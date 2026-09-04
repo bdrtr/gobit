@@ -7,93 +7,99 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/b2b/service"
 )
 
-// DTO'lar domain modellerinden AYRI tutulur: JSON alan adları dış sözleşmedir
-// ve modelde yapılan bir yeniden adlandırma istemciyi kırmamalıdır.
+// The DTOs are kept SEPARATE from the domain models: the JSON field names are
+// the external contract and a rename made in the model must not break the
+// client.
 
-// companyDTO bir şirketin yanıt gövdesidir.
+// companyDTO is the response body of a company.
 type companyDTO struct {
-	// ID şirketin kimliğidir.
+	// ID is the company's identifier.
 	ID string `json:"id"`
-	// Name şirketin ticari unvanıdır.
+	// Name is the company's trade name.
 	Name string `json:"name"`
-	// Email şirketin iletişim adresidir (küçük harfe normalize edilmiş).
+	// Email is the company's contact address (normalized to lowercase).
 	Email string `json:"email"`
-	// Phone şirketin telefonudur.
+	// Phone is the company's phone number.
 	Phone string `json:"phone"`
-	// Address fatura adresinin sokak satırıdır.
+	// Address is the street line of the billing address.
 	Address string `json:"address"`
-	// City şehirdir.
+	// City is the city.
 	City string `json:"city"`
-	// PostalCode posta kodudur.
+	// PostalCode is the postal code.
 	PostalCode string `json:"postal_code"`
-	// CountryCode ISO 3166-1 alpha-2 ülke kodudur (BÜYÜK harf); boş olabilir.
+	// CountryCode is the ISO 3166-1 alpha-2 country code (UPPERCASE); it may
+	// be empty.
 	CountryCode string `json:"country_code"`
-	// CurrencyCode ISO 4217 para birimi kodudur; harcama limitleri bu para
-	// biriminde ifade edilir.
+	// CurrencyCode is the ISO 4217 currency code; spending limits are
+	// expressed in this currency.
 	CurrencyCode string `json:"currency_code"`
-	// SpendingLimitResetPeriod çalışan limitlerinin sıfırlanma aralığıdır:
-	// "monthly", "yearly" ya da "never".
+	// SpendingLimitResetPeriod is the reset interval of the employee limits:
+	// "monthly", "yearly" or "never".
 	SpendingLimitResetPeriod string `json:"spending_limit_reset_period"`
-	// CreatedAt oluşturulma anıdır (RFC3339, UTC).
+	// CreatedAt is the moment of creation (RFC3339, UTC).
 	CreatedAt time.Time `json:"created_at"`
-	// UpdatedAt son güncellenme anıdır (RFC3339, UTC).
+	// UpdatedAt is the moment of the last update (RFC3339, UTC).
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// employeeDTO bir şirket çalışanının yanıt gövdesidir.
+// employeeDTO is the response body of a company employee.
 type employeeDTO struct {
-	// ID çalışan kaydının kimliğidir.
+	// ID is the identifier of the employee record.
 	ID string `json:"id"`
-	// CompanyID çalışanın bağlı olduğu şirkettir.
+	// CompanyID is the company the employee belongs to.
 	CompanyID string `json:"company_id"`
-	// CustomerID çalışanın müşteri kaydıdır (customer modülü). Değer link
-	// katmanından gelir; boş görünüyorsa bağ kurulamamış demektir.
+	// CustomerID is the employee's customer record (customer module). The
+	// value comes from the link layer; if it looks empty, the bond could not
+	// be established.
 	CustomerID string `json:"customer_id"`
-	// SpendingLimit pencere başına harcanabilecek azami tutardır (minor unit).
-	// null SINIRSIZ demektir; 0 gerçek bir sıfır limittir.
+	// SpendingLimit is the maximum amount that can be spent per window (minor
+	// unit). null means UNLIMITED; 0 is a real zero limit.
 	SpendingLimit *int64 `json:"spending_limit"`
-	// IsCompanyAdmin çalışanın şirket yöneticisi olup olmadığını bildirir.
+	// IsCompanyAdmin reports whether the employee is a company administrator.
 	IsCompanyAdmin bool `json:"is_company_admin"`
-	// CreatedAt oluşturulma anıdır.
+	// CreatedAt is the moment of creation.
 	CreatedAt time.Time `json:"created_at"`
-	// UpdatedAt son güncellenme anıdır.
+	// UpdatedAt is the moment of the last update.
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// storeEmployeeDTO vitrindeki müşterinin KENDİ çalışan kaydıdır.
+// storeEmployeeDTO is the storefront customer's OWN employee record.
 //
-// Yönetim yanıtından iki alanla ayrılır ve ikisi de şirketten türetilir:
-// harcama penceresinin aralığı ve o pencerenin başlangıcı. Yönetim listesinde
-// bu alanlar YOKTUR çünkü orada çalışan başına şirket okumak N+1 üretirdi;
-// vitrinde ise zaten tek bir kayıt vardır.
+// It differs from the admin response by two fields, and both are derived from
+// the company: the interval of the spending window and the start of that
+// window. Those fields are ABSENT from the admin listing because reading the
+// company per employee there would produce an N+1; in the storefront there is a
+// single record anyway.
 type storeEmployeeDTO struct {
-	// ID çalışan kaydının kimliğidir.
+	// ID is the identifier of the employee record.
 	ID string `json:"id"`
-	// CompanyID çalışanın bağlı olduğu şirkettir.
+	// CompanyID is the company the employee belongs to.
 	CompanyID string `json:"company_id"`
-	// CustomerID çalışanın müşteri kaydıdır.
+	// CustomerID is the employee's customer record.
 	CustomerID string `json:"customer_id"`
-	// SpendingLimit pencere başına harcanabilecek azami tutardır (minor unit);
-	// null sınırsız demektir.
+	// SpendingLimit is the maximum amount that can be spent per window (minor
+	// unit); null means unlimited.
 	SpendingLimit *int64 `json:"spending_limit"`
-	// SpendingLimitResetPeriod limitin sıfırlanma aralığıdır (şirketten gelir).
+	// SpendingLimitResetPeriod is the reset interval of the limit (it comes
+	// from the company).
 	SpendingLimitResetPeriod string `json:"spending_limit_reset_period"`
-	// SpendingWindowStart geçerli harcama penceresinin başlangıcıdır; periyot
-	// "never" ise null (pencere yoktur).
+	// SpendingWindowStart is the start of the current spending window; if the
+	// period is "never" it is null (there is no window).
 	//
-	// KALAN HAK BURADA YOKTUR: kalanı hesaplamak pencere içindeki siparişlerin
-	// toplamını gerektirir ve o veri order modülünündür. Uydurulmuş bir kalan
-	// alanı, istemciye yanlış bir sayı verirdi (bkz. service.Membership).
+	// THE REMAINING ALLOWANCE IS NOT HERE: computing the remainder requires
+	// the sum of the orders inside the window and that data belongs to the
+	// order module. A made-up remaining field would hand the client a wrong
+	// number (see service.Membership).
 	SpendingWindowStart *time.Time `json:"spending_window_start"`
-	// IsCompanyAdmin çalışanın şirket yöneticisi olup olmadığını bildirir.
+	// IsCompanyAdmin reports whether the employee is a company administrator.
 	IsCompanyAdmin bool `json:"is_company_admin"`
-	// CreatedAt oluşturulma anıdır.
+	// CreatedAt is the moment of creation.
 	CreatedAt time.Time `json:"created_at"`
-	// UpdatedAt son güncellenme anıdır.
+	// UpdatedAt is the moment of the last update.
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// companyRequest şirket oluşturma gövdesidir.
+// companyRequest is the company creation body.
 type companyRequest struct {
 	Name                     string `json:"name"`
 	Email                    string `json:"email"`
@@ -106,11 +112,12 @@ type companyRequest struct {
 	SpendingLimitResetPeriod string `json:"spending_limit_reset_period"`
 }
 
-// updateCompanyRequest şirket güncelleme gövdesidir.
+// updateCompanyRequest is the company update body.
 //
-// Alanlar işaretçidir: verilmeyen alan "dokunma", verilen boş dize ise gerçek
-// bir temizlemedir. İki durumu ayırmayan bir gövdede, yalnızca telefonunu
-// güncelleyen istemci şirketin adresini silmiş olurdu.
+// The fields are pointers: a field that is not given means "do not touch",
+// while a given empty string is a real clear. In a body that did not separate
+// the two cases, a client updating only its phone number would have erased the
+// company's address.
 type updateCompanyRequest struct {
 	Name                     *string `json:"name"`
 	Email                    *string `json:"email"`
@@ -123,7 +130,7 @@ type updateCompanyRequest struct {
 	SpendingLimitResetPeriod *string `json:"spending_limit_reset_period"`
 }
 
-// employeeRequest çalışan oluşturma gövdesidir.
+// employeeRequest is the employee creation body.
 type employeeRequest struct {
 	CompanyID      string `json:"company_id"`
 	CustomerID     string `json:"customer_id"`
@@ -131,23 +138,24 @@ type employeeRequest struct {
 	IsCompanyAdmin bool   `json:"is_company_admin"`
 }
 
-// updateEmployeeRequest çalışan güncelleme gövdesidir.
+// updateEmployeeRequest is the employee update body.
 //
-// Limitin KALDIRILMASI ayrı bir bayrakla istenir. Sebebi encoding/json'un
-// sınırıdır: "spending_limit": null ile alanın hiç gönderilmemesi Go tarafında
-// aynı nil işaretçiye çözülür, dolayısıyla "dokunma" ile "sınırsız yap"
-// ayrılamaz. Ayrılmasaydı bir kez konmuş limit hiçbir zaman kaldırılamazdı.
+// REMOVING the limit is asked for with a separate flag. The reason is a limit
+// of encoding/json: "spending_limit": null and the field not being sent at all
+// resolve to the same nil pointer on the Go side, so "do not touch" cannot be
+// separated from "make it unlimited". Had they not been separated, a limit set
+// once could never be removed.
 //
-// Şirket ve müşteri alanları YOKTUR: ikisi de kaydın kimliğidir ve
-// değişmeleri, kaydı güncellemek değil yenisini açmak demektir
-// (bkz. service.UpdateEmployeeInput).
+// The company and customer fields are ABSENT: both are the identity of the
+// record and changing them means opening a new record, not updating this one
+// (see service.UpdateEmployeeInput).
 type updateEmployeeRequest struct {
 	SpendingLimit      *int64 `json:"spending_limit"`
 	ClearSpendingLimit bool   `json:"clear_spending_limit"`
 	IsCompanyAdmin     *bool  `json:"is_company_admin"`
 }
 
-// toCompanyDTO şirketi yanıt gövdesine çevirir.
+// toCompanyDTO converts the company into the response body.
 func toCompanyDTO(c models.Company) companyDTO {
 	return companyDTO{
 		ID:                       c.ID,
@@ -165,7 +173,7 @@ func toCompanyDTO(c models.Company) companyDTO {
 	}
 }
 
-// toEmployeeDTO çalışanı yanıt gövdesine çevirir.
+// toEmployeeDTO converts the employee into the response body.
 func toEmployeeDTO(e models.CompanyEmployee) employeeDTO {
 	return employeeDTO{
 		ID:             e.ID,
@@ -178,7 +186,7 @@ func toEmployeeDTO(e models.CompanyEmployee) employeeDTO {
 	}
 }
 
-// toStoreEmployeeDTO üyeliği vitrin yanıt gövdesine çevirir.
+// toStoreEmployeeDTO converts the membership into the storefront response body.
 func toStoreEmployeeDTO(m service.Membership) storeEmployeeDTO {
 	return storeEmployeeDTO{
 		ID:                       m.Employee.ID,

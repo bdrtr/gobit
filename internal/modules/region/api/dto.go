@@ -7,111 +7,115 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/region/service"
 )
 
-// DTO'lar domain modellerinden AYRI tutulur: JSON alan adları dış sözleşmedir
-// ve modelde yapılan bir yeniden adlandırma istemciyi kırmamalıdır.
+// The DTOs are kept SEPARATE from the domain models: the JSON field names are
+// the external contract and a rename made in the model must not break a client.
 
-// regionDTO bir bölgenin yanıt gövdesidir.
+// regionDTO is the response body of a region.
 type regionDTO struct {
-	// ID bölgenin kimliğidir.
+	// ID is the region's id.
 	ID string `json:"id"`
-	// Name bölgenin görünen adıdır.
+	// Name is the region's display name.
 	Name string `json:"name"`
-	// CurrencyCode bölgenin para birimidir (ISO 4217, BÜYÜK harf).
+	// CurrencyCode is the region's currency (ISO 4217, UPPER case).
 	CurrencyCode string `json:"currency_code"`
-	// AutomaticTaxes verginin otomatik uygulanıp uygulanmayacağıdır.
+	// AutomaticTaxes states whether the tax is applied automatically.
 	AutomaticTaxes bool `json:"automatic_taxes"`
-	// TaxRate bölgenin YEDEK vergi oranıdır; BAZ PUAN cinsindendir (2000 = %20).
+	// TaxRateBps is the region's FALLBACK tax rate; it is in BASIS POINTS
+	// (2000 = 20%).
 	//
-	// Alan adının sonundaki birim bilinçlidir: "tax_rate": 20 gövdesi %20 mi
-	// yoksa 0,2 mi olduğu belirsiz kalırdı ve istemci tarafında yüz kat hata
-	// üretirdi. Baz puan tam sayıdır, float değildir (plan Bölüm 8).
+	// The unit at the end of the field name is deliberate: a body of
+	// "tax_rate": 20 would stay unclear about whether it is 20% or 0.2 and
+	// would produce a hundredfold error on the client side. A basis point is an
+	// integer, it is not a float (plan Section 8).
 	TaxRateBps int32 `json:"tax_rate_bps"`
-	// CreatedAt oluşturulma anıdır (RFC3339, UTC).
+	// CreatedAt is the moment of creation (RFC3339, UTC).
 	CreatedAt time.Time `json:"created_at"`
-	// UpdatedAt son güncellenme anıdır (RFC3339, UTC).
+	// UpdatedAt is the moment of the last update (RFC3339, UTC).
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// storeRegionDTO bir bölgenin MÜŞTERİYE dönen gövdesidir.
+// storeRegionDTO is the body of a region that goes back TO THE CUSTOMER.
 //
-// Yönetim gövdesinden farkı bilinçlidir: vitrin para biriminin sembolünü ve
-// ondalık basamağını görmelidir (tutarlar minor unit tam sayıdır), ama vergi
-// oranı ve otomatik vergi bayrağı iş yapılandırmasıdır ve müşteriye gitmez —
-// vergi, sepet toplamının içinde hesaplanmış olarak görünür.
+// Its difference from the admin body is deliberate: the storefront has to see
+// the currency's symbol and its decimal digits (amounts are minor unit
+// integers), but the tax rate and the automatic tax flag are business
+// configuration and do not go to the customer — the tax appears already
+// computed inside the cart total.
 type storeRegionDTO struct {
-	// ID bölgenin kimliğidir.
+	// ID is the region's id.
 	ID string `json:"id"`
-	// Name bölgenin görünen adıdır.
+	// Name is the region's display name.
 	Name string `json:"name"`
-	// CurrencyCode bölgenin para birimidir.
+	// CurrencyCode is the region's currency.
 	CurrencyCode string `json:"currency_code"`
-	// Currency para biriminin sunum bilgisidir; bulunamazsa null.
+	// Currency is the currency's presentation information; null if it is not found.
 	Currency *currencyDTO `json:"currency"`
-	// Countries bölgenin ülkeleridir; istenmediyse boş dilim.
+	// Countries are the region's countries; an empty slice if they were not requested.
 	Countries []countryDTO `json:"countries"`
 }
 
-// currencyDTO bir para biriminin yanıt gövdesidir.
+// currencyDTO is the response body of a currency.
 type currencyDTO struct {
-	// Code ISO 4217 kodudur (BÜYÜK harf).
+	// Code is the ISO 4217 code (UPPER case).
 	Code string `json:"code"`
-	// Symbol gösterim sembolüdür.
+	// Symbol is the display symbol.
 	Symbol string `json:"symbol"`
-	// Name para biriminin ISO'daki İngilizce adıdır.
+	// Name is the currency's English name in ISO.
 	Name string `json:"name"`
-	// DecimalDigits ondalık basamak sayısıdır (TRY/USD 2, JPY 0, KWD 3).
+	// DecimalDigits is the number of decimal digits (TRY/USD 2, JPY 0, KWD 3).
 	//
-	// Tutarlar minor unit TAM SAYI olarak taşınır; sunum katmanı bölme
-	// çarpanını (10^DecimalDigits) buradan öğrenir. Sabit 100 varsayan bir
-	// istemci yen tutarlarını yüz kat küçük gösterir.
+	// Amounts are carried as minor unit INTEGERS; the presentation layer learns
+	// the division factor (10^DecimalDigits) from here. A client assuming a
+	// fixed 100 shows yen amounts a hundred times too small.
 	DecimalDigits int32 `json:"decimal_digits"`
 }
 
-// countryDTO bir ülkenin yanıt gövdesidir.
+// countryDTO is the response body of a country.
 type countryDTO struct {
-	// Code ISO 3166-1 alpha-2 kodudur (BÜYÜK harf).
+	// Code is the ISO 3166-1 alpha-2 code (UPPER case).
 	Code string `json:"code"`
-	// Name ülkenin ISO'daki İngilizce kısa adıdır.
+	// Name is the country's English short name in ISO.
 	Name string `json:"name"`
-	// RegionID ülkenin bağlı olduğu bölgedir; bağlı değilse null.
+	// RegionID is the region the country is attached to; null if it is not attached.
 	RegionID *string `json:"region_id"`
 }
 
-// createRegionRequest bölge oluşturma isteğidir.
+// createRegionRequest is the region creation request.
 type createRegionRequest struct {
-	// Name bölgenin görünen adıdır; zorunludur.
+	// Name is the region's display name; it is required.
 	Name string `json:"name"`
-	// CurrencyCode ISO 4217 kodudur; büyük/küçük harf serbesttir. Zorunludur.
+	// CurrencyCode is the ISO 4217 code; upper/lower case is free. It is required.
 	CurrencyCode string `json:"currency_code"`
-	// AutomaticTaxes verginin otomatik uygulanıp uygulanmayacağıdır.
+	// AutomaticTaxes states whether the tax is applied automatically.
 	AutomaticTaxes bool `json:"automatic_taxes"`
-	// TaxRateBps bölgenin YEDEK vergi oranıdır (baz puan; 2000 = %20).
+	// TaxRateBps is the region's FALLBACK tax rate (basis points; 2000 = 20%).
 	TaxRateBps int32 `json:"tax_rate_bps"`
 }
 
-// updateRegionRequest bölge güncelleme isteğidir.
+// updateRegionRequest is the region update request.
 //
-// Tüm alanlar işaretçidir: verilmeyen alan DEĞİŞMEZ. Tam gövde istenseydi,
-// gövdesinde tax_rate_bps göndermeyi unutan bir istemci oranı sessizce
-// sıfırlardı.
+// All the fields are pointers: a field that is not given DOES NOT CHANGE. Had
+// the whole body been demanded, a client that forgets to send tax_rate_bps in
+// its body would silently zero the rate.
 type updateRegionRequest struct {
-	// Name yeni addır; null/eksikse ad değişmez.
+	// Name is the new name; if null/missing the name does not change.
 	Name *string `json:"name"`
-	// CurrencyCode yeni para birimi kodudur; null/eksikse değişmez.
+	// CurrencyCode is the new currency code; if null/missing it does not change.
 	CurrencyCode *string `json:"currency_code"`
-	// AutomaticTaxes verginin otomatik uygulanıp uygulanmayacağıdır; null/eksikse değişmez.
+	// AutomaticTaxes states whether the tax is applied automatically; if
+	// null/missing it does not change.
 	AutomaticTaxes *bool `json:"automatic_taxes"`
-	// TaxRateBps yeni vergi oranıdır (baz puan); null/eksikse değişmez.
+	// TaxRateBps is the new tax rate (basis points); if null/missing it does not change.
 	TaxRateBps *int32 `json:"tax_rate_bps"`
 }
 
-// addCountryRequest bir bölgeye ülke ekleme isteğidir.
+// addCountryRequest is the request that adds a country to a region.
 type addCountryRequest struct {
-	// CountryCode ISO 3166-1 alpha-2 kodudur; büyük/küçük harf serbesttir.
+	// CountryCode is the ISO 3166-1 alpha-2 code; upper/lower case is free.
 	CountryCode string `json:"country_code"`
 }
 
-// toRegionDTO bölge modelini yönetim yanıt gövdesine çevirir.
+// toRegionDTO converts the region model into the admin response body.
 func toRegionDTO(region models.Region) regionDTO {
 	return regionDTO{
 		ID:             region.ID,
@@ -124,7 +128,7 @@ func toRegionDTO(region models.Region) regionDTO {
 	}
 }
 
-// toCurrencyDTO para birimi modelini yanıt gövdesine çevirir.
+// toCurrencyDTO converts the currency model into the response body.
 func toCurrencyDTO(currency models.Currency) currencyDTO {
 	return currencyDTO{
 		Code:          currency.Code,
@@ -134,7 +138,7 @@ func toCurrencyDTO(currency models.Currency) currencyDTO {
 	}
 }
 
-// toCountryDTO ülke modelini yanıt gövdesine çevirir.
+// toCountryDTO converts the country model into the response body.
 func toCountryDTO(country models.Country) countryDTO {
 	return countryDTO{
 		Code:     country.Code,
@@ -143,11 +147,11 @@ func toCountryDTO(country models.Country) countryDTO {
 	}
 }
 
-// toCreateRegionInput istek gövdesini servis girdisine çevirir.
+// toCreateRegionInput converts the request body into the service input.
 //
-// Doğrulama YAPILMAZ: geçerliliğe servis karar verir ve tek bir doğrulama
-// yerinin olması, HTTP ile modüller arası çağrının aynı kuralları görmesini
-// sağlar.
+// NO validation is done here: the service decides on validity, and there being
+// a single validation site makes sure that HTTP and a call between modules see
+// the same rules.
 func toCreateRegionInput(req createRegionRequest) service.CreateRegionInput {
 	return service.CreateRegionInput{
 		Name:           req.Name,
@@ -157,7 +161,7 @@ func toCreateRegionInput(req createRegionRequest) service.CreateRegionInput {
 	}
 }
 
-// toUpdateRegionInput istek gövdesini servis girdisine çevirir.
+// toUpdateRegionInput converts the request body into the service input.
 func toUpdateRegionInput(req updateRegionRequest) service.UpdateRegionInput {
 	return service.UpdateRegionInput{
 		Name:           req.Name,

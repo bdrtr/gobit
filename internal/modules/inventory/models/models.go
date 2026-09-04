@@ -1,102 +1,105 @@
-// Package models inventory modülünün alan (domain) modellerini içerir.
+// Package models holds the domain models of the inventory module.
 //
-// Buradaki tipler veritabanı sürücüsünden bağımsızdır: pgtype ve sqlc üretimi
-// tipler buraya SIZMAZ. Çeviri repository katmanında yapılır; servis, API ve testler
-// yalnızca bu tipleri görür.
+// The types here are independent of the database driver: pgtype and sqlc
+// generated types DO NOT LEAK in here. The translation is done in the repository
+// layer; the service, the API and the tests see only these types.
 //
-// Adetler her yerde tam sayıdır (BIGINT -> int64). Bu modülde para yoktur;
-// para taşıyan modüllerdeki "minor unit" kuralının buradaki karşılığı, adedin
-// hiçbir yerde kesirli tutulmamasıdır.
+// Quantities are whole numbers everywhere (BIGINT -> int64). There is no money
+// in this module; what the "minor unit" rule of the money-carrying modules
+// amounts to here is that a quantity is never held as a fraction anywhere.
 package models
 
 import "time"
 
-// StockLocation stoğun fiziksel olarak durduğu yerdir (depo, mağaza).
+// StockLocation is the place where stock physically sits (a warehouse, a store).
 type StockLocation struct {
-	// ID "sloc_" önekli, zamana göre sıralanabilir kimliktir.
+	// ID is the "sloc_" prefixed, time-sortable id.
 	ID string
-	// Name lokasyonun görünen adıdır.
+	// Name is the display name of the location.
 	Name string
-	// Address1, Address2, City, Province, PostalCode konum bilgileridir;
-	// hepsi isteğe bağlıdır (boş dize "değer yok" demektir).
+	// Address1, Address2, City, Province and PostalCode are location details;
+	// all of them are optional (an empty string means "no value").
 	Address1   string
 	Address2   string
 	City       string
 	Province   string
 	PostalCode string
-	// CountryCode ISO 3166-1 alpha-2 ülke kodudur (örn. "TR").
+	// CountryCode is the ISO 3166-1 alpha-2 country code (e.g. "TR").
 	CountryCode string
-	// CreatedAt ve UpdatedAt UTC'dir.
+	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
 
-// InventoryItem stok takibi yapılan kalemdir.
+// InventoryItem is the item whose stock is tracked.
 //
-// Kalemin bir ürün varyantına ait olduğu bilgisi BU MODÜLDE TUTULMAZ; bağ
-// "product_variant_inventory" link'i üzerinden kurulur (Prensip 2.2). inventory
-// modülü product modülünü ne import eder ne de tablosuna referans verir.
+// The information that the item belongs to a product variant IS NOT HELD IN THIS
+// MODULE; the tie is established over the "product_variant_inventory" link
+// (Principle 2.2). The inventory module neither imports the product module nor
+// references its table.
 type InventoryItem struct {
-	// ID "invitem_" önekli kimliktir.
+	// ID is the "invitem_" prefixed id.
 	ID string
-	// SKU stok takip kodudur; yaşayan kalemler arasında benzersizdir.
+	// SKU is the stock keeping code; it is unique among the living items.
 	SKU string
-	// Title ve Description isteğe bağlı açıklayıcı alanlardır.
+	// Title and Description are optional descriptive fields.
 	Title       string
 	Description string
-	// RequiresShipping kalemin fiziksel olarak sevk edilmesi gerekip
-	// gerekmediğini bildirir; dijital ürünlerde false olur.
+	// RequiresShipping reports whether the item has to be shipped physically;
+	// it is false for digital products.
 	RequiresShipping bool
-	// CreatedAt ve UpdatedAt UTC'dir.
+	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
 
-// InventoryLevel bir kalemin bir lokasyondaki stok durumudur.
+// InventoryLevel is the stock situation of one item at one location.
 //
-// Satılabilir adet SAKLANMAZ, [InventoryLevel.Available] ile türetilir.
+// The sellable quantity IS NOT STORED, it is derived with
+// [InventoryLevel.Available].
 type InventoryLevel struct {
-	// ID "invlevel_" önekli kimliktir.
+	// ID is the "invlevel_" prefixed id.
 	ID string
-	// InventoryItemID seviyenin ait olduğu kalemin kimliğidir.
+	// InventoryItemID is the id of the item the level belongs to.
 	InventoryItemID string
-	// LocationID seviyenin ait olduğu lokasyonun kimliğidir.
+	// LocationID is the id of the location the level belongs to.
 	LocationID string
-	// StockedQuantity lokasyonda fiziksel olarak bulunan adettir.
+	// StockedQuantity is the quantity physically present at the location.
 	StockedQuantity int64
-	// ReservedQuantity fiziksel stoğun rezerve edilmiş, yani başka bir
-	// satışa söz verilmiş kısmıdır.
+	// ReservedQuantity is the part of the physical stock that is reserved, that
+	// is to say promised to another sale.
 	ReservedQuantity int64
-	// CreatedAt ve UpdatedAt UTC'dir.
+	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
 
-// Available satılabilir adedi döner: stocked - reserved.
+// Available returns the sellable quantity: stocked - reserved.
 //
-// Değer türetilir, saklanmaz. Saklansaydı iki sütun birbirinden ayrı düşebilir
-// ve stok sessizce yanlış görünürdü.
+// The value is derived, not stored. Were it stored, the two columns could drift
+// apart from each other and the stock would silently look wrong.
 func (l InventoryLevel) Available() int64 {
 	return l.StockedQuantity - l.ReservedQuantity
 }
 
-// ReservationStatus bir rezervasyonun yaşam döngüsündeki durumudur.
+// ReservationStatus is the state of a reservation in its lifecycle.
 type ReservationStatus string
 
-// Rezervasyon durumları. Geçişler: active -> released | confirmed.
-// Sonlanmış bir rezervasyon yeniden aktifleşmez.
+// Reservation states. Transitions: active -> released | confirmed.
+// A finished reservation does not become active again.
 const (
-	// ReservationActive stoğun ayrıldığını ve henüz sonlanmadığını bildirir.
+	// ReservationActive reports that the stock is set aside and has not finished yet.
 	ReservationActive ReservationStatus = "active"
-	// ReservationReleased rezervasyonun geri alındığını bildirir; ayrılan adet
-	// yeniden satılabilir hâle gelmiştir. Saga telafisi bu duruma taşır.
+	// ReservationReleased reports that the reservation was taken back; the set
+	// aside quantity has become sellable again. The saga compensation moves it
+	// into this state.
 	ReservationReleased ReservationStatus = "released"
-	// ReservationConfirmed rezervasyonun fiziksel stoktan düşüldüğünü bildirir;
-	// sevkiyatı yapılmış adet budur.
+	// ReservationConfirmed reports that the reservation was deducted from the
+	// physical stock; this is the quantity that was shipped.
 	ReservationConfirmed ReservationStatus = "confirmed"
 )
 
-// Valid durumun tanımlı bir değer olup olmadığını bildirir.
+// Valid reports whether the state is a defined value.
 func (s ReservationStatus) Valid() bool {
 	switch s {
 	case ReservationActive, ReservationReleased, ReservationConfirmed:
@@ -106,34 +109,34 @@ func (s ReservationStatus) Valid() bool {
 	}
 }
 
-// String durumun metin gösterimini döner.
+// String returns the text representation of the state.
 func (s ReservationStatus) String() string {
 	return string(s)
 }
 
-// Reservation satılabilir stoktan ayrılmış bir adettir.
+// Reservation is a quantity set aside from the sellable stock.
 //
-// Faz 6'daki complete_cart saga'sı önce Reserve ile bunu oluşturur, akış
-// başarısız olursa telafi adımı ReleaseReservation ile geri alır, başarılı
-// olursa ConfirmReservation ile fiziksel stoktan düşer.
+// The complete_cart saga in Phase 6 first creates it with Reserve, the
+// compensation step takes it back with ReleaseReservation if the flow fails, and
+// deducts it from the physical stock with ConfirmReservation if it succeeds.
 type Reservation struct {
-	// ID "invres_" önekli kimliktir.
+	// ID is the "invres_" prefixed id.
 	ID string
-	// InventoryItemID rezervasyonun ayrıldığı kalemdir.
+	// InventoryItemID is the item the reservation is set aside from.
 	InventoryItemID string
-	// LocationID stoğun ayrıldığı lokasyondur.
+	// LocationID is the location the stock is set aside at.
 	LocationID string
-	// Quantity ayrılan adettir; her zaman pozitiftir.
+	// Quantity is the quantity set aside; it is always positive.
 	Quantity int64
-	// LineItemID rezervasyonu isteyen sepet/sipariş satırının kimliğidir.
-	// cart modülüne aittir ve BURADA FOREIGN KEY DEĞİLDİR (Prensip 2.2).
-	// Boş olabilir: her rezervasyon bir satırdan doğmak zorunda değildir.
+	// LineItemID is the id of the cart/order line that asked for the reservation.
+	// It belongs to the cart module and IS NOT A FOREIGN KEY HERE (Principle 2.2).
+	// It may be empty: not every reservation has to be born from a line.
 	LineItemID string
-	// Description isteğe bağlı serbest açıklamadır.
+	// Description is an optional free-form explanation.
 	Description string
-	// Status rezervasyonun durumudur.
+	// Status is the state of the reservation.
 	Status ReservationStatus
-	// CreatedAt ve UpdatedAt UTC'dir.
+	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

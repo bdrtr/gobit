@@ -7,49 +7,53 @@ import (
 	"time"
 )
 
-// Kimlik önekleri (plan Bölüm 8: önekli, sıralanabilir kimlikler).
-// Önek, bir kimliğe bakıldığında hangi kayda ait olduğunu tek bakışta söyler ve
-// yanlış kimlikle yapılan bir çağrıyı log'da görünür kılar.
+// Identifier prefixes (plan Section 8: prefixed, sortable identifiers).
+// The prefix says at a single glance which record an identifier belongs to and
+// makes a call made with the wrong identifier visible in the log.
 const (
-	// CompanyIDPrefix şirket kimliklerinin önekidir.
+	// CompanyIDPrefix is the prefix of company identifiers.
 	CompanyIDPrefix = "comp_"
-	// EmployeeIDPrefix şirket çalışanı kimliklerinin önekidir.
+	// EmployeeIDPrefix is the prefix of company employee identifiers.
 	EmployeeIDPrefix = "compemp_"
-	// CustomerIDPrefix çalışanın bağlandığı MÜŞTERİ kimliğinin önekidir.
+	// CustomerIDPrefix is the prefix of the CUSTOMER identifier the employee
+	// is bound to.
 	//
-	// Önek customer modülünün verisidir ve burada TEKRARLANIR: modüller
-	// birbirini import edemez (Prensip 2.4). Tekrarın bedeli, customer bir gün
-	// önekini değiştirirse doğrulamanın sessizce yanlış şeyi araması olurdu;
-	// karşılığında kazanılan şey, yanlış tipte bir kimliğin link tablosuna hiç
-	// yazılamamasıdır.
+	// The prefix is the customer module's data and it is REPEATED here:
+	// modules cannot import each other (Principle 2.4). The price of the
+	// repetition would be that, if customer changed its prefix one day, the
+	// validation would silently look for the wrong thing; what is gained in
+	// return is that an identifier of the wrong type can never be written
+	// into the link table.
 	CustomerIDPrefix = "cust_"
 )
 
-// idBodyLen önek dışındaki gövdenin karakter sayısıdır: 16 bayt Crockford
-// Base32 ile dolgusuz kodlandığında tam 26 karakter eder.
+// idBodyLen is the number of characters in the body outside the prefix: 16
+// bytes encoded with Crockford Base32 without padding come to exactly 26
+// characters.
 const idBodyLen = 26
 
-// idEncoding Crockford Base32 alfabesiyle dolgusuz kodlamadır. Alfabe ASCII'de
-// artan sırada olduğundan kodlanmış dize, kodlanan baytlarla aynı sözlüksel
-// sırayı korur; kimlikler bu sayede zamana göre sıralanabilir kalır ve
-// "ORDER BY id" doğal olarak oluşturma sırasını verir.
+// idEncoding is the padding-free encoding with the Crockford Base32 alphabet.
+// Because the alphabet is in ascending order in ASCII, the encoded string
+// preserves the same lexicographic order as the bytes it encodes; that is how
+// identifiers stay sortable by time and "ORDER BY id" naturally yields the
+// creation order.
 var idEncoding = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding)
 
-// NewID verilen önekle zaman sıralı ve tekil bir kimlik üretir.
+// NewID produces a time-ordered and unique identifier with the given prefix.
 //
-// Yapısı ULID ile aynıdır: 48 bit milisaniye zaman damgası + 80 bit
-// kriptografik rastgelelik, Crockford Base32 ile 26 karaktere kodlanır.
-// Zaman damgasının başta olması, kimliğin kendisinin kabaca oluşturma sırasını
-// taşıması demektir.
+// Its structure is the same as ULID's: a 48-bit millisecond timestamp + 80 bits
+// of cryptographic randomness, encoded into 26 characters with Crockford
+// Base32. The timestamp coming first means the identifier itself carries
+// roughly the creation order.
 //
-// Aynı üretici customer, pricing ve inventory modüllerinde de bulunur; modül
-// izolasyonu gereği o paketler import EDİLMEZ (Prensip 2.4), üretici burada
-// tekrar edilir.
+// The same generator also exists in the customer, pricing and inventory
+// modules; module isolation means those packages are NOT imported (Principle
+// 2.4), so the generator is repeated here.
 func NewID(prefix string, t time.Time) string {
 	ms := t.UTC().UnixMilli()
 	if ms < 0 {
-		// 1970 öncesi bir zaman damgası kayıt için anlamlı değildir;
-		// sıralamayı bozmamak için tabana çekilir.
+		// A timestamp from before 1970 is not meaningful for a record; it is
+		// pulled down to the floor so the ordering is not broken.
 		ms = 0
 	}
 
@@ -57,24 +61,25 @@ func NewID(prefix string, t time.Time) string {
 	binary.BigEndian.PutUint64(stamp[:], uint64(ms))
 
 	var buf [16]byte
-	// UnixMilli 48 bite sığar; ilk iki bayt daima sıfırdır ve atılır.
+	// UnixMilli fits in 48 bits; the first two bytes are always zero and are
+	// dropped.
 	copy(buf[:6], stamp[2:])
 	if _, err := rand.Read(buf[6:]); err != nil {
-		// crypto/rand.Read hata dönmez; yine de bir gün dönerse kimlik
-		// yalnızca nanosaniye çözünürlüğüne dayanır — tekillik zayıflar ama
-		// kayıt açma başarısız olmaz.
+		// crypto/rand.Read does not return an error; should it ever do so,
+		// the identifier rests on nanosecond resolution alone — uniqueness
+		// weakens but opening the record does not fail.
 		binary.BigEndian.PutUint64(buf[8:], uint64(t.UnixNano()))
 	}
 
 	return prefix + idEncoding.EncodeToString(buf[:])
 }
 
-// NewCompanyID yeni bir şirket kimliği üretir.
+// NewCompanyID produces a new company identifier.
 func NewCompanyID(t time.Time) string { return NewID(CompanyIDPrefix, t) }
 
-// NewEmployeeID yeni bir çalışan kimliği üretir.
+// NewEmployeeID produces a new employee identifier.
 func NewEmployeeID(t time.Time) string { return NewID(EmployeeIDPrefix, t) }
 
-// IDBodyLength önek dışındaki gövde uzunluğunu döner; testler ve doğrulama
-// için tek doğruluk kaynağıdır.
+// IDBodyLength returns the length of the body outside the prefix; it is the
+// single source of truth for tests and validation.
 func IDBodyLength() int { return idBodyLen }

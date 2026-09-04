@@ -6,56 +6,61 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/file/models"
 )
 
-// DTO'lar domain modellerinden AYRI tutulur: JSON alan adları dış sözleşmedir
-// ve modelde yapılan bir yeniden adlandırma istemciyi kırmamalıdır.
+// The DTOs are kept SEPARATE from the domain models: JSON field names are the
+// outside contract and a rename made in the model must not break the client.
 
-// uploadDTO bir yükleme kaydının yanıt gövdesidir.
+// uploadDTO is the response body of an upload record.
 //
-// # DEPO ANAHTARI ALANI YOKTUR
+// # THERE IS NO STORAGE KEY FIELD
 //
-// Kayıtta vardır ama yayımlanmaz. İstemcinin dosyaya erişmek için ihtiyacı
-// olan tek şey [uploadDTO.URL]'dir ve anahtarı ayrıca yayımlamak, aynı şeyi
-// iki farklı sözleşmeyle vaat etmek olurdu: bugün adres anahtardan türüyor
-// ama bir nesne deposunda adres imzalıdır ve anahtarla hiç ilgisi yoktur.
-// İkisini birden yayımlayan bir uç, o gün sessizce yalan söylemeye başlardı.
+// The record has one but it is not published. The only thing the client needs
+// in order to reach the file is [uploadDTO.URL], and publishing the key on top
+// of that would be promising the same thing with two different contracts: today
+// the address is derived from the key, but in an object store the address is
+// signed and has nothing to do with the key at all. An endpoint publishing both
+// would quietly start lying on that day.
 //
-// # GÜNCELLEME ZAMANI ALANI YOKTUR
+// # THERE IS NO UPDATE TIME FIELD
 //
-// Bir yükleme kaydı hiç güncellenmez — değiştirme ucu yoktur, dosya da
-// değişmez. updated_at'i yayımlamak, değişebileceğini vaat etmek olurdu.
+// An upload record is never updated — there is no modification endpoint, and
+// the file does not change either. Publishing updated_at would be promising
+// that it can change.
 type uploadDTO struct {
-	// ID kaydın kimliğidir; silme ucu bunu alır.
+	// ID is the record's identifier; the delete endpoint takes it.
 	ID string `json:"id"`
-	// URL dosyanın erişilebilir adresidir.
+	// URL is the reachable address of the file.
 	//
-	// Yerel sağlayıcıda KÖKE GÖRELİDİR ("/files/…"); farklı bir kökenden
-	// sunulan vitrin, önüne kendi kökenini koyar.
+	// On the local provider it is RELATIVE TO THE ROOT ("/files/…"); a
+	// storefront served from a different origin puts its own origin in front of
+	// it.
 	URL string `json:"url"`
-	// ContentType dosyanın İÇERİĞİNDEN tespit edilmiş tipidir.
+	// ContentType is the type detected FROM THE CONTENT of the file.
 	//
-	// İstemcinin yükleme sırasında bildirdiği tip DEĞİLDİR ve ondan farklı
-	// olabilir; yanıtta dönmesinin sebebi tam da budur — istemci ne
-	// gönderdiğini değil, sistemin ne SAKLADIĞINI görmelidir.
+	// It IS NOT the type the client declared while uploading and it may differ
+	// from it; that is exactly why it comes back in the response — the client
+	// must see not what it sent, but what the system STORED.
 	ContentType string `json:"content_type"`
-	// Size dosyanın bayt cinsinden boyutudur.
+	// Size is the size of the file in bytes.
 	Size int64 `json:"size"`
-	// Checksum içeriğin SHA-256 özetidir (küçük harf onaltılık).
+	// Checksum is the SHA-256 digest of the content (lowercase hexadecimal).
 	Checksum string `json:"checksum"`
-	// ProviderID dosyayı saklayan sağlayıcının kimliğidir.
+	// ProviderID is the identifier of the provider storing the file.
 	ProviderID string `json:"provider_id"`
-	// OriginalName istemcinin bildirdiği dosya adıdır; boşsa alan hiç görünmez.
+	// OriginalName is the file name the client declared; if it is empty the
+	// field does not appear at all.
 	//
-	// GÖSTERİM verisidir: yönetim panelinde "hangi dosyayı yüklemiştim"
-	// sorusunu yanıtlar. Hiçbir yol ifadesine ve hiçbir HTTP başlığına
-	// girmez.
+	// It is DISPLAY data: in the admin panel it answers the "which file was it
+	// that I uploaded" question. It enters no path expression and no HTTP
+	// header.
 	OriginalName string `json:"original_name,omitempty"`
-	// UploadedBy yüklemeyi yapan çağıranın kimliğidir; boşsa alan görünmez.
+	// UploadedBy is the identifier of the caller who did the upload; if it is
+	// empty the field does not appear.
 	UploadedBy string `json:"uploaded_by,omitempty"`
-	// CreatedAt yüklemenin yapıldığı andır (RFC3339, UTC).
+	// CreatedAt is the moment the upload was made (RFC3339, UTC).
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// toUploadDTO domain kaydını yanıt gövdesine çevirir.
+// toUploadDTO converts the domain record into the response body.
 func toUploadDTO(u models.Upload) uploadDTO {
 	return uploadDTO{
 		ID:           u.ID,

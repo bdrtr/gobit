@@ -10,32 +10,33 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/inventory/models"
 )
 
-// Query sağlayıcısının sunduğu alan adları.
+// The field names the Query provider offers.
 const (
-	// FieldID kaydın kimliğidir; Query birleştirmeyi bu alan üzerinden yapar.
+	// FieldID is the id of the record; Query does the joining over this field.
 	FieldID = query.IDField
-	// FieldSKU stok takip kodudur.
+	// FieldSKU is the stock keeping code.
 	FieldSKU = "sku"
-	// FieldTitle kalemin başlığıdır.
+	// FieldTitle is the title of the item.
 	FieldTitle = "title"
-	// FieldDescription kalemin açıklamasıdır.
+	// FieldDescription is the description of the item.
 	FieldDescription = "description"
-	// FieldRequiresShipping kalemin sevkiyat gerektirip gerektirmediğidir.
+	// FieldRequiresShipping is whether the item requires shipping.
 	FieldRequiresShipping = "requires_shipping"
-	// FieldAvailableQuantity TÜM lokasyonlardaki satılabilir toplamdır.
-	// product'ın mağaza listelemesi stoğu bu alandan okur.
+	// FieldAvailableQuantity is the sellable total across ALL locations.
+	// The store listing of product reads the stock from this field.
 	FieldAvailableQuantity = "available_quantity"
-	// FieldCreatedAt oluşturulma zamanıdır.
+	// FieldCreatedAt is the creation time.
 	FieldCreatedAt = "created_at"
-	// FieldUpdatedAt son güncellenme zamanıdır.
+	// FieldUpdatedAt is the time of the last update.
 	FieldUpdatedAt = "updated_at"
 )
 
-// itemFieldGetters sunulan alanların çıkarıcılarıdır.
+// itemFieldGetters are the extractors of the offered fields.
 //
-// Alan kümesinin tek bir yerde tanımlı olması, doğrulama ile üretimin
-// ayrışmasını imkânsız kılar: burada olmayan bir alan istenirse errors.Invalid
-// döner (ADR 0004), burada olan her alan da üretilebilir.
+// The field set being defined in a single place makes it impossible for the
+// validation and the production to drift apart: asking for a field that is not
+// here returns errors.Invalid (ADR 0004), and every field that is here can also
+// be produced.
 var itemFieldGetters = map[string]func(item models.InventoryItem, available int64) any{
 	FieldID:                func(item models.InventoryItem, _ int64) any { return item.ID },
 	FieldSKU:               func(item models.InventoryItem, _ int64) any { return item.SKU },
@@ -47,38 +48,40 @@ var itemFieldGetters = map[string]func(item models.InventoryItem, available int6
 	FieldAvailableQuantity: func(_ models.InventoryItem, available int64) any { return available },
 }
 
-// QueryProvider inventory modülünün Query katmanına açtığı okuma yüzeyidir.
+// QueryProvider is the read surface the inventory module opens to the Query
+// layer.
 //
-// Container'a "inventory_item.query" adıyla kaydedilir; Query onu ADLA çözer
-// (ADR 0004). Kayıtlar "available_quantity" alanıyla birlikte döndüğü için
-// product'ın mağaza listelemesi ürünü ve stoğunu TEK query çağrısında görür.
+// It is registered in the container under the name "inventory_item.query"; Query
+// resolves it BY NAME (ADR 0004). Because the records come back together with
+// the "available_quantity" field, the store listing of product sees the product
+// and its stock in a SINGLE query call.
 type QueryProvider struct {
 	svc *Service
 }
 
-// QueryProvider'ın çekirdek sözleşmesini karşıladığı derleme zamanında
-// doğrulanır; imza kayması çalışma zamanına kalmaz.
+// QueryProvider satisfying the core contract is verified at compile time; a
+// signature drift does not survive until run time.
 var _ query.Provider = (*QueryProvider)(nil)
 
-// NewQueryProvider verilen servis üzerinde çalışan bir sağlayıcı üretir.
+// NewQueryProvider produces a provider running on the given service.
 func NewQueryProvider(svc *Service) *QueryProvider {
 	return &QueryProvider{svc: svc}
 }
 
-// Entity sağlayıcının sunduğu entity adını döner.
+// Entity returns the entity name the provider offers.
 func (p *QueryProvider) Entity() string {
 	return EntityName
 }
 
-// List kök kayıtları döner.
+// List returns the root records.
 //
-// Desteklenen filtreler: "sku" (string) ve "requires_shipping" (bool). Başka
-// bir filtre ya da tanınmayan bir alan errors.Invalid ile reddedilir (ADR 0004).
+// Supported filters: "sku" (string) and "requires_shipping" (bool). Any other
+// filter or an unrecognized field is rejected with errors.Invalid (ADR 0004).
 //
-// Limit [MaxLimit]'e KIRPILIR; bkz. [providerLimit]. Kırpma sessizdir ve hata
-// dönmez, ama sonuç sayfa boyutunun aşılamayacağı anlamına gelir: çağıran tüm
-// kayıtları aldığını varsaymamalı, [MaxLimit] kadar kayıt dönen bir yanıtı
-// "devamı olabilir" diye okumalıdır.
+// The limit is CLAMPED to [MaxLimit]; see [providerLimit]. The clamping is silent
+// and returns no error, but the result means the page size cannot be exceeded:
+// the caller must not assume that it got all the records, it has to read a
+// response that returned [MaxLimit] records as "there may be more".
 func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]query.Record, error) {
 	if err := validateFields(opts.Fields); err != nil {
 		return nil, err
@@ -117,8 +120,8 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	return p.records(ctx, items, opts.Fields)
 }
 
-// FetchByIDs verilen kimliklerin kayıtlarını BATCH olarak döner.
-// Bulunamayan kimlik için kayıt dönmez; bu bir hata değildir.
+// FetchByIDs returns the records of the given ids as a BATCH.
+// No record is returned for an id that is not found; that is not an error.
 func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([]query.Record, error) {
 	if err := validateFields(fields); err != nil {
 		return nil, err
@@ -134,10 +137,11 @@ func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([
 	return p.records(ctx, items, fields)
 }
 
-// records kalemleri istenen alanlarla kayda çevirir.
+// records turns the items into records with the requested fields.
 //
-// Satılabilir adet YALNIZCA istendiğinde hesaplanır ve hesaplanırken TÜM
-// kalemler için tek sorgu yapılır; kayıt başına sorgu (N+1) yoktur.
+// The sellable quantity is computed ONLY when it is asked for, and while it is
+// computed a single query is made for ALL the items; there is no query per
+// record (N+1).
 func (p *QueryProvider) records(ctx context.Context, items []models.InventoryItem, fields []string) ([]query.Record, error) {
 	selected := fields
 	if len(selected) == 0 {
@@ -167,21 +171,23 @@ func (p *QueryProvider) records(ctx context.Context, items []models.InventoryIte
 	return out, nil
 }
 
-// providerLimit çekirdeğin limit değerini sağlayıcının sayfa tavanına kırpar.
+// providerLimit clamps the core's limit value to the provider's page ceiling.
 //
-// Çekirdek sözleşmesinde ([query.ListOptions]) 0 "SINIRSIZ" demektir; bu
-// sağlayıcı sınırsız listeleme sunmaz, çünkü sınırsız bir kök sorgu tüm kalem
-// tablosunu belleğe alırdı. Sınırsız istek bu yüzden [MaxLimit]'e çevrilir —
-// [DefaultLimit]'e DEĞİL: çağıran açıkça "hepsini istiyorum" demiştir,
-// alabileceğinin en fazlasını almalıdır. Anlamsız bir negatif değer de aynı
-// kefeye konur: bu yolda limit bir istemci girdisi değil, başka bir modülün
-// sorgu tanımından gelen bir sayıdır ve reddedilmesi tüm okumayı düşürürdü.
+// In the core contract ([query.ListOptions]) 0 means "UNLIMITED"; this provider
+// does not offer unlimited listing, because an unlimited root query would pull
+// the whole item table into memory. An unlimited request is therefore turned into
+// [MaxLimit] — NOT into [DefaultLimit]: the caller explicitly said "I want them
+// all", and it should get the most it can get. A meaningless negative value is
+// put in the same basket: on this path the limit is not a client input but a
+// number coming from another module's query definition, and rejecting it would
+// drop the whole read.
 //
-// Tavanın aşılması da hata DEĞİLDİR, kırpılır. Admin API'sinde aynı sınırın
-// aşılması errors.Invalid'dir, çünkü orada sayıyı yazan istemcidir ve yazdığı
-// sayının uygulanmadığını bilmelidir; buradaki limit ise başka bir modülün
-// sorgu tanımından gelir ve tek bir sayı yüzünden hiç veri döndürmemek,
-// çağıranın hiç beklemediği bir başarısızlık olurdu.
+// Exceeding the ceiling IS NOT an error either, it is clamped. In the admin API
+// exceeding the same limit is errors.Invalid, because there the number is written
+// by the client and the client has to know that the number it wrote was not
+// applied; the limit here, on the other hand, comes from another module's query
+// definition, and returning no data at all because of a single number would be a
+// failure the caller never expected.
 func providerLimit(limit int) int64 {
 	if limit <= 0 || int64(limit) > MaxLimit {
 		return MaxLimit
@@ -189,7 +195,7 @@ func providerLimit(limit int) int64 {
 	return int64(limit)
 }
 
-// validateFields istenen alanların hepsinin sunulduğunu doğrular.
+// validateFields verifies that all of the requested fields are offered.
 func validateFields(fields []string) error {
 	for _, name := range fields {
 		if _, ok := itemFieldGetters[name]; !ok {

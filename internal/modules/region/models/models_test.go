@@ -11,19 +11,19 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/region/models"
 )
 
-// TestMinorUnitFactor ondalık basamak sayısının bölme çarpanına doğru
-// çevrildiğini kanıtlar.
+// TestMinorUnitFactor proves that the decimal digit count is correctly turned
+// into the division factor.
 //
-// Bu tablonun tamamı gerçek para birimlerinden gelir ve modülün varlık
-// sebebini sınar: tutarlar minor unit TAM SAYI saklandığı için sabit bir 100
-// çarpanı varsayan bir sunum katmanı yen tutarlarını yüz kat küçük, dinar
-// tutarlarını on kat büyük gösterirdi.
+// This whole table comes from real currencies and it tests the module's reason
+// for existing: since amounts are stored as minor unit INTEGERS, a presentation
+// layer assuming a fixed factor of 100 would show yen amounts a hundred times
+// too small and dinar amounts ten times too large.
 func TestMinorUnitFactor(t *testing.T) {
 	cases := []struct {
 		code   string
 		digits int32
 		factor int64
-		// amount minor unit tutar, major ise onun tam kısmıdır.
+		// amount is the minor unit amount, major is its whole part.
 		amount int64
 		major  int64
 	}{
@@ -44,24 +44,24 @@ func TestMinorUnitFactor(t *testing.T) {
 	}
 }
 
-// TestMinorUnitFactorOutOfRangeIsSafe aralık dışı bir basamak sayısının sıfır
-// değil BİR döndürdüğünü kanıtlar.
+// TestMinorUnitFactorOutOfRangeIsSafe proves that an out of range digit count
+// returns ONE, not zero.
 //
-// Sıfır dönseydi çağıranda sıfıra bölme oluşurdu; bir dönmek en kötü ihtimalle
-// ölçeği bozar ama süreci düşürmez.
+// Had it returned zero, division by zero would arise in the caller; returning
+// one distorts the scale at worst but does not bring the process down.
 func TestMinorUnitFactorOutOfRangeIsSafe(t *testing.T) {
 	for _, digits := range []int32{-1, models.MaxDecimalDigits + 1, 100} {
 		currency := models.Currency{Code: "XXX", DecimalDigits: digits}
 
-		assert.Equal(t, int64(1), currency.MinorUnitFactor(), "basamak: %d", digits)
+		assert.Equal(t, int64(1), currency.MinorUnitFactor(), "digits: %d", digits)
 	}
 }
 
-// TestTaxRatePercent baz puanın tam sayı yüzde ve kalan olarak ayrıldığını
-// kanıtlar.
+// TestTaxRatePercent proves that a basis point is split into an integer
+// percentage and a remainder.
 //
-// Yüzde float dönmez: 2050 baz puan "%20 ve 50 baz puan"dır ve iki tam sayı
-// hâlinde taşınır (plan Bölüm 8).
+// The percentage does not come back as a float: 2050 basis points is "20% and
+// 50 basis points" and it is carried as two integers (plan Section 8).
 func TestTaxRatePercent(t *testing.T) {
 	cases := []struct {
 		rate      int32
@@ -80,36 +80,36 @@ func TestTaxRatePercent(t *testing.T) {
 		region := models.Region{TaxRate: tc.rate}
 
 		percent, remainder := region.TaxRatePercent()
-		assert.Equal(t, tc.percent, percent, "oran: %d", tc.rate)
-		assert.Equal(t, tc.remainder, remainder, "oran: %d", tc.rate)
+		assert.Equal(t, tc.percent, percent, "rate: %d", tc.rate)
+		assert.Equal(t, tc.remainder, remainder, "rate: %d", tc.rate)
 	}
 }
 
-// TestRegionPatchedAppliesOnlyGivenFields yamanın yalnızca dolu alanları
-// uyguladığını ve alıcıyı DEĞİŞTİRMEDİĞİNİ kanıtlar.
+// TestRegionPatchedAppliesOnlyGivenFields proves that the patch applies only
+// the filled fields and DOES NOT MODIFY the receiver.
 func TestRegionPatchedAppliesOnlyGivenFields(t *testing.T) {
 	original := models.Region{
 		ID:             "reg_1",
-		Name:           "Türkiye",
+		Name:           "Turkey",
 		CurrencyCode:   "TRY",
 		AutomaticTaxes: true,
 		TaxRate:        2000,
 	}
 
-	name := "Yeni"
+	name := "New"
 	patched := original.Patched(models.RegionPatch{Name: &name})
 
-	assert.Equal(t, "Yeni", patched.Name)
-	assert.Equal(t, "TRY", patched.CurrencyCode, "verilmeyen alan değişmemeli")
+	assert.Equal(t, "New", patched.Name)
+	assert.Equal(t, "TRY", patched.CurrencyCode, "a field that was not given must not change")
 	assert.True(t, patched.AutomaticTaxes)
 	assert.Equal(t, int32(2000), patched.TaxRate)
-	assert.Equal(t, "Türkiye", original.Name, "alıcı değişmemeli")
+	assert.Equal(t, "Turkey", original.Name, "the receiver must not change")
 }
 
-// TestRegionPatchedWritesZeroValues sıfır değerli bir yamanın "dokunma"
-// sayılmadığını kanıtlar.
+// TestRegionPatchedWritesZeroValues proves that a patch with a zero value does
+// not count as "do not touch".
 //
-// İşaretçi kullanmanın tek sebebi budur: false ve 0 geçerli değerlerdir.
+// This is the only reason for using a pointer: false and 0 are valid values.
 func TestRegionPatchedWritesZeroValues(t *testing.T) {
 	original := models.Region{Name: "X", CurrencyCode: "TRY", AutomaticTaxes: true, TaxRate: 2000}
 
@@ -121,7 +121,7 @@ func TestRegionPatchedWritesZeroValues(t *testing.T) {
 	assert.Zero(t, patched.TaxRate)
 }
 
-// TestRegionPatchEmpty boş yamanın tanındığını kanıtlar.
+// TestRegionPatchEmpty proves that an empty patch is recognized.
 func TestRegionPatchEmpty(t *testing.T) {
 	assert.True(t, models.RegionPatch{}.Empty())
 
@@ -132,16 +132,16 @@ func TestRegionPatchEmpty(t *testing.T) {
 	assert.False(t, models.RegionPatch{Name: &name}.Empty())
 	assert.False(t, models.RegionPatch{CurrencyCode: &code}.Empty())
 	assert.False(t, models.RegionPatch{AutomaticTaxes: &automatic}.Empty(),
-		"false bir değerdir, 'verilmedi' değildir")
+		"false is a value, it is not 'not given'")
 	assert.False(t, models.RegionPatch{TaxRate: &rate}.Empty(),
-		"0 bir değerdir, 'verilmedi' değildir")
+		"0 is a value, it is not 'not given'")
 }
 
-// TestNewRegionIDIsPrefixedAndSortable kimliğin önekli, doğru uzunlukta,
-// tekil ve ZAMAN SIRALI olduğunu kanıtlar.
+// TestNewRegionIDIsPrefixedAndSortable proves that the id is prefixed, of the
+// right length, unique and TIME ORDERED.
 //
-// Sıralanabilirlik iddiası boş değildir: "ORDER BY id" oluşturma sırasını
-// verdiği için listeleme sorguları ayrı bir zaman sütununa göre sıralamaz.
+// The sortability claim is not an empty one: because "ORDER BY id" yields
+// creation order, listing queries do not sort by a separate time column.
 func TestNewRegionIDIsPrefixedAndSortable(t *testing.T) {
 	base := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
 
@@ -150,27 +150,27 @@ func TestNewRegionIDIsPrefixedAndSortable(t *testing.T) {
 
 	require.True(t, strings.HasPrefix(first, models.RegionIDPrefix))
 	assert.Len(t, strings.TrimPrefix(first, models.RegionIDPrefix), models.IDBodyLength())
-	assert.Less(t, first, second, "sonra üretilen kimlik sözlüksel olarak da sonra gelmeli")
+	assert.Less(t, first, second, "an id produced later has to come later lexicographically too")
 
 	seen := map[string]struct{}{}
 	for range 1000 {
 		id := models.NewRegionID(base)
 		_, dup := seen[id]
-		require.False(t, dup, "aynı milisaniyede üretilen kimlikler tekrar etmemeli: %s", id)
+		require.False(t, dup, "ids produced in the same millisecond must not repeat: %s", id)
 		seen[id] = struct{}{}
 	}
 }
 
-// TestNewIDClampsPreEpochTime 1970 öncesi bir zaman damgasının sıralamayı
-// bozmadığını kanıtlar.
+// TestNewIDClampsPreEpochTime proves that a timestamp before 1970 does not
+// break the ordering.
 func TestNewIDClampsPreEpochTime(t *testing.T) {
 	old := models.NewRegionID(time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC))
 	epoch := models.NewRegionID(time.Unix(0, 0))
 
 	assert.Len(t, strings.TrimPrefix(old, models.RegionIDPrefix), models.IDBodyLength())
-	// İkisi de tabana çekilir; zaman kısmı aynı olduğu için önek uzunluğunca
-	// ortak başlangıç taşırlar.
-	const stampPrefixLen = 9 // 48 bitlik damganın Base32 karşılığı
+	// Both are clamped to the floor; since the time part is the same they carry
+	// a common start over the length of the stamp prefix.
+	const stampPrefixLen = 9 // the Base32 equivalent of the 48-bit stamp
 	assert.Equal(t,
 		strings.TrimPrefix(epoch, models.RegionIDPrefix)[:stampPrefixLen],
 		strings.TrimPrefix(old, models.RegionIDPrefix)[:stampPrefixLen],

@@ -2,48 +2,51 @@ package service
 
 import "context"
 
-// Bu dosya inventory modülünün MODÜLLER ARASI yüzeyidir (ADR 0001, ADR 0006).
+// This file is the CROSS-MODULE surface of the inventory module (ADR 0001,
+// ADR 0006).
 //
-// internal/workflows altındaki saga'lar stok ayırmak ve geri bırakmak zorunda,
-// ama ne o paketler bu modülü ne bu modül onları import edebilir. Çözüm
-// region/cart/payment/order modüllerindekiyle aynıdır: yalnızca İLKEL ve
-// stdlib tipleri kullanan bir yüzey yayımlamak. Tüketici kendi dar arayüzünü
-// tanımlar, bu tip onu YAPISAL olarak karşılar ve container'dan adla çözülür.
+// The sagas under internal/workflows have to set stock aside and release it
+// again, but neither can those packages import this module nor can this module
+// import them. The solution is the same as in the region/cart/payment/order
+// modules: publishing a surface that uses only PRIMITIVE and stdlib types. The
+// consumer defines its own narrow interface, this type satisfies it STRUCTURALLY
+// and it is resolved from the container by name.
 //
-// Yüzey BİLİNÇLİ OLARAK dardır ve akışların ihtiyacına göre seçilmiştir:
-// stoğu ayır ([Interop.Reserve]), ayrılanı geri bırak
-// ([Interop.ReleaseReservation]), düşülmüş stoğa çevir
-// ([Interop.ConfirmReservation]), satılabilir toplamı sor
-// ([Interop.AvailableQuantity]) ve yeterli stoğu olan lokasyonları listele
-// ([Interop.LocationsWithStock]). Buraya eklenen her metot bir SÖZLEŞMEDİR:
-// tüketici onu kendi paketinde birebir aynı imzayla yazar ve uyumu derleyici
-// değil, yalnızca testler denetleyebilir.
+// The surface is DELIBERATELY narrow and was picked according to what the flows
+// need: set the stock aside ([Interop.Reserve]), release what was set aside
+// ([Interop.ReleaseReservation]), turn it into deducted stock
+// ([Interop.ConfirmReservation]), ask for the sellable total
+// ([Interop.AvailableQuantity]) and list the locations that have enough stock
+// ([Interop.LocationsWithStock]). Every method added here is a CONTRACT: the
+// consumer writes it in its own package with exactly the same signature and the
+// match can be checked not by the compiler but only by tests.
 //
-// LocationsWithStock yüzeye "hangi depodan gönderelim" sorusunu TAŞIMAZ, o bir
-// kargo kararıdır ve fulfillment'a aittir. Bu yüzey yalnızca stok olgusunu —
-// hangi lokasyonlarda yeterli adet olduğunu — bildirir; kararı verecek olan
-// modül adayları buradan alır. İkisini tek metotta birleştirmek, stok
-// sorgusunu kargo politikasına bağımlı kılardı.
+// LocationsWithStock DOES NOT CARRY the "which warehouse should we ship from"
+// question onto the surface, that one is a shipping decision and belongs to
+// fulfillment. This surface reports only the stock fact — at which locations
+// there is enough quantity; the module that will make the decision takes its
+// candidates from here. Merging the two into a single method would make the
+// stock query depend on shipping policy.
 
-// Interop stok servisini modüller arası ilkel yüzeye çevirir.
+// Interop turns the stock service into the primitive cross-module surface.
 //
-// Hiçbir karar vermez: yalnızca imzayı çevirir. Eşzamanlılık, kilit sırası ve
-// yetersiz stok kuralları [Service] üzerinde kalır; buraya kural eklemek aynı
-// kuralın iki yerde ayrışması demek olurdu.
+// It makes no decisions: it only translates the signature. Concurrency, lock
+// order and insufficient-stock rules stay on [Service]; adding a rule here would
+// mean the same rule drifting apart in two places.
 //
-// Container'a "inventory.interop" adıyla kaydedilir.
+// It is registered in the container under the name "inventory.interop".
 type Interop struct {
 	svc *Service
 }
 
-// NewInterop verilen servis için modüller arası yüzeyi kurar.
+// NewInterop sets up the cross-module surface for the given service.
 func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
 
-// Reserve stoğu ayırır ve rezervasyon kimliğini döner.
+// Reserve sets the stock aside and returns the reservation id.
 //
-// Yeterli stok yoksa errors.Conflict döner; saga bunu "sipariş verilemez"
-// olarak yorumlar. Ayırma VERİTABANI düzeyinde serileştirilir, dolayısıyla
-// eşzamanlı iki çağrı aynı son adedi ALAMAZ.
+// If there is not enough stock it returns errors.Conflict; the saga reads that
+// as "the order cannot be placed". Setting aside is serialized at the DATABASE
+// level, so two concurrent calls CANNOT get the same last quantity.
 func (i *Interop) Reserve(
 	ctx context.Context,
 	inventoryItemID, locationID string,
@@ -62,36 +65,37 @@ func (i *Interop) Reserve(
 	return res.ID, nil
 }
 
-// ReleaseReservation ayrılan stoğu geri bırakır.
+// ReleaseReservation releases the stock that was set aside.
 //
-// SAGA TELAFİSİDİR ve İDEMPOTENTTİR: zaten bırakılmış bir rezervasyon için
-// ikinci çağrı hata VERMEZ. Telafi zinciri bir adımı yeniden çalıştırabilir;
-// ikinci çağrının patlaması, telafinin yarıda kalması demek olurdu.
+// IT IS THE SAGA COMPENSATION and IT IS IDEMPOTENT: for an already released
+// reservation the second call DOES NOT return an error. A compensation chain may
+// rerun a step; the second call blowing up would mean the compensation stays
+// half done.
 func (i *Interop) ReleaseReservation(ctx context.Context, reservationID string) error {
 	return i.svc.ReleaseReservation(ctx, reservationID)
 }
 
-// ConfirmReservation rezervasyonu düşülmüş stoğa çevirir.
+// ConfirmReservation turns the reservation into deducted stock.
 //
-// Sipariş kesinleştiğinde çağrılır; bu noktadan sonra stok geri bırakılmaz,
-// iade ayrı bir akıştır.
+// It is called once the order is final; from this point on the stock is not
+// released again, a return is a separate flow.
 func (i *Interop) ConfirmReservation(ctx context.Context, reservationID string) error {
 	return i.svc.ConfirmReservation(ctx, reservationID)
 }
 
-// AvailableQuantity kalemin tüm lokasyonlardaki kullanılabilir adedini döner.
+// AvailableQuantity returns the item's available quantity across all locations.
 func (i *Interop) AvailableQuantity(ctx context.Context, inventoryItemID string) (int64, error) {
 	return i.svc.AvailableQuantity(ctx, inventoryItemID)
 }
 
-// LocationsWithStock kalemden en az quantity adet ayrılabilen lokasyonların
-// kimliklerini artan sırada döner.
+// LocationsWithStock returns, in ascending order, the ids of the locations from
+// which at least quantity units of the item can be set aside.
 //
-// Dönen sıra bir OLGUNUN sırasıdır, tercih sırası DEĞİLDİR: adayları tercih
-// sırasına fulfillment dizer ve sıradaki ilk çalışan depoyu sepet akışı
-// kullanır. Hiçbir lokasyon yetmiyorsa boş dilim
-// döner, hata değil; saga bunu kendi bağlamında Conflict'e çevirir. Ayrıntılı
-// gerekçe için bkz. [Service.LocationsWithStock].
+// The returned order is the order of a FACT, IT IS NOT a preference order:
+// fulfillment lines the candidates up in preference order and the cart flow uses
+// the first warehouse in that line that works. If no location is enough it
+// returns an empty slice, not an error; the saga turns that into a Conflict in
+// its own context. For the detailed rationale see [Service.LocationsWithStock].
 func (i *Interop) LocationsWithStock(
 	ctx context.Context,
 	inventoryItemID string,

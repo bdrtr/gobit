@@ -168,7 +168,7 @@ func (s *Service) UpdateTaxRate(ctx context.Context, id string, in UpdateTaxRate
 		return models.TaxRate{}, err
 	}
 	if patch.Empty() {
-		return models.TaxRate{}, errors.Invalid(CodeInvalidInput, "güncellenecek alan verilmedi")
+		return models.TaxRate{}, errors.Invalid(CodeInvalidInput, "no field was given to update")
 	}
 	return s.repo.UpdateTaxRate(ctx, id, patch, s.clock())
 }

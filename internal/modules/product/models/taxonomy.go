@@ -2,11 +2,11 @@ package models
 
 import "time"
 
-// Category ürünleri ağaç biçiminde gruplayan kategoridir.
+// Category is the category that groups products in a tree.
 //
-// ParentID aynı tablonun kendisine referansıdır: kategori ağacı tek modülün
-// içinde yaşadığı için burada foreign key serbesttir (yasak olan CROSS-MODULE
-// foreign key'dir, Prensip 2.2).
+// ParentID is a reference to the same table: since the category tree lives
+// inside a single module, a foreign key is free here (what is forbidden is the
+// CROSS-MODULE foreign key, Principle 2.2).
 type Category struct {
 	ID          string     `json:"id"`
 	Name        string     `json:"name"`
@@ -21,7 +21,8 @@ type Category struct {
 	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
 }
 
-// Collection ürünleri düz bir kümede toplayan koleksiyondur (örn. "Yaz 2026").
+// Collection is the collection that gathers products into a flat set (e.g.
+// "Summer 2026").
 type Collection struct {
 	ID        string         `json:"id"`
 	Title     string         `json:"title"`
@@ -32,7 +33,7 @@ type Collection struct {
 	DeletedAt *time.Time     `json:"deleted_at,omitempty"`
 }
 
-// Tag ürüne iliştirilen serbest etikettir.
+// Tag is the free-form label attached to a product.
 type Tag struct {
 	ID        string     `json:"id"`
 	Value     string     `json:"value"`
@@ -41,8 +42,8 @@ type Tag struct {
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }
 
-// Image ürünün görselidir. Dosyanın kendisi bu modülde tutulmaz; yalnızca
-// erişilebilir bir bağlantı (URL) saklanır.
+// Image is an image of a product. The file itself is not kept in this module;
+// only a reachable link (URL) is stored.
 type Image struct {
 	ID        string         `json:"id"`
 	ProductID string         `json:"product_id"`

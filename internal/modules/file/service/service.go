@@ -1,23 +1,25 @@
-// Package service file modülünün iş mantığıdır.
+// Package service is the business logic of the file module.
 //
-// Modülün sorumluluğu tek cümleyle: istemciden gelen RASTGELE BAYTLARI
-// denetleyip bir depoya yazdırmak ve yazılanın ne olduğunu kalıcı bir deftere
-// geçirmek. Baytları saklayan taraf bu modül değil, çekirdekteki FileProvider
-// sözleşmesini karşılayan bir SAĞLAYICIDIR.
+// The module's responsibility in a single sentence: to check the ARBITRARY
+// BYTES coming from the client, have them written into a store, and enter what
+// was written into a durable ledger. The side that keeps the bytes is not this
+// module but a PROVIDER satisfying the FileProvider contract in the core.
 //
-// # Denetim NEREDE yapılır
+// # WHERE the checking is done
 //
-// İçerik tipi İÇERİKTEN tespit edilir ve bu tespit HTTP katmanında yapılır —
-// ilk baytları okuyabilen tek yer orasıdır. İzin listesi ise BURADA uygulanır
-// ve sağlayıcıya gitmeden ÖNCE: depoya tek bayt yazılmadan reddedilen bir
-// dosyanın temizlenmesi gerekmez. Denetimi sağlayıcıya bırakmak, her
-// sağlayıcının aynı kuralı yeniden yazması ve birinin unutması demekti.
+// The content type is detected FROM THE CONTENT and that detection is done in
+// the HTTP layer — that is the only place able to read the first bytes. The
+// allow list, on the other hand, is applied HERE and BEFORE going to the
+// provider: a file rejected without a single byte being written into the store
+// does not have to be cleaned up. Leaving the checking to the provider would
+// have meant every provider writing the same rule again and one of them
+// forgetting it.
 //
-// # Modül izolasyonu
+// # Module isolation
 //
-// Bu modül başka hiçbir modülü tanımaz (Prensip 2.1/2.4, ADR 0001).
-// [models.Upload.UploadedBy] bir kullanıcı ya da API anahtarı kimliğidir;
-// serbest metin olarak saklanır ve varlığı burada doğrulanmaz.
+// This module knows no other module (Principles 2.1/2.4, ADR 0001).
+// [models.Upload.UploadedBy] is a user or API key identifier; it is stored as
+// free text and its existence is not validated here.
 package service
 
 import (
@@ -32,82 +34,89 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/file/models"
 )
 
-// Hata kodları. İstemciler bunlara göre dallanabilir; mesajlar değişebilir,
-// kodlar değişmez.
+// Error codes. Clients may branch on these; the messages may change, the codes
+// do not.
 const (
-	// CodeInvalidInput girdinin doğrulamadan geçmediğini bildirir.
+	// CodeInvalidInput reports that the input did not pass validation.
 	CodeInvalidInput = "file_invalid_input"
-	// CodeProviderNotFound seçili sağlayıcının kayıtlı olmadığını bildirir.
+	// CodeProviderNotFound reports that the selected provider is not
+	// registered.
 	CodeProviderNotFound = "file_provider_not_found"
-	// CodeProviderExists aynı kimlikle ikinci bir sağlayıcı kaydedilmek
-	// istendiğini bildirir.
+	// CodeProviderExists reports that a second provider with the same
+	// identifier was asked to be registered.
 	CodeProviderExists = "file_provider_already_registered"
-	// CodeTypeNotAllowed tespit edilen içerik tipinin izin listesinde
-	// olmadığını bildirir.
+	// CodeTypeNotAllowed reports that the detected content type is not in the
+	// allow list.
 	CodeTypeNotAllowed = "file_content_type_not_allowed"
-	// CodeTooLarge gövdenin azami boyutu aştığını bildirir.
+	// CodeTooLarge reports that the body exceeded the maximum size.
 	CodeTooLarge = "file_upload_too_large"
-	// CodeUploadFailed sağlayıcının yazma işlemini tamamlayamadığını bildirir.
+	// CodeUploadFailed reports that the provider could not complete the write.
 	CodeUploadFailed = "file_upload_failed"
-	// CodeNotServable kaydın sağlayıcısının dosya okumayı desteklemediğini
-	// bildirir.
+	// CodeNotServable reports that the record's provider does not support
+	// reading files.
 	CodeNotServable = "file_not_servable"
-	// CodeNotReady servisin eksik bağımlılıkla kurulduğunu bildirir.
+	// CodeNotReady reports that the service was built with a missing
+	// dependency.
 	CodeNotReady = "file_service_not_ready"
 )
 
-// Sayfalama sınırları (plan Bölüm 8: limit/offset).
+// Pagination bounds (plan Section 8: limit/offset).
 const (
-	// DefaultLimit limit verilmediğinde uygulanan sayfa boyutudur.
+	// DefaultLimit is the page size applied when no limit is given.
 	DefaultLimit int64 = 50
-	// MaxLimit tek istekte istenebilecek en büyük sayfa boyutudur.
+	// MaxLimit is the largest page size that may be asked for in a single
+	// request.
 	MaxLimit int64 = 100
 )
 
-// Store servisin ihtiyaç duyduğu kalıcılık yüzeyidir.
+// Store is the persistence surface the service needs.
 //
-// Arayüz TÜKETEN tarafta, yani burada tanımlıdır (ADR 0001'in örüntüsü). Servis
-// repository paketini import ETMEZ; somut depo bu imzaları yapısal olarak
-// karşılar ve bağlantı module.go'da kurulur. Böylece birim testleri gerçek bir
-// veritabanı olmadan, birkaç satırlık bir sahte depo ile yazılabilir.
+// The interface is defined on the CONSUMING side, that is, here (the pattern of
+// ADR 0001). The service does NOT import the repository package; the concrete
+// store satisfies these signatures structurally and the wiring is done in
+// module.go. This is what lets unit tests be written without a real database,
+// against a fake store a few lines long.
 type Store interface {
-	// CreateUpload yükleme kaydını yazar.
+	// CreateUpload writes the upload record.
 	CreateUpload(ctx context.Context, u models.Upload) (models.Upload, error)
-	// GetUpload kaydı kimliğiyle döner; yoksa NotFound.
+	// GetUpload returns the record by its identifier; NotFound if absent.
 	GetUpload(ctx context.Context, id string) (models.Upload, error)
-	// GetUploadByKey kaydı depo anahtarıyla döner; yoksa NotFound.
+	// GetUploadByKey returns the record by its storage key; NotFound if absent.
 	GetUploadByKey(ctx context.Context, key string) (models.Upload, error)
-	// ListUploads kayıtları sayfalar; ikinci değer TÜM satırların sayısıdır.
+	// ListUploads paginates the records; the second value is the count of ALL
+	// rows.
 	ListUploads(ctx context.Context, filter models.UploadFilter) ([]models.Upload, int64, error)
-	// DeleteUpload kaydı siler; ikinci değer satırın gerçekten silinip
-	// silinmediğidir ve olmayan kimlik HATA DEĞİLDİR.
+	// DeleteUpload deletes the record; the second value is whether the row was
+	// really deleted or not, and an identifier that does not exist IS NOT AN
+	// ERROR.
 	DeleteUpload(ctx context.Context, id string) (bool, error)
 }
 
-// Options servisin kurulum bağımlılıklarıdır.
+// Options holds the setup dependencies of the service.
 type Options struct {
-	// Store kalıcılık yüzeyidir; zorunludur.
+	// Store is the persistence surface; it is required.
 	Store Store
-	// Providers kayıtlı dosya sağlayıcılarıdır; zorunludur.
+	// Providers are the registered file providers; they are required.
 	Providers *ProviderRegistry
-	// ProviderID YÜKLEMEDE kullanılacak sağlayıcının kimliğidir
-	// (FILE_PROVIDER); zorunludur.
+	// ProviderID is the identifier of the provider to be used ON UPLOAD
+	// (FILE_PROVIDER); it is required.
 	//
-	// Sağlayıcının kayıtlı olup olmadığı BURADA doğrulanmaz ve doğrulanamaz:
-	// eklentilerin getirdiği sağlayıcılar modüller ayağa kalktıktan SONRA
-	// kaydedilir (bkz. coreplugin.Registry'nin iki fazı). Kurulumun tamamı
-	// bittikten sonraki denetim kompozisyon kökündedir (cmd/server).
+	// Whether the provider is registered is NOT validated here and cannot be:
+	// the providers brought by the plugins are registered AFTER the modules
+	// come up (see the two phases of coreplugin.Registry). The check for once
+	// the whole setup has finished is in the composition root (cmd/server).
 	ProviderID string
-	// MaxUploadBytes tek bir yüklemenin azami boyutudur; zorunludur.
+	// MaxUploadBytes is the maximum size of a single upload; it is required.
 	MaxUploadBytes int64
-	// AllowedTypes kabul edilen İÇERİK tipleridir; en az bir tip zorunludur.
+	// AllowedTypes are the accepted CONTENT types; at least one type is
+	// required.
 	AllowedTypes []string
-	// Logger nil verilirse loglar atılır.
+	// Logger discards the logs when it is given as nil.
 	Logger *slog.Logger
 }
 
-// Service file modülünün dışa açık servisidir.
-// Eşzamanlı kullanıma güvenlidir.
+// Service is the outward-facing service of the file module.
+// It is safe for concurrent use.
 type Service struct {
 	store        Store
 	providers    *ProviderRegistry
@@ -117,29 +126,29 @@ type Service struct {
 	log          *slog.Logger
 }
 
-// New verilen bağımlılıklarla bir servis üretir.
+// New produces a service with the given dependencies.
 //
-// Eksik bir bağımlılık kurulum hatasıdır ve AÇIKÇA döner: nil bir depoyla
-// kurulmuş servis ilk yüklemede panik üretirdi ve hata, kurulumdan çok sonra
-// ortaya çıkardı.
+// A missing dependency is a setup error and it is returned EXPLICITLY: a
+// service built with a nil store would produce a panic on the first upload, and
+// the error would have surfaced long after the setup.
 //
-// BOŞ izin listesi de reddedilir. "Liste boşsa her şeyi kabul et" en tehlikeli
-// varsayılan olurdu: yapılandırmadaki tek bir yazım hatası, denetimi sessizce
-// kaldırırdı.
+// An EMPTY allow list is rejected too. "If the list is empty, accept
+// everything" would be the most dangerous default: a single typo in the
+// configuration would silently remove the checking.
 func New(opts Options) (*Service, error) {
 	switch {
 	case opts.Store == nil:
-		return nil, errors.Internal(CodeNotReady, "file servisi depo olmadan kurulamaz")
+		return nil, errors.Internal(CodeNotReady, "the file service cannot be built without a store")
 	case opts.Providers == nil:
-		return nil, errors.Internal(CodeNotReady, "file servisi sağlayıcı kaydı olmadan kurulamaz")
+		return nil, errors.Internal(CodeNotReady, "the file service cannot be built without a provider registry")
 	case opts.ProviderID == "":
-		return nil, errors.Internal(CodeNotReady, "file servisi sağlayıcı kimliği olmadan kurulamaz")
+		return nil, errors.Internal(CodeNotReady, "the file service cannot be built without a provider id")
 	case opts.MaxUploadBytes <= 0:
 		return nil, errors.Internal(CodeNotReady,
-			"file servisi pozitif bir boyut sınırı olmadan kurulamaz, %d verildi", opts.MaxUploadBytes)
+			"the file service cannot be built without a positive size bound, %d given", opts.MaxUploadBytes)
 	case len(opts.AllowedTypes) == 0:
 		return nil, errors.Internal(CodeNotReady,
-			"file servisi boş izin listesiyle kurulamaz; kabul edilen tipler açıkça sayılmalıdır")
+			"the file service cannot be built with an empty allow list; the accepted types have to be counted out explicitly")
 	}
 
 	log := opts.Logger
@@ -147,44 +156,46 @@ func New(opts Options) (*Service, error) {
 		log = slog.New(slog.DiscardHandler)
 	}
 
-	// Liste KOPYALANIR ve sıralanır: çağıranın dilimini olduğu gibi tutmak,
-	// onu sonradan değiştiren bir kodun izin listesini çalışırken
-	// genişletebilmesi demekti. Sıra ise hata mesajını kararlı kılar.
-	tipler := slices.Clone(opts.AllowedTypes)
-	slices.Sort(tipler)
+	// The list is COPIED and sorted: keeping the caller's slice as it is would
+	// have meant that a piece of code changing it afterwards could widen the
+	// allow list while running. The order, in turn, makes the error message
+	// stable.
+	types := slices.Clone(opts.AllowedTypes)
+	slices.Sort(types)
 
 	return &Service{
 		store:        opts.Store,
 		providers:    opts.Providers,
 		providerID:   opts.ProviderID,
 		maxBytes:     opts.MaxUploadBytes,
-		allowedTypes: tipler,
+		allowedTypes: types,
 		log:          log,
 	}, nil
 }
 
-// ProviderID yüklemede kullanılan sağlayıcının kimliğini döner.
+// ProviderID returns the identifier of the provider used on upload.
 func (s *Service) ProviderID() string { return s.providerID }
 
-// MaxUploadBytes tek bir yüklemenin azami boyutunu döner.
+// MaxUploadBytes returns the maximum size of a single upload.
 //
-// HTTP katmanı bunu okur: gövdeyi saran [net/http.MaxBytesReader] sınırı
-// isteğin TAMAMINA uygular ve sınırı iki yerde ayrı ayrı yazmak, ikisinin
-// sessizce ayrışması demek olurdu.
+// The HTTP layer reads this: the [net/http.MaxBytesReader] wrapping the body
+// applies the bound to the WHOLE of the request, and writing the bound in two
+// separate places would have meant the two of them silently drifting apart.
 func (s *Service) MaxUploadBytes() int64 { return s.maxBytes }
 
-// AllowedTypes kabul edilen içerik tiplerini sıralı olarak döner.
+// AllowedTypes returns the accepted content types, in order.
 func (s *Service) AllowedTypes() []string { return slices.Clone(s.allowedTypes) }
 
-// Page liste isteklerinin sayfalama parametreleridir.
+// Page holds the pagination parameters of list requests.
 type Page struct {
-	// Limit döndürülecek azami satır sayısıdır; 0 ise [DefaultLimit] uygulanır.
+	// Limit is the maximum number of rows to return; if 0, [DefaultLimit] is
+	// applied.
 	Limit int64
-	// Offset atlanacak satır sayısıdır.
+	// Offset is the number of rows to skip.
 	Offset int64
 }
 
-// normalize sayfalama parametrelerini doğrular ve varsayılanları uygular.
+// normalize validates the pagination parameters and applies the defaults.
 func (p Page) normalize() (Page, error) {
 	switch {
 	case p.Limit < 0:
@@ -201,8 +212,8 @@ func (p Page) normalize() (Page, error) {
 	return p, nil
 }
 
-// ListUploads yükleme defterini sayfalayarak döner.
-// İkinci dönüş değeri TÜM kayıtların sayısıdır.
+// ListUploads returns the upload ledger, paginated.
+// The second return value is the count of ALL records.
 func (s *Service) ListUploads(ctx context.Context, page Page) ([]models.Upload, int64, error) {
 	normal, err := page.normalize()
 	if err != nil {
@@ -212,7 +223,7 @@ func (s *Service) ListUploads(ctx context.Context, page Page) ([]models.Upload, 
 	return s.store.ListUploads(ctx, models.UploadFilter{Limit: normal.Limit, Offset: normal.Offset})
 }
 
-// GetUpload tek bir yükleme kaydını döner; yoksa errors.NotFound.
+// GetUpload returns a single upload record; errors.NotFound if absent.
 func (s *Service) GetUpload(ctx context.Context, id string) (models.Upload, error) {
 	if id == "" {
 		return models.Upload{}, errors.Invalid(CodeInvalidInput, "the upload id cannot be empty")
@@ -221,33 +232,35 @@ func (s *Service) GetUpload(ctx context.Context, id string) (models.Upload, erro
 	return s.store.GetUpload(ctx, id)
 }
 
-// DeleteUpload dosyayı depodan ve kaydı defterden siler. İDEMPOTENTTİR:
-// olmayan bir kimlik hata DEĞİLDİR.
+// DeleteUpload deletes the file from the store and the record from the ledger.
+// It IS IDEMPOTENT: an identifier that does not exist IS NOT an error.
 //
-// # Neden idempotent
+// # Why idempotent
 //
-// Silme bir SON DURUM iddiasıdır ("bu yükleme artık yok") ve çağıran onu
-// yeniden deneyebilir: bir ürün görselini kaldıran akış, ikinci turunda ikinci
-// kez bu ucu çağırır. İkinci çağrının 404 dönmesi, istenen son durum
-// SAĞLANMIŞKEN akışı hata sayardı — yani tam olarak temizlemesi gereken şeyi
-// temizlenemez kılardı.
+// A delete is an END STATE claim ("this upload no longer exists") and the
+// caller may retry it: a flow removing a product image calls this endpoint a
+// second time on its second round. The second call returning 404 would count
+// the flow as an error WHILE the wanted end state HOLDS — that is, it would
+// make exactly the thing it has to clean up impossible to clean up.
 //
-// # Neden ÖNCE dosya, SONRA kayıt
+// # Why the file FIRST and the record SECOND
 //
-// İki taraf ayrı sistemlerdedir ve tek bir işleme alınamaz; geriye yalnızca
-// SIRA kalır. Bu sırada oluşabilecek tek tutarsızlık "kaydı var, dosyası yok"
-// hâlidir ve yeniden deneme onu KAPATIR: sağlayıcının silmesi idempotenttir,
-// ikinci turda hata vermez ve kayıt da silinir. Ters sıra yakınsamazdı —
-// kayıt gittikten sonra dosyanın anahtarını bilen kimse kalmaz, silme
-// başarısız olmuşsa o dosya sonsuza kadar erişilemez çöp olurdu.
+// The two sides are in separate systems and cannot be taken into a single
+// transaction; all that is left is the ORDER. The only inconsistency that can
+// arise in this order is the "its record exists, its file does not" state, and
+// a retry CLOSES it: the provider's delete is idempotent, it does not fail on
+// the second round and the record gets deleted too. The reverse order would not
+// converge — once the record is gone nobody is left who knows the file's key,
+// and if the delete had failed, that file would be unreachable garbage forever.
 func (s *Service) DeleteUpload(ctx context.Context, id string) error {
 	if id == "" {
 		return errors.Invalid(CodeInvalidInput, "the upload id cannot be empty")
 	}
 
-	kayit, err := s.store.GetUpload(ctx, id)
+	record, err := s.store.GetUpload(ctx, id)
 	if err != nil {
-		// Kayıt yoksa yapacak bir şey de yoktur; son durum zaten sağlanmıştır.
+		// If the record does not exist there is nothing to do either; the end
+		// state already holds.
 		if errors.IsNotFound(err) {
 			return nil
 		}
@@ -255,96 +268,98 @@ func (s *Service) DeleteUpload(ctx context.Context, id string) error {
 		return err
 	}
 
-	// Sağlayıcı kaydın KENDİ sağlayıcısıdır, o an yapılandırılmış olan değil:
-	// kurulum bir gün nesne deposuna geçtiğinde eski kayıtlar hâlâ yerel
-	// diskte durur ve onları silebilecek tek şey onları yazan sağlayıcıdır.
-	prov, err := s.providers.Get(kayit.ProviderID)
+	// The provider is the record's OWN provider, not the one configured at that
+	// moment: on the day the installation moves to an object store the old
+	// records still sit on the local disk, and the only thing able to delete
+	// them is the provider that wrote them.
+	prov, err := s.providers.Get(record.ProviderID)
 	if err != nil {
 		return err
 	}
 
-	if err := prov.Delete(ctx, kayit.StorageKey); err != nil {
+	if err := prov.Delete(ctx, record.StorageKey); err != nil {
 		return errors.Wrap(err, errors.KindOf(err), CodeUploadFailed,
-			"dosya depodan silinemedi: %s", kayit.StorageKey)
+			"the file could not be deleted from the store: %s", record.StorageKey)
 	}
 
 	if _, err := s.store.DeleteUpload(ctx, id); err != nil {
 		return err
 	}
 
-	s.log.DebugContext(ctx, "yükleme silindi",
-		"upload_id", id, "saglayici", kayit.ProviderID)
+	s.log.DebugContext(ctx, "upload deleted",
+		"upload_id", id, "saglayici", record.ProviderID)
 
 	return nil
 }
 
-// OpenedFile sunulmaya hazır bir dosyadır.
+// OpenedFile is a file ready to be served.
 type OpenedFile struct {
-	// Upload dosyanın defterdeki kaydıdır. Sunulan Content-Type BURADAN
-	// yazılır — istemcinin yükleme sırasında bildirdiği tipten değil.
+	// Upload is the file's record in the ledger. The Content-Type served is
+	// written FROM HERE — not from the type the client declared while
+	// uploading.
 	Upload models.Upload
-	// Content dosyanın içeriğidir; çağıran KAPATMAKLA yükümlüdür.
+	// Content is the file's content; the caller is OBLIGED TO CLOSE it.
 	//
-	// io.ReadSeeker olması gerekir: [net/http.ServeContent] aralık (Range)
-	// isteklerini ancak konumlanabilir bir kaynakta karşılayabilir.
+	// It has to be an io.ReadSeeker: [net/http.ServeContent] can satisfy range
+	// (Range) requests only over a seekable source.
 	Content io.ReadSeekCloser
-	// ModTime dosyanın son değişme zamanıdır; koşullu istekler (If-Modified-Since)
-	// bunun üzerinden yanıtlanır.
+	// ModTime is the moment the file last changed; conditional requests
+	// (If-Modified-Since) are answered over this one.
 	ModTime time.Time
 }
 
-// fileOpener bir sağlayıcının dosya OKUYABİLDİĞİNİ bildiren OPSİYONEL
-// yüzeydir.
+// fileOpener is the OPTIONAL surface reporting that a provider CAN READ files.
 //
-// Çekirdek sözleşmesinde ([coreprovider.FileProvider]) yoktur ve olmamalıdır:
-// bir nesne deposunda dosyayı CDN sunar, uygulama hiç okumaz. Yüzeyi zorunlu
-// kılmak, sunmayacak sağlayıcılara asla çağrılmayacak bir metot yazdırmak
-// olurdu.
+// It is not in the core contract ([coreprovider.FileProvider]) and it must not
+// be: in an object store the file is served by the CDN, the application never
+// reads it. Making the surface mandatory would have meant having providers that
+// will not serve write a method that is never called.
 //
-// Arayüz TÜKETEN tarafta tanımlıdır (ADR 0001); local.Provider onu yapısal
-// olarak karşılar.
+// The interface is defined on the CONSUMING side (ADR 0001); local.Provider
+// satisfies it structurally.
 type fileOpener interface {
 	Open(ctx context.Context, key string) (io.ReadSeekCloser, time.Time, error)
 }
 
-// OpenByKey depo anahtarıyla bir dosyayı sunulmak üzere açar.
+// OpenByKey opens a file by its storage key so that it can be served.
 //
-// # Sıra ÖNEMLİDİR: önce DEFTER, sonra DEPO
+// # The ORDER MATTERS: the LEDGER first, the STORE second
 //
-// Adres çubuğundan gelen anahtar önce veritabanına sorulur. Satır yoksa depoya
-// hiç dokunulmaz; yani depoya ulaşabilen tek anahtar, bu modülün kendi üretip
-// deftere yazdığı anahtardır. "Sunulan şey yalnızca yüklenmiş dosyalardır"
-// iddiasını taşıyan yapı budur — bir dize denetimi değil.
+// The key coming from the address bar is asked of the database first. If there
+// is no row the store is not touched at all; that is, the only key able to
+// reach the store is the key this module itself produced and wrote into the
+// ledger. This is the structure carrying the "the only things served are
+// uploaded files" claim — not a string check.
 //
-// Sağlayıcı okumayı desteklemiyorsa errors.NotFound döner: nesne deposuna
-// yazan bir kurulumda dosyanın gerçek adresi CDN'dedir ve bu yol boştur.
-// "Uygulanmadı" demek yerine "burada yok" demek doğrudur — istemci için
-// gerçekten yoktur.
+// If the provider does not support reading, errors.NotFound is returned: in an
+// installation writing into an object store the file's real address is on the
+// CDN and this path is empty. Saying "it is not here" instead of "it is not
+// implemented" is the right thing — for the client it really does not exist.
 func (s *Service) OpenByKey(ctx context.Context, key string) (OpenedFile, error) {
 	if strings.TrimSpace(key) == "" {
-		return OpenedFile{}, errors.Invalid(CodeInvalidInput, "depo anahtarı boş olamaz")
+		return OpenedFile{}, errors.Invalid(CodeInvalidInput, "the storage key cannot be empty")
 	}
 
-	kayit, err := s.store.GetUploadByKey(ctx, key)
+	record, err := s.store.GetUploadByKey(ctx, key)
 	if err != nil {
 		return OpenedFile{}, err
 	}
 
-	prov, err := s.providers.Get(kayit.ProviderID)
+	prov, err := s.providers.Get(record.ProviderID)
 	if err != nil {
 		return OpenedFile{}, err
 	}
 
-	acici, destekliyor := prov.(fileOpener)
-	if !destekliyor {
+	opener, supported := prov.(fileOpener)
+	if !supported {
 		return OpenedFile{}, errors.NotFound(CodeNotServable,
-			"%q sağlayıcısı dosyaları uygulamadan sunmuyor", kayit.ProviderID)
+			"the %q provider does not serve files from the application", record.ProviderID)
 	}
 
-	icerik, modTime, err := acici.Open(ctx, kayit.StorageKey)
+	content, modTime, err := opener.Open(ctx, record.StorageKey)
 	if err != nil {
 		return OpenedFile{}, err
 	}
 
-	return OpenedFile{Upload: kayit, Content: icerik, ModTime: modTime}, nil
+	return OpenedFile{Upload: record, Content: content, ModTime: modTime}, nil
 }

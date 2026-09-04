@@ -11,77 +11,80 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/b2b/models"
 )
 
-// TestHarcamaPenceresiTakvimeGoreHesaplanir modülün bir sonraki adıma
-// bıraktığı sözleşmeyi sabitler.
+// TestSpendingWindowIsComputedFromTheCalendar pins the contract the module
+// leaves to the next step.
 //
-// Pencere KAYDIN AÇILIŞINA göre değil TAKVİME göre başlar: aylık limit, şirket
-// ayın 20'sinde açılmış olsa bile ayın 1'inde sıfırlanır. Muhasebe dönemleri
-// takvimle yürür ve kayan bir ay hiçbir mali raporla örtüşmezdi.
-func TestHarcamaPenceresiTakvimeGoreHesaplanir(t *testing.T) {
+// The window starts from the CALENDAR, not from the OPENING OF THE RECORD: a
+// monthly limit resets on the 1st of the month even if the company was opened
+// on the 20th. Accounting periods run on the calendar and a sliding month would
+// line up with no financial report.
+func TestSpendingWindowIsComputedFromTheCalendar(t *testing.T) {
 	t.Parallel()
 
-	simdi := time.Date(2026, time.March, 17, 9, 30, 45, 0, time.UTC)
+	now := time.Date(2026, time.March, 17, 9, 30, 45, 0, time.UTC)
 
-	aylik := models.ResetMonthly.WindowStart(simdi)
-	require.NotNil(t, aylik)
-	assert.Equal(t, time.Date(2026, time.March, 1, 0, 0, 0, 0, time.UTC), *aylik)
+	monthly := models.ResetMonthly.WindowStart(now)
+	require.NotNil(t, monthly)
+	assert.Equal(t, time.Date(2026, time.March, 1, 0, 0, 0, 0, time.UTC), *monthly)
 
-	yillik := models.ResetYearly.WindowStart(simdi)
-	require.NotNil(t, yillik)
-	assert.Equal(t, time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC), *yillik)
+	yearly := models.ResetYearly.WindowStart(now)
+	require.NotNil(t, yearly)
+	assert.Equal(t, time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC), *yearly)
 
-	assert.Nil(t, models.ResetNever.WindowStart(simdi),
-		"sıfırlama yoksa pencere de yoktur; limit tüm geçmişe uygulanır")
+	assert.Nil(t, models.ResetNever.WindowStart(now),
+		"with no reset there is no window either; the limit applies to the whole history")
 }
 
-// TestHarcamaPenceresiYerelSaatiDegilUTCyiKullanir aynı şirketin iki farklı
-// ülkedeki çalışanı için ayın AYNI anda başladığını doğrular.
+// TestSpendingWindowUsesUTCNotLocalTime verifies that the month starts at the
+// SAME moment for two employees of the same company in two different countries.
 //
-// Yerel saat kullanılsaydı, aynı limit iki çalışan için farklı anlarda
-// sıfırlanır ve şirket toplamı hiçbir zaman tek bir döneme oturmazdı.
-func TestHarcamaPenceresiYerelSaatiDegilUTCyiKullanir(t *testing.T) {
+// Had local time been used, the same limit would reset at different moments for
+// the two employees and the company total would never settle into a single
+// period.
+func TestSpendingWindowUsesUTCNotLocalTime(t *testing.T) {
 	t.Parallel()
 
-	// UTC'ye göre 1 Nisan 00:30, ama UTC-3'te hâlâ 31 Mart.
-	konum := time.FixedZone("UTC-3", -3*60*60)
-	simdi := time.Date(2026, time.April, 1, 0, 30, 0, 0, time.UTC).In(konum)
+	// 00:30 on 1 April in UTC, but still 31 March in UTC-3.
+	zone := time.FixedZone("UTC-3", -3*60*60)
+	now := time.Date(2026, time.April, 1, 0, 30, 0, 0, time.UTC).In(zone)
 
-	baslangic := models.ResetMonthly.WindowStart(simdi)
-	require.NotNil(t, baslangic)
-	assert.Equal(t, time.Date(2026, time.April, 1, 0, 0, 0, 0, time.UTC), *baslangic,
-		"pencere UTC takvimine göre hesaplanmalı")
+	start := models.ResetMonthly.WindowStart(now)
+	require.NotNil(t, start)
+	assert.Equal(t, time.Date(2026, time.April, 1, 0, 0, 0, 0, time.UTC), *start,
+		"the window has to be computed against the UTC calendar")
 }
 
-// TestTanimsizPeriyotPencereAcmaz enum dışında bir değerin en güvenli sonuca
-// düştüğünü doğrular.
+// TestUndefinedPeriodOpensNoWindow verifies that a value outside the enum falls
+// to the safest outcome.
 //
-// "Sınırsız pencere" dönmek, limiti sessizce genişletmek olurdu; değer zaten
-// veritabanına giremez (CHECK) ama davranış yine de belirli olmalıdır.
-func TestTanimsizPeriyotPencereAcmaz(t *testing.T) {
+// Returning an "unbounded window" would mean silently widening the limit; the
+// value cannot enter the database anyway (CHECK), but the behavior still has to
+// be definite.
+func TestUndefinedPeriodOpensNoWindow(t *testing.T) {
 	t.Parallel()
 
-	var haftalik models.SpendingResetPeriod = "weekly"
-	assert.False(t, haftalik.Valid())
-	assert.Nil(t, haftalik.WindowStart(time.Now()))
+	var weekly models.SpendingResetPeriod = "weekly"
+	assert.False(t, weekly.Valid())
+	assert.Nil(t, weekly.WindowStart(time.Now()))
 
 	assert.True(t, models.ResetMonthly.Valid())
 	assert.True(t, models.ResetYearly.Valid())
 	assert.True(t, models.ResetNever.Valid())
 }
 
-// TestSifirLimitSinirsizdanFarklidir modelin en kolay karıştırılan ayrımını
-// sabitler: nil "sınırsız", 0 ise "hiç harcayamaz".
-func TestSifirLimitSinirsizdanFarklidir(t *testing.T) {
+// TestZeroLimitDiffersFromUnlimited pins the model's most easily confused
+// distinction: nil is "unlimited", 0 is "cannot spend at all".
+func TestZeroLimitDiffersFromUnlimited(t *testing.T) {
 	t.Parallel()
 
-	sifir := int64(0)
-	assert.True(t, models.CompanyEmployee{SpendingLimit: &sifir}.HasSpendingLimit())
+	zero := int64(0)
+	assert.True(t, models.CompanyEmployee{SpendingLimit: &zero}.HasSpendingLimit())
 	assert.False(t, models.CompanyEmployee{}.HasSpendingLimit())
 }
 
-// TestNormalizasyonSaklamaBicimineCevirir e-postanın küçük, kodların BÜYÜK
-// harfe indiğini doğrular.
-func TestNormalizasyonSaklamaBicimineCevirir(t *testing.T) {
+// TestNormalizationConvertsToStorageForm verifies that the e-mail comes down to
+// lowercase and the codes go up to UPPERCASE.
+func TestNormalizationConvertsToStorageForm(t *testing.T) {
 	t.Parallel()
 
 	assert.Equal(t, "muhasebe@acme.example", models.NormalizeEmail("  Muhasebe@Acme.Example "))
@@ -89,23 +92,23 @@ func TestNormalizasyonSaklamaBicimineCevirir(t *testing.T) {
 	assert.Equal(t, "TRY", models.NormalizeCurrencyCode("try"))
 }
 
-// TestKimliklerOnekliVeZamanSiralidir plan Bölüm 8'in kimlik kuralını
-// doğrular: önek türü söyler, gövde oluşturma sırasını taşır.
-func TestKimliklerOnekliVeZamanSiralidir(t *testing.T) {
+// TestIdentifiersArePrefixedAndTimeOrdered verifies the identifier rule of plan
+// Section 8: the prefix says the kind, the body carries the creation order.
+func TestIdentifiersArePrefixedAndTimeOrdered(t *testing.T) {
 	t.Parallel()
 
-	once := time.Date(2026, time.March, 17, 9, 0, 0, 0, time.UTC)
-	sonra := once.Add(time.Second)
+	earlier := time.Date(2026, time.March, 17, 9, 0, 0, 0, time.UTC)
+	later := earlier.Add(time.Second)
 
-	ilk := models.NewCompanyID(once)
-	ikinci := models.NewCompanyID(sonra)
+	first := models.NewCompanyID(earlier)
+	second := models.NewCompanyID(later)
 
-	assert.True(t, strings.HasPrefix(ilk, models.CompanyIDPrefix))
-	assert.Len(t, strings.TrimPrefix(ilk, models.CompanyIDPrefix), models.IDBodyLength())
-	assert.Less(t, ilk, ikinci, "kimlikler sözlüksel sırada da zaman sıralı olmalı")
+	assert.True(t, strings.HasPrefix(first, models.CompanyIDPrefix))
+	assert.Len(t, strings.TrimPrefix(first, models.CompanyIDPrefix), models.IDBodyLength())
+	assert.Less(t, first, second, "identifiers have to be time-ordered lexicographically too")
 
-	calisan := models.NewEmployeeID(once)
-	assert.True(t, strings.HasPrefix(calisan, models.EmployeeIDPrefix))
+	employee := models.NewEmployeeID(earlier)
+	assert.True(t, strings.HasPrefix(employee, models.EmployeeIDPrefix))
 	assert.NotEqual(t, models.CompanyIDPrefix, models.EmployeeIDPrefix,
-		"iki tür kimlik tek bakışta ayrılmalı")
+		"the two kinds of identifier have to be told apart at a single glance")
 }

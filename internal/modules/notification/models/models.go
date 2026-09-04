@@ -2,44 +2,49 @@ package models
 
 import "time"
 
-// DeliveryStatus bir teslim günlüğü kaydının durumudur.
+// DeliveryStatus is the status of a delivery log record.
 type DeliveryStatus string
 
-// Teslim durumları.
+// Delivery statuses.
 //
-// Değerler migration'daki CHECK kısıtıyla BİREBİR aynıdır; buradaki bir
-// yazım hatası, kaydı yazma anında kısıt ihlaline çevirir.
+// The values are EXACTLY the same as the CHECK constraint in the migration; a
+// typo here turns writing the record into a constraint violation.
 const (
-	// DeliveryPending kayıt açıldı, sağlayıcıya HENÜZ gidilmedi.
+	// DeliveryPending means the record was opened and the provider has NOT
+	// been reached yet.
 	//
-	// Kalıcı olarak bu durumda kalmış bir satır bir ARIZANIN kanıtıdır:
-	// gönderim yapıldı ama sonucu yazılamadı (ya da süreç arada öldü). Böyle
-	// bir satır "gitti mi" sorusuna cevap veremez ve elle incelenmelidir.
+	// A row left permanently in this status is the proof of a FAULT: the send
+	// happened but its result could not be written (or the process died in
+	// between). Such a row cannot answer the question "did it go out?" and
+	// has to be examined by hand.
 	DeliveryPending DeliveryStatus = "pending"
-	// DeliverySent sağlayıcı bildirimi kabul etti.
+	// DeliverySent means the provider accepted the notification.
 	//
-	// "Müşteriye ULAŞTI" demek DEĞİLDİR: sağlayıcı sözleşmesi (bkz.
-	// internal/core/provider) yalnızca isteğin kabul edildiğini bildirir,
-	// teslim durumu sorgulanmaz.
+	// It does NOT mean it REACHED the customer: the provider contract (see
+	// internal/core/provider) only reports that the request was accepted, the
+	// delivery status is not queried.
 	DeliverySent DeliveryStatus = "sent"
-	// DeliveryFailed sağlayıcı hata döndü; sebep Error alanındadır.
+	// DeliveryFailed means the provider returned an error; the reason is in
+	// the Error field.
 	//
-	// Bildirimin GİTMEDİĞİ anlamına da gelmez: zaman aşımına uğrayan bir
-	// istek karşı tarafta işlenmiş olabilir (çekirdek sözleşmesinin uyarısı).
+	// Nor does it mean the notification did NOT GO OUT: a request that ran
+	// into a timeout may have been processed on the far side (the warning in
+	// the core contract).
 	DeliveryFailed DeliveryStatus = "failed"
-	// DeliverySkipped gönderilecek adres olmadığı için sağlayıcıya HİÇ
-	// gidilmedi.
+	// DeliverySkipped means the provider was NOT reached at all, because
+	// there was no address to send to.
 	//
-	// Hata DEĞİLDİR: adressiz bir sipariş (örn. yönetim tarafından açılan)
-	// geçerli bir kayıttır. Durumun ayrı adı olması, "adres yoktu" ile
-	// "sağlayıcı reddetti"yi ayırır — ikisi farklı düzeltme gerektirir.
+	// It is NOT an error: an order without an address (e.g. one opened by the
+	// admin) is a valid record. Giving the status a name of its own separates
+	// "there was no address" from "the provider refused" — the two call for
+	// different fixes.
 	DeliverySkipped DeliveryStatus = "skipped"
 )
 
-// String durumun metin karşılığını döner.
+// String returns the textual form of the status.
 func (s DeliveryStatus) String() string { return string(s) }
 
-// Valid durumun tanımlı bir değer olup olmadığını bildirir.
+// Valid reports whether the status is a defined value.
 func (s DeliveryStatus) Valid() bool {
 	switch s {
 	case DeliveryPending, DeliverySent, DeliveryFailed, DeliverySkipped:
@@ -49,48 +54,51 @@ func (s DeliveryStatus) Valid() bool {
 	}
 }
 
-// Delivery tek bir bildirim gönderim denemesinin günlük kaydıdır.
+// Delivery is the log record of a single notification send attempt.
 //
-// # ALICI ADRESİ ALANI YOKTUR
+// # THERE IS NO RECIPIENT ADDRESS FIELD
 //
-// Kayıt kime gönderildiğini TAŞIMAZ; gerekçe migration dosyasındadır (özet:
-// adres siparişte zaten durur, ikinci kopya silinmesi gereken yerlerin
-// sayısını artırır). Kaydı siparişe bağlayan alan [Delivery.Reference]'tır.
+// The record does NOT carry who it was sent to; the rationale is in the
+// migration file (in short: the address already sits on the order, and a
+// second copy raises the number of places that have to be erased). The field
+// that ties the record to the order is [Delivery.Reference].
 type Delivery struct {
-	// ID kaydın kimliğidir.
+	// ID is the identifier of the record.
 	ID string
-	// Template gönderilen bildirimin şablonudur (örn. "order.placed").
+	// Template is the template of the notification sent (e.g. "order.placed").
 	Template string
-	// Channel gönderim kanalıdır ("email" | "sms").
+	// Channel is the send channel ("email" | "sms").
 	Channel string
-	// Reference bildirimin bağlı olduğu kaydın kimliğidir (sipariş).
-	// Serbest metindir, foreign key DEĞİLDİR (Prensip 2.2).
+	// Reference is the identifier of the record the notification is bound to
+	// (the order). It is free text, NOT a foreign key (Principle 2.2).
 	Reference string
-	// ProviderID gönderimi yapan sağlayıcının kimliğidir.
+	// ProviderID is the identifier of the provider that performed the send.
 	ProviderID string
-	// Status denemenin sonucudur.
+	// Status is the outcome of the attempt.
 	Status DeliveryStatus
-	// Error yalnızca Status [DeliveryFailed] iken doludur; teşhis içindir.
+	// Error is filled only while Status is [DeliveryFailed]; it is for
+	// diagnosis.
 	Error string
-	// CreatedAt kaydın açıldığı, yani gönderimin DENENDİĞİ andır.
+	// CreatedAt is the moment the record was opened, that is, the moment the
+	// send was ATTEMPTED.
 	CreatedAt time.Time
-	// UpdatedAt sonucun yazıldığı andır.
+	// UpdatedAt is the moment the outcome was written.
 	UpdatedAt time.Time
 }
 
-// DeliveryFilter teslim günlüğü listelemesinin süzgeç ve sayfalama
-// parametreleridir.
+// DeliveryFilter holds the filter and pagination parameters of a delivery log
+// listing.
 //
-// İşaretçi alanlar "verilmedi" ile "boş verildi" ayrımını korur: nil bir
-// Reference süzgeç uygulanmadığı anlamına gelir. Değer tipi kullanılsaydı iki
-// durum ayırt edilemezdi.
+// The pointer fields preserve the distinction between "not given" and "given
+// empty": a nil Reference means the filter is not applied. Had a value type
+// been used, the two cases could not be told apart.
 type DeliveryFilter struct {
-	// Reference verilirse yalnızca o referansın kayıtları döner.
+	// Reference, when given, returns only the records of that reference.
 	Reference *string
-	// Status verilirse yalnızca o durumdaki kayıtlar döner.
+	// Status, when given, returns only the records in that status.
 	Status *string
-	// Limit döndürülecek azami satır sayısıdır.
+	// Limit is the maximum number of rows to return.
 	Limit int64
-	// Offset atlanacak satır sayısıdır.
+	// Offset is the number of rows to skip.
 	Offset int64
 }

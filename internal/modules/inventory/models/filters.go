@@ -1,22 +1,23 @@
 package models
 
-// InventoryItemFilter kalem listelemesinin ölçütleridir.
+// InventoryItemFilter is the criteria set of the item listing.
 //
-// Filtre alanları işaretçidir: nil "bu ölçütü uygulama" demektir. Böylece
-// "requires_shipping = false" ile "requires_shipping filtresi yok" birbirinden
-// ayrılır; bool'un sıfır değeri sessizce filtreye dönüşmez.
+// The filter fields are pointers: nil means "do not apply this criterion". That
+// is what keeps "requires_shipping = false" apart from "there is no
+// requires_shipping filter"; the zero value of a bool does not silently turn
+// into a filter.
 //
-// Tip repository'nin değil models'ın içindedir: hem servis hem repository
-// models'ı zaten import eder, dolayısıyla servisin depo arayüzü repository
-// paketine bağlanmadan bu ölçütleri taşıyabilir.
+// The type is inside models and not inside repository: both the service and the
+// repository already import models, so the store interface of the service can
+// carry these criteria without binding itself to the repository package.
 type InventoryItemFilter struct {
-	// SKU verilirse yalnızca o stok koduna sahip kalem döner.
+	// SKU, when given, returns only the item carrying that stock code.
 	SKU *string
-	// RequiresShipping verilirse sevkiyat gerektiren/gerektirmeyen kalemler
-	// ayrıştırılır.
+	// RequiresShipping, when given, separates the items that require shipping
+	// from the ones that do not.
 	RequiresShipping *bool
-	// Limit döndürülecek azami satır sayısıdır.
+	// Limit is the maximum number of rows to return.
 	Limit int64
-	// Offset atlanacak satır sayısıdır.
+	// Offset is the number of rows to skip.
 	Offset int64
 }

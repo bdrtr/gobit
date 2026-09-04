@@ -1,9 +1,9 @@
-// Package models b2b modülünün domain modellerini tanımlar.
+// Package models defines the domain models of the b2b module.
 //
-// Buradaki tipler veritabanı tiplerinden ARINDIRILMIŞTIR: pgtype bu pakete
-// girmez, dönüşüm repository sarmalayıcısında yapılır. Böylece servis ve API
-// katmanları depolama ayrıntısına bağlanmaz. Zamanlar UTC'dir, para TAM SAYI
-// minor unit'tir ve silme SOFT'tur.
+// The types here are FREE of database types: pgtype does not enter this
+// package, the conversion is done in the repository wrapper. That way the
+// service and API layers do not bind to a storage detail. Times are UTC, money
+// is an INTEGER minor unit and deletion is SOFT.
 package models
 
 import (
@@ -11,79 +11,83 @@ import (
 	"time"
 )
 
-// Alan uzunluk sınırları.
+// Field length limits.
 //
-// Sınırlar keyfi değildir: e-posta için 320 karakter RFC 5321'in yerel bölüm
-// (64) + "@" + alan adı (255) üst sınırıdır. Diğerleri, tek bir isteğin
-// veritabanına sınırsız metin yazmasını engelleyen makul tavanlardır ve
-// migration'daki CHECK kısıtlarıyla ikinci kez zorlanır.
+// The limits are not arbitrary: 320 characters for an e-mail is the upper bound
+// of RFC 5321's local part (64) + "@" + domain name (255). The others are
+// reasonable ceilings that keep a single request from writing unbounded text
+// into the database, and they are enforced a second time by the CHECK
+// constraints in the migration.
 const (
-	// MaxEmailLen bir e-posta adresinin azami uzunluğudur.
+	// MaxEmailLen is the maximum length of an e-mail address.
 	MaxEmailLen = 320
-	// MaxNameLen ad gibi kısa metin alanlarının azami uzunluğudur.
+	// MaxNameLen is the maximum length of short text fields such as a name.
 	MaxNameLen = 255
-	// MaxPhoneLen telefon numarasının azami uzunluğudur.
+	// MaxPhoneLen is the maximum length of a phone number.
 	MaxPhoneLen = 32
-	// MaxAddressLen adres ve şehir alanlarının azami uzunluğudur.
+	// MaxAddressLen is the maximum length of the address and city fields.
 	MaxAddressLen = 255
-	// MaxPostalCodeLen posta kodunun azami uzunluğudur.
+	// MaxPostalCodeLen is the maximum length of the postal code.
 	MaxPostalCodeLen = 32
 )
 
-// SpendingResetPeriod harcama limitinin hangi ARALIKLA sıfırlandığıdır.
+// SpendingResetPeriod is the INTERVAL at which the spending limit is reset.
 //
-// # Hangi zaman penceresi kastediliyor
+// # Which time window is meant
 //
-// Bu alan tek başına bir sayı değil, bir PENCERE TANIMIDIR: çalışanın
-// [CompanyEmployee.SpendingLimit] değeri, pencerenin başlangıcından şimdiye
-// kadar verilmiş siparişlerin toplamıyla karşılaştırılır. Pencerenin başlangıcı
-// [SpendingResetPeriod.WindowStart] ile hesaplanır ve TAKVİME göredir, kaydın
-// oluşturulma tarihine göre değil: aylık bir limit, şirket ayın 20'sinde
-// açılmış olsa bile her ayın 1'inde sıfırlanır. Bu seçim bilinçlidir — muhasebe
-// dönemleri takvimle yürür ve "şirketin açılış gününe göre kayan ay" hiçbir
-// mali raporla örtüşmezdi.
+// This field is not a number on its own, it is a WINDOW DEFINITION: the
+// employee's [CompanyEmployee.SpendingLimit] value is compared against the sum
+// of the orders placed from the start of the window until now. The start of the
+// window is computed with [SpendingResetPeriod.WindowStart] and follows the
+// CALENDAR, not the creation date of the record: a monthly limit resets on the
+// 1st of every month even if the company was opened on the 20th. The choice is
+// deliberate — accounting periods run on the calendar, and a "month sliding
+// with the company's opening day" would line up with no financial report.
 //
-// Pencere UTC'dir. Yerel saat dilimi kullanmak, aynı şirketin iki farklı
-// ülkedeki çalışanı için ayın farklı anlarda başlaması demek olurdu.
+// The window is UTC. Using a local time zone would mean that the month begins
+// at different moments for two employees of the same company in two different
+// countries.
 //
-// # Kuralı KİM uygular
+// # WHO enforces the rule
 //
-// Bu modül değil, order modülü. Pencerenin başlangıcı ve limit
-// "b2b.interop" yüzeyinden yayımlanır; harcamayı (pencere içinde verilmiş
-// siparişlerin toplamını) hesaplayıp limitle karşılaştıran taraf, o toplamın
-// sahibi olan modüldür. Ayrıntı için bkz. internal/modules/b2b/service,
-// Interop.SpendingLimitJSON.
+// Not this module, the order module. The start of the window and the limit are
+// published on the "b2b.interop" surface; the side that computes the spending
+// (the sum of the orders placed inside the window) and compares it against the
+// limit is the module that owns that sum. For the detail see
+// internal/modules/b2b/service, Interop.SpendingLimitJSON.
 type SpendingResetPeriod string
 
-// Tanımlı sıfırlama periyotları. Değerler veritabanındaki CHECK kısıtıyla
-// birebir aynıdır (bkz. migrations/000001_b2b_init.up.sql).
+// The defined reset periods. The values are exactly the same as the CHECK
+// constraint in the database (see migrations/000001_b2b_init.up.sql).
 const (
-	// ResetMonthly limiti her takvim ayının 1'inde sıfırlar.
+	// ResetMonthly resets the limit on the 1st of every calendar month.
 	ResetMonthly SpendingResetPeriod = "monthly"
-	// ResetYearly limiti her takvim yılının 1 Ocak'ında sıfırlar.
+	// ResetYearly resets the limit on 1 January of every calendar year.
 	ResetYearly SpendingResetPeriod = "yearly"
-	// ResetNever limiti hiç sıfırlamaz; pencere çalışanın TÜM geçmişidir.
+	// ResetNever never resets the limit; the window is the employee's ENTIRE
+	// history.
 	ResetNever SpendingResetPeriod = "never"
 )
 
-// Valid periyodun tanımlı olup olmadığını bildirir.
+// Valid reports whether the period is one of the defined ones.
 //
-// Tip bir dizedir ve çağıran enum dışında bir değer kurabilir; böyle bir değer
-// sessizce "never"a düşseydi, aylık limit koyduğunu sanan şirket hiç
-// sıfırlanmayan bir limitle kalırdı.
+// The type is a string and the caller can construct a value outside the enum;
+// if such a value silently fell back to "never", a company that believed it had
+// set a monthly limit would be left with a limit that never resets.
 func (p SpendingResetPeriod) Valid() bool {
 	return p == ResetMonthly || p == ResetYearly || p == ResetNever
 }
 
-// WindowStart geçerli harcama penceresinin BAŞLANGIÇ anını döner.
+// WindowStart returns the START moment of the current spending window.
 //
-// [ResetNever] için nil döner: pencere yoktur, limit çalışanın tüm geçmişine
-// uygulanır. Diğer periyotlarda dönen an, içinde bulunulan takvim ayının ya da
-// yılının ilk gününün 00:00 UTC'sidir ve pencere bu andan ŞİMDİYE kadardır
-// (başlangıç dâhil, üst uç açık).
+// For [ResetNever] it returns nil: there is no window, the limit applies to the
+// employee's entire history. For the other periods the returned moment is 00:00
+// UTC on the first day of the current calendar month or year, and the window
+// runs from that moment until NOW (start inclusive, upper end open).
 //
-// Fonksiyon zamanı parametre olarak alır; time.Now'a doğrudan bağlanmak, sınır
-// anlarını (ayın ilk saniyesi, yıl dönümü) test edilemez kılardı.
+// The function takes the time as a parameter; binding directly to time.Now
+// would make the boundary moments (the first second of the month, the turn of
+// the year) untestable.
 func (p SpendingResetPeriod) WindowStart(now time.Time) *time.Time {
 	utc := now.UTC()
 	switch p {
@@ -96,117 +100,121 @@ func (p SpendingResetPeriod) WindowStart(now time.Time) *time.Time {
 	case ResetNever:
 		return nil
 	default:
-		// Tanımsız bir değer veritabanına giremez (CHECK) ve servis onu
-		// reddeder; buraya düşülürse en güvenli davranış pencereyi hiç
-		// açmamaktır — "sınırsız pencere" demek, limiti sessizce genişletmek
-		// olurdu.
+		// An undefined value cannot enter the database (CHECK) and the
+		// service rejects it; if we do land here, the safest behavior is not
+		// to open a window at all — an "unbounded window" would mean
+		// silently widening the limit.
 		return nil
 	}
 }
 
-// Company alışverişi bir birey adına değil bir TÜZEL KİŞİ adına yapan
-// müşteridir.
+// Company is the customer that shops on behalf of a LEGAL ENTITY rather than an
+// individual.
 //
-// Şirketin kendisi alışveriş yapmaz; onun adına [CompanyEmployee] kayıtları
-// yapar. Bu yüzden şirkette bir harcama limiti YOKTUR — limit çalışan başınadır
-// (bkz. [CompanyEmployee.SpendingLimit]); şirket yalnızca limitin hangi
-// ARALIKLA sıfırlandığını belirler, çünkü sıfırlama dönemi muhasebe dönemidir
-// ve çalışandan çalışana değişemez.
+// The company itself does not shop; [CompanyEmployee] records shop on its
+// behalf. That is why there is NO spending limit on the company — the limit is
+// per employee (see [CompanyEmployee.SpendingLimit]); the company only decides
+// at which INTERVAL the limit is reset, because the reset period is the
+// accounting period and cannot vary from employee to employee.
 type Company struct {
-	// ID "comp_" önekli, zaman sıralı kimliktir.
+	// ID is the time-ordered identifier with the "comp_" prefix.
 	ID string
-	// Name şirketin ticari unvanıdır; zorunludur.
+	// Name is the company's trade name; it is required.
 	Name string
-	// Email şirketin iletişim adresidir; daima KÜÇÜK harfe normalize edilmiş
-	// hâlde saklanır. BENZERSİZ DEĞİLDİR (bkz. migration belgesi).
+	// Email is the company's contact address; it is always stored normalized
+	// to LOWERCASE. It is NOT UNIQUE (see the migration document).
 	Email string
-	// Phone şirketin telefonudur; boş olabilir.
+	// Phone is the company's phone number; it may be empty.
 	Phone string
-	// Address fatura adresinin sokak satırıdır; boş olabilir.
+	// Address is the street line of the billing address; it may be empty.
 	Address string
-	// City şehirdir; boş olabilir.
+	// City is the city; it may be empty.
 	City string
-	// PostalCode posta kodudur; boş olabilir.
+	// PostalCode is the postal code; it may be empty.
 	PostalCode string
-	// CountryCode ISO 3166-1 alpha-2 ülke kodudur (BÜYÜK harf); boş olabilir.
-	// Kodun gerçekten var olan bir ülkeye karşılık geldiği BURADA denetlenmez;
-	// ülke listesinin sahibi region modülüdür.
+	// CountryCode is the ISO 3166-1 alpha-2 country code (UPPERCASE); it may
+	// be empty. Whether the code really corresponds to an existing country is
+	// NOT checked HERE; the owner of the country list is the region module.
 	CountryCode string
-	// CurrencyCode ISO 4217 para birimi kodudur (BÜYÜK harf); zorunludur.
-	// Harcama limitleri bu para biriminde ifade edilir.
+	// CurrencyCode is the ISO 4217 currency code (UPPERCASE); it is required.
+	// Spending limits are expressed in this currency.
 	CurrencyCode string
-	// SpendingLimitResetPeriod çalışan limitlerinin sıfırlanma aralığıdır.
+	// SpendingLimitResetPeriod is the reset interval of the employee limits.
 	SpendingLimitResetPeriod SpendingResetPeriod
-	// CreatedAt kaydın oluşturulma anıdır (UTC).
+	// CreatedAt is the moment the record was created (UTC).
 	CreatedAt time.Time
-	// UpdatedAt kaydın son güncellenme anıdır (UTC).
+	// UpdatedAt is the moment the record was last updated (UTC).
 	UpdatedAt time.Time
-	// DeletedAt soft delete anıdır; nil ise kayıt canlıdır.
+	// DeletedAt is the soft delete moment; if nil the record is live.
 	DeletedAt *time.Time
 }
 
-// CompanyEmployee bir şirket adına alışveriş yapabilen çalışandır.
+// CompanyEmployee is the employee who can shop on behalf of a company.
 //
-// Kayıt, B2B'nin B2C varsayımını kırdığı yerdir: alıcı bir birey değil,
-// HARCAMA YETKİSİ SINIRLI bir çalışandır. Kimliği yine de bir müşteridir —
-// sepeti, siparişi ve adresi customer modülünde durur; bu kayıt yalnızca o
-// müşterinin hangi şirket adına ve NE KADARA kadar alışveriş yapabileceğini
-// söyler.
+// The record is where B2B breaks the B2C assumption: the buyer is not an
+// individual but an employee with a LIMITED SPENDING AUTHORITY. Their identity
+// is still a customer — the cart, the order and the address live in the
+// customer module; this record only says on behalf of which company and up to
+// HOW MUCH that customer may shop.
 type CompanyEmployee struct {
-	// ID "compemp_" önekli kimliktir.
+	// ID is the identifier with the "compemp_" prefix.
 	ID string
-	// CompanyID çalışanın bağlı olduğu şirkettir; modül içi foreign key'dir.
+	// CompanyID is the company the employee belongs to; it is an in-module
+	// foreign key.
 	CompanyID string
-	// CustomerID çalışanın MÜŞTERİ kaydıdır (customer modülü).
+	// CustomerID is the employee's CUSTOMER record (customer module).
 	//
-	// DİKKAT: bu alanın veritabanında bir SÜTUNU YOKTUR. Değer
-	// "b2b_employee_customer" link'inden okunur ve servis katmanı doldurur;
-	// repository katmanı onu BOŞ bırakır. Sütun ile link'in aynı ilişkiyi iki
-	// yerde tutması, ikisinin ayrışması demek olurdu ve ayrışma vitrinde
-	// "kendi şirketim" sorusuna iki farklı cevap üretirdi.
+	// CAUTION: this field has NO COLUMN in the database. The value is read
+	// from the "b2b_employee_customer" link and filled in by the service
+	// layer; the repository layer leaves it EMPTY. A column and a link
+	// holding the same relation in two places would mean the two drifting
+	// apart, and the drift would produce two different answers to the "my own
+	// company" question in the storefront.
 	CustomerID string
-	// SpendingLimit çalışanın pencere başına harcayabileceği azami tutardır
-	// (minor unit, şirketin para biriminde).
+	// SpendingLimit is the maximum amount the employee may spend per window
+	// (minor unit, in the company's currency).
 	//
-	// nil SINIRSIZ demektir; 0 ise gerçek bir sıfır limittir ve çalışan hiç
-	// harcayamaz. İkisini tek değere indirmek, "limit koymadım" ile "limiti
-	// sıfırladım" arasındaki farkı yok ederdi. Pencerenin tanımı için bkz.
-	// [SpendingResetPeriod].
+	// nil means UNLIMITED; 0 is a real zero limit and the employee cannot
+	// spend at all. Collapsing the two into a single value would erase the
+	// difference between "I set no limit" and "I set the limit to zero". For
+	// the definition of the window see [SpendingResetPeriod].
 	SpendingLimit *int64
-	// IsCompanyAdmin çalışanın şirket yöneticisi olup olmadığını bildirir.
+	// IsCompanyAdmin reports whether the employee is a company administrator.
 	IsCompanyAdmin bool
-	// CreatedAt kaydın oluşturulma anıdır (UTC).
+	// CreatedAt is the moment the record was created (UTC).
 	CreatedAt time.Time
-	// UpdatedAt kaydın son güncellenme anıdır (UTC).
+	// UpdatedAt is the moment the record was last updated (UTC).
 	UpdatedAt time.Time
-	// DeletedAt soft delete anıdır; nil ise kayıt canlıdır.
+	// DeletedAt is the soft delete moment; if nil the record is live.
 	DeletedAt *time.Time
 }
 
-// HasSpendingLimit çalışanın sınırlı bir harcama yetkisi olup olmadığını
-// bildirir.
+// HasSpendingLimit reports whether the employee has a limited spending
+// authority.
 //
-// Sıfır limitli bir çalışan da SINIRLIDIR: kontrol nil'e bakar, değere değil.
+// An employee with a zero limit is LIMITED too: the check looks at nil, not at
+// the value.
 func (e CompanyEmployee) HasSpendingLimit() bool { return e.SpendingLimit != nil }
 
-// NormalizeEmail e-postayı saklama biçimine çevirir: kırpılır ve KÜÇÜK harfe
-// indirilir.
+// NormalizeEmail converts the e-mail into its storage form: it is trimmed and
+// lowered to LOWERCASE.
 //
-// Normalizasyon SAKLAMADA yapılır, okumada değil: "Muhasebe@X.com" ile
-// "muhasebe@x.com" aynı adresi göstermeliyse ikisinin de aynı baytlara inmesi
-// gerekir, aksi hâlde e-posta süzgeci ikisini farklı sanardı.
+// The normalization is done on STORAGE, not on read: if "Muhasebe@X.com" and
+// "muhasebe@x.com" are meant to denote the same address, both have to come down
+// to the same bytes, otherwise the e-mail filter would take them for two
+// different ones.
 func NormalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
-// NormalizeCountryCode ülke kodunu saklama biçimine çevirir: kırpılır ve BÜYÜK
-// harfe çıkarılır. Doğrulama çağırana aittir.
+// NormalizeCountryCode converts the country code into its storage form: it is
+// trimmed and raised to UPPERCASE. Validation belongs to the caller.
 func NormalizeCountryCode(code string) string {
 	return strings.ToUpper(strings.TrimSpace(code))
 }
 
-// NormalizeCurrencyCode para birimi kodunu saklama biçimine çevirir: kırpılır
-// ve BÜYÜK harfe çıkarılır. Doğrulama çağırana aittir.
+// NormalizeCurrencyCode converts the currency code into its storage form: it is
+// trimmed and raised to UPPERCASE. Validation belongs to the caller.
 func NormalizeCurrencyCode(code string) string {
 	return strings.ToUpper(strings.TrimSpace(code))
 }

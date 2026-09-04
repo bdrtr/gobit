@@ -9,11 +9,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/region/models"
 )
 
-// Entity region'ın Query katmanına açtığı entity adıdır.
-// Sağlayıcı container'a "region" + query.ProviderSuffix adıyla kaydedilir.
+// Entity is the entity name region opens to the Query layer.
+// The provider is registered in the container under the name "region" +
+// query.ProviderSuffix.
 const Entity = "region"
 
-// Sağlayıcının sunduğu alan adları.
+// The field names the provider offers.
 const (
 	fieldID             = "id"
 	fieldName           = "name"
@@ -26,63 +27,67 @@ const (
 	fieldUpdatedAt      = "updated_at"
 )
 
-// Alt kayıtların (para birimi, ülke) alan adları.
+// The field names of the sub-records (currency, country).
 const (
 	fieldCode          = "code"
 	fieldSymbol        = "symbol"
 	fieldDecimalDigits = "decimal_digits"
 )
 
-// supportedFields sağlayıcının tanıdığı alanlardır; başka bir alan istenirse
-// errors.Invalid dönülür (ADR 0004: alan doğrulaması sağlayıcıya aittir).
+// supportedFields are the fields the provider knows; if another field is asked
+// for, errors.Invalid is returned (ADR 0004: field validation belongs to the
+// provider).
 var supportedFields = []string{
 	fieldID, fieldName, fieldCurrencyCode, fieldAutomaticTaxes, fieldTaxRate,
 	fieldCurrency, fieldCountries, fieldCreatedAt, fieldUpdatedAt,
 }
 
-// QueryProvider bölgeleri Query katmanına açar (ADR 0004).
+// QueryProvider opens the regions to the Query layer (ADR 0004).
 //
-// Kayıtlar para birimi ve ülkeleriyle BİRLİKTE döner. Bu bilinçlidir:
-// sağlayıcının tüketicisi vitrinin bölge/para birimi seçimi ve (Faz 5'te)
-// sepetin bölge genişletmesidir; ikisi de bölgeyi para biriminden ayrı
-// düşünmez. Ayrı dönselerdi her bölge için ikinci bir tur gerekirdi ki
-// Query'nin N+1 yasağı tam da bunu engellemek içindir.
+// The records come back TOGETHER WITH their currency and their countries. This
+// is deliberate: the provider's consumers are the storefront's region/currency
+// selection and (in Phase 5) the cart's region expansion; neither of them
+// thinks of a region apart from its currency. Had they come back separately, a
+// second round trip would be needed for every region, and preventing exactly
+// that is what Query's N+1 ban is for.
 //
-// İstenmiyorsa Fields ile dışarıda bırakılabilir; o durumda ilgili sorgular
-// HİÇ yapılmaz.
+// If they are not wanted they can be left out with Fields; in that case the
+// related queries are NOT made AT ALL.
 //
-// # Ondalık basamak neden burada
+// # Why the decimal digits are here
 //
-// Kayıttaki "currency" alt kaydı [models.Currency.DecimalDigits] taşır. Sepet
-// ve fiyat tutarları minor unit tam sayıdır; bölgeyi okuyan bir vitrin, bölme
-// çarpanını aynı yanıttan öğrenmezse ikinci bir uç noktaya gitmek ya da sabit
-// 100 varsaymak zorunda kalırdı — ikincisi yen tutarlarını yüz kat küçük
-// gösterirdi.
+// The "currency" sub-record in the record carries
+// [models.Currency.DecimalDigits]. Cart and price amounts are minor unit
+// integers; a storefront that reads a region and does not learn the division
+// factor from the same response would be forced either to go to a second
+// endpoint or to assume a fixed 100 — the latter would show yen amounts a
+// hundred times too small.
 //
-// Arayüz internal/core/query'de tanımlıdır; bu tip yalnızca imzayı karşılar ve
-// çekirdeğe hiçbir şey bildirmez (ADR 0001'in sağlayıcı tarafı).
+// The interface is defined in internal/core/query; this type only satisfies the
+// signature and tells the core nothing (the provider side of ADR 0001).
 type QueryProvider struct {
 	svc *Service
 }
 
 var _ query.Provider = (*QueryProvider)(nil)
 
-// NewQueryProvider verilen servis üzerinde çalışan bir sağlayıcı üretir.
+// NewQueryProvider produces a provider that works over the given service.
 func NewQueryProvider(svc *Service) *QueryProvider {
 	return &QueryProvider{svc: svc}
 }
 
-// Entity sağlayıcının sunduğu entity adını döner.
+// Entity returns the entity name the provider offers.
 func (p *QueryProvider) Entity() string { return Entity }
 
-// List kök bölge kayıtlarını döner.
+// List returns the root region records.
 //
-// Desteklenen tek filtre "id"dir; değeri tek bir dize ya da dize dilimi
-// olabilir. Başka bir filtre errors.Invalid döner.
+// The only supported filter is "id"; its value can be a single string or a
+// string slice. Any other filter returns errors.Invalid.
 //
-// Limit sıfır verilirse Query sözleşmesindeki "sınırsız" YERİNE modülün
-// varsayılan sayfa boyu uygulanır ve [MaxLimit] aşılamaz: sınırsız bir kök
-// listesi tek istekte tüm tabloyu belleğe alırdı.
+// If a limit of zero is given, the module's default page size is applied
+// INSTEAD OF the "unlimited" of the Query contract and [MaxLimit] cannot be
+// exceeded: an unlimited root list would take the whole table into memory in a
+// single request.
 func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]query.Record, error) {
 	if err := p.svc.ready(); err != nil {
 		return nil, err
@@ -97,8 +102,8 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	}
 
 	if ids != nil {
-		// Kimlik filtresi varsa sayfalama uygulanmaz: çağıran zaten kesin bir
-		// kümeyi adlandırmıştır.
+		// If there is an id filter no paging is applied: the caller has already
+		// named an exact set.
 		return p.fetch(ctx, ids, fields)
 	}
 
@@ -114,9 +119,11 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	return p.records(ctx, regions, fields)
 }
 
-// FetchByIDs verilen kimliklere karşılık gelen kayıtları TEK turda döner.
+// FetchByIDs returns the records corresponding to the given ids in a SINGLE
+// round trip.
 //
-// Bulunamayan kimlik için kayıt dönmez; bu bir hata değildir (ADR 0004).
+// No record comes back for an id that is not found; this is not an error
+// (ADR 0004).
 func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([]query.Record, error) {
 	if err := p.svc.ready(); err != nil {
 		return nil, err
@@ -128,7 +135,7 @@ func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([
 	return p.fetch(ctx, ids, normalized)
 }
 
-// fetch kimlik kümesini okuyup kayıtlara çevirir.
+// fetch reads the id set and turns it into records.
 func (p *QueryProvider) fetch(ctx context.Context, ids, fields []string) ([]query.Record, error) {
 	if len(ids) == 0 {
 		return []query.Record{}, nil
@@ -141,13 +148,13 @@ func (p *QueryProvider) fetch(ctx context.Context, ids, fields []string) ([]quer
 	return p.records(ctx, regions, fields)
 }
 
-// records bölgeleri Query kayıtlarına çevirir; para birimlerini ve ülkeleri
-// gerekiyorsa TEK sorguyla toplu getirir.
+// records turns the regions into Query records; if they are needed it fetches
+// the currencies and the countries in bulk with a SINGLE query.
 //
-// Toplu getirme, kaç bölge dönerse dönsün genişletme başına SABİT sayıda tur
-// üretir: bir bölge de yüz bölge de aynı sorgu sayısını yapar. Bölge başına
-// sorgu yapmak, Query'nin yapısal olarak engellediği N+1'i sağlayıcı içine
-// geri sokmak olurdu.
+// Bulk fetching produces a CONSTANT number of round trips per expansion no
+// matter how many regions come back: one region and a hundred regions make the
+// same number of queries. Querying per region would be putting the N+1 that
+// Query structurally prevents back inside the provider.
 func (p *QueryProvider) records(
 	ctx context.Context,
 	regions []models.Region,
@@ -219,11 +226,13 @@ func (p *QueryProvider) records(
 	return records, nil
 }
 
-// currencyRecord para birimini alt kayda çevirir; bulunamadıysa nil döner.
+// currencyRecord turns the currency into a sub-record; if it was not found it
+// returns nil.
 //
-// nil dönmesi bilinçlidir: eksik bir para biriminin yerine boş bir kayıt
-// koymak, ondalık basamağı 0 gibi göstererek tutarları yanlış ölçekte
-// gösterirdi. Foreign key nedeniyle bu durum normalde oluşamaz.
+// Returning nil is deliberate: putting an empty record in place of a missing
+// currency would show the decimal digits as 0 and would therefore show amounts
+// at the wrong scale. Because of the foreign key this situation normally cannot
+// arise.
 func currencyRecord(currencies map[string]models.Currency, code string) map[string]any {
 	currency, ok := currencies[code]
 	if !ok {
@@ -237,10 +246,10 @@ func currencyRecord(currencies map[string]models.Currency, code string) map[stri
 	}
 }
 
-// countryRecords ülkeleri alt kayıtlara çevirir.
+// countryRecords turns the countries into sub-records.
 //
-// Ülkesi olmayan bir bölge için boş (nil olmayan) dilim döner; JSON'da null
-// yerine [] görünmesi tüketici için tek biçimli bir yüzeydir.
+// For a region that has no countries it returns an empty (non-nil) slice;
+// seeing [] instead of null in JSON is a uniform surface for the consumer.
 func countryRecords(countries []models.Country) []map[string]any {
 	out := make([]map[string]any, 0, len(countries))
 	for i := range countries {
@@ -252,11 +261,12 @@ func countryRecords(countries []models.Country) []map[string]any {
 	return out
 }
 
-// normalizeFields istenen alanları doğrular; boş liste TÜM alanlar demektir.
+// normalizeFields validates the requested fields; an empty list means ALL the
+// fields.
 //
-// Kimlik alanı, istenmese bile listeye EKLENİR: Query kayıtları [query.IDField]
-// üzerinden birleştirir ve kimliksiz bir kayıt errors.KindInternal ile
-// sonuçlanırdı.
+// The id field is ADDED to the list even if it was not asked for: Query joins
+// the records over [query.IDField] and a record without an id would end in
+// errors.KindInternal.
 func normalizeFields(fields []string) ([]string, error) {
 	if len(fields) == 0 {
 		return slices.Clone(supportedFields), nil
@@ -278,11 +288,12 @@ func normalizeFields(fields []string) ([]string, error) {
 	return out, nil
 }
 
-// idFilter filtrelerden kimlik kümesini çıkarır.
+// idFilter extracts the id set from the filters.
 //
-// Filtre yoksa nil döner (kimlik süzgeci uygulanmaz); "id" dışında bir filtre
-// varsa errors.Invalid döner. Boş bir dilim, nil'den AYRI bir anlam taşır:
-// "hiçbir kimlik" demektir ve boş sonuç döner.
+// If there is no filter it returns nil (no id filter is applied); if there is a
+// filter other than "id" it returns errors.Invalid. An empty slice carries a
+// meaning SEPARATE from nil: it means "no id at all" and an empty result comes
+// back.
 func idFilter(filters map[string]any) ([]string, error) {
 	if len(filters) == 0 {
 		return nil, nil

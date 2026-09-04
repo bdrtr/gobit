@@ -2,84 +2,91 @@ package models
 
 import "time"
 
-// MaxOriginalNameLen istemcinin bildirdiği dosya adının kabul edilen azami
-// uzunluğudur (karakter).
+// MaxOriginalNameLen is the accepted maximum length (in characters) of the file
+// name the client declares.
 //
-// 255, yaygın dosya sistemlerinin dosya adı sınırıdır; daha uzun bir ad zaten
-// istemcinin kendi diskinde de duramazdı. Sınır KIRPMAZ, REDDEDER: kırpmak
-// istemcinin gönderdiği veriyi sessizce değiştirmek olurdu ve alanın tek işi
-// zaten "kullanıcı ne gördüyse onu göstermek".
+// 255 is the file name limit of the common file systems; a longer name could
+// not have stood on the client's own disk either. The bound DOES NOT TRIM, IT
+// REJECTS: trimming would be silently changing the data the client sent, and
+// the field's only job is anyway "to show what the user saw".
 const MaxOriginalNameLen = 255
 
-// Upload depoya yazılmış tek bir dosyanın kaydıdır.
+// Upload is the record of a single file written into the store.
 //
-// # İSTEMCİNİN DOSYA ADI YOL DEĞİLDİR
+// # THE CLIENT'S FILE NAME IS NOT A PATH
 //
-// [Upload.OriginalName] saklanır ama depoda hiçbir şeyin yerini belirlemez;
-// dosyanın yeri [Upload.StorageKey]'dir ve onu SAĞLAYICI üretir. Ayrım
-// yapısaldır: adın taşıdığı "../" ya da onun herhangi bir kodlaması, hiçbir
-// aşamada bir yol bileşenine dönüşemez çünkü ad hiçbir yol ifadesine
-// girmez.
+// [Upload.OriginalName] is stored but it locates nothing in the store; the
+// file's place is [Upload.StorageKey] and the PROVIDER produces it. The
+// separation is structural: the "../" a name carries, or any encoding of it,
+// cannot turn into a path component at any stage, because the name enters no
+// path expression.
 //
-// Adın yine de saklanmasının sebebi yönetim arayüzüdür: panelde yüklemeleri
-// gözden geçiren kişi "urun-kirmizi-onden.jpg" ile üretilmiş anahtarı ayırt
-// edemez. Ad bu yüzden GÖSTERİM verisidir — yanıtın JSON gövdesinde geçer,
-// hiçbir HTTP BAŞLIĞINA yazılmaz (örn. Content-Disposition): başlığa yazmak,
-// içeriğine güvenilmeyen bir dizeyi başlık dilbilgisinin içine koymak olurdu.
+// The reason the name is stored nonetheless is the admin interface: the person
+// reviewing the uploads in the panel cannot tell a generated key apart from
+// "product-red-front.jpg". The name is therefore DISPLAY data — it appears in
+// the JSON body of the response, and is written into NO HTTP HEADER (e.g.
+// Content-Disposition): writing it into a header would be putting a string
+// whose content is not trusted inside the grammar of a header.
 type Upload struct {
-	// ID kaydın kimliğidir.
+	// ID is the record's identifier.
 	ID string
-	// StorageKey dosyanın depodaki anahtarıdır ve sağlayıcı tarafından
-	// ÜRETİLMİŞTİR. Silme ve okuma bu değerle yapılır.
+	// StorageKey is the file's key in the store and it is PRODUCED by the
+	// provider. Deleting and reading are done with this value.
 	StorageKey string
-	// ProviderID dosyayı yazan sağlayıcının kimliğidir.
+	// ProviderID is the identifier of the provider that wrote the file.
 	//
-	// Saklanır çünkü yapılandırma değişir: kurulum bir gün nesne deposuna
-	// geçtiğinde eski kayıtlar hâlâ yerel diskte durur ve onları okuyabilecek
-	// tek şey, o gün kullanılan sağlayıcıdır.
+	// It is stored because the configuration changes: on the day the
+	// installation moves to an object store the old records still sit on the
+	// local disk, and the only thing able to read them is the provider used on
+	// that day.
 	ProviderID string
-	// ContentType dosyanın İÇERİĞİNDEN tespit edilmiş tipidir; istemcinin
-	// bildirdiği tip hiçbir zaman buraya yazılmaz.
+	// ContentType is the type detected FROM THE CONTENT of the file; the type
+	// the client declared is never written in here.
 	//
-	// Dosya sunulurken Content-Type başlığı BU alandan yazılır.
+	// While the file is being served, the Content-Type header is written from
+	// THIS field.
 	ContentType string
-	// Size dosyanın bayt cinsinden boyutudur.
+	// Size is the size of the file in bytes.
 	Size int64
-	// Checksum içeriğin SHA-256 özetidir (küçük harf onaltılık).
+	// Checksum is the SHA-256 digest of the content (lowercase hexadecimal).
 	//
-	// Yükleme sırasında hesaplanır ve teşhis içindir: "diskteki dosya ile
-	// kaydettiğimiz şey aynı mı" sorusunun başka cevabı yoktur. İdempotency
-	// için KULLANILMAZ — özet ancak tüm baytlar okunduktan sonra bilinir,
-	// yani tekrarı önlemek için ona bakmak gövdeyi akış olarak işlemeyi
-	// bırakmak demekti (bkz. çekirdekteki FileProvider sözleşmesi).
+	// It is computed during the upload and it is for diagnosis: the question
+	// "is the file on disk the same thing as what we recorded" has no other
+	// answer. It IS NOT USED for idempotency — the digest is known only after
+	// all the bytes have been read, so looking at it in order to prevent a
+	// repeat would have meant giving up on processing the body as a stream (see
+	// the FileProvider contract in the core).
 	Checksum string
-	// OriginalName istemcinin bildirdiği dosya adıdır; boş olabilir.
-	// ASLA yol olarak kullanılmaz (bkz. tip belgesi).
+	// OriginalName is the file name the client declared; it may be empty.
+	// It is NEVER used as a path (see the type's documentation).
 	OriginalName string
-	// URL dosyanın erişilebilir adresidir.
+	// URL is the reachable address of the file.
 	//
-	// Yerel sağlayıcıda KÖKE GÖRELİDİR ("/files/…"): kurulumun alan adını
-	// kayda yazmak, alan adı değiştiği gün her satırı geçersiz kılardı.
-	// Farklı bir kökenden sunulan vitrin, adresin önüne kendi kökenini koyar.
+	// On the local provider it is RELATIVE TO THE ROOT ("/files/…"): writing
+	// the installation's domain name into the record would invalidate every row
+	// on the day the domain name changed. A storefront served from a different
+	// origin puts its own origin in front of the address.
 	URL string
-	// UploadedBy yüklemeyi yapan çağıranın kimliğidir. Serbest metindir,
-	// foreign key DEĞİLDİR (Prensip 2.2): kullanıcıyı auth modülü sahiplenir.
+	// UploadedBy is the identifier of the caller who did the upload. It is free
+	// text, NOT a foreign key (Principle 2.2): the user is owned by the auth
+	// module.
 	UploadedBy string
-	// CreatedAt kaydın açıldığı andır.
+	// CreatedAt is the moment the record was opened.
 	CreatedAt time.Time
-	// UpdatedAt kaydın son değiştiği andır.
+	// UpdatedAt is the moment the record last changed.
 	UpdatedAt time.Time
 }
 
-// UploadFilter yükleme listelemesinin sayfalama parametreleridir.
+// UploadFilter holds the pagination parameters of the upload listing.
 //
-// Süzgeç alanı YOKTUR ve bu bilinçlidir: liste bir yönetim envanteridir ve
-// bugün onu süzerek okuyan bir akış yoktur. Tüketicisi olmayan bir süzgeç,
-// hem sorguya hem belgeye hem de teste giren ama hiçbir soruyu yanıtlamayan
-// bir alan olurdu; sözleşmeye giren alan ise bir daha çıkarılamaz.
+// There IS NO filter field and that is deliberate: the list is an admin
+// inventory and there is no flow reading it filtered today. A filter with no
+// consumer would be a field that enters the query, the documentation and the
+// test alike while answering no question; and a field that has entered the
+// contract can never be taken out again.
 type UploadFilter struct {
-	// Limit döndürülecek azami satır sayısıdır.
+	// Limit is the maximum number of rows to return.
 	Limit int64
-	// Offset atlanacak satır sayısıdır.
+	// Offset is the number of rows to skip.
 	Offset int64
 }

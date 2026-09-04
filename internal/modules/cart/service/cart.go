@@ -190,7 +190,7 @@ func (s *Service) UpdateCart(ctx context.Context, cartID string, in UpdateCartIn
 	}
 	if email == nil && in.CustomerID == "" {
 		return models.Cart{}, errors.Invalid(CodeInvalidInput,
-			"güncellenecek alan verilmedi: email ya da customer_id gerekli")
+			"no field was given to update: email ya da customer_id gerekli")
 	}
 
 	updated, err := s.mutate(ctx, cartID, func(ctx context.Context, cart models.Cart) error {

@@ -1,33 +1,34 @@
-// Package models product modülünün domain modellerini tanımlar.
+// Package models defines the domain models of the product module.
 //
-// Bu tipler modülün DIŞARIYA gösterdiği şekildir: servis bunları döner, API
-// katmanı doğrudan JSON'a yazar. Bilinçli olarak veritabanı tiplerinden
-// (pgtype.*) arındırılmışlardır — pgtype repository sınırının içinde kalır;
-// aksi hâlde sürücü seçimi modülün tüm katmanlarına sızardı.
+// These types are the shape the module shows to the OUTSIDE: the service
+// returns them and the API layer writes them straight to JSON. They are
+// deliberately kept free of database types (pgtype.*) — pgtype stays inside the
+// repository boundary; otherwise the choice of driver would leak into every
+// layer of the module.
 //
-// Zaman alanları UTC'dir ve veritabanı saatinden gelir. Silme SOFT'tur:
-// DeletedAt dolu bir kayıt hiçbir okuma sorgusundan dönmez.
+// Time fields are UTC and come from the database clock. Deletion is SOFT: a
+// record whose DeletedAt is set is returned by no read query.
 package models
 
 import "time"
 
-// Status bir ürünün yayın durumudur.
+// Status is the publication status of a product.
 //
-// Değer kümesi veritabanındaki product_status_check kısıtıyla birebir aynıdır;
-// ikisinden biri değişirse diğeri de değişmelidir.
+// The value set is exactly the same as the product_status_check constraint in
+// the database; if either of the two changes, the other has to change as well.
 type Status string
 
-// Ürün yayın durumları.
+// Product publication statuses.
 const (
-	// StatusDraft taslaktır; store API'sinde görünmez.
+	// StatusDraft is a draft; it is not visible in the store API.
 	StatusDraft Status = "draft"
-	// StatusPublished yayındadır; store API'sinin varsayılan filtresidir.
+	// StatusPublished is live; it is the default filter of the store API.
 	StatusPublished Status = "published"
-	// StatusArchived arşivlenmiştir; store API'sinde görünmez ama silinmemiştir.
+	// StatusArchived is archived; not visible in the store API but not deleted.
 	StatusArchived Status = "archived"
 )
 
-// Valid durumun tanımlı değerlerden biri olup olmadığını bildirir.
+// Valid reports whether the status is one of the defined values.
 func (s Status) Valid() bool {
 	switch s {
 	case StatusDraft, StatusPublished, StatusArchived:
@@ -37,14 +38,14 @@ func (s Status) Valid() bool {
 	}
 }
 
-// String durumun metin karşılığını döner.
+// String returns the textual form of the status.
 func (s Status) String() string { return string(s) }
 
-// Product katalogdaki bir üründür.
+// Product is a product in the catalog.
 //
-// Ürünün FİYATI ve STOĞU burada YOKTUR: ikisi de ayrı modüllerin verisidir
-// (Prensip 2.3) ve varyant üzerinden link'lerle bağlanır. Ürün yalnızca
-// katalog bilgisini taşır.
+// The PRICE and the STOCK of the product are NOT here: both are the data of
+// separate modules (Principle 2.3) and are attached with links over the
+// variant. The product carries catalog information only.
 type Product struct {
 	ID            string         `json:"id"`
 	Handle        string         `json:"handle"`
@@ -67,10 +68,10 @@ type Product struct {
 	UpdatedAt     time.Time      `json:"updated_at"`
 	DeletedAt     *time.Time     `json:"deleted_at,omitempty"`
 
-	// Aşağıdaki alanlar ilişkili kayıtlardır; yalnızca çağıran istediğinde
-	// doldurulur ve boşken JSON'a hiç yazılmaz. Doldurulmaları TOPLU
-	// sorgularla yapılır (bkz. repository ...ByProductIDs), kayıt başına
-	// sorguyla değil.
+	// The fields below are related records; they are filled only when the caller
+	// asks for them and are never written to JSON while empty. They are filled
+	// with BULK queries (see repository ...ByProductIDs), not with one query per
+	// record.
 	Variants   []Variant  `json:"variants,omitempty"`
 	Options    []Option   `json:"options,omitempty"`
 	Images     []Image    `json:"images,omitempty"`

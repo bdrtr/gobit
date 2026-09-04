@@ -1,33 +1,35 @@
-// Package service inventory modülünün iş mantığıdır.
+// Package service is the business logic of the inventory module.
 //
-// Modülün sorumluluğu tek cümleyle: bir kalemin hangi lokasyonda kaç adet
-// olduğunu ve bunun ne kadarının söz verilmiş (rezerve) olduğunu bilmek.
-// Satılabilir adet (available) SAKLANMAZ, stocked - reserved olarak türetilir.
+// The responsibility of the module in a single sentence: to know how many units
+// of an item are at which location and how much of that is promised (reserved).
+// The sellable quantity (available) IS NOT STORED, it is derived as
+// stocked - reserved.
 //
-// # Eşzamanlılık
+// # Concurrency
 //
-// Stok adedini değiştiren her akış tek bir veritabanı işlemi içinde koşar ve
-// okumasını satır kilidi (SELECT ... FOR UPDATE) altında yapar. Bu, "önce oku
-// sonra yaz" yarışını yapısal olarak imkânsız kılar: iki eşzamanlı rezervasyon
-// aynı seviye satırını kilitlemek zorundadır, ikincisi birincinin işlemi
-// bitene kadar bekler ve READ COMMITTED altında satırın GÜNCEL sürümünü okur.
-// Son bir adet için yarışan iki çağrıdan tam olarak biri kazanır, diğeri
-// errors.Conflict alır. Uygulama katmanında yapılan bir kontrol bunu
-// sağlayamazdı; sınır veritabanındadır.
+// Every flow that changes a stock quantity runs inside a single database
+// transaction and does its read under a row lock (SELECT ... FOR UPDATE). That
+// makes the "read first, write later" race structurally impossible: two
+// concurrent reservations have to lock the same level row, the second one waits
+// until the first one's transaction is over and under READ COMMITTED reads the
+// CURRENT version of the row. Of two calls racing for the last unit exactly one
+// wins, the other gets errors.Conflict. A check made in the application layer
+// could not provide this; the boundary is in the database.
 //
-// Kilitler HER akışta aynı sırada alınır — önce kalem, sonra seviye (bkz.
-// [Store] "Kilit sırası"). Sıra akışa göre değişseydi, farklı iki akış aynı iki
-// satırı ters sırada isteyip birbirini kilitler ve veritabanı işlemlerden
-// birini öldürürdü: rezervasyon ile stok güncellemesi çakıştığında istek
-// yeniden denenebilir bir çakışma yerine beklenmedik bir hata alırdı.
+// The locks are taken in the same order in EVERY flow — first the item, then the
+// level (see the lock order section on [Store]). Had the order changed from flow
+// to flow, two different flows would ask for the same two rows in the reverse
+// order, lock each other out and the database would kill one of the
+// transactions: when a reservation collided with a stock update, the request
+// would get an unexpected error instead of a conflict it can retry.
 //
-// # Modül izolasyonu
+// # Module isolation
 //
-// Bu modül başka hiçbir modülü tanımaz. Bir stok kaleminin hangi ürün
-// varyantına ait olduğu bilgisi burada YOKTUR; bağ product modülünün bildirdiği
-// "product_variant_inventory" link'i ile kurulur (Prensip 2.2, ADR 0001).
-// Rezervasyonun taşıdığı line_item_id de cart modülüne ait bir kimliktir ve
-// foreign key DEĞİLDİR.
+// This module knows no other module. The information about which product variant
+// a stock item belongs to IS NOT HERE; the tie is established with the
+// "product_variant_inventory" link that the product module declares (Principle
+// 2.2, ADR 0001). The line_item_id the reservation carries is likewise an id
+// belonging to the cart module and IS NOT a foreign key.
 package service
 
 import (
@@ -39,50 +41,52 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/inventory/models"
 )
 
-// EntityName modülün Query katmanına sunduğu entity adıdır. Sağlayıcı
-// container'a "<EntityName>.query" adıyla kaydedilir (ADR 0004).
+// EntityName is the entity name the module offers to the Query layer. The
+// provider is registered in the container under the name "<EntityName>.query"
+// (ADR 0004).
 const EntityName = "inventory_item"
 
-// Hata kodları. İstemciler bunlara göre dallanabilir; mesajlar değişebilir,
-// kodlar değişmez.
+// Error codes. Clients may branch on these; the messages can change, the codes
+// do not.
 const (
-	// CodeInvalidInput girdinin doğrulamadan geçmediğini bildirir.
+	// CodeInvalidInput reports that the input did not pass validation.
 	CodeInvalidInput = "inventory_invalid_input"
-	// CodeInsufficientStock istenen adedin satılabilir stoktan fazla olduğunu
-	// bildirir. Rezervasyon yarışını kaybeden çağrı da bunu alır.
+	// CodeInsufficientStock reports that the requested quantity is more than the
+	// sellable stock. The call that loses a reservation race gets this one too.
 	CodeInsufficientStock = "inventory_insufficient_stock"
-	// CodeReservationNotActive sonlanmış bir rezervasyon üzerinde geçersiz bir
-	// geçiş denendiğini bildirir.
+	// CodeReservationNotActive reports that an invalid transition was attempted
+	// on a finished reservation.
 	CodeReservationNotActive = "inventory_reservation_not_active"
-	// CodeItemHasReservations aktif rezervasyonu olan bir kalemin silinmek
-	// istendiğini bildirir.
+	// CodeItemHasReservations reports that an item with an active reservation was
+	// asked to be deleted.
 	CodeItemHasReservations = "inventory_item_has_reservations"
-	// CodeInconsistentState rezerve adedi ile rezervasyon kayıtlarının
-	// birbirini tutmadığını bildirir; normal işleyişte oluşmaz.
+	// CodeInconsistentState reports that the reserved quantity and the
+	// reservation records do not match each other; it does not occur in normal
+	// operation.
 	CodeInconsistentState = "inventory_inconsistent_state"
 )
 
-// Sayfalama sınırları (plan Bölüm 8: limit/offset).
+// Pagination limits (plan Section 8: limit/offset).
 const (
-	// DefaultLimit limit verilmediğinde uygulanan sayfa boyutudur.
+	// DefaultLimit is the page size applied when no limit is given.
 	DefaultLimit int64 = 50
-	// MaxLimit tek istekte istenebilecek en büyük sayfa boyutudur.
+	// MaxLimit is the largest page size that can be asked for in one request.
 	MaxLimit int64 = 100
 )
 
-// maxTextLen serbest metin alanları için üst sınırdır. Sınır, tek bir isteğin
-// veritabanına sınırsız büyüklükte metin yazmasını engeller.
+// maxTextLen is the upper bound for free-text fields. The bound keeps a single
+// request from writing text of unlimited size into the database.
 const maxTextLen = 512
 
-// Service inventory modülünün dışa açık servisidir.
-// Eşzamanlı kullanıma güvenlidir.
+// Service is the outward-facing service of the inventory module.
+// It is safe for concurrent use.
 type Service struct {
 	store Store
 	log   *slog.Logger
 }
 
-// New verilen depo üzerinde çalışan bir servis üretir.
-// log nil verilirse loglar atılır.
+// New produces a service running on the given store.
+// If log is given as nil, the logs are dropped.
 func New(store Store, log *slog.Logger) *Service {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -90,15 +94,15 @@ func New(store Store, log *slog.Logger) *Service {
 	return &Service{store: store, log: log}
 }
 
-// Page liste isteklerinin sayfalama parametreleridir.
+// Page holds the pagination parameters of list requests.
 type Page struct {
-	// Limit döndürülecek azami satır sayısıdır; 0 ise [DefaultLimit] uygulanır.
+	// Limit is the maximum number of rows to return; if 0, [DefaultLimit] applies.
 	Limit int64
-	// Offset atlanacak satır sayısıdır.
+	// Offset is the number of rows to skip.
 	Offset int64
 }
 
-// normalize sayfalama parametrelerini doğrular ve varsayılanları uygular.
+// normalize validates the pagination parameters and applies the defaults.
 func (p Page) normalize() (Page, error) {
 	if p.Limit < 0 {
 		return Page{}, errors.Invalid(CodeInvalidInput, "limit negatif olamaz: %d", p.Limit)
@@ -116,21 +120,22 @@ func (p Page) normalize() (Page, error) {
 	return p, nil
 }
 
-// CreateStockLocationInput yeni bir stok lokasyonunun alanlarıdır.
+// CreateStockLocationInput holds the fields of a new stock location.
 type CreateStockLocationInput struct {
-	// Name lokasyonun görünen adıdır; zorunludur.
+	// Name is the display name of the location; it is required.
 	Name string
-	// Address1, Address2, City, Province, PostalCode konum bilgileridir.
+	// Address1, Address2, City, Province and PostalCode are location details.
 	Address1   string
 	Address2   string
 	City       string
 	Province   string
 	PostalCode string
-	// CountryCode ISO 3166-1 alpha-2 ülke kodudur; verilirse iki harf olmalıdır.
+	// CountryCode is the ISO 3166-1 alpha-2 country code; if it is given it has to
+	// be two letters.
 	CountryCode string
 }
 
-// CreateStockLocation yeni bir stok lokasyonu oluşturur.
+// CreateStockLocation creates a new stock location.
 func (s *Service) CreateStockLocation(ctx context.Context, in CreateStockLocationInput) (models.StockLocation, error) {
 	name := strings.TrimSpace(in.Name)
 	if err := requireText("name", name); err != nil {
@@ -139,10 +144,10 @@ func (s *Service) CreateStockLocation(ctx context.Context, in CreateStockLocatio
 	country := strings.ToUpper(strings.TrimSpace(in.CountryCode))
 	if country != "" && len(country) != 2 {
 		return models.StockLocation{}, errors.Invalid(CodeInvalidInput,
-			"country_code iki harfli ISO 3166-1 alpha-2 kodu olmalı: %q", in.CountryCode)
+			"country_code has to be a two-letter ISO 3166-1 alpha-2 code: %q", in.CountryCode)
 	}
-	// Sıra bilinçli olarak sabittir: map üzerinde dönmek, birden çok alan
-	// birden uzun olduğunda hangi hatanın döneceğini rastgele bırakırdı.
+	// The order is deliberately fixed: ranging over a map would leave which error
+	// is returned up to chance when more than one field is too long at once.
 	for _, field := range []struct{ label, value string }{
 		{"address_1", in.Address1},
 		{"address_2", in.Address2},
@@ -167,8 +172,8 @@ func (s *Service) CreateStockLocation(ctx context.Context, in CreateStockLocatio
 	})
 }
 
-// ListStockLocations stok lokasyonlarını sayfalayarak döner.
-// İkinci dönüş değeri sayfaya değil, TÜM eşleşen satırlara ait sayıdır.
+// ListStockLocations returns the stock locations page by page.
+// The second return value belongs not to the page but to ALL the matching rows.
 func (s *Service) ListStockLocations(ctx context.Context, page Page) ([]models.StockLocation, int64, error) {
 	page, err := page.normalize()
 	if err != nil {
@@ -177,7 +182,7 @@ func (s *Service) ListStockLocations(ctx context.Context, page Page) ([]models.S
 	return s.store.ListStockLocations(ctx, page.Limit, page.Offset)
 }
 
-// GetStockLocation lokasyonu kimliğiyle döner.
+// GetStockLocation returns the location by its id.
 func (s *Service) GetStockLocation(ctx context.Context, id string) (models.StockLocation, error) {
 	if err := requireText("id", id); err != nil {
 		return models.StockLocation{}, err
@@ -185,21 +190,22 @@ func (s *Service) GetStockLocation(ctx context.Context, id string) (models.Stock
 	return s.store.GetStockLocation(ctx, id)
 }
 
-// CreateInventoryItemInput yeni bir stok kaleminin alanlarıdır.
+// CreateInventoryItemInput holds the fields of a new inventory item.
 type CreateInventoryItemInput struct {
-	// SKU stok takip kodudur; zorunludur ve yaşayan kalemler arasında tektir.
+	// SKU is the stock keeping code; it is required and unique among living items.
 	SKU string
-	// Title ve Description isteğe bağlıdır.
+	// Title and Description are optional.
 	Title       string
 	Description string
-	// RequiresShipping nil bırakılırsa true varsayılır. İşaretçi olmasının
-	// sebebi budur: bool'un sıfır değeri "sevkiyat gerekmiyor" demek olurdu ve
-	// alanı hiç göndermeyen bir istemci dijital ürün oluşturmuş sayılırdı.
+	// RequiresShipping is assumed true when it is left nil. That is the reason it
+	// is a pointer: the zero value of a bool would mean "shipping is not required"
+	// and a client that never sends the field would count as having created a
+	// digital product.
 	RequiresShipping *bool
 }
 
-// CreateInventoryItem yeni bir stok kalemi oluşturur.
-// Aynı SKU yaşayan bir kalemde varsa errors.Conflict döner.
+// CreateInventoryItem creates a new inventory item.
+// If the same SKU exists on a living item it returns errors.Conflict.
 func (s *Service) CreateInventoryItem(ctx context.Context, in CreateInventoryItemInput) (models.InventoryItem, error) {
 	sku := strings.TrimSpace(in.SKU)
 	if err := requireText("sku", sku); err != nil {
@@ -226,7 +232,7 @@ func (s *Service) CreateInventoryItem(ctx context.Context, in CreateInventoryIte
 	})
 }
 
-// GetInventoryItem kalemi kimliğiyle döner; yoksa errors.NotFound.
+// GetInventoryItem returns the item by its id; errors.NotFound if there is none.
 func (s *Service) GetInventoryItem(ctx context.Context, id string) (models.InventoryItem, error) {
 	if err := requireText("id", id); err != nil {
 		return models.InventoryItem{}, err
@@ -234,18 +240,18 @@ func (s *Service) GetInventoryItem(ctx context.Context, id string) (models.Inven
 	return s.store.GetInventoryItem(ctx, id)
 }
 
-// ListInventoryItemsInput kalem listelemesinin girdisidir.
+// ListInventoryItemsInput is the input of the item listing.
 type ListInventoryItemsInput struct {
-	// SKU verilirse yalnızca o koda sahip kalem döner.
+	// SKU, when given, returns only the item carrying that code.
 	SKU *string
-	// RequiresShipping verilirse kalemler sevkiyat gerekliliğine göre süzülür.
+	// RequiresShipping, when given, filters the items by shipping requirement.
 	RequiresShipping *bool
-	// Page sayfalama parametreleridir.
+	// Page holds the pagination parameters.
 	Page Page
 }
 
-// ListInventoryItems kalemleri sayfalayarak döner.
-// İkinci dönüş değeri filtreye uyan TÜM satırların sayısıdır.
+// ListInventoryItems returns the items page by page.
+// The second return value is the count of ALL the rows matching the filter.
 func (s *Service) ListInventoryItems(ctx context.Context, in ListInventoryItemsInput) ([]models.InventoryItem, int64, error) {
 	page, err := in.Page.normalize()
 	if err != nil {
@@ -266,8 +272,8 @@ func (s *Service) ListInventoryItems(ctx context.Context, in ListInventoryItemsI
 	return s.store.ListInventoryItems(ctx, filter)
 }
 
-// ListInventoryItemsByIDs verilen kimliklerin kalemlerini TEK sorguda döner.
-// Bulunamayan kimlik için kayıt dönmez; bu bir hata değildir.
+// ListInventoryItemsByIDs returns the items of the given ids in a SINGLE query.
+// No record is returned for an id that is not found; that is not an error.
 func (s *Service) ListInventoryItemsByIDs(ctx context.Context, ids []string) ([]models.InventoryItem, error) {
 	if len(ids) == 0 {
 		return []models.InventoryItem{}, nil
@@ -275,14 +281,15 @@ func (s *Service) ListInventoryItemsByIDs(ctx context.Context, ids []string) ([]
 	return s.store.InventoryItemsByIDs(ctx, ids)
 }
 
-// DeleteInventoryItem kalemi ve stok seviyelerini yumuşak siler.
+// DeleteInventoryItem soft deletes the item and its stock levels.
 //
-// Kalemin AKTİF rezervasyonu varsa errors.Conflict döner: silme, söz verilmiş
-// stoğu sessizce yok etmek anlamına gelirdi. Kontrol ve silme aynı işlemde ve
-// kalemin DIŞLAYICI kilidi altında yapılır; araya giren bir rezervasyon
-// kontrolü atlatamaz, çünkü [Service.Reserve] de işlemine kalemi paylaşımlı
-// kilitleyerek başlar: ya silmeden önce biter ve sayımda görünür, ya da silme
-// bitene kadar bekler ve kalemi silinmiş bulur.
+// If the item has an ACTIVE reservation it returns errors.Conflict: deleting
+// would mean silently destroying promised stock. The check and the deletion are
+// done in the same transaction and under the EXCLUSIVE lock of the item; a
+// reservation slipping in between cannot dodge the check, because
+// [Service.Reserve] also starts its transaction by locking the item in shared
+// mode: either it finishes before the deletion and shows up in the count, or it
+// waits until the deletion is over and finds the item deleted.
 func (s *Service) DeleteInventoryItem(ctx context.Context, id string) error {
 	if err := requireText("id", id); err != nil {
 		return err
@@ -298,7 +305,7 @@ func (s *Service) DeleteInventoryItem(ctx context.Context, id string) error {
 		}
 		if active > 0 {
 			return errors.Conflict(CodeItemHasReservations,
-				"kalem silinemez: %d aktif rezervasyonu var (%s)", active, id)
+				"the item cannot be deleted: it has %d active reservations (%s)", active, id)
 		}
 		if err := s.store.SoftDeleteInventoryLevelsByItem(ctx, id); err != nil {
 			return err
@@ -307,7 +314,7 @@ func (s *Service) DeleteInventoryItem(ctx context.Context, id string) error {
 	})
 }
 
-// requireText zorunlu bir metin alanını doğrular.
+// requireText validates a required text field.
 func requireText(label, value string) error {
 	if value == "" {
 		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
@@ -315,7 +322,7 @@ func requireText(label, value string) error {
 	return checkTextLen(label, value)
 }
 
-// checkTextLen metin alanının uzunluk sınırını doğrular.
+// checkTextLen validates the length bound of a text field.
 func checkTextLen(label, value string) error {
 	if len(value) > maxTextLen {
 		return errors.Invalid(CodeInvalidInput,

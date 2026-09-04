@@ -1,26 +1,28 @@
-// Package service notification modülünün iş mantığıdır.
+// Package service is the business logic of the notification module.
 //
-// Modülün sorumluluğu tek cümleyle: bir olayın müşteriye bildirilmesi gerekiyorsa
-// bunu SEÇİLİ sağlayıcıya yaptırmak ve denemeyi bir günlüğe yazmak. Metnin
-// kendisini bu modül üretmez; şablonu sağlayıcı çözer (bkz. çekirdekteki
-// [coreprovider.Notification]).
+// The module's responsibility in one sentence: when an event has to be
+// reported to the customer, have the SELECTED provider do it and write the
+// attempt into a log. This module does not produce the text itself; the
+// provider resolves the template (see [coreprovider.Notification] in the
+// core).
 //
-// # Neden bir teslim günlüğü var
+// # Why there is a delivery log
 //
-// Gönderilmiş bir e-posta geri alınamaz, dolayısıyla bu modülde telafi
-// (compensation) yolu da yoktur. Elde kalan tek koruma TEKRARI ÖNLEMEKTİR ve o
-// da ancak kalıcı bir kayıtla mümkündür: (şablon, referans) çifti günlükte
-// BENZERSİZDİR ve kayıt sağlayıcıya gidilmeden ÖNCE açılır. Kaydın ikinci işi
-// teşhistir — "müşteriye onay gitti mi" sorusunun cevabı başka hiçbir yerde
-// yoktur.
+// An e-mail that has been sent cannot be taken back, so there is no
+// compensation path in this module either. The only protection left is
+// PREVENTING A REPEAT, and that is possible only through a durable record: the
+// (template, reference) pair is UNIQUE in the log, and the record is opened
+// BEFORE the provider is reached. The record's second job is diagnosis — the
+// answer to "did the confirmation go out to the customer" exists nowhere else.
 //
-// # Modül izolasyonu
+// # Module isolation
 //
-// Bu modül başka hiçbir modülü tanımaz (Prensip 2.1/2.4, ADR 0001). Siparişin
-// iletişim bilgisi, bu pakette tanımlı DAR arayüzle ([OrderContactReader]) ve
-// container'dan ADLA çözülen "order.interop" yüzeyinden okunur; taşınan veri
-// JSON'dur (ADR 0006). [models.Delivery.Reference] bir sipariş kimliğidir;
-// serbest metin olarak saklanır ve varlığı burada doğrulanmaz.
+// This module knows no other module (Principle 2.1/2.4, ADR 0001). The order's
+// contact information is read through the NARROW interface defined in this
+// package ([OrderContactReader]) and from the "order.interop" surface resolved
+// from the container BY NAME; the data carried is JSON (ADR 0006).
+// [models.Delivery.Reference] is an order identifier; it is stored as free
+// text and its existence is not validated here.
 package service
 
 import (
@@ -31,83 +33,92 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/notification/models"
 )
 
-// Hata kodları. İstemciler bunlara göre dallanabilir; mesajlar değişebilir,
-// kodlar değişmez.
+// Error codes. Clients may branch on these; the messages can change, the codes
+// do not.
 const (
-	// CodeInvalidInput girdinin doğrulamadan geçmediğini bildirir.
+	// CodeInvalidInput reports that the input did not pass validation.
 	CodeInvalidInput = "notification_invalid_input"
-	// CodeProviderNotFound seçili sağlayıcının kayıtlı olmadığını bildirir.
+	// CodeProviderNotFound reports that the selected provider is not
+	// registered.
 	CodeProviderNotFound = "notification_provider_not_found"
-	// CodeProviderExists aynı kimlikle ikinci bir sağlayıcı kaydedilmek
-	// istendiğini bildirir.
+	// CodeProviderExists reports that a second provider was about to be
+	// registered under the same identifier.
 	CodeProviderExists = "notification_provider_already_registered"
-	// CodeSendFailed sağlayıcının gönderimi reddettiğini bildirir.
+	// CodeSendFailed reports that the provider refused the send.
 	CodeSendFailed = "notification_send_failed"
-	// CodeEventInvalid olay yükünün sözleşmeye uymadığını bildirir.
+	// CodeEventInvalid reports that the event payload does not obey the
+	// contract.
 	CodeEventInvalid = "notification_event_payload_invalid"
-	// CodeContactUnavailable sipariş okuma yüzeyine ulaşılamadığını bildirir.
+	// CodeContactUnavailable reports that the order reading surface could not
+	// be reached.
 	CodeContactUnavailable = "notification_order_contact_unavailable"
-	// CodeContactInvalid sipariş yüzeyinin yanıtının çözülemediğini bildirir.
+	// CodeContactInvalid reports that the order surface's response could not
+	// be decoded.
 	CodeContactInvalid = "notification_order_contact_invalid"
-	// CodeNotReady servisin eksik bağımlılıkla kurulduğunu bildirir.
+	// CodeNotReady reports that the service was constructed with a missing
+	// dependency.
 	CodeNotReady = "notification_service_not_ready"
 )
 
-// Sayfalama sınırları (plan Bölüm 8: limit/offset).
+// Pagination bounds (plan Section 8: limit/offset).
 const (
-	// DefaultLimit limit verilmediğinde uygulanan sayfa boyutudur.
+	// DefaultLimit is the page size applied when no limit is given.
 	DefaultLimit int64 = 50
-	// MaxLimit tek istekte istenebilecek en büyük sayfa boyutudur.
+	// MaxLimit is the largest page size that can be asked for in a single
+	// request.
 	MaxLimit int64 = 100
 )
 
-// Store servisin ihtiyaç duyduğu kalıcılık yüzeyidir.
+// Store is the persistence surface the service needs.
 //
-// Arayüz TÜKETEN tarafta, yani burada tanımlıdır (ADR 0001'in örüntüsü). Servis
-// repository paketini import ETMEZ; somut depo bu imzaları yapısal olarak
-// karşılar ve bağlantı module.go'da kurulur. Böylece birim testleri gerçek bir
-// veritabanı olmadan, birkaç satırlık bir sahte depo ile yazılabilir.
+// The interface is defined on the CONSUMING side, that is, here (the pattern
+// of ADR 0001). The service does NOT import the repository package; the
+// concrete store satisfies these signatures structurally and the wiring is
+// established in module.go. Unit tests can therefore be written without a real
+// database, against a fake store a few lines long.
 type Store interface {
-	// ClaimDelivery kaydı yalnızca (şablon, referans) çifti henüz
-	// kullanılmamışsa yazar. İkinci dönüş değeri satırın yazılıp
-	// yazılmadığıdır; çakışma HATA DEĞİLDİR.
+	// ClaimDelivery writes the record only if the (template, reference) pair
+	// has not been used yet. The second return value is whether the row was
+	// written; a collision is NOT AN ERROR.
 	ClaimDelivery(ctx context.Context, d models.Delivery) (models.Delivery, bool, error)
-	// FinishDelivery gönderim denemesinin sonucunu yazar.
+	// FinishDelivery writes the outcome of the send attempt.
 	FinishDelivery(
 		ctx context.Context,
 		id string,
 		status models.DeliveryStatus,
 		failure string,
 	) (models.Delivery, error)
-	// GetDelivery kaydı kimliğiyle döner; yoksa NotFound.
+	// GetDelivery returns the record by its identifier; NotFound when absent.
 	GetDelivery(ctx context.Context, id string) (models.Delivery, error)
-	// ListDeliveries kayıtları süzer ve sayfalar; ikinci değer süzgece uyan
-	// TÜM satırların sayısıdır.
+	// ListDeliveries filters and pages the records; the second value is the
+	// count of ALL rows matching the filter.
 	ListDeliveries(ctx context.Context, filter models.DeliveryFilter) ([]models.Delivery, int64, error)
 }
 
-// Options servisin kurulum bağımlılıklarıdır.
+// Options holds the construction dependencies of the service.
 type Options struct {
-	// Store kalıcılık yüzeyidir; zorunludur.
+	// Store is the persistence surface; it is required.
 	Store Store
-	// Providers kayıtlı bildirim sağlayıcılarıdır; zorunludur.
+	// Providers holds the registered notification providers; it is required.
 	Providers *ProviderRegistry
-	// ProviderID gönderimde KULLANILACAK sağlayıcının kimliğidir
-	// (NOTIFICATION_PROVIDER); zorunludur.
+	// ProviderID is the identifier of the provider TO BE USED for sending
+	// (NOTIFICATION_PROVIDER); it is required.
 	//
-	// Sağlayıcının kayıtlı olup olmadığı BURADA doğrulanmaz ve doğrulanamaz:
-	// eklentilerin getirdiği sağlayıcılar modüller ayağa kalktıktan SONRA
-	// kaydedilir (bkz. coreplugin.Registry'nin iki fazı). Kurulumun tamamı
-	// bittikten sonraki denetim kompozisyon kökündedir (cmd/server).
+	// Whether the provider is registered is not validated HERE and cannot be:
+	// the providers brought in by plugins are registered AFTER the modules
+	// come up (see the two phases of coreplugin.Registry). The check that runs
+	// once the whole setup is finished lives at the composition root
+	// (cmd/server).
 	ProviderID string
-	// Contacts sipariş iletişim bilgisinin okunduğu yüzeydir; zorunludur.
+	// Contacts is the surface the order contact information is read from; it
+	// is required.
 	Contacts OrderContactReader
-	// Logger nil verilirse loglar atılır.
+	// Logger, when given as nil, makes the logs be discarded.
 	Logger *slog.Logger
 }
 
-// Service notification modülünün dışa açık servisidir.
-// Eşzamanlı kullanıma güvenlidir.
+// Service is the outward-facing service of the notification module.
+// It is safe for concurrent use.
 type Service struct {
 	store      Store
 	providers  *ProviderRegistry
@@ -116,26 +127,28 @@ type Service struct {
 	log        *slog.Logger
 }
 
-// New verilen bağımlılıklarla bir servis üretir.
+// New produces a service with the given dependencies.
 //
-// Eksik bir bağımlılık kurulum hatasıdır ve AÇIKÇA döner: nil bir depoyla
-// kurulmuş servis ilk olayda panik üretirdi ve hata, kurulumdan çok sonra —
-// ilk siparişin verildiği anda — ortaya çıkardı.
+// A missing dependency is a construction error and is returned EXPLICITLY: a
+// service built with a nil store would panic on the first event, and the fault
+// would surface long after construction — at the moment the first order is
+// placed.
 func New(opts Options) (*Service, error) {
 	if opts.Store == nil {
-		return nil, errors.Internal(CodeNotReady, "notification servisi depo olmadan kurulamaz")
+		return nil, errors.Internal(CodeNotReady,
+			"the notification service cannot be constructed without a store")
 	}
 	if opts.Providers == nil {
 		return nil, errors.Internal(CodeNotReady,
-			"notification servisi sağlayıcı kaydı olmadan kurulamaz")
+			"the notification service cannot be constructed without a provider registry")
 	}
 	if opts.Contacts == nil {
 		return nil, errors.Internal(CodeNotReady,
-			"notification servisi sipariş okuma yüzeyi olmadan kurulamaz")
+			"the notification service cannot be constructed without an order reading surface")
 	}
 	if opts.ProviderID == "" {
 		return nil, errors.Internal(CodeNotReady,
-			"notification servisi sağlayıcı kimliği olmadan kurulamaz")
+			"the notification service cannot be constructed without a provider identifier")
 	}
 
 	log := opts.Logger
@@ -151,28 +164,29 @@ func New(opts Options) (*Service, error) {
 	}, nil
 }
 
-// ProviderID gönderimde kullanılan sağlayıcının kimliğini döner.
+// ProviderID returns the identifier of the provider used for sending.
 func (s *Service) ProviderID() string { return s.providerID }
 
-// ListDeliveriesInput teslim günlüğü listelemesinin girdisidir.
+// ListDeliveriesInput is the input of a delivery log listing.
 type ListDeliveriesInput struct {
-	// Reference verilirse yalnızca o siparişin kayıtları döner.
+	// Reference, when given, returns only the records of that order.
 	Reference *string
-	// Status verilirse yalnızca o durumdaki kayıtlar döner.
+	// Status, when given, returns only the records in that status.
 	Status *string
-	// Page sayfalama parametreleridir.
+	// Page holds the pagination parameters.
 	Page Page
 }
 
-// Page liste isteklerinin sayfalama parametreleridir.
+// Page holds the pagination parameters of list requests.
 type Page struct {
-	// Limit döndürülecek azami satır sayısıdır; 0 ise [DefaultLimit] uygulanır.
+	// Limit is the maximum number of rows to return; when 0, [DefaultLimit]
+	// is applied.
 	Limit int64
-	// Offset atlanacak satır sayısıdır.
+	// Offset is the number of rows to skip.
 	Offset int64
 }
 
-// normalize sayfalama parametrelerini doğrular ve varsayılanları uygular.
+// normalize validates the pagination parameters and applies the defaults.
 func (p Page) normalize() (Page, error) {
 	if p.Limit < 0 {
 		return Page{}, errors.Invalid(CodeInvalidInput, "limit negatif olamaz: %d", p.Limit)
@@ -190,12 +204,12 @@ func (p Page) normalize() (Page, error) {
 	return p, nil
 }
 
-// ListDeliveries teslim günlüğünü süzerek ve sayfalayarak döner.
-// İkinci dönüş değeri süzgece uyan TÜM kayıtların sayısıdır.
+// ListDeliveries returns the delivery log, filtered and paged.
+// The second return value is the count of ALL records matching the filter.
 //
-// Tanınmayan bir durum süzgeci errors.Invalid ile REDDEDİLİR; sessizce boş
-// liste dönmek, "hiç başarısız bildirim yok" ile "durum adını yanlış yazdım"ı
-// ayırt edilemez hâle getirirdi.
+// An unrecognized status filter is REFUSED with errors.Invalid; returning an
+// empty list silently would make "there are no failed notifications at all"
+// indistinguishable from "I typed the status name wrong".
 func (s *Service) ListDeliveries(
 	ctx context.Context,
 	in ListDeliveriesInput,
@@ -206,7 +220,7 @@ func (s *Service) ListDeliveries(
 	}
 	if in.Status != nil && !models.DeliveryStatus(*in.Status).Valid() {
 		return nil, 0, errors.Invalid(CodeInvalidInput,
-			"%q tanınmayan bir teslim durumu; %s, %s, %s ya da %s olmalı",
+			"%q is not a recognized delivery status; it has to be %s, %s, %s or %s",
 			*in.Status, models.DeliveryPending, models.DeliverySent,
 			models.DeliveryFailed, models.DeliverySkipped)
 	}
@@ -219,10 +233,11 @@ func (s *Service) ListDeliveries(
 	})
 }
 
-// GetDelivery tek bir teslim kaydını döner; yoksa errors.NotFound.
+// GetDelivery returns a single delivery record; errors.NotFound when absent.
 func (s *Service) GetDelivery(ctx context.Context, id string) (models.Delivery, error) {
 	if id == "" {
-		return models.Delivery{}, errors.Invalid(CodeInvalidInput, "kayıt kimliği boş olamaz")
+		return models.Delivery{}, errors.Invalid(CodeInvalidInput,
+			"the record identifier cannot be empty")
 	}
 	return s.store.GetDelivery(ctx, id)
 }

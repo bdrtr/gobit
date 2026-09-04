@@ -7,54 +7,56 @@ import (
 	"time"
 )
 
-// Kimlik önekleri (plan Bölüm 8). Önek, bir kimliğin hangi varlığa ait
-// olduğunu taşımadan da olsa okunabilir kılar: logda görülen "invres_..."
-// için tabloya bakmak gerekmez.
+// ID prefixes (plan Section 8). The prefix makes an id readable even though the
+// id does not carry which entity it belongs to: an "invres_..." seen in a log
+// needs no look at the table.
 const (
-	// StockLocationIDPrefix stok lokasyonu kimliklerinin önekidir.
+	// StockLocationIDPrefix is the prefix of stock location ids.
 	StockLocationIDPrefix = "sloc_"
-	// InventoryItemIDPrefix stok kalemi kimliklerinin önekidir.
+	// InventoryItemIDPrefix is the prefix of inventory item ids.
 	InventoryItemIDPrefix = "invitem_"
-	// InventoryLevelIDPrefix stok seviyesi kimliklerinin önekidir.
+	// InventoryLevelIDPrefix is the prefix of inventory level ids.
 	InventoryLevelIDPrefix = "invlevel_"
-	// ReservationIDPrefix rezervasyon kimliklerinin önekidir.
+	// ReservationIDPrefix is the prefix of reservation ids.
 	ReservationIDPrefix = "invres_"
 )
 
-// idEncoding Crockford Base32 alfabesiyle dolgusuz kodlamadır. 16 baytlık
-// gövde bu kodlamayla tam 26 karaktere iner. Alfabe ASCII'de
-// artan sırada olduğundan kodlanmış dize, kodlanan baytlarla aynı sözlüksel
-// sırayı korur; kimlikler bu sayede zamana göre sıralanabilir kalır.
+// idEncoding is the padless encoding over the Crockford Base32 alphabet. A
+// 16-byte body comes down to exactly 26 characters under this encoding. The
+// alphabet is in ascending order in ASCII, so the encoded string keeps the same
+// lexicographic order as the bytes it encodes; ids stay sortable by time
+// because of that.
 var idEncoding = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding)
 
-// NewStockLocationID yeni bir stok lokasyonu kimliği üretir.
+// NewStockLocationID produces a new stock location id.
 func NewStockLocationID() string { return newID(StockLocationIDPrefix, time.Now()) }
 
-// NewInventoryItemID yeni bir stok kalemi kimliği üretir.
+// NewInventoryItemID produces a new inventory item id.
 func NewInventoryItemID() string { return newID(InventoryItemIDPrefix, time.Now()) }
 
-// NewInventoryLevelID yeni bir stok seviyesi kimliği üretir.
+// NewInventoryLevelID produces a new inventory level id.
 func NewInventoryLevelID() string { return newID(InventoryLevelIDPrefix, time.Now()) }
 
-// NewReservationID yeni bir rezervasyon kimliği üretir.
+// NewReservationID produces a new reservation id.
 func NewReservationID() string { return newID(ReservationIDPrefix, time.Now()) }
 
-// newID önekli, zaman sıralı ve tekil bir kimlik üretir.
+// newID produces a prefixed, time-ordered and unique id.
 //
-// Yapısı ULID ile aynıdır: 48 bit milisaniye zaman damgası + 80 bit
-// kriptografik rastgelelik, Crockford Base32 ile 26 karaktere kodlanır.
-// Zaman damgasının başta olması, kimliğin kendisinin kabaca oluşturma sırasını
-// taşıması demektir; kayıtlar birincil anahtar taramasında da doğal sırada
-// durur ve B-tree eklemeleri sona yapılır.
+// Its structure is the same as ULID's: a 48-bit millisecond timestamp + 80 bits
+// of cryptographic randomness, encoded into 26 characters with Crockford
+// Base32. The timestamp coming first means the id itself carries roughly the
+// creation order; the records then also sit in their natural order under a
+// primary key scan and B-tree inserts happen at the end.
 //
-// internal/core/workflow/pgstore/ids.go'daki üretici ile aynı yapıdadır; o
-// paket İMPORT EDİLMEZ (çekirdeğin özel yüzeyi değildir), yapı burada modülün
-// kendi kodu olarak tekrarlanır.
+// It has the same structure as the generator in
+// internal/core/workflow/pgstore/ids.go; that package is NOT IMPORTED (it is
+// not the core's published surface), the structure is repeated here as the
+// module's own code.
 func newID(prefix string, t time.Time) string {
 	ms := t.UTC().UnixMilli()
 	if ms < 0 {
-		// 1970 öncesi bir zaman damgası kayıt için anlamlı değildir;
-		// sıralamayı bozmamak için tabana çekilir.
+		// A timestamp from before 1970 is not meaningful for a record; it is
+		// pulled down to the floor so the ordering does not break.
 		ms = 0
 	}
 
@@ -62,12 +64,12 @@ func newID(prefix string, t time.Time) string {
 	binary.BigEndian.PutUint64(stamp[:], uint64(ms))
 
 	var buf [16]byte
-	// UnixMilli 48 bite sığar; ilk iki bayt daima sıfırdır ve atılır.
+	// UnixMilli fits in 48 bits; the first two bytes are always zero and are dropped.
 	copy(buf[:6], stamp[2:])
 	if _, err := rand.Read(buf[6:]); err != nil {
-		// crypto/rand.Read hata dönmez; yine de bir gün dönerse kimlik
-		// yalnızca nanosaniye çözünürlüğüne dayanır — tekillik zayıflar ama
-		// kayıt açma başarısız olmaz.
+		// crypto/rand.Read does not return an error; should it return one some
+		// day anyway, the id rests on nanosecond resolution alone — uniqueness
+		// weakens but opening the record does not fail.
 		binary.BigEndian.PutUint64(buf[8:], uint64(t.UnixNano()))
 	}
 

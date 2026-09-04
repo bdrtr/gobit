@@ -1,17 +1,18 @@
-// Package service product modülünün iş kurallarını barındırır.
+// Package service holds the business rules of the product module.
 //
-// Katmanın sözleşmesi: girdiler doğrulanır, kimlikler burada üretilir, veri
-// erişimi [repository.Store] üzerinden yapılır ve dışarıya HER ZAMAN
-// core/errors tipli hatalar döner. HTTP durum kodu seçimi API katmanının değil,
-// bu katmanın döndürdüğü hata sınıfının işidir.
+// The contract of the layer: inputs are validated, ids are produced here, data
+// access goes through [repository.Store] and what is returned to the outside is
+// ALWAYS a core/errors typed error. Choosing the HTTP status code is not the API
+// layer's job but that of the error class this layer returns.
 //
-// # Başka modüllerin verisi
+// # Other modules' data
 //
-// Fiyat (pricing) ve stok (inventory) bu modülde YOKTUR ve o modüller İMPORT
-// EDİLMEZ (Prensip 2.4, ADR 0001). İhtiyaç duyulan yüzeyler bu pakette dar
-// arayüzler olarak tanımlanır ([Linker], [Grapher]) ve somut uygulamaları
-// container'dan ADLA çözülür. Store listelemesi fiyat ve stoğu link'ler
-// üzerinden Query katmanıyla toplar (ADR 0004).
+// Price (pricing) and stock (inventory) are NOT in this module and those modules
+// are NOT IMPORTED (Principle 2.4, ADR 0001). The surfaces that are needed are
+// defined in this package as narrow interfaces ([Linker], [Grapher]) and their
+// concrete implementations are resolved from the container BY NAME. The store
+// listing gathers price and stock over the links with the Query layer (ADR
+// 0004).
 package service
 
 import (
@@ -25,65 +26,67 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/repository"
 )
 
-// Linker product'ın çekirdeğin link servisinden ihtiyaç duyduğu DAR yüzeydir.
+// Linker is the NARROW surface product needs from the core's link service.
 //
-// Tam LinkService yerine yalnızca kullanılan üç metot istenir: sözleşme
-// büyüdükçe bu modülün testleri ve sahteleri etkilenmez.
+// Instead of the full LinkService only the three methods that are used are asked
+// for: as the contract grows, the tests and the fakes of this module are not
+// affected.
 type Linker interface {
-	// Create fromID ile toID arasında bağ kurar; aynı çift için no-op'tur.
+	// Create links fromID with toID; for the same pair it is a no-op.
 	Create(ctx context.Context, name, fromID, toID string) error
-	// Delete bağı kaldırır; bağ yoksa no-op'tur.
+	// Delete removes the link; if there is no link it is a no-op.
 	Delete(ctx context.Context, name, fromID, toID string) error
-	// List fromID'ye bağlı toID'leri döner.
+	// List returns the toIDs linked to fromID.
 	List(ctx context.Context, name, fromID string) ([]string, error)
 }
 
-// Grapher cross-module okuma yüzeyidir (çekirdeğin Query katmanı).
+// Grapher is the cross-module read surface (the core's Query layer).
 //
-// Store listelemesi varyantların fiyat ve stok kayıtlarını bununla toplar;
-// pricing ve inventory modülleri ne import edilir ne de adları bilinir —
-// bilinen tek şey link adlarıdır.
+// The store listing gathers the price and stock records of the variants with it;
+// the pricing and inventory modules are neither imported nor known by name — the
+// only thing that is known is the link names.
 type Grapher interface {
-	// Graph spec'e göre kök kayıtları çeker ve genişletmeleri uygular.
+	// Graph pulls the root records according to the spec and applies the expansions.
 	Graph(ctx context.Context, spec query.GraphSpec) ([]query.Record, error)
 }
 
-// EventPublisher servisin olay veri yolundan ihtiyaç duyduğu DAR yüzeydir.
+// EventPublisher is the NARROW surface the service needs from the event bus.
 //
-// core/eventbus ÇEKİRDEKTİR ve import edilmesi serbesttir (Prensip 2.4);
-// buradaki daralma bağımlılığı azaltmak içindir: katalog yalnızca YAYIMLAR,
-// abone olmaz ve veri yolunu kapatmaz. [eventbus.EventBus]'ın tamamına
-// bağlanmak, modülün abonelik ve kapatma yetkisi varmış izlenimi verirdi.
+// core/eventbus is CORE and importing it is free (Principle 2.4); the narrowing
+// here is there to reduce the dependency: the catalog only PUBLISHES, it does
+// not subscribe and it does not close the bus. Binding to the whole of
+// [eventbus.EventBus] would give the impression that the module has the
+// authority to subscribe and to shut down.
 //
-// [eventbus.Event] tipi olduğu gibi kullanılır: olayın şekli çekirdeğin
-// sözleşmesidir ve burada yeniden tanımlanması iki tipin ayrışmasına yol
-// açardı.
+// The [eventbus.Event] type is used as it is: the shape of the event is the
+// core's contract and redefining it here would lead the two types to drift
+// apart.
 type EventPublisher interface {
-	// Publish olayı yayımlar ve handler'ları BEKLEMEZ.
+	// Publish publishes the event and does NOT WAIT for the handlers.
 	Publish(ctx context.Context, e eventbus.Event) error
 }
 
-// Options servis kurulumunun bağımlılıklarıdır.
+// Options holds the dependencies of the service setup.
 type Options struct {
-	// Repo zorunludur.
+	// Repo is required.
 	Repo repository.Store
-	// Links link tanımlarını kullanan uçlar için gereklidir; nil verilirse
-	// link uçları tipli bir "hazır değil" hatası döner.
+	// Links is needed for the endpoints that use the link definitions; if nil is
+	// given, the link endpoints return a typed "not ready" error.
 	Links Linker
-	// Query store listelemesinin fiyat/stok genişletmesi içindir; nil
-	// verilirse listeleme fiyatsız ve stoksuz çalışır.
+	// Query is there for the price/stock expansion of the store listing; if nil
+	// is given, the listing works without prices and without stock.
 	Query Grapher
-	// Events katalog olaylarının yayımlandığı veri yoludur; nil verilirse
-	// olaylar sessizce atlanır (gerekçe: [Service.publishProductEvent]).
+	// Events is the bus the catalog events are published on; if nil is given, the
+	// events are silently skipped (rationale: [Service.publishProductEvent]).
 	Events EventPublisher
-	// Logger nil verilirse loglar atılır.
+	// Logger, if nil is given, means the logs are discarded.
 	Logger *slog.Logger
 }
 
-// Service product modülünün public servisidir.
+// Service is the public service of the product module.
 //
-// Container'a "product.service" adıyla kaydedilir. Tüm metodları
-// goroutine-güvenlidir (durum tutmaz; durum veritabanındadır).
+// It is registered in the container under the name "product.service". All of its
+// methods are goroutine-safe (they hold no state; the state is in the database).
 type Service struct {
 	repo   repository.Store
 	links  Linker
@@ -92,13 +95,14 @@ type Service struct {
 	log    *slog.Logger
 }
 
-// New verilen bağımlılıklarla servisi kurar.
+// New builds the service with the given dependencies.
 //
-// Repo verilmezse hata döner: deposuz bir katalog servisi her çağrıda
-// patlardı ve bunun kurulumda görülmesi gerekir.
+// If no repo is given it returns an error: a catalog service without a
+// repository would blow up on every call, and that has to be seen at setup time.
 func New(opts Options) (*Service, error) {
 	if opts.Repo == nil {
-		return nil, errors.Invalid(codeNotReady, "product servisi depo olmadan kurulamaz")
+		return nil, errors.Invalid(codeNotReady,
+			"the product service cannot be built without a repository")
 	}
 	log := opts.Logger
 	if log == nil {
@@ -107,28 +111,29 @@ func New(opts Options) (*Service, error) {
 	return &Service{repo: opts.Repo, links: opts.Links, graph: opts.Query, events: opts.Events, log: log}, nil
 }
 
-// ListResult sayfalı bir listenin sonucudur.
+// ListResult is the result of a paginated list.
 type ListResult[T any] struct {
 	Items []T
-	// Count, limit/offset'ten BAĞIMSIZ toplam kayıt sayısıdır; API zarfındaki
-	// "count" alanının kaynağı budur.
+	// Count is the total number of records, INDEPENDENT of limit/offset; it is the
+	// source of the "count" field in the API envelope.
 	//
-	// İŞARETÇİDİR ve nil "SAYILMADI" demektir — "sıfır kayıt" demek DEĞİLDİR.
-	// Sayım isteğe bağlıdır (bkz. [ListProductsOptions.SkipCount]) ve
-	// atlandığında düz bir int alanı 0 taşırdı; 0 burada bir yalandır, çünkü
-	// "eşleşen kayıt yok" cümlesinden ayırt edilemez. Ayrımı tipe taşımak,
-	// çağıranın sayıyı okumadan önce sorması gereken soruyu SORMAK ZORUNDA
-	// bırakır: nil'i düz sayı gibi kullanmak derlenmez.
+	// It is A POINTER and nil means "NOT COUNTED" — it does NOT mean "zero
+	// records". The count is optional (see [ListProductsOptions.SkipCount]) and
+	// when it is skipped a plain int field would carry 0; 0 is a lie here, because
+	// it cannot be told apart from the sentence "no matching records". Moving the
+	// distinction into the type FORCES the caller to ask the question it has to ask
+	// before reading the number: using a nil like a plain number does not compile.
 	Count  *int
 	Offset int
 	Limit  int
 }
 
-// CreateProductInput yeni bir ürünün girdisidir.
+// CreateProductInput is the input of a new product.
 //
-// Handle boş bırakılırsa başlıktan üretilir. Options/Variants/Images alanları
-// doluysa ürün ve alt kayıtları TEK İŞLEMDE yazılır: yarım kalmış bir katalog
-// kaydı (varyantsız ürün ya da sahipsiz varyant) oluşmaz.
+// If Handle is left empty it is derived from the title. If the
+// Options/Variants/Images fields are filled, the product and its child records
+// are written IN A SINGLE TRANSACTION: a half-finished catalog record (a product
+// without variants, or an ownerless variant) does not come into being.
 type CreateProductInput struct {
 	Handle        string
 	Title         string
@@ -153,18 +158,19 @@ type CreateProductInput struct {
 	CategoryIDs   []string
 }
 
-// CreateImageInput ürüne eklenecek görselin girdisidir.
+// CreateImageInput is the input of an image to be added to a product.
 type CreateImageInput struct {
 	URL      string
 	Rank     int32
 	Metadata map[string]any
 }
 
-// UpdateProductInput bir ürünün kısmi güncellemesidir.
+// UpdateProductInput is a partial update of a product.
 //
-// PATCH sözleşmesi: nil bırakılan alan DEĞİŞMEZ. Bir alanı NULL'a çekmek bu
-// uçtan yapılamaz; bu, "verilmedi" ile "boşalt" ayrımının JSON'da tek bir
-// null ile ifade edilememesinin kabul edilmiş bedelidir.
+// The PATCH contract: a field left nil DOES NOT CHANGE. Pulling a field to NULL
+// cannot be done through this endpoint; that is the accepted price of the fact
+// that the distinction between "not given" and "empty it" cannot be expressed
+// with a single null in JSON.
 type UpdateProductInput struct {
 	Handle        *string
 	Title         *string
@@ -185,81 +191,83 @@ type UpdateProductInput struct {
 	CategoryIDs   []string
 }
 
-// ListProductsOptions ürün listelemesinin ölçütleridir.
+// ListProductsOptions is the set of criteria of the product listing.
 type ListProductsOptions struct {
 	Status       *models.Status
 	CollectionID *string
 	Handle       *string
 	Search       *string
-	// SalesChannelIDs satış kanalı süzgecidir; anlamı ve nil/boş ayrımı için
-	// bkz. [StoreListOptions.SalesChannelIDs].
+	// SalesChannelIDs is the sales channel filter; for its meaning and the
+	// nil/empty distinction see [StoreListOptions.SalesChannelIDs].
 	//
-	// Yönetim listelemesi burayı DOLDURMAZ: yönetim kimliğinin bir satış kanalı
-	// yoktur ve kataloğu bütün olarak görmesi gerekir.
+	// The admin listing DOES NOT FILL it: an admin identity has no sales channel
+	// and it has to see the catalog as a whole.
 	SalesChannelIDs []string
 	Limit           int
 	Offset          int
-	// WithRelations true ise varyantlar, seçenekler, görseller, etiketler ve
-	// kategoriler TOPLU sorgularla doldurulur (ürün başına sorgu yapılmaz).
+	// WithRelations true means the variants, options, images, tags and categories
+	// are filled with BULK queries (no query is made per product).
 	WithRelations bool
-	// SkipCount true ise toplam sayaç sorgusu HİÇ ÇALIŞTIRILMAZ ve sonucun
-	// [ListResult.Count] alanı nil döner.
+	// SkipCount true means the total count query is NOT RUN AT ALL and the
+	// [ListResult.Count] field of the result comes back nil.
 	//
-	// # Neden var
+	// # Why it exists
 	//
-	// Sayaç, sayfa boyutundan bağımsız olarak süzülmüş KÜMENİN TAMAMINI
-	// gezmek zorundadır ve büyük katalogta isteğin bütün maliyeti odur.
-	// Ölçüldü (gobit_load: 52.004 ürün, 52.000 kanal ataması, LIMIT 20,
-	// satış kanalı süzgeci açık; 15 çağrının ortancası, Go tarafından):
+	// Independently of the page size, the count has to walk THE WHOLE filtered
+	// SET, and on a large catalog it is the entire cost of the request.
+	// Measured (gobit_load: 52,004 products, 52,000 channel assignments, LIMIT
+	// 20, sales channel filter on; median of 15 calls, from the Go side):
 	//
-	//	repo.ListProducts                       0,26 ms
-	//	repo.CountProducts                     64,07 ms
-	//	ListProducts (liste + sayaç + bağlar)  67,00 ms
-	//	ListProducts (SkipCount ile)            0,65 ms
+	//	repo.ListProducts                      0.26 ms
+	//	repo.CountProducts                    64.07 ms
+	//	ListProducts (list + count + links)   67.00 ms
+	//	ListProducts (with SkipCount)          0.65 ms
 	//
-	// Yani isteğin SQL'inin %99'u sayaçtır ve maliyet katalogla büyür.
-	// Sayacın planı, ürün tablosunun TAMAMINI gezip satır başına link
-	// tablosuna indeks yoklaması yapmaktır (EXPLAIN: Seq Scan on product,
-	// 52.004 satır, SubPlan 52.004 loops, 156.013 tampon).
+	// That is, 99% of the request's SQL is the count, and the cost grows with
+	// the catalog. The plan of the count is to walk the WHOLE product table and
+	// do an index probe into the link table per row (EXPLAIN: Seq Scan on
+	// product, 52,004 rows, SubPlan 52,004 loops, 156,013 buffers).
 	//
-	// # Sayacı UCUZLATMAK önce denendi
+	// # MAKING THE COUNT CHEAPER was tried first
 	//
-	// Aynı kümeyi sayan üç ayrı SQL biçimi aynı veriyle ölçüldü (psql,
-	// hazırlanmış deyim, ısıtılmış):
+	// Three separate SQL forms counting the same set were measured with the same
+	// data (psql, prepared statement, warmed up):
 	//
-	//	                        süzgeçsiz   q ile (tek eşleşme)
-	//	korelasyonlu (bugünkü)   62-71 ms         13,8 ms
-	//	iki EXISTS (hash)        43-54 ms            —
-	//	GROUP BY + hash join     33-45 ms         30,0 ms
+	//	                           no filter   with q (single match)
+	//	correlated (today's)        62-71 ms                 13.8 ms
+	//	two EXISTS (hash)           43-54 ms                       —
+	//	GROUP BY + hash join        33-45 ms                 30.0 ms
 	//
-	// Hash biçimi süzgeçsiz durumda iki kat hızlı ama SEÇİCİ süzgeçte iki kat
-	// yavaş: link tablosunun tamamını hash'lemek sabit bir 30 ms taban
-	// koyuyor, korelasyonlu biçim ise yalnızca hayatta kalan satırlar için
-	// yokluyor. Üstelik liste sorgusu korelasyonlu biçme MECBURDUR (LIMIT'te
-	// durabilmesi ondan gelir; ölçüldü: 26,8 ms → 0,8 ms) ve kural TEK bir
-	// şablonda yaşar (bkz. repository/saleschannel.go). Biçimi ayırmak,
-	// görünürlük kuralının ikinci bir tanımı olurdu.
+	// The hash form is twice as fast without a filter but twice as slow with a
+	// SELECTIVE filter: hashing the whole link table lays down a constant 30 ms
+	// floor, while the correlated form probes only for the rows that survive.
+	// What is more, the list query MUST be correlated (its ability to stop at
+	// the LIMIT comes from that; measured: 26.8 ms -> 0.8 ms) and the rule lives
+	// in a SINGLE template (see repository/saleschannel.go). Splitting the form
+	// would be a second definition of the visibility rule.
 	//
-	// Kalan gerçek şudur: sayım O(katalog)'dur. Hiçbir biçim onu sublineer
-	// yapmaz, çünkü "kaç tane" sorusunun cevabı kümenin tamamına bakmadan
-	// bilinemez. O yüzden çözüm sayacı hızlandırmak değil, İSTENMEDİĞİNDE
-	// HİÇ SORMAMAKTIR.
+	// What remains true is this: counting is O(catalog). No form makes it
+	// sublinear, because the answer to the question "how many" cannot be known
+	// without looking at the whole set. So the solution is not to speed the
+	// count up, but NOT TO ASK IT AT ALL WHEN IT IS NOT WANTED.
 	//
-	// # Neden bayrak OLUMSUZ yazılmış
+	// # Why the flag is written NEGATIVELY
 	//
-	// Sıfır değeri BUGÜNKÜ davranış olmalıdır. Alan "WithCount bool" olsaydı,
-	// bu tipi kullanan ve alanı bilmeyen HER çağıran sessizce saymayı bırakır
-	// ve zarfındaki sayı kaybolurdu — derleyici bir struct literalindeki eksik
-	// alanı hata saymaz. Olumsuz bayrak çirkindir ama sessiz değildir.
+	// The zero value has to be TODAY'S behavior. Had the field been "WithCount
+	// bool", EVERY caller that uses this type and does not know about the field
+	// would silently stop counting and the number in its envelope would
+	// disappear — the compiler does not count a missing field in a struct
+	// literal as an error. A negative flag is ugly, but it is not silent.
 	SkipCount bool
 }
 
-// CreateProduct ürün oluşturur ve alt kayıtlarıyla birlikte döner.
+// CreateProduct creates a product and returns it together with its child
+// records.
 //
-// Handle benzersizdir: kullanımdaysa errors.Conflict döner. Çakışma iki
-// katmanda birden yakalanır — burada okunabilir bir mesajla, veritabanında
-// kısmi benzersiz indeksle. İkincisi eşzamanlı iki isteğin arasından
-// geçemeyeceğinin tek gerçek garantisidir.
+// The handle is unique: if it is in use, errors.Conflict is returned. The
+// conflict is caught in two layers at once — here with a readable message, in
+// the database with a partial unique index. The second one is the only real
+// guarantee that two concurrent requests cannot slip past each other.
 func (s *Service) CreateProduct(ctx context.Context, in CreateProductInput) (models.Product, error) {
 	product, err := s.buildProduct(in)
 	if err != nil {
@@ -327,10 +335,10 @@ func (s *Service) CreateProduct(ctx context.Context, in CreateProductInput) (mod
 	return created, nil
 }
 
-// GetProduct ürünü ilişkili kayıtlarıyla birlikte döner.
+// GetProduct returns the product together with its related records.
 //
-// Silinmiş ürün BULUNAMAZ sayılır (errors.NotFound); soft delete'in okuma
-// tarafındaki karşılığı budur.
+// A deleted product counts as NOT FOUND (errors.NotFound); that is the read-side
+// counterpart of the soft delete.
 func (s *Service) GetProduct(ctx context.Context, id string) (models.Product, error) {
 	if _, err := requireID("id", id); err != nil {
 		return models.Product{}, err
@@ -348,7 +356,7 @@ func (s *Service) GetProduct(ctx context.Context, id string) (models.Product, er
 	return products[0], nil
 }
 
-// GetProductByHandle ürünü handle'ına göre döner.
+// GetProductByHandle returns the product by its handle.
 func (s *Service) GetProductByHandle(ctx context.Context, handle string) (models.Product, error) {
 	if _, err := requireID("handle", handle); err != nil {
 		return models.Product{}, err
@@ -366,11 +374,11 @@ func (s *Service) GetProductByHandle(ctx context.Context, handle string) (models
 	return products[0], nil
 }
 
-// ListProducts ölçütlere uyan ürünleri sayfalı döner.
+// ListProducts returns the products matching the criteria, paginated.
 //
-// Toplam sayaç [ListProductsOptions.SkipCount] ile KAPATILABİLİR; kapalıyken
-// sayaç sorgusu hiç çalıştırılmaz ve [ListResult.Count] nil döner. Gerekçe ve
-// ölçüm o alanın belgesindedir.
+// The total count CAN BE TURNED OFF with [ListProductsOptions.SkipCount]; while
+// it is off the count query is not run at all and [ListResult.Count] comes back
+// nil. The rationale and the measurement are in the doc of that field.
 func (s *Service) ListProducts(ctx context.Context, opts ListProductsOptions) (ListResult[models.Product], error) {
 	limit, offset, err := normalizePaging(opts.Limit, opts.Offset)
 	if err != nil {
@@ -419,7 +427,7 @@ func (s *Service) ListProducts(ctx context.Context, opts ListProductsOptions) (L
 	return ListResult[models.Product]{Items: products, Count: count, Offset: offset, Limit: limit}, nil
 }
 
-// UpdateProduct ürünü kısmi olarak günceller.
+// UpdateProduct updates the product partially.
 func (s *Service) UpdateProduct(ctx context.Context, id string, in UpdateProductInput) (models.Product, error) {
 	if _, err := requireID("id", id); err != nil {
 		return models.Product{}, err
@@ -448,8 +456,9 @@ func (s *Service) UpdateProduct(ctx context.Context, id string, in UpdateProduct
 		if _, err := tx.UpdateProduct(ctx, id, patch); err != nil {
 			return err
 		}
-		// nil dilim "dokunma", boş dilim "hepsini kaldır" demektir; ayrım
-		// ancak işaretçisiz bir dilimin nil'i ile korunabilir.
+		// A nil slice means "do not touch", an empty slice means "remove them all";
+		// the distinction can only be preserved with the nil of a slice that is not
+		// behind a pointer.
 		if in.TagIDs != nil {
 			if err := tx.SetProductTags(ctx, id, tagIDs); err != nil {
 				return err
@@ -474,14 +483,14 @@ func (s *Service) UpdateProduct(ctx context.Context, id string, in UpdateProduct
 	return updated, nil
 }
 
-// DeleteProduct ürünü ve alt kayıtlarını SOFT siler.
+// DeleteProduct SOFT deletes the product and its child records.
 //
-// Varyantların fiyat/stok bağları ve ürünün satış kanalı bağları da
-// temizlenir: silinen bir kaydın link'i kalırsa başka modüllerin sorguları var
-// olmayan bir kayda çıkar.
-// Link temizliği veritabanı işleminin DIŞINDADIR (link tabloları çekirdeğe
-// aittir); bu yüzden başarısızlığı silmeyi geri almaz, uyarı olarak loglanır
-// ve yetim bağlar zararsızdır — kimlikler yeniden kullanılmaz.
+// The price/stock links of the variants and the sales channel links of the
+// product are cleaned up as well: if the link of a deleted record stayed behind,
+// the queries of other modules would end up at a record that does not exist.
+// The link cleanup is OUTSIDE the database transaction (the link tables belong
+// to the core); that is why its failure does not undo the deletion, it is logged
+// as a warning and the orphan links are harmless — ids are never reused.
 func (s *Service) DeleteProduct(ctx context.Context, id string) error {
 	if _, err := requireID("id", id); err != nil {
 		return err
@@ -507,14 +516,14 @@ func (s *Service) DeleteProduct(ctx context.Context, id string) error {
 	}
 	s.cleanupProductSalesChannels(ctx, id)
 
-	// Olay bağ temizliğinden SONRA yayımlanır: aboneyi kaydın bağlarını
-	// okumaya çağıran bir sıralamada, temizlik yarım kalmışken gelen abone
-	// silinmiş ürünün bağlarını hâlâ görürdü.
+	// The event is published AFTER the link cleanup: in an ordering that calls the
+	// subscriber to read the links of the record, a subscriber arriving while the
+	// cleanup was half done would still see the links of the deleted product.
 	s.publishProductEvent(ctx, EventProductDeleted, id, "")
 	return nil
 }
 
-// buildProduct girdiyi doğrular ve yazılacak ürün modelini üretir.
+// buildProduct validates the input and builds the product model to be written.
 func (s *Service) buildProduct(in CreateProductInput) (models.Product, error) {
 	title, err := requireText("title", in.Title, maxTitleLen)
 	if err != nil {
@@ -576,7 +585,7 @@ func (s *Service) buildProduct(in CreateProductInput) (models.Product, error) {
 	}, nil
 }
 
-// buildProductPatch güncelleme girdisini doğrular ve depo yamasına çevirir.
+// buildProductPatch validates the update input and turns it into a repository patch.
 func buildProductPatch(in UpdateProductInput) (repository.ProductPatch, error) {
 	patch := repository.ProductPatch{
 		Discountable:  in.Discountable,
@@ -632,7 +641,7 @@ func buildProductPatch(in UpdateProductInput) (repository.ProductPatch, error) {
 	return patch, nil
 }
 
-// buildImages görsel girdilerini doğrular ve modele çevirir.
+// buildImages validates the image inputs and turns them into models.
 func buildImages(productID string, in []CreateImageInput) ([]models.Image, error) {
 	out := make([]models.Image, 0, len(in))
 	for i, img := range in {
@@ -642,8 +651,8 @@ func buildImages(productID string, in []CreateImageInput) ([]models.Image, error
 		}
 		rank := img.Rank
 		if rank == 0 {
-			// Sıra verilmediyse gönderim sırası korunur; aksi hâlde tüm
-			// görseller aynı sırada kalır ve listeleme rastgele görünürdü.
+			// If no rank was given the submission order is preserved; otherwise all the
+			// images would stay at the same rank and the listing would look random.
 			rank = int32From(i)
 		}
 		out = append(out, models.Image{
@@ -657,9 +666,10 @@ func buildImages(productID string, in []CreateImageInput) ([]models.Image, error
 	return out, nil
 }
 
-// ensureHandleFree handle'ın başka bir üründe kullanılmadığını doğrular.
+// ensureHandleFree verifies that the handle is not used by another product.
 //
-// exceptID güncellenen ürünün kendi kimliğidir; kendi handle'ı çakışma sayılmaz.
+// exceptID is the id of the product being updated; its own handle does not count
+// as a conflict.
 func (s *Service) ensureHandleFree(ctx context.Context, handle, exceptID string) error {
 	existing, err := s.repo.GetProductByHandle(ctx, handle)
 	switch {
@@ -668,7 +678,7 @@ func (s *Service) ensureHandleFree(ctx context.Context, handle, exceptID string)
 			return nil
 		}
 		return errors.Conflict(codeHandleTaken,
-			"handle zaten kullanımda: %q (ürün: %s)", handle, existing.ID)
+			"the handle is already in use: %q (product: %s)", handle, existing.ID)
 	case errors.IsNotFound(err):
 		return nil
 	default:
@@ -676,11 +686,12 @@ func (s *Service) ensureHandleFree(ctx context.Context, handle, exceptID string)
 	}
 }
 
-// attachRelations verilen ürünlerin ilişkili kayıtlarını TOPLU doldurur.
+// attachRelations fills the related records of the given products IN BULK.
 //
-// Sorgu sayısı ürün sayısından BAĞIMSIZDIR: kaç ürün olursa olsun varyantlar,
-// seçenekler, seçenek değerleri, varyant-değer bağları, görseller, etiketler ve
-// kategoriler için sabit sayıda sorgu yapılır. Ürün başına sorgu N+1 demek olurdu.
+// The number of queries is INDEPENDENT of the number of products: no matter how
+// many products there are, a fixed number of queries is made for the variants,
+// options, option values, variant-value links, images, tags and categories. A
+// query per product would mean N+1.
 func (s *Service) attachRelations(ctx context.Context, products []models.Product) error {
 	if len(products) == 0 {
 		return nil
@@ -734,7 +745,7 @@ func (s *Service) attachRelations(ctx context.Context, products []models.Product
 	return nil
 }
 
-// attachVariantOptionValues varyantların seçenek değerlerini TEK sorguda doldurur.
+// attachVariantOptionValues fills the option values of the variants in a SINGLE query.
 func (s *Service) attachVariantOptionValues(ctx context.Context, variants []models.Variant) error {
 	if len(variants) == 0 {
 		return nil
@@ -754,7 +765,7 @@ func (s *Service) attachVariantOptionValues(ctx context.Context, variants []mode
 	return nil
 }
 
-// attachOptionValues seçeneklerin değerlerini TEK sorguda doldurur.
+// attachOptionValues fills the values of the options in a SINGLE query.
 func (s *Service) attachOptionValues(ctx context.Context, options []models.Option) ([]models.Option, error) {
 	if len(options) == 0 {
 		return options, nil
@@ -775,7 +786,7 @@ func (s *Service) attachOptionValues(ctx context.Context, options []models.Optio
 	return options, nil
 }
 
-// groupBy dilimi verilen anahtara göre gruplar; sıra korunur.
+// groupBy groups the slice by the given key; the order is preserved.
 func groupBy[T any](items []T, key func(T) string) map[string][]T {
 	out := make(map[string][]T, len(items))
 	for _, item := range items {

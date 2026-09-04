@@ -8,87 +8,94 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// Bu dosya b2b modülünün MODÜLLER ARASI yüzeyidir (ADR 0001).
+// This file is the CROSS-MODULE surface of the b2b module (ADR 0001).
 //
-// Harcama limitini UYGULAYAN taraf order modülüdür: harcamanın kendisi
-// (verilmiş siparişlerin toplamı) onun verisidir ve kuralın yazma anıyla aynı
-// işlemde uygulanabildiği tek yer orasıdır. Ama limitin NE OLDUĞU bu modülün
-// verisidir. İkisi birbirini import edemez, bu yüzden bağ diğer modüllerdeki
-// interop.go dosyalarıyla aynı biçimde kurulur: yalnızca İLKEL ve stdlib
-// tipleri kullanan bir yüzey yayımlanır, tüketici kendi dar arayüzünü kendi
-// paketinde tanımlar ve somut tip container'dan "b2b.interop" adıyla çözülür.
+// The side that ENFORCES the spending limit is the order module: the spending
+// itself (the sum of the orders placed) is its data and that is the only place
+// where the rule can be applied in the same transaction as the write. But WHAT
+// the limit is, is this module's data. The two cannot import each other, which
+// is why the bond is built the same way as in the interop.go files of the other
+// modules: a surface using only PRIMITIVE and stdlib types is published, the
+// consumer defines its own narrow interface in its own package and the concrete
+// type is resolved from the container under the name "b2b.interop".
 //
-// Tüketici tarafındaki karşılığı şudur (order kendi paketinde tanımlar):
+// The counterpart on the consumer side is this (order defines it in its own
+// package):
 //
 //	type SpendingPolicy interface {
 //	    SpendingLimitJSON(ctx context.Context, customerID string) (json.RawMessage, error)
 //	}
 //
-// Bileşik veri JSON olarak taşınır. Alan adları aşağıda AÇIKÇA beyan edilir;
-// tüketici tarafındaki şema ile birebir aynı olmak ZORUNDADIR ve uyum ancak
-// entegrasyon testiyle kanıtlanabilir — bu modül order paketini import
-// edemediği için derleyici uyumu denetleyemez.
+// The composite data travels as JSON. The field names are declared EXPLICITLY
+// below; they MUST be exactly the same as the schema on the consumer side and
+// the agreement can only be proven with an integration test — because this
+// module cannot import the order package, the compiler cannot check it.
 
-// Interop b2b servisini modüller arası İLKEL yüzeye çevirir.
+// Interop turns the b2b service into the cross-module PRIMITIVE surface.
 //
-// Hiçbir karar vermez: yalnızca imzayı ve JSON şemasını çevirir. "Limit aşıldı
-// mı" sorusunu BU taraf yanıtlamaz; yanıtlayabilmesi için pencere içindeki
-// sipariş toplamını bilmesi gerekirdi ve o veri order modülünündür.
+// It takes no decision: it only translates the signature and the JSON schema.
+// THIS side does not answer the question "was the limit exceeded"; to be able
+// to answer it, it would have to know the order total inside the window and
+// that data belongs to the order module.
 //
-// Container'a "b2b.interop" adıyla kaydedilir.
+// It is registered in the container under the name "b2b.interop".
 type Interop struct {
 	svc *Service
 }
 
-// NewInterop verilen servis için modüller arası yüzeyi kurar.
+// NewInterop sets up the cross-module surface for the given service.
 func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
 
-// interopSpendingRule bir müşteriye uygulanacak harcama kuralının JSON
-// şemasıdır.
+// interopSpendingRule is the JSON schema of the spending rule to be applied to
+// a customer.
 //
-// # Şema
+// # Schema
 //
 //	{
-//	  "limited":        true,                   // false ise diğer alanlar ANLAMSIZDIR
-//	  "spending_limit": 500000,                 // minor unit TAM SAYI
-//	  "currency_code":  "TRY",                  // ŞİRKETİN para birimi
-//	  "window_start":   "2026-09-01T00:00:00Z"  // BOŞ ise pencere yoktur
+//	  "limited":        true,                   // if false the other fields are MEANINGLESS
+//	  "spending_limit": 500000,                 // minor unit INTEGER
+//	  "currency_code":  "TRY",                  // the COMPANY's currency
+//	  "window_start":   "2026-09-01T00:00:00Z"  // EMPTY means there is no window
 //	}
 //
-// # Neden "kalan hak" değil de "limit + pencere"
+// # Why "limit + window" and not "remaining allowance"
 //
-// Kalanı hesaplamak, pencere içinde verilmiş siparişlerin toplamını gerektirir;
-// o veri order modülünündür. Buradan kalan dönmek, b2b'nin order'ı okuması
-// (yani tam da link katmanının kaldırdığı bağımlılık) demek olurdu. Bunun
-// yerine yüzey KURALI taşır ve kuralı olguya uygulayan taraf, olgunun sahibi
-// olan modüldür.
+// Computing the remainder requires the sum of the orders placed inside the
+// window; that data belongs to the order module. Returning the remainder from
+// here would mean b2b reading order (that is, exactly the dependency the link
+// layer removed). Instead the surface carries the RULE, and the side that
+// applies the rule to the fact is the module that owns the fact.
 //
-// # window_start neyi söyler
+// # What window_start says
 //
-// Pencerenin başlangıcı ŞİRKETİN sıfırlama periyodundan türer ve TAKVİME
-// göredir (bkz. models.SpendingResetPeriod): aylık limit her ayın 1'inde,
-// yıllık limit 1 Ocak'ta sıfırlanır ve pencere UTC'dir. Alan BOŞ dize ise
-// pencere yoktur ([models.ResetNever]) ve limit çalışanın TÜM geçmişine
-// uygulanır — sıfır bir zaman damgası göndermek yerine boş dize seçilmesinin
-// sebebi budur: "1 Ocak 0001'den beri" ile "pencere yok" farklı cümlelerdir ve
-// ikincisi bir tarih değildir.
+// The start of the window derives from the COMPANY's reset period and follows
+// the CALENDAR (see models.SpendingResetPeriod): a monthly limit resets on the
+// 1st of every month, a yearly limit on 1 January, and the window is UTC. If
+// the field is an EMPTY string there is no window ([models.ResetNever]) and the
+// limit applies to the employee's ENTIRE history — that is the reason an empty
+// string was chosen over sending a zero timestamp: "since 1 January 0001" and
+// "there is no window" are different sentences, and the second one is not a
+// date.
 //
-// Zaman RFC 3339 dizesidir, tam sayı değil: tüketici onu tek satırda çözer ve
-// bir kodlama kararına (saniye mi milisaniye mi) bağlı kalmaz.
+// The time is an RFC 3339 string, not an integer: the consumer parses it in a
+// single line and does not stay bound to an encoding decision (seconds or
+// milliseconds).
 //
-// # BİLİNEN SINIR: dönem ortasında şirket değiştiren çalışan
+// # KNOWN LIMIT: the employee who changes company mid-period
 //
-// Pencere takvimden gelir, çalışanın İŞE BAŞLAMA anından değil. Bir müşteri
-// dönem ortasında A şirketinden çıkıp B şirketine çalışan olarak eklenirse,
-// A'da yaptığı harcama B'nin penceresinde de sayılır — çünkü tüketici
-// harcamayı MÜŞTERİ kimliğiyle toplar ve o kimlik değişmemiştir.
+// The window comes from the calendar, not from the moment the employee STARTED
+// WORK. If a customer leaves company A mid-period and is added to company B as
+// an employee, the spending they did at A counts inside B's window too —
+// because the consumer sums the spending by CUSTOMER identifier and that
+// identifier has not changed.
 //
-// Sapma tek yönlüdür ve KISITLAYICIDIR: çalışan hak ettiğinden AZ harcayabilir,
-// asla fazlasını değil. Bu yüzden bilinçli olarak düzeltilmedi — düzeltmesi
-// pencereyi çalışan kaydının doğum anıyla sınırlamaktır ve o, "dönem"in
-// tanımını takvimden ilişkiye kaydıran ayrı bir karardır (muhasebe dönemiyle
-// örtüşmesi gerekir). Bugün ödenen bedel, yılda birkaç kayıtta görülen
-// fazladan bir kısıttır; sessizce alınmış bir karar değildir.
+// The deviation is one-directional and RESTRICTIVE: the employee may spend LESS
+// than they are entitled to, never more. That is why it was deliberately not
+// fixed — fixing it means bounding the window by the birth moment of the
+// employee record, and that is a separate decision which shifts the definition
+// of "period" from the calendar to the relationship (it has to line up with the
+// accounting period). The price paid today is an extra restriction seen on a
+// few records a year; it is not a decision taken silently.
 type interopSpendingRule struct {
 	Limited       bool   `json:"limited"`
 	SpendingLimit int64  `json:"spending_limit"`
@@ -96,53 +103,55 @@ type interopSpendingRule struct {
 	WindowStart   string `json:"window_start"`
 }
 
-// SpendingLimitJSON müşteriye uygulanacak harcama kuralını döner.
+// SpendingLimitJSON returns the spending rule to be applied to the customer.
 //
-// Şema [interopSpendingRule] belgesinde tanımlıdır.
+// The schema is defined in the [interopSpendingRule] document.
 //
-// # Kuralı OLMAYAN müşteri HATA DEĞİLDİR
+// # A customer WITHOUT a rule IS NOT AN ERROR
 //
-// Çağrı üç durumda da "limited": false döner ve BAŞARILIDIR:
+// In all three of these cases the call returns "limited": false and SUCCEEDS:
 //
-//   - Müşteri hiçbir şirketin çalışanı değil (B2C alışverişi; kurulumun
-//     çoğunluğu budur).
-//   - Müşteri çalışan ama harcama limiti nil, yani SINIRSIZ.
-//   - Verilen kimlik bir customer id bile değil (önek tutmuyor). Böyle bir
-//     kimlik çalışan olarak BAĞLANAMAZ (bkz. [Service.CreateEmployee]), yani
-//     "bu müşterinin limiti yok" cevabı tahmin değil, kanıtlanabilir bir
-//     olgudur.
+//   - The customer is not an employee of any company (a B2C purchase; this is
+//     the majority of an installation).
+//   - The customer is an employee but their spending limit is nil, that is,
+//     UNLIMITED.
+//   - The given identifier is not even a customer id (the prefix does not
+//     match). Such an identifier CANNOT BE BOUND as an employee (see
+//     [Service.CreateEmployee]), so the answer "this customer has no limit" is
+//     not a guess but a provable fact.
 //
-// Üçünde de hata dönmek yanlış olurdu: tüketici bu yüzeyi HER sipariş için
-// çağırır ve "bu müşteri B2B değil" cevabı onun için normal yoldur. Hata
-// dönmek, tüketiciyi "kural yok" ile "kuralı öğrenemedik" arasında ayrım
-// yapamaz hâle getirirdi — birincisi siparişi geçirmeli, ikincisi
-// DURDURMALIDIR.
+// Returning an error in all three would be wrong: the consumer calls this
+// surface for EVERY order and "this customer is not B2B" is the normal path for
+// it. Returning an error would leave the consumer unable to tell "there is no
+// rule" from "we could not learn the rule" — the first has to let the order
+// through, the second has to STOP it.
 //
-// Bunun dışındaki her hata (veritabanı arızası, bağ katmanının okunamaması)
-// OLDUĞU GİBİ döner ve tüketici siparişi reddeder. Kuralın okunamadığı bir anda
-// siparişi geçirmek, limiti sessizce kaldırmak olurdu.
+// Every other error (a database failure, the bond layer not being readable) is
+// returned AS IS and the consumer rejects the order. Letting an order through
+// at a moment when the rule could not be read would mean silently removing the
+// limit.
 func (i *Interop) SpendingLimitJSON(ctx context.Context, customerID string) (json.RawMessage, error) {
-	uyelik, err := i.svc.MembershipOfCustomer(ctx, customerID)
+	membership, err := i.svc.MembershipOfCustomer(ctx, customerID)
 	switch {
 	case err == nil:
-		// Kural aşağıda kurulur.
+		// The rule is built below.
 	case errors.IsNotFound(err), errors.IsInvalid(err):
 		return json.Marshal(interopSpendingRule{})
 	default:
 		return nil, err
 	}
 
-	if !uyelik.Employee.HasSpendingLimit() {
+	if !membership.Employee.HasSpendingLimit() {
 		return json.Marshal(interopSpendingRule{})
 	}
 
-	kural := interopSpendingRule{
+	rule := interopSpendingRule{
 		Limited:       true,
-		SpendingLimit: *uyelik.Employee.SpendingLimit,
-		CurrencyCode:  uyelik.Company.CurrencyCode,
+		SpendingLimit: *membership.Employee.SpendingLimit,
+		CurrencyCode:  membership.Company.CurrencyCode,
 	}
-	if uyelik.SpendingWindowStart != nil {
-		kural.WindowStart = uyelik.SpendingWindowStart.UTC().Format(time.RFC3339)
+	if membership.SpendingWindowStart != nil {
+		rule.WindowStart = membership.SpendingWindowStart.UTC().Format(time.RFC3339)
 	}
-	return json.Marshal(kural)
+	return json.Marshal(rule)
 }

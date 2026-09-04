@@ -1,7 +1,7 @@
-// Package models file modülünün alan modelleridir.
+// Package models holds the domain models of the file module.
 //
-// Tipler yalnızca VERİYİ ve onun kendi içindeki tutarlılığını taşır; hiçbir
-// veritabanı ya da HTTP ayrıntısı burada bilinmez.
+// The types carry only the DATA and its own internal consistency; no database
+// or HTTP detail is known here.
 package models
 
 import (
@@ -11,40 +11,44 @@ import (
 	"time"
 )
 
-// UploadIDPrefix yükleme kayıtlarının kimlik önekidir
-// (plan Bölüm 8: önekli, zaman sıralı kimlikler).
+// UploadIDPrefix is the identifier prefix of upload records
+// (plan Section 8: prefixed, time-ordered identifiers).
 //
-// Önek, bir kimliğe bakıldığında hangi kayda ait olduğunu tek bakışta söyler
-// ve yanlış türde bir kimlikle yapılan çağrıyı "bulunamadı" yerine açık bir
-// doğrulama hatası hâline getirir.
+// The prefix tells at a single glance which record an identifier belongs to,
+// and turns a call made with an identifier of the wrong kind into an explicit
+// validation error instead of a "not found".
 const UploadIDPrefix = "upl_"
 
-// idBodyLen önek dışındaki gövdenin karakter sayısıdır: 16 bayt Crockford
-// Base32 ile dolgusuz kodlandığında tam 26 karakter eder.
+// idBodyLen is the character count of the body outside the prefix: 16 bytes
+// encoded unpadded with Crockford Base32 come down to exactly 26 characters.
 const idBodyLen = 26
 
-// idEncoding Crockford Base32 alfabesiyle dolgusuz kodlamadır. Alfabe ASCII'de
-// artan sırada olduğundan kodlanmış dize, kodlanan baytlarla aynı sözlüksel
-// sırayı korur; kimlikler bu sayede zamana göre sıralanabilir kalır ve
-// "ORDER BY created_at DESC, id DESC" eşit damgalarda da kararlı çalışır.
+// idEncoding is the unpadded encoding over the Crockford Base32 alphabet.
+// Because the alphabet is in ascending order in ASCII, the encoded string keeps
+// the same lexicographic order as the bytes it encodes; identifiers stay
+// sortable by time thanks to this, and "ORDER BY created_at DESC, id DESC"
+// works stably on equal stamps too.
 var idEncoding = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding)
 
-// NewID verilen önekle zaman sıralı ve tekil bir kimlik üretir.
+// NewID produces a time-ordered and unique identifier with the given prefix.
 //
-// Yapısı ULID ile aynıdır: 48 bit milisaniye zaman damgası + 80 bit
-// kriptografik rastgelelik, Crockford Base32 ile 26 karaktere kodlanır.
+// Its structure is the same as ULID's: a 48-bit millisecond timestamp + 80 bits
+// of cryptographic randomness, encoded into 26 characters with Crockford
+// Base32.
 //
-// Diğer modüllerdeki üretici aynı yapıdadır; modül izolasyonu gereği o paketler
-// import EDİLMEZ (Prensip 2.4, ADR 0001), üretici burada tekrar edilir.
+// The generator in the other modules has the same structure; because of module
+// isolation those packages ARE NOT IMPORTED (Principle 2.4, ADR 0001), the
+// generator is repeated here.
 //
-// Önek BOŞ da verilebilir ve bu bilinçlidir: depo anahtarını üreten sağlayıcı
-// (bkz. internal/modules/file/local) öneksiz bir gövde ister — anahtar bir
-// kayıt kimliği değildir ve kayıt kimliğiyle karıştırılmamalıdır.
+// The prefix may also be given EMPTY and that is deliberate: the provider that
+// produces the storage key (see internal/modules/file/local) wants a body
+// without a prefix — a key is not a record identifier and must not be confused
+// with one.
 func NewID(prefix string, t time.Time) string {
 	ms := t.UTC().UnixMilli()
 	if ms < 0 {
-		// 1970 öncesi bir zaman damgası kayıt için anlamlı değildir;
-		// sıralamayı bozmamak için tabana çekilir.
+		// A timestamp before 1970 is not meaningful for a record; it is pulled
+		// down to the floor so that the ordering is not broken.
 		ms = 0
 	}
 
@@ -52,21 +56,22 @@ func NewID(prefix string, t time.Time) string {
 	binary.BigEndian.PutUint64(stamp[:], uint64(ms))
 
 	var buf [16]byte
-	// UnixMilli 48 bite sığar; ilk iki bayt daima sıfırdır ve atılır.
+	// UnixMilli fits in 48 bits; the first two bytes are always zero and are
+	// dropped.
 	copy(buf[:6], stamp[2:])
 	if _, err := rand.Read(buf[6:]); err != nil {
-		// crypto/rand.Read hata dönmez; yine de bir gün dönerse kimlik
-		// yalnızca nanosaniye çözünürlüğüne dayanır — tekillik zayıflar ama
-		// kayıt açma başarısız olmaz.
+		// crypto/rand.Read does not return an error; should it return one some
+		// day anyway, the identifier rests on nanosecond resolution alone —
+		// uniqueness weakens but opening a record does not fail.
 		binary.BigEndian.PutUint64(buf[8:], uint64(t.UnixNano()))
 	}
 
 	return prefix + idEncoding.EncodeToString(buf[:])
 }
 
-// NewUploadID yeni bir yükleme kaydı kimliği üretir.
+// NewUploadID produces a new upload record identifier.
 func NewUploadID(t time.Time) string { return NewID(UploadIDPrefix, t) }
 
-// IDBodyLength önek dışındaki gövde uzunluğunu döner; testler ve doğrulama
-// için tek doğruluk kaynağıdır.
+// IDBodyLength returns the length of the body outside the prefix; it is the
+// single source of truth for the tests and for validation.
 func IDBodyLength() int { return idBodyLen }

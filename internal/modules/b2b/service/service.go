@@ -1,27 +1,30 @@
-// Package service b2b modülünün iş mantığını barındırır.
+// Package service holds the business logic of the b2b module.
 //
-// # Modülün kırdığı varsayım
+// # The assumption the module breaks
 //
-// Vitrin akışının B2C varsayımı "alıcı = birey"dir. B2B'de alıcı, HARCAMA
-// YETKİSİ SINIRLI bir çalışandır: kimliği yine bir müşteri kaydıdır (customer
-// modülü), ama ne kadar harcayabileceğini bağlı olduğu şirket belirler. Bu
-// modül o iki bilgiyi — şirketi ve çalışanın yetkisini — tutar; kimliğin
-// kendisini TUTMAZ.
+// The B2C assumption of the storefront flow is "buyer = individual". In B2B the
+// buyer is an employee with a LIMITED SPENDING AUTHORITY: their identity is
+// again a customer record (customer module), but how much they may spend is
+// decided by the company they belong to. This module holds those two pieces of
+// information — the company and the employee's authority; it does NOT hold the
+// identity itself.
 //
-// # Müşteri bağı neden link
+// # Why the customer bond is a link
 //
-// Çalışan ile müşteri arasındaki bağ core/link'tedir, bir sütunda değil
-// (Prensip 2.2, ADR 0005). Bağın tekilliğini kardinalite zorlar: bir müşteri
-// en fazla BİR çalışan kaydına sahip olabilir (bkz. [Definitions]). Vitrinin
-// "kendi şirketim" sorusu ancak bu tekillik sayesinde tek bir cevaba çözülür.
+// The bond between the employee and the customer lives in core/link, not in a
+// column (Principle 2.2, ADR 0005). The uniqueness of the bond is enforced by
+// the cardinality: a customer can own at most ONE employee record (see
+// [Definitions]). The storefront's "my own company" question resolves to a
+// single answer only thanks to that uniqueness.
 //
-// # Dışarıya açtığı yüzey
+// # The surface it opens to the outside
 //
-// Modül başka hiçbir modülü import etmez ve hiçbir modülün servisini çağırmaz.
-// Müşterinin GERÇEKTEN var olduğu bu modülde doğrulanmaz: doğrulasaydı customer
-// modülüne bağımlı olurdu ve bağ, tam da link'in kaldırmak için var olduğu
-// bağımlılık olurdu. Var olmayan bir müşteriye bağlanmış çalışan kaydı, vitrinde
-// hiçbir isteğe çözülmediği için zararsızdır.
+// The module imports no other module and calls no other module's service. That
+// the customer REALLY exists is not verified in this module: had it verified,
+// it would depend on the customer module and the bond would be exactly the
+// dependency the link exists to remove. An employee record bound to a customer
+// that does not exist is harmless, because it resolves to no request in the
+// storefront.
 package service
 
 import (
@@ -33,56 +36,61 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/b2b/models"
 )
 
-// Hata kodları; çağıran taraf errors.CodeOf ile bunlara bakabilir.
+// Error codes; the calling side can look at these with errors.CodeOf.
 const (
-	// CodeInvalidInput girdinin doğrulamadan geçmediğini bildirir.
+	// CodeInvalidInput reports that the input did not pass validation.
 	CodeInvalidInput = "b2b_invalid_input"
-	// CodeNotReady servisin kurulmadığını bildirir.
+	// CodeNotReady reports that the service has not been set up.
 	CodeNotReady = "b2b_service_unconfigured"
-	// CodeEmployeeNotFound istenen çalışanın bulunamadığını bildirir.
+	// CodeEmployeeNotFound reports that the requested employee could not be
+	// found.
 	CodeEmployeeNotFound = "b2b_employee_not_found"
-	// CodeLinkFailed müşteri bağının kurulamadığını bildirir.
+	// CodeLinkFailed reports that the customer bond could not be established.
 	CodeLinkFailed = "b2b_link_failed"
 )
 
-// Sayfalama sınırları. Limit verilmezse varsayılan uygulanır; aşırı büyük bir
-// limit reddedilir, böylece istemci tek istekle veritabanını tarayamaz.
+// Pagination limits. If no limit is given the default is applied; an
+// excessively large limit is rejected, so a client cannot scan the database
+// with a single request.
 const (
-	// DefaultLimit limit verilmediğinde uygulanan sayfa boyutudur.
+	// DefaultLimit is the page size applied when no limit is given.
 	DefaultLimit int64 = 50
-	// MaxLimit tek istekte istenebilecek en büyük sayfa boyutudur.
+	// MaxLimit is the largest page size that can be asked for in a single
+	// request.
 	MaxLimit int64 = 100
 )
 
-// Page sayfalanmış bir liste sonucudur.
+// Page is a paginated list result.
 //
-// Limit ve Offset, isteğin ham değerleri değil UYGULANAN değerlerdir; API zarfı
-// bu alanları olduğu gibi yazar, böylece istemci varsayılana düşen bir limitten
-// haberdar olur.
+// Limit and Offset are not the raw values of the request but the APPLIED
+// values; the API envelope writes these fields as they are, so the client is
+// aware of a limit that fell back to the default.
 type Page[T any] struct {
-	// Items geçerli sayfadaki kayıtlardır.
+	// Items are the records on the current page.
 	Items []T
-	// Count filtreye uyan TOPLAM kayıt sayısıdır (sayfa boyu değil).
+	// Count is the TOTAL number of records matching the filter (not the page
+	// size).
 	Count int64
-	// Limit uygulanan sayfa boyudur.
+	// Limit is the applied page size.
 	Limit int64
-	// Offset uygulanan atlama sayısıdır.
+	// Offset is the applied skip count.
 	Offset int64
 }
 
-// Repository servisin ihtiyaç duyduğu veri erişim yüzeyidir.
+// Repository is the data access surface the service needs.
 //
-// Arayüz TÜKETEN tarafta (burada) tanımlıdır; somut uygulama
-// internal/modules/b2b/repository paketindedir. Bu, ADR 0001'in örüntüsünün
-// modül İÇİNDEKİ karşılığıdır ve servisin veritabanı olmadan test edilmesini
-// sağlar.
+// The interface is defined on the CONSUMING side (here); the concrete
+// implementation is in the internal/modules/b2b/repository package. This is the
+// IN-MODULE counterpart of ADR 0001's pattern and it lets the service be tested
+// without a database.
 type Repository interface {
 	CreateCompany(ctx context.Context, c models.Company) (models.Company, error)
 	GetCompany(ctx context.Context, id string) (models.Company, error)
 	ListCompanies(ctx context.Context, filter models.CompanyFilter, limit, offset int64) ([]models.Company, int64, error)
 	UpdateCompany(ctx context.Context, id string, patch models.CompanyPatch, now time.Time) (models.Company, error)
-	// DeleteCompany şirketi ve çalışanlarını siler; dönen dilim silinen
-	// çalışanların kimlikleridir (bağları servis kaldırır).
+	// DeleteCompany deletes the company and its employees; the returned slice
+	// holds the identifiers of the deleted employees (the service removes the
+	// bonds).
 	DeleteCompany(ctx context.Context, id string, now time.Time) ([]string, error)
 
 	CreateEmployee(ctx context.Context, e models.CompanyEmployee) (models.CompanyEmployee, error)
@@ -92,39 +100,45 @@ type Repository interface {
 	DeleteEmployee(ctx context.Context, id string, now time.Time) error
 }
 
-// Linker servisin modüller arası bağ katmanından ihtiyaç duyduğu DAR yüzeydir.
+// Linker is the NARROW surface the service needs from the cross-module bond
+// layer.
 //
-// core/link'in tam arayüzü tanım bildirimi ve ters yön okumaları da içerir;
-// buradaki metotlar modülün GERÇEKTEN çağırdıklarıdır. Dar tutulması iki işe
-// yarar: bağımlılık kullanılan yüzeyle sınırlanır ve birim testlerinde sahte
-// bir bağ servisi birkaç satırda yazılabilir.
+// core/link's full interface also covers definition declaration and reverse
+// direction reads; the methods here are the ones the module REALLY calls.
+// Keeping it narrow serves two purposes: the dependency is bounded by the
+// surface actually used, and a fake bond service can be written in a few lines
+// in unit tests.
 type Linker interface {
-	// Create fromID ile toID arasında bağ kurar; aynı çift ikinci kez
-	// bağlanırsa çağrı no-op'tur, kardinalite ihlali ise errors.Conflict.
+	// Create establishes a bond between fromID and toID; if the same pair is
+	// bound a second time the call is a no-op, and a cardinality violation is
+	// an errors.Conflict.
 	Create(ctx context.Context, name, fromID, toID string) error
-	// Delete bağı kaldırır; bağ yoksa çağrı no-op'tur.
+	// Delete removes the bond; if there is no bond the call is a no-op.
 	Delete(ctx context.Context, name, fromID, toID string) error
-	// ListMany birden çok çalışanın müşteri kimliklerini TEK sorguda döner.
+	// ListMany returns the customer identifiers of several employees in a
+	// SINGLE query.
 	ListMany(ctx context.Context, name string, fromIDs []string) (map[string][]string, error)
-	// ListManyByTo ters yönü çözer: verilen müşterilerin çalışan kimliklerini
-	// döner. Vitrinin "kendi çalışan kaydım" sorusu bununla cevaplanır.
+	// ListManyByTo resolves the reverse direction: it returns the employee
+	// identifiers of the given customers. The storefront's "my own employee
+	// record" question is answered with this.
 	ListManyByTo(ctx context.Context, name string, toIDs []string) (map[string][]string, error)
 }
 
-// Options servisin kurulum ayarlarıdır.
+// Options are the setup settings of the service.
 type Options struct {
-	// Repo kalıcılık yüzeyidir; zorunludur.
+	// Repo is the persistence surface; it is required.
 	Repo Repository
-	// Links modüller arası bağ servisidir; zorunludur.
+	// Links is the cross-module bond service; it is required.
 	Links Linker
-	// Logger yapısal log hedefidir; nil ise loglar atılır.
+	// Logger is the structured log target; if nil the logs are discarded.
 	Logger *slog.Logger
-	// Now zaman kaynağıdır; nil ise time.Now kullanılır. Testler burayı sabit
-	// bir saatle doldurarak zamana bağlı dalları belirlenimci hâle getirir.
+	// Now is the time source; if nil time.Now is used. Tests fill this in
+	// with a fixed clock to make the time-dependent branches deterministic.
 	Now func() time.Time
 }
 
-// Service b2b modülünün public servisidir. Eşzamanlı kullanıma güvenlidir.
+// Service is the public service of the b2b module. It is safe for concurrent
+// use.
 type Service struct {
 	repo  Repository
 	links Linker
@@ -132,18 +146,18 @@ type Service struct {
 	now   func() time.Time
 }
 
-// New verilen bağımlılıklarla bir servis üretir.
+// New produces a service with the given dependencies.
 //
-// Eksik bir bağımlılık KURULUM anında hata döner. Link servisi olmadan modül
-// "sessizce yarım" çalışırdı: çalışan satırları yazılır, ama hiçbiri bir
-// müşteriye bağlanmaz ve eksiklik ancak vitrinde, hiçbir müşterinin şirketini
-// bulamamasıyla görünürdü.
+// A missing dependency returns an error at SETUP time. Without the link service
+// the module would run "silently half-done": the employee rows would be
+// written, but none of them bound to a customer, and the gap would only become
+// visible in the storefront, when no customer can find their company.
 func New(opts Options) (*Service, error) {
 	if opts.Repo == nil {
-		return nil, errors.Internal(CodeNotReady, "b2b servisi depo olmadan kurulamaz")
+		return nil, errors.Internal(CodeNotReady, "the b2b service cannot be set up without a repository")
 	}
 	if opts.Links == nil {
-		return nil, errors.Internal(CodeNotReady, "b2b servisi link servisi olmadan kurulamaz")
+		return nil, errors.Internal(CodeNotReady, "the b2b service cannot be set up without a link service")
 	}
 	log := opts.Logger
 	if log == nil {
@@ -156,7 +170,7 @@ func New(opts Options) (*Service, error) {
 	return &Service{repo: opts.Repo, links: opts.Links, log: log, now: now}, nil
 }
 
-// clock geçerli anı UTC olarak döner.
+// clock returns the current moment as UTC.
 func (s *Service) clock() time.Time {
 	return s.now().UTC()
 }

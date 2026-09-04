@@ -1,89 +1,90 @@
 package models
 
-// CustomerFilter müşteri listelemesine uygulanan süzgeçtir.
+// CustomerFilter is the filter applied to the customer listing.
 //
-// Alanların hepsi işaretçidir: nil "süzme" demektir, dolu bir işaretçi ise
-// değeri sıfır (boş dize, false) olsa bile gerçek bir süzgeçtir. İki durumu
-// ayırmayan bir tasarımda "hesabı olmayanları listele" isteği sessizce
-// "hepsini listele"ye dönerdi.
+// All of the fields are pointers: nil means "do not filter", while a non-nil
+// pointer is a real filter even when its value is the zero value (empty string,
+// false). In a design that does not separate the two cases, a "list the ones
+// without an account" request would silently turn into "list them all".
 type CustomerFilter struct {
-	// Email verilirse yalnızca bu e-postaya sahip müşteriler döner.
-	// Değer çağıran tarafından normalize edilmiş olmalıdır.
+	// Email, when given, returns only the customers holding this e-mail address.
+	// The value must have been normalized by the caller.
 	Email *string
-	// HasAccount verilirse misafir/kayıtlı ayrımına göre süzer.
+	// HasAccount, when given, filters by the guest/registered distinction.
 	HasAccount *bool
-	// GroupID verilirse yalnızca bu grubun üyeleri döner.
+	// GroupID, when given, returns only the members of this group.
 	GroupID *string
 }
 
-// CustomerPatch bir müşterinin kısmi güncellemesidir.
+// CustomerPatch is the partial update of a customer.
 //
-// nil alan "dokunma", dolu alan "bu değeri yaz" demektir; boş dize gerçek bir
-// temizlemedir. Metadata için nil aynı anlamı taşır: harita verilirse sütunun
-// TAMAMI değiştirilir, birleştirme yapılmaz.
+// A nil field means "do not touch", a non-nil field means "write this value";
+// an empty string is a real clearing. nil carries the same meaning for
+// Metadata: if a map is given, the WHOLE column is replaced, no merging is
+// done.
 type CustomerPatch struct {
-	// Email yeni e-postadır; çağıran tarafından normalize edilmiş olmalıdır.
+	// Email is the new e-mail; it must have been normalized by the caller.
 	Email *string
-	// FirstName yeni addır.
+	// FirstName is the new first name.
 	FirstName *string
-	// LastName yeni soyaddır.
+	// LastName is the new last name.
 	LastName *string
-	// Phone yeni telefondur.
+	// Phone is the new phone.
 	Phone *string
-	// Metadata yeni metadata haritasıdır; sütunun tamamını değiştirir.
+	// Metadata is the new metadata map; it replaces the whole column.
 	Metadata map[string]any
 }
 
-// CustomerGroupPatch bir müşteri grubunun kısmi güncellemesidir.
+// CustomerGroupPatch is the partial update of a customer group.
 //
-// nil alan "dokunma", dolu alan "bu değeri yaz" demektir. Metadata haritası
-// verilirse sütunun TAMAMI değiştirilir, birleştirme yapılmaz.
+// A nil field means "do not touch", a non-nil field means "write this value".
+// If a Metadata map is given, the WHOLE column is replaced, no merging is done.
 type CustomerGroupPatch struct {
-	// Name grubun yeni adıdır; çağıran tarafından kırpılmış olmalıdır ve
-	// canlı gruplar arasında benzersizdir.
+	// Name is the group's new name; it must have been trimmed by the caller and
+	// is unique among live groups.
 	Name *string
-	// Metadata yeni metadata haritasıdır; sütunun tamamını değiştirir.
+	// Metadata is the new metadata map; it replaces the whole column.
 	Metadata map[string]any
 }
 
-// AddressPatch bir adresin kısmi güncellemesidir.
+// AddressPatch is the partial update of an address.
 //
-// Varsayılan kargo/fatura işaretleri BİLİNÇLİ OLARAK burada yoktur: işaret
-// değiştirmek, müşterinin diğer adreslerini de ilgilendiren bir işlemdir ve
-// tek satırlık bir güncellemeyle yapılamaz (bkz. SetDefaultAddress).
+// The default shipping/billing flags are DELIBERATELY absent here: changing a
+// flag is an operation that concerns the customer's other addresses as well and
+// cannot be done with a single-row update (see SetDefaultAddress).
 type AddressPatch struct {
-	// FirstName yeni addır.
+	// FirstName is the new first name.
 	FirstName *string
-	// LastName yeni soyaddır.
+	// LastName is the new last name.
 	LastName *string
-	// Company yeni şirket adıdır.
+	// Company is the new company name.
 	Company *string
-	// Address1 adresin yeni ilk satırıdır.
+	// Address1 is the new first line of the address.
 	Address1 *string
-	// Address2 adresin yeni ikinci satırıdır.
+	// Address2 is the new second line of the address.
 	Address2 *string
-	// City yeni şehirdir.
+	// City is the new city.
 	City *string
-	// CountryCode yeni ülke kodudur; çağıran tarafından normalize edilmelidir.
+	// CountryCode is the new country code; it must be normalized by the caller.
 	CountryCode *string
-	// PostalCode yeni posta kodudur.
+	// PostalCode is the new postal code.
 	PostalCode *string
-	// Phone yeni telefondur.
+	// Phone is the new phone.
 	Phone *string
 }
 
-// DefaultKind bir adresin hangi tür varsayılan olarak işaretleneceğidir.
+// DefaultKind is which kind of default an address is to be marked as.
 type DefaultKind uint8
 
-// Varsayılan adresin türleri.
+// The kinds of the default address.
 const (
-	// DefaultShipping varsayılan kargo adresidir (sıfır değer).
+	// DefaultShipping is the default shipping address (the zero value).
 	DefaultShipping DefaultKind = iota
-	// DefaultBilling varsayılan fatura adresidir.
+	// DefaultBilling is the default billing address.
 	DefaultBilling
 )
 
-// String türün okunabilir adını döner.
+// String returns the readable name of the kind.
 func (k DefaultKind) String() string {
 	switch k {
 	case DefaultBilling:
@@ -95,11 +96,11 @@ func (k DefaultKind) String() string {
 	}
 }
 
-// Valid türün tanımlı olup olmadığını bildirir.
+// Valid reports whether the kind is defined.
 //
-// Tip dışa açıktır ve çağıran enum dışında bir değer kurabilir; böyle bir değer
-// sessizce kargoya düşseydi, istemci fatura adresini işaretlediğini sanırken
-// kargo adresini değiştirirdi.
+// The type is exported and a caller can construct a value outside the enum; if
+// such a value silently fell through to shipping, the client would be changing
+// the shipping address while believing it had marked the billing address.
 func (k DefaultKind) Valid() bool {
 	return k == DefaultShipping || k == DefaultBilling
 }

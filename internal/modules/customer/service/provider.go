@@ -9,11 +9,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/customer/models"
 )
 
-// Entity customer'ın Query katmanına açtığı entity adıdır.
-// Sağlayıcı container'a "customer" + query.ProviderSuffix adıyla kaydedilir.
+// Entity is the entity name customer opens to the Query layer.
+// The provider is registered in the container under the name "customer" +
+// query.ProviderSuffix.
 const Entity = "customer"
 
-// Sağlayıcının sunduğu alan adları.
+// The field names the provider offers.
 const (
 	fieldID         = "id"
 	fieldEmail      = "email"
@@ -27,7 +28,7 @@ const (
 	fieldUpdatedAt  = "updated_at"
 )
 
-// Sağlayıcının tanıdığı filtre adları.
+// The filter names the provider recognizes.
 const (
 	filterID         = "id"
 	filterEmail      = "email"
@@ -35,56 +36,59 @@ const (
 	filterGroupID    = "group_id"
 )
 
-// supportedFields sağlayıcının tanıdığı alanlardır; başka bir alan istenirse
-// errors.Invalid dönülür (ADR 0004: alan doğrulaması sağlayıcıya aittir).
+// supportedFields are the fields the provider recognizes; if another field is
+// requested errors.Invalid is returned (ADR 0004: field validation belongs to
+// the provider).
 var supportedFields = []string{
 	fieldID, fieldEmail, fieldFirstName, fieldLastName, fieldPhone,
 	fieldHasAccount, fieldGroupIDs, fieldMetadata, fieldCreatedAt, fieldUpdatedAt,
 }
 
-// supportedFilters sağlayıcının tanıdığı filtrelerdir.
+// supportedFilters are the filters the provider recognizes.
 var supportedFilters = []string{filterID, filterEmail, filterHasAccount, filterGroupID}
 
-// QueryProvider müşterileri Query katmanına açar (ADR 0004).
+// QueryProvider opens the customers to the Query layer (ADR 0004).
 //
-// # Neden grup kimlikleriyle birlikte
+// # Why together with the group ids
 //
-// Kayıtlar müşterinin GRUP KİMLİKLERİYLE döner. Bunun tüketicisi fiyat
-// hesabıdır: pricing'in kural bağlamı "customer_group_id" özniteliğine bakar
-// ve bir sepetin fiyatlanması için müşterinin hangi segmentlerde olduğu
-// bilinmelidir. Grup kimlikleri ayrı bir turda istenseydi bu, her müşteri için
-// ikinci bir çağrı demekti; Query'nin N+1 yasağı tam da bunu engellemek
-// içindir. Kimlikler müşteri başına değil, KÜME olarak tek sorguda getirilir.
+// Records are returned with the customer's GROUP IDS. The consumer of this is
+// the price computation: pricing's rule context looks at the
+// "customer_group_id" attribute, and for a cart to be priced it has to be known
+// which segments the customer is in. Had the group ids been requested in a
+// separate round, that would have meant a second call for every customer;
+// Query's ban on N+1 exists precisely to prevent this. The ids are fetched in a
+// single query for the whole SET, not per customer.
 //
-// Grup kimlikleri istenmiyorsa Fields ile dışarıda bırakılabilir; o durumda
-// üyelik sorgusu HİÇ çalıştırılmaz.
+// If the group ids are not wanted they can be left out with Fields; in that
+// case the membership query is NOT run at all.
 //
-// Arayüz internal/core/query'de tanımlıdır; bu tip yalnızca imzayı karşılar ve
-// çekirdeğe hiçbir şey bildirmez (ADR 0001'in sağlayıcı tarafı).
+// The interface is defined in internal/core/query; this type only satisfies the
+// signature and tells the core nothing (the provider side of ADR 0001).
 type QueryProvider struct {
 	svc *Service
 }
 
 var _ query.Provider = (*QueryProvider)(nil)
 
-// NewQueryProvider verilen servis üzerinde çalışan bir sağlayıcı üretir.
+// NewQueryProvider produces a provider working over the given service.
 func NewQueryProvider(svc *Service) *QueryProvider {
 	return &QueryProvider{svc: svc}
 }
 
-// Entity sağlayıcının sunduğu entity adını döner.
+// Entity returns the entity name the provider offers.
 func (p *QueryProvider) Entity() string { return Entity }
 
-// List kök müşteri kayıtlarını döner.
+// List returns the root customer records.
 //
-// Desteklenen filtreler: "id" (dize ya da dize dilimi), "email", "has_account",
-// "group_id". "id" filtresi DİĞERLERİYLE BİRLEŞTİRİLEMEZ — kesin bir kimlik
-// kümesi zaten adlandırılmışken ikinci bir süzgeç, çağıranın istediği kaydın
-// sessizce elenmesi demek olurdu ve sonuç boş dönerdi.
+// Supported filters: "id" (a string or a string slice), "email",
+// "has_account", "group_id". The "id" filter CANNOT BE COMBINED WITH THE
+// OTHERS — with an exact id set already named, a second filter would have meant
+// the record the caller asked for is silently eliminated and the result comes
+// back empty.
 //
-// Limit sıfır verilirse Query sözleşmesindeki "sınırsız" YERİNE modülün
-// varsayılan sayfa boyu uygulanır: sınırsız bir kök listesi tek istekte tüm
-// müşteri tablosunu belleğe alırdı.
+// If a zero limit is given, the module's default page size is applied INSTEAD
+// of the "unlimited" in the Query contract: an unlimited root listing would
+// pull the whole customer table into memory in a single request.
 func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]query.Record, error) {
 	if err := p.svc.ready(); err != nil {
 		return nil, err
@@ -99,8 +103,8 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	}
 
 	if ids != nil {
-		// Kimlik filtresi varsa sayfalama uygulanmaz: çağıran zaten kesin bir
-		// kümeyi adlandırmıştır.
+		// If there is an id filter, no pagination is applied: the caller has
+		// already named an exact set.
 		return p.fetch(ctx, ids, fields)
 	}
 
@@ -116,9 +120,11 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	return p.records(ctx, customers, fields)
 }
 
-// FetchByIDs verilen kimliklere karşılık gelen kayıtları TEK turda döner.
+// FetchByIDs returns the records corresponding to the given ids in a SINGLE
+// round.
 //
-// Bulunamayan kimlik için kayıt dönmez; bu bir hata değildir (ADR 0004).
+// No record is returned for an id that is not found; this is not an error
+// (ADR 0004).
 func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([]query.Record, error) {
 	if err := p.svc.ready(); err != nil {
 		return nil, err
@@ -130,7 +136,7 @@ func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([
 	return p.fetch(ctx, ids, normalized)
 }
 
-// fetch kimlik kümesini okuyup kayıtlara çevirir.
+// fetch reads the id set and converts it into records.
 func (p *QueryProvider) fetch(ctx context.Context, ids, fields []string) ([]query.Record, error) {
 	if len(ids) == 0 {
 		return []query.Record{}, nil
@@ -143,8 +149,8 @@ func (p *QueryProvider) fetch(ctx context.Context, ids, fields []string) ([]quer
 	return p.records(ctx, customers, fields)
 }
 
-// records müşterileri Query kayıtlarına çevirir; gerekiyorsa grup kimliklerini
-// TEK sorguyla toplu getirir.
+// records converts the customers into Query records; if needed it fetches the
+// group ids in bulk with a SINGLE query.
 func (p *QueryProvider) records(
 	ctx context.Context,
 	customers []models.Customer,
@@ -201,12 +207,12 @@ func (p *QueryProvider) records(
 	return records, nil
 }
 
-// groupIDs grup kimliklerini kayıt için hazırlar.
+// groupIDs prepares the group ids for the record.
 //
-// Hiç grubu olmayan müşteri için boş (nil olmayan) dilim döner; JSON'da null
-// yerine [] görünmesi tüketici için tek biçimli bir yüzeydir. Dilim ayrıca
-// KOPYALANIR: Query kayıtları sığ kopyalar ve dilimin kendisi paylaşılırsa
-// çağıranlar aynı arka diziyi görürdü.
+// For a customer with no groups an empty (non-nil) slice is returned; seeing []
+// instead of null in JSON is a uniform surface for the consumer. The slice is
+// also COPIED: Query records are shallow copies, and if the slice itself were
+// shared the callers would see the same backing array.
 func groupIDs(ids []string) []string {
 	if len(ids) == 0 {
 		return []string{}
@@ -214,11 +220,12 @@ func groupIDs(ids []string) []string {
 	return slices.Clone(ids)
 }
 
-// normalizeFields istenen alanları doğrular; boş liste TÜM alanlar demektir.
+// normalizeFields validates the requested fields; an empty list means ALL
+// fields.
 //
-// Kimlik alanı, istenmese bile listeye EKLENİR: Query kayıtları [query.IDField]
-// üzerinden birleştirir ve kimliksiz bir kayıt errors.KindInternal ile
-// sonuçlanırdı.
+// The id field is ADDED to the list even when it is not requested: Query joins
+// over [query.IDField] and a record without an id would have ended in
+// errors.KindInternal.
 func normalizeFields(fields []string) ([]string, error) {
 	if len(fields) == 0 {
 		return slices.Clone(supportedFields), nil
@@ -240,10 +247,11 @@ func normalizeFields(fields []string) ([]string, error) {
 	return out, nil
 }
 
-// splitFilters filtreleri kimlik kümesine ve süzgece ayırır.
+// splitFilters separates the filters into an id set and a filter.
 //
-// Kimlik filtresi yoksa nil kimlik dilimi döner. Boş bir dilim, nil'den AYRI
-// bir anlam taşır: "hiçbir kimlik" demektir ve boş sonuç döner.
+// If there is no id filter, a nil id slice is returned. An empty slice carries
+// a meaning SEPARATE from nil: it means "no id at all" and an empty result is
+// returned.
 func splitFilters(filters map[string]any) ([]string, models.CustomerFilter, error) {
 	var (
 		ids    []string
@@ -301,7 +309,7 @@ func splitFilters(filters map[string]any) ([]string, models.CustomerFilter, erro
 	return ids, filter, nil
 }
 
-// stringSet bir filtre değerini kimlik kümesine çevirir.
+// stringSet converts a filter value into an id set.
 func stringSet(name string, value any) ([]string, error) {
 	switch typed := value.(type) {
 	case string:
@@ -318,7 +326,7 @@ func stringSet(name string, value any) ([]string, error) {
 	}
 }
 
-// stringValue bir filtre değerini tek dizeye çevirir.
+// stringValue converts a filter value into a single string.
 func stringValue(name string, value any) (string, error) {
 	typed, ok := value.(string)
 	if !ok {
@@ -328,11 +336,13 @@ func stringValue(name string, value any) (string, error) {
 	return typed, nil
 }
 
-// clampToInt64 Query'nin int sayfalama değerini servisin int64 yüzeyine taşır.
+// clampToInt64 carries Query's int pagination value onto the service's int64
+// surface.
 //
-// Dönüşüm her platformda kayıpsızdır: int en fazla 64 bittir. Negatif değer
-// düzeltilmeden geçirilir ki normalizePaging onu REDDETSİN — sessizce sıfıra
-// çekmek, istemcinin hatalı isteğini gizlerdi.
+// The conversion is lossless on every platform: int is at most 64 bits. A
+// negative value is passed through without correction so that normalizePaging
+// REJECTS it — silently pulling it to zero would hide the client's faulty
+// request.
 func clampToInt64(n int) int64 {
 	return int64(n)
 }

@@ -6,80 +6,82 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/customer/models"
 )
 
-// DTO'lar domain modellerinden AYRI tutulur: JSON alan adları dış sözleşmedir
-// ve modelde yapılan bir yeniden adlandırma istemciyi kırmamalıdır.
+// The DTOs are kept SEPARATE from the domain models: JSON field names are the
+// external contract, and a rename made in the model must not break the client.
 
-// customerDTO bir müşterinin yanıt gövdesidir.
+// customerDTO is the response body of a customer.
 type customerDTO struct {
-	// ID müşterinin kimliğidir.
+	// ID is the customer's id.
 	ID string `json:"id"`
-	// Email müşterinin e-postasıdır (küçük harfe normalize edilmiş).
+	// Email is the customer's e-mail (normalized to lower case).
 	Email string `json:"email"`
-	// FirstName müşterinin adıdır.
+	// FirstName is the customer's first name.
 	FirstName string `json:"first_name"`
-	// LastName müşterinin soyadıdır.
+	// LastName is the customer's last name.
 	LastName string `json:"last_name"`
-	// Phone müşterinin telefonudur.
+	// Phone is the customer's phone.
 	Phone string `json:"phone"`
-	// HasAccount kaydın kayıtlı hesap mı misafir mi olduğunu bildirir.
+	// HasAccount reports whether the record is a registered account or a guest.
 	HasAccount bool `json:"has_account"`
-	// Metadata serbest yapısal bağlamdır; boşsa gövdede görünmez.
+	// Metadata is free structural context; if empty it does not appear in the
+	// body.
 	Metadata map[string]any `json:"metadata,omitempty"`
-	// CreatedAt oluşturulma anıdır (RFC3339, UTC).
+	// CreatedAt is the moment of creation (RFC3339, UTC).
 	CreatedAt time.Time `json:"created_at"`
-	// UpdatedAt son güncellenme anıdır (RFC3339, UTC).
+	// UpdatedAt is the moment of the last update (RFC3339, UTC).
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// customerGroupDTO bir müşteri grubunun yanıt gövdesidir.
+// customerGroupDTO is the response body of a customer group.
 type customerGroupDTO struct {
-	// ID grubun kimliğidir.
+	// ID is the group's id.
 	ID string `json:"id"`
-	// Name grubun adıdır.
+	// Name is the group's name.
 	Name string `json:"name"`
-	// Metadata serbest yapısal bağlamdır; boşsa gövdede görünmez.
+	// Metadata is free structural context; if empty it does not appear in the
+	// body.
 	Metadata map[string]any `json:"metadata,omitempty"`
-	// CreatedAt oluşturulma anıdır.
+	// CreatedAt is the moment of creation.
 	CreatedAt time.Time `json:"created_at"`
-	// UpdatedAt son güncellenme anıdır.
+	// UpdatedAt is the moment of the last update.
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// addressDTO bir müşteri adresinin yanıt gövdesidir.
+// addressDTO is the response body of a customer address.
 type addressDTO struct {
-	// ID adresin kimliğidir.
+	// ID is the address's id.
 	ID string `json:"id"`
-	// CustomerID adresin sahibi müşteridir.
+	// CustomerID is the customer that owns the address.
 	CustomerID string `json:"customer_id"`
-	// FirstName adresin üzerindeki addır.
+	// FirstName is the first name on the address.
 	FirstName string `json:"first_name"`
-	// LastName adresin üzerindeki soyaddır.
+	// LastName is the last name on the address.
 	LastName string `json:"last_name"`
-	// Company şirket adıdır.
+	// Company is the company name.
 	Company string `json:"company"`
-	// Address1 adresin ilk satırıdır.
+	// Address1 is the first line of the address.
 	Address1 string `json:"address_1"`
-	// Address2 adresin ikinci satırıdır.
+	// Address2 is the second line of the address.
 	Address2 string `json:"address_2"`
-	// City şehirdir.
+	// City is the city.
 	City string `json:"city"`
-	// CountryCode ISO 3166-1 alpha-2 ülke kodudur (BÜYÜK harf).
+	// CountryCode is the ISO 3166-1 alpha-2 country code (UPPER case).
 	CountryCode string `json:"country_code"`
-	// PostalCode posta kodudur.
+	// PostalCode is the postal code.
 	PostalCode string `json:"postal_code"`
-	// Phone iletişim telefonudur.
+	// Phone is the contact phone.
 	Phone string `json:"phone"`
-	// IsDefaultShipping varsayılan kargo adresi işaretidir.
+	// IsDefaultShipping is the default shipping address flag.
 	IsDefaultShipping bool `json:"is_default_shipping"`
-	// IsDefaultBilling varsayılan fatura adresi işaretidir.
+	// IsDefaultBilling is the default billing address flag.
 	IsDefaultBilling bool `json:"is_default_billing"`
-	// CreatedAt oluşturulma anıdır.
+	// CreatedAt is the moment of creation.
 	CreatedAt time.Time `json:"created_at"`
-	// UpdatedAt son güncellenme anıdır.
+	// UpdatedAt is the moment of the last update.
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// customerRequest müşteri oluşturma ve misafir kaydı gövdesidir.
+// customerRequest is the body of customer creation and of guest registration.
 type customerRequest struct {
 	Email     string         `json:"email"`
 	FirstName string         `json:"first_name"`
@@ -88,11 +90,12 @@ type customerRequest struct {
 	Metadata  map[string]any `json:"metadata"`
 }
 
-// updateCustomerRequest müşteri güncelleme gövdesidir.
+// updateCustomerRequest is the customer update body.
 //
-// Alanlar işaretçidir: verilmeyen alan "dokunma", verilen boş dize ise gerçek
-// bir temizleme anlamına gelir. İki durumu ayırmayan bir gövdede, adını
-// göndermeyen istemci adını silmiş olurdu.
+// The fields are pointers: a field that is not given means "do not touch",
+// while a given empty string means a real clearing. In a body that does not
+// separate the two cases, a client that does not send its name would have
+// deleted its name.
 type updateCustomerRequest struct {
 	Email     *string        `json:"email"`
 	FirstName *string        `json:"first_name"`
@@ -101,28 +104,29 @@ type updateCustomerRequest struct {
 	Metadata  map[string]any `json:"metadata"`
 }
 
-// groupRequest müşteri grubu oluşturma gövdesidir.
+// groupRequest is the customer group creation body.
 type groupRequest struct {
 	Name     string         `json:"name"`
 	Metadata map[string]any `json:"metadata"`
 }
 
-// updateGroupRequest müşteri grubu güncelleme gövdesidir.
+// updateGroupRequest is the customer group update body.
 //
-// Ad işaretçidir: verilmeyen ad "dokunma" demektir. Ad zorunlu bir alan olduğu
-// için verilirse boş olamaz; iki durumu ayırmayan bir gövdede yalnızca
-// metadata gönderen istemci grubun adını silmiş olurdu.
+// The name is a pointer: a name that is not given means "do not touch". Because
+// the name is a required field it cannot be empty when it is given; in a body
+// that does not separate the two cases, a client sending only metadata would
+// have deleted the group's name.
 type updateGroupRequest struct {
 	Name     *string        `json:"name"`
 	Metadata map[string]any `json:"metadata"`
 }
 
-// groupMemberRequest gruba müşteri ekleme gövdesidir.
+// groupMemberRequest is the body of adding a customer to a group.
 type groupMemberRequest struct {
 	CustomerID string `json:"customer_id"`
 }
 
-// addressRequest adresin oluşturma gövdesidir.
+// addressRequest is the address creation body.
 type addressRequest struct {
 	FirstName         string `json:"first_name"`
 	LastName          string `json:"last_name"`
@@ -137,10 +141,11 @@ type addressRequest struct {
 	IsDefaultBilling  bool   `json:"is_default_billing"`
 }
 
-// updateAddressRequest adresin güncelleme gövdesidir.
+// updateAddressRequest is the address update body.
 //
-// Varsayılan işaretleri BİLİNÇLİ OLARAK yoktur: işaret değiştirmek müşterinin
-// diğer adreslerini de ilgilendirdiği için ayrı uç noktalardan yapılır.
+// The default flags are DELIBERATELY absent: because changing a flag concerns
+// the customer's other addresses as well, it is done through separate
+// endpoints.
 type updateAddressRequest struct {
 	FirstName   *string `json:"first_name"`
 	LastName    *string `json:"last_name"`
@@ -153,7 +158,7 @@ type updateAddressRequest struct {
 	Phone       *string `json:"phone"`
 }
 
-// toCustomerDTO müşteriyi yanıt gövdesine çevirir.
+// toCustomerDTO converts the customer into the response body.
 func toCustomerDTO(c models.Customer) customerDTO {
 	return customerDTO{
 		ID:         c.ID,
@@ -168,7 +173,7 @@ func toCustomerDTO(c models.Customer) customerDTO {
 	}
 }
 
-// toGroupDTO grubu yanıt gövdesine çevirir.
+// toGroupDTO converts the group into the response body.
 func toGroupDTO(g models.CustomerGroup) customerGroupDTO {
 	return customerGroupDTO{
 		ID:        g.ID,
@@ -179,7 +184,7 @@ func toGroupDTO(g models.CustomerGroup) customerGroupDTO {
 	}
 }
 
-// toAddressDTO adresi yanıt gövdesine çevirir.
+// toAddressDTO converts the address into the response body.
 func toAddressDTO(a models.CustomerAddress) addressDTO {
 	return addressDTO{
 		ID:                a.ID,

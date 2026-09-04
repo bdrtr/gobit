@@ -1,67 +1,72 @@
 package models
 
-// CompanyFilter şirket listelemesine uygulanan süzgeçtir.
+// CompanyFilter is the filter applied to the company listing.
 //
-// Alanlar işaretçidir: nil "süzme" demektir, dolu bir işaretçi ise değeri boş
-// olsa bile gerçek bir süzgeçtir. İki durumu ayırmayan bir tasarımda boş bir
-// süzgeç değeri sessizce "hepsini listele"ye dönerdi.
+// The fields are pointers: nil means "do not filter", while a non-nil pointer
+// is a real filter even if its value is empty. In a design that did not
+// separate the two cases, an empty filter value would silently turn into "list
+// them all".
 type CompanyFilter struct {
-	// Email verilirse yalnızca bu e-postaya sahip şirketler döner. Değer
-	// çağıran tarafından normalize edilmiş olmalıdır ve BİRDEN ÇOK kayıt
-	// dönebilir: şirket e-postası benzersiz değildir.
+	// Email, if given, returns only the companies carrying this e-mail. The
+	// value has to be normalized by the caller and MORE THAN ONE record may
+	// come back: a company e-mail is not unique.
 	Email *string
 }
 
-// EmployeeFilter çalışan listelemesine uygulanan süzgeçtir.
+// EmployeeFilter is the filter applied to the employee listing.
 type EmployeeFilter struct {
-	// CompanyID verilirse yalnızca bu şirketin çalışanları döner.
+	// CompanyID, if given, returns only the employees of this company.
 	CompanyID *string
-	// IsCompanyAdmin verilirse yönetici/yönetici olmayan ayrımına göre süzer.
+	// IsCompanyAdmin, if given, filters on the admin / non-admin distinction.
 	IsCompanyAdmin *bool
 }
 
-// CompanyPatch bir şirketin kısmi güncellemesidir.
+// CompanyPatch is the partial update of a company.
 //
-// nil alan "dokunma", dolu alan "bu değeri yaz" demektir; boş dize adres
-// alanlarında gerçek bir temizlemedir (taşınan bir şirketin eski posta kodu
-// silinebilmelidir).
+// A nil field means "do not touch", a non-nil field means "write this value";
+// an empty string is a real clear on the address fields (the old postal code of
+// a company that has moved has to be removable).
 type CompanyPatch struct {
-	// Name şirketin yeni unvanıdır; verilirse boş olamaz.
+	// Name is the company's new trade name; if given it cannot be empty.
 	Name *string
-	// Email yeni e-postadır; çağıran tarafından normalize edilmiş olmalıdır.
+	// Email is the new e-mail; it has to be normalized by the caller.
 	Email *string
-	// Phone yeni telefondur.
+	// Phone is the new phone number.
 	Phone *string
-	// Address adresin yeni sokak satırıdır.
+	// Address is the new street line of the address.
 	Address *string
-	// City yeni şehirdir.
+	// City is the new city.
 	City *string
-	// PostalCode yeni posta kodudur.
+	// PostalCode is the new postal code.
 	PostalCode *string
-	// CountryCode yeni ülke kodudur; çağıran tarafından normalize edilmelidir.
+	// CountryCode is the new country code; it has to be normalized by the
+	// caller.
 	CountryCode *string
-	// CurrencyCode yeni para birimi kodudur; verilirse boş olamaz.
+	// CurrencyCode is the new currency code; if given it cannot be empty.
 	CurrencyCode *string
-	// SpendingLimitResetPeriod yeni sıfırlama aralığıdır.
+	// SpendingLimitResetPeriod is the new reset interval.
 	SpendingLimitResetPeriod *SpendingResetPeriod
 }
 
-// EmployeePatch bir çalışanın kısmi güncellemesidir.
+// EmployeePatch is the partial update of an employee.
 //
-// ŞİRKET DEĞİŞTİRME BİLİNÇLİ OLARAK YOKTUR: bir çalışanın şirketi değişiyorsa
-// bu, aynı kaydın güncellenmesi değil, eski kaydın kapanıp yenisinin açılması
-// demektir — harcama geçmişi eski şirkete aittir ve kaydı taşımak o geçmişi
-// sessizce yeni şirkete devrederdi.
+// CHANGING THE COMPANY IS DELIBERATELY ABSENT: if an employee's company
+// changes, that is not an update of the same record but the closing of the old
+// record and the opening of a new one — the spending history belongs to the old
+// company, and moving the record would silently hand that history over to the
+// new one.
 type EmployeePatch struct {
-	// SpendingLimit yeni harcama limitidir (minor unit).
+	// SpendingLimit is the new spending limit (minor unit).
 	//
-	// nil "dokunma" demektir; limiti SINIRSIZA çekmek için [EmployeePatch.ClearSpendingLimit]
-	// kullanılır. İki alan gerekir çünkü alanın kendisi de nil olabilir ve tek
-	// bir işaretçi "dokunma" ile "sınırsız yap"ı ayıramaz.
+	// nil means "do not touch"; to pull the limit up to UNLIMITED,
+	// [EmployeePatch.ClearSpendingLimit] is used. Two fields are needed
+	// because the field itself can be nil as well and a single pointer cannot
+	// separate "do not touch" from "make it unlimited".
 	SpendingLimit *int64
-	// ClearSpendingLimit doğruysa limit kaldırılır (çalışan sınırsız olur).
-	// SpendingLimit ile birlikte verilmesi anlamsızdır; servis reddeder.
+	// ClearSpendingLimit, if true, removes the limit (the employee becomes
+	// unlimited). Giving it together with SpendingLimit is meaningless; the
+	// service rejects it.
 	ClearSpendingLimit bool
-	// IsCompanyAdmin yönetici işaretinin yeni değeridir.
+	// IsCompanyAdmin is the new value of the admin flag.
 	IsCompanyAdmin *bool
 }

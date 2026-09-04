@@ -1,30 +1,32 @@
-// Package service customer modülünün iş mantığını barındırır.
+// Package service holds the business logic of the customer module.
 //
-// # Modüller arası yüzey (ADR 0001)
+// # Cross-module surface (ADR 0001)
 //
-// customer hiçbir modülü import ETMEZ ve hiçbir modülden veri OKUMAZ; bu yüzden
-// bu pakette tüketici tarafı bir arayüz yoktur. Ters yön vardır: cart (Faz 5) ve
-// order (Faz 6) müşteriye ihtiyaç duyar. O tarafın kendi paketinde dar bir
-// arayüz tanımlayabilmesi için customer'ın yüzeyi İKİYE ayrılmıştır:
+// customer IMPORTS no module and READS data from no module; there is therefore
+// no consumer-side interface in this package. The reverse direction exists:
+// cart (Phase 5) and order (Phase 6) need the customer. So that side can define
+// a narrow interface in its own package, customer's surface is split IN TWO:
 //
-//   - Modül içi zengin yüzey — [models] tiplerini kullanır ([Service.CreateCustomer],
-//     [Service.ListAddresses] …). Bu metotları yalnızca customer'ın kendi API
-//     katmanı ve query sağlayıcısı çağırır.
-//   - Modüller arası yüzey — YALNIZCA ilkel ve stdlib tipleri kullanır
-//     (bkz. interop.go).
+//   - The rich in-module surface — it uses the [models] types
+//     ([Service.CreateCustomer], [Service.ListAddresses] …). These methods are
+//     called only by customer's own API layer and its query provider.
+//   - The cross-module surface — it uses ONLY primitive and stdlib types
+//     (see interop.go).
 //
-// Ayrım zorunludur: Go'da yapısal uyum imza EŞİTLİĞİ ister. Tüketici modül
-// customer'ı import edemediği için [models.Customer] gibi bir tipi imzasında
-// adlandıramaz; adlandırdığı an kendi paketindeki farklı bir tip olur ve somut
-// servis arayüzü karşılamaz.
+// The split is mandatory: structural conformance in Go demands signature
+// EQUALITY. Because the consuming module cannot import customer, it cannot name
+// a type such as [models.Customer] in its signature; the moment it names one it
+// becomes a different type in its own package and the concrete service does not
+// satisfy it.
 //
-// # Misafir ve hesap
+// # Guest and account
 //
-// Modülün en önemli kararı e-posta benzersizliğinin misafirlerde
-// UYGULANMAMASIDIR; gerekçesi [models.Customer] godoc'unda yazılıdır. Servis
-// bu kuralı tekrar etmez — kural veritabanındaki kısmi benzersiz indekstedir ve
-// tekrarlansaydı iki eşzamanlı kayıt arasındaki yarışı yine indeks çözerdi.
-// Servisin işi, indeksin ürettiği çakışmayı ANLAŞILIR bir hataya çevirmektir.
+// The module's most important decision is that e-mail uniqueness is NOT
+// ENFORCED for guests; its rationale is written in the [models.Customer] godoc.
+// The service does not repeat this rule — the rule is in the partial unique
+// index in the database, and had it been repeated the race between two
+// concurrent records would still be resolved by the index. The service's job is
+// to turn the conflict the index produces into an UNDERSTANDABLE error.
 package service
 
 import (
@@ -36,45 +38,48 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/customer/models"
 )
 
-// Hata kodları; çağıran taraf errors.CodeOf ile bunlara bakabilir.
+// Error codes; the calling side can look at these with errors.CodeOf.
 const (
-	// CodeInvalidInput girdinin doğrulamadan geçmediğini bildirir.
+	// CodeInvalidInput reports that the input did not pass validation.
 	CodeInvalidInput = "customer_invalid_input"
-	// CodeCustomerNotFound istenen müşterinin bulunamadığını bildirir.
+	// CodeCustomerNotFound reports that the requested customer was not found.
 	CodeCustomerNotFound = "customer_not_found"
 )
 
-// Sayfalama sınırları. Limit verilmezse varsayılan uygulanır; aşırı büyük bir
-// limit reddedilir, böylece istemci tek istekle veritabanını tarayamaz.
+// Pagination limits. If no limit is given the default is applied; an
+// excessively large limit is rejected, so the client cannot scan the database
+// in a single request.
 const (
-	// DefaultLimit limit verilmediğinde uygulanan sayfa boyutudur.
+	// DefaultLimit is the page size applied when no limit is given.
 	DefaultLimit int64 = 50
-	// MaxLimit tek istekte istenebilecek en büyük sayfa boyutudur.
+	// MaxLimit is the largest page size that can be requested in a single
+	// request.
 	MaxLimit int64 = 100
 )
 
-// Page sayfalanmış bir liste sonucudur.
+// Page is a paginated list result.
 //
-// Limit ve Offset, isteğin ham değerleri değil UYGULANAN değerlerdir; API zarfı
-// bu alanları olduğu gibi yazar, böylece istemci varsayılana düşen bir limitten
-// haberdar olur.
+// Limit and Offset are not the request's raw values but the APPLIED values; the
+// API envelope writes these fields as they are, so the client is aware of a
+// limit that fell back to the default.
 type Page[T any] struct {
-	// Items geçerli sayfadaki kayıtlardır.
+	// Items are the records on the current page.
 	Items []T
-	// Count filtreye uyan TOPLAM kayıt sayısıdır (sayfa boyu değil).
+	// Count is the TOTAL number of records matching the filter (not the page
+	// size).
 	Count int64
-	// Limit uygulanan sayfa boyudur.
+	// Limit is the applied page size.
 	Limit int64
-	// Offset uygulanan atlama sayısıdır.
+	// Offset is the applied number of skipped records.
 	Offset int64
 }
 
-// Repository servisin ihtiyaç duyduğu veri erişim yüzeyidir.
+// Repository is the data access surface the service needs.
 //
-// Arayüz TÜKETEN tarafta (burada) tanımlıdır; somut uygulama
-// internal/modules/customer/repository paketindedir. Bu, ADR 0001'in
-// örüntüsünün modül İÇİNDEKİ karşılığıdır ve servisin veritabanı olmadan test
-// edilmesini sağlar.
+// The interface is defined on the CONSUMING side (here); the concrete
+// implementation is in the internal/modules/customer/repository package. This
+// is the IN-MODULE counterpart of ADR 0001's pattern and it lets the service be
+// tested without a database.
 type Repository interface {
 	CreateCustomer(ctx context.Context, c models.Customer) (models.Customer, error)
 	GetCustomer(ctx context.Context, id string) (models.Customer, error)
@@ -103,26 +108,27 @@ type Repository interface {
 	SetDefaultAddress(ctx context.Context, customerID, addressID string, kind models.DefaultKind, now time.Time) (models.CustomerAddress, error)
 }
 
-// Options servisin kurulum ayarlarıdır.
+// Options are the service's setup settings.
 type Options struct {
-	// Logger yapısal log hedefidir; nil ise loglar atılır.
+	// Logger is the structural log target; if nil the logs are discarded.
 	Logger *slog.Logger
-	// Now zaman kaynağıdır; nil ise time.Now kullanılır. Testler burayı sabit
-	// bir saatle doldurarak zamana bağlı dalları belirlenimci hâle getirir.
+	// Now is the time source; if nil time.Now is used. Tests fill this in with a
+	// fixed clock to make the time-dependent branches deterministic.
 	Now func() time.Time
 }
 
-// Service customer modülünün public servisidir. Eşzamanlı kullanıma güvenlidir.
+// Service is the customer module's public service. It is safe for concurrent
+// use.
 type Service struct {
 	repo Repository
 	log  *slog.Logger
 	now  func() time.Time
 }
 
-// New verilen depo üzerinde çalışan bir servis üretir.
+// New produces a service working over the given repository.
 //
-// repo nil ise bu, kurulumda değil ilk çağrıda tipli bir hata olarak bildirilir;
-// kurulum yolu panik üretmez.
+// If repo is nil this is reported as a typed error not at setup but on the
+// first call; the setup path produces no panic.
 func New(repo Repository, opts Options) *Service {
 	log := opts.Logger
 	if log == nil {
@@ -135,59 +141,62 @@ func New(repo Repository, opts Options) *Service {
 	return &Service{repo: repo, log: log, now: now}
 }
 
-// ready deponun kurulu olduğunu doğrular.
+// ready verifies that the repository is set up.
 func (s *Service) ready() error {
 	if s == nil || s.repo == nil {
-		return errors.Unavailable("customer_service_unconfigured", "customer servisi kurulmamış")
+		return errors.Unavailable("customer_service_unconfigured", "the customer service is not configured")
 	}
 	return nil
 }
 
-// clock geçerli anı UTC olarak döner.
+// clock returns the current moment as UTC.
 func (s *Service) clock() time.Time {
 	return s.now().UTC()
 }
 
-// CustomerInput bir müşterinin yazma girdisidir.
+// CustomerInput is the write input of a customer.
 //
-// Hem hesap oluşturmada ([Service.CreateCustomer]) hem misafir kaydında
-// ([Service.RegisterGuest]) kullanılır; ikisini ayıran şey girdi değil ÇAĞRILAN
-// METOTTUR. Ayrımın bir boolean alanla taşınmaması bilinçlidir: böyle bir alan,
-// yönetim ucuna gelen bir isteğin sessizce misafir kaydı açmasına izin verirdi.
+// It is used both in account creation ([Service.CreateCustomer]) and in guest
+// registration ([Service.RegisterGuest]); what separates the two is not the
+// input but the METHOD CALLED. Not carrying the distinction in a boolean field
+// is deliberate: such a field would let a request arriving at the admin
+// endpoint silently open a guest record.
 type CustomerInput struct {
-	// Email müşterinin e-posta adresidir; zorunludur, küçük harfe normalize
-	// edilerek saklanır.
+	// Email is the customer's e-mail address; it is required and stored folded
+	// to lower case.
 	Email string
-	// FirstName müşterinin adıdır; boş bırakılabilir.
+	// FirstName is the customer's first name; it can be left empty.
 	FirstName string
-	// LastName müşterinin soyadıdır; boş bırakılabilir.
+	// LastName is the customer's last name; it can be left empty.
 	LastName string
-	// Phone müşterinin telefonudur; boş bırakılabilir.
+	// Phone is the customer's phone; it can be left empty.
 	Phone string
-	// Metadata serbest yapısal bağlamdır; boş bırakılabilir.
+	// Metadata is free structural context; it can be left empty.
 	Metadata map[string]any
 }
 
-// CreateCustomer KAYITLI bir müşteri hesabı oluşturur.
+// CreateCustomer creates a REGISTERED customer account.
 //
-// E-posta zaten bir hesaba aitse errors.Conflict döner. Misafir kaydı için
-// [Service.RegisterGuest] kullanılır; ikisi arasındaki fark
-// [models.Customer.HasAccount] alanıdır ve benzersizlik kuralını da o belirler.
+// If the e-mail already belongs to an account errors.Conflict is returned. For
+// a guest record [Service.RegisterGuest] is used; the difference between the
+// two is the [models.Customer.HasAccount] field, and that also determines the
+// uniqueness rule.
 func (s *Service) CreateCustomer(ctx context.Context, in CustomerInput) (models.Customer, error) {
 	return s.createCustomer(ctx, in, true)
 }
 
-// RegisterGuest MİSAFİR bir müşteri kaydı oluşturur.
+// RegisterGuest creates a GUEST customer record.
 //
-// Aynı e-postayla daha önce misafir kaydı ya da kayıtlı bir hesap bulunması
-// engel DEĞİLDİR: misafir kaydı bir kimlik değil, tek seferlik bir alışverişin
-// iletişim bilgisidir (gerekçe için bkz. [models.Customer]). Vitrin bu yüzden
-// müşteriyi "bu e-posta kullanılıyor" diye geri çeviremez.
+// A guest record or a registered account already existing with the same e-mail
+// is NOT an obstacle: a guest record is not an identity but the contact
+// information of a one-off purchase (for the rationale see [models.Customer]).
+// The storefront therefore cannot turn the customer away with "this e-mail is
+// in use".
 func (s *Service) RegisterGuest(ctx context.Context, in CustomerInput) (models.Customer, error) {
 	return s.createCustomer(ctx, in, false)
 }
 
-// createCustomer iki kayıt yolunun ortak gövdesidir.
+// createCustomer is the common body of the two record paths.
 func (s *Service) createCustomer(ctx context.Context, in CustomerInput, hasAccount bool) (models.Customer, error) {
 	if err := s.ready(); err != nil {
 		return models.Customer{}, err
@@ -216,16 +225,16 @@ func (s *Service) createCustomer(ctx context.Context, in CustomerInput, hasAccou
 		return models.Customer{}, err
 	}
 
-	// E-posta hassas veridir ve loglanmaz (plan Bölüm 8); kimlik ve kayıt türü
-	// bir çağrının izini sürmeye yeter.
-	s.log.DebugContext(ctx, "müşteri oluşturuldu",
+	// The e-mail is sensitive data and is not logged (plan Section 8); the id and
+	// the record kind are enough to trace a call.
+	s.log.DebugContext(ctx, "customer created",
 		slog.String("customer_id", created.ID),
 		slog.Bool("has_account", created.HasAccount),
 	)
 	return created, nil
 }
 
-// GetCustomer kimliğe göre müşteri döner; yoksa errors.NotFound.
+// GetCustomer returns the customer by id; errors.NotFound if it does not exist.
 func (s *Service) GetCustomer(ctx context.Context, id string) (models.Customer, error) {
 	if err := s.ready(); err != nil {
 		return models.Customer{}, err
@@ -236,12 +245,13 @@ func (s *Service) GetCustomer(ctx context.Context, id string) (models.Customer, 
 	return s.repo.GetCustomer(ctx, id)
 }
 
-// GetCustomerByEmail e-postaya göre KAYITLI hesabı döner; yoksa errors.NotFound.
+// GetCustomerByEmail returns the REGISTERED account by e-mail; errors.NotFound
+// if it does not exist.
 //
-// Misafir kayıtları bilinçli olarak dışarıda bırakılır: aynı e-postayla birden
-// çok misafir olabildiği için sorunun misafirler arasında tek bir doğru yanıtı
-// yoktur. Misafir kayıtlarını görmek isteyen çağıran
-// [Service.ListCustomers]'ı e-posta süzgeciyle kullanır.
+// Guest records are deliberately left out: because there can be several guests
+// with the same e-mail, the question has no single right answer among the
+// guests. A caller who wants to see the guest records uses
+// [Service.ListCustomers] with the e-mail filter.
 func (s *Service) GetCustomerByEmail(ctx context.Context, email string) (models.Customer, error) {
 	if err := s.ready(); err != nil {
 		return models.Customer{}, err
@@ -253,22 +263,22 @@ func (s *Service) GetCustomerByEmail(ctx context.Context, email string) (models.
 	return s.repo.GetAccountByEmail(ctx, normalized)
 }
 
-// ListCustomersInput müşteri listelemesinin girdisidir.
+// ListCustomersInput is the input of the customer listing.
 type ListCustomersInput struct {
-	// Email verilirse yalnızca bu e-postaya sahip müşteriler döner
-	// (misafirler dâhil). Değer normalize edilerek uygulanır.
+	// Email, when given, returns only the customers holding this e-mail address
+	// (guests included). The value is applied normalized.
 	Email *string
-	// HasAccount verilirse misafir/kayıtlı ayrımına göre süzer.
+	// HasAccount, when given, filters by the guest/registered distinction.
 	HasAccount *bool
-	// GroupID verilirse yalnızca bu grubun üyeleri döner.
+	// GroupID, when given, returns only the members of this group.
 	GroupID *string
-	// Limit sayfa boyudur; 0 ise [DefaultLimit] uygulanır.
+	// Limit is the page size; if 0 [DefaultLimit] is applied.
 	Limit int64
-	// Offset atlanacak kayıt sayısıdır.
+	// Offset is the number of records to skip.
 	Offset int64
 }
 
-// ListCustomers süzgeçlenmiş ve sayfalanmış müşteri listesini döner.
+// ListCustomers returns the filtered and paginated customer list.
 func (s *Service) ListCustomers(ctx context.Context, in ListCustomersInput) (Page[models.Customer], error) {
 	if err := s.ready(); err != nil {
 		return Page[models.Customer]{}, err
@@ -301,27 +311,28 @@ func (s *Service) ListCustomers(ctx context.Context, in ListCustomersInput) (Pag
 	return Page[models.Customer]{Items: items, Count: total, Limit: limit, Offset: offset}, nil
 }
 
-// UpdateCustomerInput bir müşterinin kısmi güncelleme girdisidir.
+// UpdateCustomerInput is the partial update input of a customer.
 //
-// nil alan "dokunma", dolu alan "bu değeri yaz" demektir.
+// A nil field means "do not touch", a non-nil field means "write this value".
 type UpdateCustomerInput struct {
-	// Email yeni e-postadır; normalize edilerek yazılır.
+	// Email is the new e-mail; it is written normalized.
 	Email *string
-	// FirstName yeni addır.
+	// FirstName is the new first name.
 	FirstName *string
-	// LastName yeni soyaddır.
+	// LastName is the new last name.
 	LastName *string
-	// Phone yeni telefondur.
+	// Phone is the new phone.
 	Phone *string
-	// Metadata yeni metadata haritasıdır; sütunun tamamını değiştirir.
+	// Metadata is the new metadata map; it replaces the whole column.
 	Metadata map[string]any
 }
 
-// UpdateCustomer müşterinin verilen alanlarını günceller.
+// UpdateCustomer updates the given fields of the customer.
 //
-// Kayıtlı bir hesabın e-postası başka bir hesap tarafından kullanılıyorsa
-// errors.Conflict döner. [models.Customer.HasAccount] burada DEĞİŞTİRİLEMEZ;
-// misafirden hesaba geçiş için [Service.ConvertGuestToAccount] kullanılır.
+// If a registered account's e-mail is in use by another account
+// errors.Conflict is returned. [models.Customer.HasAccount] CANNOT BE CHANGED
+// here; for the guest-to-account transition [Service.ConvertGuestToAccount] is
+// used.
 func (s *Service) UpdateCustomer(ctx context.Context, id string, in UpdateCustomerInput) (models.Customer, error) {
 	if err := s.ready(); err != nil {
 		return models.Customer{}, err
@@ -350,7 +361,7 @@ func (s *Service) UpdateCustomer(ctx context.Context, id string, in UpdateCustom
 	return s.repo.UpdateCustomer(ctx, id, patch, s.clock())
 }
 
-// DeleteCustomer müşteriyi ve adreslerini soft delete ile siler.
+// DeleteCustomer deletes the customer and its addresses with a soft delete.
 func (s *Service) DeleteCustomer(ctx context.Context, id string) error {
 	if err := s.ready(); err != nil {
 		return err
@@ -361,16 +372,16 @@ func (s *Service) DeleteCustomer(ctx context.Context, id string) error {
 	return s.repo.DeleteCustomer(ctx, id, s.clock())
 }
 
-// ConvertGuestToAccount misafir kaydını kayıtlı hesaba çevirir.
+// ConvertGuestToAccount converts a guest record into a registered account.
 //
-// Kaydın e-postası zaten kayıtlı bir hesaba aitse errors.Conflict döner: iki
-// hesabın aynı e-postayı paylaşması, Faz 8'de gelecek "e-posta ile giriş"in
-// hangi kaydı seçeceğini bilememesi demekti. Kayıt zaten hesapsa da
-// errors.Conflict döner; sessiz bir no-op, çağırana dönüşümün gerçekleştiğini
-// söylerdi.
+// If the record's e-mail already belongs to a registered account
+// errors.Conflict is returned: two accounts sharing the same e-mail would have
+// meant the "log in with e-mail" arriving in Phase 8 cannot know which record
+// to pick. If the record is already an account errors.Conflict is returned as
+// well; a silent no-op would tell the caller the conversion had happened.
 //
-// Karar müşteri satırı KİLİTLİYKEN verilir ve kısmi benzersiz indeks son kapı
-// olarak kalır (bkz. repository.Repo.PromoteGuest).
+// The decision is made WHILE the customer row is LOCKED and the partial unique
+// index remains the last gate (see repository.Repo.PromoteGuest).
 func (s *Service) ConvertGuestToAccount(ctx context.Context, customerID string) error {
 	if err := s.ready(); err != nil {
 		return err
@@ -384,7 +395,7 @@ func (s *Service) ConvertGuestToAccount(ctx context.Context, customerID string) 
 		return err
 	}
 
-	s.log.InfoContext(ctx, "misafir hesaba çevrildi",
+	s.log.InfoContext(ctx, "guest converted to account",
 		slog.String("customer_id", converted.ID),
 	)
 	return nil

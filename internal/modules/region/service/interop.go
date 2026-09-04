@@ -4,32 +4,35 @@ import (
 	"context"
 )
 
-// Bu dosya region'ın MODÜLLER ARASI yüzeyidir (ADR 0001, ADR 0006).
+// This file is region's CROSS-MODULE surface (ADR 0001, ADR 0006).
 //
-// Buradaki imzalar YALNIZCA ilkel ve stdlib tipleri kullanır. Sebebi Go'nun
-// yapısal uyum kuralıdır: tüketici modül region'ı import edemediği için
-// imzasında models.Region gibi bir tipi adlandıramaz; adlandırdığı an o, kendi
-// paketinde tanımlı BAŞKA bir tip olur ve somut servis tüketicinin arayüzünü
-// karşılamaz. İlkel tiplerle yazılmış bir imza ise tüketicinin kendi paketinde
-// birebir tekrarlanabilir ve container'dan "region.service" adıyla çözülür.
+// The signatures here use ONLY primitive and stdlib types. The reason is Go's
+// structural conformance rule: since the consuming module cannot import region,
+// it cannot name a type such as models.Region in its signature; the moment it
+// names one, that becomes ANOTHER type defined in its own package and the
+// concrete service does not satisfy the consumer's interface. A signature
+// written with primitive types, on the other hand, can be repeated verbatim in
+// the consumer's own package and is resolved from the container under the name
+// "region.service".
 //
-// Modül içi zengin yüzey (models tipleriyle) service.go, country.go ve
-// currency.go'dadır; onu yalnızca region'ın kendi API katmanı ve query
-// sağlayıcısı çağırır.
+// The rich in-module surface (with the models types) is in service.go,
+// country.go and currency.go; only region's own API layer and its query
+// provider call it.
 //
-// Yüzey BİLİNÇLİ OLARAK dardır. Sepetin region'dan ihtiyaç duyduğu üç şey
-// vardır — ülkeden bölge bulmak, bölgenin para birimini öğrenmek, bölgenin
-// vergisini öğrenmek — ve dördüncüsü (bir kodun ondalık basamağı) sunum içindir.
-// Buraya eklenen her metot, region'ı ayrı bir servise çıkarmanın maliyetini
-// artırır.
+// The surface is DELIBERATELY narrow. There are three things the cart needs
+// from region — finding the region from the country, learning the region's
+// currency, learning the region's tax — and the fourth (the decimal digits of a
+// code) is for presentation. Every method added here raises the cost of moving
+// region out into a separate service.
 
-// RegionIDForCountry ülke kodundan bölge KİMLİĞİNİ döner.
+// RegionIDForCountry returns the region ID from the country code.
 //
-// Sepet oluşturma akışının ilk adımıdır: müşterinin ülkesi bilinir, sepetin
-// bağlanacağı bölge bulunur. Bölge bulunamazsa errors.NotFound döner ve kodu
-// hangi durumun geçerli olduğunu söyler (bkz. [Service.ResolveRegionForCountry]).
+// It is the first step of the cart creation flow: the customer's country is
+// known, the region the cart will be attached to is found. If no region is
+// found it returns errors.NotFound and its code says which situation is in
+// force (see [Service.ResolveRegionForCountry]).
 //
-// Tüketici tarafındaki karşılığı (Faz 5'te cart bunu tanımlayacaktır):
+// Its counterpart on the consumer side (cart will define this in Phase 5):
 //
 //	type RegionResolver interface {
 //	    RegionIDForCountry(ctx context.Context, countryCode string) (string, error)
@@ -42,20 +45,21 @@ func (s *Service) RegionIDForCountry(ctx context.Context, countryCode string) (s
 	return region.ID, nil
 }
 
-// RegionCurrency bölgenin para birimi kodunu ve ONDALIK BASAMAK sayısını döner.
+// RegionCurrency returns the region's currency code and its DECIMAL DIGIT
+// count.
 //
-// İkisi birlikte döner çünkü çağıranın ikisine de aynı anda ihtiyacı vardır ve
-// ayrı iki çağrı iki tur demek olurdu: kod, sepetin hangi para biriminde
-// tutulacağını; basamak sayısı ise minor unit tam sayının hangi çarpanla
-// gösterileceğini söyler (bkz. models.Currency.MinorUnitFactor). Basamak
-// sayısını bilmeyen bir sunum katmanı sabit 100 varsayar ve yen tutarlarını
-// yüz kat küçük gösterir.
+// The two come back together because the caller needs both at the same time and
+// two separate calls would mean two round trips: the code says which currency
+// the cart will be held in; the digit count says with which factor the minor
+// unit integer will be shown (see models.Currency.MinorUnitFactor). A
+// presentation layer that does not know the digit count assumes a fixed 100 and
+// shows yen amounts a hundred times too small.
 //
-// Bölge yoksa errors.NotFound döner. Bölge var ama para birimi referans
-// tablosunda yoksa da errors.NotFound döner; bu durum foreign key nedeniyle
-// normalde oluşamaz.
+// If the region does not exist it returns errors.NotFound. If the region exists
+// but the currency is not in the reference table it returns errors.NotFound as
+// well; because of the foreign key that situation normally cannot arise.
 //
-// Tüketici tarafındaki karşılığı:
+// Its counterpart on the consumer side:
 //
 //	type RegionCurrencyReader interface {
 //	    RegionCurrency(ctx context.Context, regionID string) (string, int32, error)
@@ -73,26 +77,27 @@ func (s *Service) RegionCurrency(ctx context.Context, regionID string) (code str
 	return currency.Code, currency.DecimalDigits, nil
 }
 
-// RegionTax bölgenin YEDEK vergi oranını (baz puan) ve verginin otomatik
-// uygulanıp uygulanmayacağını döner.
+// RegionTax returns the region's FALLBACK tax rate (basis points) and whether
+// the tax will be applied automatically.
 //
-// Faz 7'de tax modülü vergi hesabını DEVRALDI, ama bu metot KALDIRILMADI:
-// sepet akışı onu GERİ DÜŞÜŞ yolu olarak kullanmaya devam eder
-// (internal/workflows/cart, "Vergi kaynağı" başlığı). İki durumda çağrılır:
-// tax modülü hiç kayıtlı değilken, ve sepetin bölgesinden bir ÜLKE
-// çözülemediğinde — tax modülü ülkesiz hesap yapamaz.
+// In Phase 7 the tax module TOOK OVER the tax calculation, but this method was
+// NOT REMOVED: the cart flow goes on using it as the FALLBACK path
+// (internal/workflows/cart, the section on where the tax comes FROM). It is
+// called in two situations: when the tax module is not registered at all, and
+// when a COUNTRY cannot be resolved from the cart's region — the tax module
+// cannot compute without a country.
 //
-// Yani bu yüzey KALICIDIR. Kaldırılırsa, tax modülü olmadan çalışan bir kurulum
-// (ör. tek bölgeli küçük bir mağaza) vergiyi sessizce sıfırlar. Sözleşmeyi
-// derleyici denetlemediği için (ADR 0006) kaldırma kararı ancak
-// internal/workflows/cart okunarak verilebilir.
+// So this surface is PERMANENT. If it is removed, an installation that runs
+// without the tax module (e.g. a small single-region shop) silently zeroes the
+// tax. Since the compiler does not check the contract (ADR 0006), the decision
+// to remove it can only be made by reading internal/workflows/cart.
 //
-// Oran tam sayıdır ve baz puandır (2000 = %20): float bir oran, tutarla
-// çarpıldığında kuruş düzeyinde sessiz yuvarlama üretirdi (plan Bölüm 8).
-// Çağıran vergiyi "tutar * oran / 10000" biçiminde, tam sayı aritmetiğiyle
-// hesaplamalıdır.
+// The rate is an integer and it is in basis points (2000 = 20%): a float rate,
+// multiplied by an amount, would produce silent rounding at the cent level
+// (plan Section 8). The caller has to compute the tax in the form
+// "amount * rate / 10000", with integer arithmetic.
 //
-// Tüketici tarafındaki karşılığı:
+// Its counterpart on the consumer side:
 //
 //	type RegionTaxReader interface {
 //	    RegionTax(ctx context.Context, regionID string) (int32, bool, error)
@@ -105,13 +110,13 @@ func (s *Service) RegionTax(ctx context.Context, regionID string) (rateBps int32
 	return region.TaxRate, region.AutomaticTaxes, nil
 }
 
-// CurrencyDecimalDigits bir para birimi kodunun ondalık basamak sayısını döner.
+// CurrencyDecimalDigits returns the decimal digit count of a currency code.
 //
-// Elinde bölge değil yalnızca para birimi kodu olan çağıranlar içindir
-// (örn. sipariş kaydının para birimi). Bölgeden gidiliyorsa
-// [Service.RegionCurrency] tek çağrıda ikisini de verir.
+// It is for callers that hold only the currency code and not a region (e.g. the
+// currency of an order record). If you are going through the region,
+// [Service.RegionCurrency] gives both in a single call.
 //
-// Tüketici tarafındaki karşılığı:
+// Its counterpart on the consumer side:
 //
 //	type CurrencyReader interface {
 //	    CurrencyDecimalDigits(ctx context.Context, currencyCode string) (int32, error)

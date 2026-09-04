@@ -2,12 +2,12 @@ package models
 
 import "time"
 
-// Variant satılabilir tek bir üründür: sepete giren, stoğu tutulan ve
-// fiyatlanan birim ürün değil VARYANTTIR.
+// Variant is a single sellable product: what goes into the cart, what stock is
+// kept for and what gets priced is not the product but the VARIANT.
 //
-// Fiyat ve stok bu modülde durmaz; varyant kimliği üzerinden
-// "product_variant_price_set" ve "product_variant_inventory" link'leriyle
-// pricing ve inventory modüllerine bağlanır.
+// Price and stock do not live in this module; they are attached to the pricing
+// and inventory modules over the variant id, through the
+// "product_variant_price_set" and "product_variant_inventory" links.
 type Variant struct {
 	ID              string         `json:"id"`
 	ProductID       string         `json:"product_id"`
@@ -25,12 +25,12 @@ type Variant struct {
 	UpdatedAt       time.Time      `json:"updated_at"`
 	DeletedAt       *time.Time     `json:"deleted_at,omitempty"`
 
-	// OptionValues varyantı seçenek uzayında konumlandıran değerlerdir
-	// (örn. "Beden: S", "Renk: Kırmızı"); yalnızca istendiğinde doldurulur.
+	// OptionValues are the values that place the variant in the option space
+	// (e.g. "Size: S", "Color: Red"); filled only when asked for.
 	OptionValues []OptionValue `json:"option_values,omitempty"`
 }
 
-// Option bir ürünün seçenek eksenidir (örn. "Beden").
+// Option is an option axis of a product (e.g. "Size").
 type Option struct {
 	ID        string     `json:"id"`
 	ProductID string     `json:"product_id"`
@@ -40,30 +40,30 @@ type Option struct {
 	UpdatedAt time.Time  `json:"updated_at"`
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 
-	// Values seçeneğin alabileceği değerlerdir (örn. "S", "M", "L").
+	// Values are the values the option can take (e.g. "S", "M", "L").
 	Values []OptionValue `json:"values,omitempty"`
 }
 
-// OptionValue bir seçeneğin tek bir değeridir (örn. "S").
+// OptionValue is a single value of an option (e.g. "S").
 type OptionValue struct {
 	ID       string `json:"id"`
 	OptionID string `json:"option_id"`
 	Value    string `json:"value"`
 	Rank     int32  `json:"rank"`
-	// OptionTitle değerin ait olduğu seçeneğin başlığıdır. Varyantın seçenek
-	// değerleri okunurken doldurulur; "S" değeri tek başına anlamsızdır,
-	// "Beden: S" anlamlıdır.
+	// OptionTitle is the title of the option the value belongs to. It is filled
+	// while the option values of a variant are read; the value "S" on its own is
+	// meaningless, "Size: S" is meaningful.
 	OptionTitle string     `json:"option_title,omitempty"`
 	CreatedAt   time.Time  `json:"created_at,omitzero"`
 	UpdatedAt   time.Time  `json:"updated_at,omitzero"`
 	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
 }
 
-// OptionValueRef bir seçenek değerinin HANGİ ÜRÜNE ait olduğunu taşır.
+// OptionValueRef carries WHICH PRODUCT an option value belongs to.
 //
-// Varyanta değer bağlanırken değerin aynı ürünün seçeneğinden gelmesi
-// zorunludur; bu doğrulama tek toplu sorguyla yapılabilsin diye ürün kimliği
-// değerin yanında döner.
+// While a value is attached to a variant, the value has to come from an option
+// of the same product; the product id is returned next to the value so that
+// this check can be done with a single bulk query.
 type OptionValueRef struct {
 	OptionValue
 	ProductID string `json:"product_id"`
