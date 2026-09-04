@@ -566,19 +566,21 @@ func (f *fakeStore) LockReturn(ctx context.Context, id string) (models.Return, e
 	return ret, nil
 }
 
-// ReceiveReturn stamps the return as received.
-func (f *fakeStore) ReceiveReturn(ctx context.Context, id string) (models.Return, error) {
-	return f.stampReturn(ctx, id, models.ReturnReceived)
+// ReceiveReturn stamps the return as received at the given location.
+func (f *fakeStore) ReceiveReturn(
+	ctx context.Context, id, locationID string,
+) (models.Return, error) {
+	return f.stampReturn(ctx, id, models.ReturnReceived, locationID)
 }
 
 // CancelReturn withdraws the return request.
 func (f *fakeStore) CancelReturn(ctx context.Context, id string) (models.Return, error) {
-	return f.stampReturn(ctx, id, models.ReturnCanceled)
+	return f.stampReturn(ctx, id, models.ReturnCanceled, "")
 }
 
 // stampReturn writes the new status and the matching timestamp.
 func (f *fakeStore) stampReturn(
-	ctx context.Context, id string, status models.ReturnStatus,
+	ctx context.Context, id string, status models.ReturnStatus, locationID string,
 ) (models.Return, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -595,6 +597,7 @@ func (f *fakeStore) stampReturn(
 	switch status {
 	case models.ReturnReceived:
 		ret.ReceivedAt = &stamp
+		ret.ReceivedLocationID = locationID
 	case models.ReturnCanceled:
 		ret.CanceledAt = &stamp
 	case models.ReturnRequested:

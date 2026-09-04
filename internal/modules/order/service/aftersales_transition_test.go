@@ -12,6 +12,9 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/service"
 )
 
+// testLocationID is the warehouse the returned goods arrive at.
+const testLocationID = "sloc_main"
+
 // returnedOrder places an order and returns it with the id of its single line,
 // which carries a quantity of three.
 func returnedOrder(t *testing.T, e env) (order models.Order, lineID string) {
@@ -169,7 +172,7 @@ func TestAReturnCanBeReceived(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, models.ReturnRequested, ret.Status)
 
-	received, err := e.svc.ReceiveReturn(ctx, ret.ID)
+	received, err := e.svc.ReceiveReturn(ctx, ret.ID, testLocationID)
 	require.NoError(t, err)
 
 	assert.Equal(t, models.ReturnReceived, received.Status)
@@ -191,9 +194,9 @@ func TestASecondReceiveKeepsTheFirstMoment(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	first, err := e.svc.ReceiveReturn(ctx, ret.ID)
+	first, err := e.svc.ReceiveReturn(ctx, ret.ID, testLocationID)
 	require.NoError(t, err)
-	second, err := e.svc.ReceiveReturn(ctx, ret.ID)
+	second, err := e.svc.ReceiveReturn(ctx, ret.ID, testLocationID)
 	require.NoError(t, err, "a second receive is a no-op, not a conflict")
 
 	require.NotNil(t, second.ReceivedAt)
@@ -213,7 +216,7 @@ func TestAReceivedReturnCannotBeWithdrawn(t *testing.T) {
 		Lines:   []service.ReturnLineInput{{OrderLineItemID: lineID, Quantity: 1}},
 	})
 	require.NoError(t, err)
-	_, err = e.svc.ReceiveReturn(ctx, ret.ID)
+	_, err = e.svc.ReceiveReturn(ctx, ret.ID, testLocationID)
 	require.NoError(t, err)
 
 	_, err = e.svc.CancelReturn(ctx, ret.ID)
@@ -237,7 +240,7 @@ func TestACanceledReturnCannotBeReceived(t *testing.T) {
 	_, err = e.svc.CancelReturn(ctx, ret.ID)
 	require.NoError(t, err)
 
-	_, err = e.svc.ReceiveReturn(ctx, ret.ID)
+	_, err = e.svc.ReceiveReturn(ctx, ret.ID, testLocationID)
 
 	require.Error(t, err)
 	assert.Equal(t, service.CodeAfterSalesTransition, errors.CodeOf(err))
@@ -256,9 +259,61 @@ func TestATransitionTakesTheReturnsLock(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = e.svc.ReceiveReturn(ctx, ret.ID)
+	_, err = e.svc.ReceiveReturn(ctx, ret.ID, testLocationID)
 	require.NoError(t, err)
 
 	assert.Contains(t, e.store.lockedReturns, ret.ID,
 		"a transition that did not lock could be split by a second operator")
+}
+
+// TestReceivingRecordsWHERETheGoodsArrived is what makes restocking possible at
+// all.
+//
+// Putting stock back needs a destination and nothing else in the system knows
+// one: the order carries no location, and the reservation that knew one was
+// consumed when checkout confirmed it. The warehouse that shipped is not the
+// answer either — a customer may return to a different one.
+func TestReceivingRecordsWHERETheGoodsArrived(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	order, lineID := returnedOrder(t, e)
+
+	ret, err := e.svc.CreateReturn(ctx, service.CreateReturnInput{
+		OrderID: order.ID,
+		Lines:   []service.ReturnLineInput{{OrderLineItemID: lineID, Quantity: 1}},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, ret.ReceivedLocationID, "a requested return has arrived nowhere")
+
+	received, err := e.svc.ReceiveReturn(ctx, ret.ID, testLocationID)
+	require.NoError(t, err)
+
+	assert.Equal(t, testLocationID, received.ReceivedLocationID)
+}
+
+// TestReceivingWithoutALocationIsRefused keeps the record from claiming goods
+// arrived somewhere unnamed.
+//
+// A received return with no location cannot be restocked, so accepting one
+// would produce exactly the state this column was added to end — and it would
+// look like a successful receipt.
+func TestReceivingWithoutALocationIsRefused(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	order, lineID := returnedOrder(t, e)
+
+	ret, err := e.svc.CreateReturn(ctx, service.CreateReturnInput{
+		OrderID: order.ID,
+		Lines:   []service.ReturnLineInput{{OrderLineItemID: lineID, Quantity: 1}},
+	})
+	require.NoError(t, err)
+
+	_, err = e.svc.ReceiveReturn(ctx, ret.ID, "")
+
+	require.Error(t, err)
+	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
+
+	current, err := e.svc.GetReturn(ctx, ret.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.ReturnRequested, current.Status, "nothing may be stamped")
 }

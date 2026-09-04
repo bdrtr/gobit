@@ -25,9 +25,18 @@ import (
 //
 // A canceled return cannot be received: the request was withdrawn, and goods
 // arriving against a withdrawn request are a new request.
-func (s *Service) ReceiveReturn(ctx context.Context, returnID string) (models.Return, error) {
+func (s *Service) ReceiveReturn(
+	ctx context.Context, returnID, locationID string,
+) (models.Return, error) {
+	if err := requireID("location_id", locationID); err != nil {
+		return models.Return{}, err
+	}
+
 	return s.transitionReturn(ctx, returnID, "receiving",
-		models.ReturnStatus.ReceiveAction, s.store.ReceiveReturn)
+		models.ReturnStatus.ReceiveAction,
+		func(ctx context.Context, id string) (models.Return, error) {
+			return s.store.ReceiveReturn(ctx, id, locationID)
+		})
 }
 
 // CancelReturn withdraws the return request.
@@ -40,6 +49,15 @@ func (s *Service) CancelReturn(ctx context.Context, returnID string) (models.Ret
 	return s.transitionReturn(ctx, returnID, "canceling",
 		models.ReturnStatus.CancelAction, s.store.CancelReturn)
 }
+
+// WHERE the goods arrived is required, and it is required HERE rather than
+// derived, because nothing else in the system knows it.
+//
+// The order carries no location. The reservation knew one, but reservations are
+// CONFIRMED at checkout — which consumes them — and their identifiers are not
+// kept against the order. And deriving it from the warehouse that shipped would
+// be wrong rather than merely unavailable: a customer may return to a different
+// one, and the stock has to land where the goods actually are.
 
 // transitionReturn applies one transition under the record's lock.
 //

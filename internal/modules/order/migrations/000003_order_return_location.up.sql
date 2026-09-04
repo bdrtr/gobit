@@ -1,0 +1,30 @@
+-- received_location_id is WHERE the returned goods physically arrived.
+--
+-- # Why the destination cannot be derived
+--
+-- Putting stock back needs somewhere to put it, and nothing already on the
+-- order says where. The order carries no location at all; the reservation knew
+-- one, but reservations are CONFIRMED at checkout — which consumes them — and
+-- their identifiers are not kept against the order.
+--
+-- Deriving it from the location that shipped the order would also be wrong
+-- rather than merely unavailable: a customer may return to a different
+-- warehouse than the one that sent the parcel, and the stock has to land where
+-- the goods actually are.
+--
+-- So the destination is a fact about the RECEIVING, supplied by the person
+-- doing it, and it is stored next to received_at because the two describe the
+-- same moment.
+--
+-- # Why it is nullable
+--
+-- A return that has not been received has no location, and a NOT NULL column
+-- would force every requested return to name a warehouse it has not reached.
+-- The pairing is enforced where the transition is written, not here: a CHECK
+-- tying it to received_at would also have to hold for rows written before this
+-- column existed.
+--
+-- There is NO foreign key: stock locations belong to the inventory module
+-- (Principle 2.2).
+ALTER TABLE order_returns
+    ADD COLUMN IF NOT EXISTS received_location_id TEXT;

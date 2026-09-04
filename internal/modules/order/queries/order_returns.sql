@@ -41,7 +41,10 @@ FOR UPDATE;
 -- the ordering of two records depend on which machine wrote them.
 -- name: ReceiveOrderReturn :one
 UPDATE order_returns
-SET status = 'received', received_at = now(), updated_at = now()
+SET status = 'received',
+    received_at = now(),
+    received_location_id = sqlc.arg('received_location_id')::text,
+    updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 

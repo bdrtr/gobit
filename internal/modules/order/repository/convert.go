@@ -347,17 +347,18 @@ func toReturn(row orderdb.OrderReturn) (models.Return, error) {
 		return models.Return{}, err
 	}
 	return models.Return{
-		ID:           row.ID,
-		OrderID:      row.OrderID,
-		Status:       models.ReturnStatus(row.Status),
-		RefundAmount: row.RefundAmount,
-		Reason:       stringValue(row.Reason),
-		Note:         stringValue(row.Note),
-		Metadata:     meta,
-		ReceivedAt:   toTimePtr(row.ReceivedAt),
-		CanceledAt:   toTimePtr(row.CanceledAt),
-		CreatedAt:    toTime(row.CreatedAt),
-		UpdatedAt:    toTime(row.UpdatedAt),
+		ID:                 row.ID,
+		OrderID:            row.OrderID,
+		Status:             models.ReturnStatus(row.Status),
+		RefundAmount:       row.RefundAmount,
+		Reason:             stringValue(row.Reason),
+		Note:               stringValue(row.Note),
+		Metadata:           meta,
+		ReceivedAt:         toTimePtr(row.ReceivedAt),
+		ReceivedLocationID: stringValue(row.ReceivedLocationID),
+		CanceledAt:         toTimePtr(row.CanceledAt),
+		CreatedAt:          toTime(row.CreatedAt),
+		UpdatedAt:          toTime(row.UpdatedAt),
 	}, nil
 }
 

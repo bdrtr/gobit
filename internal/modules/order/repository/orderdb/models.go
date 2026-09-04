@@ -81,18 +81,19 @@ type OrderLineItem struct {
 }
 
 type OrderReturn struct {
-	ID           string
-	OrderID      string
-	Status       string
-	RefundAmount int64
-	Reason       *string
-	Note         *string
-	Metadata     []byte
-	ReceivedAt   pgtype.Timestamptz
-	CanceledAt   pgtype.Timestamptz
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
-	DeletedAt    pgtype.Timestamptz
+	ID                 string
+	OrderID            string
+	Status             string
+	RefundAmount       int64
+	Reason             *string
+	Note               *string
+	Metadata           []byte
+	ReceivedAt         pgtype.Timestamptz
+	CanceledAt         pgtype.Timestamptz
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	DeletedAt          pgtype.Timestamptz
+	ReceivedLocationID *string
 }
 
 type OrderReturnItem struct {

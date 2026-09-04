@@ -126,8 +126,12 @@ type Store interface {
 	// LockReturn locks the return row and returns its current form; it may only
 	// be called inside [Store.WithTx].
 	LockReturn(ctx context.Context, id string) (models.Return, error)
-	// ReceiveReturn stamps the return as received.
-	ReceiveReturn(ctx context.Context, id string) (models.Return, error)
+	// ReceiveReturn stamps the return as received AT a stock location.
+	//
+	// The location is the caller's because it cannot be derived: the order
+	// carries none, and the warehouse that shipped an order is not necessarily
+	// the one a customer returns to.
+	ReceiveReturn(ctx context.Context, id, locationID string) (models.Return, error)
 	// CancelReturn withdraws the return request.
 	CancelReturn(ctx context.Context, id string) (models.Return, error)
 

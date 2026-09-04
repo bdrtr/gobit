@@ -32,9 +32,14 @@ func (r *Repository) LockReturn(ctx context.Context, id string) (models.Return, 
 	return toReturn(row)
 }
 
-// ReceiveReturn stamps the return as received.
-func (r *Repository) ReceiveReturn(ctx context.Context, id string) (models.Return, error) {
-	row, err := r.queries(ctx).ReceiveOrderReturn(ctx, id)
+// ReceiveReturn stamps the return as received at the given location.
+func (r *Repository) ReceiveReturn(
+	ctx context.Context, id, locationID string,
+) (models.Return, error) {
+	row, err := r.queries(ctx).ReceiveOrderReturn(ctx, orderdb.ReceiveOrderReturnParams{
+		ID:                 id,
+		ReceivedLocationID: locationID,
+	})
 	if err != nil {
 		return models.Return{}, classify(err, codeQueryFailed, "could not receive the return record")
 	}

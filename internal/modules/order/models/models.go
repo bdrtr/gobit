@@ -367,6 +367,12 @@ type Return struct {
 	// ReceivedAt is the moment the goods were received; nil when they were not
 	// received.
 	ReceivedAt *time.Time
+	// ReceivedLocationID is WHERE the goods arrived; empty until they do.
+	//
+	// It is supplied by whoever receives them and cannot be derived: the order
+	// carries no location, and the one that shipped it is not necessarily the
+	// one the customer returned to. Putting stock back needs this.
+	ReceivedLocationID string
 	// CanceledAt is the moment the request was canceled; nil when it was not
 	// canceled.
 	CanceledAt *time.Time
