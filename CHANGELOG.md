@@ -12,6 +12,57 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Tarayıcı push bildirimi geldi** (`web-push` eklentisi) — ve sağlayıcı
+  yuvasına GİRMEDİ. Bu turun asıl bulgusu kodu değil, kararı değiştirdi.
+
+  **`NotificationProvider` sözleşmesi push'u ifade edemiyor.** `To string`
+  "e-posta adresi ya da telefon numarası" diye belgeli; push'un hedefi bir adres
+  değil, tarayıcının ürettiği ÜÇ değer (endpoint, P-256 açık anahtarı, 16
+  baytlık sır) ve çerçevenin onları SAKLAMIŞ olması gerekiyor. Yani soru
+  "hangi sağlayıcı" değil, "bu durum nerede yaşıyor"muş.
+
+  Karar 17 ajanlı bir tasarım turuyla verildi: dört keşif, üç bağımsız tasarım,
+  dokuz hasım yargı, bir sentez. Çekirdeği değiştiren iki tasarım 8/15, provider
+  yuvasına zorlayan 6/15 aldı; üç yargı merceği de eklentinin KENDİ MODÜLÜNÜ
+  getirmesinde birleşti (searchpg şekli). Çekirdekte **sıfır** satır değişti.
+  Tamamı ADR 0018'de, reddedilen altı seçenekle birlikte.
+
+  **En keskin gerekçe defterin yalan söyleyecek olmasıydı:** `Send` tek bir
+  `error` döner, yani sıfır cihaza fan-out `nil` döner ve defter `sent` yazar —
+  ve `ClaimDelivery` tekrar talebini önceki durumdan bağımsız atladığı için o
+  yalan `sent`, modülün kendi godoc'unun "insanın kararı olarak kalmalı" dediği
+  yeniden göndermeyi KALICI olarak kapatır.
+
+  **Kripto sıfır bağımlılıkla, RFC vektörüne karşı kanıtlandı.** RFC 8291
+  (şifreleme) ve 8292 (VAPID) `crypto/ecdh`, `crypto/hkdf`, `crypto/ecdsa` ve
+  `crypto/aes` ile yazıldı. Bu dosyadaki her hatanın AYNI belirtisi var: push
+  servisi 201 döner, tarayıcı açamadığı bir olay alır, hiçbir yerde arıza
+  görünmez. Bu yüzden beklenen değer kendi çıktımız değil, **RFC 8291
+  Appendix A vektörü** — ve birebir tutuyor. İki mutasyonla sınandı: `key_info`
+  içindeki anahtar sırası ters çevrildiğinde ve `FillBytes` yerine `Bytes`
+  kullanıldığında testler düşüyor (ikincisi ~256'da bir kısa imza üretir, yani
+  "ara sıra 401" diye görünen ve elle üretilemeyen bir arıza).
+
+  **401 bir aboneliği ASLA silmez, 410 siler.** Eklentinin en keskin kuralı.
+  410 "bu abonelik yok" demektir ve bunu söyleyebilecek tek yetkili kaynak push
+  servisidir. 401 ise jetonun reddi demektir — VAPID anahtarı döndüğünde ya da
+  saat kaydığında olur, HER cihazı aynı anda vurur ve onarılabilir. Silseydi,
+  biri anahtarı döndürdüğü öğleden sonra tüm cihaz defteri silinirdi ve sunucu
+  tarafından geri koymanın yolu yoktur; yalnızca tarayıcılar, teker teker.
+  Mutasyonla kanıtlandı.
+
+  Bunun bedeli görünmez bir mezarlık: 401 silmediği için dönmüş anahtarla
+  basılmış satırlar sonsuza dek kalır. Her satır hangi anahtarla basıldığını
+  (`vapid_fingerprint`) taşıyor; açılışta sayılıp ERROR loglanıyor ve gönderim
+  yolunda siliniyor — kendini boşaltan bir mezarlık, görünmeyenden iyidir.
+
+  **Yolda ölçülen iki şey:** `ChannelSMS` zaten tüketicisiz bir yetenek (tüm
+  ağaçta 5 referans, hiçbiri sağlayıcı değil), ve **eklenti migration'ları
+  hiçbir arch kapısında değil** — iki rollback testi de `moduleNames(t)`'i
+  geziyor, o da yalnızca `internal/modules/`'ü okuyor. searchpg'nin up/down
+  çiftini bugün hiçbir şey doğrulamıyor. Bu eklenti kendi rollback testini
+  taşıyor ve bu, ADR 0018'in şartı.
+
 - **Yüklemeler artık nesne deposuna gidebiliyor** (`file-s3` eklentisi).
   Kutudan çıkan `local` sağlayıcısı TEK süreç için doğrudur ve İKİ süreç için
   yanlıştır: dosya, yüklemeyi karşılayan örneğin diskine düşer ve başka örneğe

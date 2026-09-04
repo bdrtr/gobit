@@ -49,6 +49,7 @@ import (
 	"github.com/bdrtr/gobit/plugins/notificationsmtp"
 	"github.com/bdrtr/gobit/plugins/paymentstripe"
 	"github.com/bdrtr/gobit/plugins/searchpg"
+	"github.com/bdrtr/gobit/plugins/webpush"
 )
 
 // The path prefixes of the API surfaces. The guards, the rate limit and
@@ -101,11 +102,17 @@ const temporarySecretBytes = 32
 //
 // The catalog shows three different ways of extending. paymentstripe,
 // notificationsmtp and files3 register a PROVIDER into a module's registry (the
-// payment, notification and file modules' extension points); searchpg brings ITS OWN MODULE —
+// payment, notification and file modules' extension points); searchpg and
+// webpush bring THEIR OWN MODULE —
 // with its own table, its own migration and its own routes — and opens a new
 // endpoint (GET /store/v1/search) without being named anywhere except the line
 // below; errorsentry and errorotlp fill a slot the CORE owns, so they need no
 // module to exist at all.
+//
+// webpush is the second of that middle kind and it is there for a reason worth
+// naming: it looked like a provider and is not one. A push destination is a set
+// of devices the framework has to have STORED, not an address a caller hands
+// over, so the notification contract cannot express it (ADR 0018).
 //
 // The two provider plugins are not the same kind of thing, and the difference
 // is worth naming: paymentstripe is a SKELETON that returns an error from every
@@ -125,6 +132,7 @@ var pluginCatalog = map[string]func() coreplugin.Plugin{
 	notificationsmtp.Name: func() coreplugin.Plugin { return notificationsmtp.New() },
 	paymentstripe.Name:    func() coreplugin.Plugin { return paymentstripe.New() },
 	searchpg.Name:         func() coreplugin.Plugin { return searchpg.New() },
+	webpush.Name:          func() coreplugin.Plugin { return webpush.New() },
 }
 
 // describeAPI builds the OpenAPI document and runs it through the modules that
