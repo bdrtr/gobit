@@ -63,8 +63,8 @@ So the surface has to cover two classes, and they are not the same condition:
 
 **A. An `/admin/v1` endpoint.** Admin API routes are published by a module's
 `api` package and mounted through `module.Registry`; the rules that keep that
-honest (`TestHerModulBilesimKokundeKayitli`,
-`TestHTTPYuzeyleriYalnizcaApiPaketlerinde`) are written for the module tree.
+honest (`TestEveryModuleIsRegisteredInTheCompositionRoot`,
+`TestHTTPSurfacesLiveOnlyInApiPackages`) are written for the module tree.
 The saga engine is CORE and no module owns it. Publishing these rows would mean
 either inventing a "workflow module" — claiming a commerce module's identity,
 migrations ownership and interop name for a core component — or letting core

@@ -44,7 +44,7 @@
 // aranır). region için entity adı ile modül adı AYNIDIR ("region"), yani linki
 // bildiren modül ucu doğal biçimde yazabilir. Aşağıdaki tanım VARSAYIMSALDIR;
 // böyle bir link bugün yoktur ve eklenmesi ancak GEZEN bir okuyucusu varsa
-// doğrudur (bkz. internal/arch TestLinkTanimlariGeziliyor):
+// doğrudur (bkz. internal/arch TestTheLinkDefinitionsAreTraversed):
 //
 //	link.LinkDefinition{
 //	    Name:        "siparis_region",

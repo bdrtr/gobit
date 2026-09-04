@@ -18,7 +18,7 @@ import (
 //
 // # Neden bir smoke senaryosu, neden statik bir denetim değil
 //
-// internal/arch'taki [TestHerAkisBilesimKokundeKurulu] "akışların yapıcısı
+// internal/arch'taki [TestEveryWorkflowIsSetUpInTheCompositionRoot] "akışların yapıcısı
 // bileşim kökünde, main()'den erişilebilen bir yerde çağrılıyor" der ve
 // kaynakta okunabilecek şey budur. Çağrının KOŞUP koşmadığını statik analiz
 // yanıtlayamaz: kurulum bir koşulun ("if acik { … }") arkasına alındığında o

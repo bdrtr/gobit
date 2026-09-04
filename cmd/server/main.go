@@ -17,7 +17,7 @@
 // module's own tests cannot see it, because they build the module themselves.
 // The admin surface of Phase 8/9 and b2b's spending limit disappeared in
 // exactly this way. The requirement is therefore checked from the outside: see
-// internal/arch/kayit_test.go, TestHerModulBilesimKokundeKayitli.
+// internal/arch/registration_test.go, TestEveryModuleIsRegisteredInTheCompositionRoot.
 package main
 
 import (
@@ -328,7 +328,7 @@ func serve() error {
 // now exists: the migrate subcommands ([migrationSources]). Keeping the
 // registrations inline in [serve] would have forced them to keep a list of
 // their own, and a module added to one list and not the other is exactly the
-// failure internal/arch TestHerModulBilesimKokundeKayitli was written for —
+// failure internal/arch TestEveryModuleIsRegisteredInTheCompositionRoot was written for —
 // except that check reads THIS registry, so it would go on passing while
 // `migrate status` quietly stopped reporting an owner.
 //
@@ -427,7 +427,7 @@ func registerModules(registry *module.Registry, cfg config.Config, log *slog.Log
 	// producing a single error — that is, it would be yet another setting that
 	// breaks an installation silently. Turning it off in code cannot be done
 	// halfway either: the module registration check (internal/arch,
-	// TestHerModulBilesimKokundeKayitli) asks whoever deletes the line to write
+	// TestEveryModuleIsRegisteredInTheCompositionRoot) asks whoever deletes the line to write
 	// the decision down with its rationale.
 	//
 	// The cost of KEEPING the module in a B2C installation is small and

@@ -89,7 +89,7 @@ Sabitlenme `1.0.0` ile olur.
   kendisi yaptı (iddialar aynı dizelerden türüyor).
 
   **Test ADLARININ çevrilmesi ek bir bağ getiriyor:** depo tüm test adlarını
-  indeksliyor (`TestBelgelerdekiAtiflarCozuluyor`) ve markdown'da ters tırnak
+  indeksliyor (`TestTheReferencesInTheDocsResolve`) ve markdown'da ters tırnak
   içinde anılan bir ad çözülmezse arch suite'i düşer. Bu turda iki atıf
   güncellendi — `workflow_test.go`'nun pgstore testine yaptığı godoc atfı ve
   ADR 0017'nin tekellik ölçümünü anan satırı.
@@ -1035,8 +1035,8 @@ adımını YAZANLARI ilgilendiriyor.
 
   Panel bu adları ELLE yazmak zorunda (modülleri import edemez) ve ayrışmaları
   SESSİZDİR: link adı değiştiği gün panel derlenir, 200 döner ve yalnızca fiyat
-  sütunu boşalır. `TestPanelKatalogAdlariUyusuyor` bu bağı derleme zamanına
-  taşıyor — `TestSaglayiciKayitAdlariUyusuyor` ile aynı gerekçe, aynı yer.
+  sütunu boşalır. `TestThePanelCatalogNamesAgree` bu bağı derleme zamanına
+  taşıyor — `TestTheProviderRegistryNamesAgree` ile aynı gerekçe, aynı yer.
   Süzgeç ve alan adlarının çoğu sahibi modülde dışa açık olmadığı için
   pinlenemiyor; onların koruması okuma katmanının "tanımadığım alan" reddi ve
   bunun panelde 500'e çevrilmesi.
@@ -1148,8 +1148,8 @@ adımını YAZANLARI ilgilendiriyor.
 
 ### Değiştirildi
 
-- Kablolama değişmezi (`TestPanelBilesimKokundeKurulu`) ve modül-izolasyonu
-  denetimi (`TestPanelModulleriImportEtmez`) dördüncü ağacı da kapsıyor. Önek
+- Kablolama değişmezi (`TestTheAdminPanelIsSetUpInTheCompositionRoot`) ve modül-izolasyonu
+  denetimi (`TestTheAdminPanelDoesNotImportModules`) dördüncü ağacı da kapsıyor. Önek
   eşlemesi ağacın KÖKÜNÜ de kabul edecek şekilde düzeltildi: eskiden yalnızca
   alt paketleri görüyordu, yani kökte kurulan bir paket denetimin dışında
   kalırdı.
@@ -1215,7 +1215,7 @@ adımını YAZANLARI ilgilendiriyor.
   İçerik defteri 784 → 777, yol defteri 41 → 38.
 
 - ADR seçenek bölümü başlıklarını tanıyan liste İKİ DİLLİ oldu
-  (`internal/arch/belge_atiflari_test.go`). Yalnızca Türkçe başlık tanıyan
+  (`internal/arch/doc_references_test.go`). Yalnızca Türkçe başlık tanıyan
   kural, İngilizce yazılmış bir ADR'nin REDDEDİLMİŞ seçeneklerini bugünkü depo
   hakkında iddia sanar ve var olmayan sembolleri kırık bildirirdi.
 
@@ -1693,7 +1693,7 @@ aynen geçerlidir; model değişmedi. Değişen tek şey, modelin kapsamadığı
   DÜŞEN SİPARİŞTİR.
 
 - **Akış kurulumunu denetleyen mimari değişmez sözdizimsel bir VEKİLDİR ve
-  yanlış negatifi ÖLÇÜLDÜ.** `TestHerAkisBilesimKokundeKurulu`, "yanlış
+  yanlış negatifi ÖLÇÜLDÜ.** `TestEveryWorkflowIsSetUpInTheCompositionRoot`, "yanlış
   yapılandırma açılışı durdurabilir mi" sorusunu "kuruluma giden yol bir `go`
   ifadesinden geçiyor mu" diye sorar. `go` tek satırlık bir dolaylamanın
   arkasına saklandığında denetim GEÇER, oysa özellik sağlanmaz: gerçek süreçte
@@ -1701,7 +1701,7 @@ aynen geçerlidir; model değişmedi. Değişen tek şey, modelin kapsamadığı
   ikili sağlıklı açılıp arızayı tek bir ERROR satırına indiriyor. Vekil yine de
   tutuluyor çünkü YAKALADIĞI biçimler (çıplak `go`, kapanış, çok halkalı
   zincir) kazara yazılanlardır; kaçırdığı biçim bilerek yazılmayı gerektirir.
-  Kapsam `internal/arch/kayit_test.go`'da yazılıdır ve orada "bu değişmez
+  Kapsam `internal/arch/registration_test.go`'da yazılıdır ve orada "bu değişmez
   açılışın kapalı arızalandığını garanti eder" cümlesi bilinçli olarak
   kurulmuyor.
 
@@ -2125,7 +2125,7 @@ giriş denemesinde ya da görseller kaybolduğunda — görünmesiydi:
   ortam değişkeninin neden **eklenmediği** yazıldı: yanlışlıkla `false` verilen
   bir anahtar harcama limitini hiçbir hata üretmeden kaldırırdı — yani bu
   bölümün kapattığı sessiz arıza sınıfının yenisi olurdu. Kod yolu ise yarım
-  kalamıyor; `TestHerModulBilesimKokundeKayitli` satırı silen kişiden kararı
+  kalamıyor; `TestEveryModuleIsRegisteredInTheCompositionRoot` satırı silen kişiden kararı
   gerekçesiyle yazmasını istiyor. Modülü B2C kurulumda bırakmanın bedeli de
   küçük ve görünür: iki boş tablo ve hiç tetiklenmeyen bir kural.
 
@@ -2231,7 +2231,7 @@ Düşmanca bir güvenlik incelemesinin çıkardığı altı bulgu:
   açılan ayna" olsun diye bildirilmişti ve `ManyToMany` kardinalitesi tam da o
   ayna uğruna seçilmişti (tekillik zaten sütunda garantiliydi). Aynaya bakan
   bir okuyucu hiç çıkmadı: ne bir `query.Expansion`, ne bir modül API'si.
-  Bulan şey `internal/arch/tuketici_test.go`'daki `TestLinkTanimlariGeziliyor`
+  Bulan şey `internal/arch/consumers_test.go`'daki `TestTheLinkDefinitionsAreTraversed`
   değişmezidir — "üretilen her yeteneğin bir tüketicisi vardır" kuralının
   link yüzeyi. Aynı sınıfın önceki vakası ürün ↔ satış kanalı arızasıydı.
 

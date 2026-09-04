@@ -278,7 +278,7 @@ func TestEklentiAyariEksikseKurulumDurur(t *testing.T) {
 // çözer.
 //
 // Kayıt ADLA çözülür: eklenti de aynı adı kullanır ve iki adın uyumu
-// internal/arch/sabitler_test.go ile derleme zamanına bağlanmıştır.
+// internal/arch/constants_test.go ile derleme zamanına bağlanmıştır.
 func containerSaglayicilari() (*paymentsvc.ProviderRegistry, error) {
 	return container.Resolve[*paymentsvc.ProviderRegistry](kap, paymentmod.ProvidersName)
 }

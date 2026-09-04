@@ -1030,7 +1030,7 @@ func warnIfShutdownIsShorterThanTheSaga(ctx context.Context, cfg config.Config, 
 // runs the checkout flow's own Compensate functions, and those need the very
 // module services the server resolves. A second copy of this wiring would drift
 // the day a module was added to one and not the other — the failure class
-// TestHerModulBilesimKokundeKayitli exists for.
+// TestEveryModuleIsRegisteredInTheCompositionRoot exists for.
 type application struct {
 	// container holds every service, resolved by name (ADR 0001).
 	container *container.Container

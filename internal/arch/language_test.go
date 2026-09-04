@@ -204,7 +204,7 @@ const generatedMarker = "Code generated"
 //
 // The key is a repo-relative path, the value the exact substrings to ignore.
 // Line numbers are deliberately not used: they rot on the first edit, which is
-// the same reason [TestBelgelerdeSatirNumarasiAtfiYok] forbids pointing at a
+// the same reason [TestTheDocsCarryNoLineNumberReference] forbids pointing at a
 // line number from a document.
 //
 // # Who is in it, and who is not yet
@@ -614,7 +614,7 @@ func TestNoTurkishOutsideLedger(t *testing.T) {
 // CLEAN, and the line then hides the fact that the debt was paid, so the
 // remaining count overstates the work left and nobody notices the finish line.
 //
-// The shape is the one [bayatMuafiyetleriDenetle] already uses for the wiring
+// The shape is the one [checkStaleExemptions] already uses for the wiring
 // exemptions: an exemption is a debt, and a debt that has been paid must have
 // its record removed.
 func TestLedgerIsNotStale(t *testing.T) {

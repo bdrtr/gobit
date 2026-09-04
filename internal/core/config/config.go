@@ -199,7 +199,7 @@ const (
 // The values are the same as internal/core/db's OWN defaults and have to stay so:
 // the only job of these two constants is to preserve the behavior from before the
 // pool became configurable — an installation giving no environment variable opens
-// exactly today's pool. Drift is failed by TestHavuzVarsayilanlariDbIleUyusuyor
+// exactly today's pool. Drift is failed by TestThePoolDefaultsAgreeWithTheDbPackage
 // in internal/arch.
 //
 // The type is int32 because pgxpool's field is int32; since all of its neighbors

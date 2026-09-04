@@ -54,7 +54,7 @@ import (
 // It carries the same value as the payment module's ProvidersName constant but
 // does NOT import that package: the core may not import the modules (Principle
 // 2.4). The value is a contract; that the two agree is protected by
-// [TestSaglayiciKayitAdlariUyusuyor].
+// [TestTheProviderRegistryNamesAgree].
 const PaymentProvidersName = "payment.providers"
 
 // FulfillmentProvidersName is the container name of the shipping provider
@@ -80,7 +80,7 @@ const ErrorReporterName = "error.reporter"
 // contract ([github.com/bdrtr/gobit/internal/core/provider.FileProvider]) and
 // the registration point were written before the module that will consume
 // them. The name is therefore ONE-SIDED for now and
-// [TestSaglayiciKayitAdlariUyusuyor] can carry no assertion for it; a line must
+// [TestTheProviderRegistryNamesAgree] can carry no assertion for it; a line must
 // be added there when the file module arrives.
 const FileProvidersName = "file.providers"
 

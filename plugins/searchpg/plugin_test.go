@@ -24,7 +24,7 @@ import (
 // noktaları, adlar ve kurulumun neyi çözmediği.
 //
 // Eklenti hiçbir modülü import EDEMEZ (internal/arch
-// TestEklentilerModulleriImportEtmez) ve bu yasak test dosyalarını da kapsar;
+// TestPluginsDoNotImportModules) ve bu yasak test dosyalarını da kapsar;
 // bu yüzden burada gerçek product modülü YOKTUR. Katalog, container'a
 // "product.interop" adıyla konan sahte bir yüzeyle temsil edilir — çekirdek de
 // product'ı tam olarak böyle görür.

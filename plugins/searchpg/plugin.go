@@ -28,7 +28,7 @@
 //
 // # Hiçbir modülü import ETMEZ
 //
-// Eklenti product'ı import edemez (internal/arch TestEklentilerModulleriImportEtmez).
+// Eklenti product'ı import edemez (internal/arch TestPluginsDoNotImportModules).
 // Katalog kaydına, bu pakette tanımlı [StoreProductReader] dar arayüzüyle ve
 // container'dan ADLA ("product.interop") ulaşır; çözüm TEMBELDİR, çünkü Setup
 // anında hiçbir modül henüz ayağa kalkmamıştır (bkz. [katalog.coz]).

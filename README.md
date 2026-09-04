@@ -175,16 +175,16 @@ için uygular — yarın eklenen vaka sessizce dışarıda kalır.
 
 | Değişmez | Ne zorlar | Yaşanmış arıza |
 |---|---|---|
-| `TestHerModulBilesimKokundeKayitli` | `module.Module`'ü uygulayan her paket `cmd/server`'da kayıtlı | Faz 8/9'un tamamı yazılmıştı, testleri yeşildi, ve `/admin/v1/**` uçlarının **hiçbiri mount edilmemişti** |
-| `TestKayitliHerModulE2EZemindeKurulu` | Kayıtlı her modül e2e zemininde de kurulu | Kayıt satırının derlenmesi ile modülün gerçekten çalışması aynı şey değil |
-| `TestInteropYuzeylerininTuketicisiVar` | Kaydedilen her `*.interop` çözülüyor | Ölü sözleşme; `Host.AddModule` hiç çağrılmıyordu |
-| `TestOlayKonularininAbonesiVar` | Yayımlanan her konunun abonesi var | `order.placed` uzun süre abonesizdi ve olay hiçbir şey yapmıyordu |
-| `TestLinkTanimlariGeziliyor` | Bildirilen her bağ **okunuyor** | Satış kanalı bağı yazılıyor, hiç okunmuyordu. Bu test ilk koşuşunda **dört ölü bağ** buldu (bkz. CHANGELOG) |
+| `TestEveryModuleIsRegisteredInTheCompositionRoot` | `module.Module`'ü uygulayan her paket `cmd/server`'da kayıtlı | Faz 8/9'un tamamı yazılmıştı, testleri yeşildi, ve `/admin/v1/**` uçlarının **hiçbiri mount edilmemişti** |
+| `TestEveryRegisteredModuleIsSetUpInTheE2EHarness` | Kayıtlı her modül e2e zemininde de kurulu | Kayıt satırının derlenmesi ile modülün gerçekten çalışması aynı şey değil |
+| `TestTheInteropSurfacesHaveAConsumer` | Kaydedilen her `*.interop` çözülüyor | Ölü sözleşme; `Host.AddModule` hiç çağrılmıyordu |
+| `TestTheEventTopicsHaveASubscriber` | Yayımlanan her konunun abonesi var | `order.placed` uzun süre abonesizdi ve olay hiçbir şey yapmıyordu |
+| `TestTheLinkDefinitionsAreTraversed` | Bildirilen her bağ **okunuyor** | Satış kanalı bağı yazılıyor, hiç okunmuyordu. Bu test ilk koşuşunda **dört ölü bağ** buldu (bkz. CHANGELOG) |
 | `TestTheEnvExampleAgreesWithTheConfigDefaults` | Her `env` etiketi `.env.example`'da ve varsayılanı aynı | `.env.example` "aşağıdaki **iki** sınır" diyordu, yedi taneydi |
 | `TestNoVariableInTheEnvExampleIsOrphaned` | `.env.example`'da karşılığı olmayan değişken yok | Silinen ayarın belgede kalması, operatöre çalışmayan bir kol vaat eder |
 | `TestThePluginNamesInTheDocsAreReal` | Belgelerdeki eklenti adları kayıtlı adlar | README, eklentiyi dizin adıyla (tireli kayıt adı yerine) çağıran bir komut örneği veriyordu; kopyalayan kurulum açılışta "bilinmeyen eklenti" ile duruyordu |
-| `TestHataYanitlariTekYerdenYazilir` | Hata gövdesi yalnızca `corehttp.WriteError`'dan | GraphQL sunucusu kuralı tekrar etmeye çalışıp ayrıştı; DSN+parola istemciye ulaştı, loglanmadı |
-| `TestGraphQLSinirVarsayilanlariConfigleUyusuyor` | `graph.Options`'ın her `Max*` alanının çekirdekte karşılığı var | Beş sertleştirme sınırının ortam değişkeni yoktu; operatör onları ayarlayamıyordu |
+| `TestErrorResponsesAreWrittenInOnePlace` | Hata gövdesi yalnızca `corehttp.WriteError`'dan | GraphQL sunucusu kuralı tekrar etmeye çalışıp ayrıştı; DSN+parola istemciye ulaştı, loglanmadı |
+| `TestTheGraphQLLimitDefaultsAgreeWithTheConfig` | `graph.Options`'ın her `Max*` alanının çekirdekte karşılığı var | Beş sertleştirme sınırının ortam değişkeni yoktu; operatör onları ayarlayamıyordu |
 | `TestVariantReadsGoThroughTheChannelDecision` | Query'den `variant` okuyan her fonksiyon satış kanalı kapsamı hakkında **görünür bir karar** verir | Kapsam okuma yüzeyinde uygulanıyor, sepete ekleme yolunda uygulanmıyordu: B kanalının anahtarıyla A kanalının varyantı satın alınabiliyordu |
 
 Bu testlerin hepsi **mutasyonla doğrulanmıştır**: değişmez kasten bozulduğunda
@@ -1294,7 +1294,7 @@ vitrinde ise yalnızca dürüst istemcinin hatasını yakalar.
   **bilinçli olarak yoktur**: yanlışlıkla `false` verilen bir anahtar, harcama
   limitini hiçbir hata üretmeden kaldırır ve bu tam da kapatılmaya çalışılan
   sessiz arıza sınıfıdır. Kod yolu ise yarım kalamaz —
-  `TestHerModulBilesimKokundeKayitli` satırı silen kişiden kararı gerekçesiyle
+  `TestEveryModuleIsRegisteredInTheCompositionRoot` satırı silen kişiden kararı gerekçesiyle
   yazmasını ister. Modülü B2C kurulumda **bırakmanın** bedeli de küçüktür ve
   görünürdür: iki boş tablo ve hiçbir şirket kaydı olmadığı için asla
   tetiklenmeyen bir kural.
@@ -1586,13 +1586,13 @@ açıktır.
   container'dan adla çözüm, [ADR 0001](docs/adr/0001-modul-arasi-iletisim.md)'in
   kabul edilen bedelidir: ayrışan bir alan adı iki paketin birim testlerini de
   yeşil bırakır, uçları gerçek container üzerinden e2e'de birleşir.
-- **`TestHerAkisBilesimKokundeKurulu` sözdizimsel bir vekildir.** "Yanlış
+- **`TestEveryWorkflowIsSetUpInTheCompositionRoot` sözdizimsel bir vekildir.** "Yanlış
   yapılandırma açılışı durdurabilir mi" sorusunu "kuruluma giden yol bir `go`
   ifadesinden geçiyor mu" diye sorar; `go` tek satırlık bir dolaylamanın
   arkasına saklandığında denetim geçer, oysa özellik sağlanmaz (gerçek süreçte
   ölçüldü). Yakaladığı biçimler kazara yazılanlar, kaçırdığı biçim bilerek
   yazılması gerekendir — ama "açılış kapalı arızalanır" cümlesi bu değişmezden
-  ÇIKMAZ. Kapsam `internal/arch/kayit_test.go`'da yazılıdır.
+  ÇIKMAZ. Kapsam `internal/arch/registration_test.go`'da yazılıdır.
 - **Yük testi süreç içidir** (`make load-test`, `internal/e2e`): doğruluğu yük
   altında sınar, kapasite planı üretmez.
 
@@ -1659,9 +1659,9 @@ Güncel sürüm: **v0.8.0**. Değişiklikler için
   kiracılıdır ([ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md)) —
   ve aynı avın bulduğu gerçek açık, satış kanalı kuralının yazma yolunda
   uygulanmaması, kapatıldı. Belgeler de denetime girdi: godoc bağları ve
-  markdown atıfları çözülüyor (`TestGodocBaglariCozuluyor`,
-  `TestBelgelerdekiAtiflarCozuluyor`), satır numarasıyla atıf yasak
-  (`TestBelgelerdeSatirNumarasiAtfiYok`) ve para değişmezinin kör noktası
+  markdown atıfları çözülüyor (`TestTheGodocLinksResolve`,
+  `TestTheReferencesInTheDocsResolve`), satır numarasıyla atıf yasak
+  (`TestTheDocsCarryNoLineNumberReference`) ve para değişmezinin kör noktası
   kapandı (`TestMoneyIsAnInteger`). **Mağaza API'sinde kırıcı değişiklikler var.**
 - **v0.6.0** — çerçeve bir YÜZ ve bir KULAK kazandı. Yönetim paneli dördüncü bir
   ağaç olarak geldi ([ADR 0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md)),

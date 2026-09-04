@@ -1113,7 +1113,7 @@ func TestTheGraphQLLimitsCanBeRaised(t *testing.T) {
 // The knob has to be backward compatible: before these two variables existed the
 // process came up with 10/2, and the upgrade must not quietly grow the pool of an
 // installation that never opens its .env. That the value stays the same as the db
-// package's is bound separately by TestHavuzVarsayilanlariDbIleUyusuyor in internal/arch.
+// package's is bound separately by TestThePoolDefaultsAgreeWithTheDbPackage in internal/arch.
 func TestThePoolLimitsHaveFilledDefaults(t *testing.T) {
 	cfg := validConfig(t)
 

@@ -46,7 +46,7 @@
 // Örnek GERÇEKTİR: b2b modülü bu bağı bildirir ve çalışanın müşteri kaydını
 // ONUN ÜZERİNDEN okur. Okunmayan bir bağ bildirmek yerine sütun kullanmak
 // gerekir; bunun neden böyle olduğu için bkz. internal/arch
-// TestLinkTanimlariGeziliyor.
+// TestTheLinkDefinitionsAreTraversed.
 //
 // Burada entity adı ile modül adı aynıdır ("customer"), ama bu bir rastlantıdır
 // ve sağlayıcı adı [ProviderName] sabitinden okunmalıdır.

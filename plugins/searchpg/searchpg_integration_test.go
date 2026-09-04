@@ -10,7 +10,7 @@
 // gerçekten geri alınabilmesi ancak sunucunun kendisine sorularak görülür.
 //
 // Katalog burada da SAHTEDİR ve olmak zorundadır: eklenti hiçbir modülü import
-// edemez (internal/arch TestEklentilerModulleriImportEtmez) ve yasak test
+// edemez (internal/arch TestPluginsDoNotImportModules) ve yasak test
 // dosyalarını da kapsar. Yani bu dosya "indeks + uçlar gerçek veritabanında
 // çalışıyor" der; "product'ın JSON şeması bu sahteyle aynı" DEMEZ — o bağ
 // yalnızca uçtan uca bir kurulumda kanıtlanabilir (bkz. görev raporu).

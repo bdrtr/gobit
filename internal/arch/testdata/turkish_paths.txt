@@ -11,11 +11,6 @@ docs/adr/0008-musteri-kimligi-guven-siniri.md
 docs/adr/0009-cok-kiracililik-kurulum-siniri.md
 docs/adr/0010-depo-secim-politikasi.md
 docs/adr/0011-yonetim-paneli-dorduncu-agac.md
-internal/arch/belge_atiflari_test.go
-internal/arch/hatayolu_test.go
-internal/arch/kayit_test.go
-internal/arch/sabitler_test.go
-internal/arch/tuketici_test.go
 internal/e2e/coklu_depo_test.go
 internal/e2e/dosya_test.go
 internal/e2e/indirim_test.go

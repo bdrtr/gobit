@@ -21,7 +21,7 @@ import (
 // silent-divergence risk of the worst kind — rename a link and the screen still
 // compiles, still answers 200 and simply shows no price — so these are
 // EXPORTED and pinned against the modules' own constants at COMPILE time by
-// [TestPanelKatalogAdlariUyusuyor] in internal/arch, the only package allowed to
+// [TestThePanelCatalogNamesAgree] in internal/arch, the only package allowed to
 // import both sides.
 //
 // # What is NOT pinned

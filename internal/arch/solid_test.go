@@ -80,7 +80,7 @@ type resolveCall struct {
 // ADR 0001 says a consumer declares a narrow interface in its own package and
 // resolves the provider's concrete type from the container by name. The SUPPLY
 // half of that — "is every registered name consumed" — is checked by
-// [TestInteropYuzeylerininTuketicisiVar]; the CONSUMPTION half was not checked at all.
+// [TestTheInteropSurfacesHaveAConsumer]; the CONSUMPTION half was not checked at all.
 // Nothing stopped a module from resolving another module's *service.Service and
 // binding itself to that whole surface at once.
 //
