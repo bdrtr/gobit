@@ -10,6 +10,34 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+### Kararlar
+
+- **gobit bir KÜTÜPHANE olacak, kopyalanan bir şablon değil** (ADR 0025).
+
+  Bugün yapısal olarak şablon modeli ve bu bir tercih değil: 155.054 satırın
+  %100'ü `internal/` altında, yani hiçbir dış modül import edemiyor. Tek kullanım
+  yolu klonlayıp `cmd/server`'ı düzenlemek.
+
+  **Ölçüm, "gerekirse yeniden yazarız" sorusunu cevapladı: yeniden yazmak
+  gerekmiyor.** Kütüphane modelinin ihtiyaç duyduğu en küçük public küme —
+  modül sözleşmesi, sağlayıcı sözleşmeleri, olay yüzeyi, tipli hatalar,
+  container — **2.961 satır, yani kod tabanının %1,9'u**. Uzatma noktalarının
+  hepsi zaten var ve üretim yollarında çalışıyor; iş icat etmek değil, taşımak
+  ve adlandırmak. Yeniden yazmak yirmi dört ADR'yi, onları zorlayan arch
+  korumalarını ve ölçülerek varılmış her düzeltmeyi atıp aynı yere varmak olurdu.
+
+  Karar verilen: yön. **Karar verilmeyen: hangi paketlerin public olacağı** — ve
+  bütün risk orada, çünkü depo kuralı zaten biliyor: bir sözleşmeye giren alan
+  bir daha çıkarılamaz. Modül modelleri 7.058 satırla (%4,6) bu hareketin en
+  kalıcı kararı; on bir modülde zaten `metadata` map'i var, ki tam da bir
+  projenin modeli struct'ı değiştirmeden genişletebilmesi için.
+
+  Yüzeyin doğru olup olmadığının somut sınavı: `ecom-iyzico` bu deponun dışında,
+  yayımlanmış sözleşmelere karşı yazılabiliyor mu? Bugün yazılamıyor — `plugins/`
+  ağacı `internal` dışında ama içindeki her eklenti `internal/core/plugin`'i
+  import ediyor, yani depoda üçüncü tarafın eklenti yazamayacağı bir eklenti
+  sistemi var.
+
 ### Düzeltildi
 
 - **`docs/gaps.md`: okuma önbelleği maddesinin dayanağı ÖLÇÜMLE çürüdü.**
