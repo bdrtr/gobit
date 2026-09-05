@@ -153,10 +153,13 @@ Four sequencing facts govern the whole list:
 - **`authorized_at` and `refunded_at` do not exist.** A session can become
   `authorized` and nothing records when; `refunds` has no `refunded_at` and its
   `created_at` is the de-facto moment. Adding either is a schema decision.
-- **A dead subscription shipped in an example and nothing refused it.**
-  `examples/plugin` listened for `order.created`, a name no publisher emits. It
-  compiled, started, and would have stayed silent forever. Nothing in the
-  repository checks that a subscribed name has a publisher.
+- ~~**A dead subscription shipped in an example and nothing refused it.**~~
+  **Closed 2026-09-05.** `TestEverySubscribedTopicHasAPublisher` is the missing
+  half of the topic audit: the old one walked publish → subscribe, and the other
+  way is worse because it fails ENTIRELY silently — the handler registers, the
+  bus accepts it, and it never runs. The examples are scanned too, since they
+  are the files a customer project copies. Mutation-proved by restoring the
+  actual bug.
 
 ### F. Standing work
 

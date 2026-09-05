@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // This file enforces ONE invariant on three surfaces: EVERY PRODUCED CAPABILITY
@@ -1040,6 +1042,187 @@ func (a *sourceTree) linkUsages(declared map[string]string, queryPath string) ma
 				})
 			}
 		}
+	}
+
+	return out
+}
+
+// publisherlessSubscriptions are the topics whose PUBLISHER is not looked for.
+//
+// gobit is a library, so a subscription can legitimately wait for an event the
+// EMBEDDING APPLICATION publishes — the framework would then never publish it
+// and the subscription is still correct. That decision is written here, with
+// the topic name and its REASON; as long as it is not written, a subscription
+// to a name nobody publishes is a bug.
+var publisherlessSubscriptions = map[string]string{}
+
+// TestEverySubscribedTopicHasAPublisher is the missing half of
+// [TestTheEventTopicsHaveASubscriber].
+//
+// That test walks publish -> subscribe: a topic produced and listened to by
+// nobody. This one walks the other way, and the other way is worse, because it
+// fails ENTIRELY silently: a subscription to a name no publisher emits
+// compiles, starts, registers a handler on the bus and waits forever. The
+// plugin looks wired. Nothing errors, nothing logs, and the handler simply
+// never runs.
+//
+// It was not a hypothesis. examples/plugin — the module this repository
+// compiles to prove an outside author can write a plugin — listened for
+// "order.created" while the only order topic gobit publishes is
+// "order.placed". It built, it ran, it was the example a customer project
+// would copy, and no gate in the repository objected.
+//
+// # The examples are scanned too, and that is the point
+//
+// They are separate Go modules, so scanProductionSource does not reach them.
+// They are also the files most likely to be copied, which makes a wrong topic
+// name there worse than one in the framework: it is reproduced into every
+// project that starts from the example.
+//
+// # What is NOT checked, stated
+//
+// A subscription whose name cannot be resolved statically is skipped. The
+// core's plugin host forwards a subscription and carries the name as a
+// PARAMETER, which no constant resolution can follow, and erroring on it would
+// fail on the framework's own plumbing rather than on a mistake. The skip is
+// why the count below is asserted: a scan that resolved nothing would pass
+// having checked nothing.
+func TestEverySubscribedTopicHasAPublisher(t *testing.T) {
+	t.Parallel()
+
+	tree := scanProductionSource(t)
+	const eventbusPath = modulePath + "/core/eventbus"
+
+	published := map[string]bool{}
+	for _, site := range tree.calls["Publish"] {
+		if len(site.call.Args) < 2 {
+			continue
+		}
+		value := tree.eventLiteral(site, site.call.Args[1], eventbusPath)
+		if value == nil {
+			continue
+		}
+		for _, name := range tree.stringValues(site.file, site.fn, fieldExpr(value, "Name"), 0) {
+			published[name] = true
+		}
+	}
+	require.NotEmpty(t, published,
+		"no publish was resolved, so every subscription would be reported as dead.\n"+
+			"The publish surface must have changed; this test has to change with it.")
+
+	checked := 0
+	for _, site := range tree.calls["Subscribe"] {
+		if len(site.call.Args) == 0 {
+			continue
+		}
+		for _, name := range tree.stringValues(site.file, site.fn, site.call.Args[0], 0) {
+			checked++
+			assertTopicHasPublisher(t, name, published, tree.location(site.file, site.call.Pos()))
+		}
+	}
+
+	for _, subscription := range exampleSubscriptions(t) {
+		checked++
+		assertTopicHasPublisher(t, subscription.topic, published, subscription.where)
+	}
+
+	require.Positive(t, checked,
+		"not a SINGLE subscription name was resolved; the scan has gone blind.\n"+
+			"Every subscription would pass, including one to a topic nobody publishes — "+
+			"which is the failure this test exists for and the one that leaves no trace "+
+			"at run time.")
+
+	for _, name := range slices.Sorted(maps.Keys(publisherlessSubscriptions)) {
+		if published[name] {
+			t.Errorf("the %q topic is exempt in publisherlessSubscriptions but IS published.\n"+
+				"The reason for the exemption no longer holds; delete the entry — a dead "+
+				"exemption covers up the next real violation.", name)
+		}
+	}
+}
+
+// assertTopicHasPublisher reports a subscription to a topic nobody publishes.
+func assertTopicHasPublisher(t *testing.T, name string, published map[string]bool, where string) {
+	t.Helper()
+
+	if published[name] || publisherlessSubscriptions[name] != "" {
+		return
+	}
+
+	t.Errorf("%s: the %q topic is subscribed to but NO PRODUCTION FILE publishes it.\n"+
+		"This fails silently at run time: the handler is registered, the bus accepts it, "+
+		"and it never runs. Nothing errors and nothing logs — the feature is simply "+
+		"absent while everything looks wired.\n"+
+		"Either the name is a typo (gobit publishes \"order.placed\", not "+
+		"\"order.created\"), or the publisher is the EMBEDDING APPLICATION — in which "+
+		"case write the topic with its reason into publisherlessSubscriptions.",
+		where, name)
+}
+
+// exampleSubscription is one Subscribe call found in an example module.
+type exampleSubscription struct {
+	topic string
+	where string
+}
+
+// exampleSubscriptions finds the literal topic names the examples subscribe to.
+//
+// Only literals: the examples are meant to be readable, and a name assembled at
+// run time in one would be a worse problem than an unaudited one.
+func exampleSubscriptions(t *testing.T) []exampleSubscription {
+	t.Helper()
+
+	var out []exampleSubscription
+	for _, example := range outOfTreeExamples {
+		dir := filepath.Join(repoRoot, example.dir)
+		err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() || !strings.HasSuffix(path, ".go") ||
+				strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+
+			fset := token.NewFileSet()
+			parsed, parseErr := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+			if parseErr != nil {
+				return parseErr
+			}
+			relative, relErr := filepath.Rel(repoRoot, path)
+			if relErr != nil {
+				return relErr
+			}
+
+			ast.Inspect(parsed, func(node ast.Node) bool {
+				call, isCall := node.(*ast.CallExpr)
+				if !isCall || len(call.Args) == 0 {
+					return true
+				}
+				selector, isSelector := call.Fun.(*ast.SelectorExpr)
+				if !isSelector || selector.Sel.Name != "Subscribe" {
+					return true
+				}
+				literal, isLiteral := call.Args[0].(*ast.BasicLit)
+				if !isLiteral || literal.Kind != token.STRING {
+					return true
+				}
+				topic, quoteErr := strconv.Unquote(literal.Value)
+				if quoteErr != nil {
+					return true
+				}
+				out = append(out, exampleSubscription{
+					topic: topic,
+					where: fmt.Sprintf("%s:%d", filepath.ToSlash(relative),
+						fset.Position(call.Pos()).Line),
+				})
+
+				return true
+			})
+
+			return nil
+		})
+		require.NoError(t, err, "%s could not be walked", example.dir)
 	}
 
 	return out
