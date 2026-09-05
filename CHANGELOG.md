@@ -78,10 +78,45 @@ Sabitlenme `1.0.0` ile olur.
   yani sabiti sabitle karşılaştırıyordu. Artık numaranın kendi dizi kısmını
   okuyor.
 
-  Açık kalan: iletimin kendisi (bir eklentinin işi, ve gelen yok) ve siparişten
-  belge derleyen workflow — bugün çağıran bitmiş belgeyi gönderiyor, ki bu bir
-  dükkânın sipariş OLMAYAN bir şeyi (hizmet, elden satış) faturalamasını
-  sağlıyor ama satış için istenen tek tıklık yol henüz değil.
+- **Sipariş artık tek çağrıyla faturalanıyor** (`POST /admin/v1/orders/{id}/invoice`).
+
+  Derlemeyi bir WORKFLOW yapıyor, çünkü fatura modülü siparişi bilmiyor, sipariş
+  modülü de belgeyi (ADR 0001/0006). İlk yazımda workflow fatura modülünün
+  tiplerini import etmişti ve arch testi reddetti: bir workflow bir modülü İKİ
+  YÖNDE de import edemez. Fatura modülüne ilkel bir interop yüzeyi eklendi —
+  taviz değil, mekanizmanın kendisi.
+
+  İki taraf istek gövdesinden, satırlar siparişten geliyor ve bu ayrım keyfi
+  değil: satıcının hukuki bilgileri dükkânın kendi yapılandırması, alıcının VKN
+  ve vergi dairesi ise bu deponun müşteri modelinde HİÇ YOK. Tahmin eden bir
+  çerçeve, belgenin yanlış olmaması gereken tek yerinde yanlış belge üretirdi.
+  Alıcının e-postası siparişin bildiği tek alan, o dolduruluyor.
+
+  Kargo belgeye SATIR olarak giriyor, çünkü basılışı öyle. Toplamlar taşınmayı
+  atlatıyor: belgenin ara toplamı kargoyu taşıyor ve genel toplamı siparişin
+  toplamının aynısı kalıyor.
+
+  **İki kez kesmek ikinci numarayı harcamıyor.** Sipariş–fatura bağı önce
+  okunuyor ve var olan belge dönüyor; 201 yerine 200 ile, ki zaman aşımından
+  sonra yeniden deneyen bir istemci ilk denemesinin tuttuğunu anlayabilsin.
+  Kalan pencere iddia edilerek kapatılmadı, yazıldı: aynı anda basan iki operatör
+  ikisi de kesebilir, ve ikinci bağ kardinalite çakışması olarak REDDEDİLİR —
+  yani dükkâna, iki kimlikle birlikte, iptal edilecek bir belgesi olduğu
+  söylenir.
+
+  Uçtan uca test HTTP zincirini kanıtlıyor: sipariş modülü akışı konteynerden
+  ADLA çözüyor, akış fatura modülünün yüzeyini başka bir adla çözüyor, bağ
+  çekirdeğin link servisinden geçiyor. Adlardaki bir harf hatası derlenir ve
+  ilk istekte 500 döner; testi o harf hatasıyla koşturmak testi düşürüyor.
+
+  Seri ön ekinde rakam yasağı KALDIRILDI. İlk yazımda "üç harf" diye
+  kısıtlamıştım; entegratörler ayrışıyor, kuralın sahibi çerçeve değil ve
+  dükkânın kendi entegratörünün kabul ettiği bir ön eki reddetmek, dükkânın
+  etrafından dolaşamayacağı bir yanlış olurdu. Uzunluk kesin kaldı — onu numara
+  biçimi gerçekten sahipleniyor.
+
+  Açık kalan: iletimin kendisi. O bir eklentinin işi — tacirin sertifikasını ve
+  entegratör sözleşmesini gerektirir — ve gelen yok.
 
 - **Sipariş satırı artık hangi ORANDA vergilendiğini söylüyor** (`tax_rate_bps`).
 

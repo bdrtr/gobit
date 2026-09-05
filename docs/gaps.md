@@ -290,10 +290,28 @@ or a workflow, that composes the three.
    PostgreSQL and the fallback read has nothing left to run in. It is one
    `INSERT ... ON CONFLICT` statement now.
 
-   **Still open:** the transmission itself (a plugin's job, and none ships), and
-   a workflow that assembles a document FROM an order — today a caller sends the
-   finished document, which is what lets a shop invoice something that is not an
-   order at all, but is not yet the one-click path a shop wants for a sale.
+   **The order path landed too (2026-09-05).** `POST /admin/v1/orders/{id}/invoice`
+   assembles the document from the order and issues it; `GET` on the same path
+   says which document the order has. The assembling is a WORKFLOW, because the
+   invoice module knows no orders and the order module knows no documents.
+
+   Two parties come from the request body and the lines come from the order, and
+   the split is not arbitrary: the seller's legal details are the shop's own
+   configuration, and the buyer's tax number is not in this repository's
+   customer model at all. A framework that guessed them would produce a document
+   wrong in the one way a document must not be. The buyer's e-mail is the single
+   field the order does know, so it is filled in.
+
+   Issuing twice does NOT spend a second number: the order-to-invoice link is
+   read first and the existing document is returned, with a 200 instead of a 201
+   so a client that retried after a timeout can tell whether its first attempt
+   landed. The residual is written down rather than claimed away — two operators
+   pressing at the same instant can both issue, and the second binding is then
+   REFUSED as a cardinality conflict, so the shop is told, with both identifiers,
+   that it has a document to cancel.
+
+   **Still open:** the transmission itself. That is a plugin's job — it needs the
+   merchant's certificate and an integrator contract — and none ships.
 
    The original finding: every "fatura"
    in the codebase is a billing ADDRESS. For a shop selling in Turkey this is a

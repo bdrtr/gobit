@@ -121,6 +121,12 @@ const (
 	// this module cannot import that package (ADR 0006 holds in both
 	// directions).
 	returnFlowName = "workflows.returns.interop"
+	// invoicingFlowName is the invoicing flow's name in the container.
+	//
+	// The value is declared by internal/workflows/invoicing and REPEATED here
+	// for the same reason: this module cannot import that package (ADR 0006
+	// holds in both directions).
+	invoicingFlowName = "workflows.invoicing.interop"
 )
 
 // SpendingPolicyName is the container name of the service that publishes the
@@ -249,7 +255,9 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// The return flow is resolved at REQUEST TIME for the reason the spending
 	// rule is: a flow is born after the whole Register loop has finished, while
 	// the handler is built inside it.
-	m.handler = api.New(svc, &returnReceiving{c: c, log: log})
+	m.handler = api.New(svc,
+		&returnReceiving{c: c, log: log},
+		&invoicingFlow{c: c, log: log})
 	slog.Default().DebugContext(ctx, "order module registered",
 		"service", ServiceName, "interop", InteropName, "provider", ProviderName)
 	return nil
@@ -452,4 +460,62 @@ func (p *spendingPolicy) resolve(ctx context.Context) {
 		p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
 			"the %s module could not resolve the spending rule provider (%q)", ModuleName, SpendingPolicyName)
 	}
+}
+
+// invoicingFlow is the wrapper that resolves the invoicing flow ON FIRST USE.
+//
+// It fails CLOSED for the reason the return wrapper does, minus the ambiguity:
+// there is no second path to a document, so a missing flow can only mean the
+// order is not invoiced.
+type invoicingFlow struct {
+	c    *container.Container
+	log  *slog.Logger
+	once sync.Once
+	svc  api.Invoicing
+	err  error
+}
+
+// That the wrapper satisfies the surface the handler expects is pinned down at
+// compile time.
+var _ api.Invoicing = (*invoicingFlow)(nil)
+
+// IssueForOrder issues the document for the order, or returns the one it has.
+func (p *invoicingFlow) IssueForOrder(
+	ctx context.Context, orderID string, request json.RawMessage,
+) (invoiceID, number string, alreadyIssued bool, err error) {
+	p.once.Do(func() { p.resolve(ctx) })
+
+	if p.err != nil {
+		return "", "", false, p.err
+	}
+
+	return p.svc.IssueForOrder(ctx, orderID, request)
+}
+
+// InvoiceOfOrder returns the identity of the document bound to the order.
+func (p *invoicingFlow) InvoiceOfOrder(
+	ctx context.Context, orderID string,
+) (invoiceID, number, status string, err error) {
+	p.once.Do(func() { p.resolve(ctx) })
+
+	if p.err != nil {
+		return "", "", "", p.err
+	}
+
+	return p.svc.InvoiceOfOrder(ctx, orderID)
+}
+
+// resolve looks the flow up in the container and remembers the outcome.
+func (p *invoicingFlow) resolve(ctx context.Context) {
+	svc, err := container.Resolve[api.Invoicing](p.c, invoicingFlowName)
+	if err != nil {
+		p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
+			"the %s module could not resolve the invoicing flow (%q); an order cannot be "+
+				"invoiced without it", ModuleName, invoicingFlowName)
+
+		return
+	}
+
+	p.svc = svc
+	p.log.InfoContext(ctx, "invoicing flow bound", "flow", invoicingFlowName)
 }

@@ -100,4 +100,11 @@ func (h *Handler) Routes(r chi.Router) {
 	write.Post("/admin/v1/orders/{id}/claims", h.adminCreateClaim)
 	read.Get("/admin/v1/orders/{id}/claims/{claimId}", h.adminGetClaim)
 	write.Post("/admin/v1/orders/{id}/claims/{claimId}/settle", h.adminSettleClaim)
+
+	// Invoicing. The endpoints are on the ORDER because "invoice this order" is
+	// a question asked about an order and the client asking it holds an order
+	// id; the invoice module's own endpoint takes a finished document and knows
+	// nothing about orders.
+	write.Post("/admin/v1/orders/{id}/invoice", h.adminIssueInvoice)
+	read.Get("/admin/v1/orders/{id}/invoice", h.adminGetOrderInvoice)
 }

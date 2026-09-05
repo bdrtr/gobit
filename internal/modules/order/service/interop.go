@@ -376,3 +376,113 @@ func (i *Interop) OrderContactJSON(ctx context.Context, orderID string) (json.Ra
 		ItemCount:    strconv.Itoa(len(detail.Items)),
 	})
 }
+
+// interopInvoiceItem is one line of an order as an invoice has to print it.
+//
+// The amounts cross as NUMBERS rather than as strings, following
+// [interopOrderItem] on the way in: they are minor-unit integers on both sides
+// and a string would only add a parse that can fail.
+type interopInvoiceItem struct {
+	// Title is what was sold, as it was copied from the catalog when the order
+	// was placed. It is what the document prints.
+	Title string `json:"title"`
+	// Quantity is the count sold.
+	Quantity int64 `json:"quantity"`
+	// UnitPrice is the unit price (minor unit).
+	UnitPrice int64 `json:"unit_price"`
+	// Subtotal is UnitPrice x Quantity.
+	Subtotal int64 `json:"subtotal"`
+	// DiscountTotal is the discount on the line, carried positive.
+	DiscountTotal int64 `json:"discount_total"`
+	// TaxRateBps is the rate the line was charged at, in BASIS POINTS.
+	//
+	// It is the reason this surface exists at all. A document prints the rate of
+	// every line, and the rate cannot be recomputed from the amount: rounding
+	// down per line maps a range of rates onto one figure.
+	TaxRateBps int32 `json:"tax_rate_bps"`
+	// TaxTotal is the tax on the line.
+	TaxTotal int64 `json:"tax_total"`
+	// Total is Subtotal - DiscountTotal + TaxTotal.
+	Total int64 `json:"total"`
+}
+
+// interopInvoiceOrder is everything a document has to print about an order.
+//
+// # Why this surface is wider than OrderContactJSON
+//
+// [interopContact] is deliberately narrow and says so: a wide contract can
+// never be narrowed again. This one is wide because an invoice IS the order
+// restated — every field here is printed on the document, and a document
+// missing a line or a rate is not a narrower document, it is a wrong one.
+//
+// What it still leaves out is as deliberate: no customer id, no addresses, no
+// payment state. The buyer's legal identity on an invoice — the VKN or TCKN and
+// the tax office — is not in this repository's customer model at all, so the
+// caller supplies the two parties and this surface supplies what was sold.
+type interopInvoiceOrder struct {
+	// OrderID and DisplayID identify the sale on the document.
+	OrderID   string `json:"order_id"`
+	DisplayID int64  `json:"display_id"`
+	// CurrencyCode is the currency of every amount (ISO 4217).
+	CurrencyCode string `json:"currency_code"`
+	// Email is the contact on the order; it may be empty.
+	Email string `json:"email"`
+	// Status is where the order stands, so a caller can refuse to invoice one
+	// that was canceled without reading it a second time.
+	Status string `json:"status"`
+	// The order totals. ShippingTotal is separate here because the order keeps
+	// it separate; a document turns it into a LINE, which is how it is printed.
+	Subtotal      int64 `json:"subtotal"`
+	DiscountTotal int64 `json:"discount_total"`
+	TaxTotal      int64 `json:"tax_total"`
+	ShippingTotal int64 `json:"shipping_total"`
+	Total         int64 `json:"total"`
+	// Items are the lines, in the order they were written.
+	Items []interopInvoiceItem `json:"items"`
+}
+
+// OrderInvoiceJSON returns everything a document has to print about the order.
+//
+// The schema is defined in the [interopInvoiceOrder] documentation. When the
+// order does not exist (or has been soft deleted) errors.NotFound is returned;
+// when the identifier is empty, errors.Invalid.
+//
+// It does NOT decide whether the order may be invoiced. That is the caller's
+// question and the caller has the policy: a shop may invoice on payment, on
+// dispatch, or monthly, and one that invoices a canceled order is making a
+// mistake this surface cannot tell apart from a deliberate correction. The
+// status is reported so the caller can decide.
+func (i *Interop) OrderInvoiceJSON(ctx context.Context, orderID string) (json.RawMessage, error) {
+	detail, err := i.svc.GetOrder(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]interopInvoiceItem, 0, len(detail.Items))
+	for k := range detail.Items {
+		items = append(items, interopInvoiceItem{
+			Title:         detail.Items[k].Title,
+			Quantity:      detail.Items[k].Quantity,
+			UnitPrice:     detail.Items[k].UnitPrice,
+			Subtotal:      detail.Items[k].Subtotal,
+			DiscountTotal: detail.Items[k].DiscountTotal,
+			TaxRateBps:    detail.Items[k].TaxRateBps,
+			TaxTotal:      detail.Items[k].TaxTotal,
+			Total:         detail.Items[k].Total,
+		})
+	}
+
+	return json.Marshal(interopInvoiceOrder{
+		OrderID:       detail.ID,
+		DisplayID:     detail.DisplayID,
+		CurrencyCode:  detail.CurrencyCode,
+		Email:         detail.Email,
+		Status:        detail.Status.String(),
+		Subtotal:      detail.Subtotal,
+		DiscountTotal: detail.DiscountTotal,
+		TaxTotal:      detail.TaxTotal,
+		ShippingTotal: detail.ShippingTotal,
+		Total:         detail.Total,
+		Items:         items,
+	})
+}

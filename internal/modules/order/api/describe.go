@@ -138,6 +138,46 @@ func Describe(d *openapi.Doc) {
 	describeReturns(d)
 	describeExchanges(d)
 	describeClaims(d)
+	describeInvoicing(d)
+}
+
+// describeInvoicing describes the two endpoints that reach the invoicing flow.
+//
+// They are described HERE, with the order's other endpoints, because that is
+// where they are mounted: the client asking "invoice this order" is holding an
+// order id, and the document it gets back is the invoice module's shape.
+func describeInvoicing(d *openapi.Doc) {
+	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/invoice", openapi.Operation{
+		Summary: "Issues the invoice for the order, or returns the one it has.",
+		Description: "Issuing is a DECISION and nothing does it automatically: when a shop " +
+			"invoices — on payment, on dispatch, monthly for a corporate buyer — is a policy " +
+			"the framework does not make. " +
+			"A number is spent for good once it is taken, so a second call does NOT issue a " +
+			"second document: it returns the one the order already has, with " +
+			"\"already_issued\": true and a 200 instead of a 201. " +
+			"The two parties come from THIS BODY and the lines come from the order. The " +
+			"seller's legal details are the shop's own configuration and the buyer's tax " +
+			"number is not in this framework's customer model, so neither can be guessed; " +
+			"an empty buyer e-mail is filled in from the order. " +
+			"Carriage reaches the document as a LINE, because that is how it is printed.",
+		RequestBody: d.RequestBody(invoicingIssueRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("The document the order already had",
+				d.Item(invoiceIssuedDTO{})),
+			"201": openapi.Response("The issued document", d.Item(invoiceIssuedDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/invoice", openapi.Operation{
+		Summary: "Returns the identity of the invoice bound to the order.",
+		Description: "404 when the order has no invoice. It answers with the document's id, " +
+			"number and status rather than with the document: this endpoint answers a question " +
+			"about an ORDER, and the document itself is served by /admin/v1/invoices/{id}, " +
+			"where its shape lives.",
+		Responses: map[string]any{
+			"200": openapi.Response("The document's identity", d.Item(orderInvoiceDTO{})),
+		},
+	})
 }
 
 // describeReturns describes the return record endpoints.

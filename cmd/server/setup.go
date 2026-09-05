@@ -45,6 +45,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
+	invoicingwf "github.com/bdrtr/gobit/internal/workflows/invoicing"
 	returnswf "github.com/bdrtr/gobit/internal/workflows/returns"
 	"github.com/bdrtr/gobit/plugins/errorotlp"
 	"github.com/bdrtr/gobit/plugins/errorsentry"
@@ -225,7 +226,21 @@ func registerWorkflows(c *container.Container) error {
 			"the return workflow could not be set up")
 	}
 
-	return c.Provide(returnswf.InteropName, returnswf.NewInterop(returnWorkflow))
+	if err := c.Provide(returnswf.InteropName, returnswf.NewInterop(returnWorkflow)); err != nil {
+		return err
+	}
+
+	// The invoicing flow, on the same container and for the same reason. It is
+	// what turns an order into a document: the invoice module knows no orders
+	// and the order module knows no documents, so the assembling belongs here
+	// (ADR 0001/0006).
+	invoicingWorkflow, err := invoicingwf.FromContainer(c)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeFlowSetupFailed,
+			"the invoicing workflow could not be set up")
+	}
+
+	return c.Provide(invoicingwf.InteropName, invoicingwf.NewInterop(invoicingWorkflow))
 }
 
 // registerPanel builds the admin panel and binds its paths.

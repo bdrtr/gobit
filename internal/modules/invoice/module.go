@@ -39,12 +39,13 @@
 // # The surfaces it exposes
 //
 //   - "invoice.service" — the rich in-module surface.
+//   - "invoice.interop" — the PRIMITIVE surface the invoicing flow reads.
 //   - POST/GET /admin/v1/invoices, GET /admin/v1/invoices/{id},
 //     POST /admin/v1/invoices/{id}/status, GET /admin/v1/invoice-series.
 //
-// There is no storefront surface (see the api package) and no cross-module
-// interop surface: nothing else reads invoices today, and a contract opened
-// without a consumer can never be narrowed again.
+// There is no storefront surface (see the api package): a document is a record
+// between the shop and the tax authority, and what a customer receives is a
+// copy the shop sends them.
 package invoice
 
 import (
@@ -58,6 +59,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/db"
 	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/internal/core/link"
 	"github.com/bdrtr/gobit/internal/core/module"
 	"github.com/bdrtr/gobit/internal/core/openapi"
 	"github.com/bdrtr/gobit/internal/modules/invoice/api"
@@ -72,11 +74,24 @@ const ModuleName = "invoice"
 // ServiceName is the name of the module's service in the container.
 const ServiceName = ModuleName + ".service"
 
+// InteropName is the name of the module's PRIMITIVE cross-module surface.
+//
+// The invoicing flow resolves it by this name. It exists because a workflow may
+// not import a module in either direction (ADR 0006) — the narrow surface is
+// the mechanism, not a concession.
+const InteropName = ModuleName + ".interop"
+
 // svcDB is the name of the core database pool in the container.
 const svcDB = "core.db"
 
+// svcLink is the name of the core's Module Links service in the container.
+const svcLink = "core.link"
+
 // codeSetupFailed is returned when the module cannot be set up.
 const codeSetupFailed = "invoice_module_setup_failed"
+
+// codeLinkDefine is returned when a link definition cannot be declared.
+const codeLinkDefine = "invoice_module_link_define_failed"
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
@@ -132,6 +147,23 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 			"the %s module could not resolve the database pool (%q)", ModuleName, svcDB)
 	}
 
+	links, err := container.Resolve[link.LinkService](c, svcLink)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
+			"the %s module could not resolve the link service (%q)", ModuleName, svcLink)
+	}
+
+	// The link definitions are verified idempotently at startup (ADR 0005). A
+	// definition may be declared ONLY ONCE, so order_invoice is declared by this
+	// module and not by the order module — this is the side that writes the
+	// record the binding carries (see [service.LinkOrderInvoice]).
+	for _, def := range service.Definitions() {
+		if err := links.Define(ctx, def); err != nil {
+			return errors.Wrap(err, errors.KindOf(err), codeLinkDefine,
+				"the %q link definition could not be declared", def.Name)
+		}
+	}
+
 	log := m.opts.Logger.With("module", ModuleName)
 
 	svc := service.New(repository.New(pool.Pool()), service.Options{Logger: log})
@@ -139,11 +171,15 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	if err := c.Provide(ServiceName, svc); err != nil {
 		return err
 	}
+	if err := c.Provide(InteropName, service.NewInterop(svc)); err != nil {
+		return err
+	}
 
 	m.svc = svc
 	m.handler = api.New(svc)
 
-	log.DebugContext(ctx, "invoice module registered", "service", ServiceName)
+	log.DebugContext(ctx, "invoice module registered",
+		"service", ServiceName, "interop", InteropName)
 
 	return nil
 }

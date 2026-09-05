@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/invoice/models"
@@ -263,12 +262,25 @@ func (in IssueInput) validateAmounts() error {
 	return nil
 }
 
-// validatePrefix refuses a series prefix the regime would not accept.
+// validatePrefix refuses a series prefix the number format could not carry.
 //
-// The length and the letters-only rule are the Turkish e-fatura shape. They are
-// checked HERE rather than at transmission, because by transmission time the
-// number has already been spent: a document refused for its prefix would leave
-// the shop with a hole in the series it cannot fill.
+// It is checked HERE rather than at transmission, because by transmission time
+// the number has already been spent: a document refused for its prefix would
+// leave the shop with a hole in the series it cannot fill.
+//
+// # What is checked and what deliberately is not
+//
+// The LENGTH is firm: the format reserves exactly three characters, and a
+// two-character prefix produces a number of the wrong length whatever anyone
+// thinks of its content.
+//
+// The content is checked only for what the format itself cannot carry —
+// upper-case ASCII letters and digits. Refusing digits was the first version
+// and it was wrong: integrators differ on whether a series code may contain
+// them, the framework does not own that rule, and a framework that refused a
+// prefix the shop's own integrator accepts would be wrong in a way the shop
+// cannot work around. Lower case and anything outside ASCII stay refused,
+// because those the format really cannot carry.
 func validatePrefix(prefix string) error {
 	if len(prefix) != prefixLen {
 		return errors.Invalid(CodeInvalidInput,
@@ -276,9 +288,10 @@ func validatePrefix(prefix string) error {
 	}
 
 	for _, r := range prefix {
-		if !unicode.IsUpper(r) || !unicode.IsLetter(r) || r > unicode.MaxASCII {
+		alphanumeric := (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+		if !alphanumeric {
 			return errors.Invalid(CodeInvalidInput,
-				"the series prefix has to be upper-case ASCII letters: %q", prefix)
+				"the series prefix has to be upper-case ASCII letters or digits: %q", prefix)
 		}
 	}
 

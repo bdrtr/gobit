@@ -177,15 +177,19 @@ type ReturnReceiving interface {
 type Handler struct {
 	svc       Orders
 	receiving ReturnReceiving
+	invoicing Invoicing
 }
 
 // New produces the handler set that runs over the given service and flow.
 //
-// receiving may be nil; the endpoint that needs it then FAILS CLOSED rather
-// than falling back to the service method, because the fallback would stamp a
-// return as received and put no stock back.
-func New(svc Orders, receiving ReturnReceiving) *Handler {
-	return &Handler{svc: svc, receiving: receiving}
+// receiving and invoicing may be nil; the endpoints that need them then FAIL
+// CLOSED rather than falling back to something else. For receiving the fallback
+// would stamp a return as received and put no stock back; for invoicing there
+// is nothing to fall back TO — a document cannot be produced without the flow
+// that assembles it, and pretending otherwise would answer a caller who is
+// waiting for a legal document.
+func New(svc Orders, receiving ReturnReceiving, invoicing Invoicing) *Handler {
+	return &Handler{svc: svc, receiving: receiving, invoicing: invoicing}
 }
 
 // returnReceiving returns the flow; if it is not bound it returns an ERROR.
@@ -205,6 +209,20 @@ func (h *Handler) returnReceiving() (ReturnReceiving, error) {
 	}
 
 	return h.receiving, nil
+}
+
+// invoicingFlow returns the flow; if it is not bound it returns an ERROR.
+//
+// It fails CLOSED for a plainer reason than the receiving flow does: there is
+// no second path to a document. What the endpoint must not do is answer 200
+// with nothing, which is what a nil check placed further in would produce.
+func (h *Handler) invoicingFlow() (Invoicing, error) {
+	if h.invoicing == nil {
+		return nil, coreerrors.Internal(codeFlowUnavailable,
+			"the invoicing flow is not bound; an order cannot be invoiced without it")
+	}
+
+	return h.invoicing, nil
 }
 
 // --- envelopes and DTOs ------------------------------------------------------

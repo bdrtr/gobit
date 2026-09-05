@@ -133,7 +133,7 @@ func TestAnUnprintableRequestIsRefused(t *testing.T) {
 	tests := map[string]func(in *service.IssueInput){
 		"a two-letter prefix":     func(in *service.IssueInput) { in.SeriesPrefix = "GB" },
 		"a lower-case prefix":     func(in *service.IssueInput) { in.SeriesPrefix = "gbt" },
-		"a prefix with a digit":   func(in *service.IssueInput) { in.SeriesPrefix = "GB1" },
+		"a prefix with a symbol":  func(in *service.IssueInput) { in.SeriesPrefix = "GB-" },
 		"an unknown kind":         func(in *service.IssueInput) { in.Kind = "gift" },
 		"no currency":             func(in *service.IssueInput) { in.CurrencyCode = "" },
 		"no seller name":          func(in *service.IssueInput) { in.Seller.Name = "  " },
@@ -210,4 +210,21 @@ func TestFormatNumberIsTheOneFormatter(t *testing.T) {
 	assert.Equal(t, "GBT2026000000001", service.FormatNumber("GBT", 2026, 1))
 	assert.Equal(t, "GBT2026999999999", service.FormatNumber("GBT", 2026, 999_999_999))
 	assert.True(t, strings.HasPrefix(service.FormatNumber("ABC", 2030, 42), "ABC2030"))
+}
+
+// TestADigitInThePrefixIsAccepted holds a rule the framework does NOT own.
+//
+// The first version refused digits, on the reading that a series code is three
+// letters. Integrators differ, and a framework that refused a prefix the shop's
+// own integrator accepts would be wrong in a way the shop cannot work around.
+// The length stays firm, because that one the number format really does own.
+func TestADigitInThePrefixIsAccepted(t *testing.T) {
+	t.Parallel()
+
+	in := validIssue()
+	in.SeriesPrefix = "A1B"
+
+	issued, err := newService(newFakeRepo()).Issue(context.Background(), in)
+	require.NoError(t, err)
+	assert.Equal(t, "A1B2026000000001", issued.Number)
 }

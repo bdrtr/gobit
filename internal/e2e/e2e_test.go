@@ -143,6 +143,7 @@ import (
 	taxsvc "github.com/bdrtr/gobit/internal/modules/tax/service"
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
+	invoicingwf "github.com/bdrtr/gobit/internal/workflows/invoicing"
 )
 
 // postgresImage is the database image the tests share; the SAME version is used
@@ -727,6 +728,9 @@ func setUpHarness(ctx context.Context) error {
 	if orderWorkflows, setupErr = setUpCheckoutWorkflows(); setupErr != nil {
 		return fmt.Errorf("could not set up the order completion workflow: %w", setupErr)
 	}
+	if setupErr = setUpInvoicingWorkflow(); setupErr != nil {
+		return fmt.Errorf("could not set up the invoicing workflow: %w", setupErr)
+	}
 
 	if err := setUpRegionFixtures(ctx); err != nil {
 		return err
@@ -902,6 +906,24 @@ func setUpCheckoutWorkflows() (*checkoutwf.Workflows, error) {
 		return nil, err
 	}
 	return flows, nil
+}
+
+// setUpInvoicingWorkflow builds the invoicing flow and registers its surface.
+//
+// It is wired here because the flow is what the order module's invoice
+// endpoints resolve BY NAME at request time: without it those endpoints fail
+// closed, and the scenario that exercises them would be proving that the
+// failure path works rather than that invoicing does.
+//
+// The flow itself is not kept: nothing in these tests calls it directly. The
+// whole point of the scenario is that the call arrives over HTTP.
+func setUpInvoicingWorkflow() error {
+	flow, err := invoicingwf.FromContainer(ctr)
+	if err != nil {
+		return err
+	}
+
+	return ctr.Provide(invoicingwf.InteropName, invoicingwf.NewInterop(flow))
 }
 
 // setUpStockLocation prepares the single stock location the scenarios share.

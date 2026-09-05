@@ -44,7 +44,7 @@ func document(t *testing.T) (paths, components map[string]any) {
 	Describe(doc)
 
 	r := chi.NewRouter()
-	New(nil, nil).Routes(r)
+	New(nil, nil, nil).Routes(r)
 
 	raw, err := doc.Build(r)
 	require.NoError(t, err)
@@ -251,6 +251,21 @@ func describedEndpoints() []endpointExpectation {
 		{
 			method: http.MethodGet, path: "/admin/v1/orders/{id}/claims/{claimId}",
 			status: "200", response: filledClaim(),
+		},
+		{
+			// The issue endpoint answers 201 when it created the document and
+			// 200 when the order already had one. The 201 is the one this table
+			// checks; that both are described is what the document says.
+			method: http.MethodPost, path: "/admin/v1/orders/{id}/invoice", status: "201",
+			request: invoicingIssueRequest{}, response: invoiceIssuedDTO{
+				InvoiceID: "inv_1", Number: "GBT2026000000001", AlreadyIssued: false,
+			},
+		},
+		{
+			method: http.MethodGet, path: "/admin/v1/orders/{id}/invoice", status: "200",
+			response: orderInvoiceDTO{
+				InvoiceID: "inv_1", Number: "GBT2026000000001", Status: "issued",
+			},
 		},
 	}
 }
