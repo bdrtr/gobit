@@ -77,7 +77,7 @@ Four sequencing facts govern the whole list:
 | B15 | **File read-back, file events, product-image ↔ upload link** | anything that looks at a photo | AI-powered features |
 | B16 | **A suggestion store** — system proposes, human applies | forecast and category suggestions. The pattern exists (`sagawatch`, ADR 0017); the storage does not | AI-powered features |
 | B17 | **KVKK erasure, export and retention** | a legal requirement; A2 and A4 come first | Turkey-specific |
-| B18 | **A per-column round-trip test for every module** | nothing — and it prevents the defect class that shipped twice in one change | Common Go mistakes |
+| B18 | ~~**A per-column round-trip test for every module**~~ **Built 2026-09-05** as `TestEveryColumnIsWrittenBySomething`: the schema and the queries are read TOGETHER, and a column no INSERT names and no UPDATE sets fails. DEFAULT and GENERATED columns are out of scope — the database supplies those | nothing — and it caught a standing finding on its first run (see D9) | Common Go mistakes |
 
 ### C. Features — after the above
 
@@ -118,6 +118,12 @@ Four sequencing facts govern the whole list:
   ADR 0008, in its sharpest form.
 - **D4** `order_exchanges.completed_at` and `canceled_at` exist and are never
   written; there is no Complete or Cancel query for an exchange.
+- **D9** **Neither the order nor the payment module ever soft-deletes.** Ten
+  `deleted_at` columns are never written by anything, while every read in both
+  modules carries `deleted_at IS NULL` — a predicate that has never once been
+  false. Found by B18's audit on its first run and recorded in its exemption
+  list. Dropping the columns is a schema decision; taking the deletes on is a
+  product one.
 - **D8** ~~The link's far side names a `fulfillment` entity that has NO Query
   provider.~~ **Fixed 2026-09-05.** The fulfillment module offers a SECOND
   entity, `fulfillment`, with the twelve fields a timeline asks for — including
