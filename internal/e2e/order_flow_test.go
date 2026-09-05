@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 	inventorymodels "github.com/bdrtr/gobit/internal/modules/inventory/models"
 	ordermodels "github.com/bdrtr/gobit/internal/modules/order/models"
 	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"

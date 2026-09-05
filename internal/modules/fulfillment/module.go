@@ -12,7 +12,7 @@
 // # Provider abstraction
 //
 // The side that talks to the carrier is not the module but a PROVIDER that
-// satisfies the FulfillmentProvider contract in internal/core/provider. The
+// satisfies the FulfillmentProvider contract in core/provider. The
 // module keeps providers in a registry by their ids
 // ([service.ProviderRegistry]) and resolves them BY NAME during the flow. The
 // only provider that comes in the box is the manual/test provider
@@ -83,12 +83,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/bdrtr/gobit/internal/core/container"
-	"github.com/bdrtr/gobit/internal/core/db"
-	"github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/module"
+	"github.com/bdrtr/gobit/core/container"
+	"github.com/bdrtr/gobit/core/db"
+	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/module"
+	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/core/openapi"
-	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/api"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/manual"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/repository"

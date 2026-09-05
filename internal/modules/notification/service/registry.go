@@ -5,8 +5,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	"github.com/bdrtr/gobit/core/errors"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 )
 
 // ProviderRegistry holds the notification providers under their identifiers.
@@ -17,7 +17,7 @@ import (
 // name "notification.providers". The plugin system
 // (coreplugin.Host.RegisterNotificationProvider) resolves that registry and
 // adds its own provider WITHOUT TOUCHING the core or this module; the contract
-// is the NotificationProvider interface in internal/core/provider.
+// is the NotificationProvider interface in core/provider.
 //
 // It is safe for concurrent use: registration happens at startup, reading on
 // every notification.

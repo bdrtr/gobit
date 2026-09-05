@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
 )
 
 // The statuses a payment row can hold. They are PayTR's own vocabulary rather

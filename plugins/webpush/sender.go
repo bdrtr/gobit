@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
 )
 
 // ttlSeconds is how long a push service holds an undelivered message.

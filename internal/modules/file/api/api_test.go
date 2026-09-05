@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
+	corehttp "github.com/bdrtr/gobit/core/http"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 	"github.com/bdrtr/gobit/internal/modules/file/service"
 )
 

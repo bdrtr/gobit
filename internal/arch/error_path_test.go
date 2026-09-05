@@ -15,7 +15,7 @@ import (
 )
 
 // coreHTTPDir is the directory of the core's HTTP package inside the repository.
-const coreHTTPDir = "internal/core/http"
+const coreHTTPDir = "core/http"
 
 // coreHTTPPath is the import path of the core's HTTP package.
 const coreHTTPPath = modulePath + "/" + coreHTTPDir

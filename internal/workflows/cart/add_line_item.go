@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 )
 
 // MaxLineItems is the largest number of DISTINCT lines a cart may carry.

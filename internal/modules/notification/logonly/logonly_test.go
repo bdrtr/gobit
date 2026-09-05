@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 	"github.com/bdrtr/gobit/internal/modules/notification/logonly"
 )
 

@@ -8,10 +8,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/eventbus"
-	"github.com/bdrtr/gobit/internal/core/link"
-	"github.com/bdrtr/gobit/internal/core/query"
+	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/eventbus"
+	"github.com/bdrtr/gobit/core/link"
+	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )

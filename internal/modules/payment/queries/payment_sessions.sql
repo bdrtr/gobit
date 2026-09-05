@@ -27,7 +27,7 @@ FOR UPDATE;
 
 -- GetPaymentSessionByIdempotencyKey aynı anahtarla açılmış oturumu bulur.
 -- CreateSession sağlayıcıya GİTMEDEN ÖNCE bunu sorar; ikinci çağrı yeni oturum
--- açmaz (plan Bölüm 2.6, internal/core/provider idempotency şartı).
+-- açmaz (plan Bölüm 2.6, core/provider idempotency şartı).
 -- name: GetPaymentSessionByIdempotencyKey :one
 SELECT * FROM payment_sessions
 WHERE provider_id = $1 AND idempotency_key = $2 AND deleted_at IS NULL;

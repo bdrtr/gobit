@@ -31,9 +31,9 @@ import (
 	"context"
 	"strings"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
-	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 )
 
 // Name eklentinin kayıttaki adıdır.

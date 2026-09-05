@@ -134,7 +134,7 @@ rather than from a customer.
 
 ## Consequences
 
-- **Exposing `internal/core/db` makes pgx a permanent public dependency.**
+- **Exposing `core/db` makes pgx a permanent public dependency.**
   `db.Pool.Pool()` hands out a raw `*pgxpool.Pool` and searchpg already uses it,
   because a plugin that brings its own module needs to write its own repository.
   There is no way around it, and it is the decision that formally ends any claim

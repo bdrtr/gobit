@@ -6,7 +6,7 @@
 // ve üretilen kod yeniden üretildiğinde yalnızca bu paket etkilenir.
 //
 // Ham hatalar da sınırı geçmez: pgx.ErrNoRows ve PostgreSQL kısıt ihlalleri
-// burada internal/core/errors'ın tipli hatalarına çevrilir, böylece HTTP
+// burada core/errors'ın tipli hatalarına çevrilir, böylece HTTP
 // katmanı status kodunu doğru seçer (plan Bölüm 2.7).
 //
 // # Kilit sırası
@@ -28,7 +28,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/promotion/repository/promotiondb"
 )
 

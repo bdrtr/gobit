@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 )
 
 // addedLine holds the arguments of the line written to the fake cart.

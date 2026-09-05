@@ -11,7 +11,7 @@ package models
 // SessionStatus is the status of a payment session.
 //
 // The values are ONE FOR ONE the same as
-// [github.com/bdrtr/gobit/internal/core/provider.SessionStatus], but that
+// [github.com/bdrtr/gobit/core/provider.SessionStatus], but that
 // package is not reused here: the column value belongs to the module's own
 // schema, and the values in the database must not change silently when the
 // core contract changes. The translation is done at the repository/service

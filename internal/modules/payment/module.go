@@ -7,7 +7,7 @@
 //
 // # Sağlayıcı soyutlaması
 //
-// Ödeme kuruluşuyla konuşan taraf modül değil, internal/core/provider'daki
+// Ödeme kuruluşuyla konuşan taraf modül değil, core/provider'daki
 // PaymentProvider sözleşmesini karşılayan bir SAĞLAYICIDIR. Modül sağlayıcıları
 // kimlikleriyle bir kayıtta tutar ([service.ProviderRegistry]) ve akış sırasında
 // ADLA çözer. Kutudan çıkan tek sağlayıcı manuel/test sağlayıcısıdır
@@ -50,13 +50,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/bdrtr/gobit/internal/core/container"
-	"github.com/bdrtr/gobit/internal/core/db"
-	"github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/link"
-	"github.com/bdrtr/gobit/internal/core/module"
+	"github.com/bdrtr/gobit/core/container"
+	"github.com/bdrtr/gobit/core/db"
+	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/link"
+	"github.com/bdrtr/gobit/core/module"
+	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/core/openapi"
-	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/modules/payment/api"
 	"github.com/bdrtr/gobit/internal/modules/payment/manual"
 	"github.com/bdrtr/gobit/internal/modules/payment/repository"

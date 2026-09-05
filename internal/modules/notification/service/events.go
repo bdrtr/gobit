@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/eventbus"
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/eventbus"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 )
 
 // This file holds the subscribers that TRIGGER the notifications.

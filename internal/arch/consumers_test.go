@@ -35,20 +35,6 @@ import (
 // consumer repeats a name by hand (order → "b2b.interop", searchpg →
 // "product.interop") the tie is only visible at the value level.
 
-// productionRoots are the trees where the production (non-test) Go source
-// lives.
-//
-// In this repository Go source is found only in these three roots. The list is
-// a CONSTANT and must be updated here when a fourth root is added; if that is
-// forgotten, all three tests in this file narrow. The direction of the
-// narrowing is LOUD: a consumer in an unscanned tree counts as "absent" and a
-// capability that was produced is unjustly declared dead — what you get is not
-// a test that passes silently but an error whose explanation is wrong. The
-// opposite direction (missing a declaration) would be silent, and that is why
-// the declaration side never looks at the root list: the declarations come from
-// the same scan.
-var productionRoots = []string{"cmd", "internal", "plugins"}
-
 // maxResolutionDepth is the largest number of steps to follow while resolving a
 // constant value.
 //
@@ -129,7 +115,7 @@ func scanProductionSource(t *testing.T) *sourceTree {
 		calls:       map[string][]callSite{},
 	}
 
-	for _, root := range productionRoots {
+	for _, root := range productionTrees {
 		absolute := filepath.Join(repoRoot, root)
 		if _, err := os.Stat(absolute); err != nil {
 			t.Fatalf("the %q root was not found: %v", root, err)
@@ -728,7 +714,7 @@ func TestTheEventTopicsHaveASubscriber(t *testing.T) {
 	t.Parallel()
 
 	tree := scanProductionSource(t)
-	const eventbusPath = modulePath + "/internal/core/eventbus"
+	const eventbusPath = modulePath + "/core/eventbus"
 
 	published := map[string]string{}
 	for _, site := range tree.calls["Publish"] {
@@ -898,8 +884,8 @@ func TestTheLinkDefinitionsAreTraversed(t *testing.T) {
 	t.Parallel()
 
 	tree := scanProductionSource(t)
-	const linkPath = modulePath + "/internal/core/link"
-	const queryPath = modulePath + "/internal/core/query"
+	const linkPath = modulePath + "/core/link"
+	const queryPath = modulePath + "/core/query"
 
 	declared := map[string]string{}
 	for _, literal := range tree.literals {

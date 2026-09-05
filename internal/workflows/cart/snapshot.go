@@ -3,7 +3,7 @@ package cart
 import (
 	"encoding/json"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 )
 
 // Snapshot is the shape of the cart a calculation round IS BASED ON.

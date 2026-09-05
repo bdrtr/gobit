@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 )
 
 // This file is the product module's CROSS-MODULE surface (ADR 0001, ADR 0006).

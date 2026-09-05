@@ -8,7 +8,7 @@
 //
 // Raw errors do not cross the boundary either: pgx.ErrNoRows and PostgreSQL
 // constraint violations are converted here into the typed errors of
-// internal/core/errors, so that the HTTP layer picks the status code correctly
+// core/errors, so that the HTTP layer picks the status code correctly
 // (plan Section 2.7).
 //
 // # Secrets
@@ -32,7 +32,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/auth/repository/authdb"
 )
 

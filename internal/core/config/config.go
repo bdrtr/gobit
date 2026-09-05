@@ -197,7 +197,7 @@ const (
 
 // The default limits of the PostgreSQL pool.
 //
-// The values are the same as internal/core/db's OWN defaults and have to stay so:
+// The values are the same as core/db's OWN defaults and have to stay so:
 // the only job of these two constants is to preserve the behavior from before the
 // pool became configurable — an installation giving no environment variable opens
 // exactly today's pool. Drift is failed by TestThePoolDefaultsAgreeWithTheDbPackage
@@ -478,7 +478,7 @@ type Config struct {
 	//
 	// The default is [DefaultFileAllowedTypes] and it DOES NOT INCLUDE SVG; the
 	// reasoning is in the godoc of the content type constants in
-	// internal/core/provider (in short: an SVG is a document, it carries script, and
+	// core/provider (in short: an SVG is a document, it carries script, and
 	// served from the same origin it becomes stored XSS).
 	FileAllowedTypes []string `env:"FILE_ALLOWED_TYPES" envSeparator:"," envDefault:"image/jpeg,image/png,image/gif,image/webp"`
 
@@ -661,7 +661,7 @@ type Config struct {
 	// RedisKeyPrefix is the installation's namespace prefix in Redis.
 	//
 	// It covers THREE kinds of key at once: the guard keys "<prefix>:rl:<client>" and
-	// "<prefix>:idem:<key>" (see the internal/core/http/redisguard package godoc),
+	// "<prefix>:idem:<key>" (see the core/http/redisguard package godoc),
 	// while the event streams are written as "<prefix>:events:<event name>"; the event
 	// bus's consumer group name is the prefix itself (see
 	// eventbus.RedisConfig.WithNamespace).
@@ -982,7 +982,7 @@ func (c Config) Validate() error {
 // validateDBPool verifies that the PostgreSQL pool limits are consistent among
 // themselves.
 //
-// The same three rules also exist in internal/core/db's Config.Validate and the
+// The same three rules also exist in core/db's Config.Validate and the
 // repetition is DELIBERATE; the reasoning is of the same class as the one in
 // [Config.validateRedisKeyPrefix]. What this copy concretely wins is THE NAMES:
 // db's error says "MinConns (5) cannot be greater than MaxConns (1)" and the

@@ -11,12 +11,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/bdrtr/gobit/internal/core/container"
-	"github.com/bdrtr/gobit/internal/core/db"
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/eventbus"
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
-	"github.com/bdrtr/gobit/internal/core/module"
+	"github.com/bdrtr/gobit/core/container"
+	"github.com/bdrtr/gobit/core/db"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/eventbus"
+	corehttp "github.com/bdrtr/gobit/core/http"
+	"github.com/bdrtr/gobit/core/module"
 )
 
 // dbServiceName is the core pool's name in the container.

@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 	cartsvc "github.com/bdrtr/gobit/internal/modules/cart/service"
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 )

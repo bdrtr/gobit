@@ -17,9 +17,9 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
 
+	"github.com/bdrtr/gobit/core/container"
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/internal/core/config"
-	"github.com/bdrtr/gobit/internal/core/container"
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
 // redisImage is the Redis image the integration tests run against.
@@ -60,7 +60,7 @@ func checkStatus(t *testing.T, body map[string]any, name string) string {
 // TestRedisOutageKeepsTheInstanceInTraffic is the end-to-end proof of the
 // readiness split, against a REAL Redis that is then killed.
 //
-// The unit tests in internal/core/http prove the router honors the two check
+// The unit tests in core/http prove the router honors the two check
 // classes; they cannot prove the server puts Redis in the right one, and that
 // single decision is what stands between a failover and a full storefront
 // outage. So this test builds the probe through setupRedis — the shipped path,

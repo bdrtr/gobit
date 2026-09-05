@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	corehttp "github.com/bdrtr/gobit/core/http"
 )
 
 // ExemptPaths lists the full panel paths that do NOT require identity.

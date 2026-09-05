@@ -17,8 +17,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/bdrtr/gobit/internal/core/db"
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/db"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/core/job"
 )
 

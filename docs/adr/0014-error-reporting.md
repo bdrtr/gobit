@@ -155,7 +155,7 @@ outage.
 - The collector shows a code and a safe sentence, not a stack. For an ordinary
   error there is no useful stack to show anyway — it was returned, not thrown —
   and for a panic the trace travels as text.
-- `internal/core/errorreport` is the second core package the log handler passes
+- `core/errorreport` is the second core package the log handler passes
   through. It is on the path of every failing request, so its cost is one map
   copy and one allow-list check per failure, and nothing at all below the level.
 - The reports carry no method or path. The access-log line has them and it is

@@ -40,6 +40,83 @@ const (
 	migrationsDirName = "migrations"
 )
 
+// productionTrees are the top-level directories holding shipped Go source.
+//
+// Seven audits used to keep a private copy of this list, each with a comment
+// saying it had to be edited by hand when a tree was added. Promoting the
+// twelve core packages out of internal/ (ADR 0026) added a tree, and every one
+// of those copies narrowed AT ONCE: a scan whose root list misses a tree finds
+// nothing there and passes having found nothing. The list therefore lives here
+// once, and [TestTheProductionTreeListCoversTheRepository] checks it against
+// the repository — the next promotion cannot blind an audit without failing
+// that test first.
+//
+// The direction of a stale list is loud on the consumer side and silent on the
+// declaration side: a consumer in an unscanned tree counts as ABSENT, so a
+// capability that was produced is declared dead and the error printed explains
+// the wrong thing. That asymmetry is why the declarations never consult this
+// list — they come from the same scan.
+var productionTrees = []string{"cmd", "core", "internal", "plugins"}
+
+// TestTheProductionTreeListCoversTheRepository keeps [productionTrees] honest.
+//
+// Every audit in this package narrows to the trees on that list. A tree missing
+// from it is not a failure anywhere: the walk simply does not go there, finds
+// no violation, and reports success. This test is the one place the list is
+// compared against what is actually on disk, so the omission has somewhere to
+// fail.
+func TestTheProductionTreeListCoversTheRepository(t *testing.T) {
+	entries, err := os.ReadDir(repoRoot)
+	require.NoError(t, err, "the repository root could not be read")
+
+	listed := map[string]bool{}
+	for _, tree := range productionTrees {
+		listed[tree] = true
+	}
+
+	holdsSource := 0
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		if !holdsProductionGo(t, filepath.Join(repoRoot, entry.Name())) {
+			continue
+		}
+		holdsSource++
+		require.True(t, listed[entry.Name()],
+			"the %q tree holds production Go source and is not in productionTrees.\n"+
+				"Every audit in this package walks that list; a tree missing from it is "+
+				"not scanned, and an unscanned tree produces no finding rather than an "+
+				"error. Add it there, in the one place it is written.", entry.Name())
+	}
+
+	require.Equal(t, len(productionTrees), holdsSource,
+		"productionTrees names %d trees but only %d of them hold production Go source.\n"+
+			"A name left behind after a tree is emptied or renamed is worse than a "+
+			"missing one: the audits keep walking a path that no longer exists and the "+
+			"count of what they checked silently drops.", len(productionTrees), holdsSource)
+}
+
+// holdsProductionGo reports whether the tree contains a non-test .go file.
+func holdsProductionGo(t *testing.T, dir string) bool {
+	t.Helper()
+	found := false
+	err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		found = true
+
+		return filepath.SkipAll
+	})
+	require.NoError(t, err, "%s could not be walked", dir)
+
+	return found
+}
+
 // moduleNames returns the names of the commerce modules in the repository.
 //
 // An empty result is NOT ACCEPTED: every check walking the modules takes this list
@@ -463,9 +540,9 @@ func TestGodocFormat(t *testing.T) {
 	// or if the godocs come loose from their definitions and the doc field stays nil).
 	denetlenenTanim := 0
 
-	roots := []string{
-		filepath.Join(repoRoot, "internal"),
-		filepath.Join(repoRoot, "cmd"),
+	roots := make([]string, 0, len(productionTrees))
+	for _, tree := range productionTrees {
+		roots = append(roots, filepath.Join(repoRoot, tree))
 	}
 
 	for _, root := range roots {

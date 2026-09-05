@@ -38,8 +38,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/internal/modules/pricing/models"
 	"github.com/bdrtr/gobit/internal/modules/pricing/service"
 )

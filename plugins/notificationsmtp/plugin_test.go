@@ -14,13 +14,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
-	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 )
 
-// The template every test writes to disk. It defines both required blocks and
-// interpolates a value, so a test that changes the data can see it land.
+// testTemplate is the template every test writes to disk. It defines both
+// required blocks and interpolates a value, so a test that changes the data can see it land.
 const testTemplate = `{{define "subject"}}Your order {{.order_id}} has shipped{{end}}` +
 	`{{define "body"}}Hello {{.name}}, order {{.order_id}} is on its way.{{end}}`
 

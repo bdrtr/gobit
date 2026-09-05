@@ -11,7 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 	fulfillmentsvc "github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 	inventorymodels "github.com/bdrtr/gobit/internal/modules/inventory/models"
 	inventorysvc "github.com/bdrtr/gobit/internal/modules/inventory/service"

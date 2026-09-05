@@ -54,7 +54,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
 	corepage "github.com/bdrtr/gobit/internal/core/page"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 	"github.com/bdrtr/gobit/internal/modules/order/service"

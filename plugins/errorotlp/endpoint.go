@@ -4,7 +4,7 @@ import (
 	"net/url"
 	"strings"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
 )
 
 // The error codes.

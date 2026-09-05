@@ -12,7 +12,7 @@ is therefore not a hypothetical; it has a counted consumer, which is the bar
 ADR 0009 sets for building anything at all.
 
 The obvious way to add it was the notification provider slot. gobit already has
-one — `internal/core/provider.NotificationProvider` — and the round before this
+one — `core/provider.NotificationProvider` — and the round before this
 one filled it for the first time with `plugins/notificationsmtp`. Adding a
 second provider looked like the same shape of work.
 
@@ -52,7 +52,7 @@ fallback.
 
 **A. Add `ChannelPush` and a `Channels() []string` method to the provider
 contract.** Adding a provider would then require changing every existing
-provider — the inverse of what `internal/core/provider`'s own godoc says the
+provider — the inverse of what `core/provider`'s own godoc says the
 contract is for. Worse, the default `log` provider would have to claim `push`,
 so every stock installation (`NOTIFICATION_PROVIDER=log` is the default) would
 write a second delivery row and a second "not sent" warning per order, for a

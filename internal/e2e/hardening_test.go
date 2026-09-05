@@ -13,10 +13,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/internal/core/container"
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
-	"github.com/bdrtr/gobit/internal/core/module"
-	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
+	"github.com/bdrtr/gobit/core/container"
+	corehttp "github.com/bdrtr/gobit/core/http"
+	"github.com/bdrtr/gobit/core/module"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	cartapi "github.com/bdrtr/gobit/internal/modules/cart/api"
 	cartsvc "github.com/bdrtr/gobit/internal/modules/cart/service"
 	paymentmod "github.com/bdrtr/gobit/internal/modules/payment"
@@ -31,7 +31,7 @@ import (
 //	 generated; the basic load test passes."
 //
 // The trace side is not here but is proven in
-// internal/core/http/telemetry_test.go with an in-memory exporter: standing up
+// core/http/telemetry_test.go with an in-memory exporter: standing up
 // an OTLP collector just to see that the span is really produced would make the
 // test depend on the network while adding nothing to the proof.
 

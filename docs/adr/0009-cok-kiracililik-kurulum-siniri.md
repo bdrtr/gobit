@@ -64,7 +64,7 @@ tekrarlamak olurdu.
 yalıtmıyor.** Ödeme sağlayıcı defteri kimliği yalnızca `id` ile tutar ve aynı
 `id` ikinci kez kaydedilemez (`internal/modules/payment/service/registry.go`);
 eklentiler `PLUGINS` ortam değişkeninden seçilip açılışta bir kez kurulur
-(`internal/core/plugin`); Stripe gizli anahtarı, SMTP göndereni, `FILE_ROOT`,
+(`core/plugin`); Stripe gizli anahtarı, SMTP göndereni, `FILE_ROOT`,
 `JWT_SECRET` ve tüm kotalar süreç başına tek bir `Config`'ten gelir. Kendi
 ödeme hesabı, kendi gönderen adresi ve kendi kotası olamayan bir kiracı, kiracı
 değil bir bölmedir. Bu bileşen A'da da B'de de **tasarlanmamıştır** ve izolasyon
@@ -72,7 +72,7 @@ seçiminin kendisinden büyüktür.
 
 **Üçüncüsü: yüzey kiracıya göre değişemez, yalnızca veri değişebilir.**
 Route'lar tek router'a bir kez bağlanır ve chi aynı deseni ikinci kez mount
-etmede panikler (`internal/core/http.Scoped` godoc'u); OpenAPI belgesinin
+etmede panikler (`core/http.Scoped` godoc'u); OpenAPI belgesinin
 önbelleği tek yuvalıdır. Bu bir arıza değil, kabul edilmesi gereken bir sınırdır
 ve hangi seçenek seçilirse seçilsin geçerlidir.
 
@@ -118,17 +118,17 @@ Kararın üç bağlayıcı sonucu vardır:
      düzeltilmesi bir paragraftır ve kiracılıktan
      bağımsız olarak bugün yanlıştır.
    - **Hız sınırının kimliğe göre anahtarlanması ya bağlanır ya silinir.**
-     Üretimde hiçbir tüketicisi olmayan bir `internal/core/http.KeyFunc`
+     Üretimde hiçbir tüketicisi olmayan bir `core/http.KeyFunc`
      uygulaması duruyordu (yalnızca kendi testi çağırıyordu) ve godoc'u "kimliği
      doğrulanmış çağrıyı kimliğine göre anahtarlar" diyordu; oysa koruma
      yığınında hız sınırı kimlikten **önce** koşar
-     (`internal/core/http.APIGuards`), yani bağlansaydı her zaman IP'ye
+     (`core/http.APIGuards`), yani bağlansaydı her zaman IP'ye
      düşerdi. Aynı yerde hem tüketicisiz bir yetenek hem de godoc'u
      davranışından ayrışan bir fonksiyon duruyordu.
 
      > **Kapatıldı: fonksiyon silindi.** Hız sınırı bugün yalnızca IP anahtarlar
-     > (`internal/core/http.ClientIPKey`, üretimde
-     > `internal/core/http.TrustedProxyIPKey`); kimliğe göre anahtarlama
+     > (`core/http.ClientIPKey`, üretimde
+     > `core/http.TrustedProxyIPKey`); kimliğe göre anahtarlama
      > yeteneği depoda **yoktur**. Kimlik başına kota istendiği gün yeniden
      > yazılır ve o gün sıranın kendisi de (hız sınırı kimlikten önce koşuyor)
      > birlikte çözülmelidir — yoksa yeni yazılan da aynı sebeple IP'ye düşer.

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 )
 
 // memoryStore is the in-process, non-durable implementation of Store.

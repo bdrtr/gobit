@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	"github.com/bdrtr/gobit/core/errors"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 )
 
@@ -52,7 +52,7 @@ type CreateFulfillmentInput struct {
 //
 // The fulfillment row is written BEFORE GOING to the provider, and the Reference
 // handed to the provider is that row's identifier. The reason is written in the
-// core contract (internal/core/provider): Reference is the field that matches
+// core contract (core/provider): Reference is the field that matches
 // the two systems during reconciliation. Had the provider been called first and
 // the response been lost, a shipping label would be left behind whose
 // counterpart record could not be known.

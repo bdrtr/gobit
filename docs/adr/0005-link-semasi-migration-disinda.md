@@ -70,4 +70,4 @@ kendisiyle tek yerde durur; ikisinin ayrışması mümkün değildir.
 ## İlgili
 
 - Plan Bölüm 5.2, Bölüm 8 (bu ADR o konvansiyona bilinçli bir istisnadır), Faz 2, Faz 9
-- `internal/core/link/service.go` — `declare`, `verifySchema`
+- `core/link/service.go` — `declare`, `verifySchema`

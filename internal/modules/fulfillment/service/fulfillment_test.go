@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	"github.com/bdrtr/gobit/core/errors"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 )
@@ -40,7 +40,7 @@ func readyOption(t *testing.T, setup testSetup) string {
 // TestTheFulfillmentGivesTheProviderItsOwnID proves that the Reference passed to
 // the provider is THE FULFILLMENT's identifier.
 //
-// The core contract (internal/core/provider) defines Reference as "the field
+// The core contract (core/provider) defines Reference as "the field
 // that matches the two systems during reconciliation". Had the order identifier
 // been given, two fulfillments of the same order could not be told apart on the
 // provider's side.

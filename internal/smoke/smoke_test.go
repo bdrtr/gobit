@@ -97,13 +97,13 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
 
-	"github.com/bdrtr/gobit/internal/core/db"
+	"github.com/bdrtr/gobit/core/db"
 )
 
 // postgresImage and redisImage are the images the tests share.
 //
 // The versions are the SAME as in the integration tests (see internal/e2e and
-// internal/core/http/redisguard): the behavior of the migrations that run at startup
+// core/http/redisguard): the behavior of the migrations that run at startup
 // must not diverge between the two runs.
 const (
 	postgresImage = "postgres:16-alpine"

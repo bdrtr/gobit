@@ -46,7 +46,7 @@ kapatırız: uçuştaki ifade kopar, sonraki her ifade başarısız olur.
 
 **D**, A ile birlikte ve katmanlı olarak.
 
-`internal/core/db`'deki `session` tipi bağlantının sahibidir. İptalde sırayla:
+`core/db`'deki `session` tipi bağlantının sahibidir. İptalde sırayla:
 
 1. `GracefulStop` — sonraki migration'ın *başlaması* engellenir,
 2. `conn.Close()` — *uçuştaki* ifade koparılır,
@@ -78,4 +78,4 @@ sürüm 3'e çıkarak düşer; bu doğrulandı.
 ## İlgili
 
 - Plan Bölüm 8 (Migration konvansiyonları), Faz 1
-- `internal/core/db/migrate.go` — `session.run`
+- `core/db/migrate.go` — `session.run`

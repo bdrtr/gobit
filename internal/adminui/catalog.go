@@ -9,9 +9,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
-	"github.com/bdrtr/gobit/internal/core/query"
+	"github.com/bdrtr/gobit/core/errors"
+	corehttp "github.com/bdrtr/gobit/core/http"
+	"github.com/bdrtr/gobit/core/query"
 )
 
 // The entity and link names the catalog screens spell BY HAND.

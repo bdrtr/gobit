@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 )
 
 // ParallelStep is a composite step that runs its branches CONCURRENTLY.

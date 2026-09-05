@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 	b2bmodels "github.com/bdrtr/gobit/internal/modules/b2b/models"
 	b2bsvc "github.com/bdrtr/gobit/internal/modules/b2b/service"
 	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"

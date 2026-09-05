@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/internal/core/config"
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
 // startProfiling opens the pprof listener when one has been configured, and

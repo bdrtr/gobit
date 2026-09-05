@@ -1,6 +1,6 @@
 # ADR 0025 — gobit is a LIBRARY a project imports, not a template a project copies
 
-- **Status:** Accepted (direction); the public surface is the open half
+- **Status:** Accepted (direction); the public surface was decided in ADR 0026
 - **Date:** 2026-09-05
 - **Phase:** after the roadmap
 
@@ -27,7 +27,7 @@ outside `internal/` and `cmd/`. So the only way to use gobit is to clone it and
 edit `cmd/server`.
 
 The sharpest consequence: `plugins/` sits outside `internal/` and looks like an
-extension point, but every plugin in it imports `internal/core/plugin` to
+extension point, but every plugin in it imports `core/plugin` to
 satisfy the host contract. An out-of-tree plugin cannot. **The repository has a
 plugin system that no third party can write a plugin for** — not because the
 compile-time model was rejected, but because the contract it implements is
@@ -78,7 +78,11 @@ expensive path to an outcome the cheap path already reaches.
 
 Decided: the direction, and that the transition is a carve-out.
 
-**Not decided: which packages become public.** That is the whole risk, because
+**Not decided here: which packages become public.** ADR 0026 decided it —
+fourteen packages, no commerce model among them, measured rather than chosen.
+What follows is the reasoning that ADR was asked to satisfy.
+
+**The open question as it stood:** That is the whole risk, because
 this repository already knows the rule — a field that enters a contract can
 never be taken out again — and a public package is that rule at package scale.
 The brief that prompted this decision says the same thing in its own words: keep

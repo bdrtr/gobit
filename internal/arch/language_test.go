@@ -189,7 +189,11 @@ var scannedExtensions = []string{".go", ".sql", ".gohtml", ".md", ".graphqls"}
 
 // scannedRoots are the trees the content scan walks, plus the repository root
 // itself for its top-level documents.
-var scannedRoots = []string{"cmd", "internal", "plugins", "docs"}
+//
+// The production trees come from [productionTrees] so that a promotion cannot
+// leave a tree unscanned for language; docs/ is added here because it holds no
+// Go source and so is not a production tree.
+var scannedRoots = append(append([]string{}, productionTrees...), "docs")
 
 // skippedDirs never hold hand-written source.
 var skippedDirs = []string{".git", "node_modules", "vendor", "bin", ".idea", ".vscode"}
@@ -234,7 +238,7 @@ const generatedMarker = "Code generated"
 //     purpose
 var diacriticDataExemptions = map[string][]string{
 	"docs/adr/0012-repository-language-and-solid.md": {"`çğıöşüÇĞİÖŞÜ`"},
-	"internal/core/db/casefold.go": {
+	"core/db/casefold.go": {
 		"'Ç' ILIKE 'ç'", "'ÇANTA'", "'çanta'", `"çanta"`, `"Çanta"`,
 	},
 	// ADR 0015 records the same defect and has to quote the same two words to

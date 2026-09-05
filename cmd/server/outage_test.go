@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/internal/adminui"
 	"github.com/bdrtr/gobit/internal/core/config"
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
 // outageRouter builds the PRODUCTION guard stack (GUARD_BACKEND=redis) against

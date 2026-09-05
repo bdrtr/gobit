@@ -1,6 +1,6 @@
 package service
 
-import "github.com/bdrtr/gobit/internal/core/link"
+import "github.com/bdrtr/gobit/core/link"
 
 // EntityName is the name of this module's entity in a link definition.
 const EntityName = "invoice"

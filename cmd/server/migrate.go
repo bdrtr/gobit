@@ -13,14 +13,14 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/bdrtr/gobit/internal/core/audit"
+	"github.com/bdrtr/gobit/core/audit"
+	"github.com/bdrtr/gobit/core/container"
+	"github.com/bdrtr/gobit/core/db"
+	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/eventbus/outbox"
+	"github.com/bdrtr/gobit/core/module"
 	"github.com/bdrtr/gobit/internal/core/config"
-	"github.com/bdrtr/gobit/internal/core/container"
-	"github.com/bdrtr/gobit/internal/core/db"
-	"github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/eventbus/outbox"
 	"github.com/bdrtr/gobit/internal/core/job/jobpg"
-	"github.com/bdrtr/gobit/internal/core/module"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
 )
 
@@ -74,7 +74,7 @@ const defaultDownSteps = 1
 // migrationSource pairs a migration owner with the files it owns.
 //
 // owner is the module name; it becomes the <owner>_schema_migrations table (see
-// [github.com/bdrtr/gobit/internal/core/db.MigrationsTable]), which is why the
+// [github.com/bdrtr/gobit/core/db.MigrationsTable]), which is why the
 // two must always travel together — a source applied under the wrong owner
 // writes into another module's version ledger.
 type migrationSource struct {
@@ -177,7 +177,7 @@ func runMigrate(args []string, out io.Writer) error {
 
 	// The context is signal-aware for a reason that is not politeness: a
 	// rollback holds golang-migrate's advisory lock, and
-	// [github.com/bdrtr/gobit/internal/core/db.MigrateDown] turns a canceled
+	// [github.com/bdrtr/gobit/core/db.MigrateDown] turns a canceled
 	// context into a real stop — the in-flight statement is cut and the lock is
 	// released. Killing the process instead would leave the lock held until the
 	// connection is reaped, and every instance trying to boot would wait on it.
@@ -217,7 +217,7 @@ func runMigrate(args []string, out io.Writer) error {
 // Version 0 means NO MIGRATION IS APPLIED, and it means that whether the
 // database has never been migrated or was rolled all the way back: golang-migrate
 // writes its "nothing applied" marker for both and
-// [github.com/bdrtr/gobit/internal/core/db.Version] reports both as 0. Nothing
+// [github.com/bdrtr/gobit/core/db.Version] reports both as 0. Nothing
 // here tries to tell them apart, because the two states are the same state —
 // the schema this owner owns is not there — and inventing a distinction would
 // need a second way of reading the ledger that could disagree with the first.
@@ -237,7 +237,7 @@ type ownerState struct {
 // Reading the version goes through golang-migrate's driver, and that driver
 // CREATES the <owner>_schema_migrations table when it is missing (the side
 // effect is on
-// [github.com/bdrtr/gobit/internal/core/db.Version]'s godoc). Run against a
+// [github.com/bdrtr/gobit/core/db.Version]'s godoc). Run against a
 // database that has never been migrated, this command therefore leaves one
 // empty version table per owner behind. It is measured, it is harmless — the
 // next boot would create exactly those tables — and it is stated in the footer
@@ -359,7 +359,7 @@ const (
 // migrationsTableSuffix is the suffix of the per-owner version table.
 //
 // It duplicates an unexported constant of
-// [github.com/bdrtr/gobit/internal/core/db] and is used ONLY in prose: the
+// [github.com/bdrtr/gobit/core/db] and is used ONLY in prose: the
 // operator who has to repair a dirty ledger by hand needs the table's name, and
 // sending them to go read a package's source for it would be the difference
 // between an actionable refusal and a dead end. The name it produces is checked

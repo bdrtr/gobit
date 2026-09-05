@@ -40,7 +40,7 @@
 // # Link'i bildiren tarafa not
 //
 // Query, bir genişletmenin hedef sağlayıcısını link tanımının UCUNDAKİ MODÜL
-// ADINDAN bulur (bkz. internal/core/query targetSide: hedef ad + ".query"
+// ADINDAN bulur (bkz. core/query targetSide: hedef ad + ".query"
 // aranır). region için entity adı ile modül adı AYNIDIR ("region"), yani linki
 // bildiren modül ucu doğal biçimde yazabilir. Aşağıdaki tanım VARSAYIMSALDIR;
 // böyle bir link bugün yoktur ve eklenmesi ancak GEZEN bir okuyucusu varsa
@@ -62,12 +62,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/bdrtr/gobit/internal/core/container"
-	"github.com/bdrtr/gobit/internal/core/db"
-	"github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/module"
+	"github.com/bdrtr/gobit/core/container"
+	"github.com/bdrtr/gobit/core/db"
+	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/module"
+	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/core/openapi"
-	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/modules/region/api"
 	"github.com/bdrtr/gobit/internal/modules/region/repository"
 	"github.com/bdrtr/gobit/internal/modules/region/service"

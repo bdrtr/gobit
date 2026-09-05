@@ -169,7 +169,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 )
 
 // The error codes. The caller can branch on them.
@@ -1288,7 +1288,7 @@ func (e *executor) execute(ctx context.Context, wf Workflow, input any, exec *Ex
 // writing its own sentence (which workflow, which step, which position) on the
 // outside. On KindInternal errors the transport layer masks that sentence and
 // the chain anyway and publishes only the code (see
-// internal/core/http.WriteError). A code is fixed and machine-readable by
+// core/http.WriteError). A code is fixed and machine-readable by
 // definition; it leaks no server detail.
 //
 // If the step error has no code — an untyped stdlib error — the engine's own

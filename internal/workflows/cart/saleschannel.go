@@ -3,7 +3,7 @@ package cart
 import (
 	"context"
 
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	corehttp "github.com/bdrtr/gobit/core/http"
 )
 
 // This file carries the sales channel scope of the cart WRITE path.

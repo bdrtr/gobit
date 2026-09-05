@@ -144,7 +144,7 @@ type GetPaymentSessionByIdempotencyKeyParams struct {
 
 // GetPaymentSessionByIdempotencyKey aynı anahtarla açılmış oturumu bulur.
 // CreateSession sağlayıcıya GİTMEDEN ÖNCE bunu sorar; ikinci çağrı yeni oturum
-// açmaz (plan Bölüm 2.6, internal/core/provider idempotency şartı).
+// açmaz (plan Bölüm 2.6, core/provider idempotency şartı).
 func (q *Queries) GetPaymentSessionByIdempotencyKey(ctx context.Context, arg GetPaymentSessionByIdempotencyKeyParams) (PaymentSession, error) {
 	row := q.db.QueryRow(ctx, getPaymentSessionByIdempotencyKey, arg.ProviderID, arg.IdempotencyKey)
 	var i PaymentSession

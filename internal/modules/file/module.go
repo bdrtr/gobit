@@ -16,7 +16,7 @@
 // # The provider abstraction
 //
 // The side that stores the bytes is not the module but a PROVIDER that
-// satisfies the FileProvider contract in internal/core/provider. The module
+// satisfies the FileProvider contract in core/provider. The module
 // keeps the providers in a registry keyed by their ids
 // ([service.ProviderRegistry]) and resolves BY NAME at upload time. The only
 // provider that comes out of the box is "local", which writes the files to the
@@ -77,10 +77,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/bdrtr/gobit/internal/core/container"
-	"github.com/bdrtr/gobit/internal/core/db"
-	"github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/module"
+	"github.com/bdrtr/gobit/core/container"
+	"github.com/bdrtr/gobit/core/db"
+	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/module"
 	"github.com/bdrtr/gobit/internal/core/openapi"
 	"github.com/bdrtr/gobit/internal/modules/file/api"
 	"github.com/bdrtr/gobit/internal/modules/file/local"

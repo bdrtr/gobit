@@ -149,7 +149,7 @@ func scanDocReferences(t *testing.T) *referenceScan {
 		stdCache:       map[string]*referencePackage{},
 	}
 
-	for _, root := range productionRoots {
+	for _, root := range productionTrees {
 		abs := filepath.Join(repoRoot, root)
 		if _, err := os.Stat(abs); err != nil {
 			t.Fatalf("the %q root was not found: %v", root, err)
@@ -365,7 +365,7 @@ const (
 	// linkThreePart is package + receiver + name: [testing.T.TempDir].
 	linkThreePart
 	// linkFullPath carries an import path:
-	// [github.com/bdrtr/gobit/internal/core/module.Module].
+	// [github.com/bdrtr/gobit/core/module.Module].
 	linkFullPath
 	linkFormCount
 )
@@ -830,7 +830,7 @@ func TestTheLinkScannerIsNotBlind(t *testing.T) {
 			linkFormNames[form])
 	}
 
-	for _, root := range productionRoots {
+	for _, root := range productionTrees {
 		require.Positive(t, roots[root],
 			"no doc link was seen in the %s/ tree; the scan may never have read that root "+
 				"(the goFiles walk or the comment parsing). Every rotten reference in an "+
@@ -848,7 +848,7 @@ func TestTheLinkScannerIsNotBlind(t *testing.T) {
 			"source must have been unreadable (build.Default.GOROOT is empty or the source "+
 			"tree is missing). In that case every stdlib link passes without its symbol "+
 			"ever being looked for.")
-	require.NotEmpty(t, scan.lookUpInPackage(modulePath+"/internal/core/module", []string{"NoSuchSymbol"}),
+	require.NotEmpty(t, scan.lookUpInPackage(modulePath+"/core/module", []string{"NoSuchSymbol"}),
 		"a symbol that does not exist in a repository package was approved; the package "+
 			"directory must not have been built. In that case every qualified link inside "+
 			"the repository passes unverified.")
@@ -1079,7 +1079,7 @@ func markdownDocs(t *testing.T) []markdownDoc {
 // audit that tried to resolve relative names would either count all of them as
 // violations or forgive all of them; neither is what is expected of an audit.
 var rootedPathReference = regexp.MustCompile(
-	`(?:^|[^\w/.-])((?:cmd|internal|plugins|docs|config|deploy|migrations)/[A-Za-z0-9_][A-Za-z0-9_./-]*)`)
+	`(?:^|[^\w/.-])((?:cmd|core|internal|plugins|docs|config|deploy|migrations)/[A-Za-z0-9_][A-Za-z0-9_./-]*)`)
 
 // pathReferenceExemption is the justification of a path reference that does NOT
 // resolve today.
@@ -1098,14 +1098,14 @@ type pathReferenceExemption struct {
 var pathReferenceExemptions = []pathReferenceExemption{
 	{
 		file: "internal/modules/tax/service/service.go",
-		path: "internal/core/provider/tax.go",
+		path: "core/provider/tax.go",
 		reason: "The tax provider contract deliberately lives in the module; the godoc " +
 			"names by its name the place it WILL MOVE TO once a second real provider is " +
 			"written. The reference is a MOVE DECISION, not a claim about today's location.",
 	},
 	{
 		file: "internal/modules/tax/service/taxprovider.go",
-		path: "internal/core/provider/tax.go",
+		path: "core/provider/tax.go",
 		reason: "The same move decision as it stands in the file where the contract is " +
 			"defined; its justification is the same as the exemption in service.go.",
 	},
@@ -1126,7 +1126,7 @@ var pathReferenceExemptions = []pathReferenceExemption{
 //
 // # Telling a path reference from a symbol reference
 //
-// Comments also write a symbol name after a directory such as "internal/core/http".
+// Comments also write a symbol name after a directory such as "core/http".
 // The distinction comes out of a rule, not out of a list: if the last element starts
 // with a CAPITAL letter it is a Go symbol (exported names are capitalized, file
 // extensions are lowercase) and the audit verifies only the PACKAGE directory. If
@@ -1226,7 +1226,7 @@ func trimPathReference(raw string) string {
 //
 // The criterion of the distinction is the CAPITAL LETTER: in Go exported names start
 // with a capital, while file extensions are lowercase. Without the criterion every
-// correctly written symbol reference such as "internal/core/http.WriteError" would
+// correctly written symbol reference such as "core/http.WriteError" would
 // look broken with "there is no such file" — and conversely, a rule that took the
 // extension for a symbol would never audit the file name of an "x.go" reference.
 func stripSymbolFromPathReference(mentioned string) string {
@@ -1276,7 +1276,7 @@ const (
 	// mdPath is a directory or file path written from the repository root.
 	mdPath markdownReferenceClass = iota
 	// mdPathQualifiedSymbol carries a package PATH + a symbol:
-	// internal/core/http.Scoped.
+	// core/http.Scoped.
 	mdPathQualifiedSymbol
 	// mdQualifiedSymbol qualifies with the package NAME: corehttp.RequireScope.
 	mdQualifiedSymbol
@@ -1287,8 +1287,8 @@ const (
 
 // mdClassNames is the name of a class in error messages.
 var mdClassNames = [mdClassCount]string{
-	mdPath:                "repository path (internal/…)",
-	mdPathQualifiedSymbol: "path-qualified symbol (internal/…/package.Name)",
+	mdPath:                "repository path (core/…, internal/…)",
+	mdPathQualifiedSymbol: "path-qualified symbol (core/…/package.Name)",
 	mdQualifiedSymbol:     "qualified symbol (package.Name)",
 	mdMemberSymbol:        "member pair (Type.Member)",
 }
@@ -1715,7 +1715,7 @@ var markdownResolverExample = markdownDoc{
 		"## Context",
 		"",
 		"Path: `internal/core/no-such-package`.",
-		"Path-qualified symbol: `internal/core/http.NoSuchSymbol`.",
+		"Path-qualified symbol: `core/http.NoSuchSymbol`.",
 		"Qualified symbol: `corehttp.NoSuchSymbol`.",
 		"Member pair: `Config.NoSuchMember`.",
 	},
@@ -1774,9 +1774,9 @@ var markdownScannerExample = markdownDoc{
 		"",
 		"## Context",
 		"",
-		"Path in backticks: `internal/core/db/migrate.go`.",
+		"Path in backticks: `core/db/migrate.go`.",
 		"Plain text path: it lives inside internal/arch.",
-		"Path-qualified symbol: `internal/core/http.Scoped`.",
+		"Path-qualified symbol: `core/http.Scoped`.",
 		"Qualified symbol: `corehttp.Principal`.",
 		"",
 		"```",
@@ -1788,7 +1788,7 @@ var markdownScannerExample = markdownDoc{
 		"The event name `product.created`, the container registration `cart.interop`,",
 		"the column `region.currency_code` and the file name `CHANGELOG.md` are NOT",
 		"symbols. A mention by module name, `order.CreateOrder`, is out of scope too.",
-		"So are the relative mention `core/link` and the spelling `db.Pool.Pool()`.",
+		"So are the relative mention `service/interop.go` and the spelling `db.Pool.Pool()`.",
 		"",
 		"## Rejected options",
 		"",
@@ -1815,9 +1815,9 @@ func TestTheMarkdownReferenceScannerIsNotBlind(t *testing.T) {
 		example = append(example, fmt.Sprintf("%s|%s", mdClassNames[reference.class], reference.raw))
 	}
 	require.Equal(t, []string{
-		mdClassNames[mdPath] + "|internal/core/db/migrate.go",
+		mdClassNames[mdPath] + "|core/db/migrate.go",
 		mdClassNames[mdPath] + "|internal/arch",
-		mdClassNames[mdPathQualifiedSymbol] + "|internal/core/http.Scoped",
+		mdClassNames[mdPathQualifiedSymbol] + "|core/http.Scoped",
 		mdClassNames[mdQualifiedSymbol] + "|corehttp.Principal",
 		mdClassNames[mdPath] + "|internal/core/config/config.go",
 		mdClassNames[mdMemberSymbol] + "|Principal.Kind",
@@ -1861,7 +1861,7 @@ func TestTheMarkdownReferenceScannerIsNotBlind(t *testing.T) {
 	// between "I did not find it" and "I could not look". That a symbol which does
 	// not exist is REJECTED is separately tested for both a repository and a stdlib
 	// package.
-	require.NotEmpty(t, scan.resolveMarkdownSymbol(modulePath+"/internal/core/http", []string{"NoSuchSymbol"}),
+	require.NotEmpty(t, scan.resolveMarkdownSymbol(modulePath+"/core/http", []string{"NoSuchSymbol"}),
 		"a symbol that does not exist in a repository package was approved; the member "+
 			"widening must be accepting every name. In that case every qualified reference "+
 			"in markdown passes unverified.")
@@ -1926,7 +1926,7 @@ func TestTheDocsCarryNoLineNumberReference(t *testing.T) {
 	// Positive control: the ban itself can go blind too. A change that broke the
 	// pattern would leave behind a test that finds nothing and therefore stays green
 	// forever — while going on carrying the word "ban" in its name.
-	require.Regexp(t, lineNumberReference, "see internal/core/http/guard.go:16",
+	require.Regexp(t, lineNumberReference, "see core/http/guard.go:16",
 		"the pattern does not catch even its own example; the ban must have gone BLIND")
 
 	report := func(source string, lineNo int, text string) {

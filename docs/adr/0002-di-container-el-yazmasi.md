@@ -32,7 +32,7 @@ Geriye do'dan yalnızca mutex'li bir map kalıyordu.
 
 ## Karar
 
-`internal/core/container` sözleşmenin istediği davranışı **doğrudan yazar**;
+`core/container` sözleşmenin istediği davranışı **doğrudan yazar**;
 `samber/do` bağımlılığı eklenmez.
 
 Dışarıya yalnızca Bölüm 5.1'deki yüzey göründüğü için karar geri alınabilir:

@@ -175,7 +175,7 @@ func productionSources(t *testing.T) string {
 	t.Helper()
 
 	var b strings.Builder
-	for _, root := range []string{"internal", "cmd", "plugins"} {
+	for _, root := range productionTrees {
 		for _, path := range productionFiles(t, filepath.Join(repoRoot, root)) {
 			rel, err := filepath.Rel(repoRoot, path)
 			require.NoError(t, err)

@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bdrtr/gobit/core/db"
+	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/core/config"
-	"github.com/bdrtr/gobit/internal/core/db"
-	"github.com/bdrtr/gobit/internal/core/errors"
 	"github.com/bdrtr/gobit/internal/core/workflow"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"

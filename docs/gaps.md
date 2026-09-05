@@ -24,9 +24,10 @@ Four sequencing facts govern the whole list:
 
 - **A decision costs nothing today and more every week.** Every item in group A
   is a question that code is currently answering by accident.
-- **The public-surface decision (A1) has a clock on it.** ADR 0025 commits gobit
-  to being a library; every contract added before the surface is chosen is one
-  more thing to classify later — including the contracts on this list.
+- ~~**The public-surface decision (A1) has a clock on it.**~~ Answered on
+  2026-09-05 by ADR 0026: `core/` is the published tree and a package enters it
+  by an edit, not by a file move. A contract added from here on is classified
+  when it is written, which is what the clock was about.
 - **Four of the five AI features are blocked by something that is not AI**, and
   three of the four Turkey-specific items are blocked by one shared piece of
   plumbing. The model is never the first step, and the carrier is not the first
@@ -40,7 +41,7 @@ Four sequencing facts govern the whole list:
 
 | # | decision | what it blocks | section |
 | --- | --- | --- | --- |
-| A1 | **Which packages become public** — the open half of ADR 0025 | the library transition; grows costlier per feature shipped | Importable core |
+| A1 | ~~**Which packages become public**~~ **Answered 2026-09-05: ADR 0026.** Fourteen packages under `core/`, 7.8% of the codebase, no commerce model among them. Four audits enforce it | ~~the library transition~~ — the remaining half is the composition root, still a program | Importable core |
 | A2 | **What gobit is legally** — data controller, or a library whose embedder is the controller | every KVKK item; ADR 0025 points at the second answer, which changes the obligation from "implement consent" to "publish the hooks and the erasure contract" | Turkey-specific |
 | A3 | **May the customer pay a different amount than the merchant receives?** | installments (vade farki) AND multi-vendor commission. Today four guards including DB CHECKs forbid it | Turkey-specific, Commerce models |
 | A4 | **Invoice retention vs KVKK erasure** | all erasure work; unwritten, somebody deletes an invoice and puts a hole in the series ADR 0024 exists to prevent | Observability and security |
@@ -285,7 +286,7 @@ express colour × size properly. SKU sits on the variant, and
 Collections, categories, tags and images are all modelled.
 
 **Idempotency — two independent layers.** An HTTP middleware
-(`internal/core/http/idempotency.go`, Redis-backed) and, underneath it, the payment
+(`core/http/idempotency.go`, Redis-backed) and, underneath it, the payment
 module's own key with a UNIQUE index as the last line of defence
 (`payment_sessions_provider_idempotency_uniq`). The second is what makes a saga
 step safe to retry when the first is not in play.
@@ -347,7 +348,7 @@ or a workflow, that composes the three.
    everything belonging to it commit in a single transaction, and only then is
    `order.placed` published — *"a publishing failure does not drop the order"*.
    The event bus documents its own guarantee just as honestly
-   (`internal/core/eventbus/eventbus.go`): in-memory is at-most-once and
+   (`core/eventbus/eventbus.go`): in-memory is at-most-once and
    loses events when the process dies; Redis is at-least-once and resumes.
 
    Neither statement covers the window between the two. If the process dies
@@ -492,7 +493,7 @@ this behaves at scale, and one of them has already shown up as a workaround.
 
 **Connection pool is fully configurable** — `MaxConns`, `MinConns`,
 `MaxConnLifetime`, `MaxConnIdleTime` with defaults of 10/2/1h/30m
-(`internal/core/db/db.go`). Worth knowing why the settings are verified by
+(`core/db/db.go`). Worth knowing why the settings are verified by
 READING THEM BACK from `pool.Pool().Config()` rather than from the config
 struct: a mutation that deleted `pgCfg.MaxConns = cfg.MaxConns` outright passed
 every test, because the startup log kept printing the CONFIGURED number while
@@ -515,7 +516,7 @@ development and says so.
 
 **Graceful shutdown and health endpoints** — `/health` and `/ready` as separate
 answers, with `ShutdownTimeout` letting open requests finish
-(`internal/core/http/server.go`). The split is load-bearing: Postgres GATES
+(`core/http/server.go`). The split is load-bearing: Postgres GATES
 traffic (`/ready` 503s without it) while Redis only DEGRADES, and which side a
 dependency lands on is decided by what its loss does to a request.
 
@@ -959,6 +960,12 @@ costed as that, not as features.
 
 ## Importable core, thin application — measured against the brief, 2026-09-05
 
+> **Acted on 2026-09-05.** The twelve packages an extension author needs were
+> promoted out of `internal/` to `core/` and the surface was fixed by ADR 0026.
+> The measurement below is what led to that decision; the part still true is the
+> composition root — `cmd/server` is a program, so an out-of-tree APPLICATION is
+> still not possible. An out-of-tree PLUGIN now is.
+
 The brief: ship the core as an IMPORTABLE Go module the way PocketBase does —
 `go get`, `app := New()`, bind hooks, compile one binary — with a thin starter
 repository per customer project. Stay away from the fork model. Open the
@@ -993,18 +1000,18 @@ inventing; it needs relocating and naming.
 
 | the brief asks for | what exists today | where it lives |
 | --- | --- | --- |
-| `PaymentProvider`, `TaxCalculator`, … | provider registries resolved BY NAME, selection in config, unknown name stops the startup | `internal/core/provider`, per-module registries |
-| hooks over domain events | an event bus with `Subscribe`, domain events, and an outbox so a promised event cannot be lost (ADR 0023) | `internal/core/eventbus` |
-| router access | chi; every module registers its own full paths, and the panel proves a fourth tree can mount its own | `internal/core/http`, `Module.Routes` |
-| merged migrations | the registry already merges per-owner migration sources and refuses two owners claiming one table | `internal/core/module`, `cmd/server/migrate.go` |
-| a project can add its own module | `Registry.Add(mod Module)` — the exact method the brief needs | `internal/core/module` |
+| `PaymentProvider`, `TaxCalculator`, … | provider registries resolved BY NAME, selection in config, unknown name stops the startup | `core/provider`, per-module registries |
+| hooks over domain events | an event bus with `Subscribe`, domain events, and an outbox so a promised event cannot be lost (ADR 0023) | `core/eventbus` |
+| router access | chi; every module registers its own full paths, and the panel proves a fourth tree can mount its own | `core/http`, `Module.Routes` |
+| merged migrations | the registry already merges per-owner migration sources and refuses two owners claiming one table | `core/module`, `cmd/server/migrate.go` |
+| a project can add its own module | `Registry.Add(mod Module)` — the exact method the brief needs | `core/module` |
 | `Product.Metadata` jsonb | present on product, variant, taxonomy, order, cart, customer, payment, invoice, fulfillment, tax and auth | eleven modules |
-| compile-time plugin registration | a plugin host with an Install phase, selected by configuration | `internal/core/plugin`, `plugins/` |
+| compile-time plugin registration | a plugin host with an Install phase, selected by configuration | `core/plugin`, `plugins/` |
 
 ### The plugin tree is not the extension point it looks like
 
 `plugins/` sits outside `internal/` and is importable — and **every plugin in it
-imports `internal/core/plugin` to satisfy the host contract.** An out-of-tree
+imports `core/plugin` to satisfy the host contract.** An out-of-tree
 plugin cannot do that. So the plugin system works for plugins that live in this
 repository and for no others, which means the Caddy model the brief names
 (`import _ "github.com/user/ecom-iyzico"`, register in `init()`) is not
@@ -1955,9 +1962,9 @@ the next reader sees a decision instead of a wait.
    about shipping the PANEL separately, and that reasoning is untouched.
 
    The original finding: No `Access-Control` handling and no OPTIONS responder in the
-   middleware chain (`internal/core/http/router.go`). The publishable
+   middleware chain (`core/http/router.go`). The publishable
    key exists precisely so it can sit in a browser
-   (`internal/core/http/auth.go`: "NOT A SECRET; it is expected to be
+   (`core/http/auth.go`: "NOT A SECRET; it is expected to be
    visible") and the preflight dies before that key is ever read. ADR 0011
    rejects CORS only as a way to ship the admin panel separately, and says so
    "because it buys nothing today, not because it is impossible" — so this is a

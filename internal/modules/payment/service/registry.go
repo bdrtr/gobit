@@ -5,9 +5,9 @@ import (
 	"strings"
 	"sync"
 
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 )
 
 // ProviderRegistry ödeme sağlayıcılarını kimlikleriyle tutar.
@@ -16,7 +16,7 @@ import (
 // ([github.com/bdrtr/gobit/internal/modules/payment/manual.Provider]) Register
 // sırasında buraya koyar ve kaydı container'a "payment.providers" adıyla
 // verir. Bir eklenti, çekirdeğe ve bu modüle DOKUNMADAN, container'dan kaydı
-// çözüp kendi sağlayıcısını ekler; sözleşme internal/core/provider'daki
+// çözüp kendi sağlayıcısını ekler; sözleşme core/provider'daki
 // PaymentProvider arayüzüdür ve plugins/paymentpaytr onu karşılar.
 //
 // Eşzamanlı kullanıma güvenlidir: kayıt açılışta, okuma her istekte yapılır.

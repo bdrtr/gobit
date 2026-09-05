@@ -27,14 +27,14 @@ const (
 	// an integration run.
 	e2eHarness = "internal/e2e"
 	// coreModulePackage is the core package where the
-	// [github.com/bdrtr/gobit/internal/core/module.Module] contract and the
-	// [github.com/bdrtr/gobit/internal/core/module.Registry] registry live.
+	// [github.com/bdrtr/gobit/core/module.Module] contract and the
+	// [github.com/bdrtr/gobit/core/module.Registry] registry live.
 	//
 	// The godocs below name those same two names SHORT (module.Module,
 	// module.Registry) and do not write them as links: this package does not
 	// import core/module, so a short name would resolve nowhere. The full path
 	// is given exactly once, here, where the name is defined.
-	coreModulePackage = modulePath + "/internal/core/module"
+	coreModulePackage = modulePath + "/core/module"
 	// workflowsDirName is the tree where the cross-module workflows live (ADR
 	// 0006). It is neither core nor a module: the depguard rules are for
 	// internal/modules, and the module registration audit walks below
@@ -52,7 +52,7 @@ const (
 	// coreContainerPackage is the core package where the container lives. The
 	// mark that a workflow package is "designed to be built from the container"
 	// is that one of its exported functions takes this type as a PARAMETER.
-	coreContainerPackage = modulePath + "/internal/core/container"
+	coreContainerPackage = modulePath + "/core/container"
 	// setupMarkerName is the conventional name of the workflow constructors.
 	//
 	// The forward audit does NOT USE this name (it looks at the shape, see

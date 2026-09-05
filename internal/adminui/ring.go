@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"sync/atomic"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	"github.com/bdrtr/gobit/core/errors"
+	corehttp "github.com/bdrtr/gobit/core/http"
 )
 
 // Ring makes the panel's guard middleware BINDABLE LATER.

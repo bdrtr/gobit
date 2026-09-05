@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/bdrtr/gobit/internal/core/query"
+	"github.com/bdrtr/gobit/core/query"
 )
 
 // EntityOrder is the order module's entity name in the read layer.

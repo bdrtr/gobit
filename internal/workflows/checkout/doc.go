@@ -2,7 +2,7 @@
 // (plan Phase 6).
 //
 // It offers a single workflow: [Workflows.CompleteCart]. The workflow consists
-// of five steps and is executed by core/workflow's saga engine:
+// of five steps and is executed by internal/core/workflow's saga engine:
 //
 //	reserve_inventory -> create_order -> authorize_payment -> capture_payment -> clear_cart
 //
@@ -74,7 +74,7 @@
 // it is IDEMPOTENT. The step is composite in itself: if one line blows up it
 // releases the reservations taken up to that moment ITSELF, because the engine
 // does not compensate a step that blew up on its single attempt (see the
-// core/workflow package comment). If its own cleanup blows up too, the error is
+// internal/core/workflow package comment). If its own cleanup blows up too, the error is
 // wrapped with [workflow.ErrUncompensated] and the execution is written
 // compensation_failed. For how the location is determined see "Location".
 //

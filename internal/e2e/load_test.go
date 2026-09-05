@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	corehttp "github.com/bdrtr/gobit/core/http"
 )
 
 // This file satisfies the "the baseline load test passes" item in the plan's

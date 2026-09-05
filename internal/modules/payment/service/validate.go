@@ -3,7 +3,7 @@ package service
 import (
 	"strings"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 )
 
@@ -87,7 +87,7 @@ func collectionStatusNames() []string {
 // doğrular.
 //
 // Sıfır, sağlayıcı sözleşmesinde de "tamamı" demektir (bkz.
-// internal/core/provider: Capture ve Refund). Aynı anlam servis yüzeyinde de
+// core/provider: Capture ve Refund). Aynı anlam servis yüzeyinde de
 // korunur ki çağıran iki farklı sıfır kuralı öğrenmek zorunda kalmasın.
 func requireOptionalAmount(label string, amount int64) error {
 	if amount == 0 {

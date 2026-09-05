@@ -28,9 +28,9 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
-	"github.com/bdrtr/gobit/internal/core/db"
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	"github.com/bdrtr/gobit/core/db"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 )
 
 const postgresImage = "postgres:16-alpine"

@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
 )
 
 // The two RFCs this file implements, and why by hand.

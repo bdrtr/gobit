@@ -11,10 +11,10 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/bdrtr/gobit/core/container"
+	"github.com/bdrtr/gobit/core/errorreport"
+	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/core/config"
-	"github.com/bdrtr/gobit/internal/core/container"
-	"github.com/bdrtr/gobit/internal/core/errorreport"
-	"github.com/bdrtr/gobit/internal/core/errors"
 	"github.com/bdrtr/gobit/internal/core/workflow"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 )

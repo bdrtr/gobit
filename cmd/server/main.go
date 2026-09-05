@@ -31,16 +31,16 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/bdrtr/gobit/core/container"
+	"github.com/bdrtr/gobit/core/errorreport"
+	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/eventbus"
+	corehttp "github.com/bdrtr/gobit/core/http"
+	"github.com/bdrtr/gobit/core/module"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	"github.com/bdrtr/gobit/internal/core/config"
-	"github.com/bdrtr/gobit/internal/core/container"
-	"github.com/bdrtr/gobit/internal/core/errorreport"
-	"github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/eventbus"
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/core/logger"
-	"github.com/bdrtr/gobit/internal/core/module"
 	"github.com/bdrtr/gobit/internal/core/observability"
-	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
 	"github.com/bdrtr/gobit/internal/modules/auth"
 	"github.com/bdrtr/gobit/internal/modules/b2b"
 	"github.com/bdrtr/gobit/internal/modules/cart"
@@ -477,7 +477,7 @@ func registerModules(registry *module.Registry, cfg config.Config, log *slog.Log
 // module the server migrates on every boot.
 //
 // Setup neither connects nor migrates: the host QUEUES the provider and
-// subscriber registrations for [github.com/bdrtr/gobit/internal/core/plugin.Registry.Start],
+// subscriber registrations for [github.com/bdrtr/gobit/core/plugin.Registry.Start],
 // which the migrate path never calls. That is why bus may be nil there.
 func installPlugins(
 	ctx context.Context,

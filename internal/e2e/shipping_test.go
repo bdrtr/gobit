@@ -14,8 +14,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	"github.com/bdrtr/gobit/core/errors"
+	corehttp "github.com/bdrtr/gobit/core/http"
 	fulfillmentmanual "github.com/bdrtr/gobit/internal/modules/fulfillment/manual"
 	fulfillmentmodels "github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 	fulfillmentsvc "github.com/bdrtr/gobit/internal/modules/fulfillment/service"

@@ -29,7 +29,7 @@ import (
 const resolveSelector = "Resolve"
 
 // containerImportPath is the package resolveSelector belongs to.
-const containerImportPath = modulePath + "/internal/core/container"
+const containerImportPath = modulePath + "/core/container"
 
 // concreteResolveExemptions are the (container name, concrete type) pairs that
 // may be resolved WITHOUT an interface.
@@ -169,7 +169,7 @@ func resolveCalls(t *testing.T) []resolveCall {
 
 	var calls []resolveCall
 
-	for _, root := range []string{"internal", "cmd", "plugins"} {
+	for _, root := range productionTrees {
 		abs := filepath.Join(repoRoot, root)
 		for _, path := range productionFiles(t, abs) {
 			fset := token.NewFileSet()
@@ -553,7 +553,7 @@ func TestAdminSurfaceHasOneAudience(t *testing.T) {
 
 	mentions := 0
 
-	for _, root := range []string{"internal", "cmd", "plugins"} {
+	for _, root := range productionTrees {
 		for _, path := range productionFiles(t, filepath.Join(repoRoot, root)) {
 			rel, err := filepath.Rel(repoRoot, path)
 			require.NoError(t, err)

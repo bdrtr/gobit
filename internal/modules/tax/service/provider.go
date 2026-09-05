@@ -4,8 +4,8 @@ import (
 	"context"
 	"slices"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/query"
+	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
 )
 
@@ -57,7 +57,7 @@ var supportedFields = []string{
 // not go through here: the calculation is [Service.CalculateTax] and Query's
 // loosely typed record surface is not suitable for money arithmetic.
 //
-// The interface is defined in internal/core/query; this type only satisfies the
+// The interface is defined in core/query; this type only satisfies the
 // signature and tells the core nothing (the provider side of ADR 0001).
 type QueryProvider struct {
 	svc *Service

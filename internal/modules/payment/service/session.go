@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"strings"
 
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 )
 

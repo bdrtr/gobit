@@ -133,7 +133,7 @@ gerçek sınır örnek sayısıyla çarpılır — bu bir *hız* sorunudur, tole
 `MemoryIdempotencyStore` yatay ölçeklendiğinde aynı anahtarla farklı örneklere
 düşen iki istek İKİ KEZ işlenir — bu bir *doğruluk* sorunudur, tolere edilemez.
 Yani çok örnekli dağıtımda paylaşılan idempotency deposu ZORUNLUDUR, paylaşılan
-hız sınırlayıcı ise isteğe bağlıdır. İkisi de `internal/core/http` içindeki
+hız sınırlayıcı ise isteğe bağlıdır. İkisi de `core/http` içindeki
 arayüzler üzerinden değiştirilebilir.
 
 ## Reddedilen seçenekler

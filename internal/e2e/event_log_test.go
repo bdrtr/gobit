@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/internal/core/eventbus"
+	"github.com/bdrtr/gobit/core/eventbus"
 	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
 )
 

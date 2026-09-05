@@ -5,8 +5,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/query"
+	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/modules/pricing/models"
 )
 
@@ -55,7 +55,7 @@ var supportedFields = []string{fieldID, fieldCreatedAt, fieldUpdatedAt, fieldPri
 // context-dependent price uses [Service.CalculateAmount]; the selection rule
 // lives there, in a single place.
 //
-// The interface is defined in internal/core/query; this type merely satisfies
+// The interface is defined in core/query; this type merely satisfies
 // the signature and declares nothing to the core (the provider side of ADR
 // 0001).
 type QueryProvider struct {

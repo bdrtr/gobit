@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/bdrtr/gobit/internal/core/container"
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/container"
+	"github.com/bdrtr/gobit/core/errors"
 )
 
 // This file is the module's ONLY face turned towards the ORDER (ADR 0001,

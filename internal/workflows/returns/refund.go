@@ -3,7 +3,7 @@ package returns
 import (
 	"context"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 )
 
 // RefundResult reports what refunding a return did.

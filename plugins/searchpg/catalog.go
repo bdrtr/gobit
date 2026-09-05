@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/bdrtr/gobit/internal/core/container"
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/container"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
 )
 
 // Bu dosya eklentinin KATALOĞA bakan tek yüzüdür (ADR 0001, ADR 0006).

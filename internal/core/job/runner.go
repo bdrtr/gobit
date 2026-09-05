@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
 )
 
 // tickInterval is how often the runner looks for due occurrences.

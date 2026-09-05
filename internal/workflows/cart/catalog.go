@@ -3,8 +3,8 @@ package cart
 import (
 	"context"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/query"
+	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/query"
 )
 
 // attrRegionID is the name of the attribute that carries the region in pricing's

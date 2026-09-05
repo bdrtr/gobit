@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	"github.com/bdrtr/gobit/core/errors"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 	"github.com/bdrtr/gobit/internal/modules/notification/models"
 	"github.com/bdrtr/gobit/internal/modules/notification/service"
 )

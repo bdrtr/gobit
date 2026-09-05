@@ -44,7 +44,7 @@ package errorotlp
 import (
 	"context"
 
-	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
 )
 
 // Name is the plugin's name in the catalog.

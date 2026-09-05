@@ -4,8 +4,8 @@ import (
 	"context"
 	"slices"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/query"
+	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/modules/customer/models"
 )
 
@@ -62,7 +62,7 @@ var supportedFilters = []string{filterID, filterEmail, filterHasAccount, filterG
 // If the group ids are not wanted they can be left out with Fields; in that
 // case the membership query is NOT run at all.
 //
-// The interface is defined in internal/core/query; this type only satisfies the
+// The interface is defined in core/query; this type only satisfies the
 // signature and tells the core nothing (the provider side of ADR 0001).
 type QueryProvider struct {
 	svc *Service

@@ -63,7 +63,7 @@ yeniden açacak sorular [ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.
 | Veritabanı | PostgreSQL 16+ | |
 | DB erişim | **`sqlc` + `pgx/v5`** | Modül başına ayrı codegen paketi; ent'in FK/graph modeli modül izolasyonuyla çelişiyor |
 | Migration | **`golang-migrate`** | `Module.Migrations() fs.FS` ile birebir uyum; modül başına `x-migrations-table` |
-| DI / container | **El yazması** (`internal/core/container`) | Bölüm 5.1 sözleşmesi `Provide(name, ctor any)` istiyor; samber/do tip parametreli olduğu için `any`'ye düzleşiyor ve teşhis/conflict/kapatma sırası elden gidiyor — bkz. [ADR 0002](docs/adr/0002-di-container-el-yazmasi.md) |
+| DI / container | **El yazması** (`core/container`) | Bölüm 5.1 sözleşmesi `Provide(name, ctor any)` istiyor; samber/do tip parametreli olduğu için `any`'ye düzleşiyor ve teşhis/conflict/kapatma sırası elden gidiyor — bkz. [ADR 0002](docs/adr/0002-di-container-el-yazmasi.md) |
 | Event bus | In-memory (dev) + Redis Streams (prod) | Arayüz tek, backend pluggable |
 | Cache / kuyruk | Redis | İş kuyruğu için `hibiken/asynq` opsiyonel |
 | Workflow | Custom saga engine | İstenirse ileride Temporal'a köprü |
@@ -125,7 +125,7 @@ AI bunları birebir bu imzalarla (gerekirse genişleterek) implemente etmeli.
 ### 5.1 Module & Registry
 
 ```go
-// internal/core/module/module.go
+// core/module/module.go
 type Module interface {
     Name() string
     // Register: servisleri container'a kaydeder, link tanımlarını ve event subscriber'ları bildirir.
@@ -138,7 +138,7 @@ type Module interface {
 ```
 
 ```go
-// internal/core/container/container.go
+// core/container/container.go
 type Container struct { /* DI wrapper */ }
 
 func (c *Container) Provide(name string, ctor any) error
@@ -153,7 +153,7 @@ func (m *ModuleRegistry) Bootstrap(ctx context.Context, c *Container) error
 ### 5.2 Module Links
 
 ```go
-// internal/core/link/link.go
+// core/link/link.go
 type LinkDefinition struct {
     Name      string // örn. "product_price"
     From      LinkSide // {Module: "product", Field: "product_id"}
@@ -172,7 +172,7 @@ type LinkService interface {
 ### 5.3 Query (cross-module okuma)
 
 ```go
-// internal/core/query/query.go
+// core/query/query.go
 // Modüllerden veriyi alıp link'ler üzerinden birleştirir.
 type Query interface {
     Graph(ctx context.Context, spec GraphSpec) ([]map[string]any, error)
@@ -185,7 +185,7 @@ type Query interface {
 ### 5.4 Event Bus
 
 ```go
-// internal/core/eventbus/eventbus.go
+// core/eventbus/eventbus.go
 type Event struct {
     Name string            // "order.placed"
     Data map[string]any
@@ -232,7 +232,7 @@ type Executor interface {
 ### 5.6 Provider Soyutlamaları
 
 ```go
-// internal/core/provider/payment.go
+// core/provider/payment.go
 type PaymentProvider interface {
     ID() string
     CreateSession(ctx context.Context, in CreateSessionInput) (Session, error)
@@ -362,7 +362,7 @@ type PaymentProvider interface {
 > koruma yığınındaki yarış. Kapasite planı için bir sayı üretmez.
 >
 > Hız sınırı ve idempotency deposu `GUARD_BACKEND` ile seçilir. `memory`
-> (varsayılan) tek süreçliktir; `redis` (`internal/core/http/redisguard`)
+> (varsayılan) tek süreçliktir; `redis` (`core/http/redisguard`)
 > paylaşılandır. Fark derece değil TÜR farkıdır: sınırın gevşemesi bir hız
 > sorunudur, idempotency'nin çalışmaması bir DOĞRULUK sorunudur — aynı
 > anahtarla farklı örneklere düşen iki istek iki sipariş üretir. Paylaşılan bir
@@ -389,8 +389,8 @@ type PaymentProvider interface {
 1. `go mod init` ve Bölüm 4'teki dizin ağacını oluştur.
 2. `Makefile` hedefleri: `run, build, test, lint, migrate-up, migrate-down, up, down, gen`.
 3. `deploy/docker-compose.yml`: Postgres 16 + Redis 7.
-4. `core/config`: env'den `APP_PORT, DATABASE_URL, REDIS_URL, LOG_LEVEL` oku.
-5. `core/logger`: `slog` JSON handler, log level config'den.
+4. `internal/core/config`: env'den `APP_PORT, DATABASE_URL, REDIS_URL, LOG_LEVEL` oku.
+5. `internal/core/logger`: `slog` JSON handler, log level config'den.
 6. `cmd/server/main.go`: config yükle → logger kur → (boş) container kur → chi router → `/health` → dinle.
 7. `golangci-lint` config + GitHub Actions CI (lint + test).
 8. İlk commit: `chore: project skeleton (phase 0)`.

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	"github.com/bdrtr/gobit/core/errors"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 )
 
 // ProviderRegistry keeps the file providers by their identifiers.
@@ -17,7 +17,7 @@ import (
 // "file.providers". The plugin system (coreplugin.Host.RegisterFileProvider)
 // resolves the registry and adds its own provider WITHOUT TOUCHING the core and
 // this module; the contract is the FileProvider interface in
-// internal/core/provider.
+// core/provider.
 //
 // It is safe for concurrent use: the registration is done at startup, the
 // reading on every upload and on every serve request.

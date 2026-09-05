@@ -3,8 +3,8 @@ package searchpg
 import (
 	"context"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/query"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/query"
 )
 
 // Hata kodları.

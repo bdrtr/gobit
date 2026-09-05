@@ -3,7 +3,7 @@ package api_test
 import (
 	"context"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/payment/api"
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 	"github.com/bdrtr/gobit/internal/modules/payment/service"

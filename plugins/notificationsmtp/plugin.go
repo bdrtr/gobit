@@ -58,9 +58,9 @@ import (
 	"text/template"
 	"time"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
-	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 )
 
 // Name is the plugin's name in the registry; it is the value the PLUGINS list

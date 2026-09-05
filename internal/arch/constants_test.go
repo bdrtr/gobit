@@ -14,12 +14,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bdrtr/gobit/core/db"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
+	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/adminui"
 	"github.com/bdrtr/gobit/internal/core/config"
-	"github.com/bdrtr/gobit/internal/core/db"
-	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
-	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/modules/auth"
 	authsvc "github.com/bdrtr/gobit/internal/modules/auth/service"
 	"github.com/bdrtr/gobit/internal/modules/file"
@@ -156,7 +156,7 @@ func TestTheDefaultNotificationProviderAgreesWithTheConfig(t *testing.T) {
 // TestThePoolDefaultsAgreeWithTheDbPackage verifies that the PostgreSQL pool's
 // defaults in TWO separate places are the same.
 //
-// The side that BUILDS the pool is internal/core/db and it carries its own
+// The side that BUILDS the pool is core/db and it carries its own
 // defaults (db.DefaultConfig); the side that READS is config, and it repeats by
 // hand the numbers it will use when no environment variable is given. The
 // repetition is mandatory: envDefault is a struct tag and Go does not accept
@@ -308,7 +308,7 @@ func TestTheSalesChannelEntityNameAgrees(t *testing.T) {
 // TestPluginsDoNotImportModules forces Phase 9's claim that a plugin "can be
 // plugged in and selected without touching the core".
 //
-// The godoc of the internal/core/plugin package says that a plugin WILL NOT
+// The godoc of the core/plugin package says that a plugin WILL NOT
 // import any commerce module, and plugins/paymentstripe honors this today. But
 // no rule ENFORCES it: the depguard rules were written for the files under
 // internal/modules, and the plugins/ tree falls within none of them.
@@ -317,7 +317,7 @@ func TestTheSalesChannelEntityNameAgrees(t *testing.T) {
 // is bound at compile time to that module's concrete type. From that moment on,
 // pulling the module out into a separate service breaks the plugin, and testing
 // the plugin requires standing up the whole payment chain. The right path for a
-// plugin is to take the contract from internal/core/provider and the
+// plugin is to take the contract from core/provider and the
 // registration point from coreplugin.Host.
 func TestPluginsDoNotImportModules(t *testing.T) {
 	t.Parallel()
@@ -348,7 +348,7 @@ func TestPluginsDoNotImportModules(t *testing.T) {
 			path := strings.Trim(imp.Path.Value, `"`)
 			if strings.HasPrefix(path, prefix) {
 				t.Errorf("%s: the plugin imports the %q module.\n"+
-					"A plugin must take the contract from internal/core/provider and the "+
+					"A plugin must take the contract from core/provider and the "+
 					"registration point from coreplugin.Host; it must not bind to the module's "+
 					"concrete type.",
 					file, strings.TrimPrefix(path, prefix))

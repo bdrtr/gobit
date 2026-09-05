@@ -271,6 +271,6 @@ CREATE TABLE IF NOT EXISTS fulfillment_manual_shipments (
 
 -- The same idempotency key cannot open a SECOND shipment. This is the constraint
 -- that ultimately enforces the idempotency requirement of the provider contract
--- (internal/core/provider).
+-- (core/provider).
 CREATE UNIQUE INDEX IF NOT EXISTS fulfillment_manual_shipments_idempotency_uniq
     ON fulfillment_manual_shipments (idempotency_key);

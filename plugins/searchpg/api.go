@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
+	corehttp "github.com/bdrtr/gobit/core/http"
 )
 
 // Eklentinin açtığı uçlar ve istedikleri yetki.

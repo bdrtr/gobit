@@ -3,7 +3,7 @@ package adminui
 import (
 	"net/http"
 
-	"github.com/bdrtr/gobit/internal/core/query"
+	"github.com/bdrtr/gobit/core/query"
 )
 
 // EntityInventoryItem is the inventory module's entity name in the read layer.

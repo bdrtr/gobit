@@ -34,8 +34,8 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"github.com/bdrtr/gobit/internal/core/container"
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/container"
+	"github.com/bdrtr/gobit/core/errors"
 )
 
 // Service names in the container (ADR 0006). The concrete types are resolved by

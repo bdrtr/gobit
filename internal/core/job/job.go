@@ -47,7 +47,7 @@ import (
 	"hash/fnv"
 	"time"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
 )
 
 // LockClass is the CLASS number of this package's advisory locks, written into

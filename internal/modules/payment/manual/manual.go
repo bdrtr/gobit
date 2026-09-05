@@ -1,7 +1,7 @@
 // Package manual gerçek bir ağ çağrısı yapmayan test/manuel ödeme
 // sağlayıcısıdır (plan Faz 6).
 //
-// [Provider], internal/core/provider'daki PaymentProvider sözleşmesini
+// [Provider], core/provider'daki PaymentProvider sözleşmesini
 // karşılar ve o sözleşmenin godoc'unda yazılı İDEMPOTENCY şartlarını yerine
 // getirir:
 //
@@ -51,9 +51,9 @@ import (
 	"log/slog"
 	"strings"
 
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 )
 

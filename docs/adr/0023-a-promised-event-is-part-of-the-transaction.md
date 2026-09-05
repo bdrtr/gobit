@@ -12,7 +12,7 @@ single transaction, and only then is `order.placed` published, because *"a
 publishing failure does not drop the order"*.
 
 The event bus is equally honest about its own guarantee
-(`internal/core/eventbus/eventbus.go`): the in-memory backend is at-most-once
+(`core/eventbus/eventbus.go`): the in-memory backend is at-most-once
 and loses events when the process dies; the Redis backend is at-least-once and
 resumes where it left off.
 
@@ -32,7 +32,7 @@ a comment.
 **The event is written INSIDE the transaction that promised it, and a scheduled
 relay publishes it.**
 
-- `internal/core/eventbus/outbox` owns the `event_outbox` table and the writing
+- `core/eventbus/outbox` owns the `event_outbox` table and the writing
   rule.
 - The module writes the row through its OWN repository, which is the only side
   inside its transaction.

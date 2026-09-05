@@ -43,7 +43,7 @@ package graph
 import (
 	"context"
 
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 

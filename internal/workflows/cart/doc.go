@@ -48,7 +48,7 @@
 // the cart module). Rolling the line back would mean DELETING the customer's intent
 // because of a transient pricing failure.
 //
-// This is why the core/workflow Executor is NOT USED in this round and the
+// This is why the internal/core/workflow Executor is NOT USED in this round and the
 // "core.workflow" name is not resolved. Wrapping a single-step job that has no
 // compensation into the engine pays the cost of the execution record and the
 // compensation machinery but buys no guarantee in return; the only thing the engine

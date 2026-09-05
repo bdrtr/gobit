@@ -5,8 +5,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	"github.com/bdrtr/gobit/core/errors"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 )
 
 // ProviderRegistry holds the shipping providers by their identifiers.
@@ -15,7 +15,7 @@ import (
 // Register and hands the registry to the container under the name
 // "fulfillment.providers". A plugin can, WITHOUT TOUCHING the core or this
 // module, resolve the registry from the container and add its own provider; the
-// contract is the FulfillmentProvider interface in internal/core/provider. The
+// contract is the FulfillmentProvider interface in core/provider. The
 // mechanism ships and is proven on the payment slot; no plugin fills this one.
 //
 // It is safe for concurrent use: registration happens at startup, reading on

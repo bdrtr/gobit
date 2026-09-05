@@ -4,8 +4,8 @@ import (
 	"context"
 	"slices"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/query"
+	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/modules/auth/models"
 )
 
@@ -53,7 +53,7 @@ var supportedFilters = []string{filterID, filterName, filterIsDisabled}
 
 // QueryProvider opens sales channels to the Query layer (ADR 0004).
 //
-// The interface is defined in internal/core/query; this type only satisfies
+// The interface is defined in core/query; this type only satisfies
 // the signature and tells the core nothing (the provider side of ADR 0001).
 type QueryProvider struct {
 	svc *Service

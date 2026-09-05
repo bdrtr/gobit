@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/bdrtr/gobit/internal/core/eventbus"
+	"github.com/bdrtr/gobit/core/eventbus"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 )
 

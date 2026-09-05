@@ -16,9 +16,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/internal/core/eventbus"
-	"github.com/bdrtr/gobit/internal/core/module"
-	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
+	"github.com/bdrtr/gobit/core/eventbus"
+	"github.com/bdrtr/gobit/core/module"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	productmodels "github.com/bdrtr/gobit/internal/modules/product/models"
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
 	"github.com/bdrtr/gobit/plugins/searchpg"

@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS notification_deliveries (
     -- channel is the send channel ("email" | "sms").
     --
     -- A CHECK constraint IS DELIBERATELY ABSENT: the list of channels is
-    -- defined in the core (internal/core/provider) and plugins can bring new
+    -- defined in the core (core/provider) and plugins can bring new
     -- channels. Pinning the values here would have made writing a migration
     -- mandatory for every channel added to the core; whereas the log records
     -- the send that was ATTEMPTED — whether the channel is supported is decided

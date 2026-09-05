@@ -1,6 +1,6 @@
 package service
 
-import "github.com/bdrtr/gobit/internal/core/link"
+import "github.com/bdrtr/gobit/core/link"
 
 // LinkOrderPayment binds an order to the payment collection opened for it.
 //

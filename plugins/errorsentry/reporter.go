@@ -13,8 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 )
 
 // The reporter's fixed numbers.

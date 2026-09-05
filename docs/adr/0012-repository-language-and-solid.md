@@ -113,7 +113,7 @@ tree, and every test here reads trees.
 
 ### 4. Error codes never translate; error messages do
 
-`internal/core/errors` already writes this down: the code is a machine-readable
+`core/errors` already writes this down: the code is a machine-readable
 identifier and part of the API contract, the message is for a human. So
 `product_not_found` stays exactly as it is forever, and the message beside it
 becomes English.

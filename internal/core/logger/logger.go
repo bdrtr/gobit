@@ -26,7 +26,7 @@ type Options struct {
 	//
 	// It exists so that something can observe the log without this package
 	// knowing what that something is. Error reporting is the caller today
-	// (internal/core/errorreport); had this package imported it, the logger —
+	// (core/errorreport); had this package imported it, the logger —
 	// which everything depends on — would have gained a dependency on a
 	// collector integration, and nothing in this file would be testable without
 	// it.

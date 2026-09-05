@@ -6,8 +6,8 @@ import (
 	"io"
 	"net/http"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
+	corehttp "github.com/bdrtr/gobit/core/http"
 )
 
 // Invoicing is the part of the invoicing flow this module's endpoints call.

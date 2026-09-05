@@ -5,7 +5,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 )
 
 // The default time budgets.

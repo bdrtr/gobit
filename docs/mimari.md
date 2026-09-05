@@ -234,7 +234,7 @@ alt komutun çıktığını ve portu hiç bağlamadığını gösterir.
 
 ## 7. İş akışları (saga)
 
-Modüller arası her çok adımlı işlem `core/workflow` üzerinde bir saga'dır:
+Modüller arası her çok adımlı işlem `internal/core/workflow` üzerinde bir saga'dır:
 ardışık yürütme, hata hâlinde **ters sırada** telafi, retry, idempotency
 anahtarı ve panik izolasyonu. Yürütme durumu Postgres'e yazılır, yani
 "aynı sepet iki kez tamamlanamaz" iddiası süreç içi bir haritanın değil kalıcı
@@ -394,7 +394,7 @@ bırakırdı — ödemede bunun bedeli paranın beklenmedik bir kuruluşa gitmes
 
 Çok örneklilik artık bir sınır değil bir **ayardır**: `GUARD_BACKEND=redis` hız
 sınırını ve idempotency deposunu paylaşılan hâle getirir (bkz.
-`internal/core/http/redisguard`). Varsayılan `memory` bilinçlidir — tek örnekli
+`core/http/redisguard`). Varsayılan `memory` bilinçlidir — tek örnekli
 geliştirme kurulumu Redis istememelidir — ama paylaşılan bir ortamda açılışta
 uyarı üretir.
 

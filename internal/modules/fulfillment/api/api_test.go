@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/api"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/service"

@@ -11,7 +11,7 @@
 // # What it does not decide
 //
 // It does not decide what may be sent. The event it receives has already been
-// through the core's allow list (internal/core/errorreport), which is
+// through the core's allow list (core/errorreport), which is
 // deliberate: a policy enforced by the plugin would be a policy each plugin
 // could get wrong, and this one runs in a process holding customer data and
 // talks to a service in somebody else's datacenter.
@@ -30,7 +30,7 @@ package errorsentry
 import (
 	"context"
 
-	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
 )
 
 // Name is the plugin's name in the catalog.

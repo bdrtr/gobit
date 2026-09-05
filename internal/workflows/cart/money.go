@@ -4,7 +4,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 )
 
 // Amount, quantity and rate limits.

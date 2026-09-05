@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/eventbus"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/eventbus"
 )
 
 // Bu dosya indeksi TAZE tutan abonelerdir.

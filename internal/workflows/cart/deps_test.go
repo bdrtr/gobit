@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/internal/core/container"
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/container"
+	"github.com/bdrtr/gobit/core/errors"
 )
 
 // provideAll registers the fakes of all six surfaces in a container UNDER THEIR

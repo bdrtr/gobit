@@ -1,7 +1,7 @@
 package service
 
 import (
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 )
 

@@ -33,7 +33,7 @@ services:
       # CAUTION: the locale is fixed AT initdb TIME. An existing data directory
       # keeps its old setting; fixing it requires a dump/restore. The
       # application tests this at startup and warns when it is broken
-      # (internal/core/db/casefold.go).
+      # (core/db/casefold.go).
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"

@@ -2,7 +2,7 @@
 // notification and SENDS IT NOWHERE (plan Section 5.6).
 //
 // [Provider] satisfies the NotificationProvider contract in
-// internal/core/provider and is the only provider that comes in the box: gobit
+// core/provider and is the only provider that comes in the box: gobit
 // is a framework and cannot know which email/SMS service will be used, yet it
 // has to show that the notification path is standing.
 //
@@ -39,7 +39,7 @@ import (
 	"maps"
 	"slices"
 
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 )
 
 // ID is the identity of the provider; it is the NOTIFICATION_PROVIDER default.

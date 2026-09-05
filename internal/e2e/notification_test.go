@@ -16,9 +16,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/internal/core/container"
-	"github.com/bdrtr/gobit/internal/core/eventbus"
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	"github.com/bdrtr/gobit/core/container"
+	"github.com/bdrtr/gobit/core/eventbus"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 	notificationmod "github.com/bdrtr/gobit/internal/modules/notification"
 	"github.com/bdrtr/gobit/internal/modules/notification/logonly"
 	notificationsvc "github.com/bdrtr/gobit/internal/modules/notification/service"

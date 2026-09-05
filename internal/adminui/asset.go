@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"net/http"
 
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	corehttp "github.com/bdrtr/gobit/core/http"
 )
 
 // assetFiles holds the panel's static assets and is EMBEDDED IN THE BINARY.

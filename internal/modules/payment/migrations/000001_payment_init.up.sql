@@ -201,6 +201,6 @@ CREATE TABLE IF NOT EXISTS payment_manual_sessions (
 );
 
 -- Aynı idempotency anahtarı İKİNCİ bir oturum açamaz. Sağlayıcı sözleşmesinin
--- (internal/core/provider) idempotency şartını nihai olarak zorlayan kısıt budur.
+-- (core/provider) idempotency şartını nihai olarak zorlayan kısıt budur.
 CREATE UNIQUE INDEX IF NOT EXISTS payment_manual_sessions_idempotency_uniq
     ON payment_manual_sessions (idempotency_key);

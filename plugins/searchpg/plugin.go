@@ -69,7 +69,7 @@ package searchpg
 import (
 	"context"
 
-	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
 )
 
 // Name eklentinin kayıttaki adıdır; PLUGINS listesine bu ad yazılır.

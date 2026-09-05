@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
 )
 
@@ -29,11 +29,11 @@ const LocalProviderID = "local"
 //
 // # Neden çekirdekte değil
 //
-// Plan Bölüm 6 "TaxProvider" der, ama internal/core/provider yalnızca
+// Plan Bölüm 6 "TaxProvider" der, ama core/provider yalnızca
 // PaymentProvider ve FulfillmentProvider tanımlar ve bu modül çekirdeğe
 // dokunamaz. Sözleşme bu yüzden BURADA yaşar. Karar geçicidir: ikinci bir
 // gerçek sağlayıcı (Avalara/TaxJar gibi) yazıldığında arayüz
-// internal/core/provider/tax.go'ya taşınmalı ve buradaki tipler takma ad
+// core/provider/tax.go'ya taşınmalı ve buradaki tipler takma ad
 // hâline getirilmelidir. İmzalar bu taşımayı ucuzlatacak biçimde, çekirdekteki
 // iki sağlayıcıyla aynı kalıpta yazılmıştır.
 //

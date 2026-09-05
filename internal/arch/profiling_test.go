@@ -16,7 +16,7 @@ import (
 const pprofImportPath = "net/http/pprof"
 
 // profilingHandlerFile is the one file allowed to import it.
-const profilingHandlerFile = "internal/core/http/profiling.go"
+const profilingHandlerFile = "core/http/profiling.go"
 
 // defaultMuxNames are the net/http identifiers that READ OR WRITE the default mux.
 //
@@ -31,9 +31,6 @@ var defaultMuxNames = map[string]struct{}{
 	"ListenAndServeTLS": {},
 }
 
-// scannedTrees are the trees this audit covers.
-var scannedTrees = []string{"internal", "cmd", "plugins"}
-
 // TestTheDefaultServeMuxIsNeverUsed keeps the profiles off every other listener.
 //
 // net/http/pprof publishes itself through a package-level global. Anything that
@@ -45,12 +42,12 @@ var scannedTrees = []string{"internal", "cmd", "plugins"}
 // nothing imports pprof.
 //
 // gobit's own profiles are on a mux built by hand
-// ([github.com/bdrtr/gobit/internal/core/http.ProfilingHandler]) and on a
+// ([github.com/bdrtr/gobit/core/http.ProfilingHandler]) and on a
 // listener of their own, so this rule costs the repository nothing to keep.
 func TestTheDefaultServeMuxIsNeverUsed(t *testing.T) {
 	t.Parallel()
 
-	for _, tree := range scannedTrees {
+	for _, tree := range productionTrees {
 		for _, file := range goFiles(t, filepath.Join(repoRoot, tree)) {
 			parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.SkipObjectResolution)
 			if err != nil {

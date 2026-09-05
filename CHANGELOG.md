@@ -34,7 +34,7 @@ Sabitlenme `1.0.0` ile olur.
 
   Yüzeyin doğru olup olmadığının somut sınavı: `ecom-iyzico` bu deponun dışında,
   yayımlanmış sözleşmelere karşı yazılabiliyor mu? Bugün yazılamıyor — `plugins/`
-  ağacı `internal` dışında ama içindeki her eklenti `internal/core/plugin`'i
+  ağacı `internal` dışında ama içindeki her eklenti `core/plugin`'i
   import ediyor, yani depoda üçüncü tarafın eklenti yazamayacağı bir eklenti
   sistemi var.
 
@@ -1297,7 +1297,7 @@ Sabitlenme `1.0.0` ile olur.
 
   Ölçüldü: defterin temiz saydığı 204 dosyada 508 aday satır; yüksek güvenli
   sözcüklere daraltıldığında **23 dosyada 100 gerçek satır**. Hepsi çevrildi.
-  Bunların içinde `internal/core/query`, `internal/core/http`,
+  Bunların içinde `core/query`, `core/http`,
   `internal/core/config` ve `internal/modules/fulfillment` gibi ÖNCEKİ TURLARDA
   "tümüyle İngilizce" ilan edilmiş ağaçlar da vardı — yani ilan, dedektörün
   körlüğü kadar doğruydu.
@@ -1356,7 +1356,7 @@ Sabitlenme `1.0.0` ile olur.
 
 - **`internal/core` ağacında Türkçe kalmadı** (ADR 0012'nin cırcırı). Workflow
   turunun ardından gelen dört turda `core/http`'nin kalan dosyaları,
-  `redisguard`, `core/query`, `core/openapi` ve `core/config` çevrildi; defter
+  `redisguard`, `core/query`, `internal/core/openapi` ve `internal/core/config` çevrildi; defter
   708 dosyadan **680**'e indi ve defterde artık `internal/core/` ile başlayan
   TEK BİR satır yok. Kalan borç `internal/modules/*`, `internal/e2e`,
   `internal/arch`'ın kendi testleri ve ADR 0001-0011'de.
@@ -1635,7 +1635,7 @@ adımını YAZANLARI ilgilendiriyor.
   golang-migrate dosyaları sürüm numarasına göre uyguladığı için uygulanmış bir
   veritabanı etkilenmez.
 
-- **`internal/core/link` ve `internal/core/eventbus` İngilizceye çevrildi**
+- **`core/link` ve `core/eventbus` İngilizceye çevrildi**
   (ADR 0012'nin cırcırı). Türkçe defterinden 15 satır DÜŞTÜ: 742 dosyadan
   727'ye; yol defteri 38'de kaldı (iki pakette hiç yol kaydı yoktu). İki pakette
   Türkçe harf sayısı sıfır.
@@ -2170,7 +2170,7 @@ adımını YAZANLARI ilgilendiriyor.
   sıralamayı da kaybettirmiyor — karşılaştırma yine bayt sırası, değişen
   yalnızca harf katlaması.
 
-- **Açılışta artık bu sınanıyor** (`internal/core/db/casefold.go`). Havuz
+- **Açılışta artık bu sınanıyor** (`core/db/casefold.go`). Havuz
   açıldıktan sonra veritabanına iki soru sorulur — `'Ç' ILIKE 'ç'` ve
   `to_tsvector`/`websearch_to_tsquery` eşleşmesi — ve biri bile başarısızsa
   hangi arama yolunun etkilendiğini ve çözümün ne olduğunu söyleyen bir UYARI
@@ -2473,16 +2473,16 @@ adımını YAZANLARI ilgilendiriyor.
   karşılaştırması sayesinde çalışıyordu. Sözleşme artık `Authenticator`
   arayüzünde yazılı ve iki taraf da aynı sabiti kullanıyor.
 
-- `internal/core/http/auth.go` İngilizceye çevrildi. Kimlik doğrulama
+- `core/http/auth.go` İngilizceye çevrildi. Kimlik doğrulama
   yanıtlarının mesajları değişti (`"authentication is required"`); kodlar
   (`unauthenticated`, `forbidden`) değişmedi.
 
-- **Çekirdeğin sekiz paketi İngilizceye çevrildi** (ADR 0012): `internal/core/errors`,
-  `internal/core/container`, `internal/core/module`, `internal/core/provider`,
-  `internal/core/logger`, `internal/core/db` (migration testdata'sı dâhil),
-  `internal/core/observability`, `internal/core/plugin`, ve `internal/core/http`
+- **Çekirdeğin sekiz paketi İngilizceye çevrildi** (ADR 0012): `core/errors`,
+  `core/container`, `core/module`, `core/provider`,
+  `internal/core/logger`, `core/db` (migration testdata'sı dâhil),
+  `internal/core/observability`, `core/plugin`, ve `core/http`
   içinde `response.go`, `auth.go`, `router.go`, `server.go`, `middleware.go`,
-  ve `internal/core/query`'nin üretim dosyaları.
+  ve `core/query`'nin üretim dosyaları.
 
   Okuma katmanının hata AYRINTI anahtarları da çevrildi
   (`"aranan_ad"` → `"looked_up_name"`, `"alan"` → `"field"`). Bunlar hata
@@ -2497,7 +2497,7 @@ adımını YAZANLARI ilgilendiriyor.
 - **Bileşim kökü ve çekirdeğin yanıt yazıcısı İngilizceye çevrildi**
   ([ADR 0012](docs/adr/0012-repository-language-and-solid.md)). `cmd/server`
   içinde `kurulum.go` → `setup.go`, `kurulum_test.go` → `setup_test.go`,
-  `belge_test.go` → `docs_test.go`; `internal/core/http` içinde `response.go`
+  `belge_test.go` → `docs_test.go`; `core/http` içinde `response.go`
   ve testi. Davranış değişmedi, ama açılış LOG MESAJLARI
   ve kullanıcıya dönen genel iç hata mesajı artık İngilizce
   (`"an unexpected server error occurred"`). Hata KODLARI değişmedi ve
@@ -2794,7 +2794,7 @@ adımını YAZANLARI ilgilendiriyor.
 ### Kaldırıldı
 
 - **Hız sınırının dışa açık anahtar yardımcısı KALDIRILDI** —
-  `internal/core/http` paketindeki `PrincipalKey`. (Ad burada paketiyle
+  `core/http` paketindeki `PrincipalKey`. (Ad burada paketiyle
   nitelenmeden yazılıyor: nitelenmiş bir atıf okuyanı ARAMAYA yollar ve
   `internal/arch` bunu denetler; oysa bu maddenin söylediği şey tam olarak
   aranacak bir şey KALMADIĞIDIR.)
@@ -3426,7 +3426,7 @@ giriş denemesinde ya da görseller kaybolduğunda — görünmesiydi:
 
 Sepet akışlarının bağlanmasını izleyen bağımsız doğrulamanın çıkardığı bulgular:
 
-- **Saga adım hatası, alt hatanın KODUNU kaybediyordu.** `core/workflow`
+- **Saga adım hatası, alt hatanın KODUNU kaybediyordu.** `internal/core/workflow`
   patlayan adımı sararken hatanın SINIFINI (`Kind`) alt hatadan devralıyor ama
   KODUNU kendi sabitiyle (`workflow_step_failed`) eziyordu. Taşıma katmanı
   gövdeye tek bir makine okunur alan yazar (`error.code`), yani her saga hatası
@@ -3557,7 +3557,7 @@ Düşmanca bir güvenlik incelemesinin çıkardığı altı bulgu:
   - `link_definitions` tablosunda bu dört ada ait satırlar kalır. Açılışta
     **hiçbir çakışma üretmezler**: `LinkService.Define` yalnızca kendi
     bildirdiği adın satırını okuyup karşılaştırır (upsert + `RETURNING`,
-    bkz. `internal/core/link/service.go`), defteri koda karşı taramaz.
+    bkz. `core/link/service.go`), defteri koda karşı taramaz.
     Koddan gelmeyen bir satır hiç okunmaz. Tek koşullu sonuç şudur: ileride
     aynı ADLA fakat farklı uçlarla bir link bildirilirse açılış
     `errors.Conflict` ile durur — ki bu, defterin görevini yapmasıdır, bir

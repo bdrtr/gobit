@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/internal/modules/b2b/service"
 )
 

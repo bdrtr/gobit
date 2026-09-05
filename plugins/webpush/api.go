@@ -10,8 +10,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
+	corehttp "github.com/bdrtr/gobit/core/http"
 )
 
 // maxBodyBytes bounds a request body.
@@ -23,10 +23,8 @@ const maxBodyBytes = 8 << 10
 // broadcastPageLimit bounds one page of the admin listing.
 const broadcastPageLimit = 100
 
-// Error codes.
-const (
-	codeInvalidRequest = "webpush_invalid_request"
-)
+// codeInvalidRequest is the error code of a malformed subscription payload.
+const codeInvalidRequest = "webpush_invalid_request"
 
 // subscribeRequest is what a browser posts after
 // PushManager.subscribe() resolves.

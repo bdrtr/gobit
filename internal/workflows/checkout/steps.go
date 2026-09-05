@@ -6,7 +6,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/core/workflow"
 )
 
@@ -277,7 +277,7 @@ func (s *reserveInventoryStep) Restore(sc *workflow.StepContext, output json.Raw
 // If a line blows up, the reservations taken up to that point are released HERE.
 // The reason is the engine's contract: a step that fails on its single attempt
 // is NOT compensated, so the debt of "either succeed completely or leave no work
-// behind" belongs to the step (see the core/workflow package comment). If the
+// behind" belongs to the step (see the internal/core/workflow package comment). If the
 // cleanup blows up as well, the error is wrapped with
 // [workflow.ErrUncompensated]: seeing the sentinel, the engine writes the
 // execution as compensation_failed rather than "rolled back", and manual

@@ -3,7 +3,7 @@ package api
 import (
 	"github.com/go-chi/chi/v5"
 
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	corehttp "github.com/bdrtr/gobit/core/http"
 )
 
 // StoreCartsPath is the storefront's cart-creation endpoint.

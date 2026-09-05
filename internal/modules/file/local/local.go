@@ -1,7 +1,7 @@
 // Package local is the default file provider, the one that keeps files ON THE
 // LOCAL DISK, in a configured root directory (plan Section 5.6).
 //
-// [Provider] satisfies the FileProvider contract in internal/core/provider and
+// [Provider] satisfies the FileProvider contract in core/provider and
 // is the only provider that comes out of the box: gobit is a framework and
 // cannot know which object store will be used, but it is obliged to show that
 // the upload path is standing.
@@ -46,8 +46,8 @@ import (
 	"path/filepath"
 	"time"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 	"github.com/bdrtr/gobit/internal/modules/file/models"
 )
 

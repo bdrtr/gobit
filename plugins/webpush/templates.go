@@ -9,7 +9,7 @@ import (
 	"strings"
 	"text/template"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
 )
 
 // templateExt is the extension of the files read from the template directory.

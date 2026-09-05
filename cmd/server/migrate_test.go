@@ -14,8 +14,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bdrtr/gobit/core/db"
 	"github.com/bdrtr/gobit/internal/core/config"
-	"github.com/bdrtr/gobit/internal/core/db"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
 	"github.com/bdrtr/gobit/plugins/searchpg"
 )
@@ -329,7 +329,7 @@ func TestStateWordsFollowTheVersion(t *testing.T) {
 // the dirty-ledger message true.
 //
 // The suffix is spelled twice — once here, once unexported inside
-// internal/core/db — because the operator repairing a dirty ledger by hand
+// core/db — because the operator repairing a dirty ledger by hand
 // needs the table's name in the error message and cannot be sent to read a
 // package's source for it. The copy is only safe while it AGREES, and the
 // agreement is asserted against the real name-building function rather than

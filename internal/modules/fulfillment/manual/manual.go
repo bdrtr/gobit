@@ -2,7 +2,7 @@
 // network call (plan Phase 7).
 //
 // [Provider] satisfies the FulfillmentProvider contract in
-// internal/core/provider and meets the conditions written in that contract's
+// core/provider and meets the conditions written in that contract's
 // godoc:
 //
 //   - [Provider.Quote] HAS NO SIDE EFFECTS: it writes nothing, does not read
@@ -62,8 +62,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	"github.com/bdrtr/gobit/core/errors"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 )
 

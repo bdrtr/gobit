@@ -3,7 +3,7 @@ package cart
 import (
 	"context"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 )
 
 // UpdateLineItemInput is the input of a line quantity update.

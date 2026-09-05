@@ -4,8 +4,8 @@ import (
 	"context"
 	"slices"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/query"
+	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/modules/promotion/models"
 )
 
@@ -64,7 +64,7 @@ var supportedFields = []string{
 // discount an order received depends not on the promotion's state TODAY, but on that
 // day's computation.
 //
-// The interface is defined in internal/core/query; this type only satisfies the
+// The interface is defined in core/query; this type only satisfies the
 // signature and tells the core nothing (the provider side of ADR 0001).
 type QueryProvider struct {
 	svc *Service

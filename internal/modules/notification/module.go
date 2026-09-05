@@ -9,7 +9,7 @@
 //
 // The side that talks to the e-mail/SMS service is not the module but a
 // PROVIDER that satisfies the NotificationProvider contract in
-// internal/core/provider. The module holds the providers by their ids in a
+// core/provider. The module holds the providers by their ids in a
 // registry ([service.ProviderRegistry]) and resolves them BY NAME at send time.
 // The only provider that comes out of the box is the "log" provider, which
 // sends nowhere and says so in its name
@@ -59,10 +59,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/bdrtr/gobit/internal/core/container"
-	"github.com/bdrtr/gobit/internal/core/db"
-	"github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/module"
+	"github.com/bdrtr/gobit/core/container"
+	"github.com/bdrtr/gobit/core/db"
+	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/module"
 	"github.com/bdrtr/gobit/internal/core/openapi"
 	"github.com/bdrtr/gobit/internal/modules/notification/api"
 	"github.com/bdrtr/gobit/internal/modules/notification/logonly"

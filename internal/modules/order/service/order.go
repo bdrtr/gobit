@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 	corepage "github.com/bdrtr/gobit/internal/core/page"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 )
@@ -534,7 +534,7 @@ func (s *Service) ListOrdersByIDs(ctx context.Context, ids []string) ([]models.O
 //
 // This method is the Compensate of the create_order step of the complete_cart
 // saga and a saga can rerun a compensation (plan Section 2.6, the "best effort
-// compensation" behavior of core/workflow). Returning an error on an order that
+// compensation" behavior of internal/core/workflow). Returning an error on an order that
 // is already canceled would mean that the second round of the compensation made
 // the whole saga look failed — whereas the desired state has ALREADY been
 // reached. That is why the second call succeeds silently and is logged at the

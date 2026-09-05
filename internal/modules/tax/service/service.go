@@ -32,14 +32,14 @@
 // # The provider abstraction is NOT IN THE CORE, it is HERE
 //
 // Plan Section 6 says "TaxProvider", but there is NO tax provider in
-// internal/core/provider (there are only Payment and Fulfillment) and this
+// core/provider (there are only Payment and Fulfillment) and this
 // module may not touch the core. That is why the contract is defined in this
 // package ([TaxProvider], see taxprovider.go) and the out-of-the-box
 // implementation is local calculation ([LocalProvider]).
 //
 // THE DECISION IS EXPLICITLY TEMPORARY: once the contract matures (once a
 // second real provider is written) it must be moved to
-// internal/core/provider/tax.go. During the move the types in this package can
+// core/provider/tax.go. During the move the types in this package can
 // be turned into aliases of the ones in the core; the signatures were written
 // with that in mind, in the same shape as the core's PaymentProvider and
 // FulfillmentProvider (ID() string + a single work method, input/output
@@ -59,7 +59,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
 )
 

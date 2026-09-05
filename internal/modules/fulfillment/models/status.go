@@ -11,7 +11,7 @@ package models
 // FulfillmentStatus is the status of a fulfillment.
 //
 // The values are IDENTICAL to provider.FulfillmentStatus in
-// internal/core/provider, but that package is not reused here: the column value
+// core/provider, but that package is not reused here: the column value
 // belongs to the module's own schema, and the values in the database must not
 // change silently when the core contract changes. The translation is done at
 // the repository/service boundary.
@@ -82,7 +82,7 @@ func (a Action) String() string {
 // CancelAction returns the outcome of a cancel request in this status.
 //
 // Cancellation IS THE SAGA COMPENSATION and, per the core contract
-// (internal/core/provider), it MUST be IDEMPOTENT; the only conflict branch in
+// (core/provider), it MUST be IDEMPOTENT; the only conflict branch in
 // the table is the irreversible one.
 //
 // Transition table:

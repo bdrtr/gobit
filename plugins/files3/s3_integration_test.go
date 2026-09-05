@@ -16,8 +16,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
-	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 )
 
 // This file is the only real proof that the hand-written SigV4 in sigv4.go is
@@ -34,8 +34,8 @@ import (
 // SignatureDoesNotMatch. That is the check that has to exist somewhere, and
 // nothing smaller than a real implementation can perform it.
 
-// The MinIO image is PINNED, following the repository's rule for the postgres
-// and redis containers. An unpinned tag means the day MinIO changes its
+// minioImage is PINNED, following the repository's rule for the postgres and
+// redis containers. An unpinned tag means the day MinIO changes its
 // validation is a day this suite fails for reasons unrelated to the change
 // being tested.
 const minioImage = "minio/minio:RELEASE.2025-09-07T16-13-09Z"

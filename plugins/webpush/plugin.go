@@ -54,8 +54,8 @@ import (
 	"log/slog"
 	"strings"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
-	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
 )
 
 // Name is the plugin's name in the registry; the PLUGINS list recognizes it.

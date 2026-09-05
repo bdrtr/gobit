@@ -5,7 +5,7 @@
 // A module commits its work and then publishes. Between those two moments the
 // process can die, and the work then exists while the event never happened.
 // The outbox closes that window by writing the event INSIDE the transaction
-// (internal/core/eventbus/outbox); this job is the other half — the thing that
+// (core/eventbus/outbox); this job is the other half — the thing that
 // turns a written row into a published event.
 //
 // # Why it is a job and not a goroutine
@@ -30,9 +30,9 @@ import (
 	"log/slog"
 	"time"
 
-	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/eventbus"
-	"github.com/bdrtr/gobit/internal/core/eventbus/outbox"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/eventbus"
+	"github.com/bdrtr/gobit/core/eventbus/outbox"
 	"github.com/bdrtr/gobit/internal/core/job"
 )
 

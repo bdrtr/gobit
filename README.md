@@ -198,10 +198,14 @@ artık kuralı ihlal etmiyorsa satır silinmek zorundadır. Muafiyet borçtur, b
 
 ## Çekirdek paketler
 
+`core/` altındakiler YAYIMLANMIŞ yüzeydir: dışarıdaki bir program onları
+import edebilir ve her dışa verilen ad bir sözdür (ADR 0026).
+`internal/core/` altındakiler yayımlanmadı; hâlâ değişebilirler.
+
 | Paket | Sorumluluk |
 |---|---|
-| `core/config` | env tabanlı 12-factor config + doğrulama, üretim koruması |
-| `core/logger` | slog JSON/text handler |
+| `internal/core/config` | env tabanlı 12-factor config + doğrulama, üretim koruması |
+| `internal/core/logger` | slog JSON/text handler |
 | `core/errors` | Tipli hatalar (`Kind`), stdlib `errors` yardımcılarını yeniden dışa verir |
 | `core/db` | pgxpool havuzu + modül başına ayrı versiyon tablolu migration runner |
 | `core/container` | İsimli kayıt, generic `Resolve[T]`, tembel singleton, döngü tespiti, ters sırada kapatma |
@@ -210,14 +214,14 @@ artık kuralı ihlal etmiyorsa satır silinmek zorundadır. Muafiyet borçtur, b
 | `core/http` | chi router, RequestID/RequestLogger/Recoverer/Telemetry, RequireAdmin/RequireStore/RequireScope, `Scoped`/`APIGuards` koruma yığını, hız sınırı, idempotency, `Kind`→status eşlemesi |
 | `core/link` | Module Links — modüller arası ilişki FK olmadan; kardinalite veritabanı kısıtıyla zorlanır |
 | `core/query` | Cross-module okuma — kök çek, link çöz, batch getir, birleştir; N+1 yapısal olarak yok |
-| `core/workflow` | Saga motoru — ters sırada telafi, retry, idempotency-key, panik izolasyonu |
-| `core/workflow/pgstore` | Yürütme durumunun Postgres deposu (`workflow_executions`) |
+| `internal/core/workflow` | Saga motoru — ters sırada telafi, retry, idempotency-key, panik izolasyonu |
+| `internal/core/workflow/pgstore` | Yürütme durumunun Postgres deposu (`workflow_executions`) |
 | `workflows/cart` | Sepet akışları: create_cart, add_line_item, update_line_item, calculate_totals. `cmd/server` `workflows.cart.interop` adıyla kaydeder, `cart` modülünün vitrin uçları o adla çözer |
 | `workflows/checkout` | `complete_cart` saga: stok ayır → sipariş → yetkilendir → tahsil et → sepeti kapat. `workflows.checkout.interop` adıyla kaydedilir, `POST /store/v1/carts/{id}/complete` onu çağırır |
 | `core/provider` | Ödeme/kargo sağlayıcı sözleşmeleri (plan Bölüm 5.6) |
 | `core/plugin` | Eklenti sözleşmesi + iki fazlı kurulum (`Install` → modüller → `Start`) |
-| `core/observability` | OpenTelemetry trace + metrik kurulumu; toplayıcı yoksa gerçekten kapalı |
-| `core/openapi` | Router ağacından OpenAPI şeması üretimi (`/openapi.json`) |
+| `internal/core/observability` | OpenTelemetry trace + metrik kurulumu; toplayıcı yoksa gerçekten kapalı |
+| `internal/core/openapi` | Router ağacından OpenAPI şeması üretimi (`/openapi.json`) |
 
 Event bus arka ucu `EVENT_BUS=inmemory|redis` ile seçilir. `redis` seçildiğinde
 Redis erişilemezse uygulama açılışta durur.

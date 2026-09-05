@@ -21,7 +21,7 @@ const (
 	// DeliverySent means the provider accepted the notification.
 	//
 	// It does NOT mean it REACHED the customer: the provider contract (see
-	// internal/core/provider) only reports that the request was accepted, the
+	// core/provider) only reports that the request was accepted, the
 	// delivery status is not queried.
 	DeliverySent DeliveryStatus = "sent"
 	// DeliveryFailed means the provider returned an error; the reason is in
