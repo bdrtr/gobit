@@ -710,6 +710,131 @@ missing is the habit of adding the assertion when the column is added.
 
 ---
 
+## An AI subsystem — measured against the brief, 2026-09-05
+
+The brief: put the LLM in the platform as a SUBSYSTEM rather than a tool called
+from outside. A core `ai` package with a `Provider` interface and a typed
+`Task[In, Out]` layer above it; review moderation as the first use case, driven
+off the outbox rather than the HTTP path; then summaries, description drafting,
+query rewriting, embeddings, recommendations, a support assistant. With
+versioned prompts, token budgets, an input-hash cache, PII masking, prompt-
+injection separation, an eval set, and graceful degradation.
+
+**Nothing about AI exists in the repository today.** What follows is what the
+brief assumes, measured.
+
+### Two assumptions that do not hold
+
+1. **There is no review module.** The sixteen modules are product, pricing,
+   inventory, region, customer, cart, payment, order, fulfillment, promotion,
+   tax, auth, file, notification, b2b and invoice. A customer cannot leave a
+   review, so `review.created` has nothing to fire from and moderation has
+   nothing to moderate.
+
+   The first use case is therefore two pieces of work, not one: the review
+   module (schema, service, storefront write, admin read, moderation state) and
+   the AI subsystem. They are separable and the review module is the one that
+   has to come first — a moderation flow with no reviews is untestable in the
+   way that matters.
+
+2. **pgvector is not available and is not free to add.** The cluster today has
+   `pg_trgm` and `unaccent` available; `vector` is not. More to the point,
+   ADR 0015 fixes the contract at **zero required extensions** and says in
+   writing that adding one is a change to what an operator must provide — a
+   decision with a date on it, not the side effect of a feature.
+
+   `pg_trgm` is already the standing candidate there, with a measured case
+   (search `?q=` 58.9 ms to 2.2 ms) that was still not taken. Embeddings would
+   make `vector` the second candidate, and the honest reading is that semantic
+   search reopens ADR 0015 rather than sitting on top of it.
+
+### What the brief needs and this repository already has
+
+The shape the brief describes is, unusually, the shape this codebase already
+uses. Seven pieces exist:
+
+1. **The provider slot.** Payment, tax, notification and file all resolve a
+   provider from a registry BY NAME, with the selection in configuration and an
+   unknown name stopping the startup. `ai.Provider` is that pattern again, and
+   "swap Anthropic for a local model in one line" is what the registry already
+   delivers for payment.
+
+2. **The outbox.** `review.created` reaching a worker without the HTTP path
+   waiting is exactly what ADR 0023 built this session: the event is written
+   inside the transaction that promises it, so a review that was saved cannot
+   have an unfired event. The brief's "a review must never be lost" is that
+   guarantee, already there.
+
+3. **The job runner.** A worker draining a queue with an interval and a run
+   budget is `internal/core/job` (ADR 0019), including the rule that `MaxRun`
+   must be shorter than `Every` — refused at startup, which is how the outbox
+   relay was caught before it shipped.
+
+4. **Versioned files embedded in the binary.** Migrations, panel templates and
+   the panel stylesheet all do it, the last with an ETag derived from the bytes.
+   "Prompts are versioned files, not strings in code" is the same mechanism, and
+   the stylesheet's stamp is the model for deriving a prompt version from its
+   content rather than trusting somebody to bump a constant.
+
+5. **Metrics.** An OTel meter provider is wired; token counts per task are a
+   counter on it. (It exports over OTLP, not Prometheus — see the observability
+   section.)
+
+6. **Redaction.** `errorreport/policy.go` already splits attributes into what
+   may travel and what may not, and REPORTS what it removed rather than dropping
+   it silently. Masking a review before it leaves the process is that policy
+   generalised, and "report what was removed" is the property worth keeping:
+   a masker that silently ate the whole comment would look like a working
+   masker.
+
+7. **An eval harness.** `go test` with testcontainers is how every module is
+   tested; a labelled set of reviews with an accuracy assertion is a test like
+   any other. What it needs that does not exist is a way to run it WITHOUT
+   calling a paid provider on every `make test` — a recorded-response fixture,
+   with the live run behind a tag, the way `integration` and `smoke` already
+   separate the expensive suites.
+
+### The decisions the brief implies that this repository would have to make
+
+- **"Core module" is two different things here.** `internal/core` holds
+  capabilities modules opt into; `internal/modules` holds owners of data.
+  an `ai` package belongs in the core tree (it owns no commerce data and every
+  module may use it); the review data belongs in a module; and anything that reads a review AND
+  calls the AI is a workflow (ADR 0001/0006). The brief's `Task[In, Out]` with
+  `Build` and `Parse` is core; `review.moderate` is the review module's task
+  definition, registered into core's registry the way a payment provider is.
+
+- **The model's decision must not be the last word, and this codebase already
+  argues that case elsewhere.** The returns flow refuses to refund automatically
+  on receipt because that is the shop's decision; the same reasoning gives the
+  moderation thresholds to configuration and the low-confidence cases to a human
+  queue. Recording the human's decision is then not only an audit trail — it is
+  the eval set growing itself.
+
+- **An LLM cache is a different argument from a read cache.** The read-cache
+  section above measures that caching database reads is not warranted: the
+  database is twelve times faster than the code formatting its answers. A
+  content-addressed cache over LLM calls is not that. It saves money and
+  removes non-determinism, and neither of those was on the scale being measured
+  there. The two must not be conflated.
+
+- **Prompt injection has a structural answer, not a prompt-worded one.** The
+  brief is right that the review text travels in its own block. The stronger
+  half is what this repository would insist on anyway: the model returns a
+  decision, the decision passes a threshold, and a human sees anything below it
+  — so a successful injection changes a confidence score, not what gets
+  published.
+
+### What would come first
+
+The review module, then an `ai` package under core with one task and one
+provider, then
+the moderation flow on the outbox that already exists. Embeddings, semantic
+search and recommendations all sit behind the ADR 0015 reopening and should be
+costed as that, not as features.
+
+---
+
 ## Capability inventory — measured 2026-09-04
 
 Ten axes, 139 capabilities: 83 gaps and 22 things this repository refuses in
