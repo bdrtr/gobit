@@ -8,6 +8,12 @@ escaping — in a panel that runs inside an administrator's session, disabling
 escaping is the shortest path to handing an attacker admin privileges.
 
 No template here uses template.HTML, template.JS or template.URL.
+
+The navigation is rendered from a LIST the Go side supplies rather than written
+out here, so a section added to the panel enters the menu by being added to that
+list — and the current section is marked with aria-current, which is both what
+the stylesheet keys on and what a screen reader announces. Two facts from one
+source instead of two that can drift.
 */ -}}
 <!doctype html>
 <html lang="en">
@@ -15,11 +21,24 @@ No template here uses template.HTML, template.JS or template.URL.
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ .Title }} · gobit</title>
+<link rel="stylesheet" href="{{ .StylesheetPath }}">
 </head>
 <body>
-<header>
-  <strong>gobit</strong>
-  <span>admin</span>
+<header class="masthead">
+  <span class="mark">gobit</span>
+  <span class="role">admin</span>
+  {{- if .Nav }}
+  <nav aria-label="Sections">
+    {{- range .Nav }}
+    <a href="{{ .Path }}"{{ if .Current }} aria-current="page"{{ end }}>{{ .Label }}</a>
+    {{- end }}
+  </nav>
+  {{- end }}
+  {{- if .SignedIn }}
+  <form class="spacer" method="post" action="{{ .LogoutPath }}">
+    <button class="quiet" type="submit">Sign out</button>
+  </form>
+  {{- end }}
 </header>
 <main>
 {{ template "body" . }}

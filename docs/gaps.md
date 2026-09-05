@@ -699,9 +699,36 @@ the next reader sees a decision instead of a wait.
    "because it buys nothing today, not because it is impossible" — so this is a
    gap, not the refusal it looks like.
 
-7. **The panel is one screen.** One module of fifteen, nothing can be created or
-   deleted from it, no navigation, no CSS. `corehttp.WriteAsset` was built for
-   panel styling in ADR 0011 and has never been called.
+7. **The panel is one screen.** **PARTLY CLOSED 2026-09-05.** It has a frame and
+   a second section now: a stylesheet, a menu, a sign-out control, and the order
+   list and order page next to the catalog.
+
+   `corehttp.WriteAsset` has its first caller. It was built for panel styling in
+   ADR 0011 and had never been called — the capability-without-a-consumer class
+   this repository has a name for (ADR 0009). The stylesheet is embedded in the
+   binary, stamped with an ETag derived from its own bytes (so a release
+   refetches exactly when the file changed), and it is the only path besides the
+   login that opens without an identity: the login page needs it, and a sign-in
+   screen rendering unstyled because its stylesheet sat behind the sign-in is a
+   poor first impression.
+
+   The menu is built from a list the Go side supplies rather than from markup,
+   so a section added to the panel enters the menu next to the route that serves
+   it. The current section is marked with `aria-current`, which is what the
+   stylesheet keys on AND what a screen reader announces — one fact rather than
+   two that can drift.
+
+   **A live run found a real defect.** The order page asked the read layer for
+   one order by id and got a 422: the order Query provider offered
+   `customer_id`, `region_id` and `status` but not `id`, while the product
+   provider did offer it. The capability existed (`FetchByIDs`, the expansion
+   path); the filter did not. It is there now, with the batch shapes and a
+   refusal to combine it with another filter — the short-circuit answers from
+   the batch read, so a second filter would be silently ignored.
+
+   Still open: thirteen modules have no screen, nothing can be created or
+   deleted from the panel, and there is no plugin extension point for a plugin
+   to add one.
 
 ### The rest
 

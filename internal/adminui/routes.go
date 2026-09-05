@@ -22,6 +22,7 @@ import (
 // the router is built — so installing it from here is IMPOSSIBLE. The split is
 // written down in ADR 0011.
 func (u *UI) Routes(r chi.Router) {
+	r.Get(StylesheetPath, u.serveStylesheet)
 	r.Get(LoginPath, u.showLogin)
 	r.Post(LoginPath, u.submitLogin)
 	r.Post(LogoutPath, u.submitLogout)
@@ -33,6 +34,8 @@ func (u *UI) Routes(r chi.Router) {
 	r.Get(VariantPath, u.showVariant)
 	r.Post(VariantPricePath, u.submitVariantPrice)
 	r.Post(VariantStockPath, u.submitVariantStock)
+	r.Get(OrdersPath, u.listOrders)
+	r.Get(OrderPath, u.showOrder)
 }
 
 // home is the panel's protected entry point.

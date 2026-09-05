@@ -1,0 +1,47 @@
+{{- /*
+order.gohtml is one order's page.
+
+The LINES are deliberately absent. They are the order module's own records and
+the read layer joins across LINKS, not within a module — showing them would need
+the panel to hold the order module's service, which is the coupling the fourth
+tree exists to avoid (ADR 0011). What this screen answers is the question an
+operator opens an order for: who, when, how much, and where it stands.
+
+Every amount is printed with its currency, and an amount whose scale could not
+be read says it is in minor units instead of being divided by a guessed hundred.
+*/ -}}
+{{ define "body" }}
+<h1>Order #{{ .Order.DisplayID }}</h1>
+
+<div class="panel">
+  <p>
+    <span class="pill">{{ .Order.Status }}</span>
+    {{ if not .Order.PlacedAt.IsZero }}
+    <span class="muted">placed {{ .Order.PlacedAt.Format "2006-01-02 15:04" }}</span>
+    {{ end }}
+  </p>
+  <p>
+    {{ if .Order.Email }}{{ .Order.Email }}{{ else }}<span class="muted">no address on this order</span>{{ end }}
+  </p>
+</div>
+
+<h2>Amounts</h2>
+
+<table>
+  <tbody>
+    <tr><th>Subtotal</th><td class="num">{{ .Order.Subtotal }} {{ .Order.Currency }}</td></tr>
+    <tr><th>Discount</th><td class="num">{{ .Order.Discount }} {{ .Order.Currency }}</td></tr>
+    <tr><th>Tax</th><td class="num">{{ .Order.Tax }} {{ .Order.Currency }}</td></tr>
+    <tr><th>Shipping</th><td class="num">{{ .Order.Shipping }} {{ .Order.Currency }}</td></tr>
+    <tr>
+      <th>Total</th>
+      <td class="num">
+        <strong>{{ .Order.Total }} {{ .Order.Currency }}</strong>
+        {{ if .Order.Minor }}<span class="muted">(minor units)</span>{{ end }}
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<p><a href="{{ .OrdersPath }}">Back to orders</a></p>
+{{ end }}

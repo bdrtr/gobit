@@ -55,6 +55,8 @@ var pages = []string{
 	"product.gohtml",
 	"product_edit.gohtml",
 	"variant.gohtml",
+	"orders.gohtml",
+	"order.gohtml",
 }
 
 // templateSet maps a page name to that page's parsed template set.
@@ -154,7 +156,19 @@ func embeddedPages() ([]string, error) {
 //
 // The entry point is the LAYOUT, not the page: a page only defines its "body"
 // block and the layout draws the frame.
-func (t *templateSet) render(w http.ResponseWriter, r *http.Request, status int, page string, data any) {
+func (t *templateSet) render(
+	w http.ResponseWriter, r *http.Request, status int, page string, data map[string]any,
+) {
+	if data == nil {
+		data = map[string]any{}
+	}
+
+	// The frame's own fields are filled in HERE rather than by each page. A page
+	// that forgot one would render without a stylesheet or without its menu, and
+	// nothing would fail — the template would simply see an empty value. Putting
+	// them in one place makes forgetting impossible instead of unlikely.
+	decorateFrame(r, data)
+
 	set, ok := t.sets[page]
 	if !ok {
 		corehttp.WriteError(r.Context(), w, errors.Internal(CodeTemplateInvalid,
@@ -169,4 +183,67 @@ func (t *templateSet) render(w http.ResponseWriter, r *http.Request, status int,
 		return
 	}
 	corehttp.WriteHTML(r.Context(), w, status, buf.Bytes())
+}
+
+// The data keys the LAYOUT reads for its frame.
+//
+// They are constants for the reason titleKey is: the layout looks them up by
+// name, so a typo would not fail — it would silently render a page with no
+// stylesheet or no menu.
+const (
+	stylesheetKey = "StylesheetPath"
+	logoutKey     = "LogoutPath"
+	signedInKey   = "SignedIn"
+	navKey        = "Nav"
+)
+
+// navItem is one entry of the panel's menu.
+type navItem struct {
+	// Label is what the operator reads.
+	Label string
+	// Path is where it goes.
+	Path string
+	// Current marks the section the request is in; the layout turns it into
+	// aria-current, which is what the stylesheet keys on AND what a screen
+	// reader announces — one fact rather than two that can drift.
+	Current bool
+}
+
+// sections are the panel's menu, in the order they are shown.
+//
+// It is a list rather than markup in the template so that a section added to
+// the panel enters the menu by being added HERE, next to the route that serves
+// it, rather than in a file nobody edits when adding a handler.
+func sections() []navItem {
+	return []navItem{
+		{Label: catalogLabel, Path: ProductsPath},
+		{Label: ordersLabel, Path: OrdersPath},
+	}
+}
+
+// decorateFrame fills in the fields the layout draws around every page.
+func decorateFrame(r *http.Request, data map[string]any) {
+	data[stylesheetKey] = StylesheetPath
+	data[logoutKey] = LogoutPath
+
+	// The sign-out control appears only when there is a session to end. On the
+	// login page there is none, and a button that logs nobody out would be an
+	// invitation to a confusing click.
+	_, signedIn := corehttp.PrincipalFromContext(r.Context())
+	data[signedInKey] = signedIn
+
+	if !signedIn {
+		return
+	}
+
+	items := sections()
+	for i := range items {
+		// The section is current when the request is inside it, so a product's
+		// own page keeps "Catalog" marked rather than leaving the menu blank on
+		// every detail screen.
+		items[i].Current = r.URL.Path == items[i].Path ||
+			strings.HasPrefix(r.URL.Path, items[i].Path+"/")
+	}
+
+	data[navKey] = items
 }

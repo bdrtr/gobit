@@ -12,10 +12,15 @@ import (
 // ExemptPaths lists the full panel paths that do NOT require identity.
 //
 // The list is short, and its staying short is the real claim: the login page is
-// about to establish identity, and so is its submission. No other panel path
-// opens without one.
+// about to establish identity, and so is its submission.
+//
+// The stylesheet is the only other member, and it carries no data — it is bytes
+// compiled into the binary, identical for every installation. The login page
+// needs it, and a login screen rendering unstyled because its stylesheet sat
+// behind the login is a poor first impression of a framework. Nothing else
+// opens without an identity.
 func ExemptPaths() []string {
-	return []string{LoginPath}
+	return []string{LoginPath, StylesheetPath}
 }
 
 // Protect is the panel tree's identity ring.

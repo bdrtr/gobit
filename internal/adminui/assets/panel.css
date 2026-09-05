@@ -1,0 +1,200 @@
+/* The panel's stylesheet.
+ *
+ * It is deliberately small and has no build step: the panel is an operator's
+ * tool, not a storefront, and a stylesheet that needed compiling would be a
+ * second artifact travelling next to a binary whose whole promise is "run it
+ * and it works".
+ *
+ * There is no colour beyond a neutral scale and one accent. A panel that
+ * invents a palette is a panel a shop has to override; a panel that stays out
+ * of the way is one they can live with.
+ */
+
+:root {
+  --ink: #1b1d20;
+  --ink-soft: #5b6068;
+  --line: #d9dce1;
+  --surface: #ffffff;
+  --ground: #f4f5f7;
+  --accent: #1f5fbf;
+  --danger: #a8322b;
+  --radius: 6px;
+  --gap: 1rem;
+}
+
+/* The dark palette follows the operator's own setting. It is defined by
+ * redefining the tokens only: a colour written directly inside this block would
+ * never apply to a viewer whose system is light. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e8eaed;
+    --ink-soft: #a2a8b0;
+    --line: #383c42;
+    --surface: #212429;
+    --ground: #16181b;
+    --accent: #7aa7e8;
+    --danger: #e08a84;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* --- the frame ---------------------------------------------------------- */
+
+.masthead {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  padding: 0.75rem 1.25rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.masthead .mark { font-weight: 650; letter-spacing: -0.01em; }
+.masthead .role { color: var(--ink-soft); font-size: 0.85rem; }
+
+.masthead nav {
+  display: flex;
+  gap: 0.25rem;
+  margin-left: 0.5rem;
+}
+
+.masthead nav a {
+  padding: 0.3rem 0.7rem;
+  border-radius: var(--radius);
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+
+.masthead nav a:hover { background: var(--ground); color: var(--ink); }
+
+/* The current section is marked with aria-current, so the styling and the
+ * screen reader read the same fact rather than two that can drift. */
+.masthead nav a[aria-current="page"] {
+  background: var(--ground);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.masthead .spacer { margin-left: auto; }
+
+main {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+}
+
+h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+h2 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
+
+a { color: var(--accent); }
+
+/* --- tables ------------------------------------------------------------- */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+th, td {
+  padding: 0.55rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+
+th {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: var(--ground); }
+
+/* Amounts and counts line up column-wise; tabular figures keep the digits from
+ * shifting between rows. */
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* A wide table scrolls inside its own box rather than pushing the page
+ * sideways. */
+.scroll { overflow-x: auto; }
+
+/* --- forms and controls -------------------------------------------------- */
+
+form { margin: 0; }
+
+label { display: block; margin: 0.75rem 0 0.25rem; color: var(--ink-soft); }
+
+input, select, textarea {
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.4rem 0.55rem;
+  max-width: 100%;
+}
+
+button {
+  font: inherit;
+  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+button.quiet {
+  background: transparent;
+  color: var(--ink-soft);
+  border-color: var(--line);
+}
+
+button:hover { filter: brightness(1.06); }
+
+/* Keyboard focus stays visible: the panel is a keyboard tool for people who
+ * use it all day. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* --- cards and messages -------------------------------------------------- */
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+}
+
+.error {
+  border-left: 3px solid var(--danger);
+  background: var(--surface);
+  color: var(--danger);
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--radius);
+  margin-bottom: 1rem;
+}
+
+.muted { color: var(--ink-soft); }
+
+.pill {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}

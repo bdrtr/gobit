@@ -83,6 +83,12 @@ const (
 	keyInventory = "inventory"
 )
 
+// catalogLabel is what the section is called on screen.
+//
+// It is a constant for the reason [ordersLabel] is: the menu and the screens
+// print the same word, and three copies are three places to rename it in.
+const catalogLabel = "Catalog"
+
 // productsPerPage is the product list's page size.
 //
 // The list is paged rather than unbounded because the read layer's limit is a

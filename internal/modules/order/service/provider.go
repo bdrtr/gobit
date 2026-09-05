@@ -117,14 +117,44 @@ func (p *QueryProvider) Entity() string {
 
 // List returns the root records.
 //
-// Supported filters: "customer_id" (string), "region_id" (string) and "status"
-// (string). Any other filter or an unrecognized field is rejected with
-// errors.Invalid (ADR 0004).
+// Supported filters: "id" (string or string slice), "customer_id" (string),
+// "region_id" (string) and "status" (string). Any other filter or an
+// unrecognized field is rejected with errors.Invalid (ADR 0004).
+//
+// # Why "id" is a filter and not only a batch fetch
+//
+// [QueryProvider.FetchByIDs] already reads orders by identifier, but it is the
+// EXPANSION path: the read layer calls it when an order hangs off another
+// record's link. A caller holding an order id and wanting that one order has to
+// go through a root query, and without this filter it could not — the product
+// provider offers it and this one did not, which is an inconsistency a caller
+// finds by getting a 422.
+//
+// It was found exactly that way: the admin panel's order page asked for one
+// order by id and the provider refused the filter.
 //
 // The limit is CLAMPED to [MaxLimit]; see [providerLimit].
 func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]query.Record, error) {
 	if err := validateFields(opts.Fields); err != nil {
 		return nil, err
+	}
+
+	// An id filter short-circuits the listing: the answer is the batch read,
+	// which is the same records the listing would produce and one query rather
+	// than a filtered scan.
+	if raw, ok := opts.Filters[FieldID]; ok {
+		if len(opts.Filters) > 1 {
+			return nil, errors.Invalid(CodeInvalidInput,
+				"the %q filter selects records by identity and cannot be combined with another "+
+					"filter", FieldID)
+		}
+
+		ids, err := idFilter(raw)
+		if err != nil {
+			return nil, err
+		}
+
+		return p.FetchByIDs(ctx, ids, opts.Fields)
 	}
 
 	in := ListOrdersInput{
@@ -169,6 +199,37 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 		return nil, err
 	}
 	return records(result.Items, opts.Fields), nil
+}
+
+// idFilter turns an id filter value into a list of identifiers.
+//
+// A single string is accepted as well as a slice: a caller reading one record
+// should not have to wrap its identifier, and the []any form is what a filter
+// arriving as JSON looks like.
+func idFilter(raw any) ([]string, error) {
+	switch value := raw.(type) {
+	case string:
+		return []string{value}, nil
+	case []string:
+		return value, nil
+	case []any:
+		out := make([]string, 0, len(value))
+
+		for _, item := range value {
+			id, ok := item.(string)
+			if !ok {
+				return nil, errors.Invalid(CodeInvalidInput,
+					"the values of filter %q have to be text, %T given", FieldID, item)
+			}
+
+			out = append(out, id)
+		}
+
+		return out, nil
+	default:
+		return nil, errors.Invalid(CodeInvalidInput,
+			"filter %q has to be text or a list of text, %T given", FieldID, raw)
+	}
 }
 
 // FetchByIDs returns the records of the given identifiers as a BATCH.

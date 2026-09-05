@@ -177,3 +177,90 @@ func TestQueryProviderClipsAnUnlimitedRequestToTheCeiling(t *testing.T) {
 		assert.Len(t, records, 1)
 	}
 }
+
+// TestQueryProviderSelectsOneOrderByID is the filter a caller holding an
+// identifier needs.
+//
+// FetchByIDs already read orders by identifier, but that is the EXPANSION path
+// — the read layer calls it when an order hangs off another record's link. A
+// caller with an order id and a root query had no way through, and the product
+// provider offers exactly this filter, so the inconsistency was one a caller
+// discovered by getting a 422.
+//
+// It was discovered that way: the admin panel's order page asked for one order
+// and the provider refused the filter.
+func TestQueryProviderSelectsOneOrderByID(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	p := service.NewQueryProvider(e.svc)
+
+	first, err := e.svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+
+	_, err = e.svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+
+	records, err := p.List(ctx, query.ListOptions{
+		Fields:  []string{service.FieldID, service.FieldTotal},
+		Filters: map[string]any{service.FieldID: first.ID},
+	})
+	require.NoError(t, err)
+	require.Len(t, records, 1, "the filter has to select ONE order out of two")
+	assert.Equal(t, first.ID, records[0][service.FieldID])
+}
+
+// TestQueryProviderAcceptsAListOfIDs covers the batch shape of the same filter.
+//
+// A single string and a slice take the same path so a caller reading one record
+// does not have to wrap its identifier, and the []any form is what the filter
+// looks like when it arrives as JSON.
+func TestQueryProviderAcceptsAListOfIDs(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	p := service.NewQueryProvider(e.svc)
+
+	first, err := e.svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+
+	second, err := e.svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+
+	for name, filter := range map[string]any{
+		"a string slice": []string{first.ID, second.ID},
+		"a JSON list":    []any{first.ID, second.ID},
+	} {
+		t.Run(name, func(t *testing.T) {
+			records, err := p.List(ctx, query.ListOptions{
+				Fields:  []string{service.FieldID},
+				Filters: map[string]any{service.FieldID: filter},
+			})
+			require.NoError(t, err)
+			assert.Len(t, records, 2)
+		})
+	}
+}
+
+// TestQueryProviderRefusesAnIDFilterBesideAnother holds a combination the
+// short-circuit cannot honor.
+//
+// The id filter answers from the batch read, which applies no other criterion.
+// Accepting a second filter would silently ignore it — the caller would get the
+// order it named even when that order does not match what else it asked for.
+func TestQueryProviderRefusesAnIDFilterBesideAnother(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	p := service.NewQueryProvider(e.svc)
+
+	order, err := e.svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+
+	_, err = p.List(ctx, query.ListOptions{
+		Fields: []string{service.FieldID},
+		Filters: map[string]any{
+			service.FieldID:     order.ID,
+			service.FieldStatus: models.OrderCanceled.String(),
+		},
+	})
+	require.Error(t, err)
+	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
+}

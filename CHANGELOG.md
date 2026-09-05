@@ -73,6 +73,33 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Panelin bir çerçevesi ve ikinci bir bölümü var** (stil, menü, siparişler).
+
+  `corehttp.WriteAsset`'in ilk çağıranı geldi. ADR 0011'de panel stili için
+  yazılmıştı ve hiç çağrılmamıştı — deponun adını koyduğu "tüketicisi olmayan
+  yetenek" sınıfı (ADR 0009). Stil ikiliye gömülü, ETag'i kendi baytlarından
+  türetiliyor (yani tarayıcı tam da dosya değiştiğinde yeniden çekiyor) ve
+  girişin yanında kimliksiz açılan tek yol o: giriş sayfasının ona ihtiyacı var
+  ve stili girişin arkasında kaldığı için stilsiz açılan bir giriş ekranı bir
+  çerçeve için kötü bir ilk izlenim.
+
+  Menü, şablondaki işaretlemeden değil Go tarafının verdiği bir LİSTEDEN
+  kuruluyor; böylece panele eklenen bir bölüm menüye, kendisini sunan rotanın
+  yanında giriyor. Açık bölüm `aria-current` ile işaretleniyor — stilin
+  dayandığı şeyle ekran okuyucunun duyurduğu şey aynı, ayrışabilecek iki fakt
+  değil.
+
+  **Canlı koşum gerçek bir kusur buldu.** Sipariş sayfası okuma katmanından tek
+  siparişi kimliğiyle istedi ve 422 aldı: sipariş Query sağlayıcısı
+  `customer_id`, `region_id` ve `status` sunuyordu ama `id` sunmuyordu — ürün
+  sağlayıcısı ise sunuyor. Yetenek vardı (`FetchByIDs`, genişletme yolu),
+  süzgeç yoktu. Artık var; toplu biçimleriyle ve başka bir süzgeçle
+  birleştirilmeyi reddederek — kısa devre toplu okumadan cevaplıyor, yani ikinci
+  süzgeç sessizce yok sayılırdı.
+
+  Açık kalan: on üç modülün ekranı yok, panelden hiçbir şey yaratılıp
+  silinemiyor, ve bir eklentinin ekran ekleyebileceği bir uzatma noktası yok.
+
 - **Fatura modülü** (ADR 0024) — belge, satırları, tarafları, durumu ve
   **boşluksuz** numaralandırması.
 

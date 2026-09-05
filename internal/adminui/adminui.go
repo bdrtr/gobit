@@ -30,10 +30,21 @@ const (
 	LoginPath = URLPrefix + "/login"
 	// LogoutPath ends the session.
 	LogoutPath = URLPrefix + "/logout"
+	// StylesheetPath serves the panel's stylesheet.
+	//
+	// It sits INSIDE the panel tree so the whole panel stays under one prefix,
+	// and it is exempt from identity for one reason: the login page needs it
+	// too, and a login screen that renders unstyled because its stylesheet was
+	// behind the login is a poor first impression of a framework.
+	StylesheetPath = URLPrefix + "/panel.css"
 	// ProductsPath is the catalog list.
 	ProductsPath = URLPrefix + "/products"
 	// ProductPath is one product's page; {id} is the product's identity.
 	ProductPath = ProductsPath + "/{id}"
+	// OrdersPath is the order list.
+	OrdersPath = URLPrefix + "/orders"
+	// OrderPath is one order's page; {id} is the order's identity.
+	OrderPath = OrdersPath + "/{id}"
 
 	// ServiceQuery is the cross-module read layer's container name.
 	ServiceQuery = "core.query"
