@@ -588,3 +588,59 @@ func (h *Handler) adminListClaims(w http.ResponseWriter, r *http.Request) {
 		Data: data, Count: count, Offset: page.Offset, Limit: page.Limit,
 	})
 }
+
+// timelineEntryDTO is one thing that happened to an order.
+type timelineEntryDTO struct {
+	// At is when it happened. It is NULL when the fact is real and its moment
+	// was never recorded; those entries come LAST.
+	At *time.Time `json:"at"`
+	// Kind is what happened, as "<source>.<what>".
+	Kind string `json:"kind"`
+	// RefID is the record the moment belongs to.
+	RefID string `json:"ref_id"`
+	// Clock says which clock stamped At — see the endpoint's description. It is
+	// empty when At is null.
+	Clock string `json:"clock"`
+	// Detail is a short extra: a status, a tracking number.
+	Detail string `json:"detail,omitempty"`
+	// Amount and Currency are set on the money entries only.
+	Amount   int64  `json:"amount,omitempty"`
+	Currency string `json:"currency_code,omitempty"`
+}
+
+// adminGetOrderTimeline returns everything that happened to the order.
+//
+// # Why it is not part of the order detail
+//
+// It reaches two other modules through links and this module's own after-sales
+// tables — a handful of round trips that the ordinary order read has no use
+// for. Putting it on the detail response would make every order read pay for a
+// screen that is opened when something has gone wrong.
+func (h *Handler) adminGetOrderTimeline(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	entries, err := h.svc.Timeline(ctx, orderID(r))
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	out := make([]timelineEntryDTO, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, timelineEntryDTO{
+			At:       entry.At,
+			Kind:     entry.Kind,
+			RefID:    entry.RefID,
+			Clock:    entry.Clock,
+			Detail:   entry.Detail,
+			Amount:   entry.Amount,
+			Currency: entry.Currency,
+		})
+	}
+
+	// The single envelope, not the paged one: a timeline is bounded by its order
+	// and there is no page to ask for. Filling a paging envelope with zeros
+	// would announce a count, an offset and a limit that mean nothing.
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: out})
+}

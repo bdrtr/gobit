@@ -140,6 +140,7 @@ func Describe(d *openapi.Doc) {
 	describeClaims(d)
 	describeInvoicing(d)
 	describeFulfilling(d)
+	describeTimeline(d)
 }
 
 // describeInvoicing describes the two endpoints that reach the invoicing flow.
@@ -351,4 +352,32 @@ func queryParameter(name, valueType, description string) openapi.Parameter {
 		Schema:      map[string]any{schemaType: valueType},
 		Description: description,
 	}
+}
+
+// describeTimeline documents the support desk's view.
+func describeTimeline(d *openapi.Doc) {
+	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/timeline", openapi.Operation{
+		Summary: "Everything that happened to the order, newest first.",
+		Description: "It is COMPOSED from records that already exist — the order's own " +
+			"stamps, its returns, claims and exchanges, the payment collection's capture " +
+			"and refund moments, and every parcel's four moments — rather than read from a " +
+			"log. Nothing is duplicated, so nothing can drift from the record it mirrors. " +
+			"\n\n" +
+			"THE MOMENTS DO NOT SHARE ONE CLOCK, and each entry says which one stamped it. " +
+			"\"database\" means the moment came from the database's now(); \"application\" " +
+			"means it came from whichever process wrote the row. The capture and a parcel's " +
+			"shipped/delivered/canceled moments are on the application clock; everything " +
+			"else is on the database's. On one machine they agree. Across machines they can " +
+			"disagree by more than the gap between two events, and then two lines look out " +
+			"of order — the \"clock\" field is what explains it. " +
+			"\n\n" +
+			"An entry whose \"at\" is NULL is a fact that really happened and whose moment " +
+			"was never recorded: an exchange that was completed or canceled, whose columns " +
+			"exist and which nothing writes. Those come LAST, and they are reported rather " +
+			"than dropped — a timeline shorter than the truth hides the gap instead of " +
+			"showing it.",
+		Responses: map[string]any{
+			"200": openapi.Response("The order's timeline", d.Item(timelineEntryDTO{})),
+		},
+	})
 }

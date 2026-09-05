@@ -23,6 +23,7 @@ import (
 	fulfillmentmanual "github.com/bdrtr/gobit/internal/modules/fulfillment/manual"
 	fulfillmentmodels "github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 	fulfillmentsvc "github.com/bdrtr/gobit/internal/modules/fulfillment/service"
+	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
 	paymentmanual "github.com/bdrtr/gobit/internal/modules/payment/manual"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 	fulfillingwf "github.com/bdrtr/gobit/internal/workflows/fulfilling"
@@ -683,4 +684,88 @@ func TestAnOrderCanSayWHENItsMoneyMoved(t *testing.T) {
 	assert.Positive(t, payment.CapturedAmount,
 		"the captured amount was lost when the moment fields were added")
 	assert.Equal(t, taxedCurrency, payment.CurrencyCode)
+}
+
+// TestTheOrderTimelineComposesWhatTheModulesRecord is the support desk's view,
+// end to end.
+//
+// It is the only place the composition can be proved: the moments come from
+// three modules — the order's own row, the payment collection's capture, and
+// each parcel's transitions — reached through two links that their far sides
+// declared. Every layer under it has its own tests and none of them can say
+// that the pieces meet.
+func TestTheOrderTimelineComposesWhatTheModulesRecord(t *testing.T) {
+	ctx := t.Context()
+
+	customerID, email := newCustomer(ctx, t)
+	variantID, _ := newStockedVariant(ctx, t, "E2E Timeline Product", map[string]int64{
+		taxedCurrency: shippingUnitPrice,
+	}, shippingStock)
+
+	cartID, _ := prepareCart(ctx, t, customerID, variantID, shippingQuantity)
+	orderResult, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        stockLocationID,
+		PaymentProviderID: paymentmanual.ID,
+		PaymentData:       paymentBehavior(t, paymentmanual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     shippingTotal,
+	})
+	require.NoError(t, err)
+
+	profileID := newShippingProfile(ctx, t, "E2E Timeline Profile")
+	optionID := newShippingOption(ctx, t, profileID, "E2E Timeline Shipping", shippingOptionFee, false)
+
+	flow, err := fulfillingwf.FromContainer(ctr)
+	require.NoError(t, err)
+	opened, err := flow.OpenForOrder(ctx, orderResult.OrderID, optionID,
+		"e2e-timeline-"+orderResult.OrderID)
+	require.NoError(t, err)
+
+	entries, err := orderSvc.Timeline(ctx, orderResult.OrderID)
+	require.NoError(t, err)
+	require.NotEmpty(t, entries)
+
+	byKind := map[string]ordersvc.TimelineEntry{}
+	for _, entry := range entries {
+		byKind[entry.Kind] = entry
+	}
+
+	require.Contains(t, byKind, ordersvc.KindOrderPlaced,
+		"the order's own moment is missing from its timeline")
+	assert.Equal(t, orderResult.OrderID, byKind[ordersvc.KindOrderPlaced].RefID)
+	assert.Equal(t, ordersvc.ClockDatabase, byKind[ordersvc.KindOrderPlaced].Clock)
+
+	require.Contains(t, byKind, ordersvc.KindPaymentCaptured,
+		"the money moment is missing; the timeline did not reach the payment module "+
+			"through the order_payment link")
+	assert.Equal(t, ordersvc.ClockApplication, byKind[ordersvc.KindPaymentCaptured].Clock,
+		"the capture is stamped by the process that captured, and the timeline has to say so")
+	assert.Positive(t, byKind[ordersvc.KindPaymentCaptured].Amount)
+
+	require.Contains(t, byKind, ordersvc.KindShipmentOpened,
+		"the parcel is missing; the timeline did not reach the fulfillment module "+
+			"through the order_fulfillment link")
+	assert.Equal(t, opened.FulfillmentID, byKind[ordersvc.KindShipmentOpened].RefID)
+
+	// A parcel that has not shipped contributes ONE moment, not four: the three
+	// transitions are null and a null moment is not an event.
+	assert.NotContains(t, byKind, ordersvc.KindShipmentShipped,
+		"a parcel that never shipped reported a shipping moment")
+
+	// Newest first, and every dated entry before every undated one.
+	seenUndated := false
+	for i := range entries {
+		if entries[i].At == nil {
+			seenUndated = true
+
+			continue
+		}
+		assert.False(t, seenUndated,
+			"a dated entry came after an undated one; the undated have to be last")
+		if i > 0 && entries[i-1].At != nil {
+			assert.False(t, entries[i-1].At.Before(*entries[i].At),
+				"the timeline is not newest first at %d", i)
+		}
+	}
 }

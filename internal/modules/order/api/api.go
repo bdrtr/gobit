@@ -106,6 +106,8 @@ type Orders interface {
 	CancelOrder(ctx context.Context, orderID, reason string) error
 	// CompleteOrder completes the order.
 	CompleteOrder(ctx context.Context, orderID string) (models.Order, error)
+	// Timeline is everything that happened to the order, newest first.
+	Timeline(ctx context.Context, orderID string) ([]service.TimelineEntry, error)
 	// PaymentOf returns the LIVE payment collection bound to the order; the
 	// second value reports whether one is bound at all.
 	PaymentOf(ctx context.Context, orderID string) (service.OrderPayment, bool, error)

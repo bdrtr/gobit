@@ -113,4 +113,8 @@ func (h *Handler) Routes(r chi.Router) {
 	// could answer which order a parcel belonged to.
 	write.Post("/admin/v1/orders/{id}/fulfillments", h.adminOpenShipment)
 	read.Get("/admin/v1/orders/{id}/fulfillments", h.adminListShipments)
+
+	// The timeline. It is the support desk's view and it composes what the
+	// other endpoints answer one at a time.
+	read.Get("/admin/v1/orders/{id}/timeline", h.adminGetOrderTimeline)
 }

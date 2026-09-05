@@ -280,6 +280,17 @@ func describedEndpoints() []endpointExpectation {
 			method: http.MethodGet, path: "/admin/v1/orders/{id}/fulfillments", status: "200",
 			response: orderShipmentDTO{FulfillmentID: "ful_1", Status: "pending"},
 		},
+		{
+			method: http.MethodGet, path: "/admin/v1/orders/{id}/timeline", status: "200",
+			// Every field is filled in: the omitempty ones drop out of the
+			// marshaled sample when they are zero, and a sample missing a field
+			// the schema declares fails this comparison for a reason that has
+			// nothing to do with the endpoint.
+			response: timelineEntryDTO{
+				At: &describeSampleTime, Kind: "payment.captured", RefID: "paycol_1",
+				Clock: "application", Detail: "captured", Amount: 1000, Currency: "TRY",
+			},
+		},
 	}
 }
 
@@ -543,3 +554,6 @@ func parameterNames(t *testing.T, op map[string]any, location string) []string {
 
 	return names
 }
+
+// describeSampleTime is a fixed moment for the document's samples.
+var describeSampleTime = time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)

@@ -56,6 +56,8 @@ type fakeOrders struct {
 	payment service.OrderPayment
 	// paymentBound reports whether a collection is bound at all.
 	paymentBound bool
+	timeline     []service.TimelineEntry
+	timelineErr  error
 	// paymentErr, when set, makes PaymentOf fail.
 	paymentErr error
 	// nextCursor is what the listing reports as the next page's position.
@@ -90,6 +92,11 @@ func (f *fakeOrders) CancelOrder(_ context.Context, orderID, reason string) erro
 	f.gotOrderID = orderID
 	f.gotReason = reason
 	return f.err
+}
+
+// Timeline returns the scripted timeline.
+func (f *fakeOrders) Timeline(_ context.Context, _ string) ([]service.TimelineEntry, error) {
+	return f.timeline, f.timelineErr
 }
 
 // PaymentOf returns the scripted live payment view.

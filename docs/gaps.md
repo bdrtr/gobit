@@ -84,7 +84,7 @@ Four sequencing facts govern the whole list:
 | # | feature | waits on |
 | --- | --- | --- |
 | C1 | **Back-in-stock waitlist** — the cheapest real feature; every part exists and only a table is missing | — |
-| C2 | **Order timeline** — the support view; mostly a read-side composition over facts that already exist | B5, B6 |
+| C2 | ~~**Order timeline**~~ **Built 2026-09-05.** `GET /admin/v1/orders/{id}/timeline` — composed, not a table; every entry names the CLOCK that stamped it, because the capture and a parcel's transitions are on the application clock while everything else is on the database's. Undated facts (an exchange that finished) come back last rather than being dropped | ~~B5, B6~~ done |
 | C3 | **Operator assistant in the panel** — sixty-one primitive interop methods are already a tool catalogue, and identity exists inside the panel | a return-creation surface |
 | C4 | **Consent records and data-subject endpoints** | A2, B17 |
 | C5 | **Outbound webhooks** (NATS after, if anyone asks) | B12, B13 |
@@ -140,6 +140,23 @@ Four sequencing facts govern the whole list:
 - **Customer identity** is the embedding application's job (ADR 0008), unless A9
   supersedes it.
 - **A/B assignment** likewise, if A9 stands: the framework has no visitor.
+
+### G. Found while building, not yet decided
+
+- **Two clocks on one axis.** `payments.captured_at`, `fulfillments.shipped_at/
+  delivered_at/canceled_at` and `invoices.issued_at` are stamped by the process
+  that wrote them; every other moment comes from the database's `now()`. On one
+  machine they agree; across machines a capture can be printed before the order
+  it paid for. The timeline names the clock per entry rather than hiding it, but
+  the DECISION — move those three to the database clock, and lose the injectable
+  clock the tests use — is open.
+- **`authorized_at` and `refunded_at` do not exist.** A session can become
+  `authorized` and nothing records when; `refunds` has no `refunded_at` and its
+  `created_at` is the de-facto moment. Adding either is a schema decision.
+- **A dead subscription shipped in an example and nothing refused it.**
+  `examples/plugin` listened for `order.created`, a name no publisher emits. It
+  compiled, started, and would have stayed silent forever. Nothing in the
+  repository checks that a subscribed name has a publisher.
 
 ### F. Standing work
 
