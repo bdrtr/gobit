@@ -113,6 +113,23 @@ func (s *Service) ListPaymentCollectionsByIDs(
 	return s.store.PaymentCollectionsByIDs(ctx, ids)
 }
 
+// ListPaymentMomentsByIDs returns WHEN each collection's money moved.
+//
+// It is a second call rather than more fields on the collection: the amounts
+// are asked for on every read and the moments almost never, and making the
+// common read carry two correlated aggregates would be paying for the rare
+// question every time.
+func (s *Service) ListPaymentMomentsByIDs(
+	ctx context.Context,
+	ids []string,
+) ([]models.PaymentMoments, error) {
+	if len(ids) == 0 {
+		return []models.PaymentMoments{}, nil
+	}
+
+	return s.store.PaymentMomentsByCollectionIDs(ctx, ids)
+}
+
 // ListPaymentSessions koleksiyonun oturumlarını döner.
 //
 // Koleksiyonun varlığı önce doğrulanır: olmayan bir koleksiyon için "oturum

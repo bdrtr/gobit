@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -623,4 +624,63 @@ func TestAShipmentOpenedThroughTheFlowIsBoundToItsOrder(t *testing.T) {
 	assert.Nil(t, byID[opened.FulfillmentID]["shipped_at"],
 		"a shipment that has not shipped must report a NULL moment rather than a zero time; "+
 			"a zero time reads as 1 January year one on a timeline")
+}
+
+// TestAnOrderCanSayWHENItsMoneyMoved is the money half of an order's timeline.
+//
+// Until now an order could say HOW MUCH at every stage — the payment
+// collection's amounts come through the order_payment link — and could not say
+// WHEN any of it happened. The amounts are on the collection row; the moments
+// are not, because a capture is a payments row and a refund is a refunds row,
+// and neither table had a reader an order could reach.
+//
+// This is the only place the chain can be proved: the aggregate is SQL, the
+// field is the payment module's Query provider, and the read is the order
+// module's — three layers that an in-memory fake agreeing with itself says
+// nothing about.
+func TestAnOrderCanSayWHENItsMoneyMoved(t *testing.T) {
+	ctx := t.Context()
+
+	customerID, email := newCustomer(ctx, t)
+	variantID, _ := newStockedVariant(ctx, t, "E2E Money Moment Product", map[string]int64{
+		taxedCurrency: shippingUnitPrice,
+	}, shippingStock)
+
+	cartID, _ := prepareCart(ctx, t, customerID, variantID, shippingQuantity)
+
+	before := time.Now().UTC()
+	orderResult, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        stockLocationID,
+		PaymentProviderID: paymentmanual.ID,
+		PaymentData:       paymentBehavior(t, paymentmanual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     shippingTotal,
+	})
+	require.NoError(t, err)
+	after := time.Now().UTC()
+
+	payment, bound, err := orderSvc.PaymentOf(ctx, orderResult.OrderID)
+	require.NoError(t, err)
+	require.True(t, bound, "the order has no payment collection bound to it")
+
+	require.NotNil(t, payment.FirstCapturedAt,
+		"the order cannot say WHEN it was paid. The money moved — the checkout saga "+
+			"captured it — so a nil here means the moment is written in the payments table "+
+			"and no layer between it and the order carries it")
+	captured := *payment.FirstCapturedAt
+	assert.False(t, captured.Before(before.Add(-time.Minute)),
+		"the capture moment is older than the test itself: %s", captured)
+	assert.False(t, captured.After(after.Add(time.Minute)),
+		"the capture moment is in the future: %s", captured)
+
+	assert.Nil(t, payment.LastRefundedAt,
+		"an order that was never refunded reported a refund moment; a zero time would "+
+			"read as 1 January year one on a timeline, and a wrong time is worse than none")
+
+	// The amounts still come back on the same read: asking for the moments must
+	// not cost the caller the figures it was already getting.
+	assert.Positive(t, payment.CapturedAmount,
+		"the captured amount was lost when the moment fields were added")
+	assert.Equal(t, taxedCurrency, payment.CurrencyCode)
 }

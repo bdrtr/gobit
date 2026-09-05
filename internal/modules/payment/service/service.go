@@ -172,6 +172,9 @@ type Store interface {
 	// PaymentCollectionsByIDs fetches the identifier set in a SINGLE query
 	// (no N+1).
 	PaymentCollectionsByIDs(ctx context.Context, ids []string) ([]models.PaymentCollection, error)
+	// PaymentMomentsByCollectionIDs reads WHEN the money moved, separately
+	// from the amounts and only when the caller asks.
+	PaymentMomentsByCollectionIDs(ctx context.Context, ids []string) ([]models.PaymentMoments, error)
 	// UpdatePaymentCollectionTotals writes the amounts and the derived status
 	// with ABSOLUTE values.
 	UpdatePaymentCollectionTotals(

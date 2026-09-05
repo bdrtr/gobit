@@ -30,6 +30,18 @@ const (
 	FieldCapturedAmount = "captured_amount"
 	// FieldRefundedAmount is the total refunded amount.
 	FieldRefundedAmount = "refunded_amount"
+	// FieldFirstCapturedAt and FieldLastRefundedAt are WHEN the money moved.
+	//
+	// They are the two facts a support desk asks for that the collection row
+	// itself cannot answer: the amounts are on the row, the moments are in the
+	// payments and refunds tables. Asking for either makes this provider issue
+	// a SECOND batch query; not asking for them costs nothing, which is why the
+	// two are separate fields rather than columns on the collection.
+	//
+	// Both are null when the thing never happened. Null and not a zero time: a
+	// zero time on a timeline reads as 1 January year one.
+	FieldFirstCapturedAt = "first_captured_at"
+	FieldLastRefundedAt  = "last_refunded_at"
 	// FieldCreatedAt is the creation time.
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt is the last update time.
@@ -123,7 +135,63 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	if err != nil {
 		return nil, err
 	}
-	return records(collections, opts.Fields), nil
+
+	moments, err := p.moments(ctx, collections, opts.Fields)
+	if err != nil {
+		return nil, err
+	}
+
+	return records(collections, opts.Fields, moments), nil
+}
+
+// moments reads the money moments, and ONLY when a moment field was asked for.
+//
+// The branch is the whole point of keeping the moments off the collection row:
+// a read that wants amounts issues one query, and a read that wants times
+// issues two. Making the collection carry them would charge every reader for
+// the rarer question.
+func (p *QueryProvider) moments(
+	ctx context.Context, collections []models.PaymentCollection, fields []string,
+) (map[string]models.PaymentMoments, error) {
+	if len(collections) == 0 || !wantsMoments(fields) {
+		return nil, nil
+	}
+
+	ids := make([]string, 0, len(collections))
+	for i := range collections {
+		ids = append(ids, collections[i].ID)
+	}
+
+	list, err := p.svc.ListPaymentMomentsByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[string]models.PaymentMoments, len(list))
+	for i := range list {
+		out[list[i].CollectionID] = list[i]
+	}
+
+	return out, nil
+}
+
+// wantsMoments reports whether a moment field was requested.
+//
+// An EMPTY field list means "every field the provider offers", so it wants them
+// too: a caller that named nothing gets the whole record, and a record missing
+// two of its declared fields would be this provider lying about its own
+// contract.
+func wantsMoments(fields []string) bool {
+	if len(fields) == 0 {
+		return true
+	}
+	for _, name := range fields {
+		if name == FieldFirstCapturedAt || name == FieldLastRefundedAt {
+			return true
+		}
+	}
+
+	return false
 }
 
 // FetchByIDs returns the records of the given identifiers as a BATCH.
@@ -141,15 +209,25 @@ func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([
 	if err != nil {
 		return nil, err
 	}
-	return records(collections, fields), nil
+
+	moments, err := p.moments(ctx, collections, fields)
+	if err != nil {
+		return nil, err
+	}
+
+	return records(collections, fields, moments), nil
 }
 
 // records turns the collections into records with the requested fields.
 // If fields is empty, ALL of the offered fields are returned.
-func records(collections []models.PaymentCollection, fields []string) []query.Record {
+func records(
+	collections []models.PaymentCollection,
+	fields []string,
+	moments map[string]models.PaymentMoments,
+) []query.Record {
 	selected := fields
 	if len(selected) == 0 {
-		selected = slices.Sorted(maps.Keys(collectionFieldGetters))
+		selected = offeredFields()
 	}
 
 	out := make([]query.Record, 0, len(collections))
@@ -158,12 +236,33 @@ func records(collections []models.PaymentCollection, fields []string) []query.Re
 	// record count rises.
 	for i := range collections {
 		record := make(query.Record, len(selected))
+		moment := moments[collections[i].ID]
 		for _, name := range selected {
-			record[name] = collectionFieldGetters[name](collections[i])
+			switch name {
+			case FieldFirstCapturedAt:
+				record[name] = moment.FirstCapturedAt
+			case FieldLastRefundedAt:
+				record[name] = moment.LastRefundedAt
+			default:
+				record[name] = collectionFieldGetters[name](collections[i])
+			}
 		}
 		out = append(out, record)
 	}
 	return out
+}
+
+// offeredFields is every field this entity offers, sorted.
+//
+// It is the getters PLUS the two moment fields, which have no getter because
+// they do not come off the collection row. Building the default list from the
+// getters alone would mean a caller that named no field got a record missing
+// two of the fields the provider declares — the provider contradicting its own
+// contract, silently.
+func offeredFields() []string {
+	names := slices.Sorted(maps.Keys(collectionFieldGetters))
+
+	return slices.Sorted(slices.Values(append(names, FieldFirstCapturedAt, FieldLastRefundedAt)))
 }
 
 // providerLimit clamps the core's limit value to the provider's page ceiling.
@@ -186,6 +285,12 @@ func providerLimit(limit int) int64 {
 // validateFields verifies that all of the requested fields are offered.
 func validateFields(fields []string) error {
 	for _, name := range fields {
+		if name == FieldFirstCapturedAt || name == FieldLastRefundedAt {
+			// The two moment fields have no getter: they do not come off the
+			// collection row. They are still offered fields, and refusing them
+			// here would make the provider reject its own contract.
+			continue
+		}
 		if _, ok := collectionFieldGetters[name]; !ok {
 			return errors.Invalid(CodeInvalidInput,
 				"the %q entity does not offer the %q field", EntityName, name)

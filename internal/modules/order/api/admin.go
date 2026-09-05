@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -80,6 +81,11 @@ type orderPaymentDTO struct {
 	CapturedAmount   int64  `json:"captured_amount"`
 	RefundedAmount   int64  `json:"refunded_amount"`
 	CurrencyCode     string `json:"currency_code"`
+	// FirstCapturedAt is when money first moved and LastRefundedAt when the
+	// last refund went out. Both are NULL when the thing never happened; a zero
+	// time would read as 1 January year one to whoever is drawing a timeline.
+	FirstCapturedAt *time.Time `json:"first_captured_at"`
+	LastRefundedAt  *time.Time `json:"last_refunded_at"`
 }
 
 // adminGetOrderPayment returns what the PAYMENT MODULE says about the order
@@ -128,6 +134,8 @@ func (h *Handler) adminGetOrderPayment(w http.ResponseWriter, r *http.Request) {
 		CapturedAmount:   payment.CapturedAmount,
 		RefundedAmount:   payment.RefundedAmount,
 		CurrencyCode:     payment.CurrencyCode,
+		FirstCapturedAt:  payment.FirstCapturedAt,
+		LastRefundedAt:   payment.LastRefundedAt,
 	}})
 }
 

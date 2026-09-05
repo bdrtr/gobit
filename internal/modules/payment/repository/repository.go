@@ -230,6 +230,38 @@ func (r *Repository) ListPaymentCollections(
 	return out, total, nil
 }
 
+// PaymentMomentsByCollectionIDs returns, for each collection, WHEN its money
+// moved — in a SINGLE query.
+//
+// It is separate from the collection read on purpose. The moments live in two
+// other tables and cost two correlated aggregates; charging every collection
+// read for them would make the common question (how much) pay for the rare one
+// (when). The caller asks only when it needs them.
+func (r *Repository) PaymentMomentsByCollectionIDs(
+	ctx context.Context,
+	ids []string,
+) ([]models.PaymentMoments, error) {
+	if len(ids) == 0 {
+		return []models.PaymentMoments{}, nil
+	}
+
+	rows, err := r.queries(ctx).PaymentMomentsByCollectionIDs(ctx, ids)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "ödeme anları okunamadı")
+	}
+
+	out := make([]models.PaymentMoments, 0, len(rows))
+	for i := range rows {
+		out = append(out, models.PaymentMoments{
+			CollectionID:    rows[i].PaymentCollectionID,
+			FirstCapturedAt: toTimePtr(rows[i].FirstCapturedAt),
+			LastRefundedAt:  toTimePtr(rows[i].LastRefundedAt),
+		})
+	}
+
+	return out, nil
+}
+
 // PaymentCollectionsByIDs verilen kimliklerin koleksiyonlarını TEK sorguda
 // döner. Bulunamayan kimlik için satır dönmez; bu bir hata değildir.
 func (r *Repository) PaymentCollectionsByIDs(

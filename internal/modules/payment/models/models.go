@@ -40,6 +40,31 @@ const (
 	MaxAmount int64 = 1_000_000_000_000
 )
 
+// PaymentMoments are WHEN a collection's money moved.
+//
+// The amounts live on the collection row; these two do not, because they belong
+// to other tables — the capture is a payments row and the refund is a refunds
+// row. They are read separately and only when asked for, so the common question
+// (how much) does not pay for the rare one (when).
+//
+// Both are nil when the thing never happened, and nil is the honest answer: a
+// zero time on a timeline reads as 1 January year one.
+type PaymentMoments struct {
+	// CollectionID is the collection the two moments belong to.
+	CollectionID string
+	// FirstCapturedAt is when money FIRST moved. With partial captures there
+	// are several; the first one is what "when was it paid" means to the person
+	// asking.
+	FirstCapturedAt *time.Time
+	// LastRefundedAt is when the LAST refund went out. With partial refunds
+	// there are several; the most recent one is what "when was it refunded"
+	// means.
+	//
+	// It comes from refunds.created_at: the refunds table has no refunded_at
+	// column, and the row is written when the refund is made.
+	LastRefundedAt *time.Time
+}
+
 // PaymentCollection is the container of the payments collected for a cart or
 // an order.
 //

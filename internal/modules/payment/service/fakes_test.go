@@ -205,6 +205,51 @@ func (f *fakeStore) PaymentCollectionsByIDs(_ context.Context, ids []string) ([]
 	return out, nil
 }
 
+// PaymentMomentsByCollectionIDs sahtenin kendi satırlarından AYNI iki anı
+// hesaplar: ilk tahsilat ve son iade.
+//
+// Aynı yüklemi uygulamak zorunlu — farklı davranan bir sahte, veritabanında
+// olmayan bir davranışın üzerinden testin geçmesine izin verir. Silinmişler
+// elenir, hiç olmayan an nil kalır.
+func (f *fakeStore) PaymentMomentsByCollectionIDs(
+	_ context.Context, ids []string,
+) ([]models.PaymentMoments, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := make([]models.PaymentMoments, 0, len(ids))
+	for _, id := range slices.Sorted(slices.Values(ids)) {
+		if _, ok := f.collections[id]; !ok {
+			continue
+		}
+
+		moment := models.PaymentMoments{CollectionID: id}
+		for paymentID := range f.payments {
+			payment := f.payments[paymentID]
+			if payment.PaymentCollectionID != id || payment.DeletedAt != nil {
+				continue
+			}
+			if moment.FirstCapturedAt == nil || payment.CapturedAt.Before(*moment.FirstCapturedAt) {
+				captured := payment.CapturedAt
+				moment.FirstCapturedAt = &captured
+			}
+			for refundID := range f.refunds {
+				refund := f.refunds[refundID]
+				if refund.PaymentID != paymentID || refund.DeletedAt != nil {
+					continue
+				}
+				if moment.LastRefundedAt == nil || refund.CreatedAt.After(*moment.LastRefundedAt) {
+					created := refund.CreatedAt
+					moment.LastRefundedAt = &created
+				}
+			}
+		}
+		out = append(out, moment)
+	}
+
+	return out, nil
+}
+
 // UpdatePaymentCollectionTotals tutarları ve durumu yazar.
 func (f *fakeStore) UpdatePaymentCollectionTotals(
 	_ context.Context,

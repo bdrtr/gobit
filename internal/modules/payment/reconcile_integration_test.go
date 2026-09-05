@@ -245,3 +245,116 @@ func TestReconciliationListingUsesItsIndex(t *testing.T) {
 	assert.NotContains(t, plan, "Seq Scan on payment_sessions",
 		"the listing fell back to a sequential scan; the plan was:\n%s", plan)
 }
+
+// TestTheMoneyMomentsAreTheFirstCaptureAndTheLastRefund pins the SQL's
+// semantics, which the end-to-end proof cannot reach.
+//
+// The e2e scenario captures once and refunds never, so it proves the chain is
+// wired and says nothing about WHICH moment is reported when there are several.
+// That choice is a contract — "when was it paid" means the first capture, "when
+// was it refunded" means the last refund — and a MIN silently turned into a MAX
+// would keep every other test green while telling a support desk the wrong day.
+//
+// The timestamps are written with raw SQL because there is no other way to
+// reach them: captured_at is set by the writing code and refunds.created_at is
+// a database default. The same reason backdateSession gives.
+func TestTheMoneyMomentsAreTheFirstCaptureAndTheLastRefund(t *testing.T) {
+	ctx := context.Background()
+	svc := reconService(t)
+	repo := repository.New(testPool.Pool())
+
+	col := reconCollection(ctx, t, svc)
+
+	// TWO sessions, because a payments row is unique per session
+	// (payments_session_uniq) — which is the schema saying that a partial
+	// capture is a second session, not a second capture on the first one.
+	half := reconAmount / 2
+	first := sessionOn(ctx, t, svc, col.ID, "moments-a-"+col.ID, half)
+	second := sessionOn(ctx, t, svc, col.ID, "moments-b-"+col.ID, half)
+
+	// Two captures, an hour apart. The EARLIER one is the answer.
+	base := time.Now().UTC().Add(-6 * time.Hour).Truncate(time.Second)
+	early, err := repo.CreatePayment(ctx, models.Payment{
+		ID: "pay_moment_early_" + col.ID, PaymentSessionID: first,
+		PaymentCollectionID: col.ID, Amount: 1000, CurrencyCode: reconCurrency,
+		CapturedAt: base,
+	})
+	require.NoError(t, err)
+	_, err = repo.CreatePayment(ctx, models.Payment{
+		ID: "pay_moment_late_" + col.ID, PaymentSessionID: second,
+		PaymentCollectionID: col.ID, Amount: 1000, CurrencyCode: reconCurrency,
+		CapturedAt: base.Add(time.Hour),
+	})
+	require.NoError(t, err)
+
+	// Two refunds against the earlier capture. The LATER one is the answer.
+	for i, offset := range []time.Duration{2 * time.Hour, 3 * time.Hour} {
+		refund, refundErr := repo.CreateRefund(ctx, models.Refund{
+			ID:        fmt.Sprintf("refund_moment_%d_%s", i, col.ID),
+			PaymentID: early.ID,
+			Amount:    100,
+		})
+		require.NoError(t, refundErr)
+		backdateRefund(ctx, t, refund.ID, base.Add(offset))
+	}
+
+	moments, err := repo.PaymentMomentsByCollectionIDs(ctx, []string{col.ID})
+	require.NoError(t, err)
+	require.Len(t, moments, 1)
+
+	require.NotNil(t, moments[0].FirstCapturedAt)
+	assert.True(t, moments[0].FirstCapturedAt.Equal(base),
+		"the reported capture moment is not the FIRST one: want %s, got %s",
+		base, moments[0].FirstCapturedAt)
+
+	require.NotNil(t, moments[0].LastRefundedAt)
+	assert.True(t, moments[0].LastRefundedAt.Equal(base.Add(3*time.Hour)),
+		"the reported refund moment is not the LAST one: want %s, got %s",
+		base.Add(3*time.Hour), moments[0].LastRefundedAt)
+
+	// A collection nobody paid reports two nils rather than two zero times.
+	empty := reconCollection(ctx, t, svc)
+	quiet, err := repo.PaymentMomentsByCollectionIDs(ctx, []string{empty.ID})
+	require.NoError(t, err)
+	require.Len(t, quiet, 1)
+	assert.Nil(t, quiet[0].FirstCapturedAt)
+	assert.Nil(t, quiet[0].LastRefundedAt)
+}
+
+// backdateRefund moves a refund's created_at to a chosen moment.
+//
+// Raw SQL for the reason backdateSession gives: created_at is a database
+// default and no write path accepts one.
+func backdateRefund(ctx context.Context, t *testing.T, refundID string, at time.Time) {
+	t.Helper()
+
+	_, err := testPool.Pool().Exec(ctx,
+		`UPDATE refunds SET created_at = $2 WHERE id = $1`, refundID, at)
+	require.NoError(t, err)
+}
+
+// sessionOn opens and authorizes one session on an EXISTING collection.
+//
+// It is not authorizedSession: that helper opens a collection of its own, and
+// what is needed here is two sessions on ONE collection — the schema's way of
+// saying a partial capture is a second session.
+func sessionOn(
+	ctx context.Context, t *testing.T, svc *service.Service, collectionID, key string, amount int64,
+) string {
+	t.Helper()
+
+	// The amount is given rather than left at zero: zero means "the rest of the
+	// collection", which the FIRST session then swallows whole and the second
+	// is refused with "nothing left to open". Splitting the amount is what a
+	// partial capture is.
+	session, err := svc.CreateSession(ctx, collectionID, manual.ID, service.CreateSessionInput{
+		Amount:         amount,
+		IdempotencyKey: key,
+	})
+	require.NoError(t, err)
+
+	authorized, err := svc.AuthorizePayment(ctx, session.ID)
+	require.NoError(t, err)
+
+	return authorized.ID
+}

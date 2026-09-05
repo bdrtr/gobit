@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/query"
@@ -30,6 +31,13 @@ const (
 	fieldPaymentCaptured   = "captured_amount"
 	fieldPaymentRefunded   = "refunded_amount"
 	fieldPaymentCurrency   = "currency_code"
+	// The two money MOMENTS. They are not on the collection row — the capture
+	// is a payments row and the refund a refunds row — so asking for them makes
+	// the payment module issue a second batch query. They are asked for here
+	// because they are the two facts a support desk asks first and an order had
+	// no way to reach either.
+	fieldPaymentFirstCaptured = "first_captured_at"
+	fieldPaymentLastRefunded  = "last_refunded_at"
 )
 
 // OrderPayment is the payment module's LIVE view of an order's collection.
@@ -60,6 +68,16 @@ type OrderPayment struct {
 	RefundedAmount   int64
 	// CurrencyCode is the collection's currency.
 	CurrencyCode string
+	// FirstCapturedAt is when money FIRST moved on this order, and
+	// LastRefundedAt when the last refund went out.
+	//
+	// Both are nil when the thing never happened, and nil is the answer that
+	// can be shown: a zero time reads as 1 January year one on a timeline. With
+	// partial captures or partial refunds there are several moments; these two
+	// are the ends a person asking "when was it paid" and "when was it
+	// refunded" means.
+	FirstCapturedAt *time.Time
+	LastRefundedAt  *time.Time
 }
 
 // Catalog is the Query-layer surface this module reads through (ADR 0004).
@@ -110,6 +128,7 @@ func (s *Service) PaymentOf(ctx context.Context, orderID string) (OrderPayment, 
 				query.IDField,
 				fieldPaymentStatus, fieldPaymentAmount, fieldPaymentCurrency,
 				fieldPaymentAuthorized, fieldPaymentCaptured, fieldPaymentRefunded,
+				fieldPaymentFirstCaptured, fieldPaymentLastRefunded,
 			},
 		}},
 	})
@@ -135,6 +154,8 @@ func (s *Service) PaymentOf(ctx context.Context, orderID string) (OrderPayment, 
 		CapturedAmount:   recordInt(collection, fieldPaymentCaptured),
 		RefundedAmount:   recordInt(collection, fieldPaymentRefunded),
 		CurrencyCode:     recordText(collection, fieldPaymentCurrency),
+		FirstCapturedAt:  recordTime(collection, fieldPaymentFirstCaptured),
+		LastRefundedAt:   recordTime(collection, fieldPaymentLastRefunded),
 	}, true, nil
 }
 
@@ -155,6 +176,23 @@ func firstExpanded(raw any) (query.Record, bool) {
 		return value[0], true
 	default:
 		return nil, false
+	}
+}
+
+// recordTime reads a moment field.
+//
+// A missing field, a null and a differently typed value are all nil, and that
+// is the same answer on purpose: every one of them means "this module cannot
+// say when", and inventing a zero time would put 1 January year one on a
+// timeline as if it were a fact.
+func recordTime(rec query.Record, field string) *time.Time {
+	switch value := rec[field].(type) {
+	case *time.Time:
+		return value
+	case time.Time:
+		return &value
+	default:
+		return nil
 	}
 }
 
