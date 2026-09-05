@@ -193,8 +193,26 @@ const productColumns = `id, handle, title, subtitle, description, thumbnail,
 //
 // The order (created_at DESC, id DESC) is fixed; the second key prevents two
 // records created in the same millisecond from changing places between pages.
+// That same pair is what a cursor carries, which is why this listing could take
+// one without changing its order at all.
+//
+// # Why the cursor bound is a sentinel and not a branch
+//
+// The obvious way to make the bound optional is
+// "$9 IS NULL OR (created_at, id) < (...)". It measures perfectly and then
+// degrades in production: Postgres plans the statement per call for its first
+// five executions and folds the OR away, so a test sees an Index Cond; on the
+// sixth it switches to a GENERIC plan, the OR survives into a Filter, and the
+// seek becomes a full index walk. Measured on 52,000 rows at the deep end:
+// 50,001 rows removed by filter, 4.3 ms instead of 0.065 ms — and nothing in
+// the code changed at that moment, which is what makes it worth writing down.
+//
+// COALESCE leaves no OR to survive. The comparison stays a ROW against the
+// index under both plans, and an absent cursor means "start at the top",
+// because every real row sorts below infinity.
 var listProductsSQL = `SELECT ` + productColumns + ` FROM product
 ` + productFilterSQL + salesChannelVisible("product.id", "$5") + `
+  AND (created_at, id) < (COALESCE($8::timestamptz, 'infinity'::timestamptz), COALESCE($9::text, ''))
 ORDER BY created_at DESC, id DESC
 LIMIT $6::int OFFSET $7::int`
 
@@ -298,9 +316,11 @@ var productVisibleSQL = `SELECT ` + salesChannelVisible("$1", "$2")
 // that dependence is written out explicitly in [productColumns] and pinned down
 // by a test.
 func (r *Repo) ListProducts(ctx context.Context, f ProductFilter) ([]models.Product, error) {
+	afterAt, afterID := f.After.SQLBounds()
+
 	rows, err := r.db.Query(ctx, listProductsSQL,
 		f.Status, f.CollectionID, f.Handle, f.Search, f.SalesChannelIDs,
-		toInt32(f.Limit), toInt32(f.Offset))
+		toInt32(f.Limit), toInt32(f.Offset), afterAt, afterID)
 	if err != nil {
 		return nil, wrapDB(err, "could not list products")
 	}

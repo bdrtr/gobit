@@ -101,15 +101,16 @@ type ComplexityRoot struct {
 	}
 
 	ProductList struct {
-		Count  func(childComplexity int) int
-		Items  func(childComplexity int) int
-		Limit  func(childComplexity int) int
-		Offset func(childComplexity int) int
+		Count      func(childComplexity int) int
+		Items      func(childComplexity int) int
+		Limit      func(childComplexity int) int
+		NextCursor func(childComplexity int) int
+		Offset     func(childComplexity int) int
 	}
 
 	Query struct {
 		Product  func(childComplexity int, id *string, handle *string) int
-		Products func(childComplexity int, limit *int, offset *int, q *string, collectionID *string) int
+		Products func(childComplexity int, limit *int, offset *int, after *string, q *string, collectionID *string) int
 	}
 
 	Tag struct {
@@ -143,7 +144,7 @@ type ComplexityRoot struct {
 // region    ************************** generated!.gotpl **************************
 
 type QueryResolver interface {
-	Products(ctx context.Context, limit *int, offset *int, q *string, collectionID *string) (*service.ListResult[service.StoreProduct], error)
+	Products(ctx context.Context, limit *int, offset *int, after *string, q *string, collectionID *string) (*service.ListResult[service.StoreProduct], error)
 	Product(ctx context.Context, id *string, handle *string) (*service.StoreProduct, error)
 }
 type VariantResolver interface {
@@ -468,6 +469,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.ProductList.Limit(childComplexity), true
+	case "ProductList.nextCursor":
+		if e.ComplexityRoot.ProductList.NextCursor == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ProductList.NextCursor(childComplexity), true
 	case "ProductList.offset":
 		if e.ComplexityRoot.ProductList.Offset == nil {
 			break
@@ -496,7 +503,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.Products(childComplexity, args["limit"].(*int), args["offset"].(*int), args["q"].(*string), args["collectionId"].(*string)), true
+		return e.ComplexityRoot.Query.Products(childComplexity, args["limit"].(*int), args["offset"].(*int), args["after"].(*string), args["q"].(*string), args["collectionId"].(*string)), true
 
 	case "Tag.id":
 		if e.ComplexityRoot.Tag.ID == nil {
@@ -832,6 +839,8 @@ func (ec *executionContext) childFields_ProductList(ctx context.Context, field g
 		return ec.fieldContext_ProductList_offset(ctx, field)
 	case "limit":
 		return ec.fieldContext_ProductList_limit(ctx, field)
+	case "nextCursor":
+		return ec.fieldContext_ProductList_nextCursor(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type ProductList", field.Name)
 }
@@ -1057,22 +1066,30 @@ func (ec *executionContext) field_Query_products_args(ctx context.Context, rawAr
 		return nil, err
 	}
 	args["offset"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "q",
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "after",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["q"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "collectionId",
+	args["after"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "q",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["q"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "collectionId",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOID2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["collectionId"] = arg3
+	args["collectionId"] = arg4
 	return args, nil
 }
 
@@ -2349,6 +2366,29 @@ func (ec *executionContext) fieldContext_ProductList_limit(_ context.Context, fi
 	return graphql.NewScalarFieldContext("ProductList", field, false, false, errors.New("field of type Int does not have child fields"))
 }
 
+func (ec *executionContext) _ProductList_nextCursor(ctx context.Context, field graphql.CollectedField, obj *service.ListResult[service.StoreProduct]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ProductList_nextCursor(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.NextCursor, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalOString2string(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_ProductList_nextCursor(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("ProductList", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
 func (ec *executionContext) _Query_products(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -2359,7 +2399,7 @@ func (ec *executionContext) _Query_products(ctx context.Context, field graphql.C
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().Products(ctx, fc.Args["limit"].(*int), fc.Args["offset"].(*int), fc.Args["q"].(*string), fc.Args["collectionId"].(*string))
+			return ec.Resolvers.Query().Products(ctx, fc.Args["limit"].(*int), fc.Args["offset"].(*int), fc.Args["after"].(*string), fc.Args["q"].(*string), fc.Args["collectionId"].(*string))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *service.ListResult[service.StoreProduct]) graphql.Marshaler {
@@ -4453,6 +4493,11 @@ func (ec *executionContext) _ProductList(ctx context.Context, sel ast.SelectionS
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "nextCursor":
+			out.Values[i] = ec._ProductList_nextCursor(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -5711,6 +5756,18 @@ func (ec *executionContext) marshalOProduct2ᚖgithubᚗcomᚋbdrtrᚋgobitᚋin
 		return graphql.Null
 	}
 	return ec._Product(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOString2string(ctx context.Context, v any) (string, error) {
+	res, err := graphql.UnmarshalString(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOString2string(ctx context.Context, sel ast.SelectionSet, v string) graphql.Marshaler {
+	_ = sel
+	_ = ctx
+	res := graphql.MarshalString(v)
+	return res
 }
 
 func (ec *executionContext) unmarshalOString2ᚖstring(ctx context.Context, v any) (*string, error) {

@@ -250,7 +250,10 @@ func TestStoreListDescribesItsBody(t *testing.T) {
 	require.True(t, ok, "the code the handler REALLY writes has to be documented")
 
 	envelope := responseSchema(t, definition)
-	assert.ElementsMatch(t, []string{"data", "count", "offset", "limit"},
+	// "next_cursor" is here because this listing accepts "after"; the two are
+	// one decision, and a listing that took a cursor without giving one back
+	// would leave a client unable to reach page two.
+	assert.ElementsMatch(t, []string{"data", "count", "offset", "limit", "next_cursor"},
 		storefrontFields(t, components, envelope), "the list envelope is the shape from plan Section 8")
 
 	item, ok := property(t, components, envelope, "data")["items"].(map[string]any)
@@ -356,7 +359,7 @@ func TestStoreListDescribesOnlyParametersItReads(t *testing.T) {
 	op := storefrontOperation(t, paths, http.MethodGet, "/store/v1/products")
 
 	names := parameterNames(t, op, "query")
-	assert.ElementsMatch(t, []string{"collection_id", "q", "limit", "offset", "with_count"}, names,
+	assert.ElementsMatch(t, []string{"collection_id", "q", "limit", "offset", "after", "with_count"}, names,
 		"the parameters have to be the same as the ones storeListProducts reads")
 	assert.NotContains(t, names, "sales_channel_id",
 		"the channel comes from the identity; it must not be announced as a query parameter")

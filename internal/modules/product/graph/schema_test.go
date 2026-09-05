@@ -5,11 +5,13 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/vektah/gqlparser/v2/ast"
 
+	"github.com/bdrtr/gobit/internal/core/page"
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
@@ -203,6 +205,7 @@ func TestProductsArgumentsMatchWhatTheServiceReads(t *testing.T) {
 		"Search":       "q",
 		"Limit":        "limit",
 		"Offset":       "offset",
+		"After":        "after",
 	}
 
 	// The fields the client CANNOT GIVE: their values come from the request's
@@ -286,8 +289,16 @@ func TestEmptyTextArgumentBuildsNoFilter(t *testing.T) {
 		"q":            "Search",
 	}
 
+	// Text arguments that are NOT filters. A cursor names a POSITION: its
+	// absence is the first page rather than "do not filter", it reaches the
+	// service as a struct rather than as a pointer, and a value that is present
+	// but unreadable has to be REFUSED — treating whitespace as "start over"
+	// would restart a client's walk from the top and tell it nothing.
+	// TestAnUnreadableCursorIsRefused covers that half.
+	notFilters := map[string]bool{"after": true}
+
 	for _, arg := range compiledSchema(t).Query.Fields.ForName("products").Arguments {
-		if !textScalars[arg.Type.NamedType] {
+		if !textScalars[arg.Type.NamedType] || notFilters[arg.Name] {
 			continue
 		}
 
@@ -358,4 +369,47 @@ func TestSchemaHasNoWriteSurface(t *testing.T) {
 
 	assert.Nil(t, s.Mutation, "the storefront GraphQL surface is read only")
 	assert.Nil(t, s.Subscription, "there is no subscription surface")
+}
+
+// TestAnEmptyCursorArgumentIsTheFirstPage covers the half
+// [TestEmptyTextArgumentBuildsNoFilter] excludes: an absent cursor is a
+// position, not a filter, and it has to reach the service as the zero value.
+func TestAnEmptyCursorArgumentIsTheFirstPage(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc, `{ products { count } }`)
+
+	require.Empty(t, response.Errors)
+	assert.True(t, svc.lastList(t).After.IsZero(), "an absent cursor must reach the service as the zero value")
+}
+
+// TestAnUnreadableCursorArgumentIsRefused keeps a broken cursor from silently
+// restarting the walk.
+//
+// A client whose cursor was truncated in a URL would otherwise get page one
+// back with a 200 and go around the listing forever without an error to see.
+func TestAnUnreadableCursorArgumentIsRefused(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
+		`{ products(after: "   ") { count } }`)
+
+	require.NotEmpty(t, response.Errors, "an unreadable cursor has to be refused, not treated as the first page")
+}
+
+// TestACursorAndAnOffsetTogetherAreRefused holds the reason both cannot be
+// honored: they name two different positions, and serving the page N rows past
+// the cursor answers neither.
+func TestACursorAndAnOffsetTogetherAreRefused(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeStorefront{}
+	cursor := page.Encode(service.ProductListing, page.Cursor{Time: time.Now(), ID: "prod_1"})
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
+		fmt.Sprintf(`{ products(after: %q, offset: 10) { count } }`, cursor))
+
+	require.NotEmpty(t, response.Errors)
+	assert.Contains(t, response.Errors[0].Message, "two different positions")
 }

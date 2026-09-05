@@ -57,6 +57,11 @@ func (h *Handler) storeListProducts(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(r.Context(), w, err)
 		return
 	}
+	after, err := afterParam(r, service.ProductListing, offset)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
 
 	result, err := h.svc.ListStoreProducts(r.Context(), service.StoreListOptions{
 		CollectionID:    stringParam(r, "collection_id"),
@@ -64,6 +69,7 @@ func (h *Handler) storeListProducts(w http.ResponseWriter, r *http.Request) {
 		SalesChannelIDs: salesChannelIDs(r),
 		Limit:           limit,
 		Offset:          offset,
+		After:           after,
 		SkipCount:       !withCount,
 	})
 	if err != nil {

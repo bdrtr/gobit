@@ -7,6 +7,7 @@ import (
 	"github.com/99designs/gqlgen/graphql"
 
 	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
+	corepage "github.com/bdrtr/gobit/internal/core/page"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
@@ -94,14 +95,28 @@ type variantResolver struct{ *Resolver }
 func (r *queryResolver) Products(
 	ctx context.Context,
 	limit, offset *int,
-	q, collectionID *string,
+	after, q, collectionID *string,
 ) (*ProductList, error) {
+	// "after" and "offset" name two different positions; honoring both would
+	// serve the page N rows past the cursor, which is a position neither of
+	// them asked for.
+	if after != nil && *after != "" && intValue(offset) != 0 {
+		return nil, coreerrors.Invalid(corepage.CodeInvalidCursor,
+			`"after" and "offset" name two different positions; send one of them`)
+	}
+
+	cursor, err := corepage.Decode(service.ProductListing, stringValue(after))
+	if err != nil {
+		return nil, err
+	}
+
 	result, err := r.svc.ListStoreProducts(ctx, service.StoreListOptions{
 		CollectionID:    trimmedPointer(collectionID),
 		Search:          trimmedPointer(q),
 		SalesChannelIDs: SalesChannelIDsFromContext(ctx),
 		Limit:           intValue(limit),
 		Offset:          intValue(offset),
+		After:           cursor,
 		SkipCount:       !isSelected(ctx, fieldCount),
 	})
 	if err != nil {
@@ -109,6 +124,16 @@ func (r *queryResolver) Products(
 	}
 
 	return &result, nil
+}
+
+// stringValue reads an optional string argument; a nil pointer is the empty
+// string.
+func stringValue(v *string) string {
+	if v == nil {
+		return ""
+	}
+
+	return *v
 }
 
 // Product returns a single storefront product by identity or by handle.

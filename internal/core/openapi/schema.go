@@ -23,7 +23,9 @@ const schemaFieldData = "data"
 const (
 	schemaFieldCount  = "count"
 	schemaFieldOffset = "offset"
-	schemaFieldLimit  = "limit"
+	// schemaFieldNextCursor is the envelope's cursor field.
+	schemaFieldNextCursor = "next_cursor"
+	schemaFieldLimit      = "limit"
 )
 
 // codeSchemaNameConflict reports that two DIFFERENT Go types want the same
@@ -115,16 +117,42 @@ func (d *Doc) Item(v any) map[string]any {
 	return itemSchema(d.SchemaOf(v))
 }
 
+// ListOption tunes the list envelope's schema.
+type ListOption func(*listSettings)
+
+// listSettings holds what the options decide.
+type listSettings struct {
+	cursored bool
+}
+
+// WithCursor declares that the listing can return a "next_cursor".
+//
+// It is given only by the endpoints that accept an "after" parameter. On the
+// rest the field would document a value the endpoint never writes.
+func WithCursor() ListOption {
+	return func(s *listSettings) { s.cursored = true }
+}
+
+// cursored applies the options and reports whether the cursor was asked for.
+func cursored(opts []ListOption) bool {
+	var settings listSettings
+	for _, opt := range opts {
+		opt(&settings)
+	}
+
+	return settings.cursored
+}
+
 // List produces the schema of the list response envelope from the RECORD type.
 //
 // The envelope shape is fixed in plan Section 8:
 // {schemaFieldData: [...], "count": N, "offset": N, "limit": N}. All four fields
 // are REQUIRED; for the endpoint whose counter is optional there is
 // [Doc.ListOptionalCount].
-func (d *Doc) List(v any) map[string]any {
+func (d *Doc) List(v any, opts ...ListOption) map[string]any {
 	oge := d.schemaOfType(listRecord(reflect.TypeOf(v)), map[reflect.Type]bool{})
 
-	return listSchema(oge, true)
+	return listSchema(oge, true, cursored(opts))
 }
 
 // ListOptionalCount produces the list envelope's schema with the "count" field
@@ -150,10 +178,10 @@ func (d *Doc) List(v any) map[string]any {
 // off the field comes back NOT as null but not WRITTEN at all (see the product
 // api listEnvelope) — writing nullable would describe a value that never appears
 // in the body.
-func (d *Doc) ListOptionalCount(v any) map[string]any {
+func (d *Doc) ListOptionalCount(v any, opts ...ListOption) map[string]any {
 	oge := d.schemaOfType(listRecord(reflect.TypeOf(v)), map[reflect.Type]bool{})
 
-	return listSchema(oge, false)
+	return listSchema(oge, false, cursored(opts))
 }
 
 // RequestBody produces a REQUIRED JSON request body definition from the given type.
@@ -771,7 +799,7 @@ func itemSchema(rec map[string]any) map[string]any {
 //
 // With countRequired false, "count" only drops out of the required list; nothing
 // changes in the properties or in its type (see [Doc.ListOptionalCount]).
-func listSchema(oge map[string]any, countRequired bool) map[string]any {
+func listSchema(oge map[string]any, countRequired, cursored bool) map[string]any {
 	required := []string{schemaFieldData}
 	if countRequired {
 		required = append(required, schemaFieldCount)
@@ -779,14 +807,24 @@ func listSchema(oge map[string]any, countRequired bool) map[string]any {
 
 	required = append(required, schemaFieldOffset, schemaFieldLimit)
 
+	properties := map[string]any{
+		schemaFieldData:   map[string]any{schemaType: typeArray, schemaItems: oge},
+		schemaFieldCount:  map[string]any{schemaType: typeInteger},
+		schemaFieldOffset: map[string]any{schemaType: typeInteger},
+		schemaFieldLimit:  map[string]any{schemaType: typeInteger},
+	}
+	// The cursor is NEVER required, on any endpoint: its absence is what says
+	// the listing is exhausted. It appears in the schema only for the listings
+	// that can produce one, for the same reason "count" has two builders —
+	// promising a field an endpoint never writes makes a generated client check
+	// for a case that cannot happen.
+	if cursored {
+		properties[schemaFieldNextCursor] = map[string]any{schemaType: typeString}
+	}
+
 	return map[string]any{
-		schemaType:     typeObject,
-		schemaRequired: required,
-		schemaProperties: map[string]any{
-			schemaFieldData:   map[string]any{schemaType: typeArray, schemaItems: oge},
-			schemaFieldCount:  map[string]any{schemaType: typeInteger},
-			schemaFieldOffset: map[string]any{schemaType: typeInteger},
-			schemaFieldLimit:  map[string]any{schemaType: typeInteger},
-		},
+		schemaType:       typeObject,
+		schemaRequired:   required,
+		schemaProperties: properties,
 	}
 }

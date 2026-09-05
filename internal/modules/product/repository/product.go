@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 
+	corepage "github.com/bdrtr/gobit/internal/core/page"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/repository/productdb"
 )
@@ -32,6 +33,14 @@ type ProductFilter struct {
 	SalesChannelIDs []string
 	Limit           int
 	Offset          int
+	// After is the keyset position the page starts below; the zero value is the
+	// first page.
+	//
+	// It is applied TOGETHER with Offset rather than instead of it, so the query
+	// keeps a single shape. The API refuses the two at once, because a cursor
+	// and an offset name two different positions and honoring both would serve a
+	// page that neither of them asked for.
+	After corepage.Cursor
 }
 
 // ProductPatch is a partial update of a product.

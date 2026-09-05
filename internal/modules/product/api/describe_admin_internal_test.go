@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -473,7 +474,14 @@ func TestAdminEndpointsDescribeTheirBodies(t *testing.T) {
 			require.True(t, ok,
 				"the code the handler REALLY writes has to be documented: %s", endpoint.status)
 
-			record := adminRecordSchema(t, components, adminBodySchema(t, definition), endpoint.list)
+			// A listing that takes a cursor has to give one back, and one that
+			// does not must not document a field it never writes. Reading the
+			// answer off the operation's own parameters ties the two halves
+			// together instead of repeating the decision in a second table.
+			cursored := slices.Contains(adminParameterNames(t, op, "query"), "after")
+
+			record := adminRecordSchema(t, components, adminBodySchema(t, definition),
+				endpoint.list, cursored)
 
 			assert.ElementsMatch(t, adminJSONKeys(t, endpoint.record),
 				adminFields(t, components, record),
@@ -492,12 +500,17 @@ func TestAdminEndpointsDescribeTheirBodies(t *testing.T) {
 // both carry "data", but in the list that field is an ARRAY. Writing the wrong
 // one would produce a method in a client generator that takes a single record
 // for an array (or an array for a single record).
-func adminRecordSchema(t *testing.T, components, envelope map[string]any, list bool) map[string]any {
+func adminRecordSchema(
+	t *testing.T, components, envelope map[string]any, list, cursored bool,
+) map[string]any {
 	t.Helper()
 
 	expected := []string{"data"}
 	if list {
 		expected = []string{"data", "count", "offset", "limit"}
+	}
+	if cursored {
+		expected = append(expected, "next_cursor")
 	}
 
 	assert.ElementsMatch(t, expected, adminFields(t, components, envelope),
@@ -577,7 +590,7 @@ func TestAdminEndpointsDescribeOnlyParametersTheyRead(t *testing.T) {
 	// endpoint that is not in the list never looks at the query string.
 	expected := map[string][]string{
 		"GET /admin/v1/products": {
-			"collection_id", "handle", "q", "status", "expand", "limit", "offset",
+			"collection_id", "handle", "q", "status", "expand", "limit", "offset", "after",
 		},
 		"GET /admin/v1/products/{id}/variants": {"limit", "offset"},
 		"GET /admin/v1/product-collections":    {"limit", "offset"},

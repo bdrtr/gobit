@@ -994,7 +994,7 @@ func fieldKey(field *ast.Field) string {
 // query is the database round trip and it does not drop when fewer fields are
 // selected.
 func complexityCosts(costs *ComplexityRoot) {
-	costs.Query.Products = func(child int, limit, _ *int, _, _ *string) int {
+	costs.Query.Products = func(child int, limit, _ *int, _, _, _ *string) int {
 		return rootQueryCost + pageSize(limit)*child
 	}
 

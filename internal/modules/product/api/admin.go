@@ -313,6 +313,11 @@ func (h *Handler) adminListProducts(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(r.Context(), w, err)
 		return
 	}
+	after, err := afterParam(r, service.ProductListing, offset)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
 
 	opts := service.ListProductsOptions{
 		CollectionID:  stringParam(r, "collection_id"),
@@ -320,6 +325,7 @@ func (h *Handler) adminListProducts(w http.ResponseWriter, r *http.Request) {
 		Search:        stringParam(r, "q"),
 		Limit:         limit,
 		Offset:        offset,
+		After:         after,
 		WithRelations: withRelations,
 	}
 	if raw := stringParam(r, "status"); raw != nil {

@@ -337,7 +337,40 @@ dependency lands on is decided by what its loss does to a request.
    allocation regression in pricing, promotion computation or JSON encoding
    would be invisible until it showed up as latency in production.
 
-2. **Pagination is offset-based everywhere.** 101 `limit` and 96 `offset`
+2. **Pagination is offset-based everywhere.** **PARTLY CLOSED 2026-09-05.**
+   The mechanism exists and the product listings use it; the remaining
+   unbounded listings are being converted module by module.
+
+   Measured on 52,000 products with the listing index in place:
+
+   | page | offset | keyset |
+   | --- | --- | --- |
+   | first | 0.31 ms | 0.06 ms |
+   | ~5,000 in | 4.63 ms | — |
+   | ~50,000 in | 34.71 ms | 0.08 ms |
+
+   Offset is linear in depth because the database walks and DISCARDS every
+   skipped row; keyset is flat because the ordering key goes into the index
+   condition. The 423x at the deep end matters less than the SHAPE: a catalog
+   that grows makes offset worse and leaves keyset where it was.
+
+   Offset is NOT removed and the change is NOT breaking. A page-numbered admin
+   screen needs to jump to page seven, which a cursor cannot do, and at the
+   depths such a screen reaches offset is cheap. `after` is additive, and the
+   two are refused together because they name different positions.
+
+   The finding worth carrying forward is the SQL shape. Writing the bound as
+   `@after IS NULL OR (created_at, id) < (...)` measures perfectly and then
+   degrades: Postgres plans a statement per call for its first five executions
+   and folds the OR away, so a test sees an Index Cond; on the sixth it switches
+   to a generic plan, the OR survives into a Filter, and the seek becomes a full
+   index walk — 50,001 rows removed by filter, 4.3 ms instead of 0.065 ms, with
+   no code change at that moment. The sentinel form
+   (`COALESCE(@after, 'infinity')`) has no OR left to survive and holds under
+   both plans. An integration test reads the plan rather than a timing, because
+   a timing cannot tell the two apart on a small table.
+
+   The original finding: 101 `limit` and 96 `offset`
    occurrences across the module APIs; no cursor, no `after`, no `before`.
 
    The cost is already visible rather than theoretical. Offset pagination needs

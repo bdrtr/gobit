@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
+	corepage "github.com/bdrtr/gobit/internal/core/page"
 	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 )
@@ -87,6 +88,9 @@ type StoreListOptions struct {
 	SalesChannelIDs []string
 	Limit           int
 	Offset          int
+	// After is the opaque position from a previous page's NextCursor; the zero
+	// value is the first page. See [ListProductsOptions.After].
+	After corepage.Cursor
 	// SkipCount, when true, means the total count query is never run at all and
 	// the Count field of the result comes back nil.
 	//
@@ -171,6 +175,7 @@ func (s *Service) ListStoreProducts(ctx context.Context, opts StoreListOptions) 
 		SalesChannelIDs: opts.SalesChannelIDs,
 		Limit:           opts.Limit,
 		Offset:          opts.Offset,
+		After:           opts.After,
 		WithRelations:   true,
 		SkipCount:       opts.SkipCount,
 	})
@@ -183,10 +188,11 @@ func (s *Service) ListStoreProducts(ctx context.Context, opts StoreListOptions) 
 		return ListResult[StoreProduct]{}, err
 	}
 	return ListResult[StoreProduct]{
-		Items:  items,
-		Count:  result.Count,
-		Offset: result.Offset,
-		Limit:  result.Limit,
+		Items:      items,
+		Count:      result.Count,
+		Offset:     result.Offset,
+		Limit:      result.Limit,
+		NextCursor: result.NextCursor,
 	}, nil
 }
 

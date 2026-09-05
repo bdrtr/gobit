@@ -12,6 +12,55 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Derin sayfa artık ucuz** (cursor pagination; ürün listelerinde).
+
+  Offset, veritabanına atladığı her satırı yürütüp ATTIRIR: sayfanın maliyeti
+  derinlikle büyür. 52 bin ürün ve listeleme indeksiyle ölçüldü:
+
+  | sayfa | offset | keyset |
+  | --- | --- | --- |
+  | ilk | 0,31 ms | 0,06 ms |
+  | ~5.000 içeride | 4,63 ms | — |
+  | ~50.000 içeride | 34,71 ms | 0,08 ms |
+
+  Derin uçtaki 423 kat asıl mesele değil; ŞEKİL öyle. Offset derinlikle
+  doğrusal, keyset düz — çünkü sıralama anahtarı bir sayaca değil indeks
+  koşuluna giriyor. Büyüyen bir katalog offset'i kötüleştirir, keyset'i
+  bulunduğu yerde bırakır.
+
+  Offset KALDIRILMADI ve değişiklik kırıcı DEĞİL. Sayfa numaralı bir yönetim
+  ekranının yedinci sayfaya atlaması gerekir ve cursor bunu yapamaz; o ekranın
+  gerçekten indiği derinliklerde offset zaten ucuz. İkisi farklı soruları
+  cevaplıyor. `after` eklemeli geldi; ikisi birlikte verilirse REDDEDİLİYOR,
+  çünkü iki ayrı konum adlandırıyorlar ve ikisini birden onurlandırmak
+  hiçbirinin istemediği bir sayfayı döndürürdü.
+
+  **Taşınacak asıl bulgu SQL'in şekli.** Sınırın apaçık yazımı —
+  `@after IS NULL OR (created_at, id) < (...)` — kusursuz ölçülür ve sonra
+  bozulur: Postgres bir ifadeyi ilk beş yürütmede çağrı başına planlar ve OR'u
+  katlar, yani test Index Cond görür; altıncıda GENERIC plana geçer, OR bir
+  Filter olarak hayatta kalır ve arama tam indeks yürüyüşüne döner. Derin uçta
+  ölçüldü: 50.001 satır filtreyle atıldı, 0,065 ms yerine 4,3 ms — ve o anda
+  kodda hiçbir şey değişmiyor. Sentinel biçiminde
+  (`COALESCE(@after, 'infinity')`) hayatta kalacak OR yok; karşılaştırma her iki
+  planda da indekse karşı bir ROW kalıyor. Entegrasyon testi süreyi değil PLANI
+  okuyor, çünkü küçük bir tabloda süre ikisini birbirinden ayırt edemez.
+
+  Cursor içinde ait olduğu listenin adını taşıyor: başka bir listeye verilen bir
+  cursor temiz çözülür, geçerli bir zaman ve kimlik olur ve sessizce yanlış
+  satırları seçerdi — eksik veri gibi okunan bir arıza. İmzalanmadı ve nedeni
+  yazıldı: sahte bir cursor, çağıranın zaten okumaya yetkili olduğu listenin
+  başka bir sayfasını seçer, yani hiçbir şey kazandırmaz.
+
+  Son sayfa cursor TAŞIMIYOR; bitişin işareti bu yokluk. Hep dönseydi istemci
+  bittiğini anlamak için boş bir sayfaya bir istek daha yürümek zorunda kalırdı.
+
+  Yürüyüşün her satırı tam bir kez ziyaret ettiği gerçek veritabanında
+  kanıtlandı — ve testin ilk hâli bunu kanıtlamıyordu: ürünler tek tek
+  yaratıldığı için damgaları farklıydı, anahtarın kimlik yarısı hiç devreye
+  girmiyordu ve onu düşüren mutasyon YAKALANMADI. Test, tüm satırları aynı
+  created_at'e çekecek şekilde düzeltildi; şimdi kimlik yarısı taşıyıcı.
+
 - **Go tarafı artık ölçülüyor** (pprof + benchmark).
 
   Deponun ölçüm disiplini güçlüydü ama tamamı VERİTABANI tarafındaydı:
