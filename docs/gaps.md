@@ -16,100 +16,124 @@ and every new file is English.
 
 ## What to do, in order
 
-Derived entirely from the measured sections below; every item points at the
-section that produced it. Nothing here is a plan for a date, and nothing is a
-size estimate — it is an ORDER, chosen so that the things which get more
-expensive the longer they wait come first.
+Derived entirely from the measured sections below. Nothing here is a date or a
+size estimate — it is an ORDER, chosen so that what gets more expensive the
+longer it waits comes first.
 
-Three sequencing facts govern the whole list:
+Four sequencing facts govern the whole list:
 
-- **A decision costs nothing today and more every week.** Each item in group A
-  is a question that code is currently answering by accident. The longer that
-  goes on, the more code has to be revisited when the question is answered on
-  purpose.
+- **A decision costs nothing today and more every week.** Every item in group A
+  is a question that code is currently answering by accident.
 - **The public-surface decision (A1) has a clock on it.** ADR 0025 commits gobit
-  to being a library. Every module, endpoint and contract added before that
-  surface is chosen is one more thing to classify later — so A1 gets more
-  expensive with each feature shipped, including the features on this list.
-- **Four of the five AI features are blocked by something that is not AI.**
-  Filters that do not exist, reviews that do not exist, images that cannot be
-  read back, history that was never kept. The model is never the first step.
+  to being a library; every contract added before the surface is chosen is one
+  more thing to classify later — including the contracts on this list.
+- **Four of the five AI features are blocked by something that is not AI**, and
+  three of the four Turkey-specific items are blocked by one shared piece of
+  plumbing. The model is never the first step, and the carrier is not the first
+  step either.
+- **Two apparently unrelated features need the same single change.** Saved cards
+  and subscriptions both need a stored payment instrument; installments and
+  multi-vendor both need the money model to admit that what the customer pays
+  and what the merchant receives can differ. Each pair is one change, not two.
 
 ### A. Decisions — no code until they are answered
 
-| # | decision | what it blocks | evidence |
+| # | decision | what it blocks | section |
 | --- | --- | --- | --- |
-| A1 | **Which packages become public** — the open half of ADR 0025 | the library transition, and it grows costlier per feature shipped | Importable core |
-| A2 | **Group-price selection for a customer in several groups** ("the best price they are entitled to") | B2B group pricing; the discount context has the identical hole | Commerce models |
-| A3 | **`allow_backorder`: give it a reader or stop publishing it** | pre-order; today a published flag does nothing | Commerce models |
-| A4 | **Invoice retention vs KVKK erasure** | any erasure work; unwritten, somebody deletes an invoice and puts the hole in the series ADR 0024 exists to prevent | Observability and security |
-| A5 | **JWT TTL policy** — there is no refresh flow, so the TTL is a straight trade nobody has stated | customer- and operator-facing session design | Observability and security |
-| A6 | **pgvector: reopen ADR 0015 or not** | semantic search, visual search, embedding recommendations | AI subsystem |
-| A7 | **Metrics posture** — OTLP-only, or expose a scrape endpoint | the "measurable speed" claim | Observability and security |
-| A8 | **Catalog cacheability** — channel in the path, single-channel opt-in, or per-key caching accepted | edge caching, and the repo already argued the default answer | Storefront speed |
-| A9 | **Customer identity: ADR 0008 stands or is superseded** | customer login, passkeys, a customer-facing assistant, and it is why the address book is unauthenticated | Storefront speed |
-| A10 | **Price history: promote the accidental retention or drop it** | forecasting | AI-powered features |
+| A1 | **Which packages become public** — the open half of ADR 0025 | the library transition; grows costlier per feature shipped | Importable core |
+| A2 | **What gobit is legally** — data controller, or a library whose embedder is the controller | every KVKK item; ADR 0025 points at the second answer, which changes the obligation from "implement consent" to "publish the hooks and the erasure contract" | Turkey-specific |
+| A3 | **May the customer pay a different amount than the merchant receives?** | installments (vade farki) AND multi-vendor commission. Today four guards including DB CHECKs forbid it | Turkey-specific, Commerce models |
+| A4 | **Invoice retention vs KVKK erasure** | all erasure work; unwritten, somebody deletes an invoice and puts a hole in the series ADR 0024 exists to prevent | Observability and security |
+| A5 | **Group-price selection for a customer in several groups** | B2B group pricing; the discount context has the identical hole | Commerce models |
+| A6 | **`allow_backorder`: give it a reader or stop publishing it** | pre-order; today a published flag does nothing, and the flags measurement names it as the live proof of ADR 0009's second error class | Commerce models |
+| A7 | **Does the panel become an admin-API client?** (supersedes ADR 0011) — and if so, the auth story, because a cookie on `/admin/v1` destroys its CSRF immunity and a token in JS is the exposure the cookie avoids | the SPA, and the extension-point design | Admin panel |
+| A8 | **Catalog cacheability** — sales channel in the path, single-channel opt-in, or per-key caching accepted | edge caching. The repo already argued the default answer in the GraphQL handler | Storefront speed |
+| A9 | **Customer identity: ADR 0008 stands or is superseded** | customer login, passkeys, a customer-facing assistant, A/B assignment, and it is why the address book is unauthenticated | Storefront speed |
+| A10 | **pgvector: reopen ADR 0015 or not** | semantic search, visual search, embedding recommendations | AI subsystem |
+| A11 | **Where translated content lives** | multi-language, and it touches the search index, the panel and the invoice | Platform features |
+| A12 | **JWT TTL policy** — there is no refresh flow, so the TTL is an unstated trade | session design | Observability and security |
+| A13 | **Metrics posture** — OTLP-only, or expose a scrape endpoint | the "measurable speed" claim | Observability and security |
+| A14 | **Price history: promote the accidental retention or drop it** | forecasting | AI-powered features |
 
 ### B. Foundations — each unblocks several features
 
-| # | foundation | unblocks | evidence |
+| # | foundation | unblocks | section |
 | --- | --- | --- | --- |
-| B1 | **Storefront filter surface** — price, category, tag, option value, in-stock, sort | NL search; the panel; every "find me" feature. **Highest leverage item on the list** | AI-powered features |
-| B2 | **Storefront vocabulary endpoints** — collections, categories, tags | NL search (no public way to resolve a word to an id today) | AI-powered features |
-| B3 | **Review module** | moderation (the AI brief's first use case), summaries, Q&A | AI subsystem |
-| B4 | **Inventory movement ledger + inventory events** | forecasting, real-time stock, and an audit trail stock does not have | AI-powered features, Storefront speed |
-| B5 | **Order line-item entity in the read layer + date filter + index** | demand analytics and forecasting | AI-powered features |
-| B6 | **File read-back, file events, product-image ↔ upload link** | anything that looks at a photo | AI-powered features |
-| B7 | **A suggestion store** — system proposes, human applies | forecast suggestions, category suggestions. The pattern exists (`sagawatch`, ADR 0017); the storage does not | AI-powered features |
-| B8 | **KVKK erasure, export and a retention policy** | a legal requirement, and A4 must be answered first | Observability and security |
-| B9 | **Stored payment instrument** — provider contract + table | saved cards AND subscriptions. One contract change serves both | Storefront speed, Commerce models |
-| B10 | **Order addresses** — the cart's addresses never reach the order | invoicing (which today takes the address from its caller), shipping labels, B2B | Storefront speed |
-| B11 | **A per-column round-trip test for every module** | nothing, and it prevents the defect class that shipped twice in one change | Common Go mistakes |
+| B1 | **A guarded inbound-callback class** — signature verification, replay window, body limit, rate limit, audit | four carriers, e-invoice, every payment provider. **Build once; today `/paytr/callback` is the only example and it is unguarded** | Turkey-specific |
+| B2 | **Storefront filter surface** — price, category, tag, option value, in-stock, sort | NL search, the panel, every "find me" feature. **Highest leverage item on the list** | AI-powered features |
+| B3 | **Storefront vocabulary endpoints** — collections, categories, tags | NL search; today there is no public way to resolve a word to an id | AI-powered features |
+| B4 | **Review module** | moderation (the AI brief's first use case), summaries, Q&A | AI subsystem |
+| B5 | **Order ↔ fulfillment link, and something that creates a fulfillment** | the order timeline, carrier tracking, "where is the parcel". The link definition was assigned to a module that never declared it | Platform features |
+| B6 | **A money-event read surface** — `payments.captured_at`, refunds | the timeline's two most-asked facts, today unreachable through the read layer | Platform features |
+| B7 | **Inventory movement ledger + inventory events** | forecasting, real-time stock, and an audit trail stock does not have | AI-powered features, Storefront speed |
+| B8 | **Customer module events** (`customer.deleted` at minimum) | erasure — today deleting a customer notifies nobody and Principle 2.2 forbids the cascade | Turkey-specific |
+| B9 | **Stored payment instrument** — provider contract + table | saved cards AND subscriptions, in one change | Storefront speed, Commerce models |
+| B10 | **Carrier-capable quote input and a tolerant shipment state machine** — district, dimensions/desi, more statuses (including iade), and out-of-order webhook tolerance | any real carrier | Turkey-specific |
+| B11 | **Order addresses** — the cart's addresses never reach the order | invoicing, shipping labels, B2B | Storefront speed |
+| B12 | **Outbound delivery machinery** — retry and a dead-letter queue on the outbox relay | webhooks, ERP/Slack integration. The bus deliberately has neither | Platform features |
+| B13 | **Plugin host: let a plugin register a job** | any plugin needing a retry pass, including outbound delivery | Platform features |
+| B14 | **Order line-item entity in the read layer + date filter + index** | demand analytics and forecasting | AI-powered features |
+| B15 | **File read-back, file events, product-image ↔ upload link** | anything that looks at a photo | AI-powered features |
+| B16 | **A suggestion store** — system proposes, human applies | forecast and category suggestions. The pattern exists (`sagawatch`, ADR 0017); the storage does not | AI-powered features |
+| B17 | **KVKK erasure, export and retention** | a legal requirement; A2 and A4 come first | Turkey-specific |
+| B18 | **A per-column round-trip test for every module** | nothing — and it prevents the defect class that shipped twice in one change | Common Go mistakes |
 
 ### C. Features — after the above
 
 | # | feature | waits on |
 | --- | --- | --- |
-| C1 | **Back-in-stock waitlist** — the cheapest real feature on the list; every part exists (events, outbox, notification providers) and only a table is missing | — |
-| C2 | **Operator assistant in the panel** — sixty-one primitive interop methods are already a tool catalogue, and identity exists inside the panel | a return-creation surface |
-| C3 | **Digital product delivery** — entitlement, expiring link, re-download policy; storage already exists | — |
-| C4 | **B2B: quotes, terms, minimum order** — terms fit the money machinery ADR 0020/0022 already built | A2 |
-| C5 | **NL search layer** | B1, B2 |
-| C6 | **Review summaries and Q&A** | B3 |
-| C7 | **Subscriptions** — a second axis on the order, not a fifth status; the scheduler is ready | B9 |
-| C8 | **Real-time stock** | B4, A8-adjacent auth shape, and a fan-out the current bus cannot do |
-| C9 | **Edge caching** | A8 |
-| C10 | **Multi-vendor marketplace** — changes what every money path means; last, deliberately | most of the above |
+| C1 | **Back-in-stock waitlist** — the cheapest real feature; every part exists and only a table is missing | — |
+| C2 | **Order timeline** — the support view; mostly a read-side composition over facts that already exist | B5, B6 |
+| C3 | **Operator assistant in the panel** — sixty-one primitive interop methods are already a tool catalogue, and identity exists inside the panel | a return-creation surface |
+| C4 | **Consent records and data-subject endpoints** | A2, B17 |
+| C5 | **Outbound webhooks** (NATS after, if anyone asks) | B12, B13 |
+| C6 | **Carrier plugins** (Yurtici, Aras, MNG, PTT) | B1, B10 |
+| C7 | **Installment table** + iyzico/Param providers | A3 |
+| C8 | **Digital product delivery** — entitlement, expiring link, re-download policy | — |
+| C9 | **B2B: quotes, terms, minimum order** | A5 |
+| C10 | **NL search layer** | B2, B3 |
+| C11 | **Review summaries and Q&A** | B4 |
+| C12 | **Subscriptions** — a second axis on the order, not a fifth status | B9 |
+| C13 | **Feature flags, then A/B** | A9 for the assignment key |
+| C14 | **Panel: extension points, then the SPA if A7 says so** | A7 |
+| C15 | **Multi-language** | A11 |
+| C16 | **Real-time stock** | B7, plus a fan-out the bus cannot do today |
+| C17 | **Edge caching** | A8 |
+| C18 | **Multi-vendor marketplace** — changes what every money path means; last, deliberately | A3 and most of the above |
 
-### D. Corrections — small, and some are lies today
+### D. Corrections — small, and some are live defects
 
-- **D1** `allow_backorder` is published and does nothing (see A3).
-- **D2** The address book's storefront endpoints are unauthenticated and keyed by
+- **D1** `/paytr/callback` sits outside every guarded prefix: **no auth, no rate
+  limit, no idempotency, no audit, no CORS, and no body-size limit anywhere in
+  the core.** Its only protection is the HMAC inside the handler. (Folded into
+  B1.)
+- **D2** `allow_backorder` is published and does nothing (see A6).
+- **D3** The address book's storefront endpoints are unauthenticated and keyed by
   a path id — personal data anyone can read and change. A known consequence of
-  ADR 0008, and its sharpest form.
-- **D3** Two repository-internal transactions (tax, region) cannot compose into a
-  service transaction; called from inside one they would open a second,
-  independent transaction.
-- **D4** ~~The OpenAPI text claimed `q` searches title and handle; it searches
+  ADR 0008, in its sharpest form.
+- **D4** `order_exchanges.completed_at` and `canceled_at` exist and are never
+  written; there is no Complete or Cancel query for an exchange.
+- **D5** Archiving an order leaves no timestamp — the status flips and nothing
+  records when.
+- **D6** Two repository-internal transactions (tax, region) cannot compose into a
+  service transaction.
+- **D7** ~~The OpenAPI text claimed `q` searches title and handle; it searches
   title only.~~ Fixed 2026-09-05.
 
 ### E. Out of framework scope — written, not forgotten
 
-- **e-fatura transmission** needs the merchant's certificate and an integrator
-  contract. The framework owes the document, the numbering and the provider slot;
-  the first two are built (ADR 0024).
-- **Carrier integration and an iyzico provider** are plugin work. The slot exists
-  and the PayTR plugin is the template.
+- **e-Fatura transmission** needs the merchant's certificate and an integrator
+  contract. The framework owes the document, the numbering and the slot; the
+  first two are built (ADR 0024).
 - **Customer identity** is the embedding application's job (ADR 0008), unless A9
   supersedes it.
+- **A/B assignment** likewise, if A9 stands: the framework has no visitor.
 
 ### F. Standing work
 
 - **Translation ledger: 260 files.** ADR 0012 lets it only shrink.
 - **Panel: twelve of sixteen modules have no screen**, nothing can be created or
-  deleted from it, and there is no extension point for a plugin to add one. The
-  four that exist cover what an operator looks at daily.
-
+  deleted from it, and there is no extension point for a plugin to add one.
 
 ## Data layer — measured 2026-09-04
 
@@ -1449,6 +1473,298 @@ prerequisite with subscriptions
 Already measured in the AI-features section and unchanged: `pgvector` is not
 available on the cluster, and ADR 0015 fixes the contract at zero required
 extensions, so this item reopens that ADR rather than sitting on top of it.
+
+---
+
+## Turkey-specific — measured against the brief, 2026-09-05
+
+The brief: e-Fatura/e-Arsiv in the core; the domestic carriers (Yurtici, Aras,
+MNG, PTT) behind one interface with tracking webhooks; iyzico/PayTR/Param plus
+installment-table calculation; and KVKK consent records with ready-made
+download/delete endpoints.
+
+**e-Fatura is the one already answered.** The document, its lines, its parties
+and its gap-free numbering landed this session (ADR 0024); what remains is the
+transmission, which needs the merchant's own certificate and an integrator
+contract and is therefore a plugin's job, not the framework's. The provider slot
+is the shape it plugs into.
+
+### Carriers: the contract is four methods and tracking is not one of them
+
+`FulfillmentProvider` has exactly `ID`, `Quote`, `Create`, `Cancel`. There is no
+label method and no label type; there is **no `Track()` and no status poll** —
+`TrackingNumber` and `TrackingURL` exist only as OUTPUT FIELDS of `Create`.
+
+Three things a Turkish carrier integration would hit immediately:
+
+- **`QuoteInput` cannot express what a Turkish carrier prices on.** It carries
+  `OptionID`, `CurrencyCode`, `CountryCode`, `TotalWeight` in grams, `ItemCount`
+  and an untyped `Data`. There is no destination postal code, no il/ilce (province/district), no
+  origin address and no dimensions — and domestic carriers price on **desi**
+  (volumetric) and on district. All of it would have to travel through the
+  untyped bag.
+- **The status vocabulary is four values** — pending, shipped, delivered,
+  canceled — pinned by a database CHECK. There is no "in transit", no "at
+  branch", no "delivery attempt failed", and no **"returned to sender" (iade)**,
+  which is a real carrier state a shop must act on.
+- **The state machine is strict and one-way**, and a carrier's event stream is
+  not. `DeliverAction` from `pending` is a CONFLICT — delivered may not skip
+  shipped — so a webhook that arrives out of order or twice hits an error rather
+  than converging.
+
+One provider ships: the manual one, which makes no network call and returns
+whatever tracking number the caller passed it. There is no carrier plugin.
+
+`MarkShipped` and `MarkDelivered` exist and are admin-scoped, and their godoc
+already names the intended source: *"THE PROVIDER IS NOT CALLED: this method
+records the fact the carrier REPORTED (a webhook or an administrator action)."*
+**The word "webhook" appears exactly once in the entire non-test codebase — in
+that comment.**
+
+### There is no inbound webhook machinery, and the one working callback is unguarded
+
+No webhook registry, no signature middleware, no replay/dedup store, no delivery
+receipts. The PayTR callback is the only working example and **none of it is
+reusable**: its path is a plugin constant, its handler is a method on the
+plugin's module, its HMAC lives in the plugin package, and its response protocol
+is a bare text token because PayTR reads the body rather than the status.
+
+More importantly, that path sits OUTSIDE the guarded prefixes — deliberately,
+because PayTR carries neither a publishable key nor a bearer token. The
+consequence, measured: `/paytr/callback` gets **no auth, no rate limit, no
+idempotency middleware, no audit and no CORS**. Its only protection is the HMAC
+check inside the handler, and there is no global request-body size limit
+anywhere in the core.
+
+Four carriers plus e-invoice plus payment callbacks means five more such paths.
+**A guarded inbound-callback class — signature verification, replay window, body
+limit, rate limit, audit — is the thing to build once**, and it is the same
+machinery every item in this brief needs.
+
+### Installments: there is nowhere for a second amount to exist
+
+No installment, BIN, card-bank or per-option-total concept exists. The only
+occurrences of the word are PayTR's own wire fields.
+
+The contract blocks it in two places at once:
+
+- **There is no return path for an installment quote.** `Session`, `AuthResult`
+  and `SessionInspection` each carry a single scalar amount. There is no list
+  type, so "these are the 3/6/9/12-month options and their totals" cannot come
+  back from a provider.
+- **The customer-paid amount is forced equal to the order total by four
+  independent guards**, including database CHECK constraints. A vade farki — an
+  installment surcharge the customer pays and the merchant does not receive — has
+  nowhere to live in the money model.
+
+That second point is the real one, and it is shared with the marketplace item:
+both need the model to admit that **what the customer pays and what the merchant
+receives can differ.** Today it cannot, and that is enforced in the schema.
+
+No iyzico and no Param provider exist; Stripe is a declared skeleton.
+
+### KVKK: zero consent records, and no ADR covers privacy at all
+
+- **No consent record of any kind.** No table, no column, no timestamp of
+  agreement — for marketing, for terms, for anything.
+- **None of the twenty-five ADRs covers privacy.** ADR 0008 governs the customer
+  identity trust boundary, which is authentication, not data protection.
+- **No export endpoint, and a customer cannot request their own deletion** — the
+  store surface has no delete handler; the only delete is admin-only.
+- **`DeleteCustomer` is a pure soft delete**, and deliberately partial: group
+  memberships are left in place with a comment saying they will cascade "when the
+  record is one day really deleted" — a real delete that nothing performs.
+- **Deleting a customer notifies nobody.** The customer module publishes no
+  events at all, so no other module can learn it must clean its own copy — and
+  Principle 2.2 forbids the foreign keys that would cascade.
+
+Personal data sits in ten tables across eight modules and a plugin.
+
+Two decisions come before any schema:
+
+1. **The invoice retention conflict** (already recorded): the document carries
+   the buyer's name, tax number and address, and its whole design says it is
+   immutable and its numbering may never have a hole.
+2. **What gobit IS, legally.** A data controller, or a library whose embedder is
+   the controller? ADR 0025 makes gobit a library, which points at the second —
+   and that answer changes what the framework owes from "implement consent" to
+   "give the embedder the hooks and the erasure contract".
+
+---
+
+## Platform features — measured against the brief, 2026-09-05
+
+The brief: an outbound event stream (webhook + NATS) so a customer can wire
+their own ERP or Slack; feature flags and A/B testing in the core; multi-store,
+multi-currency and multi-language in one installation; and an audit log with a
+"what happened on this order" timeline.
+
+### Outbound events: four events, no retry, and no multi-process fan-out
+
+**Exactly four domain events exist repo-wide** — `order.placed`,
+`product.created`, `product.updated`, `product.deleted` — published from three
+call sites. Payloads are deliberately narrow and every value is a string,
+including money and counts.
+
+For an outbound stream, three properties decide the design and all three are
+already written down:
+
+- **There is no retry and no dead-letter queue, by explicit decision.** A
+  handler error is logged and the event counts as processed; the ADR-grade
+  reasoning is the poison pill — redelivery without a DLQ lets one broken event
+  lock the consumer. An outbound sender must therefore build its own retry.
+- **Redis cannot fan out to N processes as configured.** Every subscriber joins
+  one consumer group, and a group delivers each message to exactly ONE consumer.
+  Different group names fan out; nothing in the repository uses different names.
+- **Under Redis the handler context carries nothing** — no request id, no logger,
+  no identity, no tracing span. Only the event id and its data cross the process
+  boundary, so an outbound sender must read everything from the payload.
+
+No NATS, Kafka or RabbitMQ appears anywhere, including `go.mod`.
+
+And one structural blocker for shipping this as a plugin: **the plugin host
+cannot register a job.** Its surface is Container, Logger, Setting, AddModule,
+AddRoutes and four provider registrations — an outbound-delivery plugin could
+mount a route but could not schedule its own retry pass.
+
+The outbox is the right foundation and it is already there (ADR 0023): the event
+is written inside the transaction that promises it, and a relay publishes it.
+An external subscriber would hang off that relay.
+
+### Feature flags: there is no substrate, not even a settings table
+
+**Zero flags, and no place to put one.** Eighty-two tables and not one is a
+settings or configuration table. Behaviour varies only by environment variables
+read once at process start, and **nothing reloads** — no signal handler, no file
+watcher, no polling. The plugin set is fixed at startup too.
+
+What CAN change without a restart is DATA, and there are exactly three live
+axes: `product.status`, the price-list window evaluated against the clock, and
+`sales_channel.is_disabled`, which is applied inside the key-to-channel
+resolution query itself. Those are the existing proof that a per-request
+database read is affordable on this path.
+
+Two things a flag design has to settle:
+
+- **The evaluation point.** A database-backed flag means a per-request read; the
+  sales-channel resolution is the precedent for what that costs.
+- **A/B testing needs a stable per-visitor key, and there is no visitor.** The
+  storefront identity is a publishable key representing a CHANNEL, not a person
+  (ADR 0008). Assignment would have to come from the embedding application —
+  which is consistent with ADR 0025 making gobit a library.
+
+The measurement also names `allow_backorder` again, as the live proof of what a
+flag without a reader becomes.
+
+### Multi-store, multi-currency, multi-language: two of three
+
+- **Multi-store works today** through sales channels: a publishable key binds to
+  channels, and the catalog is filtered on them in SQL — with the visibility
+  rule that an unassigned product is visible everywhere and an assigned one only
+  in its channels.
+- **Multi-currency works**: currencies are a table with their decimal digits,
+  regions carry a currency, and prices are per currency.
+- **Multi-language does not exist.** There is no locale column, no translation
+  table, no `Accept-Language` handling anywhere. A product has one title, one
+  subtitle and one description.
+
+That third one is the honest gap, and it is bigger than it looks: translated
+content is not a column on the product, it is a decision about where translated
+values live and how the storefront selects one — and it touches the search
+index, the panel and the invoice.
+
+### Order timeline: the facts exist, scattered, and two of them are unreachable
+
+What an order itself records: `placed_at`, `completed_at`, `canceled_at` with a
+reason, plus database CHECKs tying each stamp to its status. Returns carry
+`received_at` and `canceled_at`; claims carry both transitions.
+
+Four measured holes:
+
+- **Archiving leaves no timestamp.** The status flips to `archived`,
+  `completed_at` is deliberately untouched, and there is no `archived_at`. When
+  an order was archived is not recorded.
+- **`order_exchanges.completed_at` and `canceled_at` exist and are never
+  written** — there is no Complete or Cancel query for an exchange at all.
+- **The money timeline is unreachable through the read layer.**
+  `payments.captured_at` and the refund rows are the two facts a support team
+  asks for first — "when was it paid", "when did the refund go out" — and there
+  is no query provider that exposes them.
+- **There is no order↔fulfillment link, and nothing creates a fulfillment for an
+  order.** The link definition was assigned to the fulfillment module, which
+  never declared it. So "where is the parcel" cannot be answered from an order
+  at all.
+
+The audit log built this session does not close this: it records the REQUEST —
+who called what and what came back — and says in its own header that it does not
+record the change. It answers "who touched this" and not "what happened".
+
+So the timeline is a read-side composition over facts that mostly exist, plus
+two that do not: the order↔fulfillment binding, and a money-event surface.
+
+---
+
+## The embedded admin panel — measured against the brief, 2026-09-05
+
+The brief: the panel must ship, but as a CLIENT of the admin API rather than as
+part of the core — `/admin/api/*` with RBAC first, then an SPA over it, embedded
+in the binary with `embed.FS`. Extension points so a project can add its own
+page, a JSON-schema-driven form for metadata fields, and slots on the critical
+screens.
+
+**The panel exists and its structure is the opposite of the brief's, by a
+written decision.**
+
+Today the panel resolves `core.query` and the three narrow admin surfaces
+(`product.admin`, `pricing.admin`, `inventory.admin`) **from the container, in
+process. It makes no HTTP call to the admin API at all.** It is a fourth tree
+(ADR 0011) of server-rendered Go templates.
+
+ADR 0011's reasons are on the record and they are not incidental:
+
+- The panel's cookie stays inside the panel's tree and is deliberately NOT
+  accepted by the admin API, **so the admin API's CSRF immunity survives** — it
+  takes identity from a header only, and a browser cannot be made to send one
+  cross-site.
+- "The panel ships in one binary: **no separate toolchain, no separate
+  deployment and no CORS surface.**"
+
+So the brief's structure is not a refinement of what exists; **adopting it means
+superseding ADR 0011, and the crux is authentication.** An SPA calling
+`/admin/v1` needs either the cookie accepted there — which is exactly what the
+ADR refused, because it destroys the CSRF property — or a bearer token held in
+JavaScript, which is the XSS exposure the cookie avoids. Both are solvable
+(same-origin with a short-lived token, or cookie plus a CSRF token) but the
+choice is an ADR, not a detail.
+
+The brief's strongest point stands regardless: **an SPA that is an API client is
+a test of whether the admin API is complete.** Today three of the panel's writes
+go through in-process surfaces rather than HTTP, so that test would fail before
+it began — and finding out exactly where is worth doing whether or not the SPA
+follows.
+
+What is already true of the brief's other asks:
+
+- **Embedding is already the posture.** Templates and the stylesheet are in the
+  binary via `embed.FS`, with the stylesheet's ETag derived from its own bytes.
+  An SPA would use the same mechanism.
+- **RBAC exists**: the admin API is scope-guarded per endpoint.
+- **The metadata slot exists**: a `metadata` jsonb sits on eleven modules'
+  models, including product, variant and taxonomy. What is missing is the form
+  generator, not the field.
+- **The extension points do not exist.** There is no `AddPage`, no widget slot,
+  and the plugin host cannot add a panel page.
+- **Coverage is four of sixteen modules** — catalog, orders, customers,
+  inventory — which is what an operator looks at daily. The remaining twelve are
+  configuration.
+
+One precedent worth carrying into the extension design: ADR 0011 deferred
+WRITING entirely, because "no module has a narrow surface open to its admin
+side — the price module has none at all — so writing means opening new contracts
+to three modules, and every contract is a commitment without a compiler." That
+gap was later closed by opening exactly three narrow `*.admin` surfaces. **That
+is the pattern a project-added page should follow**: a named narrow surface, not
+access to the module.
 
 ## Capability inventory — measured 2026-09-04
 
