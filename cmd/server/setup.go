@@ -359,6 +359,10 @@ func guardStack(
 		Authenticator: authn,
 		AdminPrefix:   adminPrefix,
 		StorePrefix:   storePrefix,
+		// CORS is applied to the STORE surface only, and only when an
+		// installation configured origins; the reasoning is on
+		// [corehttp.GuardOptions.CORSOrigins].
+		CORSOrigins: cfg.CORSAllowedOrigins,
 		// The login endpoint is EXEMPT from the guard: the request whose
 		// identity is to be checked is the one about to establish it. The path
 		// is not spelled out here, it is read from the auth module's constant.

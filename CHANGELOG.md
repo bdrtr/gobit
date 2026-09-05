@@ -12,6 +12,44 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Tarayıcıdaki vitrin artık API'yi çağırabiliyor** (`CORS_ALLOWED_ORIGINS`).
+
+  Vitrin yüzeyinin kimliği publishable key ve o anahtarın kendi belgesi
+  *"SIR DEĞİLDİR, tarayıcıda görünmesi beklenir"* diyor. Ama tarayıcı o yüzeyi
+  hiç çağıramıyordu: preflight, anahtar okunmadan ölüyordu. Yani uçtan uca
+  çalışan tek topoloji — tarayıcıda misafir vitrini — ulaşılamazdı.
+
+  **ADR 0011'in CORS reddi geri alınmadı.** O karar CORS'u *paneli ayrı bir
+  uygulama olarak yayımlamanın yolu* olarak reddediyor, gerekçesi de "jeton
+  tarayıcıda saklanmak zorunda kalırdı". Admin yüzeyi hâlâ CORS almıyor, tam da
+  o sebeple. Açılan şey, anahtarı zaten tarayıcıda yaşamak üzere tasarlanmış
+  olan yüzey.
+
+  **Kimlik bilgisi taşımaya ASLA izin verilmiyor** ve karar bu:
+  `Access-Control-Allow-Credentials` hiç yazılmıyor. Vitrin yüzeyi bir BAŞLIKTAN
+  kimlik doğruluyor, başlığı da tarayıcı kendiliğinden eklemiyor — bu API'nin
+  CSRF bağışıklığı tam olarak oradan geliyor (ADR 0011, karar 3). İzin vermek,
+  siteler arası bir sayfanın ortamdaki çereze binmesine kapı açardı.
+
+  Varsayılan KAPALI: origin yapılandırılmadıysa hiçbir CORS başlığı yazılmıyor.
+  Varsayılan-açık bir politika, kimsenin vermediği bir güvenlik kararıdır.
+  `"*"` açıkça yapılandırılabiliyor ve herkese açık bir vitrin API'si için
+  dürüst; kimlik bilgisi zaten hiçbir hâlde taşınmadığı için joker de ortam
+  çerezine binilemez.
+
+  Sıra yük taşıyor: CORS koruma yığınının BAŞINDA. Preflight ne kimlik ne
+  idempotency anahtarı taşır, dolayısıyla izin soran tarayıcı, çağrının izinli
+  olup olmadığını öğrenmeden kimlik korumasına takılırdı. Preflight'ı
+  korumalardan önce yanıtlamak, yanıtın EKSİK ANAHTAR hakkında değil POLİTİKA
+  hakkında olmasını sağlıyor.
+
+  İzin verilen başlık listesi KAPALI, isteğin söylediği yansıtılmıyor: yansıtmak
+  izin listesini formaliteye çevirirdi, çünkü soran taraf denetlenen taraftır.
+  Ve `Vary: Origin` politika VARSA her yanıta yazılıyor — reddedilenlere de —
+  yoksa bir önbellek bir origin'in yanıtını başkasına verirdi.
+
+  Dört mutasyonun dördü de yakalandı.
+
 - **Para iadesi geldi ve ADR 0022'nin açık bıraktığı yarıyı kapattı** — B2B
   bütçe hatası dahil.
 

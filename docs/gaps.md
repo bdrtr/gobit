@@ -477,7 +477,13 @@ the next reader sees a decision instead of a wait.
    applied rate is discarded at the boundary, so no order can answer "which VAT
    rate was charged on this line" — which is what an invoice needs.
 
-6. **No CORS.** No `Access-Control` handling and no OPTIONS responder in the
+6. ~~**No CORS.**~~ **CLOSED 2026-09-05.** The store surface answers preflights
+   from configured origins (`CORS_ALLOWED_ORIGINS`, closed by default).
+   Credentials are never allowed, which keeps the header-only CSRF immunity
+   intact, and the admin surface still gets none — ADR 0011's rejection was
+   about shipping the PANEL separately, and that reasoning is untouched.
+
+   The original finding: No `Access-Control` handling and no OPTIONS responder in the
    middleware chain (`internal/core/http/router.go`). The publishable
    key exists precisely so it can sit in a browser
    (`internal/core/http/auth.go`: "NOT A SECRET; it is expected to be

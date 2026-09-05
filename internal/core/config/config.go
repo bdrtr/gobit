@@ -481,6 +481,27 @@ type Config struct {
 	// served from the same origin it becomes stored XSS).
 	FileAllowedTypes []string `env:"FILE_ALLOWED_TYPES" envSeparator:"," envDefault:"image/jpeg,image/png,image/gif,image/webp"`
 
+	// CORSAllowedOrigins are the sites allowed to call the STORE surface from a
+	// browser. Empty — the default — means no CORS at all.
+	//
+	// # Why it defaults to closed
+	//
+	// A default-open policy is a security decision, and one nobody made is one
+	// nobody can be asked about. An installation opts IN to being callable from
+	// other sites.
+	//
+	// # Why it covers the store surface only
+	//
+	// The store surface authenticates with a publishable key, which is not a
+	// secret and is expected to live in a browser. The admin surface
+	// authenticates with a bearer token, and ADR 0011 refused CORS there for
+	// exactly that reason — the token would have to be kept in a browser.
+	//
+	// "*" is accepted and means every site. It is honest for a storefront API
+	// that is public by design; credentials are never allowed either way, so
+	// the wildcard cannot be ridden by an ambient cookie.
+	CORSAllowedOrigins []string `env:"CORS_ALLOWED_ORIGINS" envSeparator:","`
+
 	// LogLevel is the structured log level: debug | info | warn | error.
 	LogLevel string `env:"LOG_LEVEL" envDefault:"info"`
 	// LogFormat is the log output format: json | text.

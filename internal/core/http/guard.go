@@ -99,6 +99,13 @@ type GuardOptions struct {
 	AdminPrefix string
 	// StorePrefix is the path prefix of the store surface; empty means [DefaultStorePrefix].
 	StorePrefix string
+	// CORSOrigins are the sites allowed to call the STORE surface from a
+	// browser; empty means no CORS at all.
+	//
+	// It covers the store surface only. The admin surface authenticates with a
+	// bearer token, and ADR 0011 refused CORS there precisely because the token
+	// would then have to live in a browser.
+	CORSOrigins []string
 	// AdminExempt are the full paths on the admin surface that are EXEMPT from
 	// authentication — in practice only the login endpoint.
 	//
@@ -198,7 +205,16 @@ func APIGuards(opts GuardOptions) []func(http.Handler) http.Handler {
 		store = DefaultStorePrefix
 	}
 
-	stack := make([]func(http.Handler) http.Handler, 0, 6)
+	stack := make([]func(http.Handler) http.Handler, 0, 7)
+
+	// CORS goes FIRST, and the order is load-bearing: a preflight carries no
+	// credentials and no idempotency key, so a browser asking permission would
+	// be turned away by the identity guard before it ever learned whether the
+	// call was allowed. Answering the preflight before the guards is what makes
+	// the answer about the POLICY rather than about the missing key.
+	if len(opts.CORSOrigins) > 0 {
+		stack = append(stack, Scoped(store, nil, CORS(opts.CORSOrigins)))
+	}
 
 	if opts.Limiter != nil {
 		limitKey := opts.LimitKey
