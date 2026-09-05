@@ -12,6 +12,50 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltildi
 
+- **`docs/gaps.md`: okuma önbelleği maddesinin dayanağı ÖLÇÜMLE çürüdü.**
+
+  pgbench ile yük fikstürüne karşı (52.004 ürün, 16 istemci, bu makinede):
+
+  | sorgu | gecikme | verim |
+  | --- | --- | --- |
+  | vitrin listesi, 20 satır | 0,47 ms | 33.830 /s |
+  | handle ile tek ürün | 0,36 ms | 44.976 /s |
+  | katalog `count(*)` | 3,03 ms | 5.273 /s |
+
+  Buna karşılık bir vitrin GraphQL isteğinin GO tarafı 374 µs ve 8.421 tahsisat
+  — çekirdek başına yaklaşık 2.700 istek/s. **Veritabanı, cevabını biçimleyen
+  koddan kabaca on iki kat hızlı.** Okuma önbelleği zaten önde olan tarafı
+  rahatlatırdı.
+
+  Pahalı olan tek okuma sayım sorgusu ve o zaten isteğe bağlı yapılmıştı —
+  maddenin işaret ettiği şey buydu, ama tartacak verim rakamı olmadan.
+
+  Maddeyi yeniden açacak koşullar yazıldı: listeleme indeks taramasının yirmi
+  satırlık olmaktan çıktığı bir katalog, bir isteği çok sorguya çeviren bir
+  zenginleştirme ayağı, ya da veritabanının bir ağ atlaması uzakta olduğu bir
+  kurulum. Bugünün şekli bunların hiçbiri değil.
+
+  (Bir önbellek gözden kaçmıştı ve eklendi: GraphQL ucu AYRIŞTIRILMIŞ BELGELERİ
+  kendi kabul kuralıyla önbelleğe alıyor. Sorguyu önbelleğe alıyor, veriyi
+  değil.)
+
+- **`docs/gaps.md`: "yönetici oturumu iptal edilemiyor" maddesi YANLIŞTI.**
+
+  Karar yazılmış ve iptal çalışıyor. `auth/service/session.go` tam olarak
+  anlatıyor: bilerek oturum kaydı yok, bunun yerine her kimlik bir OTURUM
+  ÇAPASI taşıyor ve çapadan önce üretilen token reddediliyor. `AuthenticateAdmin`
+  her doğrulamada çapayı okuyor; çıkış ya da parola değişimi kullanıcının
+  token'larını ANINDA, her cihazda düşürüyor — imza anahtarına dokunmadan. Altı
+  test kapsıyor.
+
+  Yani yönetici oturumu iptal edilebilir ve "iptal edecek bir şey yok" iddiası
+  yanlıştı. Yok olan şey CİHAZ BAŞINA iptal ve o bir gözden kaçma değil, yazılı
+  bir ret: token'a `jti` ve her isteğin okuduğu bir kara liste gerektirir, yani
+  kimsenin istemediği bir yetenek için durumsuzluktan vazgeçmek.
+
+  Önceki okuma bir oturum TABLOSU aradı, bulamadı ve mekanizma yok sandı;
+  mekanizma zaten var olan bir satırdaki zaman damgası.
+
 - **`docs/gaps.md`: misafir sepeti devralınamıyor maddesi YANLIŞTI.**
 
   Devralma var ve korumalı: `UpdateCart` misafir sepetine `customer_id` yazıyor,

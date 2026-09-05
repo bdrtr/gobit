@@ -60,35 +60,71 @@ re-checking that key-space agreement.
 
 ### Gaps
 
-1. **No read cache. Nothing is cached, anywhere.**
-   Redis is present and used for three things — the event bus
-   (`internal/core/eventbus/redis.go`), rate limiting
-   (`internal/core/http/redisguard/ratelimit.go`) and idempotency
-   (`internal/core/http/redisguard/idempotency.go`) — and for nothing else. There
-   is no product-detail cache, no category-listing cache, and therefore no
-   invalidation path on write.
+1. ~~**No read cache. Nothing is cached, anywhere.**~~ **NOT WARRANTED —
+   measured 2026-09-05.** The premise was wrong, and the measurement says so.
 
-   Every storefront read goes to PostgreSQL. That is correct and simple until it
-   is not, and the shape of the eventual problem is already visible: the
-   product listing's count query was measured at 67 ms and made optional to get
-   it to 0.65 ms, which is a workaround for the absence of a cache rather than a
-   substitute for one.
+   Measured with pgbench against the load fixture (52,004 products), 16 clients,
+   on this machine:
 
-   What it would touch: a cache belongs in `internal/core` as a capability
-   modules opt into, and the invalidation hook already exists — the modules
-   publish `product.updated` and friends on the event bus. The hard half is not
-   the cache, it is deciding what a stale read costs on each surface.
+   | query | latency | throughput |
+   | --- | --- | --- |
+   | storefront listing, 20 rows | 0.47 ms | 33,830 /s |
+   | single product by handle | 0.36 ms | 44,976 /s |
+   | `count(*)` over the catalog | 3.03 ms | 5,273 /s |
 
-2. **Sessions are not in Redis, and there are two different session stories.**
-   The admin panel keeps its session in an HttpOnly cookie scoped to the panel
-   tree (`internal/adminui/session.go`), deliberately not accepted by the admin
-   API so that API's CSRF immunity survives (ADR 0011). The auth module's
-   schema is `auth_user`, `auth_identity`, `sales_channel`, `api_key` — there is
-   no session table and no Redis session store.
+   Against that, the Go side of one storefront GraphQL request was benchmarked
+   at 374 us and 8,421 allocations — about 2,700 requests per second per core.
 
-   Whether this is a gap depends on a decision nobody has written down yet: are
+   **The database is roughly twelve times faster than the code that formats its
+   answer.** A read cache relieves the side that is already ahead. The honest
+   next lever, if a ceiling is ever measured, is the response path — and even
+   that is worth touching only once somebody has a real ceiling rather than a
+   worry.
+
+   The count query is the one expensive read, and it is already optional
+   (`with_count=false`), which is what the original finding pointed at without
+   the throughput number to weigh it against.
+
+   **What would reopen this.** A cache stops being a trade against correctness
+   and starts being necessary when the database is the constraint: a catalog
+   large enough that the listing's index scan stops being a scan of twenty rows,
+   an enrichment leg that turns one request into many queries, or a deployment
+   where the database is a network hop away and the latency is the round trip
+   rather than the work. None of those is today's shape, and the measurement
+   above is what a future one has to beat.
+
+   The original finding: Redis is present and used for three things — the event
+   bus, rate limiting and idempotency — and for nothing else. There is no
+   product-detail cache, no category-listing cache, and therefore no
+   invalidation path on write. (One cache does exist and was missed: the
+   GraphQL endpoint caches PARSED DOCUMENTS, with its own admission rule — see
+   `product/graph/handler.go`. It caches queries, not data.)
+
+2. ~~**Sessions are not in Redis, and there are two different session stories.**~~
+   **WRONG — corrected 2026-09-05.** The decision IS written down, and
+   revocation works.
+
+   `auth/service/session.go` holds it in full: there is no session record on
+   purpose, and instead each identity carries a SESSION ANCHOR — a token issued
+   before the anchor is refused. `AuthenticateAdmin` reads the anchor on every
+   verification and rejects on it, so a logout or a password change drops the
+   user's tokens IMMEDIATELY, on every device, without touching the signing
+   secret. Six tests cover it, including that a token obtained after the logout
+   still works and that an anchor on a second provider drops the token.
+
+   So an admin session is revocable and the claim that "there is nothing to
+   revoke them in" was simply false. What is absent is PER-DEVICE revocation —
+   dropping one token and leaving the others — and that absence is a written
+   refusal rather than an oversight: it needs a `jti` in the token and a
+   blacklist every request reads, which gives up statelessness for a capability
+   nothing has asked for.
+
+   The original finding, kept because the shape of the mistake is worth having:
+   "Whether this is a gap depends on a decision nobody has written down yet: are
    admin sessions meant to be revocable before their token expires? Today they
-   are not, because there is nothing to revoke them in.
+   are not, because there is nothing to revoke them in." The reading looked for
+   a session TABLE, did not find one, and concluded there was no mechanism; the
+   mechanism is a timestamp on a row that already existed.
 
 3. **Carts live in PostgreSQL, not Redis** (`cart/migrations/000001_cart_init.up.sql`).
    Listed here for completeness rather than as a defect: a cart holds inventory
