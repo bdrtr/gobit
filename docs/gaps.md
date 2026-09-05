@@ -55,6 +55,7 @@ Four sequencing facts govern the whole list:
 | A12 | **JWT TTL policy** — there is no refresh flow, so the TTL is an unstated trade | session design | Observability and security |
 | A13 | **Metrics posture** — OTLP-only, or expose a scrape endpoint | the "measurable speed" claim | Observability and security |
 | A14 | **Price history: promote the accidental retention or drop it** | forecasting | AI-powered features |
+| A15 | **May the storefront take an address it cannot verify, in order to mail it later?** — measured 2026-09-05, and it is the waitlist's real blocker rather than the missing table. The storefront has no customer identity at all, the repository has no verification, no double opt-in, no unsubscribe and no per-address throttle, and the notification module deliberately stores no recipient address | the back-in-stock waitlist (C1) and every future "tell me when" feature; A2 sits upstream of it | Commerce models |
 
 ### B. Foundations — each unblocks several features
 
@@ -66,7 +67,7 @@ Four sequencing facts govern the whole list:
 | B4 | **Review module** | moderation (the AI brief's first use case), summaries, Q&A | AI subsystem |
 | B5 | ~~**Order ↔ fulfillment link, and something that creates a fulfillment**~~ **Built 2026-09-05.** The fulfillment module declares `order_fulfillment` (one to many); `internal/workflows/fulfilling` opens a shipment for an order and binds the two; the order gets `POST`/`GET /admin/v1/orders/{id}/fulfillments`. NOT built: a shipment created at checkout — shipping stays a decision | the order timeline, carrier tracking, "where is the parcel" — answerable now. the link is expandable by the read layer too (D8) | Platform features |
 | B6 | ~~**A money-event read surface**~~ **Built 2026-09-05.** The payment collection entity offers `first_captured_at` and `last_refunded_at`, loaded by a SECOND batch query and only when asked for; the order's payment view and `GET /admin/v1/orders/{id}/payment` carry both. NOT added: `authorized_at` and `refunded_at` columns — neither exists in the schema at all | the timeline's two most-asked facts — answerable now | Platform features |
-| B7 | **Inventory movement ledger + inventory events** | forecasting, real-time stock, and an audit trail stock does not have | AI-powered features, Storefront speed |
+| B7 | **Inventory movement ledger + inventory events.** Measured 2026-09-05: the EVENT cannot be landed on its own. `TestTheEventTopicsHaveASubscriber` refuses a topic no production file subscribes to, its exemption map is empty by policy, and the one plugin that reads the catalog indexes no stock — so there is no subscriber to give it today. The event and its first consumer are one package or neither | forecasting, real-time stock, and an audit trail stock does not have | AI-powered features, Storefront speed |
 | B8 | **Customer module events** (`customer.deleted` at minimum) | erasure — today deleting a customer notifies nobody and Principle 2.2 forbids the cascade | Turkey-specific |
 | B9 | **Stored payment instrument** — provider contract + table | saved cards AND subscriptions, in one change | Storefront speed, Commerce models |
 | B10 | **Carrier-capable quote input and a tolerant shipment state machine** — district, dimensions/desi, more statuses (including iade), and out-of-order webhook tolerance | any real carrier | Turkey-specific |
@@ -83,7 +84,7 @@ Four sequencing facts govern the whole list:
 
 | # | feature | waits on |
 | --- | --- | --- |
-| C1 | **Back-in-stock waitlist.** ~~The cheapest real feature; every part exists and only a table is missing~~ — **that claim was wrong, measured 2026-09-05.** Three parts are missing, not one: the table, an inventory EVENT (the module publishes nothing at all, so there is no "it is back" to react to), and a subscriber to turn it into a message. The notification side does exist — `Service.Notify` — but it is reached by SUBSCRIBING, so the event is the load-bearing half | B7 (inventory events) |
+| C1 | **Back-in-stock waitlist.** ~~The cheapest real feature; every part exists and only a table is missing~~ — **that claim was wrong, measured 2026-09-05.** Three parts are missing, not one: the table, an inventory EVENT (the module publishes nothing at all, so there is no "it is back" to react to), and a subscriber to turn it into a message. The notification side does exist — `Service.Notify` — but it is reached by SUBSCRIBING, so the event is the load-bearing half. **A SECOND blocker was measured on the same day and it is a DECISION, not a gap: A15.** The table would hold an address this repository cannot verify, cannot let anyone unsubscribe from, and does not throttle per address | A15 first, then B7 (inventory events) |
 | C2 | ~~**Order timeline**~~ **Built 2026-09-05.** `GET /admin/v1/orders/{id}/timeline` — composed, not a table; every entry names the CLOCK that stamped it, because the capture and a parcel's transitions are on the application clock while everything else is on the database's. Undated facts (an exchange that finished) come back last rather than being dropped | ~~B5, B6~~ done |
 | C3 | **Operator assistant in the panel** — sixty-one primitive interop methods are already a tool catalogue, and identity exists inside the panel | a return-creation surface |
 | C4 | **Consent records and data-subject endpoints** | A2, B17 |
@@ -1183,11 +1184,48 @@ Pre-order proper needs a little more — a promised date, and stock that may go
 negative in a controlled way — but the first move is smaller than the feature:
 either the flag gets its reader or it stops being published.
 
-**The waitlist ("tell me when it is back") is nothing today and is the cheapest
-item on this entire list.** The parts are all built: an inventory level change
-is a fact the module already knows, the outbox guarantees the event survives the
-commit (ADR 0023), and the notification module with its provider slot already
-sends. What is missing is a table of who is waiting for what.
+**The waitlist ("tell me when it is back") is nothing today, and it is NOT the
+cheapest item on this list.** That claim stood in this file until 2026-09-05,
+when it was measured and found wrong twice over. The correction is recorded
+here as well as in the C1 row, because the row was corrected on its own once
+and this passage went on repeating the disproved sentence.
+
+The first count was wrong. Three parts are missing, not one: the table, an
+inventory EVENT — the module publishes nothing at all, so there is no "it is
+back" to react to — and a subscriber to turn that event into a message. Nor can
+the event be landed by itself: the topic gate refuses a name no production file
+subscribes to, its exemption map is empty as a matter of policy, and the one
+plugin that reads the catalog indexes no stock and so would not want the event.
+The event and its first consumer are one package or neither.
+
+The second is larger, and it is a DECISION rather than a gap — A15. The table is
+not the hard part; the ADDRESS in it is. The storefront has no customer
+identity: the only principal it carries is a publishable key that names a sales
+channel, and every storefront write endpoint takes its subject from a path
+identifier the client chooses, which is D3. ADR 0008 already measured the cart's
+email as an identity anchor and rejected it. So the only thing a "notify me"
+form could hold is an address typed into a box, unverified — and this repository
+has no verification, no double opt-in, no unsubscribe and no CAPTCHA, while the
+notification module deliberately stores no recipient address at all, because a
+second copy of one raises the number of places an erasure has to reach. That
+table would be the first row in this repository holding an unverified address
+for the purpose of mailing it.
+
+Two smaller consequences follow from the same measurement. The subscribe
+endpoint's own answer leaks: a success that differs from a conflict tells the
+caller whether an address is already waiting, which is the enumeration hazard
+ADR 0008 names for the order endpoint. And nothing slows that down per address —
+the storefront's quota is one bucket over the whole prefix, reads and writes
+alike, keyed by default on the connection rather than on the client, so behind a
+proxy it is one shared bucket for every visitor.
+
+None of this makes the feature wrong to build. It makes the FIRST step a
+sentence rather than a table, and A2 sits upstream of that sentence: if the
+embedder is the controller, the answer may be "publish the hooks and the
+erasure contract" rather than "implement consent", and those are different
+builds. Writing the table first is what would make it expensive — an address
+stored before the question is answered is an address that has to be migrated, or
+erased, once it is.
 
 ### Two flags and no delivery: digital products
 
@@ -1203,8 +1241,11 @@ would not decide for the shop.
 
 ### The order the measurement suggests
 
-1. **The waitlist**, because every part exists and it is a table plus a
-   subscriber.
+1. **The waitlist's DECISION** (A15), because it is a sentence rather than a
+   build, and because it is the step that gets more expensive the longer it
+   waits: every row written before it is answered is a row that has to be
+   migrated or erased afterwards. The build behind it is not one part but
+   three, and the event half is blocked separately by B7.
 2. **The backorder flag's reader**, because a published flag that does nothing
    is worse than an absent one.
 3. **The group-price selection rule**, because it is a decision rather than a
