@@ -60,6 +60,7 @@ var pages = []string{
 	"customers.gohtml",
 	"customer.gohtml",
 	"inventory.gohtml",
+	"sales.gohtml",
 }
 
 // templateSet maps a page name to that page's parsed template set.
@@ -221,6 +222,11 @@ func sections() []navItem {
 	return []navItem{
 		{Label: catalogLabel, Path: ProductsPath},
 		{Label: ordersLabel, Path: OrdersPath},
+		// The report sits next to the orders it is made of rather than at the
+		// end of the menu: an operator who has just looked at one order and now
+		// wants the period around it should not have to cross the whole menu to
+		// get there.
+		{Label: salesLabel, Path: SalesPath},
 		{Label: customersLabel, Path: CustomersPath},
 		{Label: inventoryLabel, Path: InventoryPath},
 	}
@@ -269,11 +275,17 @@ const (
 
 // addPaging writes the paging fields a list template reads.
 //
-// It exists because four screens page identically, and four copies of
-// "page - 1" are four places for one of them to become "page + 1" without
+// It exists because five screens page identically, and five copies of
+// "page - 1" are five places for one of them to become "page + 1" without
 // anything failing. The screens supply what only they know — which page they
 // are on, whether the read returned one row more than the page holds, and their
 // own path — and the arithmetic happens once.
+//
+// What it does NOT write is the rest of the query string. The sales report
+// carries a date range in the address and appends it to its own paging links,
+// because a "next page" that dropped the period would move the reader to a
+// different report without saying so; a helper that guessed which parameters to
+// carry would be guessing for every screen at once.
 func addPaging(data map[string]any, page int, hasNext bool, path string) {
 	data[pageKey] = page
 	data[hasNextKey] = hasNext

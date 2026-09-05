@@ -1,0 +1,106 @@
+{{- /*
+sales.gohtml is the sales report: the lines sold in a period, newest sale first.
+
+The rows come from the cross-module read layer, not from a module's service: the
+panel knows no module (ADR 0011). Two reads stand behind one row — the line
+(what sold, how many, for how much) and its order (when, under which number, in
+which currency) — and they are joined in Go rather than here, so a row whose
+order could not be found is still printed instead of half-rendered.
+
+Every field is printed as an ordinary value, so the template engine's escaping
+applies to all of them. A line's title is the copy of a product name taken at
+the moment of sale, which means it is text somebody typed, and this panel runs
+inside an administrator's session.
+
+THE PERIOD IS INCLUSIVE ON SCREEN AND HALF-OPEN IN THE QUERY. The "to" box holds
+the last day the report covers; the filter behind it stops at the start of the
+day after that, so a report for 1-31 August contains everything placed on the
+31st. The form and the paging links carry both dates, because a "next" that
+dropped them would quietly move the reader to the last thirty days.
+
+THERE IS NO TOTAL, and its absence is deliberate. Only one page of at most 25
+rows is ever in hand — the read layer offers no aggregation and clamps the
+limit — so a sum printed here would be the takings of these 25 lines while
+reading as the takings of the period. A wrong number nobody can see is worse
+than a missing one: a missing total sends someone to write the query.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+<form method="get" action="{{ .Path }}">
+  <label for="from">From (inclusive)</label>
+  <input id="from" type="date" name="from" value="{{ .From }}">
+  <label for="to">To (inclusive)</label>
+  <input id="to" type="date" name="to" value="{{ .To }}">
+  <p><button type="submit">Show period</button></p>
+</form>
+
+<p class="muted">Sold lines placed from {{ .From }} to {{ .To }}, both days included.</p>
+
+{{ if .Sales }}
+<div class="scroll">
+<table>
+  <thead>
+    <tr>
+      <th>Placed</th><th>Order</th><th>Sold as</th><th>Variant</th>
+      <th class="num">Quantity</th><th class="num">Unit price</th><th class="num">Total</th>
+    </tr>
+  </thead>
+  <tbody>
+  {{ range .Sales }}
+    <tr>
+      {{- /*
+      The day is the ORDER's, not the line's: a line added to an existing order
+      carries the day of the exchange, and dating an exchange as a fresh sale
+      would move trade between two reporting periods.
+      */ -}}
+      <td>
+        {{ if not .PlacedAt.IsZero }}{{ .PlacedAt.Format "2006-01-02" }}
+        {{ else }}<span class="muted">unknown</span>{{ end }}
+      </td>
+      <td>
+        {{ if .DisplayID }}<a href="{{ $.OrdersPath }}/{{ .OrderID }}">#{{ .DisplayID }}</a>
+        {{ else }}<span class="muted">no order</span>{{ end }}
+      </td>
+      {{- /*
+      The title is the name the line was SOLD UNDER, copied at the moment of
+      sale. It is not the variant's current name on purpose: a catalog rename
+      must not rewrite what a past sale says it was.
+      */ -}}
+      <td>{{ if .Title }}{{ .Title }}{{ else }}<span class="muted">untitled</span>{{ end }}</td>
+      {{- /*
+      The variant identifier is shown next to it because that is what an
+      operator pastes into a catalog search; the historical title may no longer
+      find anything.
+      */ -}}
+      <td>{{ if .VariantID }}{{ .VariantID }}{{ else }}<span class="muted">none</span>{{ end }}</td>
+      <td class="num">{{ .Quantity }}</td>
+      {{- /*
+      An amount whose currency scale could not be read is shown as minor units
+      and SAID to be, rather than being divided by a guessed hundred: that would
+      print the wrong figure for every 0-digit and 3-digit currency. A line
+      whose order was not found has no currency at all, which is the same state.
+      */ -}}
+      <td class="num">{{ .UnitPrice }} {{ .Currency }}</td>
+      <td class="num">
+        {{ .Total }} {{ .Currency }}{{ if .Minor }} <span class="muted">(minor)</span>{{ end }}
+      </td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">No sold lines in this period.</p>
+{{ end }}
+
+<nav>
+  {{ if .HasPrev }}
+  <a href="{{ .Path }}?page={{ .PrevPage }}&amp;from={{ .From }}&amp;to={{ .To }}">Previous</a>
+  {{ end }}
+  <span class="muted">Page {{ .Page }}</span>
+  {{ if .HasNext }}
+  <a href="{{ .Path }}?page={{ .NextPage }}&amp;from={{ .From }}&amp;to={{ .To }}">Next</a>
+  {{ end }}
+</nav>
+{{ end }}

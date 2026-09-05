@@ -73,7 +73,7 @@ Four sequencing facts govern the whole list:
 | B11 | ~~**Order addresses**~~ **Built 2026-09-05.** `order_addresses` (one shipping, one billing, enforced by a unique index), written in the SAME transaction as the order's header and lines; carried cart → interop → checkout plan → order snapshot. The cart's own schema comment already named the order as the thing its copy protects — and the order had no address at all | invoicing, shipping labels, B2B — unblocked | Storefront speed |
 | B12 | **Outbound delivery machinery** — retry and a dead-letter queue on the outbox relay | webhooks, ERP/Slack integration. The bus deliberately has neither | Platform features |
 | B13 | **Plugin host: let a plugin register a job** | any plugin needing a retry pass, including outbound delivery | Platform features |
-| B14 | **Order line-item entity in the read layer + date filter + index** | demand analytics and forecasting | AI-powered features |
+| B14 | ~~**Order line-item entity in the read layer + date filter + index**~~ **Built 2026-09-05.** `order_line_item` is the order module's SECOND read-layer entity, offered next to `order` the way fulfillment offers the shipment next to the shipping option. It carries what was sold and for how much, and takes `placed_from`/`placed_to` — half-open, matched against the ORDER's `placed_at` through a join, because a line's own `created_at` is the day its ROW was written and would date an exchange as a fresh sale. Migration 000006 brings the two indexes that keep the range and the variant filter off a full scan. It has a consumer: the panel's Sales screen. NOT built: any aggregation (the provider returns records, never sums), no line ↔ variant link so nothing expands from a sold line to its product, and forecasting itself | demand analytics and forecasting — the READ is there, the analytics are not; the other half of a forecast is still B7 | AI-powered features |
 | B15 | **File read-back, ~~product-image ↔ upload link~~ built 2026-09-05**, file events still missing. `product_image.upload_id` plus the `upload_product_image` link (declared by PRODUCT — it writes the record the binding carries; the file module's own doc says it does not know what a file belongs to). The file module gained the interop surface it deliberately lacked, and the reasoning behind that absence turned out to be half wrong: the address shows the file and says nothing ABOUT it | anything that looks at a photo — the id half is answerable now; file EVENTS are not built | AI-powered features |
 | B16 | **A suggestion store** — system proposes, human applies | forecast and category suggestions. The pattern exists (`sagawatch`, ADR 0017); the storage does not | AI-powered features |
 | B17 | **KVKK erasure, export and retention** | a legal requirement; A2 and A4 come first | Turkey-specific |
@@ -170,8 +170,11 @@ Four sequencing facts govern the whole list:
 ### F. Standing work
 
 - **Translation ledger: 260 files.** ADR 0012 lets it only shrink.
-- **Panel: twelve of sixteen modules have no screen**, nothing can be created or
-  deleted from it, and there is no extension point for a plugin to add one.
+- **Panel: five sections over four of sixteen modules; twelve modules have no
+  screen at all**, nothing can be created or deleted from it, and there is no
+  extension point for a plugin to add one. The two counts came apart on
+  2026-09-05: Sales is the fifth SECTION and the order module's SECOND screen,
+  so it changed the section count and not the module count.
 
 ## Data layer — measured 2026-09-04
 
@@ -1354,10 +1357,41 @@ What is missing is not the tools but three things around them:
   overwrites `stocked_quantity` and `reserved_quantity` in place, so the
   database cannot answer "how much stock did this item have last Tuesday" and a
   depletion rate is not derivable at all.
-- **Demand history exists and is unreachable.** `orders` and `order_line_items`
-  carry quantity, price and `created_at` — a real time series — but there is no
-  aggregate query for it, no date-range filter on the order query provider, no
-  `order_line_item` entity in the read layer, and no supporting index.
+- ~~**Demand history exists and is unreachable.**~~ **HALF CLOSED 2026-09-05
+  (B14): it is reachable now, and it is still not aggregated.** `orders` and
+  `order_line_items` carry quantity, price and `created_at` — a real time series
+  — and the read layer offers the line as its own entity, `order_line_item`,
+  next to `order`. It takes `placed_from`/`placed_to`, half-open, matched
+  against the ORDER's `placed_at` through a join. The join is a decision and the
+  migration argues it: copying `placed_at` onto the line would make the listing
+  a single-table range scan, which is the cheaper shape, but it would be a
+  SECOND source of truth for one fact and nothing in the schema would keep the
+  copy right — a line added to an existing order by an exchange carries the day
+  of the exchange, and a report drawn from it would disagree with the order it
+  belongs to without anything failing. Migration 000006 adds
+  `orders_placed_at_idx` and `order_line_items_variant_idx`, so that "last
+  month" costs the month rather than the whole sales history.
+
+  Three things are still missing, and they are three different things:
+
+  - **There is no aggregation surface.** The provider returns RECORDS — no
+    grouping, no sums, no ranking — because a GROUP BY behind that interface
+    would produce records that are not records of an entity, which is the one
+    thing the read layer's contract cannot express. So "which variants sold most
+    last month" is still a query somebody writes by hand; what exists is one
+    clamped page of the rows it would be computed from. The panel's report
+    prints no total at all rather than a sum of whichever rows sorted first, and
+    the argument is written in the template and the handler — where the next
+    person tempted to add one will read it.
+  - **There is no link between a line and a variant**, so no Graph request can
+    expand from a sold line to the product it sold. The line carries
+    `variant_id` as another module's identifier and does not validate it
+    (Principle 2.2); a consumer that wants today's catalog name has to read the
+    product entity itself, and what the line holds is the title AS SOLD.
+  - **Forecasting itself is still absent.** This is the READ SURFACE a forecast
+    needs, not the forecast. The other half of it is the bullet above: stock is
+    a current-value column, so the depletion rate has no history to come from,
+    and that is B7.
 - **Price history exists only by accident.** `ReplacePrices` soft-deletes and
   reinserts, so old rows survive — with regenerated ids, no reader and no index.
   Promoting that into a real record is a decision nobody has taken.
@@ -1816,9 +1850,12 @@ What is already true of the brief's other asks:
   generator, not the field.
 - **The extension points do not exist.** There is no `AddPage`, no widget slot,
   and the plugin host cannot add a panel page.
-- **Coverage is four of sixteen modules** — catalog, orders, customers,
-  inventory — which is what an operator looks at daily. The remaining twelve are
-  configuration.
+- **Coverage is five sections over four of sixteen modules** — catalog, orders,
+  sales, customers, inventory — which is what an operator looks at daily. Sales
+  (2026-09-05) is the first section that is not a module's own screen: it reads
+  the order module's line entity, so it adds a section without adding a module,
+  and the two counts have to be read separately from here on. The remaining
+  twelve modules are configuration.
 
 One precedent worth carrying into the extension design: ADR 0011 deferred
 WRITING entirely, because "no module has a narrow surface open to its admin
@@ -2066,10 +2103,31 @@ the next reader sees a decision instead of a wait.
    inventory provider does not offer. Widening a module's published contract for
    a screen that duplicates another one is not a trade worth making.
 
-   Still open: twelve of the sixteen modules have no screen — all of them configuration
-   (regions, tax rates, shipping options, promotions, keys) rather than daily
-   work — nothing can be created or deleted from the panel, and there is no
-   extension point for a plugin to add a screen.
+   **A sales report landed (2026-09-05), and it is the fifth section.**
+   `/admin/ui/sales` lists the LINES sold in a period, newest first, and it is
+   the first consumer of the order module's line entity (B14). The period
+   travels in the address bar rather than in a session, so the page is a URL an
+   operator bookmarks and sends on. It costs two reads — the lines, then the
+   orders behind them in ONE batch keyed by the order ids the lines carry —
+   because the read layer joins across LINKS and two entities of one module are
+   not linked to each other; the alternative was a read per row, which is the
+   N+1 the read layer exists to prevent. The filter's upper bound is exclusive
+   while the screen prints the INCLUSIVE last day, so what the operator typed
+   and what the report covers cannot drift apart.
+
+   It has no total and no per-variant summary, deliberately. The read layer
+   cannot aggregate, so the only sum this screen could compute is the sum of
+   whichever 25 lines sorted first — printed under a heading that says "Sales"
+   and read as the period's takings. A wrong number an operator cannot see is
+   worse than a missing one: a missing total sends somebody to write the query,
+   a wrong one ends the question.
+
+   Still open: the section count and the module count have come apart — five
+   sections, still four modules, because Sales is the order module's SECOND
+   screen rather than a new module's first. Twelve of the sixteen modules have
+   no screen — all of them configuration (regions, tax rates, shipping options,
+   promotions, keys) rather than daily work — nothing can be created or deleted
+   from the panel, and there is no extension point for a plugin to add a screen.
 
 ### The rest
 

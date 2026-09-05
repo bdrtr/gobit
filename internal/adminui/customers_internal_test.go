@@ -119,13 +119,27 @@ func TestAMissingCustomerIsNotFound(t *testing.T) {
 //
 // A section that has a route and no menu entry is one an operator can only
 // reach by typing the address.
+//
+// # This list HAD drifted
+//
+// A test that enumerates by hand goes stale the moment a section is added, and
+// this one had: it named the catalog, the orders and the customers while
+// sections() already returned a fourth entry, Inventory. Nothing failed, and
+// nothing would have — the loop only checks the entries it was told about, so
+// the test kept its name while proving less than the name claims. Both the
+// missing Inventory and the newly added Sales are listed here now, and the rule
+// this leaves behind is the one the drift broke: a section is added to the menu
+// and to this list IN THE SAME CHANGE, because there is no other moment at
+// which anybody has a reason to look at this loop.
 func TestTheMenuCarriesEverySection(t *testing.T) {
 	t.Parallel()
 
 	catalog := &fakeCatalog{byEntity: map[string][]query.Record{}}
 	body := getCustomerPage(newCatalogPanel(t, catalog), CustomersPath).Body.String()
 
-	for _, path := range []string{ProductsPath, OrdersPath, CustomersPath} {
+	for _, path := range []string{
+		ProductsPath, OrdersPath, SalesPath, CustomersPath, InventoryPath,
+	} {
 		assert.Contains(t, body, `href="`+path+`"`, "the menu has to carry %s", path)
 	}
 

@@ -54,6 +54,16 @@ const (
 	// There is no single-item path: an item's detail is its per-location levels
 	// and the panel already shows those on the variant page.
 	InventoryPath = URLPrefix + "/inventory"
+	// SalesPath is the sales report: the lines sold in a period.
+	//
+	// It is a GET and nothing else. The report changes nothing, and the period
+	// it covers travels in the QUERY STRING rather than in a posted form or in
+	// the session — an operator answering "what sold last month" sends the
+	// answer to somebody else, and a page whose state lives in a session cannot
+	// be sent anywhere. There is no single-line path: one sold line has no
+	// detail beyond what the row already shows, and its context is the order,
+	// which the row links to.
+	SalesPath = URLPrefix + "/sales"
 
 	// ServiceQuery is the cross-module read layer's container name.
 	ServiceQuery = "core.query"

@@ -29,6 +29,7 @@ import (
 	inventorysvc "github.com/bdrtr/gobit/internal/modules/inventory/service"
 	"github.com/bdrtr/gobit/internal/modules/notification"
 	"github.com/bdrtr/gobit/internal/modules/notification/logonly"
+	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
 	"github.com/bdrtr/gobit/internal/modules/payment"
 	"github.com/bdrtr/gobit/internal/modules/pricing"
 	"github.com/bdrtr/gobit/internal/modules/product"
@@ -704,6 +705,15 @@ func assertDefaultProvider(t *testing.T, family, providerID, configDefault, modu
 // is rejected with errors.Invalid (ADR 0004) and the panel turns that into a 500
 // saying "the screen asked the read layer for something it does not serve". So
 // the failure is NOISY, but it is seen on the first request, not at build time.
+//
+// The sales report's date filters ("placed_from"/"placed_to") are that same hole
+// with the sides swapped: the order module DOES export those two names, and it is
+// the PANEL's copies that are unexported, so the pair still cannot be bound at
+// compile time. It is tolerable for the same reason as the rest — an unrecognized
+// filter is REFUSED by the provider (ADR 0004) rather than ignored, so a drift
+// makes the report answer 500 instead of quietly reporting a different period.
+// The entity NAME is the one that had to be pinned here: it is the string the
+// whole request is addressed to, and the panel repeats it by hand.
 func TestThePanelCatalogNamesAgree(t *testing.T) {
 	t.Parallel()
 
@@ -713,6 +723,8 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 		"the panel's variant entity name must match the product module")
 	assert.Equal(t, regionsvc.Entity, adminui.EntityRegion,
 		"the panel's region entity name must match the region module")
+	assert.Equal(t, ordersvc.LineItemEntity, adminui.EntityOrderLineItem,
+		"the panel's order line entity name must match the order module")
 
 	assert.Equal(t, productsvc.LinkVariantPriceSet, adminui.LinkVariantPriceSet,
 		"the panel's price link name must match the product module")

@@ -40,6 +40,27 @@
 // admin-facing contract until a panel screen needs it: an unused
 // compiler-unchecked contract is the error class ADR 0009 names.
 //
+// # Five sections, and what the fifth reports
+//
+// The menu holds the catalog, the orders, the sales report, the customers and
+// the inventory, in that order. The list lives in one place next to the routes
+// that serve it, so a section enters the menu by being added there rather than
+// by being written into a template nobody edits when adding a handler.
+//
+// The sales report ([UI.listSales]) is the panel's first consumer of the order
+// module's line entity, and it is the screen that most obviously LOOKS like it
+// should end in a total. It does not, and the omission is the deliberate half
+// of the screen. The read layer offers no aggregation: a provider returns
+// records of an entity, and a GROUP BY behind that contract would return
+// records of nothing. What a page holds is therefore at most 25 lines out of a
+// limit the provider clamps to 100, and a sum over them would print beneath a
+// heading that says "Sales" while being the takings of whichever lines sorted
+// first. That is a wrong number an operator cannot see is wrong, which is worse
+// than no number: a missing total sends somebody to write the query, a wrong
+// one ends the question. The report waits for a read surface that can
+// aggregate, and that surface belongs to the module rather than to a loop in a
+// handler.
+//
 // # Response bodies go through core's writer
 //
 // HTML is never STREAMED to the writer. The template is rendered into memory

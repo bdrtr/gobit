@@ -101,6 +101,69 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Satılan SATIR artık okunabiliyor: `order_line_item` varlığı ve panelde
+  Satışlar bölümü** (B14).
+
+  Sipariş modülü okuma katmanına İKİNCİ bir varlık sunuyor — bir modül birden
+  çok varlık sunabilir, fulfillment kargo seçeneğinin yanında gönderiyi zaten
+  öyle sunuyor. Gerekçesi `order` varlığının kendi belgesinde yazılıydı:
+  satırlar sipariş başına değişken uzunlukta, sayfalanmamış bir kümedir ve bir
+  Record'a gömülmeleri okuma katmanının "kayıt başına tek id" sözleşmesini
+  kırardı. O doğruydu ve bir delik bırakmıştı: hiçbir şey "hangi dönemde hangi
+  varyanttan kaç adet satıldı" diye soramıyordu, çünkü siparişin süzgeçleri
+  id/customer_id/region_id/status — tarih yok, satırlara inen yol yok.
+
+  Tarih süzgeci (`placed_from`/`placed_to`) YARI AÇIK ve satırın kendi
+  `created_at`'ine değil, join ile SİPARİŞİN `placed_at`'ine bakıyor. Satırın
+  `created_at`'i satırın YAZILDIĞI gündür: mevcut bir siparişe değişimle eklenen
+  satır değişimin gününü taşır ve taze bir satış gibi okunurdu. Tarihi satıra
+  KOPYALAMAK daha ucuz olurdu (tek tablo üzerinde aralık taraması), alınmadı:
+  tek fakt için ikinci bir doğruluk kaynağı olurdu ve şemada onu doğru tutacak
+  hiçbir şey yok — doğduğu anda doğru, sonrasında sessizce ayrışabilir. 000006
+  migration'ı iki indeks getiriyor (`orders_placed_at_idx`,
+  `order_line_items_variant_idx`), böylece "geçen ay" sorusunun bedeli bütün
+  satış geçmişi değil, o ay oluyor.
+
+  **Tüketicisi var, ve tüketici panelde.** Dal, tüketicisi olmadığı için main'e
+  alınmamıştı — bu deponun adını koyduğu hata sınıfı (ADR 0009).
+  `/admin/ui/sales` bir dönemde satılan satırları yeniden eskiye listeliyor;
+  dönem adres çubuğunda taşınıyor, yani sayfa yer imine eklenip başkasına
+  gönderilebiliyor. İki okuma yapıyor: önce satırlar, sonra arkalarındaki
+  siparişler TEK toplu istekle — okuma katmanı BAĞLAR üzerinden join yapar ve
+  tek modülün iki varlığı birbirine bağlı değildir; alternatif satır başına
+  okumaydı, yani okuma katmanının önlemek için var olduğu N+1. Süzgecin üst
+  sınırı dışlayan, ekranın bastığı son gün ise KAPSAYAN gün: operatörün yazdığı
+  gün ile raporun kapsadığı gün ayrışamıyor.
+
+  **TOPLAM YOK, varyant başına özet YOK — bilerek.** Okuma katmanı hiç toplama
+  yapmıyor (sağlayıcı KAYIT döner, toplam değil), elde olan tek şey bir SAYFA:
+  en çok 25 satır. Onların toplamı "Satışlar" başlığı altında dönemin cirosu
+  diye okunurdu, oysa yalnızca sıralamada öne düşen 25 satırın toplamı olurdu.
+  Operatörün göremediği yanlış bir sayı, olmayan sayıdan kötüdür: olmayan toplam
+  birini sorguyu yazmaya yollar, yanlış olan soruyu bitirir.
+
+  **ÖLÇÜLEN: bu SQL bugüne kadar bir kez bile koşturulmamıştı.** Dalın kendi
+  commit'i itiraf ediyordu — join, yarı açık aralık, sıralama ve silinmiş
+  sipariş koşulu yalnızca sqlc'nin tip denetiminden geçmişti; birim testleri
+  SAHTE deponun öyle davrandığını kanıtlıyordu, sorgunun değil. Sahte, sorguyla
+  aynı niyetten aynı elle yazıldığı için ikisi BİRLİKTE yanlış olup yine de
+  birbirine uyabilir. Sekiz entegrasyon testi gerçek PostgreSQL'e karşı koştu ve
+  sahtenin söyleyemeyeceği dört şeyi söyledi: verilmeyen bir kriterin `IS NULL`
+  dalının "sorulmadı" demek olduğunu ("hiçbir şeyle eşleşme" değil —
+  SQL'de NULL karşılaştırması true değil NULL'dur), aralığın satırın değil
+  siparişin anına baktığını (sahte iki damgayı aynı struct'ta tutar, ayırt
+  edemez), silinmiş bir siparişin CANLI satırlarının iki okumada da
+  gizlendiğini, ve bir dizinin tek deyimde `= ANY` ile bağlandığını. İndekslerin
+  yalnızca ADI değil TANIMI da `pg_indexes`'ten doğrulandı: yanlış sütuna
+  kurulmuş ya da kısmi olmayan bir indeks, adı tutan ama işi görmeyen bir indeks
+  olurdu.
+
+  Yapılmadı: toplama yüzeyi; satır ↔ varyant BAĞI yok, o yüzden bir Graph isteği
+  satılan satırdan ürüne genişleyemiyor (satır, varyant kimliğini başka bir
+  modülün kimliği olarak taşır ve doğrulamaz — Prensip 2.2); ve tahminin
+  kendisi. Bu, tahminin ihtiyaç duyduğu OKUMA yüzeyi — tahmin değil. Öteki
+  yarısı hâlâ B7'de: stok bir defter değil, üzerine yazılan bir sütun.
+
 - **Panelin bir çerçevesi ve ikinci bir bölümü var** (stil, menü, siparişler).
 
   `corehttp.WriteAsset`'in ilk çağıranı geldi. ADR 0011'de panel stili için
