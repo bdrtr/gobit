@@ -68,7 +68,12 @@ func Describe(d *openapi.Doc) {
 			queryParameter("collection_id", typeString,
 				"Restricts the products to a single collection."),
 			queryParameter("q", typeString,
-				"Free-text search over the title and the handle."),
+				"Free-text search over the TITLE only, case-insensitively and anywhere in it. "+
+					"The handle is a SEPARATE and EXACT filter, not part of this one — a "+
+					"client searching for a handle fragment finds nothing. "+
+					"The match has a leading wildcard and therefore uses no index; on a large "+
+					"catalog it is a full scan (ADR 0015 measures it and names pg_trgm as the "+
+					"standing remedy)."),
 			queryParameter("limit", typeInteger,
 				"Page size; if not given the service's default applies."),
 			queryParameter("offset", typeInteger, "Number of records to skip."),
@@ -272,7 +277,12 @@ func describeAdminProducts(d *openapi.Doc) {
 			queryParameter("handle", typeString,
 				"Restricts the products to a single handle."),
 			queryParameter("q", typeString,
-				"Free-text search over the title and the handle."),
+				"Free-text search over the TITLE only, case-insensitively and anywhere in it. "+
+					"The handle is a SEPARATE and EXACT filter, not part of this one — a "+
+					"client searching for a handle fragment finds nothing. "+
+					"The match has a leading wildcard and therefore uses no index; on a large "+
+					"catalog it is a full scan (ADR 0015 measures it and names pg_trgm as the "+
+					"standing remedy)."),
 			queryParameter("status", typeString,
 				"Publication status filter: draft | published | archived."),
 			queryParameter("expand", typeBoolean,

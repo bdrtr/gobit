@@ -1045,6 +1045,159 @@ would not decide for the shop.
 
 ---
 
+---
+
+## AI-powered commerce features — measured against the brief, 2026-09-05
+
+The brief: natural-language search ("winter, under 500 TL, dark colour"),
+automatic review summaries and Q&A, attribute extraction from product photos, a
+chat assistant with tool-use that can read an order and start a return, and
+price/stock forecast SUGGESTIONS an operator applies rather than the system.
+
+Five areas measured in parallel against the tree. One is genuinely close; the
+rest are blocked by something more basic than the AI.
+
+### Natural-language search: the filters it would translate INTO do not exist
+
+The layer the brief describes turns a sentence into filters. **The entire
+structured filter surface of the storefront is one collection id plus free
+text** — `collection_id`, `q`, `limit`, `offset`, `after`, `with_count`, on REST
+and GraphQL alike, with a test pinning the two to each other.
+
+So there is no price filter, no category filter, no tag filter, no option-value
+filter, no in-stock filter and no sort. "Under 500 TL" and "dark colour" have
+nowhere to land, and "winter" has no first-class home either: season is not a
+column, and of its natural carriers — collection, category, tag — only
+collection is filterable.
+
+Colour and size ARE modelled (`product_option`, `product_option_value`, and the
+variant join) and neither the listing nor the search index reads them. There is
+also **no storefront endpoint that enumerates collections, categories or tags**,
+so an NL layer has no public vocabulary to resolve a word to an id.
+
+Two findings worth carrying:
+
+- **There are two independent search paths, not one.** The product module's own
+  `?q=` is `title ILIKE '%…%'` — a leading wildcard, no index, a full scan that
+  ADR 0015 measured at 58.9 ms on the 52k fixture. The searchpg plugin is a
+  separate endpoint with a real weighted `tsvector` and a GIN index, its own
+  module and its own migration ledger. They share no contract, and searchpg
+  accepts no filters at all.
+- **Search is not a provider slot.** Payment, fulfillment, notification and file
+  have registries; search does not. Swapping the engine means replacing a
+  package rather than registering an implementation.
+
+The honest order: the filters first, then a vocabulary endpoint, then the layer
+that maps a sentence onto them. An NL layer built before the filters would be a
+translator with no target language.
+
+### Review summaries and Q&A: still blocked on the review module
+
+The absence of review data is already recorded in the AI-subsystem section. The
+measurement adds two details that decide where a summary could live once reviews
+exist.
+
+- **`product.metadata` is a whole-value REPLACE, not a merge.** The update is
+  `metadata = COALESCE(@metadata, metadata)` and there is no jsonb `||` anywhere
+  in the repository. A summariser writing there would clobber whatever else a
+  shop had put in it, and two writers would clobber each other.
+- **`product.metadata` is publicly readable on the storefront**, in REST and in
+  GraphQL. A summary placed there is published by construction, including its
+  intermediate states.
+
+The precedent to copy instead is `searchpg`: a per-product derived row in its
+OWN table, with its own migration ledger, no cross-module foreign key, and a
+rebuild driven by events. Note the constraint that comes with it — **only four
+domain events exist repo-wide** (`product.created`, `product.updated`,
+`product.deleted`, `order.placed`), so a summary invalidated by a new review
+needs a fifth, which is the review module's to publish.
+
+### Attribute extraction from photos: the image cannot be read back
+
+Blocked below the AI, and in a way that is easy to miss.
+
+- **`FileProvider` has only `Upload` and `Delete`.** On any real object-store
+  deployment the application cannot read an uploaded image back at all. A vision
+  pipeline has no bytes to look at.
+- **The file module publishes no events**, so nothing can react to a photo
+  arriving.
+- **A product image and its upload record are not linked.** `product_image.url`
+  is free text, there is no `upload_id`, and a cross-module foreign key is
+  forbidden (Principle 2.2). Given an image row there is no way to reach its
+  storage key.
+- **Images are write-once at product create** — no per-image endpoint and no
+  `Images` field on the update input, so a pipeline could not write back what it
+  found.
+- **There is nowhere to put a suggestion.** `product_category_map` is a bare
+  `(product_id, category_id)` with no confidence, no source and no pending
+  state, and the setter replaces the whole set atomically.
+
+Not one of these is about models or prompts. Four are ordinary plumbing
+decisions that would each be worth making on their own merits.
+
+### The chat assistant: the tools already exist, the caller does not
+
+**This is the area that is genuinely close, and for a reason nobody planned.**
+
+There are **fifteen `*.interop` container surfaces carrying sixty-one methods**,
+and by written rule (ADR 0001/0006) every one takes and returns primitives,
+slices of primitives, or `json.RawMessage`, with composite schemas documented
+next to the method. That is a tool catalogue, built for module isolation and
+arriving fit for tool-use by accident. The container can even enumerate the
+names at runtime.
+
+What is missing is not the tools but three things around them:
+
+1. **There is no customer to be.** ADR 0008 decided the framework will not build
+   customer identity: the storefront key identifies the STORE, not the person.
+   A customer-facing assistant has nobody to act as, and "show me my order"
+   cannot be authorised. That is a decision rather than a gap — and it means the
+   assistant's first honest form is an OPERATOR's assistant inside the panel,
+   where identity already exists.
+2. **A return cannot be started through any surface.** `order.interop` offers
+   `ReturnDetailJSON`, `ReceiveReturn`, `ClaimDetailJSON`, `CompleteClaim`, and
+   `workflows.returns.interop` offers `RefundReturn`, `SettleClaim` — every one
+   acts on a return that ALREADY EXISTS. The only creation entry point is
+   domain-typed and unreachable from outside the module.
+3. **Tool schemas cannot be generated.** The container returns names, not method
+   metadata, and the OpenAPI document is missing a body schema for exactly the
+   endpoints this feature needs. Hand-writing a schema per method is fine for
+   ten tools and not for sixty-one.
+
+### Forecast suggestions: there is no history to forecast from
+
+- **Stock is a current-value column, not a ledger.** `inventory_levels`
+  overwrites `stocked_quantity` and `reserved_quantity` in place, so the
+  database cannot answer "how much stock did this item have last Tuesday" and a
+  depletion rate is not derivable at all.
+- **Demand history exists and is unreachable.** `orders` and `order_line_items`
+  carry quantity, price and `created_at` — a real time series — but there is no
+  aggregate query for it, no date-range filter on the order query provider, no
+  `order_line_item` entity in the read layer, and no supporting index.
+- **Price history exists only by accident.** `ReplacePrices` soft-deletes and
+  reinserts, so old rows survive — with regenerated ids, no reader and no index.
+  Promoting that into a real record is a decision nobody has taken.
+- **The audit log cannot reconstruct a change, by design.** It records the
+  REQUEST, not the diff, and says so in its own header.
+
+The SHAPE the brief asks for — the system proposes, a human applies — **already
+exists here with an ADR behind it.** `internal/jobs/sagawatch` is a job that
+measures, reports and deliberately never acts, and ADR 0017 is the written
+argument for why. A forecast job is that pattern again. What it lacks is
+anywhere to store a suggestion: pricing's and inventory's tables have no
+metadata column between them.
+
+### What the five have in common
+
+Four are blocked by something that is not AI — filters that do not exist,
+reviews that do not exist, images that cannot be read back, history that was
+never kept. The fifth is blocked by a decision (ADR 0008) rather than by
+machinery, and its machinery is unusually ready.
+
+The cheapest real move on this list is therefore not a model call. It is the
+storefront filter surface: the NL layer needs it, the panel would use it, and
+nothing else on the roadmap has to wait for it.
+
 ## Capability inventory — measured 2026-09-04
 
 Ten axes, 139 capabilities: 83 gaps and 22 things this repository refuses in
