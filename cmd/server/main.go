@@ -48,6 +48,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/file"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment"
 	"github.com/bdrtr/gobit/internal/modules/inventory"
+	"github.com/bdrtr/gobit/internal/modules/invoice"
 	"github.com/bdrtr/gobit/internal/modules/notification"
 	"github.com/bdrtr/gobit/internal/modules/order"
 	"github.com/bdrtr/gobit/internal/modules/payment"
@@ -456,6 +457,12 @@ func registerModules(registry *module.Registry, cfg config.Config, log *slog.Log
 	// visible: two empty tables and a spending rule that never triggers because
 	// there are no company records.
 	registry.Add(b2b.New(log))
+	// Invoice. It knows no other module: a workflow (or an operator) hands it a
+	// finished document and it gives that document a number no other document
+	// in its series will ever have. It is registered LAST because nothing else
+	// depends on it — the dependency runs the other way, and only through a
+	// caller that already holds both.
+	registry.Add(invoice.New(invoice.Options{Logger: log}))
 }
 
 // installPlugins selects the plugins named in the configuration and runs their

@@ -124,6 +124,7 @@ import (
 	fulfillmentsvc "github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 	inventorymod "github.com/bdrtr/gobit/internal/modules/inventory"
 	inventorysvc "github.com/bdrtr/gobit/internal/modules/inventory/service"
+	invoicemod "github.com/bdrtr/gobit/internal/modules/invoice"
 	notificationmod "github.com/bdrtr/gobit/internal/modules/notification"
 	ordermod "github.com/bdrtr/gobit/internal/modules/order"
 	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
@@ -640,6 +641,11 @@ func setUpHarness(ctx context.Context) error {
 	// container under the name "b2b.interop", and without the registration it
 	// counts every customer as unlimited.
 	registry.Add(b2bmod.New(nil))
+	// Invoice. It is here so its migration runs on a real database and its
+	// endpoints enter the scope of the authorization audit that walks the
+	// router tree. It binds to no other module, so nothing else in this harness
+	// changes because it is registered.
+	registry.Add(invoicemod.New(invoicemod.Options{}))
 
 	// The router is built as in PRODUCTION: the guard stack (rate limit -> identity
 	// -> idempotency) comes from the single definition in the core, the test has no

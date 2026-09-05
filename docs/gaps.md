@@ -259,8 +259,43 @@ or a workflow, that composes the three.
    slot, but no plugin fills this one, so there is no rate calculation, no label
    and no tracking from a real carrier.
 
-5. **No invoicing, and nothing for the Turkish e-invoice regimes** (e-fatura,
-   e-arsiv). Every "fatura"
+5. ~~**No invoicing, and nothing for the Turkish e-invoice regimes**~~
+   **PARTLY CLOSED 2026-09-05, ADR 0024.** There is an invoice module: the
+   document, its lines, its parties, its status, and the numbering.
+
+   **What a framework can close here, and what it cannot.** It cannot file an
+   invoice on a merchant's behalf — that needs the merchant's own certificate
+   and a contract with an integrator — so no amount of work in this repository
+   produces a filed e-fatura. What it owes is the document, its numbering, and a
+   place for the transmission to plug in. The first two are done.
+
+   The numbering is the part with a decision in it. An invoice number is
+   allocated by an UPDATE on a series ROW inside the same transaction that
+   writes the document, NOT by a database sequence — which is the opposite of
+   what the order module does for its order numbers, and for a legal rather than
+   a technical reason. A sequence advances outside the transaction, so a
+   rollback burns its number; for an order number that hole is harmless, and for
+   an invoice serial it is what a tax authority reads as a document that was
+   issued and then hidden. See ADR 0024.
+
+   Three consequences follow and each is enforced: there is no draft status (a
+   draft would need a number, and a number given to a draft that is abandoned is
+   the hole itself), a canceled document keeps its number and stays in the table
+   (deleting it puts the hole in from the other end), and an issued document is
+   immutable.
+
+   The concurrency test found a real defect while this was being written: the
+   look-then-create arrangement for opening a new year's series cannot recover
+   from its own race, because a unique violation POISONS the transaction in
+   PostgreSQL and the fallback read has nothing left to run in. It is one
+   `INSERT ... ON CONFLICT` statement now.
+
+   **Still open:** the transmission itself (a plugin's job, and none ships), and
+   a workflow that assembles a document FROM an order — today a caller sends the
+   finished document, which is what lets a shop invoice something that is not an
+   order at all, but is not yet the one-click path a shop wants for a sale.
+
+   The original finding: every "fatura"
    in the codebase is a billing ADDRESS. For a shop selling in Turkey this is a
    legal requirement, not a feature — and it is the one item on the checklist
    that no part of the framework currently touches.

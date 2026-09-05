@@ -29,6 +29,60 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Fatura modülü** (ADR 0024) — belge, satırları, tarafları, durumu ve
+  **boşluksuz** numaralandırması.
+
+  Envanterin "çerçevenin hiçbir yerinin dokunmadığı tek madde" dediği şeydi;
+  kod tabanındaki her "fatura" bir ADRESTİ.
+
+  **Bir çerçevenin kapatabileceği ve kapatamayacağı kısım.** Tacir adına fatura
+  kesemez — bu, tacirin kendi sertifikasını ve bir entegratör sözleşmesini
+  gerektirir. Çerçevenin borcu belge, numaralandırma ve iletimin takılacağı
+  yuva. İlk ikisi tamam.
+
+  Kararın bulunduğu yer numaralandırma. Fatura numarası, belgeyi yazan İŞLEMİN
+  İÇİNDE bir seri SATIRI üzerindeki UPDATE ile alınıyor; sequence ile değil — ki
+  bu, sipariş modülünün sipariş numaraları için yaptığının tam tersi ve sebebi
+  teknik değil hukuki. Sequence işlemin dışında ilerler, geri alma numarayı
+  yakar; sipariş numarasında o boşluk zararsız, fatura serisinde ise vergi
+  idaresinin "kesilip sonra saklanmış belge" diye okuduğu şey.
+
+  Üç sonuç doğuyor ve üçü de zorunlu: **taslak durumu yok** (taslak bir şeyin
+  taslağı olmak için numaraya ihtiyaç duyar, ve terk edilen bir taslağa verilen
+  numara boşluğun ta kendisi), **iptal edilen belge numarasını koruyor ve
+  tabloda kalıyor** (silmek boşluğu öbür uçtan açardı), **kesilen belge
+  değişmez** (bir hata iptal + yeni belgeyle düzeltilir, hukuk da öyle
+  yapıyor).
+
+  Yalnızca bir UPDATE var, yanında `SELECT ... FOR UPDATE` YOK: UPDATE satır
+  kilidini kendisi alıp işlem sonuna kadar tutuyor ve kilidi aldıktan sonra
+  satırı yeniden okuyor. Zaten alınacak bir kilidi önceden almak, koruma gibi
+  görünüp hiçbir şey eklemeyen bir koruma olurdu.
+
+  **Eşzamanlılık testi yazım sırasında gerçek bir kusur buldu.** Yeni yılın
+  serisini "ara, yoksa yarat, sonra ilerlet" düzeni kendi yarışından
+  kurtulamıyor: iki çağıran da hiçbir şey bulup ikisi de INSERT ediyor, biri
+  unique ihlali alıyor ve PostgreSQL'de işlem içindeki hata İŞLEMİ ZEHİRLİYOR
+  (25P02) — "kazananın satırını oku" telafisinin koşacağı bir şey kalmıyor.
+  Artık tek bir `INSERT ... ON CONFLICT` deyimi.
+
+  İki iddia da gerçek veritabanına karşı kanıtlandı ve sahte depoyla
+  kanıtlanamaz: başarısız bir kesim numarasını GERİ VERİYOR (numarayı çağıranın
+  işleminin dışında commit eden mutasyon testi düşürüyor ve yanan numarayı
+  mesajda gösteriyor), ve tek seriye aynı anda yapılan yirmi kesim 1..20
+  üretiyor, eksiksiz ve tekrarsız (ON CONFLICT'i kaldıran mutasyon testi
+  düşürüyor).
+
+  Bir mutasyon İLK DENEMEDE yakalanmadı ve suç testteydi: yardımcı, gerçek
+  numaranın yalnızca ilk üç harfini alıp beklenen diziyi kendisi kuruyordu —
+  yani sabiti sabitle karşılaştırıyordu. Artık numaranın kendi dizi kısmını
+  okuyor.
+
+  Açık kalan: iletimin kendisi (bir eklentinin işi, ve gelen yok) ve siparişten
+  belge derleyen workflow — bugün çağıran bitmiş belgeyi gönderiyor, ki bu bir
+  dükkânın sipariş OLMAYAN bir şeyi (hizmet, elden satış) faturalamasını
+  sağlıyor ama satış için istenen tek tıklık yol henüz değil.
+
 - **Sipariş satırı artık hangi ORANDA vergilendiğini söylüyor** (`tax_rate_bps`).
 
   Hesaplanan oran sınırda atılıyordu: sipariş vergi TUTARINI saklıyor, oranı
