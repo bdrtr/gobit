@@ -21,6 +21,8 @@ const (
 	// summary) was chosen here. "sum_" was not preferred, because on its own
 	// the prefix would not say which module's record it is.
 	SummaryIDPrefix = "osum_"
+	// OrderAddressIDPrefix prefixes an order address identifier.
+	OrderAddressIDPrefix = "oaddr_"
 	// ReturnIDPrefix is the prefix of return identifiers.
 	ReturnIDPrefix = "ret_"
 	// ReturnItemIDPrefix is the prefix of a return line identifier.
@@ -53,6 +55,9 @@ func NewLineItemID() string { return newID(LineItemIDPrefix, time.Now()) }
 
 // NewSummaryID produces a new order summary identifier.
 func NewSummaryID() string { return newID(SummaryIDPrefix, time.Now()) }
+
+// NewOrderAddressID produces a new order address identifier.
+func NewOrderAddressID() string { return newID(OrderAddressIDPrefix, time.Now()) }
 
 // NewReturnItemID produces a new return line identifier.
 func NewReturnItemID() string { return newID(ReturnItemIDPrefix, time.Now()) }

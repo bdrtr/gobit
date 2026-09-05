@@ -918,3 +918,53 @@ func TestNewRejectsASetupWithAMissingDependency(t *testing.T) {
 		})
 	}
 }
+
+// TestARolledBackOrderLeavesNoAddress is the claim that the addresses are in
+// the SAME transaction as the order.
+//
+// If they were written outside it, a failure after them would leave address
+// rows pointing at an order that does not exist — and in the real schema the
+// foreign key would refuse the write outright, so the fake refusing to notice
+// would be the fake disagreeing with the database about a rule that matters.
+func TestARolledBackOrderLeavesNoAddress(t *testing.T) {
+	t.Parallel()
+
+	fixture := newEnv(t)
+	// The summary is written AFTER the addresses, so this failure lands with
+	// the addresses already in.
+	fixture.store.failCreateSummary = errors.Internal("summary_failed",
+		"the summary could not be written")
+
+	in := validInput()
+	in.Addresses = []models.OrderAddress{
+		{Type: models.AddressShipping, City: "Istanbul"},
+		{Type: models.AddressBilling, City: "Ankara"},
+	}
+
+	_, err := fixture.svc.CreateOrder(context.Background(), in)
+	require.Error(t, err)
+
+	// Counted, not looked up by order id: the order was rolled back, so a
+	// lookup by its id comes back empty whether the addresses survived or not.
+	assert.Zero(t, fixture.store.addressCount(),
+		"the order was rolled back and its addresses stayed; an address row whose order "+
+			"does not exist is one the real schema's foreign key would have refused")
+}
+
+// TestOneAddressPerTypeIsRefused mirrors the schema's unique index.
+func TestOneAddressPerTypeIsRefused(t *testing.T) {
+	t.Parallel()
+
+	fixture := newEnv(t)
+
+	in := validInput()
+	in.Addresses = []models.OrderAddress{
+		{Type: models.AddressShipping, City: "Istanbul"},
+		{Type: models.AddressShipping, City: "Ankara"},
+	}
+
+	_, err := fixture.svc.CreateOrder(context.Background(), in)
+	require.Error(t, err,
+		"an order with two shipping addresses was accepted; it is a parcel with two "+
+			"destinations and the unique index on (order_id, address_type) refuses it")
+}

@@ -443,3 +443,44 @@ func toClaims(rows []orderdb.OrderClaim) ([]models.Claim, error) {
 	}
 	return out, nil
 }
+
+// toOrderAddress converts a database row into the domain model.
+func toOrderAddress(row orderdb.OrderAddress) (models.OrderAddress, error) {
+	meta, err := toJSONMap(row.Metadata)
+	if err != nil {
+		return models.OrderAddress{}, err
+	}
+
+	return models.OrderAddress{
+		ID:              row.ID,
+		OrderID:         row.OrderID,
+		Type:            models.AddressType(row.AddressType),
+		SourceAddressID: textValue(row.SourceAddressID),
+		FirstName:       textValue(row.FirstName),
+		LastName:        textValue(row.LastName),
+		Company:         textValue(row.Company),
+		Address1:        textValue(row.Address1),
+		Address2:        textValue(row.Address2),
+		City:            textValue(row.City),
+		Province:        textValue(row.Province),
+		PostalCode:      textValue(row.PostalCode),
+		CountryCode:     textValue(row.CountryCode),
+		Phone:           textValue(row.Phone),
+		Metadata:        meta,
+		CreatedAt:       toTime(row.CreatedAt),
+		UpdatedAt:       toTime(row.UpdatedAt),
+	}, nil
+}
+
+// textValue reads a nullable text column; a null is the empty string.
+//
+// Every one of these fields is optional and the module never distinguishes "not
+// given" from "given as empty": a guest checkout may carry very little, and a
+// distinction nothing acts on is a distinction that only produces branches.
+func textValue(v *string) string {
+	if v == nil {
+		return ""
+	}
+
+	return *v
+}

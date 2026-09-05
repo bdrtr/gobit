@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/internal/modules/order/models"
 )
 
 // This file is the CROSS-MODULE surface of the order module (ADR 0001,
@@ -132,6 +133,54 @@ type interopSnapshot struct {
 	Total          int64              `json:"total"`
 	Metadata       map[string]any     `json:"metadata"`
 	Items          []interopOrderItem `json:"items"`
+	// The addresses the cart carried, if any. They are written in the SAME
+	// transaction as the order: an order that exists without the address it was
+	// placed with is an order nobody can ship or invoice.
+	ShippingAddress *interopAddress `json:"shipping_address,omitempty"`
+	BillingAddress  *interopAddress `json:"billing_address,omitempty"`
+}
+
+// interopAddress is one address as it crosses the surface.
+//
+// Every field is a primitive and nothing is validated here: what an address
+// means is the shop's business, and a framework that refused an order over a
+// missing province would be deciding where a shop may sell.
+type interopAddress struct {
+	SourceAddressID string         `json:"source_address_id,omitempty"`
+	FirstName       string         `json:"first_name,omitempty"`
+	LastName        string         `json:"last_name,omitempty"`
+	Company         string         `json:"company,omitempty"`
+	Address1        string         `json:"address_1,omitempty"`
+	Address2        string         `json:"address_2,omitempty"`
+	City            string         `json:"city,omitempty"`
+	Province        string         `json:"province,omitempty"`
+	PostalCode      string         `json:"postal_code,omitempty"`
+	CountryCode     string         `json:"country_code,omitempty"`
+	Phone           string         `json:"phone,omitempty"`
+	Metadata        map[string]any `json:"metadata,omitempty"`
+}
+
+// toOrderAddress turns one incoming address into the module's own model.
+func (a *interopAddress) toOrderAddress(kind models.AddressType) *models.OrderAddress {
+	if a == nil {
+		return nil
+	}
+
+	return &models.OrderAddress{
+		Type:            kind,
+		SourceAddressID: a.SourceAddressID,
+		FirstName:       a.FirstName,
+		LastName:        a.LastName,
+		Company:         a.Company,
+		Address1:        a.Address1,
+		Address2:        a.Address2,
+		City:            a.City,
+		Province:        a.Province,
+		PostalCode:      a.PostalCode,
+		CountryCode:     a.CountryCode,
+		Phone:           a.Phone,
+		Metadata:        a.Metadata,
+	}
 }
 
 // interopOrderItem is the JSON schema of one order line.
@@ -193,6 +242,7 @@ func (i *Interop) PlaceOrderJSON(ctx context.Context, snapshot json.RawMessage) 
 		Total:          incoming.Total,
 		Items:          items,
 		Metadata:       incoming.Metadata,
+		Addresses:      incomingAddresses(incoming),
 	})
 	if err != nil {
 		return "", err
@@ -485,4 +535,22 @@ func (i *Interop) OrderInvoiceJSON(ctx context.Context, orderID string) (json.Ra
 		Total:         detail.Total,
 		Items:         items,
 	})
+}
+
+// incomingAddresses turns the snapshot's two optional addresses into the list
+// the order is written with.
+//
+// An absent address is simply not in the list: a shop selling a download has
+// neither, and inventing an empty row for it would put a blank destination on
+// a record that has none.
+func incomingAddresses(snapshot interopSnapshot) []models.OrderAddress {
+	var out []models.OrderAddress
+	if shipping := snapshot.ShippingAddress.toOrderAddress(models.AddressShipping); shipping != nil {
+		out = append(out, *shipping)
+	}
+	if billing := snapshot.BillingAddress.toOrderAddress(models.AddressBilling); billing != nil {
+		out = append(out, *billing)
+	}
+
+	return out
 }

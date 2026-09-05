@@ -31,6 +31,7 @@ type fakeSnapshot struct {
 	orders    map[string]models.Order
 	items     map[string]models.OrderLineItem
 	summaries map[string]models.OrderSummary
+	addresses map[string][]models.OrderAddress
 	returns   map[string]models.Return
 	outbox    map[string]outboxRow
 	retItems  map[string]models.ReturnItem
@@ -72,6 +73,7 @@ type fakeStore struct {
 	orders    map[string]models.Order
 	items     map[string]models.OrderLineItem
 	summaries map[string]models.OrderSummary
+	addresses map[string][]models.OrderAddress
 	returns   map[string]models.Return
 	outbox    map[string]outboxRow
 	retItems  map[string]models.ReturnItem
@@ -125,6 +127,7 @@ func newFakeStore() *fakeStore {
 		orders:    map[string]models.Order{},
 		items:     map[string]models.OrderLineItem{},
 		summaries: map[string]models.OrderSummary{},
+		addresses: map[string][]models.OrderAddress{},
 		returns:   map[string]models.Return{},
 		outbox:    map[string]outboxRow{},
 		retItems:  map[string]models.ReturnItem{},
@@ -152,6 +155,7 @@ func (f *fakeStore) snapshot() fakeSnapshot {
 		orders:    maps.Clone(f.orders),
 		items:     maps.Clone(f.items),
 		summaries: maps.Clone(f.summaries),
+		addresses: maps.Clone(f.addresses),
 		returns:   maps.Clone(f.returns),
 		outbox:    maps.Clone(f.outbox),
 		retItems:  maps.Clone(f.retItems),
@@ -477,6 +481,55 @@ func (f *fakeStore) ListLineItems(ctx context.Context, orderID string) ([]models
 
 // --- summary -----------------------------------------------------------------
 
+// CreateOrderAddress writes one address of the order.
+//
+// It refuses a second address of the same type, the way the schema's unique
+// index on (order_id, address_type) does: a fake that accepted it would let a
+// test pass over an order with two destinations, which the database will not
+// hold.
+func (f *fakeStore) CreateOrderAddress(
+	ctx context.Context, address models.OrderAddress,
+) (models.OrderAddress, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	existing := f.addresses[address.OrderID]
+	for i := range existing {
+		if existing[i].Type == address.Type {
+			return models.OrderAddress{}, errors.Conflict("order_address_duplicate",
+				"order %s already has a %s address", address.OrderID, address.Type)
+		}
+	}
+
+	stamp := f.nextStamp()
+	address.CreatedAt = stamp
+	address.UpdatedAt = stamp
+	f.recordUndo(ctx, undoEntry(f.addresses, address.OrderID))
+	f.addresses[address.OrderID] = append(existing, address)
+
+	return address, nil
+}
+
+// OrderAddressesByOrderIDs reads the addresses of several orders at once.
+func (f *fakeStore) OrderAddressesByOrderIDs(
+	ctx context.Context, orderIDs []string,
+) (map[string][]models.OrderAddress, error) {
+	// Through the view, not the live map: inside a read transaction every other
+	// reader sees the snapshot, and one reader that did not would give the
+	// caller a detail whose header and addresses came from two different
+	// instants — the thing the read transaction exists to prevent.
+	stored := f.view(ctx).addresses
+
+	out := make(map[string][]models.OrderAddress, len(orderIDs))
+	for _, id := range orderIDs {
+		if list := stored[id]; len(list) > 0 {
+			out[id] = append([]models.OrderAddress(nil), list...)
+		}
+	}
+
+	return out, nil
+}
+
 // CreateSummary opens the summary of the order.
 func (f *fakeStore) CreateSummary(ctx context.Context, summary models.OrderSummary) (models.OrderSummary, error) {
 	f.mu.Lock()
@@ -498,6 +551,25 @@ func (f *fakeStore) CreateSummary(ctx context.Context, summary models.OrderSumma
 	f.recordUndo(ctx, undoEntry(f.summaries, summary.OrderID))
 	f.summaries[summary.OrderID] = summary
 	return summary, nil
+}
+
+// addressCount is how many address rows the fake holds, whatever order they
+// belong to.
+//
+// The tests ask it rather than asking by order id, and the difference is the
+// whole point on the rollback path: a rolled-back order is not in the store, so
+// a lookup BY ITS ID would come back empty whether the addresses were rolled
+// back or left behind. The count cannot be fooled that way.
+func (f *fakeStore) addressCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	total := 0
+	for id := range f.addresses {
+		total += len(f.addresses[id])
+	}
+
+	return total
 }
 
 // GetSummary returns the summary of the order.

@@ -70,7 +70,7 @@ Four sequencing facts govern the whole list:
 | B8 | **Customer module events** (`customer.deleted` at minimum) | erasure — today deleting a customer notifies nobody and Principle 2.2 forbids the cascade | Turkey-specific |
 | B9 | **Stored payment instrument** — provider contract + table | saved cards AND subscriptions, in one change | Storefront speed, Commerce models |
 | B10 | **Carrier-capable quote input and a tolerant shipment state machine** — district, dimensions/desi, more statuses (including iade), and out-of-order webhook tolerance | any real carrier | Turkey-specific |
-| B11 | **Order addresses** — the cart's addresses never reach the order | invoicing, shipping labels, B2B | Storefront speed |
+| B11 | ~~**Order addresses**~~ **Built 2026-09-05.** `order_addresses` (one shipping, one billing, enforced by a unique index), written in the SAME transaction as the order's header and lines; carried cart → interop → checkout plan → order snapshot. The cart's own schema comment already named the order as the thing its copy protects — and the order had no address at all | invoicing, shipping labels, B2B — unblocked | Storefront speed |
 | B12 | **Outbound delivery machinery** — retry and a dead-letter queue on the outbox relay | webhooks, ERP/Slack integration. The bus deliberately has neither | Platform features |
 | B13 | **Plugin host: let a plugin register a job** | any plugin needing a retry pass, including outbound delivery | Platform features |
 | B14 | **Order line-item entity in the read layer + date filter + index** | demand analytics and forecasting | AI-powered features |

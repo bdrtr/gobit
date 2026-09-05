@@ -222,6 +222,10 @@ type OrderDetail struct {
 	Order
 	// Items are the order's lines; they are in creation order.
 	Items []OrderLineItem
+	// ShippingAddress is where the order went; nil when none was recorded.
+	ShippingAddress *OrderAddress
+	// BillingAddress is who it was billed to; nil when none was recorded.
+	BillingAddress *OrderAddress
 	// Summary is the order's payment/refund summary. Because the summary is
 	// born together with the order it is always populated here.
 	Summary OrderSummary
@@ -573,6 +577,59 @@ type Claim struct {
 	// CanceledAt is the moment the request was canceled; nil when it was not
 	// canceled.
 	CanceledAt *time.Time
+	// CreatedAt and UpdatedAt are UTC.
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// AddressType says whether an address is where the order shipped or who it was
+// billed to.
+type AddressType string
+
+// The address types.
+const (
+	// AddressShipping is where the goods went.
+	AddressShipping AddressType = "shipping"
+	// AddressBilling is who the money was billed to.
+	AddressBilling AddressType = "billing"
+)
+
+// String returns the readable value.
+func (a AddressType) String() string { return string(a) }
+
+// OrderAddress is where an order shipped to, or who it was billed to.
+//
+// It is a COPY taken when the order was placed, not a pointer into the customer
+// module. A shopper who later edits their address book must not rewrite what a
+// past order said — the cart makes the same copy for the same reason, and the
+// order is where that copy has to survive, because the cart does not.
+type OrderAddress struct {
+	// ID is the "oaddr_" prefixed identifier.
+	ID string
+	// OrderID is the order the address belongs to.
+	OrderID string
+	// Type is shipping or billing.
+	Type AddressType
+	// SourceAddressID is the customer address it was copied from; it may be
+	// empty and it is NOT a foreign key — the customer module may delete that
+	// row, and an order that lost its address with it could not be shipped.
+	SourceAddressID string
+	// The name, company and location fields; all of them are optional, because
+	// a guest checkout may carry very little and refusing the order over a
+	// missing company would be the framework deciding what a shop may sell.
+	FirstName  string
+	LastName   string
+	Company    string
+	Address1   string
+	Address2   string
+	City       string
+	Province   string
+	PostalCode string
+	// CountryCode is the ISO 3166-1 alpha-2 code (e.g. "TR"), UPPERCASE.
+	CountryCode string
+	Phone       string
+	// Metadata is free structured context.
+	Metadata map[string]any
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time

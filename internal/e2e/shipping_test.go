@@ -20,9 +20,11 @@ import (
 	"github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/query"
+	cartsvc "github.com/bdrtr/gobit/internal/modules/cart/service"
 	fulfillmentmanual "github.com/bdrtr/gobit/internal/modules/fulfillment/manual"
 	fulfillmentmodels "github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 	fulfillmentsvc "github.com/bdrtr/gobit/internal/modules/fulfillment/service"
+	ordermodels "github.com/bdrtr/gobit/internal/modules/order/models"
 	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
 	paymentmanual "github.com/bdrtr/gobit/internal/modules/payment/manual"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
@@ -768,4 +770,77 @@ func TestTheOrderTimelineComposesWhatTheModulesRecord(t *testing.T) {
 				"the timeline is not newest first at %d", i)
 		}
 	}
+}
+
+// TestTheCartsAddressReachesTheOrder closes the gap the cart's own schema
+// comment describes.
+//
+// cart_addresses says the address is COPIED from the customer's address book so
+// that a shopper who later edits it does not rewrite history — and the comment
+// names the thing being protected: "the past cart (and the order born out of
+// it)". The order born out of it had no address at all. The cart is reused or
+// dropped after checkout, so the copy the cart made protected nothing.
+//
+// This is the only place the chain can be proved: the cart's own table, its
+// interop surface, the checkout plan, the order snapshot and the order's
+// transaction are five layers, and each has tests that cannot see the next.
+func TestTheCartsAddressReachesTheOrder(t *testing.T) {
+	ctx := t.Context()
+
+	customerID, email := newCustomer(ctx, t)
+	variantID, _ := newStockedVariant(ctx, t, "E2E Address Product", map[string]int64{
+		taxedCurrency: shippingUnitPrice,
+	}, shippingStock)
+
+	cartID, _ := prepareCart(ctx, t, customerID, variantID, shippingQuantity)
+
+	shipping := cartsvc.AddressInput{
+		FirstName: "Ayse", LastName: "Yilmaz", Company: "Gobit AS",
+		Address1: "Ataturk Cad. 12", Address2: "Daire 3",
+		City: "Istanbul", Province: "Kadikoy", PostalCode: "34710",
+		CountryCode: taxedCountry, Phone: "+905551112233",
+	}
+	_, err := cartSvc.SetShippingAddress(ctx, cartID, shipping)
+	require.NoError(t, err)
+
+	billing := shipping
+	billing.Company = "Gobit Muhasebe"
+	billing.Address1 = "Bagdat Cad. 99"
+	_, err = cartSvc.SetBillingAddress(ctx, cartID, billing)
+	require.NoError(t, err)
+
+	orderResult, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        stockLocationID,
+		PaymentProviderID: paymentmanual.ID,
+		PaymentData:       paymentBehavior(t, paymentmanual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     shippingTotal,
+	})
+	require.NoError(t, err)
+
+	order, err := orderSvc.GetOrder(ctx, orderResult.OrderID)
+	require.NoError(t, err)
+
+	require.NotNil(t, order.ShippingAddress,
+		"the order has no shipping address. The cart had one and the order is what "+
+			"survives checkout: without it nothing can say where the parcel goes")
+	assert.Equal(t, "Ataturk Cad. 12", order.ShippingAddress.Address1)
+	assert.Equal(t, "Kadikoy", order.ShippingAddress.Province,
+		"the province was lost on the way; a domestic carrier prices on the district")
+	assert.Equal(t, "34710", order.ShippingAddress.PostalCode)
+	assert.Equal(t, taxedCountry, order.ShippingAddress.CountryCode)
+	assert.Equal(t, ordermodels.AddressShipping, order.ShippingAddress.Type)
+
+	require.NotNil(t, order.BillingAddress,
+		"the order has no billing address; an invoice cannot print a buyer")
+	assert.Equal(t, "Gobit Muhasebe", order.BillingAddress.Company)
+	assert.Equal(t, "Bagdat Cad. 99", order.BillingAddress.Address1,
+		"the billing address came back with the SHIPPING address's street; the two "+
+			"were not kept apart")
+	assert.Equal(t, ordermodels.AddressBilling, order.BillingAddress.Type)
+
+	// The two are separate rows on one order, which is what the unique index on
+	// (order_id, address_type) allows and no more.
+	assert.NotEqual(t, order.ShippingAddress.ID, order.BillingAddress.ID)
 }

@@ -750,3 +750,65 @@ func (r *Repository) SumCustomerSpend(
 	}
 	return spent, nil
 }
+
+// CreateOrderAddress writes one address of the order.
+//
+// It is called INSIDE the order's transaction; see the service's writeOrder.
+func (r *Repository) CreateOrderAddress(
+	ctx context.Context, address models.OrderAddress,
+) (models.OrderAddress, error) {
+	metadata, err := fromJSONMap(address.Metadata)
+	if err != nil {
+		return models.OrderAddress{}, err
+	}
+
+	row, err := r.queries(ctx).CreateOrderAddress(ctx, orderdb.CreateOrderAddressParams{
+		ID:              address.ID,
+		OrderID:         address.OrderID,
+		AddressType:     string(address.Type),
+		SourceAddressID: nullString(address.SourceAddressID),
+		FirstName:       nullString(address.FirstName),
+		LastName:        nullString(address.LastName),
+		Company:         nullString(address.Company),
+		Address1:        nullString(address.Address1),
+		Address2:        nullString(address.Address2),
+		City:            nullString(address.City),
+		Province:        nullString(address.Province),
+		PostalCode:      nullString(address.PostalCode),
+		CountryCode:     nullString(address.CountryCode),
+		Phone:           nullString(address.Phone),
+		Metadata:        metadata,
+	})
+	if err != nil {
+		return models.OrderAddress{}, classify(err, codeQueryFailed,
+			"could not write the order address")
+	}
+
+	return toOrderAddress(row)
+}
+
+// OrderAddressesByOrderIDs reads the addresses of several orders in a SINGLE
+// query; there is no query per order (N+1).
+func (r *Repository) OrderAddressesByOrderIDs(
+	ctx context.Context, orderIDs []string,
+) (map[string][]models.OrderAddress, error) {
+	if len(orderIDs) == 0 {
+		return map[string][]models.OrderAddress{}, nil
+	}
+
+	rows, err := r.queries(ctx).ListOrderAddressesByOrderIDs(ctx, orderIDs)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "could not read the order addresses")
+	}
+
+	out := make(map[string][]models.OrderAddress, len(orderIDs))
+	for i := range rows {
+		address, convErr := toOrderAddress(rows[i])
+		if convErr != nil {
+			return nil, convErr
+		}
+		out[address.OrderID] = append(out[address.OrderID], address)
+	}
+
+	return out, nil
+}

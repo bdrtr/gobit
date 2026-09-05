@@ -33,6 +33,26 @@ type Order struct {
 	DeletedAt      pgtype.Timestamptz
 }
 
+type OrderAddress struct {
+	ID              string
+	OrderID         string
+	AddressType     string
+	SourceAddressID *string
+	FirstName       *string
+	LastName        *string
+	Company         *string
+	Address1        *string
+	Address2        *string
+	City            *string
+	Province        *string
+	PostalCode      *string
+	CountryCode     *string
+	Phone           *string
+	Metadata        []byte
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type OrderClaim struct {
 	ID           string
 	OrderID      string

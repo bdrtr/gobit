@@ -95,6 +95,11 @@ type CreateOrderInput struct {
 	Total int64
 	// Items are the lines of the order; AT LEAST ONE line is required.
 	Items []CreateOrderItemInput
+	// Addresses are where the order ships and who it is billed to. At most one
+	// of each type; an empty slice is accepted, because a shop selling a
+	// download has neither and refusing the order over it would be the
+	// framework deciding what may be sold.
+	Addresses []models.OrderAddress
 	// Metadata is the caller's free extra data.
 	Metadata map[string]any
 }
@@ -309,6 +314,21 @@ func (s *Service) writeOrder(ctx context.Context, in CreateOrderInput, rule spen
 			}
 		}
 
+		// The addresses go in the SAME transaction, for the same reason the
+		// lines do: an order that exists without the address it was placed with
+		// is an order nobody can ship or invoice, and writing them afterwards is
+		// a second chance to end up in that state.
+		// By index: the address struct is large and copying it per iteration
+		// would carry a few hundred bytes for nothing.
+		for i := range in.Addresses {
+			address := in.Addresses[i]
+			address.ID = models.NewOrderAddressID()
+			address.OrderID = order.ID
+			if _, err := s.store.CreateOrderAddress(ctx, address); err != nil {
+				return err
+			}
+		}
+
 		if _, err := s.store.CreateSummary(ctx, models.OrderSummary{
 			ID:      models.NewSummaryID(),
 			OrderID: order.ID,
@@ -370,14 +390,15 @@ func (s *Service) replayedOrder(ctx context.Context, key string, cause error) (m
 
 // GetOrder returns the order together with its lines and its summary.
 //
-// The children are fetched with TWO fixed queries; whatever the number of lines
-// is, the number of queries does not change (there is no N+1). If the order does
-// not exist or is soft deleted, errors.NotFound is returned.
+// The children are fetched with THREE fixed queries; whatever the number of
+// lines or addresses is, the number of queries does not change (there is no
+// N+1). If the order does not exist or is soft deleted, errors.NotFound is
+// returned.
 //
-// The three queries run on a SINGLE SNAPSHOT ([Store.WithReadTx]); no lock is
-// taken. The only thing that is guaranteed is that all three see the SAME state
-// of the order: without a transaction the header could carry the NEW status
-// while the summary showed the OLD amounts.
+// The queries run on a SINGLE SNAPSHOT ([Store.WithReadTx]); no lock is taken.
+// The only thing that is guaranteed is that all of them see the SAME state of
+// the order: without a transaction the header could carry the NEW status while
+// the summary showed the OLD amounts.
 func (s *Service) GetOrder(ctx context.Context, orderID string) (models.OrderDetail, error) {
 	if err := requireID("order_id", orderID); err != nil {
 		return models.OrderDetail{}, err
@@ -425,7 +446,16 @@ func (s *Service) loadDetail(ctx context.Context, find func(ctx context.Context)
 		if err != nil {
 			return err
 		}
+		// A FOURTH fixed query, not one per address: the batch read is what
+		// keeps this path free of an N+1 when the listing reuses it.
+		addresses, err := s.store.OrderAddressesByOrderIDs(ctx, []string{order.ID})
+		if err != nil {
+			return err
+		}
+
 		detail = models.OrderDetail{Order: order, Items: items, Summary: summary}
+		detail.ShippingAddress, detail.BillingAddress = splitAddresses(addresses[order.ID])
+
 		return nil
 	})
 	if err != nil {
@@ -725,4 +755,27 @@ func transitionError(action, orderID string, required, actual models.OrderStatus
 	return errors.Conflict(code,
 		"%s cannot be applied: the order has to be in the %q status, it is in the %q status (%s)",
 		action, required, actual, orderID)
+}
+
+// splitAddresses picks the shipping and the billing address out of the list.
+//
+// A type that is present twice cannot happen — the schema has a unique index on
+// (order_id, address_type) — so the first of each is taken rather than the last;
+// were the constraint ever dropped, taking the first at least makes the choice
+// stable rather than dependent on row order.
+func splitAddresses(addresses []models.OrderAddress) (shipping, billing *models.OrderAddress) {
+	for i := range addresses {
+		switch addresses[i].Type {
+		case models.AddressShipping:
+			if shipping == nil {
+				shipping = &addresses[i]
+			}
+		case models.AddressBilling:
+			if billing == nil {
+				billing = &addresses[i]
+			}
+		}
+	}
+
+	return shipping, billing
 }

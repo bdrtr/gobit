@@ -35,6 +35,34 @@ type Snapshot struct {
 	Completed bool `json:"completed"`
 	// Items are the lines of the cart.
 	Items []SnapshotItem `json:"items"`
+	// ShippingAddress and BillingAddress are the addresses the cart carries;
+	// nil when it has none. They go into the ORDER, because the cart does not
+	// survive checkout and an order that cannot say where it went cannot be
+	// shipped, invoiced or disputed.
+	ShippingAddress *SnapshotAddress `json:"shipping_address,omitempty"`
+	BillingAddress  *SnapshotAddress `json:"billing_address,omitempty"`
+}
+
+// SnapshotAddress is one address as it crosses from the cart to the order.
+//
+// It is declared HERE, on the consumer's side, and carries only primitives so
+// that neither module has to be imported for it (ADR 0001/0006). Nothing is
+// validated: what the address means is the shop's business, and a framework
+// that refused an order over a missing province would be deciding where a shop
+// may sell.
+type SnapshotAddress struct {
+	SourceAddressID string         `json:"source_address_id,omitempty"`
+	FirstName       string         `json:"first_name,omitempty"`
+	LastName        string         `json:"last_name,omitempty"`
+	Company         string         `json:"company,omitempty"`
+	Address1        string         `json:"address_1,omitempty"`
+	Address2        string         `json:"address_2,omitempty"`
+	City            string         `json:"city,omitempty"`
+	Province        string         `json:"province,omitempty"`
+	PostalCode      string         `json:"postal_code,omitempty"`
+	CountryCode     string         `json:"country_code,omitempty"`
+	Phone           string         `json:"phone,omitempty"`
+	Metadata        map[string]any `json:"metadata,omitempty"`
 }
 
 // SnapshotItem is the set of fields of a cart line that enter the order.
@@ -111,6 +139,16 @@ type checkoutPlan struct {
 	ShippingTotal int64 `json:"shipping_total"`
 	// Lines are the lines that will enter the order and the reservation.
 	Lines []planLine `json:"lines"`
+
+	// ShippingAddress and BillingAddress travel from the cart to the order
+	// UNTOUCHED: this flow does not read them, it carries them. Where an order
+	// went is the shop's fact, not a decision this saga makes.
+	//
+	// They ARE written to the execution record, unlike PaymentData: an operator
+	// looking at a half-done checkout needs to see the destination, and an
+	// address is what the shop already prints on a label.
+	ShippingAddress *SnapshotAddress `json:"shipping_address,omitempty"`
+	BillingAddress  *SnapshotAddress `json:"billing_address,omitempty"`
 
 	// PaymentData is the free-form data passed to the provider and it is NOT
 	// WRITTEN TO THE RECORD.
@@ -218,6 +256,8 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 		ShippingTotal:     totals.ShippingTotal,
 		Lines:             lines,
 		PaymentData:       in.PaymentData,
+		ShippingAddress:   snap.ShippingAddress,
+		BillingAddress:    snap.BillingAddress,
 	}
 	if err := plan.validate(); err != nil {
 		return nil, err
@@ -556,6 +596,10 @@ type orderSnapshot struct {
 	ShippingTotal  int64               `json:"shipping_total"`
 	Total          int64               `json:"total"`
 	Items          []orderSnapshotItem `json:"items"`
+	// The addresses the cart carried. They are omitted when there are none: a
+	// download has neither, and an order for one is not incomplete.
+	ShippingAddress *SnapshotAddress `json:"shipping_address,omitempty"`
+	BillingAddress  *SnapshotAddress `json:"billing_address,omitempty"`
 }
 
 // orderSnapshotItem is the JSON schema of an order line.
@@ -606,6 +650,12 @@ func (p *checkoutPlan) orderSnapshotJSON(idempotencyKey string) (json.RawMessage
 		ShippingTotal:  p.ShippingTotal,
 		Total:          p.Amount,
 		Items:          items,
+		// The addresses travel WITH the order snapshot rather than being
+		// written afterwards: the order module puts them in the same
+		// transaction as the header and the lines, so an order cannot exist
+		// without the address it was placed with.
+		ShippingAddress: p.ShippingAddress,
+		BillingAddress:  p.BillingAddress,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, CodeSnapshotInvalid,

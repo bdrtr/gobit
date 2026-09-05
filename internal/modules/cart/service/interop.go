@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/internal/modules/cart/models"
 )
 
 // This file is the CROSS-MODULE surface of the cart module (ADR 0001, ADR 0006).
@@ -63,7 +64,57 @@ type interopSnapshot struct {
 	Revision        int64                   `json:"revision"`
 	Completed       bool                    `json:"completed"`
 	Items           []interopItem           `json:"items"`
-	ShippingMethods []interopShippingMethod `json:"shipping_methods"`
+	ShippingMethods []interopShippingMethod `json:"shipping_methods"` // ShippingAddress and BillingAddress are the addresses the cart carries.
+	// They are nil when the cart has none.
+	//
+	// They cross this surface because the ORDER has to keep them: the cart is
+	// reused or dropped after checkout, and an order that cannot say where it
+	// went cannot be shipped, invoiced or disputed. The copy the cart already
+	// made (so a later edit of the address book does not rewrite history) is
+	// only worth making if it survives into the order.
+	ShippingAddress *interopAddress `json:"shipping_address,omitempty"`
+	BillingAddress  *interopAddress `json:"billing_address,omitempty"`
+}
+
+// interopAddress is one address as it crosses the surface.
+//
+// Every field is a primitive: the consumer declares this shape on its own side
+// and must not import this module for it (ADR 0001/0006).
+type interopAddress struct {
+	SourceAddressID string         `json:"source_address_id,omitempty"`
+	FirstName       string         `json:"first_name,omitempty"`
+	LastName        string         `json:"last_name,omitempty"`
+	Company         string         `json:"company,omitempty"`
+	Address1        string         `json:"address_1,omitempty"`
+	Address2        string         `json:"address_2,omitempty"`
+	City            string         `json:"city,omitempty"`
+	Province        string         `json:"province,omitempty"`
+	PostalCode      string         `json:"postal_code,omitempty"`
+	CountryCode     string         `json:"country_code,omitempty"`
+	Phone           string         `json:"phone,omitempty"`
+	Metadata        map[string]any `json:"metadata,omitempty"`
+}
+
+// toInteropAddress copies a cart address onto the surface.
+func toInteropAddress(address *models.CartAddress) *interopAddress {
+	if address == nil {
+		return nil
+	}
+
+	return &interopAddress{
+		SourceAddressID: address.SourceAddressID,
+		FirstName:       address.FirstName,
+		LastName:        address.LastName,
+		Company:         address.Company,
+		Address1:        address.Address1,
+		Address2:        address.Address2,
+		City:            address.City,
+		Province:        address.Province,
+		PostalCode:      address.PostalCode,
+		CountryCode:     address.CountryCode,
+		Phone:           address.Phone,
+		Metadata:        address.Metadata,
+	}
 }
 
 // interopItem is the JSON schema of a cart line.
@@ -157,6 +208,8 @@ func (i *Interop) CartSnapshotJSON(ctx context.Context, cartID string) (json.Raw
 		Completed:       detail.Completed(),
 		Items:           make([]interopItem, 0, len(detail.Items)),
 		ShippingMethods: make([]interopShippingMethod, 0, len(detail.ShippingMethods)),
+		ShippingAddress: toInteropAddress(detail.ShippingAddress),
+		BillingAddress:  toInteropAddress(detail.BillingAddress),
 	}
 	for i := range detail.Items {
 		snapshot.Items = append(snapshot.Items, interopItem{

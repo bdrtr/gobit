@@ -110,6 +110,12 @@ type Store interface {
 
 	// CreateSummary opens the summary record of the order in a zeroed state.
 	CreateSummary(ctx context.Context, summary models.OrderSummary) (models.OrderSummary, error)
+	// CreateOrderAddress writes one address of the order, inside the order's
+	// own transaction.
+	CreateOrderAddress(ctx context.Context, address models.OrderAddress) (models.OrderAddress, error)
+	// OrderAddressesByOrderIDs reads the addresses of several orders in a
+	// SINGLE query; there is no query per order.
+	OrderAddressesByOrderIDs(ctx context.Context, orderIDs []string) (map[string][]models.OrderAddress, error)
 	// GetSummary returns the summary of the order; NotFound when there is none.
 	GetSummary(ctx context.Context, orderID string) (models.OrderSummary, error)
 	// SetSummaryTotals MERGES the cumulative paid and refunded amounts: every
