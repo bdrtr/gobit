@@ -133,8 +133,14 @@ than a reference, and every one of those places failed open.
 - **Semver starts meaning what it says.** The tags through v0.8.0 versioned an
   application; nothing downstream could break because nothing downstream could
   compile. Fourteen packages are now a promise, and /v2 is now a real cost.
-- **An out-of-tree plugin is possible**, which is the concrete test of whether
-  the surface is right. It is not yet proved — no such plugin exists.
+- **An out-of-tree plugin is possible, and it is proved rather than claimed.**
+  examples/plugin is a separate Go module — Go's own rule refuses it
+  internal/ — and internal/arch COMPILES it. It registers a payment provider,
+  mounts a route, subscribes to an event and returns a typed error using five
+  published packages and nothing else. That compilation is the only check here
+  that can catch a surface which is unusable rather than merely wrong: an
+  unexported type in a contract, or a helper the caller needs that was never
+  exported, is neither an import of internal/ nor a missing declaration.
 - **Publishing more is cheap; publishing less is not.** the job package will have
   to be published the day a plugin can register a job, and that is a deliberate edit in
   two places, not a file move.

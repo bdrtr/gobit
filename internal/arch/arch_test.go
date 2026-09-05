@@ -105,7 +105,14 @@ func holdsProductionGo(t *testing.T, dir string) bool {
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		if entry.IsDir() {
+			if isNestedModule(path) {
+				return filepath.SkipDir
+			}
+
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
 		found = true
@@ -115,6 +122,18 @@ func holdsProductionGo(t *testing.T, dir string) bool {
 	require.NoError(t, err, "%s could not be walked", dir)
 
 	return found
+}
+
+// isNestedModule reports whether the directory declares a module of its own.
+//
+// A directory with a go.mod is a SEPARATE module: its files are not part of
+// this one, `go build ./...` never reaches them, and the rules audited here do
+// not apply to them. examples/plugin is one on purpose — see
+// [TestTheOutOfTreePluginCompiles].
+func isNestedModule(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, goModFileName))
+
+	return err == nil
 }
 
 // moduleNames returns the names of the commerce modules in the repository.

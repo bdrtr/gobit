@@ -4,6 +4,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -173,7 +174,8 @@ func TestNoPackageEscapesTheSurface(t *testing.T) {
 			if path == repoRoot {
 				return nil
 			}
-			if strings.HasPrefix(entry.Name(), ".") || entry.Name() == "bin" {
+			if strings.HasPrefix(entry.Name(), ".") || entry.Name() == "bin" ||
+				isNestedModule(path) {
 				return filepath.SkipDir
 			}
 
@@ -208,4 +210,54 @@ func TestNoPackageEscapesTheSurface(t *testing.T) {
 	})
 	require.NoError(t, err, "the repository could not be walked")
 	require.Positive(t, seen, "no Go file was classified, so this audit proved nothing")
+}
+
+// outOfTreePlugin is the example module that stands outside gobit.
+const outOfTreePlugin = "examples/plugin"
+
+// TestTheOutOfTreePluginCompiles is the surface's only end-to-end proof.
+//
+// Every other audit here reads the repository's own source, and all of them
+// would stay green on a surface nobody outside could actually use: a contract
+// whose input type is unexported, a helper the caller needs that was never
+// exported, a constructor that only the composition root can reach. None of
+// that is an import of internal/ and none of it is a missing declaration — it
+// is a surface that compiles here and not there.
+//
+// So the check is a COMPILATION, from outside. examples/plugin is a separate Go
+// module: Go refuses it internal/ by the language's own rule, which makes it the
+// one place in this repository where "an outside program can do this" is a fact
+// rather than a claim. It registers a payment provider, mounts a route,
+// subscribes to an event and returns a typed error — the four things a plugin
+// exists to do.
+func TestTheOutOfTreePluginCompiles(t *testing.T) {
+	t.Parallel()
+
+	// Not a skip: this test is RUNNING under the go toolchain, so a lookup that
+	// fails means PATH was changed out from under the run, and the check would
+	// otherwise report "the surface is fine" having compiled nothing.
+	goTool, err := exec.LookPath("go")
+	require.NoError(t, err,
+		"the go toolchain is not on PATH, so the published surface was never compiled "+
+			"from outside — the one check here that can catch an unusable surface did "+
+			"not run")
+
+	dir := filepath.Join(repoRoot, outOfTreePlugin)
+	_, err = os.Stat(filepath.Join(dir, goModFileName))
+	require.NoError(t, err,
+		"%s has no %s of its own.\n"+
+			"Without it the example is part of this module, Go allows it internal/, and "+
+			"compiling it proves nothing about what an outside author can reach.",
+		outOfTreePlugin, goModFileName)
+
+	cmd := exec.CommandContext(t.Context(), goTool, "build", "./...")
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err,
+		"the out-of-tree plugin no longer compiles against the published surface:\n%s\n"+
+			"This is the failure the published surface exists to prevent. Something a "+
+			"plugin author needs has stopped being reachable — an unexported type in a "+
+			"contract, a helper that was never exported, a signature that changed. Fix "+
+			"the surface; do not fix the example by reaching further in, because it "+
+			"cannot reach further in.", output)
 }

@@ -193,7 +193,7 @@ var scannedExtensions = []string{".go", ".sql", ".gohtml", ".md", ".graphqls"}
 // The production trees come from [productionTrees] so that a promotion cannot
 // leave a tree unscanned for language; docs/ is added here because it holds no
 // Go source and so is not a production tree.
-var scannedRoots = append(append([]string{}, productionTrees...), "docs")
+var scannedRoots = append(append([]string{}, productionTrees...), "docs", "examples")
 
 // skippedDirs never hold hand-written source.
 var skippedDirs = []string{".git", "node_modules", "vendor", "bin", ".idea", ".vscode"}
