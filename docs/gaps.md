@@ -12,6 +12,104 @@ This file is in English because ADR 0012 makes language a property of the file
 and every new file is English.
 
 ---
+---
+
+## What to do, in order
+
+Derived entirely from the measured sections below; every item points at the
+section that produced it. Nothing here is a plan for a date, and nothing is a
+size estimate — it is an ORDER, chosen so that the things which get more
+expensive the longer they wait come first.
+
+Three sequencing facts govern the whole list:
+
+- **A decision costs nothing today and more every week.** Each item in group A
+  is a question that code is currently answering by accident. The longer that
+  goes on, the more code has to be revisited when the question is answered on
+  purpose.
+- **The public-surface decision (A1) has a clock on it.** ADR 0025 commits gobit
+  to being a library. Every module, endpoint and contract added before that
+  surface is chosen is one more thing to classify later — so A1 gets more
+  expensive with each feature shipped, including the features on this list.
+- **Four of the five AI features are blocked by something that is not AI.**
+  Filters that do not exist, reviews that do not exist, images that cannot be
+  read back, history that was never kept. The model is never the first step.
+
+### A. Decisions — no code until they are answered
+
+| # | decision | what it blocks | evidence |
+| --- | --- | --- | --- |
+| A1 | **Which packages become public** — the open half of ADR 0025 | the library transition, and it grows costlier per feature shipped | Importable core |
+| A2 | **Group-price selection for a customer in several groups** ("the best price they are entitled to") | B2B group pricing; the discount context has the identical hole | Commerce models |
+| A3 | **`allow_backorder`: give it a reader or stop publishing it** | pre-order; today a published flag does nothing | Commerce models |
+| A4 | **Invoice retention vs KVKK erasure** | any erasure work; unwritten, somebody deletes an invoice and puts the hole in the series ADR 0024 exists to prevent | Observability and security |
+| A5 | **JWT TTL policy** — there is no refresh flow, so the TTL is a straight trade nobody has stated | customer- and operator-facing session design | Observability and security |
+| A6 | **pgvector: reopen ADR 0015 or not** | semantic search, visual search, embedding recommendations | AI subsystem |
+| A7 | **Metrics posture** — OTLP-only, or expose a scrape endpoint | the "measurable speed" claim | Observability and security |
+| A8 | **Catalog cacheability** — channel in the path, single-channel opt-in, or per-key caching accepted | edge caching, and the repo already argued the default answer | Storefront speed |
+| A9 | **Customer identity: ADR 0008 stands or is superseded** | customer login, passkeys, a customer-facing assistant, and it is why the address book is unauthenticated | Storefront speed |
+| A10 | **Price history: promote the accidental retention or drop it** | forecasting | AI-powered features |
+
+### B. Foundations — each unblocks several features
+
+| # | foundation | unblocks | evidence |
+| --- | --- | --- | --- |
+| B1 | **Storefront filter surface** — price, category, tag, option value, in-stock, sort | NL search; the panel; every "find me" feature. **Highest leverage item on the list** | AI-powered features |
+| B2 | **Storefront vocabulary endpoints** — collections, categories, tags | NL search (no public way to resolve a word to an id today) | AI-powered features |
+| B3 | **Review module** | moderation (the AI brief's first use case), summaries, Q&A | AI subsystem |
+| B4 | **Inventory movement ledger + inventory events** | forecasting, real-time stock, and an audit trail stock does not have | AI-powered features, Storefront speed |
+| B5 | **Order line-item entity in the read layer + date filter + index** | demand analytics and forecasting | AI-powered features |
+| B6 | **File read-back, file events, product-image ↔ upload link** | anything that looks at a photo | AI-powered features |
+| B7 | **A suggestion store** — system proposes, human applies | forecast suggestions, category suggestions. The pattern exists (`sagawatch`, ADR 0017); the storage does not | AI-powered features |
+| B8 | **KVKK erasure, export and a retention policy** | a legal requirement, and A4 must be answered first | Observability and security |
+| B9 | **Stored payment instrument** — provider contract + table | saved cards AND subscriptions. One contract change serves both | Storefront speed, Commerce models |
+| B10 | **Order addresses** — the cart's addresses never reach the order | invoicing (which today takes the address from its caller), shipping labels, B2B | Storefront speed |
+| B11 | **A per-column round-trip test for every module** | nothing, and it prevents the defect class that shipped twice in one change | Common Go mistakes |
+
+### C. Features — after the above
+
+| # | feature | waits on |
+| --- | --- | --- |
+| C1 | **Back-in-stock waitlist** — the cheapest real feature on the list; every part exists (events, outbox, notification providers) and only a table is missing | — |
+| C2 | **Operator assistant in the panel** — sixty-one primitive interop methods are already a tool catalogue, and identity exists inside the panel | a return-creation surface |
+| C3 | **Digital product delivery** — entitlement, expiring link, re-download policy; storage already exists | — |
+| C4 | **B2B: quotes, terms, minimum order** — terms fit the money machinery ADR 0020/0022 already built | A2 |
+| C5 | **NL search layer** | B1, B2 |
+| C6 | **Review summaries and Q&A** | B3 |
+| C7 | **Subscriptions** — a second axis on the order, not a fifth status; the scheduler is ready | B9 |
+| C8 | **Real-time stock** | B4, A8-adjacent auth shape, and a fan-out the current bus cannot do |
+| C9 | **Edge caching** | A8 |
+| C10 | **Multi-vendor marketplace** — changes what every money path means; last, deliberately | most of the above |
+
+### D. Corrections — small, and some are lies today
+
+- **D1** `allow_backorder` is published and does nothing (see A3).
+- **D2** The address book's storefront endpoints are unauthenticated and keyed by
+  a path id — personal data anyone can read and change. A known consequence of
+  ADR 0008, and its sharpest form.
+- **D3** Two repository-internal transactions (tax, region) cannot compose into a
+  service transaction; called from inside one they would open a second,
+  independent transaction.
+- **D4** ~~The OpenAPI text claimed `q` searches title and handle; it searches
+  title only.~~ Fixed 2026-09-05.
+
+### E. Out of framework scope — written, not forgotten
+
+- **e-fatura transmission** needs the merchant's certificate and an integrator
+  contract. The framework owes the document, the numbering and the provider slot;
+  the first two are built (ADR 0024).
+- **Carrier integration and an iyzico provider** are plugin work. The slot exists
+  and the PayTR plugin is the template.
+- **Customer identity** is the embedding application's job (ADR 0008), unless A9
+  supersedes it.
+
+### F. Standing work
+
+- **Translation ledger: 260 files.** ADR 0012 lets it only shrink.
+- **Panel: twelve of sixteen modules have no screen**, nothing can be created or
+  deleted from it, and there is no extension point for a plugin to add one. The
+  four that exist cover what an operator looks at daily.
+
 
 ## Data layer — measured 2026-09-04
 
@@ -1198,6 +1296,160 @@ The cheapest real move on this list is therefore not a model call. It is the
 storefront filter surface: the NL layer needs it, the panel would use it, and
 nothing else on the roadmap has to wait for it.
 
+---
+
+## Storefront speed and checkout — measured against the brief, 2026-09-05
+
+The brief: product and category endpoints carrying ETag/Cache-Control so a CDN
+can serve them, with cart and price personalisation moved to separate endpoints;
+real-time stock and price over SSE or WebSocket; single-page checkout, guest
+checkout, saved cards, passkey login; and visual/semantic search on pgvector in
+the same database.
+
+### Edge cache: the repository already argued against it, in writing
+
+**No JSON response anywhere carries `Cache-Control`, `ETag`, `Vary`,
+`Last-Modified` or `Age`.** `corehttp.WriteJSON` writes exactly two things — a
+content type and a status — and takes no ETag parameter, so no caller could
+supply one. Only two responses in the whole tree are cacheable: the admin
+panel's stylesheet (`WriteAsset`, `immutable`) and `GET /files/{key}`
+(`public, max-age=3600`, identity-free, and its godoc is the only place that
+reasons about shared caches at all).
+
+**And the premise does not hold as stated: the product body already varies by
+caller.** `RequireStore` reads `x-publishable-api-key`, resolves it to a
+principal carrying sales-channel ids, and the storefront listing and detail
+filter on those channels in SQL. Two keys on the SAME URL get different bodies —
+covered by four integration tests — and no `Vary` is emitted for that header.
+`Vary` appears in exactly one place in the repository, for `Origin`, and only
+when CORS is configured, which by default it is not.
+
+The codebase has already written this argument down. From the GraphQL handler:
+*"The GET transport was DELIBERATELY not added. GET's only real gain is
+intermediate caches and that gain does NOT EXIST here: the response varies with
+the request's publishable key, that is, with the sales channel. A shared cache
+would either have to vary by the key header (that is, cache almost nothing) or
+serve one storefront's catalog to another — which is exactly why the channel
+filter exists."*
+
+So the brief's instinct — separate the personalised part — is right, and the
+personalised part is not the cart. **It is the sales channel, and it sits on the
+catalog endpoint itself, in a header.** Making the catalog edge-cacheable means
+deciding one of: the channel moves into the PATH (a cache key a CDN can see), or
+single-channel installations opt in explicitly, or the cache is per-key and the
+hit rate is accepted for what it is.
+
+Two further facts a cache design has to survive:
+
+- **Price does not vary per caller on the product endpoint** — every rule-bearing
+  price is dropped by the provider, with the reason written where it happens:
+  a rule needs a context (region, customer group) the provider does not carry.
+  So the catalog body is genuinely impersonal apart from the channel.
+- **The body is time-varying with no write behind it.** A price-list window
+  opening or closing changes the product response with no product write, because
+  the provider evaluates against the clock. That defeats an ETag computed from
+  the record and it defeats a long `max-age` — it is the fact that decides
+  whether the answer is a short TTL or an explicit purge.
+
+There are 42 routes under `/store/v1`, and the GraphQL endpoint is POST-only.
+
+### Real-time stock: nothing runs, and more of it is present than expected
+
+There is no SSE, WebSocket, long-poll or streaming endpoint. `text/event-stream`
+appears once in the tree, in a test.
+
+But the groundwork is unusually far along, and by accident:
+
+- **The shared response-writer wrapper is already streaming-correct and
+  tested.** It forwards `Unwrap`, `Hijack` and `Flush`, and its godoc names
+  WebSocket explicitly. A streaming handler would not have to fight the
+  middleware.
+- **`github.com/coder/websocket` is already in `go.mod`** (indirect, pulled by
+  gqlgen), and gqlgen's transport package on disk already ships `sse.go` and
+  `websocket.go`. The transports are in the module graph and simply never added
+  — the storefront schema has a `Query` type and no `Subscription`.
+- **The storefront product response already carries live stock**:
+  `inventory_item.available_quantity` reaches the client through the link
+  expansion, because the expansion requests no field list and therefore gets the
+  provider's full set.
+
+Four blockers, and each is a decision rather than a library choice:
+
+1. **Inventory publishes no events at all.** `SetInventoryLevel`,
+   `AdjustInventory`, `Reserve`, `ReleaseReservation` and `ConfirmReservation`
+   are silent. There is nothing to push.
+2. **The event bus cannot fan out to N web processes as configured.** Redis
+   Streams consumer groups deliver each message to exactly ONE consumer in the
+   group, and every subscriber joins the same group. Pushing the same change to
+   every connected browser needs a second delivery shape.
+3. **`WRITE_TIMEOUT` is 30 seconds, mandatory, and unexempted.** A long-lived
+   connection dies at thirty seconds. The pprof listener hit exactly this and
+   the answer was a second listener with no write budget — the precedent exists
+   and its cost is known.
+4. **A browser `EventSource` cannot send `x-publishable-api-key`.** The store
+   guard requires that header on every request. Real-time on the storefront
+   needs an auth shape the browser can actually produce.
+
+### Checkout: better than the brief assumes, with one real hole
+
+- **Guest checkout works and is the DEFAULT path**, not a mode. `Cart.Guest()`
+  is a first-class state, `CompleteCartInput` has no customer field at all, and
+  an ADR 0008 conformance test asserts a guest order is never asked for the
+  spending rule. **Email is not required anywhere.**
+- **A single "complete checkout" call already exists.**
+  `POST /store/v1/carts/{id}/complete` runs the whole five-step saga server-side
+  — reserve, create order, authorize, capture, clear cart. The storefront never
+  touches a payment collection or a session.
+- **Minimum cart to paid order is four HTTP calls**, proven end to end over the
+  production guard stack. The third is a `GET` and it is forced by a deliberate
+  rule: `expected_total` is mandatory on complete, and nothing in the
+  add-line-item response carries the total.
+- A full-feature checkout (email, addresses, chosen shipping and provider) is
+  about ten calls, and **email cannot be passed on the complete call** — it needs
+  a separate write to the cart.
+
+**The real hole: the cart's addresses never reach the order.** `cart_addresses`
+exists; the order module has no address table, column or model field. This is
+also why the invoicing flow has to take the buyer's address from its caller —
+the order does not have one.
+
+### Saved cards and passkeys: neither exists, and saved cards share a
+prerequisite with subscriptions
+
+- **`PaymentProvider` has five methods — CreateSession, Authorize, Capture,
+  Refund, Cancel — all addressed by a per-transaction session id.** There is no
+  customer parameter, no tokenize/attach/detach, no mandate, no payment-method
+  type; the payment schema has no customer column and no instrument table. A
+  second payment cannot reuse a first one's instrument. Both shipped payment
+  plugins confirm it: PayTR keys on a per-session iframe token, Stripe is a
+  skeleton.
+
+  **This is the same prerequisite subscriptions need** — a stored instrument
+  rather than a session — so the two features are one contract change apart, not
+  two.
+
+- **Passkey/WebAuthn: zero occurrences**, no library. The auth module supports
+  exactly three methods and all are admin-facing; the customer-facing surface
+  authenticates the STORE, not a person (ADR 0008).
+
+- **An address book exists and is a leaf.** `customer_address` is a full table
+  with DB-enforced single default shipping and billing. But **its storefront
+  endpoints are unauthenticated and identify the customer from the path** — the
+  module's own package doc says anyone reaching them can read and change a name,
+  email and address — and **nothing outside the customer module reads it.** No
+  path pre-fills a cart address from a saved one, and the order has no address
+  at all.
+
+  That is worth reading next to the KVKK note: it is personal data on an
+  unauthenticated endpoint, and it is a known consequence of ADR 0008 rather
+  than an oversight — but it is the sharpest form the consequence takes.
+
+### Visual and semantic search
+
+Already measured in the AI-features section and unchanged: `pgvector` is not
+available on the cluster, and ADR 0015 fixes the contract at zero required
+extensions, so this item reopens that ADR rather than sitting on top of it.
+
 ## Capability inventory — measured 2026-09-04
 
 Ten axes, 139 capabilities: 83 gaps and 22 things this repository refuses in
@@ -1436,7 +1688,7 @@ the next reader sees a decision instead of a wait.
    inventory provider does not offer. Widening a module's published contract for
    a screen that duplicates another one is not a trade worth making.
 
-   Still open: eleven modules have no screen — all of them configuration
+   Still open: twelve of the sixteen modules have no screen — all of them configuration
    (regions, tax rates, shipping options, promotions, keys) rather than daily
    work — nothing can be created or deleted from the panel, and there is no
    extension point for a plugin to add a screen.
