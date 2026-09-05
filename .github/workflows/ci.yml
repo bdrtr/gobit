@@ -51,6 +51,15 @@ jobs:
       # themselves.
       - name: Coverage summary (unit tests ONLY)
         run: go tool cover -func=coverage.out | tail -1
+      # The benchmarks run ONCE each, which measures nothing and is not meant
+      # to: timings from a shared runner are noise. What this catches is a
+      # benchmark that stopped compiling, or whose fixture drifted until it
+      # measures the error path — the guard clause inside each one fails here
+      # rather than months later when somebody finally reads the numbers.
+      # A benchmark nobody ever runs is the capability-without-a-consumer
+      # class this repository already has a name for (ADR 0009).
+      - name: Benchmarks still build and measure the real path
+        run: go test -run '^$' -bench . -benchtime=1x ./...
 
   integration:
     name: Integration

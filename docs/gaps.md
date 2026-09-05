@@ -297,22 +297,45 @@ dependency lands on is decided by what its loss does to a request.
 
 ### Gaps
 
-1. **No pprof and no benchmarks. Zero `func Benchmark` in the repository.**
+1. ~~**No pprof and no benchmarks. Zero `func Benchmark` in the repository.**~~
+   **CLOSED 2026-09-05.** Five benchmarks on the paths that run per request,
+   and a pprof listener of its own that is off unless configured.
 
-   This is the sharpest inconsistency in the codebase, because measurement
-   discipline is otherwise strong: the SQL side is measured with `EXPLAIN` read
-   inside integration tests, load fixtures run to 52,000 rows, and godocs carry
-   real numbers (2.9 ms, 0.56 ms, 67 ms → 0.65 ms). All of it is DATABASE-side.
+   The first numbers, on an 8845HS:
+
+   | benchmark | per op | allocs |
+   | --- | --- | --- |
+   | `StorefrontQuery` (24 products, 3 variants each) | 374 us | 8,421 |
+   | `ComputeDiscounts` (20 lines, 4 promotions) | 4.5 us | 18 |
+   | `AllocateAcross` (20 lines) | 1.3 us | 2 |
+   | `AssembleTotals` (20 lines) | 124 ns | 0 |
+   | `ApplyTaxResponse` (20 lines) | 89 ns | 0 |
+
+   The finding is the spread. The cart arithmetic — the part that was written
+   most carefully, with the remainder rules argued line by line — allocates
+   NOTHING and costs about a tenth of a microsecond. The GraphQL read surface
+   costs three thousand times as much and allocates 8,421 times per request,
+   which is the same order as the database work it was compared against
+   (67 ms -> 0.65 ms on the count query). It is the obvious first place to look,
+   and nothing before this could have said so.
+
+   The listener is separate rather than a route on the API, because a profile
+   takes as long as it was asked to take and `WRITE_TIMEOUT=30s` cuts the
+   30-second CPU profile exactly in half. It is unauthenticated, so a
+   non-loopback bind is REFUSED at startup outside development, and an arch
+   test keeps `net/http/pprof` — which publishes itself through a package-level
+   global on import alone — out of every other file.
+
+   The original finding: this is the sharpest inconsistency in the codebase,
+   because measurement discipline is otherwise strong: the SQL side is measured
+   with `EXPLAIN` read inside integration tests, load fixtures run to 52,000
+   rows, and godocs carry real numbers (2.9 ms, 0.56 ms, 67 ms → 0.65 ms). All
+   of it is DATABASE-side.
 
    Nothing measures the Go side. There is no profile endpoint to attach to a
    running process and no benchmark to catch a regression in a hot path — so an
    allocation regression in pricing, promotion computation or JSON encoding
    would be invisible until it showed up as latency in production.
-
-   What it would touch: `net/http/pprof` behind an admin-only route or a
-   separate listener (it must not be on the public surface), plus benchmarks on
-   the paths that actually run per request — cart total computation, promotion
-   evaluation, the query layer's graph resolution.
 
 2. **Pagination is offset-based everywhere.** 101 `limit` and 96 `offset`
    occurrences across the module APIs; no cursor, no `after`, no `before`.

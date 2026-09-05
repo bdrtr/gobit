@@ -12,6 +12,60 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Go tarafı artık ölçülüyor** (pprof + benchmark).
+
+  Deponun ölçüm disiplini güçlüydü ama tamamı VERİTABANI tarafındaydı:
+  entegrasyon testinin içinde okunan `EXPLAIN`, 52 bin satırlık yük fikstürü,
+  godoc'larda gerçek rakamlar (2,9 ms; 0,56 ms; 67 ms → 0,65 ms). Go tarafını
+  hiçbir şey ölçmüyordu — depoda tek bir `func Benchmark` yoktu.
+
+  İstek başına koşan beş yol ölçüldü (8845HS):
+
+  | benchmark | işlem başına | tahsisat |
+  | --- | --- | --- |
+  | `StorefrontQuery` (24 ürün, 3'er varyant) | 374 µs | 8.421 |
+  | `ComputeDiscounts` (20 satır, 4 promosyon) | 4,5 µs | 18 |
+  | `AllocateAcross` (20 satır) | 1,3 µs | 2 |
+  | `AssembleTotals` (20 satır) | 124 ns | 0 |
+  | `ApplyTaxResponse` (20 satır) | 89 ns | 0 |
+
+  Bulgu aradaki fark. En dikkatle yazılan kısım — kuruş artığı kuralları satır
+  satır tartışılan sepet aritmetiği — HİÇ tahsisat yapmıyor. GraphQL okuma
+  yüzeyi ise üç bin katı tutuyor ve istek başına 8.421 kez tahsisat yapıyor; bu,
+  kıyaslandığı veritabanı işiyle aynı büyüklük sırası (sayım sorgusu
+  67 ms → 0,65 ms). Bakılacak ilk yer orası, ve bunu bundan önce hiçbir şey
+  söyleyemezdi.
+
+  Her benchmark, ÖLÇTÜĞÜ ŞEYİN gerçekten çalıştığını timer başlamadan önce
+  doğruluyor: fikstür indirim üretmiyorsa ya da hata dönüyorsa benchmark
+  düşüyor. Reddedilme yolunu ölçen bir benchmark gayet iyi bir rakam bildirir ve
+  hiçbir anlam taşımaz.
+
+  pprof AYRI bir dinleyicide, API sunucusunun üstünde değil: bir profil
+  kendisinden istenen kadar sürer ve `WRITE_TIMEOUT=30s` ilk elde edilen 30
+  saniyelik CPU profilini tam ortasından keserdi. Ticaret yüzeyinin yazma
+  bütçesi bir hata ayıklama aracı için genişletilemez, araç da 30 saniyeye
+  sığdırılamaz; o yüzden aynı sunucuyu paylaşmıyorlar. Yan faydası: muhafız
+  yığınındaki hiçbir hata heap dökümünü genel yüzeye koyamaz, çünkü profiller o
+  yüzeyde zaten yok.
+
+  Varsayılan KAPALI. Uçlar kimlik doğrulamasız — ayrı dinleyiciyi ucuz kılan şey
+  bu — ve bir heap profili canlı belleğin İÇERİĞİNİ taşır: uçuştaki token,
+  müşteri verisi, hash'lenmeyi bekleyen parola. Bu yüzden development dışında
+  loopback olmayan bir adres açılışta REDDEDİLİR; ":6060" yerel görünüp tüm
+  arayüzleri dinlediği için kendi test vakası var.
+
+  `net/http/pprof` yalnızca IMPORT edilerek altı ucu süreç genelindeki varsayılan
+  mux'a kaydeder — yani profilleme kelimesi geçmeyen bir kod, ilgisiz bir
+  dinleyiciyi heap dökümü dağıtır hale getirebilir. Bir arch testi hem o
+  import'u tek dosyaya hapsediyor hem de varsayılan mux'a dokunulmasını
+  yasaklıyor; ikisi birlikte denetleniyor çünkü tek başına her biri zararsız.
+
+  `make bench` ile koşuluyor, CI'da `-benchtime=1x` ile bir kez: rakam değil,
+  benchmark'ın hâlâ derlendiği ve hâlâ gerçek yolu ölçtüğü doğrulanıyor.
+  Kimsenin koşmadığı bir benchmark, deponun adını koyduğu "tüketicisi olmayan
+  yetenek" sınıfının ta kendisi olurdu (ADR 0009).
+
 - **Yönetim yazmaları artık iz bırakıyor** (audit log).
 
   Admin API her yazmayı kimlik doğrulayıp yetkilendiriyor, sonra olduğunu

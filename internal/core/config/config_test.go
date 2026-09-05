@@ -29,7 +29,7 @@ var envKeys = []string{
 	"READ_TIMEOUT", "WRITE_TIMEOUT", "IDLE_TIMEOUT", "READINESS_DEGRADED_TIMEOUT",
 	"EVENT_BUS", "EVENT_BUS_CONSUMER",
 	"JWT_SECRET", "JWT_TTL",
-	"ADMIN_BOOTSTRAP_EMAIL", "ADMIN_BOOTSTRAP_PASSWORD",
+	"ADMIN_BOOTSTRAP_EMAIL", "ADMIN_BOOTSTRAP_PASSWORD", "PROFILING_ADDR",
 	"GUARD_BACKEND", "REDIS_KEY_PREFIX", "NOTIFICATION_PROVIDER",
 	"FILE_PROVIDER", "FILE_ROOT", "FILE_MAX_UPLOAD_BYTES", "FILE_ALLOWED_TYPES",
 	"GRAPHQL_MAX_DEPTH", "GRAPHQL_MAX_COMPLEXITY", "GRAPHQL_INTROSPECTION",
@@ -1221,4 +1221,50 @@ func TestThePoolLimitsCanBeTunedInBothDirections(t *testing.T) {
 		assert.Equal(t, int32(1), cfg.DBMaxConns)
 		assert.Equal(t, int32(1), cfg.DBMinConns)
 	})
+}
+
+// TestAProfilingAddressBeyondLoopbackIsRefused guards an unauthenticated
+// surface that hands out the contents of live memory.
+//
+// The endpoints have no auth — that is what makes a separate listener cheap —
+// so the bind address IS the access control. ":6060" is the case worth a test
+// of its own: it reads as local and listens on every interface.
+func TestAProfilingAddressBeyondLoopbackIsRefused(t *testing.T) {
+	tests := map[string]struct {
+		environment string
+		addr        string
+		rejected    bool
+	}{
+		"staging, every interface":      {environment: "staging", addr: ":6060", rejected: true},
+		"staging, a routable address":   {environment: "staging", addr: "0.0.0.0:6060", rejected: true},
+		"staging, an unparseable value": {environment: "staging", addr: "6060", rejected: true},
+		"staging, loopback":             {environment: "staging", addr: "127.0.0.1:6060"},
+		"staging, loopback by name":     {environment: "staging", addr: "localhost:6060"},
+		"staging, IPv6 loopback":        {environment: "staging", addr: "[::1]:6060"},
+		// Off is off: an empty address opens no listener, so there is nothing to
+		// refuse and no reason to block the installation.
+		"staging, no listener":        {environment: "staging", addr: ""},
+		"production, every interface": {environment: "production", addr: ":6060", rejected: true},
+		// Locally the listener is often reached from another container.
+		"development, every interface": {environment: "development", addr: ":6060"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			setUpSharedEnvironment(t, tt.environment)
+			t.Setenv("JWT_SECRET", productionJWTSecret)
+			t.Setenv("PROFILING_ADDR", tt.addr)
+
+			_, err := config.Load()
+			if !tt.rejected {
+				require.NoError(t, err, "a valid configuration was rejected")
+
+				return
+			}
+
+			require.Error(t, err, "a profiling listener beyond loopback cannot be accepted in a shared environment")
+			assert.Contains(t, err.Error(), "PROFILING_ADDR")
+			assert.Contains(t, err.Error(), tt.environment, "the error message has to say which environment is enforcing it")
+		})
+	}
 }

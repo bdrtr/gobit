@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -536,6 +537,31 @@ type Config struct {
 	// IdleTimeout is how long a keep-alive connection may wait idle.
 	IdleTimeout time.Duration `env:"IDLE_TIMEOUT" envDefault:"120s"`
 
+	// ProfilingAddr is the address the pprof listener binds to (e.g.
+	// "127.0.0.1:6060"). EMPTY, which is the default, means no profiling
+	// listener is opened at all.
+	//
+	// # Why it is a separate listener and not a route on the API
+	//
+	// A profile takes as long as it was asked to take, and WriteTimeout would
+	// cut it off: the default 30s kills the 30s CPU profile that is the first
+	// thing anybody reaches for. The commerce surface cannot have its write
+	// budget widened to fit a debugging tool, and the debugging tool cannot be
+	// made to fit in 30 seconds, so they do not share a server.
+	//
+	// It also means no mistake in the guard stack can put a heap dump on the
+	// public surface: the profiles are not on that surface to begin with.
+	//
+	// # Why a routable address is REFUSED in shared environments
+	//
+	// These endpoints are unauthenticated — that is what makes the separate
+	// listener cheap — and a heap profile carries the CONTENTS of live memory:
+	// tokens, customer data, a password in flight. Binding them anywhere
+	// reachable would publish all of it. Validate refuses a non-loopback
+	// address while APP_ENV is not development; reach the listener with a port
+	// forward, which is what the loopback bind is for.
+	ProfilingAddr string `env:"PROFILING_ADDR"`
+
 	// OTLPEndpoint is the gRPC address of the OpenTelemetry collector (host:port).
 	//
 	// It has NO default: left empty, tracing is turned off entirely and the
@@ -931,6 +957,16 @@ func (c Config) Validate() error {
 		// counted as "not real", its network and its tokens are real.
 		if c.OTLPEndpoint != "" && c.OTLPInsecure {
 			return fmt.Errorf("config: OTEL_EXPORTER_OTLP_INSECURE=true is not allowed while APP_ENV=%s", c.AppEnv)
+		}
+		// The pprof endpoints are unauthenticated and a heap profile carries live
+		// memory — tokens, customer data, a password on its way to be hashed. An
+		// address that is not loopback publishes all of it to whoever can reach the
+		// port. ":6060" is the shape that matters here: it looks local and listens
+		// on every interface.
+		if c.ProfilingAddr != "" && !c.profilingBindsToLoopback() {
+			return fmt.Errorf(
+				"config: PROFILING_ADDR=%q listens beyond loopback and is not allowed while APP_ENV=%s (reach it with a port forward instead)",
+				c.ProfilingAddr, c.AppEnv)
 		}
 		// An empty signing secret is two separate faults: a fixed secret means anybody
 		// can mint themselves an admin token, while a generated random one means tokens
@@ -1409,3 +1445,26 @@ func (c Config) NeedsRedis() bool {
 
 // Addr returns the address the HTTP server will listen on.
 func (c Config) Addr() string { return fmt.Sprintf(":%d", c.AppPort) }
+
+// profilingBindsToLoopback reports that ProfilingAddr can be reached from this
+// machine only.
+//
+// An address with no host — ":6060" — is NOT loopback: it listens on every
+// interface. That is the case this function exists for, because it is the one
+// that reads as local and is not.
+func (c Config) profilingBindsToLoopback() bool {
+	host, _, err := net.SplitHostPort(c.ProfilingAddr)
+	if err != nil {
+		// An unparseable address is refused rather than trusted: net/http will
+		// reject it too, and guessing on its behalf could only guess wrong in
+		// the permissive direction.
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+
+	ip := net.ParseIP(host)
+
+	return ip != nil && ip.IsLoopback()
+}

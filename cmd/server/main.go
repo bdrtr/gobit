@@ -321,6 +321,11 @@ func serve() error {
 	defer stopJobs()
 	_ = jobs
 
+	// The profiling listener is separate and comes up before the API server so
+	// that a boot slow enough to be worth profiling can be profiled.
+	waitForProfiling := startProfiling(ctx, cfg, log)
+	defer waitForProfiling()
+
 	srv := corehttp.NewServer(corehttp.ServerOptions{
 		Addr:              cfg.Addr(),
 		Handler:           router,

@@ -77,6 +77,15 @@ test-integration: ## Entegrasyon testlerini çalıştır (testcontainers gerekti
 smoke: ## Smoke testleri: gerçek ikiliyi açıp süreç davranışını sınar (Docker gerektirir)
 	go test -tags=smoke -count=1 -timeout 20m ./internal/smoke/
 
+# Benchmark'lar veritabanına DOKUNMAZ: hepsi saf fonksiyonlar ya da sahte
+# servisler üzerinde koşar. Deponun geri kalan ölçümü SQL tarafındaydı
+# (EXPLAIN, 52 bin satırlık fikstür); buradaki rakamlar Go tarafının kendi
+# maliyetidir ve iki ölçüm birbirinin yerine geçmez.
+#
+# BENCH ile tek bir benchmark seçilebilir: make bench BENCH=StorefrontQuery
+bench: ## Go tarafı benchmark'ları çalıştır (tahsisat sayısıyla birlikte)
+	go test -run '^$$' -bench '$(or $(BENCH),.)' -benchmem ./...
+
 load-test: ## Temel yük testini çalıştır (REQUESTS/CONCURRENCY ile ayarlanır)
 	GOBIT_LOAD_REQUESTS=$(or $(REQUESTS),5000) \
 	GOBIT_LOAD_CONCURRENCY=$(or $(CONCURRENCY),32) \
