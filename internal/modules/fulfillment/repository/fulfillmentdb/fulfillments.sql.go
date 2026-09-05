@@ -92,6 +92,52 @@ func (q *Queries) GetFulfillmentByIdempotencyKey(ctx context.Context, idempotenc
 	return i, err
 }
 
+const getFulfillmentsByIDs = `-- name: GetFulfillmentsByIDs :many
+SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, deleted_at FROM fulfillments
+WHERE id = ANY ($1::text[]) AND deleted_at IS NULL
+ORDER BY id
+`
+
+// GetFulfillmentsByIDs serves the Query layer's FetchByIDs call in a SINGLE
+// round trip; no query per id (N+1) is made.
+func (q *Queries) GetFulfillmentsByIDs(ctx context.Context, ids []string) ([]Fulfillment, error) {
+	rows, err := q.db.Query(ctx, getFulfillmentsByIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Fulfillment{}
+	for rows.Next() {
+		var i Fulfillment
+		if err := rows.Scan(
+			&i.ID,
+			&i.Reference,
+			&i.ShippingOptionID,
+			&i.ProviderID,
+			&i.ExternalID,
+			&i.Status,
+			&i.TrackingNumber,
+			&i.TrackingUrl,
+			&i.IdempotencyKey,
+			&i.ShippedAt,
+			&i.DeliveredAt,
+			&i.CanceledAt,
+			&i.Data,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertFulfillmentIfAbsent = `-- name: InsertFulfillmentIfAbsent :one
 
 INSERT INTO fulfillments (

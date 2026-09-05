@@ -392,6 +392,14 @@ func (s *Service) ListShippingOptions(
 	})
 }
 
+// ListFulfillmentsByIDs returns the shipments of the given identifiers in a
+// SINGLE query, for the Query layer's FetchByIDs.
+func (s *Service) ListFulfillmentsByIDs(
+	ctx context.Context, ids []string,
+) ([]models.Fulfillment, error) {
+	return s.store.FulfillmentsByIDs(ctx, ids)
+}
+
 // ListShippingOptionsByIDs returns the options of the given identifiers in a
 // SINGLE query. No record is returned for an identifier that is not found; that
 // is not an error.

@@ -532,6 +532,26 @@ func (f *fakeStore) InsertFulfillmentIfAbsent(
 	return ful, true, nil
 }
 
+func (f *fakeStore) FulfillmentsByIDs(_ context.Context, ids []string) ([]models.Fulfillment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// Sorted, deleted rows skipped, missing ids simply absent: the same three
+	// things the query does. A fake that answered any of them differently would
+	// let a test pass over behavior the database does not have.
+	out := make([]models.Fulfillment, 0, len(ids))
+	for _, id := range slices.Sorted(slices.Values(ids)) {
+		ful, ok := f.fuls[id]
+		if !ok || ful.DeletedAt != nil {
+			continue
+		}
+		ful.Items = nil
+		out = append(out, ful)
+	}
+
+	return out, nil
+}
+
 func (f *fakeStore) GetFulfillment(_ context.Context, id string) (models.Fulfillment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

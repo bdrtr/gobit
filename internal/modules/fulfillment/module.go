@@ -125,6 +125,12 @@ const ProvidersName = ModuleName + ".providers"
 // ProviderName is the Query provider's name in the container (ADR 0004).
 const ProviderName = service.EntityName + query.ProviderSuffix
 
+// ShipmentProviderName is the SHIPMENT provider's name in the container.
+//
+// A module may offer several entities; this one offers the shipping option and
+// the shipment, and the Query layer looks each up under its own name.
+const ShipmentProviderName = service.ShipmentProviderName
+
 // dbServiceName is the core database pool's name in the container.
 const dbServiceName = "core.db"
 
@@ -246,6 +252,14 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// The provider name has the form "<entity>.query"; Query looks it up under
 	// that name and verifies with Entity() that the name matches (ADR 0004).
 	if err := c.Provide(ProviderName, service.NewQueryProvider(svc)); err != nil {
+		return err
+	}
+	// The SECOND entity of this module. It exists because the
+	// "order_fulfillment" link points at the shipment, and a link whose far
+	// side has no provider can be read through the link service but not
+	// EXPANDED through a Query request — and expansion is what an order's
+	// timeline is made of.
+	if err := c.Provide(ShipmentProviderName, service.NewShipmentQueryProvider(svc)); err != nil {
 		return err
 	}
 

@@ -194,6 +194,36 @@ func (r *Repository) UpdateFulfillmentStatus(
 
 // --- fulfillment items -------------------------------------------------------
 
+// FulfillmentsByIDs returns the shipments of the given identifiers in a SINGLE
+// query. No row is returned for an identifier that is not found; that is not an
+// error.
+//
+// It exists for the Query layer's FetchByIDs: reading them one by one is the
+// N+1 the read layer was built to make structurally impossible.
+func (r *Repository) FulfillmentsByIDs(
+	ctx context.Context, ids []string,
+) ([]models.Fulfillment, error) {
+	if len(ids) == 0 {
+		return []models.Fulfillment{}, nil
+	}
+
+	rows, err := r.queries(ctx).GetFulfillmentsByIDs(ctx, ids)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "could not read fulfillments")
+	}
+
+	out := make([]models.Fulfillment, 0, len(rows))
+	for i := range rows {
+		converted, convErr := toFulfillment(rows[i])
+		if convErr != nil {
+			return nil, convErr
+		}
+		out = append(out, converted)
+	}
+
+	return out, nil
+}
+
 // CreateFulfillmentItem adds an item to the fulfillment.
 func (r *Repository) CreateFulfillmentItem(
 	ctx context.Context,

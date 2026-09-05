@@ -15,8 +15,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
+	"github.com/bdrtr/gobit/core/query"
 	fulfillmentmanual "github.com/bdrtr/gobit/internal/modules/fulfillment/manual"
 	fulfillmentmodels "github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 	fulfillmentsvc "github.com/bdrtr/gobit/internal/modules/fulfillment/service"
@@ -562,4 +564,63 @@ func TestAShipmentOpenedThroughTheFlowIsBoundToItsOrder(t *testing.T) {
 	// place the refusal can happen.
 	_, err = flow.OpenForOrder(ctx, "order_does_not_exist", optionID, key+"-missing")
 	require.Error(t, err, "a parcel was opened for an order that does not exist")
+
+	// --- a SECOND parcel on the same order ---
+	//
+	// The cardinality is one to many and the reason is concrete: an order can
+	// ship in several parcels. Asserting it with one parcel would leave both
+	// halves untested — the constraint would accept the second row either way,
+	// and a FetchByIDs that read only the first id would still look correct.
+	secondOpened, err := flow.OpenForOrder(ctx, orderResult.OrderID, optionID, key+"-2")
+	require.NoError(t, err,
+		"a second parcel could not be opened for the order; the link declares one to many")
+	require.NotEqual(t, opened.FulfillmentID, secondOpened.FulfillmentID)
+	assert.False(t, secondOpened.AlreadyOpen, "a different key is not a repeat")
+
+	// --- the binding is EXPANDABLE, not merely readable ---
+	//
+	// A link whose far side has no Query provider can be read through the link
+	// service and cannot be walked by a Graph request — and an expansion is what
+	// an order's timeline is made of. That is why the shipment got a provider of
+	// its own; this is the assertion that says the two halves meet.
+	catalog, err := container.Resolve[query.Query](ctr, svcQuery)
+	require.NoError(t, err)
+
+	records, err := catalog.Graph(ctx, query.GraphSpec{
+		Entity:  "order",
+		Fields:  []string{query.IDField},
+		Filters: map[string]any{query.IDField: orderResult.OrderID},
+		Limit:   1,
+		Expand: []query.Expansion{{
+			Link:   fulfillingwf.LinkOrderFulfillment,
+			As:     "shipments",
+			Fields: []string{query.IDField, "status", "tracking_number", "shipped_at"},
+		}},
+	})
+	require.NoError(t, err,
+		"the order_fulfillment link could not be walked by the read layer")
+	require.Len(t, records, 1)
+
+	expanded, ok := records[0]["shipments"].([]query.Record)
+	require.True(t, ok,
+		"the expansion produced no shipment records; the far side of the link has no "+
+			"provider, so the timeline cannot be assembled from a single request")
+	require.Len(t, expanded, 2,
+		"both parcels have to come back in ONE request; a FetchByIDs that reads the ids "+
+			"one at a time is the N+1 the read layer exists to make impossible")
+
+	byID := map[string]query.Record{}
+	for _, record := range expanded {
+		id, isText := record[query.IDField].(string)
+		require.True(t, isText)
+		byID[id] = record
+	}
+	require.Contains(t, byID, opened.FulfillmentID)
+	require.Contains(t, byID, secondOpened.FulfillmentID)
+
+	assert.Equal(t, string(fulfillmentmodels.StatusPending),
+		byID[opened.FulfillmentID]["status"])
+	assert.Nil(t, byID[opened.FulfillmentID]["shipped_at"],
+		"a shipment that has not shipped must report a NULL moment rather than a zero time; "+
+			"a zero time reads as 1 January year one on a timeline")
 }

@@ -177,6 +177,9 @@ type Store interface {
 	GetShippingOption(ctx context.Context, id string) (models.ShippingOption, error)
 	// ListShippingOptions filters and paginates the options.
 	ListShippingOptions(ctx context.Context, filter models.OptionFilter) ([]models.ShippingOption, int64, error)
+	// FulfillmentsByIDs fetches the shipment set in a SINGLE query, for the
+	// Query layer's FetchByIDs.
+	FulfillmentsByIDs(ctx context.Context, ids []string) ([]models.Fulfillment, error)
 	// ShippingOptionsByIDs fetches the identifier set in a SINGLE query (no
 	// N+1).
 	ShippingOptionsByIDs(ctx context.Context, ids []string) ([]models.ShippingOption, error)

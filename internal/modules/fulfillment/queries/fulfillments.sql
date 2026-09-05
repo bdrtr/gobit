@@ -52,6 +52,13 @@ WHERE deleted_at IS NULL
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
 
+-- GetFulfillmentsByIDs serves the Query layer's FetchByIDs call in a SINGLE
+-- round trip; no query per id (N+1) is made.
+-- name: GetFulfillmentsByIDs :many
+SELECT * FROM fulfillments
+WHERE id = ANY (sqlc.arg('ids')::text[]) AND deleted_at IS NULL
+ORDER BY id;
+
 -- CountFulfillments applies the SAME filters as ListFulfillments; for the
 -- rationale see CountShippingProfiles.
 -- name: CountFulfillments :one
