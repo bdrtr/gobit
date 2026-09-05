@@ -10,9 +10,9 @@ import (
 )
 
 const createImage = `-- name: CreateImage :one
-INSERT INTO product_image (id, product_id, url, rank, metadata)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, product_id, url, rank, metadata, created_at, updated_at, deleted_at
+INSERT INTO product_image (id, product_id, url, rank, metadata, upload_id)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, product_id, url, rank, metadata, created_at, updated_at, deleted_at, upload_id
 `
 
 type CreateImageParams struct {
@@ -21,8 +21,12 @@ type CreateImageParams struct {
 	Url       string
 	Rank      int32
 	Metadata  []byte
+	UploadID  *string
 }
 
+// upload_id may be NULL and it is not an error: an image whose address was
+// never uploaded here (an imported catalog, a hand-typed CDN address) has no
+// upload record to point at. See migration 000002.
 func (q *Queries) CreateImage(ctx context.Context, arg CreateImageParams) (ProductImage, error) {
 	row := q.db.QueryRow(ctx, createImage,
 		arg.ID,
@@ -30,6 +34,7 @@ func (q *Queries) CreateImage(ctx context.Context, arg CreateImageParams) (Produ
 		arg.Url,
 		arg.Rank,
 		arg.Metadata,
+		arg.UploadID,
 	)
 	var i ProductImage
 	err := row.Scan(
@@ -41,6 +46,7 @@ func (q *Queries) CreateImage(ctx context.Context, arg CreateImageParams) (Produ
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.UploadID,
 	)
 	return i, err
 }
@@ -254,8 +260,52 @@ func (q *Queries) GetProductForUpdate(ctx context.Context, id string) (Product, 
 	return i, err
 }
 
+const listImagesByIDs = `-- name: ListImagesByIDs :many
+SELECT id, product_id, url, rank, metadata, created_at, updated_at, deleted_at, upload_id FROM product_image
+WHERE id = ANY($1::text[]) AND deleted_at IS NULL
+ORDER BY product_id, rank, id
+`
+
+// The reverse read of the image/upload binding ends here: the link service
+// answers "which images use this upload" with IDS, and the records themselves
+// are read in a SINGLE query rather than one per id.
+//
+// An id with no live row is simply not returned. That is not an error but the
+// residue the write order accepts: the binding is written before the image, so
+// a create that failed afterwards can leave a link row for an image that never
+// existed (see service/links.go).
+func (q *Queries) ListImagesByIDs(ctx context.Context, dollar_1 []string) ([]ProductImage, error) {
+	rows, err := q.db.Query(ctx, listImagesByIDs, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProductImage{}
+	for rows.Next() {
+		var i ProductImage
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProductID,
+			&i.Url,
+			&i.Rank,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.UploadID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listImagesByProductIDs = `-- name: ListImagesByProductIDs :many
-SELECT id, product_id, url, rank, metadata, created_at, updated_at, deleted_at FROM product_image
+SELECT id, product_id, url, rank, metadata, created_at, updated_at, deleted_at, upload_id FROM product_image
 WHERE product_id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY product_id, rank, id
 `
@@ -278,6 +328,7 @@ func (q *Queries) ListImagesByProductIDs(ctx context.Context, dollar_1 []string)
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.UploadID,
 		); err != nil {
 			return nil, err
 		}

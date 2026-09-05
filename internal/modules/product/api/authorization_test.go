@@ -190,6 +190,12 @@ func (f *scopeCatalog) ProductSalesChannelIDs(context.Context, string) ([]string
 	return nil, nil
 }
 
+// ImagesOfUpload counts the call.
+func (f *scopeCatalog) ImagesOfUpload(context.Context, string) ([]models.Image, error) {
+	f.count()
+	return nil, nil
+}
+
 // CreateCollection counts the call.
 func (f *scopeCatalog) CreateCollection(
 	context.Context, service.CreateCollectionInput,
@@ -377,6 +383,7 @@ var readEndpoints = map[string]string{
 	"option list":     "/admin/v1/products/prod_1/options",
 	"variant links":   "/admin/v1/variants/var_1/links",
 	"sales channels":  "/admin/v1/products/prod_1/sales-channels",
+	"upload images":   "/admin/v1/product-images/by-upload/upl_1",
 	"collection list": "/admin/v1/product-collections",
 	"category list":   "/admin/v1/product-categories",
 	"tag list":        "/admin/v1/product-tags",

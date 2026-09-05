@@ -17,6 +17,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 
 	"github.com/bdrtr/gobit/core/errors"
@@ -51,6 +52,31 @@ type Grapher interface {
 	Graph(ctx context.Context, spec query.GraphSpec) ([]query.Record, error)
 }
 
+// UploadReader is the NARROW surface product needs from the file module.
+//
+// The file module CANNOT be imported (Principle 2.4, and depguard enforces it),
+// so the surface is declared here and satisfied STRUCTURALLY by whatever the
+// container holds under the file module's interop name — the pattern of ADR
+// 0001/0006, the same one the order module uses for the b2b spending rule.
+//
+// The record travels as JSON because its SHAPE belongs to the file module: it
+// declares the fields, and naming a type here would either duplicate that shape
+// or force an import. This module does not read the body at all; it only needs
+// to know whether the record is there (see [Service.verifyImageUploads]). The
+// callers that want the file behind an image decode it themselves.
+type UploadReader interface {
+	// UploadJSON returns the upload record as JSON, errors.NotFound if the id
+	// belongs to no upload.
+	//
+	// A NIL body WITH A NIL ERROR is the third answer and it means "I cannot
+	// answer": the file module is not installed in this setup. It is separate
+	// from NotFound on purpose — "there is no such upload" is a fact about the
+	// id, "there is no file module" is a fact about the installation, and
+	// treating the second as the first would reject ids that are perfectly
+	// good.
+	UploadJSON(ctx context.Context, uploadID string) (json.RawMessage, error)
+}
+
 // EventPublisher is the NARROW surface the service needs from the event bus.
 //
 // core/eventbus is CORE and importing it is free (Principle 2.4); the narrowing
@@ -77,6 +103,10 @@ type Options struct {
 	// Query is there for the price/stock expansion of the store listing; if nil
 	// is given, the listing works without prices and without stock.
 	Query Grapher
+	// Uploads is the file module's read-back; if nil is given, an image's
+	// upload id is recorded WITHOUT being verified (see
+	// [Service.verifyImageUploads]).
+	Uploads UploadReader
 	// Events is the bus the catalog events are published on; if nil is given, the
 	// events are silently skipped (rationale: [Service.publishProductEvent]).
 	Events EventPublisher
@@ -89,11 +119,12 @@ type Options struct {
 // It is registered in the container under the name "product.service". All of its
 // methods are goroutine-safe (they hold no state; the state is in the database).
 type Service struct {
-	repo   repository.Store
-	links  Linker
-	graph  Grapher
-	events EventPublisher
-	log    *slog.Logger
+	repo    repository.Store
+	links   Linker
+	graph   Grapher
+	uploads UploadReader
+	events  EventPublisher
+	log     *slog.Logger
 }
 
 // New builds the service with the given dependencies.
@@ -109,7 +140,14 @@ func New(opts Options) (*Service, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Service{repo: opts.Repo, links: opts.Links, graph: opts.Query, events: opts.Events, log: log}, nil
+	return &Service{
+		repo:    opts.Repo,
+		links:   opts.Links,
+		graph:   opts.Query,
+		uploads: opts.Uploads,
+		events:  opts.Events,
+		log:     log,
+	}, nil
 }
 
 // ListResult is the result of a paginated list.
@@ -169,7 +207,15 @@ type CreateProductInput struct {
 
 // CreateImageInput is the input of an image to be added to a product.
 type CreateImageInput struct {
-	URL      string
+	URL string
+	// UploadID is the id of the upload this image was made from; it may be left
+	// EMPTY when the address was not uploaded through this installation.
+	//
+	// It is a plain string rather than a pointer on purpose: an image is
+	// CREATED here, not patched, so there is no "not given" to tell apart from
+	// "cleared" — both mean the same thing, and the empty string says it
+	// without a second nil for the caller to reason about.
+	UploadID string
 	Rank     int32
 	Metadata map[string]any
 }
@@ -323,6 +369,18 @@ func (s *Service) CreateProduct(ctx context.Context, in CreateProductInput) (mod
 		return models.Product{}, err
 	}
 
+	// The upload half of the images is settled BEFORE the transaction opens:
+	// first that the uploads exist, then the bindings themselves. Both can
+	// fail, and failing here means the create returns with NOTHING written —
+	// which is the whole reason they run in this order (see
+	// [Service.linkImageUploads]).
+	if err := s.verifyImageUploads(ctx, images); err != nil {
+		return models.Product{}, err
+	}
+	if err := s.linkImageUploads(ctx, images); err != nil {
+		return models.Product{}, err
+	}
+
 	err = s.repo.InTx(ctx, func(ctx context.Context, tx repository.Store) error {
 		if _, err := tx.CreateProduct(ctx, product); err != nil {
 			return err
@@ -330,8 +388,10 @@ func (s *Service) CreateProduct(ctx context.Context, in CreateProductInput) (mod
 		if _, err := writeOptions(ctx, tx, options); err != nil {
 			return err
 		}
-		for _, img := range images {
-			if _, err := tx.CreateImage(ctx, img); err != nil {
+		// Walked BY INDEX: an image record is a large struct and copying one
+		// per iteration is a cost the linter counts (gocritic rangeValCopy).
+		for i := range images {
+			if _, err := tx.CreateImage(ctx, images[i]); err != nil {
 				return err
 			}
 		}
@@ -538,18 +598,27 @@ func (s *Service) UpdateProduct(ctx context.Context, id string, in UpdateProduct
 
 // DeleteProduct SOFT deletes the product and its child records.
 //
-// The price/stock links of the variants and the sales channel links of the
-// product are cleaned up as well: if the link of a deleted record stayed behind,
-// the queries of other modules would end up at a record that does not exist.
-// The link cleanup is OUTSIDE the database transaction (the link tables belong
-// to the core); that is why its failure does not undo the deletion, it is logged
-// as a warning and the orphan links are harmless — ids are never reused.
+// The price/stock links of the variants, the sales channel links of the product
+// and the upload links of its images are cleaned up as well: if the link of a
+// deleted record stayed behind, the queries of other modules would end up at a
+// record that does not exist. The link cleanup is OUTSIDE the database
+// transaction (the link tables belong to the core); that is why its failure does
+// not undo the deletion, it is logged as a warning and the orphan links are
+// harmless — ids are never reused.
 func (s *Service) DeleteProduct(ctx context.Context, id string) error {
 	if _, err := requireID("id", id); err != nil {
 		return err
 	}
 
 	variantIDs, err := s.repo.ListVariantIDsByProduct(ctx, id)
+	if err != nil {
+		return err
+	}
+	// The images are read BEFORE the deletion for the same reason the variant
+	// ids are: after the soft delete the listing filters them out, and their
+	// upload ids — the far end of the bindings to be removed — would be
+	// unreachable.
+	images, err := s.imagesForLinkCleanup(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -568,6 +637,7 @@ func (s *Service) DeleteProduct(ctx context.Context, id string) error {
 		s.cleanupVariantLinks(ctx, variantID)
 	}
 	s.cleanupProductSalesChannels(ctx, id)
+	s.cleanupImageUploadLinks(ctx, images)
 
 	// The event is published AFTER the link cleanup: in an ordering that calls the
 	// subscriber to read the links of the record, a subscriber arriving while the
@@ -702,6 +772,15 @@ func buildImages(productID string, in []CreateImageInput) ([]models.Image, error
 		if err != nil {
 			return nil, err
 		}
+		// The URL stays MANDATORY even when an upload is named. It is what the
+		// storefront renders, and deriving it from the upload would put a
+		// second address rule in this module — one that would go wrong the day
+		// the file module starts signing addresses. Whoever uploads the file
+		// gets the address in the same response as the id and sends both.
+		uploadID, err := optionalUploadID(img.UploadID)
+		if err != nil {
+			return nil, err
+		}
 		rank := img.Rank
 		if rank == 0 {
 			// If no rank was given the submission order is preserved; otherwise all the
@@ -712,11 +791,31 @@ func buildImages(productID string, in []CreateImageInput) ([]models.Image, error
 			ID:        newID(prefixImage),
 			ProductID: productID,
 			URL:       url,
+			UploadID:  uploadID,
 			Rank:      rank,
 			Metadata:  img.Metadata,
 		})
 	}
 	return out, nil
+}
+
+// optionalUploadID validates an image's upload id and turns it into the
+// nullable form the record carries.
+//
+// An empty id is not an error: it is the answer "this image was not made from
+// an upload of ours". A NON-empty one goes through [requireID], which does NOT
+// trim — an id with a stray space would land on one row in the image table and
+// on a different one in the link table, so the corruption is rejected instead
+// of silently corrected.
+func optionalUploadID(value string) (*string, error) {
+	if value == "" {
+		return nil, nil
+	}
+	id, err := requireID("images[].upload_id", value)
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
 }
 
 // ensureHandleFree verifies that the handle is not used by another product.

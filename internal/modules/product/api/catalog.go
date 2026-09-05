@@ -41,6 +41,10 @@ type Catalog interface {
 	RemoveProductSalesChannel(ctx context.Context, productID, salesChannelID string) error
 	ProductSalesChannelIDs(ctx context.Context, productID string) ([]string, error)
 
+	// ImagesOfUpload is the REVERSE read of the image/upload binding; there is
+	// no write counterpart, because an image is bound when it is created.
+	ImagesOfUpload(ctx context.Context, uploadID string) ([]models.Image, error)
+
 	CreateCollection(ctx context.Context, in service.CreateCollectionInput) (models.Collection, error)
 	GetCollection(ctx context.Context, id string) (models.Collection, error)
 	ListCollections(ctx context.Context, limit, offset int) (service.ListResult[models.Collection], error)

@@ -54,6 +54,11 @@ const (
 	codeLinkFailed   = "product_link_failed"
 	codeQueryFailed  = "product_query_failed"
 	codeNotReady     = "product_service_not_ready"
+	// codeUploadReadFailed reports that the upload behind an image could not be
+	// read from the file module. It is NOT the code of "there is no such
+	// upload": that one is a validation error and carries codeInvalidInput, so
+	// that a client can tell a bad id of its own from a broken dependency.
+	codeUploadReadFailed = "product_upload_read_failed"
 )
 
 // invalid builds a validation error.

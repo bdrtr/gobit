@@ -104,13 +104,29 @@ WHERE product_id = $1 AND deleted_at IS NULL
 ORDER BY rank, id;
 
 -- name: CreateImage :one
-INSERT INTO product_image (id, product_id, url, rank, metadata)
-VALUES ($1, $2, $3, $4, $5)
+-- upload_id may be NULL and it is not an error: an image whose address was
+-- never uploaded here (an imported catalog, a hand-typed CDN address) has no
+-- upload record to point at. See migration 000002.
+INSERT INTO product_image (id, product_id, url, rank, metadata, upload_id)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: ListImagesByProductIDs :many
 SELECT * FROM product_image
 WHERE product_id = ANY($1::text[]) AND deleted_at IS NULL
+ORDER BY product_id, rank, id;
+
+-- name: ListImagesByIDs :many
+-- The reverse read of the image/upload binding ends here: the link service
+-- answers "which images use this upload" with IDS, and the records themselves
+-- are read in a SINGLE query rather than one per id.
+--
+-- An id with no live row is simply not returned. That is not an error but the
+-- residue the write order accepts: the binding is written before the image, so
+-- a create that failed afterwards can leave a link row for an image that never
+-- existed (see service/links.go).
+SELECT * FROM product_image
+WHERE id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY product_id, rank, id;
 
 -- name: DeleteImagesByProduct :exec

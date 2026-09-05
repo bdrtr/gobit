@@ -42,6 +42,8 @@ type fakeCatalog struct {
 	addSalesChannel    func(ctx context.Context, productID, salesChannelID string) error
 	removeSalesChannel func(ctx context.Context, productID, salesChannelID string) error
 	salesChannelIDs    func(ctx context.Context, productID string) ([]string, error)
+
+	imagesOfUpload func(ctx context.Context, uploadID string) ([]models.Image, error)
 }
 
 func (f *fakeCatalog) CreateProduct(ctx context.Context, in service.CreateProductInput) (models.Product, error) {
@@ -104,6 +106,10 @@ func (f *fakeCatalog) RemoveProductSalesChannel(ctx context.Context, productID, 
 
 func (f *fakeCatalog) ProductSalesChannelIDs(ctx context.Context, productID string) ([]string, error) {
 	return f.salesChannelIDs(ctx, productID)
+}
+
+func (f *fakeCatalog) ImagesOfUpload(ctx context.Context, uploadID string) ([]models.Image, error) {
+	return f.imagesOfUpload(ctx, uploadID)
 }
 
 // newRouter builds a router wired to the fake service.

@@ -13,8 +13,11 @@
 //     record from there.
 //  3. The Query providers are registered under the names "product.query" and
 //     "variant.query" (ADR 0004).
-//  4. The price, stock and sales channel link definitions are declared
-//     (ADR 0005).
+//  4. The price, stock, sales channel and image/upload link definitions are
+//     declared (ADR 0005).
+//  5. The file module's upload read-back is wired in LAZILY, under the name
+//     "file.interop"; it is what lets an image's upload id be verified before
+//     it is recorded (see [UploadReaderName]).
 //
 // # Published events
 //
@@ -24,19 +27,23 @@
 //
 // # Other modules
 //
-// The pricing, inventory and auth packages are NOT IMPORTED (Principle 2.4,
-// ADR 0001; the rule is enforced in CI by depguard inside .golangci.yml).
-// Price and stock data is visible only through link names and the Query
-// layer; the sales channel is visible only as a link name and as identity
-// strings coming from the request's principal (see
-// service.LinkProductSalesChannel).
+// The pricing, inventory, auth and file packages are NOT IMPORTED (Principle
+// 2.4, ADR 0001; the rule is enforced in CI by depguard inside
+// .golangci.yml). Price and stock data is visible only through link names and
+// the Query layer; the sales channel is visible only as a link name and as
+// identity strings coming from the request's principal (see
+// service.LinkProductSalesChannel); the file module is visible only as a
+// container name and a narrow interface this module declares itself (see
+// [UploadReaderName]).
 package product
 
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"io/fs"
 	"log/slog"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 
@@ -91,6 +98,18 @@ const InteropName = Name + ".interop"
 // audience of this name is the admin panel, and THIS CONSTRAINT is not merely
 // documented, it is checked in internal/arch.
 const AdminName = Name + ".admin"
+
+// UploadReaderName is the container name of the surface that returns an upload
+// record by id (ADR 0001/0006).
+//
+// The name belongs to the file module and is repeated here as a STRING; modules
+// cannot import one another (Principle 2.4) and the repetition is the accepted
+// price of isolation. A typo does not stay silent for long, but it does stay
+// QUIET: an unresolvable name is read as "the file module is not installed",
+// and the ids of the images would then be recorded without being checked. The
+// single source of truth for the value is the file module's InteropName
+// constant.
+const UploadReaderName = "file.interop"
 
 // Error codes.
 const (
@@ -206,16 +225,22 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 			"the %s module could not resolve the event bus (%q)", Name, svcEventBus)
 	}
 
+	// At startup the application installs the configured logger with
+	// slog.SetDefault; the module does not look for a separate logger
+	// registration.
+	log := slog.Default().With("module", Name)
+
 	repo := repository.New(pool.Pool())
 	svc, err := service.New(service.Options{
 		Repo:   repo,
 		Links:  links,
 		Query:  queryLayer,
 		Events: bus,
-		// At startup the application installs the configured logger with
-		// slog.SetDefault; the module does not look for a separate logger
-		// registration.
-		Logger: slog.Default().With("module", Name),
+		// The upload read-back is NOT resolved here: it belongs to another
+		// module and the container may not hold it yet (the module.Module
+		// contract). The wrapper resolves it on first use.
+		Uploads: &uploadReader{c: c, log: log},
+		Logger:  log,
 	})
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
@@ -298,6 +323,86 @@ func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 // It is meant for tests and embedded use; in the normal flow the service is
 // resolved from the container under the name [ServiceName].
 func (m *Module) Service() *service.Service { return m.svc }
+
+// uploadReader is the wrapper that resolves the file module's read-back ON
+// FIRST USE.
+//
+// # Why lazily
+//
+// The [module.Module] contract says other modules' services may not be
+// registered yet during Register and requires the resolution to be deferred to
+// first use. It is also what makes the registration ORDER irrelevant: even if
+// the file module is added after this one, by the time the first product image
+// is written it has long been registered.
+//
+// # Why OPTIONAL
+//
+// If [UploadReaderName] is not registered at all, the file module is not part
+// of this setup — gobit is a library and its modules are chosen one by one (ADR
+// 0025). The wrapper then answers with a nil body and no error, which the
+// service reads as "the id cannot be verified" and records it as it was given.
+// The alternative, treating an absent module as "no such upload", would reject
+// every id in an installation that stores its files somewhere else.
+//
+// # But it does NOT go silently out of service
+//
+// If the name IS registered and does not satisfy the expected surface, the
+// error is kept and every image write that names an upload fails with it. The
+// distinction is the one the order module draws for the spending rule: "file is
+// not installed" is a setup decision, "file is installed but its surface is not
+// recognized" is a wiring fault, and turning the second into "record it
+// unchecked" would silence the check in exactly the installation that has a
+// file module to check against. The decision is made ONCE and stored; resolving
+// it again per image would only reproduce the same error.
+type uploadReader struct {
+	c    *container.Container
+	log  *slog.Logger
+	once sync.Once
+	svc  service.UploadReader
+	err  error
+}
+
+// That the wrapper satisfies the surface the service expects is pinned at
+// compile time.
+var _ service.UploadReader = (*uploadReader)(nil)
+
+// UploadJSON returns the upload record, or a nil body when the file module is
+// not part of the setup.
+func (r *uploadReader) UploadJSON(ctx context.Context, uploadID string) (json.RawMessage, error) {
+	r.once.Do(func() { r.resolve(ctx) })
+	if r.err != nil {
+		return nil, r.err
+	}
+	if r.svc == nil {
+		return nil, nil
+	}
+	return r.svc.UploadJSON(ctx, uploadID)
+}
+
+// resolve resolves the surface from the container; the result is stored once.
+//
+// The "registered but of the wrong type" branch is turned into KindInternal and
+// the container's own kind (KindInvalid for a registration of the wrong type) is
+// not passed through: inherited, the create endpoint would answer "your body is
+// invalid" with a 422 while the same request would fail with a flawless body
+// too — the fault is in the SERVER's wiring. The same rationale is written in
+// the order and cart modules' wrappers.
+func (r *uploadReader) resolve(ctx context.Context) {
+	svc, err := container.Resolve[service.UploadReader](r.c, UploadReaderName)
+	switch {
+	case err == nil:
+		r.svc = svc
+		r.log.InfoContext(ctx, "upload read-back bound", "provider", UploadReaderName)
+	case errors.IsNotFound(err):
+		// The file module is not in this setup; an image's upload id is then
+		// recorded without being verified.
+		r.log.DebugContext(ctx, "the upload read-back is not registered; image upload ids will not be verified",
+			"provider", UploadReaderName)
+	default:
+		r.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
+			"the %s module could not resolve the upload read-back (%q)", Name, UploadReaderName)
+	}
+}
 
 // mustSub opens the subdirectory; it panics if it cannot be opened.
 //

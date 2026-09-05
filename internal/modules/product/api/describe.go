@@ -522,6 +522,17 @@ func describeAdminLinks(d *openapi.Doc) {
 			"200": openapi.Response("The variant's links", d.Item(service.VariantLinks{})),
 		},
 	})
+
+	d.Describe(http.MethodGet, "/admin/v1/product-images/by-upload/{upload_id}", openapi.Operation{
+		Summary: "Returns the product images made from an upload.",
+		Responses: map[string]any{
+			// An upload nothing uses and an id that belongs to no upload give
+			// the SAME answer, an empty list: the catalog cannot see the file
+			// module's records and does not claim to know whether the upload
+			// exists. That is why there is no 404 here.
+			"200": openapi.Response("The images using the upload", d.Item(uploadImages{})),
+		},
+	})
 }
 
 // describeAdminSalesChannels describes the product-to-sales-channel link

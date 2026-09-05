@@ -268,6 +268,7 @@ func toImage(row productdb.ProductImage) (models.Image, error) {
 		ID:        row.ID,
 		ProductID: row.ProductID,
 		URL:       row.Url,
+		UploadID:  row.UploadID,
 		Rank:      row.Rank,
 		Metadata:  meta,
 		CreatedAt: toTime(row.CreatedAt),

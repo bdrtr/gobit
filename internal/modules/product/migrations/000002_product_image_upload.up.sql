@@ -1,0 +1,44 @@
+-- The product image gains the UPLOAD it was made from.
+--
+-- # What could not be answered before this column
+--
+-- product_image referenced its file BY ADDRESS ALONE (url). An address is
+-- enough to SHOW a file and enough for nothing else: from an image nobody could
+-- reach the upload record, so no caller could learn the content type the system
+-- actually detected, the size, the checksum, or which provider holds the bytes.
+--
+-- Deriving the record from the address is not an option either. The local
+-- provider's address happens to contain the storage key today, but an object
+-- store's address is signed and shares nothing with the key; a rule read out of
+-- one provider's address shape would start lying the day a second provider was
+-- configured. The id is therefore CARRIED, not derived.
+--
+-- # NULL is a legitimate value and it does not mean "unknown"
+--
+-- An image may point at an address this installation never uploaded: a catalog
+-- imported from another system, or a CDN address typed in by hand. For those
+-- images there IS no upload record and NULL says exactly that. NOT NULL would
+-- have made every existing row unmigratable and would have forced every
+-- importer to invent an upload that does not exist.
+--
+-- # NO foreign key
+--
+-- The id belongs to the file module and a cross-module foreign key is banned
+-- (Principle 2.2): the two modules must stay separable. The id is kept opaque,
+-- exactly like shipping_options.region_id. The CHECK only keeps out the empty
+-- string, which is the single value that would claim "there is an upload" while
+-- naming none.
+--
+-- # NO index, deliberately
+--
+-- The reverse direction ("which images use this upload") is NOT read from this
+-- column and that is why it gets no index. That question is asked from OUTSIDE
+-- this module, where this table cannot be seen at all, and it is answered by
+-- the "upload_product_image" link (ADR 0005; see service/links.go). An index
+-- with no reader would load a cost onto every image write and advertise a use
+-- that does not exist — the rule 000002 of the fulfillment module already wrote
+-- down. When a query inside this module reads by upload_id, that is the day the
+-- index is added.
+ALTER TABLE product_image
+    ADD COLUMN IF NOT EXISTS upload_id text
+        CONSTRAINT product_image_upload_check CHECK (upload_id IS NULL OR upload_id <> '');

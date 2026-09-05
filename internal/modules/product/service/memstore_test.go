@@ -1037,7 +1037,8 @@ func (m *memStore) ListImagesByProductIDs(_ context.Context, productIDs []string
 	}
 
 	out := map[string][]models.Image{}
-	for _, img := range m.images {
+	for id := range m.images {
+		img := m.images[id]
 		if img.DeletedAt == nil && slices.Contains(productIDs, img.ProductID) {
 			out[img.ProductID] = append(out[img.ProductID], img)
 		}
@@ -1053,13 +1054,46 @@ func (m *memStore) ListImagesByProductIDs(_ context.Context, productIDs []string
 	return out, nil
 }
 
+// ListImagesByIDs returns the live images among the given ids.
+//
+// The SOFT DELETE filter is imitated on purpose: the real query carries
+// "deleted_at IS NULL", and a fake that returned deleted rows would let a test
+// "prove" that a deleted product still claims its upload.
+func (m *memStore) ListImagesByIDs(_ context.Context, imageIDs []string) ([]models.Image, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ListImagesByIDs"); err != nil {
+		return nil, err
+	}
+
+	out := []models.Image{}
+	for _, id := range imageIDs {
+		img, ok := m.images[id]
+		if !ok || img.DeletedAt != nil {
+			continue
+		}
+		out = append(out, img)
+	}
+	slices.SortFunc(out, func(a, b models.Image) int {
+		if a.ProductID != b.ProductID {
+			return strings.Compare(a.ProductID, b.ProductID)
+		}
+		if a.Rank != b.Rank {
+			return int(a.Rank - b.Rank)
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return out, nil
+}
+
 func (m *memStore) DeleteImagesByProduct(_ context.Context, productID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.track("DeleteImagesByProduct"); err != nil {
 		return err
 	}
-	for id, img := range m.images {
+	for id := range m.images {
+		img := m.images[id]
 		if img.ProductID == productID {
 			img.DeletedAt = &deletionTime
 			m.images[id] = img

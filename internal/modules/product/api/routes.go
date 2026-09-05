@@ -123,6 +123,13 @@ func (h *Handler) Routes(r chi.Router) {
 	// removes). Establishing a link decides WHICH STOREFRONTS the product WILL
 	// APPEAR IN, that is, it changes catalog data: the write endpoints ask for
 	// [ScopeWrite], the read endpoint for [ScopeRead].
+	// The image/upload binding is READ ONLY here and there is no write
+	// endpoint: the binding is made when the image itself is created (the
+	// image carries the upload id in the create body) and it dies with it.
+	// Opening a "bind this image to that upload" endpoint would make it
+	// possible for the image's own column and the binding to disagree.
+	read.Get("/admin/v1/product-images/by-upload/{upload_id}", h.adminListImagesOfUpload)
+
 	write.Post("/admin/v1/products/{id}/sales-channels", h.adminAddSalesChannel)
 	write.Delete("/admin/v1/products/{id}/sales-channels/{sales_channel_id}", h.adminRemoveSalesChannel)
 	read.Get("/admin/v1/products/{id}/sales-channels", h.adminListSalesChannels)

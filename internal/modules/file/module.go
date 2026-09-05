@@ -57,16 +57,30 @@
 // # The surfaces it opens outwards
 //
 //   - "file.service" — the rich in-module surface (with the domain types).
+//   - "file.interop" — the PRIMITIVE cross-module surface: read one upload
+//     record by id (ADR 0006). See the service package's interop.go.
 //   - "file.providers" — the provider registry; plugins add their provider here.
 //   - POST/GET /admin/v1/uploads and DELETE /admin/v1/uploads/{id} — admin.
 //   - GET /files/{key} — the UNPROTECTED serving endpoint; its reason is in the
 //     api package.
 //
-// A cross-module "interop" surface and a Query provider are DELIBERATELY
-// ABSENT: there is no other module that reads the upload, and if one wanted to
-// read it the only thing it would need is the ADDRESS — and that already sits
-// in the product image record. Opening a contract that has no consumer would
-// produce a surface that could never be closed again.
+// The interop surface used to be DELIBERATELY ABSENT, with the argument that no
+// module reads the upload and that a reader would only ever want the ADDRESS,
+// which already sits in the product image record. The first half expired and the
+// second half was wrong. A product image can now carry the id of the upload it
+// was made from, and the address it also carries says nothing about the file
+// itself: the detected content type, the size, the checksum and the storing
+// provider live only in the record. Reading it back is what makes "which upload
+// is this image" answerable rather than merely writable, and the product module
+// is the surface's first consumer — it verifies at write time that the id it is
+// asked to record belongs to an upload.
+//
+// A Query provider is STILL absent and that is a separate decision. The binding
+// between an upload and a product image is read through the link service (see
+// the product module's "upload_product_image" definition), not through a Query
+// expansion, so nothing needs a provider registered under "upload.query" today.
+// A provider whose only caller is the one that would have to be written for it
+// is a surface that can never be closed again.
 package file
 
 import (
@@ -94,6 +108,16 @@ const ModuleName = "file"
 
 // ServiceName is the name of the module's service in the container.
 const ServiceName = ModuleName + ".service"
+
+// InteropName is the name of the PRIMITIVE cross-module surface in the
+// container (ADR 0006).
+//
+// It is registered SEPARATELY from the service: the service speaks in this
+// module's domain types, this surface only in primitive and stdlib ones —
+// which is the only form a consumer that cannot import this package is able to
+// name. The consumer repeats this VALUE as a string literal; the constant is
+// its single source of truth.
+const InteropName = ModuleName + ".interop"
 
 // ProvidersName is the name of the provider registry in the container.
 //
@@ -233,6 +257,12 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	if err := c.Provide(ServiceName, svc); err != nil {
 		return err
 	}
+	// The cross-module surface is registered under a SEPARATE name: the service
+	// itself returns the module's own types, which no consumer can name
+	// (ADR 0006).
+	if err := c.Provide(InteropName, service.NewInterop(svc)); err != nil {
+		return err
+	}
 	if err := c.Provide(ProvidersName, providers); err != nil {
 		return err
 	}
@@ -243,6 +273,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 
 	log.DebugContext(ctx, "file module registered",
 		"service", ServiceName,
+		"interop", InteropName,
 		"providers", providers.IDs(),
 		"selected_provider", m.opts.ProviderID,
 		"max_upload_bytes", m.opts.MaxUploadBytes,

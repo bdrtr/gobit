@@ -99,7 +99,15 @@ func bindings() []binding {
 		},
 		{schemaType: "Option", goType: reflect.TypeOf(models.Option{}), leftOut: taxonomyLeftOut},
 		{schemaType: "OptionValue", goType: reflect.TypeOf(models.OptionValue{}), leftOut: taxonomyLeftOut},
-		{schemaType: "Image", goType: reflect.TypeOf(models.Image{}), leftOut: taxonomyLeftOut},
+		{
+			schemaType: "Image",
+			goType:     reflect.TypeOf(models.Image{}),
+			leftOut: withLeftOut(taxonomyLeftOut, map[string]string{
+				"UploadID": "the upload's identifier is an INTERNAL record id; what a storefront " +
+					"needs from an image is its address, and publishing the id would widen the " +
+					"public surface for a value no client can do anything with",
+			}),
+		},
 		{schemaType: "Tag", goType: reflect.TypeOf(models.Tag{}), leftOut: taxonomyLeftOut},
 		{schemaType: "Category", goType: reflect.TypeOf(models.Category{}), leftOut: taxonomyLeftOut},
 	}
@@ -416,4 +424,21 @@ func TestACursorAndAnOffsetTogetherAreRefused(t *testing.T) {
 
 	require.NotEmpty(t, response.Errors)
 	assert.Contains(t, response.Errors[0].Message, "two different positions")
+}
+
+// withLeftOut is a taxonomy exemption set plus a type's own entries.
+//
+// The maps are merged into a NEW one rather than the shared taxonomy map being
+// written into: that map is used by six types, and adding one type's field to
+// it would silently exempt the field on all six.
+func withLeftOut(base, extra map[string]string) map[string]string {
+	out := make(map[string]string, len(base)+len(extra))
+	for name, reason := range base {
+		out[name] = reason
+	}
+	for name, reason := range extra {
+		out[name] = reason
+	}
+
+	return out
 }

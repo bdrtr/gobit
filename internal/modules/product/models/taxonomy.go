@@ -43,11 +43,23 @@ type Tag struct {
 }
 
 // Image is an image of a product. The file itself is not kept in this module;
-// only a reachable link (URL) is stored.
+// only a reachable link (URL) and, when there is one, the id of the upload it
+// was made from.
 type Image struct {
-	ID        string         `json:"id"`
-	ProductID string         `json:"product_id"`
-	URL       string         `json:"url"`
+	ID        string `json:"id"`
+	ProductID string `json:"product_id"`
+	URL       string `json:"url"`
+	// UploadID is the id of the file module's upload record; nil when the image
+	// points at an address this installation never uploaded (an imported
+	// catalog, a hand-typed CDN address).
+	//
+	// It is what makes "which upload is this image" answerable: the URL shows
+	// the file and says nothing else about it, and the record behind it —
+	// detected content type, size, checksum, storing provider — is reachable
+	// only through this id. It is NOT a foreign key (Principle 2.2); the record
+	// lives in another module and is read through that module's cross-module
+	// surface.
+	UploadID  *string        `json:"upload_id,omitempty"`
 	Rank      int32          `json:"rank"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
 	CreatedAt time.Time      `json:"created_at,omitzero"`

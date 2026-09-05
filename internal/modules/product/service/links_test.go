@@ -26,7 +26,7 @@ func TestDefinitionsAreTheCrossModuleContract(t *testing.T) {
 	t.Parallel()
 
 	defs := service.Definitions()
-	require.Len(t, defs, 3)
+	require.Len(t, defs, 4)
 
 	byName := map[string]link.LinkDefinition{}
 	for _, def := range defs {
@@ -55,6 +55,18 @@ func TestDefinitionsAreTheCrossModuleContract(t *testing.T) {
 		"the To end should carry auth's ENTITY name, not its MODULE name; the provider is registered under that name")
 	assert.Equal(t, link.ManyToMany, salesChannel.Cardinality,
 		"a product can be in many channels and a channel can hold many products")
+
+	upload, ok := byName["upload_product_image"]
+	require.True(t, ok, "the image/upload binding should be declared under this name")
+	assert.Equal(t, link.LinkSide{Module: "file", Entity: "upload", Field: "upload_id"}, upload.From,
+		"the FROM end is the file module's upload; this module declares the definition all the same, "+
+			"because the record the binding CARRIES — the image — is written here")
+	assert.Equal(t, link.LinkSide{Module: "product", Entity: "image", Field: "image_id"}, upload.To,
+		"the TO end is the IMAGE, not the product: the link table holds image ids")
+	assert.Equal(t, link.OneToMany, upload.Cardinality,
+		"one upload may back many images (the same photograph on two products), "+
+			"while an image is made from at most one upload — which is the strictest constraint that is TRUE. "+
+			"ManyToMany would allow an image bound to two uploads, a state nothing can produce and no reader could resolve")
 }
 
 // TestSetVariantPriceSetReplacesExisting verifies that the old link is removed

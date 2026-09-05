@@ -68,6 +68,7 @@ func (r createProductRequest) toInput() service.CreateProductInput {
 	for _, img := range r.Images {
 		in.Images = append(in.Images, service.CreateImageInput{
 			URL:      img.URL,
+			UploadID: img.UploadID,
 			Rank:     img.Rank,
 			Metadata: img.Metadata,
 		})
@@ -204,7 +205,16 @@ func (r createOptionRequest) toInput() service.CreateOptionInput {
 
 // createImageRequest is the body of an image request.
 type createImageRequest struct {
-	URL      string         `json:"url"`
+	URL string `json:"url"`
+	// UploadID names the upload record the image was made from; it may be left
+	// out.
+	//
+	// The client that uploaded the file receives the id and the address in the
+	// SAME response (POST /admin/v1/uploads) and sends both back here. The
+	// address alone would leave the image unable to say which file it shows —
+	// the record behind it, with the detected content type, the size and the
+	// checksum, is reachable only through this id.
+	UploadID string         `json:"upload_id"`
 	Rank     int32          `json:"rank"`
 	Metadata map[string]any `json:"metadata"`
 }
@@ -250,6 +260,22 @@ type linkSalesChannelRequest struct {
 type productSalesChannels struct {
 	ProductID       string   `json:"product_id"`
 	SalesChannelIDs []string `json:"sales_channel_ids"`
+}
+
+// uploadImages is the response body of "which images use this upload".
+//
+// The upload id is echoed for the reason [productSalesChannels] echoes the
+// product id: the body then stands on its own in a log or a cache, without the
+// request URL next to it.
+//
+// The images are returned WHOLE rather than as ids. A bare id list would be
+// enough for the yes/no question ("is this file in use") and useless for the
+// next one an operator immediately asks — WHERE it is used — because resolving
+// each id would need one more request per image. Each record already carries
+// its product_id and its address.
+type uploadImages struct {
+	UploadID string         `json:"upload_id"`
+	Images   []models.Image `json:"images"`
 }
 
 // createCollectionRequest is the body of a collection request.
@@ -709,6 +735,48 @@ func (h *Handler) adminRemoveSalesChannel(w http.ResponseWriter, r *http.Request
 	}
 
 	h.writeSalesChannels(w, r, productID)
+}
+
+// adminListImagesOfUpload GET /admin/v1/product-images/by-upload/{upload_id}
+//
+// It answers "which product images use this file", which is the question an
+// operator has before deleting an upload: the delete endpoint of the file
+// module cannot ask it, because that module can neither see nor import the
+// catalog.
+//
+// # Why the upload id is in the PATH and not in the query string
+//
+// It is not a filter, it is the address of what is being asked about — the
+// endpoint has no meaning without it. Every query parameter in this module is
+// optional by convention (see queryParameter), and a required one would be the
+// single exception a client cannot see in the document.
+//
+// # Why it is not under /admin/v1/uploads/{id}
+//
+// That path belongs to the file module and the catalog does not write routes
+// into another module's namespace: in an installation without the file module
+// the prefix would exist with only this one endpoint under it, which reads as a
+// broken uploads API rather than as a catalog endpoint.
+func (h *Handler) adminListImagesOfUpload(w http.ResponseWriter, r *http.Request) {
+	uploadID, err := pathParam(r, "upload_id")
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+
+	images, err := h.svc.ImagesOfUpload(r.Context(), uploadID)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	if images == nil {
+		// It has to be "[]" in JSON, not "null": the client must be able to
+		// treat the field as an array every time (the same reasoning as
+		// writeList).
+		images = []models.Image{}
+	}
+
+	writeItem(w, r, http.StatusOK, uploadImages{UploadID: uploadID, Images: images})
 }
 
 // adminListSalesChannels GET /admin/v1/products/{id}/sales-channels

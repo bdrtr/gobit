@@ -224,7 +224,11 @@ func TestMigrationUpDownIsReversible(t *testing.T) {
 	version, dirty, err := db.Version(ctx, dsn, mod.Name())
 	require.NoError(t, err)
 	assert.False(t, dirty, "the migration must not stop halfway")
-	assert.Equal(t, uint(1), version)
+	// The number moves with every migration added to the module, and it is
+	// written out rather than derived on purpose: a count taken from the
+	// embedded files would agree with itself whatever happened, and what this
+	// line is for is noticing that a migration was added.
+	assert.Equal(t, uint(2), version)
 
 	require.NoError(t, db.MigrateDown(ctx, dsn, mod.Migrations(), mod.Name(), 0),
 		"the schema must be reversible")

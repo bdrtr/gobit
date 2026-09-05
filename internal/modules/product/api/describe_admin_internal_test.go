@@ -301,6 +301,13 @@ func adminEndpoints() []adminEndpoint {
 			record: productSalesChannels{},
 		},
 		{
+			// The REVERSE read of the image/upload binding. There is no write
+			// counterpart in the table because there is no write endpoint: an
+			// image is bound to its upload when the image itself is created.
+			method: http.MethodGet, path: "/admin/v1/product-images/by-upload/{upload_id}", status: "200",
+			record: uploadImages{UploadID: "upl_1", Images: []models.Image{{}}},
+		},
+		{
 			method: http.MethodPost, path: "/admin/v1/product-collections", status: "201",
 			request: createCollectionRequest{}, record: filledCollection(),
 		},

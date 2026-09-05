@@ -161,6 +161,9 @@ type Store interface {
 
 	CreateImage(ctx context.Context, img models.Image) (models.Image, error)
 	ListImagesByProductIDs(ctx context.Context, productIDs []string) (map[string][]models.Image, error)
+	// ListImagesByIDs reads images BY THEIR OWN ids; it is what turns the image
+	// ids the upload binding returns into records.
+	ListImagesByIDs(ctx context.Context, imageIDs []string) ([]models.Image, error)
 	DeleteImagesByProduct(ctx context.Context, productID string) error
 }
 

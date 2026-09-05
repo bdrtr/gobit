@@ -247,6 +247,11 @@ func (r *Repo) CreateImage(ctx context.Context, img models.Image) (models.Image,
 		Url:       img.URL,
 		Rank:      img.Rank,
 		Metadata:  meta,
+		// The pointer is passed through AS IT IS: nil is written as SQL NULL
+		// and that is the value meaning "this image was not made from an upload
+		// of ours". Substituting an empty string would produce a third state
+		// that the CHECK constraint rejects anyway.
+		UploadID: img.UploadID,
 	})
 	if err != nil {
 		return models.Image{}, wrapDB(err, "could not add product image: %s", img.ProductID)
@@ -272,6 +277,33 @@ func (r *Repo) ListImagesByProductIDs(ctx context.Context, productIDs []string) 
 			return nil, err
 		}
 		out[rows[i].ProductID] = append(out[rows[i].ProductID], img)
+	}
+	return out, nil
+}
+
+// ListImagesByIDs returns the given images in a SINGLE query.
+//
+// It is the second half of the reverse read of the image/upload binding: the
+// link service answers with image ids and the records are read here. Ids with
+// no live row are silently absent from the result — a deleted image and a
+// binding whose image was never committed look the same from here, and both
+// mean "there is nothing to show".
+func (r *Repo) ListImagesByIDs(ctx context.Context, imageIDs []string) ([]models.Image, error) {
+	if len(imageIDs) == 0 {
+		return []models.Image{}, nil
+	}
+	rows, err := r.q.ListImagesByIDs(ctx, imageIDs)
+	if err != nil {
+		return nil, wrapDB(err, "could not read the product images (%d ids)", len(imageIDs))
+	}
+
+	out := make([]models.Image, 0, len(rows))
+	for i := range rows {
+		img, err := toImage(rows[i])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, img)
 	}
 	return out, nil
 }
