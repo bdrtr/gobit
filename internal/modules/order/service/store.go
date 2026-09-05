@@ -107,6 +107,16 @@ type Store interface {
 	CreateLineItem(ctx context.Context, item models.OrderLineItem) (models.OrderLineItem, error)
 	// ListLineItems returns the lines of the order in creation order.
 	ListLineItems(ctx context.Context, orderID string) ([]models.OrderLineItem, error)
+	// ListLineItemsFiltered lists lines ACROSS orders, filtered and paged.
+	//
+	// The date criterion in the filter is the ORDER's placed_at, not the line's
+	// created_at (see [models.OrderLineItemFilter]); an implementation that
+	// filtered on the line's own stamp would answer a different question with
+	// the same signature.
+	ListLineItemsFiltered(ctx context.Context, filter models.OrderLineItemFilter) ([]models.OrderLineItem, error)
+	// LineItemsByIDs fetches a set of line identifiers in a SINGLE query (no
+	// N+1).
+	LineItemsByIDs(ctx context.Context, ids []string) ([]models.OrderLineItem, error)
 
 	// CreateSummary opens the summary record of the order in a zeroed state.
 	CreateSummary(ctx context.Context, summary models.OrderSummary) (models.OrderSummary, error)

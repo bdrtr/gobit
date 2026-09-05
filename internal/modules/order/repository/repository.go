@@ -432,6 +432,52 @@ func (r *Repository) ListLineItems(ctx context.Context, orderID string) ([]model
 	return toLineItems(rows)
 }
 
+// ListLineItemsFiltered lists lines ACROSS orders, filtered and paged.
+//
+// It is the read behind the "order_line_item" Query entity, and it is a
+// separate method from [Repository.ListLineItems] rather than an extension of
+// it because the two have different shapes: that one is entered with an order
+// that has already been found alive, this one is entered with a date or a
+// variant and therefore has to establish liveness itself (see
+// queries/order_line_items.sql).
+//
+// There is NO count beside the rows. The Query layer's List returns records and
+// nothing else, so a total would be a second query per call whose result no
+// caller can read — the repository's counterpart of a capability with no
+// consumer. When a paginated API surface for this listing appears, the count
+// query is added THEN, together with the reader that needs it.
+func (r *Repository) ListLineItemsFiltered(
+	ctx context.Context, filter models.OrderLineItemFilter,
+) ([]models.OrderLineItem, error) {
+	rows, err := r.queries(ctx).ListOrderLineItemsFiltered(ctx, orderdb.ListOrderLineItemsFilteredParams{
+		OrderID:    filter.OrderID,
+		VariantID:  filter.VariantID,
+		PlacedFrom: fromTimePtr(filter.PlacedFrom),
+		PlacedTo:   fromTimePtr(filter.PlacedTo),
+		RowLimit:   filter.Limit,
+		RowOffset:  filter.Offset,
+	})
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "could not list the order lines")
+	}
+	return toLineItems(rows)
+}
+
+// LineItemsByIDs fetches a set of line identifiers in a SINGLE query (no N+1).
+//
+// It serves the Query layer's FetchByIDs: reading the lines one by one is
+// exactly the N+1 the read layer exists to make structurally impossible.
+func (r *Repository) LineItemsByIDs(ctx context.Context, ids []string) ([]models.OrderLineItem, error) {
+	if len(ids) == 0 {
+		return []models.OrderLineItem{}, nil
+	}
+	rows, err := r.queries(ctx).GetOrderLineItemsByIDs(ctx, ids)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "could not read the order lines")
+	}
+	return toLineItems(rows)
+}
+
 // --- summary -----------------------------------------------------------------
 
 // CreateSummary opens the order's summary record with its totals zeroed.

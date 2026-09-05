@@ -43,6 +43,11 @@
 //     cancels it here in compensation; the notification side reads the e-mail
 //     that is NOT in the event here, with [service.Interop.OrderContactJSON].
 //   - "order.query" — the read provider opened to the Query layer (ADR 0004).
+//   - "order_line_item.query" — the SECOND read provider, offering the order
+//     LINE. It is what makes "which variants sold in this period" answerable:
+//     the order entity carries no lines and no date filter, so the variant, the
+//     quantity and the amount of a sale were reachable only one order at a
+//     time. Its date filter selects on the ORDER's placed_at.
 //   - /admin/v1/orders … — the admin API (reads + status transitions).
 //   - /store/v1/orders/{id} — the customer API (READ only).
 //
@@ -107,6 +112,15 @@ const InteropName = ModuleName + ".interop"
 
 // ProviderName is the Query provider's name in the container (ADR 0004).
 const ProviderName = service.EntityName + query.ProviderSuffix
+
+// LineItemProviderName is the LINE provider's name in the container.
+//
+// A module may offer several entities and the Query layer looks each one up
+// under its own name; this module offers the order and the order line. The line
+// needed its own entity because the order's record cannot carry the lines (see
+// [service.QueryProvider]) and therefore nothing could ask which VARIANTS sold
+// in a period.
+const LineItemProviderName = service.LineItemProviderName
 
 // The names of the core services resolved from the container.
 const (
@@ -252,6 +266,13 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	if err := c.Provide(ProviderName, service.NewQueryProvider(svc)); err != nil {
 		return err
 	}
+	// The SECOND entity of this module: the order LINE. It is registered next
+	// to the order rather than folded into it because a Record has ONE join key
+	// and an order has many lines; without its own entity the variant, the
+	// quantity and the amount of a sale are reachable only one order at a time.
+	if err := c.Provide(LineItemProviderName, service.NewLineItemQueryProvider(svc)); err != nil {
+		return err
+	}
 
 	m.svc = svc
 	// The return flow is resolved at REQUEST TIME for the reason the spending
@@ -262,7 +283,8 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		&invoicingFlow{c: c, log: log},
 		&fulfillingFlow{c: c, log: log})
 	slog.Default().DebugContext(ctx, "order module registered",
-		"service", ServiceName, "interop", InteropName, "provider", ProviderName)
+		"service", ServiceName, "interop", InteropName, "provider", ProviderName,
+		"line_item_provider", LineItemProviderName)
 	return nil
 }
 

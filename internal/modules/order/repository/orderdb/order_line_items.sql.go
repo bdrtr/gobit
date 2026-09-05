@@ -7,6 +7,8 @@ package orderdb
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createOrderLineItem = `-- name: CreateOrderLineItem :one
@@ -75,6 +77,58 @@ func (q *Queries) CreateOrderLineItem(ctx context.Context, arg CreateOrderLineIt
 	return i, err
 }
 
+const getOrderLineItemsByIDs = `-- name: GetOrderLineItemsByIDs :many
+SELECT li.id, li.order_id, li.variant_id, li.title, li.quantity, li.unit_price, li.subtotal, li.discount_total, li.tax_total, li.total, li.metadata, li.created_at, li.updated_at, li.deleted_at, li.tax_rate_bps FROM order_line_items li
+    JOIN orders o ON o.id = li.order_id
+WHERE li.id = ANY ($1::text[])
+  AND li.deleted_at IS NULL
+  AND o.deleted_at IS NULL
+ORDER BY li.id
+`
+
+// GetOrderLineItemsByIDs satisfies the Query layer's FetchByIDs call in a
+// SINGLE round trip; no per-ID query (N+1) is made.
+//
+// It joins orders for the liveness reason ListOrderLineItemsFiltered gives: an
+// expansion that returned a line the listing hides would make the same entity
+// answer two different ways depending on which side of the query it was reached
+// from.
+func (q *Queries) GetOrderLineItemsByIDs(ctx context.Context, ids []string) ([]OrderLineItem, error) {
+	rows, err := q.db.Query(ctx, getOrderLineItemsByIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrderLineItem{}
+	for rows.Next() {
+		var i OrderLineItem
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderID,
+			&i.VariantID,
+			&i.Title,
+			&i.Quantity,
+			&i.UnitPrice,
+			&i.Subtotal,
+			&i.DiscountTotal,
+			&i.TaxTotal,
+			&i.Total,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.TaxRateBps,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrderLineItems = `-- name: ListOrderLineItems :many
 SELECT id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, deleted_at, tax_rate_bps FROM order_line_items
 WHERE order_id = $1 AND deleted_at IS NULL
@@ -83,6 +137,101 @@ ORDER BY created_at, id
 
 func (q *Queries) ListOrderLineItems(ctx context.Context, orderID string) ([]OrderLineItem, error) {
 	rows, err := q.db.Query(ctx, listOrderLineItems, orderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrderLineItem{}
+	for rows.Next() {
+		var i OrderLineItem
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderID,
+			&i.VariantID,
+			&i.Title,
+			&i.Quantity,
+			&i.UnitPrice,
+			&i.Subtotal,
+			&i.DiscountTotal,
+			&i.TaxTotal,
+			&i.Total,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.TaxRateBps,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOrderLineItemsFiltered = `-- name: ListOrderLineItemsFiltered :many
+SELECT li.id, li.order_id, li.variant_id, li.title, li.quantity, li.unit_price, li.subtotal, li.discount_total, li.tax_total, li.total, li.metadata, li.created_at, li.updated_at, li.deleted_at, li.tax_rate_bps FROM order_line_items li
+    JOIN orders o ON o.id = li.order_id
+WHERE li.deleted_at IS NULL
+  AND o.deleted_at IS NULL
+  AND ($1::text IS NULL OR li.order_id = $1::text)
+  AND ($2::text IS NULL OR li.variant_id = $2::text)
+  AND ($3::timestamptz IS NULL
+       OR o.placed_at >= $3::timestamptz)
+  AND ($4::timestamptz IS NULL
+       OR o.placed_at < $4::timestamptz)
+ORDER BY o.placed_at DESC, li.id DESC
+LIMIT $6::bigint OFFSET $5::bigint
+`
+
+type ListOrderLineItemsFilteredParams struct {
+	OrderID    *string
+	VariantID  *string
+	PlacedFrom pgtype.Timestamptz
+	PlacedTo   pgtype.Timestamptz
+	RowOffset  int64
+	RowLimit   int64
+}
+
+// ListOrderLineItemsFiltered is the cross-module read of the LINE as an entity
+// of its own (the "order_line_item" Query provider).
+//
+// # Why it joins orders when ListOrderLineItems does not
+//
+// Two reasons, and both are about a fact the LINE DOES NOT HOLD.
+//
+// The first is the date. This query's reason to exist is "which variants sold
+// in this period", and the moment a line was sold is the ORDER's placed_at, not
+// the line's created_at: created_at says when the row was written, and for a
+// line added later to an existing order (an exchange) the two are different
+// days. Filtering on the line's own stamp would answer a question nobody asked.
+// Why the date is not copied onto the line instead is argued in migration
+// 000006.
+//
+// The second is liveness. ListOrderLineItems is always reached through an order
+// that was already found alive, so checking the line alone is enough there.
+// This query has no such caller: it is entered with a date or a variant and
+// must not report a line of a soft-deleted order as a sale. The order's
+// deleted_at is therefore part of the condition -- and it is part of
+// GetOrderLineItemsByIDs as well, so that the listing and the expansion of the
+// same provider cannot disagree about which lines exist. That divergence is the
+// exact failure 000001 warns about for order_summaries.
+//
+// The ORDER BY is o.placed_at DESC, li.id DESC: the analytics reader wants the
+// most recent sales first, and li.id breaks the tie so a page boundary does not
+// move between two calls. orders_placed_at_idx (migration 000006) serves both
+// the range and the ordering.
+func (q *Queries) ListOrderLineItemsFiltered(ctx context.Context, arg ListOrderLineItemsFilteredParams) ([]OrderLineItem, error) {
+	rows, err := q.db.Query(ctx, listOrderLineItemsFiltered,
+		arg.OrderID,
+		arg.VariantID,
+		arg.PlacedFrom,
+		arg.PlacedTo,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

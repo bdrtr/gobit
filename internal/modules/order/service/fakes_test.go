@@ -106,6 +106,13 @@ type fakeStore struct {
 	// that has no rule is not free.
 	spendingSums int
 
+	// lineItemBatchReads counts the calls made to LineItemsByIDs.
+	//
+	// The batch read exists so that ONE expansion costs ONE query; a test
+	// cannot tell a batch from a per-id loop by the records alone, because both
+	// return the same ones. The count is the only visible difference.
+	lineItemBatchReads int
+
 	// failCreateLineItem, when it is set, makes CreateLineItem return this
 	// error; it is used to exercise the transaction rollback path.
 	failCreateLineItem error
@@ -398,6 +405,29 @@ func (f *fakeStore) OrdersByIDs(ctx context.Context, ids []string) ([]models.Ord
 	return out, nil
 }
 
+// softDeleteOrder stamps the order as soft-deleted.
+//
+// The module has NO surface that deletes an order (migration 000001 says so),
+// so the state cannot be reached through the service — while every read query
+// filters on deleted_at, and the line listing joins orders to apply that filter
+// to the lines as well. Without this helper those conditions could not be
+// exercised at all, and a test cannot prove a filter it cannot reach.
+//
+// A missing identifier is left alone on purpose: the caller asserts that the
+// records disappeared, so a silent no-op fails the test rather than hiding.
+func (f *fakeStore) softDeleteOrder(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	order, ok := f.orders[id]
+	if !ok {
+		return
+	}
+	stamp := f.nextStamp()
+	order.DeletedAt = &stamp
+	f.orders[id] = order
+}
+
 // CancelOrder cancels the order; it only takes effect in the 'pending' status.
 func (f *fakeStore) CancelOrder(ctx context.Context, id, reason string) (models.Order, error) {
 	return f.applyStatus(ctx, id, models.OrderPending, models.OrderCanceled, reason)
@@ -476,6 +506,94 @@ func (f *fakeStore) ListLineItems(ctx context.Context, orderID string) ([]models
 	slices.SortFunc(out, func(a, b models.OrderLineItem) int {
 		return a.CreatedAt.Compare(b.CreatedAt)
 	})
+	return out, nil
+}
+
+// ListLineItemsFiltered lists lines across orders, applying the SAME conditions
+// as ListOrderLineItemsFiltered.
+//
+// The two that are easy to get wrong here, and that a lazier fake would let a
+// test pass over:
+//
+//  1. The date range is matched against the ORDER's PlacedAt, not the line's
+//     CreatedAt. They are the same instant for a line written with its order,
+//     so a fake filtering on the line's stamp would look correct in every test
+//     that only opens orders — and would disagree with the database the moment
+//     a line is added to an existing order.
+//  2. A line whose ORDER is soft-deleted is not returned. The query joins
+//     orders and checks their deleted_at; a fake that only checked the line
+//     would report a deleted order's lines as sales.
+//
+// The ordering is the query's: the order's PlacedAt descending, ties broken by
+// the line id descending.
+func (f *fakeStore) ListLineItemsFiltered(
+	ctx context.Context, filter models.OrderLineItemFilter,
+) ([]models.OrderLineItem, error) {
+	snapshot := f.view(ctx)
+
+	matched := make([]models.OrderLineItem, 0, len(snapshot.items))
+	for id := range snapshot.items {
+		line := snapshot.items[id]
+		order, alive := snapshot.orders[line.OrderID]
+		if !alive || order.DeletedAt != nil {
+			continue
+		}
+		if filter.OrderID != nil && line.OrderID != *filter.OrderID {
+			continue
+		}
+		if filter.VariantID != nil && line.VariantID != *filter.VariantID {
+			continue
+		}
+		// [from, to): the lower bound is inclusive and the upper one is not.
+		if filter.PlacedFrom != nil && order.PlacedAt.Before(*filter.PlacedFrom) {
+			continue
+		}
+		if filter.PlacedTo != nil && !order.PlacedAt.Before(*filter.PlacedTo) {
+			continue
+		}
+		matched = append(matched, line)
+	}
+
+	slices.SortFunc(matched, func(a, b models.OrderLineItem) int {
+		placedA, placedB := snapshot.orders[a.OrderID].PlacedAt, snapshot.orders[b.OrderID].PlacedAt
+		if !placedA.Equal(placedB) {
+			return placedB.Compare(placedA)
+		}
+		return strings.Compare(b.ID, a.ID)
+	})
+
+	total := int64(len(matched))
+	if filter.Offset >= total {
+		return []models.OrderLineItem{}, nil
+	}
+	end := min(filter.Offset+filter.Limit, total)
+	return slices.Clone(matched[filter.Offset:end]), nil
+}
+
+// LineItemsByIDs returns the set of line identifiers.
+//
+// The lines of a soft-deleted order are absent here as well: the query joins
+// orders for exactly that reason, and a fake that answered the batch read more
+// generously than the listing would hide the divergence the join prevents.
+func (f *fakeStore) LineItemsByIDs(ctx context.Context, ids []string) ([]models.OrderLineItem, error) {
+	f.mu.Lock()
+	f.lineItemBatchReads++
+	f.mu.Unlock()
+
+	snapshot := f.view(ctx)
+
+	out := make([]models.OrderLineItem, 0, len(ids))
+	for _, id := range slices.Sorted(slices.Values(ids)) {
+		line, ok := snapshot.items[id]
+		if !ok {
+			continue
+		}
+		if order, alive := snapshot.orders[line.OrderID]; !alive || order.DeletedAt != nil {
+			continue
+		}
+		out = append(out, line)
+	}
+
 	return out, nil
 }
 

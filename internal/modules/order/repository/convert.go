@@ -200,6 +200,19 @@ func toTime(ts pgtype.Timestamptz) time.Time {
 	return ts.Time.UTC()
 }
 
+// fromTimePtr converts an optional instant into a timestamptz value.
+//
+// A nil pointer becomes SQL NULL, which is how the filter queries spell "this
+// bound was not given": the zero time is NOT used as that sentinel, because it
+// is a legitimate instant and a caller passing it would have its filter
+// silently dropped.
+func fromTimePtr(t *time.Time) pgtype.Timestamptz {
+	if t == nil {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
+}
+
 // toTimePtr converts a nullable timestamptz value to a *time.Time.
 func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	if !ts.Valid {
