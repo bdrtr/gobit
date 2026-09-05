@@ -928,6 +928,123 @@ percent, the surface is too big.
 
 ---
 
+## Commerce models — measured against the brief, 2026-09-05
+
+The brief: subscriptions and recurring orders, multi-vendor marketplace, B2B
+(group price lists, quotes, terms, minimum order), pre-order with a
+back-in-stock waitlist, and digital products with licence delivery. With one
+claim attached — a subscription dimension is cheap in the core and expensive
+later.
+
+Measured, the five are in three different states.
+
+### Nothing at all: subscriptions and multi-vendor
+
+**Subscriptions and recurring orders: zero.** No schedule, no renewal, no
+recurring capture. The order state machine is four states — pending, completed,
+archived, canceled — and every one of them describes a SINGLE sale that
+happened once.
+
+The brief's claim about cost is right, and it is worth being precise about why.
+A subscription is not a fifth status; it is a second axis. The order keeps
+`placed_at`, `completed_at` and `canceled_at` — moments, not a period — and a
+recurring sale needs a next-run, a cadence, a pause and an end. That axis
+touches the checkout saga (a renewal is a capture with no cart), payment (a
+stored mandate rather than a session), fulfillment (a shipment per period) and
+invoicing (a document per period, from a series that must stay gap-free).
+
+The one piece that is genuinely ready is the scheduler: `internal/core/job`
+already runs recurring work with an occurrence elected by a row and liveness by
+an advisory lock (ADR 0019), which is exactly the shape a renewal run needs.
+
+**Multi-vendor: zero.** No vendor, no commission, no payout. This is the
+largest of the five by some distance, because it is not a feature but a change
+to what a line means: every money path assumes one seller. The order totals, the
+payment collection, the refund spread and the invoice all resolve to one party
+today.
+
+The nearest existing concept is the SALES CHANNEL, which already scopes what a
+storefront may see and is enforced in SQL rather than in Go. A marketplace needs
+the same discipline applied to money instead of visibility.
+
+### Partly there, with the blocker already named: B2B
+
+The b2b module exists and holds **companies and their employees**, plus a
+spending rule the order module resolves by name at request time — so an
+employee's order can be refused against a company limit, and a shop without the
+module counts every customer as unlimited.
+
+What the brief asks for beyond that:
+
+- **Group price lists: the engine supports it, the cart deliberately does not
+  send the group.** `pricing`'s rule matcher takes an arbitrary
+  `map[string]string` context, so a rule keyed on `customer_group_id` would
+  already work. The cart sends only `region_id`, and the reason is written down
+  rather than forgotten: the rule context carries ONE value per attribute, a
+  customer may belong to more than one group, and picking one silently would tie
+  the price to map iteration order. The unfilled decision is pricing's — "the
+  best price the customer is entitled to" — and the same gap is left open in the
+  discount context for the same reason.
+
+  So this item is not "build group pricing". It is "decide the selection rule
+  for a customer in several groups", after which the plumbing is a context key.
+
+- **Quotes, terms/deferred payment, minimum order: nothing.** Deferred payment
+  is the interesting one, because it is the first case where an order is
+  completed with money NOT captured — and the repository has just spent a whole
+  round making the order say what was actually collected (ADR 0022) and
+  reconciling it against the provider (ADR 0020). Terms fit that machinery
+  rather than fighting it.
+
+### A flag with no reader: pre-order
+
+**`allow_backorder` exists on the variant, is editable through the admin API,
+and is published by the query provider — and nothing reads it.** Every reference
+outside the product module's own CRUD and DTO is absent; the inventory
+reservation refuses on `CodeInsufficientStock` without consulting it.
+
+That is this repository's named second error class (ADR 0009) in its purest
+form: a capability whose consumer was never written, sitting in a published API
+where a client can set it and reasonably expect it to mean something. A shop
+that ticks "allow backorder" today gets the same refusal it got before.
+
+Pre-order proper needs a little more — a promised date, and stock that may go
+negative in a controlled way — but the first move is smaller than the feature:
+either the flag gets its reader or it stops being published.
+
+**The waitlist ("tell me when it is back") is nothing today and is the cheapest
+item on this entire list.** The parts are all built: an inventory level change
+is a fact the module already knows, the outbox guarantees the event survives the
+commit (ADR 0023), and the notification module with its provider slot already
+sends. What is missing is a table of who is waiting for what.
+
+### Two flags and no delivery: digital products
+
+`inventory_items.requires_shipping` and `products.is_giftcard` both exist, so
+the model can already say "this does not ship". Nothing delivers anything: no
+entitlement, no download token, no licence.
+
+The storage half is built — the `file` module has an S3 provider — so what is
+missing is the commerce half: what a paid order entitles the buyer to, a link
+that expires and is bound to that entitlement, and a re-download policy. It is
+also the one item on this list with a tax dimension in Turkey that the framework
+would not decide for the shop.
+
+### The order the measurement suggests
+
+1. **The waitlist**, because every part exists and it is a table plus a
+   subscriber.
+2. **The backorder flag's reader**, because a published flag that does nothing
+   is worse than an absent one.
+3. **The group-price selection rule**, because it is a decision rather than a
+   build, and B2B is the segment the brief calls a real gap in Turkey.
+4. **Subscriptions**, because the brief is right that the second axis is cheaper
+   before the order model has more consumers, and the scheduler is ready.
+5. **Multi-vendor**, last, because it changes what every money path means and
+   should not be attempted while any of the above is still moving.
+
+---
+
 ## Capability inventory — measured 2026-09-04
 
 Ten axes, 139 capabilities: 83 gaps and 22 things this repository refuses in
