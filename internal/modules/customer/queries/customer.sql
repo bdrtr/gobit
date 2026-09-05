@@ -55,6 +55,10 @@ WHERE c.deleted_at IS NULL
         SELECT 1 FROM customer_group_customer m
         JOIN customer_group g ON g.id = m.customer_group_id AND g.deleted_at IS NULL
         WHERE m.customer_id = c.id AND m.customer_group_id = sqlc.narg('group_id')::text))
+  AND (c.created_at, c.id) < (
+    COALESCE(sqlc.narg('after_at')::timestamptz, 'infinity'::timestamptz),
+    COALESCE(sqlc.narg('after_id')::text, '')
+  )
 ORDER BY c.created_at DESC, c.id DESC
 LIMIT sqlc.arg('lim')::int OFFSET sqlc.arg('off')::int;
 

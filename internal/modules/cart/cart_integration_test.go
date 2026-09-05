@@ -475,8 +475,10 @@ func TestUpdateCartTransfersGuestCartToCustomer(t *testing.T) {
 	assert.Equal(t, customerID, updated.CustomerID)
 
 	// The cart now shows up in the customer filter and has kept its lines.
-	_, count, err := svc.ListCarts(ctx, service.ListCartsInput{CustomerID: &customerID})
+	listed, err := svc.ListCarts(ctx, service.ListCartsInput{CustomerID: &customerID})
 	require.NoError(t, err)
+
+	count := listed.Count
 	assert.Equal(t, int64(1), count)
 
 	detail, err := svc.GetCart(ctx, cart.ID)
@@ -514,8 +516,10 @@ func TestGuestAndRegisteredCustomerCarts(t *testing.T) {
 	assert.Equal(t, customerID, registered.CustomerID)
 
 	// The filter separates the two.
-	_, count, err := svc.ListCarts(ctx, service.ListCartsInput{CustomerID: &customerID})
+	listed, err := svc.ListCarts(ctx, service.ListCartsInput{CustomerID: &customerID})
 	require.NoError(t, err)
+
+	count := listed.Count
 	assert.Equal(t, int64(1), count)
 }
 
@@ -538,8 +542,10 @@ func TestManyCartsCanBeOpenedInTheSameRegion(t *testing.T) {
 			"a second cart must be openable for the same region and customer")
 	}
 
-	_, count, err := svc.ListCarts(ctx, service.ListCartsInput{CustomerID: &customerID})
+	listed, err := svc.ListCarts(ctx, service.ListCartsInput{CustomerID: &customerID})
 	require.NoError(t, err)
+
+	count := listed.Count
 	assert.Equal(t, int64(3), count)
 }
 

@@ -47,23 +47,24 @@ func (h *Handler) adminListCarts(w http.ResponseWriter, r *http.Request) {
 		in.Completed = &flag
 	}
 
-	carts, count, err := h.svc.ListCarts(ctx, in)
+	result, err := h.svc.ListCarts(ctx, in)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
 
-	data := make([]cartDTO, 0, len(carts))
+	data := make([]cartDTO, 0, len(result.Items))
 	// The loop is walked by index: the cart struct is large and copying it by
 	// value would carry a few hundred bytes needlessly on every turn.
-	for i := range carts {
-		data = append(data, toCartDTO(carts[i]))
+	for i := range result.Items {
+		data = append(data, toCartDTO(result.Items[i]))
 	}
 	corehttp.WriteJSON(ctx, w, http.StatusOK, listEnvelope{
-		Data:   data,
-		Count:  count,
-		Offset: page.Offset,
-		Limit:  page.Limit,
+		Data:       data,
+		Count:      result.Count,
+		NextCursor: result.NextCursor,
+		Offset:     page.Offset,
+		Limit:      page.Limit,
 	})
 }
 

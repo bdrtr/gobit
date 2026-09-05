@@ -435,7 +435,10 @@ func TestAdminListDescribesItsBody(t *testing.T) {
 	require.True(t, ok, "the code the handler REALLY writes has to be documented")
 
 	envelope := bodySchema(t, definition)
-	assert.ElementsMatch(t, []string{"data", "count", "offset", "limit"},
+	// "next_cursor" is here because this listing accepts "after": the two are
+	// one decision, and a listing that took a cursor without giving one back
+	// would leave a client unable to reach page two.
+	assert.ElementsMatch(t, []string{"data", "count", "offset", "limit", "next_cursor"},
 		fields(t, components, envelope), "the list envelope is the shape in plan Section 8")
 
 	item := listItemSchema(t, components, envelope)
@@ -509,7 +512,7 @@ func TestAdminListDescribesOnlyTheParametersItReads(t *testing.T) {
 	op := operation(t, paths, http.MethodGet, "/admin/v1/carts")
 
 	assert.ElementsMatch(t,
-		[]string{"customer_id", "region_id", "completed", "limit", "offset"},
+		[]string{"customer_id", "region_id", "completed", "limit", "offset", "after"},
 		parameterNames(t, op, "query"),
 		"the parameters have to be the same as the ones adminListCarts reads")
 

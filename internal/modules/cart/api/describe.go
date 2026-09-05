@@ -211,13 +211,22 @@ func describeAdmin(d *openapi.Doc) {
 			queryParameter("limit", typeInteger,
 				"Page size; if it is not given the service's default is applied."),
 			queryParameter("offset", typeInteger, "Number of records to skip."),
+			queryParameter("after", typeString,
+				"Opaque cursor from a previous page's \"next_cursor\". Cheaper than \"offset\" "+
+					"for deep pages: offset makes the database walk and DISCARD every row it "+
+					"skips, so its cost grows with depth, while a cursor becomes an index "+
+					"condition and stays flat. "+
+					"\"after\" and \"offset\" name two different positions and are REFUSED "+
+					"together. When the response carries no \"next_cursor\" the listing is "+
+					"exhausted."),
 		},
 		Responses: map[string]any{
 			// The record is NOT [cartDetailDTO] but [cartDTO]: the list endpoint
 			// does NOT LOAD the line items, the addresses and the shipping methods
 			// (that would open it up to N+1). Writing the detail schema would mean
 			// promising the client fields that are never filled in.
-			"200": openapi.Response("A page of carts", d.List(cartDTO{})),
+			"200": openapi.Response("A page of carts",
+				d.List(cartDTO{}, openapi.WithCursor())),
 		},
 	})
 

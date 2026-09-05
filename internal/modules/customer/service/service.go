@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
+	corepage "github.com/bdrtr/gobit/internal/core/page"
 	"github.com/bdrtr/gobit/internal/modules/customer/models"
 )
 
@@ -72,6 +73,13 @@ type Page[T any] struct {
 	Limit int64
 	// Offset is the applied number of skipped records.
 	Offset int64
+	// NextCursor is the opaque position the NEXT page starts below; empty means
+	// this page is the last one.
+	//
+	// The emptiness is the end-of-listing signal: a cursor that always came back
+	// would make a client walk one extra request into an empty page before it
+	// could tell it was done.
+	NextCursor string
 }
 
 // Repository is the data access surface the service needs.
@@ -276,6 +284,13 @@ type ListCustomersInput struct {
 	Limit int64
 	// Offset is the number of records to skip.
 	Offset int64
+	// After is the opaque position from a previous page's NextCursor; the zero
+	// value is the first page.
+	//
+	// It is what makes a deep page cheap: offset asks the database to walk and
+	// DISCARD every row it skips, so its cost grows with depth, while a cursor
+	// goes into the index condition and stays flat.
+	After corepage.Cursor
 }
 
 // ListCustomers returns the filtered and paginated customer list.
@@ -304,12 +319,31 @@ func (s *Service) ListCustomers(ctx context.Context, in ListCustomersInput) (Pag
 		filter.GroupID = in.GroupID
 	}
 
-	items, total, err := s.repo.ListCustomers(ctx, filter, limit, offset)
+	filter.After = in.After
+
+	// One row MORE than asked for is fetched and the extra one is dropped below:
+	// that is how "is there a next page" is answered without a second query.
+	items, total, err := s.repo.ListCustomers(ctx, filter, limit+1, offset)
 	if err != nil {
 		return Page[models.Customer]{}, err
 	}
-	return Page[models.Customer]{Items: items, Count: total, Limit: limit, Offset: offset}, nil
+
+	result := Page[models.Customer]{Items: items, Count: total, Limit: limit, Offset: offset}
+	if int64(len(items)) > limit {
+		result.Items = items[:limit]
+		last := result.Items[len(result.Items)-1]
+		result.NextCursor = corepage.Encode(CustomerListing,
+			corepage.Cursor{Time: last.CreatedAt, ID: last.ID})
+	}
+
+	return result, nil
 }
+
+// CustomerListing names the customer listing inside a cursor.
+//
+// A cursor carries the name of the listing it belongs to so that one handed to
+// a different listing is REFUSED rather than silently selecting the wrong rows.
+const CustomerListing = "customers"
 
 // UpdateCustomerInput is the partial update input of a customer.
 //

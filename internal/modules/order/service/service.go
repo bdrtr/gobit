@@ -55,6 +55,7 @@ import (
 	"strings"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
+	corepage "github.com/bdrtr/gobit/internal/core/page"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 )
 
@@ -227,6 +228,13 @@ type Page struct {
 	Limit int64
 	// Offset is the number of rows to skip.
 	Offset int64
+	// After is the opaque position from a previous page's NextCursor; the zero
+	// value is the first page.
+	//
+	// It is what makes a deep page cheap: offset asks the database to walk and
+	// DISCARD every row it skips, so its cost grows with depth, while a cursor
+	// goes into the index condition and stays flat.
+	After corepage.Cursor
 }
 
 // normalize validates the pagination parameters and applies the defaults.

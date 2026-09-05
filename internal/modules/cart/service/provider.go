@@ -150,11 +150,11 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 		}
 	}
 
-	carts, _, err := p.svc.ListCarts(ctx, in)
+	result, err := p.svc.ListCarts(ctx, in)
 	if err != nil {
 		return nil, err
 	}
-	return records(carts, opts.Fields), nil
+	return records(result.Items, opts.Fields), nil
 }
 
 // FetchByIDs returns the records of the given identifiers as a BATCH.

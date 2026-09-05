@@ -156,7 +156,8 @@ func TestCreateCartAllowsTwoCartsInTheSameRegion(t *testing.T) {
 
 	assert.NotEqual(t, first.ID, second.ID)
 
-	_, count, listErr := svc.ListCarts(ctx, service.ListCartsInput{})
+	listed, listErr := svc.ListCarts(ctx, service.ListCartsInput{})
+	count := listed.Count
 	require.NoError(t, listErr)
 	assert.Equal(t, int64(2), count)
 }
@@ -931,17 +932,20 @@ func TestListCartsFiltersAndPaginates(t *testing.T) {
 	require.NoError(t, err)
 
 	customer := customerID
-	carts, count, err := svc.ListCarts(ctx, service.ListCartsInput{
+	listed, err := svc.ListCarts(ctx, service.ListCartsInput{
 		CustomerID: &customer,
 		Page:       service.Page{Limit: 2},
 	})
 
 	require.NoError(t, err)
+
+	carts, count := listed.Items, listed.Count
 	assert.Equal(t, int64(3), count, "the count must be the filter's count, not the page's")
 	assert.Len(t, carts, 2, "the page size must be applied")
 
 	region := regionOther
-	_, count, err = svc.ListCarts(ctx, service.ListCartsInput{RegionID: &region})
+	listed, err = svc.ListCarts(ctx, service.ListCartsInput{RegionID: &region})
+	count = listed.Count
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 }
@@ -951,7 +955,7 @@ func TestListCartsFiltersAndPaginates(t *testing.T) {
 func TestListCartsCannotExceedTheLimitCeiling(t *testing.T) {
 	svc, _ := newService(t)
 
-	_, _, err := svc.ListCarts(context.Background(), service.ListCartsInput{
+	_, err := svc.ListCarts(context.Background(), service.ListCartsInput{
 		Page: service.Page{Limit: service.MaxLimit + 1},
 	})
 

@@ -1,5 +1,7 @@
 package models
 
+import "github.com/bdrtr/gobit/internal/core/page"
+
 // CartFilter is the set of criteria for listing carts.
 //
 // The filter fields are pointers: nil means "do not apply this criterion". That
@@ -21,4 +23,10 @@ type CartFilter struct {
 	Limit int64
 	// Offset is the number of rows to skip.
 	Offset int64
+	// After is the keyset position the page starts below; the zero value is the
+	// first page.
+	//
+	// It is applied TOGETHER with Offset so the query keeps one shape; the API
+	// refuses the two at once, because they name two different positions.
+	After page.Cursor
 }

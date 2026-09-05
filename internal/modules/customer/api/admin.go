@@ -52,12 +52,19 @@ func (h *Handler) adminListCustomers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	after, err := afterParam(r, service.CustomerListing, offset)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
 	page, err := h.svc.ListCustomers(ctx, service.ListCustomersInput{
 		Email:      stringParam(r, "email"),
 		HasAccount: hasAccount,
 		GroupID:    stringParam(r, "group_id"),
 		Limit:      limit,
 		Offset:     offset,
+		After:      after,
 	})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)

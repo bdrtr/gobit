@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
+	corepage "github.com/bdrtr/gobit/internal/core/page"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 )
 
@@ -441,33 +442,70 @@ type ListOrdersInput struct {
 // lines are not loaded here: fetching the children of dozens of orders per page
 // would make the list heavy and open to N+1. The children only come with
 // [Service.GetOrder].
-func (s *Service) ListOrders(ctx context.Context, in ListOrdersInput) ([]models.Order, int64, error) {
+func (s *Service) ListOrders(ctx context.Context, in ListOrdersInput) (OrderPage, error) {
 	page, err := in.Page.normalize()
 	if err != nil {
-		return nil, 0, err
+		return OrderPage{}, err
 	}
 
-	filter := models.OrderFilter{Limit: page.Limit, Offset: page.Offset}
+	filter := models.OrderFilter{Limit: page.Limit, Offset: page.Offset, After: in.Page.After}
 	if in.CustomerID != nil {
 		if err := requireID("customer_id", *in.CustomerID); err != nil {
-			return nil, 0, err
+			return OrderPage{}, err
 		}
 		filter.CustomerID = in.CustomerID
 	}
 	if in.RegionID != nil {
 		if err := requireID("region_id", *in.RegionID); err != nil {
-			return nil, 0, err
+			return OrderPage{}, err
 		}
 		filter.RegionID = in.RegionID
 	}
 	if in.Status != nil {
 		if !in.Status.Valid() {
-			return nil, 0, errors.Invalid(CodeInvalidInput,
+			return OrderPage{}, errors.Invalid(CodeInvalidInput,
 				"undefined order status: %q", in.Status.String())
 		}
 		filter.Status = in.Status
 	}
-	return s.store.ListOrders(ctx, filter)
+
+	// One row MORE than asked for is fetched and the extra one is dropped
+	// below: that is how "is there a next page" is answered without a second
+	// query, and it is what lets the cursor be absent on the last page.
+	filter.Limit = page.Limit + 1
+
+	orders, count, err := s.store.ListOrders(ctx, filter)
+	if err != nil {
+		return OrderPage{}, err
+	}
+
+	result := OrderPage{Items: orders, Count: count}
+	if int64(len(orders)) > page.Limit {
+		result.Items = orders[:page.Limit]
+		last := result.Items[len(result.Items)-1]
+		result.NextCursor = corepage.Encode(OrderListing,
+			corepage.Cursor{Time: last.CreatedAt, ID: last.ID})
+	}
+
+	return result, nil
+}
+
+// OrderListing names the order listing inside a cursor.
+//
+// A cursor carries the name of the listing it belongs to so that one handed to
+// a different listing is REFUSED rather than silently selecting the wrong rows.
+const OrderListing = "orders"
+
+// OrderPage is one page of the order listing.
+type OrderPage struct {
+	// Items are the orders on this page.
+	Items []models.Order
+	// Count is the total number of rows matching the filter, independent of the
+	// page.
+	Count int64
+	// NextCursor is the opaque position the NEXT page starts below; empty means
+	// this page is the last one.
+	NextCursor string
 }
 
 // ListOrdersByIDs returns the orders of the given identifiers in a SINGLE

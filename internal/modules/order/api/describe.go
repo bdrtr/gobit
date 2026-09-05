@@ -120,9 +120,18 @@ func Describe(d *openapi.Doc) {
 			queryParameter("limit", typeInteger,
 				"Page size; when it is not given the service's default applies."),
 			queryParameter("offset", typeInteger, "Number of records to skip."),
+			queryParameter("after", typeString,
+				"Opaque cursor from a previous page's \"next_cursor\". Cheaper than \"offset\" "+
+					"for deep pages: offset makes the database walk and DISCARD every row it "+
+					"skips, so its cost grows with depth, while a cursor becomes an index "+
+					"condition and stays flat. "+
+					"\"after\" and \"offset\" name two different positions and are REFUSED "+
+					"together. When the response carries no \"next_cursor\" the listing is "+
+					"exhausted."),
 		},
 		Responses: map[string]any{
-			"200": openapi.Response("Page of orders", d.List(orderDTO{})),
+			"200": openapi.Response("Page of orders",
+				d.List(orderDTO{}, openapi.WithCursor())),
 		},
 	})
 

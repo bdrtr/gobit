@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
@@ -247,12 +248,27 @@ func (r *Repository) LockCart(ctx context.Context, id string) (models.Cart, erro
 // total is the informative field of the pagination envelope, no decision about an
 // operation is based on it.
 func (r *Repository) ListCarts(ctx context.Context, filter models.CartFilter) ([]models.Cart, int64, error) {
+	// The cursor arrives as SQL NULL when it names no position; the COALESCE
+	// sentinels in the query turn that into "start at the top". A zero TIME sent
+	// instead would make the first page come back empty with no error anywhere.
+	afterAt := pgtype.Timestamptz{}
+	if !filter.After.Time.IsZero() {
+		afterAt = pgtype.Timestamptz{Time: filter.After.Time, Valid: true}
+	}
+
+	var afterID *string
+	if filter.After.ID != "" {
+		afterID = &filter.After.ID
+	}
+
 	rows, err := r.queries(ctx).ListCarts(ctx, cartdb.ListCartsParams{
 		CustomerID: filter.CustomerID,
 		RegionID:   filter.RegionID,
 		Completed:  filter.Completed,
 		RowLimit:   filter.Limit,
 		RowOffset:  filter.Offset,
+		AfterAt:    afterAt,
+		AfterID:    afterID,
 	})
 	if err != nil {
 		return nil, 0, classify(err, codeQueryFailed, "the carts could not be listed")

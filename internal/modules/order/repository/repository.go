@@ -299,12 +299,26 @@ func (r *Repository) ListOrders(ctx context.Context, filter models.OrderFilter) 
 		status = &value
 	}
 
+	// The cursor arrives as SQL NULL when it names no position; the COALESCE
+	// sentinels in the query turn that into "start at the top".
+	afterAt := pgtype.Timestamptz{}
+	if !filter.After.Time.IsZero() {
+		afterAt = pgtype.Timestamptz{Time: filter.After.Time, Valid: true}
+	}
+
+	var afterID *string
+	if filter.After.ID != "" {
+		afterID = &filter.After.ID
+	}
+
 	rows, err := r.queries(ctx).ListOrders(ctx, orderdb.ListOrdersParams{
 		CustomerID: filter.CustomerID,
 		RegionID:   filter.RegionID,
 		Status:     status,
 		RowLimit:   filter.Limit,
 		RowOffset:  filter.Offset,
+		AfterAt:    afterAt,
+		AfterID:    afterID,
 	})
 	if err != nil {
 		return nil, 0, classify(err, codeQueryFailed, "could not list the orders")

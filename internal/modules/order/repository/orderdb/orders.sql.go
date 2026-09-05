@@ -7,6 +7,8 @@ package orderdb
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const archiveOrder = `-- name: ArchiveOrder :one
@@ -426,14 +428,20 @@ WHERE deleted_at IS NULL
   AND ($1::text IS NULL OR customer_id = $1::text)
   AND ($2::text IS NULL OR region_id = $2::text)
   AND ($3::text IS NULL OR status = $3::text)
+  AND (created_at, id) < (
+    COALESCE($4::timestamptz, 'infinity'::timestamptz),
+    COALESCE($5::text, '')
+  )
 ORDER BY created_at DESC, id DESC
-LIMIT $5::bigint OFFSET $4::bigint
+LIMIT $7::bigint OFFSET $6::bigint
 `
 
 type ListOrdersParams struct {
 	CustomerID *string
 	RegionID   *string
 	Status     *string
+	AfterAt    pgtype.Timestamptz
+	AfterID    *string
 	RowOffset  int64
 	RowLimit   int64
 }
@@ -443,6 +451,8 @@ func (q *Queries) ListOrders(ctx context.Context, arg ListOrdersParams) ([]Order
 		arg.CustomerID,
 		arg.RegionID,
 		arg.Status,
+		arg.AfterAt,
+		arg.AfterID,
 		arg.RowOffset,
 		arg.RowLimit,
 	)

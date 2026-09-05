@@ -161,7 +161,8 @@ func TestInteropPlaceOrderIsIdempotent(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, first, second)
-	_, count, err := e.svc.ListOrders(ctx, service.ListOrdersInput{})
+	listed, err := e.svc.ListOrders(ctx, service.ListOrdersInput{})
+	count := listed.Count
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 }

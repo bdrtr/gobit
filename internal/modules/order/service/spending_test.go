@@ -91,7 +91,8 @@ func TestTheOrderIsNotOpenedWhenTheSpendingLimitIsExceeded(t *testing.T) {
 	assert.Equal(t, []string{testCustomerID}, policy.calls())
 
 	// The write WAS ROLLED BACK: only the past order is left behind.
-	records, _, listErr := e.svc.ListOrders(context.Background(), service.ListOrdersInput{})
+	listed, listErr := e.svc.ListOrders(context.Background(), service.ListOrdersInput{})
+	records := listed.Items
 	require.NoError(t, listErr)
 	require.Len(t, records, 1)
 	assert.Equal(t, "order_PAST", records[0].ID)

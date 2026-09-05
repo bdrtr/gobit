@@ -232,14 +232,27 @@ or a workflow, that composes the three.
    change record contains — a diff is expensive and a bare "updated product X"
    is not worth writing.
 
-3. **Guest cart cannot be adopted by a customer who logs in.** Line-item merge
-   works (adding a variant already in the cart adds quantity —
-   `workflows/cart/add_line_item.go`), but there is no `AssignCustomer`,
-   `ClaimCart` or equivalent: a guest who signs in loses their cart.
+3. ~~**Guest cart cannot be adopted by a customer who logs in.**~~
+   **WRONG — corrected 2026-09-05.** Adoption exists and is guarded. `UpdateCart`
+   writes a `customer_id` onto a guest cart, and the rule next to it refuses
+   handing an OWNED cart to a different customer
+   (`cart_customer_mismatch`); the integration test covers both directions,
+   including that a refused handover writes nothing. What the earlier reading
+   missed is that the capability is a field on the update rather than a method
+   with "claim" or "adopt" in its name, which is what the search looked for.
 
-   This is entangled with the storefront-identity decision (ADR 0008): there is
-   no customer session for the cart to be adopted BY. It becomes buildable the
-   moment identity is settled, and not before.
+   The narrower thing that really is missing: MERGING a guest cart into a cart
+   the customer already has. Adoption gives the customer a second cart; nothing
+   folds the two into one. That is a policy question (whose quantities win,
+   which cart's promotions survive) rather than a plumbing gap, which is why it
+   is left rather than guessed.
+
+   The original finding, kept because the shape of the mistake is worth having:
+   "Line-item merge works, but there is no `AssignCustomer`, `ClaimCart` or
+   equivalent: a guest who signs in loses their cart. This is entangled with the
+   storefront-identity decision (ADR 0008)." The ADR 0008 argument was the part
+   that made it sound settled; it is not relevant here, because the customer id
+   arrives from the embedding application exactly as ADR 0008 says it should.
 
 4. **No carrier integration.** `fulfillment` ships with the manual/test provider
    only. The provider interface and registry exist and are proven by the payment
@@ -337,9 +350,9 @@ dependency lands on is decided by what its loss does to a request.
    allocation regression in pricing, promotion computation or JSON encoding
    would be invisible until it showed up as latency in production.
 
-2. **Pagination is offset-based everywhere.** **PARTLY CLOSED 2026-09-05.**
-   The mechanism exists and the product listings use it; the remaining
-   unbounded listings are being converted module by module.
+2. ~~**Pagination is offset-based everywhere.**~~ **CLOSED 2026-09-05.**
+   The four listings whose tables grow without bound take a cursor: products
+   (admin and storefront, REST and GraphQL), orders, customers and carts.
 
    Measured on 52,000 products with the listing index in place:
 
@@ -369,6 +382,18 @@ dependency lands on is decided by what its loss does to a request.
    (`COALESCE(@after, 'infinity')`) has no OR left to survive and holds under
    both plans. An integration test reads the plan rather than a timing, because
    a timing cannot tell the two apart on a small table.
+
+   **The rest of the listings keep offset alone, and that is a decision rather
+   than a remainder.** Offset only costs anything at DEPTH — the table above is
+   the whole argument — and a listing whose table is configuration-sized never
+   goes there. Tax rates, shipping options, regions, currencies, countries,
+   sales channels and customer groups are counted in hundreds; a cursor on them
+   would be ceremony, and every parameter that exists has to be documented,
+   tested and honored forever. The rule to apply to the next listing is
+   therefore: **a cursor where the rows grow with the shop's trade, offset alone
+   where they grow with its configuration.** Listings scoped to one parent — a
+   product's variants, an order's returns, a company's employees — are bounded
+   by the parent and fall on the offset side too.
 
    The original finding: 101 `limit` and 96 `offset`
    occurrences across the module APIs; no cursor, no `after`, no `before`.

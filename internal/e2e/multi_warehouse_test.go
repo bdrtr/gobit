@@ -342,8 +342,10 @@ func TestLineWithNoWarehouseReleasesPreviousReservation(t *testing.T) {
 	// create_order comes AFTER reserve_inventory; because the stock step blew up
 	// it must not have run at all. An order record, even a canceled one, would
 	// mean that an order that was never attempted exists.
-	orders, totalCount, err := orderSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &customerID})
+	listed, err := orderSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &customerID})
 	require.NoError(t, err, "the customer's orders must be readable")
+
+	orders, totalCount := listed.Items, listed.Count
 	require.Empty(t, orders, "NO order must have been created")
 	require.Zero(t, totalCount, "the counter must be zero too")
 
@@ -948,8 +950,10 @@ func TestNoWarehouseServingTheRegionDropsTheOrder(t *testing.T) {
 
 	// --- what it left behind ---
 
-	orders, totalCount, err := orderSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &customerID})
+	listed, err := orderSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &customerID})
 	require.NoError(t, err, "the customer's orders must be readable")
+
+	orders, totalCount := listed.Items, listed.Count
 	require.Zero(t, totalCount, "NO order must have been created")
 	require.Empty(t, orders, "the order list must be empty")
 

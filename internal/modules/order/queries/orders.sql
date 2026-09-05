@@ -59,6 +59,10 @@ WHERE deleted_at IS NULL
   AND (sqlc.narg('customer_id')::text IS NULL OR customer_id = sqlc.narg('customer_id')::text)
   AND (sqlc.narg('region_id')::text IS NULL OR region_id = sqlc.narg('region_id')::text)
   AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
+  AND (created_at, id) < (
+    COALESCE(sqlc.narg('after_at')::timestamptz, 'infinity'::timestamptz),
+    COALESCE(sqlc.narg('after_id')::text, '')
+  )
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
 

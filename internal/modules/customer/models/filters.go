@@ -1,5 +1,7 @@
 package models
 
+import "github.com/bdrtr/gobit/internal/core/page"
+
 // CustomerFilter is the filter applied to the customer listing.
 //
 // All of the fields are pointers: nil means "do not filter", while a non-nil
@@ -14,6 +16,12 @@ type CustomerFilter struct {
 	HasAccount *bool
 	// GroupID, when given, returns only the members of this group.
 	GroupID *string
+	// After is the keyset position the page starts below; the zero value is the
+	// first page.
+	//
+	// It is applied TOGETHER with the offset so the query keeps one shape; the
+	// API refuses the two at once, because they name two different positions.
+	After page.Cursor
 }
 
 // CustomerPatch is the partial update of a customer.

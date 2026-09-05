@@ -142,8 +142,10 @@ func TestIdempotencyIsPreservedOnACartScopedEndpoint(t *testing.T) {
 func cartCount(ctx context.Context, t *testing.T) int64 {
 	t.Helper()
 
-	_, total, err := cartSvc.ListCarts(ctx, cartsvc.ListCartsInput{})
+	listed, err := cartSvc.ListCarts(ctx, cartsvc.ListCartsInput{})
 	require.NoError(t, err, "could not count the carts")
+
+	total := listed.Count
 
 	return total
 }

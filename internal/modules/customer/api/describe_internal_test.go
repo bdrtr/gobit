@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -338,7 +339,12 @@ func TestUclarGovdeleriniAnlatir(t *testing.T) {
 				return
 			}
 
-			kayit := zarfKaydi(t, bilesenler, govdeSemasi(t, tanim), uc.liste)
+			// Cursor alan bir liste cursor DÖNDÜRMEK zorunda; almayan da hiç
+			// yazmadığı bir alanı belgelememeli. Cevap ucun kendi
+			// parametrelerinden okunuyor ki iki yarı tek karar kalsın.
+			cursorlu := slices.Contains(parametreAdlari(t, op, "query"), "after")
+
+			kayit := zarfKaydi(t, bilesenler, govdeSemasi(t, tanim), uc.liste, cursorlu)
 			assert.ElementsMatch(t, jsonAnahtarlari(t, uc.yanit), alanlar(t, bilesenler, kayit),
 				"yanıt kaydının alanları DTO ile örtüşmeli")
 			assert.ElementsMatch(t, jsonAnahtarlari(t, sifirDegeri(uc.yanit)),
@@ -366,12 +372,17 @@ func basariliYanit(t *testing.T, op map[string]any, durum string) map[string]any
 // Tekil ve liste zarfları aynı "data" alanını taşır ama listede o alan bir
 // DİZİDİR; kaydı doğrudan okumak, dizi şemasını kayıt sanmak olurdu ve alan
 // karşılaştırması sessizce boş kümeyle geçerdi.
-func zarfKaydi(t *testing.T, bilesenler, zarf map[string]any, liste bool) map[string]any {
+func zarfKaydi(
+	t *testing.T, bilesenler, zarf map[string]any, liste, cursorlu bool,
+) map[string]any {
 	t.Helper()
 
 	beklenenAlanlar := []string{"data"}
 	if liste {
 		beklenenAlanlar = []string{"data", "count", "offset", "limit"}
+	}
+	if cursorlu {
+		beklenenAlanlar = append(beklenenAlanlar, "next_cursor")
 	}
 
 	assert.ElementsMatch(t, beklenenAlanlar, alanlar(t, bilesenler, zarf),
@@ -458,32 +469,44 @@ func TestAnlatilanUclarOkunmayanParametreVaatEtmez(t *testing.T) {
 	yollar, _ := belge(t)
 
 	beklenen := map[string][]string{
-		"GET /admin/v1/customers":       {"email", "has_account", "group_id", "limit", "offset"},
+		"GET /admin/v1/customers":       {"email", "has_account", "group_id", "limit", "offset", "after"},
 		"GET /admin/v1/customer-groups": {"limit", "offset"},
 	}
 
 	for _, uc := range anlatilanUclar() {
 		op := islem(t, yollar, uc.metod, uc.yol)
 
-		var sorgular []string
-
-		params, _ := op["parameters"].([]any)
-		for _, ham := range params {
-			p, ok := ham.(map[string]any)
-			require.True(t, ok)
-
-			if p["in"] != "query" {
-				continue
-			}
-
-			ad, ok := p["name"].(string)
-			require.True(t, ok)
-
-			sorgular = append(sorgular, ad)
-		}
+		sorgular := parametreAdlari(t, op, "query")
 
 		assert.ElementsMatch(t, beklenen[uc.anahtar()], sorgular,
 			"%s yalnızca handler'ın GERÇEKTEN okuduğu parametreleri duyurmalı",
 			uc.anahtar())
 	}
+}
+
+// parametreAdlari işlemin verilen konumdaki parametre adlarını döner.
+func parametreAdlari(t *testing.T, op map[string]any, konum string) []string {
+	t.Helper()
+
+	ham, ok := op["parameters"].([]any)
+	if !ok {
+		return nil
+	}
+
+	var adlar []string
+
+	for _, girdi := range ham {
+		parametre, ok := girdi.(map[string]any)
+		require.True(t, ok, "parametre bir nesne olmalı")
+
+		if parametre["in"] != konum {
+			continue
+		}
+
+		ad, ok := parametre["name"].(string)
+		require.True(t, ok, "parametrenin adı olmalı")
+		adlar = append(adlar, ad)
+	}
+
+	return adlar
 }

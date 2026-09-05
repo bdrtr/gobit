@@ -7,6 +7,8 @@ package cartdb
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const bumpCartRevision = `-- name: BumpCartRevision :one
@@ -210,14 +212,20 @@ WHERE deleted_at IS NULL
   AND ($2::text IS NULL OR region_id = $2::text)
   AND ($3::boolean IS NULL
        OR (completed_at IS NOT NULL) = $3::boolean)
+  AND (created_at, id) < (
+    COALESCE($4::timestamptz, 'infinity'::timestamptz),
+    COALESCE($5::text, '')
+  )
 ORDER BY created_at DESC, id DESC
-LIMIT $5::bigint OFFSET $4::bigint
+LIMIT $7::bigint OFFSET $6::bigint
 `
 
 type ListCartsParams struct {
 	CustomerID *string
 	RegionID   *string
 	Completed  *bool
+	AfterAt    pgtype.Timestamptz
+	AfterID    *string
 	RowOffset  int64
 	RowLimit   int64
 }
@@ -227,6 +235,8 @@ func (q *Queries) ListCarts(ctx context.Context, arg ListCartsParams) ([]Cart, e
 		arg.CustomerID,
 		arg.RegionID,
 		arg.Completed,
+		arg.AfterAt,
+		arg.AfterID,
 		arg.RowOffset,
 		arg.RowLimit,
 	)

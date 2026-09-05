@@ -214,7 +214,9 @@ func TestCreateOrderRejectsInconsistentInput(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.contains)
 
 			// A rejected request must write NOTHING.
-			orders, count, listErr := e.svc.ListOrders(ctx, service.ListOrdersInput{})
+			listed, listErr := e.svc.ListOrders(ctx, service.ListOrdersInput{})
+			orders := listed.Items
+			count := listed.Count
 			require.NoError(t, listErr)
 			assert.Zero(t, count)
 			assert.Empty(t, orders)
@@ -310,7 +312,8 @@ func TestCreateOrderRollsBackAnOrderWithoutANumber(t *testing.T) {
 	assert.Equal(t, errors.KindInternal, errors.KindOf(err))
 	assert.Equal(t, service.CodeDisplayIDInvalid, errors.CodeOf(err))
 
-	_, count, listErr := e.svc.ListOrders(ctx, service.ListOrdersInput{})
+	listed, listErr := e.svc.ListOrders(ctx, service.ListOrdersInput{})
+	count := listed.Count
 	require.NoError(t, listErr)
 	assert.Zero(t, count, "an order without a number has to be rolled back")
 	assert.Empty(t, e.bus.events())
@@ -326,7 +329,8 @@ func TestCreateOrderWritesNothingWhenALineCannotBeWritten(t *testing.T) {
 	_, err := e.svc.CreateOrder(ctx, validInput())
 
 	require.Error(t, err)
-	_, count, listErr := e.svc.ListOrders(ctx, service.ListOrdersInput{})
+	listed, listErr := e.svc.ListOrders(ctx, service.ListOrdersInput{})
+	count := listed.Count
 	require.NoError(t, listErr)
 	assert.Zero(t, count, "when the line cannot be written the order must not be written either")
 	assert.Empty(t, e.bus.events())
@@ -350,7 +354,8 @@ func TestCreateOrderIdempotencyKeyBlocksASecondOrder(t *testing.T) {
 	assert.Equal(t, first.ID, second.ID)
 	assert.Equal(t, first.DisplayID, second.DisplayID)
 
-	_, count, listErr := e.svc.ListOrders(ctx, service.ListOrdersInput{})
+	listed, listErr := e.svc.ListOrders(ctx, service.ListOrdersInput{})
+	count := listed.Count
 	require.NoError(t, listErr)
 	assert.Equal(t, int64(1), count, "the second call must not open a new order")
 	assert.Len(t, e.bus.events(), 1, "the second call must not publish a second event")
@@ -386,7 +391,8 @@ func TestCreateOrderConcurrentIdempotentCallAnswersTheRaceLoserToo(t *testing.T)
 	require.NoError(t, err, "the call that loses the race has to return the existing order, not an error")
 	assert.Equal(t, rival.ID, result.ID)
 
-	_, count, listErr := e.svc.ListOrders(ctx, service.ListOrdersInput{})
+	listed, listErr := e.svc.ListOrders(ctx, service.ListOrdersInput{})
+	count := listed.Count
 	require.NoError(t, listErr)
 	assert.Equal(t, int64(1), count)
 }
@@ -404,7 +410,8 @@ func TestCreateOrderCallWithoutAKeyOpensANewOrderEveryTime(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.NotEqual(t, first.ID, second.ID)
-	_, count, listErr := e.svc.ListOrders(ctx, service.ListOrdersInput{})
+	listed, listErr := e.svc.ListOrders(ctx, service.ListOrdersInput{})
+	count := listed.Count
 	require.NoError(t, listErr)
 	assert.Equal(t, int64(2), count)
 }
@@ -767,24 +774,27 @@ func TestListOrdersFiltersAndPaginates(t *testing.T) {
 	require.NoError(t, e.svc.CancelOrder(ctx, registered.ID, "test"))
 
 	customer := testCustomerID
-	orders, count, err := e.svc.ListOrders(ctx, service.ListOrdersInput{CustomerID: &customer})
+	listed, err := e.svc.ListOrders(ctx, service.ListOrdersInput{CustomerID: &customer})
+	orders := listed.Items
+	count := listed.Count
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 	require.Len(t, orders, 1)
 	assert.Equal(t, registered.ID, orders[0].ID)
 
 	canceled := models.OrderCanceled
-	_, count, err = e.svc.ListOrders(ctx, service.ListOrdersInput{Status: &canceled})
+	listed, err = e.svc.ListOrders(ctx, service.ListOrdersInput{Status: &canceled})
+	count = listed.Count
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 
-	_, _, err = e.svc.ListOrders(ctx, service.ListOrdersInput{
+	listed, err = e.svc.ListOrders(ctx, service.ListOrdersInput{
 		Status: func() *models.OrderStatus { s := models.OrderStatus("shipped"); return &s }(),
 	})
 	require.Error(t, err, "an undefined status has to be rejected")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 
-	_, _, err = e.svc.ListOrders(ctx, service.ListOrdersInput{
+	listed, err = e.svc.ListOrders(ctx, service.ListOrdersInput{
 		Page: service.Page{Limit: service.MaxLimit + 1},
 	})
 	require.Error(t, err, "the page ceiling cannot be exceeded")

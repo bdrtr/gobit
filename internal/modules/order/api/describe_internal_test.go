@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -358,7 +359,13 @@ func TestDescribedEndpointsDescribeTheirBodies(t *testing.T) {
 			definition, ok := responses[endpoint.status].(map[string]any)
 			require.True(t, ok, "the code the handler REALLY writes has to be documented: %s", endpoint.status)
 
-			record := envelopeRecord(t, components, bodySchema(t, definition), endpoint.list)
+			// A listing that takes a cursor has to give one back, and one that
+			// does not must not document a field it never writes. The answer is
+			// read off the operation's own parameters so the two halves stay one
+			// decision instead of two tables that can drift apart.
+			cursored := slices.Contains(parameterNames(t, op, "query"), "after")
+
+			record := envelopeRecord(t, components, bodySchema(t, definition), endpoint.list, cursored)
 			assert.ElementsMatch(t, jsonKeys(t, endpoint.response), fieldNames(t, components, record),
 				"the fields of the response record have to match the DTO")
 			assert.ElementsMatch(t, jsonKeys(t, zeroValue(endpoint.response)),
@@ -373,12 +380,17 @@ func TestDescribedEndpointsDescribeTheirBodies(t *testing.T) {
 // The envelope itself is tested too: mixing up the single and the list envelope
 // means a wrong return type in the client generator — a caller expecting the
 // paging fields gets a single record, or the other way around.
-func envelopeRecord(t *testing.T, components, envelope map[string]any, list bool) map[string]any {
+func envelopeRecord(
+	t *testing.T, components, envelope map[string]any, list, cursored bool,
+) map[string]any {
 	t.Helper()
 
 	expected := []string{envelopeDataField}
 	if list {
 		expected = []string{envelopeDataField, "count", "offset", "limit"}
+	}
+	if cursored {
+		expected = append(expected, "next_cursor")
 	}
 
 	assert.ElementsMatch(t, expected, fieldNames(t, components, envelope), "response envelope")
@@ -476,4 +488,30 @@ func TestLineItemEndpointsStayInDocumentWithoutBodies(t *testing.T) {
 				"the successful response for %s has to stay undescribed", entry)
 		}
 	}
+}
+
+// parameterNames returns the names of the operation's parameters in the given
+// location.
+func parameterNames(t *testing.T, op map[string]any, location string) []string {
+	t.Helper()
+
+	raw, ok := op["parameters"].([]any)
+	if !ok {
+		return nil
+	}
+
+	var names []string
+
+	for _, entry := range raw {
+		parameter, ok := entry.(map[string]any)
+		require.True(t, ok, "a parameter has to be an object")
+
+		if parameter["in"] == location {
+			name, ok := parameter["name"].(string)
+			require.True(t, ok, "a parameter has to have a name")
+			names = append(names, name)
+		}
+	}
+
+	return names
 }

@@ -142,6 +142,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
+	corepage "github.com/bdrtr/gobit/internal/core/page"
 	"github.com/bdrtr/gobit/internal/modules/cart/models"
 	"github.com/bdrtr/gobit/internal/modules/cart/service"
 )
@@ -231,7 +232,7 @@ type Carts interface {
 	// UpdateCart updates the cart's email and customer fields.
 	UpdateCart(ctx context.Context, cartID string, in service.UpdateCartInput) (models.Cart, error)
 	// ListCarts pages the carts.
-	ListCarts(ctx context.Context, in service.ListCartsInput) ([]models.Cart, int64, error)
+	ListCarts(ctx context.Context, in service.ListCartsInput) (service.CartPage, error)
 	// DeleteCart soft deletes the cart.
 	DeleteCart(ctx context.Context, cartID string) error
 
@@ -493,6 +494,12 @@ type listEnvelope struct {
 	Offset int64 `json:"offset"`
 	// Limit is the requested page size.
 	Limit int64 `json:"limit"`
+	// NextCursor is the opaque position to send back as "after" for the next
+	// page; it is ABSENT when this page is the last one.
+	//
+	// Its absence is the end-of-listing signal, which is what a client walking
+	// forward needs and what offset alone cannot give without a count.
+	NextCursor string `json:"next_cursor,omitempty"`
 }
 
 // cartDTO is the cart's outward representation.
@@ -718,7 +725,20 @@ func parsePage(r *http.Request) (service.Page, error) {
 	if err != nil {
 		return service.Page{}, err
 	}
-	page := service.Page{Limit: limit, Offset: offset}
+	// "after" and "offset" name two different positions; honoring both would
+	// serve the page N rows past the cursor, which neither of them asked for.
+	raw := r.URL.Query().Get("after")
+	if raw != "" && offset != 0 {
+		return service.Page{}, coreerrors.Invalid(codeInvalidRequest,
+			`"after" and "offset" name two different positions; send one of them`)
+	}
+
+	after, err := corepage.Decode(service.CartListing, raw)
+	if err != nil {
+		return service.Page{}, err
+	}
+
+	page := service.Page{Limit: limit, Offset: offset, After: after}
 	if page.Limit == 0 {
 		// So that the response's limit field really shows the bound that is
 		// applied, the default is made visible here as well.

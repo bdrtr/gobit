@@ -10,9 +10,26 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+### Düzeltildi
+
+- **`docs/gaps.md`: misafir sepeti devralınamıyor maddesi YANLIŞTI.**
+
+  Devralma var ve korumalı: `UpdateCart` misafir sepetine `customer_id` yazıyor,
+  yanındaki kural ise SAHİPLİ bir sepetin başka müşteriye devrini reddediyor
+  (`cart_customer_mismatch`); entegrasyon testi iki yönü de kapsıyor,
+  reddedilen devrin hiçbir şey yazmadığı dahil. Önceki okumanın kaçırdığı şey
+  yeteneğin adında "claim" ya da "adopt" geçen bir metot değil, güncellemenin
+  bir ALANI olması — arama tam da onu aramıştı.
+
+  Gerçekten eksik olan daha dar: misafir sepetini müşterinin ZATEN sahip olduğu
+  sepetle BİRLEŞTİRMEK. Devralma müşteriye ikinci bir sepet veriyor, ikisini
+  tek sepete katlayan bir şey yok. Bu bir politika sorusu (hangi adetler
+  kazanır, hangi sepetin promosyonları yaşar), tesisat boşluğu değil; o yüzden
+  tahmin edilmeden bırakıldı.
+
 ### Eklendi
 
-- **Derin sayfa artık ucuz** (cursor pagination; ürün listelerinde).
+- **Derin sayfa artık ucuz** (cursor pagination).
 
   Offset, veritabanına atladığı her satırı yürütüp ATTIRIR: sayfanın maliyeti
   derinlikle büyür. 52 bin ürün ve listeleme indeksiyle ölçüldü:
@@ -60,6 +77,23 @@ Sabitlenme `1.0.0` ile olur.
   yaratıldığı için damgaları farklıydı, anahtarın kimlik yarısı hiç devreye
   girmiyordu ve onu düşüren mutasyon YAKALANMADI. Test, tüm satırları aynı
   created_at'e çekecek şekilde düzeltildi; şimdi kimlik yarısı taşıyıcı.
+
+  Cursor alan dört liste: ürünler (yönetim ve vitrin, REST ve GraphQL),
+  siparişler, müşteriler, sepetler. sqlc'den geçen üçünde risk sorgu değil
+  parametrenin yolu — cursor pgtype olarak gidiyor ve konum adlandırmayan bir
+  cursor'ın SQL NULL varması gerekiyor; sıfır ZAMAN gitseydi ilk sayfa hatasız
+  boş dönerdi. Her modülde o mutasyon ayrı ayrı denendi ve yakalandı.
+
+  **Geri kalan listeler yalnızca offset ile kalıyor ve bu bir karar, artık
+  değil.** Offset yalnızca DERİNLİKTE pahalı; yapılandırma boyutundaki bir
+  listenin o derinliğe inmesi yok. Vergi oranları, kargo seçenekleri, bölgeler,
+  para birimleri, ülkeler, satış kanalları, müşteri grupları yüzlerle sayılıyor;
+  oraya cursor koymak tören olurdu ve var olan her parametre sonsuza dek
+  belgelenmek, test edilmek ve onurlandırılmak zorunda. Bir sonraki liste için
+  kural: **satırlar dükkânın TİCARETİYLE büyüyorsa cursor, YAPILANDIRMASIYLA
+  büyüyorsa yalnız offset.** Tek bir ebeveyne bağlı listeler — bir ürünün
+  varyantları, bir siparişin iadeleri, bir şirketin çalışanları — ebeveyniyle
+  sınırlı olduğu için offset tarafında.
 
 - **Go tarafı artık ölçülüyor** (pprof + benchmark).
 

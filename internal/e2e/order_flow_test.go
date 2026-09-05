@@ -381,8 +381,10 @@ func TestSagaRollsBackWhenPaymentFails(t *testing.T) {
 	// next job in the shipping queue. Since the ID is not returned by the workflow,
 	// the order is read from the customer's records; that is what a real operator
 	// would do too.
-	orders, _, err := orderSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &customerID})
+	listed, err := orderSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &customerID})
 	require.NoError(t, err, "the customer's orders must be readable")
+
+	orders := listed.Items
 	require.Len(t, orders, 1,
 		"the compensation does NOT DELETE the order, it CANCELS it: the record must remain so "+
 			"that the trace of the attempt is not lost. The record not being there at all would "+
@@ -618,8 +620,10 @@ func TestNoOrderIsCreatedWhenStockIsInsufficient(t *testing.T) {
 			"record too and it is the only thing the operator sees")
 
 	// --- no order MUST BE CREATED ---
-	orders, totalCount, err := orderSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &customerID})
+	listed, err := orderSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &customerID})
 	require.NoError(t, err, "the customer's orders must be readable")
+
+	orders, totalCount := listed.Items, listed.Count
 	require.Empty(t, orders,
 		"no order must be created AT ALL: create_order comes AFTER reserve_inventory and, since "+
 			"the stock step blew up, it must not have run at all. An order record — even a "+
@@ -733,8 +737,10 @@ func TestSameCartCannotBeCompletedTwice(t *testing.T) {
 
 	// --- the second call must leave no side effect ---
 
-	orders, _, err := orderSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &customerID})
+	listed, err := orderSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &customerID})
 	require.NoError(t, err, "the customer's orders must be readable")
+
+	orders := listed.Items
 	require.Len(t, orders, 1,
 		"only ONE order must be created; a second order would mean the same cart was sold twice")
 	require.Equal(t, first.OrderID, orders[0].ID,

@@ -58,6 +58,8 @@ type fakeOrders struct {
 	paymentBound bool
 	// paymentErr, when set, makes PaymentOf fail.
 	paymentErr error
+	// nextCursor is what the listing reports as the next page's position.
+	nextCursor string
 }
 
 // That the fake satisfies the surface the handler expects is verified at
@@ -75,10 +77,11 @@ func (f *fakeOrders) GetOrder(_ context.Context, orderID string) (models.OrderDe
 }
 
 // ListOrders returns the orders.
-func (f *fakeOrders) ListOrders(_ context.Context, in service.ListOrdersInput) ([]models.Order, int64, error) {
+func (f *fakeOrders) ListOrders(_ context.Context, in service.ListOrdersInput) (service.OrderPage, error) {
 	f.record("ListOrders")
 	f.listInput = in
-	return f.orders, f.count, f.err
+
+	return service.OrderPage{Items: f.orders, Count: f.count, NextCursor: f.nextCursor}, f.err
 }
 
 // CancelOrder cancels the order.

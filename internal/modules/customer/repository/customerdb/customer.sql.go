@@ -195,14 +195,20 @@ WHERE c.deleted_at IS NULL
         SELECT 1 FROM customer_group_customer m
         JOIN customer_group g ON g.id = m.customer_group_id AND g.deleted_at IS NULL
         WHERE m.customer_id = c.id AND m.customer_group_id = $3::text))
+  AND (c.created_at, c.id) < (
+    COALESCE($4::timestamptz, 'infinity'::timestamptz),
+    COALESCE($5::text, '')
+  )
 ORDER BY c.created_at DESC, c.id DESC
-LIMIT $5::int OFFSET $4::int
+LIMIT $7::int OFFSET $6::int
 `
 
 type ListCustomersParams struct {
 	Email      *string
 	HasAccount *bool
 	GroupID    *string
+	AfterAt    pgtype.Timestamptz
+	AfterID    *string
 	Off        int32
 	Lim        int32
 }
@@ -218,6 +224,8 @@ func (q *Queries) ListCustomers(ctx context.Context, arg ListCustomersParams) ([
 		arg.Email,
 		arg.HasAccount,
 		arg.GroupID,
+		arg.AfterAt,
+		arg.AfterID,
 		arg.Off,
 		arg.Lim,
 	)

@@ -50,6 +50,8 @@ type fakeCarts struct {
 	// billing reports whether the call that wrote the last address came from the
 	// billing endpoint.
 	billing bool
+	// nextCursor is what the listing reports as the next page's position.
+	nextCursor string
 }
 
 // The fake satisfying the surface the handler expects is verified at compile time.
@@ -69,9 +71,9 @@ func (f *fakeCarts) UpdateCart(_ context.Context, cartID string, in service.Upda
 }
 
 // ListCarts returns the carts.
-func (f *fakeCarts) ListCarts(_ context.Context, in service.ListCartsInput) ([]models.Cart, int64, error) {
+func (f *fakeCarts) ListCarts(_ context.Context, in service.ListCartsInput) (service.CartPage, error) {
 	f.listInput = in
-	return f.carts, f.count, f.err
+	return service.CartPage{Items: f.carts, Count: f.count, NextCursor: f.nextCursor}, f.err
 }
 
 // DeleteCart deletes the cart.

@@ -103,9 +103,16 @@ func describeMusteriler(d *openapi.Doc) {
 			sorguParametresi("limit", tipTamSayi,
 				"Sayfa boyutu; verilmezse servisin varsayılanı uygulanır."),
 			sorguParametresi("offset", tipTamSayi, "Atlanacak kayıt sayısı."),
+			sorguParametresi("after", tipDize,
+				"Bir önceki sayfanın \"next_cursor\" değeri. Derin sayfalarda \"offset\"ten "+
+					"ucuzdur: offset, veritabanına atladığı her satırı yürütüp ATTIRIR ve "+
+					"maliyeti derinlikle büyür; cursor ise indeks koşuluna girer ve düz kalır. "+
+					"\"after\" ile \"offset\" iki ayrı konum adlandırır ve birlikte "+
+					"REDDEDİLİR. Yanıt \"next_cursor\" taşımıyorsa liste tükenmiştir."),
 		},
 		Responses: map[string]any{
-			"200": openapi.Response("Müşteri sayfası", d.List(customerDTO{})),
+			"200": openapi.Response("Müşteri sayfası",
+				d.List(customerDTO{}, openapi.WithCursor())),
 		},
 	})
 

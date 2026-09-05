@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/bdrtr/gobit/internal/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/customer/models"
 	"github.com/bdrtr/gobit/internal/modules/customer/repository/customerdb"
@@ -96,12 +98,28 @@ func (r *Repo) ListCustomers(
 		return nil, 0, err
 	}
 
+	// The cursor arrives as SQL NULL when it names no position; the COALESCE
+	// sentinels in the query turn that into "start at the top". Sending a zero
+	// TIME instead would make the first page come back empty with no error
+	// anywhere.
+	afterAt := pgtype.Timestamptz{}
+	if !filter.After.Time.IsZero() {
+		afterAt = pgtype.Timestamptz{Time: filter.After.Time, Valid: true}
+	}
+
+	var afterID *string
+	if filter.After.ID != "" {
+		afterID = &filter.After.ID
+	}
+
 	rows, err := r.q.ListCustomers(ctx, customerdb.ListCustomersParams{
 		Email:      filter.Email,
 		HasAccount: filter.HasAccount,
 		GroupID:    filter.GroupID,
 		Lim:        toInt32(limit),
 		Off:        toInt32(offset),
+		AfterAt:    afterAt,
+		AfterID:    afterID,
 	})
 	if err != nil {
 		return nil, 0, wrapDB(err, "müşteri listesi alınamadı")

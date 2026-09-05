@@ -55,6 +55,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
+	corepage "github.com/bdrtr/gobit/internal/core/page"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 	"github.com/bdrtr/gobit/internal/modules/order/service"
 )
@@ -100,7 +101,7 @@ type Orders interface {
 	// GetOrder returns the order with its line items and summary.
 	GetOrder(ctx context.Context, orderID string) (models.OrderDetail, error)
 	// ListOrders pages the orders.
-	ListOrders(ctx context.Context, in service.ListOrdersInput) ([]models.Order, int64, error)
+	ListOrders(ctx context.Context, in service.ListOrdersInput) (service.OrderPage, error)
 	// CancelOrder cancels the order; it is idempotent.
 	CancelOrder(ctx context.Context, orderID, reason string) error
 	// CompleteOrder completes the order.
@@ -225,6 +226,12 @@ type listEnvelope struct {
 	Offset int64 `json:"offset"`
 	// Limit is the requested page size.
 	Limit int64 `json:"limit"`
+	// NextCursor is the opaque position to send back as "after" for the next
+	// page; it is ABSENT when this page is the last one.
+	//
+	// Its absence is the end-of-listing signal, which is what a client walking
+	// forward needs and what offset alone cannot give without a count.
+	NextCursor string `json:"next_cursor,omitempty"`
 }
 
 // orderDTO is the external representation of the order.
@@ -524,7 +531,20 @@ func parsePage(r *http.Request) (service.Page, error) {
 	if err != nil {
 		return service.Page{}, err
 	}
-	page := service.Page{Limit: limit, Offset: offset}
+	// "after" and "offset" name two different positions; honoring both would
+	// serve the page N rows past the cursor, which neither of them asked for.
+	raw := r.URL.Query().Get("after")
+	if raw != "" && offset != 0 {
+		return service.Page{}, coreerrors.Invalid(codeInvalidRequest,
+			`"after" and "offset" name two different positions; send one of them`)
+	}
+
+	after, err := corepage.Decode(service.OrderListing, raw)
+	if err != nil {
+		return service.Page{}, err
+	}
+
+	page := service.Page{Limit: limit, Offset: offset, After: after}
 	if page.Limit == 0 {
 		// So that the limit field in the response really shows the limit that
 		// is applied, the default is made visible here as well.

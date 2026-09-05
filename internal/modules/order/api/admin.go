@@ -38,23 +38,24 @@ func (h *Handler) adminListOrders(w http.ResponseWriter, r *http.Request) {
 		in.Status = &status
 	}
 
-	orders, count, err := h.svc.ListOrders(ctx, in)
+	result, err := h.svc.ListOrders(ctx, in)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
 
-	data := make([]orderDTO, 0, len(orders))
+	data := make([]orderDTO, 0, len(result.Items))
 	// The loop is walked by index: the order struct is large and copying it by
 	// value would carry a few hundred bytes for nothing on every turn.
-	for i := range orders {
-		data = append(data, toOrderDTO(orders[i]))
+	for i := range result.Items {
+		data = append(data, toOrderDTO(result.Items[i]))
 	}
 	corehttp.WriteJSON(ctx, w, http.StatusOK, listEnvelope{
-		Data:   data,
-		Count:  count,
-		Offset: page.Offset,
-		Limit:  page.Limit,
+		Data:       data,
+		Count:      result.Count,
+		Offset:     page.Offset,
+		Limit:      page.Limit,
+		NextCursor: result.NextCursor,
 	})
 }
 

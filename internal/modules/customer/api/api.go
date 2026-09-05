@@ -53,6 +53,7 @@ import (
 
 	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	corepage "github.com/bdrtr/gobit/internal/core/page"
 	"github.com/bdrtr/gobit/internal/modules/customer/models"
 	"github.com/bdrtr/gobit/internal/modules/customer/service"
 )
@@ -238,6 +239,12 @@ type listEnvelope struct {
 	Offset int64 `json:"offset"`
 	// Limit uygulanan sayfa boyudur.
 	Limit int64 `json:"limit"`
+	// NextCursor is the opaque position to send back as "after" for the next
+	// page; it is ABSENT when this page is the last one.
+	//
+	// Its absence is the end-of-listing signal, which is what a client walking
+	// forward needs and what offset alone cannot give without a count.
+	NextCursor string `json:"next_cursor,omitempty"`
 }
 
 // writeItem tekil yanıtı zarfıyla yazar.
@@ -275,10 +282,11 @@ func writePage[S any, T any](w http.ResponseWriter, r *http.Request, page servic
 		items = append(items, convert(item))
 	}
 	corehttp.WriteJSON(r.Context(), w, http.StatusOK, listEnvelope{
-		Data:   items,
-		Count:  page.Count,
-		Offset: page.Offset,
-		Limit:  page.Limit,
+		Data:       items,
+		Count:      page.Count,
+		Offset:     page.Offset,
+		Limit:      page.Limit,
+		NextCursor: page.NextCursor,
 	})
 }
 
@@ -335,6 +343,24 @@ func pathParam(r *http.Request, name string) string {
 // bağlanmaz.
 func storeCustomerID(r *http.Request) string {
 	return pathParam(r, paramID)
+}
+
+// afterParam reads the cursor of the page being asked for.
+//
+// An offset alongside it is REFUSED: a cursor and an offset each name a
+// position, and honoring both would serve the page N rows past the cursor,
+// which neither of them asked for.
+func afterParam(r *http.Request, listing string, offset int64) (corepage.Cursor, error) {
+	raw := r.URL.Query().Get("after")
+	if raw == "" {
+		return corepage.Cursor{}, nil
+	}
+	if offset != 0 {
+		return corepage.Cursor{}, coreerrors.Invalid(codeInvalidBody,
+			`"after" and "offset" name two different positions; send one of them`)
+	}
+
+	return corepage.Decode(listing, raw)
 }
 
 // pageParams sorgu dizesinden sayfalama parametrelerini okur.
