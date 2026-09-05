@@ -436,6 +436,56 @@ func (h *Handler) adminListReturns(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// adminCancelReturn withdraws the return request.
+//
+// # Why this endpoint exists, and why "a return is never withdrawn" was the
+// wrong answer
+//
+// [service.Service.CancelReturn] was written in full — query, repository
+// method, transition table — and until this route no HTTP caller reached it
+// (D17). The alternative on the table was to delete the method instead, on the
+// product argument that a return is simply never taken back. Three things
+// already in this module say otherwise, and each of them is a promise the
+// module could not keep while nothing called it:
+//
+//  1. The quantity rule has a RELEASE VALVE and it was unreachable.
+//     SumReturnedQuantities (queries/order_return_items.sql) excludes canceled
+//     returns on purpose — "a withdrawn request releases the units it was
+//     holding" — and with no caller that clause could never fire. A request
+//     for the whole line therefore consumed the line's returnable quantity
+//     FOREVER, and the customer-facing [Handler.storeRequestReturn] needs
+//     nothing but the order id to open one.
+//  2. [models.ReturnStatus.CancelAction] is a three-row table whose two other
+//     rows exist only to guard this transition: received -> conflict is the
+//     goods being physically here, canceled -> noop is the second click.
+//  3. The support desk's timeline already publishes a "return.canceled" entry
+//     kind (service/timeline.go) that no row could ever carry.
+//
+// Deleting the method would have meant tearing all three out and leaving a
+// return request with no way to be closed except receiving goods nobody sent.
+//
+// # Why it goes to the service and not through a flow
+//
+// The same argument [Handler.adminCancelExchange] makes, and it holds here for
+// a narrower reason than it looks: RECEIVING a return reaches inventory, so
+// that one goes through a flow. Withdrawing an UNRECEIVED request reaches
+// nothing — no stock was ever put back, so none has to be taken away again,
+// and no money has moved. The received case is not a hole in that argument,
+// it is refused by the transition table.
+//
+// It answers with the RECORD rather than the order: the order is unchanged by
+// a request that was taken back.
+func (h *Handler) adminCancelReturn(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	ret, err := h.svc.CancelReturn(ctx, chi.URLParam(r, paramReturnID))
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toReturnDTO(ret)})
+}
+
 // createExchangeRequest is the body of POST /admin/v1/orders/{id}/exchanges.
 type createExchangeRequest struct {
 	// DifferenceDue, when positive, is collected from the customer; when
@@ -620,6 +670,43 @@ func (h *Handler) adminListClaims(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, listEnvelope{
 		Data: data, Count: count, Offset: page.Offset, Limit: page.Limit,
 	})
+}
+
+// adminCancelClaim withdraws the claim.
+//
+// # Why an operator has to be able to close a claim without settling it
+//
+// A claim is opened from the ADMIN side ([Handler.adminCreateClaim]) — the
+// operator records that goods arrived damaged or short. Until this route the
+// record had exactly one exit, [Handler.adminSettleClaim], and that one refuses
+// anything but a claim in status "requested" AND of type "refund"
+// (internal/workflows/returns/claim.go). So a claim opened against the wrong
+// order, opened twice, or opened for a customer who then withdrew the
+// complaint had NO exit at all: it stayed "requested" forever, on the order's
+// claim list and on its timeline, indistinguishable from work still owed.
+//
+// The alternative — deleting [service.Service.CancelClaim] on the grounds that
+// a claim is only ever settled — asserts that every claim an operator opens is
+// correct. It also contradicts [models.ClaimStatus.CancelAction], whose
+// completed -> conflict row exists precisely to state the one case where
+// withdrawal is NOT the answer: a claim already met with money is un-met by a
+// new record, not by a status change.
+//
+// # Why it goes to the service and not through the flow
+//
+// Settling reaches payment, so it goes through the flow. Withdrawing settles
+// nothing: no money is sent, no goods are promised, no other module is told.
+// Routing it through the flow would imply a cross-module effect that does not
+// exist — the same argument [Handler.adminCancelExchange] makes.
+func (h *Handler) adminCancelClaim(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	claim, err := h.svc.CancelClaim(ctx, chi.URLParam(r, paramClaimID))
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toClaimDTO(claim)})
 }
 
 // timelineEntryDTO is one thing that happened to an order.

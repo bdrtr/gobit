@@ -120,6 +120,12 @@ type Orders interface {
 	GetReturn(ctx context.Context, returnID string) (models.Return, error)
 	// ListReturns pages the order's return records.
 	ListReturns(ctx context.Context, orderID string, page service.Page) ([]models.Return, int64, error)
+	// CancelReturn withdraws the return request.
+	//
+	// It is on this surface because it is the only thing that RELEASES the
+	// units a request is holding against the order's lines; what that costs
+	// while nothing calls it is in [Handler.adminCancelReturn].
+	CancelReturn(ctx context.Context, returnID string) (models.Return, error)
 
 	// CreateExchange opens an exchange record on the order.
 	CreateExchange(ctx context.Context, in service.CreateExchangeInput) (models.Exchange, error)
@@ -139,6 +145,12 @@ type Orders interface {
 	GetClaim(ctx context.Context, claimID string) (models.Claim, error)
 	// ListClaims pages the order's claim records.
 	ListClaims(ctx context.Context, orderID string, page service.Page) ([]models.Claim, int64, error)
+	// CancelClaim withdraws the claim.
+	//
+	// It is the claim's SECOND transition; the first, settling, is not here
+	// because it moves money and therefore goes through a flow (see
+	// [ReturnReceiving.SettleClaim]).
+	CancelClaim(ctx context.Context, claimID string) (models.Claim, error)
 }
 
 // ReturnReceiving is the surface used by this package of the flow that RECEIVES

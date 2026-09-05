@@ -295,3 +295,121 @@ func TestAnExchangeOnACanceledOrderCanStillBeWithdrawn(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, models.ExchangeCanceled, canceled.Status)
 }
+
+// TestAWithdrawnReturnGivesItsUnitsBackOnTheRealDatabase is D17's return half,
+// checked where the rule actually lives.
+//
+// The rule is SQL: SumReturnedQuantities (queries/order_return_items.sql)
+// excludes canceled returns, so a withdrawn request releases the units it was
+// holding. A fake store cannot disagree with a WHERE clause it does not have,
+// which is why this belongs here and not beside the service's unit tests.
+//
+// What the test shows is the shape of the defect the missing route left behind.
+// Step 2 is the whole point: with no caller for CancelReturn, a single request
+// for the full line — one the STOREFRONT endpoint opens knowing nothing but the
+// order id — made those units unreturnable for the life of the order, and no
+// operator had any way to give them back.
+func TestAWithdrawnReturnGivesItsUnitsBackOnTheRealDatabase(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	ord, err := svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+
+	detail, err := svc.GetOrder(ctx, ord.ID)
+	require.NoError(t, err)
+	require.Len(t, detail.Items, 1)
+	line := detail.Items[0]
+	require.Equal(t, int64(3), line.Quantity)
+
+	// 1. The whole line is asked back.
+	first, err := svc.CreateReturn(ctx, service.CreateReturnInput{
+		OrderID: ord.ID,
+		Lines:   []service.ReturnLineInput{{OrderLineItemID: line.ID, Quantity: 3}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, models.ReturnRequested, first.Status)
+
+	// 2. Nothing more can be asked back while that request stands.
+	_, err = svc.CreateReturn(ctx, service.CreateReturnInput{
+		OrderID: ord.ID,
+		Lines:   []service.ReturnLineInput{{OrderLineItemID: line.ID, Quantity: 1}},
+	})
+	require.Error(t, err)
+	assert.Equal(t, service.CodeReturnQuantityExceeded, errors.CodeOf(err))
+
+	// 3. The request is withdrawn.
+	canceled, err := svc.CancelReturn(ctx, first.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.ReturnCanceled, canceled.Status)
+	require.NotNil(t, canceled.CanceledAt)
+	assert.Equal(t, "UTC", canceled.CanceledAt.Location().String(),
+		"the moment is the DATABASE's now(), like every other after-sales stamp")
+
+	// Read the column back through a second path: the RETURNING clause could
+	// report a value the row does not keep.
+	var stamped bool
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT canceled_at IS NOT NULL FROM order_returns WHERE id = $1`, first.ID).Scan(&stamped))
+	assert.True(t, stamped, "the moment has to be ON THE ROW, not only in the response")
+
+	// 4. The units are free again.
+	second, err := svc.CreateReturn(ctx, service.CreateReturnInput{
+		OrderID: ord.ID,
+		Lines:   []service.ReturnLineInput{{OrderLineItemID: line.ID, Quantity: 3}},
+	})
+	require.NoError(t, err, "a withdrawn request must give its units back to the line")
+	assert.Equal(t, models.ReturnRequested, second.Status)
+}
+
+// TestAClaimCanBeWithdrawnOnTheRealDatabase is D17's claim half.
+//
+// order_claims.canceled_at was NULL on every row that has ever existed, for the
+// same reason the exchange's was: the UPDATE was written and nothing reachable
+// called it. The second half of the test is the entry in the transition table
+// that carries weight — a claim already MET cannot be un-met by a status
+// change, and the schema is where that has to hold.
+func TestAClaimCanBeWithdrawnOnTheRealDatabase(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	ord, err := svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+
+	opened, err := svc.CreateClaim(ctx, service.CreateClaimInput{
+		OrderID: ord.ID, Type: models.ClaimRefund, RefundAmount: 500,
+		Reason: "opened against the wrong order",
+	})
+	require.NoError(t, err)
+	require.Equal(t, models.ClaimRequested, opened.Status)
+	require.Nil(t, opened.CanceledAt)
+
+	canceled, err := svc.CancelClaim(ctx, opened.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.ClaimCanceled, canceled.Status)
+	require.NotNil(t, canceled.CanceledAt)
+	assert.Equal(t, "UTC", canceled.CanceledAt.Location().String())
+	assert.Nil(t, canceled.CompletedAt, "withdrawing is not settling")
+
+	// The second call is a no-op and keeps the FIRST moment; re-stamping would
+	// make the record claim it was withdrawn when somebody clicked twice.
+	second, err := svc.CancelClaim(ctx, opened.ID)
+	require.NoError(t, err)
+	require.NotNil(t, second.CanceledAt)
+	assert.Equal(t, *canceled.CanceledAt, *second.CanceledAt)
+
+	// A settled claim is refused: the money went back, and undoing that is a
+	// new record rather than a status change.
+	met, err := svc.CreateClaim(ctx, service.CreateClaimInput{
+		OrderID: ord.ID, Type: models.ClaimRefund, RefundAmount: 500,
+	})
+	require.NoError(t, err)
+	completed, err := svc.CompleteClaim(ctx, met.ID)
+	require.NoError(t, err)
+	require.Equal(t, models.ClaimCompleted, completed.Status)
+
+	_, err = svc.CancelClaim(ctx, met.ID)
+	require.Error(t, err)
+	assert.True(t, errors.IsConflict(err), "got: %v", err)
+	assert.Equal(t, service.CodeAfterSalesTransition, errors.CodeOf(err))
+}

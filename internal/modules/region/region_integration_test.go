@@ -794,6 +794,116 @@ func TestBolgeSilinceUlkelerSerbestKalir(t *testing.T) {
 	assert.Equal(t, ikinci.ID, *ulke.RegionID)
 }
 
+// beklettigiIstekSayisi verilen oturumun BLOKE ETTİĞİ istek sayısını döner.
+//
+// [kilitBekleyenSayisi]'nın bilinen bir engelleyiciye daraltılmış hâlidir ve
+// daraltma bu dosyadaki tek testte zorunludur: aşağıdaki test bir ANA dair
+// iddia kurar — "silme henüz bitmemişken dışarıdan bakan ne görüyor" — ve o an
+// yanlış seçilirse test hiçbir şey ölçmeden yeşil kalır. "Veritabanında biri
+// kilitte bekliyor" koşulu başka bir oturumun beklemesiyle de sağlanır; o
+// durumda iddia silme daha ilk deyimini çalıştırmadan koşar ve elbette tutar.
+// pg_blocking_pids beklemenin BİZİM işlemimizden kaynaklandığını söyler, yani
+// koşul ancak silme gerçekten ikinci deyimine geldiğinde sağlanır.
+func beklettigiIstekSayisi(ctx context.Context, t *testing.T, engelleyenPid int32) int64 {
+	t.Helper()
+
+	return sayim(ctx, t,
+		`SELECT count(*) FROM pg_stat_activity
+         WHERE datname = current_database()
+           AND wait_event_type = 'Lock'
+           AND $1 = ANY(pg_blocking_pids(pid))`, engelleyenPid)
+}
+
+// requireBeklettigiIstek verilen oturumun bir isteği gerçekten beklettiğini
+// doğrular.
+//
+// Uyku yerine BEKLEME DURUMUNA bakılır; gerekçe [requireKilitBekleyen] ile
+// aynıdır.
+func requireBeklettigiIstek(ctx context.Context, t *testing.T, engelleyenPid int32) {
+	t.Helper()
+
+	require.Eventually(t, func() bool {
+		return beklettigiIstekSayisi(ctx, t, engelleyenPid) > 0
+	}, 10*time.Second, 10*time.Millisecond, "istek bu oturumun kilidinde beklemeliydi")
+}
+
+// TestBolgeSilmeIkiYazmayiTekIslemdeYapar silmenin İKİ yazmasının dışarıya TEK
+// ANDA göründüğünü belirlenimci biçimde doğrular.
+//
+// [TestBolgeSilinceUlkelerSerbestKalir] iki yazmanın da OLDUĞUNU gösterir,
+// BİRLİKTE olduğunu değil. Fark ölçülerek bulundu: repository.DeleteRegion'ın
+// işlem çerçevesi kaldırılıp iki yazma iki ayrı autocommit deyimine çevrildiğinde
+// modülün integration testlerinin TAMAMI yeşil kalıyordu (2026-09-06). Yani
+// çerçeve vardı ama onu tutan hiçbir test yoktu; bu test o boşluğu kapatır.
+//
+// Kurgu ara durumu zamanlamaya bırakmadan üretir:
+//
+//  1. Rakip bir işlem bölgenin TEK ülkesini FOR UPDATE ile kilitler.
+//  2. Silme başlar: bölgeyi yumuşak siler, sonra ülkeleri serbest bırakmak
+//     ister ve ülke kilidinde BEKLER.
+//  3. ÜÇÜNCÜ bir okuma (havuzdan, kendi autocommit'inde) yalnızca commit
+//     edilmiş veriyi görür.
+//  4. Rakip işlem kilidi bırakır, silme tamamlanır.
+//
+// Kanıtı taşıyan adım 3'tür: doğru uygulamada bölge HÂLÂ CANLI görünür, çünkü
+// ilk yazma commit edilmemiştir. İki yazma ayrı işlemlerde olsaydı bölge o anda
+// silinmiş, ülkesi ise hâlâ ona bağlı görünürdü — yani tam olarak silmenin
+// engellemek için var olduğu durum: ölü bir bölgeye bağlı ülke.
+func TestBolgeSilmeIkiYazmayiTekIslemdeYapar(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+	bolge := yeniBolge(ctx, t, svc, "TRY")
+
+	const ulkeKodu = "LV"
+	_, err := svc.AddCountryToRegion(ctx, bolge.ID, ulkeKodu)
+	require.NoError(t, err)
+
+	conn, err := testPool.Pool().Acquire(ctx)
+	require.NoError(t, err)
+	defer conn.Release()
+
+	tx, err := conn.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var engelleyenPid int32
+	require.NoError(t, tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&engelleyenPid))
+
+	var kilitli string
+	require.NoError(t, tx.QueryRow(ctx,
+		`SELECT iso_2 FROM country WHERE iso_2 = $1 FOR UPDATE`, ulkeKodu).Scan(&kilitli))
+
+	sonuc := make(chan error, 1)
+	go func() {
+		sonuc <- svc.DeleteRegion(ctx, bolge.ID)
+	}()
+
+	requireBeklettigiIstek(ctx, t, engelleyenPid)
+
+	assert.Equal(t, int64(1), sayim(ctx, t,
+		`SELECT count(*) FROM region WHERE id = $1 AND deleted_at IS NULL`, bolge.ID),
+		"ikinci yazma bitmeden bölge silinmiş görünmemeli")
+	assert.Equal(t, int64(1), sayim(ctx, t,
+		`SELECT count(*) FROM country WHERE iso_2 = $1 AND region_id = $2`, ulkeKodu, bolge.ID),
+		"ülke de henüz serbest kalmamış olmalı; ara durum yoktur")
+
+	require.NoError(t, tx.Rollback(ctx))
+
+	select {
+	case delErr := <-sonuc:
+		require.NoError(t, delErr, "kilit bırakılınca silme tamamlanmalı")
+	case <-time.After(15 * time.Second):
+		t.Fatal("bekleyen silme zamanında tamamlanmadı")
+	}
+
+	assert.Zero(t, sayim(ctx, t,
+		`SELECT count(*) FROM region WHERE id = $1 AND deleted_at IS NULL`, bolge.ID),
+		"silme commit edilince bölge canlı kalmamalı")
+	assert.Zero(t, sayim(ctx, t,
+		`SELECT count(*) FROM country WHERE region_id = $1`, bolge.ID),
+		"aynı anda ülke de serbest kalmalı")
+}
+
 // TestUlkeBolgedenCikarilir ülke çıkarma yolunu ve yanlış bölgeyle yapılan
 // çağrının reddini doğrular.
 func TestUlkeBolgedenCikarilir(t *testing.T) {

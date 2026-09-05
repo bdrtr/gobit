@@ -74,13 +74,13 @@ Four sequencing facts govern the whole list:
 | B9 | **Stored payment instrument** — provider contract + table | saved cards AND subscriptions, in one change | Storefront speed, Commerce models |
 | B10 | **Carrier-capable quote input and a tolerant shipment state machine** — district, dimensions/desi, more statuses (including iade), and out-of-order webhook tolerance | any real carrier | Turkey-specific |
 | B11 | ~~**Order addresses**~~ **Built 2026-09-05.** `order_addresses` (one shipping, one billing, enforced by a unique index), written in the SAME transaction as the order's header and lines; carried cart → interop → checkout plan → order snapshot. The cart's own schema comment already named the order as the thing its copy protects — and the order had no address at all | invoicing, shipping labels, B2B — unblocked | Storefront speed |
-| B12 | ~~**Outbound delivery machinery** — retry and a dead-letter queue on the outbox relay~~ **Built 2026-09-06, and the "explicit decision" it rested on turned out to describe a different layer.** The outbox gains `next_attempt_at` and `dead_lettered_at`; a failed publish waits out a doubling delay (1, 2, 4 … capped at 60 minutes) and after ten attempts — four hours and three minutes of trying — is given up on and leaves the relay's index. Giving up is a WRITE, not a drop: the instant, the attempt count and the last error stay on the row, the relay job reads the pile on every pass, and a non-empty pile FAILS the run, which is the one channel that reaches the `gobit jobs` listing. Measured before it was built, and it is why the ceiling is not optional: a batch limit's worth of permanently failing rows fills every pass, so five consecutive passes published NOTHING while a healthy event written behind them finished with `attempts = 0` — never attempted once. Not degraded delivery, NO delivery. Still missing, and it is the operator half: `Redrive` and `Discard` exist, are tested, and have NO production caller — no command, no route — so today the alarm has no off switch a human can reach without SQL | webhooks, ERP/Slack integration — the delivery machinery is there, the SENDER is still C5, and a plugin still cannot own a retry pass (B13) | Platform features |
+| B12 | ~~**Outbound delivery machinery** — retry and a dead-letter queue on the outbox relay~~ **Built 2026-09-06, and the "explicit decision" it rested on turned out to describe a different layer.** The outbox gains `next_attempt_at` and `dead_lettered_at`; a failed publish waits out a doubling delay (1, 2, 4 … capped at 60 minutes) and after ten attempts — four hours and three minutes of trying — is given up on and leaves the relay's index. Giving up is a WRITE, not a drop: the instant, the attempt count and the last error stay on the row, the relay job reads the pile on every pass, and a non-empty pile FAILS the run, which is the one channel that reaches the `gobit jobs` listing. Measured before it was built, and it is why the ceiling is not optional: a batch limit's worth of permanently failing rows fills every pass, so five consecutive passes published NOTHING while a healthy event written behind them finished with `attempts = 0` — never attempted once. Not degraded delivery, NO delivery. ~~Still missing, and it is the operator half: `Redrive` and `Discard` exist, are tested, and have NO production caller — no command, no route — so today the alarm has no off switch a human can reach without SQL~~ **The operator half was built the same day.** `gobit deadletters` lists the pile and `gobit deadletters redrive <id> -confirm <id>` and `gobit deadletters discard <id> -confirm <id>` are its two exits, so the alarm now has an off switch that is not psql. The listing carries what a decision needs — the whole pile's count and not the page's, the event name, the attempt count, the last error, both instants and how long the row tried — and says out loud that the payload was WITHHELD rather than absent; the act path re-reads the pile and closes with whether the `gobit jobs` alarm will clear, which is the question the operator arrived with. One id per verb, and refusing a bulk flag was argued rather than assumed: measured against a real PostgreSQL a single discard is a primary-key delete at 0.047 ms and a redrive 0.183 ms, so the refusal costs the database nothing and buys the reading of the row that a one-keystroke mute would skip | webhooks, ERP/Slack integration — the delivery machinery is there, the SENDER is still C5, and a plugin still cannot own a retry pass (B13) | Platform features |
 | B13 | **Plugin host: let a plugin register a job** | any plugin needing a retry pass, including outbound delivery | Platform features |
 | B14 | ~~**Order line-item entity in the read layer + date filter + index**~~ **Built 2026-09-05.** `order_line_item` is the order module's SECOND read-layer entity, offered next to `order` the way fulfillment offers the shipment next to the shipping option. It carries what was sold and for how much, and takes `placed_from`/`placed_to` — half-open, matched against the ORDER's `placed_at` through a join, because a line's own `created_at` is the day its ROW was written and would date an exchange as a fresh sale. Migration 000006 brings the two indexes that keep the range and the variant filter off a full scan. It has a consumer: the panel's Sales screen. NOT built: any aggregation (the provider returns records, never sums), no line ↔ variant link so nothing expands from a sold line to its product, and forecasting itself | demand analytics and forecasting — the READ is there, the analytics are not; the other half of a forecast is still B7 | AI-powered features |
 | B15 | **File read-back, ~~product-image ↔ upload link~~ built 2026-09-05**, file events still missing. `product_image.upload_id` plus the `upload_product_image` link (declared by PRODUCT — it writes the record the binding carries; the file module's own doc says it does not know what a file belongs to). The file module gained the interop surface it deliberately lacked, and the reasoning behind that absence turned out to be half wrong: the address shows the file and says nothing ABOUT it | anything that looks at a photo — the id half is answerable now; file EVENTS are not built | AI-powered features |
 | B16 | **A suggestion store** — system proposes, human applies | forecast and category suggestions. The pattern exists (`sagawatch`, ADR 0017); the storage does not | AI-powered features |
 | B17 | **KVKK erasure, export and retention** | a legal requirement; A2 and A4 come first | Turkey-specific |
-| B18 | ~~**A per-column round-trip test for every module**~~ **Built 2026-09-05** as `TestEveryColumnIsWrittenBySomething`: the schema and the queries are read TOGETHER, and a column no INSERT names and no UPDATE sets fails. DEFAULT and GENERATED columns are out of scope — the database supplies those | nothing — and it caught a standing finding on its first run (see D9). **What it does NOT catch was measured on 2026-09-06 and it is three holes wide, one of them the very finding its own godoc names as the example — see D16** | Common Go mistakes |
+| B18 | ~~**A per-column round-trip test for every module**~~ **Built 2026-09-05** as `TestEveryColumnIsWrittenBySomething`: the schema and the queries are read TOGETHER, and a column no INSERT names and no UPDATE sets fails. DEFAULT and GENERATED columns are out of scope — the database supplies those | nothing — and it caught a standing finding on its first run (see D9). ~~**What it does NOT catch was measured on 2026-09-06 and it is three holes wide, one of them the very finding its own godoc names as the example — see D16**~~ **Two of those three closed on 2026-09-06, a fourth hole was found while closing them, and the third — text, not the call graph — is measured and deliberately open (D16). The fix surfaced NINE live findings on its first run (D18)** | Common Go mistakes |
 
 ### C. Features — after the above
 
@@ -200,8 +200,12 @@ Four sequencing facts govern the whole list:
   current query set rather than a property of the row, and because `updated_at`
   cannot say WHICH write it timed even while it is correct.
 - **D6** ~~Two repository-internal transactions (tax, region) cannot compose into a
-  service transaction.~~ **HALF fixed 2026-09-06: tax has the plumbing, region
-  does not and is untouched.** The tax repository's private
+  service transaction.~~ **Fixed 2026-09-06 — and the entry named the wrong
+  second module.** Tax had the defect and now has the plumbing. Region was
+  MEASURED and does not have it: the entry paired the two on a shape they share
+  (a transaction opened inside a repository method) rather than on the defect,
+  which is a service method that reads, decides, and then writes as two separate
+  autocommit statements. The tax repository's private
   `inTx(ctx, func(q *taxdb.Queries) error)` is gone. In its place is an
   exported `WithTx(ctx, func(ctx context.Context) error)` that carries the
   transaction in the CONTEXT — the same ambient plumbing the other six modules
@@ -228,11 +232,27 @@ Four sequencing facts govern the whole list:
   like it does), and both the province-insert and the rate-insert paths take it
   inside the same transaction as their write.
 
-  Still open: `region`. Its transactions are still opened inside single
-  repository methods (`internal/modules/region/repository/region.go`,
-  `internal/modules/region/repository/country.go`) and cannot be composed. The
-  same shape also lives in `pricing`, `promotion`, `auth` and `customer`, which
-  this entry never named.
+  **Region, measured 2026-09-06: the defect is not there.** Every region service
+  method that writes makes exactly ONE repository call, so there is no service
+  method to span; the read-decide-write compositions live a layer down inside
+  the repository's own transaction, under a documented lock order. The soft
+  delete hazard that made tax dangerous is real here too — the country's foreign
+  key references the region row and cannot see `deleted_at` — but a shared lock
+  taken before the write already closes it, and deleting that one line makes an
+  existing test fail with the orphan it was written to prevent.
+
+  What region was actually missing was PROOF, and that is now closed: the
+  transaction frame around the region delete could be removed outright, turning
+  its two writes into two autocommit statements — the exact tax shape — and the
+  module's whole integration suite stayed GREEN. Nothing held the frame in place.
+  A test now pins the intermediate state a third connection can observe while the
+  delete is blocked, and it fails under that mutation.
+
+  Still unmeasured, and named here so the pairing is not repeated: the same
+  repository-owned-transaction SHAPE lives in `pricing`, `promotion`, `auth` and
+  `customer`. The shape is not the defect — this entry's own error was assuming
+  it was — so each needs the same question asked of it separately: does a service
+  method there read, decide, and then write?
 - **D7** ~~The OpenAPI text claimed `q` searches title and handle; it searches
   title only.~~ Fixed 2026-09-05.
 - **D10** ~~Nothing stopped a module's SQL from naming another module's
@@ -430,10 +450,16 @@ Four sequencing facts govern the whole list:
   (`internal/modules/product/repository/saleschannel.go`,
   `internal/modules/product/service/service.go`); the full record is
   `docs/catalog-search-cost.md`.
-- **D16** **The column audit names D4 as the thing it catches. It never caught
-  it.** Measured 2026-09-06 while closing D4, and this is the entry on this
-  page with the most credibility riding on it, because the audit is one of the
-  six gates the house rules lean on: "adding a column obliges you to write it".
+- **D16** ~~**The column audit names D4 as the thing it catches. It never caught
+  it.**~~ **Fixed 2026-09-06.** Two of the three holes below are closed and each
+  was proved by planting a mutation and running BOTH gate versions against it;
+  the third is measured and deliberately left open; and a FOURTH nobody had
+  named turned up while the first three were being fixed. The record of the
+  finding is kept below because the fix is only as trustworthy as the account of
+  what was broken. Measured 2026-09-06 while closing D4, and this is the entry
+  on this page with the most credibility riding on it, because the audit is one
+  of the six gates the house rules lean on: "adding a column obliges you to
+  write it".
   `TestEveryColumnIsWrittenBySomething` was GREEN at the start of that session
   while `order_exchanges.completed_at` and `canceled_at` were provably unwritten
   and NOT in the exemption list. `internal/arch/columns_test.go`'s own godoc
@@ -468,17 +494,139 @@ Four sequencing facts govern the whole list:
   in unwrittenColumns but is NOT unwritten any more."
 
   The gate is green today with no lie in it and no new exemption, but it is
-  green for the order module by construction rather than by proof. Fixing the
-  audit is `internal/arch`'s own budget and was not touched.
-- **D17** **`CancelReturn` and `CancelClaim` have no production caller** —
-  measured 2026-09-06 by grep across every production tree while closing D4.
-  No HTTP route, no workflow, no interop method reaches either. So
-  `order_returns.canceled_at` and `order_claims.canceled_at` are, in
-  production, exactly as unwritten as the exchange's was; the column audit is
-  green on them only because the `UPDATE` text sits in a `.sql` file (D16, third
-  hole). Same defect class as D4, currently undetected, and left open
-  deliberately — it is a product decision about who may withdraw a return,
-  not a correction.
+  green for the order module by construction rather than by proof. ~~Fixing the
+  audit is `internal/arch`'s own budget and was not touched.~~ It was touched
+  the next day, and the rest of this entry is what that found.
+
+  **What closed the first two holes.** The written set is keyed by TABLE and
+  column now — an INSERT's column list belongs to the table it inserts into, a
+  `SET` to the table the statement updates, and an `ON CONFLICT DO UPDATE SET`
+  to the table of the INSERT it hangs off. And the declaration scan REPLAYS the
+  migrations in file order: `CREATE TABLE`, `ALTER TABLE ... ADD COLUMN`,
+  `DROP COLUMN` and `DROP TABLE` are applied in turn, so the audit sees the
+  schema the database ends up with rather than the one the first migration
+  described. The visible column count went from 715 to 718 — exactly the four
+  columns added by `ALTER` since the initial schemas, minus the one dropped
+  (`order_exchanges.completed_at`). Both proofs were run against the old gate as
+  well as the new one, on the same planted mutation: a column added by `ALTER`
+  and never written, and a column whose name is written on a SIBLING table, each
+  leave the old gate green and fail the new one by name. An audit that is only
+  shown failing on the thing it was just taught has proved nothing about
+  yesterday.
+
+  Two `ALTER` actions the replay does NOT model — `RENAME COLUMN`, and
+  `ALTER COLUMN ... SET DEFAULT`, which moves a column out of this audit's scope
+  entirely — are REPORTED as findings rather than skipped, and a control plants
+  both. Skipping what it does not understand is precisely how this gate came to
+  carry its own counter-example in its documentation, so the replay now fails
+  loudly and asks to be taught. The order the replay depends on is checked too:
+  it holds only while every migration prefix is padded to the same width, and
+  one file numbered `10_` beside `000009_` would apply an `ALTER` sequence in
+  the wrong order without a sound.
+
+  **The fourth hole, which was on nobody's list.** The `CREATE TABLE` reader
+  recognised a column by an ALLOW-LIST of nine types and split the table body by
+  LINE. A column declared with any other type — `uuid`, `date`, `varchar`,
+  `interval` — would have gone unaudited forever, and a multi-line CHECK
+  constraint produced seven column-looking lines that failed to become false
+  findings only because their leading words happened not to be in the type list.
+  It is a closed deny-list of the seven table-constraint keywords now, with
+  depth-aware comma splitting: an unknown type is a COLUMN, not a blind spot.
+  Two positive controls pin the reading and the decision, and half of the
+  planted cases are REFUSALS — `FOR UPDATE` writes nothing, an INSERT with no
+  column list names nothing, SQL inside a comment is prose and SQL inside a
+  string literal is data.
+
+  **The third hole is still open, and that is now a measurement rather than an
+  omission.** Of the 445 sqlc queries under `internal/modules`, 9 have no
+  hand-written caller anywhere in `internal` or `core` — and all nine are
+  SELECTs. So reading text instead of the call graph masks exactly ZERO columns
+  today: every INSERT and every UPDATE in this repository has a caller. The
+  cheap fix, requiring a write statement to have a hand-written caller, moves
+  the boundary one hop and stops, because the caller can itself be unreachable —
+  which is precisely the shape D17 had. Closing it honestly means reachability
+  from the real entry points over the 317k lines of `internal` and `core`, and
+  `golang.org/x/tools` is an indirect dependency of this module today. The
+  measurement sits in the gate's own godoc, so the test no longer claims more
+  than it does.
+
+  **And the fix produced nine live findings on its first run** — columns this
+  repository believed were covered and are not. They are D18.
+- **D17** ~~**`CancelReturn` and `CancelClaim` have no production caller**~~
+  **Fixed 2026-09-06, and the product decision this entry parked turned out to
+  have been made already — three times, inside the module.** Measured 2026-09-06
+  by grep across every production tree while closing D4. No HTTP route, no
+  workflow, no interop method reached either. So `order_returns.canceled_at` and
+  `order_claims.canceled_at` were, in production, exactly as unwritten as the
+  exchange's was; the column audit is green on them only because the `UPDATE`
+  text sits in a `.sql` file (D16, third hole). ~~Same defect class as D4,
+  currently undetected, and left open deliberately — it is a product decision
+  about who may withdraw a return, not a correction.~~
+
+  **What closed it.** Two admin routes —
+  `POST /admin/v1/orders/{id}/returns/{returnId}/cancel` and
+  `POST /admin/v1/orders/{id}/claims/{claimId}/cancel` — both on the write
+  scope, both going straight to the service rather than through a flow. That
+  last part is the same argument the exchange's cancel makes and it holds for a
+  narrower reason than it looks: RECEIVING a return reaches inventory, so that
+  one goes through a flow, while withdrawing an unreceived request puts no stock
+  back and moves no money. The received case is not a hole in the argument, it
+  is refused by the transition table.
+
+  **The alternative was deleting the two methods** on the product argument that
+  a return is simply never taken back, and three things already in the module
+  refused it. The quantity rule has a RELEASE VALVE that could never fire:
+  `SumReturnedQuantities` excludes canceled returns on purpose, so one request
+  for a whole line consumed that line's returnable quantity FOREVER — and the
+  storefront endpoint opens a request knowing nothing but the order id.
+  `ReturnStatus.CancelAction` and `ClaimStatus.CancelAction` are transition
+  tables whose other rows exist only to guard a transition nothing could reach.
+  And the timeline already publishes a return-canceled entry kind that no row
+  could ever carry. The claim half was worse than symmetric: settling refuses
+  anything but a claim in status requested AND of type refund, so a claim opened
+  against the wrong order, opened twice, or withdrawn by the customer had NO
+  exit at all and stayed on the list of things the shop still owes.
+
+  **Proved where the rule actually lives.** Two integration tests against a real
+  database rather than a fake store, because the release is a `WHERE` clause a
+  fake cannot disagree with: a withdrawn return gives its units back — the
+  second request for the same line is refused before the withdrawal and accepted
+  after — and a withdrawn claim keeps the FIRST moment when the operator clicks
+  twice, while a settled claim is refused with a conflict. Both read the stamp
+  back with a second query, since a `RETURNING` clause can report a value the
+  row does not keep.
+- **D18** **Nine columns that nothing has ever written, and they were invisible
+  until the audit meant to find them was fixed.** Surfaced 2026-09-06 the moment
+  `TestEveryColumnIsWrittenBySomething` began keying its written set by TABLE
+  instead of by bare column name (D16, first hole). All nine are `deleted_at`
+  and all nine have the same shape: the module soft-deletes SOME of its tables,
+  those writes covered this table's column under bare-name matching, and the
+  gate stayed green on a column that is NULL on every row that has ever existed.
+
+  | module | tables |
+  | --- | --- |
+  | product | product_category, product_collection, product_tag, product_option_value |
+  | region | country, currency |
+  | inventory | stock_locations, inventory_reservations |
+  | fulfillment | fulfillments |
+
+  What they cost is not storage. Every read of those tables carries
+  `deleted_at IS NULL`, a predicate that has never once been false — the same
+  finding D9 records for order and payment, with one difference that is the
+  whole point of this entry: D9's ten are a DECISION and these nine are not
+  decided at all.
+
+  **Their exemptions are PLACEHOLDERS for unclosed work, not decisions, and the
+  gate says so in the entries themselves.** Each of the nine opens with the
+  literal words "UNCLOSED FINDING, not a decision" and names what has not been
+  answered: whether a category should be deletable at all, whether closing a
+  stock location is a delete or a status, whether a reservation released by
+  `SetReservationStatus` needs a second way of saying what its status already
+  says, and whether the seeded country and currency lists — whose rows are
+  re-pointed rather than removed — should carry the column at all. They exist
+  only so the gate can be green on the rest of the repository while these are
+  worked. Nothing was changed in the four modules: a schema change belongs to
+  whoever answers the question, not to the audit that asked it.
 
 ### E. Out of framework scope — written, not forgotten
 
@@ -2473,8 +2621,15 @@ The outbox is the right foundation and it is already there (ADR 0023): the event
 is written inside the transaction that promises it, and a relay publishes it.
 An external subscriber would hang off that relay — which, as of 2026-09-06,
 retries with a growing delay and gives up out loud instead of retrying forever.
-The one piece of that machinery an operator still cannot reach is the way back:
-`Redrive` and `Discard` have no caller outside their tests.
+~~The one piece of that machinery an operator still cannot reach is the way
+back: `Redrive` and `Discard` have no caller outside their tests.~~ **Reachable
+since 2026-09-06:** `gobit deadletters` is their caller — a read-only listing
+plus a redrive and a discard verb, each of which requires the event id to be
+typed back with `-confirm`. The guard is a repeated ID rather than a `-force`
+flag on a measured argument about what goes wrong: the mistake these verbs
+attract is not "did not mean to discard", it is "meant a different id", and a
+constant flag carries no information about the target while migrating into a
+runbook line where it stops being a decision.
 
 ### Feature flags: there is no substrate, not even a settings table
 

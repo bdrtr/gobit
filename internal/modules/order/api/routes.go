@@ -27,10 +27,15 @@ const (
 	// ScopeWrite is the scope the WRITE endpoints of the order admin surface
 	// ask for.
 	//
-	// Status transitions (cancel, complete, archive) and opening an after-sales
-	// record ask for it. Most of the transitions are IRREVERSIBLE — a canceled
-	// order is not reopened — which is why separating it from the read scope is
-	// not a formality, it is the limit of the damage.
+	// The order's status transitions (cancel, complete, archive), opening an
+	// after-sales record and EVERY after-sales transition — receiving,
+	// refunding, settling, withdrawing — ask for it. Most of them are
+	// IRREVERSIBLE, a canceled order is not reopened, which is why separating
+	// it from the read scope is not a formality: it is the limit of the damage.
+	// The withdrawals are on this side of the line for a reason of their own —
+	// withdrawing a return hands a line's returnable quantity back, and
+	// withdrawing a claim takes a record off the list of things the shop still
+	// owes.
 	ScopeWrite = "order:write"
 )
 
@@ -86,34 +91,46 @@ func (h *Handler) Routes(r chi.Router) {
 	write.Post("/admin/v1/orders/{id}/archive", h.adminArchiveOrder)
 
 	// After-sales records. The comment that stood here said transitions were
-	// "the next phase's work"; they are bound now, and unevenly, which is worth
-	// saying rather than leaving to be discovered: a return can be received and
-	// refunded, a claim settled, an exchange withdrawn — and NOTHING binds
-	// Service.CancelReturn or Service.CancelClaim, which exist in full and can
-	// be reached by no HTTP caller.
+	// "the next phase's work"; every transition the three record types have is
+	// bound now, and the list is complete rather than merely long: a return can
+	// be received, refunded and WITHDRAWN, a claim settled and WITHDRAWN, an
+	// exchange withdrawn.
 	//
 	// The receive and refund and settle routes go through a flow rather than
 	// the service, because each of the three moves stock or money in another
-	// module. The exchange's cancel does not, and goes straight to the service.
+	// module. The three CANCELS do not, and go straight to the service; the
+	// argument is on each handler and it is the same one every time — a request
+	// that is taken back tells nobody, because nothing was done yet.
+	//
+	// The two cancels below closed D17 on 2026-09-06. Binding them was not a
+	// formality: an UPDATE that no reachable route calls leaves the column
+	// audit green — it reads the .sql files, not the call graph — while no
+	// operator can produce the write. Service.CancelReturn and
+	// Service.CancelClaim had queries, repository methods and transition tables
+	// and NO caller anywhere in production, exactly as the exchange's cancel
+	// had the day before.
 	read.Get("/admin/v1/orders/{id}/returns", h.adminListReturns)
 	write.Post("/admin/v1/orders/{id}/returns", h.adminCreateReturn)
 	read.Get("/admin/v1/orders/{id}/returns/{returnId}", h.adminGetReturn)
 	write.Post("/admin/v1/orders/{id}/returns/{returnId}/receive", h.adminReceiveReturn)
 	write.Post("/admin/v1/orders/{id}/returns/{returnId}/refund", h.adminRefundReturn)
+	// The return's release valve. Without it a request — which the STOREFRONT
+	// can open knowing nothing but the order id — held the line's returnable
+	// quantity for good; see Handler.adminCancelReturn.
+	write.Post("/admin/v1/orders/{id}/returns/{returnId}/cancel", h.adminCancelReturn)
 	read.Get("/admin/v1/orders/{id}/exchanges", h.adminListExchanges)
 	write.Post("/admin/v1/orders/{id}/exchanges", h.adminCreateExchange)
 	read.Get("/admin/v1/orders/{id}/exchanges/{exchangeId}", h.adminGetExchange)
-	// The exchange's ONLY transition. Binding it is half the fix and not a
-	// formality: an UPDATE that no reachable route calls leaves the column
-	// audit green — it reads the .sql files, not the call graph — while no
-	// operator can produce the write. That shape is already in this module:
-	// Service.CancelReturn and Service.CancelClaim have queries, repository
-	// methods and transition tables, and NO caller anywhere in production.
+	// The exchange's ONLY transition.
 	write.Post("/admin/v1/orders/{id}/exchanges/{exchangeId}/cancel", h.adminCancelExchange)
 	read.Get("/admin/v1/orders/{id}/claims", h.adminListClaims)
 	write.Post("/admin/v1/orders/{id}/claims", h.adminCreateClaim)
 	read.Get("/admin/v1/orders/{id}/claims/{claimId}", h.adminGetClaim)
 	write.Post("/admin/v1/orders/{id}/claims/{claimId}/settle", h.adminSettleClaim)
+	// The claim's other exit. Settling refuses everything but a "requested"
+	// claim of type "refund", so without this route a claim opened in error had
+	// no exit at all; see Handler.adminCancelClaim.
+	write.Post("/admin/v1/orders/{id}/claims/{claimId}/cancel", h.adminCancelClaim)
 
 	// Invoicing. The endpoints are on the ORDER because "invoice this order" is
 	// a question asked about an order and the client asking it holds an order

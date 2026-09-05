@@ -40,6 +40,99 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltildi
 
+- **Sütun denetiminin üç kör noktasından İKİSİ kapandı, DÖRDÜNCÜSÜ kapatırken
+  bulundu — ve düzeltme ilk koşumunda dokuz canlı bulgu çıkardı** (D16, D18).
+
+  Bir gün önce bu bölümde şu yazıyordu: *"Düzeltilen şey kapı değil, kapı
+  hakkındaki KAYIT: `internal/arch` başka bir bütçe ve elle tutulmadı."* Bugün
+  tutuldu.
+
+  **Yazılanlar kümesi artık TABLOYA bağlı.** Bir `INSERT`'ün sütun listesi
+  yazdığı tabloya, bir `SET`'in atamaları güncellediği tabloya, `ON CONFLICT DO
+  UPDATE SET` ise asıldığı `INSERT`'ün tablosuna ait. **Bildirimler ise artık
+  YENİDEN OYNATILIYOR:** migrasyonlar dosya sırasına göre uygulanıyor —
+  `CREATE TABLE`, `ALTER TABLE ... ADD COLUMN`, `DROP COLUMN`, `DROP TABLE` —
+  yani denetim ilk migrasyonun anlattığı şemayı değil, veritabanının vardığı
+  şemayı görüyor. Görünen sütun sayısı 715'ten 718'e çıktı: o güne dek `ALTER`
+  ile eklenmiş dört sütun, eksi düşürülen bir tanesi
+  (`order_exchanges.completed_at`). Sıra varsayımını koruyan ucuz bir denetim de
+  eklendi: migrasyon önekleri aynı genişlikte doldurulmazsa `10_` ile
+  `000009_` yan yana geldiğinde `ALTER` dizisi sessizce yanlış sırada uygulanır.
+
+  **Oynatmanın modellemediği iki `ALTER` eylemi ATLANMIYOR, BULGU olarak
+  bildiriliyor:** `RENAME COLUMN` ve sütunu bu denetimin kapsamından tümüyle
+  çıkaran `ALTER COLUMN ... SET DEFAULT`. Anlamadığı şeyi atlamak, bu kapının
+  kendi karşı örneğini belgesinde taşır hâle gelmesinin tam olarak yolu; artık
+  yüksek sesle düşüyor ve öğretilmeyi istiyor.
+
+  **İki düzeltme de mutasyonla ve HER İKİ kapı sürümüne karşı kanıtlandı.**
+  `ALTER` ile eklenmiş yazılmamış bir sütun, ve adı KARDEŞ tabloda yazılan bir
+  sütun: ikisi de eski kapıda yeşil kalıyor, yenisinde adıyla düşüyor. Yalnızca
+  yeni kapının düştüğünü göstermek dünkü kapı hakkında hiçbir şey kanıtlamazdı.
+
+  **Kimsenin listesinde olmayan dördüncü kör nokta.** `CREATE TABLE` okuyucusu
+  bir sütunu DOKUZ TİPLİK bir izin listesinden tanıyor ve tablo gövdesini SATIRA
+  göre bölüyordu. Başka bir tiple bildirilen sütun — `uuid`, `date`, `varchar`,
+  `interval` — sonsuza kadar denetim dışı kalırdı, ve çok satırlı bir CHECK
+  kısıtı sütun görünümlü yedi satır üretiyordu; bunların yanlış bulguya
+  dönüşmemesi yalnızca baş sözcüklerinin tip listesinde olmamasına bağlıydı.
+  Artık yedi tablo kısıtı anahtar sözcüğünden oluşan KAPALI bir ret listesi ve
+  derinlik gözeten virgül ayırma var: bilinmeyen bir tip artık bir sütun, bir
+  kör nokta değil. İki pozitif kontrol hem okumayı hem kararı sabitliyor ve
+  ekilen durumların yarısı REDDEDİŞ: `FOR UPDATE` hiçbir şey yazmaz, sütun
+  listesi olmayan bir `INSERT` hiçbir ad vermez, yorum içindeki SQL düzyazıdır,
+  dizge içindeki SQL veridir.
+
+  **Üçüncü kör nokta açık, ve bu artık bir eksiklik değil bir ÖLÇÜM.**
+  `internal/modules` altındaki 445 sqlc sorgusundan 9'unun `internal` ya da
+  `core` içinde elle yazılmış hiçbir çağıranı yok — ve dokuzu da `SELECT`. Yani
+  metni okuyup çağrı çizgesini okumamak bugün TAM OLARAK SIFIR sütun maskeliyor:
+  deponun her `INSERT`'ü ve her `UPDATE`'i çağrılıyor. Ucuz düzeltme — "yazan
+  bir deyimin elle yazılmış bir çağıranı olsun" — sınırı bir adım öteye taşıyıp
+  duruyor, çünkü çağıranın kendisi ulaşılamaz olabilir; D17 tam olarak o
+  biçimdeydi. Dürüst kapatma, rotalardan, işlerden ve akışlardan başlayan bir
+  erişilebilirlik çözümlemesi demek — `internal` ile `core`'un 317 bin satırı
+  üzerinde — ve `golang.org/x/tools` bugün yalnızca dolaylı bir bağımlılık.
+  Ölçüm kapının kendi godoc'unda duruyor, yani kapı artık yaptığından fazlasını
+  iddia etmiyor.
+
+  Ölçerken bir de kendi hatası yakalandı ve gönderilen kapıyı o belirledi: ilk
+  probun `UPDATE` eşleştiricisi migrasyon düzyazısındaki sözcüğü sayıp
+  `orders.archived_at`'ı yanlışlıkla maskelenmiş bildirdi. Bu migrasyonlar
+  SQL'den çok tartışma taşıyor ve `UPDATE` sözcüğü yorumlarda deyimlerden daha
+  sık geçiyor; kapı bu yüzden paketin var olan SQL sökücüsünü kullanıyor,
+  yorumları ve dizgeleri körleştirdikten sonra.
+
+- **Denetim düzeltilir düzeltilmez görünen dokuz sütun: hiçbir şeyin yazmadığı
+  dokuz `deleted_at`** (D18).
+
+  Dokuzu da aynı biçimde saklanmıştı: modül tablolarının BİR KISMINI yumuşak
+  siliyor, o yazmalar çıplak ad eşlemesi altında bu tablonun sütununu da
+  örtüyor, ve kapı hiçbir satırında dolu olmamış bir sütunda yeşil kalıyordu.
+
+  | modül | tablolar |
+  | --- | --- |
+  | product | product_category, product_collection, product_tag, product_option_value |
+  | region | country, currency |
+  | inventory | stock_locations, inventory_reservations |
+  | fulfillment | fulfillments |
+
+  Maliyetleri saklama alanı değil: bu tabloların her okuması, hiçbir zaman
+  yanlış olmamış bir `deleted_at IS NULL` yüklemini taşıyor — sipariş ve ödeme
+  için D9'un kaydettiği bulgunun aynısı, tek farkla ve fark tam olarak burada:
+  D9'daki on sütun bir KARAR, bu dokuz sütunda ise karar verilmiş hiçbir şey
+  yok.
+
+  **Muafiyet girdileri karar değil, KAPATILMAMIŞ İŞİN YER TUTUCUSU — ve kapı
+  bunu girdinin kendisinde söylüyor.** Dokuzunun her biri "UNCLOSED FINDING, not
+  a decision" sözleriyle başlıyor ve neyin cevaplanmadığını yazıyor: bir
+  kategori hiç silinebilmeli mi, bir stok konumunu kapatmak silme mi durum mu,
+  `SetReservationStatus` ile serbest bırakılan bir rezervasyonun durumunun zaten
+  söylediği şeyi ikinci kez söylemesi gerekiyor mu, ve satırları silinmek yerine
+  yeniden yönlendirilen ülke ile para birimi listeleri bu sütunu hiç taşımalı
+  mı. Dört modülde hiçbir şey değiştirilmedi: şema değişikliği, soruyu soran
+  denetimin değil cevaplayanın işi.
+
 - **Bir sütunun yazılmadığını yakalamak için kurulmuş denetim, godoc'unda ÖRNEK
   olarak verdiği bulguyu hiç yakalamamıştı — üç kör noktası da mutasyonla
   ölçüldü** (gaps.md D16).
@@ -370,6 +463,116 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Ölü mektupların artık bir OPERATÖR YÜZÜ var: `gobit deadletters`** (B12).
+
+  Dün bu bölümde şu yazıyordu: *"`Redrive` ile `Discard` var, test edildi ve
+  ÜRETİMDE HİÇBİR ÇAĞIRANI YOK — ne komut, ne rota."* Önce ölçüldü, sonra
+  yazıldı: iki fiilin depoda test dışında tek bir çağıranı yoktu, `DeadLetters`
+  ise tam bir tane taşıyordu — röle işi, yığından beş satırlık bir örnek okuyup
+  sayısını bildiriyor. Komut o eksik çağıran.
+
+  Tek ad, üç eylem: `gobit deadletters` listeler (salt okunur),
+  `gobit deadletters redrive <id> -confirm <id>` satırı kuyruğa geri koyar,
+  `gobit deadletters discard <id> -confirm <id>` atar.
+
+  **Listeleme bir kararın ihtiyaç duyduğu şeyi taşıyor:** yığının TAMAMININ
+  sayısı — sayfanınki değil — olay kimliği ve adı, deneme sayısı, son hata, söz
+  verildiği ve vazgeçildiği anlar, ne kadar denendiği ve ne zaman öldüğü; yükün
+  ise YOK değil ESİRGENMİŞ olduğu açıkça yazılıyor. Eylem yolu yığını yeniden
+  okuyup `gobit jobs` alarmının temizlenip temizlenmeyeceğiyle kapanıyor, çünkü
+  operatörün geldiği soru bu. Hiçbir satırı değiştirmeyen bir çağrı sessiz bir
+  başarı değil HATA, ve üç sebebini birden yazıyor: yanlış kimlik, hiç
+  vazgeçilmemiş satır, ya da başkasının çoktan hallettiği bir satır.
+
+  **`-limit` bayrağının maliyeti ölçüldü ve VERİTABANINA değil terminale ait
+  çıktı.** Deponun sorgusu yığının boyunu `LIMIT`'ten önce değerlendirilen bir
+  pencere fonksiyonuyla hesaplıyor, yani sayfa ne olursa olsun yığının tamamı
+  geziliyor: PostgreSQL 16, 2.000 ölü mektup taşıyan 42.300 satırlık
+  `event_outbox`, beş koşumun en iyisi — `-limit 1` 0,690 ms, `-limit 50`
+  0,690 ms, `-limit 500` 0,757 ms. Rakamı büyüten şey YIĞIN: aynı sorgu 50.000
+  mektupluk bir yığında 17,3 ms. Varsayılan 50 bu yüzden veritabanı hakkında
+  değil OKUYUCU hakkında bir sayı, ve godoc'u bunu böyle yazıyor.
+
+  **"Hepsini at" REDDEDİLDİ, ve gerekçe maliyet değil — çünkü maliyet ölçüldü.**
+  Tek bir atma birincil anahtar üzerinden 0,047 ms, tek bir geri alma 0,183 ms;
+  iki bin tanesi veritabanının fark etmeyeceği bir iş. Toplu bir bayrak
+  operatöre yalnızca TUŞ VURUŞU kazandırırdı, ve o tuş vuruşunun kendisi
+  özellik: `-all`, bu depoda görmezden gelinerek susturulamayan TEK alarmın tek
+  tuşluk susturucusu olurdu; satır yükün SON kopyası, yani yığını okumadan
+  boşaltmak "neyi vaat edip teslim etmedik" sorusunun cevabını yok eder; ve bir
+  kimliği yazmak, yanında basılan olay adını ve son hatayı OKUMUŞ olmak demek.
+  Toplu GERİ ALMA daha zor bir karardı ve ayrıca gerekçelendirildi: kesinti
+  sonrası yığın homojen değil — kimi mektup alıcı düştüğü için orada ve geri
+  alınmayı hak ediyor, kiminin yükü bozuk ve onu geri almak dört saatlik
+  denemeyi harcayıp tam olarak aynı yığına dönmek demek. Onay biçiminin
+  "hepsi" için tekrarlayabileceği dürüst bir şey de yok: bir sayı kaç tane
+  olduğunu söyler, hangileri olduğunu asla, ve listeleme ile koşum arasında
+  bayatlar.
+
+  **Onay bir `-force` bayrağı değil, KİMLİĞİN TEKRARI** — `migrate down <owner>`
+  ile `recover <id>` neyse o. Bu fiillerde yanlış giden şey neredeyse hiçbir
+  zaman "atmak istemiyordum" olmuyor, "BAŞKA bir kimliği kastediyordum" oluyor:
+  değer bir listeden, bir satır aşağıdan ya da yukarıdan, olay anında ve hızla
+  kopyalanıyor. Sabit bir bayrak hedef hakkında hiçbir bilgi taşımadığı için bu
+  hata sınıfını yakalayamaz; üstelik sabit olduğu için bir kabuk takma adına ya
+  da runbook satırına göçer ve bir daha yazılmaz. Tekrarlanan kimlik önceden
+  yazılamaz, çünkü her seferinde farklıdır ve önce yığından OKUNMAK zorundadır.
+  Geri alma da korunuyor, çünkü göründüğü gibi bir okuma değil: `attempts`
+  sıfırlanıyor ve `dead_lettered_at` temizleniyor — yani operatöre az önce
+  gösterilen ölüm kaydı siliniyor — ve gerçek bir ileti otobüse geri konuyor.
+
+  **Beş mutasyonun beşi de ısırıyor:** onay karşılaştırmasının etkisizleşmesi,
+  iki fiilin yer değiştirmesi, hiçbir satırı değiştirmeyen bir çağrının başarı
+  sayılması, gönderinin dağıtım kolunun silinmesi, ve raporun yığının sayısı
+  yerine sayfanın boyunu basması. Sonuncusu yalnızca birim katmanında düşüyor ve
+  bu doğru: integration senaryosunda sayfa yığının tamamı, yani kırpılma durumu
+  orada zaten görünmez.
+
+  Depo tarafına tek satır eklenmedi: `DeadLetter` kimliği, adı, deneme sayısını,
+  son hatayı ve iki anı zaten taşıyor, yükü taşımaması ise listelemenin yüksek
+  sesle söylediği bir tercih.
+
+- **İade isteği ve talep artık GERİ ALINABİLİYOR — iki `UPDATE` ifadesinin
+  üretimde hiçbir çağıranı yoktu** (D17).
+
+  Dün ölçülüp açık bırakılmıştı: `CancelReturn` ile `CancelClaim` tam yazılmış,
+  test edilmiş ve üretimde ne rotadan, ne akıştan, ne interop'tan çağrılıyordu —
+  yani `order_returns.canceled_at` ile `order_claims.canceled_at` üretimde takas
+  sütunu kadar yazılmıştı. Kapı onlarda yeşildi, çünkü `UPDATE` metni bir `.sql`
+  dosyasında duruyor (D16, üçüncü kör nokta).
+
+  İki yönetim ucu bağlandı —
+  `POST /admin/v1/orders/{id}/returns/{returnId}/cancel` ve
+  `POST /admin/v1/orders/{id}/claims/{claimId}/cancel` — ikisi de yazma
+  kapsamında, ikisi de akıştan değil doğrudan servise gidiyor: teslim ALINMAMIŞ
+  bir isteği geri almak ne stok ne para kıpırdatır, yani başka modüle söylenecek
+  bir şey yok. Teslim alınmış durum bu savın açığı değil, geçiş tablosunun
+  reddettiği bir durum.
+
+  **Alternatif iki metodu SİLMEKTİ** — "bir iade zaten hiç geri alınmaz"
+  gerekçesiyle — ve modülün içinde duran üç şey buna itiraz etti. Miktar
+  kuralının bir TAHLİYE VALFİ var ve hiç açılamıyordu: `SumReturnedQuantities`
+  iptal edilmiş iadeleri kasten dışarıda bırakıyor, yani bir satırın tamamı için
+  açılan tek bir istek o satırın iade edilebilir miktarını SONSUZA KADAR
+  tüketiyordu — üstelik vitrin ucu böyle bir isteği yalnızca sipariş kimliğini
+  bilerek açabiliyor. `ReturnStatus.CancelAction` ile `ClaimStatus.CancelAction`
+  üç satırlık geçiş tabloları ve öteki iki satırları yalnızca bu geçişi korumak
+  için var. Zaman çizelgesi ise hiçbir satırın taşıyamayacağı bir "iade iptal
+  edildi" girdi türünü zaten yayımlıyordu. Talep tarafı simetrikten de kötüydü:
+  uzlaştırma yalnızca "requested" durumundaki ve "refund" türündeki talebi kabul
+  ediyor, yani yanlış siparişe açılmış, iki kez açılmış ya da müşterinin geri
+  çektiği bir talebin HİÇBİR çıkışı yoktu — listede, dükkânın hâlâ borçlu olduğu
+  işlerden ayırt edilemez biçimde duruyordu.
+
+  **Kural nerede yaşıyorsa orada kanıtlandı.** Tahliye bir `WHERE` yan tümcesi ve
+  sahte bir depo, sahip olmadığı bir yan tümceye itiraz edemez; iki integration
+  testi gerçek veritabanına karşı koşuyor. Geri alınan istek birimlerini geri
+  veriyor — aynı satır için ikinci istek geri almadan ÖNCE reddediliyor, SONRA
+  kabul ediliyor — ve geri alınan talep ikinci tıklamada İLK anı koruyor,
+  uzlaştırılmış talep ise çatışmayla reddediliyor. İkisi de damgayı ikinci bir
+  sorguyla satırdan okuyor: `RETURNING` yan tümcesi satırın tutmadığı bir değeri
+  bildirebilir.
+
 - **Giden teslimat makinesi: artan gecikmeli yeniden deneme ve ÖLÜ MEKTUP — ve
   düzelttiği şeyin bir yavaşlama değil, teslimatın DURMASI olduğu ölçüldü**
   (B12).
@@ -521,9 +724,27 @@ Sabitlenme `1.0.0` ile olur.
   bakan bir kurguyla bağlandı; işlem çerçevesinin kendisi ise hem geri aldığı
   hem de çerçevesiz bırakıldığında YARIM kaldığı gösterilerek kanıtlandı.
 
-  **Yarısı açık: `region` dokunulmadı** ve aynı biçim, özgün cümlenin hiç
-  adlandırmadığı `pricing`, `promotion`, `auth` ve `customer` modüllerinde de
-  duruyor.
+  **`region` ÖLÇÜLDÜ ve kusur orada YOK** (6 Eylül 2026). Özgün cümle iki
+  modülü, paylaştıkları BİÇİM üzerinden eşleştirmişti (işlemin bir repository
+  metodunun içinde açılması); oysa kusur bu değil, bir SERVİS metodunun okuyup
+  karar verip sonra yazması ve bu ikisinin ayrı autocommit ifadeleri olmasıdır.
+  region'da yazan her servis metodu tam olarak BİR repository çağrısı yapıyor,
+  yani kapsanacak bir servis metodu yok. Yumuşak silme tehlikesi orada da
+  gerçek — ülkenin foreign key'i bölge satırına bakar ve `deleted_at`'i göremez
+  — ama yazmadan önce alınan paylaşımlı kilit onu zaten kapatıyor; o tek satır
+  silinince mevcut bir test, önlemek için yazıldığı yetim satırla düşüyor.
+
+  region'da eksik olan şey KANITTI ve o kapatıldı: bölge silmenin işlem
+  çerçevesi tamamen kaldırılıp iki yazma ayrı autocommit ifadesine
+  çevrildiğinde — yani tam olarak tax'ın şekli — modülün bütün entegrasyon
+  suite'i YEŞİL kaldı. Çerçeveyi tutan hiçbir şey yokmuş. Artık silme
+  bloklanmışken üçüncü bir bağlantının gözleyebildiği ara durumu iğneleyen bir
+  test var ve o mutasyonda düşüyor.
+
+  **Hâlâ ölçülmemiş:** aynı BİÇİM `pricing`, `promotion`, `auth` ve `customer`
+  modüllerinde de duruyor. Biçim kusur değil — bu cümlenin kendi hatası onu
+  kusur sanmaktı — o yüzden her birine soru ayrı ayrı sorulmalı: orada bir
+  servis metodu okuyup, karar verip, sonra yazıyor mu?
 
 - **Panelin kataloğunda artık ARAMA KUTUSU var: okuma katmanı `q`'yu öğrendi —
   ve maliyeti 52.004 üründe ÖLÇÜLDÜ** (B2'nin son süzgeci, D12'nin kalan yarısı).

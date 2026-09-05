@@ -261,6 +261,25 @@ func describeReturns(d *openapi.Doc) {
 			"200": openapi.Response("Return record", d.Item(returnDTO{})),
 		},
 	})
+
+	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/returns/{returnId}/cancel",
+		openapi.Operation{
+			Summary: "Withdraws the return request.",
+			// The RELEASE is written out because it is the reason a client
+			// would call this rather than ignoring the record: nothing else in
+			// the API gives a line's returnable quantity back, and a client
+			// that does not know it will report "more was asked back than was
+			// bought" to a shop whose only open request was a mistake.
+			Description: "Withdrawing RELEASES the units the request was holding: those " +
+				"lines can be asked back again, which nothing else in this API can undo. " +
+				"It is refused with 409 on a RECEIVED return — the goods are physically in " +
+				"the warehouse and the record is the only thing that says where they came " +
+				"from, so withdrawing would not un-receive them. A second call on an " +
+				"already withdrawn record succeeds and keeps the first moment.",
+			Responses: map[string]any{
+				"200": openapi.Response("The withdrawn return record", d.Item(returnDTO{})),
+			},
+		})
 }
 
 // describeExchanges describes the exchange record endpoints.
@@ -343,6 +362,25 @@ func describeClaims(d *openapi.Doc) {
 			"200": openapi.Response("Claim record", d.Item(claimDTO{})),
 		},
 	})
+
+	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/claims/{claimId}/cancel",
+		openapi.Operation{
+			Summary: "Withdraws the claim.",
+			// The pairing with settle is stated because the two are the claim's
+			// ONLY exits and they are not interchangeable: a client that reads
+			// only the settle endpoint would conclude that a claim opened by
+			// mistake has to be settled with money to get it off the list.
+			Description: "The claim's other exit, beside settling. Use it for a claim opened " +
+				"against the wrong order, opened twice, or one the customer withdrew: " +
+				"nothing is refunded and nothing is shipped, the record is simply closed. " +
+				"It is refused with 409 on a COMPLETED claim — that one was met with money " +
+				"or goods, and un-meeting it is a new record rather than a status change. " +
+				"A second call on an already withdrawn claim succeeds and keeps the first " +
+				"moment.",
+			Responses: map[string]any{
+				"200": openapi.Response("The withdrawn claim record", d.Item(claimDTO{})),
+			},
+		})
 }
 
 // pageParameters returns the two parameters [parsePage] reads.

@@ -229,6 +229,13 @@ func describedEndpoints() []endpointExpectation {
 			status: "200", response: filledReturn(),
 		},
 		{
+			method: http.MethodPost,
+			path:   "/admin/v1/orders/{id}/returns/{returnId}/cancel",
+			// No request, for the reason the exchange's cancel gives below:
+			// there is nothing to choose.
+			status: "200", response: filledReturn(),
+		},
+		{
 			method: http.MethodGet, path: "/admin/v1/orders/{id}/exchanges", status: "200",
 			response: filledExchange(), list: true,
 		},
@@ -258,6 +265,11 @@ func describedEndpoints() []endpointExpectation {
 		},
 		{
 			method: http.MethodGet, path: "/admin/v1/orders/{id}/claims/{claimId}",
+			status: "200", response: filledClaim(),
+		},
+		{
+			method: http.MethodPost,
+			path:   "/admin/v1/orders/{id}/claims/{claimId}/cancel",
 			status: "200", response: filledClaim(),
 		},
 		{

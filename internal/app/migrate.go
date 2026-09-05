@@ -673,6 +673,9 @@ Usage:
   %s %-34s list executions left half-done (read only)
   %s %-34s compensate ONE half-done execution
   %s %-34s report each scheduled job's last run
+  %s %-34s list what the outbox relay gave up on
+  %s %-34s return ONE dead letter to the queue
+  %s %-34s delete ONE dead letter for good
   %s %-34s rebuild the measurement catalog
   %s %-34s print this text
 
@@ -682,6 +685,10 @@ Usage:
 
 %s flags:
   -%-15s repeat the execution id to authorize the compensation
+
+%s flags:
+  -%-15s how many dead letters to print (default %d)
+  -%-15s repeat the event id to authorize a redrive or a discard
 
 %s flags:
   -%-15s how many single-variant products to build (default %d)
@@ -700,12 +707,18 @@ there is deliberately no "migrate up", so a deploy cannot forget it.
 		binaryName, stuckCommand+" [flags]",
 		binaryName, recoverCommand+" <execution-id> [flags]",
 		binaryName, jobsCommand,
+		binaryName, deadLettersCommand+" [flags]",
+		binaryName, deadLettersCommand+" "+cmdRedrive+" <id> [flags]",
+		binaryName, deadLettersCommand+" "+cmdDiscard+" <id> [flags]",
 		binaryName, seedCommand+" [flags]",
 		binaryName, cmdHelp,
 		cmdMigrate, cmdDown,
 		flagSteps+" N", defaultDownSteps,
 		flagConfirm+" OWNER",
 		recoverCommand,
+		flagConfirm+" ID",
+		deadLettersCommand,
+		flagLimit+" N", defaultDeadLetterLimit,
 		flagConfirm+" ID",
 		seedCommand,
 		flagProducts+" N", rig.DefaultSingleVariantProducts,

@@ -118,11 +118,16 @@ func (o Options) version() string {
 //
 // # Why the dispatch is a switch and not a CLI library
 //
-// The whole surface is three verbs and two flags. A CLI framework would bring a
-// dependency, its own flag semantics and its own help renderer to replace
-// fifteen lines of standard library; the package [flag] already parses the two
-// flags [migrateDown] takes. The rule from ADR 0001 that a dependency has to
-// earn its place applies to the binary's own front door too.
+// This once said "three verbs and two flags", and by the time it was read
+// again the binary answered seven, two of them with subverbs of their own. The
+// count is dropped rather than corrected, because a number in a godoc goes
+// stale in silence; what has to be re-argued each time the surface grows is
+// the CHOICE, and it still holds. The growth has all been in one shape: every
+// verb parses its own flags with its own [flag.FlagSet] and prints its own
+// report, so what a CLI framework would replace is exactly this switch and
+// nothing below it — at the price of a dependency, its own flag semantics and
+// its own help renderer. The rule from ADR 0001 that a dependency has to earn
+// its place applies to the binary's own front door too.
 //
 // # Why the binary grows subcommands at all
 //
@@ -130,7 +135,10 @@ func (o Options) version() string {
 // installation's database, and some operator work is nothing but a query
 // against it. That is why the migrate verbs live here rather than in a second
 // binary with its own configuration loading, and it is why [stuckCommand] —
-// the read surface for half-done sagas — lands here too.
+// the read surface for half-done sagas — lands here too. The same argument
+// brought [deadLettersCommand]: the events the outbox relay gave up on are a
+// core table, and the two verbs that act on them had no reachable caller at
+// all before it.
 //
 // # Why starting the server has NO verb
 //
@@ -163,6 +171,8 @@ func Main(args []string, out io.Writer, opts Options) error {
 		return runRecover(args[1:], out, opts)
 	case jobsCommand:
 		return runJobs(args[1:], out, opts)
+	case deadLettersCommand:
+		return runDeadLetters(args[1:], out, opts)
 	case seedCommand:
 		return runSeed(args[1:], out, opts)
 	default:

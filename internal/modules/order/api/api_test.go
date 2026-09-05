@@ -146,6 +146,13 @@ func (f *fakeOrders) ListReturns(_ context.Context, orderID string, page service
 	return f.returns, f.count, f.err
 }
 
+// CancelReturn withdraws the return request.
+func (f *fakeOrders) CancelReturn(_ context.Context, returnID string) (models.Return, error) {
+	f.record("CancelReturn")
+	f.gotChildID = returnID
+	return f.ret, f.err
+}
+
 // CreateExchange opens an exchange record.
 func (f *fakeOrders) CreateExchange(_ context.Context, in service.CreateExchangeInput) (models.Exchange, error) {
 	f.record("CreateExchange")
@@ -195,6 +202,13 @@ func (f *fakeOrders) ListClaims(_ context.Context, orderID string, page service.
 	f.gotOrderID = orderID
 	f.page = page
 	return nil, f.count, f.err
+}
+
+// CancelClaim withdraws the claim.
+func (f *fakeOrders) CancelClaim(_ context.Context, claimID string) (models.Claim, error) {
+	f.record("CancelClaim")
+	f.gotChildID = claimID
+	return f.claim, f.err
 }
 
 // sampleOrder is the order model used in the tests.
@@ -515,6 +529,106 @@ func TestAdminCancelExchangeReachesTheService(t *testing.T) {
 	require.NotNil(t, body.Data.CanceledAt, "the moment has to reach the client")
 	assert.Nil(t, body.Data.CompletedAt,
 		"the field is gone from the DTO; a client must not be able to read one")
+}
+
+// TestAdminCancelReturnReachesTheService is D17's return half.
+//
+// [service.Service.CancelReturn] existed in full — query, repository method,
+// transition table — and no HTTP caller reached it, so
+// order_returns.canceled_at was NULL on every row that has ever existed. This
+// test is what says a caller exists.
+//
+// Like the exchange's cancel it answers with the RECORD and not the order: the
+// order is unchanged by a request that was taken back.
+func TestAdminCancelReturnReachesTheService(t *testing.T) {
+	moment := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	svc := &fakeOrders{ret: models.Return{
+		ID: "ret_1", OrderID: "order_1", Status: models.ReturnCanceled,
+		RefundAmount: 1000, CanceledAt: &moment,
+	}}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodPost,
+		"/admin/v1/orders/order_1/returns/ret_1/cancel", "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []string{"CancelReturn"}, svc.calls,
+		"withdrawing reaches the service directly; it moves no stock, so no flow is in the way")
+	assert.Equal(t, "ret_1", svc.gotChildID)
+
+	var body struct {
+		Data struct {
+			Status     string     `json:"status"`
+			CanceledAt *time.Time `json:"canceled_at"`
+			ReceivedAt *time.Time `json:"received_at"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "canceled", body.Data.Status)
+	require.NotNil(t, body.Data.CanceledAt, "the moment has to reach the client")
+	assert.Nil(t, body.Data.ReceivedAt, "a withdrawn request never received anything")
+}
+
+// TestAdminCancelClaimReachesTheService is D17's claim half.
+//
+// Before this route the claim record had exactly ONE exit — settling — and that
+// one refuses everything but a "requested" claim of type "refund". A claim
+// opened against the wrong order therefore had no exit at all.
+func TestAdminCancelClaimReachesTheService(t *testing.T) {
+	moment := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	svc := &fakeOrders{claim: models.Claim{
+		ID: "clm_1", OrderID: "order_1", Type: models.ClaimRefund,
+		Status: models.ClaimCanceled, RefundAmount: 500, CanceledAt: &moment,
+	}}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodPost,
+		"/admin/v1/orders/order_1/claims/clm_1/cancel", "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []string{"CancelClaim"}, svc.calls,
+		"withdrawing settles nothing, so it does not go through the settling flow")
+	assert.Equal(t, "clm_1", svc.gotChildID)
+
+	var body struct {
+		Data struct {
+			Status      string     `json:"status"`
+			CanceledAt  *time.Time `json:"canceled_at"`
+			CompletedAt *time.Time `json:"completed_at"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "canceled", body.Data.Status)
+	require.NotNil(t, body.Data.CanceledAt)
+	assert.Nil(t, body.Data.CompletedAt, "a withdrawn claim was never met")
+}
+
+// TestTheAfterSalesCancelsAreWriteScoped is the guard half of the two endpoints
+// above.
+//
+// Binding a transition to a route without its scope would have been the worse
+// half of the fix: an identity granted for reporting could then release a
+// line's returnable quantity, or close a claim the shop still owes money on.
+// The read scope is used deliberately rather than an empty one — an empty scope
+// list fails on EVERY admin endpoint and would not show that the refusal comes
+// from the read/write DISTINCTION.
+func TestTheAfterSalesCancelsAreWriteScoped(t *testing.T) {
+	for name, path := range map[string]string{
+		"return":   "/admin/v1/orders/order_1/returns/ret_1/cancel",
+		"claim":    "/admin/v1/orders/order_1/claims/clm_1/cancel",
+		"exchange": "/admin/v1/orders/order_1/exchanges/exch_1/cancel",
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc := &fakeOrders{}
+			r := newRouter(svc)
+
+			rec := doRequestAs(t, r, http.MethodPost, path, "", readOnlyPrincipal())
+
+			require.Equal(t, http.StatusForbidden, rec.Code)
+			assert.Empty(t, svc.calls,
+				"when the scope is insufficient the service must not be reached at all")
+		})
+	}
 }
 
 // TestAdminCompleteAndArchive verifies that the transition endpoints reach the
