@@ -1,0 +1,53 @@
+{{- /*
+customers.gohtml is the customer list.
+
+The rows come from the cross-module read layer, not from a module's service: the
+panel knows no module (ADR 0011). Every field is printed as an ordinary value,
+so the template engine's escaping applies to all of them — a customer's name is
+text they supplied themselves and the panel runs inside an administrator's
+session.
+
+A shop's GUEST records outnumber its accounts, so the two are told apart in
+their own column: it is the first thing an operator looks for on this screen.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+{{ if .Customers }}
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th>Name</th><th>Email</th><th>Account</th><th>Since</th></tr>
+  </thead>
+  <tbody>
+  {{ range .Customers }}
+    <tr>
+      <td>
+        <a href="{{ $.Path }}/{{ .ID }}">
+          {{ if .Name }}{{ .Name }}{{ else }}<span class="muted">no name</span>{{ end }}
+        </a>
+      </td>
+      <td>{{ if .Email }}{{ .Email }}{{ else }}<span class="muted">no address</span>{{ end }}</td>
+      <td>
+        {{ if .HasAccount }}
+          <span class="pill">registered</span>
+        {{ else }}
+          <span class="pill">guest</span>
+        {{ end }}
+      </td>
+      <td>{{ if not .CreatedAt.IsZero }}{{ .CreatedAt.Format "2006-01-02" }}{{ end }}</td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">No customers on this page.</p>
+{{ end }}
+
+<nav>
+  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}">Previous</a>{{ end }}
+  <span class="muted">Page {{ .Page }}</span>
+  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}">Next</a>{{ end }}
+</nav>
+{{ end }}

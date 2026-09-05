@@ -1,0 +1,41 @@
+{{- /*
+customer.gohtml is one customer's page.
+
+The ADDRESSES are absent, and that is a property of the read layer rather than a
+shortcut: an address is the customer module's own record and the read layer
+joins across LINKS, not within a module. Showing them would need the panel to
+hold the customer module's service — the coupling the fourth tree exists to
+avoid (ADR 0011).
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+<div class="panel">
+  <p>
+    {{ if .Customer.HasAccount }}
+      <span class="pill">registered</span>
+    {{ else }}
+      <span class="pill">guest</span>
+    {{ end }}
+    {{ if not .Customer.CreatedAt.IsZero }}
+    <span class="muted">since {{ .Customer.CreatedAt.Format "2006-01-02" }}</span>
+    {{ end }}
+  </p>
+</div>
+
+<table>
+  <tbody>
+    <tr>
+      <th>Email</th>
+      <td>{{ if .Customer.Email }}{{ .Customer.Email }}{{ else }}<span class="muted">none</span>{{ end }}</td>
+    </tr>
+    <tr>
+      <th>Phone</th>
+      <td>{{ if .Customer.Phone }}{{ .Customer.Phone }}{{ else }}<span class="muted">none</span>{{ end }}</td>
+    </tr>
+    <tr><th>Identifier</th><td>{{ .Customer.ID }}</td></tr>
+  </tbody>
+</table>
+
+<p><a href="{{ .CustomersPath }}">Back to customers</a></p>
+{{ end }}

@@ -57,6 +57,9 @@ var pages = []string{
 	"variant.gohtml",
 	"orders.gohtml",
 	"order.gohtml",
+	"customers.gohtml",
+	"customer.gohtml",
+	"inventory.gohtml",
 }
 
 // templateSet maps a page name to that page's parsed template set.
@@ -218,6 +221,8 @@ func sections() []navItem {
 	return []navItem{
 		{Label: catalogLabel, Path: ProductsPath},
 		{Label: ordersLabel, Path: OrdersPath},
+		{Label: customersLabel, Path: CustomersPath},
+		{Label: inventoryLabel, Path: InventoryPath},
 	}
 }
 
@@ -246,4 +251,34 @@ func decorateFrame(r *http.Request, data map[string]any) {
 	}
 
 	data[navKey] = items
+}
+
+// The data keys the LIST templates read their paging from.
+//
+// They are constants for the reason [titleKey] is: the templates look them up
+// by name, so a typo would not fail — the page would simply lose its "next"
+// link and nobody would be told.
+const (
+	pageKey     = "Page"
+	hasNextKey  = "HasNext"
+	hasPrevKey  = "HasPrev"
+	nextPageKey = "NextPage"
+	prevPageKey = "PrevPage"
+	pathKey     = "Path"
+)
+
+// addPaging writes the paging fields a list template reads.
+//
+// It exists because four screens page identically, and four copies of
+// "page - 1" are four places for one of them to become "page + 1" without
+// anything failing. The screens supply what only they know — which page they
+// are on, whether the read returned one row more than the page holds, and their
+// own path — and the arithmetic happens once.
+func addPaging(data map[string]any, page int, hasNext bool, path string) {
+	data[pageKey] = page
+	data[hasNextKey] = hasNext
+	data[hasPrevKey] = page > 1
+	data[nextPageKey] = page + 1
+	data[prevPageKey] = page - 1
+	data[pathKey] = path
 }

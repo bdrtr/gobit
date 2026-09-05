@@ -726,9 +726,24 @@ the next reader sees a decision instead of a wait.
    refusal to combine it with another filter — the short-circuit answers from
    the batch read, so a second filter would be silently ignored.
 
-   Still open: thirteen modules have no screen, nothing can be created or
-   deleted from the panel, and there is no plugin extension point for a plugin
-   to add one.
+   **Customers and inventory landed too (2026-09-05).** The panel now covers the
+   four things a shop operator actually looks at: catalog, orders, customers and
+   inventory. The customer screen tells a registered account from a guest, which
+   is the first thing an operator needs to know before anything else on the row
+   means what they think it means; the inventory list says "unknown" rather than
+   0 when a total cannot be read as an integer, because a zero that is really an
+   unread value sends somebody looking for stock that is on the shelf.
+
+   Inventory has a list and NO detail page, and that is a decision: an item's
+   detail is its per-location levels, which the panel already shows on the
+   variant page, and reaching one item by identity would need a filter the
+   inventory provider does not offer. Widening a module's published contract for
+   a screen that duplicates another one is not a trade worth making.
+
+   Still open: eleven modules have no screen — all of them configuration
+   (regions, tax rates, shipping options, promotions, keys) rather than daily
+   work — nothing can be created or deleted from the panel, and there is no
+   extension point for a plugin to add a screen.
 
 ### The rest
 

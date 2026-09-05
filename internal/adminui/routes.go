@@ -36,6 +36,9 @@ func (u *UI) Routes(r chi.Router) {
 	r.Post(VariantStockPath, u.submitVariantStock)
 	r.Get(OrdersPath, u.listOrders)
 	r.Get(OrderPath, u.showOrder)
+	r.Get(CustomersPath, u.listCustomers)
+	r.Get(CustomerPath, u.showCustomer)
+	r.Get(InventoryPath, u.listInventory)
 }
 
 // home is the panel's protected entry point.

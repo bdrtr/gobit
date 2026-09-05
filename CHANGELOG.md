@@ -97,8 +97,24 @@ Sabitlenme `1.0.0` ile olur.
   birleştirilmeyi reddederek — kısa devre toplu okumadan cevaplıyor, yani ikinci
   süzgeç sessizce yok sayılırdı.
 
-  Açık kalan: on üç modülün ekranı yok, panelden hiçbir şey yaratılıp
-  silinemiyor, ve bir eklentinin ekran ekleyebileceği bir uzatma noktası yok.
+  Müşteriler ve envanter de eklendi: panel artık bir dükkân operatörünün
+  gerçekten baktığı dört şeyi kapsıyor — katalog, siparişler, müşteriler,
+  envanter. Müşteri ekranı kayıtlı hesabı misafirden ayırıyor (satırdaki başka
+  hiçbir şey, hangi tür kayıt olduğu bilinmeden düşünülen anlama gelmiyor).
+  Envanter listesi, toplam tam sayı olarak OKUNAMADIĞINDA 0 değil "unknown"
+  yazıyor: gerçekte okunamamış bir değeri sıfır diye basmak, birini rafta duran
+  stoğu aramaya yollar.
+
+  Envanterin listesi var, detay sayfası YOK ve bu bir karar: bir kalemin detayı
+  konum bazlı seviyeleridir ve panel onları zaten varyant sayfasında gösteriyor;
+  tek kaleme kimlikle ulaşmak ise envanter sağlayıcısının sunmadığı bir süzgeç
+  isterdi. Başka bir ekranı tekrarlayan bir ekran için bir modülün yayımlanmış
+  sözleşmesini genişletmek değer bir takas değil.
+
+  Açık kalan: on bir modülün ekranı yok — hepsi günlük iş değil YAPILANDIRMA
+  (bölgeler, vergi oranları, kargo seçenekleri, promosyonlar, anahtarlar) —
+  panelden hiçbir şey yaratılıp silinemiyor, ve bir eklentinin ekran
+  ekleyebileceği uzatma noktası yok.
 
 - **Fatura modülü** (ADR 0024) — belge, satırları, tarafları, durumu ve
   **boşluksuz** numaralandırması.

@@ -1,0 +1,43 @@
+{{- /*
+inventory.gohtml is the inventory list.
+
+The rows come from the cross-module read layer, not from a module's service: the
+panel knows no module (ADR 0011).
+
+An item whose sellable total could not be read prints "unknown" and NOT zero.
+The two are different facts, and printing 0 for both would send an operator
+looking for stock that is actually on the shelf.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+{{ if .Items }}
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th>SKU</th><th>Title</th><th>Shipped</th><th class="num">Available</th></tr>
+  </thead>
+  <tbody>
+  {{ range .Items }}
+    <tr>
+      <td>{{ if .SKU }}{{ .SKU }}{{ else }}<span class="muted">no SKU</span>{{ end }}</td>
+      <td>{{ if .Title }}{{ .Title }}{{ else }}<span class="muted">untitled</span>{{ end }}</td>
+      <td>{{ if .RequiresShipping }}yes{{ else }}<span class="muted">no</span>{{ end }}</td>
+      <td class="num">
+        {{ if .Available }}{{ .Available }}{{ else }}<span class="muted">unknown</span>{{ end }}
+      </td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">No inventory items on this page.</p>
+{{ end }}
+
+<nav>
+  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}">Previous</a>{{ end }}
+  <span class="muted">Page {{ .Page }}</span>
+  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}">Next</a>{{ end }}
+</nav>
+{{ end }}

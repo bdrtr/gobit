@@ -114,16 +114,13 @@ func (u *UI) listOrders(w http.ResponseWriter, r *http.Request) {
 		rows = append(rows, orderRowOf(rec, scales))
 	}
 
-	u.templates.render(w, r, http.StatusOK, "orders.gohtml", map[string]any{
-		titleKey:   ordersLabel,
-		"Orders":   rows,
-		"Page":     page,
-		"HasNext":  hasNext,
-		"HasPrev":  page > 1,
-		"NextPage": page + 1,
-		"PrevPage": page - 1,
-		"Path":     OrdersPath,
-	})
+	data := map[string]any{
+		titleKey: ordersLabel,
+		"Orders": rows,
+	}
+	addPaging(data, page, hasNext, OrdersPath)
+
+	u.templates.render(w, r, http.StatusOK, "orders.gohtml", data)
 }
 
 // showOrder renders one order.

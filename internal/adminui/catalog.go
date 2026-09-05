@@ -171,16 +171,13 @@ func (u *UI) listProducts(w http.ResponseWriter, r *http.Request) {
 		rows = append(rows, productRowOf(rec))
 	}
 
-	u.templates.render(w, r, http.StatusOK, "products.gohtml", map[string]any{
+	data := map[string]any{
 		titleKey:   "Products",
 		"Products": rows,
-		"Page":     page,
-		"HasNext":  hasNext,
-		"HasPrev":  page > 1,
-		"NextPage": page + 1,
-		"PrevPage": page - 1,
-		"Path":     ProductsPath,
-	})
+	}
+	addPaging(data, page, hasNext, ProductsPath)
+
+	u.templates.render(w, r, http.StatusOK, "products.gohtml", data)
 }
 
 // showProduct renders one product together with its variants, prices and stock.

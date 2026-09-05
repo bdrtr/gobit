@@ -45,6 +45,15 @@ const (
 	OrdersPath = URLPrefix + "/orders"
 	// OrderPath is one order's page; {id} is the order's identity.
 	OrderPath = OrdersPath + "/{id}"
+	// CustomersPath is the customer list.
+	CustomersPath = URLPrefix + "/customers"
+	// CustomerPath is one customer's page; {id} is the customer's identity.
+	CustomerPath = CustomersPath + "/{id}"
+	// InventoryPath is the inventory list.
+	//
+	// There is no single-item path: an item's detail is its per-location levels
+	// and the panel already shows those on the variant page.
+	InventoryPath = URLPrefix + "/inventory"
 
 	// ServiceQuery is the cross-module read layer's container name.
 	ServiceQuery = "core.query"
