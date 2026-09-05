@@ -8,8 +8,8 @@
 -- name: CreateOrderLineItem :one
 INSERT INTO order_line_items (
     id, order_id, variant_id, title, quantity,
-    unit_price, subtotal, discount_total, tax_total, total, metadata
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    unit_price, subtotal, discount_total, tax_total, tax_rate_bps, total, metadata
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 RETURNING *;
 
 -- name: ListOrderLineItems :many

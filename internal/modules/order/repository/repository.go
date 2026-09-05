@@ -413,6 +413,7 @@ func (r *Repository) CreateLineItem(ctx context.Context, item models.OrderLineIt
 		Subtotal:      item.Subtotal,
 		DiscountTotal: item.DiscountTotal,
 		TaxTotal:      item.TaxTotal,
+		TaxRateBps:    item.TaxRateBps,
 		Total:         item.Total,
 		Metadata:      meta,
 	})

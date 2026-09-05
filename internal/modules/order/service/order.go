@@ -30,7 +30,16 @@ type CreateOrderItemInput struct {
 	// POSITIVE number and it is subtracted.
 	DiscountTotal int64
 	// TaxTotal is the tax falling on the line.
-	TaxTotal int64
+	// TaxRateBps is the rate the line's tax was computed at, in BASIS POINTS
+	// (2000 = 20%).
+	//
+	// It is stored rather than derived because it cannot be derived: the tax is
+	// rounded DOWN per line, so more than one rate produces the same amount. An
+	// invoice has to print the rate that was CHARGED — in Turkey the KDV rate is
+	// a required field on an e-fatura — and a rate recomputed later from the
+	// amount is a different claim.
+	TaxRateBps int32
+	TaxTotal   int64
 	// Total is the total of the line: Subtotal - DiscountTotal + TaxTotal.
 	Total int64
 	// Metadata is the caller's free extra data.
@@ -292,6 +301,7 @@ func (s *Service) writeOrder(ctx context.Context, in CreateOrderInput, rule spen
 				Subtotal:      in.Items[i].Subtotal,
 				DiscountTotal: in.Items[i].DiscountTotal,
 				TaxTotal:      in.Items[i].TaxTotal,
+				TaxRateBps:    in.Items[i].TaxRateBps,
 				Total:         in.Items[i].Total,
 				Metadata:      in.Items[i].Metadata,
 			}); err != nil {

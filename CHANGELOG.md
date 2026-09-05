@@ -29,6 +29,33 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Sipariş satırı artık hangi ORANDA vergilendiğini söylüyor** (`tax_rate_bps`).
+
+  Hesaplanan oran sınırda atılıyordu: sipariş vergi TUTARINI saklıyor, oranı
+  saklamıyordu. Tutardan orana geri dönülemez — vergi satır başına AŞAĞI
+  yuvarlanıyor, yani 1899 kuruş hem %20'nin hem %19,99'un ürettiği şey. Fatura
+  her satırın oranını basar ve müşterinin ALTINDA ücretlendirildiği oranı
+  basmak zorundadır; Türkiye'de KDV oranı e-faturanın türetilmiş değil ZORUNLU
+  bir alanı. Kolon, henüz fatura yokken bu yüzden açıldı.
+
+  Her iki vergi yolu da yazıyor: bölgenin düz oranı ve tax modülünün ürün
+  bazlı kuralları. Oran sepetin hesabından checkout planına, oradan JSON
+  interop sınırını geçip `order_line_items.tax_rate_bps`'e gidiyor.
+
+  Oran DÖRT elden geçiyor — girdi, model, INSERT parametreleri, satır dönüşümü
+  — ve herhangi birinden düşmesi hâlâ derleniyor, sahte depo kullanan her birim
+  testini hâlâ geçiyor. Dördün ikisi gerçekten onsuz yazılmıştı. Sıfır da
+  meşru bir oran olduğu için aşağıda hiçbir şey yanlış görünmezdi; ilk işaret,
+  vergili bir satıra %0 KDV basan bir fatura olurdu. Entegrasyon testi tek
+  siparişte İKİ FARKLI ve varsayılan olmayan oran yazıp geri okuyor, uçtan uca
+  test ise saklanan oranın saklanan vergiyi ÜRETEN oran olduğunu doğruluyor.
+
+  NOT NULL DEFAULT 0 seçildi ve bedeli yazıldı: bu kolondan önceki siparişler 0
+  alıyor, 0 da meşru bir oran, yani eski satırlarda ikisi ayırt edilemiyor.
+  Nullable kolon bu ayrımı korurdu — hiçbir yeni siparişin nil bırakmayacağı bir
+  işaretçi ve yalnızca tarihin üretebileceği bir durumu her okuyucunun ele alma
+  zorunluluğu pahasına.
+
 - **Derin sayfa artık ucuz** (cursor pagination).
 
   Offset, veritabanına atladığı her satırı yürütüp ATTIRIR: sayfanın maliyeti

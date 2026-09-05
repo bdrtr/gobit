@@ -73,12 +73,17 @@ func TestCalculateTotalsSingleLine(t *testing.T) {
 	require.NoError(t, err)
 
 	// Unit 1000, quantity 2 -> subtotal 2000; 20% tax -> 400.
+	//
+	// The RATE is asserted next to the amount because the amount alone cannot
+	// carry it: rounding down per line maps a range of rates onto one figure,
+	// and an invoice has to print the rate that was charged.
 	require.Len(t, totals.Lines, 1)
 	assert.Equal(t, LineTotals{
 		LineItemID: testLineA,
 		UnitPrice:  1000,
 		Subtotal:   2000,
 		TaxTotal:   400,
+		TaxRateBps: 2000,
 		Total:      2400,
 	}, totals.Lines[0])
 	assert.Equal(t, int64(2000), totals.Subtotal)

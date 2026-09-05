@@ -268,19 +268,26 @@ type orderDetailDTO struct {
 
 // lineItemDTO is the external representation of an order line item.
 type lineItemDTO struct {
-	ID            string         `json:"id"`
-	OrderID       string         `json:"order_id"`
-	VariantID     string         `json:"variant_id"`
-	Title         string         `json:"title"`
-	Quantity      int64          `json:"quantity"`
-	UnitPrice     int64          `json:"unit_price"`
-	Subtotal      int64          `json:"subtotal"`
-	DiscountTotal int64          `json:"discount_total"`
-	TaxTotal      int64          `json:"tax_total"`
-	Total         int64          `json:"total"`
-	Metadata      map[string]any `json:"metadata,omitempty"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
+	ID            string `json:"id"`
+	OrderID       string `json:"order_id"`
+	VariantID     string `json:"variant_id"`
+	Title         string `json:"title"`
+	Quantity      int64  `json:"quantity"`
+	UnitPrice     int64  `json:"unit_price"`
+	Subtotal      int64  `json:"subtotal"`
+	DiscountTotal int64  `json:"discount_total"`
+	TaxTotal      int64  `json:"tax_total"`
+	// TaxRateBps is the rate the line's tax was computed at, in BASIS POINTS
+	// (2000 = 20%).
+	//
+	// It is published because it cannot be recomputed: the tax is rounded down
+	// per line, so the amount alone maps back to a range of rates. Anything
+	// that prints an invoice needs the rate the customer was charged under.
+	TaxRateBps int32          `json:"tax_rate_bps"`
+	Total      int64          `json:"total"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
 }
 
 // summaryDTO is the external representation of the order's payment/refund
@@ -399,6 +406,7 @@ func toLineItemDTO(item models.OrderLineItem) lineItemDTO {
 		Subtotal:      item.Subtotal,
 		DiscountTotal: item.DiscountTotal,
 		TaxTotal:      item.TaxTotal,
+		TaxRateBps:    item.TaxRateBps,
 		Total:         item.Total,
 		Metadata:      item.Metadata,
 		CreatedAt:     item.CreatedAt,

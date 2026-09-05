@@ -178,6 +178,16 @@ func TestCartToOrderHappyPath(t *testing.T) {
 		"the unit price must be the value taken from pricing during the compute round")
 	require.Equal(t, happySubtotal, line.Subtotal, "the line subtotal must be unit price × quantity")
 	require.Equal(t, happyTax, line.TaxTotal, "the line tax must be the same as the cart line's")
+	// The RATE travels with the amount, and it crosses the JSON interop boundary
+	// between the checkout workflow and the order module to get here. The amount
+	// alone cannot carry it: rounding down per line maps a range of rates onto
+	// one figure, and an invoice has to print the rate that was charged rather
+	// than one recomputed afterwards.
+	require.Positive(t, line.TaxRateBps,
+		"the line has tax, so it must also say the RATE it was charged at; a zero here means the "+
+			"rate was dropped somewhere between the cart's calculation and the order's row")
+	require.Equal(t, happyTax, line.Subtotal*int64(line.TaxRateBps)/10_000,
+		"the stored rate has to be the one that PRODUCES the stored tax")
 	require.Equal(t, happyTotal, line.Total, "the line total must be the same as the cart line's")
 
 	// The summary IS written, and it carries what the payment collection actually

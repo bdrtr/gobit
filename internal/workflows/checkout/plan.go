@@ -143,6 +143,13 @@ type planLine struct {
 	DiscountTotal int64 `json:"discount_total"`
 	// TaxTotal is the tax falling on the line.
 	TaxTotal int64 `json:"tax_total"`
+	// TaxRateBps is the rate the tax was computed at, in BASIS POINTS.
+	//
+	// It travels with the amount because the amount cannot be turned back into
+	// it: the tax is rounded down per line, so more than one rate produces the
+	// same figure. An invoice prints the rate of every line and must print the
+	// one that was CHARGED, not one recomputed afterwards.
+	TaxRateBps int32 `json:"tax_rate_bps"`
 	// Total is the total of the line: Subtotal - DiscountTotal + TaxTotal.
 	Total int64 `json:"total"`
 }
@@ -321,6 +328,7 @@ func (w *Workflows) planLines(ctx context.Context, snap Snapshot, totals cartwf.
 			Subtotal:        amounts.Subtotal,
 			DiscountTotal:   amounts.DiscountTotal,
 			TaxTotal:        amounts.TaxTotal,
+			TaxRateBps:      amounts.TaxRateBps,
 			Total:           amounts.Total,
 		})
 	}
@@ -559,6 +567,7 @@ type orderSnapshotItem struct {
 	Subtotal      int64  `json:"subtotal"`
 	DiscountTotal int64  `json:"discount_total"`
 	TaxTotal      int64  `json:"tax_total"`
+	TaxRateBps    int32  `json:"tax_rate_bps"`
 	Total         int64  `json:"total"`
 }
 
@@ -579,6 +588,7 @@ func (p *checkoutPlan) orderSnapshotJSON(idempotencyKey string) (json.RawMessage
 			Subtotal:      p.Lines[i].Subtotal,
 			DiscountTotal: p.Lines[i].DiscountTotal,
 			TaxTotal:      p.Lines[i].TaxTotal,
+			TaxRateBps:    p.Lines[i].TaxRateBps,
 			Total:         p.Lines[i].Total,
 		})
 	}

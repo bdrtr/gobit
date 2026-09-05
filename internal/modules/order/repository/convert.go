@@ -308,6 +308,7 @@ func toLineItem(row orderdb.OrderLineItem) (models.OrderLineItem, error) {
 		Subtotal:      row.Subtotal,
 		DiscountTotal: row.DiscountTotal,
 		TaxTotal:      row.TaxTotal,
+		TaxRateBps:    row.TaxRateBps,
 		Total:         row.Total,
 		Metadata:      meta,
 		CreatedAt:     toTime(row.CreatedAt),

@@ -78,6 +78,7 @@ type OrderLineItem struct {
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
 	DeletedAt     pgtype.Timestamptz
+	TaxRateBps    int32
 }
 
 type OrderReturn struct {

@@ -1,0 +1,30 @@
+-- tax_rate_bps is the rate the line's tax was computed at, in BASIS POINTS.
+--
+-- # Why the rate is stored and not derived from the amount
+--
+-- It cannot be derived. The tax is rounded DOWN per line, so 1899 kurus of tax
+-- is what 20% and 19.99% both produce on the same base; going backwards from
+-- the amount gives a range, not a rate.
+--
+-- An invoice prints the rate of every line, and it has to print the rate the
+-- customer was CHARGED under rather than one recomputed afterwards from a
+-- rounded figure. In Turkey the KDV rate is a required field on an e-fatura,
+-- not a derived one — which is why this column exists before any invoicing does.
+--
+-- # Why basis points and not a decimal
+--
+-- 2000 is 20%. A basis point is an integer, so the rate is exact and no
+-- rounding enters through the type itself; the repository carries every other
+-- rate the same way (region.tax_rate_bps, tax_rate.rate_bps).
+--
+-- # Why NOT NULL DEFAULT 0
+--
+-- Every order placed before this column existed gets 0, and 0 is also a
+-- legitimate rate (a tax-exempt line), so the two cannot be told apart on old
+-- rows. A nullable column would keep that distinction — at the cost of a
+-- pointer no new order would ever leave nil, and of every reader having to
+-- handle a case that only history can produce. The distinction is worth less
+-- than the permanent cost, so it is given up here and written down rather than
+-- left to be discovered.
+ALTER TABLE order_line_items
+    ADD COLUMN tax_rate_bps integer NOT NULL DEFAULT 0;

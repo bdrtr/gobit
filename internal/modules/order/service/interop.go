@@ -93,6 +93,7 @@ func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
 //	      "subtotal":       3000,
 //	      "discount_total": 0,
 //	      "tax_total":      600,
+//	      "tax_rate_bps":   2000,
 //	      "total":          3600,
 //	      "metadata":       {}
 //	    }
@@ -142,6 +143,7 @@ type interopOrderItem struct {
 	Subtotal      int64          `json:"subtotal"`
 	DiscountTotal int64          `json:"discount_total"`
 	TaxTotal      int64          `json:"tax_total"`
+	TaxRateBps    int32          `json:"tax_rate_bps"`
 	Total         int64          `json:"total"`
 	Metadata      map[string]any `json:"metadata"`
 }
@@ -171,6 +173,7 @@ func (i *Interop) PlaceOrderJSON(ctx context.Context, snapshot json.RawMessage) 
 			Subtotal:      incoming.Items[k].Subtotal,
 			DiscountTotal: incoming.Items[k].DiscountTotal,
 			TaxTotal:      incoming.Items[k].TaxTotal,
+			TaxRateBps:    incoming.Items[k].TaxRateBps,
 			Total:         incoming.Items[k].Total,
 			Metadata:      incoming.Items[k].Metadata,
 		})

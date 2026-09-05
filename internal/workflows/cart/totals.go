@@ -81,6 +81,18 @@ type LineTotals struct {
 	DiscountTotal int64 `json:"discount_total"`
 	// TaxTotal is the tax falling on the line.
 	TaxTotal int64 `json:"tax_total"`
+	// TaxRateBps is the rate the tax was computed at, in BASIS POINTS
+	// (2000 = 20%).
+	//
+	// # Why the rate is carried and not just the amount
+	//
+	// The amount alone cannot be turned back into the rate: the tax is rounded
+	// DOWN per line, so 1899 kurus at 20% and at 19.99% produce the same
+	// figure. An invoice has to print the rate of every line — in Turkey the
+	// KDV rate is a required field on an e-fatura, not a derived one — and a
+	// figure recomputed later from the amount is a different claim from the one
+	// the customer was charged under.
+	TaxRateBps int32 `json:"tax_rate_bps"`
 	// Total is the line's total: Subtotal - DiscountTotal + TaxTotal.
 	Total int64 `json:"total"`
 }

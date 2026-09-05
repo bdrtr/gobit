@@ -220,6 +220,7 @@ func (w *Workflows) applyRegionTax(ctx context.Context, snap Snapshot, lines []L
 			return taxErr
 		}
 		lines[i].TaxTotal = tax
+		lines[i].TaxRateBps = rateBps
 	}
 	return nil
 }
@@ -390,6 +391,7 @@ func applyTaxResponse(snap Snapshot, lines []LineTotals, resp taxResponse) error
 
 	for i := range resp.Items {
 		lines[i].TaxTotal = resp.Items[i].TaxAmount
+		lines[i].TaxRateBps = resp.Items[i].RateBps
 	}
 	return nil
 }

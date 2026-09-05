@@ -13,9 +13,9 @@ const createOrderLineItem = `-- name: CreateOrderLineItem :one
 
 INSERT INTO order_line_items (
     id, order_id, variant_id, title, quantity,
-    unit_price, subtotal, discount_total, tax_total, total, metadata
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-RETURNING id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, deleted_at
+    unit_price, subtotal, discount_total, tax_total, tax_rate_bps, total, metadata
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+RETURNING id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, deleted_at, tax_rate_bps
 `
 
 type CreateOrderLineItemParams struct {
@@ -28,6 +28,7 @@ type CreateOrderLineItemParams struct {
 	Subtotal      int64
 	DiscountTotal int64
 	TaxTotal      int64
+	TaxRateBps    int32
 	Total         int64
 	Metadata      []byte
 }
@@ -49,6 +50,7 @@ func (q *Queries) CreateOrderLineItem(ctx context.Context, arg CreateOrderLineIt
 		arg.Subtotal,
 		arg.DiscountTotal,
 		arg.TaxTotal,
+		arg.TaxRateBps,
 		arg.Total,
 		arg.Metadata,
 	)
@@ -68,12 +70,13 @@ func (q *Queries) CreateOrderLineItem(ctx context.Context, arg CreateOrderLineIt
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.TaxRateBps,
 	)
 	return i, err
 }
 
 const listOrderLineItems = `-- name: ListOrderLineItems :many
-SELECT id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, deleted_at FROM order_line_items
+SELECT id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, deleted_at, tax_rate_bps FROM order_line_items
 WHERE order_id = $1 AND deleted_at IS NULL
 ORDER BY created_at, id
 `
@@ -102,6 +105,7 @@ func (q *Queries) ListOrderLineItems(ctx context.Context, orderID string) ([]Ord
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.TaxRateBps,
 		); err != nil {
 			return nil, err
 		}

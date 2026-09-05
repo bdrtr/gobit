@@ -253,7 +253,23 @@ type OrderLineItem struct {
 	// stored positive.
 	DiscountTotal int64
 	// TaxTotal is the tax falling on the line (minor unit).
-	TaxTotal int64
+	// TaxRateBps is the rate the line's tax was computed at, in BASIS POINTS
+	// (2000 = 20%).
+	//
+	// # Why the rate is stored and not derived
+	//
+	// It cannot be derived. The tax is rounded DOWN per line, so 1899 kurus at
+	// 20% and at 19.99% are the same figure afterwards. An invoice prints the
+	// rate of every line and must print the one the customer was CHARGED under;
+	// in Turkey the KDV rate is a required field on an e-fatura rather than a
+	// derived one.
+	//
+	// It is zero on an order placed before this field existed, and zero is a
+	// legitimate rate as well, so the two cannot be told apart on old rows.
+	// That is the price of adding the column late and is written down rather
+	// than papered over with a pointer that no new order would ever set.
+	TaxRateBps int32
+	TaxTotal   int64
 	// Total is the line's total (minor unit):
 	// Subtotal - DiscountTotal + TaxTotal.
 	Total int64

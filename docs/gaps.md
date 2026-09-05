@@ -562,10 +562,28 @@ the next reader sees a decision instead of a wait.
    one batch read and sends it, so tax rules match per product instead of every
    line falling through to the region's default rate.
 
+   **The rate is no longer discarded (2026-09-05).** Both tax paths — the
+   region's flat rate and the tax module's per-product rules — now write the
+   rate they applied onto the line, and it travels through the checkout plan and
+   the JSON interop into `order_line_items.tax_rate_bps`. It is stored rather
+   than derived because it cannot be derived: the tax is rounded DOWN per line,
+   so 1899 kurus is what 20% and 19.99% both produce, and an invoice has to
+   print the rate the customer was CHARGED under. In Turkey the KDV rate is a
+   required field on an e-fatura rather than a computed one, which is why this
+   column exists before any invoicing does.
+
+   The rate crossed four hands — input, model, INSERT parameters, row
+   conversion — and leaving it out of any one of them still compiled and still
+   passed every unit test that uses a fake store. Two of the four were in fact
+   written without it. Zero is also a legitimate rate, so nothing downstream
+   would have looked wrong; the first sign would have been an invoice printing
+   0% on a taxed line. An integration test now writes two DIFFERENT non-default
+   rates on one order and reads them back, and the end-to-end test asserts that
+   the stored rate is the one that PRODUCES the stored tax.
+
    Still open on this axis: `ProvinceCode` is never sent (the cart carries no
-   province), a region holding more than one country still resolves to none, the
-   applied rate is discarded at the boundary so no order can say which rate it
-   was charged, and shipping tax is hard-wired off. `product_type_id` stays
+   province), a region holding more than one country still resolves to none, and
+   shipping tax is hard-wired off. `product_type_id` stays
    empty legitimately — gobit has no product type.
 
    The original finding: The tax module is
