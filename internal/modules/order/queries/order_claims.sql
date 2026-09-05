@@ -18,3 +18,23 @@ LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
 -- name: CountOrderClaims :one
 SELECT COUNT(*) FROM order_claims
 WHERE order_id = $1 AND deleted_at IS NULL;
+
+-- LockOrderClaim locks the claim row until the end of the transaction.
+-- name: LockOrderClaim :one
+SELECT * FROM order_claims
+WHERE id = $1 AND deleted_at IS NULL
+FOR UPDATE;
+
+-- CompleteOrderClaim records that the claim was settled.
+-- name: CompleteOrderClaim :one
+UPDATE order_claims
+SET status = 'completed', completed_at = now(), updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING *;
+
+-- CancelOrderClaim withdraws the claim.
+-- name: CancelOrderClaim :one
+UPDATE order_claims
+SET status = 'canceled', canceled_at = now(), updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING *;

@@ -263,6 +263,24 @@ func (i *Interop) ReceiveReturn(ctx context.Context, returnID, locationID string
 	return err
 }
 
+// ClaimDetailJSON returns what a flow needs to settle a claim.
+//
+// The schema is documented on [Service.ClaimDetailJSON].
+func (i *Interop) ClaimDetailJSON(ctx context.Context, claimID string) (json.RawMessage, error) {
+	return i.svc.ClaimDetailJSON(ctx, claimID)
+}
+
+// CompleteClaim records that the claim was settled.
+//
+// It says the claim WAS settled and nothing about how; sending the money or the
+// replacement happened outside this module, and this module could not check it
+// if it wanted to.
+func (i *Interop) CompleteClaim(ctx context.Context, claimID string) error {
+	_, err := i.svc.CompleteClaim(ctx, claimID)
+
+	return err
+}
+
 // CompleteOrder stamps the order as completed.
 //
 // It is NOT idempotent: a second call returns errors.Conflict (for the

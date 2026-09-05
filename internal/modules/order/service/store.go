@@ -152,6 +152,13 @@ type Store interface {
 	// ListExchanges pages the exchange records of the order.
 	ListExchanges(ctx context.Context, filter models.ChildFilter) ([]models.Exchange, int64, error)
 
+	// LockClaim locks the claim row; it may only be called inside [Store.WithTx].
+	LockClaim(ctx context.Context, id string) (models.Claim, error)
+	// CompleteClaim records that the claim was settled.
+	CompleteClaim(ctx context.Context, id string) (models.Claim, error)
+	// CancelClaim withdraws the claim.
+	CancelClaim(ctx context.Context, id string) (models.Claim, error)
+
 	// CreateClaim opens a new claim record.
 	CreateClaim(ctx context.Context, claim models.Claim) (models.Claim, error)
 	// GetClaim returns the claim record by its identifier; NotFound when there

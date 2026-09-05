@@ -366,11 +366,15 @@ the next reader sees a decision instead of a wait.
    capture and records its amounts on the order, so `paid_total` is right from
    the moment of checkout.
 
-   **The refund half is still open.** Refunds are made through the payment
-   module's own admin API, which has no order-side caller, so a refund made
-   later never reaches the summary — and the B2B consequence below is therefore
-   NOT fixed. It needs either payment events (the module publishes none) or an
-   admin flow that writes both sides.
+   ~~**The refund half is still open.**~~ **CLOSED 2026-09-05.** The return
+   flow's refund writes both sides: it refunds against the collection and
+   records the collection's running refunded total on the order. The B2B
+   consequence below is fixed with it.
+
+   What remains unwritten is a refund made OUTSIDE a return — through the
+   payment module's own admin API — which still has no order-side caller. That
+   needs either payment events (the module publishes none) or the same
+   two-sided discipline on that endpoint.
 
    One prerequisite for that flow landed on 2026-09-05: there was no path from
    an order to its payment at all, because the collection's `Reference` carries
@@ -401,11 +405,28 @@ the next reader sees a decision instead of a wait.
    a return records where the goods arrived and puts their stock back, through
    a flow the admin endpoint is bound to.
 
-   Still open: REFUNDING. It is deliberately not part of receiving — goods can
-   arrive damaged or incomplete, so paying the money back is a separate
-   operator decision — but the action itself does not exist yet. There is also
-   still no customer-facing request surface, and exchanges and claims can move
-   but nothing acts on them either.
+   **Refunding landed the same day**, as a separate action for the reason above
+   (goods can arrive damaged, so paying back is an operator decision). It also
+   closes the refund half ADR 0022 left open: the amount is recorded on the
+   order, so a refunded B2B order now returns the employee's budget.
+
+   **Claims settle with money** as of the same day, and a claim to be settled
+   with a REPLACEMENT is refused rather than stamped — shipping goods against
+   an existing order is a capability the framework does not have.
+
+   **A customer can open a return request** as of the same day
+   (`POST /store/v1/orders/{id}/returns`), under the same trust boundary its
+   sibling read declares: verifying the order belongs to the requester is the
+   embedding application's job (ADR 0008). The cost is bounded — a request moves
+   nothing until an operator receives it — and the customer names LINES, never
+   an amount.
+
+   What is left on this axis is a DECISION rather than an oversight: exchange
+   completion is not built, because it needs goods shipped out AND a positive
+   difference collected against an existing order, and the one-to-one
+   `order_payment` cardinality forbids the second today. A cancellation request
+   is likewise absent: cancelling reaches money and stock, and a paid order
+   cannot be canceled at all.
 
    The original finding: Zero `UPDATE` statements
    across `order_returns.sql`, `order_exchanges.sql` and `order_claims.sql` —

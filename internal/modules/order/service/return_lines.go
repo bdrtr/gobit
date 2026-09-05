@@ -119,6 +119,39 @@ type returnLineJSON struct {
 	Quantity        int64  `json:"quantity"`
 }
 
+// ClaimDetailJSON returns what a flow needs to settle a claim.
+//
+// A claim is settled either with money (`refund`) or with new goods
+// (`replace`), and which one it is decides who has to act. The type is
+// therefore part of the answer rather than something the caller infers.
+func (s *Service) ClaimDetailJSON(ctx context.Context, claimID string) (json.RawMessage, error) {
+	if err := requireID("claim_id", claimID); err != nil {
+		return nil, err
+	}
+
+	claim, err := s.store.GetClaim(ctx, claimID)
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(claimDetailJSON{
+		ClaimID:      claim.ID,
+		OrderID:      claim.OrderID,
+		Status:       claim.Status.String(),
+		ClaimType:    string(claim.Type),
+		RefundAmount: claim.RefundAmount,
+	})
+}
+
+// claimDetailJSON is the wire form of a claim.
+type claimDetailJSON struct {
+	ClaimID      string `json:"claim_id"`
+	OrderID      string `json:"order_id"`
+	Status       string `json:"status"`
+	ClaimType    string `json:"claim_type"`
+	RefundAmount int64  `json:"refund_amount"`
+}
+
 // ReturnStatusOf reports a return's current status.
 //
 // It exists next to [Service.ReturnDetailJSON] because a caller that only has

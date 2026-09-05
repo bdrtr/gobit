@@ -91,6 +91,8 @@ type fakeStore struct {
 	lockedOrders []string
 	// lockedReturns records the return rows that were locked, in order.
 	lockedReturns []string
+	// lockedClaims records the claim rows that were locked, in order.
+	lockedClaims []string
 
 	// spendingLocks records the customers whose spending lock was taken IN
 	// ORDER.
@@ -667,6 +669,65 @@ func (f *fakeStore) ReturnedQuantities(
 	}
 
 	return out, nil
+}
+
+// LockClaim locks the claim row and returns its current form.
+func (f *fakeStore) LockClaim(ctx context.Context, id string) (models.Claim, error) {
+	if err := requireTx(ctx, "LockClaim"); err != nil {
+		return models.Claim{}, err
+	}
+
+	f.mu.Lock()
+	f.lockedClaims = append(f.lockedClaims, id)
+	claim, ok := f.claims[id]
+	f.mu.Unlock()
+
+	if !ok {
+		return models.Claim{}, errors.NotFound("order_claim_not_found",
+			"the claim record was not found: %s", id)
+	}
+
+	return claim, nil
+}
+
+// CompleteClaim records that the claim was settled.
+func (f *fakeStore) CompleteClaim(ctx context.Context, id string) (models.Claim, error) {
+	return f.stampClaim(ctx, id, models.ClaimCompleted)
+}
+
+// CancelClaim withdraws the claim.
+func (f *fakeStore) CancelClaim(ctx context.Context, id string) (models.Claim, error) {
+	return f.stampClaim(ctx, id, models.ClaimCanceled)
+}
+
+// stampClaim writes the new status and the matching timestamp.
+func (f *fakeStore) stampClaim(
+	ctx context.Context, id string, status models.ClaimStatus,
+) (models.Claim, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	claim, ok := f.claims[id]
+	if !ok {
+		return models.Claim{}, errors.NotFound("order_claim_not_found",
+			"the claim record was not found: %s", id)
+	}
+
+	stamp := f.nextStamp()
+	claim.Status = status
+	claim.UpdatedAt = stamp
+	switch status {
+	case models.ClaimCompleted:
+		claim.CompletedAt = &stamp
+	case models.ClaimCanceled:
+		claim.CanceledAt = &stamp
+	case models.ClaimRequested:
+	}
+
+	f.recordUndo(ctx, undoEntry(f.claims, id))
+	f.claims[id] = claim
+
+	return claim, nil
 }
 
 // GetReturn returns the return record.

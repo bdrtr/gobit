@@ -853,6 +853,42 @@ type fakeReceiving struct {
 	gotReturnID   string
 	gotLocationID string
 	calls         int
+
+	refunded       int64
+	recorded       bool
+	refundWarnings []string
+	refundErr      error
+	refundCalls    int
+	gotAmount      int64
+	gotReason      string
+	settleCalls    int
+	gotClaimID     string
+}
+
+// SettleClaim records the call and returns the scripted outcome.
+func (f *fakeReceiving) SettleClaim(
+	_ context.Context, claimID string, amount int64, reason string,
+) (refunded int64, summaryRecorded bool, warnings []string, err error) {
+	f.settleCalls++
+	f.gotClaimID, f.gotAmount, f.gotReason = claimID, amount, reason
+	if f.refundErr != nil {
+		return 0, false, nil, f.refundErr
+	}
+
+	return f.refunded, f.recorded, f.refundWarnings, nil
+}
+
+// RefundReturn records the call and returns the scripted outcome.
+func (f *fakeReceiving) RefundReturn(
+	_ context.Context, returnID string, amount int64, reason string,
+) (refunded int64, summaryRecorded bool, warnings []string, err error) {
+	f.refundCalls++
+	f.gotReturnID, f.gotAmount, f.gotReason = returnID, amount, reason
+	if f.refundErr != nil {
+		return 0, false, nil, f.refundErr
+	}
+
+	return f.refunded, f.recorded, f.refundWarnings, nil
 }
 
 // ReceiveReturn records the call and returns the scripted outcome.
@@ -933,4 +969,108 @@ func TestAReturnIsNotReceivedWithoutTheFlow(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	assert.Empty(t, svc.calls, "nothing may be written when the stock cannot follow")
+}
+
+// TestRefundingAReturnGoesTHROUGHTheFlow keeps the money on the same path as
+// the stock.
+//
+// The refund reaches the payment module and the recording reaches this one; an
+// endpoint bound to either alone would do half of it.
+func TestRefundingAReturnGoesTHROUGHTheFlow(t *testing.T) {
+	flow := &fakeReceiving{refunded: 1200, recorded: true}
+	r := newRouterWithFlow(&fakeOrders{}, flow)
+
+	rec := doRequest(t, r, http.MethodPost,
+		"/admin/v1/orders/order_1/returns/ret_1/refund", `{"amount":1200,"reason":"damaged"}`)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, 1, flow.refundCalls)
+	assert.Equal(t, "ret_1", flow.gotReturnID)
+	assert.Equal(t, int64(1200), flow.gotAmount)
+	assert.Equal(t, "damaged", flow.gotReason)
+
+	payload := decodeResponse(t, rec)
+	data, ok := payload["data"].(map[string]any)
+	require.True(t, ok, rec.Body.String())
+	assert.InDelta(t, 1200, data["refunded_amount"], 0.0)
+	assert.Equal(t, true, data["summary_recorded"])
+}
+
+// TestMoneyThatLeftWithoutBeingRecordedReachesTheOperator keeps the risk the
+// ordering accepts from being invisible.
+//
+// summary_recorded false does not mean the money stayed — it means the ORDER
+// does not say it left, and an operator has to see that in the response rather
+// than only in a log.
+func TestMoneyThatLeftWithoutBeingRecordedReachesTheOperator(t *testing.T) {
+	flow := &fakeReceiving{
+		refunded:       1200,
+		recorded:       false,
+		refundWarnings: []string{"the order was not told about the refund"},
+	}
+	r := newRouterWithFlow(&fakeOrders{}, flow)
+
+	rec := doRequest(t, r, http.MethodPost,
+		"/admin/v1/orders/order_1/returns/ret_1/refund", `{"amount":1200}`)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	payload := decodeResponse(t, rec)
+	data, ok := payload["data"].(map[string]any)
+	require.True(t, ok, rec.Body.String())
+	assert.Equal(t, false, data["summary_recorded"])
+	assert.InDelta(t, 1200, data["refunded_amount"], 0.0)
+	assert.NotEmpty(t, data["warnings"])
+}
+
+// TestACustomerCanAskForAReturn is the surface the storefront did not have.
+//
+// The record could only be opened from the admin side, so a shop had no way to
+// let a customer start one at all.
+func TestACustomerCanAskForAReturn(t *testing.T) {
+	svc := &fakeOrders{ret: models.Return{ID: "ret_1", OrderID: "order_1"}}
+	r := newRouter(svc)
+
+	rec := doRequestAs(t, r, http.MethodPost, "/store/v1/orders/order_1/returns",
+		`{"lines":[{"order_line_item_id":"oli_1","quantity":2}],"reason":"too small"}`,
+		corehttp.Principal{})
+
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	require.Len(t, svc.returnInput.Lines, 1)
+	assert.Equal(t, "oli_1", svc.returnInput.Lines[0].OrderLineItemID)
+	assert.Equal(t, int64(2), svc.returnInput.Lines[0].Quantity)
+	assert.Equal(t, "too small", svc.returnInput.Reason)
+}
+
+// TestACustomerCannotNameTheirOwnRefund is the shipping-price defect in another
+// place, refused before it exists.
+//
+// What a return is worth is the shop's to decide after seeing what comes back.
+// A body that could carry an amount would let a customer decide their own
+// refund; the field is not in the request at all, and this API rejects fields
+// it does not recognize.
+func TestACustomerCannotNameTheirOwnRefund(t *testing.T) {
+	svc := &fakeOrders{}
+	r := newRouter(svc)
+
+	rec := doRequestAs(t, r, http.MethodPost, "/store/v1/orders/order_1/returns",
+		`{"lines":[{"order_line_item_id":"oli_1","quantity":1}],"refund_amount":9999}`,
+		corehttp.Principal{})
+
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Zero(t, svc.returnInput.RefundAmount)
+}
+
+// TestAReturnRequestWithNoLinesIsRefused keeps an empty record out.
+//
+// A return that names nothing cannot be restocked and cannot be judged; it
+// would sit in the operator's list saying only that somebody clicked.
+func TestAReturnRequestWithNoLinesIsRefused(t *testing.T) {
+	svc := &fakeOrders{}
+	r := newRouter(svc)
+
+	rec := doRequestAs(t, r, http.MethodPost, "/store/v1/orders/order_1/returns",
+		`{"lines":[]}`, corehttp.Principal{})
+
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Empty(t, svc.calls)
 }

@@ -9,6 +9,64 @@ import (
 	"context"
 )
 
+const cancelOrderClaim = `-- name: CancelOrderClaim :one
+UPDATE order_claims
+SET status = 'canceled', canceled_at = now(), updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at, deleted_at
+`
+
+// CancelOrderClaim withdraws the claim.
+func (q *Queries) CancelOrderClaim(ctx context.Context, id string) (OrderClaim, error) {
+	row := q.db.QueryRow(ctx, cancelOrderClaim, id)
+	var i OrderClaim
+	err := row.Scan(
+		&i.ID,
+		&i.OrderID,
+		&i.ClaimType,
+		&i.Status,
+		&i.RefundAmount,
+		&i.Reason,
+		&i.Note,
+		&i.Metadata,
+		&i.CompletedAt,
+		&i.CanceledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const completeOrderClaim = `-- name: CompleteOrderClaim :one
+UPDATE order_claims
+SET status = 'completed', completed_at = now(), updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at, deleted_at
+`
+
+// CompleteOrderClaim records that the claim was settled.
+func (q *Queries) CompleteOrderClaim(ctx context.Context, id string) (OrderClaim, error) {
+	row := q.db.QueryRow(ctx, completeOrderClaim, id)
+	var i OrderClaim
+	err := row.Scan(
+		&i.ID,
+		&i.OrderID,
+		&i.ClaimType,
+		&i.Status,
+		&i.RefundAmount,
+		&i.Reason,
+		&i.Note,
+		&i.Metadata,
+		&i.CompletedAt,
+		&i.CanceledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const countOrderClaims = `-- name: CountOrderClaims :one
 SELECT COUNT(*) FROM order_claims
 WHERE order_id = $1 AND deleted_at IS NULL
@@ -141,4 +199,32 @@ func (q *Queries) ListOrderClaims(ctx context.Context, arg ListOrderClaimsParams
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockOrderClaim = `-- name: LockOrderClaim :one
+SELECT id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at, deleted_at FROM order_claims
+WHERE id = $1 AND deleted_at IS NULL
+FOR UPDATE
+`
+
+// LockOrderClaim locks the claim row until the end of the transaction.
+func (q *Queries) LockOrderClaim(ctx context.Context, id string) (OrderClaim, error) {
+	row := q.db.QueryRow(ctx, lockOrderClaim, id)
+	var i OrderClaim
+	err := row.Scan(
+		&i.ID,
+		&i.OrderID,
+		&i.ClaimType,
+		&i.Status,
+		&i.RefundAmount,
+		&i.Reason,
+		&i.Note,
+		&i.Metadata,
+		&i.CompletedAt,
+		&i.CanceledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
 }

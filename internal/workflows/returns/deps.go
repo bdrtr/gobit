@@ -39,9 +39,17 @@ const (
 	ServiceOrder = "order.interop"
 	// ServiceInventory is the inventory module's cross-module surface.
 	ServiceInventory = "inventory.interop"
+	// ServicePayment is the payment module's cross-module surface.
+	ServicePayment = "payment.interop"
 	// ServiceLink is the core's Module Links service.
 	ServiceLink = "core.link"
 )
+
+// LinkOrderPayment binds an order to the payment collection opened for it.
+//
+// The payment module declares it and the value is REPEATED here for the reason
+// [LinkVariantInventory] gives.
+const LinkOrderPayment = "order_payment"
 
 // LinkVariantInventory binds a product variant to its inventory item.
 //
@@ -63,6 +71,10 @@ const (
 	CodeNoInventoryItem = "returns_workflow_no_inventory_item"
 	// CodeRestockFailed reports that the stock could not be put back.
 	CodeRestockFailed = "returns_workflow_restock_failed"
+	// CodeNoPayment reports that the order has no payment collection bound.
+	CodeNoPayment = "returns_workflow_no_payment"
+	// CodeRefundFailed reports that the money could not be sent back.
+	CodeRefundFailed = "returns_workflow_refund_failed"
 )
 
 // Orders is the surface of the order module used by this flow.
@@ -71,6 +83,27 @@ type Orders interface {
 	ReturnDetailJSON(ctx context.Context, returnID string) (json.RawMessage, error)
 	// ReceiveReturn stamps the return as received at the given location.
 	ReceiveReturn(ctx context.Context, returnID, locationID string) error
+	// SetOrderSummaryTotals records on the order how much was collected and how
+	// much was refunded; the write is a MERGE and cannot shrink a total.
+	SetOrderSummaryTotals(ctx context.Context, orderID string, paidTotal, refundedTotal int64) error
+
+	// ClaimDetailJSON returns what a flow needs to settle a claim.
+	ClaimDetailJSON(ctx context.Context, claimID string) (json.RawMessage, error)
+	// CompleteClaim records that the claim was settled.
+	CompleteClaim(ctx context.Context, claimID string) error
+}
+
+// Payments is the surface of the payment module used by this flow.
+type Payments interface {
+	// RefundCollection refunds an amount against a collection and returns what
+	// actually went back. A zero amount refunds everything left.
+	RefundCollection(ctx context.Context, collectionID string, amount int64, reason string) (int64, error)
+	// Collection returns the collection's status and amounts.
+	Collection(ctx context.Context, collectionID string) (
+		status string,
+		amount, authorized, captured, refunded int64,
+		err error,
+	)
 }
 
 // Inventory is the surface of the inventory module used by this flow.
@@ -99,6 +132,12 @@ type Deps struct {
 	// real number; a missing inventory surface has none — receiving goods
 	// without putting their stock back is the defect this flow exists to close.
 	Inventory Inventory
+	// Payments is the payment surface; it is mandatory.
+	//
+	// Like [Deps.Inventory] it has no correct fallback: refunding without it
+	// would mean telling a customer their money is on the way while nothing
+	// asked a provider to send it.
+	Payments Payments
 	// Links is the Module Links surface; it is mandatory.
 	Links Links
 	// Logger discards the logs when nil.
@@ -109,6 +148,7 @@ type Deps struct {
 type Workflows struct {
 	orders    Orders
 	inventory Inventory
+	payments  Payments
 	links     Links
 	log       *slog.Logger
 }
@@ -121,6 +161,7 @@ func New(deps Deps) (*Workflows, error) {
 	}{
 		{ServiceOrder, deps.Orders == nil},
 		{ServiceInventory, deps.Inventory == nil},
+		{ServicePayment, deps.Payments == nil},
 		{ServiceLink, deps.Links == nil},
 	}
 	for _, dep := range missing {
@@ -138,6 +179,7 @@ func New(deps Deps) (*Workflows, error) {
 	return &Workflows{
 		orders:    deps.Orders,
 		inventory: deps.Inventory,
+		payments:  deps.Payments,
 		links:     deps.Links,
 		log:       log,
 	}, nil
@@ -161,12 +203,21 @@ func FromContainer(c *container.Container) (*Workflows, error) {
 	if err != nil {
 		return nil, err
 	}
+	payments, err := resolve[Payments](c, ServicePayment)
+	if err != nil {
+		return nil, err
+	}
 	links, err := resolve[Links](c, ServiceLink)
 	if err != nil {
 		return nil, err
 	}
 
-	return New(Deps{Orders: orders, Inventory: inventory, Links: links})
+	return New(Deps{
+		Orders:    orders,
+		Inventory: inventory,
+		Payments:  payments,
+		Links:     links,
+	})
 }
 
 // resolve reads one surface from the container and wraps the failure with its

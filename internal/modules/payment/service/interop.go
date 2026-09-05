@@ -175,6 +175,36 @@ func (i *Interop) Refund(ctx context.Context, paymentID string, amount int64, re
 	return refund.ID, nil
 }
 
+// RefundCollection refunds an amount against a collection and returns the total
+// that actually went back.
+//
+// The caller names a COLLECTION rather than a capture because how a collected
+// amount is split across captures is this module's bookkeeping; the rationale
+// is on [Service.RefundCollection]. A zero amount refunds everything left.
+//
+// The returned total is what the caller has to record on its own side — the
+// order module writes it into the order's summary — and it is returned rather
+// than assumed, because a refund can legitimately be capped by what the
+// collection still holds.
+func (i *Interop) RefundCollection(
+	ctx context.Context, collectionID string, amount int64, reason string,
+) (int64, error) {
+	refunds, err := i.svc.RefundCollection(ctx, collectionID, amount, reason)
+
+	var total int64
+	for idx := range refunds {
+		total += refunds[idx].Amount
+	}
+	if err != nil {
+		// The total is returned ALONGSIDE the error: a partly made refund moved
+		// real money, and a caller told only "it failed" would record nothing
+		// and retry the whole amount.
+		return total, err
+	}
+
+	return total, nil
+}
+
 // Collection returns the collection's current status and its AMOUNTS.
 //
 // The saga is obliged to verify for itself that the payment is COMPLETE and

@@ -108,6 +108,71 @@ func (s *Service) transitionReturn(
 	return out, nil
 }
 
+// CompleteClaim settles the claim.
+//
+// It records that the claim WAS settled; what settling meant — money sent back,
+// or a replacement shipped — happened outside this module and is the caller's
+// to have done. The module cannot check it: both reach modules this one does
+// not know.
+func (s *Service) CompleteClaim(ctx context.Context, claimID string) (models.Claim, error) {
+	return s.transitionClaim(ctx, claimID, "completing",
+		models.ClaimStatus.CompleteAction, s.store.CompleteClaim)
+}
+
+// CancelClaim withdraws the claim.
+func (s *Service) CancelClaim(ctx context.Context, claimID string) (models.Claim, error) {
+	return s.transitionClaim(ctx, claimID, "canceling",
+		models.ClaimStatus.CancelAction, s.store.CancelClaim)
+}
+
+// transitionClaim applies one claim transition under the record's lock.
+//
+// It is [Service.transitionReturn] for the other record type; the two are
+// separate because the statuses are different types, and a shared generic
+// would trade a readable table for a type parameter.
+func (s *Service) transitionClaim(
+	ctx context.Context,
+	claimID, what string,
+	action func(models.ClaimStatus) models.AfterSalesAction,
+	write func(context.Context, string) (models.Claim, error),
+) (models.Claim, error) {
+	if err := requireID("claim_id", claimID); err != nil {
+		return models.Claim{}, err
+	}
+
+	var out models.Claim
+	err := s.store.WithTx(ctx, func(ctx context.Context) error {
+		current, err := s.store.LockClaim(ctx, claimID)
+		if err != nil {
+			return err
+		}
+
+		switch action(current.Status) {
+		case models.AfterSalesNoop:
+			s.log.DebugContext(ctx, "the claim is already in the target state, nothing was done",
+				"claim_id", claimID, "status", current.Status.String(), "action", what)
+			out = current
+
+			return nil
+		case models.AfterSalesConflict:
+			return errors.Conflict(CodeAfterSalesTransition,
+				"%s is not possible on a claim in status %q (%s)",
+				what, current.Status.String(), claimID)
+		case models.AfterSalesProceed:
+			// Handled below.
+		}
+
+		out, err = write(ctx, claimID)
+
+		return err
+	})
+	if err != nil {
+		return models.Claim{}, err
+	}
+
+	return out, nil
+}
+
 // checkReturnQuantities verifies that the requested lines belong to the order
 // and that no line is asked back more times than it was bought.
 //

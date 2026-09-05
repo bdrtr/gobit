@@ -12,6 +12,94 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Para iadesi geldi ve ADR 0022'nin açık bıraktığı yarıyı kapattı** — B2B
+  bütçe hatası dahil.
+
+  İadeler ödeme modülünün kendi yönetim API'sinden yapılıyordu ve sipariş
+  tarafında çağıranı yoktu, dolayısıyla SONRADAN yapılan bir iade siparişin
+  özetine hiç ulaşmıyordu. Adı konmuş kurbanı vardı: B2B harcama penceresi
+  `order_summaries.refunded_total`'ı düşüyor, yani iade edilmiş bir B2B siparişi
+  çalışanın bütçesini geri vermiyordu. Artık veriyor.
+
+  **Çağıran bir TAHSİLAT adlandırmak zorunda değil.** `RefundPayment` bir ödeme
+  kimliği istiyor ve modül dışındaki bir çağıranın onu elde etme yolu yok —
+  üstelik olmamalı da: tahsil edilmiş tutarın tahsilatlara nasıl bölündüğü bu
+  modülün defter tutması. Yeni `RefundCollection` "şu siparişe şu kadarını geri
+  ver" cümlesini karşılıyor; tutarı tahsilatlara en eskisinden başlayarak
+  yayıyor, ki iade edilebilir bakiye en yeni tahsilatlarda toplansın — sonraki
+  kısmi bir iadenin muhtemelen onlarla ilgili olacağı için.
+
+  Plan para HAREKET ETMEDEN kuruluyor: koleksiyonun verebileceğinden fazlası
+  reddediliyor. Tersi, elinden geleni iade edip sonra hata dönmek olurdu ve
+  çağıranı istemediği kısmi bir iadeyle bırakırdı.
+
+  **Mal önce gelmeli.** Teslim alınmamış iade için para gönderilmiyor: kimsenin
+  görmediği mal için para iadesi, çerçevenin dükkân adına seçemeyeceği bir
+  politika. Muayeneden önce ödemek isteyen dükkân önce teslim alıp hemen iade
+  eder — aynı iki olgu, aynı sırayla, ama açıkça.
+
+  **Sipariş EN SON haberdar ediliyor** ve oradaki hata parayı geri getirmiyor.
+  İade bir sağlayıcıya ulaşıyor, özet yazımı yerel; yereli önce yapmak,
+  sağlayıcının göndermeyi reddettiği bir parayı kaydetmek olurdu. Ters risk —
+  para gitti, kayıt yok — RAPOR ediliyor: sonuçta `summary_recorded` false,
+  logda ERROR, ve siparişin koleksiyonuyla karşılaştırılması farkı görünür
+  kılıyor (ADR 0020'nin argümanı bir kat yukarıda).
+
+  Siparişe yazılan rakam BU ÇAĞRININ tutarı değil, koleksiyonun YAŞAM BOYU
+  toplamı: özet kümülatif, ve delta yazmak ikinci iade var olduğu anda yanlış
+  olurdu. Toplam yazmak aynı zamanda tekrarı güvenli kılıyor, çünkü sipariş
+  tarafındaki birleştirme büyük olanı tutuyor.
+
+  Kısmen giden para "hiç gitmedi" diye raporlanmıyor: yalnızca hata dönmek
+  çağıranı hiçbir şey kaydetmemeye ve tüm tutarı yeniden denemeye — yani
+  parçayı ikinci kez göndermeye — iterdi.
+
+  Dört mutasyonun dördü de yakalandı.
+
+- **Talepler (claim) artık çözülüyor — ama yalnızca parayla, ve ötekini
+  REDDEDEREK.**
+
+  Talep ya parayla ya da yeni malla çözülüyor. Bu akış birincisini yapıyor.
+  İkincisi, var olan bir siparişe karşı mal SEVK ETMEK demek ve çerçevede böyle
+  bir yetenek hiçbir yerde yok — o yüzden `replace` türündeki talep sessizce
+  "tamamlandı" damgalanmıyor, gerekçesini söyleyen bir çakışmayla REDDEDİLİYOR.
+  Damgalamak, müşteriye bir şey gönderilmiş gibi kaydetmek olurdu.
+
+  Sıfır tutar burada iadedekinden BAŞKA bir şey demek: talebin kendi rakamı.
+  İadede sıfır "koleksiyonun tamamı" demekti çünkü müşteri siparişini geri
+  veriyor; talep ise mutabık kalınan tutarı taşıyor ve koleksiyonun tamamına
+  düşmek "şu talebi çöz"ü "siparişi iade et"e çevirirdi.
+
+  Talep EN SON damgalanıyor. Para her hâlükârda gitti; yazılamayan bir damga
+  operatörün yeniden çözebileceği bir talep bırakıyor — ki bu görünür — oysa
+  önce damgalamak, hiçbir şey gönderilmemişken çözülmüş görünen bir talep
+  bırakırdı.
+
+- **Müşteri artık iade talebi açabiliyor** (`POST /store/v1/orders/{id}/returns`).
+
+  Kayıt yalnızca yönetim tarafından açılabiliyordu, yani bir dükkânın müşteriye
+  iade başlatma imkânı hiç yoktu.
+
+  Yetkilendirme sınırı kardeş ucuyla aynı ve aynı gerekçeyle: siparişin talep
+  eden müşteriye ait olduğunu doğrulamak GÖMEN UYGULAMANIN işi (ADR 0008).
+  Buradaki bedeli sınırlı ve söylenmeye değer: talep TALEPTİR — ne stok ne para
+  kımıldıyor, bir operatör teslim almadan hiçbir şey olmuyor, ve adet kuralı
+  zaten alınandan fazlasını reddediyor. EYLEYEN uçlar admin ve kapsamlı.
+
+  **Müşteri satır adlandırıyor, tutar değil.** İade tutarı sıfır bırakılıp
+  dükkâna bırakılıyor: gövdenin "bu iade ne eder" diyebilmesi, müşterinin kendi
+  iadesine karar vermesi olurdu — kargo fiyatı deliğinin başka bir yerdeki
+  hâli. Alan gövdede hiç yok ve API tanımadığı alanı reddediyor.
+
+  İptal TALEBİ bilerek hâlâ yok: iptal paraya ve stoğa uzanıyor, üstelik parası
+  alınmış sipariş zaten iptal edilemiyor — geri dönüş yolu iade.
+
+  Üç mutasyonun üçü de yakalandı. Değişim (exchange) tamamlama ve `replace`
+  talebi BİLEREK yapılmadı: ikisi de var olmayan yetenekler istiyor (mevcut
+  siparişe karşı mal sevki, ve pozitif farkın tahsili — ki `order_payment`
+  bire-bir kardinalitesi bugün onu zaten engelliyor). Tüketicisi olmayan
+  yetenek inşa etmek ADR 0009'un adını koyduğu hata.
+
 - **İade artık EYLİYOR: teslim alınan malın stoğu geri konuyor**
   (`internal/workflows/returns`, satış sonrası 2/3).
 

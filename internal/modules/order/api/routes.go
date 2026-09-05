@@ -71,6 +71,7 @@ func (h *Handler) Routes(r chi.Router) {
 	// that the order BELONGS TO THE CUSTOMER is separate work and is still not
 	// done; this is a deliberate gap, not a hidden assumption.
 	r.Get("/store/v1/orders/{id}", h.storeGetOrder)
+	r.Post("/store/v1/orders/{id}/returns", h.storeRequestReturn)
 
 	// --- Admin API (administration) ---
 	read.Get("/admin/v1/orders", h.adminListOrders)
@@ -91,10 +92,12 @@ func (h *Handler) Routes(r chi.Router) {
 	write.Post("/admin/v1/orders/{id}/returns", h.adminCreateReturn)
 	read.Get("/admin/v1/orders/{id}/returns/{returnId}", h.adminGetReturn)
 	write.Post("/admin/v1/orders/{id}/returns/{returnId}/receive", h.adminReceiveReturn)
+	write.Post("/admin/v1/orders/{id}/returns/{returnId}/refund", h.adminRefundReturn)
 	read.Get("/admin/v1/orders/{id}/exchanges", h.adminListExchanges)
 	write.Post("/admin/v1/orders/{id}/exchanges", h.adminCreateExchange)
 	read.Get("/admin/v1/orders/{id}/exchanges/{exchangeId}", h.adminGetExchange)
 	read.Get("/admin/v1/orders/{id}/claims", h.adminListClaims)
 	write.Post("/admin/v1/orders/{id}/claims", h.adminCreateClaim)
 	read.Get("/admin/v1/orders/{id}/claims/{claimId}", h.adminGetClaim)
+	write.Post("/admin/v1/orders/{id}/claims/{claimId}/settle", h.adminSettleClaim)
 }

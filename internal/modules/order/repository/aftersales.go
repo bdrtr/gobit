@@ -128,3 +128,38 @@ func toReturnItem(row orderdb.OrderReturnItem) models.ReturnItem {
 		UpdatedAt:       toTime(row.UpdatedAt),
 	}
 }
+
+// LockClaim locks the claim row until the end of the transaction.
+func (r *Repository) LockClaim(ctx context.Context, id string) (models.Claim, error) {
+	row, err := r.queries(ctx).LockOrderClaim(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.Claim{}, coreerrors.NotFound(codeClaimNotFound,
+				"claim record not found: %s", id)
+		}
+
+		return models.Claim{}, classify(err, codeQueryFailed, "could not lock the claim record")
+	}
+
+	return toClaim(row)
+}
+
+// CompleteClaim records that the claim was settled.
+func (r *Repository) CompleteClaim(ctx context.Context, id string) (models.Claim, error) {
+	row, err := r.queries(ctx).CompleteOrderClaim(ctx, id)
+	if err != nil {
+		return models.Claim{}, classify(err, codeQueryFailed, "could not complete the claim record")
+	}
+
+	return toClaim(row)
+}
+
+// CancelClaim withdraws the claim.
+func (r *Repository) CancelClaim(ctx context.Context, id string) (models.Claim, error) {
+	row, err := r.queries(ctx).CancelOrderClaim(ctx, id)
+	if err != nil {
+		return models.Claim{}, classify(err, codeQueryFailed, "could not cancel the claim record")
+	}
+
+	return toClaim(row)
+}

@@ -32,6 +32,16 @@ type stubOrders struct {
 	receivedReturn   string
 	receivedLocation string
 	receiveCalls     int
+
+	claim           claimDetail
+	claimErr        error
+	completeErr     error
+	completeCalls   int
+	summaryErr      error
+	summaryCalls    int
+	summaryOrder    string
+	summaryPaid     int64
+	summaryRefunded int64
 }
 
 // ReturnDetailJSON returns the scripted detail.
@@ -41,6 +51,32 @@ func (s *stubOrders) ReturnDetailJSON(_ context.Context, _ string) (json.RawMess
 	}
 
 	return json.Marshal(s.detail)
+}
+
+// SetOrderSummaryTotals records what the order was told.
+func (s *stubOrders) SetOrderSummaryTotals(
+	_ context.Context, orderID string, paidTotal, refundedTotal int64,
+) error {
+	s.summaryCalls++
+	s.summaryOrder, s.summaryPaid, s.summaryRefunded = orderID, paidTotal, refundedTotal
+
+	return s.summaryErr
+}
+
+// ClaimDetailJSON returns the scripted claim.
+func (s *stubOrders) ClaimDetailJSON(_ context.Context, _ string) (json.RawMessage, error) {
+	if s.claimErr != nil {
+		return nil, s.claimErr
+	}
+
+	return json.Marshal(s.claim)
+}
+
+// CompleteClaim records the stamp and applies the scripted behavior.
+func (s *stubOrders) CompleteClaim(_ context.Context, _ string) error {
+	s.completeCalls++
+
+	return s.completeErr
 }
 
 // ReceiveReturn records the stamp and applies the scripted behavior.
@@ -100,10 +136,54 @@ func (s *stubLinks) ListMany(
 	return out, nil
 }
 
+// refundCall is one RefundCollection call.
+type refundCall struct {
+	collectionID string
+	amount       int64
+	reason       string
+}
+
+// stubPayments is the scriptable payment surface.
+type stubPayments struct {
+	refunded    int64
+	refundErr   error
+	captured    int64
+	totalRefund int64
+	readErr     error
+
+	refundCalls []refundCall
+}
+
+// RefundCollection records the call and returns the scripted outcome.
+func (s *stubPayments) RefundCollection(
+	_ context.Context, collectionID string, amount int64, reason string,
+) (int64, error) {
+	s.refundCalls = append(s.refundCalls,
+		refundCall{collectionID: collectionID, amount: amount, reason: reason})
+
+	return s.refunded, s.refundErr
+}
+
+// Collection returns the scripted amounts.
+//
+// The six results mirror the payment module's own surface, whose signature is
+// long for ADR 0006's reason: a consumer that cannot import that package cannot
+// name a shared struct, so the amounts cross as separate primitives.
+//
+//nolint:gocritic // The shape is the cross-module contract's, not a choice made here.
+func (s *stubPayments) Collection(_ context.Context, _ string) (string, int64, int64, int64, int64, error) {
+	if s.readErr != nil {
+		return "", 0, 0, 0, 0, s.readErr
+	}
+
+	return "captured", s.captured, 0, s.captured, s.totalRefund, nil
+}
+
 // harness wires the flow over scriptable surfaces.
 type harness struct {
 	orders    *stubOrders
 	inventory *stubInventory
+	payments  *stubPayments
 	links     *stubLinks
 	wf        *Workflows
 }
@@ -123,13 +203,19 @@ func newHarness(t *testing.T) *harness {
 			},
 		}},
 		inventory: &stubInventory{},
+		payments:  &stubPayments{},
 		links: &stubLinks{links: map[string][]string{
 			testVariantA: {testItemA},
 			testVariantB: {testItemB},
 		}},
 	}
 
-	wf, err := New(Deps{Orders: h.orders, Inventory: h.inventory, Links: h.links})
+	wf, err := New(Deps{
+		Orders:    h.orders,
+		Inventory: h.inventory,
+		Payments:  h.payments,
+		Links:     h.links,
+	})
 	require.NoError(t, err)
 	h.wf = wf
 
@@ -288,7 +374,11 @@ func TestALocationIsRequired(t *testing.T) {
 // TestAMissingSurfaceIsRefusedAtWiring keeps a half-built flow from being
 // discovered on the first return.
 func TestAMissingSurfaceIsRefusedAtWiring(t *testing.T) {
-	_, err := New(Deps{Inventory: &stubInventory{}, Links: &stubLinks{}})
+	_, err := New(Deps{
+		Inventory: &stubInventory{},
+		Payments:  &stubPayments{},
+		Links:     &stubLinks{},
+	})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), ServiceOrder)

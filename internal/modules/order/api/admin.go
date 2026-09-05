@@ -189,6 +189,99 @@ func (h *Handler) adminReceiveReturn(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
+// refundReturnRequest is the body of the return refund.
+type refundReturnRequest struct {
+	// Amount is how much to send back (minor unit). ZERO means everything the
+	// collection has left, which is what "give the customer their money back"
+	// means when nobody named a figure.
+	Amount int64 `json:"amount"`
+	// Reason is free text kept on the refund record; it is optional.
+	Reason string `json:"reason"`
+}
+
+// refundReturnResponse reports what the refund did.
+type refundReturnResponse struct {
+	RefundedAmount  int64    `json:"refunded_amount"`
+	SummaryRecorded bool     `json:"summary_recorded"`
+	Warnings        []string `json:"warnings,omitempty"`
+}
+
+// adminRefundReturn sends money back for a received return.
+//
+// It is a SEPARATE endpoint from receiving on purpose. Receiving is a physical
+// fact — the goods are in the building — while refunding is a decision the shop
+// makes after looking at what arrived, and a single endpoint doing both would
+// take that decision away.
+func (h *Handler) adminRefundReturn(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	flow, err := h.returnReceiving()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	var body refundReturnRequest
+	if err := decodeBody(w, r, &body); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	refunded, recorded, warnings, err := flow.RefundReturn(
+		ctx, chi.URLParam(r, paramReturnID), body.Amount, body.Reason)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: refundReturnResponse{
+		RefundedAmount:  refunded,
+		SummaryRecorded: recorded,
+		Warnings:        warnings,
+	}})
+}
+
+// adminSettleClaim settles a damage or shortage claim by refunding it.
+//
+// A claim to be settled with a REPLACEMENT comes back as a conflict, and the
+// message says why: shipping goods against an existing order is not something
+// this framework can do. Stamping it complete would record a settlement that
+// never reached the customer.
+func (h *Handler) adminSettleClaim(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	flow, err := h.returnReceiving()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	var body refundReturnRequest
+	if err := decodeBody(w, r, &body); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	refunded, recorded, warnings, err := flow.SettleClaim(
+		ctx, chi.URLParam(r, paramClaimID), body.Amount, body.Reason)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: refundReturnResponse{
+		RefundedAmount:  refunded,
+		SummaryRecorded: recorded,
+		Warnings:        warnings,
+	}})
+}
+
 // cancelOrderRequest is the body of POST /admin/v1/orders/{id}/cancel.
 type cancelOrderRequest struct {
 	// Reason is the cancellation reason; it is optional.

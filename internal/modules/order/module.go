@@ -330,6 +330,30 @@ func (p *returnReceiving) ReceiveReturn(
 	return p.svc.ReceiveReturn(ctx, returnID, locationID)
 }
 
+// RefundReturn sends money back for a received return.
+func (p *returnReceiving) RefundReturn(
+	ctx context.Context, returnID string, amount int64, reason string,
+) (refunded int64, summaryRecorded bool, warnings []string, err error) {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return 0, false, nil, p.err
+	}
+
+	return p.svc.RefundReturn(ctx, returnID, amount, reason)
+}
+
+// SettleClaim settles a claim by refunding it.
+func (p *returnReceiving) SettleClaim(
+	ctx context.Context, claimID string, amount int64, reason string,
+) (refunded int64, summaryRecorded bool, warnings []string, err error) {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return 0, false, nil, p.err
+	}
+
+	return p.svc.SettleClaim(ctx, claimID, amount, reason)
+}
+
 // resolve looks the flow up in the container and remembers the outcome.
 func (p *returnReceiving) resolve(ctx context.Context) {
 	svc, err := container.Resolve[api.ReturnReceiving](p.c, returnFlowName)

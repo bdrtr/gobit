@@ -152,6 +152,24 @@ type ReturnReceiving interface {
 	ReceiveReturn(ctx context.Context, returnID, locationID string) (
 		restockedLines int, restockedUnits int64, warnings []string, err error,
 	)
+
+	// RefundReturn sends money back for a received return and records it on the
+	// order.
+	//
+	// summaryRecorded being false does not mean the money stayed: it means the
+	// ORDER does not say it left, and an operator has to be shown that.
+	RefundReturn(ctx context.Context, returnID string, amount int64, reason string) (
+		refunded int64, summaryRecorded bool, warnings []string, err error,
+	)
+
+	// SettleClaim settles a damage or shortage claim by refunding it.
+	//
+	// A claim settled with a REPLACEMENT is refused: shipping goods against an
+	// existing order is not a capability this framework has, and stamping such
+	// a claim complete would say something was sent when nothing was.
+	SettleClaim(ctx context.Context, claimID string, amount int64, reason string) (
+		refunded int64, summaryRecorded bool, warnings []string, err error,
+	)
 }
 
 // Handler is the HTTP handler set of the order module.
