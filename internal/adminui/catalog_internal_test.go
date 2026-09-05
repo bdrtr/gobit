@@ -636,6 +636,387 @@ func TestTheCategoryNameIsEscaped(t *testing.T) {
 			"data is silently removed")
 }
 
+// TestTheTypedSearchReachesTheProductSpec proves the box's text ends up in the
+// read layer's filter, under the name the provider answers to.
+//
+// The name is the storefront's "q" and not the panel's own "search", and the
+// assertion pins the string itself: the two surfaces of one installation ask
+// one question, and the day they stop spelling it the same way the panel is
+// the side that has to move. The value is a bare STRING, the shape the
+// provider's scalar filters take.
+func TestTheTypedSearchReachesTheProductSpec(t *testing.T) {
+	t.Parallel()
+
+	catalog := categoryCatalog(categoryVocabulary())
+
+	rec := getPage(newCatalogPanel(t, catalog), ProductsPath+"?search=coffee")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	spec, ok := catalog.specFor(EntityProduct)
+	require.True(t, ok, "the product entity must be read")
+	assert.Equal(t, map[string]any{filterSearch: "coffee"}, spec.Filters,
+		"the typed text must reach the read layer under the provider's own filter name")
+	assert.Equal(t, "q", filterSearch,
+		"the panel must spell the search filter the way the storefront does; one "+
+			"vocabulary across the two surfaces is what keeps the two searches comparable")
+}
+
+// TestTheSearchTermIsTrimmedBeforeItIsUsed proves the applied term and the term
+// on screen are the same string.
+//
+// Trimming only the filter would leave the box holding text that no longer
+// describes what was applied; trimming only the box would filter by a term with
+// spaces around it, which the provider matches against titles that have none.
+func TestTheSearchTermIsTrimmedBeforeItIsUsed(t *testing.T) {
+	t.Parallel()
+
+	catalog := categoryCatalog(categoryVocabulary())
+
+	body := getPage(newCatalogPanel(t, catalog), ProductsPath+"?search=%20coffee%20").Body.String()
+
+	spec, ok := catalog.specFor(EntityProduct)
+	require.True(t, ok)
+	assert.Equal(t, map[string]any{filterSearch: "coffee"}, spec.Filters,
+		"the surrounding spaces must not travel into the filter")
+	assert.Contains(t, body, `value="coffee"`,
+		"the box must be refilled with the term that was actually applied")
+}
+
+// TestAnEmptySearchIsNotAFilter proves an absent or blank box leaves the spec
+// unfiltered.
+//
+// It is the sibling of [TestAnEmptyCategoryIsNotAFilter] and the class is the
+// same one the product module named on its own list road
+// (TestEmptyTextArgumentBuildsNoFilter in internal/modules/product/graph), but
+// the failure it prevents is the OPPOSITE shape. An empty category matches
+// nothing; an empty term narrows nothing at all — the provider normalizes a
+// blank one away and the "title ILIKE '%…%'" underneath it matches every title
+// regardless. So the rows would be the whole catalog while the screen said it
+// was searching: every paging link would carry a filter nobody asked for, and
+// an empty page would be blamed on a search that was never typed. It is not a
+// hypothetical shape either — an untouched box submits exactly this on every
+// single use of the form.
+//
+// What is asserted is the SPEC this screen built and the sentence it printed,
+// never the rows that came back. The read layer refusing to act on a blank term
+// is its own rule and a good one, and it is exactly what would hide this bug
+// from the rows: the list would look right while the screen around it claimed a
+// narrowing that never left this package.
+func TestAnEmptySearchIsNotAFilter(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"no parameter at all": ProductsPath,
+		"present and empty":   ProductsPath + "?search=",
+		"only whitespace":     ProductsPath + "?search=%20%20%20",
+		"a tab and a newline": ProductsPath + "?search=%09%0A",
+	}
+
+	for name, path := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			catalog := categoryCatalog(categoryVocabulary())
+			// No products, so the empty-list sentence is on the page and can be
+			// read: the point is that an unsearched empty list must not be
+			// explained by a search nobody made.
+			catalog.byEntity[EntityProduct] = nil
+
+			rec := getPage(newCatalogPanel(t, catalog), path)
+
+			require.Equal(t, http.StatusOK, rec.Code)
+
+			spec, ok := catalog.specFor(EntityProduct)
+			require.True(t, ok)
+			assert.Empty(t, spec.Filters,
+				"a blank box must leave the spec UNFILTERED; passing \"\" through matches "+
+					"every title and narrows nothing while the screen claims it does")
+
+			body := rec.Body.String()
+			assert.Contains(t, body, "No products on this page.",
+				"an unsearched empty page must not blame a search")
+			assert.NotContains(t, body, "clear the search",
+				"there is nothing to clear when no search is applied")
+		})
+	}
+}
+
+// TestASearchInsideACategoryProducesBothFilters is the composition.
+//
+// The two narrowings are one GET form for exactly this: an operator looking for
+// one product inside a category they have already chosen. Two filter keys have
+// to arrive in ONE spec — a search that REPLACED the spec's filters instead of
+// joining them would drop the category and answer with a wider catalog than the
+// address describes, at 200, with the dropdown still showing the category.
+func TestASearchInsideACategoryProducesBothFilters(t *testing.T) {
+	t.Parallel()
+
+	catalog := categoryCatalog(categoryVocabulary())
+
+	rec := getPage(newCatalogPanel(t, catalog), ProductsPath+"?category=pcat_beans&search=coffee")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	spec, ok := catalog.specFor(EntityProduct)
+	require.True(t, ok)
+	assert.Equal(t, map[string]any{filterCategoryID: "pcat_beans", filterSearch: "coffee"},
+		spec.Filters, "both narrowings must reach the read layer in ONE spec")
+
+	body := rec.Body.String()
+	assert.Contains(t, body, `<option value="pcat_beans" selected>Beans</option>`,
+		"the category must still be the selected option while a search is applied")
+	assert.Contains(t, body, `value="coffee"`,
+		"and the box must still hold the term while a category is applied")
+}
+
+// TestProductFiltersLeavesOutWhatIsEmpty is the filter map's state table.
+//
+// The rule is one sentence — an empty value is not a filter — and it has to
+// hold for each key alone and for the two together, which is four states. The
+// nil result is asserted rather than merely "empty": the read layer treats a
+// nil and an empty map alike, but this package's own tests read the spec back,
+// and "the screen sent no filters at all" is the fact they turn on.
+func TestProductFiltersLeavesOutWhatIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		category string
+		search   string
+		want     map[string]any
+	}{
+		"neither":            {want: nil},
+		"only a category":    {category: "pcat_beans", want: map[string]any{filterCategoryID: "pcat_beans"}},
+		"only a search":      {search: "coffee", want: map[string]any{filterSearch: "coffee"}},
+		"an empty search":    {category: "pcat_beans", search: "", want: map[string]any{filterCategoryID: "pcat_beans"}},
+		"an empty category":  {category: "", search: "coffee", want: map[string]any{filterSearch: "coffee"}},
+		"both of them given": {category: "pcat_beans", search: "coffee", want: map[string]any{filterCategoryID: "pcat_beans", filterSearch: "coffee"}},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, productFilters(tt.category, tt.search))
+		})
+	}
+}
+
+// TestThePagingLinksCarryBothNarrowings proves "next" stays inside whatever the
+// screen is showing.
+//
+// A link that dropped either one would walk the operator into a wider catalog
+// while the heading, the box and the dropdown all still said the same thing.
+// The term is one with a SPACE in it on purpose: it has to arrive in the link
+// percent-encoded, or the address breaks at the first blank and the next page
+// searches for half of what was typed.
+func TestThePagingLinksCarryBothNarrowings(t *testing.T) {
+	t.Parallel()
+
+	full := make([]query.Record, 0, productsPerPage+1)
+	for i := range productsPerPage + 1 {
+		full = append(full, query.Record{"id": "p" + strconv.Itoa(i), "title": "T"})
+	}
+
+	catalog := categoryCatalog(categoryVocabulary())
+	catalog.byEntity[EntityProduct] = full
+
+	body := getPage(newCatalogPanel(t, catalog),
+		ProductsPath+"?page=2&category=pcat_beans&search=cold%20brew").Body.String()
+
+	assert.Contains(t, body, "page=3&amp;category=pcat_beans&amp;search=cold%20brew",
+		"the next link must keep BOTH narrowings, and the term must be escaped")
+	assert.Contains(t, body, "page=1&amp;category=pcat_beans&amp;search=cold%20brew",
+		"and so must the previous one")
+}
+
+// TestPagingLinksCarryOnlyWhatIsApplied proves a searched but uncategorized
+// list appends the search alone.
+//
+// The mirror of [TestUnfilteredPagingLinksCarryNoCategory]: the address bar is
+// read and pasted by operators, and a trailing "&category=" on every link of a
+// list nobody categorized is noise that also looks like a filter.
+func TestPagingLinksCarryOnlyWhatIsApplied(t *testing.T) {
+	t.Parallel()
+
+	full := make([]query.Record, 0, productsPerPage+1)
+	for i := range productsPerPage + 1 {
+		full = append(full, query.Record{"id": "p" + strconv.Itoa(i), "title": "T"})
+	}
+
+	catalog := categoryCatalog(categoryVocabulary())
+	catalog.byEntity[EntityProduct] = full
+
+	body := getPage(newCatalogPanel(t, catalog), ProductsPath+"?search=coffee").Body.String()
+
+	assert.Contains(t, body, "page=2&amp;search=coffee", "the search must be carried")
+	assert.NotContains(t, body, "&amp;category=",
+		"a list narrowed by nothing but a search must not append an empty category")
+}
+
+// TestTheEmptyListNamesWhatEmptiedIt is the four-sentence table.
+//
+// Two independent narrowings make four states and each of them earns its own
+// sentence. Getting this wrong is how an operator concludes their catalog is
+// broken: "No products on this page" under a search is true and useless — it is
+// the sentence read as "this shop is empty", and the control that emptied it is
+// the one thing they would not then check. The reverse mistake costs as much;
+// blaming the category when the search is what matched nothing sends somebody
+// to repair a taxonomy that is fine.
+func TestTheEmptyListNamesWhatEmptiedIt(t *testing.T) {
+	t.Parallel()
+
+	const (
+		plain         = "No products on this page."
+		inCategory    = "No products in this category on this page."
+		searched      = "Nothing matched that search."
+		searchedInCat = "Nothing matched that search in this category."
+	)
+
+	// The four are asserted against each OTHER, not only for their own case:
+	// three of these sentences are near-prefixes of another, so a template that
+	// fell through two branches would still contain the right one.
+	sentences := []string{plain, inCategory, searched, searchedInCat}
+
+	tests := map[string]struct {
+		path string
+		want string
+	}{
+		"nothing is applied":     {path: ProductsPath, want: plain},
+		"a category alone":       {path: ProductsPath + "?category=pcat_beans", want: inCategory},
+		"a search alone":         {path: ProductsPath + "?search=coffee", want: searched},
+		"a search in a category": {path: ProductsPath + "?category=pcat_beans&search=coffee", want: searchedInCat},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			catalog := categoryCatalog(categoryVocabulary())
+			catalog.byEntity[EntityProduct] = nil
+
+			rec := getPage(newCatalogPanel(t, catalog), tt.path)
+
+			require.Equal(t, http.StatusOK, rec.Code)
+			body := rec.Body.String()
+			assert.Contains(t, body, tt.want)
+			for _, other := range sentences {
+				if other == tt.want {
+					continue
+				}
+				assert.NotContains(t, body, other,
+					"exactly ONE of the four sentences may be on the page; a second one "+
+						"blames a control that emptied nothing")
+			}
+		})
+	}
+}
+
+// TestTheAppliedSearchStaysVisibleAndCanBeCleared is the visibility half.
+//
+// A filtered screen that looks unfiltered is the failure the category dropdown
+// was built around, and a search box has more ways to fall into it: the term
+// lives only in the address, so a box that came back blank would leave a short
+// list under a heading that says "Products" with nothing on the page explaining
+// it. The way OUT has to be on the page too — emptying the box works, but only
+// if the operator already knows the box is what did this.
+//
+// The clear link keeps the category and drops only the search, which is what
+// its words promise. The category's own "show all products" is the other half
+// of the pair and clears everything, which is what ITS words promise; the two
+// are asserted together here because getting either one backwards turns a
+// deliberate narrowing into an accidental one.
+func TestTheAppliedSearchStaysVisibleAndCanBeCleared(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a search on its own", func(t *testing.T) {
+		t.Parallel()
+
+		body := getPage(newCatalogPanel(t, categoryCatalog(categoryVocabulary())),
+			ProductsPath+"?search=coffee").Body.String()
+
+		assert.Contains(t, body, `value="coffee"`, "the box must keep what was searched for")
+		assert.Contains(t, body, "Matching <strong>coffee</strong>",
+			"the applied search must be stated above the list, not only inside the box")
+		assert.Contains(t, body, `<a href="`+ProductsPath+`">clear the search</a>`,
+			"with no category applied the clear link is the bare product list")
+	})
+
+	t.Run("a search inside a category", func(t *testing.T) {
+		t.Parallel()
+
+		body := getPage(newCatalogPanel(t, categoryCatalog(categoryVocabulary())),
+			ProductsPath+"?category=pcat_beans&search=coffee").Body.String()
+
+		assert.Contains(t, body,
+			`<a href="`+ProductsPath+`?category=pcat_beans">clear the search</a>`,
+			"clearing the search must KEEP the category; dropping a narrowing the "+
+				"operator did not ask to drop is how a filtered screen widens by accident")
+		assert.Contains(t, body, `<a href="`+ProductsPath+`">show all products</a>`,
+			"and the category's own link must still clear everything, which is what it says")
+	})
+}
+
+// TestTheSearchBoxSurvivesAnUnreadableCategoryList proves one broken read does
+// not take away the control that never depended on it.
+//
+// The dropdown is filled by a second Graph call and disappears when that call
+// fails. The box needs no vocabulary at all, so a box nested inside the
+// dropdown's own condition would vanish for a reason that has nothing to do
+// with it — and an operator who cannot search a catalog of tens of thousands is
+// back to paging through it.
+//
+// The applied category has to survive submitting that form, too. With the
+// dropdown gone there is no control carrying it, so the form carries it hidden:
+// without that, typing a search would silently widen the list to the whole
+// catalog while the notice above it still named the category.
+func TestTheSearchBoxSurvivesAnUnreadableCategoryList(t *testing.T) {
+	t.Parallel()
+
+	catalog := categoryCatalog(categoryVocabulary())
+	catalog.errByEntity = map[string]error{
+		EntityCategory: errors.NotFound("query_provider_missing", "category.query was not found"),
+	}
+
+	rec := getPage(newCatalogPanel(t, catalog), ProductsPath+"?category=pcat_beans&search=coffee")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.NotContains(t, body, "<select", "the dropdown must still be absent, not empty")
+	assert.Contains(t, body, `<input type="search" id="search" name="search" value="coffee">`,
+		"the search box must survive a failure it has nothing to do with")
+	assert.Contains(t, body, `<input type="hidden" name="category" value="pcat_beans">`,
+		"the form must carry the applied category that the missing dropdown can no "+
+			"longer submit")
+}
+
+// TestTheSearchTermIsEscaped proves the typed text cannot carry markup.
+//
+// It is printed back in three places — an attribute value, a <strong> and a URL
+// in the paging links — and it is the most directly attacker-controlled string
+// on the screen: unlike a title or a category name it needs no write access at
+// all, only a link somebody clicks while signed in as an administrator.
+func TestTheSearchTermIsEscaped(t *testing.T) {
+	t.Parallel()
+
+	full := make([]query.Record, 0, productsPerPage+1)
+	for i := range productsPerPage + 1 {
+		full = append(full, query.Record{"id": "p" + strconv.Itoa(i), "title": "T"})
+	}
+
+	catalog := categoryCatalog(categoryVocabulary())
+	catalog.byEntity[EntityProduct] = full
+
+	term := url.QueryEscape(`"><script>alert('admin')</script>`)
+	body := getPage(newCatalogPanel(t, catalog), ProductsPath+"?search="+term).Body.String()
+
+	assert.NotContains(t, body, "<script>", "the typed term must not be printed as a raw tag")
+	assert.Contains(t, body, "&lt;script&gt;", "the term must be escaped, not dropped")
+	assert.NotContains(t, body, "ZgotmplZ",
+		"the engine failed to resolve a context: escaping LOOKS like it worked but the "+
+			"data is silently removed")
+}
+
 // TestProductPageJoinsPriceAndStock proves one product page shows the variant,
 // its price and its stock — the three coming from three different modules.
 //

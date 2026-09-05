@@ -64,7 +64,7 @@ Four sequencing facts govern the whole list:
 | # | foundation | unblocks | section |
 | --- | --- | --- | --- |
 | B1 | ~~**A guarded inbound-callback class**~~ **Built 2026-09-05: ADR 0028.** `core/http.CallbackRegistry` — per-route quota, body limit, timeout, enforced signature check and a derived replay window; PayTR converted onto it at the same URL. Audit deliberately left out (see D1) | four carriers, e-invoice, every payment provider — the plumbing is there; a carrier still waits on B10 | Turkey-specific |
-| B2 | **Storefront filter surface** — ~~category, tag~~ **built 2026-09-05** (`category_id`, `tag_id`, in REST and GraphQL, EXISTS not joins so a product in several categories is returned once). ~~Still missing: price, in-stock, option value, sort~~ — **one bag holding four different kinds of work; measured and split 2026-09-05.** SORT is a straightforward build with one trap (the cursor). OPTION VALUE is a build behind one decision, entirely inside the product module. PRICE and IN-STOCK are NOT builds — they are decisions, and they are now **A16** and **A17**. ~~Also measured: the built half never reached the read layer, so the panel cannot filter by category while the storefront can~~ — **that half reached the read layer the same day.** The `product` provider takes `category_id` and `tag_id` too now (two switch cases, NO new SQL — the EXISTS subqueries were already in the listing and the count), it REFUSES either of them combined with `id`/`ids` rather than answering from relation slices it never loads, and the module offers a second read-layer entity, `category`, so a consumer can turn a name into an identifier. What is still behind is exactly one filter: the storefront's text search | ~~NL search~~ **C10 does not exist in code** — but `category_id` has a real named consumer since 2026-09-05: the panel's product list narrows the catalog through the read layer and offers a dropdown of category names. `tag_id` has none (see A16, A17 and the section below) | AI-powered features |
+| B2 | **Storefront filter surface** — ~~category, tag~~ **built 2026-09-05** (`category_id`, `tag_id`, in REST and GraphQL, EXISTS not joins so a product in several categories is returned once). ~~Still missing: price, in-stock, option value, sort~~ — **one bag holding four different kinds of work; measured and split 2026-09-05.** SORT is a straightforward build with one trap (the cursor). OPTION VALUE is a build behind one decision, entirely inside the product module. PRICE and IN-STOCK are NOT builds — they are decisions, and they are now **A16** and **A17**. ~~Also measured: the built half never reached the read layer, so the panel cannot filter by category while the storefront can~~ — **that half reached the read layer the same day.** The `product` provider takes `category_id` and `tag_id` too now (two switch cases, NO new SQL — the EXISTS subqueries were already in the listing and the count), it REFUSES either of them combined with `id`/`ids` rather than answering from relation slices it never loads, and the module offers a second read-layer entity, `category`, so a consumer can turn a name into an identifier. ~~What is still behind is exactly one filter: the storefront's text search~~ — **that one closed too, later the same day.** The provider answers `q` (the storefront's own spelling), trims it, treats an empty or whitespace term as NO filter, and REFUSES it beside `id`/`ids` on a measured argument rather than a taste. The panel grew the search box that consumes it. The cost was measured on the 52,004-product rig instead of guessed (`docs/catalog-search-cost.md`) and the finding inverts the expectation the missing index creates: a term matching 52,000 titles is answered in 0.03 ms, a term matching ONE product costs 9.1 ms and reads the whole table — **the rare search is the expensive one, and that is the one a search box receives** | ~~NL search~~ **C10 does not exist in code** — but `category_id` has a real named consumer since 2026-09-05: the panel's product list narrows the catalog through the read layer and offers a dropdown of category names. `tag_id` has none (see A16, A17 and the section below) | AI-powered features |
 | B3 | ~~**Storefront vocabulary endpoints**~~ **Built 2026-09-05.** `GET /store/v1/{collections,categories,tags}`. The category listing applies `is_active`/`is_internal` — two columns that existed since the first migration and that nothing read | NL search — the word→id half is done; the FILTER half is B2 | AI-powered features |
 | B4 | **Review module** | moderation (the AI brief's first use case), summaries, Q&A | AI subsystem |
 | B5 | ~~**Order ↔ fulfillment link, and something that creates a fulfillment**~~ **Built 2026-09-05.** The fulfillment module declares `order_fulfillment` (one to many); `internal/workflows/fulfilling` opens a shipment for an order and binds the two; the order gets `POST`/`GET /admin/v1/orders/{id}/fulfillments`. NOT built: a shipment created at checkout — shipping stays a decision | the order timeline, carrier tracking, "where is the parcel" — answerable now. the link is expandable by the read layer too (D8) | Platform features |
@@ -195,6 +195,67 @@ Four sequencing facts govern the whole list:
   same thing — the tag control is a decision (a tag is free text, and a
   dropdown is the wrong shape for it), the search box is still blocked, because
   the provider has no text filter while the storefront listing does.
+
+  **The second of those two was closed hours later, on the same day.** The
+  provider learned `q`, the panel grew the search box, and the two controls are
+  ONE form so that "search inside a category" is a single request. The tag
+  control stays absent and stays a decision. What the search cost is no longer a
+  guess either; the numbers are in `docs/catalog-search-cost.md` and their
+  consequences are in the B2 section below.
+- **D13** ~~The catalog every performance sentence in this repository is
+  measured against existed as rows in ONE Docker volume, and nothing here could
+  rebuild it.~~ **Closed 2026-09-05, and it was a real gap rather than an
+  inconvenience.** No seed file, no seed target, no seed program; the compose
+  file never creates that database at all, so a fresh machine had no rig and no
+  way to get one, while **28 non-test files carry timing figures that rest on
+  it.** `docker compose down -v` was the whole distance between a measured claim
+  and unfalsifiable prose — that is, the repository's loudest rule, that a
+  performance sentence is never written unmeasured, depended on a volume nobody
+  had promised to keep.
+
+  The rebuild is a subcommand of the server binary (`internal/rig`, reached as
+  `make seed`) and NOT a `.sql` file, because the schema has to come from the
+  modules' own migrations: three of the tables the rig needs
+  (`link_product_variant_price_set`, `link_product_variant_inventory`,
+  `link_product_sales_channel`) appear in no migration at all — `core/link`
+  creates them at run time — so a plain `psql -f` would die on the first link
+  insert. **13.6 s** for the full catalog out of `generate_series` in one
+  transaction, ids derived from the row number so a second run inserts nothing,
+  and the acceptance test is a PLAN rather than a stopwatch: a rebuilt rig
+  reproduces the count query's recorded plan to the buffer — 52,004 rows, 52,004
+  subplan loops, Heap Fetches 0, 156,743 shared hits of which 156,013 the
+  subquery's.
+
+  Two findings came out of the rebuild itself. `ANALYZE` alone is not enough:
+  without the VACUUM half the visibility map is unset everywhere, the same
+  statement reports **52,000 heap fetches and 208,742 buffers** instead of 0 and
+  156,743, and every reader comparing a fresh measurement against a godoc would
+  have been comparing two different databases without being told. And the
+  surviving rig's schema is **five order migrations, one payment migration and
+  one product migration behind** the repository, missing the invoice, job,
+  outbox and audit schemas entirely — the drift a hand-written seed file would
+  have institutionalized.
+
+  Written down rather than hidden: the reset is slow, **4 m 31 s to delete what
+  13.6 s wrote**, because a referential-integrity check will not use the
+  modules' PARTIAL indexes and falls to a sequential scan per deleted parent.
+  Remaining hole: the seeder's bulk SQL names other modules' tables, and neither
+  SQL gate reads it — both walk `internal/modules` only (see D10). What catches
+  a column a migration renamed is the load fixture below, which runs the same
+  generator on every integration run.
+- **D14** ~~`make load-test` measured a catalog of ZERO products.~~ **Fixed
+  2026-09-05, and it is D11 one layer down.** D11 made the target run its test
+  again; this is what the test then did. The harness creates regions, tax
+  fixtures, an identity and one stock location and NOT ONE PRODUCT, and the
+  target selects this test alone, so no other file's fixtures ran either: the
+  storefront listing returned an empty page, the count query counted nothing,
+  and the target printed a green requests-per-second line. The class is the same
+  as D11's — a check that sees nothing is indistinguishable from a check that
+  passes — but the emptiness was in the DATA, where no selector gate can look.
+  The test now builds 200 products through the same generator that rebuilds the
+  rig, mints its own sales channel so the fixture cannot leak into the other
+  storefront scenarios, and counts a 200 whose body carries no product as a
+  failure.
 
 ### E. Out of framework scope — written, not forgotten
 
@@ -720,6 +781,26 @@ dependency lands on is decided by what its loss does to a request.
    pass rather than module by module. The ordering columns already exist
    (`created_at DESC` with an id tiebreak in most indexes), which is the part
    that is usually missing.
+
+3. **The catalog's text search has no index that can serve it, and its ceiling
+   is now measured** — 2026-09-05.
+
+   Not a defect and not a surprise: the predicate carries a leading wildcard, so
+   no B-tree helps even if one existed on `title`. What was worth measuring is
+   the SHAPE, and it is the opposite of what "no index" usually implies. A term
+   matching almost the whole catalog is answered in 0.03 ms because the ordered
+   scan stops at 25 rows; a term matching ONE product costs 9.1 ms and reads all
+   730 pages of the table. At 16 clients a selective search runs at 638 to 856
+   per second against 11,564 for an unfiltered listing.
+
+   The number to plan against is the throughput one, not the latency: **a few
+   hundred concurrent selective searches per second is the first ceiling this
+   repository has that is not the response path.** The panel is nowhere near it
+   and never will be; a storefront search box reaches it long before the catalog
+   grows. The full record — plans, buffer counts, the prepared-statement plan
+   flip, the count's behavior and the options not taken — is
+   `docs/catalog-search-cost.md`, and its consequences for B2's remaining work
+   are in the B2 section below.
 
 ---
 
@@ -1438,22 +1519,28 @@ read-layer entity, `category` (`internal/modules/product/service/category_provid
 which needed no new SQL either — the by-ids query existed and was generated, and
 nothing had wrapped it.
 
-What is still BEHIND, precisely: the storefront listing takes a text search and
-the provider does not, so the panel has a category dropdown and no search box.
-That was left deliberately by this repository's own standing rule (a capability
-with no consumer is a surface whose correctness is tested nowhere) and the
-omission is written into the provider's godoc rather than left to be rediscovered
-here. The panel also offers no TAG control, and that is a different kind of
-absence — a decision, not a gap: a tag is free text with no dropdown to be, while
-a category is a tree an operator maintains.
+~~What is still BEHIND, precisely: the storefront listing takes a text search and
+the provider does not, so the panel has a category dropdown and no search box.~~
+**That was true for a few hours.** The rule that left it out was this
+repository's own — a capability with no consumer is a surface whose correctness
+is tested nowhere — and the consumer arrived with the filter, in the same round:
+the provider answers `q` and the panel's product list has a search box. The
+subsection below carries what it cost when it was measured. The panel still
+offers no TAG control, and that is a different kind of absence — a decision, not
+a gap: a tag is free text with no dropdown to be, while a category is a tree an
+operator maintains.
 
 The hand-copied names are pinned where they can be. `TestThePanelCatalogNamesAgree`
 in `internal/arch` binds the panel's `category` entity string to the module's own
-constant at compile time. The FILTER name cannot be bound: both copies of
-`category_id` are unexported in their own packages, so there is no pair to
-compare, and the protection there is the provider's refusal of an unknown filter
-turning into a loud 500. That limit is now recorded in the test's own "does not
-cover" section instead of being silently true.
+constant at compile time. The FILTER names cannot be bound that way: both copies
+of `category_id`, and both copies of `q` after it, are unexported constants in
+their own packages, so there is no pair to hand to an assertion. They are pinned
+one step weaker instead — `TestThePanelCatalogFilterKeysAgree` reads the four
+shared keys out of the two packages' SOURCES and compares the values, which is
+where a constant lives when the compiler has inlined it. What the source pin
+cannot reach is the record FIELD names, because the module writes those as
+literal keys with no constant to read; that limit is recorded in the entity
+test's own "does not cover" section instead of being silently true.
 
 ### And the consumer is real — for one of the two filters
 
@@ -1470,6 +1557,116 @@ rather than counted as built. It came in the same change as `category_id`
 because the two are one switch and one argument; keeping it out would have meant
 the read layer disagreeing with the storefront on a filter the storefront
 already answers.
+
+### The text search — B2's last filter, and the first measured ceiling
+
+Built 2026-09-05, and measured the same day on the 52,004-product rig. The full
+record with every plan and every buffer count is `docs/catalog-search-cost.md`;
+what belongs here is the part that constrains future work.
+
+The filter itself cost no SQL: the term becomes `ProductFilter.Search` and the
+shared filter body already turned it into `title ILIKE '%' || $4 || '%'` for the
+listing AND the count. The decisions were where the work was. An empty or
+whitespace-only term builds NO filter, because the two ways of passing it
+through are silent and point in opposite directions — `''` reaches SQL as
+`ILIKE '%%'` and matches everything, `'   '` matches nothing, and no caller can
+tell which it got. And `q` beside `id`/`ids` is REFUSED rather than re-checked in
+Go, on a measurement rather than a preference: `ILIKE` folds case the way the
+CLUSTER's CTYPE folds it and Go folds it the way Unicode does. On the C-CTYPE
+cluster in this workspace, uppercase-in-title against lowercase-in-term, the two
+disagree on both non-ASCII pairs tried — a capital C-cedilla against a lowercase
+one, and a dotted capital I against a plain `i`, where SQL finds no match and Go
+finds one — and agree on the ASCII pair; on a C.UTF-8 cluster all three agree.
+The letters are spelled out in words here rather than written, because a
+markdown file carrying them would land in the language ledger; the module's own
+godoc shows them as escapes for the same reason. Which means a
+Go-side re-check would be right or wrong depending on how somebody ran `initdb`,
+which is exactly what `core/db.CaseFolding` probes at startup and what ADR 0015
+was written about.
+
+**The cost does not follow the term, it follows how far down the ordering the
+page's last match sits.** No index on this repository's `title` column can serve
+the predicate — the pattern has a leading wildcard and there is no trigram or
+full-text index — and the obvious conclusion from that, "the search is a
+sequential scan and therefore slow", is half wrong in the half that decides what
+to do about it. Listing, no channel filter, `LIMIT 25`:
+
+| filter | plan | time | buffers |
+| --- | --- | --- | --- |
+| none | index scan on `(created_at DESC, id DESC)` | 0.03 ms | 7 |
+| a term matching 52,000 of 52,004 | same index scan, term as a filter | 0.03 ms | 9 |
+| a term matching 111 | same, 12,473 index entries walked | 2.6 ms | 2,635 |
+| a term matching 1 | sequential scan + sort | 9.1 ms | 730 |
+
+**The broad search is free and the selective one is expensive — and the
+selective one is what a search box receives.** Three consequences worth carrying
+into anything that touches this path:
+
+- **The count moves in BOTH directions.** With the sales channel filter on, an
+  unfiltered count is about 74 ms and 156,743 buffers; a term matching one
+  product drops it to 12.9 ms and 734 buffers, because the `ILIKE` runs ahead of
+  the per-row visibility subplan and removes 52,003 of its invocations. A broad
+  term raises it to about 84 ms. The wall in the count was never the search; it
+  is the visibility probe this file already recorded (67 ms → 0.65 ms, above).
+- **One plan degrades silently under a prepared statement, and it is the
+  mechanism the cursor's `COALESCE` sentinel was written for.** Executions one
+  through five of the channel-filtered listing use a custom plan at 14.4 ms and
+  734 buffers; from the sixth, PostgreSQL switches to a generic plan — an index
+  walk over the whole ordering index at about 25 ms and 10,982 buffers — and
+  does not switch back. Which plan a connection lands on depends on the terms
+  its first five executions carried, so it is variance between connections
+  rather than a constant tax, and variance that depends on history is the
+  hardest kind to reproduce from a bug report.
+- **Throughput is where the ceiling actually is.** pgbench, terms randomized per
+  transaction, 16 clients: an unfiltered listing runs at 11,564 per second, a
+  selective search at 856 (no channel) and 638 (with it) — **about forty times
+  the latency and a thirteenth of the throughput.** For a panel used by a handful
+  of operators that is irrelevant; for a storefront search box it is the first
+  ceiling anybody hits, and it arrives long before the catalog grows.
+
+**Where it stops.** The scan is linear at 0.18 to 0.235 microseconds per row,
+measured from 10,000 rows up with no knee, so a selective search extrapolates to
+roughly 20 ms at 100,000 products, 50 ms at 250,000 and 100 ms at 500,000. That
+is an extrapolation from a measured slope and not a measurement, and it holds
+only while the rows stay this narrow (these titles average 15.5 characters and
+the descriptions are empty, so a real catalog is already worse), the table stays
+in memory, and the concurrency stays low. The honest boundary is not a row count
+but a pair of conditions: **the search stops being fast enough when the catalog
+no longer fits in memory, or when concurrent searches exceed a few hundred per
+second — whichever comes first.** On this hardware the second arrives first.
+
+**A lead for the rest of B2, measured read-only.** The filter body spells every
+optional predicate as `($n IS NULL OR …)`, and for the taxonomy filters the
+second half of that `OR` is an `EXISTS`. PostgreSQL pulls an `EXISTS` in a
+`WHERE` clause up into a semi-join BEFORE it folds constants, so an `EXISTS`
+wrapped in an `OR` is never a candidate: the plan runs the subquery once per
+catalog row (`loops=52,004`) and the index on `product_category_map` is
+unreachable from the query as written. Adding a category to a search that cost
+0.03 ms makes it cost at least 29 ms — with an EMPTY map table on the inner
+side. That is a property of the plan rather than of the data, but it is a lead
+and not a recommendation: the `OR` idiom is what lets ONE statement serve every
+combination of filters, and trading it away for the category alone would be a
+decision about all seven predicates.
+
+**What could not be measured, and what changed about that.** The rig used for
+these numbers has ZERO rows in `product_category`, `product_category_map` and
+`product_tag_map`, so every figure in the category paragraph above is a FLOOR —
+which is also the reason the panel's own headline request, "search inside a
+category", has no honest number yet. The rebuilt rig (D13) seeds twenty
+categories and twenty tags by default precisely so the next measurement is not
+stuck the same way. Also unmeasured: cold caches (every figure is warm and the
+plans say so), a multi-channel shop, and the Go side of the request, which is
+benchmarked separately above.
+
+**Options, none taken.** A trigram GIN index is the one index type that could
+serve this predicate; `pg_trgm` is available in the image and not installed, and
+everything else about it is unmeasured deliberately — creating it would be a
+write to a measurement instrument and a migration is a schema decision with a
+rollback and a per-write cost that one measurement does not get to make alone.
+Reusing `plugins/searchpg`'s full-text shape would mean the same catalog searched
+by two different definitions of "matches". Leaving it alone is the default, it
+is what the measurement supports at this size, and it now has a written ceiling
+instead of an unknown one.
 
 ## AI-powered commerce features — measured against the brief, 2026-09-05
 

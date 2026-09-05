@@ -22,6 +22,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/job/jobpg"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
+	"github.com/bdrtr/gobit/internal/rig"
 )
 
 // The verbs the binary answers to. They are constants because [Main] and
@@ -672,6 +673,7 @@ Usage:
   %s %-34s list executions left half-done (read only)
   %s %-34s compensate ONE half-done execution
   %s %-34s report each scheduled job's last run
+  %s %-34s rebuild the measurement catalog
   %s %-34s print this text
 
 %s %s flags:
@@ -680,6 +682,12 @@ Usage:
 
 %s flags:
   -%-15s repeat the execution id to authorize the compensation
+
+%s flags:
+  -%-15s how many single-variant products to build (default %d)
+  -%-15s how many two-variant products to build (default %d)
+  -%-15s the sales channel the products are assigned to
+  -%-15s delete the rig's rows first; needs -%s <database>
 
 The server starts when there are NO arguments and in no other way; no
 subcommand starts one. Forward migrations stay automatic at startup —
@@ -692,10 +700,16 @@ there is deliberately no "migrate up", so a deploy cannot forget it.
 		binaryName, stuckCommand+" [flags]",
 		binaryName, recoverCommand+" <execution-id> [flags]",
 		binaryName, jobsCommand,
+		binaryName, seedCommand+" [flags]",
 		binaryName, cmdHelp,
 		cmdMigrate, cmdDown,
 		flagSteps+" N", defaultDownSteps,
 		flagConfirm+" OWNER",
 		recoverCommand,
-		flagConfirm+" ID")
+		flagConfirm+" ID",
+		seedCommand,
+		flagProducts+" N", rig.DefaultSingleVariantProducts,
+		flagMulti+" N", rig.DefaultMultiVariantProducts,
+		flagChannel+" NAME",
+		flagReset, flagConfirm)
 }

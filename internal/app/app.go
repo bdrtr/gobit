@@ -163,6 +163,8 @@ func Main(args []string, out io.Writer, opts Options) error {
 		return runRecover(args[1:], out, opts)
 	case jobsCommand:
 		return runJobs(args[1:], out, opts)
+	case seedCommand:
+		return runSeed(args[1:], out, opts)
 	default:
 		if err := writeReport(out, usageText(opts.version())); err != nil {
 			return err

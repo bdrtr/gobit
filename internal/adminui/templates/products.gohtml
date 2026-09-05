@@ -1,43 +1,74 @@
 {{- /*
-products.gohtml is the catalog list, optionally narrowed to one category.
+products.gohtml is the catalog list, optionally narrowed by a category, by a
+search, or by both.
 
 The rows come from the cross-module read layer, not from a module's service: the
 panel knows no module (ADR 0011). Every field is printed as an ordinary value,
-so the template engine's escaping applies to all of them — a product title and a
-category name are both operator-supplied text and the panel runs inside an
-administrator's session.
+so the template engine's escaping applies to all of them — a product title, a
+category name and the text an operator typed into the box are all operator-
+supplied text, and the panel runs inside an administrator's session.
 
 Paging shows "next" only when the read returned one record more than the page
 holds. There is no total and no last page: a count over a growing catalog is the
 expensive half of paging and this screen does not need it.
 
-THE FILTER TRAVELS IN THE ADDRESS, and the paging links carry it. A "next page"
-that dropped the category would walk the reader out of the filtered view and
-into the whole catalog without saying so — the same failure the sales report's
-links avoid by carrying their period. It is appended CONDITIONALLY here, unlike
-there: that report always covers some window, while this list is unfiltered most
-of the time, and "&category=" hanging off every link would be noise in an
-address bar operators read. If one did leak through, the handler trims the value
-and an empty one is not a filter, so it would be harmless rather than a filter
-by an identity nothing has.
+THE FILTERS TRAVEL IN THE ADDRESS, and the paging links carry them. A "next
+page" that dropped the category or the search would walk the reader out of the
+narrowed view and into a wider catalog without saying so — the same failure the
+sales report's links avoid by carrying their period. They are appended
+CONDITIONALLY here, unlike there: that report always covers some window, while
+this list is unnarrowed most of the time, and "&category=&search=" hanging off
+every link would be noise in an address bar operators read. If one did leak
+through, the handler trims the value and an empty one is not a filter, so it
+would be harmless rather than a narrowing by something nothing matches.
 
-THE FORM DOES NOT CARRY THE PAGE, on purpose. Choosing a category starts a new
-listing, and page 7 of the unfiltered catalog names nothing in the filtered one;
-submitting from there would land on an empty page of a category that has plenty.
+THE TWO CONTROLS ARE ONE FORM, which is what makes them compose. Two forms
+would each submit only their own control, so choosing a category would discard
+the typed search and searching would discard the category — silently, with a
+200 and a wider list. Searching inside a category is the whole reason the box
+was added, so both controls submit together.
 
-THE CONTROL AND THE LIST MUST NEVER DISAGREE. Three states below say so out
-loud, because in each of them the dropdown alone would be misleading: the
-vocabulary could not be read, it was read and does not contain the chosen
-identifier, or it was cut short so the identifier could not be checked. The one
-thing this screen must not do is show an empty table under a plain "Products"
-heading — an operator reads that as an empty catalog.
+THE FORM DOES NOT CARRY THE PAGE, on purpose. Choosing a category or typing a
+search starts a new listing, and page 7 of the unfiltered catalog names nothing
+in the narrowed one; submitting from there would land on an empty page of a
+view that has plenty.
+
+THE CONTROLS AND THE LIST MUST NEVER DISAGREE. Three states below say so out
+loud for the category, because in each of them the dropdown alone would be
+misleading: the vocabulary could not be read, it was read and does not contain
+the chosen identifier, or it was cut short so the identifier could not be
+checked. The search has no such states — there is no vocabulary behind a box —
+so its whole visibility is the text staying in it and one line naming what is
+being matched. The one thing this screen must not do is show an empty table
+under a plain "Products" heading: an operator reads that as an empty catalog.
+
+THE SEARCH BOX SITS OUTSIDE THE TEST THAT HIDES THE DROPDOWN, on purpose. The
+dropdown disappears when the vocabulary cannot be read, and a box nested inside
+that test would disappear with it — taking away a control that never depended
+on that read in the first place.
+
+WHEN THE DROPDOWN IS ABSENT and a category is still applied, the form carries
+that category in a hidden field instead: without it, submitting a search
+would drop a narrowing the operator cannot even see any more, and the way back
+to the whole catalog is the link in the notice rather than an accident of
+submitting.
 */ -}}
 {{ define "body" }}
 <h1>Products</h1>
 
-{{ with .CategoryFilter }}
-{{ if .Options }}
-<form method="get" action="{{ $.Path }}">
+<form method="get" action="{{ .Path }}">
+  <label for="search">Search</label>
+  {{- /*
+  The box is refilled with what was applied, not left blank. A blank box over a
+  narrowed list is the same lie the "All categories" dropdown would tell over a
+  filtered one: the operator retypes what they already searched for, or reads
+  the short list as the whole catalog. Emptying the box and submitting is the
+  second way back to the full list, next to the link under the form — the
+  handler treats an empty term as no filter at all.
+  */}}
+  <input type="search" id="search" name="search" value="{{ .SearchFilter.Term }}">
+  {{ with .CategoryFilter }}
+  {{- if .Options }}
   <label for="category">Category</label>
   <select id="category" name="category">
     {{- /*
@@ -50,10 +81,14 @@ heading — an operator reads that as an empty catalog.
     <option value="{{ .ID }}"{{ if .Selected }} selected{{ end }}>{{ .Name }}</option>
     {{- end }}
   </select>
+  {{- else if .Applied }}
+  <input type="hidden" name="category" value="{{ .ID }}">
+  {{- end }}
+  {{ end }}
   <button type="submit">Show</button>
 </form>
-{{ end }}
 
+{{ with .CategoryFilter }}
 {{ if .Unavailable }}
 {{- /*
 The dropdown is absent because the category list could not be read. The page
@@ -90,6 +125,23 @@ died over a control it could not fill would cost the operator the catalog too.
 {{ end }}
 {{ end }}
 
+{{- /*
+Every "show all products" link above is the bare path, so it clears the search
+as well as the category. That is what the words say and it is why they can stay:
+a link promising all products that left a search applied would be the same
+confident-wrong screen the notices exist to prevent. The link below is the other
+half of the pair — it clears only the search and KEEPS the category, because
+"clear the search" is a promise about the search, and dropping a narrowing the
+operator did not ask to drop is how a filtered screen becomes an unfiltered one
+by accident.
+*/ -}}
+{{ if .SearchFilter.Applied }}
+<p class="muted">
+  Matching <strong>{{ .SearchFilter.Term }}</strong> —
+  <a href="{{ .Path }}{{ if .CategoryFilter.Applied }}?category={{ .CategoryFilter.ID }}{{ end }}">clear the search</a>.
+</p>
+{{ end }}
+
 {{ if .Products }}
 <table>
   <thead>
@@ -108,12 +160,22 @@ died over a control it could not fill would cost the operator the catalog too.
 </table>
 {{ else }}
 {{- /*
-The empty message names the filter when there is one. "No products on this page"
-under a category filter would be true and useless: it is the sentence an
-operator reads as "the catalog is empty", and the one thing they would not then
-check is the control that emptied it.
+The empty message names what emptied the page, and there are FOUR of them
+because two independent narrowings make four states. "No products on this page"
+under a search is true and useless: it is the sentence an operator reads as "the
+catalog is empty", and the one thing they would not then check is the control
+that emptied it. The reverse mistake costs as much — blaming a category when the
+search is what matched nothing sends the operator to fix a taxonomy that is
+fine. Each state therefore gets its own sentence, and the search is asked FIRST
+because it is the narrowing the operator just typed.
 */ -}}
+{{ if .SearchFilter.Applied }}
 {{ if .CategoryFilter.Applied }}
+<p>Nothing matched that search in this category.</p>
+{{ else }}
+<p>Nothing matched that search.</p>
+{{ end }}
+{{ else if .CategoryFilter.Applied }}
 <p>No products in this category on this page.</p>
 {{ else }}
 <p>No products on this page.</p>
@@ -121,8 +183,8 @@ check is the control that emptied it.
 {{ end }}
 
 <nav>
-  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}{{ if .CategoryFilter.Applied }}&amp;category={{ .CategoryFilter.ID }}{{ end }}">Previous</a>{{ end }}
+  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}{{ if .CategoryFilter.Applied }}&amp;category={{ .CategoryFilter.ID }}{{ end }}{{ if .SearchFilter.Applied }}&amp;search={{ .SearchFilter.Term }}{{ end }}">Previous</a>{{ end }}
   <span>Page {{ .Page }}</span>
-  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}{{ if .CategoryFilter.Applied }}&amp;category={{ .CategoryFilter.ID }}{{ end }}">Next</a>{{ end }}
+  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}{{ if .CategoryFilter.Applied }}&amp;category={{ .CategoryFilter.ID }}{{ end }}{{ if .SearchFilter.Applied }}&amp;search={{ .SearchFilter.Term }}{{ end }}">Next</a>{{ end }}
 </nav>
 {{ end }}

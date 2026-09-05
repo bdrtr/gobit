@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -715,23 +716,32 @@ func assertDefaultProvider(t *testing.T, family, providerID, configDefault, modu
 // The entity NAME is the one that had to be pinned here: it is the string the
 // whole request is addressed to, and the panel repeats it by hand.
 //
-// The catalog's CATEGORY filter is that same hole with NEITHER side exported.
-// The panel spells "category_id" and the product module spells "category_id",
-// and both copies are unexported constants of their own packages, so there is no
-// pair to hand to an assertion at all — the sales report at least had one
-// exported side that could not be reached. The two fields the category dropdown
-// asks for, "id" and "name", are further out still: the module writes them as
-// literal keys in its record builder, so there is nothing to export even if
-// somebody decided to. What IS pinned is the entity name, for the same reason as
+// The catalog's own FILTER names are that same hole with NEITHER side exported.
+// The panel spells "id", "product_id", "category_id" and — since the search box
+// arrived — "q"; the product module spells the same four the same way; and all
+// eight copies are unexported constants of their own packages, so there is no
+// pair to hand to an assertion IN THIS TEST — the sales report at least had one
+// exported side that could not be reached. They are not left silent, though:
+// [TestThePanelCatalogFilterKeysAgree] pins them by reading the two packages'
+// sources and comparing the values. That binding is weaker than the compiler's
+// and it is the strongest one available while both sides stay unexported.
+//
+// The FIELD names are further out still, and they are the part nothing pins. The
+// two the category dropdown asks for, "id" and "name", and the six the product
+// list asks for are written by the module as literal keys in its record builder,
+// so there is no constant to export and none to read out of the source either.
+// What IS pinned is the entity name, for the same reason as
 // the three above it, and it is the pin that matters most on this screen: the
 // panel addresses a whole second read to "category", and a rename there would
 // leave the catalog compiling and answering 200 with no filter control at all.
 //
-// The refusal that stands in for the missing pins is WEAKER here than on the
-// other screens, and that is worth writing down rather than assuming. A drifted
-// FILTER name is still loud: the product list passes it in the very call that
-// builds the page, the provider answers errors.Invalid, and the screen becomes a
-// 500 that names what was asked for. A drifted FIELD name is not. The category
+// The refusal that stands in for the missing FIELD pins is WEAKER here than on
+// the other screens, and that is worth writing down rather than assuming. A
+// drifted FILTER name is caught unconditionally by the source pin, and at run
+// time it is loud as well, though only once the control is USED: a filter key
+// travels only when it is applied, so the provider's errors.Invalid — and the 500
+// that names what was asked for — waits for an operator to pick a category or
+// type in the box. A drifted FIELD name is neither loud nor pinned. The category
 // vocabulary is a SECOND read whose failure deliberately degrades the dropdown
 // instead of the page (that is the panel's choice, and the right one — losing a
 // convenience should not take the catalog away), so the drift arrives as a
@@ -769,6 +779,188 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 		"the panel's price write surface name must match the pricing module")
 	assert.Equal(t, inventory.AdminName, adminui.ServiceInventoryAdmin,
 		"the panel's inventory surface name must match the inventory module")
+}
+
+// productServiceDirName is the directory holding the product module's service
+// package, the side of the filter pairing that OWNS the keys.
+const productServiceDirName = modulesDir + "/product/service"
+
+// filterConstantPrefix is the name prefix both packages give a Query filter key.
+//
+// The prefix is the pairing rule, and it works only because the two packages
+// name their copies after the same thing: the panel writes filterCategoryID for
+// the key the product module writes as filterCategoryID. That is a convention
+// and not a compiler rule, which is why the pairing is backed by
+// [pinnedPanelFilterKeys] below.
+const filterConstantPrefix = "filter"
+
+// pinnedPanelFilterKeys are the filter constants that MUST exist, under this
+// exact name, in the panel AND in the product module.
+//
+// The list is DATA and it is the half of the audit that cannot go quiet. The
+// comparison is automatic — it walks both packages and compares every filter
+// constant they both declare — and an automatic pairing shrinks WITHOUT A SOUND:
+// rename the panel's copy to filterQuery and the intersection loses a member
+// while the test stays green, which is precisely the drift being audited. Naming
+// the four here turns that rename into a failure that says which side dropped
+// the name.
+//
+// Four is what the catalog screen sends today: the product list's identity and
+// product filters, the category dropdown's narrowing, and the search box's term.
+var pinnedPanelFilterKeys = []string{
+	"filterID",
+	"filterProductID",
+	"filterCategoryID",
+	"filterSearch",
+}
+
+// TestThePanelCatalogFilterKeysAgree verifies that the filter keys the panel
+// SENDS and the ones the product provider ANSWERS TO carry the same value, by
+// reading both out of the source.
+//
+// # Why this is not an assert of two constants
+//
+// It is the shape [TestThePanelCatalogNamesAgree] cannot reach. That test binds
+// the panel's entity, link and service names to the modules' exported constants
+// at compile time; the FILTER keys have no exported side at all. The panel's
+// copies are unexported (internal/adminui/catalog.go) and so are the module's
+// (internal/modules/product/service/store.go). The module exports exactly one
+// filter key, [productsvc.FilterSalesChannelIDs], and its godoc gives the reason:
+// a caller OUTSIDE the module passes that one, so the name is part of a contract
+// somebody else holds. None of these four has such a caller — the panel is not a
+// second module, it is a screen reading the same read layer as everyone else —
+// so exporting them would publish four names the module would then have to keep,
+// for the sake of a test.
+//
+// Go leaves exactly one way to compare two unexported constants of two packages,
+// and it is the one [exportedConfigConstants] already uses for the same reason:
+// constants DO NOT EXIST at run time — the compiler inlines them — so the audit
+// looks where the compiler looks, at the source.
+//
+// # What the drift costs, and why the run-time refusal is not enough
+//
+// The provider refuses a filter it does not recognize with errors.Invalid (ADR
+// 0004) and the panel turns that into a 500, so a drift is NOT silent. It is
+// also not seen until somebody uses the control: a filter key is sent only when
+// the filter is applied, so a renamed "q" leaves the catalog screen answering
+// 200 for every operator who never types in the box, and breaks for the one who
+// does. The panel cannot import the module to close that gap (ADR 0011) and it
+// should not: the point of the read layer is that the two sides meet by NAME.
+// What is left is to compare the names outside both packages, which is this
+// package's job.
+//
+// # The cost of pairing by name, stated rather than assumed
+//
+// Two packages are paired on an identifier convention, and that has one real
+// consequence: the day the panel gives an unrelated screen a filter constant
+// whose NAME collides with a product filter of a different meaning, this test
+// fails and demands a rename. That is accepted deliberately. The panel's other
+// screens name their keys after the module that owns them (the sales report's
+// filterPlacedFrom and filterPlacedTo have no counterpart in product), so a
+// homonym would itself be a naming defect worth stopping for.
+//
+// The pairing does NOT reach the record FIELD names the same screen reads. The
+// module writes those as literal keys in its record builder — there is no
+// constant on that side to read — and their drift is the genuinely silent corner
+// recorded in [TestThePanelCatalogNamesAgree].
+func TestThePanelCatalogFilterKeysAgree(t *testing.T) {
+	t.Parallel()
+
+	panel := filterKeyConstants(t, adminUIDirName)
+	module := filterKeyConstants(t, productServiceDirName)
+
+	for _, name := range pinnedPanelFilterKeys {
+		if _, found := panel[name]; !found {
+			t.Errorf("%s declares NO constant named %s any more.\n"+
+				"The pairing below is by name, so a rename does not fail it — it silently "+
+				"stops comparing that key. If the panel no longer sends the filter, delete "+
+				"the name from pinnedPanelFilterKeys; if it renamed it, rename it here too.",
+				adminUIDirName, name)
+		}
+		if _, found := module[name]; !found {
+			t.Errorf("%s declares NO constant named %s any more.\n"+
+				"Same reason as the panel side: the comparison would go quiet rather than red.",
+				productServiceDirName, name)
+		}
+	}
+
+	for _, name := range slices.Sorted(maps.Keys(panel)) {
+		owned, shared := module[name]
+		if !shared {
+			continue
+		}
+		ours := panel[name]
+
+		assert.Equal(t, owned.value, ours.value,
+			"the panel sends %s as %q (%s) while the product provider answers to %q (%s).\n"+
+				"The panel reaches the read layer BY NAME (ADR 0011) and cannot import the "+
+				"module, so nothing but this comparison binds the two spellings. A drifted key "+
+				"is refused by the provider (ADR 0004) and becomes a 500 — but only for the "+
+				"operator who uses that control.",
+			name, ours.value, repoPath(ours.position.String()),
+			owned.value, repoPath(owned.position.String()))
+	}
+}
+
+// filterKeyConstant is one filter key as it stands in a package's source.
+type filterKeyConstant struct {
+	// value is the string the constant is declared with.
+	value string
+	// position is where it is declared; it goes into the failure message so the
+	// reader does not have to grep for two names in two trees.
+	position token.Position
+}
+
+// filterKeyConstants reads a package's filter key constants out of its source,
+// mapped by identifier name.
+//
+// Only string LITERALS are collected. A constant declared from another constant
+// (the panel's fieldAvailable, which is FieldAvailableQuantity) carries its value
+// through a binding that already cannot drift, and folding such expressions here
+// would mean writing a constant evaluator to re-derive what the compiler has
+// checked.
+func filterKeyConstants(t *testing.T, dirName string) map[string]filterKeyConstant {
+	t.Helper()
+
+	fset := token.NewFileSet()
+	found := map[string]filterKeyConstant{}
+
+	for _, file := range parseDir(t, fset, filepath.Join(repoRoot, dirName), false) {
+		for _, decl := range file.tree.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				value, ok := spec.(*ast.ValueSpec)
+				if !ok || len(value.Names) != len(value.Values) {
+					continue
+				}
+				for i, name := range value.Names {
+					if !strings.HasPrefix(name.Name, filterConstantPrefix) {
+						continue
+					}
+					literal, ok := value.Values[i].(*ast.BasicLit)
+					if !ok || literal.Kind != token.STRING {
+						continue
+					}
+					text, err := strconv.Unquote(literal.Value)
+					require.NoError(t, err, "%s: %s could not be read as a string",
+						repoPath(fset.Position(name.Pos()).String()), name.Name)
+					found[name.Name] = filterKeyConstant{
+						value:    text,
+						position: fset.Position(name.Pos()),
+					}
+				}
+			}
+		}
+	}
+
+	require.NotEmpty(t, found,
+		"no constant named %s* at all was found in %s; the walk must be broken — "+
+			"an audit that finds nothing stays green in a vacuum", filterConstantPrefix, dirName)
+
+	return found
 }
 
 // TestThePanelStatusOptionsAgreeWithTheModules verifies that the statuses the

@@ -927,6 +927,163 @@ func TestTheReadLayerAnswersTheTaxonomyFiltersAgainstTheDatabase(t *testing.T) {
 		"combining an id with a taxonomy filter should be refused: %v", err)
 }
 
+// TestTheReadLayerSearchesTheTitleAgainstTheDatabase proves the free-text
+// filter where it is actually defined.
+//
+// The provider's unit tests run against the in-memory store, and that store
+// matches with strings.ToLower + strings.Contains — a Go answer to a question
+// only PostgreSQL answers in production. A fake agreeing with itself proves
+// nothing about ILIKE: whether the pattern really folds case, whether it really
+// matches in the MIDDLE of a title rather than at its start, and whether the
+// term reaches parameter $4 at all are properties of the SQL in
+// repository/saleschannel.go.
+//
+// The token is unique per run because the tests share one database: a fixed
+// word like "shirt" would be matched by rows an unrelated test left behind, and
+// the assertions would then pass or fail depending on what ran before them.
+//
+// # The fixture is ASCII, deliberately
+//
+// The word appears in two cases and never outside ASCII. A non-ASCII fixture
+// would not test this module at all — it would test the CLUSTER's CTYPE, which
+// folds ASCII only when the cluster was created with --locale=C (see
+// core/db/casefold.go and ADR 0015). This test would then pass or fail
+// depending on how the container that runs it was initialized, and it would
+// still say nothing about the filter dispatch it exists to cover.
+func TestTheReadLayerSearchesTheTitleAgainstTheDatabase(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+	products := service.NewProductProvider(repository.New(testPool.Pool()))
+
+	linen, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Search linen", Handle: uniqueHandle("search-linen")})
+	require.NoError(t, err)
+
+	// The token carries the case difference: one title spells it in upper case,
+	// the other in lower. A fold applied to a single side answers one of the two
+	// searches below and fails the other.
+	token := uniqueHandle("qsearch")
+	upperTitle := "Blue " + strings.ToUpper(token) + " coat"
+	lowerTitle := "Red " + token + " coat"
+
+	published, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle:      uniqueHandle("search-published"),
+		Title:       upperTitle,
+		Status:      models.StatusPublished,
+		CategoryIDs: []string{linen.ID},
+	})
+	require.NoError(t, err)
+	draft, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle: uniqueHandle("search-draft"),
+		Title:  lowerTitle,
+		Status: models.StatusDraft,
+	})
+	require.NoError(t, err)
+
+	byLower, err := products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"q": token},
+	})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{published.ID, draft.ID}, providerIDs(t, byLower),
+		"the read layer's search did not reach the ILIKE pattern")
+
+	byUpper, err := products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"q": strings.ToUpper(token)},
+	})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{published.ID, draft.ID}, providerIDs(t, byUpper),
+		"ILIKE folds both sides; a match found in one direction only is not case-insensitive")
+
+	// A fragment cut out of the MIDDLE of the token: it is neither the start of
+	// the title nor a whole word in it, so an anchored pattern ('term%') and a
+	// word-boundary match both return nothing here.
+	middle := token[3 : len(token)-3]
+	byFragment, err := products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"q": middle},
+	})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{published.ID, draft.ID}, providerIDs(t, byFragment),
+		"the leading wildcard is what makes this a substring search")
+
+	// The same question asked of the module's own listing. The two have to give
+	// ONE answer; that is the whole point of the read layer spelling the filter
+	// the way the storefront spells it.
+	fromService, err := svc.ListProducts(ctx, service.ListProductsOptions{Search: &token})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, modelIDs(fromService.Items), providerIDs(t, byLower),
+		"the panel and the shop are searching the same catalog with two different answers")
+
+	withStatus, err := products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"q": token, "status": string(models.StatusPublished)},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{published.ID}, providerIDs(t, withStatus),
+		"the draft product matching the same term was not filtered out")
+
+	withCategory, err := products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"q": token, "category_id": linen.ID},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{published.ID}, providerIDs(t, withCategory),
+		"the search and the category EXISTS subquery should narrow together")
+
+	// A term no title carries. An "IS NULL OR" predicate written the wrong way
+	// round degrades into no filter at all — which returns the whole catalog and
+	// looks like a wide answer rather than a broken one.
+	none, err := products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"q": uniqueHandle("qmissing")},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, none, "a term no product carries returned products")
+
+	// The normalization holds against the real store too, and here it is not a
+	// matter of taste: a whitespace term handed to SQL as it came becomes
+	// ILIKE '%   %' and returns an EMPTY catalog, while an empty one becomes
+	// ILIKE '%%' and returns all of it. Both are silent. The rule is that
+	// neither is a criterion, so the answer must be the unfiltered page.
+	unfiltered, err := products.List(ctx, query.ListOptions{})
+	require.NoError(t, err)
+	for _, term := range []string{"", "   "} {
+		blank, blankErr := products.List(ctx, query.ListOptions{
+			Filters: map[string]any{"q": term},
+		})
+		require.NoError(t, blankErr, "a term of %q is not an error; it is not a criterion", term)
+		assert.ElementsMatch(t, providerIDs(t, unfiltered), providerIDs(t, blank),
+			"a term of %q must answer exactly what no term answers", term)
+	}
+
+	// A padded term is TRIMMED rather than passed through: '%  <token>  %'
+	// matches neither of the two titles, both of which carry the token between
+	// single spaces.
+	padded := "  " + token + "  "
+	byPadded, err := products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"q": padded},
+	})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{published.ID, draft.ID}, providerIDs(t, byPadded),
+		"the term that reached the query was not the trimmed one")
+
+	// And the refusal holds against the real store as well. It is a decision of
+	// the dispatch, not of the fake: on the id path the title would be matched
+	// by a Go rule instead of the database's, and the two answer differently
+	// outside ASCII (see core/db/casefold.go).
+	_, err = products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"id": published.ID, "q": token},
+	})
+	require.Error(t, err)
+	assert.True(t, coreerrors.IsInvalid(err),
+		"combining an id with the search should be refused: %v", err)
+
+	// A whitespace term is normalized away BEFORE the refusal is decided, so it
+	// cannot refuse anything: an id filter beside a cleared search box is a
+	// perfectly answerable request.
+	cleared, err := products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"id": published.ID, "q": "  "},
+	})
+	require.NoError(t, err, "a whitespace term is not part of the request")
+	assert.Equal(t, []string{published.ID}, providerIDs(t, cleared))
+}
+
 // TestTheCategoryProviderReadsTheRealTable proves the vocabulary entity against
 // the database.
 //

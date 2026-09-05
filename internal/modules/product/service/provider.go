@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"slices"
+	"strings"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/query"
@@ -68,17 +69,54 @@ func (p *productProvider) Entity() string { return EntityProduct }
 
 // List returns the product records.
 //
-// Supported filters: status, handle, collection_id, category_id, tag_id and
+// Supported filters: status, handle, collection_id, q, category_id, tag_id and
 // id/ids. An unrecognized filter returns errors.Invalid (ADR 0004): ignoring it
 // silently would leave the client believing that an unfiltered list — one it
 // thinks it has filtered — is the right answer.
 //
-// The text search the storefront listing accepts ("q",
-// [StoreListOptions].Search) is deliberately NOT among them. The field is wired
-// end to end in the repository and adding the case would cost two lines, but
-// this surface gets a filter when a caller asks a question with it; a filter
-// opened ahead of its consumer is a promise whose correctness nothing exercises
-// (the same rule the channel filter of [variantProvider.List] is held to).
+// # The free-text search
+//
+// "q" was the last filter of the storefront's set this surface could not
+// answer, and it is spelled the storefront's way (see [filterSearch]). The
+// predicate is NOT written here: the term becomes
+// [repository.ProductFilter].Search and the shared filter body turns it into
+// title ILIKE '%' || $4::text || '%' for the listing AND for the count (see
+// repository/saleschannel.go). One definition, two queries, no copy in Go.
+//
+// The consumer was already waiting. The panel reaches the catalog only through
+// Query (ADR 0011), so while this case did not exist a shopper could search the
+// shop and the operator maintaining that same catalog could only page through
+// it — the screen carried no search box because the read layer answered no such
+// filter (internal/adminui/catalog.go).
+//
+// # An empty or whitespace-only term builds NO filter
+//
+// The value is trimmed first, and when nothing survives the trim no filter is
+// built at all: the caller gets the page it would have got had it not sent the
+// key. That is the "matches everything" direction of the two, and it is picked
+// deliberately.
+//
+// Handing the value on as it came is what the two wrong answers look like, and
+// they point in OPPOSITE directions. An empty string reaches SQL as
+// ILIKE '%%' and matches every row: a caller that believes it searched is shown
+// the whole catalog. A run of spaces reaches SQL as ILIKE '%   %' and matches
+// only the titles carrying that run, which is to say nothing: a caller that
+// searched for nothing is shown an empty shop. Neither answer says a word about
+// what happened, and no caller can tell which of the two it got.
+//
+// Between them, "no filter" is the answer this module ALREADY gives to the same
+// input everywhere else: REST counts an empty parameter as not given
+// (stringParam in api/api.go), GraphQL trims the argument down to nil
+// (trimmedPointer in graph/resolver.go), and TestEmptyTextArgumentBuildsNoFilter
+// in graph/schema_test.go holds EVERY text argument of the storefront listing to
+// that rule — including, deliberately, the ones added after it was written. A
+// read layer that answered "nothing" to a search box an operator had just
+// cleared, while the shop answered "the catalog", would be one question with two
+// answers.
+//
+// Trimming is not only about the empty case: " shirt " would reach SQL as
+// '% shirt %' and miss the product whose title merely ENDS in "shirt". What
+// travels is the trimmed term, exactly as on the other two surfaces.
 //
 // # The taxonomy filters
 //
@@ -131,6 +169,105 @@ func (p *productProvider) Entity() string { return EntityProduct }
 // when the answer would have been empty would be a filter that works sometimes,
 // and the caller could not tell which time it got.
 //
+// # Why the SEARCH cannot be combined with id/ids either
+//
+// Same answer, DIFFERENT reason, and the difference has to be written down
+// because the obvious objection to it is correct: unlike a category membership,
+// the title IS a scalar column on [models.Product], so [productProvider.fetch]
+// could re-check it in memory beside status, handle and collection_id. Nothing
+// structural stops it.
+//
+// What stops it is that the re-check would be a SECOND definition of a
+// predicate whose first definition is in SQL — the hazard the taxonomy refusal
+// was written for — and here the two cannot be made to agree by construction.
+// ILIKE folds case the way the CLUSTER folds it: the rule comes from the CTYPE
+// the data directory was created with, which is not a constant a Go process can
+// read. The repository already knows this and probes for it at startup
+// ([github.com/bdrtr/gobit/core/db.CaseFolding], core/db/casefold.go, ADR
+// 0015). Measured on two PostgreSQL 16 clusters and on Go, uppercase in the
+// title against lowercase in the term:
+//
+//	pair                                CTYPE C   CTYPE C.UTF-8   Go ToLower+Contains
+//	"SHIRT" / "shirt"                   true      true            true
+//	U+00C7 + "OCUK" / U+00E7 + "ocuk"   FALSE     true            true
+//	U+0130 + "NCE" / "ince"             FALSE     true            true
+//
+// So on a C cluster the id path would hand back rows that the same term does
+// NOT return without the id filter, and on a C.UTF-8 one it would not: whether
+// the Go copy is right would depend on how somebody ran initdb. Those are not
+// hypothetical clusters — deploy/docker-compose.yml has carried the C.UTF-8
+// setting only since the search defect ADR 0015 records, and a locale is fixed
+// at initdb time, so every data directory created before that fix still folds
+// ASCII only. A predicate whose two implementations cannot be made to agree is
+// refused rather than half-answered.
+//
+// Three answers were rejected to get here:
+//
+//   - Re-check with strings.Contains alone. Case-SENSITIVE beside a
+//     case-INSENSITIVE SQL predicate: "shirt" finds the shirt on every path but
+//     the id one. It is the cheapest way to write the two-answers fault and it
+//     looks exactly like the three re-checks above it, which is what makes it
+//     the likely mistake rather than an unlikely one.
+//   - Re-check with strings.ToLower on both sides — what the fake store does
+//     (memstore_test.go). It agrees with SQL for ASCII, and that is precisely
+//     what makes it dangerous: every fixture in this package is ASCII, so the
+//     divergence is invisible to the tests here and shows up in a catalog with
+//     non-ASCII titles on a C-locale cluster, the deployment ADR 0015 was
+//     written about.
+//   - Push the ids into the query as one more predicate so that ONE engine
+//     answers the whole question. This is the only version with no second
+//     definition, and it is not a provider-sized change: it edits the shared
+//     filter body and both queries built on it, that is, the storefront's
+//     hottest path. If the combination ever gets a caller, that is the road —
+//     this paragraph is the note it leaves behind.
+//
+// It has no caller today: the panel's only id-filtered spec reads ONE product
+// by id.
+//
+// The refusal is decided AFTER the term is normalized, and that order is part
+// of the decision: whitespace is not a criterion (see above), so an id filter
+// arriving beside a search box the operator has just cleared is ANSWERED, not
+// refused. Refusing it would turn an empty box into an error page. Unlike the
+// value, the DATA is never consulted — id + q fails whether or not that
+// product's title matches.
+//
+// # What the cost is, measured
+//
+// The structural half was always checkable: there is NO index on title. The
+// module's schema creates a unique partial index on handle, one on status, one
+// on collection_id and the listing's own (created_at DESC, id DESC), and it
+// creates no trigram, no full-text and no expression index anywhere
+// (migrations/000001_product_init.up.sql). The pattern also carries a LEADING
+// wildcard, which no B-tree can serve even if one existed on title.
+//
+// The obvious conclusion from those two facts — "the search is a sequential
+// scan, therefore it is slow" — is HALF WRONG, and the wrong half is the half
+// that would decide what to do about it. Measured on 52,004 real products
+// (docs/catalog-search-cost.md): the listing's cost does not follow the term,
+// it follows how far down the ordering the page's last match sits. A term
+// matching almost the whole catalog is answered from the (created_at DESC,
+// id DESC) index in 0.03 ms, because the scan stops once 25 rows have passed
+// the filter and the 25th is 29 rows in. A term matching ONE product costs
+// 9.1 ms and reads all 730 pages of the table, because there is nothing to stop
+// early for. The rare search is the expensive one — the opposite of what a
+// missing index is usually read to mean, and the reason "is the search slow"
+// has no answer that does not name WHICH search.
+//
+// The count behaves differently again, and in the caller's favor: with the
+// storefront's sales channel filter on, a term matching one product takes the
+// channel-filtered count from about 74 ms DOWN to about 13 ms, because the ILIKE is
+// evaluated before the per-row visibility subquery and removes 52,003 of its
+// invocations. This surface never runs that query (it applies no channel and
+// asks for no count), but the same filter body serves it, so the number belongs
+// next to the filter rather than only next to the count.
+//
+// The written boundary is a slope, not a row count: 0.18 microseconds per
+// catalog row, linear from 10,000 rows upward, holding while the table stays in
+// memory and the rows stay as narrow as the rig's. The measurement says what
+// would end that, and it says it in one place instead of being guessed at in
+// several: this repository has already carried a godoc claiming an index was
+// used, and measurement proved it wrong.
+//
 // # The sales channel filter is NOT APPLIED here
 //
 // This surface is a CROSS-MODULE read and there is no customer request behind
@@ -170,6 +307,16 @@ func (p *productProvider) List(ctx context.Context, opts query.ListOptions) ([]q
 				return nil, err
 			}
 			filter.CollectionID = &value
+		case filterSearch:
+			// The only filter whose value is NORMALIZED rather than carried
+			// through: a term that is empty after trimming leaves Search nil,
+			// which is the same state as "the key was never sent". See
+			// [searchFilter].
+			value, err := searchFilter(key, raw)
+			if err != nil {
+				return nil, err
+			}
+			filter.Search = value
 		case filterCategoryID:
 			value, err := stringFilter(key, raw)
 			if err != nil {
@@ -198,12 +345,19 @@ func (p *productProvider) List(ctx context.Context, opts query.ListOptions) ([]q
 	// mid-walk would name category_id on one run and tag_id on the next for the
 	// same request. The order here is fixed, and a request that carries both
 	// always reports the same one.
+	//
+	// The search joins the same list and joins it LAST, so that a request which
+	// already used to be refused keeps being refused by the same name. It is
+	// read off filter.Search rather than off the map, which is what makes a
+	// whitespace term — normalized away above — no longer part of the request.
 	if len(ids) > 0 {
 		switch {
 		case filter.CategoryID != nil:
 			return nil, taxonomyWithIDs(filterCategoryID)
 		case filter.TagID != nil:
 			return nil, taxonomyWithIDs(filterTagID)
+		case filter.Search != nil:
+			return nil, searchWithIDs()
 		}
 	}
 
@@ -216,12 +370,15 @@ func (p *productProvider) List(ctx context.Context, opts query.ListOptions) ([]q
 
 // fetch reads by id if an id filter was given, and by the criteria if not.
 //
-// CategoryID and TagID cannot reach the id branch: [productProvider.List]
-// refuses that combination before calling here, and the reason — the membership
-// is not on the record this branch holds — is written out there. If a future
-// filter is added, the question to ask of it is the same one: can the criterion
-// be answered from a [models.Product] as [repository.Store.ListProductsByIDs]
-// returns it? A criterion that cannot must be refused, not skipped.
+// CategoryID, TagID and Search cannot reach the id branch: [productProvider.List]
+// refuses those combinations before calling here. The reasons are written out
+// there and they are NOT the same reason — the taxonomy membership is not on
+// the record this branch holds, while the title is on it but its match rule
+// belongs to the database. If a future filter is added, the question to ask of
+// it is in two parts: can the criterion be answered from a [models.Product] as
+// [repository.Store.ListProductsByIDs] returns it, and would answering it here
+// give the SAME verdict the SQL gives? A criterion that fails either half must
+// be refused, not skipped.
 func (p *productProvider) fetch(ctx context.Context, ids []string, filter repository.ProductFilter) ([]models.Product, error) {
 	if len(ids) == 0 {
 		return p.repo.ListProducts(ctx, filter)
@@ -551,6 +708,32 @@ func stringFilter(key string, raw any) (string, error) {
 	return value, nil
 }
 
+// searchFilter turns the free-text filter value into a search term.
+//
+// It returns nil when nothing survives the trim, and nil means the criterion is
+// NOT APPLIED — the same state the filter struct is in when the key was never
+// sent. The whole argument for that choice, and for the two silent answers it
+// keeps out, is in [productProvider.List] under "An empty or whitespace-only
+// term builds NO filter"; it is not repeated here, because a rule written twice
+// is a rule that gets fixed once.
+//
+// The returned pointer addresses the TRIMMED copy and never the caller's value:
+// handing the raw string on would push " shirt " into the ILIKE pattern, and a
+// term that is trimmed for the emptiness test but not for the query would be
+// the worst of both — the check would pass and the match would still be made
+// against the padding.
+func searchFilter(key string, raw any) (*string, error) {
+	value, err := stringFilter(key, raw)
+	if err != nil {
+		return nil, err
+	}
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, nil
+	}
+	return &trimmed, nil
+}
+
 // boolFilter turns a filter value into a boolean.
 //
 // ONLY a real bool is accepted. The strings "true" and "false" were left out on
@@ -608,6 +791,23 @@ func taxonomyWithIDs(key string) error {
 		"filter %q cannot be combined with %q or %q: on the id path the category and tag "+
 			"membership is not read, so the filter could not be applied", key, filterID, filterIDs).
 		WithDetails(filterDetails(EntityProduct, key))
+}
+
+// searchWithIDs builds the typed error of the refused q + id combination.
+//
+// It is a SEPARATE constructor from [taxonomyWithIDs] although the two produce
+// the same error kind and the same details shape, and the reason is the
+// MESSAGE: the taxonomy refusal says the membership is not read on the id path,
+// which is true of a category and false of a title. Reusing that sentence here
+// would hand the caller an explanation that does not describe its request, and
+// an explanation that does not fit is worse than none — the reader goes looking
+// for a membership that has nothing to do with what it asked.
+func searchWithIDs() error {
+	return errors.Invalid(codeInvalidInput,
+		"filter %q cannot be combined with %q or %q: the title match is defined by the "+
+			"database's ILIKE, and re-checking it in Go on the id path would answer with a "+
+			"different case rule", filterSearch, filterID, filterIDs).
+		WithDetails(filterDetails(EntityProduct, filterSearch))
 }
 
 // unsupportedFilter builds the typed error for an unrecognized filter.

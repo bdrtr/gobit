@@ -82,6 +82,26 @@ const (
 	// bound at compile time; the protection is the read layer's refusal of an
 	// unknown filter, which [UI.catalogFailure] turns into a loud 500.
 	filterCategoryID = "category_id"
+
+	// filterSearch narrows a product listing to the ones whose title matches
+	// free text.
+	//
+	// The spelling is the STOREFRONT's for the same reason [filterCategoryID]'s
+	// is, and here it is the harder sell: the shop reads "q" off its own query
+	// string (internal/modules/product/api/store.go), the provider answers to
+	// that word, and "search" — which reads far better on its own — would mean
+	// the two surfaces of one installation asking one question under two names,
+	// with a translation table nothing verifies. The panel's own address bar is
+	// where the readable word belongs instead; see [paramSearch].
+	//
+	// It is unexported like its neighbors, with the same consequence: no
+	// compile-time pair, and the protection is the read layer's refusal of an
+	// unknown filter turned into a loud 500 by [UI.catalogFailure]. The
+	// refusal is weaker HERE than for the category, and the difference is worth
+	// naming rather than assuming: a filter is only sent when it is applied, so
+	// a rename of this word is invisible until somebody actually types in the
+	// box. It is loud on the first SEARCH, not on the first request.
+	filterSearch = "q"
 )
 
 // paramCategory is the query parameter carrying the chosen category.
@@ -93,6 +113,23 @@ const (
 // link. The two names meet in exactly one place, [UI.listProducts], where the
 // parameter becomes [filterCategoryID].
 const paramCategory = "category"
+
+// paramSearch is the query parameter carrying the text typed in the search box.
+//
+// It is the PANEL's name and not the provider's, exactly like [paramCategory]:
+// the address bar is read, edited and pasted into a message by people, and
+// "?search=coffee" says what it does while "?q=coffee" is a thing to look up.
+// The provider's own spelling stays in [filterSearch] and the two meet in
+// [UI.listProducts] and nowhere else, so the day the read layer renames its
+// filter, every bookmark an operator holds keeps working.
+//
+// The word is repeated BY HAND in products.gohtml, on the box's name attribute
+// and in the paging links, because a template is handed data and not constants.
+// That repetition is the same silent-divergence risk [paramCategory] already
+// carries and it is covered the same way: the tests drive the screen through
+// its own query string and read the spec that came out, so a box named one
+// thing and read as another fails rather than quietly filtering nothing.
+const paramSearch = "search"
 
 // The record fields the catalog reads.
 const (
@@ -157,6 +194,47 @@ const categoriesInFilter = 200
 // and no notice, which is precisely the silent state this control is built to
 // avoid.
 const categoryFilterKey = "CategoryFilter"
+
+// searchFilterKey is the data key the product list's search box is read from.
+//
+// It is a constant for the reason [categoryFilterKey] is: the template looks it
+// up BY NAME and a typo does not fail. It renders the box EMPTY, and an empty
+// box over a narrowed list is exactly the screen this control exists to
+// prevent — the operator retypes what they already searched for, or reads the
+// short list as the whole catalog.
+const searchFilterKey = "SearchFilter"
+
+// searchFilter is everything the product list's search box needs.
+//
+// One field behind a struct is more than a bare string under a data key, and
+// the bare string was rejected on purpose. The template asks the same question
+// of BOTH narrowings in four places — the notice above the table, the two
+// paging links and the empty-list sentence — and a screen where one of them
+// reads ".CategoryFilter.Applied" while the other reads ".Search" invites the
+// next editor to treat the two as different kinds of state. That is how one of
+// them ends up carried into a paging link and the other does not, which is the
+// bug this whole screen keeps being about.
+//
+// It carries no "unavailable" or "unknown" fact and could not: unlike a
+// category, a search box has no vocabulary behind it, so nothing can be read to
+// fill it and nothing about the typed text can be checked. The only thing that
+// can be wrong with a search is that it matched nothing, and that is a fact of
+// the LIST — the empty-list sentence tells it — not of the control.
+type searchFilter struct {
+	// Term is the text the operator typed, trimmed. Empty means the list is not
+	// searched at all; see [productFilters] for why an empty term never becomes
+	// a filter.
+	Term string
+}
+
+// Applied reports whether the list is narrowed by a search.
+//
+// The template asks this rather than testing Term for emptiness, for the reason
+// [categoryFilter.Applied] exists: the one question the box, the notice, the
+// paging links and the empty-list message all turn on is answered in ONE place.
+func (f searchFilter) Applied() bool {
+	return f.Term != ""
+}
 
 // categoryOption is one entry of the category dropdown.
 type categoryOption struct {
@@ -265,7 +343,8 @@ type variantRow struct {
 	Stock string
 }
 
-// listProducts renders the product list, optionally narrowed to one category.
+// listProducts renders the product list, optionally narrowed by a category, by
+// a search, or by both.
 //
 // It reads through the cross-module read layer and NOT through a module's
 // service (ADR 0011): the panel knows no module, so a Graph call addressed by
@@ -283,11 +362,19 @@ type variantRow struct {
 // closes; the provider learned category_id on the read layer, and the two
 // surfaces now spell it the same way (see [filterCategoryID]).
 //
-// The remaining asymmetry is honest and named: the storefront also takes a tag
-// and a text search, and this screen offers neither. A category is a tree an
-// operator maintains and can be offered as a list of names; a tag is free text
-// with no such control, and a search box on the panel would need a filter the
-// provider does not answer yet.
+// The text search closed the second half of that gap the same way: the shop
+// could be searched and the panel could only be paged through, so an operator
+// looking for one product in a catalog of tens of thousands walked it
+// [productsPerPage] rows at a time. The provider learned the storefront's own
+// "q" (see [filterSearch]) and this screen spells it identically.
+//
+// The remaining asymmetry is honest and named: the storefront also takes a TAG
+// and this screen does not offer one. A category is a tree an operator
+// maintains and can be offered as a list of names, and a search needs no
+// vocabulary at all; a tag is free text with neither property — a dropdown of
+// every tag in the shop is not a control, and a tag typed by hand would be an
+// identifier an operator does not know, which is the same as not having the
+// filter.
 //
 // # Two reads, and why the second one cannot fail the page
 //
@@ -310,37 +397,86 @@ type variantRow struct {
 // without the dropdown there is otherwise no way back to the full list but
 // editing the address.
 //
-// # The filter travels in the address
+// # The filters travel in the address, in ONE form
 //
-// It is a GET form writing [paramCategory] into the query string, following the
-// sales report: a narrowed catalog is a view an operator bookmarks and sends to
-// somebody else, and state kept in a session or a POST body cannot be sent
-// anywhere. The paging links carry it too, because a "next page" that dropped
-// the category would move the reader into the unfiltered catalog without
-// saying so.
+// Both narrowings are a GET form writing [paramCategory] and [paramSearch] into
+// the query string, following the sales report: a narrowed catalog is a view an
+// operator bookmarks and sends to somebody else, and state kept in a session or
+// a POST body cannot be sent anywhere. The paging links carry both, because a
+// "next page" that dropped either one would move the reader into a wider
+// catalog without saying so.
 //
-// An EMPTY value is not a filter. The parameter is trimmed and an empty result
-// leaves Filters unset rather than passing "" through: the module measured this
-// exact class on its own list road (TestEmptyTextArgumentBuildsNoFilter in
-// internal/modules/product/graph) and the cost is silent — an empty identity
-// filters by an identity nothing has and returns an empty catalog that looks
-// like an empty shop. It is not a theoretical shape here either: the "All
-// categories" entry of the dropdown submits exactly that.
+// They are ONE form and not two, which is what makes them compose. Two forms
+// would each submit only their own control, so choosing a category would
+// discard the search the operator had just typed and searching would discard
+// the category — and it would discard them by SUBMITTING, that is, the screen
+// would answer 200 with a wider list and nothing on it to say what had been
+// dropped. Searching inside a category is the request that made this box worth
+// building, so the two live in one form and reach [productFilters] together.
+//
+// # What the two narrowings cost, measured
+//
+// They are not the same price, and neither price is visible on the screen.
+// Measured on a 52,004-product catalog through the same read layer this handler
+// calls, with no count query and no sales channel — that is, this screen's exact
+// shape (docs/catalog-search-cost.md):
+//
+//	unnarrowed page                             0.03 ms
+//	a term matching almost every product        0.03 ms
+//	a term matching ONE product                  9.1 ms
+//	a broad term on the LAST page of paging     12.4 ms
+//	any term composed with a category           29 ms or more
+//
+// The order of that list is the finding, and it is the reverse of the intuition
+// the missing index invites. The listing is ordered by (created_at DESC,
+// id DESC) and asks for [productsPerPage] rows plus one, so a term that matches
+// nearly everything is answered by walking that index and stopping after 26
+// matches — the search is free. A term that matches one product has nothing to
+// stop the walk, so the database reads the whole table. The operator typing a
+// product name to find it is therefore in the EXPENSIVE case every time, and
+// the operator typing two letters is in the cheap one.
+//
+// The fourth row is the OFFSET's cost and not the search's: the same last page
+// with no term at all is 5.2 ms, because paging by offset makes the database
+// walk and discard everything it skips, and the term is then evaluated on each
+// row walked past. There is no cheaper option on this road: the read layer's
+// list options carry a limit and an offset and NOTHING ELSE (see
+// [query.ListOptions]), so the keyset cursor the product module offers its own
+// callers is not reachable from here at all — reaching it would mean importing
+// the module, which ADR 0011 forbids. That is a real cost of the fourth tree
+// and it is worth naming rather than discovering: the deep page is the one
+// place where the panel's read is structurally more expensive than the
+// storefront's, and no filter this screen sends can change it.
+//
+// Nothing on this screen has to change for that. Ten milliseconds is a page an
+// operator waits on once per form submission, and the count that would dominate
+// it is not run here at all (see below). The number is written down because the
+// next question asked of this screen — a type-ahead that searches per keystroke,
+// or a shop ten times this size — is answered by it and not by intuition. The
+// last row is the one to watch: composing a category with the search costs at
+// least 29 ms because the category predicate cannot narrow the scan and runs
+// once per catalog row, and it is a FLOOR rather than a measurement, since the
+// measured catalog carries no category memberships at all.
+//
+// An EMPTY value is not a filter, for either of them. The parameters are
+// trimmed and an empty result is left OUT of the map rather than passed through
+// (see [productFilters]); the module measured this exact class on its own list
+// road (TestEmptyTextArgumentBuildsNoFilter in internal/modules/product/graph)
+// and the cost is silent. Neither empty is a theoretical shape here: the "All
+// categories" entry of the dropdown submits an empty category, and an untouched
+// box submits an empty term on every single use of the form.
 func (u *UI) listProducts(w http.ResponseWriter, r *http.Request) {
 	page := pageNumber(r.URL.Query().Get("page"))
 	chosen := strings.TrimSpace(r.URL.Query().Get(paramCategory))
+	typed := strings.TrimSpace(r.URL.Query().Get(paramSearch))
 
-	spec := query.GraphSpec{
-		Entity: EntityProduct,
-		Fields: []string{fieldID, fieldTitle, fieldHandle, fieldStatus, fieldThumbnail, fieldUpdatedAt},
-		Limit:  productsPerPage + 1,
-		Offset: (page - 1) * productsPerPage,
-	}
-	if chosen != "" {
-		spec.Filters = map[string]any{filterCategoryID: chosen}
-	}
-
-	records, err := u.catalog.Graph(r.Context(), spec)
+	records, err := u.catalog.Graph(r.Context(), query.GraphSpec{
+		Entity:  EntityProduct,
+		Fields:  []string{fieldID, fieldTitle, fieldHandle, fieldStatus, fieldThumbnail, fieldUpdatedAt},
+		Filters: productFilters(chosen, typed),
+		Limit:   productsPerPage + 1,
+		Offset:  (page - 1) * productsPerPage,
+	})
 	if err != nil {
 		u.catalogFailure(w, r, err, "The product list could not be read.")
 		return
@@ -349,6 +485,12 @@ func (u *UI) listProducts(w http.ResponseWriter, r *http.Request) {
 	// One extra record is requested so "is there a next page" is answered
 	// without a second, counting query — a count over a growing catalog is the
 	// expensive half of pagination and this screen does not need the total.
+	//
+	// Measured at 52,004 products, this screen's own shape: the page above is
+	// 0.03 ms and the count it does not run is 3.3 ms, so the extra row buys
+	// back roughly a hundredfold. The count is the half that cannot stop early,
+	// which is why it grows with the catalog while the page does not
+	// (docs/catalog-search-cost.md).
 	hasNext := len(records) > productsPerPage
 	if hasNext {
 		records = records[:productsPerPage]
@@ -363,10 +505,65 @@ func (u *UI) listProducts(w http.ResponseWriter, r *http.Request) {
 		titleKey:          "Products",
 		"Products":        rows,
 		categoryFilterKey: categoryFilterOf(chosen, u.categoryList(r.Context())),
+		// The TRIMMED term goes to the screen, not the raw parameter: the box
+		// is refilled from this value, and refilling it with the spaces the
+		// operator happened to type would show a box whose contents no longer
+		// match the filter that was applied.
+		searchFilterKey: searchFilter{Term: typed},
 	}
 	addPaging(data, page, hasNext, ProductsPath)
 
 	u.templates.render(w, r, http.StatusOK, "products.gohtml", data)
+}
+
+// productFilters builds the read layer's filter map out of the two narrowings
+// the address can carry.
+//
+// Both values arrive TRIMMED from [UI.listProducts]; what is decided here is
+// the empty case, and it is decided identically for the two of them — an empty
+// value is left OUT of the map rather than passed through. What that costs is
+// different for each, and neither cost is visible on the screen that pays it:
+//
+//   - An empty category filters by an identity nothing has, so the answer is an
+//     empty table that reads as an empty shop.
+//   - An empty term is the opposite and no better: it narrows NOTHING. The
+//     provider normalizes a blank one away, and the predicate underneath it is
+//     a "title ILIKE '%' || term || '%'" that every title satisfies anyway
+//     (internal/modules/product/repository/saleschannel.go), so by either route
+//     the rows are the whole catalog. The screen is what would lie about them —
+//     the notice above the table would say the list was narrowed, every paging
+//     link would carry a filter nobody asked for, and an empty page would be
+//     blamed on a search nobody typed.
+//
+// The provider's own normalization is not what this decision rests on, and the
+// panel does not lean on it. The screen's copy of the rule exists because the
+// screen has its own state to keep honest: the read layer could drop a blank
+// term and the panel would still be showing a search box, a notice and two
+// paging links that all claim a narrowing that never reached the query.
+//
+// The map is nil when neither is applied rather than empty. The read layer
+// treats the two the same, but the specs this package builds are read back by
+// its own tests, and "this screen sent no filters at all" is the fact those
+// tests assert on.
+//
+// It is a function rather than four lines inside the handler because the rule
+// has to hold for each key ALONE and for the two TOGETHER, which is a table a
+// test can walk, and because the composition is the part that breaks: a search
+// written into the spec by REPLACING Filters instead of adding to it would drop
+// the category silently and show a wider catalog than the address describes.
+func productFilters(category, search string) map[string]any {
+	filters := map[string]any{}
+	if category != "" {
+		filters[filterCategoryID] = category
+	}
+	if search != "" {
+		filters[filterSearch] = search
+	}
+	if len(filters) == 0 {
+		return nil
+	}
+
+	return filters
 }
 
 // categoryList reads the category vocabulary the product filter is built from.

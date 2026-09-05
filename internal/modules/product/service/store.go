@@ -37,6 +37,22 @@ const (
 	filterCategoryID = "category_id"
 	filterTagID      = "tag_id"
 
+	// filterSearch is the product provider's free-text search over the title,
+	// and it carries the storefront's spelling for the same reason its two
+	// neighbors do: "q".
+	//
+	// Both storefront surfaces already read that exact word — REST off the
+	// query string (api/store.go, stringParam(r, "q")) and GraphQL as the
+	// argument of the same name (graph/resolver.go) — and both hand it to
+	// [StoreListOptions].Search, which becomes [repository.ProductFilter].Search
+	// and finally the ILIKE of the shared filter body. A single letter is not a
+	// self-explanatory name and "search" or "title" would read better here; what
+	// they would cost is a THIRD name for one concept, so that the panel and the
+	// shop — one installation, one operator, one URL that gets copied from one
+	// to the other — would need a translation table that nothing verifies. The
+	// name in use wins over the better name.
+	filterSearch = "q"
+
 	// filterParentID walks the category tree one level at a time; it is the
 	// same word the storefront's category endpoint reads (see api/store.go).
 	filterParentID = "parent_id"

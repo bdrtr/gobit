@@ -40,6 +40,29 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltildi
 
+- **`make load-test` BOŞ bir katalog ölçüyordu** (D14) — ve bu, D11'in bir kat
+  altı.
+
+  D11 hedefin testi yeniden KOŞMASINI sağladı; bu, koşan testin ne yaptığı.
+  Koşum ortamı bölgeleri, vergi verilerini, bir kimliği ve bir stok lokasyonunu
+  yaratıyor ve TEK BİR ÜRÜN yaratmıyor; hedef de yalnızca bu testi seçtiği için
+  başka hiçbir dosyanın verisi koşmuyor. Sonuç: vitrin listelemesi boş sayfa
+  döndürüyor, sayım hiçbir şey saymıyor ve hedef yeşil bir istek/saniye satırı
+  basıyor. Sınıf D11'inkiyle aynı — hiçbir şey görmeyen bir denetim ile geçen
+  bir denetim birbirinden ayırt edilemez — ama boşluk VERİDE, yani hiçbir
+  seçici kapısının bakamayacağı yerde.
+
+  Test artık ölçtüğü şeyi kendisi kuruyor: düzeneği yeniden kuran üretecin aynısıyla
+  200 ürün, kendi mintlediği bir satış kanalına atanmış (yük verisi paketteki
+  diğer vitrin senaryolarına sızmasın diye), ve gövdesinde ürün taşımayan bir 200
+  artık BAŞARISIZLIK sayılıyor (`internal/e2e/load_test.go`).
+
+  Paylaşım tek yönlü bir kolaylık değil: seed eden SQL başka modüllerin
+  tablolarını adlandırıyor ve iki SQL kapısı da yalnızca `internal/modules`
+  altını okuyor (D10), yani o SQL'i hiçbir mimari kapı görmüyor. Bir
+  migration'ın yeniden adlandırdığı sütun BURADA, adlandıran commit'te düşüyor —
+  bir yıl sonra düzeneği kurmayı deneyenin karşısında değil.
+
 - **`make load-test` hiçbir şey ölçmüyordu — ve yeşil görünüyordu.**
 
   Reçetedeki seçici `-run TestTemelYukAltindaDogruKalir` idi ve o ad depoda
@@ -184,6 +207,170 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Panelin kataloğunda artık ARAMA KUTUSU var: okuma katmanı `q`'yu öğrendi —
+  ve maliyeti 52.004 üründe ÖLÇÜLDÜ** (B2'nin son süzgeci, D12'nin kalan yarısı).
+
+  Aynı günün ikinci yarısı buydu. Kategori süzgeci geldiğinde geriye tek bir fark
+  kalmıştı: vitrin listelemesi metin araması yapıyor, okuma katmanının `product`
+  sağlayıcısı yapmıyordu. Yani dükkânın MÜŞTERİSİ katalogda arayabiliyor,
+  kataloğu tutan OPERATÖR arayamıyordu — panel bir modülü import edemez (ADR
+  0011), tek yolu okuma katmanıdır.
+
+  **Süzgecin kendisi SIFIR SQL istedi.** Terim `ProductFilter.Search` alanına
+  gidiyor ve paylaşılan süzgeç gövdesi onu hem listelemede hem SAYIMDA
+  `title ILIKE '%' || $4 || '%'` yapıyor: tek tanım, iki sorgu, Go'da yüklem yok.
+  İş, yazılacak koddan çok verilecek kararlardaydı.
+
+  **Ad "q", çünkü vitrinin kendi adı o** (REST'te sorgu dizesi, GraphQL'de aynı
+  adlı argüman). "search" tek başına daha iyi okunurdu; bedeli tek kavrama
+  ÜÇÜNCÜ bir ad — panel ile dükkân TEK kurulumdur ve aralarında hiçbir şeyin
+  doğrulamadığı bir çeviri tablosu kalırdı. Panelin ADRES ÇUBUĞU ise ayrı bir
+  karar: orada `?search=` yazıyor, çünkü bir yer imi bir sürümden uzun yaşar ve
+  URL'yi insan okur. İki ad tek bir yerde, panelin listeleme fonksiyonunda
+  buluşuyor (`internal/adminui/catalog.go`).
+
+  **Boş ya da yalnızca boşluktan oluşan terim HİÇ SÜZGEÇ DEĞİL.** Ham geçirmenin
+  iki yanlışı TERS yönlere bakıyor: `''` SQL'e `ILIKE '%%'` olarak varır ve her
+  satırı eşler (arama yaptığını sanan istemciye bütün katalog), `'   '` ise
+  hiçbirini (hiçbir şey aramamış olana boş dükkân). İkisi de sessiz ve istemci
+  hangisini aldığını ayırt edemez. Seçilen yön, bu deponun aynı girdiye zaten her
+  yerde verdiği cevap: REST boş parametreyi verilmemiş sayıyor, GraphQL argümanı
+  kırpıp `nil`'e indiriyor ve `graph` paketindeki boş-metin testi vitrin
+  listelemesinin BÜTÜN metin argümanlarını bu kurala tutuyor.
+
+  **`q` ile `id`/`ids` BİRLİKTE verilirse istek REDDEDİLİYOR ve gerekçe
+  ÖLÇÜLDÜ.** Başlık bir skaler sütun olduğu için Go tarafında yeniden
+  denetlenebilirdi; engel şu: ILIKE'ın harf katlaması KÜMENİN CTYPE'ından gelir,
+  Go'nunki Unicode'dan. Bu çalışma alanındaki C-CTYPE kümesinde denenen iki
+  ASCII-dışı çift — büyük C-sedilla ile küçüğü, noktalı büyük I ile düz `i` —
+  SQL'de EŞLEŞMİYOR, Go'da eşleşiyor; C.UTF-8 kümesinde üçü de uyuşuyor. Yani
+  Go kopyasının doğru olup olmadığı `initdb`'nin nasıl koşulduğuna bağlı olurdu.
+  Depo bunu zaten açılışta yokluyor (`core/db/casefold.go`, ADR 0015) ve
+  `deploy/docker-compose.yml` C.UTF-8 ayarını ancak o kusurdan beri taşıyor —
+  yerel ayar `initdb` anında sabitlendiği için o düzeltmeden önce yaratılmış her
+  veri dizini hâlâ yalnızca ASCII katlıyor.
+
+  **Ölçüm: 52.004 ürün, 54.000 varyant, tamamı `docs/catalog-search-cost.md`.**
+  Yapısal yarısı koşmadan biliniyordu — `title` üzerinde indeks yok, desen
+  BAŞTAN joker, yani hiçbir B-tree yardım edemez. Ondan çıkan "öyleyse arama
+  yavaştır" sonucu YARIM YANLIŞ, ve yanlış olan yarı ne yapılacağına karar veren
+  yarı. Listeleme, kanal süzgeci yok, `LIMIT 25`:
+
+  | süzgeç | plan | süre | buffer |
+  | --- | --- | --- | --- |
+  | yok | sıralama indeksi taraması | 0,03 ms | 7 |
+  | 52.000 başlığı eşleyen terim | aynı tarama, terim Filter olarak | 0,03 ms | 9 |
+  | 111 başlığı eşleyen terim | aynı tarama, 12.473 indeks girdisi yürünüyor | 2,6 ms | 2.635 |
+  | 1 başlığı eşleyen terim | sıralı tarama + sort | 9,1 ms | 730 |
+
+  **Maliyet terimi değil, sayfanın son eşleşmesinin sıralamada ne kadar
+  aşağıda olduğunu izliyor: GENİŞ arama bedava, SEÇİCİ arama pahalı — ve bir
+  arama kutusuna gelen seçici olanıdır.** Taşınmaya değer üç sonuç:
+
+  - **Sayım İKİ YÖNE birden hareket ediyor.** Kanal süzgeci açıkken süzgeçsiz
+    sayım ~74 ms ve 156.743 buffer; tek ürün eşleyen bir terim onu 12,9 ms ve
+    734 buffer'a DÜŞÜRÜYOR, çünkü `ILIKE` satır başına koşan görünürlük
+    altsorgusunun ÖNÜNE geçip 52.003 çağrısını siliyor. Geniş terim ise ~84 ms'ye
+    çıkarıyor. Sayımdaki duvar aramanın getirdiği bir şey değil; bu deponun
+    zaten ölçüp yazdığı görünürlük probu.
+  - **Bir plan hazırlanmış deyim altında SESSİZCE bozuluyor.** Kanal süzgeçli
+    listelemenin ilk beş koşumu özel planla 14,4 ms ve 734 buffer; ALTINCIDAN
+    itibaren PostgreSQL genel plana geçiyor — bütün sıralama indeksini yürüyen
+    bir tarama, ~25 ms ve 10.982 buffer — ve geri dönmüyor. Bu, imleç sınırının
+    `OR` yerine `COALESCE` nöbetçisiyle yazılmasının sebebi olan mekanizmanın
+    ta kendisi, bu kez başka bir yan tümcede. Bağlantının hangi plana düştüğü
+    ilk beş koşumun taşıdığı terimlere bağlı, yani sabit bir vergi değil
+    bağlantılar arası VARYANS: hata raporundan yeniden üretilmesi en zor cins.
+  - **Tavan gecikmede değil, ÜRETİMDE.** pgbench, terim işlem başına
+    rastgele, 16 istemci: süzgeçsiz listeleme saniyede 11.564, seçici arama
+    kanalsız 856 ve kanallı 638 — **kırk kat gecikme, on üçte bir üretim.** Bir
+    avuç operatörün kullandığı panel için önemsiz; vitrin arama kutusu için bu,
+    katalog büyümeden çok önce çarpılacak ilk tavan.
+
+  **Nerede biter.** Tarama 10.000 satırdan itibaren doğrusal, satır başına
+  0,18–0,235 mikrosaniye, dizde kırılma yok; buradan seçici arama 100 bin üründe
+  ~20 ms, 250 binde ~50 ms, 500 binde ~100 ms eder. Bu bir ÖLÇÜM DEĞİL, ölçülen
+  eğimden uzatmadır ve üç şey doğru kaldığı sürece geçerlidir: satırlar bu kadar
+  dar kalır (bu başlıklar ortalama 15,5 karakter ve açıklamalar boş, yani gerçek
+  bir katalog şimdiden daha pahalı), tablo bellekte kalır, eşzamanlılık düşük
+  kalır. Dürüst sınır bir satır sayısı değil, bir çift koşul: **katalog belleğe
+  sığmaz olduğunda ya da eşzamanlı arama birkaç yüz/saniyeyi geçtiğinde —
+  hangisi önce gelirse.** Bu donanımda ikincisi önce geliyor.
+
+  **Ölçülemeyen ve neden ölçülemediği yazılan şey:** düzenekte `product_category`
+  ve `product_category_map` BOŞ, yani "kategori içinde ara" — kutunun asıl var
+  oluş sebebi — için verilen her rakam bir TABAN. Yine de plandan okunabilen bir
+  şey var: süzgeç gövdesi her isteğe bağlı yüklemi `($n IS NULL OR …)` diye
+  yazıyor, taksonomi süzgeçlerinde bu `OR`'un ikinci yarısı bir `EXISTS`, ve
+  PostgreSQL `EXISTS`'i yarı-birleştirmeye sabit katlamasından ÖNCE çıkardığı
+  için `OR` içindeki `EXISTS` hiç aday olmuyor: altsorgu katalog satırı başına
+  bir kez koşuyor ve şemanın açtığı indeks sorgudan ERİŞİLEMEZ kalıyor. 0,03 ms
+  eden bir aramaya kategori eklemek onu en az 29 ms yapıyor — üstelik iç taraf
+  BOŞKEN. Bu bir ipucu, tavsiye değil: aynı `OR` deyimi tek bir deyimin bütün
+  süzgeç bileşimlerine hizmet etmesini sağlayan şey.
+
+  **En keskin ayrım yine mutasyondan geldi.** Depodaki `ILIKE` `LIKE` yapıldığında
+  BÜTÜN birim takımı yeşil kalıyor — sahte depo ILIKE'ı kanıtlayamaz — ve yalnızca
+  yeni entegrasyon testi düşüyor. Entegrasyon testinin neden var olmak zorunda
+  olduğu iddia edilmedi, ölçüldü.
+
+  **Elle kopyalanan SÜZGEÇ adları artık bağlı** (`internal/arch/constants_test.go`).
+  `q` iki tarafta da dışa aktarılmamış bir sabit, yani derleyicinin
+  bağlayabileceği bir çift YOK — sabitler çalışma zamanında zaten var olmaz,
+  derleyici onları yerinde açar. Yeni kapı bu yüzden derleyicinin baktığı yere,
+  KAYNAĞA bakıyor: `TestThePanelCatalogFilterKeysAgree` iki paketin kaynağından
+  ortak dört süzgeç sabitini (`id`, `product_id`, `category_id`, `q`) okuyup
+  değerlerini karşılaştırıyor. Eşleme AD üzerinden olduğu için tek başına
+  sessizce küçülebilirdi — panel kendi kopyasını yeniden adlandırsa kesişim bir
+  üye kaybeder ve test yeşil kalırdı — bu yüzden dört ad ayrıca VERİ olarak
+  yazılı ve eksilmesi hata. İki mutasyonla kanıtlandı: beklenen adı değiştirmek
+  iki tarafı da adıyla bildiriyor, karşılaştırılan değeri kaydırmak dördünü de
+  düşürüyor. Bağlanamayan tek şey ALAN adları — modül onları kayıt kurucusunda
+  düz dizge olarak yazıyor, okunacak sabit yok — ve bu sınır testin kendi
+  "kapsamadıkları" bölümünde duruyor.
+
+- **Ölçüm düzeneği artık DEPODAN kuruluyor: `gobit seed`** (D13).
+
+  Her zamanlama cümlesinin dayandığı 52.004 ürünlük katalog TEK bir Docker
+  biriminde yaşıyordu ve depoda onu yeniden kuracak hiçbir şey yoktu: seed
+  dosyası yok, hedefi yok, programı yok; compose dosyası o veritabanını hiç
+  yaratmıyor, yani temiz bir makinede düzenek YOK ve elde etme yolu da yok.
+  **Test dışı 28 dosya bu düzeneğe dayanan rakam taşıyor.** Yani
+  `docker compose down -v`, ölçülmüş bir iddia ile doğrulanamaz düzyazı
+  arasındaki bütün mesafeydi — deponun en yüksek sesli kuralı bir Docker
+  birimine bağlıydı.
+
+  Yeniden kurma AYRI BİR BETİK DEĞİL, sunucu ikilisinin alt komutu
+  (`internal/rig`, `internal/app/seed.go`, `make seed`) ve bu zorunlu: şema
+  modüllerin KENDİ migration'larından gelmeli, üstelik düzeneğin ihtiyaç duyduğu
+  üç tablo — `link_product_variant_price_set`, `link_product_variant_inventory`,
+  `link_product_sales_channel` — hiçbir migration'da yok; onları `core/link`
+  AÇILIŞTA yaratıyor, yani saf bir `psql -f` ilk link INSERT'ünde patlardı.
+
+  **13,6 saniye**, tek işlemde, `generate_series`'ten; kimlikler satır
+  numarasından türediği için ikinci koşum hiçbir şey eklemiyor. Kabul testi bir
+  KRONOMETRE değil bir PLAN — yavaş makinede kızarıp okuyucuya "bunu boş ver"
+  öğreten bir eşik yok: yeniden kurulan düzenek sayım sorgusunun kayıtlı planını
+  buffer'ına kadar üretiyor (52.004 satır, 52.004 altsorgu döngüsü, Heap Fetches
+  0, 156.743 shared hit, bunun 156.013'ü altsorgunun).
+
+  **İki bulgu kurmanın kendisinden çıktı.** `ANALYZE` tek başına yetmiyor:
+  VACUUM olmadan görünürlük haritası hiçbir yerde kurulmuyor ve aynı deyim 0 ve
+  156.743 yerine **52.000 heap fetch ve 208.742 buffer** bildiriyor — yani üçte
+  bir fazla trafik, ve godoc'taki rakamla karşılaştıran herkes farkında olmadan
+  BAŞKA bir veritabanıyla karşılaştırıyor olurdu. İkincisi: hayatta kalan
+  düzeneğin şeması depodan **beş order, bir payment ve bir product migration
+  geride**, invoice/job/outbox/audit şemaları ise hiç yok — elle yazılmış bir
+  seed dosyasının kurumsallaştıracağı sürüklenmenin ta kendisi.
+
+  Gizlenmeyip yazılan bedel: silme YAVAŞ, **13,6 saniyenin yazdığını silmek
+  4 dakika 31 saniye**, çünkü yabancı anahtar denetimi modüllerin KISMİ
+  indekslerini kullanamıyor ve silinen her ebeveyn için sıralı taramaya düşüyor.
+  TRUNCATE hızlı olurdu ve kurulumun gerçek kataloğunu da silerdi; denetim için
+  geçici indeks yaratmak bir geliştirme aracının şemayı değiştirmesi olurdu.
+  İkisi de reddedildi, sayı yüksek sesle söylendi.
+
+
 - **Panelin kataloğu artık kategoriye göre daraltılabiliyor: okuma katmanı
   taksonomi süzgeçlerini ve bir `category` varlığını öğrendi** (B2, D12).
 
@@ -262,6 +449,11 @@ Sabitlenme `1.0.0` ile olur.
   sunuluyor, birim ve entegrasyon testleriyle örtülü, hiç kimse çağırmıyor —
   panel etiket kontrolü sunmuyor, çünkü etiket serbest metindir ve açılır listesi
   yoktur. Yazıldı; "yapıldı" diye sayılmadı.
+
+  **Metin araması aynı günün ilerleyen saatlerinde yapıldı** — tüketicisi de
+  birlikte geldiği için kural çiğnenmedi; bu bölümün başındaki arama kutusu
+  girdisine bakın. `tag_id` için yazılan yukarıdaki kural olduğu gibi duruyor:
+  hâlâ tüketicisi yok.
 
 - **Bir modülün SQL'i yalnızca KENDİ tablolarını adlandırabiliyor**
   (`internal/arch/module_sql_test.go`).

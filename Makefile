@@ -35,7 +35,7 @@ SQLC             := $(BIN_DIR)/sqlc
 DOTENV = set -a; [ -f .env ] && { __cagiran_ortam=$$(export -p); . ./.env; eval "$$__cagiran_ortam"; }; set +a;
 
 .DEFAULT_GOAL := help
-.PHONY: help run build test test-integration smoke load-test openapi-schema openapi-client openapi-validate lint fmt tidy gen up up-tracing down logs psql redis-cli migrate-status migrate-up migrate-down tools clean rename-module
+.PHONY: help run build test test-integration smoke seed load-test openapi-schema openapi-client openapi-validate lint fmt tidy gen up up-tracing down logs psql redis-cli migrate-status migrate-up migrate-down tools clean rename-module
 
 help: ## Bu yardım metnini göster
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -85,6 +85,40 @@ smoke: ## Smoke testleri: gerçek ikiliyi açıp süreç davranışını sınar 
 # BENCH ile tek bir benchmark seçilebilir: make bench BENCH=StorefrontQuery
 bench: ## Go tarafı benchmark'ları çalıştır (tahsisat sayısıyla birlikte)
 	go test -run '^$$' -bench '$(or $(BENCH),.)' -benchmem ./...
+
+# Ölçüm düzeneği artık DEPODAN kurulur.
+#
+# 52 bin ürünlük katalog aylarca tek bir Docker biriminde yaşadı ve depoda onu
+# yeniden kuracak hiçbir şey yoktu: seed dosyası yok, seed hedefi yok, seed
+# programı yok. `docker compose down -v` ile 28 dosyadaki her zamanlama cümlesi
+# doğrulanamaz düzyazıya dönüşüyordu — "performans cümlesi ölçülmeden yazılmaz"
+# kuralı bir Docker birimine bağlıydı.
+#
+# Hedef AYRI BİR BETİK DEĞİL, ikilinin kendi alt komutudur ve bu zorunludur:
+# şema modüllerin KENDİ migration'larından gelir, üstelik üç link tablosu
+# (link_product_variant_price_set, link_product_variant_inventory,
+# link_product_sales_channel) hiçbir migration'da yoktur — core/link onları
+# AÇILIŞTA, Define çağrısıyla yaratır. Saf bir `psql -f seed.sql` bu yüzden ilk
+# link INSERT'ünde patlardı.
+#
+# BOYUT parametredir ve varsayılanı düzeneğin kendi şeklidir (50.000 tek
+# varyantlı + 2.000 çift varyantlı ürün = 52.004). Küçük bir katalog için:
+#   make seed URUNLER=200 COKLU=20
+# Değişken verilmediğinde bayrak HİÇ GEÇİLMEZ; varsayılan sayı burada DEĞİL,
+# ikilinin içindedir (internal/rig). İkinci bir yerde tekrarlansaydı, biri
+# değiştiğinde Makefile sessizce eski şekli kurmaya devam ederdi.
+#
+# HEDEF VERİTABANI ortamdan gelir (DATABASE_URL) — sunucununkiyle aynı ayar.
+#
+# SİLME (-reset) BU HEDEFTE YOKTUR ve gerekçe migrate-down'unkiyle aynıdır:
+# onay, veritabanı adının TEKRARIDIR; bir Makefile değişkeni onayı da beraberinde
+# taşısaydı silme "yanlışlıkla çalıştırılabilir" hâle gelirdi. Silmeli hâli elle
+# yazılır:
+#   go run ./cmd/server seed -reset -confirm <veritabanı-adı>
+SEED_FLAGS := $(if $(URUNLER),-products $(URUNLER)) $(if $(COKLU),-multi $(COKLU))
+
+seed: ## Ölçüm kataloğunu kur (URUNLER/COKLU ile boyutlandırılır)
+	@$(DOTENV) go run -ldflags '$(LDFLAGS)' ./cmd/server seed $(SEED_FLAGS)
 
 load-test: ## Temel yük testini çalıştır (REQUESTS/CONCURRENCY ile ayarlanır)
 	GOBIT_LOAD_REQUESTS=$(or $(REQUESTS),5000) \
