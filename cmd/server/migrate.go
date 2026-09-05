@@ -17,6 +17,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/db"
 	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/internal/core/eventbus/outbox"
 	"github.com/bdrtr/gobit/internal/core/job/jobpg"
 	"github.com/bdrtr/gobit/internal/core/module"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
@@ -91,6 +92,7 @@ func coreMigrationSources() []migrationSource {
 	return []migrationSource{
 		{owner: pgstore.MigrationOwner, src: pgstore.Migrations()},
 		{owner: jobpg.MigrationOwner, src: jobpg.Migrations()},
+		{owner: outbox.MigrationOwner, src: outbox.Migrations()},
 	}
 }
 

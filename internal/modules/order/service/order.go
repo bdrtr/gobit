@@ -305,6 +305,14 @@ func (s *Service) writeOrder(ctx context.Context, in CreateOrderInput, rule spen
 			return err
 		}
 
+		// The promised event is written HERE, with the order rather than after
+		// it. That is the whole outbox: an order that commits without its event
+		// is an order nobody is told about, and the window in which that could
+		// happen was the gap between this transaction and the publish.
+		if err := s.recordOrderPlaced(ctx, outboxEventID(order.ID), order, len(in.Items)); err != nil {
+			return err
+		}
+
 		created = order
 		return nil
 	})

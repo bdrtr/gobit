@@ -32,6 +32,7 @@ type fakeSnapshot struct {
 	items     map[string]models.OrderLineItem
 	summaries map[string]models.OrderSummary
 	returns   map[string]models.Return
+	outbox    map[string]outboxRow
 	retItems  map[string]models.ReturnItem
 	exchanges map[string]models.Exchange
 	claims    map[string]models.Claim
@@ -72,6 +73,7 @@ type fakeStore struct {
 	items     map[string]models.OrderLineItem
 	summaries map[string]models.OrderSummary
 	returns   map[string]models.Return
+	outbox    map[string]outboxRow
 	retItems  map[string]models.ReturnItem
 	exchanges map[string]models.Exchange
 	claims    map[string]models.Claim
@@ -124,6 +126,7 @@ func newFakeStore() *fakeStore {
 		items:     map[string]models.OrderLineItem{},
 		summaries: map[string]models.OrderSummary{},
 		returns:   map[string]models.Return{},
+		outbox:    map[string]outboxRow{},
 		retItems:  map[string]models.ReturnItem{},
 		exchanges: map[string]models.Exchange{},
 		claims:    map[string]models.Claim{},
@@ -150,6 +153,7 @@ func (f *fakeStore) snapshot() fakeSnapshot {
 		items:     maps.Clone(f.items),
 		summaries: maps.Clone(f.summaries),
 		returns:   maps.Clone(f.returns),
+		outbox:    maps.Clone(f.outbox),
 		retItems:  maps.Clone(f.retItems),
 		exchanges: maps.Clone(f.exchanges),
 		claims:    maps.Clone(f.claims),
@@ -669,6 +673,47 @@ func (f *fakeStore) ReturnedQuantities(
 	}
 
 	return out, nil
+}
+
+// WriteOutboxEvent records an event inside the "transaction".
+//
+// It enforces the same rule the real repository does — outside a transaction it
+// REFUSES — because that rule is the entire guarantee: an outbox row written
+// outside one promises an event for work that may never commit.
+func (f *fakeStore) WriteOutboxEvent(
+	ctx context.Context, id, name string, data map[string]any,
+) error {
+	if err := requireTx(ctx, "WriteOutboxEvent"); err != nil {
+		return err
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.recordUndo(ctx, undoEntry(f.outbox, id))
+	f.outbox[id] = outboxRow{ID: id, Name: name, Data: data}
+
+	return nil
+}
+
+// outboxEvents returns the events written into the fake outbox, in id order.
+func (f *fakeStore) outboxEvents() []outboxRow {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := make([]outboxRow, 0, len(f.outbox))
+	for _, id := range slices.Sorted(maps.Keys(f.outbox)) {
+		out = append(out, f.outbox[id])
+	}
+
+	return out
+}
+
+// outboxRow is one event written into the fake outbox.
+type outboxRow struct {
+	ID   string
+	Name string
+	Data map[string]any
 }
 
 // LockClaim locks the claim row and returns its current form.

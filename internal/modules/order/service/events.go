@@ -103,15 +103,23 @@ const (
 //     not created" and the saga would run a compensation (a cancellation)
 //     needlessly.
 //
-// The price of this is that a lost event falls behind the record. The price is
-// made VISIBLE: the failure is logged at the ERROR level with the identifier
-// and the number of the order, so that the escaped event can be republished by
-// hand or by a scanning job.
+// The price of this WAS that a lost event fell behind the record — the process
+// dying between the commit and the publish left an order nobody was told about.
+// That price is no longer paid: the event is also written into the OUTBOX,
+// inside the same transaction as the order (see [Service.recordOrderPlaced]),
+// and a relay publishes what this call missed. What stays is the direct publish
+// as the FAST path: a subscriber hears about most orders in the same request
+// rather than up to a minute later.
+//
+// The failure is still logged at ERROR with the identifier and the number of
+// the order, because a bus that is failing is worth knowing about even when the
+// outbox will cover for it.
 //
 // For why the numeric fields are put in as STRINGS see [EventFieldTotal] and
 // the block above it.
 func (s *Service) publishOrderPlaced(ctx context.Context, order models.Order, itemCount int) {
 	event := eventbus.Event{
+		ID:   outboxEventID(order.ID),
 		Name: EventOrderPlaced,
 		Data: map[string]any{
 			EventFieldOrderID:      order.ID,
@@ -133,4 +141,50 @@ func (s *Service) publishOrderPlaced(ctx context.Context, order models.Order, it
 			"display_id", order.DisplayID,
 			"error", err)
 	}
+}
+
+// recordOrderPlaced writes the "order.placed" event into the outbox, inside the
+// caller's transaction.
+//
+// # Why the event is written twice
+//
+// The row is the GUARANTEE and the direct publish is the SPEED. A subscriber
+// normally hears about an order in the same request; if the process dies before
+// that, the row is still committed and the relay sends it.
+//
+// The two cannot produce two events, and the id is what makes that true: both
+// carry the same one, the relay writes it, and the bus's own delivery is keyed
+// on it. A subscriber that is idempotent on the event id — which the bus's
+// at-least-once contract already requires — cannot tell the two apart.
+//
+// # A failure here FAILS the order
+//
+// Unlike the publish, this returns its error and the transaction rolls back.
+// An order written without its promised event is exactly the state the outbox
+// exists to prevent, and accepting it silently would leave the guarantee
+// looking present while it was not.
+func (s *Service) recordOrderPlaced(
+	ctx context.Context, eventID string, order models.Order, itemCount int,
+) error {
+	return s.store.WriteOutboxEvent(ctx, eventID, EventOrderPlaced, map[string]any{
+		EventFieldOrderID:      order.ID,
+		EventFieldDisplayID:    strconv.FormatInt(order.DisplayID, 10),
+		EventFieldStatus:       order.Status.String(),
+		EventFieldRegionID:     order.RegionID,
+		EventFieldCustomerID:   order.CustomerID,
+		EventFieldCurrencyCode: order.CurrencyCode,
+		EventFieldTotal:        strconv.FormatInt(order.Total, 10),
+		EventFieldItemCount:    strconv.Itoa(itemCount),
+		EventFieldPlacedAt:     order.PlacedAt.UTC().Format(time.RFC3339Nano),
+	})
+}
+
+// outboxEventID derives the event's id from the order's.
+//
+// It is DERIVED rather than random so that the outbox row and the direct
+// publish carry the same id — that is what makes the two deliveries one event
+// — and so that a retried write lands on the same row instead of adding a
+// second.
+func outboxEventID(orderID string) string {
+	return EventOrderPlaced + ":" + orderID
 }

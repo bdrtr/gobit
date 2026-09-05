@@ -317,3 +317,61 @@ func TestReceivingWithoutALocationIsRefused(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, models.ReturnRequested, current.Status, "nothing may be stamped")
 }
+
+// TestThePromisedEventIsWrittenWITHTheOrder is the outbox's whole point.
+//
+// A module commits its work and then publishes. Between those two moments the
+// process can die, and the order then exists while the event never happened —
+// no confirmation mail, and nothing anywhere recording that one is owed. The
+// row closes that window because it commits with the order.
+func TestThePromisedEventIsWrittenWITHTheOrder(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+
+	order, err := e.svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+
+	written := e.store.outboxEvents()
+	require.Len(t, written, 1)
+	assert.Equal(t, service.EventOrderPlaced, written[0].Name)
+	assert.Equal(t, order.ID, written[0].Data[service.EventFieldOrderID])
+}
+
+// TestAnOrderThatROLLSBACKLeavesNoPromise is the other half of "with".
+//
+// If the event survived a rolled-back order, the relay would announce an order
+// that does not exist — which is worse than the silence the outbox replaced.
+func TestAnOrderThatROLLSBACKLeavesNoPromise(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+
+	in := validInput()
+	in.Items[0].Quantity = -1 // rejected inside the transaction
+
+	_, err := e.svc.CreateOrder(ctx, in)
+	require.Error(t, err)
+
+	assert.Empty(t, e.store.outboxEvents(),
+		"a promise must not outlive the work that promised it")
+}
+
+// TestTheOutboxRowAndTheDirectPublishCarryTheSAMEID is what keeps two
+// deliveries from being two events.
+//
+// The bus is published to directly as the fast path and the relay sends the row
+// if that missed. A subscriber idempotent on the event id — which the bus's
+// at-least-once contract already requires — cannot tell the two apart.
+func TestTheOutboxRowAndTheDirectPublishCarryTheSAMEID(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+
+	_, err := e.svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+
+	written := e.store.outboxEvents()
+	require.Len(t, written, 1)
+	busEvents := e.bus.events()
+	require.Len(t, busEvents, 1)
+	assert.Equal(t, written[0].ID, busEvents[0].ID,
+		"one event, delivered twice, must not become two")
+}

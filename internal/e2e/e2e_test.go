@@ -100,6 +100,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/db"
 	"github.com/bdrtr/gobit/internal/core/eventbus"
+	"github.com/bdrtr/gobit/internal/core/eventbus/outbox"
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/core/link"
 	"github.com/bdrtr/gobit/internal/core/module"
@@ -534,6 +535,11 @@ func setUpHarness(ctx context.Context) error {
 	// the cart workflows do not use the workflow engine, the setup order must stay
 	// the same as in production.
 	if err := db.Migrate(ctx, testDSN, pgstore.Migrations(), pgstore.MigrationOwner); err != nil {
+		return err
+	}
+	// The outbox is a core schema too, and the order module writes into it
+	// inside its own transaction — so an order cannot be placed without it.
+	if err := db.Migrate(ctx, testDSN, outbox.Migrations(), outbox.MigrationOwner); err != nil {
 		return err
 	}
 

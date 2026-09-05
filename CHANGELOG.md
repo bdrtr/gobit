@@ -12,6 +12,54 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Söz verilen olay artık onu vaat eden işlemin parçası** (outbox, ADR 0023).
+
+  Modül işini commit ediyor, sonra yayımlıyordu. Bu iki an arasında süreç
+  ölürse iş var olmuş ama olay hiç gerçekleşmemiş oluyordu: onay maili
+  gönderilmiyor ve borçlu olunduğunu hiçbir yer kaydetmiyordu. Event bus kendi
+  garantisini dürüstçe yazmış (in-memory at-most-once, Redis at-least-once) ama
+  **hiçbiri o pencereyi kapsamıyordu**, çünkü yayın işlemin parçası değildi.
+  Depoda "outbox" kelimesi tam bir kez geçiyordu, bir yorumda varsayım olarak.
+
+  Satır artık işlemin parçası: `event_outbox` çekirdeğin, satırı modül KENDİ
+  deposundan yazıyor, ve dakikada bir koşan `internal/jobs/outboxrelay`
+  yayımlıyor.
+
+  **Yazıcı işlemi bağlamdan değil ARGÜMANDAN alıyor** ve bu seçim değil zorunluluk:
+  her modül işlemini kendi DIŞA KAPALI bağlam anahtarında tutuyor, yani çekirdek
+  onu göremiyor. Executor'ı geçirmek, çekirdeğe ait bir tablonun modüle ait bir
+  işlemin içinde yazılmasını, iki tarafın da diğerinin içini öğrenmesine gerek
+  kalmadan sağlıyor.
+
+  **Doğrudan yayın KALDI, hızlı yol olarak.** Satır GARANTİ, doğrudan yayın HIZ:
+  abone çoğu siparişi aynı istekte duyuyor, süreç ölürse satır zaten commit
+  edilmiş ve röle gönderiyor. İkisi iki olaya dönüşemiyor ve bunu sağlayan şey
+  kimlik: ikisi de aynı kimliği taşıyor, siparişten türetiliyor. Olay kimliğine
+  göre idempotent bir abone — ki bus'ın at-least-once sözleşmesi bunu ZATEN
+  gerektiriyor — ikisini ayırt edemez.
+
+  Outbox yazımındaki hata artık siparişi DÜŞÜRÜYOR. Yayının aksine hata dönüyor
+  ve işlem geri alınıyor: olayı olmayan bir sipariş, tam da bu kararın önlemek
+  için var olduğu durum, ve sessizce kabul etmek garantiyi var gibi gösterirdi.
+
+  Röle dakikada bir koşuyor ve bu depodaki tek kısa aralık. `sagawatch` ve
+  `paymentrecon` bir süredir yanlış olan şeyleri raporluyor, erken bulmak bir
+  şey değiştirmiyor; burada GECİKME ZARARIN KENDİSİ — bekleyen şey, parası çoktan
+  alınmış bir sipariş hakkında birinin beklediği mesaj.
+
+  Birden fazla kopya aynı anda röle yapabiliyor: satırlar `FOR UPDATE SKIP
+  LOCKED` ile alınıyor, kilit işlem bitene kadar duruyor ve KİLİDİN KENDİSİ
+  taleptir — sürelenecek bir şey yok, süpürülecek bir şey yok. ADR 0019'un
+  lease yerine advisory lock seçerken kullandığı akıl yürütmenin aynısı.
+
+  Şimdilik yalnızca sipariş modülü bu yoldan yazıyor ve bu bilinçli: `order.placed`
+  gerçek abonesi olan olay (notification), ve abonesi olmayan yayıncıları
+  dönüştürmek ADR 0009'un adını koyduğu hata olurdu.
+
+  Üç mutasyonun üçü de yakalandı — ve üçüncüsü bir test boşluğu ortaya çıkardı:
+  deponun işlem denetimini hiçbir birim testi koşmuyordu (servis testleri sahte
+  depoyu kullanıyor), o yüzden entegrasyon testi yazıldı.
+
 - **Tarayıcıdaki vitrin artık API'yi çağırabiliyor** (`CORS_ALLOWED_ORIGINS`).
 
   Vitrin yüzeyinin kimliği publishable key ve o anahtarın kendi belgesi

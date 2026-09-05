@@ -173,8 +173,17 @@ or a workflow, that composes the three.
 
 ### Gaps
 
-1. **No outbox. An order can be committed and its event lost, with nothing to
-   notice.**
+1. ~~**No outbox. An order can be committed and its event lost, with nothing to
+   notice.**~~ **CLOSED 2026-09-05, ADR 0023.** The event is written inside the
+   transaction that promises it and a relay publishes it every minute; the
+   direct publish stays as the fast path and the two share one id, so a
+   subscriber idempotent on it cannot tell them apart.
+
+   Only `order.placed` writes through it today — the one event with a real
+   subscriber. Converting publishers with no subscriber would be ADR 0009's
+   error class.
+
+   The original finding:
 
    `order/service/order.go` states the ordering honestly: the order and
    everything belonging to it commit in a single transaction, and only then is

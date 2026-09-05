@@ -16,9 +16,12 @@ import (
 	"github.com/bdrtr/gobit/internal/core/db"
 	"github.com/bdrtr/gobit/internal/core/errorreport"
 	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/internal/core/eventbus"
+	"github.com/bdrtr/gobit/internal/core/eventbus/outbox"
 	"github.com/bdrtr/gobit/internal/core/job"
 	"github.com/bdrtr/gobit/internal/core/job/jobpg"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
+	"github.com/bdrtr/gobit/internal/jobs/outboxrelay"
 	"github.com/bdrtr/gobit/internal/jobs/paymentrecon"
 	"github.com/bdrtr/gobit/internal/jobs/sagawatch"
 	"github.com/bdrtr/gobit/internal/modules/payment"
@@ -82,6 +85,20 @@ func registerJobs(c *container.Container, log *slog.Logger) (*job.Registry, erro
 	}
 
 	if err := registry.Add(paymentrecon.Definition(recon, log)); err != nil {
+		return nil, err
+	}
+
+	// The outbox relay is the delivery half of the transactional outbox: the
+	// modules write the event with their work, this sends it. It is registered
+	// unconditionally, because an installation whose relay is missing looks
+	// exactly like one whose subscribers are slow.
+	bus, err := container.Resolve[eventbus.EventBus](c, svcEventBus)
+	if err != nil {
+		return nil, coreerrors.Wrap(err, coreerrors.KindOf(err), job.CodeInvalidDefinition,
+			"the job runner could not resolve the event bus (%q)", svcEventBus)
+	}
+
+	if err := registry.Add(outboxrelay.Definition(outbox.NewStore(pool.Pool()), bus, log)); err != nil {
 		return nil, err
 	}
 

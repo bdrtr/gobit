@@ -152,6 +152,16 @@ type Store interface {
 	// ListExchanges pages the exchange records of the order.
 	ListExchanges(ctx context.Context, filter models.ChildFilter) ([]models.Exchange, int64, error)
 
+	// WriteOutboxEvent records an event INSIDE the current transaction.
+	//
+	// It is what makes a promised event survive a process that dies between the
+	// commit and the publish: the row commits with the work or disappears with
+	// it. The publishing itself is a relay's job, not this call's.
+	//
+	// It may only be called inside [Store.WithTx]; outside one it writes an
+	// event for work that has not been committed.
+	WriteOutboxEvent(ctx context.Context, id, name string, data map[string]any) error
+
 	// LockClaim locks the claim row; it may only be called inside [Store.WithTx].
 	LockClaim(ctx context.Context, id string) (models.Claim, error)
 	// CompleteClaim records that the claim was settled.

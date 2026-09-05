@@ -35,6 +35,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/db"
 	"github.com/bdrtr/gobit/internal/core/errors"
 	"github.com/bdrtr/gobit/internal/core/eventbus"
+	"github.com/bdrtr/gobit/internal/core/eventbus/outbox"
 	"github.com/bdrtr/gobit/internal/modules/order"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 	"github.com/bdrtr/gobit/internal/modules/order/repository"
@@ -114,6 +115,14 @@ func runWithPostgres(m *testing.M) int {
 
 	if err := db.Migrate(ctx, testDSN, order.New().Migrations(), order.ModuleName); err != nil {
 		fmt.Fprintf(os.Stderr, "the migration could not be applied: %v\n", err)
+		return 1
+	}
+
+	// The outbox is a CORE schema and the module writes into it inside its own
+	// transaction, so the harness has to apply it too — exactly as the
+	// composition root applies the core schemas before the module ones.
+	if err := db.Migrate(ctx, testDSN, outbox.Migrations(), outbox.MigrationOwner); err != nil {
+		fmt.Fprintf(os.Stderr, "the outbox migration could not be applied: %v\n", err)
 		return 1
 	}
 
@@ -931,4 +940,84 @@ func TestOrderContactJSONOnAMissingOrder(t *testing.T) {
 
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err), "got: %v", err)
+}
+
+// TestTheOutboxRefusesToBeWrittenOutsideATransaction is the repository's own
+// guard, and it is exercised HERE because no unit test can reach it: the
+// service's tests run on a fake store, so the rule they check is the fake's.
+//
+// The rule is the whole guarantee. An outbox row written outside a transaction
+// promises an event for work that may never commit — the exact fault the outbox
+// exists to prevent, wearing the appearance of preventing it.
+func TestTheOutboxRefusesToBeWrittenOutsideATransaction(t *testing.T) {
+	ctx := context.Background()
+	repo := repository.New(testPool.Pool())
+
+	err := repo.WriteOutboxEvent(ctx, "order.placed:order_x", "order.placed",
+		map[string]any{"order_id": "order_x"})
+
+	require.Error(t, err)
+	assert.Equal(t, errors.KindInternal, errors.KindOf(err))
+	assert.Contains(t, err.Error(), "transaction")
+}
+
+// TestThePromisedEventCommitsWithTheOrder proves the guarantee against a REAL
+// database, which is the only place it can be proven: what is being claimed is
+// that two writes share one transaction.
+func TestThePromisedEventCommitsWithTheOrder(t *testing.T) {
+	ctx := context.Background()
+	repo := repository.New(testPool.Pool())
+
+	var orderID string
+	require.NoError(t, repo.WithTx(ctx, func(ctx context.Context) error {
+		created, err := repo.CreateOrder(ctx, models.Order{
+			ID:           models.NewOrderID(),
+			Status:       models.OrderPending,
+			RegionID:     testRegionID,
+			CurrencyCode: testCurrency,
+			Email:        "outbox@example.com",
+			// The totals have to add up: the schema enforces
+			// total = subtotal - discount + tax + shipping.
+			Subtotal: 1000,
+			Total:    1000,
+		})
+		if err != nil {
+			return err
+		}
+		orderID = created.ID
+
+		return repo.WriteOutboxEvent(ctx, "order.placed:"+created.ID, "order.placed",
+			map[string]any{"order_id": created.ID})
+	}))
+
+	var name string
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT name FROM event_outbox WHERE id = $1`, "order.placed:"+orderID).Scan(&name))
+	assert.Equal(t, "order.placed", name)
+}
+
+// TestARolledBackOrderLeavesNoPromise is the other half of "commits with".
+//
+// If the event outlived a rolled-back order the relay would announce an order
+// that does not exist, which is worse than the silence the outbox replaced.
+func TestARolledBackOrderLeavesNoPromise(t *testing.T) {
+	ctx := context.Background()
+	repo := repository.New(testPool.Pool())
+
+	eventID := "order.placed:" + models.NewOrderID()
+	wanted := errors.Internal("test_rollback", "rolled back on purpose")
+
+	err := repo.WithTx(ctx, func(ctx context.Context) error {
+		if err := repo.WriteOutboxEvent(ctx, eventID, "order.placed", nil); err != nil {
+			return err
+		}
+
+		return wanted
+	})
+	require.Error(t, err)
+
+	var count int
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM event_outbox WHERE id = $1`, eventID).Scan(&count))
+	assert.Zero(t, count, "a promise must not outlive the work that promised it")
 }
