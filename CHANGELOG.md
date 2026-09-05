@@ -12,6 +12,54 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Yönetim yazmaları artık iz bırakıyor** (audit log).
+
+  Admin API her yazmayı kimlik doğrulayıp yetkilendiriyor, sonra olduğunu
+  unutuyordu: bir değişikliğin tek kalıcı izi satırın `updated_at`'iydi.
+
+  **Kayıt İSTEĞİ tutuyor, DEĞİŞİKLİĞİ değil** — ve envanterin "zor kısım" dediği
+  şey buydu. Diff, on beş modülün her yazma için önce/sonra üretmesi demek: on
+  beş yerde sözleşme ve her istekte maliyet. Kuru bir "bir ürün güncellendi" ise
+  daha ucuz ve hiçbir işe yaramaz. Satırın cevapladığı şey, bir olayın
+  başladığı soru: bu yüzeye kim dokundu, ne zaman, ve başarılı oldu mu. NE
+  olduğu zaten kaydın kendisinden okunuyor.
+
+  Yalnızca YAZMALAR ve yalnızca yönetim yüzeyi. Okumalar cevapsız hacim:
+  birinin siparişleri listelediğini bilmek kimseye yardım etmiyor. Vitrin ise
+  kararla kimliksiz (ADR 0008), oradaki satır "biri" der ve hiçbir şey ifade
+  etmezdi.
+
+  Denetim kimlik korumasının DIŞINDA duruyor, bu yüzden REDDEDİLEN yazma da
+  kaydediliyor: birinin yetkisi olmayan bir şeyi değiştirmeye çalışması, tam da
+  bir olayın aradığı satır.
+
+  Başarısız denetim isteği DÜŞÜRMÜYOR. Değişiklik zaten commit edilmiş; yanıtı
+  reddetmek hiçbir şeyi geri almaz, yalnızca bir günlükleme arızasını müşteriye
+  görünen bir kesintiye çevirirdi. Kalan risk açıkça yazıldı: satırı kaybolan
+  değişiklik izsiz kalır, ve o pencereyi kapatmak audit satırının her modülün
+  işlemine katılması demek olurdu — ADR 0023'ün olaylar için kabul ettiği
+  bağlanma, ki bu kayıt onu hak etmiyor.
+
+  Yazım isteğin bağlamını AŞAN bir bağlamla yapılıyor: istemcinin bağlantıyı
+  kesmesi, zaten olmuş bir değişikliğin kaydını kaybetmek için sebep değil — ve
+  iptal edilmiş istek, birinin sonradan "ne koştu" diye soracağı andır.
+
+  Dışarıda durmanın bir bedeli var ve ilk sürüm onu ödemeyi unutmuştu: muhafız
+  kimliği TÜRETİLMİŞ bir isteğe koyar, dıştaki ara katman elindeki özgün
+  isteğiyle kalır. Yani her satır "kimse" diyordu — tablonun var olma sebebi
+  olan tek soru cevapsızdı. Birim testleri bunu göremedi çünkü kimliği isteğe
+  kendileri koyuyordu; hatayı canlı ikiliye karşı koşmak gösterdi. Kimlik artık
+  muhafızın doldurduğu bir yuvayla YUKARI taşınıyor. İdempotency aynı tehlikeyi
+  içeri taşınarak çözmüştü ve bunu godoc'unda yazmıştı; ucuz cevap odur, yuva
+  yalnızca dışarıda kalmak zorunda olan tek ara katman için var.
+
+  Aktör kimliği TEXT ve foreign key YOK: kimlikler auth modülünün (Prensip 2.2),
+  ve silinen bir kullanıcı iz kaydını da götürmemeli — izin en çok gerektiği an
+  tam olarak odur.
+
+  Beş mutasyonun beşi de yakalandı; kayıt ayrıca canlı ikiliye karşı doğrulandı
+  (201 aktörlü, 401 aktörsüz, okuma denetlenmiyor, yol tam kaynağı gösteriyor).
+
 - **Söz verilen olay artık onu vaat eden işlemin parçası** (outbox, ADR 0023).
 
   Modül işini commit ediyor, sonra yayımlıyordu. Bu iki an arasında süreç

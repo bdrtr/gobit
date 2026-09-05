@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/bdrtr/gobit/internal/adminui"
+	"github.com/bdrtr/gobit/internal/core/audit"
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/db"
@@ -351,11 +353,23 @@ func guardStack(
 	authn corehttp.Authenticator,
 	panel *adminui.Ring,
 	rdb *redis.Client,
+	pool *db.Pool,
 	log *slog.Logger,
 ) ([]func(http.Handler) http.Handler, error) {
 	warnAboutRateLimit(cfg, log)
 
+	// The audit log is unconditional in a real server: an installation whose
+	// admin writes are not recorded looks exactly like one where nobody wrote
+	// anything. The nil check is for the guard-stack tests, which build the
+	// stack without a database — and those are also the only callers that can
+	// pass nil, because serve always has a pool by this point.
+	var auditor corehttp.AuditWriter
+	if pool != nil {
+		auditor = audit.NewStore(pool.Pool())
+	}
+
 	opts := corehttp.GuardOptions{
+		Audit:         auditor,
 		Authenticator: authn,
 		AdminPrefix:   adminPrefix,
 		StorePrefix:   storePrefix,
@@ -363,6 +377,8 @@ func guardStack(
 		// installation configured origins; the reasoning is on
 		// [corehttp.GuardOptions.CORSOrigins].
 		CORSOrigins: cfg.CORSAllowedOrigins,
+		AuditID:     newAuditID,
+		AuditLogger: log,
 		// The login endpoint is EXEMPT from the guard: the request whose
 		// identity is to be checked is the one about to establish it. The path
 		// is not spelled out here, it is read from the auth module's constant.
@@ -1189,7 +1205,7 @@ func openApplication(
 	// is REJECTED.
 	panelRing := &adminui.Ring{}
 
-	guards, err := guardStack(cfg, authn, panelRing, redisClient, log)
+	guards, err := guardStack(cfg, authn, panelRing, redisClient, pool, log)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1258,4 +1274,21 @@ func openApplication(
 		panelRing: panelRing,
 		authn:     authn,
 	}, closeApp, nil
+}
+
+// newAuditID produces an audit row's identifier.
+//
+// It is a plain random id rather than something derived from the request: two
+// writes on the same path by the same actor in the same second are two
+// different facts, and a derived id would collapse them.
+func newAuditID() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		// crypto/rand failing is a broken machine rather than a condition to
+		// handle; an id that repeats would silently drop audit rows on the
+		// primary key, which is the one outcome this table must not have.
+		panic("audit id could not be generated: " + err.Error())
+	}
+
+	return "audit_" + hex.EncodeToString(raw[:])
 }

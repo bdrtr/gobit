@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -99,6 +100,19 @@ type GuardOptions struct {
 	AdminPrefix string
 	// StorePrefix is the path prefix of the store surface; empty means [DefaultStorePrefix].
 	StorePrefix string
+	// Audit records who called which ADMIN WRITE; nil means no audit log.
+	//
+	// It is scoped to the admin surface because a row is worth writing when it
+	// names somebody, and the storefront is unauthenticated by decision
+	// (ADR 0008).
+	Audit AuditWriter
+	// AuditID produces the identifier of an audit row; it is required when
+	// [GuardOptions.Audit] is set.
+	AuditID func() string
+	// AuditLogger receives the failures of the audit writer; nil uses the
+	// default logger.
+	AuditLogger *slog.Logger
+
 	// CORSOrigins are the sites allowed to call the STORE surface from a
 	// browser; empty means no CORS at all.
 	//
@@ -214,6 +228,14 @@ func APIGuards(opts GuardOptions) []func(http.Handler) http.Handler {
 	// the answer about the POLICY rather than about the missing key.
 	if len(opts.CORSOrigins) > 0 {
 		stack = append(stack, Scoped(store, nil, CORS(opts.CORSOrigins)))
+	}
+
+	// The audit goes on the ADMIN prefix and OUTSIDE the identity guard, so a
+	// write that was refused for want of a scope is recorded too: an attempt to
+	// change something one is not allowed to change is exactly the line an
+	// incident is looking for.
+	if opts.Audit != nil && opts.AuditID != nil {
+		stack = append(stack, Scoped(admin, nil, Audit(opts.Audit, opts.AuditID, opts.AuditLogger)))
 	}
 
 	if opts.Limiter != nil {

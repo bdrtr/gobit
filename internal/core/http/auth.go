@@ -86,8 +86,45 @@ type Authenticator interface {
 // principalKey is the context key carrying the verified identity.
 type principalKey struct{}
 
+// principalSinkKey carries the slot an outer middleware left for the identity.
+type principalSinkKey struct{}
+
+// withPrincipalSink leaves a slot that [WithPrincipal] also fills in.
+//
+// # Why the identity has to travel back UP
+//
+// A guard passes the identity DOWN by deriving a new request, so a middleware
+// running OUTSIDE the guard never sees it: the derived request reaches the
+// inner handler and dies there, while the outer middleware is still holding the
+// original. The audit log has to run outside — a write REFUSED for want of an
+// identity is exactly the write worth recording — so the identity comes back up
+// through this slot instead.
+//
+// # Why it is safe to read
+//
+// The guard fills the slot before calling the handler, and the outer middleware
+// reads it only after that call has returned; the call and its return order the
+// two accesses. Nothing reads the slot while the handler is running.
+//
+// # The other answer to the same hazard
+//
+// Idempotency needs the identity too, and it is installed AFTER authentication
+// for exactly this reason (see [Idempotency]). Moving inward is the cheaper
+// answer and the right one wherever it is available; the slot exists for the
+// one middleware whose job requires it to stay outside.
+func withPrincipalSink(ctx context.Context, slot *Principal) context.Context {
+	return context.WithValue(ctx, principalSinkKey{}, slot)
+}
+
 // WithPrincipal puts the verified identity into the context.
+//
+// It also fills the slot left by [withPrincipalSink] when there is one, which
+// is how every guard feeds the audit log without knowing that it exists.
 func WithPrincipal(ctx context.Context, p Principal) context.Context {
+	if slot, ok := ctx.Value(principalSinkKey{}).(*Principal); ok {
+		*slot = p
+	}
+
 	return context.WithValue(ctx, principalKey{}, p)
 }
 

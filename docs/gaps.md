@@ -209,7 +209,17 @@ or a workflow, that composes the three.
    (`order.placed` → notification), which is what ADR 0009 requires before
    building anything.
 
-2. **No audit log.** Nothing records who changed what. The admin API
+2. ~~**No audit log.**~~ **CLOSED 2026-09-05.** Every admin write — including a
+   REFUSED one — records who called what and what came back, in `audit_log`.
+
+   It records the REQUEST rather than the change, which is the answer to the
+   "hard half" this finding named: a diff would be a contract in fifteen
+   modules and a cost on every request, and a bare "updated product X" would be
+   worth nothing. What is stored is what an incident starts from — who touched
+   this surface, when, did it succeed — and the WHAT is read from the record,
+   which carries its own `updated_at`.
+
+   The original finding: Nothing records who changed what. The admin API
    authenticates and authorises every write (forty scopes), and then forgets it
    happened. The only durable trace of any change is the row's `updated_at`.
 

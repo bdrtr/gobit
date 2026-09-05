@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/bdrtr/gobit/internal/core/audit"
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/db"
@@ -93,6 +94,7 @@ func coreMigrationSources() []migrationSource {
 		{owner: pgstore.MigrationOwner, src: pgstore.Migrations()},
 		{owner: jobpg.MigrationOwner, src: jobpg.Migrations()},
 		{owner: outbox.MigrationOwner, src: outbox.Migrations()},
+		{owner: audit.MigrationOwner, src: audit.Migrations()},
 	}
 }
 
