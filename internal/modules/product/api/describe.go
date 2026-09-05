@@ -57,7 +57,7 @@ func Describe(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/store/v1/products", openapi.Operation{
 		Summary: "Lists the published products with their price and stock information.",
 		// The parameters are the ones the handler READS, not the ones we might
-		// wish for: [Handler.storeListProducts] reads only these five.
+		// wish for: [Handler.storeListProducts] reads only these seven.
 		//
 		// "sales_channel_id" is DELIBERATELY ABSENT and must not be added: the
 		// channel comes from the request's publishable key, not from the query
@@ -67,6 +67,14 @@ func Describe(d *openapi.Doc) {
 		Parameters: []openapi.Parameter{
 			queryParameter("collection_id", typeString,
 				"Restricts the products to a single collection."),
+			queryParameter("category_id", typeString,
+				"Restricts the products to a single category. The id comes from "+
+					"GET /store/v1/categories — a storefront has the word a shopper clicked, "+
+					"not an id. A product that belongs to SEVERAL categories is returned "+
+					"once, and the count counts products rather than memberships."),
+			queryParameter("tag_id", typeString,
+				"Restricts the products to a single tag. The id comes from "+
+					"GET /store/v1/tags. A product carrying SEVERAL tags is returned once."),
 			queryParameter("q", typeString,
 				"Free-text search over the TITLE only, case-insensitively and anywhere in it. "+
 					"The handle is a SEPARATE and EXACT filter, not part of this one — a "+

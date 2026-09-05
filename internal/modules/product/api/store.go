@@ -65,6 +65,8 @@ func (h *Handler) storeListProducts(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.svc.ListStoreProducts(r.Context(), service.StoreListOptions{
 		CollectionID:    stringParam(r, "collection_id"),
+		CategoryID:      stringParam(r, "category_id"),
+		TagID:           stringParam(r, "tag_id"),
 		Search:          stringParam(r, "q"),
 		SalesChannelIDs: salesChannelIDs(r),
 		Limit:           limit,

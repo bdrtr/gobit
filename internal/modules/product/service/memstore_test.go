@@ -212,6 +212,10 @@ func (m *memStore) matches(p *models.Product, f repository.ProductFilter) bool {
 		return false
 	case f.Search != nil && !strings.Contains(strings.ToLower(p.Title), strings.ToLower(*f.Search)):
 		return false
+	case f.CategoryID != nil && !slices.Contains(m.productCats[p.ID], *f.CategoryID):
+		return false
+	case f.TagID != nil && !slices.Contains(m.productTags[p.ID], *f.TagID):
+		return false
 	default:
 		return m.visibleIn(p.ID, f.SalesChannelIDs)
 	}

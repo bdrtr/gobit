@@ -64,7 +64,11 @@ const codeProviderNotFound = "query_provider_not_found"
 // letting the client change that would leak draft products.
 type StoreListOptions struct {
 	CollectionID *string
-	Search       *string
+	// CategoryID and TagID are the two filters a storefront can actually call:
+	// the ids come from the vocabulary endpoints, which is what those exist for.
+	CategoryID *string
+	TagID      *string
+	Search     *string
 	// SalesChannelIDs are the sales channels the request is bound to.
 	//
 	// The value comes from the request's IDENTITY (the channels of the
@@ -171,6 +175,8 @@ func (s *Service) ListStoreProducts(ctx context.Context, opts StoreListOptions) 
 	result, err := s.ListProducts(ctx, ListProductsOptions{
 		Status:          &published,
 		CollectionID:    opts.CollectionID,
+		CategoryID:      opts.CategoryID,
+		TagID:           opts.TagID,
 		Search:          opts.Search,
 		SalesChannelIDs: opts.SalesChannelIDs,
 		Limit:           opts.Limit,

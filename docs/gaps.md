@@ -61,7 +61,7 @@ Four sequencing facts govern the whole list:
 | # | foundation | unblocks | section |
 | --- | --- | --- | --- |
 | B1 | ~~**A guarded inbound-callback class**~~ **Built 2026-09-05: ADR 0028.** `core/http.CallbackRegistry` — per-route quota, body limit, timeout, enforced signature check and a derived replay window; PayTR converted onto it at the same URL. Audit deliberately left out (see D1) | four carriers, e-invoice, every payment provider — the plumbing is there; a carrier still waits on B10 | Turkey-specific |
-| B2 | **Storefront filter surface** — price, category, tag, option value, in-stock, sort | NL search, the panel, every "find me" feature. **Highest leverage item on the list** | AI-powered features |
+| B2 | **Storefront filter surface** — ~~category, tag~~ **built 2026-09-05** (`category_id`, `tag_id`, in REST and GraphQL, EXISTS not joins so a product in several categories is returned once). Still missing: price, in-stock, option value, sort — see below | NL search, the panel, every "find me" feature | AI-powered features |
 | B3 | ~~**Storefront vocabulary endpoints**~~ **Built 2026-09-05.** `GET /store/v1/{collections,categories,tags}`. The category listing applies `is_active`/`is_internal` — two columns that existed since the first migration and that nothing read | NL search — the word→id half is done; the FILTER half is B2 | AI-powered features |
 | B4 | **Review module** | moderation (the AI brief's first use case), summaries, Q&A | AI subsystem |
 | B5 | **Order ↔ fulfillment link, and something that creates a fulfillment** | the order timeline, carrier tracking, "where is the parcel". The link definition was assigned to a module that never declared it | Platform features |
@@ -1181,6 +1181,22 @@ would not decide for the shop.
 ---
 
 ---
+
+> **B2, what is left and why — measured 2026-09-05.** Category and tag are
+> built. The other four are not one job:
+>
+> - **option value is not expressible by id.** `product_option` carries a
+>   `product_id`: options are PER PRODUCT, so "Color: Red" has a different id in
+>   every product and there is no shared vocabulary to filter on. A catalog
+>   filter has to match the option TITLE and the value TEXT, which needs a
+>   normalisation decision (case, whitespace) and an index that does not exist.
+> - **price and in-stock cross a module boundary.** They live in pricing and
+>   inventory; the product module may not import either (ADR 0001), and
+>   filtering after the Query layer has fetched the roots breaks paging — the
+>   page would be filtered AFTER it was cut.
+> - **sort collides with the keyset cursor.** The cursor is `(created_at, id)`;
+>   any other order needs the cursor to carry the sort, or the sort has to be
+>   offset-only. That is a decision, not an omission.
 
 ## AI-powered commerce features — measured against the brief, 2026-09-05
 

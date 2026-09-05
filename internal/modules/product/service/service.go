@@ -213,6 +213,10 @@ type ListProductsOptions struct {
 	CollectionID *string
 	Handle       *string
 	Search       *string
+	// CategoryID and TagID narrow the listing to a category or a tag. A product
+	// may belong to several of either and is still returned ONCE.
+	CategoryID *string
+	TagID      *string
 	// SalesChannelIDs is the sales channel filter; for its meaning and the
 	// nil/empty distinction see [StoreListOptions.SalesChannelIDs].
 	//
@@ -414,6 +418,8 @@ func (s *Service) ListProducts(ctx context.Context, opts ListProductsOptions) (L
 		CollectionID:    opts.CollectionID,
 		Handle:          opts.Handle,
 		Search:          opts.Search,
+		CategoryID:      opts.CategoryID,
+		TagID:           opts.TagID,
 		SalesChannelIDs: opts.SalesChannelIDs,
 		Limit:           limit,
 		Offset:          offset,

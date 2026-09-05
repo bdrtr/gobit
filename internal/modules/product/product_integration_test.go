@@ -732,3 +732,72 @@ func TestTheCategoryVisibilityFilterIsAppliedBySQL(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, admin.Items, 3, "the admin view lost the categories the merchant has to manage")
 }
+
+// TestTheCategoryAndTagFiltersReturnAProductOnce is the claim a join would
+// break.
+//
+// A product may sit in several categories and carry several tags. Written as a
+// join the row multiplies: the product comes back once per membership, the page
+// holds fewer products than its limit says, and the count becomes a number of
+// MEMBERSHIPS. EXISTS asks the only question being asked, and this is the test
+// that says so against the real database rather than against a fake that agrees
+// with itself.
+func TestTheCategoryAndTagFiltersReturnAProductOnce(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+
+	first, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Shirts", Handle: uniqueHandle("shirts")})
+	require.NoError(t, err)
+	second, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Summer", Handle: uniqueHandle("summer")})
+	require.NoError(t, err)
+
+	sale, err := svc.CreateTag(ctx, uniqueHandle("sale"))
+	require.NoError(t, err)
+	newIn, err := svc.CreateTag(ctx, uniqueHandle("new"))
+	require.NoError(t, err)
+
+	product, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle:      uniqueHandle("multi"),
+		Title:       "In two categories and carrying two tags",
+		Status:      models.StatusPublished,
+		CategoryIDs: []string{first.ID, second.ID},
+		TagIDs:      []string{sale.ID, newIn.ID},
+	})
+	require.NoError(t, err)
+
+	// A second product OUTSIDE the category. Without it the count assertion below
+	// cannot discriminate: a count query that lost the filter would count one
+	// product either way, and dropping the predicate from the count alone — the
+	// mistake that makes a storefront ask for pages that never fill — would pass.
+	_, err = svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle: uniqueHandle("uncategorised"),
+		Title:  "In no category and carrying no tag",
+		Status: models.StatusPublished,
+	})
+	require.NoError(t, err)
+
+	byCategory, err := svc.ListProducts(ctx, service.ListProductsOptions{CategoryID: &first.ID})
+	require.NoError(t, err)
+	require.Len(t, byCategory.Items, 1,
+		"the product came back more than once; the filter multiplies the row")
+	assert.Equal(t, product.ID, byCategory.Items[0].ID)
+	require.NotNil(t, byCategory.Count)
+	assert.Equal(t, 1, *byCategory.Count, "the count counted memberships rather than products")
+
+	byTag, err := svc.ListProducts(ctx, service.ListProductsOptions{TagID: &sale.ID})
+	require.NoError(t, err)
+	require.Len(t, byTag.Items, 1)
+	assert.Equal(t, product.ID, byTag.Items[0].ID)
+
+	// A filter that matches nothing has to return nothing rather than everything:
+	// an "IS NULL OR" predicate written the wrong way round degrades to no filter
+	// at all, which is silent and looks like a wide catalog.
+	other, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Empty", Handle: uniqueHandle("empty")})
+	require.NoError(t, err)
+	empty, err := svc.ListProducts(ctx, service.ListProductsOptions{CategoryID: &other.ID})
+	require.NoError(t, err)
+	assert.Empty(t, empty.Items, "a category with no products returned products")
+}

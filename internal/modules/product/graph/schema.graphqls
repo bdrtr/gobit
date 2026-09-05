@@ -59,7 +59,26 @@ type Query {
 
   "after" and "offset" name two different positions and are refused together.
   """
-  products(limit: Int, offset: Int, after: String, q: String, collectionId: ID): ProductList!
+  products(
+    limit: Int
+    offset: Int
+    after: String
+    q: String
+    collectionId: ID
+    """
+    Narrows the listing to a category. The id comes from /store/v1/categories:
+    a storefront has the word a shopper clicked, not an id.
+
+    A product in several categories is still returned ONCE.
+    """
+    categoryId: ID
+    """
+    Narrows the listing to a tag. The id comes from /store/v1/tags.
+
+    A product carrying several tags is still returned ONCE.
+    """
+    tagId: ID
+  ): ProductList!
 
   """
   Returns a single storefront product by identity or by handle.

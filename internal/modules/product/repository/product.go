@@ -18,6 +18,11 @@ type ProductFilter struct {
 	CollectionID *string
 	Handle       *string
 	Search       *string
+	// CategoryID and TagID keep a product that is in SEVERAL categories or
+	// carries SEVERAL tags from being returned more than once: they become
+	// EXISTS subqueries rather than joins (see productFilterSQL).
+	CategoryID *string
+	TagID      *string
 	// SalesChannelIDs are the sales channels the request is bound to.
 	//
 	// Here nil and an EMPTY BUT NON-nil slice say DIFFERENT things, and the

@@ -202,6 +202,8 @@ func TestProductsArgumentsMatchWhatTheServiceReads(t *testing.T) {
 	// REST), while the service field is Search.
 	mapping := map[string]string{
 		"CollectionID": "collectionId",
+		"CategoryID":   "categoryId",
+		"TagID":        "tagId",
 		"Search":       "q",
 		"Limit":        "limit",
 		"Offset":       "offset",
@@ -286,6 +288,8 @@ func TestEmptyTextArgumentBuildsNoFilter(t *testing.T) {
 	// one to one).
 	fields := map[string]string{
 		"collectionId": "CollectionID",
+		"categoryId":   "CategoryID",
+		"tagId":        "TagID",
 		"q":            "Search",
 	}
 

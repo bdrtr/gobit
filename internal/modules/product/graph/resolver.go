@@ -95,7 +95,7 @@ type variantResolver struct{ *Resolver }
 func (r *queryResolver) Products(
 	ctx context.Context,
 	limit, offset *int,
-	after, q, collectionID *string,
+	after, q, collectionID, categoryID, tagID *string,
 ) (*ProductList, error) {
 	// "after" and "offset" name two different positions; honoring both would
 	// serve the page N rows past the cursor, which is a position neither of
@@ -112,6 +112,8 @@ func (r *queryResolver) Products(
 
 	result, err := r.svc.ListStoreProducts(ctx, service.StoreListOptions{
 		CollectionID:    trimmedPointer(collectionID),
+		CategoryID:      trimmedPointer(categoryID),
+		TagID:           trimmedPointer(tagID),
 		Search:          trimmedPointer(q),
 		SalesChannelIDs: SalesChannelIDsFromContext(ctx),
 		Limit:           intValue(limit),

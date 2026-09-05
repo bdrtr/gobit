@@ -152,14 +152,36 @@ func salesChannelVisible(productExpr, channelsParam string) string {
 // counting queries.
 //
 // Parameter order: $1 status, $2 collection_id, $3 handle, $4 search,
-// $5 sales_channel_ids. The pagination parameters ($6, $7) exist only in the
-// list query; that is why the count query can use the same body without
-// changing it at all.
+// $5 category_id, $6 tag_id, $7 sales_channel_ids. The pagination parameters
+// ($8, $9) and the cursor ($10, $11) exist only in the list query; that is why
+// the count query can use the same body without changing it at all.
+//
+// # Why the taxonomy filters are EXISTS and not joins
+//
+// A product may sit in several categories and carry several tags, so a join
+// multiplies the row: a product in three categories would come back three times,
+// the page would hold fewer products than its limit says, and the count would be
+// a number of MEMBERSHIPS rather than of products. EXISTS asks the only question
+// being asked — is there at least one — and stops at the first match.
+//
+// Both map tables are keyed (product_id, x) with a second index on x alone, so
+// the subquery is an index probe per row: the same shape the sales channel
+// filter already has, and the reason that shape was measured and kept.
 const productFilterSQL = `WHERE deleted_at IS NULL
   AND ($1::text IS NULL OR status = $1::text)
   AND ($2::text IS NULL OR collection_id = $2::text)
   AND ($3::text IS NULL OR handle = $3::text)
   AND ($4::text IS NULL OR title ILIKE '%' || $4::text || '%')
+  AND ($5::text IS NULL OR EXISTS (
+    SELECT 1 FROM product_category_map
+    WHERE product_category_map.product_id = product.id
+      AND product_category_map.category_id = $5::text
+  ))
+  AND ($6::text IS NULL OR EXISTS (
+    SELECT 1 FROM product_tag_map
+    WHERE product_tag_map.product_id = product.id
+      AND product_tag_map.tag_id = $6::text
+  ))
   AND `
 
 // productColumns lists the columns of the product row IN THE ORDER of
@@ -211,10 +233,10 @@ const productColumns = `id, handle, title, subtitle, description, thumbnail,
 // index under both plans, and an absent cursor means "start at the top",
 // because every real row sorts below infinity.
 var listProductsSQL = `SELECT ` + productColumns + ` FROM product
-` + productFilterSQL + salesChannelVisible("product.id", "$5") + `
-  AND (created_at, id) < (COALESCE($8::timestamptz, 'infinity'::timestamptz), COALESCE($9::text, ''))
+` + productFilterSQL + salesChannelVisible("product.id", "$7") + `
+  AND (created_at, id) < (COALESCE($10::timestamptz, 'infinity'::timestamptz), COALESCE($11::text, ''))
 ORDER BY created_at DESC, id DESC
-LIMIT $6::int OFFSET $7::int`
+LIMIT $8::int OFFSET $9::int`
 
 // countProductsSQL reads the TOTAL number of products matching the criteria.
 //
@@ -244,7 +266,7 @@ LIMIT $6::int OFFSET $7::int`
 // solution was sought not here but IN THE CALLER: the count is no longer run at
 // all when it is not wanted (see service.ListProductsOptions.SkipCount).
 var countProductsSQL = `SELECT count(*) FROM product
-` + productFilterSQL + salesChannelVisible("product.id", "$5")
+` + productFilterSQL + salesChannelVisible("product.id", "$7")
 
 // visibleProductIDsSQL returns, out of the given ids, the ones that are VISIBLE
 // in the channels.
@@ -319,8 +341,8 @@ func (r *Repo) ListProducts(ctx context.Context, f ProductFilter) ([]models.Prod
 	afterAt, afterID := f.After.SQLBounds()
 
 	rows, err := r.db.Query(ctx, listProductsSQL,
-		f.Status, f.CollectionID, f.Handle, f.Search, f.SalesChannelIDs,
-		toInt32(f.Limit), toInt32(f.Offset), afterAt, afterID)
+		f.Status, f.CollectionID, f.Handle, f.Search, f.CategoryID, f.TagID,
+		f.SalesChannelIDs, toInt32(f.Limit), toInt32(f.Offset), afterAt, afterID)
 	if err != nil {
 		return nil, wrapDB(err, "could not list products")
 	}
@@ -344,7 +366,8 @@ func (r *Repo) ListProducts(ctx context.Context, f ProductFilter) ([]models.Prod
 func (r *Repo) CountProducts(ctx context.Context, f ProductFilter) (int, error) {
 	var n int64
 	err := r.db.QueryRow(ctx, countProductsSQL,
-		f.Status, f.CollectionID, f.Handle, f.Search, f.SalesChannelIDs).Scan(&n)
+		f.Status, f.CollectionID, f.Handle, f.Search, f.CategoryID, f.TagID,
+		f.SalesChannelIDs).Scan(&n)
 	if err != nil {
 		return 0, wrapDB(err, "could not read product count")
 	}
