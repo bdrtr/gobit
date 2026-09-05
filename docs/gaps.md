@@ -83,7 +83,7 @@ Four sequencing facts govern the whole list:
 
 | # | feature | waits on |
 | --- | --- | --- |
-| C1 | **Back-in-stock waitlist** — the cheapest real feature; every part exists and only a table is missing | — |
+| C1 | **Back-in-stock waitlist.** ~~The cheapest real feature; every part exists and only a table is missing~~ — **that claim was wrong, measured 2026-09-05.** Three parts are missing, not one: the table, an inventory EVENT (the module publishes nothing at all, so there is no "it is back" to react to), and a subscriber to turn it into a message. The notification side does exist — `Service.Notify` — but it is reached by SUBSCRIBING, so the event is the load-bearing half | B7 (inventory events) |
 | C2 | ~~**Order timeline**~~ **Built 2026-09-05.** `GET /admin/v1/orders/{id}/timeline` — composed, not a table; every entry names the CLOCK that stamped it, because the capture and a parcel's transitions are on the application clock while everything else is on the database's. Undated facts (an exchange that finished) come back last rather than being dropped | ~~B5, B6~~ done |
 | C3 | **Operator assistant in the panel** — sixty-one primitive interop methods are already a tool catalogue, and identity exists inside the panel | a return-creation surface |
 | C4 | **Consent records and data-subject endpoints** | A2, B17 |
