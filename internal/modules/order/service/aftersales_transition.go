@@ -108,6 +108,84 @@ func (s *Service) transitionReturn(
 	return out, nil
 }
 
+// CancelExchange withdraws the exchange request.
+//
+// # Why this is the only transition an exchange has
+//
+// It is the only one the framework can honor. Completing an exchange means two
+// movements: goods shipped OUT against an order that already exists, and — when
+// [models.Exchange.DifferenceDue] is positive — money collected against that
+// same order. The first has no capability anywhere in this repository, which is
+// why settling a claim with a replacement is refused rather than stamped
+// (internal/workflows/returns/claim.go). The second is forbidden by the
+// order-to-payment link's one-to-one cardinality, whose own definition names
+// this record as the thing that will reopen it one day
+// (internal/modules/payment/service/links.go).
+//
+// Withdrawing needs neither. Nothing ships, nothing is collected, no other
+// module is reached: a request was opened and it is taken back. That is why
+// this method exists and its sibling does not.
+//
+// # Idempotent, and the second call keeps the FIRST moment
+//
+// The rule [Service.ReceiveReturn] states holds here for the same reason: a
+// second withdrawal is a no-op rather than a conflict, and re-stamping would
+// make the record claim it was withdrawn at the moment somebody clicked twice.
+//
+// # It does not check the order
+//
+// Deliberately, and it is the difference from [Service.CreateExchange], which
+// requires a live order. Opening a record against a canceled order would be
+// opening work that cannot be done; taking one back is closing work that should
+// not be done, and refusing that because the order moved would strand the
+// record open forever.
+//
+// # Why the body is here instead of a third frame
+//
+// [Service.transitionReturn] and [Service.transitionClaim] exist because their
+// record types have TWO transitions each, and the "second call keeps the first
+// moment" rule would otherwise have to be right in two places per type. The
+// exchange has one. A frame parameterized over a single call site would add an
+// indirection and a function value to read past, and would buy no place for the
+// rule to go wrong twice.
+func (s *Service) CancelExchange(ctx context.Context, exchangeID string) (models.Exchange, error) {
+	if err := requireID("exchange_id", exchangeID); err != nil {
+		return models.Exchange{}, err
+	}
+
+	var out models.Exchange
+	err := s.store.WithTx(ctx, func(ctx context.Context) error {
+		current, err := s.store.LockExchange(ctx, exchangeID)
+		if err != nil {
+			return err
+		}
+
+		switch current.Status.CancelAction() {
+		case models.AfterSalesNoop:
+			s.log.DebugContext(ctx, "the exchange record is already withdrawn, nothing was done",
+				"exchange_id", exchangeID, "status", current.Status.String())
+			out = current
+
+			return nil
+		case models.AfterSalesConflict:
+			return errors.Conflict(CodeAfterSalesTransition,
+				"canceling is not possible on an exchange in status %q (%s)",
+				current.Status.String(), exchangeID)
+		case models.AfterSalesProceed:
+			// Handled below.
+		}
+
+		out, err = s.store.CancelExchange(ctx, exchangeID)
+
+		return err
+	})
+	if err != nil {
+		return models.Exchange{}, err
+	}
+
+	return out, nil
+}
+
 // CompleteClaim settles the claim.
 //
 // It records that the claim WAS settled; what settling meant — money sent back,

@@ -31,6 +31,7 @@ type Order struct {
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
 	DeletedAt      pgtype.Timestamptz
+	ArchivedAt     pgtype.Timestamptz
 }
 
 type OrderAddress struct {
@@ -76,7 +77,6 @@ type OrderExchange struct {
 	DifferenceDue int64
 	Note          *string
 	Metadata      []byte
-	CompletedAt   pgtype.Timestamptz
 	CanceledAt    pgtype.Timestamptz
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz

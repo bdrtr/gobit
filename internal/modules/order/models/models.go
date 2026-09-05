@@ -165,6 +165,19 @@ type Order struct {
 	// CanceledAt is the moment the order was canceled; nil when it is not
 	// canceled.
 	CanceledAt *time.Time
+	// ArchivedAt is the moment the order was archived; nil when it is not
+	// archived.
+	//
+	// It does NOT replace CompletedAt and does not overlap it: an archived
+	// order carries both, because archiving does not undo the completion it
+	// followed. Reading "when did this order close" off ArchivedAt would give
+	// the day it left the lists rather than the day the sale ended.
+	//
+	// It is nil on an order archived before the column existed (migration
+	// 000007), which is the one case where the status and the stamp disagree.
+	// The database allows exactly that disagreement and no other: the
+	// constraint holds a stamp to the status, not the status to a stamp.
+	ArchivedAt *time.Time
 	// CancelReason is the cancellation rationale; it is empty on an order that
 	// was not canceled.
 	CancelReason string
@@ -437,22 +450,30 @@ type ReturnItem struct {
 }
 
 // ExchangeStatus is the status of an exchange record.
+//
+// There are TWO of them, where the sibling records have three, and the missing
+// one is a statement about what this framework can do rather than about what an
+// exchange is. Completing an exchange means shipping goods out against an
+// existing order and, when [Exchange.DifferenceDue] is positive, collecting
+// money against one; there is no capability for the first anywhere in the
+// framework, and the order-to-payment link is one-to-one, which forbids the
+// second. A "completed" value would therefore be a state nothing could enter,
+// with a stamp nothing could write — which is what it was until migration
+// 000008 removed both.
 type ExchangeStatus string
 
 // Exchange statuses.
 const (
 	// ExchangeRequested means the exchange was requested.
 	ExchangeRequested ExchangeStatus = "requested"
-	// ExchangeCompleted means the exchange was completed.
-	ExchangeCompleted ExchangeStatus = "completed"
-	// ExchangeCanceled means the exchange request was canceled.
+	// ExchangeCanceled means the exchange request was withdrawn.
 	ExchangeCanceled ExchangeStatus = "canceled"
 )
 
 // Valid reports whether the status is a defined value.
 func (s ExchangeStatus) Valid() bool {
 	switch s {
-	case ExchangeRequested, ExchangeCompleted, ExchangeCanceled:
+	case ExchangeRequested, ExchangeCanceled:
 		return true
 	default:
 		return false
@@ -466,7 +487,12 @@ func (s ExchangeStatus) String() string {
 
 // Exchange is an exchange record (plan Section 6).
 //
-// In Phase 6 it is a SKELETON; the exchange workflow belongs to later phases.
+// It is a REQUEST that can be withdrawn, and nothing more. What it is not is
+// spelled out on [ExchangeStatus]: there is no completion, because the two
+// things completing one would require are capabilities the framework does not
+// have. An operator opens the record, the goods and the money are settled by
+// whatever means exist outside this system, and the record is either left open
+// or withdrawn.
 type Exchange struct {
 	// ID is the identifier with the "exch_" prefix.
 	ID string
@@ -485,11 +511,12 @@ type Exchange struct {
 	Note string
 	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
-	// CompletedAt is the moment the exchange was completed; nil when it was not
-	// completed.
-	CompletedAt *time.Time
-	// CanceledAt is the moment the request was canceled; nil when it was not
-	// canceled.
+	// CanceledAt is the moment the request was withdrawn; nil while it is open.
+	//
+	// The pairing with Status is not merely a convention here: the database
+	// holds the two to each other in both directions
+	// (order_exchanges_canceled_stamp), so a canceled exchange without a moment
+	// cannot be written.
 	CanceledAt *time.Time
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time

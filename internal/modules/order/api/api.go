@@ -127,6 +127,11 @@ type Orders interface {
 	GetExchange(ctx context.Context, exchangeID string) (models.Exchange, error)
 	// ListExchanges pages the order's exchange records.
 	ListExchanges(ctx context.Context, orderID string, page service.Page) ([]models.Exchange, int64, error)
+	// CancelExchange withdraws the exchange request.
+	//
+	// It is the ONLY transition an exchange has, and no CompleteExchange stands
+	// beside it: see [models.ExchangeStatus].
+	CancelExchange(ctx context.Context, exchangeID string) (models.Exchange, error)
 
 	// CreateClaim opens a claim record on the order.
 	CreateClaim(ctx context.Context, in service.CreateClaimInput) (models.Claim, error)
@@ -291,6 +296,7 @@ type orderDTO struct {
 	PlacedAt      time.Time      `json:"placed_at"`
 	CompletedAt   *time.Time     `json:"completed_at,omitempty"`
 	CanceledAt    *time.Time     `json:"canceled_at,omitempty"`
+	ArchivedAt    *time.Time     `json:"archived_at,omitempty"`
 	CancelReason  string         `json:"cancel_reason,omitempty"`
 	CreatedAt     time.Time      `json:"created_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`
@@ -368,7 +374,6 @@ type exchangeDTO struct {
 	DifferenceDue int64          `json:"difference_due"`
 	Note          string         `json:"note,omitempty"`
 	Metadata      map[string]any `json:"metadata,omitempty"`
-	CompletedAt   *time.Time     `json:"completed_at,omitempty"`
 	CanceledAt    *time.Time     `json:"canceled_at,omitempty"`
 	CreatedAt     time.Time      `json:"created_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`
@@ -410,6 +415,7 @@ func toOrderDTO(order models.Order) orderDTO {
 		PlacedAt:      order.PlacedAt,
 		CompletedAt:   order.CompletedAt,
 		CanceledAt:    order.CanceledAt,
+		ArchivedAt:    order.ArchivedAt,
 		CancelReason:  order.CancelReason,
 		CreatedAt:     order.CreatedAt,
 		UpdatedAt:     order.UpdatedAt,
@@ -492,7 +498,6 @@ func toExchangeDTO(exchange models.Exchange) exchangeDTO {
 		DifferenceDue: exchange.DifferenceDue,
 		Note:          exchange.Note,
 		Metadata:      exchange.Metadata,
-		CompletedAt:   exchange.CompletedAt,
 		CanceledAt:    exchange.CanceledAt,
 		CreatedAt:     exchange.CreatedAt,
 		UpdatedAt:     exchange.UpdatedAt,

@@ -168,6 +168,13 @@ func (f *fakeOrders) ListExchanges(_ context.Context, orderID string, page servi
 	return nil, f.count, f.err
 }
 
+// CancelExchange withdraws the exchange request.
+func (f *fakeOrders) CancelExchange(_ context.Context, exchangeID string) (models.Exchange, error) {
+	f.record("CancelExchange")
+	f.gotChildID = exchangeID
+	return f.exchange, f.err
+}
+
 // CreateClaim opens a claim record.
 func (f *fakeOrders) CreateClaim(_ context.Context, in service.CreateClaimInput) (models.Claim, error) {
 	f.record("CreateClaim")
@@ -468,6 +475,46 @@ func TestAdminCancelRejectsUnknownField(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	assert.Empty(t, svc.calls)
+}
+
+// TestAdminCancelExchangeReachesTheService binds the exchange's only
+// transition to a caller.
+//
+// Binding it is half of closing D4 and not a formality: the column audit reads
+// the .sql files and not the call graph, so an UPDATE that no route can reach
+// would turn the audit green while leaving the column exactly as unwritable as
+// it was. This test is what says a caller exists.
+//
+// It answers with the RECORD and not the order — unlike complete and archive,
+// which re-read the order — because withdrawing a request changes nothing about
+// the order it hangs off.
+func TestAdminCancelExchangeReachesTheService(t *testing.T) {
+	moment := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	svc := &fakeOrders{exchange: models.Exchange{
+		ID: "exch_1", OrderID: "order_1", Status: models.ExchangeCanceled,
+		DifferenceDue: -500, CanceledAt: &moment,
+	}}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodPost,
+		"/admin/v1/orders/order_1/exchanges/exch_1/cancel", "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []string{"CancelExchange"}, svc.calls)
+	assert.Equal(t, "exch_1", svc.gotChildID)
+
+	var body struct {
+		Data struct {
+			Status      string     `json:"status"`
+			CanceledAt  *time.Time `json:"canceled_at"`
+			CompletedAt *time.Time `json:"completed_at"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "canceled", body.Data.Status)
+	require.NotNil(t, body.Data.CanceledAt, "the moment has to reach the client")
+	assert.Nil(t, body.Data.CompletedAt,
+		"the field is gone from the DTO; a client must not be able to read one")
 }
 
 // TestAdminCompleteAndArchive verifies that the transition endpoints reach the

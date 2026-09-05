@@ -111,13 +111,25 @@ SET status       = 'completed',
 WHERE id = $1 AND deleted_at IS NULL AND status = 'pending'
 RETURNING *;
 
--- ArchiveOrder takes a completed order into the archive.
+-- ArchiveOrder takes a completed order into the archive and stamps the moment.
 --
 -- completed_at IS NOT TOUCHED: archiving does not change the order's moment of
--- completion, it only moves it out of the day-to-day lists.
+-- completion, it only moves it out of the day-to-day lists. archived_at is the
+-- moment of THIS transition and is written here for the same reason
+-- ReceiveOrderReturn writes received_at from now(): the moment belongs to the
+-- record, and an application-supplied instant makes the ordering of two records
+-- depend on which machine wrote them.
+--
+-- updated_at was the rejected alternative and it looks free, because on an
+-- archived order the two hold the same instant today — archiving is terminal,
+-- so no later UPDATE moves it. That equality is an accident of the current
+-- query set rather than a property of the row: the first statement that touches
+-- an archived order for any other reason breaks it silently, and updated_at
+-- cannot say WHICH write it timed even while it is correct.
 -- name: ArchiveOrder :one
 UPDATE orders
-SET status     = 'archived',
-    updated_at = now()
+SET status      = 'archived',
+    archived_at = now(),
+    updated_at  = now()
 WHERE id = $1 AND deleted_at IS NULL AND status = 'completed'
 RETURNING *;

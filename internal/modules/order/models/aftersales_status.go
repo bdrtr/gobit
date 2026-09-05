@@ -98,42 +98,33 @@ func (s ReturnStatus) CancelAction() AfterSalesAction {
 	}
 }
 
-// CompleteAction returns the outcome of completing the exchange in this status.
+// CancelAction returns the outcome of withdrawing the exchange in this status.
 //
 // Transition table:
 //
 //	requested -> proceed
-//	completed -> noop      (the FIRST completion keeps its moment)
-//	canceled  -> conflict  (a withdrawn exchange is not completed later)
-func (s ExchangeStatus) CompleteAction() AfterSalesAction {
-	switch s {
-	case ExchangeRequested:
-		return AfterSalesProceed
-	case ExchangeCompleted:
-		return AfterSalesNoop
-	case ExchangeCanceled:
-		return AfterSalesConflict
-	default:
-		return AfterSalesConflict
-	}
-}
-
-// CancelAction returns the outcome of canceling the exchange in this status.
+//	canceled  -> noop      (already withdrawn; the FIRST withdrawal keeps its
+//	                        moment, for the reason AfterSalesNoop exists)
 //
-// Transition table:
+// # Why there is no CompleteAction beside it
 //
-//	requested -> proceed
-//	completed -> conflict  (goods have moved in BOTH directions and money may
-//	                        have moved with them; the way back is a new record)
-//	canceled  -> noop
+// The exchange is the one after-sales record with two statuses instead of
+// three, and the missing transition is missing on purpose. It carried a table
+// here until 2026-09-06 — requested -> proceed, completed -> noop — and the
+// table was unreachable: no query wrote the status, so nothing ever called it,
+// and the transition it described could not have been honored if it had. See
+// [ExchangeStatus] for what completing would require and why the framework
+// cannot do it.
+//
+// A dead table is worse than an absent one here, because this file exists to be
+// READ AS THE RULE. An entry saying "requested -> proceed" is a promise that
+// completing works, made by the file whose whole purpose is to be the answer.
 func (s ExchangeStatus) CancelAction() AfterSalesAction {
 	switch s {
 	case ExchangeRequested:
 		return AfterSalesProceed
 	case ExchangeCanceled:
 		return AfterSalesNoop
-	case ExchangeCompleted:
-		return AfterSalesConflict
 	default:
 		return AfterSalesConflict
 	}

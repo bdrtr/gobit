@@ -36,23 +36,24 @@ const (
 // without a second field, and they are CONSTANTS because a support screen will
 // switch on them: a kind invented at a call site is one nobody can render.
 const (
-	KindOrderPlaced        = "order.placed"
-	KindOrderCompleted     = "order.completed"
-	KindOrderCanceled      = "order.canceled"
-	KindPaymentCaptured    = "payment.captured"
-	KindPaymentRefunded    = "payment.refunded"
-	KindShipmentOpened     = "shipment.opened"
-	KindShipmentShipped    = "shipment.shipped"
-	KindShipmentDelivered  = "shipment.delivered"
-	KindShipmentCanceled   = "shipment.canceled"
-	KindReturnOpened       = "return.opened"
-	KindReturnReceived     = "return.received"
-	KindReturnCanceled     = "return.canceled"
-	KindClaimOpened        = "claim.opened"
-	KindClaimCompleted     = "claim.completed"
-	KindClaimCanceled      = "claim.canceled"
-	KindExchangeOpened     = "exchange.opened"
-	KindExchangeUnfinished = "exchange.unfinished"
+	KindOrderPlaced       = "order.placed"
+	KindOrderCompleted    = "order.completed"
+	KindOrderCanceled     = "order.canceled"
+	KindOrderArchived     = "order.archived"
+	KindPaymentCaptured   = "payment.captured"
+	KindPaymentRefunded   = "payment.refunded"
+	KindShipmentOpened    = "shipment.opened"
+	KindShipmentShipped   = "shipment.shipped"
+	KindShipmentDelivered = "shipment.delivered"
+	KindShipmentCanceled  = "shipment.canceled"
+	KindReturnOpened      = "return.opened"
+	KindReturnReceived    = "return.received"
+	KindReturnCanceled    = "return.canceled"
+	KindClaimOpened       = "claim.opened"
+	KindClaimCompleted    = "claim.completed"
+	KindClaimCanceled     = "claim.canceled"
+	KindExchangeOpened    = "exchange.opened"
+	KindExchangeCanceled  = "exchange.canceled"
 )
 
 // The clock that stamped a moment.
@@ -116,12 +117,27 @@ type TimelineEntry struct {
 //
 // # Facts with no moment are kept, not dropped
 //
-// Two things are known to have happened and carry no stamp: an exchange that
-// was completed or canceled (the columns exist and nothing writes them) and an
-// archived order (the status flips and no moment is recorded). They come back
-// with a nil At, LAST. Dropping them would make the timeline silently shorter
-// than the truth, which is the failure this repository keeps writing
-// constraints against.
+// The machinery for an undated entry stays — [sortTimeline] puts a nil At last
+// and [TimelineEntry.At] is a pointer for that reason — but nothing produces
+// one any more, and the two things that used to are worth recording because the
+// text here described them WRONGLY.
+//
+// It claimed an archived order came back with a nil At. It did not come back at
+// all: [orderEntries] emitted placed, completed and canceled, and no archived
+// entry of any kind existed, so the one moment the paragraph was written to
+// defend was the one the code dropped. It is dated now (migration 000007) and
+// emitted as [KindOrderArchived].
+//
+// It also claimed an exchange that was completed or canceled came back undated.
+// That entry could never fire: nothing wrote the exchange's status either, so
+// every exchange was "requested" and the branch testing for anything else was
+// unreachable. An exchange is now withdrawable and the withdrawal is dated
+// ([KindExchangeCanceled]); completion is gone from the record entirely, so
+// there is no longer a state to report without a moment.
+//
+// The lesson is kept rather than the code: a timeline shorter than the truth is
+// the failure that hides a bug instead of showing it, and a comment claiming
+// otherwise hides it twice.
 func (s *Service) Timeline(ctx context.Context, orderID string) ([]TimelineEntry, error) {
 	order, err := s.GetOrder(ctx, orderID)
 	if err != nil {
@@ -167,6 +183,17 @@ func orderEntries(order models.OrderDetail) []TimelineEntry {
 	if order.CanceledAt != nil {
 		entries = append(entries, TimelineEntry{
 			At: order.CanceledAt, Kind: KindOrderCanceled, RefID: order.ID,
+			Clock: ClockDatabase,
+		})
+	}
+	// An archived order that carries no moment was archived before the column
+	// existed (migration 000007), and it produces no entry: there is nothing to
+	// place on a timeline and inventing a position would be worse than the
+	// absence. The status still says "archived" on the placed entry's Detail,
+	// so the fact is not lost, only undated — which is exactly what it is.
+	if order.ArchivedAt != nil {
+		entries = append(entries, TimelineEntry{
+			At: order.ArchivedAt, Kind: KindOrderArchived, RefID: order.ID,
 			Clock: ClockDatabase,
 		})
 	}
@@ -366,16 +393,12 @@ func (s *Service) afterSalesEntries(ctx context.Context, orderID string) ([]Time
 			At: &exchanges[i].CreatedAt, Kind: KindExchangeOpened, RefID: exchanges[i].ID,
 			Clock: ClockDatabase, Detail: exchanges[i].Status.String(),
 		})
-		// An exchange that is finished carries NO moment: the columns exist and
-		// nothing writes them (gaps.md D4). The fact is reported with a nil At
-		// rather than dropped, because a timeline shorter than the truth is the
-		// failure that hides a bug instead of showing it.
-		if exchanges[i].Status != models.ExchangeRequested {
-			entries = append(entries, TimelineEntry{
-				Kind: KindExchangeUnfinished, RefID: exchanges[i].ID,
-				Detail: exchanges[i].Status.String(),
-			})
-		}
+		// The withdrawal, when there was one. It goes through appendMoment like
+		// every other stamp rather than through a status test, and that is the
+		// point of the change: the record's own column now answers "when", so
+		// nothing here has to infer a moment from a status.
+		entries = appendMoment(entries, exchanges[i].CanceledAt,
+			KindExchangeCanceled, exchanges[i].ID)
 	}
 
 	return entries, nil

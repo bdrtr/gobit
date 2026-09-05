@@ -23,11 +23,36 @@
 // undoes nothing. It delivers a message the business transaction already
 // decided to send — the decision was made and committed by a person's request;
 // all that was missing was the delivery.
+//
+// # The two ways delivery machinery betrays its promise
+//
+// Both are prevented, and each by a different mechanism, so it is worth saying
+// which is which:
+//
+//   - RETRYING FOREVER. A payload the receiver will never accept, re-sent every
+//     minute for the life of the installation — and, because the pass reads the
+//     oldest rows up to its limit, filling every batch so that the healthy
+//     events behind it are never attempted at all. The ceiling in
+//     [github.com/bdrtr/gobit/core/eventbus/outbox.Policy] prevents this: the row
+//     is given up on and leaves the relay's query.
+//   - DROPPING SILENTLY. An event the relay stops trying, with nobody told. The
+//     dead letter prevents this, and only because it is READ: this job asks for
+//     the pile on every pass and, when it is not empty, FAILS — which is the
+//     one channel that reaches `gobit jobs`, because a run's detail is recorded
+//     only alongside an error (internal/core/job/runner.go's execute). A job
+//     that reported "ok" while promised events sat undelivered would be the
+//     write-only ledger this repository has already built once, in audit_log.
+//
+// The failure is not cosmetic and it does not clear itself. It stands until a
+// human redrives the events or discards them, which is the intended cost: the
+// alarm is the feature.
 package outboxrelay
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
@@ -51,6 +76,11 @@ const Name = "outbox-relay"
 // It is not shorter than a minute because the relay is not the primary path.
 // The bus is still published to directly in the same request; this is what
 // catches what that missed.
+//
+// It is also the floor under the retry backoff. The store's first delay is one
+// minute for exactly this reason: a shorter one would be rounded up to the next
+// pass anyway, and a policy whose smallest step the scheduler cannot express
+// would document a schedule the installation does not actually follow.
 const Every = time.Minute
 
 // MaxRun bounds one pass.
@@ -70,19 +100,33 @@ const MaxRun = 45 * time.Second
 // A cap that is hit is REPORTED as hit: a backlog of ten thousand events is a
 // different fact from a quiet minute, and the next pass is a minute away, so
 // nothing is stranded by it.
+//
+// The cap used to be reachable by rows that could never succeed: the pass took
+// the oldest unpublished rows, and a limit's worth of permanently failing ones
+// filled every batch forever. Backoff and the dead letter are what keep this
+// number a throughput bound instead of a queue-length bomb.
 const limit = 200
+
+// deadLetterSample is how many dead letters the report carries.
+//
+// Five, not all of them. The report ends up on one line of `gobit jobs` and in
+// one log record; a pile of two thousand printed in full would push the count —
+// the number that decides whether anybody is woken up — off the screen. The
+// count is always the whole pile; the sample is only what it looks like.
+const deadLetterSample = 5
 
 // codeRelayFailed reports that the pass could not be made.
 const codeRelayFailed = "outbox_relay_failed"
 
 // relay is the narrow surface this job needs.
 //
-// It is declared HERE so the job depends on the one method it calls and a test
-// can supply it without a database.
+// It is declared HERE so the job depends on the two methods it calls and a test
+// can supply them without a database.
 type relay interface {
 	Relay(
 		ctx context.Context, limit int32, publish func(context.Context, outbox.Pending) error,
-	) (published, failed int, err error)
+	) (outbox.RelayResult, error)
+	DeadLetters(ctx context.Context, limit int32) (outbox.DeadLetterReport, error)
 }
 
 // publisher is the bus the events go to.
@@ -104,9 +148,15 @@ func Definition(r relay, bus publisher, log *slog.Logger) job.Definition {
 	}
 }
 
-// run relays one batch.
+// run relays one batch and then reports whatever the relay has given up on.
+//
+// The two halves are in one job on purpose. A separate "dead letter watch" job
+// would run on its own schedule, take its own lock and produce its own history
+// row, and an operator would then have to correlate two listings to learn that
+// the relay is fine and the events are not. The relay is the only thing that
+// creates dead letters; it is the right thing to report them.
 func run(ctx context.Context, r relay, bus publisher, log *slog.Logger) error {
-	published, failed, err := r.Relay(ctx, limit,
+	result, err := r.Relay(ctx, limit,
 		func(ctx context.Context, event outbox.Pending) error {
 			return bus.Publish(ctx, event.Event())
 		})
@@ -115,31 +165,130 @@ func run(ctx context.Context, r relay, bus publisher, log *slog.Logger) error {
 			"the outbox could not be relayed")
 	}
 
-	if published == 0 && failed == 0 {
+	reportPass(ctx, result, log)
+
+	// Asked for on EVERY pass, including the ones that published nothing. A
+	// pile that is only counted when something happens is one that goes
+	// unnoticed during the quiet hour after the outage that filled it.
+	deadLetters, err := r.DeadLetters(ctx, deadLetterSample)
+	if err != nil {
+		return coreerrors.Wrap(err, coreerrors.KindOf(err), codeRelayFailed,
+			"the outbox dead letters could not be read; the relay cannot say whether "+
+				"anything has been given up on")
+	}
+	if deadLetters.Empty() {
+		return nil
+	}
+
+	return deadLetterError{report: deadLetters}
+}
+
+// reportPass logs what the pass did.
+func reportPass(ctx context.Context, result outbox.RelayResult, log *slog.Logger) {
+	if result.Published == 0 && result.Failed == 0 {
 		// DEBUG, not INFO. A healthy installation runs this every minute
 		// forever, and a line that never changes is a line nobody reads.
 		log.DebugContext(ctx, "the outbox is empty")
 
-		return nil
+		return
 	}
 
-	if failed > 0 {
+	if len(result.DeadLettered) > 0 {
+		// The moment of death, with the ids, logged once. The row keeps the
+		// last error and the attempt count, but nothing else records WHICH
+		// pass gave up on it, and an operator reconstructing an incident reads
+		// the log forwards.
+		log.ErrorContext(ctx, "promised events have been given up on and will NOT be retried; "+
+			"they are dead-lettered and need a human to redrive or discard them",
+			"dead_lettered", len(result.DeadLettered),
+			"event_ids", strings.Join(result.DeadLettered, ","))
+	}
+
+	if result.Failed > 0 {
 		// ERROR: every one of these is a message somebody is waiting for. The
-		// row keeps its attempt count, so a permanently failing event stops
-		// looking like a slow one.
+		// row keeps its attempt count and its next attempt is delayed, so a
+		// permanently failing event stops looking like a slow one — and stops
+		// occupying a slot in every batch.
 		log.ErrorContext(ctx, "some promised events could not be published; they stay in the "+
-			"outbox and are retried, but a repeated failure needs a human",
-			"failed", failed, "published", published)
+			"outbox and are retried after a growing delay, but a repeated failure needs a human",
+			"failed", result.Failed, "published", result.Published)
 	}
 
-	if published > 0 {
-		log.InfoContext(ctx, "promised events were published", "published", published)
+	if result.Published > 0 {
+		log.InfoContext(ctx, "promised events were published", "published", result.Published)
 	}
 
-	if published+failed == limit {
+	if result.Published+result.Failed == limit {
 		log.WarnContext(ctx, "the relay filled its limit, so there is a backlog; the next pass "+
 			"is a minute away", "limit", limit)
 	}
-
-	return nil
 }
+
+// deadLetterError is a standing pile of dead letters, stated as a failed run.
+//
+// # Why a failure and not a log line
+//
+// Because a log line is not a read surface an operator visits. `gobit jobs` is
+// — it is the first thing asked during an incident — and it prints a DETAIL
+// column that internal/core/job's runner fills only from an error: a successful
+// run records no detail at all, by construction. So the choice was never
+// "failure or detail", it was "failure, or the pile is invisible to the one
+// listing built to be looked at".
+//
+// # Why it does not clear itself
+//
+// It stands on every pass until the events are redriven or discarded, so the
+// listing keeps saying so. That is deliberate and it is the cost of the design:
+// a report that cleared after one pass would be gone by the time anybody typed
+// the command. The escape hatches exist and are not promises — Redrive and
+// Discard on the store.
+type deadLetterError struct {
+	report outbox.DeadLetterReport
+}
+
+// Error states the pile and names the oldest of it.
+func (e deadLetterError) Error() string {
+	return fmt.Sprintf(
+		"%d promised event(s) have been given up on and are waiting for a human "+
+			"(redrive them once the receiver is fixed, or discard them): %s",
+		e.report.Count, describe(e.report.Oldest))
+}
+
+// JobDetail is the one line `gobit jobs` prints in its DETAIL column.
+//
+// It carries the event NAMES and ids rather than the payloads. The rule on
+// Outcome.Detail is that it holds no personal data; an event id here is
+// composed by the publisher from its own aggregate id (ADR 0023 requires the
+// caller to supply it), which is the same identifier the error logs already
+// print. The payload, which can hold an address or a phone number, never
+// leaves the row.
+func (e deadLetterError) JobDetail() string {
+	return fmt.Sprintf("%d dead-lettered; oldest %s", e.report.Count, describe(e.report.Oldest))
+}
+
+// describe renders the sample on one line.
+func describe(letters []outbox.DeadLetter) string {
+	if len(letters) == 0 {
+		// Reachable only if the count and the sample disagree, which the
+		// store's single-query report makes impossible today. Saying so beats
+		// printing an empty list that reads like "nothing is wrong".
+		return "(no sample available)"
+	}
+
+	parts := make([]string, 0, len(letters))
+	for _, letter := range letters {
+		parts = append(parts, fmt.Sprintf("%s %s after %d attempts (%s)",
+			letter.Name, letter.ID, letter.Attempts, oneLine(letter.LastError)))
+	}
+
+	return strings.Join(parts, "; ")
+}
+
+// oneLine flattens whatever the receiver said into a single line.
+//
+// The last error is a string a REMOTE system produced — a driver message, a
+// wrapped chain, an HTTP body — and nothing in this repository controls whether
+// it contains a newline. Outcome.Detail is one cell of a tabwriter table, so a
+// newline there does not merely look bad: it breaks the alignment of every row
+// after it, in the one listing an operator reads during an incident.
+func oneLine(text string) string { return strings.Join(strings.Fields(text), " ") }

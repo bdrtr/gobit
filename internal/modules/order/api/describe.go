@@ -292,6 +292,25 @@ func describeExchanges(d *openapi.Doc) {
 			"200": openapi.Response("Exchange record", d.Item(exchangeDTO{})),
 		},
 	})
+
+	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/exchanges/{exchangeId}/cancel",
+		openapi.Operation{
+			Summary: "Withdraws the exchange request.",
+			// The two statuses and the ABSENT third are written out here for
+			// the same reason the claim's type values are: the schema shows
+			// "status" as a bare string, and a client that assumed the usual
+			// requested/completed/canceled triple would wait for a completion
+			// that cannot arrive.
+			Description: "The only transition an exchange has. Its status is " +
+				"\"requested\" or \"canceled\" and there is no completed state: " +
+				"completing an exchange would need goods shipped out against an " +
+				"existing order and, on a positive difference, money collected " +
+				"against it, and this framework can do neither. A second call on " +
+				"an already withdrawn record succeeds and keeps the first moment.",
+			Responses: map[string]any{
+				"200": openapi.Response("The withdrawn exchange record", d.Item(exchangeDTO{})),
+			},
+		})
 }
 
 // describeClaims describes the damage/shortage claim record endpoints.

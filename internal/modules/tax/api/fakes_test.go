@@ -32,6 +32,22 @@ func newMemRepo() *memRepo {
 	}
 }
 
+// WithTx fn'i OLDUĞU GİBİ çalıştırır; GERİ ALMA YAPMAZ.
+//
+// Bu dosyanın konusu HTTP katmanıdır: status kodu, zarf biçimi ve hata
+// eşlemesi. İşlemin gerçekten geri aldığı burada değil, gerçek veritabanı
+// üzerinde koşan entegrasyon testlerinde gösterilir; bellek içi bir depoda
+// inandırıcı bir geri alma taklidi, veritabanında geri alınmayan bir yazmayı
+// gizlerdi.
+func (m *memRepo) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	return fn(ctx)
+}
+
+// LockTaxRegion canlı bölgeyi döner; kilit YOKTUR (bkz. [memRepo.WithTx]).
+func (m *memRepo) LockTaxRegion(ctx context.Context, id string) (models.TaxRegion, error) {
+	return m.GetTaxRegion(ctx, id)
+}
+
 // CreateTaxRegion bölgeyi yazar; ülkenin ikinci kökünü reddeder.
 func (m *memRepo) CreateTaxRegion(_ context.Context, region models.TaxRegion, now time.Time) (models.TaxRegion, error) {
 	// Anahtar üzerinden dolaşılır: değerle dolaşmak her turda modelin

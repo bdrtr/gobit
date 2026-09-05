@@ -97,6 +97,8 @@ type fakeStore struct {
 	lockedReturns []string
 	// lockedClaims records the claim rows that were locked, in order.
 	lockedClaims []string
+	// lockedExchanges records the exchange rows that were locked, in order.
+	lockedExchanges []string
 
 	// spendingLocks records the customers whose spending lock was taken IN
 	// ORDER.
@@ -465,8 +467,14 @@ func (f *fakeStore) applyStatus(ctx context.Context, id string, required, next m
 		order.CancelReason = reason
 	case models.OrderCompleted:
 		order.CompletedAt = &stamp
-	case models.OrderArchived, models.OrderPending:
-		// The stamp does not change.
+	case models.OrderArchived:
+		// CompletedAt is NOT touched: archiving does not move the moment the
+		// order was completed, and the query says so in the same words.
+		order.ArchivedAt = &stamp
+	case models.OrderPending:
+		// Nothing transitions INTO pending; the arm exists so the switch is
+		// exhaustive over the status type rather than falling through a
+		// default that would swallow a new status added later.
 	}
 	f.recordUndo(ctx, undoEntry(f.orders, id))
 	f.orders[id] = order
@@ -1037,6 +1045,51 @@ func (f *fakeStore) ListExchanges(ctx context.Context, filter models.ChildFilter
 		return []models.Exchange{}, total, nil
 	}
 	return matched[filter.Offset:min(filter.Offset+filter.Limit, total)], total, nil
+}
+
+// LockExchange locks the exchange row and returns its current form.
+func (f *fakeStore) LockExchange(ctx context.Context, id string) (models.Exchange, error) {
+	if err := requireTx(ctx, "LockExchange"); err != nil {
+		return models.Exchange{}, err
+	}
+
+	// Read directly rather than through view(), for the reason LockReturn
+	// gives: a locking read sees the live row, and view() takes this mutex.
+	f.mu.Lock()
+	f.lockedExchanges = append(f.lockedExchanges, id)
+	exchange, ok := f.exchanges[id]
+	f.mu.Unlock()
+
+	if !ok {
+		return models.Exchange{}, errors.NotFound("order_exchange_not_found",
+			"the exchange record was not found: %s", id)
+	}
+
+	return exchange, nil
+}
+
+// CancelExchange withdraws the exchange request.
+//
+// There is no stampExchange helper beside it, unlike stampReturn and
+// stampClaim: those two serve two transitions each, and this record has one.
+func (f *fakeStore) CancelExchange(ctx context.Context, id string) (models.Exchange, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	exchange, ok := f.exchanges[id]
+	if !ok {
+		return models.Exchange{}, errors.NotFound("order_exchange_not_found",
+			"the exchange record was not found: %s", id)
+	}
+
+	stamp := f.nextStamp()
+	exchange.Status = models.ExchangeCanceled
+	exchange.CanceledAt = &stamp
+	exchange.UpdatedAt = stamp
+	f.recordUndo(ctx, undoEntry(f.exchanges, id))
+	f.exchanges[id] = exchange
+
+	return exchange, nil
 }
 
 // CreateClaim writes a claim record.

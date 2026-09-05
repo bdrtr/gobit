@@ -131,6 +131,34 @@ func toReturnItem(row orderdb.OrderReturnItem) models.ReturnItem {
 	}
 }
 
+// LockExchange locks the exchange row until the end of the transaction.
+//
+// It may only be called inside [Repository.WithTx], for the reason
+// [Repository.LockReturn] states.
+func (r *Repository) LockExchange(ctx context.Context, id string) (models.Exchange, error) {
+	row, err := r.queries(ctx).LockOrderExchange(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.Exchange{}, coreerrors.NotFound(codeExchangeNotFound,
+				"exchange record not found: %s", id)
+		}
+
+		return models.Exchange{}, classify(err, codeQueryFailed, "could not lock the exchange record")
+	}
+
+	return toExchange(row)
+}
+
+// CancelExchange withdraws the exchange request.
+func (r *Repository) CancelExchange(ctx context.Context, id string) (models.Exchange, error) {
+	row, err := r.queries(ctx).CancelOrderExchange(ctx, id)
+	if err != nil {
+		return models.Exchange{}, classify(err, codeQueryFailed, "could not cancel the exchange record")
+	}
+
+	return toExchange(row)
+}
+
 // LockClaim locks the claim row until the end of the transaction.
 func (r *Repository) LockClaim(ctx context.Context, id string) (models.Claim, error) {
 	row, err := r.queries(ctx).LockOrderClaim(ctx, id)

@@ -74,13 +74,13 @@ Four sequencing facts govern the whole list:
 | B9 | **Stored payment instrument** — provider contract + table | saved cards AND subscriptions, in one change | Storefront speed, Commerce models |
 | B10 | **Carrier-capable quote input and a tolerant shipment state machine** — district, dimensions/desi, more statuses (including iade), and out-of-order webhook tolerance | any real carrier | Turkey-specific |
 | B11 | ~~**Order addresses**~~ **Built 2026-09-05.** `order_addresses` (one shipping, one billing, enforced by a unique index), written in the SAME transaction as the order's header and lines; carried cart → interop → checkout plan → order snapshot. The cart's own schema comment already named the order as the thing its copy protects — and the order had no address at all | invoicing, shipping labels, B2B — unblocked | Storefront speed |
-| B12 | **Outbound delivery machinery** — retry and a dead-letter queue on the outbox relay | webhooks, ERP/Slack integration. The bus deliberately has neither | Platform features |
+| B12 | ~~**Outbound delivery machinery** — retry and a dead-letter queue on the outbox relay~~ **Built 2026-09-06, and the "explicit decision" it rested on turned out to describe a different layer.** The outbox gains `next_attempt_at` and `dead_lettered_at`; a failed publish waits out a doubling delay (1, 2, 4 … capped at 60 minutes) and after ten attempts — four hours and three minutes of trying — is given up on and leaves the relay's index. Giving up is a WRITE, not a drop: the instant, the attempt count and the last error stay on the row, the relay job reads the pile on every pass, and a non-empty pile FAILS the run, which is the one channel that reaches the `gobit jobs` listing. Measured before it was built, and it is why the ceiling is not optional: a batch limit's worth of permanently failing rows fills every pass, so five consecutive passes published NOTHING while a healthy event written behind them finished with `attempts = 0` — never attempted once. Not degraded delivery, NO delivery. Still missing, and it is the operator half: `Redrive` and `Discard` exist, are tested, and have NO production caller — no command, no route — so today the alarm has no off switch a human can reach without SQL | webhooks, ERP/Slack integration — the delivery machinery is there, the SENDER is still C5, and a plugin still cannot own a retry pass (B13) | Platform features |
 | B13 | **Plugin host: let a plugin register a job** | any plugin needing a retry pass, including outbound delivery | Platform features |
 | B14 | ~~**Order line-item entity in the read layer + date filter + index**~~ **Built 2026-09-05.** `order_line_item` is the order module's SECOND read-layer entity, offered next to `order` the way fulfillment offers the shipment next to the shipping option. It carries what was sold and for how much, and takes `placed_from`/`placed_to` — half-open, matched against the ORDER's `placed_at` through a join, because a line's own `created_at` is the day its ROW was written and would date an exchange as a fresh sale. Migration 000006 brings the two indexes that keep the range and the variant filter off a full scan. It has a consumer: the panel's Sales screen. NOT built: any aggregation (the provider returns records, never sums), no line ↔ variant link so nothing expands from a sold line to its product, and forecasting itself | demand analytics and forecasting — the READ is there, the analytics are not; the other half of a forecast is still B7 | AI-powered features |
 | B15 | **File read-back, ~~product-image ↔ upload link~~ built 2026-09-05**, file events still missing. `product_image.upload_id` plus the `upload_product_image` link (declared by PRODUCT — it writes the record the binding carries; the file module's own doc says it does not know what a file belongs to). The file module gained the interop surface it deliberately lacked, and the reasoning behind that absence turned out to be half wrong: the address shows the file and says nothing ABOUT it | anything that looks at a photo — the id half is answerable now; file EVENTS are not built | AI-powered features |
 | B16 | **A suggestion store** — system proposes, human applies | forecast and category suggestions. The pattern exists (`sagawatch`, ADR 0017); the storage does not | AI-powered features |
 | B17 | **KVKK erasure, export and retention** | a legal requirement; A2 and A4 come first | Turkey-specific |
-| B18 | ~~**A per-column round-trip test for every module**~~ **Built 2026-09-05** as `TestEveryColumnIsWrittenBySomething`: the schema and the queries are read TOGETHER, and a column no INSERT names and no UPDATE sets fails. DEFAULT and GENERATED columns are out of scope — the database supplies those | nothing — and it caught a standing finding on its first run (see D9) | Common Go mistakes |
+| B18 | ~~**A per-column round-trip test for every module**~~ **Built 2026-09-05** as `TestEveryColumnIsWrittenBySomething`: the schema and the queries are read TOGETHER, and a column no INSERT names and no UPDATE sets fails. DEFAULT and GENERATED columns are out of scope — the database supplies those | nothing — and it caught a standing finding on its first run (see D9). **What it does NOT catch was measured on 2026-09-06 and it is three holes wide, one of them the very finding its own godoc names as the example — see D16** | Common Go mistakes |
 
 ### C. Features — after the above
 
@@ -90,7 +90,7 @@ Four sequencing facts govern the whole list:
 | C2 | ~~**Order timeline**~~ **Built 2026-09-05.** `GET /admin/v1/orders/{id}/timeline` — composed, not a table; every entry names the CLOCK that stamped it, because the capture and a parcel's transitions are on the application clock while everything else is on the database's. Undated facts (an exchange that finished) come back last rather than being dropped | ~~B5, B6~~ done |
 | C3 | **Operator assistant in the panel** — sixty-one primitive interop methods are already a tool catalogue, and identity exists inside the panel | a return-creation surface |
 | C4 | **Consent records and data-subject endpoints** | A2, B17 |
-| C5 | **Outbound webhooks** (NATS after, if anyone asks) | B12, B13 |
+| C5 | **Outbound webhooks** (NATS after, if anyone asks) | ~~B12~~ done — retry and the dead letter are built; B13, and a sender |
 | C6 | **Carrier plugins** (Yurtici, Aras, MNG, PTT) | B1, B10 |
 | C7 | **Installment table** + iyzico/Param providers | A3 |
 | C8 | **Digital product delivery** — entitlement, expiring link, re-download policy | — |
@@ -119,8 +119,39 @@ Four sequencing facts govern the whole list:
 - **D3** The address book's storefront endpoints are unauthenticated and keyed by
   a path id — personal data anyone can read and change. A known consequence of
   ADR 0008, in its sharpest form.
-- **D4** `order_exchanges.completed_at` and `canceled_at` exist and are never
-  written; there is no Complete or Cancel query for an exchange.
+- **D4** ~~`order_exchanges.completed_at` and `canceled_at` exist and are never
+  written; there is no Complete or Cancel query for an exchange.~~ **Fixed
+  2026-09-06, and not by writing both — one column got a writer and the other
+  was DROPPED.** `CancelOrderExchange` is the first `UPDATE` the
+  `order_exchanges` table has ever had, and it is bound to
+  `POST /admin/v1/orders/{id}/exchanges/{exchangeId}/cancel`, because a write
+  query no route reaches would have turned the audit green while leaving the
+  column exactly as unwritable as before. Migration 000008 drops `completed_at`
+  and removes `completed` from the status CHECK: exchange completion needs
+  goods shipped out against an existing order — a capability the framework does
+  not have anywhere — AND a positive difference collected against it, which the
+  one-to-one `order_payment` cardinality forbids. Three separate places in this
+  repository had already written that down, including the section on
+  after-sales below. A state nothing can enter and no moment can date is not a
+  gap; it is a state that should not exist.
+
+  `canceled_at` got the FULL mirror CHECK — `(status = 'canceled') =
+  (canceled_at IS NOT NULL)` — and it could only be added because the column
+  was dead: no existing row holds `canceled`, so every row satisfies both
+  directions. D5's `archived_at` could not have this, and the two entries
+  should be read together.
+
+  Three dead constructs went with it rather than being left looking alive: the
+  completed exchange status constant, the transition-table entry that named its
+  complete action and that nothing could call, and the timeline's unreachable
+  unfinished-exchange branch. All three are deleted, so none of them resolves
+  any more and none of them can be cited here — which is the audit working.
+  If a hand-written row somewhere holds `completed`, the migration
+  FAILS rather than rewriting it — no code here could have produced that row,
+  and quietly resetting it would destroy the only evidence of it.
+
+  **The entry sat open for a reason worth recording: the audit built to catch
+  exactly this never caught it.** See D16.
 - **D9** **Neither the order nor the payment module ever soft-deletes.** Ten
   `deleted_at` columns are never written by anything, while every read in both
   modules carries `deleted_at IS NULL` — a predicate that has never once been
@@ -134,10 +165,74 @@ Four sequencing facts govern the whole list:
   `order_fulfillment` link is now walkable by a Graph request, proved end to end
   with two parcels on one order so the batch read and the one-to-many
   cardinality both bite.
-- **D5** Archiving an order leaves no timestamp — the status flips and nothing
-  records when.
-- **D6** Two repository-internal transactions (tax, region) cannot compose into a
-  service transaction.
+- **D5** ~~Archiving an order leaves no timestamp — the status flips and nothing
+  records when.~~ **Fixed 2026-09-06.** Migration 000007 adds
+  `orders.archived_at` — nullable, no default — and `ArchiveOrder` writes it
+  from the DATABASE clock in the same statement that flips the status. It
+  reaches the model, the admin DTO, the read layer's `order` provider
+  (`FieldArchivedAt`) and the timeline, which now emits a dated `order.archived`
+  entry. `completed_at` is provably untouched by archiving.
+
+  The SHAPE was decided by measurement rather than by taste: three of the four
+  order statuses already carry their own moment (`placed_at`, `completed_at`,
+  `canceled_at`) and two of the three are held to their status by mirror
+  CHECKs. Archiving was the one transition of four that flipped a status and
+  wrote nothing. A dated-transitions side table would have left three stamps on
+  the row and a fourth elsewhere with no rule saying which is authoritative,
+  and it would have made the two existing mirror CHECKs unenforceable — a CHECK
+  cannot see another table's rows.
+
+  Two refusals are recorded in the migration. A `DEFAULT now()` was refused:
+  it would stamp the column when the ROW is written, so every order would claim
+  to have been archived the instant it was placed — and it would also move the
+  column out of the column audit's scope by that audit's own rule, buying
+  silence instead of safety. And the CHECK holds in ONE direction only,
+  `archived_at IS NULL OR status = 'archived'`, where the siblings get the
+  mirror form: orders archived before the column existed carry the status and
+  no moment, and the only way to add the other direction would be to backfill a
+  moment nobody recorded. Migration 000003 answered that exact question the
+  same way for `received_location_id`. The consequence is pinned by a test
+  rather than hidden.
+
+  The rejected alternative was `updated_at`, and it looks free — on an archived
+  order the two hold the same instant today, because archiving is terminal so
+  no later write moves it. Rejected because that equality is an accident of the
+  current query set rather than a property of the row, and because `updated_at`
+  cannot say WHICH write it timed even while it is correct.
+- **D6** ~~Two repository-internal transactions (tax, region) cannot compose into a
+  service transaction.~~ **HALF fixed 2026-09-06: tax has the plumbing, region
+  does not and is untouched.** The tax repository's private
+  `inTx(ctx, func(q *taxdb.Queries) error)` is gone. In its place is an
+  exported `WithTx(ctx, func(ctx context.Context) error)` that carries the
+  transaction in the CONTEXT — the same ambient plumbing the other six modules
+  already had — so the service decides the boundary and two repository calls
+  can share one transaction. The signature had to come down to types both sides
+  share: ADR 0001 forbids the service importing the repository package, so no
+  type of that package can appear in the interface the service declares.
+
+  **And the entry was understating the problem in the way that matters: the day
+  a caller needed this had already arrived, and a godoc was claiming it had
+  been handled.** `DeleteTaxRegion` said its lock "prevents a race with a
+  concurrent rate-insertion flow, because that flow also reads the region under
+  a shared lock." Measured: the tax module contained ZERO `FOR SHARE` queries.
+  Rate insertion read the region unlocked and in a SEPARATE transaction, so a
+  delete landing between the check and the write was invisible to it. The
+  foreign key cannot catch that, because the delete is SOFT — the parent row
+  stays. The result is not merely an orphan: `ResolveTaxRegions` matches a
+  province row on its own and the chain walks most-specific first, so every
+  basket in that province would keep being taxed from a region the operator
+  believes deleted, even after a fresh root was opened for the country. The
+  sentence is true today: `GetTaxRegionForShare` is the module's first shared
+  lock, `LockTaxRegion` refuses to run outside a transaction (a `FOR SHARE`
+  taken without one is released immediately and protects nothing while looking
+  like it does), and both the province-insert and the rate-insert paths take it
+  inside the same transaction as their write.
+
+  Still open: `region`. Its transactions are still opened inside single
+  repository methods (`internal/modules/region/repository/region.go`,
+  `internal/modules/region/repository/country.go`) and cannot be composed. The
+  same shape also lives in `pricing`, `promotion`, `auth` and `customer`, which
+  this entry never named.
 - **D7** ~~The OpenAPI text claimed `q` searches title and handle; it searches
   title only.~~ Fixed 2026-09-05.
 - **D10** ~~Nothing stopped a module's SQL from naming another module's
@@ -335,6 +430,55 @@ Four sequencing facts govern the whole list:
   (`internal/modules/product/repository/saleschannel.go`,
   `internal/modules/product/service/service.go`); the full record is
   `docs/catalog-search-cost.md`.
+- **D16** **The column audit names D4 as the thing it catches. It never caught
+  it.** Measured 2026-09-06 while closing D4, and this is the entry on this
+  page with the most credibility riding on it, because the audit is one of the
+  six gates the house rules lean on: "adding a column obliges you to write it".
+  `TestEveryColumnIsWrittenBySomething` was GREEN at the start of that session
+  while `order_exchanges.completed_at` and `canceled_at` were provably unwritten
+  and NOT in the exemption list. `internal/arch/columns_test.go`'s own godoc
+  says, in the paragraph explaining what the defect looks like, that
+  order_exchanges keeps both columns and nothing writes either. It says so
+  while passing.
+
+  Three holes, each measured rather than reasoned:
+
+  - **The written set is keyed by bare column NAME, module-wide — not by
+    table.** `completed_at` counted as written because `CompleteOrderClaim`
+    sets it on a DIFFERENT table, and `canceled_at` because three other queries
+    do. Every module with a repeated column name has the same blind spot, and
+    timestamp names repeat by design.
+  - **Only a `CREATE TABLE` body is read for declarations.** A column added by
+    `ALTER TABLE ... ADD COLUMN` — how EVERY migration after the first adds one
+    — is invisible to the scan. Proved by mutation both ways: an unwritten
+    column added by `ALTER` leaves the gate green; the same column moved into
+    the initial `CREATE TABLE` fails it with the right message. So the house
+    rule holds for the initial schema and not for anything added since,
+    including D5's `archived_at`.
+  - **It reads `.sql` text, not the call graph.** A write query that no
+    reachable route or workflow calls turns the gate green while no operator
+    can produce the write. That is why D4's cancel was bound to a route in the
+    same change rather than shipped as a service method.
+
+  And a consequence worth stating because it was the recorded plan: the third
+  option for D4 — "record them in the exemption list with the reason" — was
+  mechanically IMPOSSIBLE. The exemption is consulted only after the
+  written-set guard, and the test's closing loop asserts every exemption key
+  was actually found unwritten, so the entry would have failed with "is exempt
+  in unwrittenColumns but is NOT unwritten any more."
+
+  The gate is green today with no lie in it and no new exemption, but it is
+  green for the order module by construction rather than by proof. Fixing the
+  audit is `internal/arch`'s own budget and was not touched.
+- **D17** **`CancelReturn` and `CancelClaim` have no production caller** —
+  measured 2026-09-06 by grep across every production tree while closing D4.
+  No HTTP route, no workflow, no interop method reaches either. So
+  `order_returns.canceled_at` and `order_claims.canceled_at` are, in
+  production, exactly as unwritten as the exchange's was; the column audit is
+  green on them only because the `UPDATE` text sits in a `.sql` file (D16, third
+  hole). Same defect class as D4, currently undetected, and left open
+  deliberately — it is a product decision about who may withdraw a return,
+  not a correction.
 
 ### E. Out of framework scope — written, not forgotten
 
@@ -1060,11 +1204,21 @@ is the correct amount of machinery for what they do. Two of them (tax, region)
 open a transaction INSIDE a single repository method to make that one method
 atomic — a different thing from deciding a business boundary, and defensible.
 
-The nuance that will matter one day: those two methods cannot be composed into a
-larger transaction. Called from inside a service transaction they would open a
+~~The nuance that will matter one day: those two methods cannot be composed into
+a larger transaction. Called from inside a service transaction they would open a
 SECOND, independent one, and a rollback of the outer would not undo them. Today
 no caller does that. The day one does, the fix is the ambient-transaction
-plumbing the other six already have, not a bigger method.
+plumbing the other six already have, not a bigger method.~~
+
+**Corrected 2026-09-06, and the wrong half was "today no caller does that".** A
+caller did — the tax service's own create paths read a rule and then wrote
+against it in two separate transactions — and a godoc in the repository was
+already describing the composed behaviour as if it existed. TAX now carries the
+transaction in the context like the other six, and its first shared lock exists;
+the full record is D6. REGION still has the uncomposable shape, and so, unnamed
+by the original sentence, do `pricing`, `promotion`, `auth` and `customer`. The
+prescription in the struck paragraph was right and is what was done; what it got
+wrong was the deadline.
 
 ### Global state: there is none
 
@@ -2281,10 +2435,26 @@ including money and counts.
 For an outbound stream, three properties decide the design and all three are
 already written down:
 
-- **There is no retry and no dead-letter queue, by explicit decision.** A
+- ~~**There is no retry and no dead-letter queue, by explicit decision.** A
   handler error is logged and the event counts as processed; the ADR-grade
   reasoning is the poison pill — redelivery without a DLQ lets one broken event
-  lock the consumer. An outbound sender must therefore build its own retry.
+  lock the consumer. An outbound sender must therefore build its own retry.~~
+  **Half wrong, and both halves were corrected on 2026-09-06.** The decision is
+  real but it is about the BUS's subscriber side, and this bullet let it stand
+  for the whole system — including the outbox relay, which is a different layer
+  with a different failure mode. The relay now has both: a doubling backoff and
+  a dead letter after ten attempts (B12). The poison-pill reasoning is exactly
+  what it is built around — the pill is the reason the ceiling exists, and the
+  dead letter is the DLQ whose absence made redelivery unsafe. An outbound
+  sender still builds its own retry for what happens INSIDE its handler; what
+  it no longer has to build is the retry of the delivery itself.
+
+  The measurement that made this a defect rather than a preference: the relay
+  reads the OLDEST pending rows up to its limit, so a limit's worth of
+  permanently failing rows fills every batch. Against a real PostgreSQL with
+  the previous code, five consecutive passes published nothing and a healthy
+  event written behind two poisoned ones finished with `attempts = 0`. The
+  backlog did not slow delivery down; it ENDED it.
 - **Redis cannot fan out to N processes as configured.** Every subscriber joins
   one consumer group, and a group delivers each message to exactly ONE consumer.
   Different group names fan out; nothing in the repository uses different names.
@@ -2301,7 +2471,10 @@ mount a route but could not schedule its own retry pass.
 
 The outbox is the right foundation and it is already there (ADR 0023): the event
 is written inside the transaction that promises it, and a relay publishes it.
-An external subscriber would hang off that relay.
+An external subscriber would hang off that relay — which, as of 2026-09-06,
+retries with a growing delay and gives up out loud instead of retrying forever.
+The one piece of that machinery an operator still cannot reach is the way back:
+`Redrive` and `Discard` have no caller outside their tests.
 
 ### Feature flags: there is no substrate, not even a settings table
 
@@ -2345,34 +2518,51 @@ content is not a column on the product, it is a decision about where translated
 values live and how the storefront selects one — and it touches the search
 index, the panel and the invoice.
 
-### Order timeline: the facts exist, scattered, and two of them are unreachable
+### ~~Order timeline: the facts exist, scattered, and two of them are unreachable~~ — all four holes are closed, the last two on 2026-09-06
 
 What an order itself records: `placed_at`, `completed_at`, `canceled_at` with a
 reason, plus database CHECKs tying each stamp to its status. Returns carry
 `received_at` and `canceled_at`; claims carry both transitions.
 
-Four measured holes:
+Four measured holes, and all four are now closed. The last two went on
+2026-09-06; the first two went on 2026-09-05 and this section had not been
+updated, which is the divergence class this file keeps producing:
 
-- **Archiving leaves no timestamp.** The status flips to `archived`,
+- ~~**Archiving leaves no timestamp.** The status flips to `archived`,
   `completed_at` is deliberately untouched, and there is no `archived_at`. When
-  an order was archived is not recorded.
-- **`order_exchanges.completed_at` and `canceled_at` exist and are never
-  written** — there is no Complete or Cancel query for an exchange at all.
-- **The money timeline is unreachable through the read layer.**
+  an order was archived is not recorded.~~ Closed 2026-09-06 (D5). The stamp
+  exists and the timeline emits a dated `order.archived` entry.
+- ~~**`order_exchanges.completed_at` and `canceled_at` exist and are never
+  written** — there is no Complete or Cancel query for an exchange at all.~~
+  Closed 2026-09-06 (D4), by writing one and dropping the other.
+- ~~**The money timeline is unreachable through the read layer.**
   `payments.captured_at` and the refund rows are the two facts a support team
   asks for first — "when was it paid", "when did the refund go out" — and there
-  is no query provider that exposes them.
-- **There is no order↔fulfillment link, and nothing creates a fulfillment for an
+  is no query provider that exposes them.~~ Closed 2026-09-05 (B6).
+- ~~**There is no order↔fulfillment link, and nothing creates a fulfillment for an
   order.** The link definition was assigned to the fulfillment module, which
   never declared it. So "where is the parcel" cannot be answered from an order
-  at all.
+  at all.~~ Closed 2026-09-05 (B5, D8).
+
+**And the timeline's documentation described behaviour the code did not have.**
+Its godoc said an undated fact — an exchange that finished — came back LAST
+rather than being dropped; the entry builder emitted no such entry at all, and
+the branch that would have produced it was unreachable. It has been corrected
+and the branch is gone, replaced by a DATED withdrawal entry. The timeline had
+zero tests of any kind when it was built on 2026-09-05, which is how a false
+sentence survived a day in a file everybody had read. It has tests now for the
+entry builder; the composed read itself still has none, because it needs a
+wired query catalog the module's fake store cannot supply.
 
 The audit log built this session does not close this: it records the REQUEST —
 who called what and what came back — and says in its own header that it does not
 record the change. It answers "who touched this" and not "what happened".
 
-So the timeline is a read-side composition over facts that mostly exist, plus
-two that do not: the order↔fulfillment binding, and a money-event surface.
+~~So the timeline is a read-side composition over facts that mostly exist, plus
+two that do not: the order↔fulfillment binding, and a money-event surface.~~ The
+timeline is a read-side composition over facts that ALL exist now. Both of the
+two that did not were built on 2026-09-05, and the two stamps it was reading
+around were built on 2026-09-06.
 
 ---
 
@@ -2555,6 +2745,16 @@ the next reader sees a decision instead of a wait.
    `order_payment` cardinality forbids the second today. A cancellation request
    is likewise absent: cancelling reaches money and stock, and a paid order
    cannot be canceled at all.
+
+   **On 2026-09-06 that decision was taken all the way into the schema** (D4).
+   Exchange completion is not merely unbuilt now, it is unrepresentable: the
+   `completed` status value and the `completed_at` column are gone, because a
+   state nothing can enter and no moment can date reads as a feature somebody
+   forgot rather than a capability the framework does not have. The exchange
+   did gain its first transition in the same change — WITHDRAWAL — with a
+   route, a stamp and a mirror CHECK. The day the `order_payment` cardinality
+   opens, `completed` comes back as a migration, which is a smaller change than
+   leaving a dead state reachable-looking in the meantime.
 
    The original finding: Zero `UPDATE` statements
    across `order_returns.sql`, `order_exchanges.sql` and `order_claims.sql` —

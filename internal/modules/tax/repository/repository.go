@@ -8,6 +8,25 @@
 // Ham hatalar da sınırı geçmez: pgx.ErrNoRows ve PostgreSQL kısıt ihlalleri
 // burada core/errors'ın tipli hatalarına çevrilir, böylece HTTP katmanı
 // status kodunu doğru seçer (plan Bölüm 2.7).
+//
+// # İşlemin taşınması
+//
+// [Repo.WithTx] bir işlem açar ve onu CONTEXT'e koyar; işlem sürerken o
+// context ile çağrılan HER depo metodu aynı işlemde çalışır. Reddedilen
+// alternatif, işlem tutamağını metot imzasına koymaktı (bu paket bunu bir
+// süre yaptı: işlem yalnızca depo İÇİNDE, `func(q *taxdb.Queries) error`
+// alan özel bir yardımcıyla açılıyordu). O biçim iki depo çağrısını TEK
+// işlemde birleştirmeyi imkânsız kılar, çünkü tutamağı yalnızca bu paket
+// üretebilir ve dışarıya veremez — servis, kuralını okuduğu satırla yazdığı
+// satırı aynı işlemde tutamaz. İmzayı iki tarafın da paylaştığı tiplere
+// (context.Context, models.*) indirmek, servisin KENDİ paketinde tanımladığı
+// dar arayüzle bu paketin YAPISAL olarak eşleşmesini de sağlar; ADR 0001
+// servisin bu paketi import etmesini yasakladığı için imzada bu paketin bir
+// tipi geçemez.
+//
+// Kilit alan metot ([Repo.LockTaxRegion]) işlem DIŞINDA çağrılırsa hata
+// döner: FOR SHARE kilidi işlem bitince serbest kalır, yani işlemsiz bir
+// kilit hiçbir şey korumaz ve koruduğu sanılır.
 package repository
 
 import (
@@ -56,7 +75,24 @@ const (
 	CodeCanceled = "tax_canceled"
 	// CodeTxFailed işlem (transaction) yönetiminin başarısızlığını bildirir.
 	CodeTxFailed = "tax_tx_failed"
+	// CodeTxRequired kilit alan bir metodun işlem DIŞINDA çağrıldığını
+	// bildirir; bu bir programlama hatasıdır, istemci girdisi değil.
+	CodeTxRequired = "tax_tx_required"
 )
+
+// rollbackTimeout iptal edilmiş bir context üzerinde geri almaya tanınan
+// süredir.
+//
+// Geri alma, çağıranın context'i sona ermiş olsa BİLE denenmelidir: aksi hâlde
+// işlem, bağlantı havuza dönene kadar açık kalırdı.
+const rollbackTimeout = 5 * time.Second
+
+// txKeyType context anahtarının tipidir; dışarıdan üretilemesin diye dışa
+// aktarılmaz.
+type txKeyType struct{}
+
+// txKey işlem tutamağının context'teki anahtarıdır.
+var txKey = txKeyType{}
 
 // PostgreSQL SQLSTATE kodları (ihtiyaç duyulanlar).
 const (
@@ -101,32 +137,86 @@ func (r *Repo) ready() error {
 	return nil
 }
 
-// inTx fn'i tek bir işlemde çalıştırır; fn hata dönerse işlem GERİ ALINIR.
+// WithTx fn'i tek bir veritabanı işleminde çalıştırır.
 //
-// Atomiklik silme yollarında zorunludur: bir bölge silinirken önce bölge, sonra
-// oranları, sonra kuralları yumuşak silinir. Arada hata oluşursa bölge silinmiş
-// ama oranları canlı kalırdı; o oranlar hiçbir hesaba girmez ama aynı ülkeye
-// açılan yeni bir bölgenin yanında yetim satır olarak durur ve rapor
-// toplamlarını bozardı.
-func (r *Repo) inTx(ctx context.Context, fn func(q *taxdb.Queries) error) error {
+// fn'e verilen context işlemi TAŞIR: o context ile çağrılan her depo metodu
+// aynı işlemde koşar. İşlem içindeki her çağrı bu yüzden FN'E VERİLEN
+// context'le yapılmalıdır; dıştaki ctx kullanılırsa o çağrı işlemin dışına
+// düşer ve atomiklik sessizce kaybedilir.
+//
+// fn hata döndürürse işlem GERİ ALINIR ve hata yukarı geçer.
+//
+// Atomiklik iki ayrı sınıf için zorunludur:
+//
+//   - Silme yolları: bir bölge silinirken önce bölge, sonra oranları, sonra
+//     kuralları yumuşak silinir. Arada hata oluşursa bölge silinmiş ama
+//     oranları canlı kalırdı; o oranlar hiçbir hesaba girmez ama aynı ülkeye
+//     açılan yeni bir bölgenin yanında yetim satır olarak durur ve rapor
+//     toplamlarını bozardı.
+//   - Servis kuralının okuduğu satırla yazdığı satır: "bölge canlı mı"
+//     denetimiyle yazma arasına giren bir silme, ikisi ayrı işlemdeyken
+//     görülemez (bkz. [Repo.LockTaxRegion]).
+//
+// Çağrılar İÇ İÇE geçerse YENİ bir işlem AÇILMAZ, var olan kullanılır:
+// PostgreSQL'de iç içe işlem bir savepoint demektir ve dıştaki işlemin
+// atomikliği hakkında yanıltıcı bir güven verirdi.
+func (r *Repo) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
 	if err := r.ready(); err != nil {
 		return err
+	}
+	if _, ok := txFromContext(ctx); ok {
+		return fn(ctx)
 	}
 
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return wrapDB(err, "işlem başlatılamadı")
 	}
-	// Rollback, Commit'ten sonra çağrıldığında pgx.ErrTxClosed döner ve
-	// yok sayılır; bu, başarılı yolda da defer'ın güvenle kalmasını sağlar.
-	defer func() { _ = tx.Rollback(ctx) }()
 
-	if err := fn(r.q.WithTx(tx)); err != nil {
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		// Çağıranınkinden BAĞIMSIZ, kısa ömürlü bir context kullanılır:
+		// çağıranın ctx'i iptal edilmişse onunla yapılan geri alma da anında
+		// başarısız olur ve işlem açık kalırdı.
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
+		defer cancel()
+		_ = tx.Rollback(rollbackCtx)
+	}()
+
+	if err := fn(context.WithValue(ctx, txKey, tx)); err != nil {
 		return err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return wrapDB(err, "işlem tamamlanamadı")
+	}
+	committed = true
+	return nil
+}
+
+// txFromContext context'teki işlem tutamağını döner.
+func txFromContext(ctx context.Context) (pgx.Tx, bool) {
+	tx, ok := ctx.Value(txKey).(pgx.Tx)
+	return tx, ok
+}
+
+// queries context'e uyan sorgu kümesini döner: işlem varsa ona, yoksa havuza
+// bağlı olanı.
+func (r *Repo) queries(ctx context.Context) *taxdb.Queries {
+	if tx, ok := txFromContext(ctx); ok {
+		return r.q.WithTx(tx)
+	}
+	return r.q
+}
+
+// requireTx kilit alan metotların işlem içinde çağrıldığını doğrular.
+func requireTx(ctx context.Context, op string) error {
+	if _, ok := txFromContext(ctx); !ok {
+		return errors.Internal(CodeTxRequired,
+			"%s işlem içinde çağrılmalıdır; işlemsiz bir FOR SHARE kilidi hiçbir şeyi korumaz", op)
 	}
 	return nil
 }

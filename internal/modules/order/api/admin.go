@@ -507,6 +507,39 @@ func (h *Handler) adminListExchanges(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// adminCancelExchange withdraws the exchange request.
+//
+// # Why this endpoint exists and no completion endpoint does
+//
+// Withdrawing is the only thing that can be done to an exchange, and until this
+// endpoint the record could not be moved at all: it was born "requested" and
+// stayed there forever, with two stamp columns nothing wrote. The reason no
+// sibling "complete" route stands here is on [models.ExchangeStatus] — the two
+// movements completing an exchange needs are capabilities this framework does
+// not have, and a route that stamped the record anyway would report work that
+// never happened.
+//
+// # Why it goes to the service and not through a flow
+//
+// [Handler.adminReceiveReturn] goes through one because receiving reaches
+// inventory. Withdrawing reaches nothing: no stock moves, no money moves, no
+// other module is told. The whole transition is the record's own row, so the
+// service IS the right depth — routing it through a flow would add a hop that
+// does nothing and imply a cross-module effect that does not exist.
+//
+// It answers with the record rather than the order: the caller acted on the
+// exchange, and the order is unchanged by a withdrawn request.
+func (h *Handler) adminCancelExchange(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	exchange, err := h.svc.CancelExchange(ctx, chi.URLParam(r, paramExchangeID))
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toExchangeDTO(exchange)})
+}
+
 // createClaimRequest is the body of POST /admin/v1/orders/{id}/claims.
 type createClaimRequest struct {
 	// Type has to be either "refund" or "replace".

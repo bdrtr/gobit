@@ -62,6 +62,45 @@ func (m *memRepo) enter(name string) error {
 	return nil
 }
 
+// WithTx fn'i OLDUĞU GİBİ çalıştırır; GERİ ALMA YAPMAZ.
+//
+// Bu, taklidin bilerek eksik bıraktığı yerdir ve eksikliği yazılı olmak
+// zorundadır: bellek içi bir depo işlem açamaz, dolayısıyla bu metodun
+// geçmesi "yazma atomikti" demek DEĞİLDİR. Burada kanıtlanan tek şey servisin
+// işlem çerçevesini ÇAĞIRDIĞIDIR (çağrı sayacı üzerinden görünür). Çerçevenin
+// gerçekten geri aldığı ve kilidin gerçekten beklettiği yalnızca entegrasyon
+// testlerinde, gerçek satır kilitleri üzerinde gösterilebilir — sahte bir depo
+// kendi yazdığı kuralı doğrulayamaz.
+//
+// Geri alma taklit EDİLMEDİ; edilseydi daha da kötü olurdu: bellekte inandırıcı
+// biçimde geri alınan bir yazma, veritabanında geri alınmayan bir yazmayı
+// gizlerdi ve testler tam da o an yeşil kalırdı.
+func (m *memRepo) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	m.mu.Lock()
+	err := m.enter("WithTx")
+	m.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return fn(ctx)
+}
+
+// LockTaxRegion canlı bölgeyi döner; kilit YOKTUR (bkz. [memRepo.WithTx]).
+func (m *memRepo) LockTaxRegion(_ context.Context, id string) (models.TaxRegion, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.enter("LockTaxRegion"); err != nil {
+		return models.TaxRegion{}, err
+	}
+
+	region, ok := m.regions[id]
+	if !ok || region.DeletedAt != nil {
+		return models.TaxRegion{}, errors.NotFound("tax_region_not_found",
+			"vergi bölgesi bulunamadı: %s", id)
+	}
+	return region, nil
+}
+
 // CreateTaxRegion bölgeyi yazar; ülkenin ikinci kökünü reddeder.
 func (m *memRepo) CreateTaxRegion(_ context.Context, region models.TaxRegion, now time.Time) (models.TaxRegion, error) {
 	m.mu.Lock()

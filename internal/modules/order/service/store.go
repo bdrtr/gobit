@@ -167,6 +167,14 @@ type Store interface {
 	GetExchange(ctx context.Context, id string) (models.Exchange, error)
 	// ListExchanges pages the exchange records of the order.
 	ListExchanges(ctx context.Context, filter models.ChildFilter) ([]models.Exchange, int64, error)
+	// LockExchange locks the exchange row; it may only be called inside
+	// [Store.WithTx].
+	LockExchange(ctx context.Context, id string) (models.Exchange, error)
+	// CancelExchange withdraws the exchange request.
+	//
+	// There is no CompleteExchange beside it and there cannot be one today; the
+	// reason is on [models.ExchangeStatus].
+	CancelExchange(ctx context.Context, id string) (models.Exchange, error)
 
 	// WriteOutboxEvent records an event INSIDE the current transaction.
 	//

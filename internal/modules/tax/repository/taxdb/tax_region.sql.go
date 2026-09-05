@@ -46,6 +46,45 @@ func (q *Queries) GetTaxRegion(ctx context.Context, id string) (TaxRegion, error
 	return i, err
 }
 
+const getTaxRegionForShare = `-- name: GetTaxRegionForShare :one
+SELECT id, country_code, province_code, parent_id, provider_id, metadata, created_at, updated_at, deleted_at FROM tax_region
+WHERE id = $1 AND deleted_at IS NULL
+FOR SHARE
+`
+
+// GetTaxRegionForShare bölgeyi okur ve satırını PAYLAŞIMLI kilitler.
+//
+// Kilit, bölgeye BİR ŞEY BAĞLAYAN akışlar içindir: eyalet bölgesi ekleme ve
+// oran ekleme. İkisi de "bölge canlı mı" denetimini yapıp ardından yazar;
+// denetim kilitsiz olsaydı araya giren bir silme, denetimden SONRA ve
+// yazmadan ÖNCE tamamlanabilir ve satır SİLİNMİŞ bir bölgeye bağlanırdı.
+// Yumuşak silme satırı yerinde bıraktığı için foreign key bunu yakalamaz:
+// kısıt satırın VARLIĞINA bakar, deleted_at'ine değil.
+//
+// Kilit PAYLAŞIMLIDIR, tekil değil. Aynı bölgeye eşzamanlı iki oran eklemenin
+// birbirini beklemesi için hiçbir sebep yoktur; beklemesi gereken tek akış
+// silmedir ve o GetTaxRegionForUpdate ile TEKİL kilit alır — FOR SHARE ile
+// FOR UPDATE çakışır, iki FOR SHARE çakışmaz.
+//
+// WHERE koşulu kilit alındıktan SONRA yeniden değerlendirilir: bekleyen istek
+// uyandığında satırın GÜNCEL hâlini görür ve silinmişse "yok" döner.
+func (q *Queries) GetTaxRegionForShare(ctx context.Context, id string) (TaxRegion, error) {
+	row := q.db.QueryRow(ctx, getTaxRegionForShare, id)
+	var i TaxRegion
+	err := row.Scan(
+		&i.ID,
+		&i.CountryCode,
+		&i.ProvinceCode,
+		&i.ParentID,
+		&i.ProviderID,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const getTaxRegionForUpdate = `-- name: GetTaxRegionForUpdate :one
 SELECT id, country_code, province_code, parent_id, provider_id, metadata, created_at, updated_at, deleted_at FROM tax_region
 WHERE id = $1 AND deleted_at IS NULL

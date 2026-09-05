@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -888,4 +889,291 @@ func TestModulKaydiCozulebilir(t *testing.T) {
 	require.True(t, ok, "oranlar kayıtla birlikte dönmeli: %#v", records[0]["rates"])
 	require.Len(t, rates, 1)
 	assert.Equal(t, int32(2000), rates[0]["rate_bps"])
+}
+
+// kilitBekleyenSayisi satır kilidinde bekleyen istek sayısını döner.
+func kilitBekleyenSayisi(ctx context.Context, t *testing.T) int64 {
+	t.Helper()
+
+	return sayim(ctx, t,
+		`SELECT count(*) FROM pg_stat_activity
+         WHERE datname = current_database()
+           AND wait_event_type = 'Lock'
+           AND pid <> pg_backend_pid()`)
+}
+
+// requireKilitBekleyen bir isteğin gerçekten kilitte beklediğini doğrular.
+//
+// Uyku yerine BEKLEME DURUMUNA bakılır: sabit bir uyku ya yavaş makinede erken
+// uyanıp testi kırılgan yapardı, ya da her koşuya boş bekleme eklerdi.
+func requireKilitBekleyen(ctx context.Context, t *testing.T) {
+	t.Helper()
+
+	require.Eventually(t, func() bool {
+		return kilitBekleyenSayisi(ctx, t) > 0
+	}, 10*time.Second, 10*time.Millisecond, "istek satır kilidinde beklemeliydi")
+}
+
+// kilitleyenIslem verilen bölge satırını TEKİL kilitleyen bir işlem açar ve
+// işlemi döner; çağıran onu ya commit eder ya da defer ile geri alır.
+func kilitleyenIslem(ctx context.Context, t *testing.T, regionID string) (pgx.Tx, func()) {
+	t.Helper()
+
+	conn, err := testPool.Pool().Acquire(ctx)
+	require.NoError(t, err)
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		conn.Release()
+		require.NoError(t, err)
+	}
+
+	var kilitli string
+	require.NoError(t, tx.QueryRow(ctx,
+		`SELECT id FROM tax_region WHERE id = $1 FOR UPDATE`, regionID).Scan(&kilitli))
+
+	return tx, func() {
+		_ = tx.Rollback(ctx)
+		conn.Release()
+	}
+}
+
+// TestIslemIkiYazmayiBirlikteGeriAlir iki AYRI depo çağrısının tek bir işlemde
+// birleşebildiğini ve birlikte geri alındığını doğrular.
+//
+// D6'NIN ASIL KANITI BUDUR. Depo işlemi bu paketin İÇİNDE, yalnızca
+// `func(q *taxdb.Queries) error` alan özel bir yardımcıyken bu test
+// YAZILAMAZDI: tutamağı yalnızca depo üretebiliyordu, dışarıya veremiyordu ve
+// iki depo çağrısı zorunlu olarak iki ayrı işlemde koşuyordu. Şimdi işlem
+// context'te taşınıyor ve çerçeveyi servis kuruyor.
+//
+// Test üç şeyi birden gösterir ve üçü de ayrı ayrı gereklidir:
+//
+//   - İki farklı depo metodu (bölge yazma, oran yazma) AYNI işlemde koşar.
+//   - İşlem İÇİNDEKİ bir okuma, henüz commit edilmemiş yazmaları GÖRÜR —
+//     yani context gerçekten işlemi taşır; iki ayrı bağlantı olsaydı okuma
+//     hiçbirini göremezdi ve test yine "yeşil" görünürdü.
+//   - Hata dönüldüğünde İKİ satır da geri alınır; tabloda hiç izi kalmaz.
+func TestIslemIkiYazmayiBirlikteGeriAlir(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+	repo := repository.New(testPool.Pool())
+
+	kok := yeniKokBolge(ctx, t, svc)
+
+	now := time.Now().UTC()
+	eyaletKodu := "77"
+	eyalet := models.TaxRegion{
+		ID:           models.NewTaxRegionID(now),
+		CountryCode:  kok.CountryCode,
+		ProvinceCode: &eyaletKodu,
+		ParentID:     &kok.ID,
+	}
+	oran := models.TaxRate{
+		ID:          models.NewTaxRateID(now),
+		TaxRegionID: eyalet.ID,
+		Name:        "KDV",
+		RateBps:     2000,
+		IsDefault:   true,
+	}
+
+	const kasitliKod = "kasitli_hata"
+	err := repo.WithTx(ctx, func(ctx context.Context) error {
+		if _, txErr := repo.CreateTaxRegion(ctx, eyalet, now); txErr != nil {
+			return txErr
+		}
+		// Oran, aynı işlemde yazılan eyalete bağlanır: foreign key ancak
+		// ikisi TEK işlemdeyse sağlanır, ayrı işlemlerde ikinci yazma
+		// commit edilmemiş bir satıra referans veremezdi.
+		if _, txErr := repo.CreateTaxRate(ctx, oran, now); txErr != nil {
+			return txErr
+		}
+
+		okunan, txErr := repo.GetTaxRegion(ctx, eyalet.ID)
+		if txErr != nil {
+			return txErr
+		}
+		require.Equal(t, eyalet.ID, okunan.ID,
+			"işlem içindeki okuma, aynı işlemin yazdığı satırı görmeli")
+
+		return errors.Internal(kasitliKod, "işlemi geri almak için kasıtlı hata")
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, kasitliKod, errors.CodeOf(err), "hata olduğu gibi yukarı geçmeli")
+
+	assert.Zero(t, sayim(ctx, t,
+		`SELECT count(*) FROM tax_region WHERE id = $1`, eyalet.ID),
+		"birinci yazma geri alınmalı")
+	assert.Zero(t, sayim(ctx, t,
+		`SELECT count(*) FROM tax_rate WHERE id = $1`, oran.ID),
+		"ikinci yazma geri alınmalı")
+}
+
+// TestIslemsizIkiYazmaYarimKalir yukarıdaki iddianın DİŞİ OLDUĞUNU gösterir.
+//
+// Kontrol testi olmadan [TestIslemIkiYazmayiBirlikteGeriAlir] "geri alma
+// çalışıyor" ile "yazma hiç olmuyor" arasındaki farkı ayırt edemezdi. Burada
+// aynı iki yazma İŞLEM ÇERÇEVESİ OLMADAN yapılır; ikincisi veritabanı kısıtına
+// takılır ve BİRİNCİSİ YERİNDE KALIR. Bu, çerçeve eklenmeden önce servisin
+// yaptığı şeydir.
+func TestIslemsizIkiYazmaYarimKalir(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+	repo := repository.New(testPool.Pool())
+
+	kok := yeniKokBolge(ctx, t, svc)
+
+	now := time.Now().UTC()
+	eyaletKodu := "78"
+	eyalet := models.TaxRegion{
+		ID:           models.NewTaxRegionID(now),
+		CountryCode:  kok.CountryCode,
+		ProvinceCode: &eyaletKodu,
+		ParentID:     &kok.ID,
+	}
+	_, err := repo.CreateTaxRegion(ctx, eyalet, now)
+	require.NoError(t, err)
+
+	// İkinci yazma tax_rate_bps_check kısıtına takılır: oran %100'ü aşamaz.
+	_, err = repo.CreateTaxRate(ctx, models.TaxRate{
+		ID:          models.NewTaxRateID(now),
+		TaxRegionID: eyalet.ID,
+		Name:        "Geçersiz",
+		RateBps:     models.MaxRateBps + 1,
+	}, now)
+	require.Error(t, err)
+
+	assert.Equal(t, int64(1), sayim(ctx, t,
+		`SELECT count(*) FROM tax_region WHERE id = $1`, eyalet.ID),
+		"işlemsiz yazma geri alınmaz; yarım durum tam olarak budur")
+}
+
+// TestKilitIslemDisindaAlinamaz kilidin işlemsiz kullanımını yasaklar.
+//
+// FOR SHARE kilidi işlem bitince serbest kalır: işlemsiz alınan bir kilit
+// hiçbir şeyi korumaz ama koruduğu SANILIR. Sessizce kilitsiz bir okumaya
+// dönmek, aşağıdaki iki testin koruduğu kuralı fark edilmeden kapatırdı.
+func TestKilitIslemDisindaAlinamaz(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+	repo := repository.New(testPool.Pool())
+
+	kok := yeniKokBolge(ctx, t, svc)
+
+	_, err := repo.LockTaxRegion(ctx, kok.ID)
+	require.Error(t, err, "kilit işlem dışında alınamamalı")
+	assert.Equal(t, repository.CodeTxRequired, errors.CodeOf(err))
+	assert.Equal(t, errors.KindInternal, errors.KindOf(err),
+		"bu bir programlama hatasıdır, istemci girdisi değil")
+
+	// Aynı çağrı işlem İÇİNDE çalışır.
+	require.NoError(t, repo.WithTx(ctx, func(ctx context.Context) error {
+		kilitli, txErr := repo.LockTaxRegion(ctx, kok.ID)
+		if txErr != nil {
+			return txErr
+		}
+		assert.Equal(t, kok.ID, kilitli.ID)
+		return nil
+	}))
+}
+
+// TestEyaletSilinmekteOlanKokeEklenemez ebeveyn denetiminin yazmayla AYNI
+// işlemde ve kilit ALTINDA yapıldığını belirlenimci biçimde doğrular.
+//
+// Kurgu yarışın kaybeden tarafını zamanlamaya bırakmadan üretir:
+//
+//  1. Rakip bir işlem kök bölge satırını TEKİL kilitler.
+//  2. Eyalet ekleme başlar ve kök kilidinde BEKLER.
+//  3. Rakip işlem kökü yumuşak siler ve commit eder.
+//  4. Bekleyen istek uyanır; FOR SHARE kilidi alındıktan sonra WHERE koşulu
+//     (deleted_at IS NULL) YENİDEN değerlendirilir ve satır "yok" görünür.
+//
+// Denetim kilitsiz ve ayrı bir işlemde yapılsaydı — çerçeve eklenmeden önceki
+// durum — istek 2. adımda kökü CANLI okur, hiç beklemez ve eyaleti SİLİNMİŞ
+// bir köke bağlardı. Foreign key bunu yakalamaz: silme yumuşaktır, kök satırı
+// yerinde durur. Sonuç yalnızca yetim bir satır değildir — ResolveTaxRegions
+// eyalet satırını KENDİ BAŞINA eşleştirir, yani o eyaletteki her sepet
+// operatörün sildiğini sandığı bir bölgeden vergilenmeye devam ederdi; ülkeye
+// yeni bir kök açıldıktan sonra bile, çünkü zincir en özelden genele yürür ve
+// eyalet başta gelir.
+func TestEyaletSilinmekteOlanKokeEklenemez(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+	kok := yeniKokBolge(ctx, t, svc)
+
+	tx, kapat := kilitleyenIslem(ctx, t, kok.ID)
+	defer kapat()
+
+	sonuc := make(chan error, 1)
+	go func() {
+		_, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
+			CountryCode: kok.CountryCode, ProvinceCode: "34", ParentID: kok.ID,
+		})
+		sonuc <- err
+	}()
+
+	requireKilitBekleyen(ctx, t)
+
+	_, err := tx.Exec(ctx,
+		`UPDATE tax_region SET deleted_at = now(), updated_at = now() WHERE id = $1`, kok.ID)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit(ctx))
+
+	select {
+	case ekleErr := <-sonuc:
+		require.Error(t, ekleErr, "silinmiş köke eyalet eklenememeli")
+		assert.Equal(t, errors.KindNotFound, errors.KindOf(ekleErr))
+	case <-time.After(15 * time.Second):
+		t.Fatal("bekleyen istek zamanında tamamlanmadı")
+	}
+
+	assert.Zero(t, sayim(ctx, t,
+		`SELECT count(*) FROM tax_region WHERE parent_id = $1`, kok.ID),
+		"eyalet satırı hiç yazılmamalı")
+}
+
+// TestOranSilinmekteOlanBolgeyeEklenemez oran ekleme yolunun aynı korumayı
+// aldığını doğrular.
+//
+// Kurgu [TestEyaletSilinmekteOlanKokeEklenemez] ile aynıdır; kanıtladığı şey
+// farklıdır. repository.DeleteTaxRegion'ın godoc'u kilidin "aynı bölgeye
+// eşzamanlı bir oran ekleme akışıyla yarışı engellediğini", çünkü "oran ekleyen
+// akışın da bölgeyi paylaşımlı kilitle okuduğunu" söylüyordu. ÖLÇÜLDÜ: modülde
+// FOR SHARE alan tek bir sorgu bile yoktu, oran ekleme bölgeyi kilitsiz ve AYRI
+// bir işlemde okuyordu. Cümle bugün doğrudur ve bu test onu bağlar.
+func TestOranSilinmekteOlanBolgeyeEklenemez(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+	kok := yeniKokBolge(ctx, t, svc)
+
+	tx, kapat := kilitleyenIslem(ctx, t, kok.ID)
+	defer kapat()
+
+	sonuc := make(chan error, 1)
+	go func() {
+		_, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
+			TaxRegionID: kok.ID, Name: "KDV", RateBps: 2000, IsDefault: true,
+		})
+		sonuc <- err
+	}()
+
+	requireKilitBekleyen(ctx, t)
+
+	_, err := tx.Exec(ctx,
+		`UPDATE tax_region SET deleted_at = now(), updated_at = now() WHERE id = $1`, kok.ID)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit(ctx))
+
+	select {
+	case ekleErr := <-sonuc:
+		require.Error(t, ekleErr, "silinmiş bölgeye oran eklenememeli")
+		assert.Equal(t, errors.KindNotFound, errors.KindOf(ekleErr))
+	case <-time.After(15 * time.Second):
+		t.Fatal("bekleyen istek zamanında tamamlanmadı")
+	}
+
+	assert.Zero(t, sayim(ctx, t,
+		`SELECT count(*) FROM tax_rate WHERE tax_region_id = $1`, kok.ID),
+		"oran satırı hiç yazılmamalı")
 }

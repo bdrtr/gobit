@@ -38,6 +38,25 @@ type CreateTaxRateInput struct {
 // errors.NotFound döner ve hiçbir satır yazılmaz. Denetim burada okunabilir bir
 // hatayla, veritabanında ise foreign key ile iki kez yapılır; ikincisi yalnızca
 // doğrudan SQL ile yapılan müdahaleyi kapsar.
+//
+// # Denetim ile yazma AYNI işlemdedir
+//
+// Bölge denetimi ile oranın yazılması tek bir işlemde koşar ve bölge satırı
+// PAYLAŞIMLI kilitle okunur (Repository.LockTaxRegion). Bu çerçeve eklenmeden
+// önceki durum ÖLÇÜLDÜ: iki çağrı ayrı ayrı otomatik commit'lenen ifadelerdi ve
+// aralarındaki boşluğa giren bir [Service.DeleteTaxRegion] denetimden sonra
+// tamamlanıyor, oran yine de yazılıyordu. Foreign key bunu YAKALAMAZ — silme
+// YUMUŞAKTIR, bölge satırı yerinde durur — ve geriye silinmiş bir bölgeye bağlı
+// CANLI bir oran kalıyordu. O oran hiçbir hesaba girmez ama defterde durur;
+// repository.DeleteTaxRegion'ın işlemi tam olarak bu satırın oluşmaması için
+// vardır ve servis tarafındaki boşluk onu atlıyordu.
+//
+// Varsayılan oran denetimi ([Service.assertNoDefaultRate]) de işlemin
+// İÇİNDEDİR ama tekilliği o SAĞLAMAZ: paylaşımlı kilit iki eşzamanlı oran
+// eklemeyi birbirinden ayırmaz (ayırması da istenmez) ve iki istek denetimi
+// birlikte geçebilir. Son savunma yine kısmi benzersiz indekstir; denetimin
+// buradaki işi, yarışın kaybedeni değil, sıradan çağıran için okunabilir bir
+// hata üretmektir.
 func (s *Service) CreateTaxRate(ctx context.Context, in CreateTaxRateInput) (models.TaxRate, error) {
 	if err := s.ready(); err != nil {
 		return models.TaxRate{}, err
@@ -58,28 +77,38 @@ func (s *Service) CreateTaxRate(ctx context.Context, in CreateTaxRateInput) (mod
 		return models.TaxRate{}, err
 	}
 
-	if _, err := s.repo.GetTaxRegion(ctx, in.TaxRegionID); err != nil {
-		return models.TaxRate{}, err
-	}
-	if in.IsDefault {
-		if err := s.assertNoDefaultRate(ctx, in.TaxRegionID); err != nil {
-			return models.TaxRate{}, err
+	var created models.TaxRate
+	txErr := s.repo.WithTx(ctx, func(ctx context.Context) error {
+		if _, err := s.repo.LockTaxRegion(ctx, in.TaxRegionID); err != nil {
+			return err
 		}
-	}
+		if in.IsDefault {
+			if err := s.assertNoDefaultRate(ctx, in.TaxRegionID); err != nil {
+				return err
+			}
+		}
 
-	now := s.clock()
-	rate := models.TaxRate{
-		ID:          models.NewTaxRateID(now),
-		TaxRegionID: in.TaxRegionID,
-		Name:        name,
-		RateBps:     in.RateBps,
-		IsDefault:   in.IsDefault,
-		Metadata:    in.Metadata,
+		now := s.clock()
+		rate := models.TaxRate{
+			ID:          models.NewTaxRateID(now),
+			TaxRegionID: in.TaxRegionID,
+			Name:        name,
+			RateBps:     in.RateBps,
+			IsDefault:   in.IsDefault,
+			Metadata:    in.Metadata,
+		}
+		if code != "" {
+			rate.Code = &code
+		}
+
+		var err error
+		created, err = s.repo.CreateTaxRate(ctx, rate, now)
+		return err
+	})
+	if txErr != nil {
+		return models.TaxRate{}, txErr
 	}
-	if code != "" {
-		rate.Code = &code
-	}
-	return s.repo.CreateTaxRate(ctx, rate, now)
+	return created, nil
 }
 
 // assertNoDefaultRate bölgenin henüz varsayılan oranı olmadığını doğrular.

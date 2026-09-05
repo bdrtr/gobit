@@ -24,7 +24,7 @@ func (r *Repo) CreateTaxRate(ctx context.Context, rate models.TaxRate, now time.
 		return models.TaxRate{}, err
 	}
 
-	row, err := r.q.InsertTaxRate(ctx, taxdb.InsertTaxRateParams{
+	row, err := r.queries(ctx).InsertTaxRate(ctx, taxdb.InsertTaxRateParams{
 		ID:          rate.ID,
 		TaxRegionID: rate.TaxRegionID,
 		Name:        rate.Name,
@@ -46,7 +46,7 @@ func (r *Repo) GetTaxRate(ctx context.Context, id string) (models.TaxRate, error
 		return models.TaxRate{}, err
 	}
 
-	row, err := r.q.GetTaxRate(ctx, id)
+	row, err := r.queries(ctx).GetTaxRate(ctx, id)
 	if err != nil {
 		return models.TaxRate{}, notFoundOr(err, CodeTaxRateNotFound, "vergi oranı bulunamadı: %s", id)
 	}
@@ -59,7 +59,7 @@ func (r *Repo) ListTaxRates(ctx context.Context, regionID string) ([]models.TaxR
 		return nil, err
 	}
 
-	rows, err := r.q.ListTaxRatesByRegion(ctx, regionID)
+	rows, err := r.queries(ctx).ListTaxRatesByRegion(ctx, regionID)
 	if err != nil {
 		return nil, wrapDB(err, "vergi oranları alınamadı: %s", regionID)
 	}
@@ -78,7 +78,7 @@ func (r *Repo) ListTaxRatesByRegions(ctx context.Context, regionIDs []string) ([
 		return []models.TaxRate{}, nil
 	}
 
-	rows, err := r.q.ListTaxRatesByRegions(ctx, regionIDs)
+	rows, err := r.queries(ctx).ListTaxRatesByRegions(ctx, regionIDs)
 	if err != nil {
 		return nil, wrapDB(err, "vergi oranları alınamadı")
 	}
@@ -102,7 +102,9 @@ func (r *Repo) UpdateTaxRate(
 	}
 
 	var out models.TaxRate
-	err := r.inTx(ctx, func(q *taxdb.Queries) error {
+	err := r.WithTx(ctx, func(ctx context.Context) error {
+		q := r.queries(ctx)
+
 		row, err := q.GetTaxRateForUpdate(ctx, id)
 		if err != nil {
 			return notFoundOr(err, CodeTaxRateNotFound, "vergi oranı bulunamadı: %s", id)
@@ -164,7 +166,9 @@ func (r *Repo) DeleteTaxRate(ctx context.Context, id string, now time.Time) erro
 		return err
 	}
 
-	return r.inTx(ctx, func(q *taxdb.Queries) error {
+	return r.WithTx(ctx, func(ctx context.Context) error {
+		q := r.queries(ctx)
+
 		if _, err := q.SoftDeleteTaxRate(ctx, taxdb.SoftDeleteTaxRateParams{
 			ID:        id,
 			DeletedAt: fromTime(now),

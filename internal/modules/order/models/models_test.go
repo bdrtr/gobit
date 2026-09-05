@@ -148,6 +148,34 @@ func TestOrderStatusValid(t *testing.T) {
 	assert.False(t, models.OrderStatus("").Valid())
 }
 
+// TestExchangeStatusHasNoCompletedValue is a vocabulary test, and it is here
+// because the vocabulary is the promise.
+//
+// "completed" was a defined status with a stamp column beside it and no writer
+// anywhere, so the type advertised a state the framework could not reach.
+// Completing an exchange needs goods shipped out against an existing order and,
+// on a positive difference, money collected against one; there is no capability
+// for the first and the order-to-payment link's one-to-one cardinality forbids
+// the second. Both halves are recorded in the source, not inferred here.
+func TestExchangeStatusHasNoCompletedValue(t *testing.T) {
+	assert.True(t, models.ExchangeRequested.Valid())
+	assert.True(t, models.ExchangeCanceled.Valid())
+	assert.False(t, models.ExchangeStatus("completed").Valid(),
+		"an exchange cannot be completed, so the status must not be accepted")
+	assert.False(t, models.ExchangeStatus("").Valid())
+}
+
+// TestTheExchangeCancelTable is the transition table read as a table.
+//
+// The noop entry is the one worth a test: it is what keeps a second click from
+// moving the moment the record was actually withdrawn.
+func TestTheExchangeCancelTable(t *testing.T) {
+	assert.Equal(t, models.AfterSalesProceed, models.ExchangeRequested.CancelAction())
+	assert.Equal(t, models.AfterSalesNoop, models.ExchangeCanceled.CancelAction())
+	assert.Equal(t, models.AfterSalesConflict, models.ExchangeStatus("completed").CancelAction(),
+		"a status this type does not define may not proceed")
+}
+
 // TestOrderSummaryOutstanding verifies the computation of the outstanding
 // amount.
 //

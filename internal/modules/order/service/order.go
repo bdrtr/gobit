@@ -682,13 +682,44 @@ func (s *Service) CompleteOrder(ctx context.Context, orderID string) (models.Ord
 		})
 }
 
-// ArchiveOrder takes a completed order into the archive.
+// ArchiveOrder takes a completed order into the archive and records WHEN.
 //
 // Archiving does not undo the completedness of the order; it only takes it out
 // of the daily lists and does not touch the [models.Order.CompletedAt] stamp.
 // Archiving an order that is not completed is rejected: making a job that has
 // not been closed yet invisible would be the easiest way for it to be
 // forgotten.
+//
+// # Why a dedicated stamp and not a dated-transitions pattern
+//
+// The question was asked the other way round — "is the real defect that NO
+// transition on this entity is dated, so it needs a pattern rather than a
+// column?" — and the measurement says no. Three of the four statuses already
+// carry their own moment: pending has PlacedAt, completed has CompletedAt,
+// canceled has CanceledAt with a reason beside it, and two of the three are
+// held to their status by a database CHECK. Archiving was the ONE transition of
+// the four that flipped a status and wrote nothing but updated_at.
+//
+// So [models.Order.ArchivedAt] completes a pattern that already exists rather
+// than starting one. A transition ledger was the rejected alternative, and it
+// would have been worse in two concrete ways: a reader asking when an order
+// changed would have three stamps on the row and a fourth in a side table with
+// no rule saying which is authoritative, and the two existing mirror CHECKs
+// would become unenforceable, because a CHECK cannot see another table's rows.
+//
+// # updated_at was not enough, and it looks like it is
+//
+// On an archived order today the two hold the same instant: archiving is
+// terminal, so no later UPDATE moves it. That is a property of the current
+// query set and not of the row — the first statement that touches an archived
+// order for any other reason breaks it silently — and even while it is correct,
+// updated_at cannot say WHICH write it timed.
+//
+// # Rows archived before the column existed keep no moment
+//
+// They carry the status and a nil stamp, and nothing invents one for them. The
+// database allows exactly that asymmetry and no other: the constraint holds a
+// stamp to the status, not the status to a stamp (migration 000007).
 func (s *Service) ArchiveOrder(ctx context.Context, orderID string) (models.Order, error) {
 	return s.transition(ctx, orderID, models.OrderCompleted, "archiving",
 		func(ctx context.Context, id string) (models.Order, error) {

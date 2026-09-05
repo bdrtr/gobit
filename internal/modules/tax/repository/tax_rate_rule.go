@@ -24,7 +24,9 @@ func (r *Repo) CreateTaxRateRule(
 	}
 
 	var out models.TaxRateRule
-	err := r.inTx(ctx, func(q *taxdb.Queries) error {
+	err := r.WithTx(ctx, func(ctx context.Context) error {
+		q := r.queries(ctx)
+
 		rate, err := q.GetTaxRateForUpdate(ctx, rule.TaxRateID)
 		if err != nil {
 			return notFoundOr(err, CodeTaxRateNotFound,
@@ -63,7 +65,7 @@ func (r *Repo) GetTaxRateRule(ctx context.Context, id string) (models.TaxRateRul
 		return models.TaxRateRule{}, err
 	}
 
-	row, err := r.q.GetTaxRateRule(ctx, id)
+	row, err := r.queries(ctx).GetTaxRateRule(ctx, id)
 	if err != nil {
 		return models.TaxRateRule{}, notFoundOr(err, CodeTaxRateRuleNotFound,
 			"vergi kuralı bulunamadı: %s", id)
@@ -77,7 +79,7 @@ func (r *Repo) ListTaxRateRules(ctx context.Context, rateID string) ([]models.Ta
 		return nil, err
 	}
 
-	rows, err := r.q.ListTaxRateRulesByRate(ctx, rateID)
+	rows, err := r.queries(ctx).ListTaxRateRulesByRate(ctx, rateID)
 	if err != nil {
 		return nil, wrapDB(err, "vergi kuralları alınamadı: %s", rateID)
 	}
@@ -94,7 +96,7 @@ func (r *Repo) ListTaxRateRulesByRates(ctx context.Context, rateIDs []string) ([
 		return []models.TaxRateRule{}, nil
 	}
 
-	rows, err := r.q.ListTaxRateRulesByRates(ctx, rateIDs)
+	rows, err := r.queries(ctx).ListTaxRateRulesByRates(ctx, rateIDs)
 	if err != nil {
 		return nil, wrapDB(err, "vergi kuralları alınamadı")
 	}
@@ -107,7 +109,7 @@ func (r *Repo) DeleteTaxRateRule(ctx context.Context, id string, now time.Time) 
 		return err
 	}
 
-	if _, err := r.q.SoftDeleteTaxRateRule(ctx, taxdb.SoftDeleteTaxRateRuleParams{
+	if _, err := r.queries(ctx).SoftDeleteTaxRateRule(ctx, taxdb.SoftDeleteTaxRateRuleParams{
 		ID:        id,
 		DeletedAt: fromTime(now),
 	}); err != nil {

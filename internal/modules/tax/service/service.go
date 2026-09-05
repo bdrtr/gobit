@@ -128,7 +128,37 @@ type Page[T any] struct {
 // implementation is in the internal/modules/tax/repository package. This is the
 // IN-MODULE counterpart of ADR 0001's pattern and it makes the service testable
 // without a database.
+//
+// # Transaction boundary
+//
+// [Repository.WithTx] runs the given function in a single database transaction
+// and carries the transaction on the context the function receives. Every call
+// inside the transaction must therefore be made with THE CONTEXT GIVEN TO THE
+// FUNCTION; if the outer ctx is used, that call falls outside the transaction
+// and atomicity is silently lost.
+//
+// It is in this interface rather than being kept inside the repository because
+// the rule that needs the transaction lives HERE. Two of this service's write
+// paths read a row, decide on it and then write a second row — a province
+// region under its country root, a rate under its region — and the decision has
+// to hold until the write lands. While the transaction was a repository-private
+// helper the service could not span it, so the read and the write ran as two
+// autocommit statements with a gap in between; a delete that landed in that gap
+// left a LIVE row hanging off a DELETED region, and the foreign key did not
+// object because the deletion is SOFT and the parent row is still there.
+//
+// [Repository.LockTaxRegion] holds a SHARED lock on the region row until the
+// end of the transaction and may only be called inside [Repository.WithTx]:
+// the lock is what makes the gap above impossible, and a lock taken outside a
+// transaction is released immediately and protects nothing.
 type Repository interface {
+	// WithTx runs fn in a single transaction; if fn returns an error the
+	// transaction is rolled back.
+	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
+	// LockTaxRegion reads the region with a SHARED lock held until the end of
+	// the transaction; NotFound if it is absent or already deleted.
+	LockTaxRegion(ctx context.Context, id string) (models.TaxRegion, error)
+
 	CreateTaxRegion(ctx context.Context, region models.TaxRegion, now time.Time) (models.TaxRegion, error)
 	GetTaxRegion(ctx context.Context, id string) (models.TaxRegion, error)
 	GetTaxRegionsByIDs(ctx context.Context, ids []string) ([]models.TaxRegion, error)
@@ -275,6 +305,24 @@ type CreateTaxRegionInput struct {
 // in the database (parent_id, country_code) gives the same guarantee a second
 // time.
 //
+// The three checks and the write of the province run in ONE transaction and
+// the parent is read under a SHARED lock ([Repository.LockTaxRegion]). Without
+// it the sequence described here leaves a half-written state, and it was
+// reproduced before this frame was added: the caller reads a live root, a concurrent
+// [Service.DeleteTaxRegion] soft-deletes that root together with its whole
+// tree, and only then does the province row land. The foreign key does not
+// object — a soft delete leaves the parent row in place — so the result is a
+// LIVE province region whose root is deleted. That is not a cosmetic orphan:
+// [Repository.ResolveTaxRegions] matches a province row on its own, so a cart in
+// that province is taxed from a region the operator believes it deleted, and it
+// keeps being taxed from it after a NEW root is opened for the country, since
+// the province comes first in the specific-to-general chain.
+//
+// The ROOT branch is deliberately NOT wrapped: there is no parent row to lock
+// there, its "read first, then write" check is against the country's other
+// rows, and the last line of defense for it is the partial unique index — the
+// one described in the section above.
+//
 // # The provider is validated BEFORE THE WRITE
 //
 // When [CreateTaxRegionInput.ProviderID] is given a value it is checked to be
@@ -311,13 +359,10 @@ func (s *Service) CreateTaxRegion(ctx context.Context, in CreateTaxRegionInput) 
 		if err := s.assertNoRoot(ctx, country); err != nil {
 			return models.TaxRegion{}, err
 		}
+		return s.write(ctx, region)
 	case province != "" && in.ParentID != "":
-		parent, err := s.parentForProvince(ctx, in.ParentID, country)
-		if err != nil {
-			return models.TaxRegion{}, err
-		}
-		region.ParentID = &parent.ID
 		region.ProvinceCode = &province
+		return s.writeProvince(ctx, region, in.ParentID)
 	case province == "":
 		return models.TaxRegion{}, errors.Invalid(CodeInvalidInput,
 			"when a parent is given the province code is required too; a country root is created without a parent")
@@ -325,12 +370,50 @@ func (s *Service) CreateTaxRegion(ctx context.Context, in CreateTaxRegionInput) 
 		return models.TaxRegion{}, errors.Invalid(CodeInvalidInput,
 			"the parent (country root) id is required for a province region")
 	}
+}
 
-	// The clock is read ONCE: the id's timestamp diverging from created_at
-	// means a list ordered by id not matching creation order.
+// write stamps the region with a fresh id and writes it.
+//
+// The clock is read ONCE: the id's timestamp diverging from created_at means a
+// list ordered by id not matching creation order.
+func (s *Service) write(ctx context.Context, region models.TaxRegion) (models.TaxRegion, error) {
 	now := s.clock()
 	region.ID = models.NewTaxRegionID(now)
 	return s.repo.CreateTaxRegion(ctx, region, now)
+}
+
+// writeProvince validates the root and writes the province region UNDER ONE
+// TRANSACTION.
+//
+// The read of the parent takes a shared lock and the write follows it inside
+// the same transaction; the rationale, and the state the missing frame left
+// behind, are in the [Service.CreateTaxRegion] godoc. Nothing else may be added
+// between the two calls: a validation that does not need the parent row belongs
+// BEFORE the transaction, where it costs no lock time.
+func (s *Service) writeProvince(
+	ctx context.Context,
+	region models.TaxRegion,
+	parentID string,
+) (models.TaxRegion, error) {
+	if err := requireID(parentID, models.TaxRegionIDPrefix, "tax region id"); err != nil {
+		return models.TaxRegion{}, err
+	}
+
+	var created models.TaxRegion
+	err := s.repo.WithTx(ctx, func(ctx context.Context) error {
+		parent, err := s.parentForProvince(ctx, parentID, region.CountryCode)
+		if err != nil {
+			return err
+		}
+		region.ParentID = &parent.ID
+
+		created, err = s.write(ctx, region)
+		return err
+	})
+	if err != nil {
+		return models.TaxRegion{}, err
+	}
+	return created, nil
 }
 
 // assertNoRoot verifies that the country does not have a root region yet.
@@ -350,12 +433,13 @@ func (s *Service) assertNoRoot(ctx context.Context, country string) error {
 
 // parentForProvince reads and validates the root the province region will be
 // attached to.
+//
+// It may ONLY be called inside a transaction, and it reads the parent under a
+// SHARED lock rather than with a plain read: the three checks below decide
+// something about a row that a concurrent delete is free to remove, and a
+// decision that outlives its lock is a decision about the past.
 func (s *Service) parentForProvince(ctx context.Context, parentID, country string) (models.TaxRegion, error) {
-	if err := requireID(parentID, models.TaxRegionIDPrefix, "tax region id"); err != nil {
-		return models.TaxRegion{}, err
-	}
-
-	parent, err := s.repo.GetTaxRegion(ctx, parentID)
+	parent, err := s.repo.LockTaxRegion(ctx, parentID)
 	if err != nil {
 		return models.TaxRegion{}, err
 	}

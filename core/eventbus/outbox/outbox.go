@@ -22,6 +22,33 @@
 // transaction under its own unexported context key, so the core cannot see it.
 // Passing the executor is what lets a core-owned table be written inside a
 // module-owned transaction without either side learning the other's internals.
+//
+// # When the publish fails
+//
+// Delivery machinery has two ways to break its promise, and they are opposite,
+// so a design that only guards one arrives at the other. Both are named here
+// with the mechanism that prevents each:
+//
+//   - RETRYING FOREVER, prevented by [Policy.MaxAttempts]. Before it existed,
+//     a row the receiver would never accept was re-sent every minute for the
+//     life of the installation — and, because a pass reads the OLDEST pending
+//     rows up to its limit, a limit's worth of such rows filled every batch.
+//     Measured against a real PostgreSQL: five consecutive passes published
+//     nothing while a healthy event written behind two poisoned ones finished
+//     with attempts = 0, never attempted once. That is not degraded delivery,
+//     it is no delivery.
+//   - DROPPING SILENTLY, prevented by the dead letter and, specifically, by
+//     [Store.DeadLetters] being READ. Giving up records the instant, the
+//     attempt count and the last error, the relay job asks for the pile on
+//     every pass, and a non-empty pile makes that job's run FAIL — which is
+//     the only channel that reaches the `gobit jobs` listing an operator
+//     actually looks at. A ledger with no reader is the mistake this
+//     repository has already made once, in audit_log; a dead letter nothing
+//     reads would be it a second time.
+//
+// [Store.Redrive] and [Store.Discard] are the way back out, and they exist for
+// a reason beyond tidiness: the failed run does not clear itself, so without
+// them the alarm would have no off switch and would eventually be ignored.
 package outbox
 
 import (

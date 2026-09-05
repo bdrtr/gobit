@@ -1,0 +1,66 @@
+-- archived_at is the moment a completed order was taken out of the daily lists.
+--
+-- # Why a column and not a pattern
+--
+-- The obvious reading of the gap — "no status transition on this entity is
+-- dated, so it needs a transition ledger rather than a column" — is wrong here,
+-- and the schema says so. Three of the four statuses already carry their own
+-- moment: pending has placed_at, completed has completed_at, canceled has
+-- canceled_at with a reason beside it, and two of the three are held to their
+-- status by a mirror CHECK (orders_canceled_stamp, orders_completed_stamp).
+-- Archiving was the ONLY transition of the four that flipped a status and
+-- recorded nothing.
+--
+-- So this is the fourth entry in an existing pattern, not one column bolted
+-- onto a table that needs a different shape. A transitions table was the
+-- rejected alternative and it would have been the wrong trade twice over: it
+-- would leave three stamps on the row AND a fourth in a side table, so a reader
+-- asking "when did this order change" would have two places to look and no rule
+-- saying which is authoritative — and it would make the two mirror CHECKs
+-- unenforceable, because a CHECK cannot see another table's rows.
+--
+-- # Why the database does NOT supply it
+--
+-- No DEFAULT, deliberately, and the reason is not style. A DEFAULT now() would
+-- stamp the column when the ROW is written, so every order would claim to have
+-- been archived the moment it was placed. And a column the database supplies is
+-- out of the column audit's scope by that audit's own rule
+-- (TestEveryColumnIsWrittenBySomething), so a DEFAULT would also buy silence:
+-- the day something stopped writing this column, nothing would fail. The
+-- transition writes it, and the audit is what keeps that true.
+--
+-- # Why nullable
+--
+-- An order that was never archived has no such moment, and NOT NULL would force
+-- one. The alternative — NOT NULL DEFAULT with a zero instant, the shape 000004
+-- accepted for tax_rate_bps — is not available here: 000004 could accept it
+-- because 0 is a legitimate rate, whereas a zero timestamp is not a legitimate
+-- moment and every reader would have to know the sentinel.
+--
+-- # Why the CHECK holds in one direction only
+--
+-- The mirror form the sibling stamps use — (status = 'archived') = (archived_at
+-- IS NOT NULL) — cannot be added. Any order archived BEFORE this column existed
+-- carries the status and no moment, and the constraint would reject those rows;
+-- the only way to add it would be to backfill a moment nobody recorded. This
+-- repository already decided that question once, in 000003, for exactly the
+-- same reason: "a CHECK tying it to received_at would also have to hold for
+-- rows written before this column existed."
+--
+-- What IS enforceable is the other direction: a stamp implies the status. That
+-- catches the fault worth catching — a moment written onto an order that is not
+-- archived — and it is the last defense behind the transition, which sets the
+-- status and the stamp in one statement. It also covers an intervention made
+-- directly with SQL, which is the same argument orders_totals_consistent is
+-- justified by.
+--
+-- The consequence is stated rather than hidden: an archived order whose
+-- archived_at is NULL is an order archived before this migration, and it is
+-- distinguishable from a fresh one. That is the honest reading of a fact that
+-- was never recorded.
+ALTER TABLE orders
+    ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+
+ALTER TABLE orders
+    ADD CONSTRAINT orders_archived_stamp
+        CHECK (archived_at IS NULL OR status = 'archived');

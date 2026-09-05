@@ -25,7 +25,7 @@ func (r *Repo) CreateTaxRegion(ctx context.Context, region models.TaxRegion, now
 		return models.TaxRegion{}, err
 	}
 
-	row, err := r.q.InsertTaxRegion(ctx, taxdb.InsertTaxRegionParams{
+	row, err := r.queries(ctx).InsertTaxRegion(ctx, taxdb.InsertTaxRegionParams{
 		ID:           region.ID,
 		CountryCode:  region.CountryCode,
 		ProvinceCode: region.ProvinceCode,
@@ -47,7 +47,41 @@ func (r *Repo) GetTaxRegion(ctx context.Context, id string) (models.TaxRegion, e
 		return models.TaxRegion{}, err
 	}
 
-	row, err := r.q.GetTaxRegion(ctx, id)
+	row, err := r.queries(ctx).GetTaxRegion(ctx, id)
+	if err != nil {
+		return models.TaxRegion{}, notFoundOr(err, CodeTaxRegionNotFound,
+			"vergi bölgesi bulunamadı: %s", id)
+	}
+	return toTaxRegion(row)
+}
+
+// LockTaxRegion bölgeyi PAYLAŞIMLI kilitle okur; kilit işlem sonuna kadar
+// tutulur.
+//
+// YALNIZCA [Repo.WithTx] içinde çağrılabilir ve dışarıda çağrılırsa hata
+// döner: FOR SHARE kilidi işlem bitince serbest kalır, yani işlemsiz bir kilit
+// hiçbir şeyi korumaz ama koruduğu sanılır.
+//
+// Bölgeye bir şey BAĞLAYAN her akış bunu kullanır — eyalet bölgesi ekleme ve
+// oran ekleme. İkisi de "bölge canlı mı" denetimini yapıp ardından yazar ve
+// denetim ile yazma AYNI işlemde olmalıdır. Kilitsiz [Repo.GetTaxRegion] ile
+// yapılan denetimin bedeli ölçülmüştür: araya giren bir
+// [Repo.DeleteTaxRegion] denetimden sonra tamamlanır, yazma yine de başarılı
+// olur ve silinmiş bir bölgeye bağlı CANLI bir satır kalır. Foreign key bunu
+// yakalayamaz çünkü silme YUMUŞAKTIR: satır yerinde durur.
+//
+// Kilit PAYLAŞIMLIDIR: aynı bölgeye eşzamanlı iki oran eklemenin birbirini
+// beklemesi için sebep yoktur, beklemesi gereken tek akış silmedir ve o TEKİL
+// kilit alır.
+func (r *Repo) LockTaxRegion(ctx context.Context, id string) (models.TaxRegion, error) {
+	if err := r.ready(); err != nil {
+		return models.TaxRegion{}, err
+	}
+	if err := requireTx(ctx, "LockTaxRegion"); err != nil {
+		return models.TaxRegion{}, err
+	}
+
+	row, err := r.queries(ctx).GetTaxRegionForShare(ctx, id)
 	if err != nil {
 		return models.TaxRegion{}, notFoundOr(err, CodeTaxRegionNotFound,
 			"vergi bölgesi bulunamadı: %s", id)
@@ -65,7 +99,7 @@ func (r *Repo) GetTaxRegionsByIDs(ctx context.Context, ids []string) ([]models.T
 		return []models.TaxRegion{}, nil
 	}
 
-	rows, err := r.q.GetTaxRegionsByIDs(ctx, ids)
+	rows, err := r.queries(ctx).GetTaxRegionsByIDs(ctx, ids)
 	if err != nil {
 		return nil, wrapDB(err, "vergi bölgeleri alınamadı")
 	}
@@ -86,7 +120,7 @@ func (r *Repo) ListTaxRegions(
 		return nil, 0, err
 	}
 
-	rows, err := r.q.ListTaxRegions(ctx, taxdb.ListTaxRegionsParams{
+	rows, err := r.queries(ctx).ListTaxRegions(ctx, taxdb.ListTaxRegionsParams{
 		Limit:       limit,
 		Offset:      offset,
 		CountryCode: countryCode,
@@ -95,7 +129,7 @@ func (r *Repo) ListTaxRegions(
 		return nil, 0, wrapDB(err, "vergi bölgeleri listelenemedi")
 	}
 
-	total, err := r.q.CountTaxRegions(ctx, countryCode)
+	total, err := r.queries(ctx).CountTaxRegions(ctx, countryCode)
 	if err != nil {
 		return nil, 0, wrapDB(err, "vergi bölgeleri sayılamadı")
 	}
@@ -118,7 +152,7 @@ func (r *Repo) ResolveTaxRegions(ctx context.Context, countryCode, provinceCode 
 		return nil, err
 	}
 
-	rows, err := r.q.ResolveTaxRegions(ctx, taxdb.ResolveTaxRegionsParams{
+	rows, err := r.queries(ctx).ResolveTaxRegions(ctx, taxdb.ResolveTaxRegionsParams{
 		CountryCode:  countryCode,
 		ProvinceCode: provinceCode,
 	})
@@ -140,9 +174,15 @@ func (r *Repo) DeleteTaxRegion(ctx context.Context, id string, now time.Time) er
 		return err
 	}
 
-	return r.inTx(ctx, func(q *taxdb.Queries) error {
-		// Kilit, aynı bölgeye eşzamanlı bir oran ekleme akışıyla yarışı
-		// engeller: oran ekleyen akış da bölgeyi paylaşımlı kilitle okur.
+	return r.WithTx(ctx, func(ctx context.Context) error {
+		q := r.queries(ctx)
+
+		// Kilit, aynı bölgeye eşzamanlı bir oran ya da eyalet ekleme akışıyla
+		// yarışı engeller: o akışlar da bölgeyi [Repo.LockTaxRegion] ile
+		// PAYLAŞIMLI kilitle okur ve FOR SHARE ile FOR UPDATE çakışır. Kilit
+		// olmadan yumuşak silme onlara görünmezdi — foreign key satırın
+		// VARLIĞINA bakar, deleted_at'ine değil, yani silinmiş bir bölgeye
+		// yazılan oran hiçbir kısıta takılmaz.
 		if _, err := q.GetTaxRegionForUpdate(ctx, id); err != nil {
 			return notFoundOr(err, CodeTaxRegionNotFound, "vergi bölgesi bulunamadı: %s", id)
 		}

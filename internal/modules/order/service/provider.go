@@ -47,6 +47,15 @@ const (
 	// FieldCanceledAt is the moment the order was canceled; nil when it is not
 	// canceled.
 	FieldCanceledAt = "canceled_at"
+	// FieldArchivedAt is the moment the order was archived; nil when it is not
+	// archived, and ALSO nil on an order archived before the column existed
+	// (migration 000007).
+	//
+	// It is offered next to the two stamps above rather than left to the
+	// module's own reads, because a read layer that can answer "when was this
+	// completed" and not "when was it archived" makes the gap look like a
+	// property of archiving instead of a missing field.
+	FieldArchivedAt = "archived_at"
 	// FieldCreatedAt is the creation time.
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt is the time of the last update.
@@ -85,6 +94,12 @@ var orderFieldGetters = map[string]func(order models.Order) any{
 			return nil
 		}
 		return *o.CanceledAt
+	},
+	FieldArchivedAt: func(o models.Order) any {
+		if o.ArchivedAt == nil {
+			return nil
+		}
+		return *o.ArchivedAt
 	},
 	FieldCreatedAt: func(o models.Order) any { return o.CreatedAt },
 	FieldUpdatedAt: func(o models.Order) any { return o.UpdatedAt },

@@ -241,6 +241,14 @@ func describedEndpoints() []endpointExpectation {
 			status: "200", response: filledExchange(),
 		},
 		{
+			method: http.MethodPost,
+			path:   "/admin/v1/orders/{id}/exchanges/{exchangeId}/cancel",
+			// No request: the transition takes no body. There is nothing to
+			// choose — an exchange is either withdrawn or not — and a body
+			// would invite a client to send one and be surprised it is ignored.
+			status: "200", response: filledExchange(),
+		},
+		{
 			method: http.MethodGet, path: "/admin/v1/orders/{id}/claims", status: "200",
 			response: filledClaim(), list: true,
 		},
@@ -315,6 +323,7 @@ func filledOrder() orderDTO {
 		Metadata:     map[string]any{"k": "v"},
 		CompletedAt:  &now,
 		CanceledAt:   &now,
+		ArchivedAt:   &now,
 		CancelReason: "the customer changed their mind",
 	}
 }
@@ -338,10 +347,9 @@ func filledExchange() exchangeDTO {
 	now := time.Now().UTC()
 
 	return exchangeDTO{
-		Note:        "size exchange",
-		Metadata:    map[string]any{"k": "v"},
-		CompletedAt: &now,
-		CanceledAt:  &now,
+		Note:       "size exchange",
+		Metadata:   map[string]any{"k": "v"},
+		CanceledAt: &now,
 	}
 }
 

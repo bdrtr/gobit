@@ -85,9 +85,16 @@ func (h *Handler) Routes(r chi.Router) {
 	write.Post("/admin/v1/orders/{id}/complete", h.adminCompleteOrder)
 	write.Post("/admin/v1/orders/{id}/archive", h.adminArchiveOrder)
 
-	// After-sales records: in Phase 6 only create + read + list. Status
-	// transitions (return received, exchange completed …) are the next phase's
-	// work.
+	// After-sales records. The comment that stood here said transitions were
+	// "the next phase's work"; they are bound now, and unevenly, which is worth
+	// saying rather than leaving to be discovered: a return can be received and
+	// refunded, a claim settled, an exchange withdrawn — and NOTHING binds
+	// Service.CancelReturn or Service.CancelClaim, which exist in full and can
+	// be reached by no HTTP caller.
+	//
+	// The receive and refund and settle routes go through a flow rather than
+	// the service, because each of the three moves stock or money in another
+	// module. The exchange's cancel does not, and goes straight to the service.
 	read.Get("/admin/v1/orders/{id}/returns", h.adminListReturns)
 	write.Post("/admin/v1/orders/{id}/returns", h.adminCreateReturn)
 	read.Get("/admin/v1/orders/{id}/returns/{returnId}", h.adminGetReturn)
@@ -96,6 +103,13 @@ func (h *Handler) Routes(r chi.Router) {
 	read.Get("/admin/v1/orders/{id}/exchanges", h.adminListExchanges)
 	write.Post("/admin/v1/orders/{id}/exchanges", h.adminCreateExchange)
 	read.Get("/admin/v1/orders/{id}/exchanges/{exchangeId}", h.adminGetExchange)
+	// The exchange's ONLY transition. Binding it is half the fix and not a
+	// formality: an UPDATE that no reachable route calls leaves the column
+	// audit green — it reads the .sql files, not the call graph — while no
+	// operator can produce the write. That shape is already in this module:
+	// Service.CancelReturn and Service.CancelClaim have queries, repository
+	// methods and transition tables, and NO caller anywhere in production.
+	write.Post("/admin/v1/orders/{id}/exchanges/{exchangeId}/cancel", h.adminCancelExchange)
 	read.Get("/admin/v1/orders/{id}/claims", h.adminListClaims)
 	write.Post("/admin/v1/orders/{id}/claims", h.adminCreateClaim)
 	read.Get("/admin/v1/orders/{id}/claims/{claimId}", h.adminGetClaim)

@@ -9,6 +9,36 @@ import (
 	"context"
 )
 
+const cancelOrderExchange = `-- name: CancelOrderExchange :one
+UPDATE order_exchanges
+SET status = 'canceled', canceled_at = now(), updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, deleted_at
+`
+
+// CancelOrderExchange withdraws the exchange request.
+//
+// canceled_at comes from the DATABASE clock, as every other after-sales stamp
+// does: the moment belongs to the record, and letting the caller supply it
+// makes the ordering of two records depend on which machine wrote them.
+func (q *Queries) CancelOrderExchange(ctx context.Context, id string) (OrderExchange, error) {
+	row := q.db.QueryRow(ctx, cancelOrderExchange, id)
+	var i OrderExchange
+	err := row.Scan(
+		&i.ID,
+		&i.OrderID,
+		&i.Status,
+		&i.DifferenceDue,
+		&i.Note,
+		&i.Metadata,
+		&i.CanceledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const countOrderExchanges = `-- name: CountOrderExchanges :one
 SELECT COUNT(*) FROM order_exchanges
 WHERE order_id = $1 AND deleted_at IS NULL
@@ -25,7 +55,7 @@ const createOrderExchange = `-- name: CreateOrderExchange :one
 
 INSERT INTO order_exchanges (id, order_id, status, difference_due, note, metadata)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, order_id, status, difference_due, note, metadata, completed_at, canceled_at, created_at, updated_at, deleted_at
+RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, deleted_at
 `
 
 type CreateOrderExchangeParams struct {
@@ -37,7 +67,15 @@ type CreateOrderExchangeParams struct {
 	Metadata      []byte
 }
 
-// order_exchanges queries (exchange skeleton; plan Section 6).
+// order_exchanges queries (plan Section 6).
+//
+// The record is created, read, listed and WITHDRAWN. It is never completed, and
+// that is a capability statement rather than an omission: completing an
+// exchange means shipping goods against an existing order and — when
+// difference_due is positive — collecting money against one, and the framework
+// can do neither today (migration 000008 carries the argument and the sources).
+// The column that used to promise it is gone, so there is no stamp here left
+// without a writer.
 func (q *Queries) CreateOrderExchange(ctx context.Context, arg CreateOrderExchangeParams) (OrderExchange, error) {
 	row := q.db.QueryRow(ctx, createOrderExchange,
 		arg.ID,
@@ -55,7 +93,6 @@ func (q *Queries) CreateOrderExchange(ctx context.Context, arg CreateOrderExchan
 		&i.DifferenceDue,
 		&i.Note,
 		&i.Metadata,
-		&i.CompletedAt,
 		&i.CanceledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -65,7 +102,7 @@ func (q *Queries) CreateOrderExchange(ctx context.Context, arg CreateOrderExchan
 }
 
 const getOrderExchange = `-- name: GetOrderExchange :one
-SELECT id, order_id, status, difference_due, note, metadata, completed_at, canceled_at, created_at, updated_at, deleted_at FROM order_exchanges
+SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, deleted_at FROM order_exchanges
 WHERE id = $1 AND deleted_at IS NULL
 `
 
@@ -79,7 +116,6 @@ func (q *Queries) GetOrderExchange(ctx context.Context, id string) (OrderExchang
 		&i.DifferenceDue,
 		&i.Note,
 		&i.Metadata,
-		&i.CompletedAt,
 		&i.CanceledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -89,7 +125,7 @@ func (q *Queries) GetOrderExchange(ctx context.Context, id string) (OrderExchang
 }
 
 const listOrderExchanges = `-- name: ListOrderExchanges :many
-SELECT id, order_id, status, difference_due, note, metadata, completed_at, canceled_at, created_at, updated_at, deleted_at FROM order_exchanges
+SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, deleted_at FROM order_exchanges
 WHERE order_id = $1 AND deleted_at IS NULL
 ORDER BY created_at DESC, id DESC
 LIMIT $3::bigint OFFSET $2::bigint
@@ -117,7 +153,6 @@ func (q *Queries) ListOrderExchanges(ctx context.Context, arg ListOrderExchanges
 			&i.DifferenceDue,
 			&i.Note,
 			&i.Metadata,
-			&i.CompletedAt,
 			&i.CanceledAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -131,4 +166,34 @@ func (q *Queries) ListOrderExchanges(ctx context.Context, arg ListOrderExchanges
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockOrderExchange = `-- name: LockOrderExchange :one
+SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, deleted_at FROM order_exchanges
+WHERE id = $1 AND deleted_at IS NULL
+FOR UPDATE
+`
+
+// LockOrderExchange locks the exchange row until the end of the transaction.
+//
+// The reason is the one LockOrderReturn states: the transition reads the
+// current status and writes the next one, and two operators withdrawing the
+// same exchange at the same moment would otherwise both read "requested" and
+// both write a timestamp, leaving the record holding the later one.
+func (q *Queries) LockOrderExchange(ctx context.Context, id string) (OrderExchange, error) {
+	row := q.db.QueryRow(ctx, lockOrderExchange, id)
+	var i OrderExchange
+	err := row.Scan(
+		&i.ID,
+		&i.OrderID,
+		&i.Status,
+		&i.DifferenceDue,
+		&i.Note,
+		&i.Metadata,
+		&i.CanceledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
 }

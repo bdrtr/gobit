@@ -61,3 +61,24 @@ UPDATE tax_region
 SET deleted_at = @deleted_at, updated_at = @deleted_at
 WHERE deleted_at IS NULL AND (id = @id::text OR parent_id = @id::text)
 RETURNING id;
+
+-- GetTaxRegionForShare bölgeyi okur ve satırını PAYLAŞIMLI kilitler.
+--
+-- Kilit, bölgeye BİR ŞEY BAĞLAYAN akışlar içindir: eyalet bölgesi ekleme ve
+-- oran ekleme. İkisi de "bölge canlı mı" denetimini yapıp ardından yazar;
+-- denetim kilitsiz olsaydı araya giren bir silme, denetimden SONRA ve
+-- yazmadan ÖNCE tamamlanabilir ve satır SİLİNMİŞ bir bölgeye bağlanırdı.
+-- Yumuşak silme satırı yerinde bıraktığı için foreign key bunu yakalamaz:
+-- kısıt satırın VARLIĞINA bakar, deleted_at'ine değil.
+--
+-- Kilit PAYLAŞIMLIDIR, tekil değil. Aynı bölgeye eşzamanlı iki oran eklemenin
+-- birbirini beklemesi için hiçbir sebep yoktur; beklemesi gereken tek akış
+-- silmedir ve o GetTaxRegionForUpdate ile TEKİL kilit alır — FOR SHARE ile
+-- FOR UPDATE çakışır, iki FOR SHARE çakışmaz.
+--
+-- WHERE koşulu kilit alındıktan SONRA yeniden değerlendirilir: bekleyen istek
+-- uyandığında satırın GÜNCEL hâlini görür ve silinmişse "yok" döner.
+-- name: GetTaxRegionForShare :one
+SELECT * FROM tax_region
+WHERE id = $1 AND deleted_at IS NULL
+FOR SHARE;

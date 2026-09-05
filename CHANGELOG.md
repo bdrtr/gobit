@@ -40,6 +40,52 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltildi
 
+- **Bir sütunun yazılmadığını yakalamak için kurulmuş denetim, godoc'unda ÖRNEK
+  olarak verdiği bulguyu hiç yakalamamıştı — üç kör noktası da mutasyonla
+  ölçüldü** (gaps.md D16).
+
+  D4 kapatılırken çıktı ve bu turun en pahalı bulgusu bu, çünkü ev kurallarından
+  biri doğrudan bu kapıya yaslanıyor: "bir sütun eklemek onu yazmayı zorunlu
+  kılar". `TestEveryColumnIsWrittenBySomething` oturumun başında YEŞİLDİ —
+  `order_exchanges.completed_at` ile `canceled_at` kanıtlanabilir biçimde hiç
+  yazılmıyorken ve muafiyet listesinde de değilken.
+  `internal/arch/columns_test.go`'nun kendi godoc'u, kusurun neye benzediğini
+  anlattığı paragrafta tam olarak bu iki sütunu örnek gösteriyor. Bunu geçerken
+  söylüyordu.
+
+  **Birinci kör nokta: yazılanlar kümesi TABLOYA göre değil, modül genelinde
+  çıplak sütun ADINA göre tutuluyor.** `completed_at` yazılmış sayılıyordu çünkü
+  `CompleteOrderClaim` onu BAŞKA bir tabloda yazıyor; `canceled_at` sayılıyordu
+  çünkü üç ayrı sorgu yazıyor. Zaman damgası adları tasarımı gereği tekrar eder,
+  yani aynı körlük tekrar eden ada sahip her modülde var.
+
+  **İkinci kör nokta: bildirim taraması yalnızca `CREATE TABLE` gövdesini
+  okuyor.** `ALTER TABLE ... ADD COLUMN` ile eklenen bir sütun — yani ilk
+  migrasyondan SONRAKİ her migrasyonun sütun ekleme biçimi — taramaya hiç
+  görünmüyor. İki yönlü mutasyonla kanıtlandı: `ALTER` ile eklenen yazılmamış
+  bir sütunda kapı yeşil kalıyor, aynı sütun ilk `CREATE TABLE` gövdesine
+  taşındığında kapı doğru mesajla düşüyor. Yani ev kuralı ilk şema için geçerli,
+  o günden beri eklenen hiçbir şey için değil — aynı turda eklenen
+  `orders.archived_at` dâhil.
+
+  **Üçüncü kör nokta: `.sql` METNİ okunuyor, çağrı çizgesi değil.** Hiçbir rotanın
+  ya da akışın çağırmadığı bir yazma sorgusu kapıyı yeşile çevirir, oysa hiçbir
+  operatör o yazmayı üretemez. D4'ün iptali servis metodu olarak değil ROTAYA
+  BAĞLI olarak gönderildi, sebebi tam olarak bu.
+
+  **Kayıtlı üçüncü seçenek MEKANİK OLARAK İMKÂNSIZMIŞ.** D4 için yazılı duran
+  "ikisini gerekçesiyle muafiyet listesine kaydet" yolu işlemiyor: muafiyet
+  yalnızca yazılanlar kümesi nöbetçisinden SONRA bakılıyor ve testin kapanış
+  döngüsü her muafiyet anahtarının gerçekten yazılmamış bulunduğunu doğruluyor —
+  giriş "artık yazılmamış DEĞİL" diye düşerdi.
+
+  Düzeltilen şey kapı değil, kapı hakkındaki KAYIT: `internal/arch` başka bir
+  bütçe ve elle tutulmadı. Aynı sınıftan ikinci bir örnek de aynı gün ölçüldü ve
+  açık bırakıldı (D17): `CancelReturn` ile `CancelClaim` üretimde hiçbir yerden
+  çağrılmıyor — ne rota, ne akış, ne interop — yani `order_returns.canceled_at`
+  ile `order_claims.canceled_at` üretimde tam olarak takas sütunu kadar yazılmış
+  durumda. Kapı onlarda yeşil, çünkü `UPDATE` metni bir `.sql` dosyasında duruyor.
+
 - **Verilmeyen bir ölçüt artık HİÇ YAN TÜMCE YAZMIYOR — ve kategori süzgecinin
   gerçek maliyeti ilk kez ÖLÇÜLDÜ.**
 
@@ -323,6 +369,161 @@ Sabitlenme `1.0.0` ile olur.
   tahmin edilmeden bırakıldı.
 
 ### Eklendi
+
+- **Giden teslimat makinesi: artan gecikmeli yeniden deneme ve ÖLÜ MEKTUP — ve
+  düzelttiği şeyin bir yavaşlama değil, teslimatın DURMASI olduğu ölçüldü**
+  (B12).
+
+  Önceden bir yayımlama hatası tek bir şey yapıyordu: `attempts` bir artıyor ve
+  satır bekleyen kalıyordu. Bir dakika sonraki geçiş onu yeniden deniyordu,
+  ondan sonraki her geçiş de, kurulum yaşadığı sürece. Bu, bir outbox'ın bağışık
+  olması gereken iki arızayı BİRDEN üretiyordu — ve ikisi birbirinin zıddı
+  olduğu için yalnızca birine yaslanan bir tasarım ötekine varır.
+
+  **Ölçüm gerçek bir PostgreSQL üzerinde, rölenin kendi koduyla yapıldı ve
+  beklenenden ağır çıktı.** Geçiş en ESKİ bekleyen satırları tavanı kadar okur;
+  yani kalıcı olarak başarısız olan tavan kadar satır her partiyi doldurur. Art
+  arda BEŞ geçiş hiçbir şey yayımlamadı ve onların arkasına yazılan sağlıklı bir
+  olay `attempts = 0` ile bitti — bir kez bile denenmemişti. Yığılma teslimatı
+  bozmuyor, BİTİRİYOR. "Yeniden deneme yok" bir eksiklik olarak yazılıydı;
+  ölçüldüğünde bir veri kaybı sınıfı çıktı.
+
+  **`next_attempt_at` birinci arızayı, `dead_lettered_at` ikincisini kapatıyor.**
+  Başarısız satır gecikmesi dolana kadar seçilmez, yani her partide bir yer
+  işgal etmeyi bırakır; tavandan sonra ise rölenin indeksinden tamamen çıkar ve
+  arkasındaki olayların önü açılır. Varsayılan takvim 1, 2, 4, 8, 16, 32, 60,
+  60, 60 dakika ve sonra ölü mektup: on denemeye yayılmış dört saat üç dakika.
+  Rakam, hayatta kalması gereken şeye göre seçildi — alıcı kesintisi. Dört
+  saatten kısası nöbetçi bir insanın makul olarak onaramayacağı, uzunu ise
+  gerçekten zehirli bir olayı kimseye haber vermeden ertesi iş gününe taşıyan
+  süre.
+
+  **Vazgeçmek bir DÜŞÜRME değil, bir YAZMA.** Satır, vazgeçilen anı, deneme
+  sayısını ve son hatayı taşır; röle işi her geçişte yığını okur ve yığın boş
+  değilken koşumunu BAŞARISIZ sayar. Sebep tasarım değil mekanizma: iş
+  koşucusunun DETAY sütununu yalnızca bir hatadan doldurduğu için, başarılı bir
+  koşum hiç detay kaydetmez — yani seçenek "hata mı detay mı" değildi, "hata mı,
+  yoksa yığın operatörün baktığı tek listede GÖRÜNMEZ mi" idi. Okuyucusu olmayan
+  bir defter bu deponun `audit_log` ile bir kez yaptığı hata.
+
+  **İndeks değişikliğinin üç cümlesi de ölçülü** (PostgreSQL 16; 40.000
+  yayımlanmış, 2.000 ölü mektup, 300 bekleyen satır; rölenin kendi seçimi,
+  `LIMIT` 200):
+
+  | indeks | süre | buffer | elenen satır |
+  | --- | --- | --- | --- |
+  | yeni kısmi yüklem | 0,18 ms | 411 | 0 |
+  | 000001'in yüklemi, aynı anahtar | 1,38 ms | 840 | 1.900 |
+  | anahtar `(next_attempt_at, created_at, id)` | 0,31 ms | — | Sort düğümü |
+
+  Orta satırda önemli olan milisaniye değil, 1.900: bunlar taramanın 200 canlı
+  satırı bulmak için üzerinden geçtiği ÖLÜ satırlar. 000001'in indeksinden asla
+  çıkmadıkları için o rakam kurulum yaşadığı sürece büyür — yavaşlayan bir sorgu
+  ile yavaşlamaya DEVAM EDEN bir sorgu arasındaki fark bu. Anahtar `created_at`
+  ile başlamayı sürdürüyor çünkü sıralama ondan; başa `next_attempt_at` konsa
+  planlayıcı sıralama düğümü ekliyor.
+
+  **Ölü mektupların kendi indeksi bir eniyileme değil.** Röle "insanın bakması
+  gereken bir şey var mı?" sorusunu her geçişte, dakikada bir, sonsuza kadar
+  sorar; o indeks olmadan bu soru bütün geçmişin sıralı taraması olurdu ve o
+  kadar pahalı bir soru er geç sorulmaz olur.
+
+  **Eksik kalan yarı yazıldı, gizlenmedi: `Redrive` ile `Discard` var, test
+  edildi ve ÜRETİMDE HİÇBİR ÇAĞIRANI YOK** — ne komut, ne rota. Yani bugün
+  alarmın SQL'e inmeden ulaşılabilen bir kapatma düğmesi yok, ve tasarımın
+  kendisi "kapatılamayan alarm sonunda susturulur" diyerek o düğmeyi gerekçe
+  yapıyor. Kaydedildi (B12), kapatılmadı.
+
+- **Siparişin arşivlenmesi artık TARİHLENİYOR, ve takasın tablosu ilk `UPDATE`
+  ifadesini aldı** (D5, D4).
+
+  İkisi de aynı sınıftan: durumu çeviren ama ne zaman çevrildiğini kaydetmeyen
+  bir geçiş. Dört sipariş durumundan üçü zaten kendi anını taşıyordu
+  (`placed_at`, `completed_at`, `canceled_at`) ve üçünden ikisi durumuna bir
+  ayna CHECK'i ile bağlıydı; arşivleme, durumu çevirip hiçbir şey yazmayan TEK
+  geçişti. Migrasyon 000007 `orders.archived_at` sütununu ekliyor ve
+  `ArchiveOrder` onu, durumu çeviren AYNI ifadede veritabanı saatinden yazıyor.
+  Damga modele, yönetim DTO'suna, okuma katmanının `order` sağlayıcısına
+  (`FieldArchivedAt`) ve zaman çizelgesine ulaşıyor.
+
+  **Tarihlenmiş geçişler tablosu REDDEDİLDİ ve gerekçe ölçüldü:** satırda üç
+  damga, yan tabloda dördüncü bir damga olurdu ve hangisinin yetkili olduğunu
+  söyleyen bir kural olmazdı — ayrıca var olan iki ayna CHECK'i uygulanamaz hâle
+  gelirdi, çünkü bir CHECK başka bir tablonun satırlarını göremez.
+
+  **`DEFAULT now()` de reddedildi ve bu, ucuz görünen yanlış.** Varsayılan,
+  sütunu SATIR yazıldığında damgalar; yani her sipariş, verildiği anda
+  arşivlenmiş olduğunu iddia ederdi. Üstelik sütunu, sütun denetiminin kendi
+  kuralı gereği denetim kapsamının DIŞINA çıkarırdı — güvenlik değil sessizlik
+  satın alırdı. CHECK ise kardeşlerinin aksine TEK YÖNLÜ
+  (`archived_at IS NULL OR status = 'archived'`): sütun var olmadan önce
+  arşivlenmiş siparişler durumu taşıyor ve anı taşımıyor, ters yönü eklemenin
+  tek yolu kimsenin kaydetmediği bir anı geriye doldurmak olurdu. Depo aynı
+  soruyu migrasyon 000003'te `received_location_id` için aynı biçimde
+  cevaplamıştı.
+
+  **Takasta ise bir sütun YAZAN kazandı, öteki DÜŞTÜ.** `CancelOrderExchange`,
+  `order_exchanges` tablosunun bugüne kadarki ilk `UPDATE` ifadesi ve
+  `POST /admin/v1/orders/{id}/exchanges/{exchangeId}/cancel` uçuna bağlı —
+  bağlanmasaydı sütun denetimi yeşile döner, sütun ise tam olarak eskisi kadar
+  yazılamaz kalırdı (bkz. Düzeltildi, üçüncü kör nokta). Migrasyon 000008 ise
+  `completed_at` sütununu ve durum CHECK'inden `completed` değerini DÜŞÜRÜYOR:
+  takasın tamamlanması, var olan bir siparişe karşı mal SEVK EDİLMESİNİ — bu
+  çerçevede hiçbir yerde olmayan bir yetenek — VE pozitif farkın tahsil
+  edilmesini gerektiriyor, ikincisini `order_payment` bağının birebirliği
+  yasaklıyor. Depo bunu üç ayrı yerde zaten yazmıştı. Hiçbir şeyin giremediği ve
+  hiçbir anın tarihleyemeyeceği bir durum bir eksiklik değildir; var olmaması
+  gereken bir durumdur. Elle yazılmış bir satır `completed` taşıyorsa migrasyon
+  onu düzeltmek yerine DÜŞÜYOR — o satırı bu depodaki hiçbir kod üretemezdi ve
+  sessizce sıfırlamak, sistem dışında ne yapıldığının tek kanıtını yok ederdi.
+
+  Takasın `canceled_at`'i TAM ayna CHECK'ini aldı — `(status = 'canceled')` ile
+  `(canceled_at IS NOT NULL)` eşit — ve bunu tam da sütun ÖLÜ olduğu için
+  alabildi: hiçbir mevcut satır `canceled` taşımıyor, yani her satır iki yönü de
+  sağlıyor. Siparişin `archived_at`'i alamadı ve fark yazıldı.
+
+  **Zaman çizelgesinin godoc'u sahip olmadığı bir davranışı anlatıyordu.**
+  Tarihsiz bir olgunun — biten bir takasın — düşürülmek yerine EN SONA
+  konduğunu söylüyordu; girdi üretici öyle bir girdi hiç üretmiyordu ve o dalı
+  üretecek koşul zaten erişilemezdi. Dal silindi, yerine TARİHLİ bir geri çekme
+  girdisi geldi. Çizelge kurulduğu gün (2026-09-05) hiç testi yoktu; şimdi girdi
+  üreticinin testleri var, bileşik okumanın hâlâ yok ve sebebi yazıldı.
+
+- **Vergi modülü işlemi CONTEXT'te taşıyor, ve modülün ilk paylaşımlı kilidi
+  var** (D6'nın vergi yarısı).
+
+  Depo içindeki özel `inTx(ctx, func(q *taxdb.Queries) error)` gitti; yerine
+  işlemi context'e koyan dışa açık `WithTx(ctx, func(ctx context.Context) error)`
+  geldi — öteki altı modülün zaten sahip olduğu ortam-işlem tesisatı. Böylece
+  sınırı servis kuruyor ve iki depo çağrısı tek işlemde birleşebiliyor. İmzanın
+  iki tarafın paylaştığı tiplere inmesi zorunluydu: ADR 0001 servisin depo
+  paketini import etmesini yasakladığı için o paketin hiçbir tipi, servisin
+  kendi tanımladığı dar arayüzde geçemez.
+
+  **Ve kayıtlı gerekçenin yanlış olan yarısı şuydu: "bugün hiçbir çağıran bunu
+  yapmıyor".** Yapıyordu — ve bir godoc, yapılmamış olanı yapılmış gibi
+  anlatıyordu. `DeleteTaxRegion`, aldığı kilidin "aynı bölgeye eşzamanlı bir
+  oran ekleme akışıyla yarışı engellediğini, çünkü o akışın da bölgeyi
+  paylaşımlı kilitle okuduğunu" söylüyordu. ÖLÇÜLDÜ: modülde tek bir `FOR SHARE`
+  sorgusu yoktu. Oran ekleme bölgeyi kilitsiz ve AYRI bir işlemde okuyordu,
+  yani denetimle yazma arasına giren bir silme ona görünmüyordu. Foreign key
+  bunu yakalayamaz çünkü silme YUMUŞAK: ana satır yerinde durur. Sonuç yalnızca
+  yetim bir satır da değil — `ResolveTaxRegions` eyalet satırını kendi başına
+  eşleştirir ve zincir en özelden genele yürür, yani o eyaletteki her sepet,
+  operatörün sildiğini sandığı bir bölgeden vergilenmeye devam ederdi; ülkeye
+  yeni bir kök açıldıktan sonra bile.
+
+  Cümle bugün doğru: `GetTaxRegionForShare` modülün ilk paylaşımlı kilidi,
+  `LockTaxRegion` işlem DIŞINDA çağrılırsa hata döner (işlemsiz alınan bir
+  `FOR SHARE` hemen serbest kalır, yani hiçbir şeyi korumaz ama koruduğu
+  sanılır), ve hem eyalet ekleme hem oran ekleme onu yazmayla AYNI işlemin
+  içinde alır. İki yarış da gerçek veritabanında, uyku yerine bekleme durumuna
+  bakan bir kurguyla bağlandı; işlem çerçevesinin kendisi ise hem geri aldığı
+  hem de çerçevesiz bırakıldığında YARIM kaldığı gösterilerek kanıtlandı.
+
+  **Yarısı açık: `region` dokunulmadı** ve aynı biçim, özgün cümlenin hiç
+  adlandırmadığı `pricing`, `promotion`, `auth` ve `customer` modüllerinde de
+  duruyor.
 
 - **Panelin kataloğunda artık ARAMA KUTUSU var: okuma katmanı `q`'yu öğrendi —
   ve maliyeti 52.004 üründe ÖLÇÜLDÜ** (B2'nin son süzgeci, D12'nin kalan yarısı).
