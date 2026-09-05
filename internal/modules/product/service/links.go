@@ -23,6 +23,17 @@ const (
 	EntityProduct = "product"
 	// EntityVariant is the entity name of the variant records.
 	EntityVariant = "variant"
+	// EntityCategory is the entity name of the category records.
+	//
+	// Unlike [EntityImage] it DOES register a provider ("category.query", see
+	// [NewCategoryProvider]) and unlike [EntityProduct] it appears on NO link
+	// end. That is the honest shape of the thing: a category is a vocabulary
+	// entry a consumer reads to turn a word into an id, and the membership
+	// between a product and a category is not a link but a table of this
+	// module's own (product_category_map, see migrations/000001_product_init.up.sql).
+	// Declaring a link for it would move a relation the module owns into the
+	// link layer and give two writers to one truth.
+	EntityCategory = "category"
 	// EntitySalesChannel is the sales channel entity name of the auth module.
 	//
 	// The module's name is "auth", its entity is "sales_channel": auth registers

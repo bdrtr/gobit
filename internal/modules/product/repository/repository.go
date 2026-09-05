@@ -146,6 +146,10 @@ type Store interface {
 
 	CreateCategory(ctx context.Context, c models.Category) (models.Category, error)
 	GetCategory(ctx context.Context, id string) (models.Category, error)
+	// ListCategoriesByIDs reads the named categories in a SINGLE query; it is
+	// what keeps the read layer's category provider free of an N+1 when a
+	// caller names several ids (see Repo.ListCategoriesByIDs).
+	ListCategoriesByIDs(ctx context.Context, ids []string) ([]models.Category, error)
 	ListCategories(ctx context.Context, f CategoryFilter) ([]models.Category, error)
 	CountCategories(ctx context.Context, f CategoryFilter) (int, error)
 

@@ -184,6 +184,85 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Panelin kataloğu artık kategoriye göre daraltılabiliyor: okuma katmanı
+  taksonomi süzgeçlerini ve bir `category` varlığını öğrendi** (B2, D12).
+
+  Aynı gün ölçülen boşluk şuydu: vitrin listelemesi `category_id` ve `tag_id`
+  kabul ederken okuma katmanının `product` sağlayıcısı yalnızca `status`,
+  `handle`, `collection_id` ve `id`/`ids` kabul ediyordu — yani dükkânın
+  MÜŞTERİSİ kataloğu kategoriye göre daraltabiliyor, dükkânın OPERATÖRÜ
+  daraltamıyordu. Panel bir modülü import edemez (ADR 0011), tek yolu okuma
+  katmanıdır; bu yüzden boşluk panelin değil, sağlayıcının boşluğuydu.
+
+  **Ölçülen ilk şey maliyet: iki `switch` dalı ve SIFIR yeni SQL.**
+  `ProductFilter.CategoryID` ve `ProductFilter.TagID` hem listelemeye hem sayıma
+  zaten EXISTS altsorgusu olarak bağlıydı (join değil — birkaç kategoride olan
+  ürün bir kez döner). Veritabanının en başından beri cevaplayabildiği bir soruya
+  yüzey bir `case` uzaklıktaydı. Bu boşluk sınıfının şekli budur: eksik olan
+  makine değil, makineyi sunan yüzeydeki dal.
+
+  **`id`/`ids` ile bir taksonomi süzgeci BİRLİKTE verilirse istek REDDEDİLİYOR**,
+  cevaplanmıyor. Gerekçe varsayılmadı, koda bakılarak doğrulandı: kimlik
+  yolundan dönen ürünlerin kategori ve etiket dilimleri hiçbir zaman
+  doldurulmuyor (satır→model çevirimi onları hiç yazmıyor), yani Go tarafında
+  yapılacak bir üyelik denetimi DERLENİR, hiçbir şeyle eşleşmez ve kendinden
+  emin BOŞ bir sayfa döndürür. Üyelikleri ayrıca çekmek de reddedildi: üyelik
+  yüklemi SQL'deki EXISTS'in yanında ikinci kez Go'da yazılmış olurdu ve kategori
+  bir AĞAÇ — SQL bir gün alt kategorileri de eşleştirdiğinde Go kopyası doğrudan
+  üyeliği cevaplamaya devam eder, tek süzgeç iki cevap verir. Reddin VERİDEN
+  BAĞIMSIZ olduğu testle sabitlendi: kimlik gerçekten o kategorideyken de düşer.
+
+  **Panelin bir sözlüğe ihtiyacı vardı, çünkü operatör `pcat_…` bilmez.** Ürün
+  modülü okuma katmanına ikinci bir varlık sunuyor: `category`
+  (`internal/modules/product/service/category_provider.go`). O da yeni SQL
+  istemedi — kimliklere göre okuyan sorgu zaten yazılmış ve üretilmişti, onu
+  saran hiçbir repository metodu yoktu (`Repo.ListCategoriesByIDs`).
+
+  Sağlayıcı VARSAYILAN olarak `is_active`/`is_internal` daraltması YAPMIYOR:
+  panel vitrin değildir ve kapattığı kategoriyi göremeyen bir satıcı onu geri
+  açamaz. Vitrinin daraltması `public_only` olarak açık bir tercihe dönüştü,
+  kayıt iki bayrağı da BİLDİRİYOR — böylece geniş liste tuzak değil okunur olur
+  — ve entegrasyon testi `public_only`'nin servisin kendi listelemesiyle birebir
+  aynı kümeyi döndürdüğünü sabitliyor.
+
+  **En keskin ölçüm mutasyondan geldi.** SQL'deki kategori EXISTS altsorgusu
+  etkisizleştirildiğinde SAHTE depoya dayanan bütün birim takımı YEŞİL kalıyor
+  ve yalnızca yeni entegrasyon testi kırmızıya dönüyor. Entegrasyon testinin
+  neden var olmak zorunda olduğu iddia edilmedi, ÖLÇÜLDÜ: sahte de sorgu da aynı
+  niyetten aynı elle yazıldığı için ikisi BİRLİKTE yanlış olup yine de birbirine
+  uyabilir.
+
+  Panel tarafında süzgeç adres çubuğunda taşınıyor — daraltılmış katalog yer
+  imine eklenip başkasına gönderilebilen bir görünümdür — ve sayfalama bağları da
+  onu taşıyor, yoksa "sonraki sayfa" okuyucuyu hiçbir şey söylemeden süzülmemiş
+  kataloğa taşırdı. Sözlük İKİNCİ bir okuma ve başarısızlığı SAYFAYI değil
+  KONTROLÜ düşürüyor: satırlar zaten elde ve doğru, bir açılır liste
+  dolduramadığı için "Katalog okunamadı" demek ekranı bir kolaylık uğruna elden
+  almak olurdu. Ama sessizce de düşmüyor — "sözlük okunamadı", "sözlüğün tamamı
+  okundu ve bu kimlik içinde yok" ve "sözlük 200'de kesildi, bu kimlik
+  doğrulanamadı" ÜÇ AYRI cümle, çünkü üçü üç ayrı fakt; tek bir "bozuk"
+  bayrağına indirmek, var olan bir kategori için "böyle bir kategori yok"
+  dedirtirdi.
+
+  **Elle kopyalanan ad sabitlendi** (`internal/arch/constants_test.go`):
+  `TestThePanelCatalogNamesAgree` panelin `category` dizgisini modülün kendi
+  sabitine derleme zamanında bağlıyor; yeni pin mutasyonla kanıtlandı. SÜZGEÇ
+  adı bağlanamıyor — `category_id` panelde de modülde de dışa aktarılmamış bir
+  sabit, yani karşılaştırılacak bir çift yok. Bu sınır testin kendi
+  "kapsamadıkları" bölümüne yazıldı, çünkü kayma bu ekranda tek cinsten değil:
+  süzgeç adının kayması GÜRÜLTÜLÜ (sağlayıcı tanımadığı süzgeci reddeder, sayfa
+  500 olur), ALAN adının kayması değil — sözlük okuması sayfayı düşürmediği için
+  loga bir uyarı ve ekrana bir not olarak gelir, ve alan denetimi KAYIT BAŞINA
+  olduğu için hiç kategorisi olmayan bir dükkânda hiç rapor edilmez.
+
+  Yapılmadı: metin araması (`q`). Vitrin listelemesi arıyor, sağlayıcı aramıyor,
+  yani panelde arama kutusu yok — bilerek, ve sağlayıcının godoc'una yazılarak:
+  tüketicisi olmayan bir yetenek, doğruluğu hiçbir yerde sınanmayan bir yüzeydir
+  (ADR 0009). Aynı kural `tag_id` için de geçerli ve orada daha rahatsız edici:
+  sunuluyor, birim ve entegrasyon testleriyle örtülü, hiç kimse çağırmıyor —
+  panel etiket kontrolü sunmuyor, çünkü etiket serbest metindir ve açılır listesi
+  yoktur. Yazıldı; "yapıldı" diye sayılmadı.
+
 - **Bir modülün SQL'i yalnızca KENDİ tablolarını adlandırabiliyor**
   (`internal/arch/module_sql_test.go`).
 

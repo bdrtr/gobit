@@ -866,6 +866,32 @@ func (m *memStore) GetCategory(_ context.Context, id string) (models.Category, e
 	return c, nil
 }
 
+// ListCategoriesByIDs returns the named categories WITHOUT applying the
+// listing's flags.
+//
+// The fake follows the real query on both halves that matter: a deleted
+// category does not come back, and is_active/is_internal are NOT looked at (see
+// Repo.ListCategoriesByIDs). Had the fake filtered them here, the category
+// provider's id path would look narrower in the tests than it is in production
+// and the re-check the provider does itself would be tested against a store
+// that had already done it.
+func (m *memStore) ListCategoriesByIDs(_ context.Context, ids []string) ([]models.Category, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ListCategoriesByIDs"); err != nil {
+		return nil, err
+	}
+
+	out := make([]models.Category, 0, len(ids))
+	for _, id := range ids {
+		if c, ok := m.categories[id]; ok && c.DeletedAt == nil {
+			out = append(out, c)
+		}
+	}
+	slices.SortFunc(out, func(a, b models.Category) int { return strings.Compare(a.ID, b.ID) })
+	return out, nil
+}
+
 func (m *memStore) ListCategories(_ context.Context, f repository.CategoryFilter) ([]models.Category, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

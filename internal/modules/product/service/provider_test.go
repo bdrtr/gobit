@@ -94,6 +94,277 @@ func TestProductProviderFilters(t *testing.T) {
 	assert.Empty(t, records)
 }
 
+// taxonomyFixture is the setup of the catalog taxonomy tests.
+//
+// It is laid out so that every assertion below can FAIL. There are two
+// categories and two tags rather than one of each, so a filter that ignored its
+// value would be caught; there is a product in NEITHER, so a filter that matched
+// everything would be caught; and the second member of the shirt category is a
+// DRAFT, so dropping the status from the combination shows up as a count of two.
+type taxonomyFixture struct {
+	products query.Provider
+	shirts   models.Category
+	summer   models.Category
+	sale     models.Tag
+	fresh    models.Tag
+	// listed is published, sits in BOTH categories and carries the "sale" tag.
+	listed models.Product
+	// draft sits in the shirt category and is not published.
+	draft models.Product
+}
+
+// newTaxonomyFixture builds the products, categories and tags of the taxonomy
+// tests.
+func newTaxonomyFixture(t *testing.T) taxonomyFixture {
+	t.Helper()
+
+	ctx := context.Background()
+	store := newMemStore()
+	svc := newService(t, store, newFakeLinker(), nil)
+
+	shirts, err := svc.CreateCategory(ctx, service.CreateCategoryInput{Name: "Shirts", Handle: "shirts"})
+	require.NoError(t, err)
+	summer, err := svc.CreateCategory(ctx, service.CreateCategoryInput{Name: "Summer", Handle: "summer"})
+	require.NoError(t, err)
+	sale, err := svc.CreateTag(ctx, "sale")
+	require.NoError(t, err)
+	fresh, err := svc.CreateTag(ctx, "new")
+	require.NoError(t, err)
+
+	listed := seedProductInput(t, svc, service.CreateProductInput{
+		Handle:      "listed-shirt",
+		Title:       "Listed Shirt",
+		Status:      models.StatusPublished,
+		CategoryIDs: []string{shirts.ID, summer.ID},
+		TagIDs:      []string{sale.ID},
+	})
+	draft := seedProductInput(t, svc, service.CreateProductInput{
+		Handle:      "draft-shirt",
+		Title:       "Draft Shirt",
+		Status:      models.StatusDraft,
+		CategoryIDs: []string{shirts.ID},
+	})
+	// The product that belongs to nothing. Without it a filter that was dropped
+	// on the floor would return the same two rows as a filter that was applied.
+	seedProductInput(t, svc, service.CreateProductInput{
+		Handle: "loose-hat",
+		Title:  "Loose Hat",
+		Status: models.StatusPublished,
+	})
+
+	return taxonomyFixture{
+		products: service.NewProductProvider(store),
+		shirts:   shirts,
+		summer:   summer,
+		sale:     sale,
+		fresh:    fresh,
+		listed:   listed,
+		draft:    draft,
+	}
+}
+
+// recordIDs returns the id field of every record.
+func recordIDs(t *testing.T, records []query.Record) []string {
+	t.Helper()
+
+	out := make([]string, 0, len(records))
+	for _, rec := range records {
+		id, ok := rec[query.IDField].(string)
+		require.True(t, ok, "the record carries no readable %q field: %#v", query.IDField, rec)
+		out = append(out, id)
+	}
+	return out
+}
+
+// TestProductProviderTaxonomyFilters verifies that the read layer answers the
+// two filters the STOREFRONT has always been able to ask.
+//
+// Until these existed the panel — which reaches the catalog only through this
+// provider — could not narrow the catalog by category while the shop's customers
+// could. The names are the storefront's own, so the two surfaces stay one
+// vocabulary.
+func TestProductProviderTaxonomyFilters(t *testing.T) {
+	t.Parallel()
+
+	fx := newTaxonomyFixture(t)
+	ctx := context.Background()
+
+	byCategory, err := fx.products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"category_id": fx.shirts.ID},
+	})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{fx.listed.ID, fx.draft.ID}, recordIDs(t, byCategory),
+		"the category filter returned the wrong set")
+
+	byOtherCategory, err := fx.products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"category_id": fx.summer.ID},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{fx.listed.ID}, recordIDs(t, byOtherCategory),
+		"the filter is not reading its VALUE; the two categories hold different sets")
+
+	byTag, err := fx.products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"tag_id": fx.sale.ID},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{fx.listed.ID}, recordIDs(t, byTag))
+
+	// A tag nobody carries. An "IS NULL OR" predicate written the wrong way
+	// round degrades into no filter at all, which looks like a wide catalog and
+	// says nothing.
+	byUnusedTag, err := fx.products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"tag_id": fx.fresh.ID},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, byUnusedTag, "a tag no product carries returned products")
+}
+
+// TestProductProviderCombinesTheTaxonomyFiltersWithTheOthers verifies that the
+// new filters NARROW alongside the old ones instead of replacing them.
+//
+// The combination is where a filter dispatch goes wrong quietly: a case that
+// overwrote the filter struct, or a status that stopped being carried, would
+// still return a plausible-looking page.
+func TestProductProviderCombinesTheTaxonomyFiltersWithTheOthers(t *testing.T) {
+	t.Parallel()
+
+	fx := newTaxonomyFixture(t)
+	ctx := context.Background()
+
+	both, err := fx.products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"category_id": fx.shirts.ID, "tag_id": fx.sale.ID},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{fx.listed.ID}, recordIDs(t, both),
+		"category AND tag together should narrow, not widen")
+
+	// The category of one product together with the tag of another: the
+	// intersection is empty, and an implementation that applied only the last
+	// filter it read would return a record here.
+	crossed, err := fx.products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"category_id": fx.summer.ID, "tag_id": fx.fresh.ID},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, crossed)
+
+	withStatus, err := fx.products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"category_id": fx.shirts.ID, "status": "published"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{fx.listed.ID}, recordIDs(t, withStatus),
+		"the draft product in the same category should have been left out")
+}
+
+// TestProductProviderPagesTheTaxonomyResult verifies that the limit still binds
+// on the filtered path.
+//
+// The limit reaches SQL as a LIMIT and the "0 means unlimited" of the Query
+// contract is translated by [providerLimit]. A filter that pushed the paging
+// aside would return the whole catalog to a caller that asked for one row.
+func TestProductProviderPagesTheTaxonomyResult(t *testing.T) {
+	t.Parallel()
+
+	fx := newTaxonomyFixture(t)
+	ctx := context.Background()
+	filters := map[string]any{"category_id": fx.shirts.ID}
+
+	unlimited, err := fx.products.List(ctx, query.ListOptions{Filters: filters})
+	require.NoError(t, err)
+	require.Len(t, unlimited, 2, "a limit of zero means unlimited")
+
+	first, err := fx.products.List(ctx, query.ListOptions{Filters: filters, Limit: 1})
+	require.NoError(t, err)
+	assert.Len(t, first, 1)
+
+	second, err := fx.products.List(ctx, query.ListOptions{Filters: filters, Limit: 1, Offset: 1})
+	require.NoError(t, err)
+	require.Len(t, second, 1)
+	assert.NotEqual(t, recordIDs(t, first), recordIDs(t, second),
+		"the offset returned the same row again")
+
+	past, err := fx.products.List(ctx, query.ListOptions{Filters: filters, Limit: 1, Offset: 2})
+	require.NoError(t, err)
+	assert.Empty(t, past)
+}
+
+// TestProductProviderRefusesATaxonomyFilterWithIDs pins the DECISION taken for
+// the id path.
+//
+// On that path the provider reads the products by id and re-checks the rest of
+// the criteria in Go, and the category/tag membership is not on the record it
+// holds. The three answers were: check the empty relation slices anyway (every
+// query silently returns nothing), fetch the memberships and check honestly (a
+// second copy of a predicate that lives in SQL, over a TREE), or refuse. The
+// refusal is what is implemented, and it is what this test holds in place.
+func TestProductProviderRefusesATaxonomyFilterWithIDs(t *testing.T) {
+	t.Parallel()
+
+	fx := newTaxonomyFixture(t)
+	ctx := context.Background()
+
+	// The id and the category MATCH: this product really is in that category.
+	// The refusal must not depend on the data — a filter that failed only when
+	// the answer would have been empty is a filter that works sometimes, and the
+	// caller cannot tell which time it got.
+	_, err := fx.products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"id": fx.listed.ID, "category_id": fx.shirts.ID},
+	})
+	require.Error(t, err, "a silently empty page is the failure this refusal exists to prevent")
+	assert.True(t, errors.IsInvalid(err), "the refusal should be a validation error: %v", err)
+	assert.Contains(t, err.Error(), "category_id",
+		"the message should name the filter to drop, not the id")
+
+	_, err = fx.products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"ids": []string{fx.listed.ID}, "tag_id": fx.sale.ID},
+	})
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalid(err), "the ids shape should be refused as well: %v", err)
+
+	// The id filter ON ITS OWN is untouched by the refusal: it is the panel's
+	// product detail page and it runs on every product view.
+	alone, err := fx.products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"id": fx.listed.ID},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{fx.listed.ID}, recordIDs(t, alone))
+}
+
+// TestProductProviderIDFilterRechecksTheScalarCriteria covers the branch the
+// refusal above rests on.
+//
+// The claim is that status, handle and collection_id ARE re-checked on the id
+// path, in memory, against the record the batch read returned. Nothing tested
+// that branch before — so the assertion that a taxonomy filter cannot be
+// answered there stood beside three siblings whose behavior was equally
+// unobserved.
+func TestProductProviderIDFilterRechecksTheScalarCriteria(t *testing.T) {
+	t.Parallel()
+
+	fx := newTaxonomyFixture(t)
+	ctx := context.Background()
+
+	published, err := fx.products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"ids": []string{fx.listed.ID, fx.draft.ID}, "status": "published"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{fx.listed.ID}, recordIDs(t, published),
+		"the status was not applied to the id set")
+
+	byHandle, err := fx.products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"id": fx.listed.ID, "handle": "draft-shirt"},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, byHandle, "the handle of another product should match nothing")
+
+	// No product in the fixture has a collection, so the criterion is a genuine
+	// discriminator: a re-check that skipped a nil column would return the row.
+	byCollection, err := fx.products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"id": fx.listed.ID, "collection_id": "pcol_missing"},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, byCollection)
+}
+
 // TestProviderRejectsUnknownFilter verifies that an unrecognized filter is NOT
 // SILENTLY IGNORED (ADR 0004).
 func TestProviderRejectsUnknownFilter(t *testing.T) {

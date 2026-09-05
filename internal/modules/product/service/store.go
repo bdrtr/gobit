@@ -24,6 +24,31 @@ const (
 	filterHandle       = "handle"
 	filterCollectionID = "collection_id"
 
+	// filterCategoryID and filterTagID are the taxonomy filters of the product
+	// provider, and they are spelled THE WAY THE STOREFRONT SPELLS THEM.
+	//
+	// The storefront reads the same two words off the query string (see
+	// api/store.go, "category_id" and "tag_id") and hands them to the same
+	// repository fields. Had the read layer picked a second spelling for the
+	// same concept — "category" here, "category_id" there — the two surfaces
+	// would answer the same question under two names, and the first consumer
+	// that spoke both (the panel and the shop are one installation) would have
+	// to keep a translation table nothing verifies.
+	filterCategoryID = "category_id"
+	filterTagID      = "tag_id"
+
+	// filterParentID walks the category tree one level at a time; it is the
+	// same word the storefront's category endpoint reads (see api/store.go).
+	filterParentID = "parent_id"
+
+	// filterPublicOnly is the category provider's opt-in narrowing to the set a
+	// SHOPPER may see; see [categoryProvider.List] for why it is opt-in.
+	//
+	// The name follows [repository.CategoryFilter].PublicOnly and
+	// [ListCategoriesOptions].PublicOnly rather than inventing a third word for
+	// the flag the two of them already carry.
+	filterPublicOnly = "public_only"
+
 	// FilterSalesChannelIDs is the sales channel filter of the variant provider.
 	//
 	// Unlike its siblings it is EXPORTED, and the difference comes from the

@@ -64,7 +64,7 @@ Four sequencing facts govern the whole list:
 | # | foundation | unblocks | section |
 | --- | --- | --- | --- |
 | B1 | ~~**A guarded inbound-callback class**~~ **Built 2026-09-05: ADR 0028.** `core/http.CallbackRegistry` — per-route quota, body limit, timeout, enforced signature check and a derived replay window; PayTR converted onto it at the same URL. Audit deliberately left out (see D1) | four carriers, e-invoice, every payment provider — the plumbing is there; a carrier still waits on B10 | Turkey-specific |
-| B2 | **Storefront filter surface** — ~~category, tag~~ **built 2026-09-05** (`category_id`, `tag_id`, in REST and GraphQL, EXISTS not joins so a product in several categories is returned once). ~~Still missing: price, in-stock, option value, sort~~ — **one bag holding four different kinds of work; measured and split 2026-09-05.** SORT is a straightforward build with one trap (the cursor). OPTION VALUE is a build behind one decision, entirely inside the product module. PRICE and IN-STOCK are NOT builds — they are decisions, and they are now **A16** and **A17**. Also measured: the built half never reached the read layer, so the panel cannot filter by category while the storefront can | ~~NL search~~ **C10 does not exist in code**, so the built filters have NO named consumer today; the panel is a real one and is BEHIND them (see A16, A17 and the section below) | AI-powered features |
+| B2 | **Storefront filter surface** — ~~category, tag~~ **built 2026-09-05** (`category_id`, `tag_id`, in REST and GraphQL, EXISTS not joins so a product in several categories is returned once). ~~Still missing: price, in-stock, option value, sort~~ — **one bag holding four different kinds of work; measured and split 2026-09-05.** SORT is a straightforward build with one trap (the cursor). OPTION VALUE is a build behind one decision, entirely inside the product module. PRICE and IN-STOCK are NOT builds — they are decisions, and they are now **A16** and **A17**. ~~Also measured: the built half never reached the read layer, so the panel cannot filter by category while the storefront can~~ — **that half reached the read layer the same day.** The `product` provider takes `category_id` and `tag_id` too now (two switch cases, NO new SQL — the EXISTS subqueries were already in the listing and the count), it REFUSES either of them combined with `id`/`ids` rather than answering from relation slices it never loads, and the module offers a second read-layer entity, `category`, so a consumer can turn a name into an identifier. What is still behind is exactly one filter: the storefront's text search | ~~NL search~~ **C10 does not exist in code** — but `category_id` has a real named consumer since 2026-09-05: the panel's product list narrows the catalog through the read layer and offers a dropdown of category names. `tag_id` has none (see A16, A17 and the section below) | AI-powered features |
 | B3 | ~~**Storefront vocabulary endpoints**~~ **Built 2026-09-05.** `GET /store/v1/{collections,categories,tags}`. The category listing applies `is_active`/`is_internal` — two columns that existed since the first migration and that nothing read | NL search — the word→id half is done; the FILTER half is B2 | AI-powered features |
 | B4 | **Review module** | moderation (the AI brief's first use case), summaries, Q&A | AI subsystem |
 | B5 | ~~**Order ↔ fulfillment link, and something that creates a fulfillment**~~ **Built 2026-09-05.** The fulfillment module declares `order_fulfillment` (one to many); `internal/workflows/fulfilling` opens a shipment for an order and binds the two; the order gets `POST`/`GET /admin/v1/orders/{id}/fulfillments`. NOT built: a shipment created at checkout — shipping stays a decision | the order timeline, carrier tracking, "where is the parcel" — answerable now. the link is expandable by the read layer too (D8) | Platform features |
@@ -185,6 +185,16 @@ Four sequencing facts govern the whole list:
   godoc in `internal/adminui/catalog.go` now says what is true; the gap itself
   is B2's, and the fix is to teach the provider the two taxonomy filters rather
   than to give the panel a module import.
+
+  **And the gap it uncovered is closed too, on the same day.** The fix was the
+  one named above and not a module import: the provider learned `category_id`
+  and `tag_id`, the product module added a `category` entity so the screen can
+  offer NAMES instead of identifiers, and the panel's product list has a
+  category dropdown whose choice travels in the query string. The panel still
+  offers no tag control and no search box, and those two absences are NOT the
+  same thing — the tag control is a decision (a tag is free text, and a
+  dropdown is the wrong shape for it), the search box is still blocked, because
+  the provider has no text filter while the storefront listing does.
 
 ### E. Out of framework scope — written, not forgotten
 
@@ -1390,27 +1400,76 @@ availability is defined below the product, twice. The product module can reach a
 link table legally and so can answer "has an inventory item", which is not the
 question anybody asks. The full reasoning is in A17.
 
-### The half that IS built has not reached the read layer
+### ~~The half that IS built has not reached the read layer~~ — it reached it
 
-The panel does not read the storefront listing. It reads the cross-module read
-layer's `product` provider, and that provider accepts `status`, `handle`,
-`collection_id` and `id`/`ids` — **not `category_id` and not `tag_id`.** So the
-read layer's product surface is now BEHIND the REST and GraphQL surfaces that B2
-extended, and the visible consequence is that the shop's customers can narrow
-the catalog by category while the shop's operator cannot.
+**Closed 2026-09-05**, hours after the sentence below was written, and it is
+left standing because the shape of the gap is worth keeping:
+
+> The panel does not read the storefront listing. It reads the cross-module read
+> layer's `product` provider, and that provider accepts `status`, `handle`,
+> `collection_id` and `id`/`ids` — **not `category_id` and not `tag_id`.** So the
+> read layer's product surface is now BEHIND the REST and GraphQL surfaces that
+> B2 extended, and the visible consequence is that the shop's customers can
+> narrow the catalog by category while the shop's operator cannot.
 
 This was believed to be impossible, and the belief was written down: the godoc
 on the panel's product list claimed it made "the same Graph call the storefront
 listing uses, so the screen cannot drift". The two were never the same call.
 The comment has been corrected (see D12).
 
-### And there is no consumer
+The provider now takes both taxonomy filters, and the interesting measurement is
+what they cost: two switch cases and no SQL at all. `ProductFilter.CategoryID`
+and `ProductFilter.TagID` were already wired into the listing AND the count as
+EXISTS subqueries, so the read layer had been one `switch` short of a capability
+the database could already answer. That is the honest shape of this class of gap
+— not missing machinery, missing a case in the surface that offers it.
 
-This file names C10 (natural-language search) as B2's consumer. **C10 does not
-exist in code.** So the filters built on 2026-09-05 have no real named consumer
-yet, and this repository's own rule applies to them: a capability without a
-consumer is work believed done and not done. The panel is the nearest candidate
-for a real one, and the paragraph above is why it cannot be that yet.
+Two things had to be decided rather than typed. The first: `id`/`ids` combined
+with a taxonomy filter is REFUSED with an invalid-argument error, not answered.
+The id path reads products by identity and its records carry no category or tag
+membership at all (the row-to-model conversion never fills them), so a Go-side
+re-check would compile, match nothing, and hand back a confidently empty page —
+and fetching the memberships instead would write the membership predicate a
+SECOND time in Go beside the SQL EXISTS, which stops being one truth the day the
+SQL learns to match a category's descendants. The refusal is data-independent
+and it is pinned by a test. The second: the panel needs a vocabulary, because
+an operator does not know `pcat_…`. So the product module offers a second
+read-layer entity, `category` (`internal/modules/product/service/category_provider.go`),
+which needed no new SQL either — the by-ids query existed and was generated, and
+nothing had wrapped it.
+
+What is still BEHIND, precisely: the storefront listing takes a text search and
+the provider does not, so the panel has a category dropdown and no search box.
+That was left deliberately by this repository's own standing rule (a capability
+with no consumer is a surface whose correctness is tested nowhere) and the
+omission is written into the provider's godoc rather than left to be rediscovered
+here. The panel also offers no TAG control, and that is a different kind of
+absence — a decision, not a gap: a tag is free text with no dropdown to be, while
+a category is a tree an operator maintains.
+
+The hand-copied names are pinned where they can be. `TestThePanelCatalogNamesAgree`
+in `internal/arch` binds the panel's `category` entity string to the module's own
+constant at compile time. The FILTER name cannot be bound: both copies of
+`category_id` are unexported in their own packages, so there is no pair to
+compare, and the protection there is the provider's refusal of an unknown filter
+turning into a loud 500. That limit is now recorded in the test's own "does not
+cover" section instead of being silently true.
+
+### And the consumer is real — for one of the two filters
+
+This file names C10 (natural-language search) as B2's consumer, and **C10 still
+does not exist in code.** What changed on 2026-09-05 is that `category_id` no
+longer needs it: the panel's product list is a real named consumer, in
+production code, on a screen an operator opens, and it exercises the filter
+through the read layer rather than through a module import.
+
+`tag_id` has no consumer at all. It is offered by the provider, covered by unit
+and integration tests, and called by nothing — which is precisely the class this
+repository refuses to call finished (ADR 0009), so it is written down here
+rather than counted as built. It came in the same change as `category_id`
+because the two are one switch and one argument; keeping it out would have meant
+the read layer disagreeing with the storefront on a filter the storefront
+already answers.
 
 ## AI-powered commerce features — measured against the brief, 2026-09-05
 

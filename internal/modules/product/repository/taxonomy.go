@@ -92,6 +92,41 @@ func (r *Repo) GetCategory(ctx context.Context, id string) (models.Category, err
 	return toCategory(row), nil
 }
 
+// ListCategoriesByIDs returns the categories of the given ids in a SINGLE
+// query.
+//
+// It is the batch counterpart of [Repo.GetCategory] and it exists for the read
+// layer's category provider: an expansion, or a filter naming several ids, would
+// otherwise turn into one round trip per id — the N+1 the Query layer is built
+// to keep out (ADR 0004).
+//
+// An id that is not found produces NO row and that is not an error: the caller
+// asked "which of these do you have", and a deleted category is a valid answer
+// of "not this one". The SQL applies the same deleted_at predicate as every
+// other read, so a soft-deleted category cannot come back through this door
+// while it is hidden at the others.
+//
+// The FLAGS ARE NOT applied here. is_active and is_internal narrow a LISTING
+// (see [CategoryFilter].PublicOnly); this method answers about named ids and
+// the caller decides what to do with a switched-off one — the provider does
+// exactly that.
+func (r *Repo) ListCategoriesByIDs(ctx context.Context, ids []string) ([]models.Category, error) {
+	if len(ids) == 0 {
+		return []models.Category{}, nil
+	}
+
+	rows, err := r.q.ListCategoriesByIDs(ctx, ids)
+	if err != nil {
+		return nil, wrapDB(err, "could not read the categories (%d ids)", len(ids))
+	}
+
+	out := make([]models.Category, 0, len(rows))
+	for i := range rows {
+		out = append(out, toCategory(rows[i]))
+	}
+	return out, nil
+}
+
 // CategoryFilter is the criteria of a category listing.
 //
 // It is a struct rather than three parameters for the reason ProductFilter is:

@@ -30,6 +30,7 @@ import (
 	"github.com/bdrtr/gobit/core/db"
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/link"
+	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/modules/product"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/repository"
@@ -804,4 +805,226 @@ func TestTheCategoryAndTagFiltersReturnAProductOnce(t *testing.T) {
 	empty, err := svc.ListProducts(ctx, service.ListProductsOptions{CategoryID: &other.ID})
 	require.NoError(t, err)
 	assert.Empty(t, empty.Items, "a category with no products returned products")
+}
+
+// TestTheReadLayerAnswersTheTaxonomyFiltersAgainstTheDatabase is the provider's
+// half of [TestTheCategoryAndTagFiltersReturnAProductOnce].
+//
+// That test drives the SERVICE. The read layer is a different caller with its
+// own filter dispatch, and until this one existed nothing checked that the two
+// reach the same predicate: the provider's unit tests run against the in-memory
+// store, and a fake that agrees with itself says nothing about the EXISTS
+// subqueries — those live in SQL (see repository/saleschannel.go) and only a
+// real database can be asked whether they were reached.
+//
+// The comparison against the service is deliberate. Asserting a hand-written set
+// of ids would only prove that the provider returns SOMETHING; asserting that it
+// returns what the service's own listing returns is what makes the panel and the
+// shop one answer.
+func TestTheReadLayerAnswersTheTaxonomyFiltersAgainstTheDatabase(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+	products := service.NewProductProvider(repository.New(testPool.Pool()))
+
+	shirts, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Shirts", Handle: uniqueHandle("provider-shirts")})
+	require.NoError(t, err)
+	summer, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Summer", Handle: uniqueHandle("provider-summer")})
+	require.NoError(t, err)
+	empty, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Empty", Handle: uniqueHandle("provider-empty")})
+	require.NoError(t, err)
+	sale, err := svc.CreateTag(ctx, uniqueHandle("provider-sale"))
+	require.NoError(t, err)
+
+	// The listed product is in BOTH categories and carries the tag; the draft is
+	// in one of them and carries none. Every assertion below can therefore fail:
+	// a filter that lost its value, a filter that was dropped, and a status that
+	// stopped being carried alongside a taxonomy filter all show up as a
+	// different set.
+	listed, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle:      uniqueHandle("provider-listed"),
+		Title:       "Listed in two categories",
+		Status:      models.StatusPublished,
+		CategoryIDs: []string{shirts.ID, summer.ID},
+		TagIDs:      []string{sale.ID},
+	})
+	require.NoError(t, err)
+	draft, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle:      uniqueHandle("provider-draft"),
+		Title:       "Draft in one category",
+		Status:      models.StatusDraft,
+		CategoryIDs: []string{shirts.ID},
+	})
+	require.NoError(t, err)
+
+	byCategory, err := products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"category_id": shirts.ID},
+	})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{listed.ID, draft.ID}, providerIDs(t, byCategory),
+		"the read layer's category filter did not reach the EXISTS subquery")
+
+	fromService, err := svc.ListProducts(ctx, service.ListProductsOptions{CategoryID: &shirts.ID})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, modelIDs(fromService.Items), providerIDs(t, byCategory),
+		"the panel and the shop are reading the same catalog with two different answers")
+
+	// The product sits in two categories. Asked about one of them it must appear
+	// ONCE: a row that multiplied would make a page hold fewer products than its
+	// limit promises.
+	bySecondCategory, err := products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"category_id": summer.ID},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{listed.ID}, providerIDs(t, bySecondCategory))
+
+	byTag, err := products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"tag_id": sale.ID},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{listed.ID}, providerIDs(t, byTag))
+
+	withStatus, err := products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"category_id": shirts.ID, "status": string(models.StatusPublished)},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{listed.ID}, providerIDs(t, withStatus),
+		"the draft product in the same category was not filtered out")
+
+	both, err := products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"category_id": summer.ID, "tag_id": sale.ID},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{listed.ID}, providerIDs(t, both))
+
+	// A category with no products. An "IS NULL OR" predicate written the wrong
+	// way round degrades into no filter at all — which returns the whole catalog
+	// and looks like a wide answer rather than a broken one.
+	none, err := products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"category_id": empty.ID},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, none, "a category with no products returned products")
+
+	// The limit still binds on the filtered path: it goes to SQL as a LIMIT.
+	page, err := products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"category_id": shirts.ID}, Limit: 1,
+	})
+	require.NoError(t, err)
+	assert.Len(t, page, 1)
+
+	// And the refusal holds against the real store too. It is a decision of the
+	// dispatch, not of the fake: on the id path the membership is never read, so
+	// the filter could not be applied and the caller is told instead of being
+	// handed a page that quietly ignored it.
+	_, err = products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"id": listed.ID, "category_id": shirts.ID},
+	})
+	require.Error(t, err)
+	assert.True(t, coreerrors.IsInvalid(err),
+		"combining an id with a taxonomy filter should be refused: %v", err)
+}
+
+// TestTheCategoryProviderReadsTheRealTable proves the vocabulary entity against
+// the database.
+//
+// The claims that need a real query are the two flag columns and the tree: the
+// listing path applies them in SQL ([repository.CategoryFilter].PublicOnly) and
+// the id path applies them in Go, so this is also where the two implementations
+// of one predicate can be caught disagreeing.
+func TestTheCategoryProviderReadsTheRealTable(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+	categories := service.NewCategoryProvider(repository.New(testPool.Pool()))
+
+	parent, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Vocabulary root", Handle: uniqueHandle("vocabulary-root")})
+	require.NoError(t, err)
+	shown, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Shown", Handle: uniqueHandle("vocabulary-shown"), ParentID: &parent.ID})
+	require.NoError(t, err)
+	switchedOff, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Switched off", Handle: uniqueHandle("vocabulary-off"),
+		ParentID: &parent.ID, IsActive: ptrBool(false)})
+	require.NoError(t, err)
+	internalOnly, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Operators only", Handle: uniqueHandle("vocabulary-internal"),
+		ParentID: &parent.ID, IsInternal: true})
+	require.NoError(t, err)
+
+	children, err := categories.List(ctx, query.ListOptions{
+		Filters: map[string]any{"parent_id": parent.ID},
+	})
+	require.NoError(t, err)
+	assert.ElementsMatch(t,
+		[]string{shown.ID, switchedOff.ID, internalOnly.ID}, providerIDs(t, children),
+		"the read layer hid a category the operator has to manage")
+
+	public, err := categories.List(ctx, query.ListOptions{
+		Filters: map[string]any{"parent_id": parent.ID, "public_only": true},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{shown.ID}, providerIDs(t, public))
+
+	// The same question asked of the module's own storefront listing. The two
+	// have to give one answer; that is the whole point of the flag having one
+	// name on both surfaces.
+	fromService, err := svc.ListCategories(ctx, service.ListCategoriesOptions{
+		ParentID: &parent.ID, PublicOnly: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, modelIDs(fromService.Items), providerIDs(t, public))
+
+	// The id path applies the flag in Go, over the rows the batch read returned.
+	namedPublic, err := categories.List(ctx, query.ListOptions{
+		Filters: map[string]any{
+			"ids":         []string{shown.ID, switchedOff.ID, internalOnly.ID},
+			"public_only": true,
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{shown.ID}, providerIDs(t, namedPublic),
+		"the id path and the listing path disagree about the same filter")
+
+	// An expansion hides nothing: the id was already named by the caller, and
+	// answering "no such record" for a switched-off category would leave it
+	// holding a dangling reference.
+	expanded, err := categories.FetchByIDs(ctx, []string{switchedOff.ID, "pcat_missing"}, nil)
+	require.NoError(t, err, "an id that is not found is not an error")
+	require.Len(t, expanded, 1)
+	assert.Equal(t, false, expanded[0]["is_active"],
+		"the record must say that this category is switched off")
+}
+
+// providerIDs returns the id field of every record.
+func providerIDs(t *testing.T, records []query.Record) []string {
+	t.Helper()
+
+	out := make([]string, 0, len(records))
+	for _, rec := range records {
+		id, ok := rec[query.IDField].(string)
+		require.True(t, ok, "the record carries no readable %q field: %#v", query.IDField, rec)
+		out = append(out, id)
+	}
+	return out
+}
+
+// modelIDs returns the ids of the records the SERVICE returned.
+//
+// It is generic because the comparison is made for two different models
+// (product and category) and a per-type copy would be the same three lines
+// twice.
+func modelIDs[T interface{ models.Product | models.Category }](items []T) []string {
+	out := make([]string, 0, len(items))
+	for i := range items {
+		switch item := any(items[i]).(type) {
+		case models.Product:
+			out = append(out, item.ID)
+		case models.Category:
+			out = append(out, item.ID)
+		}
+	}
+	return out
 }

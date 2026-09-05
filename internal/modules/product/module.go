@@ -11,8 +11,11 @@
 //  2. The PRIMITIVE cross-module read surface is registered under the name
 //     "product.interop" (ADR 0006); plugins and workflows read the catalog
 //     record from there.
-//  3. The Query providers are registered under the names "product.query" and
-//     "variant.query" (ADR 0004).
+//  3. The Query providers are registered under the names "product.query",
+//     "variant.query" and "category.query" (ADR 0004). The third one is the
+//     VOCABULARY of the first: the product provider's category_id filter takes
+//     an id, and this is where a consumer that only has the word finds it (see
+//     [service.NewCategoryProvider]).
 //  4. The price, stock, sales channel and image/upload link definitions are
 //     declared (ADR 0005).
 //  5. The file module's upload read-back is wired in LAZILY, under the name
@@ -268,6 +271,14 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(service.EntityVariant+query.ProviderSuffix, service.NewVariantProvider(repo)); err != nil {
+		return err
+	}
+	// The category provider is registered NEXT TO the other two rather than
+	// behind a flag: without it the product provider's category_id filter has
+	// no way to be called from outside this module — the caller would have an
+	// id it could not obtain. A filter whose vocabulary is missing is the same
+	// gap as the storefront had before its vocabulary endpoints existed.
+	if err := c.Provide(service.EntityCategory+query.ProviderSuffix, service.NewCategoryProvider(repo)); err != nil {
 		return err
 	}
 

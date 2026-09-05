@@ -281,16 +281,36 @@ func newServiceWithBus(
 // variant.
 func seedProduct(t *testing.T, svc *service.Service, handle, title string) models.Product {
 	t.Helper()
-	product, err := svc.CreateProduct(context.Background(), service.CreateProductInput{
+	product := seedProductInput(t, svc, service.CreateProductInput{
 		Handle: handle,
 		Title:  title,
 		Status: models.StatusPublished,
-		Variants: []service.CreateVariantInput{
-			{Title: "One size"},
-		},
 	})
-	require.NoError(t, err)
 	require.Len(t, product.Variants, 1)
+	return product
+}
+
+// seedProductInput creates the product the input describes and stops the test
+// if it cannot be written.
+//
+// [seedProduct] fixes the status and gives the product no category and no tag,
+// which is right for most of the tests here and wrong for exactly one family:
+// the taxonomy filters of the Query provider. Those are questions about
+// MEMBERSHIP, and a fixture whose products all belong to nothing cannot tell a
+// filter that matches everything from a filter that matches nothing — both
+// return the same empty page. The status has to vary in the same fixture too,
+// because "category_id together with status" is one of the combinations that
+// has to keep working.
+//
+// The variant is filled in when the input leaves it out: it is not what these
+// tests are about, and every product in this package has one.
+func seedProductInput(t *testing.T, svc *service.Service, in service.CreateProductInput) models.Product {
+	t.Helper()
+	if len(in.Variants) == 0 {
+		in.Variants = []service.CreateVariantInput{{Title: "One size"}}
+	}
+	product, err := svc.CreateProduct(context.Background(), in)
+	require.NoError(t, err)
 	return product
 }
 

@@ -15,14 +15,19 @@ import (
 // 0004).
 //
 // The providers are registered in the container under the names "product.query"
-// and "variant.query". Query resolves them by name; the core does not know this
-// module, and this module is visible to the core only by satisfying the
+// and "variant.query" (the third one, "category.query", lives in
+// category_provider.go). Query resolves them by name; the core does not know
+// this module, and this module is visible to the core only by satisfying the
 // signature.
 //
-// The reason two separate entities are offered is identity: the price and stock
-// links are made with the VARIANT id, not with the product id. Had there been a
-// single "product" entity, the links would fall onto the "id" field of the
-// product records and nothing would match.
+// The reason product and variant are separate entities is identity: the price
+// and stock links are made with the VARIANT id, not with the product id. Had
+// there been a single "product" entity, the links would fall onto the "id"
+// field of the product records and nothing would match.
+//
+// The category entity is separate for a different reason and it is written out
+// where it lives: it is a VOCABULARY, read to turn a word into an id, not a
+// second view of a product.
 
 // providerUnlimited is the limit that goes to the query when Limit 0
 // (unlimited) is given.
@@ -63,10 +68,68 @@ func (p *productProvider) Entity() string { return EntityProduct }
 
 // List returns the product records.
 //
-// Supported filters: status, handle, collection_id, id/ids. An unrecognized
-// filter returns errors.Invalid (ADR 0004): ignoring it silently would leave the
-// client believing that an unfiltered list — one it thinks it has filtered — is
-// the right answer.
+// Supported filters: status, handle, collection_id, category_id, tag_id and
+// id/ids. An unrecognized filter returns errors.Invalid (ADR 0004): ignoring it
+// silently would leave the client believing that an unfiltered list — one it
+// thinks it has filtered — is the right answer.
+//
+// The text search the storefront listing accepts ("q",
+// [StoreListOptions].Search) is deliberately NOT among them. The field is wired
+// end to end in the repository and adding the case would cost two lines, but
+// this surface gets a filter when a caller asks a question with it; a filter
+// opened ahead of its consumer is a promise whose correctness nothing exercises
+// (the same rule the channel filter of [variantProvider.List] is held to).
+//
+// # The taxonomy filters
+//
+// category_id and tag_id become EXISTS subqueries in the repository, not joins
+// (see [repository.ProductFilter] and repository/saleschannel.go): a product
+// that sits in three categories is still one row. Written as a join it would
+// come back once per membership, the page would hold fewer products than its
+// limit promises and a count would count MEMBERSHIPS. That is a property of the
+// SQL, so it is proven against a real database rather than against the fake
+// (see product_integration_test.go).
+//
+// The two names are the storefront's own (see [filterCategoryID]): before this
+// existed the shop could narrow the catalog by category and the read layer could
+// not, so an operator's panel — which reaches the catalog only through Query —
+// had no way to ask the question its customers were already asking.
+//
+// # Why the taxonomy filters cannot be COMBINED with id/ids
+//
+// Given an id filter, [productProvider.fetch] takes the batch read and applies
+// the remaining criteria IN MEMORY. That works for status, handle and
+// collection_id because each of them is a scalar column on [models.Product] —
+// the re-check reads the record it already holds. Membership is not on the
+// record: [repository.Store.ListProductsByIDs] returns the product rows, and
+// Categories/Tags are opt-in relation slices filled only by the SERVICE
+// ([Service.ListProducts] with WithRelations), which this provider does not go
+// through — it holds the repository directly. On that path the slices are
+// ALWAYS nil.
+//
+// So the combination is refused with errors.Invalid, and two other answers were
+// rejected to get there:
+//
+//   - Re-check the nil slices anyway. It compiles, it looks like the three
+//     lines above it, and it matches NOTHING: every id + category_id query comes
+//     back empty and says nothing about why. That is the silent wrong answer
+//     this repository bans, dressed as a filter.
+//   - Fetch the memberships and re-check honestly. It is affordable —
+//     [repository.Store.ListCategoriesByProductIDs] is a bulk read and the id
+//     branch pages AFTER filtering, so unlike the variant provider's channel
+//     case there is no short-page hazard. It was still rejected: it writes the
+//     membership predicate a SECOND time, in Go, beside the SQL EXISTS. A
+//     category is a TREE, and the day the SQL grows to match a category's
+//     descendants — the obvious next request for a shop menu — the Go copy goes
+//     on answering about direct membership, and the same filter gives two
+//     answers depending on which path the caller happened to take. On top of
+//     that the combination has no caller today: the panel's only id-filtered
+//     spec reads ONE product by id.
+//
+// The refusal does not look at the data: id + category_id fails the same way
+// whether or not that product is in that category. A refusal that fired only
+// when the answer would have been empty would be a filter that works sometimes,
+// and the caller could not tell which time it got.
 //
 // # The sales channel filter is NOT APPLIED here
 //
@@ -107,6 +170,18 @@ func (p *productProvider) List(ctx context.Context, opts query.ListOptions) ([]q
 				return nil, err
 			}
 			filter.CollectionID = &value
+		case filterCategoryID:
+			value, err := stringFilter(key, raw)
+			if err != nil {
+				return nil, err
+			}
+			filter.CategoryID = &value
+		case filterTagID:
+			value, err := stringFilter(key, raw)
+			if err != nil {
+				return nil, err
+			}
+			filter.TagID = &value
 		case filterID, filterIDs:
 			values, err := stringsFilter(key, raw)
 			if err != nil {
@@ -118,6 +193,20 @@ func (p *productProvider) List(ctx context.Context, opts query.ListOptions) ([]q
 		}
 	}
 
+	// The check is made after the whole map has been walked, not inside the
+	// case: which key the map hands over first is random, so a refusal raised
+	// mid-walk would name category_id on one run and tag_id on the next for the
+	// same request. The order here is fixed, and a request that carries both
+	// always reports the same one.
+	if len(ids) > 0 {
+		switch {
+		case filter.CategoryID != nil:
+			return nil, taxonomyWithIDs(filterCategoryID)
+		case filter.TagID != nil:
+			return nil, taxonomyWithIDs(filterTagID)
+		}
+	}
+
 	products, err := p.fetch(ctx, ids, filter)
 	if err != nil {
 		return nil, err
@@ -126,6 +215,13 @@ func (p *productProvider) List(ctx context.Context, opts query.ListOptions) ([]q
 }
 
 // fetch reads by id if an id filter was given, and by the criteria if not.
+//
+// CategoryID and TagID cannot reach the id branch: [productProvider.List]
+// refuses that combination before calling here, and the reason — the membership
+// is not on the record this branch holds — is written out there. If a future
+// filter is added, the question to ask of it is the same one: can the criterion
+// be answered from a [models.Product] as [repository.Store.ListProductsByIDs]
+// returns it? A criterion that cannot must be refused, not skipped.
 func (p *productProvider) fetch(ctx context.Context, ids []string, filter repository.ProductFilter) ([]models.Product, error) {
 	if len(ids) == 0 {
 		return p.repo.ListProducts(ctx, filter)
@@ -328,6 +424,21 @@ func (v *variantProvider) FetchByIDs(ctx context.Context, ids, fields []string) 
 	return records(variants, variantRecord, fields, EntityVariant)
 }
 
+// The record keys that MORE THAN ONE of this module's entities offers.
+//
+// Only these two are named, and the rest of the keys stay literals where the
+// record is built. That is deliberate: a key belongs to ONE entity's contract,
+// and a shared constant for "handle" would suggest that a product's handle and a
+// category's handle are the same promise — they can move apart, and the order
+// module writes the same rule for its own line fields. The timestamps are the
+// exception because every entity here carries them and the pair is now written
+// three times; a typo in one copy would give that one entity a differently
+// spelled key, and nothing but the consumer would ever notice.
+const (
+	fieldCreatedAt = "created_at"
+	fieldUpdatedAt = "updated_at"
+)
+
 // productRecord turns a product into a Query record.
 //
 // The keys are the same as the JSON field names: if the same data appeared under
@@ -349,8 +460,8 @@ func productRecord(p models.Product) query.Record {
 		"material":       deref(p.Material),
 		"origin_country": deref(p.OriginCountry),
 		"metadata":       p.Metadata,
-		"created_at":     p.CreatedAt,
-		"updated_at":     p.UpdatedAt,
+		fieldCreatedAt:   p.CreatedAt,
+		fieldUpdatedAt:   p.UpdatedAt,
 	}
 }
 
@@ -369,8 +480,8 @@ func variantRecord(v models.Variant) query.Record {
 		"weight":           derefInt32(v.Weight),
 		"rank":             v.Rank,
 		"metadata":         v.Metadata,
-		"created_at":       v.CreatedAt,
-		"updated_at":       v.UpdatedAt,
+		fieldCreatedAt:     v.CreatedAt,
+		fieldUpdatedAt:     v.UpdatedAt,
 	}
 }
 
@@ -440,6 +551,23 @@ func stringFilter(key string, raw any) (string, error) {
 	return value, nil
 }
 
+// boolFilter turns a filter value into a boolean.
+//
+// ONLY a real bool is accepted. The strings "true" and "false" were left out on
+// purpose: a filter that reads two spellings of the same value teaches two
+// client dialects, and the first value outside the pair ("yes", "1", "") would
+// then need a rule of its own — one that could only be guessed at. The callers
+// of this surface build their filters in Go, and a definition arriving as JSON
+// carries a JSON boolean, which unmarshals to bool anyway.
+func boolFilter(key string, raw any) (bool, error) {
+	value, ok := raw.(bool)
+	if !ok {
+		return false, errors.Invalid(codeInvalidInput,
+			"filter %q has to be a boolean, %T given", key, raw)
+	}
+	return value, nil
+}
+
 // stringsFilter turns a filter value into a string slice.
 //
 // A single string is accepted too: "id" and "ids" use the same path and the
@@ -466,6 +594,20 @@ func stringsFilter(key string, raw any) ([]string, error) {
 		return nil, errors.Invalid(codeInvalidInput,
 			"filter %q has to be a string or a string slice, %T given", key, raw)
 	}
+}
+
+// taxonomyWithIDs builds the typed error of the refused combination.
+//
+// It is a REFUSAL, not a failure: the caller asked something this path cannot
+// answer correctly, and the answer says which filter to drop. The details carry
+// the taxonomy filter rather than "id", because that is the one the caller has
+// to take out — an id filter with no taxonomy filter is a perfectly good
+// request, and the panel makes it on every product page.
+func taxonomyWithIDs(key string) error {
+	return errors.Invalid(codeInvalidInput,
+		"filter %q cannot be combined with %q or %q: on the id path the category and tag "+
+			"membership is not read, so the filter could not be applied", key, filterID, filterIDs).
+		WithDetails(filterDetails(EntityProduct, key))
 }
 
 // unsupportedFilter builds the typed error for an unrecognized filter.

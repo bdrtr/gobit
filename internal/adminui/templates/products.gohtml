@@ -1,17 +1,94 @@
 {{- /*
-products.gohtml is the catalog list.
+products.gohtml is the catalog list, optionally narrowed to one category.
 
 The rows come from the cross-module read layer, not from a module's service: the
 panel knows no module (ADR 0011). Every field is printed as an ordinary value,
-so the template engine's escaping applies to all of them — a product title is
-operator-supplied text and the panel runs inside an administrator's session.
+so the template engine's escaping applies to all of them — a product title and a
+category name are both operator-supplied text and the panel runs inside an
+administrator's session.
 
 Paging shows "next" only when the read returned one record more than the page
 holds. There is no total and no last page: a count over a growing catalog is the
 expensive half of paging and this screen does not need it.
+
+THE FILTER TRAVELS IN THE ADDRESS, and the paging links carry it. A "next page"
+that dropped the category would walk the reader out of the filtered view and
+into the whole catalog without saying so — the same failure the sales report's
+links avoid by carrying their period. It is appended CONDITIONALLY here, unlike
+there: that report always covers some window, while this list is unfiltered most
+of the time, and "&category=" hanging off every link would be noise in an
+address bar operators read. If one did leak through, the handler trims the value
+and an empty one is not a filter, so it would be harmless rather than a filter
+by an identity nothing has.
+
+THE FORM DOES NOT CARRY THE PAGE, on purpose. Choosing a category starts a new
+listing, and page 7 of the unfiltered catalog names nothing in the filtered one;
+submitting from there would land on an empty page of a category that has plenty.
+
+THE CONTROL AND THE LIST MUST NEVER DISAGREE. Three states below say so out
+loud, because in each of them the dropdown alone would be misleading: the
+vocabulary could not be read, it was read and does not contain the chosen
+identifier, or it was cut short so the identifier could not be checked. The one
+thing this screen must not do is show an empty table under a plain "Products"
+heading — an operator reads that as an empty catalog.
 */ -}}
 {{ define "body" }}
 <h1>Products</h1>
+
+{{ with .CategoryFilter }}
+{{ if .Options }}
+<form method="get" action="{{ $.Path }}">
+  <label for="category">Category</label>
+  <select id="category" name="category">
+    {{- /*
+    The empty value is the way back to the whole catalog, and it is empty rather
+    than a word like "all" because the handler treats an empty parameter as "no
+    filter" — one spelling for "unfiltered" instead of two.
+    */ -}}
+    <option value="">All categories</option>
+    {{- range .Options }}
+    <option value="{{ .ID }}"{{ if .Selected }} selected{{ end }}>{{ .Name }}</option>
+    {{- end }}
+  </select>
+  <button type="submit">Show</button>
+</form>
+{{ end }}
+
+{{ if .Unavailable }}
+{{- /*
+The dropdown is absent because the category list could not be read. The page
+still shows the products, since they were read successfully and a screen that
+died over a control it could not fill would cost the operator the catalog too.
+*/ -}}
+<p class="muted">
+  The category list could not be read, so the filter is not available.
+  {{ if .Applied }}
+  The products below are still narrowed to the category
+  <code>{{ .ID }}</code>, which cannot be named or changed here —
+  <a href="{{ $.Path }}">show all products</a>.
+  {{ end }}
+</p>
+{{ else if .Unknown }}
+<p class="muted">
+  No category is known by the identifier <code>{{ .ID }}</code>. The list below
+  is still narrowed by it, so what is under this line is what that filter
+  matched and not the catalog —
+  <a href="{{ $.Path }}">show all products</a>.
+</p>
+{{ else if .Unverified }}
+<p class="muted">
+  The category list is capped and was cut short, so <code>{{ .ID }}</code>
+  could not be checked against it — it may well exist. The list below is
+  narrowed by that identifier either way —
+  <a href="{{ $.Path }}">show all products</a>.
+</p>
+{{ else if .Applied }}
+<p class="muted">
+  Narrowed to <strong>{{ .Name }}</strong> —
+  <a href="{{ $.Path }}">show all products</a>.
+</p>
+{{ end }}
+{{ end }}
 
 {{ if .Products }}
 <table>
@@ -30,12 +107,22 @@ expensive half of paging and this screen does not need it.
   </tbody>
 </table>
 {{ else }}
+{{- /*
+The empty message names the filter when there is one. "No products on this page"
+under a category filter would be true and useless: it is the sentence an
+operator reads as "the catalog is empty", and the one thing they would not then
+check is the control that emptied it.
+*/ -}}
+{{ if .CategoryFilter.Applied }}
+<p>No products in this category on this page.</p>
+{{ else }}
 <p>No products on this page.</p>
+{{ end }}
 {{ end }}
 
 <nav>
-  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}">Previous</a>{{ end }}
+  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}{{ if .CategoryFilter.Applied }}&amp;category={{ .CategoryFilter.ID }}{{ end }}">Previous</a>{{ end }}
   <span>Page {{ .Page }}</span>
-  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}">Next</a>{{ end }}
+  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}{{ if .CategoryFilter.Applied }}&amp;category={{ .CategoryFilter.ID }}{{ end }}">Next</a>{{ end }}
 </nav>
 {{ end }}

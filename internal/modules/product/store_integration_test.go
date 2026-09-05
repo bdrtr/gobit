@@ -240,7 +240,12 @@ func TestModuleRegisterWiresContainer(t *testing.T) {
 	require.NoError(t, err, "the surface must be resolvable under the name %q", product.InteropName)
 	assert.NotNil(t, interop)
 
-	for _, entity := range []string{service.EntityProduct, service.EntityVariant} {
+	// The category provider is in this list for the same reason the other two
+	// are: it is registered under a name computed from the entity, and a name
+	// that did not match would not fail at startup — Query would simply not find
+	// it, and the panel's category dropdown would come back empty with an error
+	// nobody sees until an operator tries to filter.
+	for _, entity := range []string{service.EntityProduct, service.EntityVariant, service.EntityCategory} {
 		name := entity + query.ProviderSuffix
 		provider, err := container.Resolve[query.Provider](sys.container, name)
 		require.NoError(t, err, "the %q provider must be registered", name)

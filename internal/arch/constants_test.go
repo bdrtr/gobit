@@ -714,6 +714,33 @@ func assertDefaultProvider(t *testing.T, family, providerID, configDefault, modu
 // makes the report answer 500 instead of quietly reporting a different period.
 // The entity NAME is the one that had to be pinned here: it is the string the
 // whole request is addressed to, and the panel repeats it by hand.
+//
+// The catalog's CATEGORY filter is that same hole with NEITHER side exported.
+// The panel spells "category_id" and the product module spells "category_id",
+// and both copies are unexported constants of their own packages, so there is no
+// pair to hand to an assertion at all — the sales report at least had one
+// exported side that could not be reached. The two fields the category dropdown
+// asks for, "id" and "name", are further out still: the module writes them as
+// literal keys in its record builder, so there is nothing to export even if
+// somebody decided to. What IS pinned is the entity name, for the same reason as
+// the three above it, and it is the pin that matters most on this screen: the
+// panel addresses a whole second read to "category", and a rename there would
+// leave the catalog compiling and answering 200 with no filter control at all.
+//
+// The refusal that stands in for the missing pins is WEAKER here than on the
+// other screens, and that is worth writing down rather than assuming. A drifted
+// FILTER name is still loud: the product list passes it in the very call that
+// builds the page, the provider answers errors.Invalid, and the screen becomes a
+// 500 that names what was asked for. A drifted FIELD name is not. The category
+// vocabulary is a SECOND read whose failure deliberately degrades the dropdown
+// instead of the page (that is the panel's choice, and the right one — losing a
+// convenience should not take the catalog away), so the drift arrives as a
+// warning in the log and a notice on the screen rather than a failed request.
+// And the provider's field check is per RECORD — it projects each record and
+// rejects a key it does not carry, see internal/modules/product/service/provider.go
+// — so a shop with no categories yet has no record to project and nothing at all
+// is reported. That corner is genuinely silent, and it is silent about an empty
+// dropdown in a shop whose dropdown would have been empty anyway.
 func TestThePanelCatalogNamesAgree(t *testing.T) {
 	t.Parallel()
 
@@ -721,6 +748,8 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 		"the panel's product entity name must match the product module")
 	assert.Equal(t, productsvc.EntityVariant, adminui.EntityVariant,
 		"the panel's variant entity name must match the product module")
+	assert.Equal(t, productsvc.EntityCategory, adminui.EntityCategory,
+		"the panel's category entity name must match the product module")
 	assert.Equal(t, regionsvc.Entity, adminui.EntityRegion,
 		"the panel's region entity name must match the region module")
 	assert.Equal(t, ordersvc.LineItemEntity, adminui.EntityOrderLineItem,

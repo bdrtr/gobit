@@ -41,6 +41,21 @@ const (
 	// EntityRegion is the region provider's entity name; the catalog reads it
 	// only to learn each currency's decimal digits.
 	EntityRegion = "region"
+	// EntityCategory is the product module's category provider's entity name.
+	//
+	// The panel reads it for ONE purpose: to turn the category identifiers the
+	// product filter takes into names an operator can choose between. Without
+	// it the filter would exist and be unusable — an operator does not know
+	// "pcat_01J…" and would have to fetch it from somewhere else, which is the
+	// same as not having the filter.
+	//
+	// It is EXPORTED for the reason the three above it are: it is the string
+	// the whole request is addressed to, a rename in the module leaves this
+	// package compiling and answering 200 with an empty dropdown, and exporting
+	// it is what lets [TestThePanelCatalogNamesAgree] in internal/arch bind the
+	// two at compile time. That test is in a package this one may not edit; the
+	// line it needs is reported with the change rather than written here.
+	EntityCategory = "category"
 
 	// LinkVariantPriceSet joins a variant to its price set.
 	LinkVariantPriceSet = "product_variant_price_set"
@@ -57,11 +72,32 @@ const (
 	filterID = "id"
 	// filterProductID selects variants belonging to a product.
 	filterProductID = "product_id"
+	// filterCategoryID narrows a product listing to one category.
+	//
+	// The spelling is the STOREFRONT's, deliberately: the shop's own listing
+	// reads "category_id" from its query string, and one vocabulary across the
+	// two surfaces is what keeps an operator's URL and a shopper's URL
+	// describing the same narrowing. It is unexported like the two above it
+	// because the module does not export its counterpart, so the pair cannot be
+	// bound at compile time; the protection is the read layer's refusal of an
+	// unknown filter, which [UI.catalogFailure] turns into a loud 500.
+	filterCategoryID = "category_id"
 )
+
+// paramCategory is the query parameter carrying the chosen category.
+//
+// It is the PANEL's name and not the provider's, following [paramFrom] and
+// [paramTo] on the sales report: the address bar is read and edited by people,
+// a bookmark outlives a release, and tying the URL to the read layer's
+// vocabulary would mean a provider rename silently invalidating every saved
+// link. The two names meet in exactly one place, [UI.listProducts], where the
+// parameter becomes [filterCategoryID].
+const paramCategory = "category"
 
 // The record fields the catalog reads.
 const (
 	fieldID          = "id"
+	fieldName        = "name"
 	fieldTitle       = "title"
 	fieldHandle      = "handle"
 	fieldStatus      = "status"
@@ -95,6 +131,97 @@ const catalogLabel = "Catalog"
 // number the CALLER writes: asking for everything makes the panel's first page
 // cost grow with the catalog, and a catalog is the one table that always grows.
 const productsPerPage = 25
+
+// categoriesInFilter is how many categories the filter's dropdown offers.
+//
+// It is a CAP and not a page: the control has no "next", so whatever is not in
+// these entries cannot be picked. The number is therefore chosen against the
+// two failures a dropdown has. Asking for everything — Limit 0, which the read
+// layer reads as unlimited — would let one screen pull an unbounded table into
+// a <select> nobody can scroll; capping too low would hide categories that
+// exist. Two hundred is above any hand-maintained taxonomy this panel has seen
+// and small enough to render.
+//
+// One record MORE than this is requested, the same trick the product list uses
+// for its "next" link, and here it answers a different question: whether the
+// vocabulary in hand is the WHOLE vocabulary. That answer is what stops the
+// screen from telling an operator that a category which merely sits past the
+// cap does not exist — see [categoryFilterOf].
+const categoriesInFilter = 200
+
+// categoryFilterKey is the data key the product list's filter control is read
+// from.
+//
+// It is a constant for the reason [titleKey] is: the template looks it up BY
+// NAME, and a typo would not fail. It would render the list with no dropdown
+// and no notice, which is precisely the silent state this control is built to
+// avoid.
+const categoryFilterKey = "CategoryFilter"
+
+// categoryOption is one entry of the category dropdown.
+type categoryOption struct {
+	// ID is what travels in the address and becomes the filter's value.
+	ID string
+	// Name is what the operator reads. For an identifier the vocabulary does
+	// not contain it is the RAW ID: showing the id is ugly and true, while
+	// leaving the entry out would make the control disagree with the list under
+	// it.
+	Name string
+	// Selected marks the entry the list is currently narrowed by.
+	Selected bool
+}
+
+// categoryFilter is everything the product list's category control needs.
+//
+// It is one struct under one data key rather than five keys, because five keys
+// are five chances for the template to look one up under a name nothing checks.
+//
+// The three "something is wrong" fields are MUTUALLY EXCLUSIVE by construction
+// (see [categoryFilterOf]) and they are three rather than one because they are
+// three different facts and each deserves a different sentence: the vocabulary
+// could not be read at all, the vocabulary was read in full and does not
+// contain the chosen identifier, or the vocabulary was cut at
+// [categoriesInFilter] so the chosen identifier could not be checked against
+// it. Collapsing them into one "bad" flag would make the screen say
+// "no such category" about a category that exists.
+type categoryFilter struct {
+	// ID is the category the address asked for, empty when the list is
+	// unfiltered.
+	ID string
+	// Name is the chosen category's name, empty when it is not known.
+	Name string
+	// Options are the entries of the dropdown; nil when the vocabulary could
+	// not be read, which is what the template keys the control's absence on.
+	Options []categoryOption
+	// Unavailable reports that the vocabulary read FAILED while the product
+	// read succeeded.
+	Unavailable bool
+	// Unknown reports that the complete vocabulary does not contain [ID].
+	Unknown bool
+	// Unverified reports that [ID] is not among the entries in hand AND the
+	// vocabulary was truncated, so nothing here can say whether it exists.
+	Unverified bool
+}
+
+// Applied reports whether the list is narrowed by a category.
+//
+// The template asks this rather than testing ID for emptiness, so that the one
+// question the paging links, the notices and the empty-list message all turn on
+// is answered in ONE place.
+func (f categoryFilter) Applied() bool {
+	return f.ID != ""
+}
+
+// categoryList is the category vocabulary as it was read, with how complete it
+// is.
+type categoryList struct {
+	Options []categoryOption
+	// Truncated reports that the read layer had MORE categories than the cap.
+	Truncated bool
+	// Unavailable reports that the read failed. Options is then nil, which is
+	// NOT the same fact as a shop with no categories at all.
+	Unavailable bool
+}
 
 // Error codes the catalog can produce.
 const (
@@ -138,7 +265,7 @@ type variantRow struct {
 	Stock string
 }
 
-// listProducts renders the product list.
+// listProducts renders the product list, optionally narrowed to one category.
 //
 // It reads through the cross-module read layer and NOT through a module's
 // service (ADR 0011): the panel knows no module, so a Graph call addressed by
@@ -146,34 +273,74 @@ type variantRow struct {
 //
 // # This is NOT the call the storefront listing makes
 //
-// An earlier version of this comment claimed it was, and drew comfort from it —
-// "the same Graph call the storefront listing uses, so the screen cannot drift".
-// That was false. The storefront goes to the product module's own store listing
-// in internal/modules/product/service/store.go; this screen goes to the read
-// layer's "product" provider, and the two surfaces have never had the same
-// filter set. Measured 2026-09-05: the provider accepts status, handle,
-// collection_id and id/ids, while the storefront listing accepts collection_id,
-// category_id, tag_id and a text search.
+// An older version of this comment claimed it was, and drew comfort from it —
+// "the same Graph call the storefront listing uses, so the screen cannot
+// drift". That was false. The storefront goes to the product module's own store
+// listing in internal/modules/product/service/store.go; this screen goes to the
+// read layer's "product" provider, and the two are separate surfaces that have
+// to be taught the same filter twice. The gap that measurement found — the shop
+// could be narrowed by category and the panel could not — is what this screen
+// closes; the provider learned category_id on the read layer, and the two
+// surfaces now spell it the same way (see [filterCategoryID]).
 //
-// So the drift the sentence promised to prevent has already happened, in the
-// direction the sentence was not looking: THE OPERATOR CANNOT NARROW THE
-// CATALOG BY CATEGORY OR TAG WHILE THE SHOP'S CUSTOMERS CAN. This page is
-// unfiltered because there is nothing to pass, not because a filtered panel was
-// judged unnecessary — and a screen that walks a catalog [productsPerPage] rows
-// at a time is the screen that needs the narrowing most.
+// The remaining asymmetry is honest and named: the storefront also takes a tag
+// and a text search, and this screen offers neither. A category is a tree an
+// operator maintains and can be offered as a list of names; a tag is free text
+// with no such control, and a search box on the panel would need a filter the
+// provider does not answer yet.
 //
-// The way out is to teach the provider the two taxonomy filters, not to give
-// the panel a module import: the import would buy this one screen a filter and
-// cost ADR 0011. B2 in docs/gaps.md carries the item.
+// # Two reads, and why the second one cannot fail the page
+//
+// The products are one call and the category vocabulary is another, the same
+// two-call shape [UI.showProduct] and [UI.listSales] use. The reads are made in
+// THIS ORDER on purpose: the product list is the page, the vocabulary is only
+// the control that narrows it. A failure of the first is a page that cannot be
+// built and is reported as one. A failure of the SECOND is not: the rows are
+// already in hand and correct, and answering a request for the catalog with
+// "Catalog unavailable" because a dropdown could not be filled would take the
+// whole screen away over the loss of a convenience.
+//
+// What is NOT acceptable is dropping the control silently while a category is
+// still applied. The operator would see a short list under a heading that says
+// "Products", with nothing on the page saying it had been narrowed — the list
+// would then read as the whole catalog, which is the confident-wrong-answer
+// class this repository treats as a defect. So the failure degrades the CONTROL
+// and is stated on the page: [categoryFilterOf] carries the reason through and
+// products.gohtml prints it, together with a link that clears the filter, since
+// without the dropdown there is otherwise no way back to the full list but
+// editing the address.
+//
+// # The filter travels in the address
+//
+// It is a GET form writing [paramCategory] into the query string, following the
+// sales report: a narrowed catalog is a view an operator bookmarks and sends to
+// somebody else, and state kept in a session or a POST body cannot be sent
+// anywhere. The paging links carry it too, because a "next page" that dropped
+// the category would move the reader into the unfiltered catalog without
+// saying so.
+//
+// An EMPTY value is not a filter. The parameter is trimmed and an empty result
+// leaves Filters unset rather than passing "" through: the module measured this
+// exact class on its own list road (TestEmptyTextArgumentBuildsNoFilter in
+// internal/modules/product/graph) and the cost is silent — an empty identity
+// filters by an identity nothing has and returns an empty catalog that looks
+// like an empty shop. It is not a theoretical shape here either: the "All
+// categories" entry of the dropdown submits exactly that.
 func (u *UI) listProducts(w http.ResponseWriter, r *http.Request) {
 	page := pageNumber(r.URL.Query().Get("page"))
+	chosen := strings.TrimSpace(r.URL.Query().Get(paramCategory))
 
-	records, err := u.catalog.Graph(r.Context(), query.GraphSpec{
+	spec := query.GraphSpec{
 		Entity: EntityProduct,
 		Fields: []string{fieldID, fieldTitle, fieldHandle, fieldStatus, fieldThumbnail, fieldUpdatedAt},
 		Limit:  productsPerPage + 1,
 		Offset: (page - 1) * productsPerPage,
-	})
+	}
+	if chosen != "" {
+		spec.Filters = map[string]any{filterCategoryID: chosen}
+	}
+
+	records, err := u.catalog.Graph(r.Context(), spec)
 	if err != nil {
 		u.catalogFailure(w, r, err, "The product list could not be read.")
 		return
@@ -193,12 +360,118 @@ func (u *UI) listProducts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]any{
-		titleKey:   "Products",
-		"Products": rows,
+		titleKey:          "Products",
+		"Products":        rows,
+		categoryFilterKey: categoryFilterOf(chosen, u.categoryList(r.Context())),
 	}
 	addPaging(data, page, hasNext, ProductsPath)
 
 	u.templates.render(w, r, http.StatusOK, "products.gohtml", data)
+}
+
+// categoryList reads the category vocabulary the product filter is built from.
+//
+// A failure is REPORTED IN THE RESULT rather than returned, the way
+// [UI.currencyScales] reports a missing region module: both are reads that
+// enrich a page rather than produce it, and both have exactly one caller, which
+// would otherwise write the same "log it and carry on" branch. The real error
+// goes to the log, because the operator cannot act on it and the page has
+// somewhere better to put its words than a provider's message.
+//
+// The absent vocabulary is deliberately NOT the same value as an empty one. A
+// shop with no categories should show a dropdown holding only "All categories";
+// a shop whose category provider is not registered should show no dropdown at
+// all and say why. Returning an empty slice for both would silently turn the
+// second into the first, and the operator would conclude their taxonomy had
+// been deleted.
+func (u *UI) categoryList(ctx context.Context) categoryList {
+	records, err := u.catalog.Graph(ctx, query.GraphSpec{
+		Entity: EntityCategory,
+		Fields: []string{fieldID, fieldName},
+		// One more than the cap, so the answer to "was there more" comes out of
+		// this read instead of a counting one; see [categoriesInFilter].
+		Limit: categoriesInFilter + 1,
+	})
+	if err != nil {
+		corehttp.LoggerFromContext(ctx).WarnContext(ctx,
+			"the panel could not read the category vocabulary; the catalog filter will be absent",
+			"error", err)
+
+		return categoryList{Unavailable: true}
+	}
+
+	truncated := len(records) > categoriesInFilter
+	if truncated {
+		records = records[:categoriesInFilter]
+	}
+
+	options := make([]categoryOption, 0, len(records))
+	for _, rec := range records {
+		id := recordString(rec, fieldID)
+		if id == "" {
+			// A record with no identity cannot be chosen: submitting it would
+			// send an empty parameter, which this screen reads as "no filter",
+			// so the entry would silently clear the operator's choice.
+			continue
+		}
+		options = append(options, categoryOption{ID: id, Name: recordString(rec, fieldName)})
+	}
+
+	return categoryList{Options: options, Truncated: truncated}
+}
+
+// categoryFilterOf builds the control's view from the chosen id and what was
+// read.
+//
+// # Why an identifier nobody recognizes is still applied
+//
+// The list has ALREADY been read with the filter by the time this runs, and
+// re-reading it without would cost a second query to show a different catalog
+// than the address asked for. More importantly the vocabulary is not the
+// authority on which categories exist — it can be truncated, it can be
+// unavailable — so silently widening the view to the whole catalog would mean
+// showing every product on a screen whose address says one category. An
+// operator reading that would take the rows for members of the category.
+//
+// The applied filter therefore stands and the SCREEN explains the emptiness.
+// The three failing states are kept apart because each of them warrants a
+// different sentence, and the pure function is where they are made exclusive so
+// that no template branch can ever show two of them at once.
+func categoryFilterOf(chosen string, list categoryList) categoryFilter {
+	filter := categoryFilter{ID: chosen, Options: list.Options}
+
+	if list.Unavailable {
+		// Nothing here can be said about the identifier: with no vocabulary in
+		// hand, "unknown" would be a claim about data that was never read.
+		filter.Unavailable = true
+
+		return filter
+	}
+
+	for i := range filter.Options {
+		if filter.Options[i].ID != chosen {
+			continue
+		}
+		filter.Options[i].Selected = true
+		filter.Name = filter.Options[i].Name
+
+		return filter
+	}
+
+	if chosen == "" {
+		return filter
+	}
+
+	// The chosen identifier is not among the entries in hand, and the control
+	// must still show it as the selected one. A <select> whose value matches no
+	// option renders its FIRST option as selected, which here is "All
+	// categories" — a control claiming the list is unfiltered while it is
+	// filtered, which is worse than an ugly entry showing a raw identifier.
+	filter.Options = append(filter.Options, categoryOption{ID: chosen, Name: chosen, Selected: true})
+	filter.Unknown = !list.Truncated
+	filter.Unverified = list.Truncated
+
+	return filter
 }
 
 // showProduct renders one product together with its variants, prices and stock.
