@@ -40,6 +40,123 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltildi
 
+- **Verilmeyen bir ölçüt artık HİÇ YAN TÜMCE YAZMIYOR — ve kategori süzgecinin
+  gerçek maliyeti ilk kez ÖLÇÜLDÜ.**
+
+  Düne kadar listelemenin her isteğe bağlı ölçütü `($n IS NULL OR <yan tümce>)`
+  olarak yazılıyordu: istek ne taşırsa taşısın tek sabit metin. İyi okunuyordu ve
+  tam da önemli olan yerde yanlıştı. Bir ayrık altındaki alt sorgu yarı-birleşime
+  YÜKSELTİLEMEZ, yani `product` her planın dış ilişkisi olarak kalıyor ve
+  taksonomi haritası ancak tam bir taramaya asılı alt plan olabiliyordu.
+
+  **Dünkü ölçüm bunu söyleyemezdi, çünkü düzenekte tek bir kategori satırı bile
+  yoktu** — o yüzden dünkü rakamlar TABAN olarak yazılmıştı. Düzenek artık
+  depodan kuruluyor (D13) ve varsayılan biçimi yirmi kategori ile yirmi etiket
+  taşıyor, yani rakamlar var. Ve rakamlar dünkü iki cümleyi düşürdü: *"kategori
+  taramayı hiç daraltmaz"* YANLIŞ — 52.004 satırın 49.404'ü, kanal alt sorgusu
+  hiç koşmadan önce eleniyor — ve *"kategori indeksine erişilemez"* yalnızca
+  GENEL plan altında doğru. OR'lu gövde her çağrıda sıfırdan planlandığı için
+  planlayıcı sabiti görüyor, ayrığı katlıyor ve indekse hash'lenmiş bir alt planla
+  ERİŞİYOR (`loops=1`, 4 buffer). Yani indeks, deyim ASLA önbelleğe
+  alınamadığı için erişilebilirdi.
+
+  Ölçüm, yeniden kurulmuş düzenek (52.004 ürün, 52.000 kanal ataması), harf
+  katlamasını geçen bir küme, `plan_cache_mode` varsayılan `auto` — yani pgx'in
+  aldığı ayar — ve her satır 9-11 ısınmış koşumun medyanı:
+
+  | sorgu | OR'lu gövde | koşullu gövde | oran |
+  | --- | --- | --- | --- |
+  | ölçüt yok, sayım +kanal | 78,0 ms / 156.743 | 76,3 ms / 156.743 | 1,0 |
+  | ölçüt yok, liste +kanal | 0,10 ms / 68 | 0,08 ms / 68 | 1,0 |
+  | kategori %5, sayım | 13,2 ms / 1.117 | 8,0 ms / 1.117 | 1,6 |
+  | kategori %5, sayım +kanal | 20,2 ms / 8.918 | 10,3 ms / 18.588 | 1,9 |
+  | kategori %5, liste | 0,90 ms / 473 | 0,38 ms / 1.272 | 2,4 |
+  | kategori %5, liste +kanal | 1,29 ms / 534 | 0,93 ms / 2.458 | 1,4 |
+  | 26 ürünlük bitişik kategori, sayım +kanal | 12,5 ms / 812 | 0,16 ms / 186 | 80 |
+  | 27 ürünlük yayık kategori, sayım +kanal | 163,5 ms / 156.746 | 0,28 ms / 193 | 586 |
+  | 27 ürünlük yayık kategori, liste +kanal | 52,7 ms / 122.033 | 0,28 ms / 193 | 188 |
+
+  **İlk üç satır bu değişikliğin bir takas OLMADIĞINI söylüyor:** vitrinin en sık
+  sunduğu istek biçiminde — hiç taksonomi ölçütü yokken — iki gövde aynı planı,
+  aynı buffer sayısını ve aynı milisaniyeyi veriyor. Tablonun geri kalanını almak
+  için hiçbir şey verilmedi.
+
+  **Yedinci ile sekizinci satır ise bir sayı değil, bir YAZI TURA.** Aynı deyim, aynı veri,
+  yalnızca kategori kimliği değişik: 26 ürünü listeleme sırasında BİTİŞİK olan
+  kategori 12,5 ms, 27 ürünü YAYIK olan 163,5 ms. İki plan da yasal, ikisi de tek
+  bir deyimden çıkıyor ve hangisinin seçileceğine istatistikler karar veriyor —
+  yani OR'lu gövdenin maliyeti bütçelenebilir bir rakam değildi. Ters yöne düşen
+  planda korelasyonlu kanal alt sorgusu, 26 satır döndürmek için 52.004 kez
+  koşuyor.
+
+  **Bu değişikliğin gerçekten riske attığı tek şey ölçüldü, akıl yürütülmedi.**
+  OR'lu gövde PostgreSQL'in genel plan tuzağından KORUNMUŞTU — ve tam da yavaş
+  olmasının sebebiyle: yedi ölçütün hepsi canlı olabildiği için genel planı
+  695.113'e mal oluyor, özel planları 232.000 civarı, `auto` da genel planı asla
+  benimsemiyordu (`pg_prepared_statements`: 60 koşumda 0 genel / 60 özel). Ucuzlayan
+  bir deyimin genel planı benimsenebilir ve genel plan hangi kategorinin
+  sorulduğunu göremez. Sayım gerçekten geçiyor (25 genel / 5 özel) ve hiçbir şey
+  kaybetmiyor: %5 kategoride 9,8 ms genel, 10,3 ms özel. Liste denenen dört
+  biçimin hiçbirinde geçmiyor — ama bu bir garanti değil bir maliyet
+  karşılaştırması, o yüzden godoc bunu saptayan tek sorguyu adıyla yazıyor.
+
+  Ödenen üç bedel de yazıldı, hiçbiri sıfır değil: parametre numaraları artık
+  sabit değil (gövde ile argümanları TEK ÇİFT olarak dönüyor, ki listeleme ile
+  sayım numaralandırmada ayrışamasın), hazırlanmış deyim yeniden kullanımı ölçüt
+  BİLEŞİMİ başına bir metin üretiyor (tavan 128, pgx'in önbelleği 512) ve
+  `grep` artık deyimin tamamını hiçbir zaman basmayacak. Tam kayıt:
+  `internal/modules/product/repository/saleschannel.go` ve
+  `docs/catalog-search-cost.md`.
+
+  **Bunu ödeyen şey ÇARPIKLIK, ve düzenekte çarpıklık yok.** Düzeneğin yirmi
+  kategorisinin her biri tam olarak 2.600 ürün tutuyor (kataloğun %5,0'i,
+  üreticinin kuralı gereği) ve o biçimde bu arızanın tamamı görünmez. Aynı
+  cümlenin öteki yüzü şu: bu kusur, deponun ölçebildiği TEK katalogda
+  görünmüyordu. Seçici kategoriler elle, geçici bir veritabanında kuruldu ve
+  onunla birlikte gitti — `rig.Spec`'te çarpıklık seçeneği yok (G).
+
+- **Ürün modülünün sekiz kayıtlı performans rakamı yeniden ölçüldü; BEŞİ yanlış
+  çıktı** (D15).
+
+  D13'ün ilk faturası bu. Bir rakamı yeniden kurulabilir bir düzeneğe bağlamak
+  onu yanlışlanabilir yapar — ve kümenin ilk yeniden koşumu, çoğunluğunun
+  kaydığını buldu. Yeniden üretilen üçünün üçü de YAPISAL (plan düğümü, koşum
+  sayısı, elenen satır); düşen beşinin beşi de milisaniye.
+
+  **Birebir yeniden üretilenler:** sayımın kayıtlı planı (52.004 satır, 52.004
+  alt plan koşumu, Heap Fetches 0, 156.743 buffer'ın 156.013'ü alt sorgunun) ve
+  reddedilen `OR IS NULL` imleç sınırının `Rows Removed by Filter: 50001`
+  değeri. İkisinde de yalnızca milisaniye makineye bağlı, iddiaya değil.
+
+  **Yönü doğru, iki büyüklüğü de yanlış:** görünürlük kuralının biçimini savunan
+  "iki EXISTS 26,8 ms, tek `bool_or` 0,8 ms" çifti. MEKANİZMA birebir yeniden
+  üretiliyor — eski biçimin iki alt bağlantısı da ilk satır dönmeden önce
+  bağlantı tablosunu baştan sona tarıyor — ama ölçülen 21,4 ms'ye karşı 0,12 ms.
+  En olası okuma, iki yarının aynı saatten okunmamış olması: 0,8 ms bir istemci
+  gidiş-dönüşünün, 26,8 ms bir `EXPLAIN`'in biçimini taşıyor. **Bir
+  karşılaştırmanın iki yarısı da aynı saatten gelmek zorundadır** — 0,8 ms'nin
+  aylarca 0,12 ms'lik bir sorgunun yanında durabilmesinin sebebi bu.
+
+  **Düpedüz yanlış çıkan dördü ve yanlarında yeniden üretilen biri**, sayımın
+  neden hash birleşimi olarak yeniden yazılmadığını savunan blokta. Tutan: iki
+  EXISTS'in 43-54 ms bandı, tavanında ölçüldü. Tutmayanlar: hash biçiminin bandı
+  33-45 ms yazıyordu, 42-48 ölçüldü; "süzgeçsizken iki kat hızlı" 1,35 ile 1,6
+  kat arası; "sabit ~30 ms taban" ~39 ms; ve seçici süzgeçteki "13,8 ms'ye karşı
+  30,0 ms" çifti 20,3'e karşı 39,0. **SAV dördünü de atlatıyor** ve düzeltme
+  olmalarının sebebi bu: iddia mutlak rakamlar değil, takasın YÖN DEĞİŞTİRMESİYDİ
+  — hash biçimi hiçbir şey süzülmezken hızlı, bir ölçüt seçici olur olmaz yavaş
+  — ve hâlâ öyle.
+
+  **Neden denetlenemez olduklarını da yazmak, sınıfın geri gelmemesi için:**
+  sekizinin hiçbiri tarih, küme ya da `plan_cache_mode` ayarı taşımıyordu ve
+  alındıkları veritabanı yeniden kurulamıyordu (D13). İkisi ayrıca C yerel ayarlı,
+  yani `core/db/casefold.go` probunu GEÇEMEYEN bir kümede alınmıştı — orada büyük
+  bir Türkçe harf kendi küçüğüyle `ILIKE` eşleşmiyor, yani o rakamlar öyle bir
+  harf taşıyan hiçbir kelimeyi bulamayan bir aramayı tarif ediyor. Aynı çıplak
+  `ILIKE` sayımı orada 8,7 ms, katlamanın çalıştığı kümede 14,5 ms — 1,66 kat.
+  Düzeltmeler kaynağında, eski rakam SİLİNMEDEN üstü çizilerek yapıldı; her
+  yenisinin yanında tezgâh ve plan önbelleği ayarı yazıyor.
+
 - **`make load-test` BOŞ bir katalog ölçüyordu** (D14) — ve bu, D11'in bir kat
   altı.
 

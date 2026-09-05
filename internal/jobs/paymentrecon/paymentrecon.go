@@ -77,9 +77,58 @@ const Every = time.Hour
 // MaxRun bounds one pass.
 //
 // The database side is not the cost: the listing is a partial-index scan
-// measured at 0.56 ms over a 200,000-session fixture (52 buffers, against
-// 12.0 ms and 3,618 buffers for the same query with the index dropped). The
-// cost is [limit] sequential provider round trips.
+// measured on 2026-09-06 at 0.04 ms and 52 buffers over a 200,000-session
+// fixture, against 12.7 ms and 3,703 buffers for the same query with the index
+// dropped. The cost is [limit] sequential provider round trips.
+//
+// # The fixture, and what it replaces
+//
+// Those figures are a RE-MEASUREMENT. The sentence above used to read "0.56 ms
+// over a 200,000-session fixture (52 buffers, against 12.0 ms and 3,618
+// buffers)" and the fixture it named was gone: no seed program built it, no
+// test built it, and the database the figure was taken on did not even carry
+// payment_sessions_reconcile_idx any more. A number whose rig cannot be reached
+// is not a measurement, it is a memory of one.
+//
+// It was rebuilt rather than struck, because the shape is cheap to state:
+// payment_sessions has exactly one foreign key, to payment_collections, and
+// both are plain generate_series inserts into a freshly migrated database.
+// 200,000 collections and 200,000 sessions took 1.9 s + 4.2 s plus a 0.3 s
+// VACUUM (ANALYZE); the status mix was chosen to match the premise the index's
+// own migration is argued from — that the live-authorized set is a small
+// fraction — at 178,000 captured, 18,000 failed, 2,000 pending and 2,000
+// authorized (1%), with updated_at spread one row per second into the past.
+// That gives a 3,627-page table and a 12-page partial index. Warmed prepared
+// statement, EXPLAIN (ANALYZE, BUFFERS), median of 9:
+//
+//	with payment_sessions_reconcile_idx   0.04 ms     52 buffers
+//	index dropped                        12.74 ms   3,703 buffers
+//
+// The plans say why. With the index it is one Index Scan whose Index Cond is
+// the whole predicate and whose LIMIT stops it after 50 rows; without it, a
+// Gather Merge over a top-N heapsort over a Parallel Seq Scan that removes
+// about 66,000 rows in each of its three scan loops.
+//
+// # Why the old 0.56 ms is called out instead of quietly replaced
+//
+// Two of the three old figures came back almost exactly — 52 buffers to the
+// digit, 3,618 against a measured 3,703 (2.3%) — so the old fixture really was
+// about this size and this shape, and the sentence was not invented. Only
+// 0.56 ms is not the query's cost: it is 15x the measured execution time and it
+// sits squarely in the band of the CLIENT-SIDE round trip, which on the rebuilt
+// fixture is 0.14 ms warm, 0.41 ms on the second call and 1.77 ms on the first.
+// Mixing an EXPLAIN figure and a round-trip figure inside one parenthesis is
+// how that happened, and it is worth a reader's suspicion whenever a table here
+// puts three numbers side by side.
+//
+// # The fixture is NOT in the seeder
+//
+// internal/rig rebuilds the CATALOG and nothing else; its own godoc lists this
+// 200,000-session fixture among the three rigs it deliberately does not build.
+// So the recipe above is the whole of it, and anyone re-checking these numbers
+// has to run it by hand against a migrated database. Until that changes, treat
+// the two milliseconds as dated: they are what this machine measured on
+// 2026-09-06, not a property of the query.
 //
 // When the deadline lands mid-pass the pass does NOT lose what it found. The
 // context error surfaces from the provider call, which is counted as

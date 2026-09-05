@@ -1173,7 +1173,9 @@ func providerIDs(t *testing.T, records []query.Record) []string {
 // It is generic because the comparison is made for two different models
 // (product and category) and a per-type copy would be the same three lines
 // twice.
-func modelIDs[T interface{ models.Product | models.Category }](items []T) []string {
+func modelIDs[T interface {
+	models.Product | models.Category
+}](items []T) []string {
 	out := make([]string, 0, len(items))
 	for i := range items {
 		switch item := any(items[i]).(type) {

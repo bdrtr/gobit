@@ -306,20 +306,78 @@ type ListProductsOptions struct {
 	// # MAKING THE COUNT CHEAPER was tried first
 	//
 	// Three separate SQL forms counting the same set were measured with the same
-	// data (psql, prepared statement, warmed up):
+	// data (psql, prepared statement, warmed up). The table below was
+	// RE-MEASURED on 2026-09-06 and every figure in it moved; what it replaces,
+	// and why the old figures were low, is under the next two headings.
+	//
+	// Conditions, because a millisecond without them is what made the
+	// re-measurement necessary: the rig rebuilt from this repository with
+	// "gobit seed" (52,004 products, 52,000 channel assignments, VACUUM
+	// ANALYZEd by the seeder), PostgreSQL 16.14, a cluster that PASSES the
+	// case-folding probe in core/db/casefold.go, plan_cache_mode at its default,
+	// EXPLAIN (ANALYZE, BUFFERS) on a warmed prepared statement, median of 14
+	// runs taken in two separate batches:
 	//
 	//	                           no filter   with q (single match)
-	//	correlated (today's)        62-71 ms                 13.8 ms
-	//	two EXISTS (hash)           43-54 ms                       —
-	//	GROUP BY + hash join        33-45 ms                 30.0 ms
+	//	correlated (today's)           69 ms                 18.1 ms
+	//	two EXISTS (hash)              45 ms                 19.0 ms
+	//	GROUP BY + hash join           39 ms                 35.0 ms
 	//
-	// The hash form is twice as fast without a filter but twice as slow with a
-	// SELECTIVE filter: hashing the whole link table lays down a constant 30 ms
-	// floor, while the correlated form probes only for the rows that survive.
+	// The hash form is 1.78x faster without a filter and 1.93x slower with a
+	// SELECTIVE filter: hashing the whole link table lays down a floor of about
+	// 35 ms — of which the HashAggregate over the 52,000 link rows is 19 ms and
+	// the hash build 27 ms, all of it spent before a single product row has been
+	// joined — while the correlated form probes only for the rows that survive.
+	// THE DIRECTION CHANGE is what decided the shape and it is the part that
+	// reproduces. The milliseconds reproduce less well and must not be quoted to
+	// three digits: the observed spread over those 14 runs was 67-75, 42-55 and
+	// 36-46 ms in the unfiltered column, and the two batch medians of one and
+	// the same form differed by up to 4 ms.
+	//
 	// What is more, the list query MUST be correlated (its ability to stop at
-	// the LIMIT comes from that; measured: 26.8 ms -> 0.8 ms) and the rule lives
-	// in a SINGLE template (see repository/saleschannel.go). Splitting the form
-	// would be a second definition of the visibility rule.
+	// the LIMIT comes from that) and the rule lives in a SINGLE template (see
+	// repository/saleschannel.go). Splitting the form would be a second
+	// definition of the visibility rule. Measured the same way at LIMIT 20 with
+	// the channel filter on: today's single bool_or is 0.06 ms and 68 buffers,
+	// its subquery running 20 loops — one per row RETURNED — while the two
+	// EXISTS form is 19.4 ms and 1,120 buffers, because both of its sublinks are
+	// hashed over all 52,000 link rows before the first row can leave. The pair
+	// this godoc used to carry for that comparison, "26.8 ms -> 0.8 ms", is
+	// replaced in both halves: neither number reproduces, and 0.8 ms standing
+	// next to a query that costs 0.06 ms is wrong by more than the whole
+	// measurement.
+	//
+	// # What those numbers replace
+	//
+	// Until 2026-09-06 the table read "62-71 ms / 13.8 ms", "43-54 ms" and
+	// "33-45 ms / 30.0 ms", and the prose called the hash form twice as fast
+	// unfiltered with a constant 30 ms floor. Two of those claims survive the
+	// re-measurement — the correlated form's 69 ms and the two EXISTS form's
+	// 45 ms both land inside their old bands — and four do not: the floor is 35
+	// and not 30 ms, "twice as fast" is 1.78x, and BOTH numbers in the q column
+	// were low. The old figures carried no date, no cluster and no plan-cache
+	// setting, which is exactly why it took a rebuild of the rig to find out
+	// which of them were still true.
+	//
+	// # The conditions the "with q" column was measured under
+	//
+	// That column is an ILIKE, and ILIKE is the one operator here whose cost
+	// depends on the CLUSTER's locale rather than on anything this repository
+	// controls. The old 13.8 ms and 30.0 ms were taken on gobit_load, a cluster
+	// initdb'd with --locale=C, on which the probe in core/db/casefold.go FAILS:
+	// an uppercase Turkish letter does not ILIKE-match its own lowercase form
+	// there, so a storefront search for any word carrying one returns nothing at
+	// all. Measured on 2026-09-06 against both clusters, same machine, same
+	// hour, same 52,004 rows, the bare
+	// "count(*) ... WHERE title ILIKE '%'||$1||'%'" costs 8.7 ms where the
+	// folding is broken and 14.5 ms where it works (median of 7 each) — 1.66x.
+	// The rig carries three products whose titles are Turkish for exactly this
+	// purpose; a lowercase ILIKE for their words finds all three on the folding
+	// cluster and NONE on gobit_load, while a case-exact LIKE finds them on both
+	// — so the zero is the folding and not a missing row. The table above is the
+	// folding cluster's, because that is the cluster a Turkish shopper is served
+	// from; the same figure taken on the other one describes a search that does
+	// not work.
 	//
 	// What remains true is this: counting is O(catalog). No form makes it
 	// sublinear, because the answer to the question "how many" cannot be known

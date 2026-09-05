@@ -268,6 +268,27 @@ func (p *productProvider) Entity() string { return EntityProduct }
 // several: this repository has already carried a godoc claiming an index was
 // used, and measurement proved it wrong.
 //
+// # The condition every figure above was taken under, added 2026-09-06
+//
+// They were all measured on the surviving rig, and that cluster was created
+// with a collation under which the database's own case folding does not work —
+// it fails the probe this repository runs at startup, so an upper-case letter
+// carrying a diacritic does not match its lower-case form there at all. Every
+// ILIKE figure above is therefore OPTIMISTIC, and by a measured amount rather
+// than a guessed one: the same bare comparison costs about 8.7 ms on that
+// cluster against about 14.5 ms on one that folds correctly, a factor of 1.66.
+// The SHAPE of the finding survives — a rare term is still the expensive one,
+// and the slope is still linear — but the absolute milliseconds belong to a
+// cluster no deployment should have.
+//
+// The reason this was not simply re-measured and overwritten is worth stating,
+// because it is the whole argument for the rig being rebuildable: fixing that
+// cluster's collation needs a new data directory, which would have deleted the
+// only copy of the catalog these numbers were taken on. The rig can now be
+// rebuilt from this repository, so the next person to touch this block can
+// stand it up on a correctly folding cluster and replace the figures rather
+// than inheriting them.
+//
 // # The sales channel filter is NOT APPLIED here
 //
 // This surface is a CROSS-MODULE read and there is no customer request behind

@@ -87,11 +87,16 @@ import (
 //   - The module's migrations. Almost all of it is DDL, but a data backfill
 //     ("INSERT INTO mine SELECT ... FROM yours") is a cross-module read that
 //     would otherwise have a whole directory to hide in.
-//   - Hand-written SQL in Go string constants. This is not a corner: all 469
-//     lines of internal/modules/product/repository/saleschannel.go are
-//     hand-written SQL and the argument for it, written by hand precisely
-//     BECAUSE sqlc cannot see the link table's schema, and the order module
-//     has more.
+//   - Hand-written SQL in Go string literals. This is not a corner:
+//     internal/modules/product/repository/saleschannel.go is the storefront's
+//     whole listing and count, written by hand precisely BECAUSE sqlc cannot
+//     see the link table's schema, and the order module has more. That file
+//     carried a line count here until 2026-09-06, when the filter body became
+//     a builder and the number went stale in the same commit that made the
+//     scanner cover it — which is why the sentence now describes what the file
+//     IS. The scanner walks every string literal in the file rather than only
+//     its constant declarations, so SQL living inside a function body is
+//     covered exactly as a package-level constant is.
 //
 // # Tests are NOT scanned, and that is a decision rather than an oversight
 //

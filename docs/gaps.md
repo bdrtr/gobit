@@ -243,6 +243,34 @@ Four sequencing facts govern the whole list:
   SQL gate reads it — both walk `internal/modules` only (see D10). What catches
   a column a migration renamed is the load fixture below, which runs the same
   generator on every integration run.
+
+  **Used in anger the next day, and it did the two things it was built for.**
+  The rebuild seeded in 13.35 s (17.3 s of wall clock including migrations and
+  module bootstrap; 11.91 s on the other container), reproduced the recorded
+  plan to the digit — 52,004 rows, 52,004 subplan loops, Heap Fetches 0, 156,743
+  shared hits of which 156,013 the subquery's — and, because it seeds twenty
+  categories and twenty tags, **made the taxonomy filters MEASURABLE for the
+  first time.** They had never been measured: the surviving rig has zero rows in
+  both map tables, so every category figure this file carried was a floor. The
+  numbers replaced that floor, the floor turned out to be wrong in both
+  directions, and the filter body changed as a result (see B2 above and
+  `docs/catalog-search-cost.md`). No reset was needed for any of it — a fresh
+  scratch database beats `rig.Reset` by two orders of magnitude, which is the
+  practical form of the 4 m 31 s recorded above.
+
+  **And the rebuild made a class of claim falsifiable that had not been.** Six
+  performance sentences written against the unreconstructable volume were re-run
+  against a rig anybody can rebuild; two reproduced, one reproduced structurally,
+  and three did not (D15). That is the gap D13 was really about, arriving as a
+  number: it was not that the rig might be lost, it was that nothing could be
+  checked while it was the only copy.
+
+  **The one limit found by using it.** The default shape is PERFECTLY UNIFORM —
+  every category holds exactly 2,600 products and so does every tag, by
+  construction — so the case that decided the B2 change, a category holding a
+  handful of products, cannot be asked for. `rig.Spec` takes a category COUNT
+  and has no skew option. The selective categories were hand-built on a scratch
+  database and are gone with it.
 - **D14** ~~`make load-test` measured a catalog of ZERO products.~~ **Fixed
   2026-09-05, and it is D11 one layer down.** D11 made the target run its test
   again; this is what the test then did. The harness creates regions, tax
@@ -256,6 +284,57 @@ Four sequencing facts govern the whole list:
   rig, mints its own sales channel so the fixture cannot leak into the other
   storefront scenarios, and counts a 200 whose body carries no product as a
   failure.
+- **D15** ~~The product module's performance figures were true when they were
+  written and nobody could check whether they still were.~~ **Re-measured and
+  corrected 2026-09-06: of eight recorded figures, three reproduce and FIVE DO
+  NOT.** This is the first correction D13 paid for — a rig anybody can rebuild
+  turns a recorded figure into a falsifiable one, and the very first re-run of
+  the set found the majority of it had drifted. The three that survive are all
+  STRUCTURAL (plan node, loop count, rows removed); every one of the five that
+  failed is a millisecond. Checked on the rebuilt rig and on a cluster that
+  passes the case-folding probe:
+
+  **Reproduced exactly.** The count's recorded plan — 52,004 rows, 52,004
+  subplan loops, Heap Fetches 0, 156,743 shared hits of which 156,013 the
+  subquery's — in every run, on both the old and the new statement shape. Its
+  millisecond is a machine figure rather than a wrong one and was not struck.
+  And the rejected `OR IS NULL` cursor bound's `Rows Removed by Filter: 50001`,
+  exact, with only the accompanying millisecond nudged.
+
+  **Direction right, both magnitudes wrong.** "Two EXISTS 26.8 ms against a
+  single `bool_or` 0.8 ms" was the argument for the visibility rule's shape. The
+  MECHANISM reproduces verbatim — both sublinks become a full sequential scan of
+  the link table before the first row leaves the plan — and neither number does:
+  measured 21.4 ms against 0.12 ms. The likeliest reading is that the pair was
+  never read off one clock, 0.8 ms having the shape of a client round trip and
+  26.8 ms the shape of an `EXPLAIN`. That is the defect worth naming, because it
+  is the one that let a 0.8 ms stand for months beside a query costing 0.12 ms:
+  **both halves of a comparison have to come from the same clock.**
+
+  **Four claims false outright and one reproducing beside them**, all in the
+  rejected-alternatives block that argues why the count is not rewritten as a
+  hash join. Reproduces: the two-EXISTS band, 43-54 ms, measured at its ceiling.
+  Does not: the hash form's band was 33-45 ms and measures 42-48; "twice as fast
+  unfiltered" is between 1.35x and 1.6x depending on the batch; its "fixed
+  ~30 ms floor" is about 39 ms; and the selective-filter pair "13.8 ms against
+  30.0 ms" measures 20.3 against 39.0. The ARGUMENT survives all four, and that
+  is why they are corrections rather than a reversal: the claim was that the
+  trade CHANGES DIRECTION — the hash shape is faster with nothing filtered and
+  slower the moment a criterion is selective — and it still does.
+
+  **Why they were uncheckable, stated so the class does not come back.** Not one
+  of the eight carried a date, a cluster, or a `plan_cache_mode` setting, and the
+  database they were taken on could not be rebuilt (D13). Two of them were also
+  taken on a cluster whose data directory was `initdb`'d with a C locale and
+  which therefore FAILS `core/db/casefold.go` — where an uppercase Turkish
+  letter does not `ILIKE`-match its own lowercase form, so those figures
+  describe a search that returns nothing at all for a word carrying one. The
+  same bare `ILIKE` count costs 8.7 ms there and 14.5 ms where the folding
+  works, 1.66x. The corrections landed at their source, struck in place rather
+  than deleted, with the bench and the plan-cache setting named
+  (`internal/modules/product/repository/saleschannel.go`,
+  `internal/modules/product/service/service.go`); the full record is
+  `docs/catalog-search-cost.md`.
 
 ### E. Out of framework scope — written, not forgotten
 
@@ -268,6 +347,19 @@ Four sequencing facts govern the whole list:
 
 ### G. Found while building, not yet decided
 
+- **The rig cannot reproduce the case that motivated the change it paid for.**
+  Its taxonomy is uniform by construction — twenty categories of exactly 2,600
+  products each, from `internal/rig/catalog.go` mapping product n to category
+  `(n - 1) % C + 1` — and the OR/EXISTS collapse measured on 2026-09-06 is
+  invisible at that shape: 16.5 ms at 5%, 147 ms at 0.05%, same statement, same
+  catalog, one different category id. The selective categories were hand-built
+  on a scratch database and are gone with it, so the 34x-to-586x row of the
+  module's own table cannot be re-derived by running a command. `rig.Spec`
+  takes a category COUNT and has no skew option. The DECISION is what shape a
+  skewed rig should have — one small category, a power-law spread, or a
+  parameter — and whether the plan-shape acceptance test should pin the skewed
+  case too, which would make it the first acceptance test that asserts a
+  DIFFERENCE between two plans rather than one plan.
 - **Two clocks on one axis.** `payments.captured_at`, `fulfillments.shipped_at/
   delivered_at/canceled_at` and `invoices.issued_at` are stamped by the process
   that wrote them; every other moment comes from the database's `now()`. On one
@@ -1635,7 +1727,7 @@ but a pair of conditions: **the search stops being fast enough when the catalog
 no longer fits in memory, or when concurrent searches exceed a few hundred per
 second — whichever comes first.** On this hardware the second arrives first.
 
-**A lead for the rest of B2, measured read-only.** The filter body spells every
+~~**A lead for the rest of B2, measured read-only.** The filter body spells every
 optional predicate as `($n IS NULL OR …)`, and for the taxonomy filters the
 second half of that `OR` is an `EXISTS`. PostgreSQL pulls an `EXISTS` in a
 `WHERE` clause up into a semi-join BEFORE it folds constants, so an `EXISTS`
@@ -1643,19 +1735,53 @@ wrapped in an `OR` is never a candidate: the plan runs the subquery once per
 catalog row (`loops=52,004`) and the index on `product_category_map` is
 unreachable from the query as written. Adding a category to a search that cost
 0.03 ms makes it cost at least 29 ms — with an EMPTY map table on the inner
-side. That is a property of the plan rather than of the data, but it is a lead
-and not a recommendation: the `OR` idiom is what lets ONE statement serve every
-combination of filters, and trading it away for the category alone would be a
-decision about all seven predicates.
+side.~~ **The lead was taken on 2026-09-06 and the filter body changed; half of
+the paragraph above was wrong, and the half that was wrong is why the change was
+worth making.** Correct: the sublink is never pulled up, in either plan mode.
+Wrong: "the index is unreachable". Under the default `plan_cache_mode` the
+statement is re-planned on every call, the planner sees the literal id, folds
+the disjunction away and reaches `product_category_map_category_idx` through a
+hashed subplan at `loops=1` — 11.5 ms and 1,117 buffers at the rig's 5%
+categories, where the paragraph predicted at least 29 ms and 52,004 loops. The
+per-row shape does happen, but only when the planner orders the CHANNEL subquery
+ahead of the taxonomy one, and then it is 147 ms rather than 29.
 
-**What could not be measured, and what changed about that.** The rig used for
+**A criterion the request did not carry now writes NO CLAUSE and consumes NO
+PARAMETER** (`productFilterSQL` in
+`internal/modules/product/repository/saleschannel.go`, which returns the body
+and its arguments as one pair so the listing and the count cannot disagree about
+the numbering). What that bought, measured on the rebuilt rig: nothing at all at
+the shape the storefront serves most often — no taxonomy criterion, same plan,
+same buffers, same milliseconds — between 1.4x and 2.4x at the rig's uniform 5%
+categories, and between 34x and 586x at a category holding a handful of
+products. **It is the SKEW that pays for it, and the rig has none**, which is
+the same sentence as "this was invisible on the only catalog the repository
+could measure". The risk the change carried was that a cheaper statement becomes
+eligible for a CACHED generic plan that cannot see which category was asked for;
+it was measured rather than reasoned about, and `pg_prepared_statements` reports
+the list statements at 0 generic / 30 custom on every shape tried while the
+count statements flip and lose nothing by it. That is a cost comparison and not
+a guarantee, so the godoc names the one query that detects it changing.
+
+**What could not be measured, and what changed about that.** ~~The rig used for
 these numbers has ZERO rows in `product_category`, `product_category_map` and
 `product_tag_map`, so every figure in the category paragraph above is a FLOOR —
 which is also the reason the panel's own headline request, "search inside a
-category", has no honest number yet. The rebuilt rig (D13) seeds twenty
-categories and twenty tags by default precisely so the next measurement is not
-stuck the same way. Also unmeasured: cold caches (every figure is warm and the
-plans say so), a multi-channel shop, and the Go side of the request, which is
+category", has no honest number yet.~~ **Measured 2026-09-06 on the rebuilt rig
+(D13): the taxonomy filters have numbers now and the floor is gone.** At the
+rig's 5% categories the filter costs 0.7 ms for a page of the listing and
+11.5 ms for the count, 16.5 ms with the sales channel filter added; the panel
+runs the listing only, so its category dropdown costs it the first of those
+figures and nothing else. What the rig still cannot supply is the case that
+mattered: its
+twenty categories hold exactly 2,600 products EACH — 5.0%, by construction,
+since `internal/rig/catalog.go` maps product n to category `(n - 1) % C + 1` —
+so a selective category does not exist in it and had to be hand-built on a
+scratch database. `rig.Spec` has no skew option; adding one is the difference
+between a defect anybody can reproduce and one that needs a note. Also
+unmeasured: collections (no product in the rig carries a `collection_id`), a
+product in SEVERAL categories, cold caches (every figure is warm and the plans
+say so), a multi-channel shop, and the Go side of the request, which is
 benchmarked separately above.
 
 **Options, none taken.** A trigram GIN index is the one index type that could
