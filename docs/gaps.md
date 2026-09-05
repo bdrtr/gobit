@@ -56,13 +56,15 @@ Four sequencing facts govern the whole list:
 | A13 | **Metrics posture** — OTLP-only, or expose a scrape endpoint | the "measurable speed" claim | Observability and security |
 | A14 | **Price history: promote the accidental retention or drop it** | forecasting | AI-powered features |
 | A15 | **May the storefront take an address it cannot verify, in order to mail it later?** — measured 2026-09-05, and it is the waitlist's real blocker rather than the missing table. The storefront has no customer identity at all, the repository has no verification, no double opt-in, no unsubscribe and no per-address throttle, and the notification module deliberately stores no recipient address | the back-in-stock waitlist (C1) and every future "tell me when" feature; A2 sits upstream of it | Commerce models |
+| A16 | **What amount would a price filter compare against?** — measured 2026-09-05, and it came out of B2 as a DECISION rather than the build it was filed as. A product has no price. A price belongs to a `price_set`, the set reaches a VARIANT through a link, and one set holds many rows — currency × quantity tier × price list. "The price" is a selection FUNCTION of (currency, quantity, rule attributes, instant) resolved by five ordered tie-breakers (list tier, rule count, tier width, amount, id), not a column. The storefront is worse off than merely undefined: prices are fetched in a SECOND round trip made AFTER the page was cut by LIMIT/OFFSET, and what comes back is only the UNCONDITIONAL subset in every currency, with no currency, region or customer-group input — so there is not even a well-defined "the amount" on the page to filter on. Denormalising one into the catalog has NO invalidation signal: the pricing module publishes no events at all | the price filter AND the price sort in B2; "under 500 TL" in C10; a price column in any search index | AI-powered features |
+| A17 | **What does "in stock" mean for a PRODUCT?** — measured 2026-09-05, out of the same B2 row and the same kind of answer: nowhere in this repository is it defined. Availability is defined at two granularities and BOTH sit below the product. The product module may legally read a link table (there is an argued precedent), so its SQL can answer "has an inventory item" but NOT "has stock" — the quantity is `inventory_levels.stocked_quantity`, the inventory module's own column, and ADR 0001 stops there. A REGION-correct answer is a THREE-module question: `stock_locations` carries no region column at all, and the region-to-location map is `shipping_location_regions` — in FULFILLMENT, keyed (location_id, region_id), with the region→warehouse direction deliberately unindexed because nothing reads it. There is no denormalised stock column and the event-driven route to one is blocked by B7 | the in-stock filter in B2; real-time stock (C16) reads the same absence; the waitlist (C1) needs the same definition to know when to fire | AI-powered features |
 
 ### B. Foundations — each unblocks several features
 
 | # | foundation | unblocks | section |
 | --- | --- | --- | --- |
 | B1 | ~~**A guarded inbound-callback class**~~ **Built 2026-09-05: ADR 0028.** `core/http.CallbackRegistry` — per-route quota, body limit, timeout, enforced signature check and a derived replay window; PayTR converted onto it at the same URL. Audit deliberately left out (see D1) | four carriers, e-invoice, every payment provider — the plumbing is there; a carrier still waits on B10 | Turkey-specific |
-| B2 | **Storefront filter surface** — ~~category, tag~~ **built 2026-09-05** (`category_id`, `tag_id`, in REST and GraphQL, EXISTS not joins so a product in several categories is returned once). Still missing: price, in-stock, option value, sort — see below | NL search, the panel, every "find me" feature | AI-powered features |
+| B2 | **Storefront filter surface** — ~~category, tag~~ **built 2026-09-05** (`category_id`, `tag_id`, in REST and GraphQL, EXISTS not joins so a product in several categories is returned once). ~~Still missing: price, in-stock, option value, sort~~ — **one bag holding four different kinds of work; measured and split 2026-09-05.** SORT is a straightforward build with one trap (the cursor). OPTION VALUE is a build behind one decision, entirely inside the product module. PRICE and IN-STOCK are NOT builds — they are decisions, and they are now **A16** and **A17**. Also measured: the built half never reached the read layer, so the panel cannot filter by category while the storefront can | ~~NL search~~ **C10 does not exist in code**, so the built filters have NO named consumer today; the panel is a real one and is BEHIND them (see A16, A17 and the section below) | AI-powered features |
 | B3 | ~~**Storefront vocabulary endpoints**~~ **Built 2026-09-05.** `GET /store/v1/{collections,categories,tags}`. The category listing applies `is_active`/`is_internal` — two columns that existed since the first migration and that nothing read | NL search — the word→id half is done; the FILTER half is B2 | AI-powered features |
 | B4 | **Review module** | moderation (the AI brief's first use case), summaries, Q&A | AI subsystem |
 | B5 | ~~**Order ↔ fulfillment link, and something that creates a fulfillment**~~ **Built 2026-09-05.** The fulfillment module declares `order_fulfillment` (one to many); `internal/workflows/fulfilling` opens a shipment for an order and binds the two; the order gets `POST`/`GET /admin/v1/orders/{id}/fulfillments`. NOT built: a shipment created at checkout — shipping stays a decision | the order timeline, carrier tracking, "where is the parcel" — answerable now. the link is expandable by the read layer too (D8) | Platform features |
@@ -138,6 +140,51 @@ Four sequencing facts govern the whole list:
   service transaction.
 - **D7** ~~The OpenAPI text claimed `q` searches title and handle; it searches
   title only.~~ Fixed 2026-09-05.
+- **D10** ~~Nothing stopped a module's SQL from naming another module's
+  table.~~ **Closed 2026-09-05.** `TestModuleSQLNamesOnlyItsOwnTables` derives
+  the ownership map from the migrations — 71 tables over 16 modules, and
+  `sales_channel` turns out to be owned by AUTH, not by product — then reads USE
+  from THREE surfaces: the query files, the module's OWN migrations (a data
+  backfill would otherwise have a whole directory to hide in) and Go string
+  constants, folded through literal + same-package-constant concatenation so
+  that the hand-written channel-scoped query is actually seen. The tree passes
+  today with an EMPTY exemption ledger: there is no cross-module SQL read in
+  this repository, and the rule was not weakened to be able to say so. The
+  violation was invisible by construction because it WORKS — every module is
+  handed the same pool — and would only surface the day a module moved to its
+  own database. Two holes were found while proving the gate, before it ever ran
+  in anger: the table extractor treated `INSERT INTO price (…)` as a function
+  call and swallowed the target, so it would have been blind to cross-module
+  WRITES, the loudest half; and its constant-fold depth limit was guessed at 12
+  while the deepest real chain is 23, so it had been truncating expressions and
+  reading queries with the end cut off. Reading a link table stays legal by
+  construction rather than by exemption — `core/link` creates those at runtime,
+  so no migration owns them, and a control test asserts the link table is NOT
+  reported. Remaining hole, named and not closed: plugin-owned tables are owned
+  by nobody, so a module reading one would pass.
+- **D11** ~~`make load-test` brought up the containers, printed a green line and
+  measured NOTHING.~~ **Fixed 2026-09-05.** The recipe's `-run` selector named
+  `TestTemelYukAltindaDogruKalir`, a name that exists nowhere in the repository:
+  the test was translated, the Makefile was not. `go test` answers a selector
+  that matches nothing with "no tests to run" and **exit code 0**, so the target
+  was green, slow and empty — reproduced verbatim before the fix. The selector
+  now names `TestStaysCorrectUnderBaselineLoad`, and the class is closed by
+  `TestEveryRunPatternInABuildFileNamesARealTest`: every `-run` pattern in the
+  Makefile and in the CI workflows has to name a real test, benchmark, fuzz
+  target or example. The one accepted exception is the empty selector paired
+  with `-bench`, which is how the benchmark targets say "no tests, only
+  benchmarks"; `-benchmem` alone does not buy it.
+- **D12** ~~The panel's product list makes "the same Graph call the storefront
+  listing uses, so the screen cannot drift".~~ **Corrected 2026-09-05, and the
+  false sentence was hiding a live gap.** The two were never the same call: the
+  storefront goes to the product module's store listing, the panel goes to the
+  read layer's `product` provider, and the provider takes `status`, `handle`,
+  `collection_id` and `id`/`ids` while the storefront listing takes
+  `collection_id`, `category_id`, `tag_id` and a text search. So the operator
+  cannot narrow the catalog by category while the shop's customers can. The
+  godoc in `internal/adminui/catalog.go` now says what is true; the gap itself
+  is B2's, and the fix is to teach the provider the two taxonomy filters rather
+  than to give the panel a module import.
 
 ### E. Out of framework scope — written, not forgotten
 
@@ -1259,21 +1306,111 @@ would not decide for the shop.
 
 ---
 
-> **B2, what is left and why — measured 2026-09-05.** Category and tag are
-> built. The other four are not one job:
->
-> - **option value is not expressible by id.** `product_option` carries a
->   `product_id`: options are PER PRODUCT, so "Color: Red" has a different id in
->   every product and there is no shared vocabulary to filter on. A catalog
->   filter has to match the option TITLE and the value TEXT, which needs a
->   normalisation decision (case, whitespace) and an index that does not exist.
-> - **price and in-stock cross a module boundary.** They live in pricing and
->   inventory; the product module may not import either (ADR 0001), and
->   filtering after the Query layer has fetched the roots breaks paging — the
->   page would be filtered AFTER it was cut.
-> - **sort collides with the keyset cursor.** The cursor is `(created_at, id)`;
->   any other order needs the cursor to carry the sort, or the sort has to be
->   offset-only. That is a decision, not an omission.
+## B2's remainder is four different kinds of work — measured 2026-09-05
+
+~~"Still missing: price, in-stock, option value, sort"~~ — that line listed four
+names as though they were one gap of one kind, and they are not. Two of them are
+builds, two of them are not builds at all. The bag is the finding: while the
+four sat on one row, the cheapest of them (sort) looked as expensive as the one
+that cannot be started without a written decision (price), so nothing moved.
+
+The order below is by kind, not by value.
+
+### Sort — a real build, and the only straightforward one
+
+The listing's `ORDER BY` is a COMPILE-TIME CONSTANT — `created_at DESC, id DESC`
+in `internal/modules/product/queries/product.sql` and, again, in the
+hand-written channel-scoped query in
+`internal/modules/product/repository/saleschannel.go`. There is no sort argument
+on either surface, REST or GraphQL, so there is nothing to widen: the parameter
+has to be introduced before it can be honoured.
+
+What the product module can sort by from its OWN tables, measured against the
+indexes in `internal/modules/product/migrations`:
+
+| sort | answerable | index |
+| --- | --- | --- |
+| `created_at` | yes, and it is the one in use | `product_created_at_idx` |
+| `handle` | yes | `product_handle_uniq` |
+| `title` | yes | NONE — a sort on it is a sort of the whole catalog |
+| price | no | there is no price to sort by; see A16 |
+| stock | no | there is no stock column; see A17 |
+| popularity | no | there is no TABLE, not merely no index |
+
+**The trap is the cursor, and it is silent.** The keyset cursor carries three
+things — the listing's name, a time and an id (the type lives in
+`internal/core/page`) — and NOTHING about the order the page was cut in. A
+cursor minted under `created_at DESC` decodes cleanly under a `title` sort: the
+listing name still matches, the time and id are still well-formed, and the query
+pages happily through the WRONG ORDER. It does not fail; it returns plausible
+rows. So the sort parameter and the cursor's payload are one change and have to
+be decided together — either the cursor carries the sort key and rejects a
+mismatch, or the sorted listings are offset-only and say so.
+
+### Option value — a build, behind one decision
+
+All five tables are inside the product module (`product_option`,
+`product_option_value`, `product_variant_option_value`, plus the variant and the
+product), so ADR 0001 does not block this one at all. Three things do:
+
+- **The filter cannot be on a value ID.** `product_option.product_id` and
+  `product_option_value.option_id` are both NOT NULL, so an option-value id
+  resolves to exactly ONE product by construction — filtering the catalog by one
+  would return at most one product. The filter has to be on the (option title,
+  value) TEXT pair, which needs a normalisation decision: case, whitespace, and
+  whether "Renk" and "Color" are the same axis.
+- **No index leads with either column.** The two unique indexes that exist are
+  `product_option (product_id, title)` and
+  `product_option_value (option_id, value)`; both lead with the PARENT id, which
+  is exactly the column a catalog filter does not have.
+- **There is no vocabulary endpoint, and a vocabulary of ids would be useless.**
+  B3 built the collection, category and tag listings; option values got none,
+  and could not have used the same shape — what a client needs here is DISTINCT
+  (option title, value) TEXT pairs, and no query, no repository method and no
+  service method returns that today.
+
+And one question category and tag never had to answer, because each shipped as a
+single scalar per axis: **multi-value.** "Red or blue, in size M" is OR within
+one option and AND across two, and neither the parameter shape nor the SQL for
+it exists.
+
+### Price — a decision, not a build. Now A16
+
+Filed as a filter, measured as a definition problem: there is no amount on the
+page to compare against. The full reasoning is in A16; the short form is that a
+product has no price, "the price" is a selection function with five ordered
+tie-breakers, and the storefront's prices arrive in a second round trip made
+AFTER `LIMIT`/`OFFSET` has already cut the page — filtering there would filter a
+page that was chosen before the filter ran.
+
+### In-stock — also a decision. Now A17
+
+Same shape, different module. "In stock" for a PRODUCT is defined nowhere here;
+availability is defined below the product, twice. The product module can reach a
+link table legally and so can answer "has an inventory item", which is not the
+question anybody asks. The full reasoning is in A17.
+
+### The half that IS built has not reached the read layer
+
+The panel does not read the storefront listing. It reads the cross-module read
+layer's `product` provider, and that provider accepts `status`, `handle`,
+`collection_id` and `id`/`ids` — **not `category_id` and not `tag_id`.** So the
+read layer's product surface is now BEHIND the REST and GraphQL surfaces that B2
+extended, and the visible consequence is that the shop's customers can narrow
+the catalog by category while the shop's operator cannot.
+
+This was believed to be impossible, and the belief was written down: the godoc
+on the panel's product list claimed it made "the same Graph call the storefront
+listing uses, so the screen cannot drift". The two were never the same call.
+The comment has been corrected (see D12).
+
+### And there is no consumer
+
+This file names C10 (natural-language search) as B2's consumer. **C10 does not
+exist in code.** So the filters built on 2026-09-05 have no real named consumer
+yet, and this repository's own rule applies to them: a capability without a
+consumer is work believed done and not done. The panel is the nearest candidate
+for a real one, and the paragraph above is why it cannot be that yet.
 
 ## AI-powered commerce features — measured against the brief, 2026-09-05
 
@@ -1285,23 +1422,35 @@ price/stock forecast SUGGESTIONS an operator applies rather than the system.
 Five areas measured in parallel against the tree. One is genuinely close; the
 rest are blocked by something more basic than the AI.
 
-### Natural-language search: the filters it would translate INTO do not exist
+### Natural-language search: the filters it would translate INTO are half built
 
-The layer the brief describes turns a sentence into filters. **The entire
-structured filter surface of the storefront is one collection id plus free
-text** — `collection_id`, `q`, `limit`, `offset`, `after`, `with_count`, on REST
-and GraphQL alike, with a test pinning the two to each other.
+The layer the brief describes turns a sentence into filters. Two claims made
+here on 2026-09-04 were overtaken by B2 and B3 the next day and are struck
+rather than deleted, because the shape of the miss is worth keeping:
 
-So there is no price filter, no category filter, no tag filter, no option-value
-filter, no in-stock filter and no sort. "Under 500 TL" and "dark colour" have
-nowhere to land, and "winter" has no first-class home either: season is not a
-column, and of its natural carriers — collection, category, tag — only
-collection is filterable.
+~~**The entire structured filter surface of the storefront is one collection id
+plus free text** — `collection_id`, `q`, `limit`, `offset`, `after`,
+`with_count`, on REST and GraphQL alike.~~ **Measured again 2026-09-05:**
+`category_id` and `tag_id` are on both surfaces, and the test that pins REST and
+GraphQL to each other holds them together.
+
+~~There is also **no storefront endpoint that enumerates collections, categories
+or tags**, so an NL layer has no public vocabulary to resolve a word to an
+id.~~ **B3 built all three listings**, so the word→id half now has a public
+vocabulary.
+
+What is still missing is narrower and no longer one thing — the split above is
+the measurement. "Under 500 TL" has nowhere to land and will not until **A16**
+is answered; "in stock" until **A17** is; "dark colour" needs both the
+option-value filter and a vocabulary endpoint for option values, neither of
+which exists; "cheapest first" needs a sort parameter no surface accepts, and a
+cursor that would silently page through the wrong order if one were added
+carelessly. "Winter" still has no first-class home — season is not a column —
+but of its natural carriers, collection, category and tag, ALL THREE are
+filterable now rather than one.
 
 Colour and size ARE modelled (`product_option`, `product_option_value`, and the
-variant join) and neither the listing nor the search index reads them. There is
-also **no storefront endpoint that enumerates collections, categories or tags**,
-so an NL layer has no public vocabulary to resolve a word to an id.
+variant join) and neither the listing nor the search index reads them.
 
 Two findings worth carrying:
 
@@ -1315,9 +1464,13 @@ Two findings worth carrying:
   have registries; search does not. Swapping the engine means replacing a
   package rather than registering an implementation.
 
-The honest order: the filters first, then a vocabulary endpoint, then the layer
-that maps a sentence onto them. An NL layer built before the filters would be a
-translator with no target language.
+The honest order was: the filters first, then a vocabulary endpoint, then the
+layer that maps a sentence onto them. Two of those three steps are part-done,
+and the ordering claim survives its own progress — an NL layer built before the
+filters would be a translator with no target language, and the target language
+is currently four words short: price, in-stock, option value, sort. Two of the
+four are sentences somebody has to write (A16, A17), not code somebody has to
+type, and that is the only reason the order still holds.
 
 ### Review summaries and Q&A: still blocked on the review module
 

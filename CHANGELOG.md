@@ -40,6 +40,89 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltildi
 
+- **`make load-test` hiçbir şey ölçmüyordu — ve yeşil görünüyordu.**
+
+  Reçetedeki seçici `-run TestTemelYukAltindaDogruKalir` idi ve o ad depoda
+  HİÇBİR YERDE yok: test `TestStaysCorrectUnderBaselineLoad` olarak çevrilmişti,
+  Makefile o değişikliğe dahil edilmemişti. Arıza bir yazım hatası değil,
+  `go test`'in sözleşmesi: hiçbir şeyle eşleşmeyen bir seçiciye verdiği cevap
+  `ok ... [no tests to run]` ve **çıkış kodu 0**. Yani hedef ryuk ve postgres
+  konteynerlerini ayağa kaldırıyor, saniyeler harcıyor, "ok" basıyor ve
+  ÖLÇMÜYOR. Düzeltmeden önce birebir yeniden üretildi.
+
+  Bu sınıfın kötülüğü sessizliği değil, YANLIŞ GÜVEN vermesi: yük testi
+  koşulmadığı için değil, koştuğu SANILDIĞI için işe yaramıyordu. Kapısı da
+  aynı turda geldi (bkz. Eklendi).
+
+  Ortam anahtarları ayrıca kontrol edildi ve onlar sağlamdı:
+  `GOBIT_LOAD_REQUESTS` ve `GOBIT_LOAD_CONCURRENCY`, `internal/e2e/load_test.go`
+  içinde Makefile'ın ihraç ettiği adların aynısı. Çeviri turunda düşen tek şey
+  test ADIYDI.
+
+- **`docs/gaps.md`: B2'nin kalan dört filtresi tek bir iş DEĞİLMİŞ — ölçüldü ve
+  bölündü.**
+
+  Satır "hâlâ eksik: fiyat, stokta, seçenek değeri, sıralama" diyordu ve dördünü
+  aynı cinsten tek bir boşluk gibi listeliyordu. Ölçüm dördü ikiye ayırdı:
+  **ikisi inşaat, ikisi karar.**
+
+  - **SIRALAMA** gerçek bir inşaat ve tek düz olanı. Listelemenin `ORDER BY`'ı
+    derleme zamanı sabiti (`created_at DESC, id DESC`) ve iki yüzeyin de
+    sıralama argümanı yok. Ürün modülünün kendi tablolarından cevaplanabilenler:
+    `created_at` (indeksli, zaten kullanımda), `handle` (indeksli), `title`
+    (İNDEKSSİZ). Fiyat, stok ve popülerlik sıralamasının yolu YOK — popülerliğin
+    indeksi değil TABLOSU yok. **Tuzak imleçte:** keyset imleci yalnızca
+    (listeleme adı, zaman, kimlik) taşıyor ve başka bir sıralama altında TEMİZ
+    ÇÖZÜLÜR — listeleme adı tutar, zaman ve kimlik geçerlidir, sorgu yanlış
+    sıradan sayfalamaya devam eder. Düşmez, makul satırlar döndürür. Sıralama
+    ile imleç tek karardır.
+  - **SEÇENEK DEĞERİ** bir kararın arkasındaki inşaat. Beş tablonun hepsi ürün
+    modülünün içinde, yani ADR 0001 engellemiyor. Ama bir seçenek DEĞERİ
+    kimliği, NOT NULL yabancı anahtarlar yüzünden tam olarak bir ürüne çözülüyor
+    — kimliğe göre süzmek tanım gereği en fazla bir ürün döndürürdü. Süzgeç
+    (seçenek başlığı, değer) METİN çiftinde olmak zorunda ve hiçbir indeks bu
+    iki sütunun biriyle başlamıyor. Sözlük ucu da yok: istemcinin ihtiyacı
+    DISTINCT metin çiftleri ve bunu bugün hiçbir sorgu, repository metodu ya da
+    servis metodu döndürmüyor. Üstelik kategori ve etiketin hiç karşılaşmadığı
+    bir soru var — ÇOK DEĞERLİ süzme (bir seçenek içinde VEYA, seçenekler arası
+    VE); ikisi de eksen başına tek skalerle geldiği için o soru hiç sorulmadı.
+  - **FİYAT bir KARAR, inşaat değil** (artık A16). Bir ürünün fiyatı yoktur:
+    fiyat bir `price_set`'e, set bir link üzerinden VARYANTA aittir ve tek set
+    birçok satır tutar (para birimi × adet kademesi × fiyat listesi). "Fiyat",
+    (para birimi, adet, kural nitelikleri, an) girdisinden beş sıralı eşitlik
+    bozucuyla seçilen bir FONKSİYON, bir sütun değil. Vitrin bunu daha da
+    belirsiz yapıyor: fiyatlar sayfa `LIMIT`/`OFFSET` ile KESİLDİKTEN SONRA
+    ikinci bir gidiş dönüşle çekiliyor ve dönen şey her para biriminde yalnızca
+    KOŞULSUZ alt küme — para birimi, bölge, müşteri grubu girdisi yok. Yani
+    süzülecek "o tutar" sayfada bile yok. Kataloğa denormalize etmenin
+    geçersizleştirme sinyali YOK: pricing modülü hiç olay yayımlamıyor.
+  - **STOKTA da bir KARAR** (artık A17). Bir ÜRÜN için "stokta" bu depoda
+    hiçbir yerde tanımlı değil; uygunluk iki granülerlikte tanımlı ve ikisi de
+    ürünün ALTINDA. Ürün modülü link tablosunu okuyabildiği için SQL'i "envanter
+    kalemi var mı"yı cevaplayabilir, "stok var mı"yı cevaplayamaz — adet
+    `inventory_levels` içinde, envanter modülünün kendi tablosunda. Bölgeye
+    doğru bir cevap ÜÇ MODÜLLÜK soru: `stock_locations` bölge sütunu hiç
+    taşımıyor ve bölge→lokasyon haritası `shipping_location_regions`, yani
+    FULFILLMENT'ta. Denormalize stok sütunu yok, olaya dayalı yol ise B7 ile
+    kapalı.
+
+  **İnşa edilmiş yarı panele ULAŞMAMIŞ, ve bunu yazılı bir yanlış saklıyordu.**
+  Panel vitrin listelemesini hiç okumuyor; okuma katmanının `product`
+  sağlayıcısını okuyor ve o sağlayıcı `status`, `handle`, `collection_id` ve
+  `id`/`ids` kabul ediyor — `category_id` ve `tag_id` DEĞİL. Yani okuma
+  katmanının ürün yüzeyi, B2'nin genişlettiği REST ve GraphQL yüzeylerinin
+  ARKASINDA kaldı ve görünür sonucu şu: **dükkânın müşterisi kataloğu kategoriye
+  göre daraltabiliyor, dükkânın operatörü daraltamıyor.** Bunun imkânsız olduğu
+  `internal/adminui/catalog.go` içinde godoc olarak yazılıydı — "vitrin
+  listelemesinin kullandığı AYNI Graph çağrısı, o yüzden ekran ayrışamaz". İkisi
+  hiçbir zaman aynı çağrı olmadı. Yorum düzeltildi; kod değişmedi.
+
+  Son olarak, açıkça yazıldı: `docs/gaps.md` B2'nin tüketicisi olarak C10'u
+  (doğal dil arama) gösteriyor ve **C10 kodda yok**. Yani 2026-09-05'te inşa
+  edilen süzgeçlerin gerçek bir adlandırılmış tüketicisi henüz yok — bu deponun
+  kuralı da tam olarak bu: tüketicisi olmayan bir yetenek, yapıldığı SANILAN
+  iştir.
+
 - **`docs/gaps.md`: okuma önbelleği maddesinin dayanağı ÖLÇÜMLE çürüdü.**
 
   pgbench ile yük fikstürüne karşı (52.004 ürün, 16 istemci, bu makinede):
@@ -100,6 +183,71 @@ Sabitlenme `1.0.0` ile olur.
   tahmin edilmeden bırakıldı.
 
 ### Eklendi
+
+- **Bir modülün SQL'i yalnızca KENDİ tablolarını adlandırabiliyor**
+  (`internal/arch/module_sql_test.go`).
+
+  ADR 0001 modüller arası doğrudan okumayı yasaklıyordu ama SQL tarafında bunu
+  hiçbir şey denetlemiyordu — ve bu, kapatılması en zor kusur sınıfının
+  şeklidir: **ihlal ÇALIŞIR.** Her modül aynı bağlantı havuzunu alıyor, yani
+  product'ın sorgusuna `JOIN inventory_levels` yazmak bugün doğru sonuç verir,
+  hiçbir test kırılmaz, ve bağ ancak envanter kendi veritabanına ya da kendi
+  servisine taşındığı gün "relation does not exist" olarak ortaya çıkar.
+
+  Sahiplik haritası TAHMİN edilmiyor, migration'lardan türetiliyor: **71 tablo,
+  16 modül.** Ölçümün kendisi bir şeyi düzeltti — `sales_channel` product'ın
+  değil AUTH'un tablosu.
+
+  KULLANIM iki değil ÜÇ yüzeyden okunuyor: sorgu dosyaları, modülün KENDİ
+  migration'ları ve Go dizgi sabitleri. Migration'ların dahil edilmesi sonradan
+  eklenen bir titizlik değil, kapının varlık sebebi: modülün SQL'inin üçte
+  birini okumayan bir kural, tam da kapatmaya çalıştığı boşluğun aynısını
+  bırakır ve "modüller arası okumanı bir backfill olarak yaz" açık bir kapı
+  olurdu. Go tarafında sabitler katlanıyor (dizgi + aynı paketteki sabit), yani
+  elle yazılmış kanal kapsamlı sorgu da GÖRÜLÜYOR.
+
+  **Kapı bugünkü ağaçta GEÇİYOR ve muafiyet defteri BOŞ.** Bu depoda modüller
+  arası SQL okuması yok; kural bunu söyleyebilmek için gevşetilmedi ve tek bir
+  testdata satırı eklenmedi.
+
+  Yazılmadan önce iki körlük bulundu, ikisi de kapı hiç iş görmeden:
+
+  - Çıkarıcı "adı takip eden `(` bir fonksiyon çağrısıdır" kuralını her cümleye
+    uyguluyordu, yani `INSERT INTO price (id, amount)` hedefini yutuyordu. Bu
+    depodaki her insert o biçimde yazılı — kapı, ihlalin EN GÜRÜLTÜLÜ yarısına,
+    modüller arası YAZMAYA kör olacaktı ve çalışıyor gibi görünecekti.
+  - Sabit katlama derinliği 12 diye tahmin edilmişti; gerçek en derin zincir 23.
+    Yani gerçek ifadeler kırpılıyor ve kuyruk yerine bir yer tutucu okunuyordu —
+    sessizce. Sınır 64 oldu ve çarpılırsa kapı AÇIKLAMAYLA DÜŞÜYOR; sonu
+    kesilmiş bir sorguyu okumaktansa durmak doğrusu.
+
+  Link tablosunu okumak muafiyetle değil YAPI GEREĞİ serbest kalıyor: `core/link`
+  o tabloları çalışma zamanında yaratıyor (ADR 0005), yani hiçbir migration
+  sahiplenmiyor ve "kimsenin sahibi olmadığı" tablo serbest. Bir kontrol testi
+  link tablosunun raporlanMADIĞINI iddia ediyor — gelecekteki bir okuyucu kapıyı
+  "düzeltmek" için onu yasaklarsa, test ona vitrinin satış kanalı süzgecini
+  sildiğini söyleyecek.
+
+  Kapsam dışı bırakılan iki şey de ölçülerek bırakıldı: test dosyaları taranmıyor
+  (modül ağaçlarındaki 183 SQL biçimli test sabitinin hiçbiri başka modülün
+  tablosunu adlandırmıyor, ve birkaç modüle yayılan bir entegrasyon testinin
+  hepsinde durum hazırlaması meşru), eklenti tablolarının sahibi de yok — sonuncu
+  gerçek bir delik ve kapatılmadı, adıyla yazıldı.
+
+- **Bir yapı dosyasındaki her `-run` deseni gerçek bir test adlandırmak zorunda**
+  (`internal/arch/build_files_test.go`).
+
+  Yukarıdaki `make load-test` arızasının sınıf kapısı. `go test` eşleşmeyen bir
+  seçiciye sıfır çıkış koduyla "no tests to run" der, yani bir yapı dosyasındaki
+  ölü seçici HİÇBİR YERDE hata olarak görünmez — CI'da ise bedeli en yüksek
+  yerdedir: yeşil bir adım, koşmayan bir test.
+
+  Kapı hem Makefile'ı hem `.github/workflows` altındaki iş akışlarını okuyor ve
+  her `-run` desenini deponun gerçek test, benchmark, fuzz hedefi ve örnek
+  adlarına karşı çözüyor. Tek kabul edilen istisna, boş seçicinin `-bench` ile
+  eşlendiği hâl — benchmark hedeflerinin "test yok, yalnızca benchmark" deme
+  biçimi bu; `-benchmem` tek başına bunu satın almıyor ve o ayrım mutasyonla
+  kanıtlandı.
 
 - **Satılan SATIR artık okunabiliyor: `order_line_item` varlığı ve panelde
   Satışlar bölümü** (B14).

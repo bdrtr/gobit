@@ -89,7 +89,7 @@ bench: ## Go tarafı benchmark'ları çalıştır (tahsisat sayısıyla birlikte
 load-test: ## Temel yük testini çalıştır (REQUESTS/CONCURRENCY ile ayarlanır)
 	GOBIT_LOAD_REQUESTS=$(or $(REQUESTS),5000) \
 	GOBIT_LOAD_CONCURRENCY=$(or $(CONCURRENCY),32) \
-	go test -tags=integration -count=1 -v -run TestTemelYukAltindaDogruKalir ./internal/e2e/
+	go test -tags=integration -count=1 -v -run TestStaysCorrectUnderBaselineLoad ./internal/e2e/
 
 lint: $(GOLANGCI) ## golangci-lint çalıştır
 	$(GOLANGCI) run ./...

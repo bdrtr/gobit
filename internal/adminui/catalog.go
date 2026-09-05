@@ -141,9 +141,30 @@ type variantRow struct {
 // listProducts renders the product list.
 //
 // It reads through the cross-module read layer and NOT through a module's
-// service (ADR 0011): the panel knows no module, and the same Graph call is the
-// one the storefront listing uses, so the screen cannot drift from what the
-// framework actually serves.
+// service (ADR 0011): the panel knows no module, so a Graph call addressed by
+// entity name is the only surface it is allowed to use.
+//
+// # This is NOT the call the storefront listing makes
+//
+// An earlier version of this comment claimed it was, and drew comfort from it —
+// "the same Graph call the storefront listing uses, so the screen cannot drift".
+// That was false. The storefront goes to the product module's own store listing
+// in internal/modules/product/service/store.go; this screen goes to the read
+// layer's "product" provider, and the two surfaces have never had the same
+// filter set. Measured 2026-09-05: the provider accepts status, handle,
+// collection_id and id/ids, while the storefront listing accepts collection_id,
+// category_id, tag_id and a text search.
+//
+// So the drift the sentence promised to prevent has already happened, in the
+// direction the sentence was not looking: THE OPERATOR CANNOT NARROW THE
+// CATALOG BY CATEGORY OR TAG WHILE THE SHOP'S CUSTOMERS CAN. This page is
+// unfiltered because there is nothing to pass, not because a filtered panel was
+// judged unnecessary — and a screen that walks a catalog [productsPerPage] rows
+// at a time is the screen that needs the narrowing most.
+//
+// The way out is to teach the provider the two taxonomy filters, not to give
+// the panel a module import: the import would buy this one screen a filter and
+// cost ADR 0011. B2 in docs/gaps.md carries the item.
 func (u *UI) listProducts(w http.ResponseWriter, r *http.Request) {
 	page := pageNumber(r.URL.Query().Get("page"))
 
