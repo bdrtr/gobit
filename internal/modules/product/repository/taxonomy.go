@@ -92,13 +92,32 @@ func (r *Repo) GetCategory(ctx context.Context, id string) (models.Category, err
 	return toCategory(row), nil
 }
 
-// ListCategories returns the categories paginated; if parentID is given only
+// CategoryFilter is the criteria of a category listing.
+//
+// It is a struct rather than three parameters for the reason ProductFilter is:
+// the listing and the COUNT have to apply the same predicate, and two argument
+// lists that must stay in step are two places to forget one.
+type CategoryFilter struct {
+	// ParentID lists only the children of that node.
+	ParentID *string
+	// PublicOnly hides the categories the merchant has switched off (is_active)
+	// or marked as operator-only (is_internal).
+	//
+	// It is false for the admin surface ON PURPOSE: a merchant who cannot see a
+	// switched-off category has no way to switch it back on.
+	PublicOnly bool
+	Limit      int
+	Offset     int
+}
+
+// ListCategories returns the categories paginated; if ParentID is given only
 // the children of that node are listed.
-func (r *Repo) ListCategories(ctx context.Context, parentID *string, limit, offset int) ([]models.Category, error) {
+func (r *Repo) ListCategories(ctx context.Context, f CategoryFilter) ([]models.Category, error) {
 	rows, err := r.q.ListCategories(ctx, productdb.ListCategoriesParams{
-		ParentID: parentID,
-		Lim:      toInt32(limit),
-		Off:      toInt32(offset),
+		ParentID:   f.ParentID,
+		PublicOnly: f.PublicOnly,
+		Lim:        toInt32(f.Limit),
+		Off:        toInt32(f.Offset),
 	})
 	if err != nil {
 		return nil, wrapDB(err, "could not list categories")
@@ -111,9 +130,12 @@ func (r *Repo) ListCategories(ctx context.Context, parentID *string, limit, offs
 	return out, nil
 }
 
-// CountCategories returns the total number of categories.
-func (r *Repo) CountCategories(ctx context.Context, parentID *string) (int, error) {
-	n, err := r.q.CountCategories(ctx, parentID)
+// CountCategories returns the total number of categories matching the filter.
+func (r *Repo) CountCategories(ctx context.Context, f CategoryFilter) (int, error) {
+	n, err := r.q.CountCategories(ctx, productdb.CountCategoriesParams{
+		ParentID:   f.ParentID,
+		PublicOnly: f.PublicOnly,
+	})
 	if err != nil {
 		return 0, wrapDB(err, "could not read category count")
 	}

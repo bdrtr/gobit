@@ -40,16 +40,26 @@ SELECT * FROM product_category
 WHERE handle = $1 AND deleted_at IS NULL;
 
 -- name: ListCategories :many
+-- public_only applies the two flags the category table has carried since the
+-- first migration and that nothing has read until now: is_active is the
+-- merchant's switch for a category that is not ready, and is_internal is for one
+-- that exists for operators and was never meant to be browsable. The storefront
+-- passes true; the admin surface passes false and sees everything, which is the
+-- only way the merchant can turn a category back on.
 SELECT * FROM product_category
 WHERE deleted_at IS NULL
   AND (sqlc.narg('parent_id')::text IS NULL OR parent_id = sqlc.narg('parent_id')::text)
+  AND (NOT sqlc.arg('public_only')::boolean OR (is_active AND NOT is_internal))
 ORDER BY rank, created_at DESC, id DESC
 LIMIT sqlc.arg('lim')::int OFFSET sqlc.arg('off')::int;
 
 -- name: CountCategories :one
+-- The count applies the SAME predicate as the listing. A count taken over a
+-- wider set than the page is a storefront asking for pages that never fill.
 SELECT count(*) FROM product_category
 WHERE deleted_at IS NULL
-  AND (sqlc.narg('parent_id')::text IS NULL OR parent_id = sqlc.narg('parent_id')::text);
+  AND (sqlc.narg('parent_id')::text IS NULL OR parent_id = sqlc.narg('parent_id')::text)
+  AND (NOT sqlc.arg('public_only')::boolean OR (is_active AND NOT is_internal));
 
 -- name: ListCategoriesByIDs :many
 SELECT * FROM product_category

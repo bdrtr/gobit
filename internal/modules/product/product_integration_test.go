@@ -683,3 +683,52 @@ func derefInt32(p *int32) int32 {
 
 	return *p
 }
+
+// TestTheCategoryVisibilityFilterIsAppliedBySQL is the half a fake cannot prove.
+//
+// The service tests use an in-memory store, and an in-memory store agreeing
+// with itself says nothing about the predicate the database applies — the two
+// are separate implementations of one rule, and this repository has already
+// been bitten by a fake that disagreed with its query. What is checked here is
+// the SQL: that a switched-off and an operator-only category are absent from
+// BOTH the page and the count, and that the admin view still has them.
+func TestTheCategoryVisibilityFilterIsAppliedBySQL(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+
+	parent, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name:   "Visibility " + uniqueHandle("root"),
+		Handle: uniqueHandle("visibility-root"),
+	})
+	require.NoError(t, err)
+
+	shown, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Shown", Handle: uniqueHandle("shown"), ParentID: &parent.ID,
+	})
+	require.NoError(t, err)
+	_, err = svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Switched off", Handle: uniqueHandle("switched-off"),
+		ParentID: &parent.ID, IsActive: ptrBool(false),
+	})
+	require.NoError(t, err)
+	_, err = svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Operators only", Handle: uniqueHandle("operators-only"),
+		ParentID: &parent.ID, IsInternal: true,
+	})
+	require.NoError(t, err)
+
+	shop, err := svc.ListCategories(ctx, service.ListCategoriesOptions{
+		ParentID: &parent.ID, PublicOnly: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, shop.Items, 1, "the database returned a category the storefront must not see")
+	assert.Equal(t, shown.ID, shop.Items[0].ID)
+	require.NotNil(t, shop.Count)
+	assert.Equal(t, 1, *shop.Count,
+		"the COUNT query does not apply the same predicate as the listing; a storefront "+
+			"would ask for pages that never fill")
+
+	admin, err := svc.ListCategories(ctx, service.ListCategoriesOptions{ParentID: &parent.ID})
+	require.NoError(t, err)
+	assert.Len(t, admin.Items, 3, "the admin view lost the categories the merchant has to manage")
+}

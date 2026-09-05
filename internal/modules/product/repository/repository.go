@@ -146,8 +146,8 @@ type Store interface {
 
 	CreateCategory(ctx context.Context, c models.Category) (models.Category, error)
 	GetCategory(ctx context.Context, id string) (models.Category, error)
-	ListCategories(ctx context.Context, parentID *string, limit, offset int) ([]models.Category, error)
-	CountCategories(ctx context.Context, parentID *string) (int, error)
+	ListCategories(ctx context.Context, f CategoryFilter) ([]models.Category, error)
+	CountCategories(ctx context.Context, f CategoryFilter) (int, error)
 
 	CreateTag(ctx context.Context, t models.Tag) (models.Tag, error)
 	GetTagByValue(ctx context.Context, value string) (models.Tag, error)

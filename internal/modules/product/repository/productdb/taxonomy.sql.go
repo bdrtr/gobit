@@ -45,10 +45,18 @@ const countCategories = `-- name: CountCategories :one
 SELECT count(*) FROM product_category
 WHERE deleted_at IS NULL
   AND ($1::text IS NULL OR parent_id = $1::text)
+  AND (NOT $2::boolean OR (is_active AND NOT is_internal))
 `
 
-func (q *Queries) CountCategories(ctx context.Context, parentID *string) (int64, error) {
-	row := q.db.QueryRow(ctx, countCategories, parentID)
+type CountCategoriesParams struct {
+	ParentID   *string
+	PublicOnly bool
+}
+
+// The count applies the SAME predicate as the listing. A count taken over a
+// wider set than the page is a storefront asking for pages that never fill.
+func (q *Queries) CountCategories(ctx context.Context, arg CountCategoriesParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countCategories, arg.ParentID, arg.PublicOnly)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -312,18 +320,31 @@ const listCategories = `-- name: ListCategories :many
 SELECT id, name, handle, description, parent_id, is_active, is_internal, rank, created_at, updated_at, deleted_at FROM product_category
 WHERE deleted_at IS NULL
   AND ($1::text IS NULL OR parent_id = $1::text)
+  AND (NOT $2::boolean OR (is_active AND NOT is_internal))
 ORDER BY rank, created_at DESC, id DESC
-LIMIT $3::int OFFSET $2::int
+LIMIT $4::int OFFSET $3::int
 `
 
 type ListCategoriesParams struct {
-	ParentID *string
-	Off      int32
-	Lim      int32
+	ParentID   *string
+	PublicOnly bool
+	Off        int32
+	Lim        int32
 }
 
+// public_only applies the two flags the category table has carried since the
+// first migration and that nothing has read until now: is_active is the
+// merchant's switch for a category that is not ready, and is_internal is for one
+// that exists for operators and was never meant to be browsable. The storefront
+// passes true; the admin surface passes false and sees everything, which is the
+// only way the merchant can turn a category back on.
 func (q *Queries) ListCategories(ctx context.Context, arg ListCategoriesParams) ([]ProductCategory, error) {
-	rows, err := q.db.Query(ctx, listCategories, arg.ParentID, arg.Off, arg.Lim)
+	rows, err := q.db.Query(ctx, listCategories,
+		arg.ParentID,
+		arg.PublicOnly,
+		arg.Off,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -862,35 +862,49 @@ func (m *memStore) GetCategory(_ context.Context, id string) (models.Category, e
 	return c, nil
 }
 
-func (m *memStore) ListCategories(_ context.Context, parentID *string, limit, offset int) ([]models.Category, error) {
+func (m *memStore) ListCategories(_ context.Context, f repository.CategoryFilter) ([]models.Category, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.track("ListCategories"); err != nil {
 		return nil, err
 	}
 
+	out := m.matchingCategories(f)
+	slices.SortFunc(out, func(a, b models.Category) int { return strings.Compare(a.ID, b.ID) })
+	return sliceWindow(out, f.Limit, f.Offset), nil
+}
+
+// matchingCategories applies the filter the SQL applies.
+//
+// It is shared by the listing and the count on purpose: the count used to
+// return len(m.categories) whatever the filter said, so a test could see a
+// page of one and a count of ten and call that correct — the fake disagreeing
+// with the query it stands in for, which is the one thing a fake must not do.
+func (m *memStore) matchingCategories(f repository.CategoryFilter) []models.Category {
 	out := make([]models.Category, 0, len(m.categories))
 	for id := range m.categories {
 		c := m.categories[id]
-		if c.DeletedAt != nil {
+		switch {
+		case c.DeletedAt != nil:
 			continue
-		}
-		if parentID != nil && (c.ParentID == nil || *c.ParentID != *parentID) {
+		case f.ParentID != nil && (c.ParentID == nil || *c.ParentID != *f.ParentID):
+			continue
+		case f.PublicOnly && (!c.IsActive || c.IsInternal):
 			continue
 		}
 		out = append(out, c)
 	}
-	slices.SortFunc(out, func(a, b models.Category) int { return strings.Compare(a.ID, b.ID) })
-	return sliceWindow(out, limit, offset), nil
+
+	return out
 }
 
-func (m *memStore) CountCategories(_ context.Context, _ *string) (int, error) {
+func (m *memStore) CountCategories(_ context.Context, f repository.CategoryFilter) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.track("CountCategories"); err != nil {
 		return 0, err
 	}
-	return len(m.categories), nil
+	return len(m.matchingCategories(f)), nil
 }
 
 func (m *memStore) CreateTag(_ context.Context, t models.Tag) (models.Tag, error) {

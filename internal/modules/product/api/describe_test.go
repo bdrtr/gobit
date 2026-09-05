@@ -585,6 +585,11 @@ func TestEveryStoreEndpointIsDescribed(t *testing.T) {
 		// path, its body and where the contract is (see
 		// api.describeStorefrontGraphQL).
 		"POST /store/v1/graphql",
+		// The vocabulary a storefront needs to USE the catalog filters: the
+		// listing takes ids and a storefront has the word a shopper clicked.
+		"GET /store/v1/collections",
+		"GET /store/v1/categories",
+		"GET /store/v1/tags",
 	}, found)
 }
 

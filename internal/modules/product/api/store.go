@@ -122,3 +122,88 @@ func (h *Handler) storeGetProduct(w http.ResponseWriter, r *http.Request) {
 func salesChannelIDs(r *http.Request) []string {
 	return graph.SalesChannelIDsFromContext(r.Context())
 }
+
+// The storefront's vocabulary endpoints.
+//
+// # Why they exist
+//
+// The listing takes a collection id, a category id and a tag id, and a
+// storefront has none of them: it has the WORD a shopper clicked. Until these
+// endpoints existed there was no public way to turn "t-shirts" into an id, so
+// every filter the catalog supports was unusable from outside — a capability
+// with a caller that could not be written.
+//
+// # Why they are not sales-channel scoped
+//
+// A product is hidden per channel because a product is what is sold; the
+// taxonomy is one tree for the whole installation. What DOES hide a category is
+// the merchant's own switch: the storefront listing passes PublicOnly, so a
+// category that is switched off (is_active) or exists for operators
+// (is_internal) is not listed. Those two flags have been in the schema since
+// the first migration and nothing read them until now.
+//
+// Collections and tags carry no such flag, so there is nothing to hide behind:
+// a collection exists or it does not.
+
+// storeListCollections GET /store/v1/collections
+func (h *Handler) storeListCollections(w http.ResponseWriter, r *http.Request) {
+	limit, offset, err := paging(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+
+		return
+	}
+
+	result, err := h.svc.ListCollections(r.Context(), limit, offset)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+
+		return
+	}
+	writeList(w, r, result)
+}
+
+// storeListCategories GET /store/v1/categories
+//
+// parent_id walks the tree one level at a time, which is what a navigation menu
+// asks for. Without it the whole tree comes back flat and the client has to
+// rebuild the hierarchy from parent_id fields it was not going to read.
+func (h *Handler) storeListCategories(w http.ResponseWriter, r *http.Request) {
+	limit, offset, err := paging(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+
+		return
+	}
+
+	result, err := h.svc.ListCategories(r.Context(), service.ListCategoriesOptions{
+		ParentID:   stringParam(r, "parent_id"),
+		PublicOnly: true,
+		Limit:      limit,
+		Offset:     offset,
+	})
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+
+		return
+	}
+	writeList(w, r, result)
+}
+
+// storeListTags GET /store/v1/tags
+func (h *Handler) storeListTags(w http.ResponseWriter, r *http.Request) {
+	limit, offset, err := paging(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+
+		return
+	}
+
+	result, err := h.svc.ListTags(r.Context(), limit, offset)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+
+		return
+	}
+	writeList(w, r, result)
+}

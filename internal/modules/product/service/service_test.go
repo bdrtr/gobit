@@ -590,3 +590,60 @@ func TestCreateCategoryRequiresExistingParent(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err), "a not found was expected: %v", err)
 }
+
+// TestTheStorefrontDoesNotSeeAHiddenCategory is the point of the whole
+// PublicOnly flag.
+//
+// is_active and is_internal have been columns since the first migration and
+// nothing read them until the storefront needed a vocabulary: the merchant
+// could switch a category off and it stayed exactly as visible as before. This
+// is the test that says the switch does something.
+func TestTheStorefrontDoesNotSeeAHiddenCategory(t *testing.T) {
+	t.Parallel()
+
+	svc := newService(t, newMemStore(), newFakeLinker(), nil)
+	ctx := context.Background()
+
+	visible, err := svc.CreateCategory(ctx, service.CreateCategoryInput{Name: "Shirts"})
+	require.NoError(t, err)
+	_, err = svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Not ready", IsActive: ptr(false)})
+	require.NoError(t, err)
+	_, err = svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Operators only", IsInternal: true})
+	require.NoError(t, err)
+
+	shop, err := svc.ListCategories(ctx, service.ListCategoriesOptions{PublicOnly: true})
+	require.NoError(t, err)
+
+	require.Len(t, shop.Items, 1, "a switched-off or internal category reached the storefront")
+	assert.Equal(t, visible.ID, shop.Items[0].ID)
+	require.NotNil(t, shop.Count)
+	assert.Equal(t, 1, *shop.Count,
+		"the count was taken over a wider set than the page; a storefront would ask for "+
+			"pages that never fill")
+}
+
+// TestTheMerchantStillSeesAHiddenCategory is the other half, and it is the one
+// that keeps the flag usable.
+//
+// A merchant who cannot see a category they switched off has no way to switch
+// it back on. That is why PublicOnly defaults to FALSE and the storefront is
+// the caller that has to ask for the narrower view.
+func TestTheMerchantStillSeesAHiddenCategory(t *testing.T) {
+	t.Parallel()
+
+	svc := newService(t, newMemStore(), newFakeLinker(), nil)
+	ctx := context.Background()
+
+	_, err := svc.CreateCategory(ctx, service.CreateCategoryInput{Name: "Shirts"})
+	require.NoError(t, err)
+	_, err = svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Not ready", IsActive: ptr(false)})
+	require.NoError(t, err)
+
+	admin, err := svc.ListCategories(ctx, service.ListCategoriesOptions{})
+	require.NoError(t, err)
+
+	assert.Len(t, admin.Items, 2, "the admin surface lost sight of a switched-off category")
+}

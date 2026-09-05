@@ -62,7 +62,7 @@ Four sequencing facts govern the whole list:
 | --- | --- | --- | --- |
 | B1 | ~~**A guarded inbound-callback class**~~ **Built 2026-09-05: ADR 0028.** `core/http.CallbackRegistry` — per-route quota, body limit, timeout, enforced signature check and a derived replay window; PayTR converted onto it at the same URL. Audit deliberately left out (see D1) | four carriers, e-invoice, every payment provider — the plumbing is there; a carrier still waits on B10 | Turkey-specific |
 | B2 | **Storefront filter surface** — price, category, tag, option value, in-stock, sort | NL search, the panel, every "find me" feature. **Highest leverage item on the list** | AI-powered features |
-| B3 | **Storefront vocabulary endpoints** — collections, categories, tags | NL search; today there is no public way to resolve a word to an id | AI-powered features |
+| B3 | ~~**Storefront vocabulary endpoints**~~ **Built 2026-09-05.** `GET /store/v1/{collections,categories,tags}`. The category listing applies `is_active`/`is_internal` — two columns that existed since the first migration and that nothing read | NL search — the word→id half is done; the FILTER half is B2 | AI-powered features |
 | B4 | **Review module** | moderation (the AI brief's first use case), summaries, Q&A | AI subsystem |
 | B5 | **Order ↔ fulfillment link, and something that creates a fulfillment** | the order timeline, carrier tracking, "where is the parcel". The link definition was assigned to a module that never declared it | Platform features |
 | B6 | **A money-event read surface** — `payments.captured_at`, refunds | the timeline's two most-asked facts, today unreachable through the read layer | Platform features |

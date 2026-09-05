@@ -5,6 +5,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
+	"github.com/bdrtr/gobit/internal/modules/product/repository"
 )
 
 // CreateCollectionInput is the input of a new collection.
@@ -28,8 +29,17 @@ type CreateCategoryInput struct {
 // ListCategoriesOptions is the criteria of a category listing.
 type ListCategoriesOptions struct {
 	ParentID *string
-	Limit    int
-	Offset   int
+	// PublicOnly hides the categories a shopper is not meant to see: the ones
+	// the merchant switched off (is_active) and the ones that exist for
+	// operators (is_internal).
+	//
+	// The default is FALSE, so the admin surface keeps seeing everything without
+	// asking. The storefront is the caller that has to say true, and it is the
+	// only one — a default that hid rows would mean a merchant losing sight of a
+	// category the moment they switched it off.
+	PublicOnly bool
+	Limit      int
+	Offset     int
 }
 
 // CreateCollection creates a collection.
@@ -143,11 +153,18 @@ func (s *Service) ListCategories(ctx context.Context, opts ListCategoriesOptions
 		return ListResult[models.Category]{}, err
 	}
 
-	items, err := s.repo.ListCategories(ctx, opts.ParentID, limit, offset)
+	filter := repository.CategoryFilter{
+		ParentID:   opts.ParentID,
+		PublicOnly: opts.PublicOnly,
+		Limit:      limit,
+		Offset:     offset,
+	}
+
+	items, err := s.repo.ListCategories(ctx, filter)
 	if err != nil {
 		return ListResult[models.Category]{}, err
 	}
-	count, err := s.repo.CountCategories(ctx, opts.ParentID)
+	count, err := s.repo.CountCategories(ctx, filter)
 	if err != nil {
 		return ListResult[models.Category]{}, err
 	}

@@ -73,6 +73,11 @@ func (h *Handler) Routes(r chi.Router) {
 	// --- Store API (customer) ---
 	r.Get("/store/v1/products", h.storeListProducts)
 	r.Get("/store/v1/products/{id}", h.storeGetProduct)
+	// The vocabulary a storefront needs to use the catalog filters: it has the
+	// word a shopper clicked, and the listing takes an id.
+	r.Get("/store/v1/collections", h.storeListCollections)
+	r.Get("/store/v1/categories", h.storeListCategories)
+	r.Get("/store/v1/tags", h.storeListTags)
 
 	// The GraphQL storefront read surface. ONLY POST is registered; for why GET
 	// is not opened see [graph.NewHandler]. The path sitting under /store/v1

@@ -138,6 +138,7 @@ func Describe(d *openapi.Doc) {
 		},
 	})
 
+	describeStorefrontVocabulary(d)
 	describeStorefrontGraphQL(d)
 	describeAdminProducts(d)
 	describeAdminVariants(d)
@@ -145,6 +146,55 @@ func Describe(d *openapi.Doc) {
 	describeAdminLinks(d)
 	describeAdminSalesChannels(d)
 	describeAdminTaxonomy(d)
+}
+
+// describeStorefrontVocabulary documents the three endpoints that turn a word
+// into an id.
+//
+// They are documented together because they exist for one reason: the catalog
+// listing filters by id, and a storefront has the word a shopper clicked. A
+// filter whose value cannot be obtained is a filter nobody can call.
+func describeStorefrontVocabulary(d *openapi.Doc) {
+	paging := []openapi.Parameter{
+		queryParameter("limit", typeInteger,
+			"Page size; if not given the service's default applies."),
+		queryParameter("offset", typeInteger, "Number of records to skip."),
+	}
+
+	d.Describe(http.MethodGet, "/store/v1/collections", openapi.Operation{
+		Summary:    "Lists the collections, for the \"collection_id\" filter of the product listing.",
+		Parameters: paging,
+		Responses: map[string]any{
+			"200": openapi.Response("Collections", d.List(models.Collection{})),
+		},
+	})
+
+	d.Describe(http.MethodGet, "/store/v1/categories", openapi.Operation{
+		Summary: "Lists the categories a shopper may see.",
+		// What is NOT listed is worth stating in the document: a client that
+		// cannot see a category it knows exists needs to be able to find out
+		// why without reading this repository.
+		Parameters: append([]openapi.Parameter{
+			queryParameter("parent_id", typeString,
+				"Lists only the children of that category. A navigation menu asks for one "+
+					"level at a time; without it the whole tree comes back flat."),
+		}, paging...),
+		Responses: map[string]any{
+			"200": openapi.Response(
+				"Categories that are active and not internal. A category the merchant has "+
+					"switched off (\"is_active\": false) or marked as operator-only "+
+					"(\"is_internal\": true) is NOT listed here, and neither is it counted.",
+				d.List(models.Category{})),
+		},
+	})
+
+	d.Describe(http.MethodGet, "/store/v1/tags", openapi.Operation{
+		Summary:    "Lists the product tags.",
+		Parameters: paging,
+		Responses: map[string]any{
+			"200": openapi.Response("Tags", d.List(models.Tag{})),
+		},
+	})
 }
 
 // graphqlRequest is the GraphQL request body.
