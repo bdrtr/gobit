@@ -462,15 +462,29 @@ func readLimited(r *http.Request) ([]byte, error) {
 		return nil, nil
 	}
 
+	return readAtMost(r, maxIdempotentBodyBytes)
+}
+
+// readAtMost reads a bounded body and puts it back for the handler.
+//
+// It is shared by the two rings that need the WHOLE body before the handler
+// runs: the idempotency fingerprint and the callback signature check. Sharing
+// it also keeps them from reading the body twice — only one ring can consume
+// and restore it, and this is the function that does.
+func readAtMost(r *http.Request, limit int64) ([]byte, error) {
+	if r.Body == nil {
+		return nil, nil
+	}
+
 	// Try to read one byte past the limit so we can tell an overflow apart.
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxIdempotentBodyBytes+1))
+	body, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
 	if err != nil {
 		return nil, coreerrors.Invalid("invalid_body", "the request body could not be read")
 	}
 
-	if len(body) > maxIdempotentBodyBytes {
+	if int64(len(body)) > limit {
 		return nil, coreerrors.Invalid("body_too_large",
-			"an idempotent request body can be at most %d bytes", maxIdempotentBodyBytes)
+			"the request body can be at most %d bytes", limit)
 	}
 
 	// We consumed the body; put it back so the handler can read it.

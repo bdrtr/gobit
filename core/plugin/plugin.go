@@ -45,6 +45,7 @@ import (
 	"github.com/bdrtr/gobit/core/container"
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/eventbus"
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/module"
 	coreprovider "github.com/bdrtr/gobit/core/provider"
 )
@@ -64,6 +65,14 @@ const FulfillmentProvidersName = "fulfillment.providers"
 // NotificationProvidersName is the container name of the notification provider
 // registry.
 const NotificationProvidersName = "notification.providers"
+
+// CallbacksName is the container name of the inbound-callback registry.
+//
+// It is PUBLISHED, unlike the infrastructure names ("core.db" and the rest),
+// which are unexported constants in the composition root that a plugin has to
+// re-spell as a literal. A rename there breaks every plugin silently; a rename
+// here does not compile.
+const CallbacksName = "core.callbacks"
 
 // ErrorReporterName is the container name of the error reporter.
 //
@@ -126,6 +135,11 @@ type fulfillmentSink interface {
 // registry.
 type notificationSink interface {
 	Register(p coreprovider.NotificationProvider) error
+}
+
+// callbackSink is the narrow surface of the inbound-callback registry.
+type callbackSink interface {
+	Register(rt corehttp.CallbackRoute) error
 }
 
 // fileSink is the narrow surface of the file provider registry.
@@ -273,6 +287,41 @@ func (h *Host) RegisterPaymentProvider(p coreprovider.PaymentProvider) {
 			}
 
 			return sink.Register(p)
+		},
+	})
+}
+
+// RegisterCallback binds a guarded inbound endpoint for this plugin.
+//
+// # Why a plugin cannot just bind the route itself
+//
+// It can — [Host.AddRoutes] and a module's own Routes both do — and that is the
+// problem this method exists for. A callback bound that way lands on the root
+// router outside every guard: no quota, no body limit, no replay window, and no
+// enforced signature check. It is indistinguishable from a guarded one by
+// reading the code, which is how the measured example stayed unguarded.
+//
+// Going through here, the guards are not optional: the registry refuses a route
+// with no verifier at STARTUP, and it is the registry — not the plugin — that
+// binds the path, so a plugin that forgot to register simply has no endpoint
+// rather than an unguarded one.
+//
+// Like the provider registrations this is applied during [Registry.Start], and
+// for the same reason: at Setup time the registry is not necessarily in the
+// container yet. When it is absent, Start returns an ERROR — an installation
+// believed to be taking provider callbacks and silently taking none is the
+// failure this whole surface is about.
+func (h *Host) RegisterCallback(rt corehttp.CallbackRoute) {
+	name := h.active
+	h.queue = append(h.queue, queuedTask{
+		description: "the callback of the " + name + " plugin (" + rt.Path + ")",
+		apply: func(_ context.Context, host *Host) error {
+			sink, err := resolveSink[callbackSink](host, CallbacksName, "callback")
+			if err != nil {
+				return err
+			}
+
+			return sink.Register(rt)
 		},
 	})
 }

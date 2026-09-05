@@ -370,7 +370,7 @@ func guardStack(
 	rdb *redis.Client,
 	pool *db.Pool,
 	log *slog.Logger,
-) ([]func(http.Handler) http.Handler, error) {
+) ([]func(http.Handler) http.Handler, *corehttp.CallbackRegistry, error) {
 	warnAboutRateLimit(cfg, log)
 
 	// The audit log is unconditional in a real server: an installation whose
@@ -451,13 +451,13 @@ func guardStack(
 
 	if cfg.GuardBackend == config.BackendRedis {
 		if rdb == nil {
-			return nil, errors.Invalid(codeGuardBackendMissing,
+			return nil, nil, errors.Invalid(codeGuardBackendMissing,
 				"GUARD_BACKEND=%s was selected but there is no Redis client", config.BackendRedis)
 		}
 
 		store, err := redisguard.NewIdempotencyStore(rdb, cfg.RedisKeyPrefix, cfg.IdempotencyTTL)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		opts.IdempotencyStore = store
 
@@ -466,7 +466,7 @@ func guardStack(
 		if cfg.RateLimitPerMinute > 0 {
 			limiter, limitErr := redisguard.NewLimiter(rdb, cfg.RedisKeyPrefix, cfg.RateLimitPerMinute, time.Minute)
 			if limitErr != nil {
-				return nil, limitErr
+				return nil, nil, limitErr
 			}
 
 			opts.Limiter = limiter
@@ -476,7 +476,9 @@ func guardStack(
 		log.Info("guard backend: redis (shared)",
 			"key_prefix", cfg.RedisKeyPrefix)
 
-		return withPanelRing(opts, panel), nil
+		callbacks := newCallbackRegistry(opts, log)
+
+		return withPanelRing(opts, panel, callbacks), callbacks, nil
 	}
 
 	opts.IdempotencyStore = memoryIdempotencyStore(cfg)
@@ -510,7 +512,27 @@ func guardStack(
 			"remedy", "GUARD_BACKEND=redis")
 	}
 
-	return withPanelRing(opts, panel), nil
+	callbacks := newCallbackRegistry(opts, log)
+
+	return withPanelRing(opts, panel, callbacks), callbacks, nil
+}
+
+// newCallbackRegistry gives the inbound-callback ring the same guard services
+// the API surfaces got.
+//
+// It takes them from the FILLED GuardOptions rather than from the config a
+// second time: the store and the limiter are chosen by a branch above (Redis or
+// memory, and no limiter at all when the limit is off), and reading the config
+// again would be a second place that has to reach the same conclusion. A
+// callback guarded by a different store than the API is guarded by is a
+// difference nobody would look for.
+func newCallbackRegistry(opts corehttp.GuardOptions, log *slog.Logger) *corehttp.CallbackRegistry {
+	return corehttp.NewCallbackRegistry(corehttp.CallbackOptions{
+		Limiter:  opts.Limiter,
+		LimitKey: opts.LimitKey,
+		Store:    opts.IdempotencyStore,
+		Logger:   log,
+	})
 }
 
 // withPanelRing adds the panel's own ring ON TOP of the API guards.
@@ -538,10 +560,17 @@ func guardStack(
 func withPanelRing(
 	opts corehttp.GuardOptions,
 	panel *adminui.Ring,
+	callbacks *corehttp.CallbackRegistry,
 ) []func(http.Handler) http.Handler {
 	return append(corehttp.APIGuards(opts),
 		corehttp.Scoped(adminui.URLPrefix, nil, panel.CheckOrigin),
 		corehttp.Scoped(adminui.URLPrefix, adminui.ExemptPaths(), panel.Protect),
+		// The callback ring carries no prefix of its own: it acts on the paths
+		// it was given and passes everything else through. A reserved prefix
+		// would force every provider's configured URL to move, and that URL
+		// lives on the PROVIDER's side, where changing it is an operational
+		// break rather than a deploy.
+		callbacks.Middleware(),
 	)
 }
 
@@ -1120,6 +1149,11 @@ type application struct {
 	// after this function returns.
 	panelRing *adminui.Ring
 	authn     *corehttp.DeferredAuthenticator
+	// callbacks holds the inbound provider endpoints. It is a third deferred
+	// binding: the plugins that own the callbacks are installed after the
+	// router is built, so the registry is created here, filled during
+	// Registry.Start and mounted before the plugin routes.
+	callbacks *corehttp.CallbackRegistry
 }
 
 // openApplication opens the database, brings up every module and wires the
@@ -1221,8 +1255,18 @@ func openApplication(
 	// is REJECTED.
 	panelRing := &adminui.Ring{}
 
-	guards, err := guardStack(cfg, authn, panelRing, redisClient, pool, log)
+	// The callback registry is the third object born before the router. Its
+	// routes come from plugins that do not exist yet, so it guards nothing
+	// until it is mounted — and refuses to recognize a path before then, which
+	// is what makes a callback arriving mid-startup fail closed.
+	guards, callbacks, err := guardStack(cfg, authn, panelRing, redisClient, pool, log)
 	if err != nil {
+		return nil, nil, err
+	}
+
+	// The registry enters the container under a PUBLISHED name so a plugin can
+	// resolve it without re-spelling an unexported constant.
+	if err := c.Provide(coreplugin.CallbacksName, callbacks); err != nil {
 		return nil, nil, err
 	}
 
@@ -1289,6 +1333,7 @@ func openApplication(
 		host:      host,
 		panelRing: panelRing,
 		authn:     authn,
+		callbacks: callbacks,
 	}, closeApp, nil
 }
 

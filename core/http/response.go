@@ -315,3 +315,31 @@ func newErrorResponse(ctx context.Context, code, message string, details map[str
 		},
 	}
 }
+
+// The two writers below answer a PROVIDER, not a client, and they live here for
+// the reason this file exists: every response body in the core is written in one
+// place, so the rule "an error reaches the client only through WriteError" can
+// be read rather than trusted. A callback answer is the one body that must NOT
+// be the JSON envelope — the provider reads it as an acknowledgement token —
+// and putting it anywhere else would make that look like an escape rather than
+// a decision.
+
+// writeCallback answers in the provider's own protocol.
+func writeCallback(w http.ResponseWriter, answer CallbackResponse) {
+	if answer.ContentType != "" {
+		w.Header().Set("Content-Type", answer.ContentType)
+	}
+	w.WriteHeader(answer.Status)
+	_, _ = w.Write([]byte(answer.Body))
+}
+
+// replayCallback writes back the answer this server produced the first time.
+func replayCallback(w http.ResponseWriter, record *IdempotentResponse) {
+	target := w.Header()
+	for name, values := range record.Header {
+		target[name] = append([]string(nil), values...)
+	}
+	target.Set(IdempotencyReplayedHeader, "true")
+	w.WriteHeader(record.Status)
+	_, _ = w.Write(record.Body)
+}

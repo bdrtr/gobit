@@ -148,6 +148,12 @@ func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 	// does not exist yet.
 	h.RegisterPaymentProvider(p.mod.provider())
 
+	// The callback is registered rather than bound. The ring refuses a route
+	// with no verifier at startup and binds the path itself, so this plugin
+	// cannot end up with the endpoint it had before ADR 0028: reachable by
+	// anyone, with no quota, no body limit and no replay window.
+	h.RegisterCallback(p.mod.callbackRoute())
+
 	return nil
 }
 

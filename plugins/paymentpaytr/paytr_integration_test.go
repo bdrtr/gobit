@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -30,6 +31,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/db"
 	coreerrors "github.com/bdrtr/gobit/core/errors"
+	corehttp "github.com/bdrtr/gobit/core/http"
 	coreprovider "github.com/bdrtr/gobit/core/provider"
 )
 
@@ -138,9 +140,34 @@ func rawCallback(
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 
-	m.handleCallback(rec, req)
+	callbackRouter(t, m).ServeHTTP(rec, req)
 
 	return rec
+}
+
+// callbackRouter serves the callback the way production does: through the core's
+// inbound-callback ring rather than by calling the handler.
+//
+// Calling the handler directly is what these tests used to do, and after ADR
+// 0028 it would prove the wrong thing: the signature check no longer lives in
+// the handler, so a direct call would accept a forged callback and the security
+// proof below would pass while the endpoint was open.
+//
+// The ring is built with NO replay store on purpose. Dedup is the core's, tested
+// there; what these tests are for is this plugin's own second line — the
+// conditional UPDATE that refuses to apply a payment twice — and a replay ring
+// in front of it would answer the retry before the database ever saw it.
+func callbackRouter(t *testing.T, m *paytrModule) chi.Router {
+	t.Helper()
+
+	registry := corehttp.NewCallbackRegistry(corehttp.CallbackOptions{Logger: slog.New(slog.DiscardHandler)})
+	require.NoError(t, registry.Register(m.callbackRoute()))
+
+	router := chi.NewRouter()
+	router.Use(registry.Middleware())
+	require.NoError(t, registry.Mount(router))
+
+	return router
 }
 
 // --- the migration ----------------------------------------------------------

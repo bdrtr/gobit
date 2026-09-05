@@ -40,9 +40,17 @@ import (
 //
 // Resolution is recursive (constant → constant → parameter → caller) and a
 // cyclic declaration or two functions calling each other could produce an
-// infinite descent. The deepest chain today is four steps; eight leaves room
-// for chains that will grow without the rule changing.
-const maxResolutionDepth = 8
+// infinite descent.
+//
+// The number was eight, chosen when the deepest chain was four. The panel's
+// paths have since grown a five-link chain of concatenated constants
+// (URLPrefix → ProductsPath → ProductPath → VariantPath → VariantPricePath),
+// which costs ten steps because every concatenation is a step of its own — and
+// the audit that found this reported the path as UNRESOLVABLE rather than as
+// unguarded, which is the right direction to fail in but not an obvious one to
+// read. Sixteen leaves room for the chain to grow again; the protection against
+// a cycle is the limit existing at all, not its exact value.
+const maxResolutionDepth = 16
 
 // constDefinition holds the value expression of a constant and the file it is
 // defined in.

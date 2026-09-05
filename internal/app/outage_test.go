@@ -27,7 +27,7 @@ func outageRouter(t *testing.T, handled *int) http.Handler {
 	cfg := baseConfig()
 	cfg.GuardBackend = config.BackendRedis
 
-	guards, err := guardStack(cfg, validIdentity{}, &adminui.Ring{}, unconnectedRedis(), nil, discardLogger())
+	guards, _, err := guardStack(cfg, validIdentity{}, &adminui.Ring{}, unconnectedRedis(), nil, discardLogger())
 	require.NoError(t, err, "the guard stack could not be built")
 
 	r := corehttp.NewRouter(corehttp.RouterOptions{

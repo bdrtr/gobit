@@ -60,7 +60,7 @@ Four sequencing facts govern the whole list:
 
 | # | foundation | unblocks | section |
 | --- | --- | --- | --- |
-| B1 | **A guarded inbound-callback class** — signature verification, replay window, body limit, rate limit, audit | four carriers, e-invoice, every payment provider. **Build once; today `/paytr/callback` is the only example and it is unguarded** | Turkey-specific |
+| B1 | ~~**A guarded inbound-callback class**~~ **Built 2026-09-05: ADR 0028.** `core/http.CallbackRegistry` — per-route quota, body limit, timeout, enforced signature check and a derived replay window; PayTR converted onto it at the same URL. Audit deliberately left out (see D1) | four carriers, e-invoice, every payment provider — the plumbing is there; a carrier still waits on B10 | Turkey-specific |
 | B2 | **Storefront filter surface** — price, category, tag, option value, in-stock, sort | NL search, the panel, every "find me" feature. **Highest leverage item on the list** | AI-powered features |
 | B3 | **Storefront vocabulary endpoints** — collections, categories, tags | NL search; today there is no public way to resolve a word to an id | AI-powered features |
 | B4 | **Review module** | moderation (the AI brief's first use case), summaries, Q&A | AI subsystem |
@@ -104,10 +104,14 @@ Four sequencing facts govern the whole list:
 
 ### D. Corrections — small, and some are live defects
 
-- **D1** `/paytr/callback` sits outside every guarded prefix: **no auth, no rate
-  limit, no idempotency, no audit, no CORS, and no body-size limit anywhere in
-  the core.** Its only protection is the HMAC inside the handler. (Folded into
-  B1.)
+- **D1** ~~`/paytr/callback` sits outside every guarded prefix~~ **Fixed
+  2026-09-05 (ADR 0028).** It now goes through the callback ring: quota, 64 KiB
+  body limit, 10s timeout, signature verified before anything reads the payload,
+  and a replay window keyed on the signed fields. `TestEveryStateChangingRouteIsGuarded`
+  keeps the class closed — a write bound outside the guarded prefixes now fails
+  the build. Still NOT audited: writing a row for an actor this repository only
+  asserts contradicts the audit contract in four places, and nothing reads
+  `audit_log` yet. That is decision 1 of ADR 0028.
 - **D2** `allow_backorder` is published and does nothing (see A6).
 - **D3** The address book's storefront endpoints are unauthenticated and keyed by
   a path id — personal data anyone can read and change. A known consequence of

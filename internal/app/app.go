@@ -316,6 +316,19 @@ func serve(opts Options) error {
 	// has silently been taken over by a plugin, or where the plugin was never
 	// bound at all; both would only be noticed when the first request went to
 	// the wrong place.
+	// The callbacks are bound BEFORE the plugin routes, and the order carries
+	// the rule: a callback path is claimed first, so a plugin's own AddRoutes
+	// cannot shadow one — MountRoutes' conflict check sees the callback pattern
+	// already on the router and refuses the second binding by name.
+	//
+	// Mounting also FREEZES the registry. A callback registered after this point
+	// would never be bound, and a route the provider can reach that this ring
+	// does not know is exactly the unguarded endpoint the registry exists to
+	// remove; the refusal is loud rather than silent.
+	if err := app.callbacks.Mount(router); err != nil {
+		return err
+	}
+
 	if err := pluginRegistry.MountRoutes(router, host); err != nil {
 		return err
 	}

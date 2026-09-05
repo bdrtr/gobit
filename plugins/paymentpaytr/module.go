@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -34,6 +35,17 @@ const dbServiceName = "core.db"
 // shared bearer token would be: it covers the amount and the outcome, not just
 // the caller's identity.
 const CallbackPath = "/paytr/callback"
+
+// The error codes the callback's verification can refuse with. They never reach
+// PayTR — the ring answers in PayTR's own protocol — but they are what the log
+// line carries, and a forged callback is the one event worth being able to grep
+// for by code.
+const (
+	// codeCallbackUnreadable is a body that is not a PayTR form.
+	codeCallbackUnreadable = "paytr_callback_unreadable"
+	// codeCallbackBadHash is a signature that does not match.
+	codeCallbackBadHash = "paytr_callback_bad_hash"
+)
 
 // pendingGrace is how old a payment must be before it is listed as stuck.
 //
@@ -127,14 +139,106 @@ func (m *paytrModule) reportStuck(ctx context.Context) {
 		"list", CallbackPath+"/../pending")
 }
 
-// Routes mounts the callback and the operator's list.
+// Routes mounts the operator's list.
+//
+// The CALLBACK is not here any more. It is registered with the core's inbound
+// callback registry (ADR 0028), which binds the path itself — so this plugin
+// cannot end up with an endpoint the guards do not know about, which is exactly
+// what binding it here produced: no quota, no body limit and no replay window,
+// with the signature check inside the handler as the only protection.
 func (m *paytrModule) Routes(r chi.Router) {
 	if m.store == nil {
 		return
 	}
 
-	r.Post(CallbackPath, m.handleCallback)
 	r.With(corehttp.RequireScope(ScopeRead)).Get("/admin/v1/paytr/pending", m.handlePending)
+}
+
+// callbackRoute is what this plugin registers with the core's callback ring.
+//
+// # The answers are PayTR's protocol, not gobit's
+//
+// PayTR reads the BODY, not the status: anything but the exact token "OK" means
+// "not acknowledged" and it retries. That is why a duplicate is answered with OK
+// too — a contradicting retry is a real signal, and the ring reports it at
+// ERROR, but refusing it would produce an endless retry loop while every
+// payment looked fine from the inside.
+func (m *paytrModule) callbackRoute() corehttp.CallbackRoute {
+	return corehttp.CallbackRoute{
+		Source:  ProviderID,
+		Path:    CallbackPath,
+		Verify:  m.verifyCallback,
+		Key:     callbackIdentity,
+		Handler: m.handleCallback,
+		Ack: corehttp.CallbackAck{
+			Accepted:    corehttp.CallbackResponse{Status: http.StatusOK, Body: "OK"},
+			Duplicate:   corehttp.CallbackResponse{Status: http.StatusOK, Body: "OK"},
+			Rejected:    corehttp.CallbackResponse{Status: http.StatusForbidden, Body: "BAD_HASH"},
+			Malformed:   corehttp.CallbackResponse{Status: http.StatusBadRequest, Body: "BAD_REQUEST"},
+			Unavailable: corehttp.CallbackResponse{Status: http.StatusInternalServerError, Body: "RETRY"},
+		},
+	}
+}
+
+// verifyCallback is PayTR's signature check, moved out of the handler.
+//
+// The body arrives already buffered, so the form is parsed from the bytes the
+// signature was computed over rather than from a stream something else may have
+// consumed.
+func (m *paytrModule) verifyCallback(_ context.Context, _ *http.Request, body []byte) error {
+	form, err := url.ParseQuery(string(body))
+	if err != nil {
+		return coreerrors.Invalid(codeCallbackUnreadable, "the callback body could not be parsed")
+	}
+
+	oid, received := form.Get("merchant_oid"), form.Get("hash")
+	if oid == "" || received == "" {
+		return coreerrors.Invalid(codeCallbackUnreadable,
+			"the callback carried no order id or no signature")
+	}
+
+	expected := callbackSignature(callbackInput{
+		MerchantOID: oid,
+		Status:      form.Get("status"),
+		TotalAmount: form.Get("total_amount"),
+	}, m.cfg.MerchantKey, m.cfg.MerchantSalt)
+
+	if !signaturesMatch(expected, received) {
+		// This is the message that says a payment succeeded, so it is the one
+		// worth forging. The order id is included because a genuine
+		// misconfiguration and an attack look identical here, and the id is what
+		// tells them apart afterwards.
+		return coreerrors.Unauthorized(codeCallbackBadHash,
+			"the signature of callback %s does not match", oid)
+	}
+
+	return nil
+}
+
+// callbackIdentity says which event a verified callback is, and what it asserts.
+//
+// Both tuples come ONLY from fields the signature covers. failed_reason_msg is
+// deliberately excluded: PayTR does not sign it, so including it would let a
+// resend that differs only in that field look like a different event — which is
+// how a replay window is defeated while appearing to work.
+//
+// PayTR signs no event id, no nonce and no timestamp, so the order id is the
+// whole identity: one order has one payment outcome.
+func callbackIdentity(_ *http.Request, body []byte) (identity, content []string, err error) {
+	form, parseErr := url.ParseQuery(string(body))
+	if parseErr != nil {
+		return nil, nil, coreerrors.Invalid(codeCallbackUnreadable,
+			"the verified callback body could not be parsed")
+	}
+
+	oid := form.Get("merchant_oid")
+	if oid == "" {
+		return nil, nil, nil
+	}
+
+	return []string{oid},
+		[]string{oid, form.Get("status"), form.Get("total_amount")},
+		nil
 }
 
 // handleCallback records what PayTR reported.
@@ -148,6 +252,15 @@ func (m *paytrModule) Routes(r chi.Router) {
 //
 // That is also why the failure paths answer with a short token rather than the
 // core's error envelope: this endpoint's protocol is PayTR's, not gobit's.
+//
+// # What is NOT here any more
+//
+// The signature check. It ran here until ADR 0028 and it was the endpoint's
+// only protection; it now runs in the core's callback ring, BEFORE the body is
+// keyed and before anything derived from the payload is trusted. By the time
+// this handler is entered the callback is verified, so a missing order id or an
+// unreadable amount is a fault in a message PayTR really sent, not a possible
+// forgery.
 func (m *paytrModule) handleCallback(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -161,31 +274,6 @@ func (m *paytrModule) handleCallback(w http.ResponseWriter, r *http.Request) {
 	oid := r.PostForm.Get("merchant_oid")
 	status := r.PostForm.Get("status")
 	totalAmount := r.PostForm.Get("total_amount")
-	received := r.PostForm.Get("hash")
-
-	if oid == "" || received == "" {
-		m.log.WarnContext(ctx, "a PayTR callback arrived without an order id or a signature")
-		answer(w, http.StatusBadRequest, "BAD_REQUEST")
-
-		return
-	}
-
-	expected := callbackSignature(
-		callbackInput{MerchantOID: oid, Status: status, TotalAmount: totalAmount},
-		m.cfg.MerchantKey, m.cfg.MerchantSalt)
-
-	if !signaturesMatch(expected, received) {
-		// This is the message that tells the system a payment succeeded, so it
-		// is the one worth forging. A mismatch is logged at ERROR and the order
-		// id is included: a genuine configuration fault and an attack look
-		// identical here, and the id is what tells them apart afterwards.
-		m.log.ErrorContext(ctx, "a PayTR callback failed signature verification",
-			"merchant_oid", oid)
-		answer(w, http.StatusForbidden, "BAD_HASH")
-
-		return
-	}
-
 	paid, err := strconv.ParseInt(totalAmount, 10, 64)
 	if err != nil {
 		m.log.ErrorContext(ctx, "a verified PayTR callback carried an unreadable amount",
