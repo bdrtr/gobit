@@ -44,7 +44,7 @@ func document(t *testing.T) (paths, components map[string]any) {
 	Describe(doc)
 
 	r := chi.NewRouter()
-	New(nil, nil, nil).Routes(r)
+	New(nil, nil, nil, nil).Routes(r)
 
 	raw, err := doc.Build(r)
 	require.NoError(t, err)
@@ -266,6 +266,19 @@ func describedEndpoints() []endpointExpectation {
 			response: orderInvoiceDTO{
 				InvoiceID: "inv_1", Number: "GBT2026000000001", Status: "issued",
 			},
+		},
+		{
+			// Like the issue endpoint, the open endpoint answers 201 when it
+			// opened a parcel and 200 when the idempotency key had already
+			// opened one. The 201 is the one this table checks.
+			method: http.MethodPost, path: "/admin/v1/orders/{id}/fulfillments", status: "201",
+			request: openShipmentRequest{}, response: shipmentOpenedDTO{
+				FulfillmentID: "ful_1", AlreadyOpen: false,
+			},
+		},
+		{
+			method: http.MethodGet, path: "/admin/v1/orders/{id}/fulfillments", status: "200",
+			response: orderShipmentDTO{FulfillmentID: "ful_1", Status: "pending"},
 		},
 	}
 }

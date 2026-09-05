@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/core/errors"
@@ -21,6 +22,7 @@ import (
 	fulfillmentsvc "github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 	paymentmanual "github.com/bdrtr/gobit/internal/modules/payment/manual"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
+	fulfillingwf "github.com/bdrtr/gobit/internal/workflows/fulfilling"
 )
 
 // This file proves the SHIPPING leg of the plan's Phase 7 DoD: "a fulfillment
@@ -473,4 +475,91 @@ func storeShippingOptions(t *testing.T, query url.Values) []map[string]any {
 			"records")
 
 	return envelope.Data
+}
+
+// TestAShipmentOpenedThroughTheFlowIsBoundToItsOrder closes the gap the test
+// above names in its own words.
+//
+// That test opens a fulfillment through the fulfillment module's interop and
+// then says, at the assertion on Reference, exactly what is wrong with it: the
+// field is not a foreign key, a wrong or empty value trips no constraint, and
+// "the shipping label ends up printed without anyone knowing which order it
+// belongs to". Reference is a string the module never validates, by decision.
+//
+// The fulfilling flow is what makes the association a FACT rather than a
+// convention, and this is the only place it can be proved: the binding is a
+// row written by the real link service under a definition the real fulfillment
+// module declared, and a fake link store agreeing with itself says nothing
+// about either.
+func TestAShipmentOpenedThroughTheFlowIsBoundToItsOrder(t *testing.T) {
+	ctx := t.Context()
+
+	customerID, email := newCustomer(ctx, t)
+	variantID, _ := newStockedVariant(ctx, t, "E2E Bound Shipment Product", map[string]int64{
+		taxedCurrency: shippingUnitPrice,
+	}, shippingStock)
+
+	cartID, _ := prepareCart(ctx, t, customerID, variantID, shippingQuantity)
+	orderResult, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        stockLocationID,
+		PaymentProviderID: paymentmanual.ID,
+		PaymentData:       paymentBehavior(t, paymentmanual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     shippingTotal,
+	})
+	require.NoError(t, err)
+
+	profileID := newShippingProfile(ctx, t, "E2E Bound Shipment Profile")
+	optionID := newShippingOption(ctx, t, profileID, "E2E Bound Shipping", shippingOptionFee, false)
+
+	flow, err := fulfillingwf.FromContainer(ctr)
+	require.NoError(t, err,
+		"the fulfilling flow must resolve from the same container the composition root uses; "+
+			"a surface it cannot find is one no installation has")
+
+	key := "e2e-bound-" + orderResult.OrderID
+	opened, err := flow.OpenForOrder(ctx, orderResult.OrderID, optionID, key)
+	require.NoError(t, err)
+	require.NotEmpty(t, opened.FulfillmentID)
+	assert.False(t, opened.AlreadyOpen, "the first press cannot be a repeat")
+
+	// The binding is read through the LINK SERVICE rather than through the flow:
+	// asking the flow whether it wrote what the flow says it wrote would prove
+	// nothing about the row.
+	bound, err := links.ListMany(ctx, fulfillingwf.LinkOrderFulfillment,
+		[]string{orderResult.OrderID})
+	require.NoError(t, err)
+	assert.Equal(t, []string{opened.FulfillmentID}, bound[orderResult.OrderID],
+		"the shipment was opened and NOT bound to its order; nothing can answer which "+
+			"order the parcel belongs to, which is the whole point of the flow")
+
+	// A second press with the same key: no second parcel, no second binding,
+	// and the repeat is REPORTED.
+	repeat, err := flow.OpenForOrder(ctx, orderResult.OrderID, optionID, key)
+	require.NoError(t, err)
+	assert.Equal(t, opened.FulfillmentID, repeat.FulfillmentID,
+		"the same idempotency key opened a SECOND parcel")
+	assert.True(t, repeat.AlreadyOpen,
+		"the second press was reported as new; an operator would believe two parcels exist")
+
+	stillBound, err := links.ListMany(ctx, fulfillingwf.LinkOrderFulfillment,
+		[]string{orderResult.OrderID})
+	require.NoError(t, err)
+	assert.Len(t, stillBound[orderResult.OrderID], 1,
+		"the repeat wrote a second binding row")
+
+	shipments, err := flow.ShipmentsOfOrder(ctx, orderResult.OrderID)
+	require.NoError(t, err)
+	require.Len(t, shipments, 1, "the order's shipments could not be read back")
+	assert.Equal(t, opened.FulfillmentID, shipments[0].FulfillmentID)
+	assert.Equal(t, string(fulfillmentmodels.StatusPending), shipments[0].Status,
+		"the status came back empty, which is what the flow reports when the fulfillment "+
+			"module could not be asked at all")
+
+	// An order that does not exist opens NOTHING. The fulfillment module cannot
+	// refuse it — it never validates the reference — so this flow is the only
+	// place the refusal can happen.
+	_, err = flow.OpenForOrder(ctx, "order_does_not_exist", optionID, key+"-missing")
+	require.Error(t, err, "a parcel was opened for an order that does not exist")
 }

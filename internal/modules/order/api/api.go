@@ -175,9 +175,10 @@ type ReturnReceiving interface {
 
 // Handler is the HTTP handler set of the order module.
 type Handler struct {
-	svc       Orders
-	receiving ReturnReceiving
-	invoicing Invoicing
+	svc        Orders
+	receiving  ReturnReceiving
+	invoicing  Invoicing
+	fulfilling Fulfilling
 }
 
 // New produces the handler set that runs over the given service and flow.
@@ -188,8 +189,10 @@ type Handler struct {
 // is nothing to fall back TO — a document cannot be produced without the flow
 // that assembles it, and pretending otherwise would answer a caller who is
 // waiting for a legal document.
-func New(svc Orders, receiving ReturnReceiving, invoicing Invoicing) *Handler {
-	return &Handler{svc: svc, receiving: receiving, invoicing: invoicing}
+func New(
+	svc Orders, receiving ReturnReceiving, invoicing Invoicing, fulfilling Fulfilling,
+) *Handler {
+	return &Handler{svc: svc, receiving: receiving, invoicing: invoicing, fulfilling: fulfilling}
 }
 
 // returnReceiving returns the flow; if it is not bound it returns an ERROR.
@@ -209,6 +212,21 @@ func (h *Handler) returnReceiving() (ReturnReceiving, error) {
 	}
 
 	return h.receiving, nil
+}
+
+// fulfillingFlow returns the flow; if it is not bound it returns an ERROR.
+//
+// It fails CLOSED and the reason is specific to this one: a shipment opened
+// without the flow would be a real parcel bound to nothing, and nothing could
+// afterwards say which order it belonged to. That is worse than not shipping.
+func (h *Handler) fulfillingFlow() (Fulfilling, error) {
+	if h.fulfilling == nil {
+		return nil, coreerrors.Internal(codeFlowUnavailable,
+			"the fulfilling flow is not bound; a shipment cannot be opened for an order "+
+				"without it, and one opened another way would be bound to nothing")
+	}
+
+	return h.fulfilling, nil
 }
 
 // invoicingFlow returns the flow; if it is not bound it returns an ERROR.

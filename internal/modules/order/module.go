@@ -127,6 +127,8 @@ const (
 	// for the same reason: this module cannot import that package (ADR 0006
 	// holds in both directions).
 	invoicingFlowName = "workflows.invoicing.interop"
+	// fulfillingFlowName is the fulfilling flow's name in the container.
+	fulfillingFlowName = "workflows.fulfilling.interop"
 )
 
 // SpendingPolicyName is the container name of the service that publishes the
@@ -257,7 +259,8 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// the handler is built inside it.
 	m.handler = api.New(svc,
 		&returnReceiving{c: c, log: log},
-		&invoicingFlow{c: c, log: log})
+		&invoicingFlow{c: c, log: log},
+		&fulfillingFlow{c: c, log: log})
 	slog.Default().DebugContext(ctx, "order module registered",
 		"service", ServiceName, "interop", InteropName, "provider", ProviderName)
 	return nil
@@ -518,4 +521,63 @@ func (p *invoicingFlow) resolve(ctx context.Context) {
 
 	p.svc = svc
 	p.log.InfoContext(ctx, "invoicing flow bound", "flow", invoicingFlowName)
+}
+
+// fulfillingFlow resolves the fulfilling flow LAZILY, on the first request.
+//
+// The reason is the one the invoicing wrapper gives: a flow is born after the
+// whole Register loop has finished, while the handler is built inside it. The
+// outcome is remembered either way — a resolution that failed once will fail
+// again, and retrying it per request would turn a setup fault into a load.
+type fulfillingFlow struct {
+	c    *container.Container
+	log  *slog.Logger
+	once sync.Once
+	svc  api.Fulfilling
+	err  error
+}
+
+// That the wrapper satisfies the surface the handler expects is pinned down at
+// compile time.
+var _ api.Fulfilling = (*fulfillingFlow)(nil)
+
+// OpenForOrder opens a shipment for the order and binds the two.
+func (p *fulfillingFlow) OpenForOrder(
+	ctx context.Context, orderID string, request json.RawMessage,
+) (fulfillmentID string, alreadyOpen bool, err error) {
+	p.once.Do(func() { p.resolve(ctx) })
+
+	if p.err != nil {
+		return "", false, p.err
+	}
+
+	return p.svc.OpenForOrder(ctx, orderID, request)
+}
+
+// ShipmentsOfOrderJSON lists the shipments bound to the order.
+func (p *fulfillingFlow) ShipmentsOfOrderJSON(
+	ctx context.Context, orderID string,
+) (json.RawMessage, error) {
+	p.once.Do(func() { p.resolve(ctx) })
+
+	if p.err != nil {
+		return nil, p.err
+	}
+
+	return p.svc.ShipmentsOfOrderJSON(ctx, orderID)
+}
+
+// resolve looks the flow up in the container and remembers the outcome.
+func (p *fulfillingFlow) resolve(ctx context.Context) {
+	svc, err := container.Resolve[api.Fulfilling](p.c, fulfillingFlowName)
+	if err != nil {
+		p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
+			"the %s module could not resolve the fulfilling flow (%q); a shipment cannot be "+
+				"opened for an order without it", ModuleName, fulfillingFlowName)
+
+		return
+	}
+
+	p.svc = svc
+	p.log.InfoContext(ctx, "fulfilling flow bound", "flow", fulfillingFlowName)
 }

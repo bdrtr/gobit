@@ -64,7 +64,7 @@ Four sequencing facts govern the whole list:
 | B2 | **Storefront filter surface** — ~~category, tag~~ **built 2026-09-05** (`category_id`, `tag_id`, in REST and GraphQL, EXISTS not joins so a product in several categories is returned once). Still missing: price, in-stock, option value, sort — see below | NL search, the panel, every "find me" feature | AI-powered features |
 | B3 | ~~**Storefront vocabulary endpoints**~~ **Built 2026-09-05.** `GET /store/v1/{collections,categories,tags}`. The category listing applies `is_active`/`is_internal` — two columns that existed since the first migration and that nothing read | NL search — the word→id half is done; the FILTER half is B2 | AI-powered features |
 | B4 | **Review module** | moderation (the AI brief's first use case), summaries, Q&A | AI subsystem |
-| B5 | **Order ↔ fulfillment link, and something that creates a fulfillment** | the order timeline, carrier tracking, "where is the parcel". The link definition was assigned to a module that never declared it | Platform features |
+| B5 | ~~**Order ↔ fulfillment link, and something that creates a fulfillment**~~ **Built 2026-09-05.** The fulfillment module declares `order_fulfillment` (one to many); `internal/workflows/fulfilling` opens a shipment for an order and binds the two; the order gets `POST`/`GET /admin/v1/orders/{id}/fulfillments`. NOT built: a shipment created at checkout — shipping stays a decision | the order timeline, carrier tracking, "where is the parcel" — answerable now. Query EXPANSION over the link still needs a `fulfillment` provider | Platform features |
 | B6 | **A money-event read surface** — `payments.captured_at`, refunds | the timeline's two most-asked facts, today unreachable through the read layer | Platform features |
 | B7 | **Inventory movement ledger + inventory events** | forecasting, real-time stock, and an audit trail stock does not have | AI-powered features, Storefront speed |
 | B8 | **Customer module events** (`customer.deleted` at minimum) | erasure — today deleting a customer notifies nobody and Principle 2.2 forbids the cascade | Turkey-specific |
@@ -118,6 +118,10 @@ Four sequencing facts govern the whole list:
   ADR 0008, in its sharpest form.
 - **D4** `order_exchanges.completed_at` and `canceled_at` exist and are never
   written; there is no Complete or Cancel query for an exchange.
+- **D8** The link's far side names a `fulfillment` entity that has NO Query
+  provider. The binding is readable through the link service, which is what the
+  flow and the order's endpoints use, and NOT expandable through a Query
+  request. Giving the shipment a provider is what the order timeline (C2) needs.
 - **D5** Archiving an order leaves no timestamp — the status flips and nothing
   records when.
 - **D6** Two repository-internal transactions (tax, region) cannot compose into a

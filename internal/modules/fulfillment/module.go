@@ -86,6 +86,7 @@ import (
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/db"
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/link"
 	"github.com/bdrtr/gobit/core/module"
 	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/core/openapi"
@@ -127,9 +128,14 @@ const ProviderName = service.EntityName + query.ProviderSuffix
 // dbServiceName is the core database pool's name in the container.
 const dbServiceName = "core.db"
 
+// linkServiceName is the Module Links service's name in the container.
+const linkServiceName = "core.link"
+
 // Error codes.
 const (
-	codeSetupFailed      = "fulfillment_module_setup_failed"
+	codeSetupFailed = "fulfillment_module_setup_failed"
+	// codeLinkDefine reports a link definition that could not be declared.
+	codeLinkDefine       = "fulfillment_module_link_define_failed"
 	codeProviderRegister = "fulfillment_module_provider_register_failed"
 )
 
@@ -189,6 +195,24 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
 			"the %s module could not resolve the database pool (%q)", ModuleName, dbServiceName)
+	}
+
+	links, err := container.Resolve[link.LinkService](c, linkServiceName)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
+			"the %s module could not resolve the link service (%q)", ModuleName, linkServiceName)
+	}
+
+	// The link definitions are declared HERE: the schema sits next to the
+	// definition and is verified idempotently at every startup (ADR 0005). A
+	// definition may be declared only ONCE, so "order_fulfillment" is declared
+	// by this module rather than by the order module — this is the side that
+	// writes the record the binding carries (see [service.LinkOrderFulfillment]).
+	for _, def := range service.Definitions() {
+		if err := links.Define(ctx, def); err != nil {
+			return errors.Wrap(err, errors.KindOf(err), codeLinkDefine,
+				"the %q link definition could not be declared", def.Name)
+		}
 	}
 
 	log := slog.Default().With("module", ModuleName)

@@ -139,6 +139,7 @@ func Describe(d *openapi.Doc) {
 	describeExchanges(d)
 	describeClaims(d)
 	describeInvoicing(d)
+	describeFulfilling(d)
 }
 
 // describeInvoicing describes the two endpoints that reach the invoicing flow.
@@ -178,6 +179,59 @@ func describeInvoicing(d *openapi.Doc) {
 			"200": openapi.Response("The document's identity", d.Item(orderInvoiceDTO{})),
 		},
 	})
+}
+
+// describeFulfilling describes the two endpoints that reach the fulfilling flow.
+//
+// They are described HERE, with the order's other endpoints, because that is
+// where they are mounted: the operator asking "ship this order" is holding an
+// order id, and the fulfillment module's own create endpoint takes a reference
+// it never validates.
+func describeFulfilling(d *openapi.Doc) {
+	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/fulfillments", openapi.Operation{
+		Summary: "Opens a shipment for the order and binds the two.",
+		Description: "Shipping is a DECISION and nothing does it automatically: when a shop " +
+			"ships — on payment, after picking, in one parcel or in three — is a policy the " +
+			"framework does not make. " +
+			"The idempotency key is REQUIRED. A second call with the same key does NOT open a " +
+			"second parcel: it returns the one already open, with \"already_open\": true and a " +
+			"200 instead of a 201. Without a key a retried request opens a second parcel and " +
+			"the shop finds out at the carrier. " +
+			"An unknown order id is REFUSED rather than opening a parcel bound to nothing — " +
+			"the fulfillment module never validates the reference it is handed, so this is the " +
+			"only place that can refuse. " +
+			"The order may have SEVERAL shipments; the binding is one to many.",
+		RequestBody: d.RequestBody(openShipmentRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("The shipment that was already open",
+				d.Item(shipmentOpenedDTO{})),
+			"201": openapi.Response("The opened shipment", d.Item(shipmentOpenedDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/fulfillments", openapi.Operation{
+		Summary: "Lists the shipments bound to the order.",
+		Description: "This is the \"where is the parcel\" read. It answers with identities and " +
+			"statuses rather than with the shipments: a client that wants a parcel's detail " +
+			"reads it from /admin/v1/fulfillments/{id}, where its shape lives. " +
+			"A status that could NOT be read comes back empty rather than failing the whole " +
+			"request — the binding is a fact either way, and an order with three parcels one " +
+			"of whose statuses is unreadable still has three parcels.",
+		Responses: map[string]any{
+			"200": openapi.Response("The order's shipments", d.Item(orderShipmentDTO{})),
+		},
+	})
+}
+
+// orderShipmentDTO is one shipment as the order's endpoint reports it.
+//
+// It exists so the OpenAPI document can describe the response; the body itself
+// is the flow's JSON, passed through without being re-encoded.
+type orderShipmentDTO struct {
+	// FulfillmentID is the shipment's identifier.
+	FulfillmentID string `json:"fulfillment_id"`
+	// Status is empty when the fulfillment module could not be asked.
+	Status string `json:"status"`
 }
 
 // describeReturns describes the return record endpoints.

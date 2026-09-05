@@ -230,7 +230,7 @@ func newRouter(svc api.Orders) chi.Router {
 // be exercised that way.
 func newRouterWithFlow(svc api.Orders, receiving api.ReturnReceiving) chi.Router {
 	r := chi.NewRouter()
-	api.New(svc, receiving, nil).Routes(r)
+	api.New(svc, receiving, nil, nil).Routes(r)
 	return r
 }
 

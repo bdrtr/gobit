@@ -45,6 +45,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
+	fulfillingwf "github.com/bdrtr/gobit/internal/workflows/fulfilling"
 	invoicingwf "github.com/bdrtr/gobit/internal/workflows/invoicing"
 	returnswf "github.com/bdrtr/gobit/internal/workflows/returns"
 	"github.com/bdrtr/gobit/plugins/errorotlp"
@@ -240,7 +241,22 @@ func registerWorkflows(c *container.Container) error {
 			"the invoicing workflow could not be set up")
 	}
 
-	return c.Provide(invoicingwf.InteropName, invoicingwf.NewInterop(invoicingWorkflow))
+	if err := c.Provide(invoicingwf.InteropName, invoicingwf.NewInterop(invoicingWorkflow)); err != nil {
+		return err
+	}
+
+	// The fulfilling flow, on the same container and for the same reason. It is
+	// what opens a SHIPMENT for an order and binds the two: the fulfillment
+	// module never validates the reference it is handed and the order module
+	// knows no parcels, so nothing could answer "which order is this parcel
+	// for" until the assembling landed here (ADR 0001/0006).
+	fulfillingWorkflow, err := fulfillingwf.FromContainer(c)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeFlowSetupFailed,
+			"the fulfilling workflow could not be set up")
+	}
+
+	return c.Provide(fulfillingwf.InteropName, fulfillingwf.NewInterop(fulfillingWorkflow))
 }
 
 // registerPanel builds the admin panel and binds its paths.

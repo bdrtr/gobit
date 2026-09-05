@@ -30,6 +30,7 @@ import (
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/db"
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/link"
 	coreprovider "github.com/bdrtr/gobit/core/provider"
 	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment"
@@ -658,6 +659,10 @@ func TestModuleRegistersItsContainerSurfaces(t *testing.T) {
 
 	c := container.New(nil)
 	require.NoError(t, c.Provide("core.db", testPool))
+	// The module declares its link definitions in Register (ADR 0005), so it
+	// needs the link service as well. Handing it a real one rather than a stub
+	// is what makes the definition's SCHEMA part of what this test covers.
+	require.NoError(t, c.Provide("core.link", link.New(testPool, nil)))
 
 	mod := fulfillment.New()
 	require.NoError(t, mod.Register(ctx, c))
