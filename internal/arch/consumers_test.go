@@ -120,7 +120,7 @@ func scanProductionSource(t *testing.T) *sourceTree {
 		if _, err := os.Stat(absolute); err != nil {
 			t.Fatalf("the %q root was not found: %v", root, err)
 		}
-		for _, path := range goFiles(t, absolute) {
+		for _, path := range treeFiles(t, root) {
 			if strings.HasSuffix(path, "_test.go") {
 				continue
 			}

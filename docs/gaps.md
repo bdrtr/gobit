@@ -41,7 +41,7 @@ Four sequencing facts govern the whole list:
 
 | # | decision | what it blocks | section |
 | --- | --- | --- | --- |
-| A1 | ~~**Which packages become public**~~ **Answered 2026-09-05: ADR 0026.** Fourteen packages under `core/`, 7.8% of the codebase, no commerce model among them. Four audits enforce it | ~~the library transition~~ — the remaining half is the composition root, still a program | Importable core |
+| A1 | ~~**Which packages become public**~~ **Answered 2026-09-05: ADR 0026 + 0027.** Fourteen packages under `core/` plus a four-method facade at the module root; 7.8% of the codebase, no commerce model among them. Six audits enforce it, one of them by compiling an out-of-tree module | ~~the library transition~~ — done. An out-of-tree plugin is proved; an out-of-tree application is possible and not yet proved by an example | Importable core |
 | A2 | **What gobit is legally** — data controller, or a library whose embedder is the controller | every KVKK item; ADR 0025 points at the second answer, which changes the obligation from "implement consent" to "publish the hooks and the erasure contract" | Turkey-specific |
 | A3 | **May the customer pay a different amount than the merchant receives?** | installments (vade farki) AND multi-vendor commission. Today four guards including DB CHECKs forbid it | Turkey-specific, Commerce models |
 | A4 | **Invoice retention vs KVKK erasure** | all erasure work; unwritten, somebody deletes an invoice and puts a hole in the series ADR 0024 exists to prevent | Observability and security |
@@ -358,7 +358,7 @@ or a workflow, that composes the three.
    committed local fact whose downstream effect silently did not occur.
 
    The word "outbox" appears exactly once in the repository, as a hypothetical
-   in a comment (`cmd/server/migrate.go`).
+   in a comment (`internal/app/migrate.go`).
 
    What it would touch: core, as a table plus a publisher that writes the event
    in the SAME transaction as the business write and hands it to the bus
@@ -960,11 +960,13 @@ costed as that, not as features.
 
 ## Importable core, thin application — measured against the brief, 2026-09-05
 
-> **Acted on 2026-09-05.** The twelve packages an extension author needs were
-> promoted out of `internal/` to `core/` and the surface was fixed by ADR 0026.
-> The measurement below is what led to that decision; the part still true is the
-> composition root — `cmd/server` is a program, so an out-of-tree APPLICATION is
-> still not possible. An out-of-tree PLUGIN now is.
+> **Acted on 2026-09-05, and the measurement below is now HISTORY.** The twelve
+> packages an extension author needs were promoted out of `internal/` to
+> `core/` (ADR 0026), and the composition root moved out of `package main` to
+> `internal/app` behind a four-method facade at the module root (ADR 0027).
+> `cmd/server` is fifteen lines. An out-of-tree plugin is proved by compilation
+> in `examples/plugin`; an out-of-tree application is possible and the matching
+> example has not been written yet.
 
 The brief: ship the core as an IMPORTABLE Go module the way PocketBase does —
 `go get`, `app := New()`, bind hooks, compile one binary — with a thin starter
@@ -1003,7 +1005,7 @@ inventing; it needs relocating and naming.
 | `PaymentProvider`, `TaxCalculator`, … | provider registries resolved BY NAME, selection in config, unknown name stops the startup | `core/provider`, per-module registries |
 | hooks over domain events | an event bus with `Subscribe`, domain events, and an outbox so a promised event cannot be lost (ADR 0023) | `core/eventbus` |
 | router access | chi; every module registers its own full paths, and the panel proves a fourth tree can mount its own | `core/http`, `Module.Routes` |
-| merged migrations | the registry already merges per-owner migration sources and refuses two owners claiming one table | `core/module`, `cmd/server/migrate.go` |
+| merged migrations | the registry already merges per-owner migration sources and refuses two owners claiming one table | `core/module`, `internal/app/migrate.go` |
 | a project can add its own module | `Registry.Add(mod Module)` — the exact method the brief needs | `core/module` |
 | `Product.Metadata` jsonb | present on product, variant, taxonomy, order, cart, customer, payment, invoice, fulfillment, tax and auth | eleven modules |
 | compile-time plugin registration | a plugin host with an Install phase, selected by configuration | `core/plugin`, `plugins/` |
@@ -1043,7 +1045,7 @@ the order the brief implies:
 
 1. An `app` package with the lifecycle `cmd/server` already performs: build the
    registry, install plugins, bootstrap, serve. Today that logic is 1,200 lines
-   of `cmd/server/setup.go` that no external program can call.
+   of `internal/app/setup.go` that no external program can call.
 2. The module contract (`Module`, `Registry.Add`) so a project can add a module
    of its own.
 3. The provider contracts, so `ecom-iyzico` can exist out of tree.

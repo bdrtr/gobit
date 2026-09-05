@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -167,7 +167,7 @@ func warnIfAJobOutlivesShutdown(
 // night?" — and it is a subcommand rather than an endpoint because it is asked
 // from a terminal during an incident, when the admin API may be the thing that
 // is broken.
-func runJobs(args []string, out io.Writer) error {
+func runJobs(args []string, out io.Writer, opts Options) error {
 	if len(args) > 0 {
 		return coreerrors.Invalid(job.CodeUnknown, "jobs takes no arguments")
 	}
@@ -194,7 +194,7 @@ func runJobs(args []string, out io.Writer) error {
 	//
 	// Nothing is started here: opening builds and bootstraps, and the runner
 	// lives in serve (see [startJobs]).
-	app, closeApp, err := openApplication(ctx, cfg, log, errorreport.NewSink())
+	app, closeApp, err := openApplication(ctx, cfg, log, errorreport.NewSink(), opts)
 	if err != nil {
 		return err
 	}

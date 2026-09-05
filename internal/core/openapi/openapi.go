@@ -214,7 +214,7 @@ func New(title, version string) *Doc {
 //
 // # Who calls it
 //
-// The composition root (cmd/server) calls it through a type assertion over the
+// The composition root (internal/app) calls it through a type assertion over the
 // module list. The core cannot: [Doc] does not know the modules (Principle 2.4)
 // and the only place that sees the module list is the setup.
 type Describer interface {

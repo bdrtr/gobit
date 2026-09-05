@@ -23,7 +23,7 @@ decision's foundation rather than a footnote.**
   (`promotion/service/compute.go`, `campaignUsable(candidate, in.At)`), so a job
   that flipped a status would change nothing observable.
 - Abandoned-cart recovery is not missing. It is **refused**, in writing, in four
-  places: ADR 0017, `cmd/server/recover.go`, `internal/core/workflow/workflow.go`
+  places: ADR 0017, `internal/app/recover.go`, `internal/core/workflow/workflow.go`
   and the README. The refusal is precise — recovery runs COMPENSATIONS, which
   are side effects, and a scheduled job would decide on its own, unwatched, to
   undo work.

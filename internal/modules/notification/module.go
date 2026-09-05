@@ -20,7 +20,7 @@
 // Which provider will be used is chosen by NOTIFICATION_PROVIDER. Whether the
 // name is REALLY registered cannot be verified here — plugin providers are
 // registered AFTER the modules come up — and the check is therefore at the
-// composition root (cmd/server): an unknown name STOPS the startup.
+// composition root (internal/app): an unknown name STOPS the startup.
 //
 // # The "order.placed" subscriber
 //

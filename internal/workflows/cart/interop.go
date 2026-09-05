@@ -8,7 +8,7 @@ import (
 // InteropName is the name of the cart workflows in the container (ADR 0001/0006).
 //
 // This package declares the name but the COMPOSITION ROOT performs the
-// registration (cmd/server): the workflows resolve their own dependencies from the
+// registration (internal/app): the workflows resolve their own dependencies from the
 // container as well and can only be built AFTER every module has Registered — had
 // they been built inside some module's Register they would have been looking for
 // services that do not exist yet.

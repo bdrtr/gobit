@@ -104,7 +104,7 @@ type Options struct {
 	// Whether the provider is registered is NOT validated here and cannot be:
 	// the providers brought by the plugins are registered AFTER the modules
 	// come up (see the two phases of coreplugin.Registry). The check for once
-	// the whole setup has finished is in the composition root (cmd/server).
+	// the whole setup has finished is in the composition root (internal/app).
 	ProviderID string
 	// MaxUploadBytes is the maximum size of a single upload; it is required.
 	MaxUploadBytes int64

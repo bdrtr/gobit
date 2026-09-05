@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"bytes"
@@ -39,7 +39,7 @@ func migrateConfig() config.Config {
 // listen — which is what the smoke scenario does, for a couple of them, at the
 // cost of a container and a compiled binary. What cannot be covered that way is
 // the invocation NOBODY THOUGHT OF, and that is precisely the one that will be
-// added later: a new verb whose branch falls through to serve, or a serve()
+// added later: a new verb whose branch falls through to serve, or a serve
 // call moved into a helper "just to tidy up". Reading the source answers for
 // every argument at once.
 //
@@ -171,7 +171,7 @@ func TestAnUnknownArgumentIsRefusedBeforeTheConfigurationIsRead(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			var out bytes.Buffer
 
-			err := run(args, &out)
+			err := Main(args, &out, Options{})
 
 			require.Error(t, err, "%v was accepted; the server must never be the fallback", args)
 			assert.NotContains(t, err.Error(), "DATABASE_URL",
@@ -188,7 +188,7 @@ func TestHelpPrintsTheUsageAndSucceeds(t *testing.T) {
 		t.Run(arg, func(t *testing.T) {
 			var out bytes.Buffer
 
-			require.NoError(t, run([]string{arg}, &out))
+			require.NoError(t, Main([]string{arg}, &out, Options{}))
 			assert.Contains(t, out.String(), "start the HTTP server")
 		})
 	}
@@ -204,7 +204,7 @@ func TestHelpPrintsTheUsageAndSucceeds(t *testing.T) {
 func TestUsageNamesEveryVerbTheDispatchAccepts(t *testing.T) {
 	t.Parallel()
 
-	usage := usageText()
+	usage := usageText("dev")
 
 	for _, verb := range []string{cmdHelp, cmdMigrate, cmdStatus, cmdDown, stuckCommand, flagSteps, flagConfirm} {
 		assert.Contains(t, usage, verb, "the usage text does not mention %q", verb)
@@ -358,7 +358,7 @@ func TestMigrationsTableSuffixMatchesTheDatabasePackage(t *testing.T) {
 func TestMigrationSourcesCoverTheCoreAndEveryModule(t *testing.T) {
 	t.Parallel()
 
-	sources, err := migrationSources(t.Context(), migrateConfig())
+	sources, err := migrationSources(t.Context(), migrateConfig(), Options{})
 	require.NoError(t, err)
 
 	owners := ownerNames(sources)
@@ -398,13 +398,13 @@ func TestMigrationSourcesIncludeAModuleAPluginBrings(t *testing.T) {
 	cfg := migrateConfig()
 	cfg.Plugins = []string{searchpg.Name}
 
-	sources, err := migrationSources(t.Context(), cfg)
+	sources, err := migrationSources(t.Context(), cfg, Options{})
 	require.NoError(t, err)
 
 	assert.Contains(t, ownerNames(sources), searchpg.ModuleName,
 		"the module the %q plugin brings is missing from the migrate surface", searchpg.Name)
 
-	withoutPlugin, err := migrationSources(t.Context(), migrateConfig())
+	withoutPlugin, err := migrationSources(t.Context(), migrateConfig(), Options{})
 	require.NoError(t, err)
 	assert.NotContains(t, ownerNames(withoutPlugin), searchpg.ModuleName,
 		"the plugin's module appears even when the plugin is NOT installed; the list is "+
@@ -422,7 +422,7 @@ func TestMigrationSourcesRefuseAnUnknownPlugin(t *testing.T) {
 	cfg := migrateConfig()
 	cfg.Plugins = []string{"no-such-plugin"}
 
-	_, err := migrationSources(t.Context(), cfg)
+	_, err := migrationSources(t.Context(), cfg, Options{})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no-such-plugin")
@@ -435,7 +435,7 @@ func TestAnUnknownOwnerIsNamedWithTheKnownOnes(t *testing.T) {
 	sources := []migrationSource{{owner: "cart"}, {owner: "order"}}
 
 	var out bytes.Buffer
-	err := migrateDown(t.Context(), &out, "postgres://unused", sources, []string{"crat"})
+	err := migrateDown(t.Context(), &out, "postgres://unused", sources, []string{"crat"}, "dev")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "crat")
@@ -492,6 +492,6 @@ func TestAReportThatCouldNotBeWrittenIsAnError(t *testing.T) {
 
 	// The dispatch path too: `help` writes nothing else, so a swallowed write
 	// there is a command that produces no output and reports success.
-	require.Error(t, run([]string{cmdHelp}, brokenWriter{}),
+	require.Error(t, Main([]string{cmdHelp}, brokenWriter{}, Options{}),
 		"help exited successfully having printed nothing")
 }

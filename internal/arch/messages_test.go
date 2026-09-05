@@ -176,7 +176,7 @@ func productionSources(t *testing.T) string {
 
 	var b strings.Builder
 	for _, root := range productionTrees {
-		for _, path := range productionFiles(t, filepath.Join(repoRoot, root)) {
+		for _, path := range treeProductionFiles(t, root) {
 			rel, err := filepath.Rel(repoRoot, path)
 			require.NoError(t, err)
 			if strings.HasPrefix(filepath.ToSlash(rel), smokeDir+"/") {

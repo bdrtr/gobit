@@ -43,7 +43,7 @@ import (
 //
 // In production, plugins are installed BEFORE module bootstrap and the module a
 // plugin brings is added to the SAME registry as the core modules
-// (see cmd/server/main.go: Install -> Bootstrap -> Start -> MountRoutes).
+// (see internal/app/app.go: Install -> Bootstrap -> Start -> MountRoutes).
 // Moving the installation into the test would require bringing that module up
 // with a SECOND [module.Registry] — a wiring that does not exist in production.
 // The test would then prove not how the plugin is installed in production, but

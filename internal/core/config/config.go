@@ -99,7 +99,7 @@ const DefaultRedisKeyPrefix = "gobit"
 // out-of-the-box provider (logonly.ID), but it CANNOT BE BOUND to that package:
 // the core cannot import modules (Principle 2.4). Should they drift, the
 // installation tries to start with a provider name that is not in the registry and
-// cmd/server stops startup — it does not stay silent.
+// internal/app stops startup — it does not stay silent.
 //
 // It is EXPORTED so its agreement with the envDefault tag can be pinned by a test.
 const DefaultNotificationProvider = "log"
@@ -361,7 +361,7 @@ type Config struct {
 	// "Installed" is a condition validation CANNOT SEE: whether the database has any
 	// users at all cannot be known from here. The check therefore belongs to the seed
 	// step, and there a fresh database plus these two variables empty STOPS startup in
-	// shared environments; the reasoning is in cmd/server's
+	// shared environments; the reasoning is in internal/app's
 	// reportUnmanageableInstallation godoc.
 	AdminBootstrapEmail string `env:"ADMIN_BOOTSTRAP_EMAIL"`
 	// AdminBootstrapPassword is the password of the first admin user.
@@ -371,7 +371,7 @@ type Config struct {
 	// [MinBootstrapPasswordLen] characters.
 	//
 	// Because the seed step runs only while there are no users at all (see
-	// cmd/server's seedAdmin), forgetting this value in the environment does NOT
+	// internal/app's seedAdmin), forgetting this value in the environment does NOT
 	// CHANGE the password of an existing administrator.
 	AdminBootstrapPassword string `env:"ADMIN_BOOTSTRAP_PASSWORD"`
 	// EventBus is the backend of the event bus: inmemory | redis.
@@ -380,7 +380,7 @@ type Config struct {
 	// process crashes or shutdown does not finish within [Config.ShutdownTimeout] the
 	// undelivered events vanish without a trace — the order was placed, the
 	// confirmation notification never went out. In shared environments this risk is
-	// WARNED about at startup (see cmd/server's warnAboutEventBus); it is not stopped,
+	// WARNED about at startup (see internal/app's warnAboutEventBus); it is not stopped,
 	// because on a single-instance staging installation inmemory is still a legitimate
 	// choice and the same concession is made with GUARD_BACKEND=memory.
 	//
@@ -415,7 +415,7 @@ type Config struct {
 	// Which names are VALID config does not and cannot know: providers come from
 	// plugins and the plugin list is fixed at compile time (the same distinction holds
 	// for [Config.Plugins]). Only the FORM is validated here; whether the name is
-	// really registered is checked by the composition root (cmd/server) after all the
+	// really registered is checked by the composition root (internal/app) after all the
 	// plugins are loaded, and an unknown name STOPS startup. Falling back to the
 	// default quietly would produce an installation that believes it sends e-mail in
 	// production but reaches no customer at all.
@@ -1117,7 +1117,7 @@ func validPrefixRune(r rune) bool {
 // Empty and repeated names are REJECTED: a value like "PLUGINS=stripe,,stripe" is
 // almost always a mistake in a hand-edited environment file, and a repeated name
 // would produce a collision in the plugin registry anyway. Which names are VALID
-// config does not know; the side building the application (cmd/server) knows, and
+// config does not know; the side building the application (internal/app) knows, and
 // it rejects an unknown name there.
 func (c Config) validatePlugins() error {
 	gorulen := make(map[string]struct{}, len(c.Plugins))
@@ -1209,13 +1209,13 @@ func (c Config) validateFile() error {
 // unable to come up without giving an environment variable it gets nothing for.
 // The same concession was made on GUARD_BACKEND: the in-memory guard is BROKEN in
 // a multi-instance deployment but does not stop startup, a warning is logged (see
-// cmd/server's guardStack). The decision here is consistent with it — and the
+// internal/app's guardStack). The decision here is consistent with it — and the
 // reason is shared: it is not certain that the configuration is WRONG, only that it
 // is RISKY. A temporary root can be a deliberate choice in an installation that
 // does not want the files to be durable (a preview environment, a one-off demo).
 //
 // The reason the decision sits in config is that the definition of "risky" is here:
-// the side writing the warning (cmd/server) only calls.
+// the side writing the warning (internal/app) only calls.
 func (c Config) LocalFileRootIsDurable() bool {
 	if c.FileProvider != DefaultFileProvider {
 		return true
@@ -1381,7 +1381,7 @@ func (c Config) validateAdminBootstrap() error {
 // While the limit is OFF (RATE_LIMIT_PER_MINUTE <= 0) the question is moot and it
 // returns true: warning about the key of a limiter that was never installed would
 // send the operator to an unrelated setting. That situation has its own separate
-// report (see cmd/server's warnAboutRateLimit).
+// report (see internal/app's warnAboutRateLimit).
 //
 // # Why the default did NOT change and why startup does NOT stop
 //
@@ -1422,7 +1422,7 @@ func (c Config) IsProduction() bool { return c.AppEnv == "production" }
 // environments shared by more than one developer and more than one SERVER INSTANCE.
 //
 // The concrete fault: if JWT_SECRET is left empty while staging runs multi-instance,
-// every instance produces its own random secret at startup (see cmd/server's
+// every instance produces its own random secret at startup (see internal/app's
 // jwtSecret); a token taken from instance A returns a 401 on instance B. Because it
 // depends on the load balancer's distribution the fault is INTERMITTENT and hard to
 // diagnose — it is not even of the class that has to be caught before going to

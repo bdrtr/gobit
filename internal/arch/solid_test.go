@@ -170,8 +170,7 @@ func resolveCalls(t *testing.T) []resolveCall {
 	var calls []resolveCall
 
 	for _, root := range productionTrees {
-		abs := filepath.Join(repoRoot, root)
-		for _, path := range productionFiles(t, abs) {
+		for _, path := range treeProductionFiles(t, root) {
 			fset := token.NewFileSet()
 			file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 			require.NoError(t, err, "%s could not be parsed", path)
@@ -554,7 +553,7 @@ func TestAdminSurfaceHasOneAudience(t *testing.T) {
 	mentions := 0
 
 	for _, root := range productionTrees {
-		for _, path := range productionFiles(t, filepath.Join(repoRoot, root)) {
+		for _, path := range treeProductionFiles(t, root) {
 			rel, err := filepath.Rel(repoRoot, path)
 			require.NoError(t, err)
 			rel = filepath.ToSlash(rel)

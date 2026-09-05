@@ -19,7 +19,7 @@
 //  4. make migrate-up was still holding back a feature from nine phases earlier.
 //
 // What they have in common is that none of them lives INSIDE a package: all four sit
-// in cmd/server's wiring, in the startup sequence, or in process behavior.
+// in internal/app's wiring, in the startup sequence, or in process behavior.
 //
 // internal/e2e cannot see them, and should not be expected to: it drives the router
 // with httptest, which means it SKIPS main.go's wiring, the migrations at startup,

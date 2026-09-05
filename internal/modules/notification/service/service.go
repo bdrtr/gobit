@@ -108,7 +108,7 @@ type Options struct {
 	// the providers brought in by plugins are registered AFTER the modules
 	// come up (see the two phases of coreplugin.Registry). The check that runs
 	// once the whole setup is finished lives at the composition root
-	// (cmd/server).
+	// (internal/app).
 	ProviderID string
 	// Contacts is the surface the order contact information is read from; it
 	// is required.

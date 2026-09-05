@@ -40,7 +40,7 @@ import (
 // # Why internal/e2e is not enough
 //
 // internal/e2e/storefront_flow_test.go drives the same chain over HTTP but wires
-// the router itself with httptest: it SKIPS cmd/server's wiring, the startup order
+// the router itself with httptest: it SKIPS internal/app's wiring, the startup order
 // and the real process. Putting the setup behind a flag would not have failed that
 // test — because that test sets the workflows up on its own ground. The process
 // here, by contrast, runs the `go build` output, so main() is what decides.

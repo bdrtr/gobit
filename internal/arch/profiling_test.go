@@ -48,7 +48,7 @@ func TestTheDefaultServeMuxIsNeverUsed(t *testing.T) {
 	t.Parallel()
 
 	for _, tree := range productionTrees {
-		for _, file := range goFiles(t, filepath.Join(repoRoot, tree)) {
+		for _, file := range treeFiles(t, tree) {
 			parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.SkipObjectResolution)
 			if err != nil {
 				t.Fatalf("%s could not be parsed: %v", file, err)

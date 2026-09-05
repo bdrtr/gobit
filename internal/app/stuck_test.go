@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -251,7 +251,7 @@ func TestStuckHelpIsNotAFailure(t *testing.T) {
 	t.Parallel()
 
 	out := &strings.Builder{}
-	require.NoError(t, runStuck([]string{"-h"}, out))
+	require.NoError(t, runStuck([]string{"-h"}, out, Options{}))
 	assert.Empty(t, out.String(), "usage belongs on stderr; stdout is the listing")
 }
 
@@ -267,11 +267,11 @@ func TestStuckIsRoutedByTheDispatcherAndUnknownVerbsFail(t *testing.T) {
 
 	// A flag only the stuck flag set knows about proves the routing without
 	// opening a database: the parse fails before any configuration is read.
-	err := run([]string{stuckCommand, "-not-a-flag"}, io.Discard)
+	err := Main([]string{stuckCommand, "-not-a-flag"}, io.Discard, Options{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not-a-flag")
 
-	err = run([]string{"stcuk"}, io.Discard)
+	err = Main([]string{"stcuk"}, io.Discard, Options{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "stcuk")
 }

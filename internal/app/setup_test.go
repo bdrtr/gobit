@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -289,7 +289,7 @@ func TestDBPoolCanBeTurnedDown(t *testing.T) {
 //
 // The rule is stated where it can be checked: in this package, the second
 // argument of db.New is a dbConfig call. The scan reads the SOURCE rather than
-// running main, because run() opens a database and this must stay a unit test.
+// running Main, because it opens a database and this must stay a unit test.
 func TestThePoolIsOpenedThroughTheConfiguration(t *testing.T) {
 	t.Parallel()
 

@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -74,7 +74,7 @@ type stuckLister interface {
 // server watches: an operator who hits Ctrl-C during an incident expects the
 // query to stop, and a background context would leave it running until the
 // database answered.
-func runStuck(args []string, out io.Writer) error {
+func runStuck(args []string, out io.Writer, opts Options) error {
 	filter, err := parseStuckFlags(args)
 	switch {
 	case errors.Is(err, flag.ErrHelp):

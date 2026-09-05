@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -24,7 +24,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
 )
 
-// The verbs the binary answers to. They are constants because [run] and
+// The verbs the binary answers to. They are constants because [Main] and
 // [usageText] both spell them and a usage text naming a verb the dispatch does
 // not have is worse than no usage text at all.
 const (
@@ -117,13 +117,16 @@ func coreMigrationSources() []migrationSource {
 // server that is starting; printing them around a status table would mix an
 // operator's report with a startup diary, and the JSON handler would mangle the
 // table besides.
-func migrationSources(ctx context.Context, cfg config.Config) ([]migrationSource, error) {
+func migrationSources(ctx context.Context, cfg config.Config,
+	opts Options,
+) ([]migrationSource, error) {
 	log := slog.New(slog.DiscardHandler)
 
 	registry := module.NewRegistry(log, nil)
-	registerModules(registry, cfg, log)
+	registerModules(registry, cfg, log, opts.Modules)
 
-	if _, _, err := installPlugins(ctx, cfg, container.New(log), registry, nil, log); err != nil {
+	if _, _, err := installPlugins(ctx, cfg, container.New(log), registry, nil, log,
+		opts.Plugins); err != nil {
 		return nil, err
 	}
 
@@ -147,13 +150,13 @@ func migrationSources(ctx context.Context, cfg config.Config) ([]migrationSource
 
 // runMigrate dispatches the migrate verbs.
 //
-// It loads the configuration itself rather than taking it from [run]: `gobit
+// It loads the configuration itself rather than taking it from [Main]: `gobit
 // help` has to work in a shell with no environment at all, and an unknown verb
 // must fail on the ARGUMENT — an operator who typed `migrate stauts` is owed
 // "unknown migrate command", not a complaint about DATABASE_URL.
-func runMigrate(args []string, out io.Writer) error {
+func runMigrate(args []string, out io.Writer, opts Options) error {
 	if len(args) == 0 {
-		if err := writeReport(out, usageText()); err != nil {
+		if err := writeReport(out, usageText(opts.version())); err != nil {
 			return err
 		}
 
@@ -162,7 +165,7 @@ func runMigrate(args []string, out io.Writer) error {
 
 	verb, rest := args[0], args[1:]
 	if verb != cmdStatus && verb != cmdDown {
-		if err := writeReport(out, usageText()); err != nil {
+		if err := writeReport(out, usageText(opts.version())); err != nil {
 			return err
 		}
 
@@ -195,7 +198,7 @@ func runMigrate(args []string, out io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	sources, err := migrationSources(ctx, cfg)
+	sources, err := migrationSources(ctx, cfg, opts)
 	if err != nil {
 		return err
 	}
@@ -209,7 +212,7 @@ func runMigrate(args []string, out io.Writer) error {
 		return migrateStatus(ctx, out, cfg.DatabaseURL, sources)
 	}
 
-	return migrateDown(ctx, out, cfg.DatabaseURL, sources, rest)
+	return migrateDown(ctx, out, cfg.DatabaseURL, sources, rest, opts.version())
 }
 
 // ownerState is one owner's line in the status report.
@@ -449,10 +452,11 @@ func migrateDown(
 	databaseURL string,
 	sources []migrationSource,
 	args []string,
+	version string,
 ) error {
 	owner, flags, err := parseDownArgs(args)
 	if err != nil {
-		if writeErr := writeReport(out, usageText()); writeErr != nil {
+		if writeErr := writeReport(out, usageText(version)); writeErr != nil {
 			return writeErr
 		}
 
@@ -658,7 +662,7 @@ func pluralOwners(n int) string {
 // on, so a verb cannot be renamed without the help text following. The one
 // thing spelled out in prose is the sentence that matters most and cannot be
 // derived: the server starts with NO arguments.
-func usageText() string {
+func usageText(version string) string {
 	return fmt.Sprintf(`%s %s — headless commerce, one binary.
 
 Usage:

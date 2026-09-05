@@ -3,7 +3,7 @@
 // This file needs a real PostgreSQL and is only compiled with
 // `-tags=integration` (`make test-integration`), so `make test` stays fast and
 // Docker-free.
-package main
+package app
 
 import (
 	"bytes"
@@ -118,7 +118,7 @@ func TestStatusReportsEveryOwnerOnAFreshDatabase(t *testing.T) {
 		"the fresh database already carries a version table; the measurement below "+
 			"would prove nothing")
 
-	sources, err := migrationSources(t.Context(), migrateConfig())
+	sources, err := migrationSources(t.Context(), migrateConfig(), Options{})
 	require.NoError(t, err)
 
 	var out bytes.Buffer
@@ -180,7 +180,7 @@ func TestDownWithoutConfirmationChangesNOTHING(t *testing.T) {
 	require.Positive(t, before.version)
 
 	var out bytes.Buffer
-	err = migrateDown(t.Context(), &out, dsn, sources, []string{"cart"})
+	err = migrateDown(t.Context(), &out, dsn, sources, []string{"cart"}, "dev")
 
 	require.Error(t, err, "an unconfirmed rollback must not report success")
 	assert.Contains(t, err.Error(), "-"+flagConfirm+" cart",
@@ -212,7 +212,7 @@ func TestAConfirmationForAnotherOwnerIsNotAConfirmation(t *testing.T) {
 
 	var out bytes.Buffer
 	err = migrateDown(t.Context(), &out, dsn, sources,
-		[]string{"cart", "-" + flagConfirm, "order"})
+		[]string{"cart", "-" + flagConfirm, "order"}, "dev")
 
 	require.Error(t, err)
 
@@ -239,7 +239,7 @@ func TestAConfirmedRollbackMovesTheLedgerAndReportsWhatItReads(t *testing.T) {
 
 	var out bytes.Buffer
 	require.NoError(t, migrateDown(t.Context(), &out, dsn, sources,
-		[]string{"cart", "-" + flagSteps, "1", "-" + flagConfirm, "cart"}))
+		[]string{"cart", "-" + flagSteps, "1", "-" + flagConfirm, "cart"}, "dev"))
 
 	after, err := readOwnerState(t.Context(), dsn, "cart")
 	require.NoError(t, err)
@@ -270,7 +270,7 @@ func TestStepsFlagReachesTheRollback(t *testing.T) {
 
 	var out bytes.Buffer
 	require.NoError(t, migrateDown(t.Context(), &out, dsn, sources,
-		[]string{"region", "-" + flagSteps, "2", "-" + flagConfirm, "region"}))
+		[]string{"region", "-" + flagSteps, "2", "-" + flagConfirm, "region"}, "dev"))
 
 	after, err := readOwnerState(t.Context(), dsn, "region")
 	require.NoError(t, err)
@@ -298,7 +298,7 @@ func TestDownRollsBackTheOwnerThatWasNAMED(t *testing.T) {
 
 	var out bytes.Buffer
 	require.NoError(t, migrateDown(t.Context(), &out, dsn, sources,
-		[]string{"cart", "-" + flagSteps, "1", "-" + flagConfirm, "cart"}))
+		[]string{"cart", "-" + flagSteps, "1", "-" + flagConfirm, "cart"}, "dev"))
 
 	regionState, err := readOwnerState(t.Context(), dsn, "region")
 	require.NoError(t, err)
@@ -328,7 +328,7 @@ func TestRollingBackToZeroLeavesNothingToRollBack(t *testing.T) {
 
 	var out bytes.Buffer
 	require.NoError(t, migrateDown(t.Context(), &out, dsn, sources,
-		[]string{"cart", "-" + flagSteps, versionPattern(before.version), "-" + flagConfirm, "cart"}))
+		[]string{"cart", "-" + flagSteps, versionPattern(before.version), "-" + flagConfirm, "cart"}, "dev"))
 
 	after, err := readOwnerState(t.Context(), dsn, "cart")
 	require.NoError(t, err)
@@ -339,7 +339,7 @@ func TestRollingBackToZeroLeavesNothingToRollBack(t *testing.T) {
 
 	out.Reset()
 	require.NoError(t, migrateDown(t.Context(), &out, dsn, sources,
-		[]string{"cart", "-" + flagConfirm, "cart"}),
+		[]string{"cart", "-" + flagConfirm, "cart"}, "dev"),
 		"a rollback with nothing to roll back is the documented normal outcome")
 	assert.Contains(t, out.String(), "nothing to roll back")
 }
@@ -387,7 +387,7 @@ func TestADirtyLedgerIsRefusedEvenWithAConfirmation(t *testing.T) {
 
 	var out bytes.Buffer
 	err = migrateDown(t.Context(), &out, dsn, sources,
-		[]string{"cart", "-" + flagConfirm, "cart"})
+		[]string{"cart", "-" + flagConfirm, "cart"}, "dev")
 
 	require.Error(t, err, "a dirty ledger was rolled back on a confirmation")
 	assert.Contains(t, err.Error(), migrationsTableSuffix,

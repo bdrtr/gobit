@@ -148,7 +148,7 @@ func b2bVerifySchema(t *testing.T, dsn string) {
 // b2b was added in Phase 10 and has never run ON THE REAL BINARY. internal/e2e
 // proves the module's flow but builds the services ITSELF: it skips the
 // registry.Add line in the composition root, the migration order at startup,
-// the guard stack and the real network. cmd/server's own doc comment states the
+// the guard stack and the real network. internal/app's own doc comment states the
 // price of that gap: "a module NOT ADDED here does not EXIST in any
 // installation" — and b2b's spending limit disappeared in exactly this way once.
 //

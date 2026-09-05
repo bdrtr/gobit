@@ -43,7 +43,7 @@ const concurrentInstanceCount = 3
 // conflict is REALLY produced: what produces the real race is three separate
 // PROCESSES hitting the same PostgreSQL uniqueness constraint at the same time.
 // This test sets up the race itself; if the fix is reverted (the
-// errors.IsConflict branch in cmd/server/setup.go) two instances fail to start
+// errors.IsConflict branch in internal/app/setup.go) two instances fail to start
 // and the test fails.
 func TestConcurrentStartupCreatesSingleAdmin(t *testing.T) {
 	dsn := scenarioDatabase(t)

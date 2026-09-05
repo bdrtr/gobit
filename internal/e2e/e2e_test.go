@@ -47,7 +47,7 @@
 // # Setup
 //
 // The tests share a single PostgreSQL container (testcontainers) and the setup
-// FOLLOWS the order in cmd/server/main.go: the core services are registered in
+// FOLLOWS the order in internal/app/app.go: the core services are registered in
 // the container by name (core.db, core.link, core.query, core.eventbus,
 // core.workflow), the core migrations are applied, the modules are brought up
 // with [module.Registry] and the workflows are built from surfaces resolved BY
@@ -153,7 +153,7 @@ const postgresImage = "postgres:16-alpine"
 
 // The names of the core services in the container.
 //
-// The names are THE SAME as the ones in cmd/server/main.go and repeating them is
+// The names are THE SAME as the ones in internal/app/app.go and repeating them is
 // deliberate: the cart workflows resolve their dependencies not at compile time
 // but with exactly these strings (ADR 0006). A typo here has the same effect as a
 // typo in production, and the test must see it.
@@ -281,7 +281,7 @@ var (
 	// The router has to be built BEFORE the modules come up (chi refuses r.Use
 	// being called after the routes), while the authenticator is born when the
 	// auth module registers. Production has the same gap and closes it with the
-	// same type (see cmd/server/main.go).
+	// same type (see internal/app/app.go).
 	testAuthn = &corehttp.DeferredAuthenticator{}
 	// testRouter is the router that carries the modules' routes.
 	//
@@ -522,7 +522,7 @@ func runWithPostgres(m *testing.M) int {
 // setUpHarness prepares the container, the modules, the workflows and the region
 // fixtures.
 //
-// The order is THE SAME as cmd/server/main.go's and it has to be: the modules
+// The order is THE SAME as internal/app/app.go's and it has to be: the modules
 // resolve core.db, core.link and core.query during Register, so those three must
 // be registered BEFORE Bootstrap. If the order changes, a setup that would blow
 // up in production too blows up here — which is what we want.
@@ -579,7 +579,7 @@ func setUpHarness(ctx context.Context) error {
 	registry := module.NewRegistry(nil, func(ctx context.Context, src fs.FS, owner string) error {
 		return db.Migrate(ctx, testDSN, src, owner)
 	})
-	// The module set and its order are the same as cmd/server/main.go's. The whole
+	// The module set and its order are the same as internal/app/app.go's. The whole
 	// setup must be exercised: pruning a module for the test would hide from the
 	// test a conflict that production would only see at startup.
 	registry.Add(productmod.New(productmod.Options{}))

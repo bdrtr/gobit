@@ -1,6 +1,7 @@
 package arch_test
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
@@ -26,6 +27,7 @@ import (
 // provider, to register a module, to write a plugin, or to boot the server.
 // Everything else stays under internal/, where it can still change.
 var publishedPackages = []string{
+	facadePackage,
 	"core/audit",
 	"core/container",
 	"core/db",
@@ -44,6 +46,13 @@ var publishedPackages = []string{
 
 // publishedTree is the directory the published packages live in.
 const publishedTree = "core"
+
+// facadePackage is the package at the repository root (ADR 0027).
+//
+// It is the one published package that is not a contract: it names the modules,
+// the plugins and the lifecycle to assemble an installation, and an outside
+// program uses it without ever naming any of them.
+const facadePackage = "."
 
 // TestThePublishedPackagesAreTheDeclaredOnes keeps publishing deliberate.
 //
@@ -76,6 +85,11 @@ func TestThePublishedPackagesAreTheDeclaredOnes(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err, "the published tree could not be walked")
+
+	// The facade is not under the published tree; it IS the repository root.
+	if holdsProductionGo(t, repoRoot) {
+		found[facadePackage] = true
+	}
 
 	for pkg := range found {
 		require.True(t, declared[pkg],
@@ -113,6 +127,15 @@ func TestNoPublishedPackageImportsAnInternalOne(t *testing.T) {
 
 	checked := 0
 	for _, pkg := range publishedPackages {
+		// The facade is the exemption, and it is the only one. A composition
+		// root exists to name what it assembles: it cannot register the
+		// commerce modules without importing them, and they are internal by
+		// the decision this rule protects. What it may not do is EXPOSE any of
+		// them, which is the rule that actually matters here — see
+		// [TestTheFacadeExposesNothingInternal], which enforces it.
+		if pkg == facadePackage {
+			continue
+		}
 		dir := filepath.Join(repoRoot, pkg)
 		entries, err := os.ReadDir(dir)
 		require.NoError(t, err, "%s could not be read", pkg)
@@ -260,4 +283,195 @@ func TestTheOutOfTreePluginCompiles(t *testing.T) {
 			"contract, a helper that was never exported, a signature that changed. Fix "+
 			"the surface; do not fix the example by reaching further in, because it "+
 			"cannot reach further in.", output)
+}
+
+// TestTheFacadeExposesNothingInternal is the self-containment rule for the one
+// package that cannot obey the simple version of it.
+//
+// Every other published package is checked by its IMPORTS, which is a stricter
+// line than the defect requires and a cheap one to hold. The facade cannot hold
+// it: assembling an installation means naming the modules being assembled, and
+// those are internal on purpose.
+//
+// So the facade is checked by its SIGNATURES instead, which is the rule the
+// import check was standing in for all along. An internal type may be mentioned
+// inside a function body — an outside program never has to write that type
+// there. It may not appear in a parameter, a result, a receiver, the type of an
+// exported variable, or the type of an EXPORTED FIELD, because each of those is
+// a place the caller has to be able to name.
+func TestTheFacadeExposesNothingInternal(t *testing.T) {
+	t.Parallel()
+
+	internalPrefix := modulePath + "/internal/"
+	files := treeFiles(t, facadePackage)
+
+	checkedFiles, checkedDecls := 0, 0
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		fset := token.NewFileSet()
+		parsed, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+		require.NoError(t, err, "%s could not be parsed", path)
+		checkedFiles++
+
+		aliases := map[string]string{}
+		for _, spec := range parsed.Imports {
+			imported, quoteErr := strconv.Unquote(spec.Path.Value)
+			require.NoError(t, quoteErr, "%s has an unreadable import path", path)
+			if !strings.HasPrefix(imported, internalPrefix) {
+				continue
+			}
+			alias := imported[strings.LastIndex(imported, "/")+1:]
+			if spec.Name != nil {
+				alias = spec.Name.Name
+			}
+			aliases[alias] = imported
+		}
+		if len(aliases) == 0 {
+			continue
+		}
+
+		for _, decl := range parsed.Decls {
+			for _, node := range exportedSignatures(decl) {
+				checkedDecls++
+				name, imported := internalUse(node, aliases)
+				require.Empty(t, imported,
+					"%s exposes %s through %s in an exported signature.\n"+
+						"The facade may NAME an internal package — it has to, to assemble "+
+						"the installation — but it may not put one where a caller has to "+
+						"write the type. An outside program cannot declare a variable of "+
+						"that type, implement that interface, or satisfy that contract, and "+
+						"the wall it hits is in its own code with no explanation on this "+
+						"side.", filepath.Base(path), imported, name)
+			}
+		}
+	}
+
+	require.Positive(t, checkedFiles,
+		"no file was read at the repository root, so the facade was never checked.\n"+
+			"If the facade moved, this audit is passing on an empty set.")
+	require.Positive(t, checkedDecls,
+		"the facade declares nothing exported, or it imports nothing internal.\n"+
+			"Either way this audit proved nothing: it is written for a package that "+
+			"names internal packages AND publishes an API over them.")
+}
+
+// exportedSignatures returns the parts of a declaration a caller has to name.
+//
+// Function BODIES are deliberately left out: that is where an internal package
+// may be used, and it is the whole distinction this audit draws. Unexported
+// declarations are left out for the same reason — an outside program cannot
+// refer to them at all.
+func exportedSignatures(decl ast.Decl) []ast.Node {
+	var out []ast.Node
+	switch d := decl.(type) {
+	case *ast.FuncDecl:
+		if !d.Name.IsExported() {
+			return nil
+		}
+		if d.Recv != nil {
+			out = append(out, d.Recv)
+		}
+		out = append(out, d.Type)
+	case *ast.GenDecl:
+		for _, spec := range d.Specs {
+			switch sp := spec.(type) {
+			case *ast.TypeSpec:
+				if sp.Name.IsExported() {
+					out = append(out, exportedTypeParts(sp.Type)...)
+				}
+			case *ast.ValueSpec:
+				exported := false
+				for _, name := range sp.Names {
+					exported = exported || name.IsExported()
+				}
+				if !exported {
+					continue
+				}
+				if sp.Type != nil {
+					out = append(out, sp.Type)
+				}
+				for _, value := range sp.Values {
+					out = append(out, value)
+				}
+			}
+		}
+	}
+
+	return out
+}
+
+// exportedTypeParts narrows a type to the parts a caller can write.
+//
+// A struct's UNEXPORTED fields are the mechanism this repository uses to hold
+// internal state on a published type — the facade's own App does exactly that —
+// so they are not a leak and must not be reported as one. The same holds for an
+// interface's unexported methods, which no outside type can implement anyway.
+func exportedTypeParts(expr ast.Expr) []ast.Node {
+	switch t := expr.(type) {
+	case *ast.StructType:
+		var out []ast.Node
+		for _, field := range t.Fields.List {
+			if fieldIsExported(field) {
+				out = append(out, field.Type)
+			}
+		}
+
+		return out
+	case *ast.InterfaceType:
+		var out []ast.Node
+		for _, method := range t.Methods.List {
+			if fieldIsExported(method) {
+				out = append(out, method.Type)
+			}
+		}
+
+		return out
+	default:
+		return []ast.Node{expr}
+	}
+}
+
+// fieldIsExported reports whether a struct field or interface method can be
+// named from outside the package. An embedded field carries no name of its own
+// and is exported when the type it embeds is.
+func fieldIsExported(field *ast.Field) bool {
+	if len(field.Names) == 0 {
+		return true
+	}
+	for _, name := range field.Names {
+		if name.IsExported() {
+			return true
+		}
+	}
+
+	return false
+}
+
+// internalUse reports the first internal package a node names, with the
+// selector that named it.
+func internalUse(node ast.Node, aliases map[string]string) (selector, imported string) {
+	name := ""
+	ast.Inspect(node, func(n ast.Node) bool {
+		if imported != "" {
+			return false
+		}
+		expr, ok := n.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		qualifier, ok := expr.X.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		if path, found := aliases[qualifier.Name]; found {
+			name = qualifier.Name + "." + expr.Sel.Name
+			imported = path
+		}
+
+		return false
+	})
+
+	return name, imported
 }

@@ -659,7 +659,7 @@ func auditCorePackage(t *testing.T, dir string, used []map[string]bool) {
 	t.Helper()
 
 	fset := token.NewFileSet()
-	files := productionFiles(t, dir)
+	files := packageFiles(t, dir)
 	trees := make(map[string]*ast.File, len(files))
 
 	for _, file := range files {
@@ -708,7 +708,7 @@ func wrapperTypes(t *testing.T, dir string) map[string]bool {
 
 	names := map[string]bool{}
 
-	for _, file := range productionFiles(t, dir) {
+	for _, file := range packageFiles(t, dir) {
 		tree, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
 		if err != nil {
 			t.Fatalf("%s could not be parsed: %v", file, err)
@@ -993,7 +993,7 @@ func auditPackage(t *testing.T, dir string, exemptionUsed []bool) {
 	t.Helper()
 
 	fset := token.NewFileSet()
-	files := productionFiles(t, dir)
+	files := packageFiles(t, dir)
 	trees := make(map[string]*ast.File, len(files))
 	localNames := map[string]bool{}
 
@@ -1514,6 +1514,37 @@ func productionFiles(t *testing.T, root string) []string {
 	return out
 }
 
+// packageFiles returns the production files of ONE package.
+//
+// A Go package is a single directory, and the audits below are written per
+// package: the import aliases, the wrapper types and the unqualified names all
+// belong to one package and mean nothing in another. [productionFiles] walks
+// the SUBTREE, which was a harmless imprecision while every package sat several
+// levels down — core/http picked up core/http/redisguard, and redisguard was
+// audited a second time on its own anyway.
+//
+// It stopped being harmless when a package appeared AT the repository root
+// (ADR 0027): its directory is the whole repository, so one call audited every
+// file in it, under the root package's import aliases, and reported violations
+// in modules that have an audit of their own.
+func packageFiles(t *testing.T, dir string) []string {
+	t.Helper()
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err, "%s could not be read", dir)
+
+	var out []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		out = append(out, filepath.Join(dir, name))
+	}
+
+	return out
+}
+
 // verifyWriterCarryingFiles verifies that at least one file in the given
 // packages carries an http.ResponseWriter.
 //
@@ -1576,7 +1607,7 @@ func mentionsWriter(t *testing.T, file string) bool {
 // usesCoreErrorPath looks for a corehttp.WriteError call in the package.
 func usesCoreErrorPath(t *testing.T, dir string) bool {
 	t.Helper()
-	for _, file := range productionFiles(t, dir) {
+	for _, file := range packageFiles(t, dir) {
 		tree, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
 		if err != nil {
 			t.Fatalf("%s could not be parsed: %v", file, err)

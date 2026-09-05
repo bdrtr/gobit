@@ -240,7 +240,7 @@ type IdempotencyStore interface {
 // left — cart CREATION — has been made EXEMPT from this ring: its path carries no
 // capability and its response PRODUCES one, that is, a second customer arriving
 // with the same key and the same body was being handed the first one's cart id.
-// The reasoning and the measurement are in cmd/server's exemption list.
+// The reasoning and the measurement are in internal/app's exemption list.
 //
 // The rule that follows: when installing this middleware on a new surface, the
 // question to ask is not "is it authenticated" but "does the resolved identity

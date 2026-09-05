@@ -17,10 +17,18 @@ import (
 
 // Paths of the composition roots and of the core contract.
 const (
-	// compositionRoot is the package where the production binary builds the
-	// module registry. Its source is PARSED, not IMPORTED: a main package
-	// cannot be imported.
-	compositionRoot = "cmd/server"
+	// compositionRoot is the package where the installation builds the module
+	// registry. Its source is PARSED, not IMPORTED: what these audits ask is
+	// whether a registration LINE EXISTS, and importing the package would
+	// answer a different question — whether the value can be built — which is
+	// true of a module nobody registers.
+	//
+	// It moved out of cmd/server in ADR 0027. The binary is now fifteen lines
+	// that call the published facade, and the lifecycle it used to hold is a
+	// package the facade can call.
+	compositionRoot = "internal/app"
+	// entryPoint is the function the reachability graph starts from.
+	entryPoint = "Main"
 	// e2eHarness is the package where the end-to-end tests bring the modules up
 	// with real migrations. That package sits behind the "integration" build
 	// tag; parsing does not care about the tag, so this audit runs even without
@@ -244,7 +252,7 @@ func TestEveryModuleIsRegisteredInTheCompositionRoot(t *testing.T) {
 			"A module that is not registered exists in no deployment: its migration is not "+
 			"applied, its service does not enter the container, its endpoints are not mounted "+
 			"and because the module's own tests stay green this shows up nowhere.\n"+
-			"Either add the registry.Add(...) line in cmd/server/main.go, or write the module "+
+			"Either add the registry.Add(...) line in internal/app/app.go, or write the module "+
 			"into the unregisteredModules map together with its rationale.",
 			path, strings.Join(modules[path], ", "), compositionRoot)
 	}
@@ -307,7 +315,7 @@ func TestEveryModuleIsRegisteredInTheCompositionRoot(t *testing.T) {
 // # Why internal/e2e is not touched
 //
 // e2e_test.go already SAYS "The module set and its order are the same as the one
-// in cmd/server/main.go". That is a comment's promise, and this repository's
+// in internal/app/app.go". That is a comment's promise, and this repository's
 // third class of defect is exactly that: the godoc's promise drifting from the
 // code's behavior. What enforces a promise is not another line written next to
 // it but a test that audits it from the outside; the test does NOT CHANGE that
@@ -800,6 +808,16 @@ func registeredModulePackages(t *testing.T, root string, includeTestFiles bool) 
 			}
 			receiver, ok := sel.X.(*ast.Ident)
 			if !ok || !variables[receiver.Name] {
+				return true
+			}
+
+			// A module handed in by the EMBEDDING program is registered from a
+			// variable, and no package name can be read from it — there is none
+			// to read, because the module is not in this repository. That is the
+			// facade's contract (ADR 0027) and not a registration this audit can
+			// or should follow: what it checks is that every module gobit SHIPS
+			// is registered, and a caller's module is by definition not one.
+			if callerSuppliedModule(call.Args) {
 				return true
 			}
 
@@ -1346,7 +1364,9 @@ func reachFromMain(files []parsedFile) compositionRootReach {
 		}
 	}
 
-	visit("main", true)
+	// The graph starts at Main, the exported entry point the facade calls; it
+	// used to start at main, back when the composition root was the binary.
+	visit(entryPoint, true)
 	if _, exists := bodies["init"]; exists {
 		visit("init", true)
 	}
@@ -1738,4 +1758,20 @@ func TestTheAdminPanelDoesNotImportModules(t *testing.T) {
 			}
 		}
 	}
+}
+
+// callerSuppliedModule reports whether an Add call passes a bare identifier.
+//
+// It is deliberately NARROW: only a single, unqualified identifier counts. The
+// audit's loud refusal of unreadable forms is the thing keeping it honest, so
+// this widens it by exactly one shape — the loop variable of the facade's
+// "register what the caller handed us" pass — and nothing else. A selector, a
+// call, a composite literal or a conversion still fails as before.
+func callerSuppliedModule(args []ast.Expr) bool {
+	if len(args) != 1 {
+		return false
+	}
+	_, bare := args[0].(*ast.Ident)
+
+	return bare
 }

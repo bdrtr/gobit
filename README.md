@@ -125,12 +125,19 @@ sınır aşıldığında, yani üretimde edilir.
 ## Dizin yapısı
 
 ```
-cmd/server            # giriş noktası: config -> logger -> container -> router -> dinle
-internal/core         # çekirdek: config, errors, logger, db, container, module,
-                      # eventbus, link, query, workflow, provider, http
+gobit.go              # YAYIMLANMIŞ cephe: New().Add(modül).Use(eklenti).Main(args)
+cmd/server            # ikili: on beş satır, cepheyi çağırır — aynı zamanda örnek
+core                  # YAYIMLANMIŞ sözleşmeler (ADR 0026): errors, db, container,
+                      # module, eventbus, link, query, provider, plugin, http,
+                      # audit, errorreport
+internal/app          # kompozisyon kökü: config -> logger -> container -> router ->
+                      # dinle; operatör alt komutları (migrate, stuck, recover, jobs)
+internal/core         # yayımlanmayan çekirdek: config, logger, job, workflow,
+                      # observability, openapi, page
 internal/modules      # izole commerce modülleri (product, pricing, inventory, …)
 internal/workflows    # modüller arası saga workflow'ları
-plugins               # harici modül/provider eklentileri
+plugins               # ağaç içi eklentiler
+examples/plugin       # AYRI modül: yayımlanmış yüzeyin dışarıdan derlenen kanıtı
 migrations            # global (çekirdek) migration'lar
 deploy                # docker-compose, Dockerfile
 ```
@@ -175,7 +182,7 @@ için uygular — yarın eklenen vaka sessizce dışarıda kalır.
 
 | Değişmez | Ne zorlar | Yaşanmış arıza |
 |---|---|---|
-| `TestEveryModuleIsRegisteredInTheCompositionRoot` | `module.Module`'ü uygulayan her paket `cmd/server`'da kayıtlı | Faz 8/9'un tamamı yazılmıştı, testleri yeşildi, ve `/admin/v1/**` uçlarının **hiçbiri mount edilmemişti** |
+| `TestEveryModuleIsRegisteredInTheCompositionRoot` | `module.Module`'ü uygulayan her paket `internal/app`'da kayıtlı | Faz 8/9'un tamamı yazılmıştı, testleri yeşildi, ve `/admin/v1/**` uçlarının **hiçbiri mount edilmemişti** |
 | `TestEveryRegisteredModuleIsSetUpInTheE2EHarness` | Kayıtlı her modül e2e zemininde de kurulu | Kayıt satırının derlenmesi ile modülün gerçekten çalışması aynı şey değil |
 | `TestTheInteropSurfacesHaveAConsumer` | Kaydedilen her `*.interop` çözülüyor | Ölü sözleşme; `Host.AddModule` hiç çağrılmıyordu |
 | `TestTheEventTopicsHaveASubscriber` | Yayımlanan her konunun abonesi var | `order.placed` uzun süre abonesizdi ve olay hiçbir şey yapmıyordu |
@@ -216,7 +223,7 @@ import edebilir ve her dışa verilen ad bir sözdür (ADR 0026).
 | `core/query` | Cross-module okuma — kök çek, link çöz, batch getir, birleştir; N+1 yapısal olarak yok |
 | `internal/core/workflow` | Saga motoru — ters sırada telafi, retry, idempotency-key, panik izolasyonu |
 | `internal/core/workflow/pgstore` | Yürütme durumunun Postgres deposu (`workflow_executions`) |
-| `workflows/cart` | Sepet akışları: create_cart, add_line_item, update_line_item, calculate_totals. `cmd/server` `workflows.cart.interop` adıyla kaydeder, `cart` modülünün vitrin uçları o adla çözer |
+| `workflows/cart` | Sepet akışları: create_cart, add_line_item, update_line_item, calculate_totals. `internal/app` `workflows.cart.interop` adıyla kaydeder, `cart` modülünün vitrin uçları o adla çözer |
 | `workflows/checkout` | `complete_cart` saga: stok ayır → sipariş → yetkilendir → tahsil et → sepeti kapat. `workflows.checkout.interop` adıyla kaydedilir, `POST /store/v1/carts/{id}/complete` onu çağırır |
 | `core/provider` | Ödeme/kargo sağlayıcı sözleşmeleri (plan Bölüm 5.6) |
 | `core/plugin` | Eklenti sözleşmesi + iki fazlı kurulum (`Install` → modüller → `Start`) |
@@ -249,7 +256,7 @@ açılışta loglanır; çakışma ancak iki açılış logu yan yana konduğund
 ## API güvenliği
 
 İki yüzey, iki kimlik. Koruma modüllerde değil, **router'ı kuran tarafta**
-(`cmd/server`) takılır: modüller route'larını tam yolla düz bir router'a
+(`internal/app`) takılır: modüller route'larını tam yolla düz bir router'a
 kaydeder, kapsamlama `corehttp.Scoped` ile yapılır ve sıra tek bir yerde,
 `corehttp.APIGuards` içinde yazılıdır.
 
@@ -475,7 +482,7 @@ Modül somut akışı **tanımaz**: kendi paketinde dar bir arayüz tanımlar
 (`api.CartOpening`, `api.LinePricing`, `api.CartCompletion`) ve somut tipi
 container'dan `workflows.cart.interop` / `workflows.checkout.interop` adıyla
 çözer (ADR 0001).
-`cmd/server` yalnızca akışları **kurar ve kaydeder**; bileşim köküne handler
+`internal/app` yalnızca akışları **kurar ve kaydeder**; bileşim köküne handler
 kodu girmez. Bu, `order` → `b2b` harcama kuralında zaten kullanılan kalıbın
 aynısıdır.
 
@@ -841,7 +848,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 OTEL_EXPORTER_OTLP_INSECURE=true make
 Eklenti sıradan bir Go paketidir; `plugins/` altında yaşar ve hiçbir commerce
 modülünü import etmez. Sözleşmeyi `core/provider`'dan, kayıt noktasını
 `core/plugin.Host`'tan alır. Eklenti eklemek çekirdeği ya da bir modülü
-**değiştirmez**: `cmd/server` içindeki katalog haritasına bir satır eklenir ve
+**değiştirmez**: `internal/app` içindeki katalog haritasına bir satır eklenir ve
 kurulum `PLUGINS` ile seçilir.
 
 ```bash
@@ -1293,7 +1300,7 @@ vitrinde ise yalnızca dürüst istemcinin hatasını yakalar.
 - Şirketin para birimi ile sepetinki farklıysa sipariş reddedilir; çevirmek için
   bir kur kaynağı gerekirdi ve o karar bu modülün değildir.
 - `b2b` **kayıtlı değilken** davranış b2b hiç yokmuş gibidir: hiçbir okuma,
-  hiçbir kilit. Saf B2C kurulum, `cmd/server`'daki tek satır silinerek elde
+  hiçbir kilit. Saf B2C kurulum, `internal/app`'daki tek satır silinerek elde
   edilir — yani bir **kod** değişikliğiyle. Kapatan bir ortam değişkeni
   **bilinçli olarak yoktur**: yanlışlıkla `false` verilen bir anahtar, harcama
   limitini hiçbir hata üretmeden kaldırır ve bu tam da kapatılmaya çalışılan

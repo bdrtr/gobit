@@ -44,7 +44,7 @@
 //
 // The module does not know the internal/core/config package: the JWT secret
 // and its lifetime are given from outside through [Options], and whoever
-// wires the application (cmd/server) reads them from the configuration and
+// wires the application (internal/app) reads them from the configuration and
 // passes them here. If the secret is empty [Module.Register] RETURNS AN
 // ERROR — not opening at all is right, rather than opening with an unsigned
 // admin surface.

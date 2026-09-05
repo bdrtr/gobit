@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -50,7 +50,7 @@ const recoverCommand = "recover"
 // pointed at the wrong installation by accident. Nothing is served: no listener
 // is opened and the plugins' queued registrations are not applied (see
 // [openApplication]).
-func runRecover(args []string, out io.Writer) error {
+func runRecover(args []string, out io.Writer, opts Options) error {
 	flags, err := parseRecoverFlags(args)
 	switch {
 	case errors.Is(err, flag.ErrHelp):
@@ -76,7 +76,7 @@ func runRecover(args []string, out io.Writer) error {
 	// visible, because the operator is about to act on that same installation.
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	app, closeApp, err := openApplication(ctx, cfg, log, errorreport.NewSink())
+	app, closeApp, err := openApplication(ctx, cfg, log, errorreport.NewSink(), opts)
 	if err != nil {
 		return err
 	}

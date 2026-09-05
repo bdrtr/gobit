@@ -461,7 +461,7 @@ func setUpSharedEnvironment(t *testing.T, environment string) {
 //
 // The regression: the gate was only inside APP_ENV=production. staging is usually
 // multi-instance; when the secret is left empty every instance produces its own
-// random secret at startup (see cmd/server's jwtSecret) and a token taken from one
+// random secret at startup (see internal/app's jwtSecret) and a token taken from one
 // instance returns a 401 on another. Because it depends on the load balancer's
 // distribution the fault is intermittent and hard to diagnose.
 func TestSharedEnvironmentsRequireASigningSecret(t *testing.T) {
@@ -769,7 +769,7 @@ func TestTheNotificationProviderDefaultIsTheOneThatDoesNotSend(t *testing.T) {
 //
 // Config cannot know whether the name is REGISTERED (providers come from plugins);
 // what is exercised here is only the form. That an unrecognized name stops startup
-// is exercised on the cmd/server side.
+// is exercised on the internal/app side.
 func TestTheNotificationProviderFormIsValidated(t *testing.T) {
 	tests := map[string]struct {
 		value    string

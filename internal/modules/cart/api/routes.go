@@ -10,7 +10,7 @@ import (
 //
 // It is a constant because the composition root has to name it: this path is
 // EXEMPT from the idempotency ring, and the reason is written where the
-// exemption is declared (cmd/server/setup.go). Spelling it there by hand would
+// exemption is declared (internal/app/setup.go). Spelling it there by hand would
 // let the two drift, and the drift would restore a cross-shopper leak.
 const StoreCartsPath = "/store/v1/carts"
 

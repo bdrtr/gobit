@@ -189,7 +189,7 @@ YOKTUR, çünkü şemayı ayrı bir adımda ilerleten her kurulumda er geç "şe
 güncellemeyi unuttum" olur. İkilinin argümansız çalıştırılması sunucuyu
 başlatır ve bu, sunucuyu başlatmanın **tek** yoludur.
 
-Geri alma ise elle çağrılır (`cmd/server/migrate.go`):
+Geri alma ise elle çağrılır (`internal/app/migrate.go`):
 
 ```
 gobit migrate status                     her sahibin sürümünü ve dirty durumunu bildirir
@@ -346,7 +346,7 @@ saga içindedir, katalogda commit'ten sonradır ve hata dönmek çağırana
 
 `plugins/<ad>/` altında `coreplugin.Plugin` uygulayan bir paket; sözleşme
 `core/provider`'dan, kayıt noktası `coreplugin.Host`'tan alınır. Kurulum
-dosyasına (`cmd/server/setup.go`) katalog satırı eklenir, `PLUGINS` ile
+dosyasına (`internal/app/setup.go`) katalog satırı eklenir, `PLUGINS` ile
 seçilir. Çekirdek ve modüller **değişmez**.
 
 Kurulum iki fazlıdır: `Install` modüllerden önce (eklentinin getirdiği modül de

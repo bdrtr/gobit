@@ -1363,7 +1363,7 @@ Sabitlenme `1.0.0` ile olur.
 
   Çeviri, tanımlayıcıları da taşıdığı için paket sınırını iki yerde aştı:
   `MemoryIdempotencyStore.Butce()` erişimcisi `Budget()` oldu (bileşim kökü onu
-  sınıyor, `cmd/server/setup_test.go` da güncellendi) ve `config`'in hata
+  sınıyor, `internal/app/setup_test.go` da güncellendi) ve `config`'in hata
   metinleri İngilizceye geçince `internal/smoke/graphql_test.go`'nun iddia
   dizesi yenilendi. İkinci dosya defterde ve Türkçe KALIYOR — çevrilen yalnızca
   aradığı metin.

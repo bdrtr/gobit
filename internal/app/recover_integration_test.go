@@ -1,6 +1,6 @@
 //go:build integration
 
-package main
+package app
 
 import (
 	"bytes"
@@ -76,7 +76,7 @@ func TestRecoverBootsTheApplicationAndReportsAMissingExecution(t *testing.T) {
 	recoverEnv(t, dsn)
 
 	var out bytes.Buffer
-	err := run([]string{recoverCommand, "wfx_NOTTHERE00001", "-" + flagConfirm, "wfx_NOTTHERE00001"}, &out)
+	err := Main([]string{recoverCommand, "wfx_NOTTHERE00001", "-" + flagConfirm, "wfx_NOTTHERE00001"}, &out, Options{})
 
 	require.Error(t, err)
 	assert.True(t, coreerrors.IsNotFound(err), "error: %v", err)
@@ -94,7 +94,7 @@ func TestRecoverRefusesAWorkflowItCannotBuild(t *testing.T) {
 	stuckRecord(t, dsn, "wfx_OTHERWORKFLOW", "some_other_flow", "k_other", time.Hour, `{"cart_id":"cart_1"}`)
 
 	var out bytes.Buffer
-	err := run([]string{recoverCommand, "wfx_OTHERWORKFLOW", "-" + flagConfirm, "wfx_OTHERWORKFLOW"}, &out)
+	err := Main([]string{recoverCommand, "wfx_OTHERWORKFLOW", "-" + flagConfirm, "wfx_OTHERWORKFLOW"}, &out, Options{})
 
 	require.Error(t, err)
 	assert.True(t, coreerrors.IsInvalid(err), "error: %v", err)
@@ -114,7 +114,7 @@ func TestRecoverRefusesAnExecutionWhoseLeaseIsAlive(t *testing.T) {
 	stuckRecord(t, dsn, "wfx_STILLRUNNING1", checkoutwf.WorkflowName, "k_live", time.Second, `{"cart_id":"cart_1"}`)
 
 	var out bytes.Buffer
-	err := run([]string{recoverCommand, "wfx_STILLRUNNING1", "-" + flagConfirm, "wfx_STILLRUNNING1"}, &out)
+	err := Main([]string{recoverCommand, "wfx_STILLRUNNING1", "-" + flagConfirm, "wfx_STILLRUNNING1"}, &out, Options{})
 
 	require.Error(t, err)
 	assert.True(t, coreerrors.IsConflict(err), "error: %v", err)
@@ -133,7 +133,7 @@ func TestRecoverClosesAnAbandonedExecutionThatHeldNothing(t *testing.T) {
 	stuckRecord(t, dsn, "wfx_NOWORKDONE001", checkoutwf.WorkflowName, "k_nowork", time.Hour, `{"cart_id":"cart_1"}`)
 
 	var out bytes.Buffer
-	err := run([]string{recoverCommand, "wfx_NOWORKDONE001", "-" + flagConfirm, "wfx_NOWORKDONE001"}, &out)
+	err := Main([]string{recoverCommand, "wfx_NOWORKDONE001", "-" + flagConfirm, "wfx_NOWORKDONE001"}, &out, Options{})
 	require.NoError(t, err)
 
 	assert.Contains(t, out.String(), "wfx_NOWORKDONE001")

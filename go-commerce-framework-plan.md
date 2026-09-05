@@ -391,7 +391,7 @@ type PaymentProvider interface {
 3. `deploy/docker-compose.yml`: Postgres 16 + Redis 7.
 4. `internal/core/config`: env'den `APP_PORT, DATABASE_URL, REDIS_URL, LOG_LEVEL` oku.
 5. `internal/core/logger`: `slog` JSON handler, log level config'den.
-6. `cmd/server/main.go`: config yükle → logger kur → (boş) container kur → chi router → `/health` → dinle.
+6. `internal/app/app.go`: config yükle → logger kur → (boş) container kur → chi router → `/health` → dinle.
 7. `golangci-lint` config + GitHub Actions CI (lint + test).
 8. İlk commit: `chore: project skeleton (phase 0)`.
 

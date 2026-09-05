@@ -2,7 +2,7 @@
 
 // This file needs a real Redis and is only compiled with `-tags=integration`
 // (`make test-integration`), so `make test` stays fast and Docker-free.
-package main
+package app
 
 import (
 	"context"

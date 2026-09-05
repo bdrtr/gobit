@@ -27,7 +27,7 @@
 // Which provider is used is chosen by FILE_PROVIDER. Whether the name is
 // REALLY registered cannot be verified here — plugin providers are registered
 // AFTER the modules have come up — and that is why the check sits at the
-// composition root (cmd/server): an unknown name STOPS the startup.
+// composition root (internal/app): an unknown name STOPS the startup.
 //
 // # Security decisions
 //

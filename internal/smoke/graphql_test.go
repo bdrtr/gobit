@@ -164,7 +164,7 @@ func publishStorefrontProduct(t *testing.T, s *proc, token, channelID, title, ha
 // # Why a real process
 //
 // internal/e2e drives this endpoint with httptest and finds it green, but it builds
-// the router ITSELF: it skips the wiring in the composition root (cmd/server's
+// the router ITSELF: it skips the wiring in the composition root (internal/app's
 // product.Options), the config parsing, the migrations at startup, the plugin
 // loading and the real network. So it cannot answer the question "does the
 // storefront of somebody who clones the repository and runs it answer GraphQL?".

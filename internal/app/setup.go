@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -1140,6 +1140,7 @@ func openApplication(
 	cfg config.Config,
 	log *slog.Logger,
 	reportSink *errorreport.Sink,
+	opts Options,
 ) (*application, func(), error) {
 	c := container.New(log)
 
@@ -1226,7 +1227,7 @@ func openApplication(
 	}
 
 	router := corehttp.NewRouter(corehttp.RouterOptions{
-		Version:         version,
+		Version:         opts.version(),
 		Logger:          log,
 		ReadinessChecks: checks,
 		DegradedChecks:  degraded,
@@ -1242,11 +1243,11 @@ func openApplication(
 	registry := module.NewRegistry(log, func(ctx context.Context, src fs.FS, owner string) error {
 		return db.Migrate(ctx, cfg.DatabaseURL, src, owner)
 	})
-	registerModules(registry, cfg, log)
+	registerModules(registry, cfg, log, opts.Modules)
 
 	// The plugins are installed BEFORE the modules: a module brought in by a
 	// plugin must be able to go through the Register/migration/route cycle too.
-	pluginRegistry, host, err := installPlugins(ctx, cfg, c, registry, bus, log)
+	pluginRegistry, host, err := installPlugins(ctx, cfg, c, registry, bus, log, opts.Plugins)
 	if err != nil {
 		return nil, nil, err
 	}

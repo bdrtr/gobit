@@ -422,7 +422,7 @@ const (
 // (see [checkStaleExemptions]).
 var asymmetricConfigConstants = map[string]string{
 	"BackendRedis": `the "redis" name lives in the core only: config's enum ` +
-		`lists and cmd/server's decision to set up the Redis client. No module ` +
+		`lists and internal/app's decision to set up the Redis client. No module ` +
 		`repeats this string in a constant of its own, so there is no end to drift.`,
 
 	"DefaultRedisKeyPrefix": `redisguard, which consumes the prefix, has NO ` +

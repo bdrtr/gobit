@@ -110,7 +110,7 @@ func TestReadyGatingCheckFailureLeavesTraffic(t *testing.T) {
 // Redis is that dependency. Every replica shares one Redis, so a gate here
 // fails every replica in the same second and Kubernetes empties the Service —
 // the "fail-closed for everything" outage ADR 0007 rejected. Measured in
-// cmd/server's TestRedisOutageMeasurement, an instance in this state still
+// internal/app's TestRedisOutageMeasurement, an instance in this state still
 // answers catalog reads with 200.
 func TestReadyDegradingCheckFailureKeepsTraffic(t *testing.T) {
 	t.Parallel()

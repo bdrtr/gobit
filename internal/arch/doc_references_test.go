@@ -154,7 +154,7 @@ func scanDocReferences(t *testing.T) *referenceScan {
 		if _, err := os.Stat(abs); err != nil {
 			t.Fatalf("the %q root was not found: %v", root, err)
 		}
-		for _, filePath := range goFiles(t, abs) {
+		for _, filePath := range treeFiles(t, root) {
 			tree, err := parser.ParseFile(scan.fset, filePath, nil, parser.ParseComments|parser.SkipObjectResolution)
 			if err != nil {
 				t.Fatalf("%s could not be parsed: %v", filePath, err)
@@ -171,7 +171,7 @@ func scanDocReferences(t *testing.T) *referenceScan {
 			}
 			scan.files = append(scan.files, file)
 			if !strings.HasSuffix(tree.Name.Name, "_test") {
-				scan.productionName[modulePath+"/"+file.dir] = tree.Name.Name
+				scan.productionName[importPathOfDir(file.dir)] = tree.Name.Name
 			}
 		}
 	}
@@ -677,8 +677,29 @@ func (s *referenceScan) referenceTarget(importPath string) (target *referencePac
 	if !ok {
 		return nil, true
 	}
-	dir := strings.TrimPrefix(importPath, modulePath+"/")
-	return s.packages[dir+"\x00"+name], true
+	return s.packages[dirOfImportPath(importPath)+"\x00"+name], true
+}
+
+// importPathOfDir maps a repository-relative directory to its import path.
+//
+// The root directory is the module ITSELF. Joining it the ordinary way would
+// produce ".../gobit/.", an import path nothing writes and nothing resolves, so
+// every link into the published facade would report a missing package.
+func importPathOfDir(dir string) string {
+	if dir == repositoryRoot {
+		return modulePath
+	}
+
+	return modulePath + "/" + dir
+}
+
+// dirOfImportPath is the inverse of [importPathOfDir].
+func dirOfImportPath(importPath string) string {
+	if importPath == modulePath {
+		return repositoryRoot
+	}
+
+	return strings.TrimPrefix(importPath, modulePath+"/")
 }
 
 // lookUpInPackage looks for a name in the package at an import path.
@@ -817,7 +838,7 @@ func TestTheLinkScannerIsNotBlind(t *testing.T) {
 	roots := map[string]int{}
 	for _, candidate := range scan.allLinkCandidates() {
 		counts[candidate.form]++
-		roots[strings.SplitN(candidate.file.path, "/", 2)[0]]++
+		roots[treeOf(candidate.file.path)]++
 	}
 
 	for form, count := range counts {

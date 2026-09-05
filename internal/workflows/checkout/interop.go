@@ -11,7 +11,7 @@ import (
 // 0001/0006).
 //
 // This package declares the name, the COMPOSITION ROOT performs the registration
-// (cmd/server): the flow resolves seven module surfaces from the container and
+// (internal/app): the flow resolves seven module surfaces from the container and
 // can only be constructed AFTER every module has Registered. The consumer is the
 // cart MODULE — whoever owns the HTTP endpoint that turns a cart into an order
 // owns the cart — and it repeats the name as a STRING in its own package (see

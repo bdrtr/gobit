@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"testing"
@@ -72,7 +72,7 @@ func TestRecoverRefusesALeftoverArgument(t *testing.T) {
 func TestUsageTextNamesTheRecoverCommand(t *testing.T) {
 	t.Parallel()
 
-	text := usageText()
+	text := usageText("dev")
 
 	assert.Contains(t, text, recoverCommand)
 	assert.Contains(t, text, "-"+flagConfirm+" ID")

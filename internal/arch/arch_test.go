@@ -56,7 +56,14 @@ const (
 // capability that was produced is declared dead and the error printed explains
 // the wrong thing. That asymmetry is why the declarations never consult this
 // list — they come from the same scan.
-var productionTrees = []string{"cmd", "core", "internal", "plugins"}
+var productionTrees = []string{repositoryRoot, "cmd", "core", "internal", "plugins"}
+
+// repositoryRoot names the tree that is the repository root itself.
+//
+// The published facade is a package AT the root (ADR 0027), so the root holds
+// production Go source without being a directory anyone would think to list.
+// [goFiles] reads it at depth one; every other tree is read whole.
+const repositoryRoot = "."
 
 // TestTheProductionTreeListCoversTheRepository keeps [productionTrees] honest.
 //
@@ -74,7 +81,15 @@ func TestTheProductionTreeListCoversTheRepository(t *testing.T) {
 		listed[tree] = true
 	}
 
-	holdsSource := 0
+	// The root is not one of its own directory entries, so it is counted here.
+	require.True(t, listed[repositoryRoot],
+		"the repository root holds the published facade and is not in productionTrees")
+	require.True(t, holdsProductionGo(t, repoRoot),
+		"no non-test Go file was found at the repository root.\n"+
+			"The published facade lives there (ADR 0027); if it moved, the audits that "+
+			"read the root are now reading nothing and passing.")
+	holdsSource := 1
+
 	for _, entry := range entries {
 		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
@@ -106,7 +121,9 @@ func holdsProductionGo(t *testing.T, dir string) bool {
 			return err
 		}
 		if entry.IsDir() {
-			if isNestedModule(path) {
+			// The walk's own root declares a module when it IS the repository
+			// root; skipping it there would end the walk before it read a file.
+			if path != dir && isNestedModule(path) {
 				return filepath.SkipDir
 			}
 
@@ -122,6 +139,65 @@ func holdsProductionGo(t *testing.T, dir string) bool {
 	require.NoError(t, err, "%s could not be walked", dir)
 
 	return found
+}
+
+// treeFiles returns the .go files of ONE production tree.
+//
+// The repository root is a tree like the others except in one respect: every
+// other tree is BELOW it. Reading it recursively would walk cmd/, core/,
+// internal/ and plugins/ a second time, so each per-file audit would report the
+// same violation twice and the file counts the audits use to prove they read
+// something would stop meaning anything. The root is therefore read at depth
+// one, which is exactly the package the published facade lives in (ADR 0027).
+func treeFiles(t *testing.T, tree string) []string {
+	t.Helper()
+
+	files := goFiles(t, filepath.Join(repoRoot, tree))
+	if tree != repositoryRoot {
+		return files
+	}
+
+	shallow := files[:0]
+	for _, file := range files {
+		if filepath.Clean(filepath.Dir(file)) == filepath.Clean(repoRoot) {
+			shallow = append(shallow, file)
+		}
+	}
+
+	return shallow
+}
+
+// treeProductionFiles is [treeFiles] without the _test.go files.
+func treeProductionFiles(t *testing.T, tree string) []string {
+	t.Helper()
+
+	files := productionFiles(t, filepath.Join(repoRoot, tree))
+	if tree != repositoryRoot {
+		return files
+	}
+
+	shallow := files[:0]
+	for _, file := range files {
+		if filepath.Clean(filepath.Dir(file)) == filepath.Clean(repoRoot) {
+			shallow = append(shallow, file)
+		}
+	}
+
+	return shallow
+}
+
+// treeOf reports which production tree a repository-relative path belongs to.
+//
+// A path with no separator is a file AT the repository root, and its tree is
+// the root itself — not, as a plain split would say, a tree named after the
+// file.
+func treeOf(path string) string {
+	slash := strings.Index(path, "/")
+	if slash < 0 {
+		return repositoryRoot
+	}
+
+	return path[:slash]
 }
 
 // isNestedModule reports whether the directory declares a module of its own.
@@ -203,7 +279,12 @@ func modulePrefix(t *testing.T) string {
 	return modulePath + "/" + modulesDir + "/"
 }
 
-// goFiles returns all the .go files under the given root.
+// goFiles returns all the .go files under the given root, recursively.
+//
+// Callers that want ONE production tree want [treeFiles] instead: this walk
+// from the repository root would read every tree at once, which is right for
+// the audits that mean the whole repository and wrong for the ones that mean a
+// tree.
 func goFiles(t *testing.T, root string) []string {
 	t.Helper()
 	var out []string
@@ -559,78 +640,76 @@ func TestGodocFormat(t *testing.T) {
 	// or if the godocs come loose from their definitions and the doc field stays nil).
 	denetlenenTanim := 0
 
-	roots := make([]string, 0, len(productionTrees))
+	var files []string
 	for _, tree := range productionTrees {
-		roots = append(roots, filepath.Join(repoRoot, tree))
+		files = append(files, treeFiles(t, tree)...)
 	}
 
-	for _, root := range roots {
-		for _, file := range goFiles(t, root) {
-			fset := token.NewFileSet()
-			parsed, err := parser.ParseFile(fset, file, nil, parser.ParseComments)
-			if err != nil {
-				t.Fatalf("%s could not be parsed: %v", file, err)
-			}
-			// Generated code (sqlc) is outside this rule.
-			if len(parsed.Comments) > 0 && strings.Contains(parsed.Comments[0].Text(), "Code generated by") {
-				continue
-			}
+	for _, file := range files {
+		fset := token.NewFileSet()
+		parsed, err := parser.ParseFile(fset, file, nil, parser.ParseComments)
+		if err != nil {
+			t.Fatalf("%s could not be parsed: %v", file, err)
+		}
+		// Generated code (sqlc) is outside this rule.
+		if len(parsed.Comments) > 0 && strings.Contains(parsed.Comments[0].Text(), "Code generated by") {
+			continue
+		}
 
-			for _, decl := range parsed.Decls {
-				var (
-					doc  *ast.CommentGroup
-					name string
-				)
-				switch d := decl.(type) {
-				case *ast.FuncDecl:
-					doc, name = d.Doc, d.Name.Name
-				case *ast.GenDecl:
-					doc = d.Doc
-					if len(d.Specs) == 1 {
-						switch sp := d.Specs[0].(type) {
-						case *ast.TypeSpec:
-							name = sp.Name.Name
-						case *ast.ValueSpec:
-							if len(sp.Names) > 0 {
-								name = sp.Names[0].Name
-							}
+		for _, decl := range parsed.Decls {
+			var (
+				doc  *ast.CommentGroup
+				name string
+			)
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				doc, name = d.Doc, d.Name.Name
+			case *ast.GenDecl:
+				doc = d.Doc
+				if len(d.Specs) == 1 {
+					switch sp := d.Specs[0].(type) {
+					case *ast.TypeSpec:
+						name = sp.Name.Name
+					case *ast.ValueSpec:
+						if len(sp.Names) > 0 {
+							name = sp.Names[0].Name
 						}
 					}
 				}
-				// The name of the "var _ Iface = (*T)(nil)" idiom is "_"; its godoc naturally
-				// describes not a name but the contract being verified.
-				if doc == nil || name == "" || name == "_" || len(doc.List) == 0 {
-					continue
-				}
-				denetlenenTanim++
+			}
+			// The name of the "var _ Iface = (*T)(nil)" idiom is "_"; its godoc naturally
+			// describes not a name but the contract being verified.
+			if doc == nil || name == "" || name == "_" || len(doc.List) == 0 {
+				continue
+			}
+			denetlenenTanim++
 
-				first := doc.List[0].Text
-				if m := godocComma.FindStringSubmatch(first); m != nil {
-					t.Errorf("%s:%d: the godoc first line is %q — there is a COMMA right after the name.\n"+
-						"The right form: \"// %s ...\". revive applies this rule only to exported "+
-						"identifiers.",
-						file, fset.Position(doc.List[0].Pos()).Line, strings.TrimSpace(first), m[1])
-					continue
-				}
-				// If it does not start with the name of the definition it is attached to, the
-				// godoc has most likely stuck to the wrong identifier.
-				prefix := "// " + name
-				if !strings.HasPrefix(first, prefix) && !strings.HasPrefix(first, "// Package ") &&
-					!strings.HasPrefix(first, "//nolint") && !strings.HasPrefix(first, "//go:") {
-					t.Errorf("%s:%d: the godoc of the %q definition starts with %q.\n"+
-						"A godoc block has to start with the NAME of the definition it is attached "+
-						"to; this block has most likely stuck to the wrong definition because no "+
-						"blank line was put in between.",
-						file, fset.Position(doc.List[0].Pos()).Line, name, strings.TrimSpace(first))
-				}
+			first := doc.List[0].Text
+			if m := godocComma.FindStringSubmatch(first); m != nil {
+				t.Errorf("%s:%d: the godoc first line is %q — there is a COMMA right after the name.\n"+
+					"The right form: \"// %s ...\". revive applies this rule only to exported "+
+					"identifiers.",
+					file, fset.Position(doc.List[0].Pos()).Line, strings.TrimSpace(first), m[1])
+				continue
+			}
+			// If it does not start with the name of the definition it is attached to, the
+			// godoc has most likely stuck to the wrong identifier.
+			prefix := "// " + name
+			if !strings.HasPrefix(first, prefix) && !strings.HasPrefix(first, "// Package ") &&
+				!strings.HasPrefix(first, "//nolint") && !strings.HasPrefix(first, "//go:") {
+				t.Errorf("%s:%d: the godoc of the %q definition starts with %q.\n"+
+					"A godoc block has to start with the NAME of the definition it is attached "+
+					"to; this block has most likely stuck to the wrong definition because no "+
+					"blank line was put in between.",
+					file, fset.Position(doc.List[0].Pos()).Line, name, strings.TrimSpace(first))
 			}
 		}
 	}
 
 	require.Positive(t, denetlenenTanim,
-		"not a SINGLE definition with a checked godoc was found under internal/ and cmd/; "+
+		"not a SINGLE definition with a checked godoc was found in the production trees; "+
 			"the check must have gone BLIND.\n"+
-			"Possible reasons: the sources moved outside these two roots, the parsing is done "+
+			"Possible reasons: the sources moved outside productionTrees, the parsing is done "+
 			"without comments (parser.ParseComments dropped), or the \"Code generated by\" "+
 			"sieve covers all the files. Because revive does not look at unexported "+
 			"definitions, nothing else checks that class when this scan falls silent.")
