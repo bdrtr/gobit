@@ -29,6 +29,11 @@ func migrateConfig() config.Config {
 	return config.Config{ServiceName: "gobit-test"}
 }
 
+// entryPointName is the function every invocation of an installation goes
+// through. It was main until ADR 0027 moved the lifecycle into this package;
+// the binary now calls it through the published facade.
+const entryPointName = "Main"
+
 // TestOnlyAnEmptyArgumentListCanStartTheServer reads the dispatch's SOURCE and
 // proves the server has exactly one way in.
 //
@@ -79,7 +84,7 @@ func TestOnlyAnEmptyArgumentListCanStartTheServer(t *testing.T) {
 				locations = append(locations,
 					fset.Position(ident.Pos()).String()+" in "+decl.Name.Name)
 
-				if decl.Name.Name == "run" && insideEmptyArgsGuard(decl, ident) {
+				if decl.Name.Name == entryPointName && insideEmptyArgsGuard(decl, ident) {
 					guarded++
 				}
 
@@ -96,7 +101,7 @@ func TestOnlyAnEmptyArgumentListCanStartTheServer(t *testing.T) {
 			"added is never the one somebody meant to add.",
 		references, strings.Join(locations, ", "))
 	require.Equal(t, 1, guarded,
-		"the single serve call (%s) is NOT inside run's `len(args) == 0` branch.\n"+
+		"the single serve call (%s) is NOT inside "+entryPointName+"'s `len(args) == 0` branch.\n"+
 			"That branch is the whole invariant: it was measured that before it existed, "+
 			"`gobit migrate status` booted a server, applied every forward migration and "+
 			"listened on the configured port.",

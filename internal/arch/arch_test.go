@@ -205,7 +205,7 @@ func treeOf(path string) string {
 // A directory with a go.mod is a SEPARATE module: its files are not part of
 // this one, `go build ./...` never reaches them, and the rules audited here do
 // not apply to them. examples/plugin is one on purpose — see
-// [TestTheOutOfTreePluginCompiles].
+// [TestTheOutOfTreeExamplesCompile].
 func isNestedModule(dir string) bool {
 	_, err := os.Stat(filepath.Join(dir, goModFileName))
 

@@ -7,6 +7,8 @@ import (
 	"go/parser"
 	gotoken "go/token"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -276,21 +278,35 @@ func TestStuckIsRoutedByTheDispatcherAndUnknownVerbsFail(t *testing.T) {
 	assert.Contains(t, err.Error(), "stcuk")
 }
 
-// TestMainDispatchesRatherThanServingDirectly is the wiring invariant.
+// TestTheBinaryDispatchesRatherThanServingDirectly is the wiring invariant.
 //
 // A subcommand main never reaches is this repository's most expensive bug class
 // — the capability that compiles, passes its own tests and exists in no
 // installation. It cannot be caught by running main (that starts a server), so
-// the rule is stated where it can be read: main's body calls the dispatcher.
-func TestMainDispatchesRatherThanServingDirectly(t *testing.T) {
+// the rule is stated where it can be read: main's body reaches the entry point.
+//
+// Since ADR 0027 the invariant spans two packages. main lives in cmd/server and
+// is fifteen lines; what it calls is the published facade, whose Main hands over
+// to the dispatcher in THIS package. So the check reads the binary's source, not
+// this package's — and it reads it from here, next to the subcommands whose
+// deadness it is guarding against.
+func TestTheBinaryDispatchesRatherThanServingDirectly(t *testing.T) {
 	t.Parallel()
 
 	fset := gotoken.NewFileSet()
 	found, called := false, false
 
-	for _, name := range packageSources(t) {
-		file, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
-		require.NoError(t, err)
+	entries, err := os.ReadDir(binaryDir)
+	require.NoError(t, err, "%s could not be read", binaryDir)
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") ||
+			strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		file, parseErr := parser.ParseFile(fset, filepath.Join(binaryDir, entry.Name()), nil,
+			parser.SkipObjectResolution)
+		require.NoError(t, parseErr)
 
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -303,7 +319,7 @@ func TestMainDispatchesRatherThanServingDirectly(t *testing.T) {
 				if !isCall {
 					return true
 				}
-				if id, isIdent := call.Fun.(*ast.Ident); isIdent && id.Name == "run" {
+				if sel, isSel := call.Fun.(*ast.SelectorExpr); isSel && sel.Sel.Name == entryPointName {
 					called = true
 				}
 
@@ -312,9 +328,15 @@ func TestMainDispatchesRatherThanServingDirectly(t *testing.T) {
 		}
 	}
 
-	require.True(t, found, "no main function was found in cmd/server; this check is BLIND")
+	require.True(t, found,
+		"no main function was found in %s; this check is BLIND.\n"+
+			"The binary moved or was renamed: point binaryDir at it, because a dispatch "+
+			"nobody reads is a dispatch nobody checks.", binaryDir)
 	assert.True(t, called,
-		"main does not call the dispatcher (run).\n"+
+		"main does not reach the facade's %s.\n"+
 			"Every subcommand would then be dead code: it would compile, its own tests "+
-			"would pass, and no installation would have it.")
+			"would pass, and no installation would have it.", entryPointName)
 }
+
+// binaryDir is where the shipped binary's main lives, relative to this package.
+const binaryDir = "../../cmd/server"

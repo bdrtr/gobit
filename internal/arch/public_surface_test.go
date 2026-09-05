@@ -235,54 +235,111 @@ func TestNoPackageEscapesTheSurface(t *testing.T) {
 	require.Positive(t, seen, "no Go file was classified, so this audit proved nothing")
 }
 
-// outOfTreePlugin is the example module that stands outside gobit.
-const outOfTreePlugin = "examples/plugin"
+// outOfTreeExamples are the separate modules that stand outside gobit.
+//
+// Each is a real Go module with its own go.mod, so the language itself refuses
+// them internal/. Between them they exercise both halves of what the surface
+// promises: writing an EXTENSION and running an INSTALLATION.
+var outOfTreeExamples = []struct {
+	dir  string
+	what string
+}{
+	{
+		dir: "examples/plugin",
+		what: "a plugin that registers a payment provider, mounts a route, subscribes to " +
+			"an event and returns a typed error — the four things a plugin exists to do " +
+			"(ADR 0026)",
+	},
+	{
+		dir: "examples/starter",
+		what: "an application that adds a module of its own and runs the whole " +
+			"installation through the published facade (ADR 0027)",
+	},
+}
 
-// TestTheOutOfTreePluginCompiles is the surface's only end-to-end proof.
+// TestTheOutOfTreeExamplesCompile is the surface's only end-to-end proof.
 //
 // Every other audit here reads the repository's own source, and all of them
 // would stay green on a surface nobody outside could actually use: a contract
 // whose input type is unexported, a helper the caller needs that was never
-// exported, a constructor that only the composition root can reach. None of
-// that is an import of internal/ and none of it is a missing declaration — it
-// is a surface that compiles here and not there.
+// exported, a constructor only the composition root can reach. None of that is
+// an import of internal/ and none of it is a missing declaration — it is a
+// surface that compiles here and not there.
 //
-// So the check is a COMPILATION, from outside. examples/plugin is a separate Go
-// module: Go refuses it internal/ by the language's own rule, which makes it the
-// one place in this repository where "an outside program can do this" is a fact
-// rather than a claim. It registers a payment provider, mounts a route,
-// subscribes to an event and returns a typed error — the four things a plugin
-// exists to do.
-func TestTheOutOfTreePluginCompiles(t *testing.T) {
+// So the check is a COMPILATION, from outside.
+func TestTheOutOfTreeExamplesCompile(t *testing.T) {
 	t.Parallel()
 
-	// Not a skip: this test is RUNNING under the go toolchain, so a lookup that
-	// fails means PATH was changed out from under the run, and the check would
-	// otherwise report "the surface is fine" having compiled nothing.
+	goTool := goToolPath(t)
+
+	for _, example := range outOfTreeExamples {
+		t.Run(example.dir, func(t *testing.T) {
+			t.Parallel()
+
+			dir := filepath.Join(repoRoot, example.dir)
+			_, err := os.Stat(filepath.Join(dir, goModFileName))
+			require.NoError(t, err,
+				"%s has no %s of its own.\n"+
+					"Without it the example is part of this module, Go allows it internal/, "+
+					"and compiling it proves nothing about what an outside author can reach.",
+				example.dir, goModFileName)
+
+			cmd := exec.CommandContext(t.Context(), goTool, "build", "./...")
+			cmd.Dir = dir
+			output, buildErr := cmd.CombinedOutput()
+			require.NoError(t, buildErr,
+				"%s no longer compiles against the published surface:\n%s\n"+
+					"It is %s.\n"+
+					"This is the failure the published surface exists to prevent. Something "+
+					"an outside author needs has stopped being reachable — an unexported "+
+					"type in a contract, a helper that was never exported, a signature that "+
+					"changed. Fix the surface; do not fix the example by reaching further "+
+					"in, because it cannot reach further in.", example.dir, output, example.what)
+		})
+	}
+}
+
+// TestTheOutOfTreeStarterRuns takes the proof one step past compiling.
+//
+// A program can compile against a facade that dispatches to nothing. The
+// operator surface is the cheapest thing to run without infrastructure — help
+// touches no database, no Redis and no port — and it comes from the lifecycle
+// rather than from the facade, so seeing it means the call really reached the
+// composition root through the published entry point.
+func TestTheOutOfTreeStarterRuns(t *testing.T) {
+	t.Parallel()
+
+	cmd := exec.CommandContext(t.Context(), goToolPath(t), "run", ".", "help")
+	cmd.Dir = filepath.Join(repoRoot, "examples", "starter")
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "the out-of-tree starter could not be run:\n%s", output)
+
+	// The subcommands belong to the lifecycle, not to the facade: a facade that
+	// silently did nothing would still print an empty page.
+	for _, verb := range []string{"migrate status", "stuck", "recover", "jobs"} {
+		require.Contains(t, string(output), verb,
+			"the starter ran but its operator surface does not mention %q.\n"+
+				"That surface comes from the composition root, so its absence means the "+
+				"published entry point no longer reaches it — the program links and does "+
+				"nothing.", verb)
+	}
+}
+
+// goToolPath returns the go binary, and refuses to skip when it is missing.
+//
+// Not a skip: these tests are RUNNING under the go toolchain, so a lookup that
+// fails means PATH was changed out from under the run, and the checks would
+// otherwise report "the surface is fine" having compiled nothing.
+func goToolPath(t *testing.T) string {
+	t.Helper()
+
 	goTool, err := exec.LookPath("go")
 	require.NoError(t, err,
 		"the go toolchain is not on PATH, so the published surface was never compiled "+
 			"from outside — the one check here that can catch an unusable surface did "+
 			"not run")
 
-	dir := filepath.Join(repoRoot, outOfTreePlugin)
-	_, err = os.Stat(filepath.Join(dir, goModFileName))
-	require.NoError(t, err,
-		"%s has no %s of its own.\n"+
-			"Without it the example is part of this module, Go allows it internal/, and "+
-			"compiling it proves nothing about what an outside author can reach.",
-		outOfTreePlugin, goModFileName)
-
-	cmd := exec.CommandContext(t.Context(), goTool, "build", "./...")
-	cmd.Dir = dir
-	output, err := cmd.CombinedOutput()
-	require.NoError(t, err,
-		"the out-of-tree plugin no longer compiles against the published surface:\n%s\n"+
-			"This is the failure the published surface exists to prevent. Something a "+
-			"plugin author needs has stopped being reachable — an unexported type in a "+
-			"contract, a helper that was never exported, a signature that changed. Fix "+
-			"the surface; do not fix the example by reaching further in, because it "+
-			"cannot reach further in.", output)
+	return goTool
 }
 
 // TestTheFacadeExposesNothingInternal is the self-containment rule for the one

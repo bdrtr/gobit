@@ -41,7 +41,7 @@ Four sequencing facts govern the whole list:
 
 | # | decision | what it blocks | section |
 | --- | --- | --- | --- |
-| A1 | ~~**Which packages become public**~~ **Answered 2026-09-05: ADR 0026 + 0027.** Fourteen packages under `core/` plus a four-method facade at the module root; 7.8% of the codebase, no commerce model among them. Six audits enforce it, one of them by compiling an out-of-tree module | ~~the library transition~~ — done. An out-of-tree plugin is proved; an out-of-tree application is possible and not yet proved by an example | Importable core |
+| A1 | ~~**Which packages become public**~~ **Answered 2026-09-05: ADR 0026 + 0027.** Fourteen packages under `core/` plus a four-method facade at the module root; 7.8% of the codebase, no commerce model among them. Six audits enforce it, one of them by compiling an out-of-tree module | ~~the library transition~~ — done. An out-of-tree plugin is proved; an out-of-tree application is proved too — `examples/starter` is compiled AND RUN by the audit | Importable core |
 | A2 | **What gobit is legally** — data controller, or a library whose embedder is the controller | every KVKK item; ADR 0025 points at the second answer, which changes the obligation from "implement consent" to "publish the hooks and the erasure contract" | Turkey-specific |
 | A3 | **May the customer pay a different amount than the merchant receives?** | installments (vade farki) AND multi-vendor commission. Today four guards including DB CHECKs forbid it | Turkey-specific, Commerce models |
 | A4 | **Invoice retention vs KVKK erasure** | all erasure work; unwritten, somebody deletes an invoice and puts a hole in the series ADR 0024 exists to prevent | Observability and security |
@@ -965,8 +965,8 @@ costed as that, not as features.
 > `core/` (ADR 0026), and the composition root moved out of `package main` to
 > `internal/app` behind a four-method facade at the module root (ADR 0027).
 > `cmd/server` is fifteen lines. An out-of-tree plugin is proved by compilation
-> in `examples/plugin`; an out-of-tree application is possible and the matching
-> example has not been written yet.
+> in `examples/plugin`, and an out-of-tree application by `examples/starter`,
+> which the audit both compiles and runs.
 
 The brief: ship the core as an IMPORTABLE Go module the way PocketBase does —
 `go get`, `app := New()`, bind hooks, compile one binary — with a thin starter

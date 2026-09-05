@@ -101,10 +101,19 @@ tree list is now written once and checked (ADR 0026) rather than copied.
 
 ## Consequences
 
-- **An out-of-tree application is now possible.** It is not yet proved the way
-  the plugin is; examples/plugin compiles a plugin, and the equivalent for an
-  application is a starter module that boots one. That is the obvious next
-  example to add.
+- **An out-of-tree application is now possible, and it is proved rather than
+  claimed.** examples/starter is a separate Go module with a module of its own;
+  internal/arch compiles it AND RUNS it, because a program can compile against a
+  facade that dispatches to nothing. What it runs is the operator surface, which
+  needs no database, no Redis and no port — and which comes from the lifecycle
+  rather than from the facade, so seeing it means the call really reached the
+  composition root.
+- **One failure here has no symptom, and it needed its own test.** A facade whose
+  Add does nothing still compiles, still links, still starts the server and still
+  answers every request gobit ships — the caller's module is simply absent, with
+  nothing logged and both examples still green. It was mutation-proved from both
+  ends: the facade must carry what it is given, and the composition root must
+  take it out again.
 - **The operator subcommands come with the library.** An embedding project gets
   `migrate status`, `stuck`, `recover` and `jobs` over its own modules for free,
   which is the half of this move that would have been most expensive to
