@@ -145,6 +145,36 @@ Sabitlenme `1.0.0` ile olur.
   yazmıştı; modül üçüncüsünü kazanınca ikisi de kırıldı. Sayı artık okunuyor:
   biri geri alınacak adım sayısını mevcut sürümden türetiyor, diğeri
   dokunulmayan sahibin sürümünü geri almadan ÖNCE okuyup onunla karşılaştırıyor.
+- **Dört temel satırı, kendi satırlarının adlandırmadığı bir engel taşıyordu —
+  ve ölçünce açık sekiz satırın HEPSİNİN engelli olduğu çıktı** (B9, B15, B16;
+  B8 aynı gün).
+
+  Satırlar hiçbir engel yazmıyordu, yani sıradaki turun "engelsiz" diye
+  seçebileceği işler gibi duruyorlardı. Ölçüm başka şey söyledi:
+
+  **B9 (saklanan ödeme aracı)** iki engel taşıyor ve ikisi de bu tablonun başka
+  satırlarında zaten adlandırılmış. Depoda saklanan araç izi hiç yok — ne tablo,
+  ne kolon, ne sembol. Sözleşme yarısı B10'un engelinin aynısı: `PaymentProvider`
+  ADR 0026'nın yayımladığı `core/provider`'da, yani genişletmek bir düzenleme
+  değil uyumluluk kararı. Tüketici yarısı B7 ile B13'ün kuralı: onu harcayacak
+  bir checkout yolu olmadan saklanan araç, tüketicisi olmayan bir yetenektir.
+
+  **B15 (dosya olayları)** B7'nin engelini taşıyor, ve satırın ima ettiğinden
+  daha keskin biçimde: `file` modülü **hiçbir olay yayımlamıyor**. Yani ikinci
+  bir abone arayan bir konu değil, hiç konuşmamış bir modül.
+
+  **B16 (öneri deposu)** için satırın kendi cümlesi durumu hafife alıyor: hiçbir
+  migration'da öneri adlı bir tablo yok, ve iki UÇ da eksik — yazacak bir şey yok
+  (öneren her özellik bir AI satırı ve hiçbiri kurulu değil) ve okuyacak bir şey
+  de yok (panelde insanın uygulayacağı bir ekran yok). `sagawatch` iyi bir emsal
+  ama gösterdiği şey RAPOR eden bir iş; bu satırın istediği YAZAN bir iş ve
+  CEVAPLAYAN bir ekran.
+
+  **Bunun ortaya çıkardığı bütün:** açık sekiz B satırının hepsi engelli, ve her
+  engel iki şeyden biri — verilmemiş bir KARAR ya da var olmayan bir TÜKETİCİ.
+  Bugün cevapsız kurulabilecek hiçbir temel yok. Bu, işin büyüklüğü hakkında
+  değil SIRA hakkında bir olgu: listedeki en ucuz hamle hâlâ A2'yi cevaplamak.
+
 - **Karar listesi bir SIRA olduğunu söylüyordu ama sırayı hiçbir yerde
   yazmıyordu; ölçülüp yazıldı, ve bir kök ile bir ÇİFT çıktı.**
 
