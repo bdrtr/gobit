@@ -34,6 +34,7 @@ import (
 	corehttp "github.com/bdrtr/gobit/core/http"
 	corepage "github.com/bdrtr/gobit/internal/core/page"
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
+	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
@@ -246,6 +247,32 @@ func boolParam(r *http.Request, name string, fallback bool) (bool, error) {
 			"the %s parameter has to be a boolean value (given: %q)", name, raw)
 	}
 	return value, nil
+}
+
+// sortParam reads the listing order.
+//
+// An absent value is the default and not an error: the parameter is additive
+// and every client that predates it keeps working unchanged. A value that is
+// not in the set IS refused, for the reason [boolParam] refuses a
+// non-boolean — a client that asked for an order it did not get cannot tell
+// that from a catalog which happens to look that way, so the mistake has to
+// arrive as an error rather than as data.
+//
+// The set is closed and lives in the models package beside the values
+// themselves; the API does not carry a second copy of it.
+func sortParam(r *http.Request) (models.ProductOrder, error) {
+	raw := r.URL.Query().Get("sort")
+	if raw == "" {
+		return models.ProductOrderNewest, nil
+	}
+
+	order := models.ProductOrder(raw)
+	if !order.Valid() {
+		return "", coreerrors.Invalid(codeBadParam,
+			"the sort parameter has to be one of newest, oldest (given: %q)", raw)
+	}
+
+	return order, nil
 }
 
 // afterParam reads the cursor of the page being asked for.

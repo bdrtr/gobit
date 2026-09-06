@@ -253,8 +253,31 @@ type UpdateProductInput struct {
 // out of a key space it does not describe.
 const ProductListing = "products"
 
+// ProductListingFor names the listing a cursor belongs to for a given order.
+//
+// The order is PART OF THE NAME, and that is what closes the trap this feature
+// carries. The two orders walk the same key in opposite directions, so a cursor
+// minted under one of them is a perfectly valid position in the other's key
+// space and would silently serve the wrong page — the exact fault
+// [corepage.Encode]'s godoc describes as reading like missing data rather than
+// like an error. With the order in the name, [corepage.Decode] refuses it.
+//
+// The newest-first order keeps the BARE name deliberately: it is the order
+// every listing had before this parameter existed, so a cursor a client is
+// already holding stays valid across this change.
+func ProductListingFor(order models.ProductOrder) string {
+	if order == models.ProductOrderOldest {
+		return ProductListing + "." + string(models.ProductOrderOldest)
+	}
+
+	return ProductListing
+}
+
 // ListProductsOptions is the set of criteria of the product listing.
 type ListProductsOptions struct {
+	// Order is the listing order; the zero value is newest first, which is what
+	// the listing returned before the field existed.
+	Order        models.ProductOrder
 	Status       *models.Status
 	CollectionID *string
 	Handle       *string
@@ -532,6 +555,11 @@ func (s *Service) ListProducts(ctx context.Context, opts ListProductsOptions) (L
 		return ListResult[models.Product]{}, err
 	}
 
+	order, err := normalizeProductOrder(opts.Order)
+	if err != nil {
+		return ListResult[models.Product]{}, err
+	}
+
 	filter := repository.ProductFilter{
 		CollectionID:    opts.CollectionID,
 		Handle:          opts.Handle,
@@ -542,6 +570,7 @@ func (s *Service) ListProducts(ctx context.Context, opts ListProductsOptions) (L
 		Limit:           limit,
 		Offset:          offset,
 		After:           opts.After,
+		Order:           order,
 	}
 	if opts.Status != nil {
 		status, err := normalizeStatus(*opts.Status)
@@ -566,7 +595,7 @@ func (s *Service) ListProducts(ctx context.Context, opts ListProductsOptions) (L
 	if len(products) > limit {
 		products = products[:limit]
 		last := products[len(products)-1]
-		nextCursor = corepage.Encode(ProductListing, corepage.Cursor{Time: last.CreatedAt, ID: last.ID})
+		nextCursor = corepage.Encode(ProductListingFor(order), corepage.Cursor{Time: last.CreatedAt, ID: last.ID})
 	}
 
 	var count *int

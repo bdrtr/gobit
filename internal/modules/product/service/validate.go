@@ -247,6 +247,24 @@ func normalizeStatus(status models.Status) (models.Status, error) {
 	return status, nil
 }
 
+// normalizeProductOrder validates the listing order and supplies the default.
+//
+// An empty value is the default rather than an error: a caller that does not
+// care about the order should not have to name one. A value that is not in the
+// set IS an error, and refusing it is the point — silently falling back to the
+// default would answer a request for oldest-first with newest-first, which the
+// client cannot tell from a catalog that happens to look that way.
+func normalizeProductOrder(order models.ProductOrder) (models.ProductOrder, error) {
+	if order == "" {
+		return models.ProductOrderNewest, nil
+	}
+	if !order.Valid() {
+		return "", invalid("invalid product order: %q (valid values: newest, oldest)", order)
+	}
+
+	return order, nil
+}
+
 // normalizePaging validates the paging values and clamps them to the limits.
 //
 // A negative value is an ERROR (it is a client mistake and correcting it

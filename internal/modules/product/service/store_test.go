@@ -3,12 +3,14 @@ package service_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/query"
+	corepage "github.com/bdrtr/gobit/internal/core/page"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
@@ -346,4 +348,60 @@ func TestListStoreProductsSkipCountLeavesThePageUnchanged(t *testing.T) {
 		"turning the count off should not change the records of the page (variants, price and stock included)")
 	assert.Equal(t, counted.Limit, uncounted.Limit)
 	assert.Equal(t, counted.Offset, uncounted.Offset)
+}
+
+// TestACursorFromOneOrderIsRefusedByTheOther is the whole reason the order is
+// part of the cursor's listing name.
+//
+// The two orders walk the SAME key in opposite directions, so a cursor minted
+// under one of them is a perfectly valid position in the other's key space. If
+// the name did not distinguish them the cursor would decode, the seek would run
+// and the client would be served a page from the wrong end of the catalog —
+// the fault corepage's own godoc describes as reading like missing data rather
+// than like an error. Nothing else in the system would notice.
+func TestACursorFromOneOrderIsRefusedByTheOther(t *testing.T) {
+	t.Parallel()
+
+	position := corepage.Cursor{Time: time.Unix(1_700_000_000, 0).UTC(), ID: "prod_42"}
+
+	newest := corepage.Encode(service.ProductListingFor(models.ProductOrderNewest), position)
+	oldest := corepage.Encode(service.ProductListingFor(models.ProductOrderOldest), position)
+
+	require.NotEqual(t, newest, oldest,
+		"the two orders must not mint the same cursor for the same row, or neither can refuse the other")
+
+	_, err := corepage.Decode(service.ProductListingFor(models.ProductOrderOldest), newest)
+	require.Error(t, err, "a newest-first cursor must not name a position in the oldest-first listing")
+	assert.Equal(t, corepage.CodeInvalidCursor, errors.CodeOf(err))
+
+	_, err = corepage.Decode(service.ProductListingFor(models.ProductOrderNewest), oldest)
+	require.Error(t, err, "an oldest-first cursor must not name a position in the newest-first listing")
+	assert.Equal(t, corepage.CodeInvalidCursor, errors.CodeOf(err))
+
+	// Each is of course still valid in its own listing.
+	back, err := corepage.Decode(service.ProductListingFor(models.ProductOrderNewest), newest)
+	require.NoError(t, err)
+	assert.Equal(t, position, back)
+}
+
+// TestTheDefaultOrderKeepsCursorsMintedBeforeItExisted is the compatibility
+// half of the same decision.
+//
+// The newest-first order keeps the BARE listing name, so a cursor a client is
+// already holding — minted when the parameter did not exist — still names a
+// position after the change. Had the default been given a suffixed name too,
+// every cursor in flight would have started returning an error.
+func TestTheDefaultOrderKeepsCursorsMintedBeforeItExisted(t *testing.T) {
+	t.Parallel()
+
+	position := corepage.Cursor{Time: time.Unix(1_700_000_000, 0).UTC(), ID: "prod_7"}
+	old := corepage.Encode(service.ProductListing, position)
+
+	back, err := corepage.Decode(service.ProductListingFor(models.ProductOrderNewest), old)
+	require.NoError(t, err, "a cursor minted before the order parameter existed must still decode")
+	assert.Equal(t, position, back)
+
+	// And the zero value resolves to the same listing, so a caller that names no
+	// order at all is on the same page space.
+	assert.Equal(t, service.ProductListing, service.ProductListingFor(""))
 }

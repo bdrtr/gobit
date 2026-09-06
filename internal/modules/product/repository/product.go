@@ -46,6 +46,14 @@ type ProductFilter struct {
 	// and an offset name two different positions and honoring both would serve a
 	// page that neither of them asked for.
 	After corepage.Cursor
+	// Order is the listing order. The zero value is the newest-first order the
+	// listing has always had, so a caller that does not set it gets exactly
+	// what it got before the field existed.
+	//
+	// It changes the keyset predicate as well as the ORDER BY, and the two have
+	// to move together: a seek written for one direction and an ORDER BY
+	// written for the other returns a page that is neither.
+	Order models.ProductOrder
 }
 
 // ProductPatch is a partial update of a product.

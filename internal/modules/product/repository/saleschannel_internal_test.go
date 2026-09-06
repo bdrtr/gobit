@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/bdrtr/gobit/internal/modules/product/models"
 )
 
 // This file pins the CONSTRUCTION of the product listing's filter body.
@@ -270,4 +272,60 @@ WHERE deleted_at IS NULL
   AND (created_at, id) < (COALESCE($5::timestamptz, 'infinity'::timestamptz), COALESCE($6::text, ''))
 ORDER BY created_at DESC, id DESC
 LIMIT $3::int OFFSET $4::int`, listSQL)
+}
+
+// TestTheSeekAndTheOrderMoveTogether verifies that the keyset comparison and the
+// ORDER BY always describe the SAME direction.
+//
+// They are one decision written in two places, and the failure mode when they
+// disagree is the reason this test exists: nothing errors. The statement runs,
+// returns rows, and serves a page that is neither the one the cursor named nor
+// the one the order promised — a fault that reads as missing products.
+func TestTheSeekAndTheOrderMoveTogether(t *testing.T) {
+	t.Parallel()
+
+	newest, _ := listProductsSQL(ProductFilter{Limit: 20})
+	assert.Contains(t, newest, "(created_at, id) < (COALESCE(")
+	assert.Contains(t, newest, "ORDER BY created_at DESC, id DESC")
+	assert.Contains(t, newest, "'infinity'::timestamptz")
+
+	oldest, _ := listProductsSQL(ProductFilter{Limit: 20, Order: models.ProductOrderOldest})
+	assert.Contains(t, oldest, "(created_at, id) > (COALESCE(")
+	assert.Contains(t, oldest, "ORDER BY created_at ASC, id ASC")
+	assert.Contains(t, oldest, "'-infinity'::timestamptz")
+
+	// The pairing, stated as the thing that must never happen: a "<" seek must
+	// never sit beside an ascending ORDER BY, and the reverse.
+	assert.NotContains(t, newest, "ORDER BY created_at ASC")
+	assert.NotContains(t, oldest, "ORDER BY created_at DESC")
+	assert.NotContains(t, oldest, "(created_at, id) < (COALESCE(")
+}
+
+// TestTheZeroOrderIsTheOrderTheListingAlwaysHad pins the default down.
+//
+// The field was added to an existing filter, so every caller that predates it
+// passes the zero value; if that produced anything but newest-first, the change
+// would have silently reversed every existing listing.
+func TestTheZeroOrderIsTheOrderTheListingAlwaysHad(t *testing.T) {
+	t.Parallel()
+
+	zero, _ := listProductsSQL(ProductFilter{Limit: 20})
+	named, _ := listProductsSQL(ProductFilter{Limit: 20, Order: models.ProductOrderNewest})
+	assert.Equal(t, named, zero)
+}
+
+// TestBothOrdersKeepTheSentinelFormRatherThanABranch keeps the cheap plan.
+//
+// The COALESCE sentinel is not a style: an OR branch folds away for the first
+// executions and survives into a Filter when the statement goes generic, which
+// turns the seek into a full index walk with nothing in the code changing. The
+// new order had to be written in the same form, and this is what says so.
+func TestBothOrdersKeepTheSentinelFormRatherThanABranch(t *testing.T) {
+	t.Parallel()
+
+	for _, order := range []models.ProductOrder{models.ProductOrderNewest, models.ProductOrderOldest} {
+		query, _ := listProductsSQL(ProductFilter{Limit: 20, Order: order})
+		assert.NotContains(t, query, " OR ", "order %q: the keyset bound must carry no OR branch", order)
+		assert.Contains(t, query, "COALESCE(", "order %q: the bound must stay a sentinel", order)
+	}
 }

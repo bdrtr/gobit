@@ -9,6 +9,7 @@ import (
 	"github.com/vektah/gqlparser/v2/ast"
 	"github.com/vektah/gqlparser/v2/gqlerror"
 
+	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
@@ -994,7 +995,7 @@ func fieldKey(field *ast.Field) string {
 // query is the database round trip and it does not drop when fewer fields are
 // selected.
 func complexityCosts(costs *ComplexityRoot) {
-	costs.Query.Products = func(child int, limit, _ *int, _, _, _, _, _ *string) int {
+	costs.Query.Products = func(child int, limit, _ *int, _, _ *string, _ *models.ProductOrder, _, _, _ *string) int {
 		return rootQueryCost + pageSize(limit)*child
 	}
 

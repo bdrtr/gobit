@@ -84,6 +84,8 @@ models:
     model: github.com/bdrtr/gobit/internal/modules/product/models.Tag
   Category:
     model: github.com/bdrtr/gobit/internal/modules/product/models.Category
+  ProductOrder:
+    model: github.com/bdrtr/gobit/internal/modules/product/models.ProductOrder
 
   # JSON is gqlgen's ready-made scalar carrying map[string]any; the name was
   # changed because in the schema it tells the client more ("Map" is the name of

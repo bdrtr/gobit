@@ -31,6 +31,7 @@ import (
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/link"
 	"github.com/bdrtr/gobit/core/query"
+	corepage "github.com/bdrtr/gobit/internal/core/page"
 	"github.com/bdrtr/gobit/internal/modules/product"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/repository"
@@ -500,6 +501,118 @@ func TestListProductsPagesConsistently(t *testing.T) {
 		}
 	}
 	assert.Len(t, seen, total, "the pages must cover the whole set")
+}
+
+// TestTheTwoOrdersAreTheSameSetReadFromOppositeEnds verifies the listing order
+// against a real database rather than against the string the builder produced.
+//
+// The SQL test next to the builder proves the seek and the ORDER BY name the
+// same direction; only the database can say that the direction is the one the
+// client asked for and that the set is the same either way. A statement that
+// merely LOOKS reversed and quietly drops or duplicates a row would pass the
+// first test and fail here.
+func TestTheTwoOrdersAreTheSameSetReadFromOppositeEnds(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+	collection, err := svc.CreateCollection(ctx, service.CreateCollectionInput{
+		Title: "Order " + uniqueHandle("collection"),
+	})
+	require.NoError(t, err)
+
+	const total = 5
+	for i := range total {
+		_, err := svc.CreateProduct(ctx, service.CreateProductInput{
+			Handle:       uniqueHandle(fmt.Sprintf("order-%d", i)),
+			Title:        fmt.Sprintf("Order %d", i),
+			CollectionID: &collection.ID,
+		})
+		require.NoError(t, err)
+	}
+
+	ids := func(order models.ProductOrder) []string {
+		page, err := svc.ListProducts(ctx, service.ListProductsOptions{
+			Order:        order,
+			CollectionID: &collection.ID,
+			Limit:        total,
+		})
+		require.NoError(t, err)
+		require.Len(t, page.Items, total)
+
+		out := make([]string, 0, total)
+		for _, item := range page.Items {
+			out = append(out, item.ID)
+		}
+
+		return out
+	}
+
+	newest := ids(models.ProductOrderNewest)
+	oldest := ids(models.ProductOrderOldest)
+
+	assert.ElementsMatch(t, newest, oldest, "the two orders must return the SAME set")
+
+	reversed := make([]string, len(oldest))
+	for i, id := range oldest {
+		reversed[len(oldest)-1-i] = id
+	}
+	assert.Equal(t, newest, reversed, "oldest-first must be newest-first read backwards")
+
+	// The zero value is the order the listing always had.
+	assert.Equal(t, newest, ids(""), "an unset order must still be newest first")
+}
+
+// TestPagingByCursorCoversTheSetInBothOrders verifies that the keyset seek walks
+// the whole listing in either direction.
+//
+// The seek is the half that changes with the order, and its failure mode is not
+// an error: a bound written for the wrong end returns the first page and then
+// nothing, or returns the same page for ever. Walking to exhaustion and counting
+// what came back is what tells those apart.
+func TestPagingByCursorCoversTheSetInBothOrders(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+	collection, err := svc.CreateCollection(ctx, service.CreateCollectionInput{
+		Title: "Cursor " + uniqueHandle("collection"),
+	})
+	require.NoError(t, err)
+
+	const total = 5
+	for i := range total {
+		_, err := svc.CreateProduct(ctx, service.CreateProductInput{
+			Handle:       uniqueHandle(fmt.Sprintf("cursor-%d", i)),
+			Title:        fmt.Sprintf("Cursor %d", i),
+			CollectionID: &collection.ID,
+		})
+		require.NoError(t, err)
+	}
+
+	for _, order := range []models.ProductOrder{models.ProductOrderNewest, models.ProductOrderOldest} {
+		seen := map[string]struct{}{}
+		cursor := corepage.Cursor{}
+
+		for range total {
+			page, err := svc.ListProducts(ctx, service.ListProductsOptions{
+				Order:        order,
+				CollectionID: &collection.ID,
+				Limit:        2,
+				After:        cursor,
+			})
+			require.NoError(t, err, "order %q", order)
+
+			for _, item := range page.Items {
+				_, dup := seen[item.ID]
+				assert.False(t, dup, "order %q: %s came back on two pages", order, item.ID)
+				seen[item.ID] = struct{}{}
+			}
+			if page.NextCursor == "" {
+				break
+			}
+			cursor, err = corepage.Decode(service.ProductListingFor(order), page.NextCursor)
+			require.NoError(t, err, "order %q: the listing must accept its own cursor", order)
+		}
+
+		assert.Len(t, seen, total, "order %q: the cursor walk must cover the whole set", order)
+	}
 }
 
 // TestCreateVariantLosesRaceWithProductDeletion verifies that a variant cannot

@@ -213,6 +213,7 @@ func TestProductsArgumentsMatchWhatTheServiceReads(t *testing.T) {
 		"CategoryID":   "categoryId",
 		"TagID":        "tagId",
 		"Search":       "q",
+		"Order":        "sort",
 		"Limit":        "limit",
 		"Offset":       "offset",
 		"After":        "after",

@@ -41,6 +41,44 @@ func (s Status) Valid() bool {
 // String returns the textual form of the status.
 func (s Status) String() string { return string(s) }
 
+// ProductOrder is the order a product listing comes back in.
+//
+// It is a CLOSED set and not a column name the caller supplies, and the reason
+// is the keyset cursor rather than taste: every order a listing offers needs an
+// index its seek can ride, and an order named by the client would either find
+// no index or fall back to a sort of the whole table without saying so.
+//
+// The two values here cost no index at all. `product_created_at_idx` is
+// declared `(created_at DESC, id DESC)` and PostgreSQL reads a b-tree in either
+// direction, so the older-first order is the same index walked the other way.
+// The orders that are NOT here are absent for a reason and not by omission:
+// price and availability are not columns of this table at all — they belong to
+// the pricing and inventory modules — and what they would even mean is the open
+// question docs/gaps.md records as A16 and A17.
+type ProductOrder string
+
+// Product listing orders.
+const (
+	// ProductOrderNewest is newest first. It is the default and the order every
+	// listing had before this parameter existed.
+	ProductOrderNewest ProductOrder = "newest"
+	// ProductOrderOldest is oldest first: the same key read the other way.
+	ProductOrderOldest ProductOrder = "oldest"
+)
+
+// Valid reports whether the order is one of the defined values.
+func (o ProductOrder) Valid() bool {
+	switch o {
+	case ProductOrderNewest, ProductOrderOldest:
+		return true
+	default:
+		return false
+	}
+}
+
+// String returns the textual form of the order.
+func (o ProductOrder) String() string { return string(o) }
+
 // Product is a product in the catalog.
 //
 // The PRICE and the STOCK of the product are NOT here: both are the data of

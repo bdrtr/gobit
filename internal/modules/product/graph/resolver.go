@@ -8,6 +8,7 @@ import (
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	corepage "github.com/bdrtr/gobit/internal/core/page"
+	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
@@ -95,7 +96,9 @@ type variantResolver struct{ *Resolver }
 func (r *queryResolver) Products(
 	ctx context.Context,
 	limit, offset *int,
-	after, q, collectionID, categoryID, tagID *string,
+	after, q *string,
+	sort *models.ProductOrder,
+	collectionID, categoryID, tagID *string,
 ) (*ProductList, error) {
 	// "after" and "offset" name two different positions; honoring both would
 	// serve the page N rows past the cursor, which is a position neither of
@@ -105,12 +108,21 @@ func (r *queryResolver) Products(
 			`"after" and "offset" name two different positions; send one of them`)
 	}
 
-	cursor, err := corepage.Decode(service.ProductListing, stringValue(after))
+	order := models.ProductOrderNewest
+	if sort != nil {
+		order = *sort
+	}
+
+	// The cursor is decoded against the listing name of THE ORDER ASKED FOR, so
+	// one minted under the other order is refused here rather than serving a
+	// page out of a key space it does not describe.
+	cursor, err := corepage.Decode(service.ProductListingFor(order), stringValue(after))
 	if err != nil {
 		return nil, err
 	}
 
 	result, err := r.svc.ListStoreProducts(ctx, service.StoreListOptions{
+		Order:           order,
 		CollectionID:    trimmedPointer(collectionID),
 		CategoryID:      trimmedPointer(categoryID),
 		TagID:           trimmedPointer(tagID),

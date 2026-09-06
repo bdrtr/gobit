@@ -360,7 +360,7 @@ func TestStoreListDescribesOnlyParametersItReads(t *testing.T) {
 
 	names := parameterNames(t, op, "query")
 	assert.ElementsMatch(t, []string{
-		"collection_id", "category_id", "tag_id", "q", "limit", "offset", "after", "with_count",
+		"collection_id", "category_id", "tag_id", "q", "sort", "limit", "offset", "after", "with_count",
 	}, names,
 		"the parameters have to be the same as the ones storeListProducts reads")
 	assert.NotContains(t, names, "sales_channel_id",

@@ -57,13 +57,22 @@ func (h *Handler) storeListProducts(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(r.Context(), w, err)
 		return
 	}
-	after, err := afterParam(r, service.ProductListing, offset)
+	order, err := sortParam(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	// The cursor is decoded against the listing name of THE ORDER ASKED FOR, so
+	// a cursor minted under the other order is refused here rather than serving
+	// a page out of a key space it does not describe.
+	after, err := afterParam(r, service.ProductListingFor(order), offset)
 	if err != nil {
 		corehttp.WriteError(r.Context(), w, err)
 		return
 	}
 
 	result, err := h.svc.ListStoreProducts(r.Context(), service.StoreListOptions{
+		Order:           order,
 		CollectionID:    stringParam(r, "collection_id"),
 		CategoryID:      stringParam(r, "category_id"),
 		TagID:           stringParam(r, "tag_id"),

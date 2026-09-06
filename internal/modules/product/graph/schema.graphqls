@@ -64,6 +64,21 @@ type Query {
     offset: Int
     after: String
     q: String
+    """
+    The order the listing comes back in. Default: newest.
+
+    Both orders ride the SAME index — it is declared (created_at DESC, id DESC)
+    and a b-tree is readable in either direction — so neither is the expensive
+    one.
+
+    A cursor belongs to ONE order: an "after" minted under newest is REFUSED
+    when sent with oldest, because it names a position in a key space read the
+    other way and would otherwise serve the wrong page silently.
+
+    Price and availability are not offered here: they are not columns of the
+    catalog at all.
+    """
+    sort: ProductOrder
     collectionId: ID
     """
     Narrows the listing to a category. The id comes from /store/v1/categories:
@@ -245,4 +260,18 @@ type Category {
   isActive: Boolean!
   isInternal: Boolean!
   rank: Int!
+}
+
+"""
+The order a product listing comes back in.
+
+The values are spelled exactly as the REST surface spells them, and lower case
+rather than the SCREAMING_CASE GraphQL convention, because the enum is BOUND to
+the module's own type (see gqlgen.yml): a second spelling would need a converter,
+and a converter is the second definition this schema's binding policy exists to
+avoid.
+"""
+enum ProductOrder {
+  newest
+  oldest
 }

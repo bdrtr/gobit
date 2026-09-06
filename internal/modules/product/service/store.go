@@ -104,6 +104,8 @@ const codeProviderNotFound = "query_provider_not_found"
 // There is NO status filter: the storefront shows only published products, and
 // letting the client change that would leak draft products.
 type StoreListOptions struct {
+	// Order is the listing order; the zero value is newest first.
+	Order        models.ProductOrder
 	CollectionID *string
 	// CategoryID and TagID are the two filters a storefront can actually call:
 	// the ids come from the vocabulary endpoints, which is what those exist for.
@@ -214,6 +216,7 @@ type enrichment struct {
 func (s *Service) ListStoreProducts(ctx context.Context, opts StoreListOptions) (ListResult[StoreProduct], error) {
 	published := models.StatusPublished
 	result, err := s.ListProducts(ctx, ListProductsOptions{
+		Order:           opts.Order,
 		Status:          &published,
 		CollectionID:    opts.CollectionID,
 		CategoryID:      opts.CategoryID,

@@ -57,7 +57,7 @@ func Describe(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/store/v1/products", openapi.Operation{
 		Summary: "Lists the published products with their price and stock information.",
 		// The parameters are the ones the handler READS, not the ones we might
-		// wish for: [Handler.storeListProducts] reads only these seven.
+		// wish for: [Handler.storeListProducts] reads only these eight.
 		//
 		// "sales_channel_id" is DELIBERATELY ABSENT and must not be added: the
 		// channel comes from the request's publishable key, not from the query
@@ -82,6 +82,19 @@ func Describe(d *openapi.Doc) {
 					"The match has a leading wildcard and therefore uses no index; on a large "+
 					"catalog it is a full scan (ADR 0015 measures it and names pg_trgm as the "+
 					"standing remedy)."),
+			queryParameter("sort", typeString,
+				"Listing order: \"newest\" (default, and the order this listing had before "+
+					"the parameter existed) or \"oldest\". Any other value is REFUSED rather "+
+					"than falling back, because a client that asked for an order it did not "+
+					"get cannot tell that from a catalog which happens to look that way. "+
+					"Both orders ride the SAME index — it is declared (created_at DESC, id "+
+					"DESC) and a b-tree is readable in either direction — so neither is the "+
+					"expensive one. "+
+					"A cursor belongs to ONE order: an \"after\" minted under \"newest\" is "+
+					"refused when sent with sort=oldest, because it names a position in a key "+
+					"space read the other way and would otherwise serve the wrong page. "+
+					"Price and availability are not offered: they are not columns of the "+
+					"catalog at all."),
 			queryParameter("limit", typeInteger,
 				"Page size; if not given the service's default applies."),
 			queryParameter("offset", typeInteger, "Number of records to skip."),

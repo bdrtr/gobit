@@ -534,13 +534,52 @@ const productColumns = `id, handle, title, subtitle, description, thumbnail,
 	material, origin_country, collection_id, metadata,
 	created_at, updated_at, deleted_at`
 
+// keysetSeek is the ordering half of the listing: the comparison the cursor
+// rides and the ORDER BY it has to agree with.
+//
+// The two are returned TOGETHER on purpose. They are one decision written in
+// two places, and a seek written for one direction beside an ORDER BY written
+// for the other does not fail — it returns a page that is neither, which reads
+// as missing rows rather than as an error.
+//
+// # Both orders ride ONE index
+//
+// `product_created_at_idx` is declared `(created_at DESC, id DESC)` and a
+// b-tree is readable in either direction, so the older-first order is the same
+// index walked backwards. Neither order costs a migration and neither degrades
+// to a sort of the whole table.
+//
+// # The sentinel flips with the direction
+//
+// The absent cursor means "start at the top", and which end that is depends on
+// the direction: newest-first starts below +infinity, oldest-first starts above
+// -infinity. The id sentinel stays the empty string in both, because the row
+// comparison is already decided by the timestamp against an infinity — no real
+// row ties with one.
+//
+// The form is a ROW COMPARISON against a COALESCE sentinel rather than an OR
+// branch, and the reason is measured in the [corepage] godoc: the branch folds
+// away for the first five executions and survives into a Filter on the sixth,
+// when the statement goes generic.
+func keysetSeek(order models.ProductOrder, afterAtParam, afterIDParam string) (seek, orderBy string) {
+	if order == models.ProductOrderOldest {
+		return "  AND (created_at, id) > (COALESCE(" + afterAtParam + "::timestamptz, '-infinity'::timestamptz), COALESCE(" + afterIDParam + "::text, ''))",
+			"ORDER BY created_at ASC, id ASC"
+	}
+
+	return "  AND (created_at, id) < (COALESCE(" + afterAtParam + "::timestamptz, 'infinity'::timestamptz), COALESCE(" + afterIDParam + "::text, ''))",
+		"ORDER BY created_at DESC, id DESC"
+}
+
 // listProductsSQL builds the paginated listing for the given criteria and the
 // arguments it takes.
 //
-// The order (created_at DESC, id DESC) is fixed; the second key prevents two
-// records created in the same millisecond from changing places between pages.
+// The ordering KEY (created_at, id) is fixed and the DIRECTION is not: the
+// second key prevents two records created in the same millisecond from changing
+// places between pages, and [keysetSeek] reads that one key from either end.
 // That same pair is what a cursor carries, which is why this listing could take
-// one without changing its order at all.
+// one without changing its key at all — and why the order it was minted under
+// has to travel with it (see service.ProductListingFor).
 //
 // Its four own parameters — limit, offset and the two halves of the cursor —
 // are numbered AFTER whatever [productFilterSQL] used, which is the whole
@@ -591,10 +630,12 @@ func listProductsSQL(f ProductFilter) (query string, args []any) {
 	afterIDParam := "$" + strconv.Itoa(n+4)
 	args = append(args, toInt32(f.Limit), toInt32(f.Offset), afterAt, afterID)
 
+	seek, orderBy := keysetSeek(f.Order, afterAtParam, afterIDParam)
+
 	return `SELECT ` + productColumns + ` FROM product
 ` + body + `
-  AND (created_at, id) < (COALESCE(` + afterAtParam + `::timestamptz, 'infinity'::timestamptz), COALESCE(` + afterIDParam + `::text, ''))
-ORDER BY created_at DESC, id DESC
+` + seek + `
+` + orderBy + `
 LIMIT ` + limitParam + `::int OFFSET ` + offsetParam + `::int`, args
 }
 
