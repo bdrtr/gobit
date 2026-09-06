@@ -145,6 +145,47 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltildi
 
+- **Yol denetiminin kök listesinde beş dosyalık bir delik vardı, ve deliği
+  bulan şey deliğe düşen bir dosya oldu.**
+
+  `TestRepoPathsAreEnglishOutsideLedger` bir yolun Türkçe olup olmadığını
+  `turkishStems` listesine bakarak sorar, ve o listenin kendi godoc'u onu bir
+  TABAN olarak tarif ediyor, bir çit olarak değil. Taban 2026-09-06'da ölçüldü:
+  izlenen bütün yollar parçalarına ayrıldı — 488 benzersiz parça — ve 19'u
+  Türkçe çıktı. Bunlardan beşi listede hiçbir karşılığı olmadığı için
+  denetimden GÖRÜNMEDEN geçiyordu, ve beşi de yol ledger'ında değildi:
+  `docs/adr/0002-di-container-el-yazmasi.md`,
+  `docs/adr/0003-migration-iptali.md`, `docs/adr/0004-query-veri-erisimi.md`,
+  `docs/adr/0005-link-semasi-migration-disinda.md` ve `docs/mimari.md`.
+  Ledger'ın ADR'leri 0001, 0006–0011 diye gidiyordu; eksik aralığın kendisi
+  delikti.
+
+  Bu, denetimin kırıldığı bir hata değil: denetim hiçbir şey görmeden geçiyordu,
+  ve geçen bir denetimle ayırt edilemiyordu.
+
+  Kök listesi VERİdir, o yüzden toplu yeniden yazılmadı — 18 kök alfabetik
+  yerlerine tek tek eklendi ve sonuç küme farkıyla doğrulandı: 168'den 186'ya,
+  kayıp sıfır. (Aynı listeden bir kökün toplu bir işlemle sessizce silinmesi bu
+  depoda daha önce yaşandı.)
+
+  **Eklenen bir kök beklenmedik bir yerde ısırdı, ve orada bulduğu şey de
+  gerçek borçtu.** `veri` kökü, ledger'da OLMAYAN üç e2e dosyasında
+  `vitrinVeri` adlı test yardımcısını yakaladı — yol şeridi değil, tanımlayıcı
+  şeridi. Yardımcının godoc'u zaten İngilizceydi ve komşuları da öyleydi
+  (`openStorefrontCart`, `storefrontCompletionBody`); Türkçe kalan tek şey
+  adıydı. `storefrontData` olarak çevrildi.
+
+  Değişmez iki yönde de mutasyonla kanıtlandı. Ledger satırı silinince denetim
+  `docs/mimari.md`'yi adıyla VE onu yakalayan kökle bildiriyor; kök silinince
+  `TestPathLedgerIsNotStale` aynı satır için "artık Türkçe ad taşımıyor" diyor.
+  Yani ne kök ne de ledger satırı süs.
+
+  Kapanmayan borç adıyla yazılıyor: `vitrin` hâlâ bir kök DEĞİL, ve ledger'da
+  olmayan dokuz `.go` dosyası onu taşıyor — `vitrinIstegi`,
+  `anahtarliVitrinIstegi`, `vitrinKatalogu`, `vitrinZarfi`, `describeVitrin`.
+  Bu turda çevrilmediler, çünkü kök eklemek onları çevirmeyi ZORUNLU kılar ve o
+  ayrı bir iştir; burada ölçülüp adlandırıldılar.
+
 - **Hiçbir şeyin OKUMADIĞI bayrağın VARSAYILANINI da hiçbir şey tutmuyordu — ve
   `allow_backorder` yalnız değil, dördün biri** (A6, D2).
 

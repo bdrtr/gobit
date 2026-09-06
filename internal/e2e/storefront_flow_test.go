@@ -89,7 +89,7 @@ func TestStorefrontCartBecomesOrder(t *testing.T) {
 		fmt.Sprintf(`{"variant_id":%q,"quantity":%d}`, variantID, storefrontQuantity))
 	require.Equal(t, http.StatusCreated, added.Code, "body: %s", added.Body.String())
 
-	line := vitrinVeri(t, added)
+	line := storefrontData(t, added)
 	assert.InDelta(t, float64(storefrontUnitPrice), line["unit_price"], 0,
 		"the unit price must come FROM THE CATALOG; the client sent no price at all")
 	assert.Equal(t, variantTitle, line["title"],
@@ -102,7 +102,7 @@ func TestStorefrontCartBecomesOrder(t *testing.T) {
 	fetched := vitrinIstegi(t, http.MethodGet, "/store/v1/carts/"+cartID, "")
 	require.Equal(t, http.StatusOK, fetched.Code, "body: %s", fetched.Body.String())
 
-	cart := vitrinVeri(t, fetched)
+	cart := storefrontData(t, fetched)
 	assert.InDelta(t, float64(storefrontSubtotal), cart["subtotal"], 0)
 	assert.InDelta(t, float64(storefrontTax), cart["tax_total"], 0,
 		"the tax must be computed with the region's rate; had the calculation pass "+
@@ -120,7 +120,7 @@ func TestStorefrontCartBecomesOrder(t *testing.T) {
 		storefrontCompletionBody(t, storefrontTotal))
 	require.Equal(t, http.StatusOK, done.Code, "body: %s", done.Body.String())
 
-	result := vitrinVeri(t, done)
+	result := storefrontData(t, done)
 	orderID, _ := result["order_id"].(string)
 	require.NotEmpty(t, orderID, "the response must carry the order's id")
 	assert.Equal(t, cartID, result["cart_id"])
@@ -339,7 +339,7 @@ func TestStorefrontCurrencyDerivedFromRegion(t *testing.T) {
 
 			fetched := vitrinIstegi(t, http.MethodGet, "/store/v1/carts/"+cartID, "")
 			require.Equal(t, http.StatusOK, fetched.Code, "body: %s", fetched.Body.String())
-			assert.Equal(t, scenario.currency, vitrinVeri(t, fetched)["currency_code"],
+			assert.Equal(t, scenario.currency, storefrontData(t, fetched)["currency_code"],
 				"the cart's currency must be THE COUNTRY'S REGION'S; the client sent "+
 					"neither a region nor a currency")
 
@@ -347,7 +347,7 @@ func TestStorefrontCurrencyDerivedFromRegion(t *testing.T) {
 				fmt.Sprintf(`{"variant_id":%q,"quantity":1}`, variantID))
 			require.Equal(t, http.StatusCreated, added.Code, "body: %s", added.Body.String())
 
-			assert.InDelta(t, float64(scenario.price), vitrinVeri(t, added)["unit_price"], 0,
+			assert.InDelta(t, float64(scenario.price), storefrontData(t, added)["unit_price"], 0,
 				"the unit price must be selected from the list in the cart's currency; had "+
 					"the wrong list been read the customer would pay another country's price")
 		})
@@ -396,7 +396,7 @@ func TestStorefrontPlacesNoOrderOnUnapprovedTotal(t *testing.T) {
 	done := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/complete",
 		storefrontCompletionBody(t, storefrontTotal))
 	require.Equal(t, http.StatusOK, done.Code, "body: %s", done.Body.String())
-	assert.NotEmpty(t, vitrinVeri(t, done)["order_id"])
+	assert.NotEmpty(t, storefrontData(t, done)["order_id"])
 }
 
 // TestStorefrontExpectedTotalIsMandatory verifies that the guard CANNOT BE
@@ -545,8 +545,8 @@ func vitrinIstegi(t *testing.T, method, path, body string) *httptest.ResponseRec
 	return anahtarliVitrinIstegi(t, publishableKey, method, path, body)
 }
 
-// vitrinVeri returns the response envelope's "data" field as an object.
-func vitrinVeri(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
+// storefrontData returns the response envelope's "data" field as an object.
+func storefrontData(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
 
 	var envelope struct {

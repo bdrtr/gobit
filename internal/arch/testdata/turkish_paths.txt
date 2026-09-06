@@ -5,11 +5,16 @@
 # in English; this list may only shrink.
 #
 docs/adr/0001-modul-arasi-iletisim.md
+docs/adr/0002-di-container-el-yazmasi.md
+docs/adr/0003-migration-iptali.md
+docs/adr/0004-query-veri-erisimi.md
+docs/adr/0005-link-semasi-migration-disinda.md
 docs/adr/0006-workflow-modul-erisimi.md
 docs/adr/0007-sertlestirme-arizada-davranis.md
 docs/adr/0008-musteri-kimligi-guven-siniri.md
 docs/adr/0009-cok-kiracililik-kurulum-siniri.md
 docs/adr/0010-depo-secim-politikasi.md
 docs/adr/0011-yonetim-paneli-dorduncu-agac.md
+docs/mimari.md
 internal/modules/inventory/api/yetki_test.go
 internal/modules/pricing/api/yetki_test.go

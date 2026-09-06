@@ -192,7 +192,7 @@ func openCartWithKey(t *testing.T, key string) string {
 	require.Equal(t, http.StatusCreated, recorder.Code,
 		"the cart must open; body: %s", recorder.Body.String())
 
-	id, ok := vitrinVeri(t, recorder)["id"].(string)
+	id, ok := storefrontData(t, recorder)["id"].(string)
 	require.True(t, ok, "the opened cart must carry an identity; body: %s", recorder.Body.String())
 
 	return id
