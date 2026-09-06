@@ -145,6 +145,38 @@ Sabitlenme `1.0.0` ile olur.
   yazmıştı; modül üçüncüsünü kazanınca ikisi de kırıldı. Sayı artık okunuyor:
   biri geri alınacak adım sayısını mevcut sürümden türetiyor, diğeri
   dokunulmayan sahibin sürümünü geri almadan ÖNCE okuyup onunla karşılaştırıyor.
+- **Bir handler, hiç belgelemediği bir sorgu parametresini okuyabiliyor ve
+  deponun bütün kapıları yeşil kalıyor** (D25).
+
+  Mutasyonla kanıtlandı: vitrin ürün listelemesine `undocumented_switch` okuyan
+  bir dal ekildi, modülün bütün suite'i **ve** `internal/arch` geçti. Böyle bir
+  parametre, çalışan ama reklamı yapılmayan bir anahtardır — üretilen istemciye,
+  belgeye ve incelemeye görünmez.
+
+  Bunu kapatıyor sanılan denetim yalnızca **öteki yönü** kapatıyor.
+  Godoc'u önlediği kusuru zaten yazıyor: "okunmayan bir parametreyi şemaya
+  koymak, istemciye ÇALIŞMAYAN bir özellik vaat etmektir." Eksik yarı için daha
+  kötüsü var: karşılaştırdığı iki taraftan hiçbiri HANDLER değil — üretilen
+  belgeyi testin içine elle yazılmış bir listeyle karşılaştırıyor, yani ikisinde
+  birden olmayan bir parametre kendisiyle uyuşuyor ve geçiyor.
+
+  **Kapı fiyatlandırıldı ve YAZILMADI, çünkü naif biçimi bu deponun kendi
+  ölçütünü geçemiyor.** İlk yaklaşıklık — her `URL.Query().Get("x")` ve her
+  `xxxParam(r, "x")` sabitini, aynı paketin `queryParameter("x")` çağrılarıyla
+  karşılaştırmak — **on iki modülde** bulgu bildirdi, ve tek tek bakınca
+  neredeyse hepsi gürültü çıktı: `id`, `upload_id` ve `sales_channel_id` YOL
+  parametresi, `limit` ile `offset` ise regex'in göremediği bir `paging`
+  değişkeniyle belgeleniyor. Yanlış pozitiflerini muafiyet listesinde taşımak
+  zorunda kalan bir kapı, kapı sayılmaz — bu ölçütü aynı gün başka bir kapı için
+  ben koymuştum.
+
+  Gereken yapısal kural yazıldı ama uygulanmadı: bir fonksiyon, KENDİ
+  parametresini `URL.Query().Get`'e geçiriyorsa parametre okuyucusudur ve sabit
+  onun çağrı yerlerinden toplanır; belgelenen taraf ise `openapi.Parameter`
+  üreten çağrılardan türetilir. İki taraf, iki farklı yapı, elle liste yok.
+  Bugünkü sızıntının sıfır olduğuna inanılıyor — ekilen anahtar bulunan tek
+  örnekti — yani kapı ÖNLEYİCİ, ki aceleye getirilmemesinin sebebi de bu.
+
   Testin gevşemediği mutasyonla gösterildi — `-steps` yok sayıldığında hâlâ
   düşüyor.
 

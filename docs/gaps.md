@@ -1143,6 +1143,39 @@ belonging to that feature**, and the next round pays for the question twice.
   no row in the README's invariant table. Nothing is red, because that audit only
   checks README against the repository and not the reverse, but the row is
   missing.
+- **D25** **A handler can read a query parameter it never describes, and every
+  gate in this repository stays green.** Proved by mutation on 2026-09-06: a
+  branch reading `undocumented_switch` was planted in the storefront product
+  listing, and the whole module suite plus `internal/arch` passed. The parameter
+  would be a working, unadvertised switch — invisible to the generated client,
+  to the document and to review.
+
+  The audit that looks like it covers this,
+  `TestStoreListDescribesOnlyParametersItReads`, only closes the OTHER
+  direction. Its godoc states the fault it prevents — "putting a parameter that
+  is not read into the schema is promising the client a feature that DOES NOT
+  WORK" — and that is exactly one half. Worse for the missing half, neither of
+  the sides it compares is the HANDLER: it checks the generated document against
+  a list written by hand in the test, so a parameter absent from both agrees
+  with itself and passes.
+
+  **The gate this wants was priced and NOT written, because the naive form fails
+  this repository's own standard.** A first approximation — every
+  `URL.Query().Get("x")` literal and every `xxxParam(r, "x")` literal, compared
+  against the `queryParameter("x")` calls of the same package — reported
+  findings in TWELVE modules, and checking them showed almost all were noise:
+  `id`, `upload_id` and `sales_channel_id` are PATH parameters, and `limit` and
+  `offset` are described through a `paging` variable the regex could not see.
+  A gate whose exemption list would have to hold its own false positives is not
+  a gate, so what is needed is the structural rule: a function is a
+  parameter READER when its body passes one of its OWN parameters to
+  `URL.Query().Get`, and the literal is then collected at its call sites; the
+  described side is derived from the calls that build an `openapi.Parameter`.
+  Two sides, two different constructs, no hand list. Today's leakage under that
+  rule is believed to be zero — the planted switch was the only one found — so
+  the gate is PREVENTIVE, which is also why it was not worth shipping in a
+  hurry.
+
 - **D24** **A carrier's events arrive out of order, and the shipment state
   machine refused all of it — while tolerating repeats.** Measured 2026-09-06 by
   printing the whole transition table from a throwaway probe rather than reading
