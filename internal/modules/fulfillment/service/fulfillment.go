@@ -254,7 +254,14 @@ func (s *Service) CancelFulfillment(ctx context.Context, id string) error {
 		case models.ActionNoop:
 			s.log.DebugContext(ctx, "the fulfillment is already canceled", "fulfillment", id)
 			return nil
-		case models.ActionConflict:
+		case models.ActionConflict, models.ActionRecord:
+			// ActionRecord cannot occur here and is bundled with the conflict
+			// deliberately rather than left to fall through the switch: a
+			// cancellation is a COMMAND to the carrier, not a report about a
+			// past moment, so "this arrived late" has no meaning for it (see
+			// [models.FulfillmentStatus.CancelAction]). Should the table ever
+			// grow such a branch, the safe reading of an unhandled outcome is
+			// refusal, not silent success.
 			return errors.Conflict(CodeInvalidTransition,
 				"a fulfillment in the %q state cannot be canceled; the return flow has to be used: %s", ful.Status, id)
 		case models.ActionProceed:
@@ -280,12 +287,12 @@ func (s *Service) CancelFulfillment(ctx context.Context, id string) error {
 		now := s.now()
 		_, err = s.store.UpdateFulfillmentStatus(ctx, ful.ID, models.StatusCanceled,
 			ful.TrackingNumber, ful.TrackingURL,
-			ful.ShippedAt, ful.DeliveredAt, &now)
+			ful.ShippedAt, ful.DeliveredAt, &now, ful.ReturnedAt)
 		return err
 	})
 }
 
-// MarkShipped marks the fulfillment as shipped.
+// MarkShipped records that the carrier COLLECTED the fulfillment.
 //
 // THE PROVIDER IS NOT CALLED: this method records the fact the carrier REPORTED
 // (a webhook or an administrator action). Telling the provider "ship this" is
@@ -296,6 +303,22 @@ func (s *Service) CancelFulfillment(ctx context.Context, id string) error {
 // number (or with an empty one) DOES NOT return an error; if a DIFFERENT
 // tracking number is requested errors.Conflict is returned, because that is no
 // longer a repeat but a new request.
+//
+// # A collection reported AFTER the delivery is ACCEPTED
+//
+// This is the ordinary out-of-order case and it is the single most common thing
+// a carrier's webhooks do: two events are emitted seconds apart and arrive in
+// the wrong order. On a delivered or returned shipment the call therefore takes
+// the [models.ActionRecord] branch — no error, the status stays where it is,
+// and a tracking number that was not known before IS WRITTEN, because that is
+// often the only message carrying it.
+//
+// shipped_at is deliberately NOT filled in on that branch. The only moment
+// available is the clock's "now", which is after the delivery already recorded,
+// and a dispatch dated after its own delivery is worse than a missing one: an
+// absent stamp says "nobody told us when it set out", which is true, while an
+// out-of-order stamp asserts something that cannot have happened. The full
+// argument is at [models.ActionRecord].
 func (s *Service) MarkShipped(
 	ctx context.Context,
 	id, trackingNumber, trackingURL string,
@@ -329,6 +352,13 @@ func (s *Service) MarkShipped(
 			out = ful
 			s.log.DebugContext(ctx, "the fulfillment has already been shipped", "fulfillment", id)
 			return nil
+		case models.ActionRecord:
+			updated, err := s.recordLateShipment(ctx, ful, number, url)
+			if err != nil {
+				return err
+			}
+			out = updated
+			return nil
 		case models.ActionConflict:
 			return errors.Conflict(CodeInvalidTransition,
 				"a fulfillment in the %q state cannot be shipped: %s", ful.Status, id)
@@ -349,7 +379,7 @@ func (s *Service) MarkShipped(
 
 		now := s.now()
 		updated, err := s.store.UpdateFulfillmentStatus(ctx, ful.ID, models.StatusShipped,
-			number, url, &now, ful.DeliveredAt, ful.CanceledAt)
+			number, url, &now, ful.DeliveredAt, ful.CanceledAt, ful.ReturnedAt)
 		if err != nil {
 			return err
 		}
@@ -362,15 +392,89 @@ func (s *Service) MarkShipped(
 	return out, nil
 }
 
+// recordLateShipment absorbs a collection report that arrived AFTER the
+// shipment had already moved past 'shipped'.
+//
+// It is the [models.ActionRecord] branch of [Service.MarkShipped] and it is a
+// separate function because it makes three decisions, each of which the inline
+// switch would have hidden.
+//
+// 1. THE STATUS DOES NOT MOVE. The shipment is delivered or returned; a
+// collection event is behind it, not ahead of it, and writing 'shipped' here
+// would undo a terminal fact with a stale message.
+//
+// 2. NO MOMENT IS STAMPED. The clock says "now", which is after the delivery
+// that is already on the row. The argument for leaving the hole rather than
+// filling it with a false number is at [models.ActionRecord].
+//
+// 3. TRACKING INFORMATION IS TAKEN, and this is the reason the branch writes at
+// all. On several carriers the collection message is the one that carries the
+// waybill number; if it lost the race with the delivery message, refusing it
+// would leave the shipment permanently without the number a shopper is given.
+// A number that CONTRADICTS a stored one is still a conflict — that is not a
+// late message, it is a message about a different parcel.
+//
+// It must be called inside the transaction that holds the fulfillment's lock.
+func (s *Service) recordLateShipment(
+	ctx context.Context,
+	ful models.Fulfillment,
+	number, url string,
+) (models.Fulfillment, error) {
+	if number != "" && ful.TrackingNumber != "" && number != ful.TrackingNumber {
+		return models.Fulfillment{}, errors.Conflict(CodeInvalidTransition,
+			"the fulfillment carries the tracking number %q; a late shipment report cannot change it to %q (%s)",
+			ful.TrackingNumber, number, ful.ID)
+	}
+
+	if number == "" {
+		number = ful.TrackingNumber
+	}
+	if url == "" {
+		url = ful.TrackingURL
+	}
+	// Nothing new arrived, so nothing is written. Skipping the UPDATE is not an
+	// optimisation: this path is a webhook's retry loop, and touching
+	// updated_at on every repeat would make a shipment nobody changed look
+	// freshly modified in every listing ordered by it.
+	if number == ful.TrackingNumber && url == ful.TrackingURL {
+		s.log.DebugContext(ctx, "a shipment report arrived after the shipment moved on; nothing new to record",
+			"fulfillment", ful.ID, "status", ful.Status.String())
+		return ful, nil
+	}
+
+	s.log.InfoContext(ctx, "a shipment report arrived out of order; the tracking information was recorded and the status left alone",
+		"fulfillment", ful.ID, "status", ful.Status.String())
+
+	return s.store.UpdateFulfillmentStatus(ctx, ful.ID, ful.Status,
+		number, url, ful.ShippedAt, ful.DeliveredAt, ful.CanceledAt, ful.ReturnedAt)
+}
+
 // MarkDelivered marks the fulfillment as delivered.
 //
 // THE PROVIDER IS NOT CALLED; the rationale is the same as for
-// [Service.MarkShipped].
-//
-// Only a SHIPPED fulfillment can be delivered: skipping the order would leave
-// shipped_at empty and, during reconciliation, when the fulfillment set out
-// would stay unanswered. On an already delivered fulfillment a second call
+// [Service.MarkShipped]. On an already delivered fulfillment a second call
 // returns no error (idempotency).
+//
+// # A PENDING fulfillment can be delivered, and shipped_at stays empty
+//
+// Until 2026-09-06 this refused a delivery on a fulfillment that had not been
+// marked shipped, on the argument that "skipping the step would leave
+// shipped_at empty and reconciliation would have no answer for when the
+// fulfillment set out".
+//
+// The argument named a real hole and prescribed the wrong remedy. Refusing the
+// delivery does not produce the dispatch moment; it throws away the delivery as
+// well, and leaves a shipment that is provably in the customer's hands reading
+// 'pending' for good. It also cost the operator a fabricated number: the only
+// way through was to click "ship" first, which stamps shipped_at with the
+// clock — a moment nobody measured, written into the column the argument was
+// trying to protect.
+//
+// So the hole is kept and left honest. shipped_at NULL on a delivered shipment
+// means "we were never told when it set out". A collection report that arrives
+// later fills the tracking information in through [Service.MarkShipped]'s
+// [models.ActionRecord] branch, and the moment stays null because it is still
+// not known.
 func (s *Service) MarkDelivered(ctx context.Context, id string) (models.Fulfillment, error) {
 	if err := requireID(id, models.FulfillmentIDPrefix, "the fulfillment identifier"); err != nil {
 		return models.Fulfillment{}, err
@@ -388,16 +492,90 @@ func (s *Service) MarkDelivered(ctx context.Context, id string) (models.Fulfillm
 			out = ful
 			s.log.DebugContext(ctx, "the fulfillment has already been delivered", "fulfillment", id)
 			return nil
-		case models.ActionConflict:
+		case models.ActionConflict, models.ActionRecord:
+			// ActionRecord cannot occur here: delivery is the far end of the
+			// line, so no status this table defines sits ahead of it. It is
+			// bundled with the conflict rather than left to fall through
+			// because an unhandled outcome must read as refusal.
 			return errors.Conflict(CodeInvalidTransition,
-				"a fulfillment in the %q state cannot be delivered; it has to be shipped first: %s", ful.Status, id)
+				"a fulfillment in the %q state cannot be delivered: %s", ful.Status, id)
+		case models.ActionProceed:
+			// Handled below.
+		}
+
+		if ful.ShippedAt == nil {
+			// Worth a line at INFO rather than passing silently: this is the
+			// out-of-order case, and the shipment it produces carries a null
+			// dispatch moment that a reader would otherwise take for a bug.
+			s.log.InfoContext(ctx, "a delivery was reported before any collection; the dispatch moment stays unknown",
+				"fulfillment", id, "status", ful.Status.String())
+		}
+
+		now := s.now()
+		updated, err := s.store.UpdateFulfillmentStatus(ctx, ful.ID, models.StatusDelivered,
+			ful.TrackingNumber, ful.TrackingURL, ful.ShippedAt, &now, ful.CanceledAt, ful.ReturnedAt)
+		if err != nil {
+			return err
+		}
+		out = updated
+		return nil
+	})
+	if err != nil {
+		return models.Fulfillment{}, err
+	}
+	return out, nil
+}
+
+// MarkReturned records that the parcel CAME BACK to the sender undelivered —
+// the Turkish carriers' "iade".
+//
+// THE PROVIDER IS NOT CALLED; the rationale is the same as for
+// [Service.MarkShipped]. The status is terminal and a second call returns no
+// error (idempotency).
+//
+// # What this is NOT
+//
+// It is not the customer sending goods back after receiving them. That is a
+// SECOND fulfillment opened on a shipping option marked is_return, it is the
+// module's standing answer, and it is unaffected by this method. The difference
+// is physical rather than terminological — the case here has one waybill and
+// the other has two — and the whole argument is at [models.StatusReturned].
+//
+// Only a SHIPPED fulfillment can come back: a parcel that was never collected
+// has nowhere to come back from, and a delivered one is in the recipient's
+// hands. Neither refusal is an ordering artifact that a later message could
+// resolve, which is why they are conflicts rather than the tolerant
+// [models.ActionRecord] branch — a return implies a collection, so the two
+// cannot arrive in the wrong order without being about different parcels.
+func (s *Service) MarkReturned(ctx context.Context, id string) (models.Fulfillment, error) {
+	if err := requireID(id, models.FulfillmentIDPrefix, "the fulfillment identifier"); err != nil {
+		return models.Fulfillment{}, err
+	}
+
+	var out models.Fulfillment
+	err := s.store.WithTx(ctx, func(ctx context.Context) error {
+		ful, err := s.store.LockFulfillment(ctx, id)
+		if err != nil {
+			return err
+		}
+
+		switch ful.Status.ReturnAction() {
+		case models.ActionNoop:
+			out = ful
+			s.log.DebugContext(ctx, "the fulfillment has already come back", "fulfillment", id)
+			return nil
+		case models.ActionConflict, models.ActionRecord:
+			return errors.Conflict(CodeInvalidTransition,
+				"a fulfillment in the %q state cannot be returned to the sender; "+
+					"a parcel the customer sends back is a new fulfillment on an is_return option: %s",
+				ful.Status, id)
 		case models.ActionProceed:
 			// Handled below.
 		}
 
 		now := s.now()
-		updated, err := s.store.UpdateFulfillmentStatus(ctx, ful.ID, models.StatusDelivered,
-			ful.TrackingNumber, ful.TrackingURL, ful.ShippedAt, &now, ful.CanceledAt)
+		updated, err := s.store.UpdateFulfillmentStatus(ctx, ful.ID, models.StatusReturned,
+			ful.TrackingNumber, ful.TrackingURL, ful.ShippedAt, ful.DeliveredAt, ful.CanceledAt, &now)
 		if err != nil {
 			return err
 		}

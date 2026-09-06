@@ -7,11 +7,22 @@
 // # State machine
 //
 // The fulfillment's transition table lives on [models.FulfillmentStatus], in the
-// CancelAction, ShipAction and DeliverAction methods, as pure functions; this
-// package only turns the result into a typed error. Every illegal transition
-// returns errors.Conflict (e.g. canceling a delivered fulfillment). A
-// transition into a status the fulfillment is already in, however, is NOT an
-// error but a silent no-op; that is where idempotency comes from.
+// CancelAction, ShipAction, DeliverAction and ReturnAction methods, as pure
+// functions; this package only turns the result into a typed error. Every
+// illegal transition returns errors.Conflict (e.g. canceling a delivered
+// fulfillment). A transition into a status the fulfillment is already in,
+// however, is NOT an error but a silent no-op; that is where idempotency comes
+// from.
+//
+// # A carrier's events arrive out of order, and that is not an error either
+//
+// A fourth outcome, [models.ActionRecord], covers the report that is BEHIND the
+// shipment's current status — "collected" landing after "delivered". The
+// service accepts it, writes whatever NEW FACT it carries (a tracking number
+// that was not known before) and does not move the status backwards. What it
+// does NOT do is stamp the moment: the clock would say "now", and a dispatch
+// recorded after its own delivery is a row reconciliation has to read as
+// impossible. The full argument is at [models.ActionRecord].
 //
 // # A price does not come from two sources
 //
@@ -225,13 +236,17 @@ type Store interface {
 		shippedAt, deliveredAt, canceledAt *time.Time,
 	) (models.Fulfillment, error)
 	// UpdateFulfillmentStatus writes the status, the tracking information and
-	// the stamps with ABSOLUTE values.
+	// the FOUR stamps with ABSOLUTE values.
+	//
+	// The stamps a call does not change are passed back unchanged rather than
+	// omitted. That is deliberate and it is what lets a late carrier event
+	// write a tracking number while leaving every moment exactly as it was.
 	UpdateFulfillmentStatus(
 		ctx context.Context,
 		id string,
 		status models.FulfillmentStatus,
 		trackingNumber, trackingURL string,
-		shippedAt, deliveredAt, canceledAt *time.Time,
+		shippedAt, deliveredAt, canceledAt, returnedAt *time.Time,
 	) (models.Fulfillment, error)
 
 	// CreateFulfillmentItem adds an item to the fulfillment.

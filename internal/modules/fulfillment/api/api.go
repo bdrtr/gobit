@@ -102,6 +102,12 @@ const (
 	pathAdminCancel       = "/admin/v1/fulfillments/{id}/cancel"
 	pathAdminShip         = "/admin/v1/fulfillments/{id}/ship"
 	pathAdminDeliver      = "/admin/v1/fulfillments/{id}/deliver"
+	// pathAdminReturned records that the parcel came BACK undelivered
+	// ("iade"). It is a separate verb from cancel on purpose: a cancellation is
+	// something WE asked the carrier for, while this is something the carrier
+	// tells us, and collapsing them would make a parcel that went out and came
+	// back indistinguishable from one that never left.
+	pathAdminReturned = "/admin/v1/fulfillments/{id}/returned"
 
 	pathStoreOptions = "/store/v1/shipping-options"
 )
@@ -177,6 +183,9 @@ type Fulfillments interface {
 	MarkShipped(ctx context.Context, id, trackingNumber, trackingURL string) (models.Fulfillment, error)
 	// MarkDelivered marks the fulfillment as delivered.
 	MarkDelivered(ctx context.Context, id string) (models.Fulfillment, error)
+	// MarkReturned records that the parcel came back to the sender
+	// undelivered ("iade").
+	MarkReturned(ctx context.Context, id string) (models.Fulfillment, error)
 }
 
 // Handler is the HTTP handler set of the fulfillment module.
@@ -285,6 +294,7 @@ func (h *Handler) Routes(r chi.Router) {
 	write.Post(pathAdminCancel, h.cancelFulfillment)
 	write.Post(pathAdminShip, h.shipFulfillment)
 	write.Post(pathAdminDeliver, h.deliverFulfillment)
+	write.Post(pathAdminReturned, h.returnFulfillment)
 
 	// The store endpoint DOES NOT CHANGE: a publishable key carries no scope.
 	r.Get(pathStoreOptions, h.listStoreEligibleOptions)
@@ -428,6 +438,7 @@ type fulfillmentDTO struct {
 	ShippedAt        *time.Time           `json:"shipped_at,omitempty"`
 	DeliveredAt      *time.Time           `json:"delivered_at,omitempty"`
 	CanceledAt       *time.Time           `json:"canceled_at,omitempty"`
+	ReturnedAt       *time.Time           `json:"returned_at,omitempty"`
 	Data             json.RawMessage      `json:"data,omitempty"`
 	Metadata         map[string]any       `json:"metadata,omitempty"`
 	Items            []fulfillmentItemDTO `json:"items"`
@@ -548,6 +559,7 @@ func toFulfillmentDTO(ful models.Fulfillment) fulfillmentDTO {
 		ShippedAt:        ful.ShippedAt,
 		DeliveredAt:      ful.DeliveredAt,
 		CanceledAt:       ful.CanceledAt,
+		ReturnedAt:       ful.ReturnedAt,
 		Data:             ful.Data,
 		Metadata:         ful.Metadata,
 		Items:            items,

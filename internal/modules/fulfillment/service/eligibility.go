@@ -58,6 +58,40 @@ var clientDeclarableFacts = []string{AttrSubtotal, AttrItemCount, AttrTotalWeigh
 // the numeric fields is nevertheless validated: even though the truth of a value
 // cannot be known, it can be known that it is not large enough to overflow the
 // provider's arithmetic with a single request parameter.
+//
+// # The destination stops at the COUNTRY, and that is a real ceiling
+//
+// Measured on 2026-09-06. The deepest the destination goes on this path is
+// [ListOptionsInput.CountryCode] plus an opaque [ListOptionsInput.RegionID],
+// and only the country reaches the provider — [coreprovider.QuoteInput] has
+// CountryCode, TotalWeight, ItemCount and the OPTION's static Data, and nothing
+// else. Turkey's carriers price by ILCE (district) and by DESI (volumetric
+// weight), so neither of the two numbers a real carrier's tariff is a function
+// of can be expressed here.
+//
+// [ListOptionsInput.Attributes] does NOT close the gap, and mistaking it for a
+// way through is the trap this paragraph exists to mark. Those fields reach the
+// RULE evaluation and stop there; [Service.quote] hands the provider the
+// option's own configuration and never the request's attributes. A district put
+// in that map can gate whether an option is OFFERED and cannot influence what
+// it COSTS.
+//
+// Closing it is not work this module can do alone and it is not a field on this
+// struct:
+//
+//   - [coreprovider.QuoteInput] would have to grow the destination and the
+//     parcel's dimensions. That package is PUBLISHED (ADR 0026), so it is a
+//     compatibility decision rather than an edit.
+//   - Nothing upstream holds a district. `order_addresses` and the cart's
+//     address carry address_1/address_2, city, province and postal_code, and no
+//     district column exists in either. A field added here would be filled with
+//     an empty string by every caller in the repository.
+//   - Dimensions are a CATALOG fact (a variant's box), and the catalog is
+//     another module. A local copy here would be a second source of truth for a
+//     number the product module owns.
+//
+// Until those three move, an option whose price depends on the district has to
+// be [models.PriceFlat] or carry the tariff in the option's own Data.
 type ListOptionsInput struct {
 	// RegionID is the cart's region. Options whose region equals this AND
 	// options whose region is empty become candidates.

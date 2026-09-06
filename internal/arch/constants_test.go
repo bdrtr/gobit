@@ -963,6 +963,104 @@ func filterKeyConstants(t *testing.T, dirName string) map[string]filterKeyConsta
 	return found
 }
 
+// productModelsDirName is the package that DECLARES the product publication
+// status vocabulary.
+//
+// Its source is PARSED for the same reason [exportedConfigConstants] parses
+// config's: Go constants do not exist at run time, so "which statuses does this
+// type declare" has no reflective answer. What CAN be asked at run time is
+// whether a given status is accepted, and this audit asks both — see
+// [TestThePanelStatusOptionsAgreeWithTheModules].
+const productModelsDirName = modulesDir + "/product/models"
+
+// productStatusTypeName is the type whose string constants are that vocabulary.
+const productStatusTypeName = "Status"
+
+// knownProductStatuses are the statuses that MUST come out of the source read.
+//
+// The list is DATA and it is the half of the reader that cannot go quiet. The
+// comparison below is automatic — it walks the module's const declarations —
+// and an automatic read shrinks WITHOUT A SOUND: change the declaration form
+// (an untyped block plus a conversion, a generated enum, a map literal) and the
+// reader returns fewer names or none, which makes the panel's list agree with a
+// set that no longer describes the module. Naming the three here turns that
+// into a failure that says the reader stopped seeing.
+var knownProductStatuses = []string{"draft", "published", "archived"}
+
+// productStatusConstants reads the string constants of the given type out of
+// already-parsed files, mapped from Go identifier to declared value.
+//
+// The type is carried down a const block the way the compiler carries it: a
+// spec with no type of its own inherits the last one seen in the same
+// declaration. Without that, a block written
+//
+//	const (
+//		StatusDraft Status = "draft"
+//		StatusPublished     = "published"
+//	)
+//
+// would give up half its members to a reader that only looked at each line.
+func productStatusConstants(files []*ast.File, typeName string) map[string]string {
+	found := map[string]string{}
+
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.CONST {
+				continue
+			}
+			carried := ""
+			for _, spec := range gen.Specs {
+				value, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				if ident, typed := value.Type.(*ast.Ident); typed {
+					carried = ident.Name
+				} else if value.Type != nil {
+					carried = ""
+				}
+				if carried != typeName || len(value.Names) != len(value.Values) {
+					continue
+				}
+				for i, name := range value.Names {
+					literal, ok := value.Values[i].(*ast.BasicLit)
+					if !ok || literal.Kind != token.STRING {
+						continue
+					}
+					text, err := strconv.Unquote(literal.Value)
+					if err != nil {
+						continue
+					}
+					found[name.Name] = text
+				}
+			}
+		}
+	}
+
+	return found
+}
+
+// declaredProductStatuses reads the module's status vocabulary from its source.
+func declaredProductStatuses(t *testing.T) map[string]string {
+	t.Helper()
+
+	fset := token.NewFileSet()
+	var trees []*ast.File
+	for _, file := range parseDir(t, fset, filepath.Join(repoRoot, productModelsDirName), false) {
+		trees = append(trees, file.tree)
+	}
+
+	declared := productStatusConstants(trees, productStatusTypeName)
+	require.NotEmpty(t, declared,
+		"no %s constant at all was found in %s; the reader has gone BLIND.\n"+
+			"An empty vocabulary makes the comparison below hold against whatever the "+
+			"panel happens to offer, which is the comparison this audit exists to refuse.",
+		productStatusTypeName, productModelsDirName)
+
+	return declared
+}
+
 // TestThePanelStatusOptionsAgreeWithTheModules verifies that the statuses the
 // panel offers in its edit form are the same as the ones the module ACCEPTS.
 //
@@ -976,20 +1074,141 @@ func filterKeyConstants(t *testing.T, dirName string) map[string]filterKeyConsta
 //     cannot even know the capability exists.
 //
 // The second one is this test's real reason: it is the silent one.
+//
+// # ~~"the second one is this test's real reason"~~ — it could not fail until
+// 2026-09-06
+//
+// The sentence above was true about the INTENT and false about the code. Until
+// that date the module's side of the comparison was a three-element slice
+// written HERE, in the test:
+//
+//	moduleStatuses := []string{
+//		productmodels.StatusDraft.String(),
+//		productmodels.StatusPublished.String(),
+//		productmodels.StatusArchived.String(),
+//	}
+//
+// Each element was compiler-bound to a real constant, which made the list look
+// like the module's answer. It was not: the ENUMERATION was the test's. Adding a
+// fourth status to the module — const plus a case in Valid, the whole change a
+// real one would be — leaves that slice at three, the panel's list at three, and
+// the assertion comparing two sets that agree with each other and say nothing
+// about the module. Mutation-measured on 2026-09-06: `StatusScheduled` was added
+// to both the const block and Valid, and this test stayed GREEN.
+//
+// It is the plugin lesson in miniature and the smallest instance of it in this
+// package: a gate that derives both sides of a comparison from the same place
+// proves the two agree with each other and nothing about the world. Here the
+// "same place" was not even a second source file — it was this function.
+//
+// # The two sides now
+//
+// The module side is read where the compiler reads it, out of
+// [productModelsDirName]'s const declarations, and then FILTERED THROUGH THE
+// COMPILED [productmodels.Status.Valid]. That second step is what keeps the
+// reader honest in the direction a source scan cannot check itself: a constant
+// the parser hallucinates is not accepted by the running module and is dropped,
+// and a constant the module declares but leaves out of the Valid switch is
+// reported on its own — a status that exists in the type and that every write
+// refuses is a defect whichever way the panel is spelled.
+//
+// The panel side is [adminui.ProductStatuses], compiled, from a package that
+// cannot import the module (ADR 0011).
 func TestThePanelStatusOptionsAgreeWithTheModules(t *testing.T) {
 	t.Parallel()
 
-	moduleStatuses := []string{
-		productmodels.StatusDraft.String(),
-		productmodels.StatusPublished.String(),
-		productmodels.StatusArchived.String(),
+	declared := declaredProductStatuses(t)
+
+	var accepted []string
+	for _, name := range slices.Sorted(maps.Keys(declared)) {
+		status := declared[name]
+		if !productmodels.Status(status).Valid() {
+			t.Errorf("the module declares %s = %q but %s.Valid() REFUSES it.\n"+
+				"A status in the vocabulary that no write accepts cannot be reached from any "+
+				"surface: the panel offering it gets an errors.Invalid, the panel omitting it "+
+				"hides a capability that does not exist anyway. Either add it to the Valid "+
+				"switch or delete the constant.",
+				name, status, productStatusTypeName)
+
+			continue
+		}
+		accepted = append(accepted, status)
 	}
 
-	assert.ElementsMatch(t, moduleStatuses, adminui.ProductStatuses(),
-		"the panel's status list must match the module's accepted ones exactly")
+	// The reader's floor. Without it, a declaration form this parser stops
+	// recognizing empties `accepted`, and an empty set would quietly agree with
+	// a panel that had been emptied too.
+	for _, status := range knownProductStatuses {
+		assert.Contains(t, accepted, status,
+			"the module no longer declares an accepted %q status.\n"+
+				"Either the status really is gone — then delete it from knownProductStatuses "+
+				"in the same change — or the reader stopped seeing the declaration form, and "+
+				"from here on this audit compares the panel against a vocabulary it cannot "+
+				"read.", status)
+	}
+
+	assert.ElementsMatch(t, accepted, adminui.ProductStatuses(),
+		"the panel's status list must match the module's accepted ones exactly.\n"+
+			"The module side is READ from %s and filtered through Valid, so a status added "+
+			"there and not offered here fails: the operator would otherwise never see the "+
+			"option and get no error saying why.", productModelsDirName)
 
 	for _, status := range adminui.ProductStatuses() {
 		assert.True(t, productmodels.Status(status).Valid(),
 			"the panel offers the %q status but the module does not consider it valid", status)
 	}
+}
+
+// TestTheProductStatusReaderIsNotBlind is the positive control for the reader
+// [TestThePanelStatusOptionsAgreeWithTheModules] leans on.
+//
+// The control plants into the READER, not into the decision, and the difference
+// is the whole point: the decision here is one ElementsMatch and it obviously
+// works, while the audit's field of view is the const walk — which is exactly
+// what was missing when the module's side of the comparison was a literal in
+// the test. A control that fed the comparison a hand-built set would prove the
+// comparison and reproduce the defect.
+func TestTheProductStatusReaderIsNotBlind(t *testing.T) {
+	t.Parallel()
+
+	const planted = `package models
+
+type Status string
+
+type Other string
+
+const (
+	StatusDraft Status = "draft"
+	StatusScheduled Status = "scheduled"
+	StatusInherited = "inherited"
+)
+
+const OtherThing Other = "other"
+
+const untypedThing = "untyped"
+`
+
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, "planted.go", planted, parser.SkipObjectResolution)
+	require.NoError(t, err)
+
+	found := productStatusConstants([]*ast.File{parsed}, productStatusTypeName)
+
+	assert.Equal(t, map[string]string{
+		"StatusDraft":     "draft",
+		"StatusScheduled": "scheduled",
+		"StatusInherited": "inherited",
+	}, found,
+		"the reader did not read the planted vocabulary as expected.\n"+
+			"StatusScheduled is the fourth status the old shape of this audit could not "+
+			"see; StatusInherited carries the type down the const block the way the "+
+			"compiler does; OtherThing and untypedThing must NOT appear, because a reader "+
+			"that collects every string constant would call unrelated names statuses and "+
+			"demand the panel offer them.")
+
+	// The real package must still be readable by the same function, or the
+	// control above is testing a reader nothing uses.
+	assert.Subset(t, slices.Collect(maps.Values(declaredProductStatuses(t))), knownProductStatuses,
+		"the reader works on planted source but not on %s; the audit's field of view is "+
+			"the real package, not the fixture", productModelsDirName)
 }

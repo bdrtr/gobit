@@ -415,6 +415,7 @@ func toFulfillment(row fulfillmentdb.Fulfillment) (models.Fulfillment, error) {
 		ShippedAt:        toTimePtr(row.ShippedAt),
 		DeliveredAt:      toTimePtr(row.DeliveredAt),
 		CanceledAt:       toTimePtr(row.CanceledAt),
+		ReturnedAt:       toTimePtr(row.ReturnedAt),
 		Data:             toJSONRaw(row.Data),
 		Metadata:         meta,
 		CreatedAt:        toTime(row.CreatedAt),

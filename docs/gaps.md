@@ -55,9 +55,36 @@ Four sequencing facts govern the whole list:
 | A12 | **JWT TTL policy** — there is no refresh flow, so the TTL is an unstated trade | session design | Observability and security |
 | A13 | **Metrics posture** — OTLP-only, or expose a scrape endpoint | the "measurable speed" claim | Observability and security |
 | A14 | **Price history: promote the accidental retention or drop it** | forecasting | AI-powered features |
-| A15 | **May the storefront take an address it cannot verify, in order to mail it later?** — measured 2026-09-05, and it is the waitlist's real blocker rather than the missing table. The storefront has no customer identity at all, the repository has no verification, no double opt-in, no unsubscribe and no per-address throttle, and the notification module deliberately stores no recipient address | the back-in-stock waitlist (C1) and every future "tell me when" feature; A2 sits upstream of it | Commerce models |
+| A15 | ~~**May the storefront take an address it cannot verify, in order to mail it later?**~~ **The question was too narrow and it was widened on 2026-09-06: may the storefront accept content from a party it CANNOT IDENTIFY, for this framework to act on later?** The address measurement of 2026-09-05 stands unchanged — no customer identity, no verification, no double opt-in, no unsubscribe, no per-address throttle, and a notification module that deliberately stores no recipient address — but it describes a CLASS rather than the waitlist. Re-measured: the storefront's only principal is the publishable key, and every storefront write takes its subject from a path identifier the client chooses (the address book, and `POST /store/v1/orders/{id}/returns`). **The repository has already answered one instance of this question and its argument is written down**, in the order module's store handler: an unauthenticated write is acceptable there because a request is a REQUEST — it moves no stock and no money, an operator has to receive it before anything happens, and every endpoint that ACTS is admin-only and scoped. That argument hands the decision its discriminator, and it is a question somebody can answer per feature: **does a human stand between the write and its effect?** The waitlist fails it outright — the effect of a waitlist row is an outbound message and nobody approves it. A customer-written REVIEW (B4) has the same shape and the same discriminator settles it: published on APPROVAL, the return-request argument covers it unchanged and A15 is already answered for B4; published on SUBMISSION, it is not covered and B4 needs this sentence before its first table. Either way what is stored is personal data, so A2 sits upstream of both | the back-in-stock waitlist (C1), the review module (B4) and every future "tell me when" or "write us something" feature; A2 sits upstream of it | Commerce models |
 | A16 | **What amount would a price filter compare against?** — measured 2026-09-05, and it came out of B2 as a DECISION rather than the build it was filed as. A product has no price. A price belongs to a `price_set`, the set reaches a VARIANT through a link, and one set holds many rows — currency × quantity tier × price list. "The price" is a selection FUNCTION of (currency, quantity, rule attributes, instant) resolved by five ordered tie-breakers (list tier, rule count, tier width, amount, id), not a column. The storefront is worse off than merely undefined: prices are fetched in a SECOND round trip made AFTER the page was cut by LIMIT/OFFSET, and what comes back is only the UNCONDITIONAL subset in every currency, with no currency, region or customer-group input — so there is not even a well-defined "the amount" on the page to filter on. Denormalising one into the catalog has NO invalidation signal: the pricing module publishes no events at all | the price filter AND the price sort in B2; "under 500 TL" in C10; a price column in any search index | AI-powered features |
 | A17 | **What does "in stock" mean for a PRODUCT?** — measured 2026-09-05, out of the same B2 row and the same kind of answer: nowhere in this repository is it defined. Availability is defined at two granularities and BOTH sit below the product. The product module may legally read a link table (there is an argued precedent), so its SQL can answer "has an inventory item" but NOT "has stock" — the quantity is `inventory_levels.stocked_quantity`, the inventory module's own column, and ADR 0001 stops there. A REGION-correct answer is a THREE-module question: `stock_locations` carries no region column at all, and the region-to-location map is `shipping_location_regions` — in FULFILLMENT, keyed (location_id, region_id), with the region→warehouse direction deliberately unindexed because nothing reads it. There is no denormalised stock column and the event-driven route to one is blocked by B7 | the in-stock filter in B2; real-time stock (C16) reads the same absence; the waitlist (C1) needs the same definition to know when to fire | AI-powered features |
+
+**Are these stated in a form somebody could answer? Read end to end on
+2026-09-06, and the answer is mostly yes, with four exceptions and one
+correction.** Twelve of the sixteen open rows name a CHOICE between alternatives
+and say what each one costs — A2 names two legal positions, A6 the two exits
+from a published flag that does nothing, A8 three cacheability answers, A13 two
+metrics postures, A3 and A7 are yes/no questions with the consequence of each
+answer written out, and A16 and A17 end in a definition somebody can put on
+paper. Those can be answered in a sentence by somebody who has not read the
+code, which is the property this group needs.
+
+Four cannot, and the defect is the same in all four: **A4, A5, A11 and A12 name
+a TOPIC, not a question.** "Invoice retention vs KVKK erasure", "group-price
+selection for a customer in several groups", "where translated content lives",
+"JWT TTL policy" — each says what the subject is and none names a candidate
+answer, so answering one means first inventing the options. That is a reading
+job rather than a build, and it is the cheapest thing on this list: until the
+candidates are written out, these four rows cannot be decided in a meeting, only
+reopened in one. They are left as they stand here rather than guessed at,
+because inventing alternatives without measuring them is how a decision record
+ends up with a wrong option in it.
+
+The correction is A15, and it is recorded above: the question was named after
+ONE feature while its subject is a class, so a second feature (B4) was about to
+rediscover the same blocker from scratch. That is worth stating as a rule for
+this table — **a decision named after the feature that found it will be read as
+belonging to that feature**, and the next round pays for the question twice.
 
 ### B. Foundations — each unblocks several features
 
@@ -66,13 +93,13 @@ Four sequencing facts govern the whole list:
 | B1 | ~~**A guarded inbound-callback class**~~ **Built 2026-09-05: ADR 0028.** `core/http.CallbackRegistry` — per-route quota, body limit, timeout, enforced signature check and a derived replay window; PayTR converted onto it at the same URL. Audit deliberately left out (see D1) | four carriers, e-invoice, every payment provider — the plumbing is there; a carrier still waits on B10 | Turkey-specific |
 | B2 | **Storefront filter surface** — ~~category, tag~~ **built 2026-09-05** (`category_id`, `tag_id`, in REST and GraphQL, EXISTS not joins so a product in several categories is returned once). ~~Still missing: price, in-stock, option value, sort~~ — **one bag holding four different kinds of work; measured and split 2026-09-05.** SORT is a straightforward build with one trap (the cursor). OPTION VALUE is a build behind one decision, entirely inside the product module. PRICE and IN-STOCK are NOT builds — they are decisions, and they are now **A16** and **A17**. ~~Also measured: the built half never reached the read layer, so the panel cannot filter by category while the storefront can~~ — **that half reached the read layer the same day.** The `product` provider takes `category_id` and `tag_id` too now (two switch cases, NO new SQL — the EXISTS subqueries were already in the listing and the count), it REFUSES either of them combined with `id`/`ids` rather than answering from relation slices it never loads, and the module offers a second read-layer entity, `category`, so a consumer can turn a name into an identifier. ~~What is still behind is exactly one filter: the storefront's text search~~ — **that one closed too, later the same day.** The provider answers `q` (the storefront's own spelling), trims it, treats an empty or whitespace term as NO filter, and REFUSES it beside `id`/`ids` on a measured argument rather than a taste. The panel grew the search box that consumes it. The cost was measured on the 52,004-product rig instead of guessed (`docs/catalog-search-cost.md`) and the finding inverts the expectation the missing index creates: a term matching 52,000 titles is answered in 0.03 ms, a term matching ONE product costs 9.1 ms and reads the whole table — **the rare search is the expensive one, and that is the one a search box receives** | ~~NL search~~ **C10 does not exist in code** — but `category_id` has a real named consumer since 2026-09-05: the panel's product list narrows the catalog through the read layer and offers a dropdown of category names. `tag_id` has none (see A16, A17 and the section below) | AI-powered features |
 | B3 | ~~**Storefront vocabulary endpoints**~~ **Built 2026-09-05.** `GET /store/v1/{collections,categories,tags}`. The category listing applies `is_active`/`is_internal` — two columns that existed since the first migration and that nothing read | NL search — the word→id half is done; the FILTER half is B2 | AI-powered features |
-| B4 | **Review module** | moderation (the AI brief's first use case), summaries, Q&A | AI subsystem |
+| B4 | **Review module** — and it is not the pure build this row implied. **Measured 2026-09-06: A15 decides its first table.** A review is content written from the storefront by a party this repository cannot identify — the only principal there is the publishable key and every store write takes its subject from a client-chosen path identifier — so "verified purchase" cannot be established either, and the text is personal data that A2 sits upstream of. The discriminator A15 now carries answers it in one sentence: if a review is published on APPROVAL, the argument already written for the storefront return request covers it unchanged (an unauthenticated write whose every acting endpoint is admin-only and scoped); if it is published on SUBMISSION, nothing stands between an anonymous writer and the shop's product page and the decision has to be made first. Note which way the AI brief leans — moderation is its first use case, and moderation IS the operator in between | moderation (the AI brief's first use case), summaries, Q&A — and it is blocked by A15, not only by its own absence | AI subsystem |
 | B5 | ~~**Order ↔ fulfillment link, and something that creates a fulfillment**~~ **Built 2026-09-05.** The fulfillment module declares `order_fulfillment` (one to many); `internal/workflows/fulfilling` opens a shipment for an order and binds the two; the order gets `POST`/`GET /admin/v1/orders/{id}/fulfillments`. NOT built: a shipment created at checkout — shipping stays a decision | the order timeline, carrier tracking, "where is the parcel" — answerable now. the link is expandable by the read layer too (D8) | Platform features |
 | B6 | ~~**A money-event read surface**~~ **Built 2026-09-05.** The payment collection entity offers `first_captured_at` and `last_refunded_at`, loaded by a SECOND batch query and only when asked for; the order's payment view and `GET /admin/v1/orders/{id}/payment` carry both. NOT added: `authorized_at` and `refunded_at` columns — neither exists in the schema at all | the timeline's two most-asked facts — answerable now | Platform features |
 | B7 | **Inventory movement ledger + inventory events.** Measured 2026-09-05: the EVENT cannot be landed on its own. `TestTheEventTopicsHaveASubscriber` refuses a topic no production file subscribes to, its exemption map is empty by policy, and the one plugin that reads the catalog indexes no stock — so there is no subscriber to give it today. The event and its first consumer are one package or neither | forecasting, real-time stock, and an audit trail stock does not have | AI-powered features, Storefront speed |
 | B8 | **Customer module events** (`customer.deleted` at minimum) | erasure — today deleting a customer notifies nobody and Principle 2.2 forbids the cascade | Turkey-specific |
 | B9 | **Stored payment instrument** — provider contract + table | saved cards AND subscriptions, in one change | Storefront speed, Commerce models |
-| B10 | **Carrier-capable quote input and a tolerant shipment state machine** — district, dimensions/desi, more statuses (including iade), and out-of-order webhook tolerance | any real carrier | Turkey-specific |
+| B10 | **Carrier-capable quote input and a tolerant shipment state machine** — ~~district, dimensions/desi, more statuses (including iade), and out-of-order webhook tolerance~~ **the state-machine half was built 2026-09-06; the quote-input half was measured the same day and is larger than this row said.** BUILT: `returned` is the fifth status (migration 000004), with `returned_at` under a FULL MIRROR check — expressible only because the status is terminal, unlike the three one-directional stamps of 000001 — a `POST /admin/v1/fulfillments/{id}/returned` route, and a transition table that now distinguishes a carrier's REPORT from a command. The tolerance is a fourth outcome rather than a looser second table: a collection reported after a delivery is ACCEPTED, the status does not move backwards, the tracking number is taken (often it is the only message carrying it) and no moment is stamped, because the only clock available would date a dispatch after its own delivery. STILL MISSING, and it is not this module's to close alone: `core/provider.QuoteInput` carries country, weight, item count and the option's own data, and nothing else — so neither of the two numbers a domestic carrier's tariff is a function of, the district and the desi, can be expressed. Widening it is a decision about a PUBLISHED contract (ADR 0026), and two more things have to move with it: no address table in this repository has a district column (the cart's and the order's carry city and province), and parcel dimensions are a catalog fact the product module owns | any real carrier | Turkey-specific |
 | B11 | ~~**Order addresses**~~ **Built 2026-09-05.** `order_addresses` (one shipping, one billing, enforced by a unique index), written in the SAME transaction as the order's header and lines; carried cart → interop → checkout plan → order snapshot. The cart's own schema comment already named the order as the thing its copy protects — and the order had no address at all | invoicing, shipping labels, B2B — unblocked | Storefront speed |
 | B12 | ~~**Outbound delivery machinery** — retry and a dead-letter queue on the outbox relay~~ **Built 2026-09-06, and the "explicit decision" it rested on turned out to describe a different layer.** The outbox gains `next_attempt_at` and `dead_lettered_at`; a failed publish waits out a doubling delay (1, 2, 4 … capped at 60 minutes) and after ten attempts — four hours and three minutes of trying — is given up on and leaves the relay's index. Giving up is a WRITE, not a drop: the instant, the attempt count and the last error stay on the row, the relay job reads the pile on every pass, and a non-empty pile FAILS the run, which is the one channel that reaches the `gobit jobs` listing. Measured before it was built, and it is why the ceiling is not optional: a batch limit's worth of permanently failing rows fills every pass, so five consecutive passes published NOTHING while a healthy event written behind them finished with `attempts = 0` — never attempted once. Not degraded delivery, NO delivery. ~~Still missing, and it is the operator half: `Redrive` and `Discard` exist, are tested, and have NO production caller — no command, no route — so today the alarm has no off switch a human can reach without SQL~~ **The operator half was built the same day.** `gobit deadletters` lists the pile and `gobit deadletters redrive <id> -confirm <id>` and `gobit deadletters discard <id> -confirm <id>` are its two exits, so the alarm now has an off switch that is not psql. The listing carries what a decision needs — the whole pile's count and not the page's, the event name, the attempt count, the last error, both instants and how long the row tried — and says out loud that the payload was WITHHELD rather than absent; the act path re-reads the pile and closes with whether the `gobit jobs` alarm will clear, which is the question the operator arrived with. One id per verb, and refusing a bulk flag was argued rather than assumed: measured against a real PostgreSQL a single discard is a primary-key delete at 0.047 ms and a redrive 0.183 ms, so the refusal costs the database nothing and buys the reading of the row that a one-keystroke mute would skip | webhooks, ERP/Slack integration — the delivery machinery is there, a plugin can now own a periodic pass (B13, built the same day), and the one thing still missing is the SENDER itself (C5) | Platform features |
 | B13 | ~~**Plugin host: let a plugin register a job**~~ **Built 2026-09-06, and it arrived WITH its first consumer rather than before one.** `plugin.Host.RegisterJob` takes a four-field `plugin.Job` — name, interval, per-run bound, work — collected during Setup the way routes are, and drained by the composition root's `addPluginJobs` at the moment the job registry exists. ADR 0019 deferred this surface with a condition rather than a refusal ("it arrives with the first plugin that brings a job") and ADR 0026 had priced it as publishing the whole scheduler package; that price was refused, because a plugin needs four VALUES while publishing the package would freeze the runner, the store contract, the advisory-lock class and the key algorithm into the compatibility promise — publishing the machine in order to hand out a form. The copy is paid for rather than hoped away: `TestEveryJobDefinitionFieldReachesAPluginJob` reflects over the scheduler's own definition and fails the day it grows a field the published struct does not carry. Nothing is validated twice and nothing is SKIPPED: a plugin's definition goes through the same `Registry.Add` as the core's three, so a missing name, a `MaxRun` longer than its interval, a nil body or a name already taken all refuse the BOOT — because a job dropped quietly would leave `gobit jobs` printing a listing with nothing missing from it, and an operator reads that absence as "that pass had nothing to do". The plugins are admitted LAST so that a name clash fails on the side whose name is the easier one to change. The first consumer is in the same change: `paymentpaytr` now runs an hourly `pendingWatch` for payments PayTR never called back about — a class that does not arrive at startup but ACCUMULATES, and which until now was reported exactly once, at boot, by a process that then watched it grow in silence | ~~any plugin needing a retry pass~~ — done; the outbound sender (C5) is the next thing that would use it | Platform features |
@@ -80,7 +107,7 @@ Four sequencing facts govern the whole list:
 | B15 | **File read-back, ~~product-image ↔ upload link~~ built 2026-09-05**, file events still missing. `product_image.upload_id` plus the `upload_product_image` link (declared by PRODUCT — it writes the record the binding carries; the file module's own doc says it does not know what a file belongs to). The file module gained the interop surface it deliberately lacked, and the reasoning behind that absence turned out to be half wrong: the address shows the file and says nothing ABOUT it | anything that looks at a photo — the id half is answerable now; file EVENTS are not built | AI-powered features |
 | B16 | **A suggestion store** — system proposes, human applies | forecast and category suggestions. The pattern exists (`sagawatch`, ADR 0017); the storage does not | AI-powered features |
 | B17 | **KVKK erasure, export and retention** | a legal requirement; A2 and A4 come first | Turkey-specific |
-| B18 | ~~**A per-column round-trip test for every module**~~ **Built 2026-09-05** as `TestEveryColumnIsWrittenBySomething`: the schema and the queries are read TOGETHER, and a column no INSERT names and no UPDATE sets fails. DEFAULT and GENERATED columns are out of scope — the database supplies those | nothing — and it caught a standing finding on its first run (see D9). ~~**What it does NOT catch was measured on 2026-09-06 and it is three holes wide, one of them the very finding its own godoc names as the example — see D16**~~ **Two of those three closed on 2026-09-06, a fourth hole was found while closing them, and the third — text, not the call graph — is measured and deliberately open (D16). The fix surfaced NINE live findings on its first run, and EIGHT of the nine were answered later the same day — four by writing a delete that had never existed, four by DROPPING a column that was wrong. The ninth is not a placeholder any more: its exemption states the question (D18)** | Common Go mistakes |
+| B18 | ~~**A per-column round-trip test for every module**~~ **Built 2026-09-05** as `TestEveryColumnIsWrittenBySomething`: the schema and the queries are read TOGETHER, and a column no INSERT names and no UPDATE sets fails. DEFAULT and GENERATED columns are out of scope — the database supplies those | nothing — and it caught a standing finding on its first run (see D9). ~~**What it does NOT catch was measured on 2026-09-06 and it is three holes wide, one of them the very finding its own godoc names as the example — see D16**~~ **Two of those three closed on 2026-09-06, a fourth hole was found while closing them, and the third — text, not the call graph — is measured and deliberately open (D16). The fix surfaced NINE live findings on its first run, and EIGHT of the nine were answered later the same day — four by writing a delete that had never existed, four by DROPPING a column that was wrong. The ninth is not a placeholder any more: its exemption states the question (D18). And a hole of a DIFFERENT kind was found later the same day, from the other end: all of the above is about what the audit sees inside its scope, and the scope itself is 16 of the repository's 24 schemas — ten tables owned outside the module tree have no column audit at all. It was deliberately not widened and the reason is in D23** | Common Go mistakes |
 
 ### C. Features — after the above
 
@@ -91,7 +118,7 @@ Four sequencing facts govern the whole list:
 | C3 | **Operator assistant in the panel** — sixty-one primitive interop methods are already a tool catalogue, and identity exists inside the panel | a return-creation surface |
 | C4 | **Consent records and data-subject endpoints** | A2, B17 |
 | C5 | **Outbound webhooks** (NATS after, if anyone asks) — **the sender was BUILT on 2026-09-06 as `plugins/webhookout`, and it is NOT INSTALLABLE. That was measured, not assumed.** What exists is whole and proved: a receiver is registered over `POST /admin/v1/webhooks`, which mints its signing secret server-side and returns it exactly ONCE; four topics are subscribed BY NAME, written out rather than ranged over, because the reverse topic gate resolves a subscription statically and a loop variable is a name it cannot resolve; an event on the bus writes one delivery row PER RECEIVER and does nothing else, since the bus logs a handler's error and counts the event processed, so anything the handler does not finish is lost for good; a minute-by-minute job claims what is due by moving `next_attempt_at` forward — a LEASE, not a held transaction, because an attempt is an HTTP request to a third party and a transaction spanning a pass of them would hold a pool connection for most of a minute exactly when the receiver has stopped answering; and every attempt is signed HMAC-SHA256 over a LENGTH-PREFIXED join of six values, the same rule ADR 0028's inbound ring uses, so a body cannot be moved onto another event's signature. The queue is deliberately NOT `event_outbox`, and the schema is the refusal: that table is keyed on the EVENT and carries one attempt counter, one next attempt and one dead-letter stamp, so an event owed to three receivers with one of them down has no expressible state in it — and putting webhook deliveries in the relay's pile would make a third party's decommissioned endpoint indistinguishable from gobit's own bus failing to accept an event, in the one listing an operator reads to tell those apart. A pile given up on FAILS the delivery run, and `GET /admin/v1/webhooks/deliveries?state=dead` plus redrive and discard are the two ways out. Plain http is refused unless the host is loopback; resolving the host to refuse a private address is NOT done and the refusal is argued — a resolve-then-connect check is not a check, and closing it properly means a dialer that refuses at connect time. Proved from a real cart through a real order to a receiver that holds nothing but the issued secret (`TestARealOrderReachesARealWebhookReceiver` in `internal/e2e`, observed passing 2026-09-06), which is the only place that can catch the order module and the plugin disagreeing about the event. **What is missing is ONE MAP ENTRY.** `webhook-out` is absent from the composition root's plugin catalog, so `PLUGINS=webhook-out` stops the boot with "unknown plugin". Measured with `go list -deps ./cmd/server`: the closure names eight plugins and not this one, so the package is not compiled into the binary at all and its migration is outside `gobit migrate` too. The plugin's own package doc says it is "named nowhere except one line in the composition root's catalog" — that line does not exist. Why no gate caught it is D22. **The catalog line landed 2026-09-06 and C5 is now WHOLE: `webhookout.Name` is in the installer's map, `go list -deps ./cmd/server` names the package, and its migration is inside the migrate surface.** | ~~B12~~ ~~B13~~ both done — retry, the dead letter and a plugin-registrable periodic pass are all built. The SENDER is built too; what is left is the catalog line, and nothing else |
-| C6 | **Carrier plugins** (Yurtici, Aras, MNG, PTT) | B1, B10 |
+| C6 | **Carrier plugins** (Yurtici, Aras, MNG, PTT) | ~~B1~~ built (ADR 0028); B10's state machine is built and its quote input is not; **and a third blocker was measured 2026-09-06 that neither row named: a carrier has NOWHERE TO DELIVER what it receives.** The fulfillment module's cross-module write surface is five primitive methods and none of them can move a shipment to shipped, delivered or returned. The admin routes can, but a carrier's webhook holds no admin credential — that is the premise the callback ring is built on — and a plugin cannot call the service directly, because the plugin-import gate refuses the import and a structural interface cannot be written either while the method returns a module type the plugin's package cannot name. The method is deliberately NOT added ahead of the plugin (a cross-module surface with no consumer is a contract nothing can check), and the shape it should take is written down where it will be needed: ONE method carrying the carrier's OWN instant, because the tolerance is a property of the sequence rather than of any single transition, and because that instant is the one thing an admin route cannot supply and a carrier always can |
 | C7 | **Installment table** + iyzico/Param providers | A3 |
 | C8 | **Digital product delivery** — entitlement, expiring link, re-download policy | — |
 | C9 | **B2B: quotes, terms, minimum order** | A5 |
@@ -927,6 +954,167 @@ Four sequencing facts govern the whole list:
   D16, where the column audit read a schema it reconstructed from CREATE TABLE
   only, and the same as the earlier finding that a fake repository proves the
   fake. Worth checking the remaining audits against.
+
+- **D23** **The audits were audited, and three of them were green on the very
+  defect they were written for.** D22 closed with a sentence rather than a fix —
+  "worth checking the remaining audits against" — and 2026-09-06 is the round
+  that did it. All **89** gate tests in `internal/arch` were read one by one and
+  each was asked the same three questions: what are the two sides of the
+  comparison, where does each side come from, and what plausible violation would
+  leave it green. Three answers were bad enough to fix, four more are recorded
+  below unfixed, and the rest are sound.
+
+  **Start with the last part, because it is what makes the rest worth reading.**
+  The overwhelming majority of these gates hold, and the reason is structural
+  rather than lucky: **21 of the 89 exist ONLY as blindness guards or positive
+  controls** — a test whose whole job is to plant a violation and prove the
+  reader beside it still sees one. Almost every remaining gate carries at least
+  one counter naming what it would mean for that particular link of its walk to
+  go quiet, and several carry three to five separate counters because a single
+  total would hide which link broke. The five shapes they come in are worth
+  writing down, because the defect D22 named is the absence of all five: two
+  packages that cannot import each other compared through the compiler; source
+  against a DIFFERENT artefact (the environment example, the compose file, the
+  build files, the smoke test's log literals); producer against consumer inside
+  one scan, where the question itself is a relation in the source and both
+  directions are audited; source against THE WORLD, where the test compiles an
+  out-of-tree module, runs the binary, or round-trips SQL on a container; and
+  prohibitions carrying a field-of-view counter. Three hypotheses about weakness
+  were chased and killed by measurement — the SQL ownership map, the
+  publish/subscribe family and the plugin-installability gate all turned out to
+  be sound, two of them for reasons already argued in their own file headers.
+
+  **Finding 1, and it is the expensive one: `TestMoneyIsAnInteger` read one tree
+  out of five.** Its godoc states a repository-wide rule — money is stored as an
+  integer in minor units — and its walk was the module list. Measured: **682**
+  money-named struct fields in the production trees, **118 of them outside**
+  `internal/modules`, and **93 of those in** `internal/workflows`, which is where
+  the totals are actually COMPUTED — checkout, price, discount, tax, shipping,
+  the payment amount. A float declared in the one place the rule exists to
+  protect was outside the rule, and the gate was green on all 118 the way an
+  audit that never opened the file is green. The walk is now `productionTrees`,
+  the list a separate gate holds against disk, with a per-tree file counter so a
+  tree going quiet fails instead of passing; the decision was widened at the same
+  time from a bare identifier to pointer and slice floats, because a nullable
+  money column is exactly where somebody reaches for a pointer. Mutation-proved
+  three ways, and the old gate was green on the same planted float in the
+  checkout money chain.
+
+  **Finding 2 is D22's lesson at the smallest possible scale: the "same place"
+  was not a second file, it was the assertion's own function.**
+  `TestThePanelStatusOptionsAgreeWithTheModules` compared the panel's status
+  dropdown against a three-element slice written INSIDE the test body. Each
+  element was compiler-bound to a real constant, which is what made the list look
+  like the module's answer; it was not, because the ENUMERATION belonged to the
+  test. Mutation-measured: adding a fifth status to the module's constant block
+  AND to its `Status.Valid` switch — the whole of a real change — left the gate
+  green, so an operator could never have selected the new status and no error
+  anywhere would have said why. That is the direction the test's own godoc calls
+  its real reason. The module's vocabulary is now READ from the module's models
+  package and then filtered through the COMPILED `Status.Valid`, which is two
+  different instruments looking at the same thing — a source scan cannot check
+  itself, and Go constants do not exist at run time to be reflected over. A
+  constant declared and left out of the switch is now reported on its own, and
+  the new control plants into the READER rather than into the comparison,
+  because the reader is what was missing. A godoc in the panel already claimed
+  this pinning worked; the sentence was false until this fix and is true now.
+
+  **Finding 3: the three migration gates read 16 of the repository's 24
+  migration directories.** Rollback, the cross-module foreign-key rule and the
+  real-Postgres round trip all derived their input from the module list. The
+  eight they never opened are four plugin schemas and the four CORE ones —
+  `core/audit/migrations`, `core/eventbus/outbox/migrations`,
+  `internal/core/workflow/pgstore/migrations` and
+  `internal/core/job/jobpg/migrations` — and the core four are the worse
+  omission by a distance, because they are applied BEFORE any module migration
+  on every startup, so a down that fails there leaves the migration ledger dirty
+  in front of the whole boot. That is verbatim the fault the round-trip test was
+  written for. All eight were compliant when measured; they were compliant
+  UNAUDITED, which is the same relationship to safety that an unread file has.
+  A shared `migrationDirs` helper now discovers them from `productionTrees`
+  under two floors — every module must still be found, and at least one set must
+  be outside `internal/modules` so a future narrowing fails loudly — and the
+  integration gate round-trips all 24 on a real container.
+
+  **A bug was introduced while fixing that and caught before it shipped**, and
+  it is recorded because the mutation run is what exposed it: the first version
+  of the helper walked the repository root recursively as well, so every
+  directory was found twice and each finding printed twice. It was fixed by
+  reading the root at depth one — the way the shared file walk already documents
+  — rather than by deduplicating, because a dedupe would have hidden the overlap
+  instead of removing it.
+
+  **Four more were measured and deliberately NOT fixed.** Each is written with
+  the reason, because "we looked and left it" is a different statement from "we
+  did not look":
+
+  | gate | what it lets through | why it was left |
+  | --- | --- | --- |
+  | `TestEveryColumnIsWrittenBySomething` | the same 16 of 24 schemas. Ten tables owned outside the module tree have no "is this column ever written" audit at all | it reads writes from the modules' query files, and those packages build their SQL in Go. Widening the declaration side without the write side would report every one of their columns as dead — a pile of false accusations is how a gate gets deleted, and this package says so in three places. It is a scoping change, not a widening (see D16) |
+  | `TestModuleSQLNamesOnlyItsOwnTables` | a module naming a PLUGIN's table. The ownership map skips any table no module owns | the file header ARGUES that allowance for core tables and run-time link tables and does not argue it for plugin tables. Measured: no module names a plugin table and no plugin names a module table today. The right order is to extend the header's argument first, and changing what "owner" means in a file whose header is an argued decision is not a silent edit |
+  | `TestTheDefaultServeMuxIsNeverUsed` | an empty walk. It is the one prohibition gate in the package with no counter of its own and no positive control | cheap to fix and it lets through strictly less than the three above; it is protected indirectly, since the tree list it walks is pinned elsewhere and other gates share the walk |
+  | `TestLayerPurityCatchesAViolation` | less than its name says. It plants into a RE-IMPLEMENTATION of the decision — its own fixture, its own inline match — so it proves the forbidden fragment is matchable and nothing about whether the real walk sees it | the pair is sound overall, because the gate it guards pins its own reader with a per-layer scanned counter against a written-down exemption map. The control alone is what is weak |
+
+  Two smaller notes that are not defects and would mislead a reader who trusted
+  the test names. `TestDetectorPassesEnglishSource` asserts that a fixture
+  carrying a Turkish word written without diacritics produces NO hits: that is
+  the detector's known blind spot encoded as correct behaviour, deliberately and
+  documented, but the name reads like proof the detector is clean on Turkish and
+  it is not. And `TestTheGuardedPrefixesStillExist` only requires the admin
+  prefix literal to appear ANYWHERE in the composition root's setup file, which
+  a comment would satisfy; measured, it is satisfied today by two real
+  constants, so the gate is currently telling the truth by luck rather than by
+  construction.
+
+  **What this entry does NOT claim.** The 84 gates that were not changed were
+  judged by reading their readers, their counters and their controls — not by
+  breaking each one. Five were mutation-proved: the three fixed and the two
+  blind spots. `TestNoTurkishOutsideLedger` could not be exercised at all
+  (the user's untracked file at the repository root fails it, so the whole round
+  skipped that one test), and the smoke-tagged suite was not run, so the gate
+  that pins the smoke test's log literals against production source is read-only
+  evidence too. One loose end for whoever is next: the new blindness control has
+  no row in the README's invariant table. Nothing is red, because that audit only
+  checks README against the repository and not the reverse, but the row is
+  missing.
+- **D24** **A carrier's events arrive out of order, and the shipment state
+  machine refused all of it — while tolerating repeats.** Measured 2026-09-06 by
+  printing the whole transition table from a throwaway probe rather than reading
+  it by eye, and the shape of the answer is what makes it worth an entry: a
+  second ship, deliver or cancel landed on a no-op, so IDEMPOTENCE was handled,
+  and pending + deliver and delivered + ship were both conflicts, so REORDERING
+  was refused. Those are the two things a webhook stream does, and only one of
+  them had been thought about.
+
+  The consequence has a live half and a latent one. Latent: there is no carrier
+  plugin yet (C6), so no webhook is being refused today. Live: the admin routes
+  exist now, and an operator reconciling against a carrier's portal by hand had
+  to click "ship" before recording a delivery — which stamps a dispatch moment
+  from the clock, a number NOBODY MEASURED, written into the very column the old
+  rule was trying to protect. The old godoc argued that skipping the step "would
+  leave shipped_at empty and reconciliation would have no answer for when the
+  fulfillment set out". It named a real hole and prescribed the wrong remedy:
+  refusing the delivery does not produce the dispatch moment, it discards the
+  delivery too, and leaves a parcel provably in the customer's hands reading
+  pending for good.
+
+  The fix is a fourth outcome in the table — a reported fact that is BEHIND the
+  shipment's position is accepted without moving the status backwards — and not
+  a second, looser table for callbacks. The rejected alternative is recorded
+  where the table is: two tables disagreeing about the same statuses is exactly
+  the "rules extracted from ifs scattered across three service methods" that
+  having a table prevents, and it also mis-states the admin case, since an
+  operator typing in what a portal told them is reporting too, not commanding.
+  A late collection report writes the tracking number — often the only message
+  carrying it — and stamps NO moment, because the only clock available says now
+  and would date a dispatch after its own delivery. A missing stamp says nobody
+  told us; an out-of-order stamp says something false.
+
+  Cancellation stays strict and that is the discriminator the table now carries:
+  it is the one transition here that is a COMMAND rather than a report, so
+  "this arrived late" has no meaning for it, and a carrier reporting a
+  collection after WE recalled the parcel contradicts our own record rather than
+  merely overtaking it.
 
 ### E. Out of framework scope — written, not forgotten
 
@@ -2777,14 +2965,24 @@ Three things a Turkish carrier integration would hit immediately:
   origin address and no dimensions — and domestic carriers price on **desi**
   (volumetric) and on district. All of it would have to travel through the
   untyped bag.
-- **The status vocabulary is four values** — pending, shipped, delivered,
+- ~~**The status vocabulary is four values** — pending, shipped, delivered,
   canceled — pinned by a database CHECK. There is no "in transit", no "at
   branch", no "delivery attempt failed", and no **"returned to sender" (iade)**,
-  which is a real carrier state a shop must act on.
-- **The state machine is strict and one-way**, and a carrier's event stream is
+  which is a real carrier state a shop must act on.~~ **The iade half was closed
+  2026-09-06.** `returned` is the fifth value, terminal, with a moment that
+  mirrors it exactly. The transit statuses stay absent and that is now a
+  DECISION rather than an omission: "at branch" and "delivery attempt failed"
+  are positions on a journey that the module records nowhere and no consumer
+  asks for, while a return changes what the shop must do next.
+- ~~**The state machine is strict and one-way**, and a carrier's event stream is
   not. `DeliverAction` from `pending` is a CONFLICT — delivered may not skip
   shipped — so a webhook that arrives out of order or twice hits an error rather
-  than converging.
+  than converging.~~ **Corrected 2026-09-06, and the measurement is worth
+  keeping: the module tolerated REPEATS and refused REORDERING.** The whole
+  table was printed by a throwaway probe rather than read by eye — a second
+  ship, deliver or cancel landed on a no-op, while pending + deliver and
+  delivered + ship were both conflicts. The two out-of-order pairs converge now;
+  see D24.
 
 One provider ships: the manual one, which makes no network call and returns
 whatever tracking number the caller passed it. There is no carrier plugin.
@@ -2792,10 +2990,24 @@ whatever tracking number the caller passed it. There is no carrier plugin.
 `MarkShipped` and `MarkDelivered` exist and are admin-scoped, and their godoc
 already names the intended source: *"THE PROVIDER IS NOT CALLED: this method
 records the fact the carrier REPORTED (a webhook or an administrator action)."*
-**The word "webhook" appears exactly once in the entire non-test codebase — in
-that comment.**
+~~**The word "webhook" appears exactly once in the entire non-test codebase — in
+that comment.**~~ **Re-measured 2026-09-06: 131 occurrences in 11 non-test Go
+files.** The inbound callback ring (ADR 0028) and the outbound sender (C5)
+landed in between. What has NOT changed is the thing that sentence was really
+about — an inbound carrier event still has no way into this module, which is now
+recorded on the C6 row with the measurement behind it.
 
-### There is no inbound webhook machinery, and the one working callback is unguarded
+### ~~There is no inbound webhook machinery, and the one working callback is unguarded~~ — built 2026-09-05 (B1, D1)
+
+**Everything below this heading was true when it was measured and the paragraph
+that follows is kept for the argument it makes, not as a description of today.**
+`CallbackRegistry` in the core HTTP package is the class this passage asked for:
+a registered callback route gets a quota, a body limit, a timeout, a signature
+check enforced before anything reads the payload, and a replay window derived
+from the signed fields. PayTR was converted onto it at the same URL, and
+`TestEveryStateChangingRouteIsGuarded` now fails a write bound outside the
+guarded prefixes. What a carrier still lacks is not the door but the room behind
+it — see the C6 row.
 
 No webhook registry, no signature middleware, no replay/dedup store, no delivery
 receipts. The PayTR callback is the only working example and **none of it is

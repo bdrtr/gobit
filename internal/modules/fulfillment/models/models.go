@@ -311,11 +311,21 @@ type Fulfillment struct {
 	TrackingURL    string
 	// IdempotencyKey prevents the same fulfillment from being created twice.
 	IdempotencyKey string
-	// ShippedAt, DeliveredAt and CanceledAt are the moments of the respective
-	// transition (UTC); nil if the transition has not happened.
+	// ShippedAt, DeliveredAt, CanceledAt and ReturnedAt are the moments of the
+	// respective transition (UTC); nil if the transition has not happened.
+	//
+	// A nil ShippedAt on a shipment that is already delivered is a REAL and
+	// expected state rather than a defect: the carrier's collection event
+	// arrived after its delivery event, and the module refuses to invent a
+	// dispatch moment it was never told. The argument is at [ActionRecord].
 	ShippedAt   *time.Time
 	DeliveredAt *time.Time
 	CanceledAt  *time.Time
+	// ReturnedAt is the moment the parcel came BACK undelivered ("iade"); see
+	// [StatusReturned]. Because that status is terminal, this field is set on
+	// exactly the shipments whose Status is [StatusReturned] and on no others —
+	// a database CHECK enforces both directions.
+	ReturnedAt *time.Time
 	// Data is the provider's raw data; it is stored as is and not interpreted.
 	Data json.RawMessage
 	// Metadata is the caller's free-form extra data.

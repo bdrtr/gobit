@@ -312,7 +312,7 @@ func TestMigrationRollsBackWithDataPresent(t *testing.T) {
 	version, dirty, err := db.Version(ctx, testDSN, fulfillment.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "there must be no half-finished migration")
-	assert.Equal(t, uint(3), version,
+	assert.Equal(t, uint(4), version,
 		"the version is the NUMBER of migrations in the module; when a new file is added "+
 			"this goes up too. Were it held constant, an unapplied migration would "+
 			"silently go unnoticed")
@@ -1006,3 +1006,199 @@ func TestTheIdempotencyGuardSurvivedTheDroppedColumn(t *testing.T) {
 			"index is not there, and a retried saga step can print a second label")
 	assert.Contains(t, err.Error(), "fulfillments_idempotency_uniq")
 }
+
+// --- a parcel that came back, and events that arrive in the wrong order ------
+
+// TestTheReturnedStampConstraintIsAFullMirror exercises what migration 000004
+// actually added to the schema, in both directions.
+//
+// The three stamp constraints 000001 wrote are one-directional and could not
+// have been anything else: shipped_at SURVIVES into 'delivered', so requiring
+// the status whenever the moment is present would be false for every delivered
+// shipment. 'returned' is terminal, nothing follows it, and the mirror is
+// therefore expressible — which means it has to be exercised in the direction
+// the others cannot have, or the difference between the two shapes is a claim
+// in a comment.
+//
+// It is written with raw SQL on purpose. The service can no longer produce
+// either violation, so going through it would prove the service and say nothing
+// about the schema; a maintenance script and a partial restore reach the table
+// without the service, and the constraint is what stands there.
+func TestTheReturnedStampConstraintIsAFullMirror(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	profile := newProfile(ctx, t, svc)
+	option := newOption(ctx, t, svc, profile.ID, 1_000)
+
+	// Both rows satisfy EVERY OTHER constraint on the table, and that is what
+	// makes the assertion about the constraint NAME meaningful: a row that also
+	// trips fulfillments_shipped_stamp would fail either way, and the test would
+	// pass while saying nothing about the mirror.
+	insert := `INSERT INTO fulfillments (id, reference, shipping_option_id, provider_id,
+                                         idempotency_key, status, shipped_at, returned_at)
+               VALUES ($1, $2, $3, 'manual', $4, $5, $6, $7)`
+	now := time.Now().UTC()
+
+	_, err := testPool.Pool().Exec(ctx, insert,
+		models.NewFulfillmentID(), testReference, option.ID,
+		"mirror-a-"+models.NewFulfillmentID(), "returned", now, nil)
+	require.Error(t, err,
+		"the 'returned' status was written WITHOUT its moment; a returned parcel whose "+
+			"return has no date cannot be reconciled against the carrier")
+	assert.Contains(t, err.Error(), "fulfillments_returned_stamp")
+
+	_, err = testPool.Pool().Exec(ctx, insert,
+		models.NewFulfillmentID(), testReference, option.ID,
+		"mirror-b-"+models.NewFulfillmentID(), "shipped", now, now)
+	require.Error(t, err,
+		"returned_at was written WITHOUT the status; the row carries the evidence that "+
+			"the parcel came back while every status filter still counts it as in transit. "+
+			"This is the direction the three one-directional stamp constraints CANNOT have, "+
+			"and it is the whole reason this one is written as a mirror")
+	assert.Contains(t, err.Error(), "fulfillments_returned_stamp")
+}
+
+// TestTheStatusCheckAcceptsReturnedAndNothingElse proves the CHECK was REPLACED
+// rather than added to.
+//
+// A second CHECK naming the same column would have been ANDed with the first,
+// so 'returned' would still have been refused while the new constraint looked
+// like it worked. The negative half is asserted in the same test because a
+// widened vocabulary that accepts anything is not a vocabulary.
+func TestTheStatusCheckAcceptsReturnedAndNothingElse(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	profile := newProfile(ctx, t, svc)
+	option := newOption(ctx, t, svc, profile.ID, 1_000)
+
+	insert := `INSERT INTO fulfillments (id, reference, shipping_option_id, provider_id,
+                                         idempotency_key, status, shipped_at, returned_at)
+               VALUES ($1, $2, $3, 'manual', $4, $5, now(), $6)`
+
+	_, err := testPool.Pool().Exec(ctx, insert,
+		models.NewFulfillmentID(), testReference, option.ID,
+		"check-ok-"+models.NewFulfillmentID(), "returned", time.Now().UTC())
+	require.NoError(t, err,
+		"'returned' is refused; migration 000004 added a CHECK next to the old one "+
+			"instead of replacing it, and the two are ANDed")
+
+	_, err = testPool.Pool().Exec(ctx, insert,
+		models.NewFulfillmentID(), testReference, option.ID,
+		"check-bad-"+models.NewFulfillmentID(), "iade", nil)
+	require.Error(t, err, "the status vocabulary must stay closed")
+	assert.Contains(t, err.Error(), "fulfillments_status_valid")
+}
+
+// TestOutOfOrderCarrierEventsSurviveTheRealSchema replays a reordered carrier
+// sequence against a real PostgreSQL.
+//
+// The unit test proves the SERVICE's decisions against a fake store. What can
+// only be proved here is that the row the decisions produce is a row the
+// database accepts: a delivered shipment whose shipped_at is NULL passes
+// fulfillments_shipped_stamp only because that constraint is one-directional,
+// and if it were ever tightened to a mirror this state would become unwritable
+// while every unit test still passed.
+func TestOutOfOrderCarrierEventsSurviveTheRealSchema(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	profile := newProfile(ctx, t, svc)
+	option := newOption(ctx, t, svc, profile.ID, 1_000)
+
+	ful, err := svc.CreateFulfillment(ctx, service.CreateFulfillmentInput{
+		Reference:        testReference,
+		ShippingOptionID: option.ID,
+		IdempotencyKey:   "ooo-" + models.NewFulfillmentID(),
+	})
+	require.NoError(t, err)
+
+	// The delivery message wins the race, and it is repeated.
+	for range 2 {
+		delivered, deliverErr := svc.MarkDelivered(ctx, ful.ID)
+		require.NoError(t, deliverErr, "a repeated delivery must be absorbed")
+		assert.Equal(t, models.StatusDelivered, delivered.Status)
+		assert.Nil(t, delivered.ShippedAt,
+			"the dispatch moment was never reported and must not be invented")
+	}
+
+	// The collection message arrives afterwards, twice, carrying the number the
+	// provider issued when the shipment was opened.
+	for range 2 {
+		late, shipErr := svc.MarkShipped(ctx, ful.ID, ful.TrackingNumber, "")
+		require.NoError(t, shipErr,
+			"a collection reported after the delivery is a late message, not a contradiction; "+
+				"refusing it leaves the carrier retrying it forever")
+		assert.Equal(t, models.StatusDelivered, late.Status, "the status must not move backwards")
+	}
+
+	// And the row really is on disk in that shape.
+	var status string
+	var shippedAt, deliveredAt *time.Time
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT status, shipped_at, delivered_at FROM fulfillments WHERE id = $1`, ful.ID,
+	).Scan(&status, &shippedAt, &deliveredAt))
+	assert.Equal(t, "delivered", status)
+	assert.Nil(t, shippedAt, "shipped_at stays null; the moment is unknown, not zero")
+	assert.NotNil(t, deliveredAt)
+}
+
+// TestAParcelComesBackThroughTheRealSchema drives the "iade" transition end to
+// end against a real database.
+//
+// The service, the query and the constraint have to agree about which of the
+// four stamps a return writes; a mismatch between them shows up nowhere else,
+// because UpdateFulfillmentStatus passes all four absolutely and the fake store
+// would happily accept a combination the CHECK refuses.
+func TestAParcelComesBackThroughTheRealSchema(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	profile := newProfile(ctx, t, svc)
+	option := newOption(ctx, t, svc, profile.ID, 1_000)
+
+	ful, err := svc.CreateFulfillment(ctx, service.CreateFulfillmentInput{
+		Reference:        testReference,
+		ShippingOptionID: option.ID,
+		IdempotencyKey:   "iade-" + models.NewFulfillmentID(),
+	})
+	require.NoError(t, err)
+
+	_, err = svc.MarkShipped(ctx, ful.ID, ful.TrackingNumber, "")
+	require.NoError(t, err)
+
+	returned, err := svc.MarkReturned(ctx, ful.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.StatusReturned, returned.Status)
+	require.NotNil(t, returned.ReturnedAt)
+
+	var status string
+	var returnedAt, canceledAt, deliveredAt *time.Time
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT status, returned_at, canceled_at, delivered_at FROM fulfillments WHERE id = $1`, ful.ID,
+	).Scan(&status, &returnedAt, &canceledAt, &deliveredAt))
+	assert.Equal(t, "returned", status)
+	assert.NotNil(t, returnedAt, "the moment reached the column, not just the model")
+	assert.Nil(t, canceledAt, "a parcel that came back was not canceled by us")
+	assert.Nil(t, deliveredAt, "and it never reached the recipient")
+
+	// The listing filter has to accept the new value, or a returned parcel is
+	// findable only by reading every page.
+	list, total, err := svc.ListFulfillments(ctx, service.ListFulfillmentsInput{
+		Status: ptr("returned"),
+	})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, total, int64(1))
+	found := false
+	for i := range list {
+		if list[i].ID == ful.ID {
+			found = true
+		}
+	}
+	assert.True(t, found, "the returned shipment must be reachable through the status filter")
+}
+
+// ptr returns a pointer to the given value; the listing filters take pointers so
+// that "not given" and "given empty" stay distinguishable.
+func ptr[T any](value T) *T { return &value }

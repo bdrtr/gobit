@@ -89,12 +89,20 @@ SET external_id      = $2,
 WHERE id = $1
 RETURNING *;
 
--- UpdateFulfillmentStatus writes the status and the timestamp that accompanies
+-- UpdateFulfillmentStatus writes the status and the timestamps that accompany
 -- it.
 --
 -- The stamps are given as ABSOLUTE values; the constraints in the schema
 -- (fulfillments_*_stamp) reject a write that leaves the status without its
--- stamp.
+-- stamp, and fulfillments_returned_stamp additionally rejects returned_at
+-- WITHOUT the status, because 'returned' is terminal and the moment can never
+-- outlive it (see 000004).
+--
+-- This is the ONLY statement that writes returned_at. Passing every stamp
+-- absolutely rather than adding a second, narrower update is what keeps that
+-- true: a dedicated "set returned_at" query would be a second place where the
+-- status and its moment could be written apart, and the mirror constraint would
+-- then be the only thing left holding them together.
 -- name: UpdateFulfillmentStatus :one
 UPDATE fulfillments
 SET status          = $2,
@@ -103,6 +111,7 @@ SET status          = $2,
     shipped_at      = $5,
     delivered_at    = $6,
     canceled_at     = $7,
+    returned_at     = $8,
     updated_at      = now()
 WHERE id = $1
 RETURNING *;

@@ -653,6 +653,23 @@ func (h *Handler) deliverFulfillment(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toFulfillmentDTO(ful)})
 }
 
+// returnFulfillment records that the parcel came back to the sender
+// undelivered ("iade").
+//
+// There is NO request body, and the absence is the point: the route asserts one
+// fact and takes no operator input to color it with. Cancellation next door
+// takes none either, for the same reason.
+func (h *Handler) returnFulfillment(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	ful, err := h.svc.MarkReturned(ctx, chi.URLParam(r, "id"))
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toFulfillmentDTO(ful)})
+}
+
 // writeFulfillment reads the fulfillment and writes it with the single
 // envelope.
 //

@@ -21,17 +21,43 @@ func TestStatusTransitionTable(t *testing.T) {
 	t.Parallel()
 
 	statuses := []struct {
-		status  models.FulfillmentStatus
-		cancel  models.Action
-		ship    models.Action
-		deliver models.Action
-		valid   bool
+		status   models.FulfillmentStatus
+		cancel   models.Action
+		ship     models.Action
+		deliver  models.Action
+		returned models.Action
+		valid    bool
 	}{
-		{models.StatusPending, models.ActionProceed, models.ActionProceed, models.ActionConflict, true},
-		{models.StatusShipped, models.ActionProceed, models.ActionNoop, models.ActionProceed, true},
-		{models.StatusDelivered, models.ActionConflict, models.ActionConflict, models.ActionNoop, true},
-		{models.StatusCanceled, models.ActionNoop, models.ActionConflict, models.ActionConflict, true},
-		{models.FulfillmentStatus("unknown"), models.ActionConflict, models.ActionConflict, models.ActionConflict, false},
+		{
+			models.StatusPending,
+			models.ActionProceed, models.ActionProceed, models.ActionProceed, models.ActionConflict,
+			true,
+		},
+		{
+			models.StatusShipped,
+			models.ActionProceed, models.ActionNoop, models.ActionProceed, models.ActionProceed,
+			true,
+		},
+		{
+			models.StatusDelivered,
+			models.ActionConflict, models.ActionRecord, models.ActionNoop, models.ActionConflict,
+			true,
+		},
+		{
+			models.StatusReturned,
+			models.ActionConflict, models.ActionRecord, models.ActionConflict, models.ActionNoop,
+			true,
+		},
+		{
+			models.StatusCanceled,
+			models.ActionNoop, models.ActionConflict, models.ActionConflict, models.ActionConflict,
+			true,
+		},
+		{
+			models.FulfillmentStatus("unknown"),
+			models.ActionConflict, models.ActionConflict, models.ActionConflict, models.ActionConflict,
+			false,
+		},
 	}
 
 	for _, row := range statuses {
@@ -41,9 +67,39 @@ func TestStatusTransitionTable(t *testing.T) {
 			assert.Equal(t, row.cancel, row.status.CancelAction(), "cancel branch")
 			assert.Equal(t, row.ship, row.status.ShipAction(), "ship branch")
 			assert.Equal(t, row.deliver, row.status.DeliverAction(), "deliver branch")
+			assert.Equal(t, row.returned, row.status.ReturnAction(), "return branch")
 			assert.Equal(t, row.valid, row.status.Valid(), "validity")
 		})
 	}
+}
+
+// TestAnOutOfOrderReportIsNeverAConflict pins the property the whole
+// [models.ActionRecord] branch exists for, at the level of the table.
+//
+// It is stated as a rule rather than as four more rows in the table above,
+// because the rule is what a carrier plugin depends on: a report about a stage
+// the shipment has ALREADY PASSED must never come back as a conflict. A
+// conflict on this path is not a caught mistake, it is a webhook the carrier
+// will retry until it gives up, against an endpoint that will never accept it.
+//
+// The canceled status is deliberately outside the rule and is asserted as the
+// exception it is: WE recalled that parcel, so a carrier reporting that it
+// collected it afterwards contradicts our own record rather than merely
+// arriving late, and an operator has to see it.
+func TestAnOutOfOrderReportIsNeverAConflict(t *testing.T) {
+	t.Parallel()
+
+	pastShipment := []models.FulfillmentStatus{models.StatusDelivered, models.StatusReturned}
+	for _, status := range pastShipment {
+		assert.NotEqual(t, models.ActionConflict, status.ShipAction(),
+			"a collection reported on a %q shipment is a late message, not a contradiction", status)
+	}
+
+	assert.Equal(t, models.ActionProceed, models.StatusPending.DeliverAction(),
+		"a delivery whose collection event has not arrived yet must still be recorded")
+
+	assert.Equal(t, models.ActionConflict, models.StatusCanceled.ShipAction(),
+		"a collection reported after WE canceled the parcel contradicts our own record")
 }
 
 // TestDeliveredCannotBeCanceled pins down, at the level of the state machine,

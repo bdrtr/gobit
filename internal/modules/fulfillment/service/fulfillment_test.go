@@ -591,15 +591,37 @@ func TestAProviderCancelFailureDoesNotChangeTheRecord(t *testing.T) {
 func TestStateTransitions(t *testing.T) {
 	t.Parallel()
 
-	t.Run("a pending fulfillment cannot be delivered", func(t *testing.T) {
+	t.Run("a pending fulfillment CAN be delivered and its dispatch stays unknown", func(t *testing.T) {
 		t.Parallel()
 
 		setup := newSetup(t)
 		ful := setup.createFulfillment(t, readyOption(t, setup), "key-1")
 
-		_, err := setup.svc.MarkDelivered(context.Background(), ful.ID)
+		delivered, err := setup.svc.MarkDelivered(context.Background(), ful.ID)
+		require.NoError(t, err,
+			"a delivery reported before any collection is the ordinary out-of-order case; "+
+				"refusing it would discard the delivery too")
+		assert.Equal(t, models.StatusDelivered, delivered.Status)
+		require.NotNil(t, delivered.DeliveredAt)
+		assert.Nil(t, delivered.ShippedAt,
+			"the dispatch moment was never reported and must NOT be invented; a stamp taken "+
+				"from the clock here would sit AFTER the delivery it precedes")
+	})
+
+	t.Run("a fulfillment that came back cannot be delivered", func(t *testing.T) {
+		t.Parallel()
+
+		setup := newSetup(t)
+		ful := setup.createFulfillment(t, readyOption(t, setup), "key-1")
+		_, err := setup.svc.MarkShipped(context.Background(), ful.ID, "TK-1", "")
+		require.NoError(t, err)
+		_, err = setup.svc.MarkReturned(context.Background(), ful.ID)
+		require.NoError(t, err)
+
+		_, err = setup.svc.MarkDelivered(context.Background(), ful.ID)
 		require.Error(t, err)
-		assert.True(t, errors.IsConflict(err), "the error has to be errors.Conflict: %v", err)
+		assert.True(t, errors.IsConflict(err),
+			"a parcel cannot be in the merchant's warehouse and the customer's hands at once: %v", err)
 	})
 
 	t.Run("a canceled fulfillment cannot be shipped", func(t *testing.T) {
@@ -778,4 +800,223 @@ func TestFulfillmentListingAttachesTheItems(t *testing.T) {
 	for _, ful := range list {
 		assert.Len(t, ful.Items, 1, "every fulfillment's item has to be attached")
 	}
+}
+
+// TestCarrierEventsArriveOutOfOrderAndRepeat is the correctness proof of the
+// tolerance a carrier plugin depends on.
+//
+// It is written as a REPLAY of event sequences rather than as separate cases
+// per transition, because the property is about a SEQUENCE: a carrier's webhook
+// is at-least-once and unordered, so the same three events reach us in an order
+// nobody chose and some of them twice. Asserting the end state of each sequence
+// is the only way to state "however they arrive, the record ends up saying the
+// same thing".
+//
+// The measurement this replaced: before 2026-09-06 the module tolerated the
+// REPEAT and refused the REORDER. Duplicates landed on the noop branch of all
+// three transitions, while "delivered" before "shipped" — the single most
+// common carrier reordering — returned errors.Conflict. Half of at-least-once
+// delivery was handled and the other half returned an error the carrier would
+// retry forever.
+func TestCarrierEventsArriveOutOfOrderAndRepeat(t *testing.T) {
+	t.Parallel()
+
+	const (
+		ship    = "ship"
+		deliver = "deliver"
+	)
+
+	sequences := []struct {
+		name string
+		// events is the order the carrier's messages REACH us, duplicates
+		// included.
+		events []string
+		// shippedKnown says whether the dispatch moment ends up recorded. It is
+		// false exactly when the collection message never arrived BEFORE the
+		// delivery: the moment is not invented afterwards.
+		shippedKnown bool
+	}{
+		{"in order", []string{ship, deliver}, true},
+		{"reversed", []string{deliver, ship}, false},
+		{"reversed with both repeated", []string{deliver, ship, deliver, ship}, false},
+		{"in order with the delivery repeated three times", []string{ship, deliver, deliver, deliver}, true},
+		{"the collection repeated before the delivery", []string{ship, ship, deliver}, true},
+		{"every message twice, interleaved", []string{deliver, deliver, ship, ship}, false},
+	}
+
+	for _, sequence := range sequences {
+		t.Run(sequence.name, func(t *testing.T) {
+			t.Parallel()
+
+			setup := newSetup(t)
+			ful := setup.createFulfillment(t, readyOption(t, setup), "key-"+sequence.name)
+
+			for i, event := range sequence.events {
+				var err error
+				switch event {
+				case ship:
+					// The carrier repeats the waybill number it issued when the
+					// shipment was opened; a DIFFERENT number is a separate
+					// case and is a conflict on purpose
+					// (TestALateCollectionMessageStillRefusesAContradiction).
+					_, err = setup.svc.MarkShipped(context.Background(), ful.ID, ful.TrackingNumber, "")
+				case deliver:
+					_, err = setup.svc.MarkDelivered(context.Background(), ful.ID)
+				}
+				require.NoErrorf(t, err,
+					"message %d (%q) of the sequence was refused; a carrier cannot choose the "+
+						"order its webhooks arrive in, and a refusal here is a message it retries forever",
+					i+1, event)
+			}
+
+			final, err := setup.svc.GetFulfillment(context.Background(), ful.ID)
+			require.NoError(t, err)
+
+			assert.Equal(t, models.StatusDelivered, final.Status,
+				"however the messages arrive, the parcel was delivered and the record has to say so")
+			assert.NotNil(t, final.DeliveredAt, "the delivery moment is always recorded")
+			assert.Equal(t, ful.TrackingNumber, final.TrackingNumber,
+				"the tracking number must survive every order the messages arrive in")
+
+			if sequence.shippedKnown {
+				assert.NotNil(t, final.ShippedAt,
+					"the collection was reported while the parcel was still pending, so its moment is known")
+				return
+			}
+			assert.Nil(t, final.ShippedAt,
+				"the collection message lost the race, so the dispatch moment was never measured. "+
+					"Filling it in from the clock would date the dispatch AFTER its own delivery")
+		})
+	}
+}
+
+// TestALateCollectionMessageCarriesTheTrackingNumber pins the one thing the
+// [models.ActionRecord] branch WRITES.
+//
+// On several carriers the collection message is the one that carries the
+// waybill number. If it loses the race with the delivery message, dropping it
+// on the floor would leave the shipment permanently without the number the
+// shopper is given — which is what "tolerating" the reorder would amount to if
+// the branch only avoided the error.
+func TestALateCollectionMessageCarriesTheTrackingNumber(t *testing.T) {
+	t.Parallel()
+
+	setup := newSetup(t)
+	setup.provider.createWithoutTracking = true
+	ful := setup.createFulfillment(t, readyOption(t, setup), "key-late")
+	require.Empty(t, ful.TrackingNumber, "this carrier issues the number with the collection event")
+
+	delivered, err := setup.svc.MarkDelivered(context.Background(), ful.ID)
+	require.NoError(t, err)
+	require.Empty(t, delivered.TrackingNumber, "no message has carried a number yet")
+
+	late, err := setup.svc.MarkShipped(context.Background(), ful.ID, "TK-LATE", "https://carrier/TK-LATE")
+	require.NoError(t, err)
+
+	assert.Equal(t, models.StatusDelivered, late.Status, "the status must not move backwards")
+	assert.Equal(t, "TK-LATE", late.TrackingNumber)
+	assert.Equal(t, "https://carrier/TK-LATE", late.TrackingURL)
+	assert.Nil(t, late.ShippedAt, "the moment is still unknown; only the number arrived")
+}
+
+// TestALateCollectionMessageStillRefusesAContradiction separates "arrived late"
+// from "disagrees".
+//
+// Tolerating a reorder must not turn into accepting anything: a tracking number
+// that differs from the stored one is not the same event arriving twice, it is
+// a message about a different parcel, and it stays a conflict.
+func TestALateCollectionMessageStillRefusesAContradiction(t *testing.T) {
+	t.Parallel()
+
+	setup := newSetup(t)
+	ful := setup.createFulfillment(t, readyOption(t, setup), "key-contradiction")
+
+	_, err := setup.svc.MarkShipped(context.Background(), ful.ID, "TK-1", "")
+	require.NoError(t, err)
+	_, err = setup.svc.MarkDelivered(context.Background(), ful.ID)
+	require.NoError(t, err)
+
+	_, err = setup.svc.MarkShipped(context.Background(), ful.ID, "TK-2", "")
+	require.Error(t, err)
+	assert.True(t, errors.IsConflict(err), "the error has to be errors.Conflict: %v", err)
+}
+
+// TestARepeatedLateMessageDoesNotTouchTheRow proves the record branch is free
+// when it has nothing to add.
+//
+// This path is a webhook's retry loop. Writing on every repeat would leave
+// updated_at moving on a shipment nobody changed, and every listing ordered by
+// it would show a parcel that has been sitting still for a week as the most
+// recently touched record in the store.
+func TestARepeatedLateMessageDoesNotTouchTheRow(t *testing.T) {
+	t.Parallel()
+
+	setup := newSetup(t)
+	ful := setup.createFulfillment(t, readyOption(t, setup), "key-quiet")
+
+	_, err := setup.svc.MarkShipped(context.Background(), ful.ID, "TK-1", "")
+	require.NoError(t, err)
+	_, err = setup.svc.MarkDelivered(context.Background(), ful.ID)
+	require.NoError(t, err)
+
+	before := setup.store.fulfillmentWriteCount()
+	for range 5 {
+		_, err = setup.svc.MarkShipped(context.Background(), ful.ID, "TK-1", "")
+		require.NoError(t, err)
+	}
+	assert.Equal(t, before, setup.store.fulfillmentWriteCount(),
+		"a late message carrying nothing new must not write the row")
+}
+
+// TestTheParcelCameBackIsItsOwnStatus proves the "iade" terminal state.
+//
+// The three things asserted here are the three lies the status exists to
+// prevent: it is not a cancellation (we asked for none), it is not a delivery
+// (the recipient never got it), and it is not the shipment silently staying in
+// transit forever.
+func TestTheParcelCameBackIsItsOwnStatus(t *testing.T) {
+	t.Parallel()
+
+	setup := newSetup(t)
+	ful := setup.createFulfillment(t, readyOption(t, setup), "key-iade")
+
+	_, err := setup.svc.MarkShipped(context.Background(), ful.ID, "TK-1", "")
+	require.NoError(t, err)
+
+	returned, err := setup.svc.MarkReturned(context.Background(), ful.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.StatusReturned, returned.Status)
+	require.NotNil(t, returned.ReturnedAt, "the moment is written with the status")
+	assert.Nil(t, returned.CanceledAt, "nobody canceled this parcel")
+	assert.Nil(t, returned.DeliveredAt, "the recipient never received it")
+	assert.NotNil(t, returned.ShippedAt, "it did set out, and that moment stands")
+
+	// Idempotent: the carrier repeats this message like every other one.
+	again, err := setup.svc.MarkReturned(context.Background(), ful.ID)
+	require.NoError(t, err)
+	assert.Equal(t, returned.ReturnedAt, again.ReturnedAt, "a repeat must not re-stamp the moment")
+
+	// Terminal in both directions that could undo it.
+	_, err = setup.svc.MarkDelivered(context.Background(), ful.ID)
+	assert.True(t, errors.IsConflict(err), "a returned parcel is not in the customer's hands: %v", err)
+	err = setup.svc.CancelFulfillment(context.Background(), ful.ID)
+	assert.True(t, errors.IsConflict(err), "there is nothing left to recall: %v", err)
+}
+
+// TestAParcelThatNeverSetOutCannotComeBack states the one refusal in the return
+// table that could be mistaken for missing tolerance.
+//
+// It is NOT an ordering artifact: a return implies a collection, so "it came
+// back" and "it was collected" cannot legitimately arrive in this order about
+// the same parcel. Accepting it would let a single stray message mark a parcel
+// still sitting in the warehouse as having traveled twice.
+func TestAParcelThatNeverSetOutCannotComeBack(t *testing.T) {
+	t.Parallel()
+
+	setup := newSetup(t)
+	ful := setup.createFulfillment(t, readyOption(t, setup), "key-never")
+
+	_, err := setup.svc.MarkReturned(context.Background(), ful.ID)
+	require.Error(t, err)
+	assert.True(t, errors.IsConflict(err), "the error has to be errors.Conflict: %v", err)
 }

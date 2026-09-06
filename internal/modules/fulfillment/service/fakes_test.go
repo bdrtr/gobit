@@ -650,7 +650,7 @@ func (f *fakeStore) UpdateFulfillmentStatus(
 	id string,
 	status models.FulfillmentStatus,
 	trackingNumber, trackingURL string,
-	shippedAt, deliveredAt, canceledAt *time.Time,
+	shippedAt, deliveredAt, canceledAt, returnedAt *time.Time,
 ) (models.Fulfillment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -669,10 +669,20 @@ func (f *fakeStore) UpdateFulfillmentStatus(
 		return models.Fulfillment{}, errors.Internal("fake_stamp_missing",
 			"the %q status cannot be written without a timestamp", status)
 	}
+	// The counterpart of fulfillments_returned_stamp, and it is a FULL MIRROR
+	// like the constraint itself: the 'returned' status without its moment is
+	// refused, and so is the moment without the status. Copying only the first
+	// half would let a unit test write a row the real database rejects, which
+	// is the exact drift a fake store exists to avoid.
+	if (status == models.StatusReturned) != (returnedAt != nil) {
+		return models.Fulfillment{}, errors.Internal("fake_returned_stamp_mismatch",
+			"the %q status and returned_at must be set together", status)
+	}
 	ful.Status = status
 	ful.TrackingNumber = trackingNumber
 	ful.TrackingURL = trackingURL
 	ful.ShippedAt, ful.DeliveredAt, ful.CanceledAt = shippedAt, deliveredAt, canceledAt
+	ful.ReturnedAt = returnedAt
 	ful.UpdatedAt = testNow
 	f.fuls[id] = ful
 	f.fulWrites++
@@ -776,6 +786,13 @@ type fakeProvider struct {
 	createErr error
 	// createStatus is the status Create returns; if empty, "pending".
 	createStatus coreprovider.FulfillmentStatus
+	// createWithoutTracking makes Create return EMPTY tracking information.
+	//
+	// It imitates the carriers whose waybill number is not known at the moment
+	// the shipment is opened but arrives with the collection event. That is the
+	// case in which a late collection message is the ONLY carrier of the number
+	// a shopper is given, so it has to be reachable in a test.
+	createWithoutTracking bool
 	// createCalls counts how many times Create was called.
 	createCalls int
 	// createInputs stores the inputs handed to Create in order.
@@ -845,13 +862,17 @@ func (p *fakeProvider) Create(
 	if status == "" {
 		status = coreprovider.FulfillmentPending
 	}
-	return coreprovider.Fulfillment{
+	out := coreprovider.Fulfillment{
 		ID:             "ext_" + in.IdempotencyKey,
 		Status:         status,
 		TrackingNumber: "TK-" + in.IdempotencyKey,
 		TrackingURL:    "https://shipping.example/TK-" + in.IdempotencyKey,
 		Data:           json.RawMessage(`{"label":"printed"}`),
-	}, nil
+	}
+	if p.createWithoutTracking {
+		out.TrackingNumber, out.TrackingURL = "", ""
+	}
+	return out, nil
 }
 
 // Cancel records the cancellation.

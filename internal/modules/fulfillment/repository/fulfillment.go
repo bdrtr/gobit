@@ -167,12 +167,18 @@ func (r *Repository) UpdateFulfillmentProviderResult(
 
 // UpdateFulfillmentStatus writes the fulfillment's status, tracking information
 // and timestamps with ABSOLUTE values.
+//
+// All FOUR stamps travel on every call, including the ones the caller is not
+// changing. That is what makes this the single writer of returned_at and keeps
+// the status and its moment in one statement; the schema's mirror CHECK on
+// 'returned' would otherwise be the only thing left holding the pair together
+// (see queries/fulfillments.sql).
 func (r *Repository) UpdateFulfillmentStatus(
 	ctx context.Context,
 	id string,
 	status models.FulfillmentStatus,
 	trackingNumber, trackingURL string,
-	shippedAt, deliveredAt, canceledAt *time.Time,
+	shippedAt, deliveredAt, canceledAt, returnedAt *time.Time,
 ) (models.Fulfillment, error) {
 	row, err := r.queries(ctx).UpdateFulfillmentStatus(ctx, fulfillmentdb.UpdateFulfillmentStatusParams{
 		ID:             id,
@@ -182,6 +188,7 @@ func (r *Repository) UpdateFulfillmentStatus(
 		ShippedAt:      fromTimePtr(shippedAt),
 		DeliveredAt:    fromTimePtr(deliveredAt),
 		CanceledAt:     fromTimePtr(canceledAt),
+		ReturnedAt:     fromTimePtr(returnedAt),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

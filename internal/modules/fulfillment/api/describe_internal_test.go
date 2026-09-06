@@ -279,6 +279,10 @@ func describedEndpoints() []endpointExpectation {
 			method: http.MethodPost, path: pathAdminDeliver, status: "200",
 			response: filledFulfillment(),
 		},
+		{
+			method: http.MethodPost, path: pathAdminReturned, status: "200",
+			response: filledFulfillment(),
+		},
 	}
 }
 
@@ -322,6 +326,7 @@ func filledFulfillment() fulfillmentDTO {
 		ShippedAt:      &now,
 		DeliveredAt:    &now,
 		CanceledAt:     &now,
+		ReturnedAt:     &now,
 		Data:           json.RawMessage(`{"k":"v"}`),
 		Metadata:       map[string]any{"k": "v"},
 		Items:          []fulfillmentItemDTO{{}},

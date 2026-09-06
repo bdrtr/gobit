@@ -44,6 +44,7 @@ type fakeFulfillments struct {
 	lastUpdateProfile service.UpdateProfileInput
 	lastShipTracking  [2]string
 	lastCanceledID    string
+	lastReturnedID    string
 	lastLocationInput service.SetShippingLocationInput
 	// lastReadLocation and lastDeletedLocation prove that the path parameter
 	// gets from the handler to the service under the RIGHT name. Had they not
@@ -195,6 +196,11 @@ func (f *fakeFulfillments) MarkShipped(
 }
 
 func (f *fakeFulfillments) MarkDelivered(_ context.Context, _ string) (models.Fulfillment, error) {
+	return f.fulfillment, f.err
+}
+
+func (f *fakeFulfillments) MarkReturned(_ context.Context, id string) (models.Fulfillment, error) {
+	f.lastReturnedID = id
 	return f.fulfillment, f.err
 }
 

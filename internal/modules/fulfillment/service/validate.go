@@ -134,9 +134,9 @@ func normalizeStatus(value string) (models.FulfillmentStatus, error) {
 	status := models.FulfillmentStatus(strings.TrimSpace(value))
 	if !status.Valid() {
 		return "", errors.Invalid(CodeInvalidInput,
-			"%q is not a recognized fulfillment status; the valid ones are: %s, %s, %s, %s",
+			"%q is not a recognized fulfillment status; the valid ones are: %s, %s, %s, %s, %s",
 			value, models.StatusPending, models.StatusShipped,
-			models.StatusDelivered, models.StatusCanceled)
+			models.StatusDelivered, models.StatusCanceled, models.StatusReturned)
 	}
 	return status, nil
 }

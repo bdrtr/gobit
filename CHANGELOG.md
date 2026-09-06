@@ -12,6 +12,34 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **Bir kararın adı, onu bulan ÖZELLİĞİN adı olursa, sonraki tur aynı soruyu
+  ikinci kez öder** (A15, B4).
+
+  A15 "vitrin, doğrulayamadığı bir adresi sonradan postalamak için alabilir mi?"
+  diye soruyordu ve bekleme listesinin (C1) engeli diye kaydedilmişti. 2026-09-06'da
+  ölçüldü: soru bir SINIFI tarif ediyor, bir özelliği değil. Vitrinin tek
+  kimliği publishable anahtar ve her vitrin yazması konusunu istemcinin seçtiği
+  bir yol parametresinden alıyor — adres defteri ve
+  `POST /store/v1/orders/{id}/returns`. Yani müşterinin YAZDIĞI bir yorum (B4)
+  aynı şekle sahip, ve bu bugüne kadar hiçbir yerde yazmıyordu.
+
+  **Depo bu sorunun bir örneğini zaten cevaplamış ve gerekçesi order modülünün
+  vitrin handler'ında duruyor:** kimliksiz bir yazma orada kabul edilebilir,
+  çünkü bir TALEP taleptir — stok da para da kımıldatmaz, bir operatörün onu
+  teslim alması gerekir, ve EYLEYEN her uç yönetime ait ve kapsamlıdır. Karara
+  ayırt edicisini veren de bu gerekçe, ve özellik başına cevaplanabilir bir
+  soru: **yazma ile etkisi arasında bir insan duruyor mu?** Bekleme listesi bunu
+  geçemiyor, çünkü bir satırın etkisi giden bir mesaj ve kimse onaylamıyor. Bir
+  yorum için cevabı aynı ayırt edici veriyor: ONAYLA yayımlanıyorsa mevcut
+  gerekçe onu olduğu gibi kapsar, GÖNDERİMLE yayımlanıyorsa kapsamaz ve cümlenin
+  ilk tablodan önce yazılması gerekir.
+
+  Aynı okumada A grubunun tamamı gözden geçirildi: on altı açık satırın on ikisi
+  seçenekleriyle birlikte yazılmış ve bir cümleyle cevaplanabilir; dördü (A4,
+  A5, A11, A12) bir KONU adlandırıyor, aday cevap adlandırmıyor — yani onları
+  cevaplamak önce seçenekleri icat etmeyi gerektiriyor. Seçenekler ölçülmeden
+  uydurulmadı; eksiklik olduğu gibi kaydedildi.
+
 - **Yazılmış, belgelenmiş, uçtan uca test edilmiş bir eklenti KURULAMIYORDU —
   ve bu sınıf için yazılmış kapı YEŞİLDİ** (C5, D22).
 
@@ -80,6 +108,132 @@ Sabitlenme `1.0.0` ile olur.
   sistemi var.
 
 ### Düzeltildi
+
+- **Kapıların kendisi denetlendi: 89 kapıdan üçü, yazılma sebebi olan kusurun
+  tam üzerinde YEŞİLDİ** (D23).
+
+  D22 bir cümleyle kapanmıştı — "kalan denetimler bu gözle gözden geçirilmeli".
+  Bu tur onu yaptı: `internal/arch`'taki 89 kapının hepsi teker teker okundu ve
+  her birine aynı üç soru soruldu. Karşılaştırmanın iki tarafı ne? Her taraf
+  NEREDEN geliyor? Hangi makul ihlal bu kapıyı yeşil bırakır?
+
+  **Önce sonucun büyük yarısı, çünkü geri kalanını inandırıcı kılan odur:
+  kapıların ezici çoğunluğu sağlam, ve sebebi şans değil YAPI.** 89'un 21'i
+  yalnızca körlük kontrolü ya da pozitif kontrol olarak var — tek işi bir ihlal
+  ekip yanındaki okuyucunun hâlâ gördüğünü kanıtlamak olan testler. Kalanların
+  neredeyse hepsi, yürüyüşünün o halkası sessizleşirse ne anlama geleceğini
+  adıyla söyleyen en az bir sayaç taşıyor; birkaçı üç ile beş arası taşıyor,
+  çünkü tek bir toplam hangi halkanın koptuğunu gizlerdi. Zayıf olduğu tahmin
+  edilen üç kapı da ölçülüp aklandı.
+
+  **Bulgu 1 — `TestMoneyIsAnInteger` beş üretim ağacından BİRİNİ okuyordu.**
+  Godoc'u depo geneline ait bir kural söylüyor (para, minor birimde INTEGER
+  saklanır); yürüyüşü ise modül listesiydi. Ölçüm: üretim ağaçlarında para adlı
+  **682** struct alanı var, bunların **118'i `internal/modules` dışında**, ve o
+  118'in **93'ü `internal/workflows`'ta** — yani toplamların HESAPLANDIĞI yerde:
+  checkout, fiyat, indirim, vergi, kargo, ödeme tutarı. Kuralın korumak için
+  yazıldığı yerde bildirilen bir float, kuralın DIŞINDAYDI; kapı 118'inin
+  hepsinde, dosyayı hiç açmamış bir denetimin yeşil olduğu gibi yeşildi.
+  Yürüyüş artık ortak üretim ağacı listesi, ağaç başına dosya sayacıyla — bir
+  ağaç sessizleşirse geçmek yerine düşüyor — ve karar aynı anda işaretçi ve
+  dilim float'lara genişletildi, çünkü nullable bir para sütunu tam da birinin
+  işaretçiye uzanacağı yer. Üç ayrı mutasyonla kanıtlandı; eski kapı,
+  checkout'un para zincirine ekilen aynı float'ta yeşil kalıyordu.
+
+  **Bulgu 2 — bir kapı, kendi godoc'unun "asıl sebebim" dediği yönde
+  DÜŞEMİYORDU**, ve bu D22'nin dersinin en küçük ölçeği: "aynı yer" ikinci bir
+  dosya bile değil, iddianın kendi fonksiyonuydu. Panelin durum listesi, modül
+  tarafını testin GÖVDESİNE yazılmış üç elemanlı bir dilimle karşılaştırıyordu.
+  Her eleman gerçek bir sabite derleyici tarafından bağlıydı — listeyi modülün
+  cevabı gibi gösteren de buydu — ama SAYIM teste aitti. Mutasyonla ölçüldü:
+  modülün sabit bloğuna ve `Status.Valid` switch'ine beşinci bir durum eklemek,
+  yani gerçek değişikliğin tamamı, kapıyı YEŞİL bıraktı; operatör o durumu asla
+  seçemezdi ve hiçbir hata sebebini söylemezdi. Modülün söz dağarcığı artık
+  modülün kendi models paketinden OKUNUYOR ve sonra DERLENMİŞ `Status.Valid`
+  süzgecinden geçiriliyor: aynı şeye bakan iki farklı alet, çünkü bir kaynak
+  taraması kendini denetleyemez ve Go sabitleri çalışma zamanında yansıtılacak
+  şekilde var olmaz. Bildirilip switch'e alınmayan bir sabit artık ayrıca
+  raporlanıyor. Yeni pozitif kontrol karşılaştırmaya değil OKUYUCUYA ekiyor,
+  çünkü eksik olan oydu. Paneldeki bir godoc bu bağlamanın çalıştığını zaten
+  iddia ediyordu; o cümle bu düzeltmeye kadar YANLIŞTI, şimdi doğru.
+
+  **Bulgu 3 — üç migration kapısı, deponun 24 migration dizininden 16'sını
+  okuyordu.** Geri alma, modüller arası foreign key kuralı ve gerçek
+  PostgreSQL'de gidiş-dönüş; üçü de girdisini modül listesinden türetiyordu. Hiç
+  açılmayan sekizin dördü eklenti şeması, dördü ÇEKİRDEK: `core/audit/migrations`,
+  `core/eventbus/outbox/migrations`, `internal/core/workflow/pgstore/migrations`
+  ve `internal/core/job/jobpg/migrations`. Çekirdek dördü açık farkla daha kötü,
+  çünkü her açılışta HER modül migration'ından ÖNCE uygulanıyorlar: orada
+  başarısız olan bir down, migration defterini bütün açılışın önünde kirli
+  bırakır — ki gidiş-dönüş testinin yazılma sebebi kelimesi kelimesine budur.
+  Sekizinin sekizi de ölçüldüğünde kurala uygundu; DENETLENMEDEN uygundular, ki
+  bu okunmamış bir dosyanın güvenlikle kurduğu ilişkinin aynısı. Ortak bir
+  yardımcı artık dizinleri üretim ağaçlarından buluyor, iki tabanla: her modül
+  hâlâ bulunmalı, ve en az bir küme `internal/modules` DIŞINDA olmalı ki
+  ileride bir daraltma sessizce değil gürültüyle düşsün. Entegrasyon kapısı
+  24'ün hepsini gerçek bir kapsayıcıda gidip geliyor.
+
+  **Bu iş sırasında bir hata ÜRETİLDİ ve sevk edilmeden yakalandı**, ve
+  kaydedilmesinin sebebi onu ortaya çıkaranın mutasyon koşusu olması: yardımcının
+  ilk hâli depo kökünü de özyinelemeli yürüyordu, yani her dizin iki kez
+  bulunuyor ve her bulgu iki kez yazılıyordu. Tekilleştirerek değil, kökü tek
+  derinlikte okuyarak düzeltildi — tekilleştirme örtüşmeyi kaldırmaz, gizlerdi.
+
+  **Dört kapı daha ölçüldü ve BİLEREK düzeltilmedi**, her biri sebebiyle
+  yazıldı; çünkü "baktık ve bıraktık" ile "bakmadık" aynı cümle değil. Kolon
+  denetimi aynı 16/24 kapsamında — dışarıdaki on tablonun hiç kolon denetimi yok
+  — ama yazma tarafını genişletmeden bildirim tarafını genişletmek o paketlerin
+  BÜTÜN kolonlarını ölü diye raporlardı, ve yalancı çoban bir kapının silinme
+  sebebidir. Bir modülün bir EKLENTİ tablosunu adlandırması bugün serbest;
+  dosyanın başlığı bu izni çekirdek ve link tabloları için savunuyor, eklenti
+  tabloları için savunmuyor, ve başlığı savunulmuş bir kararın olduğu yerde
+  "sahip" teriminin anlamını sessizce değiştirmek doğru sıra değil. Varsayılan
+  mux yasağı, pakette kendi sayacı ve pozitif kontrolü OLMAYAN tek yasak kapısı:
+  boş bir yürüyüş geçer. Ve katman saflığının pozitif kontrolü kararın
+  KENDİ YENİDEN YAZIMINA ekiyor — yani yasak parçanın eşleşebildiğini
+  kanıtlıyor, gerçek yürüyüşün onu gördüğünü değil.
+
+  **Bu kaydın İDDİA ETMEDİĞİ şey.** Değiştirilmeyen 84 kapı, okuyucuları,
+  sayaçları ve kontrolleri okunarak yargılandı — her biri kırılarak değil.
+  Mutasyonla kanıtlanan beş tane: düzeltilen üçü ve iki kör nokta.
+  `TestNoTurkishOutsideLedger` hiç çalıştırılamadı (kullanıcının depo kökündeki
+  izlenmeyen dosyası onu düşürüyor; tur boyunca o tek test atlandı), smoke etiketli
+  paket de koşulmadı.
+
+- **Kargonun olayları SIRASIZ gelir; sevkiyat durum makinesi hepsini
+  reddediyordu — tekrarları ise hoş görüyordu** (B10, D24).
+
+  Tablonun tamamı gözle okunarak değil, tek kullanımlık bir sonda ile
+  YAZDIRILARAK ölçüldü, ve cevabın şekli kaydı hak ettiren şey: ikinci bir
+  ship, deliver veya cancel noop'a düşüyordu — yani ETKİSİZLİK düşünülmüştü — ama
+  pending + deliver ve delivered + ship'in ikisi de çatışmaydı, yani YENİDEN
+  SIRALAMA reddediliyordu. Bir webhook akışının yaptığı iki şey bunlar ve
+  yalnızca biri düşünülmüş.
+
+  Sonucun canlı bir yarısı var, gizli bir yarısı var. Gizli olan: henüz kargo
+  eklentisi yok (C6), yani bugün reddedilen bir webhook yok. Canlı olan: yönetim
+  uçları var, ve kargonun portalıyla elle mutabakat yapan bir operatör bir
+  teslimi kaydetmeden önce "ship"e basmak zorundaydı — bu da saatten bir sevk anı
+  damgalıyor, yani KİMSENİN ÖLÇMEDİĞİ bir sayıyı, tam da eski kuralın korumaya
+  çalıştığı sütuna. Eski godoc "adımı atlamak shipped_at'i boş bırakır ve
+  mutabakatın sevk anına cevabı olmaz" diyordu: gerçek bir boşluğu adlandırıp
+  yanlış çareyi yazmış. Teslimi reddetmek sevk anını üretmiyor; teslimi de atıyor
+  ve müşterinin elinde olduğu ispatlı bir koliyi temelli "pending" bırakıyor.
+
+  Düzeltme tabloya DÖRDÜNCÜ bir sonuç ekliyor — sevkiyatın konumunun GERİSİNDE
+  kalan bir bildirim, durumu geriye çekmeden kabul ediliyor — ve geri çevrilen
+  alternatif, yani yalnızca callback'lerin kullanacağı ikinci ve gevşek bir
+  tablo, tablonun yanına yazıldı: aynı statüler hakkında birbiriyle çelişen iki
+  tablo, tam da tablonun önlemek için var olduğu "üç servis metoduna dağılmış
+  if'ler" şeklidir. Geç gelen bir toplama bildirimi takip numarasını YAZIYOR —
+  çoğu kargoda onu taşıyan tek mesaj odur — ve HİÇBİR an damgalamıyor, çünkü
+  eldeki tek saat "şimdi" diyor ve sevki kendi teslimatından sonraya tarihlerdi.
+  Eksik damga "bize söylenmedi" der; sırasız damga olmamış bir şeyi iddia eder.
+
+  İptal sıkı kalıyor ve tablonun taşıdığı ayırt edici bu: buradaki tek KOMUT
+  odur, bildirim değil, dolayısıyla "geç geldi" onun için anlamsızdır — ve BİZ
+  geri çağırdıktan sonra toplama bildiren bir kargo, bizi geçmiş olmuyor, kendi
+  kaydımızla çelişiyor.
 
 - **Tax'ın şekli dört modülde daha arandı: ikisinde KUSUR çıktı, ikisinde
   çıkmadı — ve çıkmayışı da ölçüldü** (D6, D19, D20).
@@ -622,6 +776,69 @@ Sabitlenme `1.0.0` ile olur.
   tahmin edilmeden bırakıldı.
 
 ### Eklendi
+
+- **Bir koli GERİ DÖNEBİLİR: `returned` beşinci sevkiyat statüsü, ve tablo artık
+  BİLDİRİM ile KOMUT'u ayırıyor** (B10).
+
+  Her Türk kargosu (Yurtiçi, Aras, MNG, PTT) terminal bir "iade" olayı
+  bildiriyor: koli teslim edilemedi — alıcı bulunamadı, kabul etmedi ya da adres
+  yanlıştı — ve ORİJİNAL irsaliyeyle geri geldi. Bu güne kadar şema dört statü
+  kabul ediyordu ve hiçbiri bu olguyu tutamıyordu; bu olayı eşleyecek bir
+  eklentinin üç yeri vardı ve üçü de yanlış bir şey yazıyordu. `canceled`
+  sevkiyatın olmadığını iddia eder, oysa etiket basıldı ve koli iki yönde de
+  yolculuk etti — üstelik modülün kendi anlamıyla, yani SAGA TELAFİSİYLE
+  çakışır. `delivered` alıcının koliyi aldığını iddia eder, ki olmayan tam
+  olarak budur. Hiçbir şey yazmamak satırı temelli "shipped" bırakır: kendi
+  deposunda duran bir koli, yolda diye tarif edilir ve onu oradan
+  çıkarabilecek hiçbir olay yoktur.
+
+  **Bu, modülün ZATEN sahip olduğu iade değil, ve fark fiziksel.** Müşterinin
+  teslim ALDIKTAN sonra geri göndermesine modülün cevabı duruyor: `is_return`
+  işaretli bir kargo seçeneği üzerinde İKİNCİ bir fulfillment — yani bilerek
+  satın alınmış ikinci bir irsaliye, ters yöne giden. Buradaki statü BİRİNCİ
+  irsaliyenin kötü bitmesiyle ilgili. Birinde iki sevkiyat var, ötekinde bir;
+  ikisini birleştirmek ya kimsenin satın almadığı bir sevkiyat icat eder ya da
+  gerçek olanı sıkışık bırakır.
+
+  **`returned_at`'in CHECK'i TAM AYNA, ve 000001'in üç damga kısıtı olamazdı.**
+  Onlar tek yönlü: statüyü damgasız reddediyorlar, damgayı statüsüz kabul
+  ediyorlar. Bu bir gözden kaçma değil, zorunluluk — `shipped_at`, `delivered`
+  statüsüne SAĞ ÇIKAR, dolayısıyla ters yön teslim edilmiş her sevkiyat için
+  yanlıştır. `returned` TERMİNAL olduğu için farklı: tablodaki hiçbir geçiş onu
+  takip etmiyor, yani damga kendi statüsünü aşamaz. Veri migration'ı olmadan
+  eklenebilmesinin tek sebebi kolonun YENİ olması; kullanımdaki bir kolona aynı
+  kısıt sonradan takılamazdı. Aynı gerekçe order modülünün D4'te yazdığı
+  gerekçedir.
+
+  Kolonun aynı değişiklikte yazarı var: `Service.MarkReturned`,
+  `POST /admin/v1/fulfillments/{id}/returned` ucuna bağlı — gövdesiz, çünkü uç
+  tek bir olguyu bildiriyor ve operatörün onu renklendireceği bir girdi almıyor.
+  Statü çeşitlemesi `fulfillment_manual_shipments`'a BİLEREK taşınmadı: o tablo
+  taklit edilen dış sistemin defteri ve sağlayıcı sözleşmesi dört statü biliyor,
+  `returned` onlardan biri değil. Taklidin CHECK'ini genişletmek, sağlayıcının
+  yazamayacağı ve servisin okumayı reddedeceği bir değer üretirdi — yani hiçbir
+  yerden erişilemeyen bir durum, bu deponun iki kez temizlediği "canlı görünen
+  ölü kod" şekli.
+
+  **Geri alma DÜŞEBİLİR ve bu bir kusur değil, karar.** Herhangi bir satır
+  `returned` tutuyorsa daraltılan CHECK reddedilir ve down o deyimde durur. Onları
+  önce `canceled` diye yeniden yazmak — böylece geri alma hep başarılı olur —
+  reddedildi: bu tablo kargoyla mutabakatın tutulduğu kayıt, ve "biz bu koliyi
+  geri çağırdık" cümlesini, kargonun teslim edemeyip iade ettiği bir kolinin
+  üstüne, hem de kimsenin yakından izlemediği bir deploy geri alması sırasında
+  sessizce yazmak olurdu. Duran bir geri alma kurtarılabilir; satırları yeniden
+  yazan bir geri alma kurtarılamaz.
+
+  **Sevkiyat rotasının kalan yarısı ölçüldü ve yapılmadı, ikisi de kaydedildi.**
+  `core/provider.QuoteInput` ülke, ağırlık, kalem sayısı ve seçeneğin kendi
+  verisini taşıyor, başka hiçbir şey taşımıyor — yani yurt içi kargonun tarifesini
+  belirleyen iki sayı, ilçe ve desi, bu sözleşmede ifade edilemiyor; genişletmek
+  YAYIMLANMIŞ bir sözleşme kararı (ADR 0026) ve iki şeyin daha kımıldaması
+  gerekiyor, çünkü hiçbir adres tablosunda ilçe kolonu yok ve koli ölçüleri
+  katalog modülünün olgusu. Ve bir kargonun olayını modüle sokacak bir yüzey de
+  yok: modüller arası yazma yüzeyi beş ilkel metot ve hiçbiri sevkiyatı
+  kımıldatamıyor. O metot eklentiden ÖNCE eklenmedi, çünkü tüketicisi olmayan
+  bir sözleşmeyi hiçbir şey denetleyemez — B13'ün aynı gerekçeyle beklediği gibi.
 
 - **Giden webhook'ların GÖNDERİCİSİ yazıldı — ve bugün KURULAMIYOR; bu
   varsayılmadı, ölçüldü** (C5, D22).

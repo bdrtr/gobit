@@ -296,7 +296,13 @@ func describeFulfillments(d *openapi.Doc) {
 	})
 
 	d.Describe(http.MethodPost, pathAdminShip, openapi.Operation{
-		Summary: "Marks the fulfillment as handed to the carrier.",
+		Summary: "Records that the carrier collected the fulfillment.",
+		Description: "It is IDEMPOTENT. If the shipment has already been delivered or " +
+			"returned, the report is ACCEPTED rather than refused — a carrier's events " +
+			"arrive out of order — and only the tracking information is written; the " +
+			"status is not moved backwards and shipped_at stays empty, because the only " +
+			"moment available would be later than the delivery already recorded. A " +
+			"tracking number that CONTRADICTS a stored one is still a 409.",
 		// The body is OPTIONAL: some carriers provide the tracking number later
 		// and the handler does not treat an empty body as an error (see
 		// [decodeOptionalBody]). Marking it required would mean the client
@@ -309,8 +315,23 @@ func describeFulfillments(d *openapi.Doc) {
 
 	d.Describe(http.MethodPost, pathAdminDeliver, openapi.Operation{
 		Summary: "Marks the fulfillment as delivered.",
+		Description: "It is IDEMPOTENT. A delivery may be reported on a fulfillment that " +
+			"was never marked as collected; shipped_at then stays empty, which says that " +
+			"nobody has reported the dispatch rather than that it did not happen.",
 		Responses: map[string]any{
 			"200": openapi.Response("The delivered fulfillment", d.Item(fulfillmentDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodPost, pathAdminReturned, openapi.Operation{
+		Summary: "Records that the parcel came back to the sender undelivered.",
+		Description: "The carriers' \"iade\": the parcel could not be delivered and came " +
+			"back under the ORIGINAL waybill. It is IDEMPOTENT and TAKES no body. It is " +
+			"not the same thing as a customer sending goods back after receiving them — " +
+			"that is a new fulfillment on a shipping option with is_return set. Only a " +
+			"shipped fulfillment can come back; anything else is a 409.",
+		Responses: map[string]any{
+			"200": openapi.Response("The returned fulfillment", d.Item(fulfillmentDTO{})),
 		},
 	})
 }

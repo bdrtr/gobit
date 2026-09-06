@@ -30,6 +30,42 @@ import (
 // fulfillment (compensation) and read its status. Every method added here
 // raises the cost of extracting fulfillment into a separate service.
 //
+// # What is NOT here, and why it is not here YET
+//
+// There is no way for a CARRIER to report an event. Measured on 2026-09-06:
+// the five methods below are the module's entire cross-module write surface,
+// and none of them can move a shipment to shipped, delivered or returned. The
+// admin HTTP routes can, but a carrier's webhook holds no admin credential —
+// that is the premise the inbound callback ring is built on (ADR 0028) — and a
+// plugin cannot reach [Service.MarkShipped] directly: TestPluginsDoNotImportModules
+// refuses the import, and a structural interface naming it cannot be written
+// either, because the method returns [models.Fulfillment], a type the plugin's
+// package cannot name. So a carrier plugin (C6) has nowhere to deliver what it
+// receives.
+//
+// The method is NOT added here ahead of that plugin, and the reason is the
+// rule this repository has paid for twice. A cross-module surface is only
+// meaningful against a consumer: this file's own documentation says the JSON
+// schema "MUST BE IDENTICAL to the schema on the consumer side, and conformance
+// can only be proven by an integration test", so a method with no consumer is a
+// contract nothing can check and nothing can correct. The same call was made for
+// the inventory event (docs/gaps.md B7) and for the plugin job surface (B13,
+// which arrived WITH its first consumer rather than before one).
+//
+// What it should look like when it lands is worth writing down, because the
+// shape is not obvious and it was measured rather than guessed. It is ONE
+// method, not three, and it carries the carrier's own instant:
+//
+//	RecordCarrierEvent(ctx context.Context, fulfillmentID, event string, occurredAt time.Time, trackingNumber, trackingURL string) (string, error)
+//
+// One method because the tolerance is a property of the SEQUENCE, not of any
+// single transition (see [models.ActionRecord]), and three methods would put
+// the ordering decision back on the caller that cannot make it. The instant
+// because it is the one thing an admin route cannot supply and a carrier
+// always can: with it, the [models.ActionRecord] branch could fill in a
+// dispatch moment that is TRUE instead of leaving it null, which is the single
+// piece of data this module currently has no way to learn.
+//
 // # Composite data travels as JSON and its schema is declared HERE
 //
 // The shipping option list does not fit into primitive types; it travels as
