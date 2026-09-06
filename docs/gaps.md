@@ -1159,8 +1159,27 @@ belonging to that feature**, and the next round pays for the question twice.
   a list written by hand in the test, so a parameter absent from both agrees
   with itself and passes.
 
-  **The gate this wants was priced and NOT written, because the naive form fails
-  this repository's own standard.** A first approximation — every
+  **Closed later the same day, and the gate found two live findings on its first
+  run.** `TestEveryQueryParameterAHandlerReadsIsDescribed` takes its two sides
+  from two different constructs — the reads from the handler's source, the
+  descriptions from the code that builds the document — and its scope is DERIVED
+  rather than listed: a package is in scope when it constructs an
+  `openapi.Parameter`, which selects exactly the module api packages and leaves
+  the panel and the plugin surfaces out because describing is undefined for
+  them. The reader rule is structural: a function that forwards one of its OWN
+  parameters to `URL.Query().Get` is a reader, and the literal is collected at
+  its call sites, so `stringParam(r, "tag_id")` is seen and `pathParam(r, "id")`
+  is not. What it found: the shipping-option listing filters by `provider_id`
+  and by `price_type` and the document mentions neither. Both are exempted with
+  the reason rather than fixed, and the reason is worth reading — the module
+  leaves that whole CRUD undescribed over a component-name collision, but the
+  collision is about the response SCHEMA and a query parameter never touches it,
+  so its own test is stricter than the reason its file gives. Narrowing that is
+  the module's decision, not the audit's.
+
+  ~~**The gate this wants was priced and NOT written, because the naive form
+  fails this repository's own standard.**~~ **The pricing below stands as the
+  record of why the FIRST attempt was refused.** A first approximation — every
   `URL.Query().Get("x")` literal and every `xxxParam(r, "x")` literal, compared
   against the `queryParameter("x")` calls of the same package — reported
   findings in TWELVE modules, and checking them showed almost all were noise:

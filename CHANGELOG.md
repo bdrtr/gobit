@@ -145,6 +145,39 @@ Sabitlenme `1.0.0` ile olur.
   yazmıştı; modül üçüncüsünü kazanınca ikisi de kırıldı. Sayı artık okunuyor:
   biri geri alınacak adım sayısını mevcut sürümden türetiyor, diğeri
   dokunulmayan sahibin sürümünü geri almadan ÖNCE okuyup onunla karşılaştırıyor.
+- **D25'in kapısı yazıldı ve ilk koşusunda iki canlı bulgu buldu** — ve
+  reddettiğim naif biçim kayıt olarak duruyor.
+
+  `TestEveryQueryParameterAHandlerReadsIsDescribed` iki tarafını **iki farklı
+  yapıdan** alıyor: okumaları handler'ın kaynağından, tanımları belgeyi kuran
+  koddan. Kapsamı da elle liste değil, TÜRETİLMİŞ: bir paket `openapi.Parameter`
+  kuruyorsa kapsamda. Bu kural tam olarak modül `api` paketlerini seçiyor ve
+  paneli ile eklenti yüzeylerini dışarıda bırakıyor — onlar hiç belge
+  yayımlamıyor, yani "belgelenmiş" onlar için tanımsız.
+
+  Okuyucu kuralı yapısal: bir fonksiyon **kendi** parametresini
+  `URL.Query().Get`'e geçiriyorsa okuyucudur, ve sabit onun çağrı yerlerinden
+  toplanır. Böylece `stringParam(r, "tag_id")` görülüyor, `pathParam(r, "id")`
+  görülmüyor — naif regex'imin on iki modülde ürettiği gürültünün sebebi tam da
+  bu ayrımı yapamamasıydı.
+
+  **Bulunanlar:** kargo seçeneği listelemesi `provider_id` ve `price_type` ile
+  süzüyor, belge ikisini de anmıyor. İkisi de düzeltilmedi, **gerekçeyle muaf
+  tutuldu**, ve gerekçe okunmaya değer: modül o CRUD'un tamamını bir bileşen-adı
+  çakışması yüzünden belgelemiyor — ama çakışma yanıt ŞEMASI hakkında ve bir
+  sorgu parametresi ona hiç dokunmuyor. Yani modülün kendi testi, kendi
+  dosyasının verdiği gerekçeden daha katı. Denedim, testi düştü, ve geri aldım:
+  o kuralı daraltmak o modülün kararı, bu denetimin değil.
+
+  **Kendi körlük testim kendi tarayıcımda bir delik yakaladı.** İlk hâli
+  `[]openapi.Parameter{{Name: …}}` biçimindeki **tipi elenmiş** bileşik
+  değişmezleri görmüyordu, ve bu yüzden belgelenmiş bir parametreyi
+  "belgelenmemiş" diye bildiriyordu. Kapı yayımlanmadan önce yakalandı; üç
+  bulgudan biri böyle elendi.
+
+  İki mutasyon: D25'in kanıtladığı kusur yeniden ekilince kapı dosya:satır ile
+  yakalıyor, muafiyet silinince o satırda düşüyor.
+
 - **Bir handler, hiç belgelemediği bir sorgu parametresini okuyabiliyor ve
   deponun bütün kapıları yeşil kalıyor** (D25).
 
