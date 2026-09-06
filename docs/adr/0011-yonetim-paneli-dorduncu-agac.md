@@ -6,6 +6,11 @@
 - **Değiştirildi:** 2026-09-03 — Karar 6'nın ertelediği yazma sorusu
   [ADR 0013](0013-panel-write-surface.md) ile kapatıldı. Dördüncü ağaç, kimlik
   ve yazıcı kararları değişmedi.
+- **Değiştirildi:** 2026-09-06 — panelin çerçeveden SUNULMASI kararı
+  [ADR 0030](0030-the-panel-becomes-an-admin-api-client.md) ile değişti: panel
+  artık `/admin/v1`'in bir istemcisi. Dördüncü ağaç yerleşimi, kimlik kararı ve
+  localStorage reddi aynen duruyor; değişen tek şey çerezin yol kapsamı, ve o
+  ADR bunun bedelini (yol kapsamlı çerezin üçüncü CSRF katmanı) adıyla yazıyor.
 
 ## Bağlam
 

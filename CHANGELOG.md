@@ -12,6 +12,57 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **On yedi kararın ilk dördü verildi ve ADR olarak yazıldı: kök, çift ve tek
+  canlı tehlike** (A2 → ADR 0029, A7 → ADR 0030, A12 → ADR 0031, A4 → ADR 0032).
+
+  Sıra, `gaps.md`'nin kendi ölçümünün söylediği sıraydı: önce kök, sonra çift,
+  sonra tehlike.
+
+  **ADR 0029 — sorumlu gömen uygulamadır.** ADR 0025 gobit'i bir kütüphane
+  saymıştı; bir kütüphane başkasının ürününün saklama süresini, hukuki
+  dayanağını ya da rıza metnini seçmez. Yükümlülük "rızayı uygula"dan "kancaları
+  ve silme sözleşmesini yayımla"ya dönüyor. gobit üç şey borçlu ve fazlası
+  değil: sonuçları **DELETED / ANONYMIZED / RETAINED** olan bir sözleşme —
+  üçüncüsü tasarım gerektiren asıl şey, çünkü yalnızca bitti/başarısız alan bir
+  çağıran reddi arızadan ayırt edemez —, bir modülün "bu kişi silindi"
+  diyebilmesi için kancalar (B8), ve her modülün ne tuttuğunun beyanı.
+
+  **ADR 0030 — panel `/admin/v1`'in istemcisi olur, ve bedeli kayıp olarak
+  yazılır.** Jeton yine JavaScript'e girmiyor; ADR 0011'in localStorage reddi
+  aynen duruyor ve değişen tek şey çerezin yolu. Ama bunu "bağışıklık korunur"
+  diye yazmadık, çünkü `session.go` tam tersini söylüyor: *"çerez API önekine de
+  gönderilirse o bağışıklık kaybolur ve HER yönetim ucu yeni bir saldırı
+  yüzeyine girer."* Bugün üç katman var — `HttpOnly`, `SameSite=Strict` +
+  `UI.CheckOrigin`, ve çerezin `/admin/ui`'ye kapsanması. ADR üçüncüsünü
+  harcıyor ve kapattığı boşluğu adıyla anıyor: deponun kendi godoc'u
+  `SameSite`'ın **tek başına yeterli olmadığını** (subdomain devralma) zaten
+  yazmış, yani `CheckOrigin` "ikinci katman" olmaktan çıkıp "katman" oluyor ve
+  API önekine takılması gerekiyor.
+
+  **ADR 0031 — sabit on iki saat.** Ölçüm maliyeti tersine çevirmişti: iptal
+  zaten kurulu. ADR bir kusuru da kabul edip adlandırıyor — çerezin ömrü jetona
+  bağlı olduğu için doğal olarak dolan bir oturum **hiç çerez göndermiyor**,
+  panel `token == ""` dalını alıyor ve giriş sayfasını **boş mesajla** çiziyor;
+  "oturumunuzun süresi doldu" cümlesi ise çerez tasarımının ulaşılmaz kıldığı
+  dalda duruyor. Yani on iki saatlik sınır, operatörün açıklamaya en çok
+  ihtiyaç duyduğu an ve bugün çıplak bir form görüyor.
+
+  **ADR 0032 — düzenlenmiş fatura silmeyi reddeder, ve ret ŞEMADA durur.**
+  Çünkü Go'daki bir ret çağıranı durdurur, veritabanındaki ret **cümleyi**
+  durdurur — ve bulgunun tamamı buydu: modülde silme yolu yok ama tehlike yine
+  de canlı, çünkü sıradaki uygulama bir cümle uzakta. ADR *nerede*'yi sabitleyip
+  *nasıl*'ı bilerek açık bırakıyor: `BEFORE DELETE` trigger'ı mesaj taşır ama bu
+  deponun **hiçbir migration'ında bulunmayan** ilk yordamsal kodu olur;
+  `REVOKE DELETE` yeni bir kod türü getirmez ama açıklama da taşımaz. İki
+  serbest metin alanı doğrulanmıyor, tek cümlelik bir kural yayımlanıyor.
+
+  ADR 0011'in başlığına ikinci değişiklik kaydı düşüldü, ve `gaps.md`'de bu
+  turun kendi ürettiği üç bayatlama düzeltildi: açık A satırı on yediden on üçe
+  indi, sıra paragrafının ilk iki olgusu artık talimat değil TARİH, ve B17
+  "A2 ile A4 önce gelir" demeyi bırakıp önündeki tek şeyin B8 olduğunu yazdı.
+
+  Kalan on üç cevap verildi ama henüz ADR'ye dönmedi.
+
 - **"Bir kararın arkasında" diyen bir satırın kararı yazılmamıştı; yazıldı ve
   karar metin eşleşmesi çıktı** (A18, B2'nin OPTION VALUE yarısı).
 
