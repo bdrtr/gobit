@@ -10,8 +10,20 @@ import (
 
 // CreatePriceRule bir fiyata kural ekler.
 //
-// Fiyat yoksa foreign key ihlali oluşur ve errors.Invalid dönülür; kuralın
-// yetim kalması yapısal olarak imkânsızdır.
+// Fiyat HİÇ YOKSA foreign key ihlali oluşur ve errors.Invalid dönülür.
+//
+// Fiyat SİLİNMİŞSE foreign key SUSAR ve kural yazılır: silme yumuşaktır, satır
+// yerinde durur ve FK satırın deleted_at'ine değil VARLIĞINA bakar. Bir süre
+// burada "kuralın yetim kalması yapısal olarak imkânsızdır" yazıyordu; ölçüldü
+// ve yanlış çıktı (2026-09-06, bkz. pricing_integration_test.go'daki
+// TestSilinmisFiyataKuralYazilabilirAmaUlasilamaz).
+//
+// Kilit EKLENMEDİ ve bu bilinçlidir. Eklenecek kilidin koruyacağı bir karar
+// yoktur: bu yol TEK depo çağrısı yapar ve servis öncesinde hiçbir şey okumaz,
+// yani "oku → karar ver → yaz" yarışı oluşamaz. Yazılan kuralın sonucu da
+// ULAŞILAMAZ bir satırdır — fiyatın kendisi silinmiş olduğu için aday
+// sorgusuna girmez ve müşterinin ödediği tutar değişmez. Testin ikinci yarısı
+// tam olarak bunu tutar.
 func (r *Repo) CreatePriceRule(ctx context.Context, rule models.PriceRule, now time.Time) (models.PriceRule, error) {
 	if err := r.ready(); err != nil {
 		return models.PriceRule{}, err

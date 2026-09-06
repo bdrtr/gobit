@@ -928,3 +928,104 @@ func varsayilanSayisi(ctx context.Context, t *testing.T, customerID, sutun strin
 	require.NoError(t, testPool.Pool().QueryRow(ctx, sorgu, customerID).Scan(&n))
 	return n
 }
+
+// engellenenIstekSayisi verilen oturumun BLOKE ETTİĞİ istek sayısını döner.
+//
+// pg_blocking_pids ile bilinen bir engelleyiciye daraltmak zorunludur:
+// "veritabanında biri kilitte bekliyor" koşulu başka bir testin oturumuyla da
+// sağlanır ve o durumda aşağıdaki bekleme iddiası, sınanan istek daha ilk
+// deyimini çalıştırmadan koşar. Test yeşil kalır ve hiçbir şey ölçmez.
+func engellenenIstekSayisi(ctx context.Context, t *testing.T, engelleyenPid int32) int64 {
+	t.Helper()
+
+	var n int64
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM pg_stat_activity
+         WHERE datname = current_database()
+           AND wait_event_type = 'Lock'
+           AND $1 = ANY(pg_blocking_pids(pid))`, engelleyenPid).Scan(&n))
+	return n
+}
+
+// requireEngellenenIstek verilen oturumun bir isteği gerçekten beklettiğini
+// doğrular.
+//
+// Uyku yerine BEKLEME DURUMUNA bakılır: sabit bir uyku ya yavaş makinede erken
+// uyanıp testi kırılgan yapar, ya da her koşuya ölü bekleme ekler.
+func requireEngellenenIstek(ctx context.Context, t *testing.T, engelleyenPid int32) {
+	t.Helper()
+
+	require.Eventually(t, func() bool {
+		return engellenenIstekSayisi(ctx, t, engelleyenPid) > 0
+	}, 10*time.Second, 10*time.Millisecond,
+		"sınanan yazma bu oturumun kilidinde beklemeliydi")
+}
+
+// TestSilinmekteOlanMusteriyeAdresEklenemez GetCustomerForUpdate'in İDDİASINI
+// doğrular.
+//
+// queries/customer.sql şunu söyler: "FOR UPDATE kilit alındıktan sonra WHERE
+// koşulunu YENİDEN değerlendirir; araya giren bir silme bu yüzden 'kayıt yok'
+// olarak görünür." Bugüne kadar bunu tutan hiçbir test yoktu.
+// [TestSilinenMusteriHicbirOkumadaGorunmez] silmeyi ÖNCE yapar ve sonra okur;
+// o durumu düz bir okuma da reddeder. İlginç olan, silmenin yazma KARAR
+// VERİRKEN gelmesidir ve onu ancak rakip bir işlem üretebilir.
+//
+// Beklemenin kendisi kanıt DEĞİLDİR: adres INSERT'ünün foreign key'i de aynı
+// satırı KEY SHARE ile kilitler ve o da beklerdi. Kanıtı taşıyan, uyandıktan
+// SONRA reddedilmesidir — foreign key satırı fiziksel olarak yerinde bulur ve
+// yazmayı kabul ederdi, çünkü silme YUMUŞAKTIR.
+func TestSilinmekteOlanMusteriyeAdresEklenemez(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+	musteri := yeniHesap(ctx, t, svc)
+
+	conn, err := testPool.Pool().Acquire(ctx)
+	require.NoError(t, err)
+	defer conn.Release()
+
+	tx, err := conn.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var engelleyenPid int32
+	require.NoError(t, tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&engelleyenPid))
+
+	var kilitli string
+	require.NoError(t, tx.QueryRow(ctx,
+		`SELECT id FROM customer WHERE id = $1 FOR UPDATE`, musteri.ID).Scan(&kilitli))
+
+	sonuc := make(chan error, 1)
+	go func() {
+		_, adresErr := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
+		sonuc <- adresErr
+	}()
+
+	requireEngellenenIstek(ctx, t, engelleyenPid)
+
+	// Silmeyi engelleyen işlemin KENDİSİ yapar: adres yazma ancak müşterinin
+	// çoktan gittiği bir dünyaya uyanabilsin diye. Üçüncü bir oturumdan
+	// yapılsaydı o da aynı kilidin arkasına dizilir ve ikisinin sırası
+	// zamanlayıcıya kalırdı.
+	_, err = tx.Exec(ctx,
+		`UPDATE customer SET deleted_at = $2, updated_at = $2 WHERE id = $1`,
+		musteri.ID, time.Now().UTC())
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit(ctx))
+
+	var adresErr error
+	select {
+	case adresErr = <-sonuc:
+	case <-time.After(15 * time.Second):
+		t.Fatal("bekleyen adres yazması zamanında bitmedi")
+	}
+
+	if assert.Error(t, adresErr, "silinmekte olan müşteriye adres eklenmemeli") {
+		assert.True(t, errors.IsNotFound(adresErr), "tür: %s", errors.KindOf(adresErr))
+	}
+	var adresSayisi int64
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM customer_address WHERE customer_id = $1`, musteri.ID).Scan(&adresSayisi))
+	assert.Equal(t, int64(0), adresSayisi,
+		"silinmiş müşterinin altında canlı adres kalmamalı")
+}

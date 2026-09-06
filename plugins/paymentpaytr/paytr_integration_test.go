@@ -12,6 +12,7 @@
 package paymentpaytr
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -495,4 +496,71 @@ func poolFor(t *testing.T, dsn string) *db.Pool {
 	t.Cleanup(pool.Close)
 
 	return pool
+}
+
+// TestThePendingWatchReportsWhatTheStartupLineWouldMiss runs the job's own path
+// against a real database.
+//
+// The startup report happens once, inside Register. This is the same query and
+// the same message on a schedule, which is the whole of B13's first consumer:
+// the class it names — money PayTR may have taken with no order behind it —
+// accumulates in a process that has been up for a week, not at the moment it
+// boots.
+func TestThePendingWatchReportsWhatTheStartupLineWouldMiss(t *testing.T) {
+	m := freshModule(t)
+	ctx := t.Context()
+
+	var logged bytes.Buffer
+	m.log = slog.New(slog.NewJSONHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	// Nothing pending yet: the pass succeeds and says so at DEBUG, because a
+	// line that never changes is a line nobody reads.
+	require.NoError(t, m.watchPending(ctx))
+	assert.Contains(t, logged.String(), "no PayTR payment is waiting on a callback")
+	assert.NotContains(t, logged.String(), `"level":"WARN"`)
+
+	require.NoError(t, m.store.open(ctx, payment{
+		MerchantOID: "ORPHAN", Amount: 10000, CurrencyCode: "TRY"}))
+	_, err := testPool.Pool().Exec(ctx,
+		`UPDATE paytr_payment SET created_at = now() - interval '2 hours'
+		 WHERE merchant_oid = 'ORPHAN'`)
+	require.NoError(t, err)
+
+	logged.Reset()
+
+	// It still SUCCEEDS. Failing the run would put a permanent FAILED next to
+	// this job in `gobit jobs` from the first orphan onwards — this pile has no
+	// operator command that empties it, unlike the outbox's dead letters — and
+	// an alarm that is always on is one an operator learns to skim past.
+	require.NoError(t, m.watchPending(ctx))
+
+	line := logged.String()
+	assert.Contains(t, line, `"level":"WARN"`)
+	assert.Contains(t, line, "PayTR payments are still pending")
+	assert.Contains(t, line, `"pending":1`)
+	assert.Contains(t, line, `"truncated":false`)
+	assert.Contains(t, line, PendingPath,
+		"the operator's next step has to be a path this plugin actually serves")
+}
+
+// TestTheStartupReportSurvivesAFailureTheJobWouldReport is the difference
+// between the watch's two callers.
+//
+// They share one query and one message; what they do with an error is the whole
+// distinction. Refusing to boot over a diagnostic query would trade a visible
+// problem for a bigger one, while a scheduled pass that swallowed the same
+// error would report "ok" for a pass that read nothing.
+func TestTheStartupReportSurvivesAFailureTheJobWouldReport(t *testing.T) {
+	m := freshModule(t)
+	m.store = nil
+
+	var logged bytes.Buffer
+	m.log = slog.New(slog.NewJSONHandler(&logged, nil))
+
+	m.reportStuck(t.Context())
+
+	assert.Contains(t, logged.String(), "could not be counted at startup")
+	require.Error(t, m.watchPending(t.Context()),
+		"the same condition has to be an ERROR for the job, which is how it reaches "+
+			"`gobit jobs` as FAILED rather than as a silent ok")
 }

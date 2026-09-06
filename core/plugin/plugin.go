@@ -1,8 +1,9 @@
 // Package plugin defines the plugins that add capabilities without touching the
 // core.
 //
-// A plugin can register a module, routes, event subscribers and providers
-// (payment, fulfillment, notification, file). While doing so it imports NO
+// A plugin can register a module, routes, event subscribers, scheduled jobs
+// ([Host.RegisterJob]) and providers (payment, fulfillment, notification,
+// file). While doing so it imports NO
 // commerce module: it reaches the registration points from the container BY
 // NAME and takes the contracts from the core's
 // [github.com/bdrtr/gobit/core/provider] package (ADR 0001).
@@ -37,8 +38,10 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -159,6 +162,86 @@ type routeRegistration struct {
 	bind func(r chi.Router)
 }
 
+// Job is scheduled work a plugin brings.
+//
+// # Why the scheduler's own type is not repeated from it
+//
+// The runner, its store, its advisory-lock arithmetic and its occurrence
+// election live in internal/core/job, and a published package may not import an
+// internal one. That line is held for the downstream author rather than for
+// tidiness: a plugin outside this module can CALL a function whose signature
+// names an internal type, but it cannot declare a value of that type — so the
+// wall lands in the customer's project with no explanation on this side.
+//
+// ADR 0019 deferred this surface with a condition rather than a refusal ("it
+// arrives with the first plugin that brings a job"), and ADR 0026 anticipated
+// the price as publishing the whole job package. Measured, that price buys the
+// wrong thing: a plugin needs FOUR values, while publishing the package would
+// freeze the runner, the store contract, the lock class and the key algorithm
+// into the compatibility promise — publishing the machine in order to hand out
+// a form. ADR 0026's own bias is "publish late, and publish what was measured";
+// four fields were measured, the scheduler was not.
+//
+// What the copy costs is drift, and the cost is PAID rather than hoped away:
+// internal/app/jobs_test.go reflects over the scheduler's own definition and
+// fails when it grows a field this struct does not carry.
+type Job struct {
+	// Name identifies the job. It is the advisory lock's input, the primary key
+	// of the job's history and what `gobit jobs` prints, so it is a CONTRACT:
+	// changing it starts a new job with no history and lets the old one run
+	// again.
+	//
+	// It shares ONE namespace with the jobs the core registers and with every
+	// other plugin's, and a clash is refused at startup rather than resolved —
+	// two jobs under one name would share an advisory lock and a history row,
+	// so one of them would silently never run. Prefix it with the plugin's own
+	// name.
+	Name string
+
+	// Every is the interval between occurrences.
+	//
+	// It is an interval and not a calendar expression, and that is the
+	// scheduler's decision rather than a simplification: a cron expression
+	// carries a time zone, and a time zone carries an hour that happens twice
+	// and an hour that does not happen at all.
+	Every time.Duration
+
+	// MaxRun bounds one run; the context handed to Run carries it as a
+	// deadline.
+	//
+	// It MUST NOT exceed Every. A run that outlasts its own interval is due
+	// again before it finished, so it can never catch up — and it is REFUSED at
+	// startup rather than left running behind forever.
+	MaxRun time.Duration
+
+	// Run is the work.
+	//
+	// It MUST be safe to run twice: election makes a second concurrent run
+	// unlikely, not impossible — a process can be partitioned from the database
+	// after taking the lock, and the row that elects an occurrence is written
+	// before the work rather than after.
+	//
+	// Whether it may WRITE is the one question no gate here answers for the
+	// author. ADR 0017 refuses running side effects unwatched, and every job the
+	// core registers only reads and reports; a plugin job that acts is the
+	// plugin author's decision to defend.
+	Run func(ctx context.Context) error
+
+	// plugin is the name of the plugin that registered the job, captured by
+	// [Host.RegisterJob].
+	//
+	// It is unexported so it cannot be set from outside, and it exists for the
+	// same reason [routeRegistration] carries one: the error that refuses a bad
+	// definition at startup is useless if it cannot say which plugin to go and
+	// fix.
+	plugin string
+}
+
+// PluginName reports the plugin that registered the job.
+//
+// It is empty for a Job that never went through [Host.RegisterJob].
+func (j Job) PluginName() string { return j.plugin }
+
 // queuedTask represents a registration to be applied during the Start phase.
 type queuedTask struct {
 	// description says which task failed, in the error message.
@@ -188,6 +271,8 @@ type Host struct {
 	active string
 	// routes are the route registrations the plugins want to bind.
 	routes []routeRegistration
+	// jobs are the scheduled jobs the plugins declared.
+	jobs []Job
 	// queue holds the tasks to be applied at Start.
 	queue []queuedTask
 }
@@ -263,6 +348,55 @@ func (h *Host) AddRoutes(fn func(r chi.Router)) {
 
 	h.routes = append(h.routes, routeRegistration{plugin: h.active, bind: fn})
 }
+
+// RegisterJob declares scheduled work the plugin brings.
+//
+// # Why it is COLLECTED and not queued
+//
+// The provider registrations wait for [Registry.Start] because they need a
+// module's registry to be in the container. A job waits for something that is
+// not there at Start either: the job registry is built by the composition root
+// after the modules are up, immediately before the runner is started. So this
+// follows [Host.AddRoutes]'s shape rather than
+// [Host.RegisterPaymentProvider]'s — collected during Setup, drained by the
+// composition root at the moment the thing that can hold it exists.
+//
+// The consequence is worth stating because it is the useful half: the jobs are
+// complete as soon as Setup has run, so `gobit jobs` lists a plugin's jobs even
+// though that command never reaches the Start phase.
+//
+// # Nothing is validated here, and that is deliberate
+//
+// A job with no name, a non-positive interval, or a MaxRun longer than its
+// interval IS refused — by the scheduler, at startup, under the same rule that
+// refuses one of the core's own. Repeating the rule here would put "what a
+// valid schedule is" in two places, and the copy that drifts is always the one
+// nobody runs.
+//
+// A nil Run is carried through for the same reason, and it is the one place
+// this method deliberately differs from every Register method above it. Those
+// drop a nil provider, because a nil provider cannot be registered at all. An
+// incomplete job CAN be: dropping it here would produce an installation that
+// believes it has a retry pass, has none, and shows nothing missing in
+// `gobit jobs` — the absence reads as "there was nothing to report". So it is
+// passed on, and refused loudly, at boot.
+func (h *Host) RegisterJob(j Job) {
+	j.plugin = h.active
+
+	h.jobs = append(h.jobs, j)
+}
+
+// Jobs returns the jobs the plugins declared, in registration order.
+//
+// It is the composition root's read and there is no consumer for it inside this
+// package, because there cannot be one: the scheduler that runs these is
+// internal, which is the whole reason [Job] exists as a separate type.
+//
+// The slice is a copy. The host hands the same value to a caller that will
+// range over it while startup is still going on, and a caller that appended to
+// the returned slice would either mutate the host's own or not, depending on
+// capacity — the least debuggable of all possible outcomes.
+func (h *Host) Jobs() []Job { return slices.Clone(h.jobs) }
 
 // RegisterPaymentProvider adds a payment provider to the payment module.
 //

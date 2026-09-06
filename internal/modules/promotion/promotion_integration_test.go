@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -991,4 +992,181 @@ func lower(s string) string {
 		}
 	}
 	return string(out)
+}
+
+// sayim tek sütunlu bir sayım sorgusunu çalıştırır.
+func sayim(ctx context.Context, t *testing.T, sorgu string, arg ...any) int64 {
+	t.Helper()
+
+	var adet int64
+	require.NoError(t, testPool.Pool().QueryRow(ctx, sorgu, arg...).Scan(&adet))
+	return adet
+}
+
+// beklettigiIstekSayisi verilen oturumun BLOKE ETTİĞİ istek sayısını döner.
+//
+// Daraltma zorunludur: "veritabanında biri kilitte bekliyor" koşulu başka bir
+// testin ya da havuzun beklemesiyle de sağlanır ve o durumda iddia, ölçmek
+// istediğimiz an gelmeden koşup elbette tutardı. pg_blocking_pids beklemenin
+// BİZİM kilitleyen işlemimizden kaynaklandığını söyler.
+func beklettigiIstekSayisi(ctx context.Context, t *testing.T, engelleyenPid int32) int64 {
+	t.Helper()
+
+	return sayim(ctx, t,
+		`SELECT count(*) FROM pg_stat_activity
+         WHERE datname = current_database()
+           AND wait_event_type = 'Lock'
+           AND $1 = ANY(pg_blocking_pids(pid))`, engelleyenPid)
+}
+
+// requireBeklettigiIstek verilen oturumun bir isteği gerçekten beklettiğini
+// doğrular.
+//
+// Uyku yerine BEKLEME DURUMUNA bakılır: sabit bir uyku ya yavaş makinede erken
+// uyanıp testi kırılgan yapardı, ya da her koşuya boş bekleme eklerdi.
+func requireBeklettigiIstek(ctx context.Context, t *testing.T, engelleyenPid int32) {
+	t.Helper()
+
+	require.Eventually(t, func() bool {
+		return beklettigiIstekSayisi(ctx, t, engelleyenPid) > 0
+	}, 10*time.Second, 10*time.Millisecond, "istek bu oturumun kilidinde beklemeliydi")
+}
+
+// promosyonuSilenIslem promosyonu YUMUŞAK silen ama HENÜZ commit ETMEYEN bir
+// işlem açar; dönen pid beklemenin bu işleme ATFEDİLEBİLMESİ içindir.
+//
+// Rakip olarak düz bir `SELECT ... FOR UPDATE` DEĞİL, silmenin GERÇEK deyimi
+// kullanılır (repository.DeletePromotion'ın çalıştırdığı UPDATE). Fark testin
+// tamamını taşır: FOR UPDATE her satır kilidiyle çakışır ve yazma yolu hangi
+// kilidi alırsa alsın bekletirdi — yani test, yanlış bir kilit seçilse bile
+// yeşil kalırdı. Silme deyimi satıra yalnızca FOR NO KEY UPDATE koyar; yazma
+// yolunun aldığı PAYLAŞIMLI kilidin gerçek bir silmeyi beklediği ancak böyle
+// sınanır.
+func promosyonuSilenIslem(
+	ctx context.Context,
+	t *testing.T,
+	promosyonID string,
+) (tx pgx.Tx, pid int32, temizle func()) {
+	t.Helper()
+
+	conn, err := testPool.Pool().Acquire(ctx)
+	require.NoError(t, err)
+
+	tx, err = conn.Begin(ctx)
+	if err != nil {
+		conn.Release()
+		require.NoError(t, err)
+	}
+	temizle = func() {
+		_ = tx.Rollback(ctx)
+		conn.Release()
+	}
+
+	require.NoError(t, tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid))
+
+	etiket, err := tx.Exec(ctx,
+		`UPDATE promotion SET deleted_at = now(), updated_at = now()
+         WHERE id = $1 AND deleted_at IS NULL`, promosyonID)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, etiket.RowsAffected(), "silme tek satırı etkilemeliydi")
+
+	return tx, pid, temizle
+}
+
+// TestKuralEklemeSilinenPromosyonaYazmaz kural eklemenin "önce oku sonra yaz"
+// yarışını KAPATTIĞINI belirlenimci biçimde doğrular.
+//
+// Kurgu ara durumu zamanlamaya bırakmaz:
+//
+//  1. Rakip bir işlem promosyonu YUMUŞAK siler ve commit ETMEZ.
+//  2. AddPromotionRule başlar ve promosyonu PAYLAŞIMLI kilitle okumak ister;
+//     silmenin kilidinde BEKLER. pg_blocking_pids ile beklemenin rakip
+//     işlemden geldiği doğrulanır.
+//  3. Rakip işlem commit eder; bekleyen istek uyanır ve kilidi aldıktan sonra
+//     WHERE koşulunu YENİDEN değerlendirip "kayıt yok" görür.
+//
+// İki iddia da gereklidir ve AYRI şeyleri ölçer: adım 2 kilidin GERÇEKTEN
+// alındığını (yoksa hiç beklenmezdi), adım 3 sonucunun NotFound olması ise
+// yazmanın inmediğini gösterir.
+//
+// Ölçüldü (2026-09-06): denetim serviste, ayrı bir autocommit okumasıyla
+// yapılırken bu test İKİ yerden birden düşüyordu — yazma hiç beklemiyordu ve
+// kural silinmiş promosyonun altına iniyordu. Foreign key onu yakalamaz:
+// yumuşak silme satırı yerinde bırakır ve FK satırın deleted_at'ine değil
+// VARLIĞINA bakar.
+func TestKuralEklemeSilinenPromosyonaYazmaz(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+	promo := aktifPromosyon(ctx, t, svc, service.PromotionInput{})
+
+	tx, pid, temizle := promosyonuSilenIslem(ctx, t, promo.ID)
+	defer temizle()
+
+	bitti := make(chan error, 1)
+	go func() {
+		_, err := svc.AddPromotionRule(ctx, promo.ID, service.RuleInput{
+			RuleType:  models.RuleContext,
+			Attribute: "customer_group_id",
+			Operator:  models.OpEq,
+			Values:    []string{"vip"},
+		})
+		bitti <- err
+	}()
+	requireBeklettigiIstek(ctx, t, pid)
+	require.NoError(t, tx.Commit(ctx))
+
+	err := <-bitti
+	require.Error(t, err, "silinmiş promosyona kural yazılmamalı")
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
+
+	assert.Zero(t, sayim(ctx, t,
+		`SELECT count(*) FROM promotion_rule r
+         JOIN promotion p ON p.id = r.promotion_id
+         WHERE r.promotion_id = $1 AND p.deleted_at IS NOT NULL`, promo.ID),
+		"silinmiş promosyonun altında canlı kural kalmamalı")
+}
+
+// TestYontemYazmaSilinenPromosyonaYazmaz aynı yarışı uygulama yöntemi yolunda
+// doğrular; kurgu [TestKuralEklemeSilinenPromosyonaYazmaz] ile aynıdır.
+//
+// İki yol AYRI sınanır çünkü yazmaları farklıdır: kural düz bir INSERT, yöntem
+// ise bir upsert'tir. "Upsert tek ifadedir, o hâlde atomiktir" tam olarak
+// buradaki tuzaktır — tek ifade olan yazmanın kendisidir, promosyonun canlı
+// olduğu bilgisi değil.
+func TestYontemYazmaSilinenPromosyonaYazmaz(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+
+	promo, err := svc.CreatePromotion(ctx, service.PromotionInput{
+		Code:   benzersizKod(),
+		Status: models.PromotionActive,
+	})
+	require.NoError(t, err)
+
+	tx, pid, temizle := promosyonuSilenIslem(ctx, t, promo.ID)
+	defer temizle()
+
+	bitti := make(chan error, 1)
+	go func() {
+		_, methodErr := svc.SetApplicationMethod(ctx, promo.ID, service.ApplicationMethodInput{
+			Type:       models.MethodPercentage,
+			TargetType: models.TargetItems,
+			Allocation: models.AllocationEach,
+			Value:      5000,
+		})
+		bitti <- methodErr
+	}()
+	requireBeklettigiIstek(ctx, t, pid)
+	require.NoError(t, tx.Commit(ctx))
+
+	err = <-bitti
+	require.Error(t, err, "silinmiş promosyona uygulama yöntemi yazılmamalı")
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
+
+	assert.Zero(t, sayim(ctx, t,
+		`SELECT count(*) FROM promotion_application_method m
+         JOIN promotion p ON p.id = m.promotion_id
+         WHERE m.promotion_id = $1 AND m.deleted_at IS NULL AND p.deleted_at IS NOT NULL`,
+		promo.ID),
+		"silinmiş promosyonun altında canlı uygulama yöntemi kalmamalı")
 }

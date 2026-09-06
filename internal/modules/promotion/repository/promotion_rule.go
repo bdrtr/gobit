@@ -8,32 +8,45 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/repository/promotiondb"
 )
 
-// CreatePromotionRule bir promosyona kural ekler.
+// CreatePromotionRule bir promosyona kural ekler; promosyon yoksa ya da
+// silinmişse errors.NotFound döner.
 //
-// Promosyon yoksa foreign key ihlali oluşur ve errors.Invalid dönülür; kuralın
-// yetim kalması yapısal olarak imkânsızdır.
+// Promosyon PAYLAŞIMLI kilit altında okunur ve kural AYNI işlemde yazılır
+// (bkz. [requireLivePromotion]). Kilidin burada, foreign key'in ise hiçbir
+// yerde yeterli OLMADIĞININ gerekçesi orada yazılıdır: yumuşak silme satırı
+// yerinde bıraktığı için FK, silinmiş bir promosyonun altına yazılan kuralı
+// GEÇİRİR.
 func (r *Repo) CreatePromotionRule(
 	ctx context.Context,
 	rule models.PromotionRule,
 	now time.Time,
 ) (models.PromotionRule, error) {
-	if err := r.ready(); err != nil {
-		return models.PromotionRule{}, err
-	}
+	var out models.PromotionRule
 
-	row, err := r.q.InsertPromotionRule(ctx, promotiondb.InsertPromotionRuleParams{
-		ID:          rule.ID,
-		PromotionID: rule.PromotionID,
-		RuleType:    string(rule.RuleType),
-		Attribute:   rule.Attribute,
-		Operator:    string(rule.Operator),
-		RuleValues:  rule.Values,
-		CreatedAt:   fromTime(now),
+	err := r.inTx(ctx, func(q *promotiondb.Queries) error {
+		if txErr := requireLivePromotion(ctx, q, rule.PromotionID); txErr != nil {
+			return txErr
+		}
+
+		row, txErr := q.InsertPromotionRule(ctx, promotiondb.InsertPromotionRuleParams{
+			ID:          rule.ID,
+			PromotionID: rule.PromotionID,
+			RuleType:    string(rule.RuleType),
+			Attribute:   rule.Attribute,
+			Operator:    string(rule.Operator),
+			RuleValues:  rule.Values,
+			CreatedAt:   fromTime(now),
+		})
+		if txErr != nil {
+			return wrapDB(txErr, "promosyon kuralı eklenemedi: %s", rule.PromotionID)
+		}
+		out = toPromotionRule(row)
+		return nil
 	})
 	if err != nil {
-		return models.PromotionRule{}, wrapDB(err, "promosyon kuralı eklenemedi: %s", rule.PromotionID)
+		return models.PromotionRule{}, err
 	}
-	return toPromotionRule(row), nil
+	return out, nil
 }
 
 // GetPromotionRule kimliğe göre kuralı döner; yoksa errors.NotFound.

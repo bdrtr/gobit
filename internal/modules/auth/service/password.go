@@ -146,6 +146,23 @@ func (s *Service) hashPassword(password string) (string, error) {
 // Changing the password IS NOT NECESSARY in order to close sessions: the
 // endpoint that advances the same anchor without touching the credential is
 // [Service.Logout].
+//
+// # ONE repository call, deliberately
+//
+// This method does not read the user. It used to — it called GetUser to learn
+// that the user was alive and to hand its address down as the identity's
+// provider_identity — and that made the check and the write two separate
+// autocommit statements. A [Service.DeleteUser] landing in the gap was measured
+// (2026-09-06) to leave a live identity under a deleted user, and an e-mail
+// change landing there to write the stale address; the full account, and the
+// reason the lock lives in the repository rather than in a transaction opened
+// here, is in repository.Repo.SetPasswordHash.
+//
+// The rule this leaves behind is worth stating plainly: nothing that has to be
+// true AT THE MOMENT OF THE WRITE may be established by a separate repository
+// call from here. Validation that depends on the INPUT ALONE (the password
+// policy below) is free to stay, because no concurrent request can make it
+// stale.
 func (s *Service) SetPassword(ctx context.Context, userID, password string) error {
 	if err := s.ready(); err != nil {
 		return err
@@ -157,24 +174,19 @@ func (s *Service) SetPassword(ctx context.Context, userID, password string) erro
 		return err
 	}
 
-	user, err := s.repo.GetUser(ctx, userID)
-	if err != nil {
-		return err
-	}
-
 	hash, err := s.hashPassword(password)
 	if err != nil {
 		return err
 	}
 
 	if _, err := s.repo.SetPasswordHash(
-		ctx, user.ID, models.ProviderEmailPass, user.Email, hash, s.clock(),
+		ctx, userID, models.ProviderEmailPass, hash, s.clock(),
 	); err != nil {
 		return err
 	}
 
 	s.log.InfoContext(ctx, "user password updated",
-		slog.String("user_id", user.ID),
+		slog.String("user_id", userID),
 	)
 	return nil
 }

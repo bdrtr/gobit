@@ -11,37 +11,54 @@ import (
 // SetApplicationMethod promosyonun uygulama yöntemini yazar; varsa ÜZERİNE
 // YAZAR.
 //
+// Promosyon yoksa ya da silinmişse errors.NotFound döner.
+//
 // Yerine koyma tek ifadedir (upsert): "önce sil sonra ekle" iki ifade arasında
 // yöntemsiz bir promosyon bırakır ve o aralıkta koşan bir hesap indirim
 // üretmezdi.
 //
-// Promosyon yoksa foreign key ihlali oluşur ve errors.Invalid dönülür; yöntemin
-// yetim kalması yapısal olarak imkânsızdır.
+// Promosyon PAYLAŞIMLI kilit altında okunur ve yöntem AYNI işlemde yazılır
+// (bkz. [requireLivePromotion]). Upsert'ün TEK ifade olması yetmez: tek ifade
+// olan şey yazmanın kendisidir, promosyonun canlı olduğu bilgisi değil. Foreign
+// key de yetmez — yumuşak silme satırı yerinde bıraktığı için FK, silinmiş bir
+// promosyonun altına yazılan yöntemi GEÇİRİR.
+//
+// Koşulu upsert'ün İÇİNE koymak (INSERT ... SELECT) reddedildi: çakışma dalı
+// (ON CONFLICT DO UPDATE) promosyon tablosunu göremez ve o dalda koşul yeniden
+// yazılamazdı; iki dalın farklı garantileri olurdu.
 func (r *Repo) SetApplicationMethod(
 	ctx context.Context,
 	m models.ApplicationMethod,
 	now time.Time,
 ) (models.ApplicationMethod, error) {
-	if err := r.ready(); err != nil {
-		return models.ApplicationMethod{}, err
-	}
+	var out models.ApplicationMethod
 
-	row, err := r.q.UpsertApplicationMethod(ctx, promotiondb.UpsertApplicationMethodParams{
-		ID:           m.ID,
-		PromotionID:  m.PromotionID,
-		Type:         string(m.Type),
-		TargetType:   string(m.TargetType),
-		Allocation:   string(m.Allocation),
-		Value:        m.Value,
-		MaxQuantity:  copyInt64(m.MaxQuantity),
-		CurrencyCode: nilIfEmpty(m.CurrencyCode),
-		CreatedAt:    fromTime(now),
+	err := r.inTx(ctx, func(q *promotiondb.Queries) error {
+		if txErr := requireLivePromotion(ctx, q, m.PromotionID); txErr != nil {
+			return txErr
+		}
+
+		row, txErr := q.UpsertApplicationMethod(ctx, promotiondb.UpsertApplicationMethodParams{
+			ID:           m.ID,
+			PromotionID:  m.PromotionID,
+			Type:         string(m.Type),
+			TargetType:   string(m.TargetType),
+			Allocation:   string(m.Allocation),
+			Value:        m.Value,
+			MaxQuantity:  copyInt64(m.MaxQuantity),
+			CurrencyCode: nilIfEmpty(m.CurrencyCode),
+			CreatedAt:    fromTime(now),
+		})
+		if txErr != nil {
+			return wrapDB(txErr, "uygulama yöntemi yazılamadı: %s", m.PromotionID)
+		}
+		out = toApplicationMethod(row)
+		return nil
 	})
 	if err != nil {
-		return models.ApplicationMethod{}, wrapDB(err,
-			"uygulama yöntemi yazılamadı: %s", m.PromotionID)
+		return models.ApplicationMethod{}, err
 	}
-	return toApplicationMethod(row), nil
+	return out, nil
 }
 
 // GetApplicationMethod promosyonun uygulama yöntemini döner; yoksa

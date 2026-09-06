@@ -17,6 +17,7 @@ import (
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/eventbus"
 	"github.com/bdrtr/gobit/core/eventbus/outbox"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/job"
 	"github.com/bdrtr/gobit/internal/core/job/jobpg"
@@ -45,22 +46,29 @@ const jobsCommand = "jobs"
 
 // registerJobs declares the jobs this binary runs.
 //
-// Jobs are declared at the COMPOSITION ROOT, exactly as modules are, and there
-// is deliberately no plugin extension point for them yet. An extension point
-// with nothing to extend it is the error class ADR 0009 names, and it can be
-// added on the day a plugin actually brings a job.
+// Jobs are declared at the COMPOSITION ROOT, exactly as modules are. A plugin
+// may now add one as well ([coreplugin.Host.RegisterJob]), and that is still the
+// composition root doing it: the plugin DECLARES during Setup, this function
+// admits, and the scheduler never sees anything the root did not hand it.
 //
-// Both jobs were pre-authorized rather than invented. ADR 0016 built the
-// operator's read surface for half-finished sagas and left the alerting half
-// explicitly unclaimed ("It is a snapshot, not an alert. Nobody is told a cart
-// is stuck") — that gap is internal/jobs/sagawatch. ADR 0019 recorded payment
-// reconciliation as the repository's one unkept periodic promise, named by
-// internal/workflows/checkout/doc.go as the only correct way to close a known
-// hole — that is internal/jobs/paymentrecon.
+// The three in-repo jobs were pre-authorized rather than invented. ADR 0016
+// built the operator's read surface for half-finished sagas and left the
+// alerting half explicitly unclaimed ("It is a snapshot, not an alert. Nobody
+// is told a cart is stuck") — that gap is internal/jobs/sagawatch. ADR 0019
+// recorded payment reconciliation as the repository's one unkept periodic
+// promise, named by internal/workflows/checkout/doc.go as the only correct way
+// to close a known hole — that is internal/jobs/paymentrecon. The third is the
+// outbox relay, which is the delivery half of the transactional outbox.
 //
-// Neither job writes anything. That is not a coincidence about these two; it
-// is ADR 0017's line, which the scheduler does not get to cross.
-func registerJobs(c *container.Container, log *slog.Logger) (*job.Registry, error) {
+// Two of the three only read and report. The relay is the exception and it is
+// worth naming rather than glossing: it publishes and it marks rows, so the
+// scheduler DOES write. What ADR 0017 refuses is narrower than "writing" — it
+// refuses running COMPENSATIONS, side effects that undo work, on a schedule
+// nobody watched. Sending a message that a committed transaction already
+// promised to send is not that.
+func registerJobs(
+	c *container.Container, host *coreplugin.Host, log *slog.Logger,
+) (*job.Registry, error) {
 	registry := job.NewRegistry()
 
 	pool, err := container.Resolve[*db.Pool](c, svcDB)
@@ -102,7 +110,64 @@ func registerJobs(c *container.Container, log *slog.Logger) (*job.Registry, erro
 		return nil, err
 	}
 
+	// The plugins go in LAST, and the order is the error message. The registry
+	// refuses a duplicate name, so whichever side is added second is the one
+	// that fails — and the operator can change a plugin's job name far more
+	// easily than one of the core's, whose name is the primary key of a history
+	// they already have.
+	if err := addPluginJobs(registry, host); err != nil {
+		return nil, err
+	}
+
 	return registry, nil
+}
+
+// addPluginJobs admits the jobs the plugins declared during Setup.
+//
+// # The translation, and why it is here
+//
+// A plugin cannot name [job.Definition]: it is internal, and a plugin outside
+// this module could not declare one (see [coreplugin.Job]). So the plugin fills
+// in a published four-field struct and this is the single place that turns it
+// into the scheduler's own. One place, at the boundary, rather than a shape the
+// scheduler has to keep accepting forever.
+//
+// # Nothing is skipped, and nothing is validated twice
+//
+// A definition that cannot run is refused by [job.Registry.Add] — the very same
+// call, and therefore the very same rule, that the three jobs above go through.
+// A MaxRun longer than the interval fails the boot; so does a missing Run, an
+// empty name and a name already taken. Skipping such a job instead would be the
+// worst outcome available: `gobit jobs` would print a listing with nothing
+// missing from it, and an operator reading it would take the absence of the
+// plugin's line as "that pass had nothing to do".
+//
+// The error is re-wrapped only to name the plugin. The original code is carried
+// through rather than replaced, because "duplicate name" and "invalid
+// definition" send whoever reads it to two different places.
+func addPluginJobs(registry *job.Registry, host *coreplugin.Host) error {
+	if host == nil {
+		// The migrate subcommand builds a host it throws away, and a nil host
+		// is how a test says "no plugins". Neither is a reason to fail.
+		return nil
+	}
+
+	for _, declared := range host.Jobs() {
+		definition := job.Definition{
+			Name:   declared.Name,
+			Every:  declared.Every,
+			MaxRun: declared.MaxRun,
+			Run:    job.Func(declared.Run),
+		}
+
+		if err := registry.Add(definition); err != nil {
+			return coreerrors.Wrap(err, coreerrors.KindOf(err), coreerrors.CodeOf(err),
+				"the %q job declared by the %s plugin was refused",
+				declared.Name, declared.PluginName())
+		}
+	}
+
+	return nil
 }
 
 // startJobs builds the runner and starts it.
@@ -111,9 +176,13 @@ func registerJobs(c *container.Container, log *slog.Logger) (*job.Registry, erro
 // the pass in progress so that shutdown cannot close the pool underneath a job
 // that is still writing its outcome.
 func startJobs(
-	ctx context.Context, c *container.Container, cfg config.Config, log *slog.Logger,
+	ctx context.Context,
+	c *container.Container,
+	host *coreplugin.Host,
+	cfg config.Config,
+	log *slog.Logger,
 ) (*job.Runner, func(), error) {
-	registry, err := registerJobs(c, log)
+	registry, err := registerJobs(c, host, log)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -192,6 +261,11 @@ func runJobs(args []string, out io.Writer, opts Options) error {
 	// runner's would quietly describe a different set of jobs than the one that
 	// actually runs — which is the one thing this command exists not to do.
 	//
+	// The same reasoning now covers the plugins, and it costs nothing extra:
+	// opening the application runs their Setup, and a job is DECLARED there. So
+	// this listing carries a plugin's jobs even though it never reaches the
+	// Start phase that applies the providers and the subscriptions.
+	//
 	// Nothing is started here: opening builds and bootstraps, and the runner
 	// lives in serve (see [startJobs]).
 	app, closeApp, err := openApplication(ctx, cfg, log, errorreport.NewSink(), opts)
@@ -200,7 +274,7 @@ func runJobs(args []string, out io.Writer, opts Options) error {
 	}
 	defer closeApp()
 
-	registry, err := registerJobs(app.container, log)
+	registry, err := registerJobs(app.container, app.host, log)
 	if err != nil {
 		return err
 	}

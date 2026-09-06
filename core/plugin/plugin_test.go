@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
@@ -674,4 +675,126 @@ func TestPluginsReturnsTheNames(t *testing.T) {
 	reg.Add(testPlugin{name: "shippo"})
 
 	assert.Equal(t, []string{"stripe", "shippo"}, reg.Plugins())
+}
+
+// TestAPluginJobIsCollectedAtSetup proves a job is complete as soon as Setup
+// has run, and that it carries the plugin's name with it.
+//
+// The completeness is not a detail: `gobit jobs` opens the application and
+// never reaches the Start phase, so a job that waited for Start the way a
+// provider does would be missing from the one listing an operator consults
+// during an incident — and missing there reads as "that pass had nothing to
+// do".
+func TestAPluginJobIsCollectedAtSetup(t *testing.T) {
+	t.Parallel()
+
+	_, reg, h := newHost(t, nil)
+
+	reg.Add(testPlugin{name: "paytr", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterJob(coreplugin.Job{
+			Name:   "paytr-pending-watch",
+			Every:  time.Hour,
+			MaxRun: time.Minute,
+			Run:    func(context.Context) error { return nil },
+		})
+
+		return nil
+	}})
+
+	require.NoError(t, reg.Install(t.Context(), h))
+
+	jobs := h.Jobs()
+	require.Len(t, jobs, 1, "the job must be there BEFORE Start, not after it")
+	assert.Equal(t, "paytr-pending-watch", jobs[0].Name)
+	assert.Equal(t, time.Hour, jobs[0].Every)
+	assert.Equal(t, time.Minute, jobs[0].MaxRun)
+	assert.Equal(t, "paytr", jobs[0].PluginName(),
+		"the startup error that refuses a bad definition has to be able to name the plugin")
+}
+
+// TestAJobWithNoRunIsNOTDropped is the one place this host deliberately differs
+// from its own Register methods.
+//
+// Those drop a nil provider, because a nil provider cannot be registered at
+// all. An incomplete job CAN be, and dropping it here would give an
+// installation that believes it has a scheduled pass, has none, and shows
+// nothing missing in `gobit jobs`. It is passed on so the composition root can
+// refuse it out loud.
+func TestAJobWithNoRunIsNOTDropped(t *testing.T) {
+	t.Parallel()
+
+	_, reg, h := newHost(t, nil)
+
+	reg.Add(testPlugin{name: "broken", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterJob(coreplugin.Job{Name: "no-run", Every: time.Hour, MaxRun: time.Minute})
+
+		return nil
+	}})
+
+	require.NoError(t, reg.Install(t.Context(), h))
+
+	jobs := h.Jobs()
+	require.Len(t, jobs, 1, "a job with no Run must survive to the place that can REFUSE it")
+	assert.Nil(t, jobs[0].Run)
+}
+
+// TestJobsAreReturnedAsACopy keeps a caller from reaching the host's own slice.
+//
+// The composition root ranges over this while startup is still running. A
+// caller that appended to the returned slice would mutate the host's — or not,
+// depending on capacity, which is the least debuggable of the two.
+func TestJobsAreReturnedAsACopy(t *testing.T) {
+	t.Parallel()
+
+	_, reg, h := newHost(t, nil)
+
+	reg.Add(testPlugin{name: "one", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterJob(coreplugin.Job{
+			Name:   "a",
+			Every:  time.Hour,
+			MaxRun: time.Minute,
+			Run:    func(context.Context) error { return nil },
+		})
+
+		return nil
+	}})
+	require.NoError(t, reg.Install(t.Context(), h))
+
+	taken := h.Jobs()
+	taken[0].Name = "rewritten"
+	// The append is the second half of the case: with a shared backing array a
+	// caller with spare capacity writes past the host's length instead of into
+	// it, so only one of the two mutations would show.
+	_ = append(taken, coreplugin.Job{Name: "smuggled"})
+
+	again := h.Jobs()
+	require.Len(t, again, 1)
+	assert.Equal(t, "a", again[0].Name)
+}
+
+// TestTwoPluginsEachBringingAJobKeepTheirOwnNames proves the plugin label is
+// captured per registration and not read off whichever plugin ran last.
+func TestTwoPluginsEachBringingAJobKeepTheirOwnNames(t *testing.T) {
+	t.Parallel()
+
+	_, reg, h := newHost(t, nil)
+
+	for _, name := range []string{"first", "second"} {
+		reg.Add(testPlugin{name: name, setup: func(_ context.Context, h *coreplugin.Host) error {
+			h.RegisterJob(coreplugin.Job{
+				Name:   name + "-pass",
+				Every:  time.Hour,
+				MaxRun: time.Minute,
+				Run:    func(context.Context) error { return nil },
+			})
+
+			return nil
+		}})
+	}
+	require.NoError(t, reg.Install(t.Context(), h))
+
+	jobs := h.Jobs()
+	require.Len(t, jobs, 2)
+	assert.Equal(t, "first", jobs[0].PluginName())
+	assert.Equal(t, "second", jobs[1].PluginName())
 }

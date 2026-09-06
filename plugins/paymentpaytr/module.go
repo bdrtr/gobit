@@ -56,6 +56,15 @@ const pendingGrace = time.Hour
 // ScopeRead is the scope the operator's stuck-payment list requires.
 const ScopeRead = "paytr:read"
 
+// PendingPath is the operator's stuck-payment list.
+//
+// It is a constant because two places name it and they had drifted: the route
+// was bound from a literal while the startup warning pointed at
+// CallbackPath + "/../pending", which is "/paytr/pending" — a path this plugin
+// has never served. An operator who followed that line got a 404 and had no way
+// to tell whether the endpoint or the payment was missing.
+const PendingPath = "/admin/v1/paytr/pending"
+
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
@@ -113,30 +122,25 @@ func (m *paytrModule) Register(ctx context.Context, c *container.Container) erro
 	return nil
 }
 
-// reportStuck logs how many payments PayTR never reported on.
+// reportStuck makes the pending report once, at startup.
 //
 // It is the startup counterpart of `gobit stuck`: a payment left pending is
 // money that may have been taken with nothing following it, and nothing else in
 // the system will ever mention it. A failure to count is not a startup failure
 // — refusing to boot over a diagnostic query would trade a visible problem for
 // a bigger one.
+//
+// The report itself is [paytrModule.watchPending], which the plugin also
+// registers as an hourly job (job.go). The two callers share one query and one
+// message and differ only in what they do with an error, which is the whole
+// difference between them: a diagnostic that fails at boot must not stop the
+// boot, while a scheduled pass that fails must land in `gobit jobs` as FAILED
+// rather than as a silent "ok".
 func (m *paytrModule) reportStuck(ctx context.Context) {
-	stuck, err := m.store.pending(ctx, pendingGrace, 100)
-	if err != nil {
+	if err := m.watchPending(ctx); err != nil {
 		m.log.WarnContext(ctx, "the pending PayTR payments could not be counted at startup",
 			"error", err)
-
-		return
 	}
-	if len(stuck) == 0 {
-		return
-	}
-
-	m.log.WarnContext(ctx, "PayTR payments are still pending; PayTR never reported on them "+
-		"and any money taken has no order behind it",
-		"pending", len(stuck),
-		"older_than", pendingGrace.String(),
-		"list", CallbackPath+"/../pending")
 }
 
 // Routes mounts the operator's list.
@@ -151,7 +155,7 @@ func (m *paytrModule) Routes(r chi.Router) {
 		return
 	}
 
-	r.With(corehttp.RequireScope(ScopeRead)).Get("/admin/v1/paytr/pending", m.handlePending)
+	r.With(corehttp.RequireScope(ScopeRead)).Get(PendingPath, m.handlePending)
 }
 
 // callbackRoute is what this plugin registers with the core's callback ring.

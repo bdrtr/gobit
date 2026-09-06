@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -17,7 +18,8 @@ import (
 	coreprovider "github.com/bdrtr/gobit/core/provider"
 )
 
-// Plugin registers a bank-transfer payment provider and one status route.
+// Plugin registers a bank-transfer payment provider, one status route, an event
+// subscription and one scheduled job.
 type Plugin struct{}
 
 // New builds the plugin.
@@ -26,7 +28,7 @@ func New() *Plugin { return &Plugin{} }
 // Name identifies the plugin to the host.
 func (p *Plugin) Name() string { return "havale" }
 
-// Setup registers the provider, a route and an event subscription.
+// Setup registers the provider, a route, an event subscription and a job.
 func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 	account, ok := h.Setting("account")
 	if !ok {
@@ -50,6 +52,34 @@ func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 		h.Logger().InfoContext(ctx, "an order was created", "event", e.Name)
 
 		return nil
+	})
+	// A scheduled job, and the reason this example carries one is that nothing
+	// else can prove it. coreplugin.Job exists precisely so that a plugin
+	// OUTSIDE the gobit module can declare scheduled work without the internal
+	// scheduler package being published; an in-tree plugin declaring one proves
+	// nothing about that, because Go would let it reach internal/ anyway. This
+	// file cannot, so this compiling is the proof.
+	//
+	// It does NO I/O — no query, no request, no write. That is a property of
+	// the EXAMPLE and not of jobs: whoever copies this directory gets a starter
+	// that behaves identically whether the job runs or not, and an example that
+	// quietly started touching a database on an hourly timer would be a
+	// surprise nobody asked for. A real one is plugins/paymentpaytr/job.go,
+	// which reads a table and reports what it finds.
+	//
+	// Every 24 hours with a one-minute bound: MaxRun MUST NOT exceed Every, and
+	// a definition that breaks that rule is refused when the process starts
+	// rather than run behind forever.
+	h.RegisterJob(coreplugin.Job{
+		Name:   "havale-reminder",
+		Every:  24 * time.Hour,
+		MaxRun: time.Minute,
+		Run: func(ctx context.Context) error {
+			h.Logger().InfoContext(ctx, "bank transfers are confirmed by hand; check the account",
+				"account", account)
+
+			return nil
+		},
 	})
 
 	return nil

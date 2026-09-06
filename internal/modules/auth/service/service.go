@@ -151,7 +151,11 @@ type Repository interface {
 	DeleteUser(ctx context.Context, id string, now time.Time) error
 
 	GetIdentity(ctx context.Context, userID, provider string) (models.AuthIdentity, error)
-	SetPasswordHash(ctx context.Context, userID, provider, providerIdentity, hash string, now time.Time) (models.AuthIdentity, error)
+	// SetPasswordHash writes the hash and, when the user has no identity for
+	// the provider yet, creates one. The user's liveness and its login address
+	// are BOTH resolved inside this call: the service must not read the user
+	// first and pass what it read down (see [Service.SetPassword]).
+	SetPasswordHash(ctx context.Context, userID, provider, hash string, now time.Time) (models.AuthIdentity, error)
 	SessionAnchor(ctx context.Context, userID string) (time.Time, error)
 	RevokeSessions(ctx context.Context, userID string, now time.Time) ([]models.AuthIdentity, error)
 	RegisterLoginFailure(ctx context.Context, identityID string, threshold int, lockUntil, now time.Time) (models.AuthIdentity, error)

@@ -215,6 +215,50 @@ func (q *Queries) ListUsersByIDs(ctx context.Context, ids []string) ([]AuthUser,
 	return items, nil
 }
 
+const lockLiveUser = `-- name: LockLiveUser :one
+SELECT id, email, first_name, last_name, avatar_url, scopes, metadata, created_at, updated_at, deleted_at FROM auth_user
+WHERE id = $1 AND deleted_at IS NULL
+FOR SHARE
+`
+
+// LockLiveUser verifies that the user is LIVE and locks the row until the end
+// of the transaction.
+//
+// Whoever hangs a row off a user reads it through this query, not through
+// GetUser. Why a foreign key is not enough: an FK looks at the PHYSICAL
+// existence of auth_user's row, and a soft-deleted user (deleted_at set)
+// passes it, so the write lands on a user nothing else can see any more.
+//
+// FOR SHARE is what makes the check hold until the write. It was MEASURED
+// (2026-09-06) that without it SetPasswordHash writes a LIVE identity under a
+// user deleted in the meantime, and the row is unreachable but not harmless:
+// it holds the deleted user's address in auth_identity_provider_uniq forever,
+// so no new administrator can be opened at that address (the whole account of
+// it is in repository/identity.go, SetPasswordHash).
+//
+// The lock is SHARED, not exclusive: two password writes for different users
+// have no reason to wait for one another, and even for the same user the row
+// they contend on is the identity row, not this one. The only flow that must
+// wait is a delete, and SoftDeleteUser is an UPDATE — a row-exclusive lock,
+// which FOR SHARE conflicts with. Two FOR SHAREs do not conflict.
+func (q *Queries) LockLiveUser(ctx context.Context, id string) (AuthUser, error) {
+	row := q.db.QueryRow(ctx, lockLiveUser, id)
+	var i AuthUser
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.FirstName,
+		&i.LastName,
+		&i.AvatarUrl,
+		&i.Scopes,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const softDeleteIdentitiesOfUser = `-- name: SoftDeleteIdentitiesOfUser :exec
 UPDATE auth_identity
 SET deleted_at = $2, updated_at = $2

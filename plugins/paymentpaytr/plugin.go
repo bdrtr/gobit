@@ -154,6 +154,12 @@ func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 	// anyone, with no quota, no body limit and no replay window.
 	h.RegisterCallback(p.mod.callbackRoute())
 
+	// The stuck-payment report used to happen once, inside Register, and the
+	// class it names accumulates in a process that has been up for a week
+	// rather than at the moment it boots. This is that report on a schedule; it
+	// reads and logs and never touches a payment (job.go).
+	h.RegisterJob(pendingWatch(p.mod))
+
 	return nil
 }
 

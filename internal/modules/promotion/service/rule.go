@@ -39,11 +39,16 @@ type ApplicationMethodInput struct {
 	CurrencyCode string
 }
 
-// AddPromotionRule bir promosyona kural ekler.
+// AddPromotionRule bir promosyona kural ekler; promosyon yoksa ya da silinmişse
+// errors.NotFound döner.
 //
-// Promosyonun varlığı ÖNCE doğrulanır: foreign key ihlali de aynı sonucu
-// verirdi ama hatası "kısıt ihlali" olarak giderdi; erken kontrol
-// errors.NotFound döndürerek istemciye ne olduğunu söyler.
+// Promosyonun CANLI olduğu denetimi burada DEĞİL, yazmayla aynı işlemde ve
+// satır kilidi altında yapılır (bkz. repository.CreatePromotionRule).
+// Reddedilen alternatif — ve bu metodun bir süre yaptığı şey — denetimi burada,
+// ayrı bir okumayla yapmaktı: o biçimde okuma ile yazma iki AYRI autocommit
+// deyimidir ve araya giren bir yumuşak silme, kuralın silinmiş bir promosyonun
+// altına inmesine izin verir. Foreign key bunu durdurmaz; yumuşak silme satırı
+// yerinde bırakır (ölçüldü, 2026-09-06).
 func (s *Service) AddPromotionRule(
 	ctx context.Context,
 	promotionID string,
@@ -56,9 +61,6 @@ func (s *Service) AddPromotionRule(
 		return models.PromotionRule{}, err
 	}
 	if err := validateRuleInput(in); err != nil {
-		return models.PromotionRule{}, err
-	}
-	if _, err := s.repo.GetPromotion(ctx, promotionID); err != nil {
 		return models.PromotionRule{}, err
 	}
 
@@ -117,7 +119,11 @@ func (s *Service) DeletePromotionRule(ctx context.Context, id string) error {
 	return s.repo.DeletePromotionRule(ctx, id, s.clock())
 }
 
-// SetApplicationMethod promosyonun uygulama yöntemini yazar; varsa üzerine yazar.
+// SetApplicationMethod promosyonun uygulama yöntemini yazar; varsa üzerine
+// yazar. Promosyon yoksa ya da silinmişse errors.NotFound döner.
+//
+// Promosyonun canlı olduğu denetimi burada DEĞİL, yazmayla aynı işlemde ve
+// satır kilidi altında yapılır; gerekçe [Service.AddPromotionRule] ile aynıdır.
 func (s *Service) SetApplicationMethod(
 	ctx context.Context,
 	promotionID string,
@@ -127,9 +133,6 @@ func (s *Service) SetApplicationMethod(
 		return models.ApplicationMethod{}, err
 	}
 	if err := requireID(promotionID, models.PromotionIDPrefix, "promotion id"); err != nil {
-		return models.ApplicationMethod{}, err
-	}
-	if _, err := s.repo.GetPromotion(ctx, promotionID); err != nil {
 		return models.ApplicationMethod{}, err
 	}
 

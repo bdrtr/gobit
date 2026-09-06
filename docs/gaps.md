@@ -74,8 +74,8 @@ Four sequencing facts govern the whole list:
 | B9 | **Stored payment instrument** — provider contract + table | saved cards AND subscriptions, in one change | Storefront speed, Commerce models |
 | B10 | **Carrier-capable quote input and a tolerant shipment state machine** — district, dimensions/desi, more statuses (including iade), and out-of-order webhook tolerance | any real carrier | Turkey-specific |
 | B11 | ~~**Order addresses**~~ **Built 2026-09-05.** `order_addresses` (one shipping, one billing, enforced by a unique index), written in the SAME transaction as the order's header and lines; carried cart → interop → checkout plan → order snapshot. The cart's own schema comment already named the order as the thing its copy protects — and the order had no address at all | invoicing, shipping labels, B2B — unblocked | Storefront speed |
-| B12 | ~~**Outbound delivery machinery** — retry and a dead-letter queue on the outbox relay~~ **Built 2026-09-06, and the "explicit decision" it rested on turned out to describe a different layer.** The outbox gains `next_attempt_at` and `dead_lettered_at`; a failed publish waits out a doubling delay (1, 2, 4 … capped at 60 minutes) and after ten attempts — four hours and three minutes of trying — is given up on and leaves the relay's index. Giving up is a WRITE, not a drop: the instant, the attempt count and the last error stay on the row, the relay job reads the pile on every pass, and a non-empty pile FAILS the run, which is the one channel that reaches the `gobit jobs` listing. Measured before it was built, and it is why the ceiling is not optional: a batch limit's worth of permanently failing rows fills every pass, so five consecutive passes published NOTHING while a healthy event written behind them finished with `attempts = 0` — never attempted once. Not degraded delivery, NO delivery. ~~Still missing, and it is the operator half: `Redrive` and `Discard` exist, are tested, and have NO production caller — no command, no route — so today the alarm has no off switch a human can reach without SQL~~ **The operator half was built the same day.** `gobit deadletters` lists the pile and `gobit deadletters redrive <id> -confirm <id>` and `gobit deadletters discard <id> -confirm <id>` are its two exits, so the alarm now has an off switch that is not psql. The listing carries what a decision needs — the whole pile's count and not the page's, the event name, the attempt count, the last error, both instants and how long the row tried — and says out loud that the payload was WITHHELD rather than absent; the act path re-reads the pile and closes with whether the `gobit jobs` alarm will clear, which is the question the operator arrived with. One id per verb, and refusing a bulk flag was argued rather than assumed: measured against a real PostgreSQL a single discard is a primary-key delete at 0.047 ms and a redrive 0.183 ms, so the refusal costs the database nothing and buys the reading of the row that a one-keystroke mute would skip | webhooks, ERP/Slack integration — the delivery machinery is there, the SENDER is still C5, and a plugin still cannot own a retry pass (B13) | Platform features |
-| B13 | **Plugin host: let a plugin register a job** | any plugin needing a retry pass, including outbound delivery | Platform features |
+| B12 | ~~**Outbound delivery machinery** — retry and a dead-letter queue on the outbox relay~~ **Built 2026-09-06, and the "explicit decision" it rested on turned out to describe a different layer.** The outbox gains `next_attempt_at` and `dead_lettered_at`; a failed publish waits out a doubling delay (1, 2, 4 … capped at 60 minutes) and after ten attempts — four hours and three minutes of trying — is given up on and leaves the relay's index. Giving up is a WRITE, not a drop: the instant, the attempt count and the last error stay on the row, the relay job reads the pile on every pass, and a non-empty pile FAILS the run, which is the one channel that reaches the `gobit jobs` listing. Measured before it was built, and it is why the ceiling is not optional: a batch limit's worth of permanently failing rows fills every pass, so five consecutive passes published NOTHING while a healthy event written behind them finished with `attempts = 0` — never attempted once. Not degraded delivery, NO delivery. ~~Still missing, and it is the operator half: `Redrive` and `Discard` exist, are tested, and have NO production caller — no command, no route — so today the alarm has no off switch a human can reach without SQL~~ **The operator half was built the same day.** `gobit deadletters` lists the pile and `gobit deadletters redrive <id> -confirm <id>` and `gobit deadletters discard <id> -confirm <id>` are its two exits, so the alarm now has an off switch that is not psql. The listing carries what a decision needs — the whole pile's count and not the page's, the event name, the attempt count, the last error, both instants and how long the row tried — and says out loud that the payload was WITHHELD rather than absent; the act path re-reads the pile and closes with whether the `gobit jobs` alarm will clear, which is the question the operator arrived with. One id per verb, and refusing a bulk flag was argued rather than assumed: measured against a real PostgreSQL a single discard is a primary-key delete at 0.047 ms and a redrive 0.183 ms, so the refusal costs the database nothing and buys the reading of the row that a one-keystroke mute would skip | webhooks, ERP/Slack integration — the delivery machinery is there, a plugin can now own a periodic pass (B13, built the same day), and the one thing still missing is the SENDER itself (C5) | Platform features |
+| B13 | ~~**Plugin host: let a plugin register a job**~~ **Built 2026-09-06, and it arrived WITH its first consumer rather than before one.** `plugin.Host.RegisterJob` takes a four-field `plugin.Job` — name, interval, per-run bound, work — collected during Setup the way routes are, and drained by the composition root's `addPluginJobs` at the moment the job registry exists. ADR 0019 deferred this surface with a condition rather than a refusal ("it arrives with the first plugin that brings a job") and ADR 0026 had priced it as publishing the whole scheduler package; that price was refused, because a plugin needs four VALUES while publishing the package would freeze the runner, the store contract, the advisory-lock class and the key algorithm into the compatibility promise — publishing the machine in order to hand out a form. The copy is paid for rather than hoped away: `TestEveryJobDefinitionFieldReachesAPluginJob` reflects over the scheduler's own definition and fails the day it grows a field the published struct does not carry. Nothing is validated twice and nothing is SKIPPED: a plugin's definition goes through the same `Registry.Add` as the core's three, so a missing name, a `MaxRun` longer than its interval, a nil body or a name already taken all refuse the BOOT — because a job dropped quietly would leave `gobit jobs` printing a listing with nothing missing from it, and an operator reads that absence as "that pass had nothing to do". The plugins are admitted LAST so that a name clash fails on the side whose name is the easier one to change. The first consumer is in the same change: `paymentpaytr` now runs an hourly `pendingWatch` for payments PayTR never called back about — a class that does not arrive at startup but ACCUMULATES, and which until now was reported exactly once, at boot, by a process that then watched it grow in silence | ~~any plugin needing a retry pass~~ — done; the outbound sender (C5) is the next thing that would use it | Platform features |
 | B14 | ~~**Order line-item entity in the read layer + date filter + index**~~ **Built 2026-09-05.** `order_line_item` is the order module's SECOND read-layer entity, offered next to `order` the way fulfillment offers the shipment next to the shipping option. It carries what was sold and for how much, and takes `placed_from`/`placed_to` — half-open, matched against the ORDER's `placed_at` through a join, because a line's own `created_at` is the day its ROW was written and would date an exchange as a fresh sale. Migration 000006 brings the two indexes that keep the range and the variant filter off a full scan. It has a consumer: the panel's Sales screen. NOT built: any aggregation (the provider returns records, never sums), no line ↔ variant link so nothing expands from a sold line to its product, and forecasting itself | demand analytics and forecasting — the READ is there, the analytics are not; the other half of a forecast is still B7 | AI-powered features |
 | B15 | **File read-back, ~~product-image ↔ upload link~~ built 2026-09-05**, file events still missing. `product_image.upload_id` plus the `upload_product_image` link (declared by PRODUCT — it writes the record the binding carries; the file module's own doc says it does not know what a file belongs to). The file module gained the interop surface it deliberately lacked, and the reasoning behind that absence turned out to be half wrong: the address shows the file and says nothing ABOUT it | anything that looks at a photo — the id half is answerable now; file EVENTS are not built | AI-powered features |
 | B16 | **A suggestion store** — system proposes, human applies | forecast and category suggestions. The pattern exists (`sagawatch`, ADR 0017); the storage does not | AI-powered features |
@@ -90,7 +90,7 @@ Four sequencing facts govern the whole list:
 | C2 | ~~**Order timeline**~~ **Built 2026-09-05.** `GET /admin/v1/orders/{id}/timeline` — composed, not a table; every entry names the CLOCK that stamped it, because the capture and a parcel's transitions are on the application clock while everything else is on the database's. Undated facts (an exchange that finished) come back last rather than being dropped | ~~B5, B6~~ done |
 | C3 | **Operator assistant in the panel** — sixty-one primitive interop methods are already a tool catalogue, and identity exists inside the panel | a return-creation surface |
 | C4 | **Consent records and data-subject endpoints** | A2, B17 |
-| C5 | **Outbound webhooks** (NATS after, if anyone asks) | ~~B12~~ done — retry and the dead letter are built; B13, and a sender |
+| C5 | **Outbound webhooks** (NATS after, if anyone asks) | ~~B12~~ ~~B13~~ both done — retry, the dead letter and a plugin-registrable periodic pass are all built. What is left is the SENDER itself, and it is now the only thing left |
 | C6 | **Carrier plugins** (Yurtici, Aras, MNG, PTT) | B1, B10 |
 | C7 | **Installment table** + iyzico/Param providers | A3 |
 | C8 | **Digital product delivery** — entitlement, expiring link, re-download policy | — |
@@ -248,11 +248,27 @@ Four sequencing facts govern the whole list:
   A test now pins the intermediate state a third connection can observe while the
   delete is blocked, and it fails under that mutation.
 
-  Still unmeasured, and named here so the pairing is not repeated: the same
-  repository-owned-transaction SHAPE lives in `pricing`, `promotion`, `auth` and
-  `customer`. The shape is not the defect — this entry's own error was assuming
-  it was — so each needs the same question asked of it separately: does a service
-  method there read, decide, and then write?
+  **The four modules this entry named as unmeasured were measured on
+  2026-09-06, and the answer split two and two.** The question put to each was
+  the one this entry had to learn to ask — not "does a repository open its own
+  transaction" but "does a SERVICE method read, decide, and then write as two
+  separate autocommit statements". A module where the defect is ABSENT is a
+  result, and it is written down here as one:
+
+  | module | defect | what the measurement found |
+  | --- | --- | --- |
+  | `pricing` | **no** | every writing service method makes exactly ONE repository call. The only multi-call methods — `ListPrices`, `ListStorePrices`, `ListPriceRules` — are read-only, and their extra read exists to return a 404 rather than an empty list. The repository already had the finished shape: `ReplacePrices` opens its transaction with `GetPriceSetForUpdate`. No behaviour was changed |
+  | `promotion` | **yes, twice** | `AddPromotionRule` and `SetApplicationMethod`. Both races were PRODUCED against the original code, not argued. Fixed; the consequence is weaker than tax's and the entry says so — D20 |
+  | `auth` | **yes, and the damage outlives the request** | `Service.SetPassword`. Produced, and the orphan it leaves burns an e-mail address in a unique index forever. Fixed — D19 |
+  | `customer` | **shape yes, defect no** | `AddToGroup` runs its two existence checks unlocked, so the race is REAL: under READ COMMITTED a transaction without a lock protects nothing, and an intervening soft delete is simply not seen by the decision already made. Its consequence is zero, and that was measured rather than assumed — a deleted group's membership rows are already LEFT BEHIND by the ordinary delete path, so the row the race writes is indistinguishable from one the module produces in normal operation. No lock was added; the godoc now says which lock it would have to be (`GetCustomerForUpdate`, because the customer row is always locked first here) so that the next reader does not have to measure it again |
+
+  Two things follow that are worth keeping. The first is that this entry's
+  original error — pairing modules on the shape — would have been made three
+  more times: two of the four carry the shape and no defect. The second is that
+  finding the defect is only half the work. In `promotion` it turned up a godoc
+  claiming a protection that did not exist, which is the exact failure tax was
+  recorded for; in `pricing` it turned up another, on a method with no race at
+  all. Both were corrected. Neither module was given machinery it did not need.
 - **D7** ~~The OpenAPI text claimed `q` searches title and handle; it searches
   title only.~~ Fixed 2026-09-05.
 - **D10** ~~Nothing stopped a module's SQL from naming another module's
@@ -627,6 +643,116 @@ Four sequencing facts govern the whole list:
   only so the gate can be green on the rest of the repository while these are
   worked. Nothing was changed in the four modules: a schema change belongs to
   whoever answers the question, not to the audit that asked it.
+- **D19** ~~`Service.SetPassword` read the user in one statement and wrote its
+  identity in another; a delete landing in the gap burned an e-mail address
+  permanently.~~ **Fixed 2026-09-06.** Found by asking D6's question of `auth`.
+  The service called `GetUser` — its own autocommit statement — and then
+  `SetPasswordHash`, its own transaction. A concurrent `DeleteUser` soft-deletes
+  the user AND its identities, so the write found no identity and INSERTED one:
+  a LIVE identity under a deleted user. The foreign key cannot object, for the
+  reason that runs through this whole class — a soft delete is an UPDATE, and
+  `auth_user`'s row stays physically in place, so CASCADE never fires.
+
+  **The consequence is not a security consequence, and that was measured rather
+  than assumed.** A deleted administrator cannot log in through the orphan:
+  `Login` reads through `GetUserByEmail` and token verification through
+  `principalFromToken`, and both read the LIVE user first.
+  `TestARevivedIdentityCannotLogIn` manufactures the orphan with raw SQL and
+  confirms the refusal. What it actually costs is smaller and permanent: the
+  deleted user's address stays in `auth_identity_provider_uniq` forever, so
+  opening a NEW administrator at that address fails with a conflict while the
+  user list shows the address as free — and there is no repair path, because
+  `DeleteUser` on an already deleted user returns NotFound.
+
+  A second variant of the same gap was produced with an `UpdateUser` in place of
+  the delete: the INSERT then wrote the OLD address into `provider_identity`,
+  which is the precise divergence `SyncIdentityProviderIdentity` exists to
+  prevent.
+
+  **The fix moved the read INTO the write.** `LockLiveUser` (`FOR SHARE`) is now
+  the first statement of `Repo.SetPasswordHash`'s transaction, and the identity's
+  `provider_identity` comes from THAT row rather than from a parameter — so
+  liveness and address have one source and cannot disagree about the instant they
+  describe. The service makes exactly one repository call and the
+  `providerIdentity` argument is gone from the signature. Tax's exported
+  `WithTx` was rejected with a reason: it is the right answer when the SERVICE
+  has to decide something from the locked row, and here it did not — it needed
+  only "is it alive" and "what is its address", both of which belong to the
+  write. It would also have put transactions on the service's own repository
+  interface, so every fake in the module would have had to imitate one.
+  Stripping `FOR SHARE` from `LockLiveUser` makes the new test fail with exactly
+  the orphan it was written to prevent.
+
+  Pinned in passing: the failed-login counter's `FOR UPDATE` was TRUE and held
+  by nothing — no test would have noticed its removal.
+  `TestTheFailedAttemptCounterLosesNoIncrement` holds it now: with the lock
+  stripped, twelve concurrent increments arrive as eight.
+
+  **Still open, measured on the same day and deliberately not closed:**
+  `LinkSalesChannel` locks the CHANNEL and not the KEY. A `DeleteAPIKey` landing
+  between the service's `GetAPIKey` and the link write leaves a link row for a
+  key that delete had just unlinked; it was produced, and it is unreachable —
+  every road to it reads the live key first. Closing it means a second
+  `FOR SHARE`, on `api_key`, taken BEFORE the channel's, because `DeleteAPIKey`
+  walks the key and then the link rows and any flow taking the channel first
+  would close a waiting cycle. That is a new lock-ordering constraint bought for
+  a row nobody can read. Named here so it is not re-found as news.
+- **D20** ~~Three godocs in `promotion` said orphaning a rule was "structurally
+  impossible". It was measurably possible.~~ **Fixed 2026-09-06 — and the
+  consequence is the weakest class this file records, which is the honest half
+  of the entry.** Found by asking D6's question of `promotion`:
+  `AddPromotionRule` and `SetApplicationMethod` each did `GetPromotion`, decided
+  the promotion was alive, and then wrote — two separate autocommit statements.
+  Both child tables reference `promotion` ON DELETE CASCADE, and a soft delete
+  never fires it.
+
+  **The race was produced, not argued.** The harness runs the real soft-delete
+  statement in an uncommitted competing transaction and then confirms with
+  `pg_blocking_pids` that the write is waiting on THAT session — so the decision
+  was provably already made. Against the original code neither write waited, and
+  each left one orphan row.
+
+  **What the orphan does is nothing, and measuring that is what keeps this entry
+  honest.** `ComputeDiscounts` returns a `DiscountTotal` of zero with the code in
+  `UnmatchedCodes`; `LookupStoreCoupon` answers `promotion_not_usable`;
+  `ListPromotionRules` 404s — every reader filters the promotion's own
+  `deleted_at`. No customer is charged the wrong amount by either race. The two
+  readers that DO return the orphan, `Service.GetPromotionRule` and
+  `Service.GetApplicationMethod`, have no HTTP route at all. So the defect was
+  never the row: it was the SENTENCE, three of them, claiming a protection that
+  did not exist — the identical failure this file records against tax in D6. The
+  code was made true rather than the sentences softened only because it cost
+  about thirty lines of machinery the module already had; had it been expensive,
+  rewriting the sentences was the correct answer.
+
+  The fix is `LockPromotionShared` (`FOR SHARE`) plus `requireLivePromotion`, as
+  the first step of the repository's own transaction. Shared and not exclusive
+  for tax's reason: two administrators adding rules to one promotion must not
+  serialize, while a soft delete is a plain UPDATE taking a lock that `FOR SHARE`
+  DOES conflict with. The transaction stays inside the repository — there is one
+  write per method, so unlike tax no service-visible surface changed. Pushing
+  the liveness test into the write itself was rejected in writing: it works for
+  the rule insert and CANNOT work for the method's upsert, whose conflict branch
+  updates a row without being able to see the promotion table at all — so the
+  two siblings would have ended up with different guarantees.
+
+  Three things were found while proving it. The first harness was too weak and
+  was thrown away: it used `SELECT … FOR UPDATE` as the adversary, which
+  conflicts with every row lock, so the test would have stayed green even if the
+  fix had taken the wrong one. Both in-memory fakes were modelling the bug —
+  they accepted a rule for a promotion that did not exist, which is why no unit
+  test could ever have caught this — and teaching them the contract immediately
+  failed `TestHataSiniflandirmasiStatusKodunaCevrilir`, which had been asserting
+  404 while the fake returned 200. And `DeletePromotion`'s claim that its
+  children "become unreadable" is false independently of any race:
+  `GetApplicationMethod` returns the method of a deleted promotion, because that
+  query filters only the method's own `deleted_at`.
+
+  **Flagged and not acted on:** `Service.GetPromotionRule` is a published
+  capability with no consumer anywhere — no route, no in-module caller, only the
+  interface entry and the fakes. That is this repository's named most expensive
+  recurring defect (ADR 0009), and deleting a public service method is not a
+  call to make inside a concurrency brief.
 
 ### E. Out of framework scope — written, not forgotten
 

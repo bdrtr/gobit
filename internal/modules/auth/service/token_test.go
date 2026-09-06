@@ -159,9 +159,14 @@ func (d *sessionRepo) GetIdentity(_ context.Context, userID, provider string) (m
 //
 // updated_at advancing is the contract of the UpdatePasswordHash query and it
 // is the anchor of session revocation.
+//
+// The login address is NOT a parameter and the fake reads it from its own user
+// record, exactly as the real repository reads it from the row it locked: the
+// caller cannot hand down an address it read earlier, and this fake must not
+// offer a way to.
 func (d *sessionRepo) SetPasswordHash(
 	_ context.Context,
-	userID, provider, providerIdentity, hash string,
+	userID, provider, hash string,
 	now time.Time,
 ) (models.AuthIdentity, error) {
 	identity := d.identity(provider)
@@ -173,7 +178,7 @@ func (d *sessionRepo) SetPasswordHash(
 			ID:               "authid_" + provider,
 			UserID:           userID,
 			Provider:         provider,
-			ProviderIdentity: providerIdentity,
+			ProviderIdentity: d.user.Email,
 			CreatedAt:        now,
 		})
 		identity = &d.identities[len(d.identities)-1]

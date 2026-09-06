@@ -141,6 +141,23 @@ func (r *Repo) DeleteGroup(ctx context.Context, id string, now time.Time) error 
 // foreign key ihlali de aynı sonucu verirdi ama hangi tarafın (müşteri mi grup
 // mu) eksik olduğunu söylemezdi ve istemciye 422 olarak dönerdi; eksik bir
 // kaynak için doğru sınıf errors.NotFound'dur.
+//
+// # "Aynı işlemde" burada KORUMA DEĞİLDİR
+//
+// Denetimler kilitsizdir ve bu bilinçli. Bir işlem, tek başına, READ COMMITTED
+// altında hiçbir şeyi korumaz: her deyim taze bir anlık görüntü alır, yani
+// araya giren bir [Repo.DeleteCustomer] ya da [Repo.DeleteGroup] denetimden
+// sonra commit ederse üyelik yine yazılır ve foreign key itiraz etmez, çünkü
+// silme YUMUŞAKTIR. Bu, tax modülünde paraya mal olan şeklin ta kendisidir —
+// ama buradaki SONUCU sıfırdır ve fark ölçüldü (2026-09-06): silinmiş bir
+// grubun üyelik satırları zaten BIRAKILIYOR ([Repo.DeleteGroup]) ve silinmiş
+// bir müşterininki de öyle ([Repo.DeleteCustomer]), çünkü grubu ya da müşteriyi
+// okuyan her sorgu deleted_at IS NULL süzer. Yarışın ürettiği satır, modülün
+// normal işleyişte zaten ürettiği satırdan AYIRT EDİLEMEZ.
+//
+// Kilit eklemek, dolayısıyla, hiçbir gözlenebilir farkı kapatmaz; eklenirse
+// [customerdb.Queries.GetCustomerForUpdate] ile eklenmelidir, çünkü bu modülde
+// müşteri satırı HER ZAMAN ilk kilitlenir (bkz. queries/customer.sql).
 func (r *Repo) AddToGroup(ctx context.Context, customerID, groupID string, now time.Time) error {
 	return r.inTx(ctx, func(q *customerdb.Queries) error {
 		if _, err := q.GetCustomer(ctx, customerID); err != nil {

@@ -366,7 +366,7 @@ func serve(opts Options) error {
 	// Stop() is deferred rather than left to the context, because the runner
 	// waits for the pass it is in the middle of. Without it a shutdown could
 	// close the pool underneath a job that is still writing.
-	jobs, stopJobs, err := startJobs(ctx, c, cfg, log)
+	jobs, stopJobs, err := startJobs(ctx, c, host, cfg, log)
 	if err != nil {
 		return err
 	}

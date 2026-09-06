@@ -94,6 +94,27 @@ SELECT * FROM promotion
 WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE;
 
+-- LockPromotionShared promosyonu PAYLAŞIMLI kilitle okur; ALTINA satır yazan
+-- yolların ilk adımıdır (kural ekleme, uygulama yöntemi yazma).
+--
+-- Kilit ŞARTTIR ve foreign key onun yerini TUTMAZ: promotion_rule ve
+-- promotion_application_method promotion(id)'ye referans verir, ama silme
+-- YUMUŞAKTIR ve satırı yerinde bırakır. FK denetimi satırın VARLIĞINA bakar,
+-- deleted_at'ine değil; silinmiş bir promosyonun altına yazılan satırı bu
+-- yüzden hiçbir kısıt durduramaz. Ölçüldü (2026-09-06): varlık denetimi ile
+-- yazma arasına giren bir yumuşak silme, yazmayı beklet(me)den geçiriyordu.
+--
+-- FOR UPDATE değil FOR SHARE alınır: iki yönetici aynı promosyona aynı anda
+-- kural ekleyebilmelidir ve iki FOR SHARE çakışmaz. Silme ise düz bir UPDATE'tir
+-- ve satıra FOR NO KEY UPDATE kilidi koyar — FOR SHARE onunla ÇAKIŞIR, yani
+-- yazma silmeyi bekler ve kilidi aldıktan sonra WHERE koşulunu YENİDEN
+-- değerlendirip "kayıt yok" görür.
+--
+-- name: LockPromotionShared :one
+SELECT * FROM promotion
+WHERE id = $1 AND deleted_at IS NULL
+FOR SHARE;
+
 -- IncrementPromotionUsage kullanım sayacını KOŞULLU artırır.
 --
 -- Sınır aşılacaksa satır GÜNCELLENMEZ ve sorgu hiç satır dönmez; çağıran bunu

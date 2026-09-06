@@ -254,6 +254,27 @@ func (r *Repo) MarkAPIKeyUsed(ctx context.Context, id string, usedAt, staleBefor
 // Repeating the same link is NOT an error (a link is a set). A key that does
 // not exist returns errors.Invalid through a foreign key violation, and a
 // channel that does not exist or has been soft-deleted returns errors.NotFound.
+//
+// # The CHANNEL is protected; the KEY is not, and that was measured
+//
+// The lock below covers one side of the link only. On 2026-09-06 the other side
+// was produced: the service reads the key ([Repo.GetAPIKey], its own autocommit
+// statement) to decide that it is publishable, and a [Repo.DeleteAPIKey]
+// landing between that read and this write leaves a link row for a key the
+// delete had just unlinked. The foreign key does not object, for the same
+// reason it does not object anywhere else in this module — a soft delete leaves
+// the row physically in place.
+//
+// It is NOT fixed and the measurement says why: the row is unreachable. Every
+// road to it reads the live key first — service.SalesChannelsOfAPIKey through
+// GetAPIKey, the store identity through GetAPIKeyByHash — and both filter
+// deleted keys, so the orphan is visible to nobody and gives nobody anything.
+// The fix would be one more FOR SHARE, on api_key, taken BEFORE the channel's
+// (the order matters: DeleteAPIKey walks api_key then the link rows, so any
+// flow taking the channel first would close a waiting cycle). That is a new
+// lock ordering constraint on a table pair whose two delete paths already
+// contend on the same link rows, and buying it for a row nobody can read is the
+// wrong trade until something can read the row.
 func (r *Repo) LinkSalesChannel(ctx context.Context, apiKeyID, channelID string, now time.Time) error {
 	if err := r.ready(); err != nil {
 		return err

@@ -134,11 +134,28 @@ func (r *Repo) ready() error {
 // inTx runs fn in a single transaction; if fn returns an error the transaction
 // is ROLLED BACK.
 //
-// Atomicity is mandatory in two places: when the user and the identity record
-// are created together (a user without an identity can never log in, and an
-// identity without a user is left orphaned) and on an email change (if the user
-// row shows the new address while the identity row shows the old one, login
-// breaks).
+// It is needed for two DIFFERENT jobs and confusing them is how a protection
+// gets believed in without existing.
+//
+// The first is ATOMICITY — two writes that must land together or not at all:
+// the user and its identity record (a user without an identity can never log
+// in, an identity without a user is orphaned), an email change (if the user row
+// shows the new address while the identity row shows the old one, login
+// breaks), a key and its channel links ([Repo.CreateAPIKeyWithChannels]), and
+// the two soft deletes that a foreign key CASCADE cannot perform because a soft
+// delete is an UPDATE ([Repo.DeleteUser], [Repo.DeleteAPIKey],
+// [Repo.DeleteSalesChannel]).
+//
+// The second is HOLDING A LOCK, and a transaction is only the CONTAINER for it,
+// never the protection itself: a FOR SHARE or FOR UPDATE row lock is released
+// the moment the transaction ends, so a check that has to still be true when
+// the write lands must take its lock and do its write inside ONE call of this
+// helper. Two methods rest on that today — [Repo.SetPasswordHash]
+// (queries/users.sql, LockLiveUser) and the channel link
+// (queries/sales_channels.sql, LockLiveSalesChannel). Under READ COMMITTED a
+// transaction that takes NO lock gives no such protection at all: every
+// statement in it gets a fresh snapshot, so a competitor committing in between
+// is simply seen by the next statement and not by the decision already made.
 func (r *Repo) inTx(ctx context.Context, fn func(q *authdb.Queries) error) error {
 	if err := r.ready(); err != nil {
 		return err

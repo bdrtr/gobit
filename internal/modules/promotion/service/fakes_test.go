@@ -191,6 +191,25 @@ func (m *memRepo) CreatePromotion(_ context.Context, p models.Promotion, now tim
 	return p, nil
 }
 
+// canliPromosyon promosyonun altına satır yazan taklit metotların ortak
+// denetimidir; KİLİT YOKTUR, yalnızca sözleşme modellenir.
+//
+// Taklit bunu yapmak ZORUNDADIR: gerçek depo yazmayı promosyon satırı
+// PAYLAŞIMLI kilit altındayken ve aynı işlemde yapar (bkz.
+// repository.CreatePromotionRule). Denetimi taşımayan bir taklit, silinmiş bir
+// promosyonun altına kural kabul eder — yani tam olarak gerçek depoda kapatılan
+// hatayı modellerdi ve servis testleri onu göremezdi.
+//
+// Kilidin kendisi taklit edilemez ve edilmemelidir: kilit veritabanındadır ve
+// yalnızca integration testinde sınanabilir.
+func (m *memRepo) canliPromosyon(id string) error {
+	if _, ok := m.promotions[id]; !ok {
+		return errors.NotFound(repository.CodePromotionNotFound,
+			"promosyon bulunamadı: %s", id)
+	}
+	return nil
+}
+
 func (m *memRepo) GetPromotion(_ context.Context, id string) (models.Promotion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -339,6 +358,9 @@ func (m *memRepo) SetApplicationMethod(
 	if err := m.hook("SetApplicationMethod"); err != nil {
 		return models.ApplicationMethod{}, err
 	}
+	if err := m.canliPromosyon(method.PromotionID); err != nil {
+		return models.ApplicationMethod{}, err
+	}
 	method.CreatedAt, method.UpdatedAt = now, now
 	m.methods[method.PromotionID] = method
 	return method, nil
@@ -380,6 +402,9 @@ func (m *memRepo) CreatePromotionRule(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.hook("CreatePromotionRule"); err != nil {
+		return models.PromotionRule{}, err
+	}
+	if err := m.canliPromosyon(rule.PromotionID); err != nil {
 		return models.PromotionRule{}, err
 	}
 	rule.CreatedAt, rule.UpdatedAt = now, now

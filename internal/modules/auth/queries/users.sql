@@ -17,6 +17,31 @@ WHERE id = $1 AND deleted_at IS NULL;
 SELECT * FROM auth_user
 WHERE email = $1 AND deleted_at IS NULL;
 
+-- LockLiveUser verifies that the user is LIVE and locks the row until the end
+-- of the transaction.
+--
+-- Whoever hangs a row off a user reads it through this query, not through
+-- GetUser. Why a foreign key is not enough: an FK looks at the PHYSICAL
+-- existence of auth_user's row, and a soft-deleted user (deleted_at set)
+-- passes it, so the write lands on a user nothing else can see any more.
+--
+-- FOR SHARE is what makes the check hold until the write. It was MEASURED
+-- (2026-09-06) that without it SetPasswordHash writes a LIVE identity under a
+-- user deleted in the meantime, and the row is unreachable but not harmless:
+-- it holds the deleted user's address in auth_identity_provider_uniq forever,
+-- so no new administrator can be opened at that address (the whole account of
+-- it is in repository/identity.go, SetPasswordHash).
+--
+-- The lock is SHARED, not exclusive: two password writes for different users
+-- have no reason to wait for one another, and even for the same user the row
+-- they contend on is the identity row, not this one. The only flow that must
+-- wait is a delete, and SoftDeleteUser is an UPDATE — a row-exclusive lock,
+-- which FOR SHARE conflicts with. Two FOR SHAREs do not conflict.
+-- name: LockLiveUser :one
+SELECT * FROM auth_user
+WHERE id = $1 AND deleted_at IS NULL
+FOR SHARE;
+
 -- name: ListUsers :many
 SELECT * FROM auth_user
 WHERE deleted_at IS NULL

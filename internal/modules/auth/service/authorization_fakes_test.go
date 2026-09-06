@@ -82,7 +82,7 @@ func (d *fakeRepo) GetIdentity(_ context.Context, _, _ string) (models.AuthIdent
 
 func (d *fakeRepo) SetPasswordHash(
 	_ context.Context,
-	_, _, _, _ string,
+	_, _, _ string,
 	_ time.Time,
 ) (models.AuthIdentity, error) {
 	d.writeCount++

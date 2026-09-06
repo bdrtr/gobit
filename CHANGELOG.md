@@ -40,6 +40,125 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltildi
 
+- **Tax'ın şekli dört modülde daha arandı: ikisinde KUSUR çıktı, ikisinde
+  çıkmadı — ve çıkmayışı da ölçüldü** (D6, D19, D20).
+
+  D6 kendi hatasını zaten kaydetmişti: iki modül paylaştıkları ŞEKİL üzerinden
+  eşleştirilmişti, kusur üzerinden değil. Bu yüzden bu kez sorulan soru şekil
+  değil: bir SERVİS metodu okuyup karar veriyor ve sonra AYRI bir autocommit
+  deyimiyle yazıyor mu? Dört modülün ikisinde cevap evet, ikisinde hayır. Hayır
+  da bir sonuçtur ve burada öyle yazılıyor.
+
+  **`auth`: vardı, ve bıraktığı iz isteğin ömrünü aşıyor.**
+  `Service.SetPassword` önce `GetUser` çağırıyordu — tek başına bir deyim —
+  sonra `SetPasswordHash`, kendi işlemi. Araya giren bir `DeleteUser`
+  kullanıcıyı VE kimliklerini yumuşak siliyor; yazma hiçbir kimlik bulamayıp bir
+  tane EKLİYOR: silinmiş bir kullanıcının altında CANLI bir kimlik. Foreign key
+  itiraz edemez, ve bu sınıfın tamamının sebebi bu — yumuşak silme bir
+  UPDATE'tir, `auth_user` satırı fiziksel olarak yerinde kalır, CASCADE hiç
+  çalışmaz.
+
+  **Sonuç bir güvenlik açığı DEĞİL, ve bu varsayılmadı, ölçüldü.** Silinmiş
+  yönetici o kimlikle geri giremiyor: `Login` (`GetUserByEmail`) de belirteç
+  doğrulaması (`principalFromToken`) da önce CANLI kullanıcıyı okuyor;
+  `TestARevivedIdentityCannotLogIn` yetim satırı ham SQL ile imal edip reddi
+  kanıtlıyor. Gerçek bedel daha küçük ve KALICI: silinen kullanıcının adresi
+  `auth_identity_provider_uniq` içinde sonsuza kadar duruyor, yani o adrese YENİ
+  bir yönetici açmak çakışmayla düşüyor — kullanıcı listesi adresi boş
+  gösterirken. Onarım yolu da yok: zaten silinmiş bir kullanıcı için
+  `DeleteUser` NotFound döner.
+
+  Aynı boşluğun ikinci çeşidi silme yerine `UpdateUser` ile üretildi: INSERT bu
+  kez ESKİ adresi `provider_identity` alanına yazdı — tam olarak
+  `SyncIdentityProviderIdentity`'nin önlemek için var olduğu ayrışma.
+
+  **Düzeltme okumayı yazmanın İÇİNE taşıdı.** `LockLiveUser` (`FOR SHARE`) artık
+  `Repo.SetPasswordHash` işleminin ilk deyimi, ve kimliğin `provider_identity`
+  değeri bir parametreden değil O satırdan geliyor: canlılık ile adresin tek bir
+  kaynağı var, hangi anı anlattıkları konusunda anlaşmazlığa düşemezler. Servis
+  artık tek bir depo çağrısı yapıyor ve `providerIdentity` parametresi imzadan
+  kalktı. Tax'ın dışa açılmış `WithTx`'i gerekçesiyle reddedildi: o, SERVİSİN
+  kilitli satırdan bir karar çıkarması gerektiğinde doğru cevaptır, burada ise
+  gereken yalnızca "canlı mı" ve "adresi ne" — ikisi de yazmaya ait. Kanıt
+  mutasyonla: `LockLiveUser`'dan `FOR SHARE` sökülünce yeni test tam da önlemek
+  için yazıldığı yetimle düşüyor.
+
+  Yolda ikinci bir şey sabitlendi: başarısız giriş sayacının `FOR UPDATE`'i
+  DOĞRUydu ama hiçbir test onu tutmuyordu. Kilit sökülünce eşzamanlı on iki
+  artıştan sekizi kalıyor; `TestTheFailedAttemptCounterLosesNoIncrement` artık
+  tutuyor.
+
+  **`auth`'ta ölçülüp bilerek KAPATILMAYAN bir yarış da var, ve adı konuluyor.**
+  `LinkSalesChannel` kanalı kilitliyor, anahtarı kilitlemiyor: servisin
+  `GetAPIKey` okumasıyla bağlama yazması arasına giren bir `DeleteAPIKey`,
+  az önce koparttığı anahtar için bir bağlama satırı bırakıyor. Üretildi — ve
+  ulaşılamaz: o satıra giden her yol önce canlı anahtarı okuyor. Kapatmak
+  `api_key` üzerinde ikinci bir `FOR SHARE` demek, üstelik kanalınkinden ÖNCE
+  alınmak zorunda, çünkü `DeleteAPIKey` önce anahtarı sonra bağlama satırlarını
+  geziyor ve kanalı önce alan bir akış bekleme çemberini kapatırdı. Kimsenin
+  okuyamadığı bir satır için yeni bir kilit sırası kuralı satın alınmadı.
+
+  **`promotion`: iki tane vardı, ve asıl kusur satır değil CÜMLEydi** (D20).
+  `AddPromotionRule` ile `SetApplicationMethod`, ikisi de, `GetPromotion` ile
+  "promosyon canlı" kararını verip sonra yazıyordu. Yarış tartışılmadı,
+  ÜRETİLDİ: rakip işlem gerçek yumuşak-silme deyimini çalıştırıyor ve
+  `pg_blocking_pids` ile yazmanın TAM O oturumu beklediği doğrulanıyor. Orijinal
+  kodda ikisi de hiç beklemedi ve her biri bir yetim satır bıraktı.
+
+  **Yetimin yaptığı şey ise hiçbir şey, ve bunu ölçmek bu kaydın dürüst yarısı.**
+  `ComputeDiscounts` sıfır `DiscountTotal` ve kodu `UnmatchedCodes` içinde
+  döndürüyor, `LookupStoreCoupon` `promotion_not_usable` diyor,
+  `ListPromotionRules` 404 veriyor — çünkü okuyan her sorgu promosyonun kendi
+  `deleted_at` sütununu süzüyor. Hiçbir müşteriden yanlış tutar alınmıyor.
+  Yetimi döndüren tek iki okuyucunun ise HTTP rotası yok. Yani düzeltilen şey üç
+  godoc cümlesi: "yetim kalması yapısal olarak imkânsızdır" diyorlardı ve bu
+  ölçülebilir biçimde yanlıştı — D6'nın tax'a karşı kaydettiği hatanın aynısı.
+  Kodun doğru hâle getirilmesi seçildi çünkü modülün zaten sahip olduğu
+  makineyle otuz satır tuttu; pahalı olsaydı doğru cevap cümleleri düzeltip
+  durmaktı.
+
+  Düzeltme `LockPromotionShared` (`FOR SHARE`) ve `requireLivePromotion`:
+  deponun kendi işleminin ilk adımı. Paylaşımlı, çünkü aynı promosyona kural
+  ekleyen iki yönetici birbirini beklememeli; yumuşak silme ise `FOR SHARE`'in
+  ÇAKIŞTIĞI bir UPDATE kilidi alıyor — ve bu çakışma PostgreSQL'in kilit tablosu
+  üzerine akıl yürütülerek değil, ölçülerek doğrulandı. İşlem depoda kaldı:
+  metot başına tek yazma var, dolayısıyla tax'tan farklı olarak servise bakan
+  hiçbir yüzey değişmedi.
+
+  Üç şey de kanıtlanırken bulundu. İlk düzenek atıldı: rakip olarak
+  `SELECT ... FOR UPDATE` kullanıyordu, o da her satır kilidiyle çakışır, yani
+  YANLIŞ kilit alınmış olsa bile test yeşil kalırdı. İki sahte depo hatanın
+  kendisini modelliyordu — var olmayan bir promosyona kural kabul ediyorlardı,
+  ki hiçbir birim testinin bunu yakalayamamış olmasının sebebi budur — ve
+  sözleşme öğretilince `TestHataSiniflandirmasiStatusKodunaCevrilir` düştü:
+  test 404 bekliyordu, sahte 200 döndürüyordu. Üçüncüsü,
+  `DeletePromotion`'ın "çocukları okunamaz hâle gelir" iddiası yarıştan bağımsız
+  olarak yanlıştı: `GetApplicationMethod` silinmiş bir promosyonun yöntemini
+  döndürüyor, çünkü o sorgu yalnızca yöntemin KENDİ `deleted_at` sütununu
+  süzüyor.
+
+  **`pricing`: yoktu, ve bu bir omuz silkme değil kanıtlanmış bir cevap.** Yazan
+  her servis metodu tam olarak BİR depo çağrısı yapıyor; çok çağrılı üç metot —
+  `ListPrices`, `ListStorePrices`, `ListPriceRules` — salt okunur ve fazladan
+  okumaları boş liste yerine 404 dönebilmek için var. Depo zaten bitmiş şekle
+  sahipti: `ReplacePrices` işlemine `GetPriceSetForUpdate` ile başlıyor. Hiçbir
+  davranış değişmedi. Yine de bir godoc yanlıştı: silinmiş bir fiyatın altına
+  kural YAZILABİLİYOR, FK susuyor. Kilit eklenmedi, çünkü servis orada tek çağrı
+  yapıyor — korunacak bayat bir karar yok, ve olmayan bir yarış için kilit
+  makinesi kurmak yanlış olurdu. Cümle düzeltildi;
+  `TestSilinmisFiyataKuralYazilabilirAmaUlasilamaz` iki yarımı birden çiviliyor:
+  FK gerçekten susuyor VE ortaya çıkan satıra ulaşılamıyor.
+
+  **`customer`: şekil var, kusur yok — ve farkı ölçüm söyledi.** `AddToGroup`
+  iki varlık denetimini kilitsiz yapıyor, yani yarış GERÇEK: READ COMMITTED
+  altında kilitsiz bir işlem tek başına hiçbir şeyi korumaz, her deyim taze bir
+  anlık görüntü alır. Sonucu ise sıfır: silinmiş bir grubun üyelik satırları
+  olağan silme yolunda ZATEN bırakılıyor, silinmiş bir müşterininki de öyle —
+  dolayısıyla yarışın ürettiği satır, modülün normal işleyişte ürettiğinden
+  ayırt edilemez. Kilit eklenmedi; godoc artık eklenmesi gerekseydi hangisinin
+  olacağını (`GetCustomerForUpdate`, çünkü bu modülde müşteri satırı her zaman
+  ilk kilitlenir) yazıyor, ki bir sonraki okuyucu aynı ölçümü baştan yapmasın.
+
 - **Sütun denetiminin üç kör noktasından İKİSİ kapandı, DÖRDÜNCÜSÜ kapatırken
   bulundu — ve düzeltme ilk koşumunda dokuz canlı bulgu çıkardı** (D16, D18).
 
@@ -462,6 +581,56 @@ Sabitlenme `1.0.0` ile olur.
   tahmin edilmeden bırakıldı.
 
 ### Eklendi
+
+- **Bir eklenti artık zamanlanmış iş kaydedebiliyor — ve uzatma noktası İLK
+  TÜKETİCİSİYLE birlikte geldi** (B13).
+
+  `Host.RegisterJob` dört alanlı bir `plugin.Job` alıyor: ad, aralık, tek koşum
+  sınırı, ve işin kendisi. Rotalar gibi Setup sırasında TOPLANIYOR, kompozisyon
+  kökünün `addPluginJobs` fonksiyonu tarafından da iş defteri var olduğu anda
+  boşaltılıyor. ADR 0019 bu yüzeyi reddetmemiş, KOŞULA bağlamıştı — "ilk iş
+  getiren eklentiyle gelir" — ve o gün bugün.
+
+  **Zamanlayıcı paketinin tamamını yayımlamak REDDEDİLDİ, ve reddin gerekçesi
+  yazılı:** bir eklentinin ihtiyacı DÖRT DEĞER, oysa paketi yayımlamak
+  koşucuyu, depo sözleşmesini, danışma kilidi sınıfını ve anahtar
+  algoritmasını uyumluluk sözüne dondururdu — bir form dağıtmak için makinenin
+  tamamını yayımlamak.
+  Kopyanın bedeli sürüklenmedir ve bu bedel umutla değil testle ödeniyor:
+  `TestEveryJobDefinitionFieldReachesAPluginJob` zamanlayıcının kendi tanımı
+  üzerinde yansıma yapıyor ve o tanım, yayımlanmış struct'ın taşımadığı bir alan
+  kazandığı gün düşüyor.
+
+  **Hiçbir şey iki kez doğrulanmıyor, ve hiçbir şey ATLANMIYOR.** Eklentinin
+  tanımı çekirdeğin kendi üç işiyle aynı `Registry.Add` çağrısından geçiyor:
+  adsız bir iş, aralığından uzun bir `MaxRun`, gövdesi olmayan bir iş ya da
+  alınmış bir ad AÇILIŞI reddettiriyor. Sessizce düşürmek buradaki en kötü
+  sonuç olurdu: `gobit jobs` listesi eksiksiz görünürdü ve operatör o yokluğu
+  "o geçişte yapacak bir şey yoktu" diye okurdu. Eklentiler defterin SONUNA
+  ekleniyor, çünkü ad çakışmasında ikinci taraf düşer ve bir eklentinin iş adını
+  değiştirmek, geçmişi zaten olan bir çekirdek işinin adını değiştirmekten çok
+  daha kolaydır.
+
+  **İlk tüketici aynı değişiklikte:** `paymentpaytr` artık saatlik bir
+  `pendingWatch` koşuyor. Taşıdığı rapor bugüne dek yalnızca BİR kez
+  yapılıyordu — açılışta, `Register` içinden — oysa anlattığı sınıf (PayTR'nin
+  hiç geri dönmediği, karşılığında sipariş olmayabilecek para) açılışta gelmez,
+  bir haftadır ayakta olan bir süreçte BİRİKİR. İş yazmıyor, denemiyor, iptal
+  etmiyor: okuyor ve bildiriyor; ADR 0017'nin çizgisi orada duruyor.
+
+  Aynı yerde iki küçük şey daha düzeldi. Sınırın dolması artık DOLDU olarak
+  bildiriliyor: yüz satırlık başlangıç raporu sınıra vardığını söylemiyordu,
+  yani dört yüz ödemelik bir olay "yüz" diye anlatılırdı — sessizce "en az bu
+  kadar" anlamına gelen bir sayı, hiç sayı olmamasından kötüdür. Ve raporun
+  işaret ettiği adres yanlıştı: uyarı satırı bu eklentinin hiç sunmadığı bir
+  yolu gösteriyordu, artık rota ile uyarının tek kaynağı olan `PendingPath`
+  sabitini gösteriyor.
+
+  Yüzeyin gerçekten dışarıdan kullanılabilir olduğunun kanıtı `examples/plugin`:
+  kendi go.mod'u olan, `internal/` ağacına ERİŞEMEYEN ayrı bir modül, ve artık
+  o da bir iş bildiriyor. Derleniyor olması kanıtın kendisi — depo içindeki bir
+  eklentinin aynı şeyi yapması hiçbir şey kanıtlamazdı, çünkü o zaten
+  zamanlayıcıya doğrudan uzanabilirdi.
 
 - **Ölü mektupların artık bir OPERATÖR YÜZÜ var: `gobit deadletters`** (B12).
 

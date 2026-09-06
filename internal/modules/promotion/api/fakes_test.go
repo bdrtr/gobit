@@ -220,11 +220,29 @@ func (m *memRepo) ListCandidates(_ context.Context, codes []string) ([]models.Pr
 	return out, nil
 }
 
+// canliPromosyon promosyonun altına satır yazan taklit metotların ortak
+// denetimidir.
+//
+// Taklit bunu taşımak ZORUNDADIR: gerçek depo yazmayı promosyon satırı
+// PAYLAŞIMLI kilit altındayken ve aynı işlemde yapar (bkz.
+// repository.CreatePromotionRule). Denetimsiz bir taklit, silinmiş ya da hiç
+// var olmayan bir promosyona yöntem yazılmasını KABUL eder ve API katmanının
+// 404 döndüğünü sanan test yeşil kalırdı.
+func (m *memRepo) canliPromosyon(id string) error {
+	if _, ok := m.promotions[id]; !ok {
+		return notFound("promosyon", id)
+	}
+	return nil
+}
+
 func (m *memRepo) SetApplicationMethod(
 	_ context.Context,
 	method models.ApplicationMethod,
 	now time.Time,
 ) (models.ApplicationMethod, error) {
+	if err := m.canliPromosyon(method.PromotionID); err != nil {
+		return models.ApplicationMethod{}, err
+	}
 	method.CreatedAt, method.UpdatedAt = now, now
 	m.methods[method.PromotionID] = method
 	return method, nil
@@ -251,6 +269,9 @@ func (m *memRepo) CreatePromotionRule(
 	rule models.PromotionRule,
 	now time.Time,
 ) (models.PromotionRule, error) {
+	if err := m.canliPromosyon(rule.PromotionID); err != nil {
+		return models.PromotionRule{}, err
+	}
 	rule.CreatedAt, rule.UpdatedAt = now, now
 	m.rules[rule.PromotionID] = append(m.rules[rule.PromotionID], rule)
 	return rule, nil

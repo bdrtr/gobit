@@ -392,6 +392,47 @@ func (q *Queries) LockPromotion(ctx context.Context, id string) (Promotion, erro
 	return i, err
 }
 
+const lockPromotionShared = `-- name: LockPromotionShared :one
+SELECT id, code, is_automatic, type, campaign_id, status, usage_limit, usage_count, metadata, created_at, updated_at, deleted_at FROM promotion
+WHERE id = $1 AND deleted_at IS NULL
+FOR SHARE
+`
+
+// LockPromotionShared promosyonu PAYLAŞIMLI kilitle okur; ALTINA satır yazan
+// yolların ilk adımıdır (kural ekleme, uygulama yöntemi yazma).
+//
+// Kilit ŞARTTIR ve foreign key onun yerini TUTMAZ: promotion_rule ve
+// promotion_application_method promotion(id)'ye referans verir, ama silme
+// YUMUŞAKTIR ve satırı yerinde bırakır. FK denetimi satırın VARLIĞINA bakar,
+// deleted_at'ine değil; silinmiş bir promosyonun altına yazılan satırı bu
+// yüzden hiçbir kısıt durduramaz. Ölçüldü (2026-09-06): varlık denetimi ile
+// yazma arasına giren bir yumuşak silme, yazmayı beklet(me)den geçiriyordu.
+//
+// FOR UPDATE değil FOR SHARE alınır: iki yönetici aynı promosyona aynı anda
+// kural ekleyebilmelidir ve iki FOR SHARE çakışmaz. Silme ise düz bir UPDATE'tir
+// ve satıra FOR NO KEY UPDATE kilidi koyar — FOR SHARE onunla ÇAKIŞIR, yani
+// yazma silmeyi bekler ve kilidi aldıktan sonra WHERE koşulunu YENİDEN
+// değerlendirip "kayıt yok" görür.
+func (q *Queries) LockPromotionShared(ctx context.Context, id string) (Promotion, error) {
+	row := q.db.QueryRow(ctx, lockPromotionShared, id)
+	var i Promotion
+	err := row.Scan(
+		&i.ID,
+		&i.Code,
+		&i.IsAutomatic,
+		&i.Type,
+		&i.CampaignID,
+		&i.Status,
+		&i.UsageLimit,
+		&i.UsageCount,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const softDeletePromotion = `-- name: SoftDeletePromotion :one
 UPDATE promotion
 SET deleted_at = $2, updated_at = $2

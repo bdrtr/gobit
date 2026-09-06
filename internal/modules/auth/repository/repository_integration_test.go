@@ -178,7 +178,7 @@ func TestThereIsOneIdentityPerUserPerProvider(t *testing.T) {
 	user := newUser(ctx, t, repo)
 	now := time.Now().UTC()
 
-	_, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, user.Email, "hash-1", now)
+	_, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, "hash-1", now)
 	require.NoError(t, err)
 
 	_, err = testPool.Pool().Exec(ctx,
@@ -205,10 +205,10 @@ func TestSettingPasswordDoesNotOpenASecondIdentity(t *testing.T) {
 	user := newUser(ctx, t, repo)
 	now := time.Now().UTC()
 
-	first, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, user.Email, "hash-1", now)
+	first, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, "hash-1", now)
 	require.NoError(t, err)
 
-	second, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, user.Email, "hash-2", now.Add(time.Second))
+	second, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, "hash-2", now.Add(time.Second))
 	require.NoError(t, err)
 
 	assert.Equal(t, first.ID, second.ID, "the second call must not open a new identity")
@@ -237,7 +237,7 @@ func TestLogoutAdvancesTheAnchorAndLeavesCredentialsUntouched(t *testing.T) {
 	user := newUser(ctx, t, repo)
 	now := time.Now().UTC()
 
-	before, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, user.Email, "hash-1", now)
+	before, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, "hash-1", now)
 	require.NoError(t, err)
 
 	// The lock is set up BEFORE the logout; whether it is preserved can only be
@@ -288,7 +288,7 @@ func TestLogoutAdvancesTheAnchorOfEveryProvider(t *testing.T) {
 	user := newUser(ctx, t, repo)
 	now := time.Now().UTC()
 
-	emailpass, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, user.Email, "hash-1", now)
+	emailpass, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, "hash-1", now)
 	require.NoError(t, err)
 
 	// The provider name is a raw string: the models package holds only the
@@ -339,7 +339,7 @@ func TestSessionAnchorIsReadFromTheNewestProvider(t *testing.T) {
 	user := newUser(ctx, t, repo)
 	now := time.Now().UTC()
 
-	_, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, user.Email, "hash-1", now)
+	_, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, "hash-1", now)
 	require.NoError(t, err)
 
 	ahead := now.Add(time.Hour)

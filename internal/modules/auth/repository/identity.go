@@ -50,9 +50,49 @@ func (r *Repo) GetIdentity(ctx context.Context, userID, provider string) (models
 // (see the head of queries/identities.sql and service/session.go,
 // sessionAnchor). So this call also closes the user's open sessions; to close
 // the sessions without touching the password there is [Repo.RevokeSessions].
+//
+// # The user is read HERE, under a lock, and the caller does not read it
+//
+// The user row is read with queries/users.sql, LockLiveUser as the FIRST
+// statement of the transaction, and the identity's provider_identity comes from
+// THAT read. Both facts close the same hole and both were measured
+// (2026-09-06) rather than reasoned about.
+//
+// The service used to read the user itself (service.Service.SetPassword called
+// GetUser) and hand the address down as a parameter. That put a check and a
+// write in two separate autocommit statements, and a concurrent
+// [Repo.DeleteUser] landing in the gap produced two distinct wrong states:
+//
+//   - The user was deleted between the read and the write. The delete
+//     soft-deletes the identities too, so the branch below found none and
+//     INSERTED one — a LIVE identity under a deleted user. The foreign key
+//     cannot object: a soft delete is an UPDATE and auth_user's row stays
+//     physically in place. The row cannot be logged in with (both
+//     service.Service.Login and token verification read the live user first,
+//     and that was measured too), but it is not harmless — it holds the
+//     address in auth_identity_provider_uniq, so CREATING A NEW ADMINISTRATOR AT
+//     THAT ADDRESS FAILS WITH A CONFLICT FOREVER while the user list shows the
+//     address as free. There is no repair path either: DeleteUser on an already
+//     deleted user returns NotFound.
+//   - The e-mail changed between the read and the write ([Repo.UpdateUser]).
+//     The INSERT then wrote the OLD address into provider_identity, leaving
+//     auth_user.email and auth_identity.provider_identity pointing at different
+//     addresses — the exact divergence queries/users.sql,
+//     SyncIdentityProviderIdentity exists to prevent — and burning the old
+//     address in the same index.
+//
+// The rejected alternative was tax's shape: an exported WithTx carrying the
+// transaction in a context key, plus a lock method the SERVICE calls between
+// its two repository calls. It is the right answer when the service has to
+// DECIDE something from the locked row. Here it does not — the only things it
+// needed from the user were "is it alive" and "what is its address", and both
+// belong to the write. Taking that road would also have had to put WithTx and a
+// lock method on the service's own Repository interface, which is exactly
+// the price service/apikey.go's atomicAPIKeyWriter godoc refuses to pay: every
+// fake repository in the module would then have to imitate transactions.
 func (r *Repo) SetPasswordHash(
 	ctx context.Context,
-	userID, provider, providerIdentity, hash string,
+	userID, provider, hash string,
 	now time.Time,
 ) (models.AuthIdentity, error) {
 	if err := r.ready(); err != nil {
@@ -61,6 +101,11 @@ func (r *Repo) SetPasswordHash(
 
 	var identity models.AuthIdentity
 	txErr := r.inTx(ctx, func(q *authdb.Queries) error {
+		user, err := q.LockLiveUser(ctx, userID)
+		if err != nil {
+			return notFoundOr(err, CodeUserNotFound, "user not found: %s", userID)
+		}
+
 		existing, err := q.GetIdentityOfUser(ctx, authdb.GetIdentityOfUserParams{
 			UserID:   userID,
 			Provider: provider,
@@ -84,17 +129,20 @@ func (r *Repo) SetPasswordHash(
 			if metaErr != nil {
 				return metaErr
 			}
+			// The login address comes from the LOCKED row, not from a parameter:
+			// the value and the liveness check then have exactly one source and
+			// cannot disagree about the moment they describe.
 			row, insErr := q.InsertIdentity(ctx, authdb.InsertIdentityParams{
 				ID:               models.NewAuthIdentityID(now),
 				UserID:           userID,
 				Provider:         provider,
-				ProviderIdentity: providerIdentity,
+				ProviderIdentity: user.Email,
 				PasswordHash:     hash,
 				Metadata:         meta,
 				CreatedAt:        fromTime(now),
 			})
 			if insErr != nil {
-				return classifyUserWrite(insErr, providerIdentity, "could not create identity record")
+				return classifyUserWrite(insErr, user.Email, "could not create identity record")
 			}
 			identity, insErr = toIdentity(row)
 			return insErr

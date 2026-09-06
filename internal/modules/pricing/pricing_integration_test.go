@@ -980,3 +980,56 @@ func TestCalculateAmountsJSONMatchesPerSetOnRealData(t *testing.T) {
 	assert.Greater(t, perSetQueries, int64(2*len(items)-2),
 		"kap başına yol kalem başına en az iki sorgu açar; ölçülen: %d", perSetQueries)
 }
+
+// TestSilinmisFiyataKuralYazilabilirAmaUlasilamaz foreign key'in yumuşak silmeyi
+// YAKALAMADIĞINI ve bunun sonucunun ne olduğunu birlikte ölçer.
+//
+// CreatePriceRule bir yazma yolu olmasına rağmen TEK depo çağrısı yapar: kural
+// hangi fiyata bağlanacaksa onu çağıran verir, servis öncesinde hiçbir şey
+// okumaz. Yani "oku → karar ver → yaz" yarışı burada YOKTUR ve tax'taki kusurun
+// biçimi bu modülde hiçbir metotta bulunmaz.
+//
+// Yine de yazılan kural, silinmiş bir fiyatın altına inebilir: price_rule
+// price(id)'ye referans verir ama silme YUMUŞAKTIR ve satırı yerinde bırakır.
+// Test bunu kanıtlar ve HEMEN ARDINDAN sonucu ölçer: fiyatın kendisi zaten
+// silinmiş olduğu için aday sorgusuna girmez, dolayısıyla kural hiçbir hesabı
+// değiştiremez. Ölçülen sonuç ULAŞILAMAZ bir satırdır — müşterinin ödediği
+// tutar değişmez.
+//
+// Test bir kusuru değil, repository.CreatePriceRule godoc'undaki cümleyi tutar:
+// o cümle bir süre "kuralın yetim kalması yapısal olarak imkânsızdır" diyordu
+// ve ölçüm bunun yanlış olduğunu gösterdi (2026-09-06).
+func TestSilinmisFiyataKuralYazilabilirAmaUlasilamaz(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+
+	set, err := svc.CreatePriceSet(ctx, []service.PriceInput{
+		{CurrencyCode: "TRY", Amount: 10000},
+	})
+	require.NoError(t, err)
+
+	prices, err := svc.ListPrices(ctx, set.ID)
+	require.NoError(t, err)
+	require.Len(t, prices, 1)
+	priceID := prices[0].ID
+
+	// Kap silinince fiyatları da yumuşak silinir; satırlar yerinde kalır.
+	require.NoError(t, svc.DeletePriceSet(ctx, set.ID))
+
+	_, err = svc.CreatePriceRule(ctx, priceID, service.RuleInput{
+		Attribute: "region_id",
+		Operator:  models.OpEq,
+		Values:    []string{"reg_1"},
+	})
+	require.NoError(t, err,
+		"foreign key yumuşak silmeyi yakalamaz: silinmiş fiyatın altına kural yazılabilir")
+
+	// SONUÇ: kural yazıldı ama hiçbir hesap yolu ona ulaşamaz, çünkü fiyatın
+	// kendisi aday sorgusundan elenir.
+	_, err = svc.CalculatePrice(ctx, set.ID, service.CalculateParams{
+		CurrencyCode: "TRY",
+		Attributes:   map[string]string{"region_id": "reg_1"},
+	})
+	require.Error(t, err, "silinmiş kabın fiyatı hesaba girmemeli")
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
+}

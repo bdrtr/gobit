@@ -157,8 +157,18 @@ func (r *Repo) UpdatePromotion(ctx context.Context, p models.Promotion, now time
 
 // DeletePromotion promosyonu soft delete ile siler; yoksa errors.NotFound.
 //
-// Uygulama yöntemi ve kurallar silinmez ama okunmaz hâle gelir: hepsi
-// promosyon üzerinden okunur ve promosyon canlı değildir.
+// Uygulama yöntemi ve kurallar SİLİNMEZ ve hesaba da GİRMEZ: hesabın aday
+// sorgusu (ListApplicablePromotions) promosyonun deleted_at'ine bakar, kupon
+// yolu (GetPromotionByCode) da öyle. Silinmiş bir promosyonun yöntemi ya da
+// kuralı hiçbir sepet hesabına giremez (ölçüldü, 2026-09-06).
+//
+// "Hepsi promosyon üzerinden okunur" demek YANLIŞ olurdu ve bir süre öyle
+// yazıyordu: [Repo.GetApplicationMethod] ve [Repo.GetPromotionRule] yalnızca
+// KENDİ satırlarının deleted_at'ine bakar, promosyona JOIN yapmaz. İkisi de
+// silinmiş bir promosyonun satırını döndürür. Bugün bunun bir sonucu yoktur —
+// ikisinin de HTTP yolu yoktur ve GetApplicationMethod'un tek çağıranı
+// (service.storeCandidate) promosyonu zaten önce koddan çözer ve silinmişse
+// oraya hiç varmaz — ama sonuçsuz olması, olmadığı anlamına gelmez.
 func (r *Repo) DeletePromotion(ctx context.Context, id string, now time.Time) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -258,6 +268,26 @@ func (r *Repo) ListCandidates(ctx context.Context, codes []string) ([]models.Pro
 		out = append(out, candidate)
 	}
 	return out, nil
+}
+
+// requireLivePromotion promosyonun CANLI olduğunu PAYLAŞIMLI kilit altında
+// doğrular; yoksa (ya da silinmişse) errors.NotFound döner.
+//
+// Promosyonun ALTINA satır yazan her yol bunu çağırmalıdır ve çağrı yazmayla
+// AYNI işlemde olmalıdır: kilit işlem bitince serbest kalır, yani işlemsiz bir
+// kilit hiçbir şey korumaz.
+//
+// Reddedilen alternatif, kontrolü SERVİSTE yapmaktı — ve bir süre öyleydi.
+// O biçimde varlık denetimi ile yazma iki AYRI autocommit deyimidir; araya
+// giren bir yumuşak silme okumayı bayatlatır ve yazma yine de iner. Foreign key
+// bunu yakalayamaz, çünkü yumuşak silme satırı yerinde bırakır ve FK satırın
+// deleted_at'ine değil VARLIĞINA bakar (ölçüldü, 2026-09-06; bkz.
+// promotion_integration_test.go'daki TestKuralEklemeSilinenPromosyonaYazmaz).
+func requireLivePromotion(ctx context.Context, q *promotiondb.Queries, promotionID string) error {
+	if _, err := q.LockPromotionShared(ctx, promotionID); err != nil {
+		return notFoundOr(err, CodePromotionNotFound, "promosyon bulunamadı: %s", promotionID)
+	}
+	return nil
 }
 
 // toPromotion üretilen satırı domain modeline çevirir.

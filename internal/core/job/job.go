@@ -6,8 +6,9 @@
 // for a scheduler to do it still does not need one: an expiring campaign is
 // already refused at READ time, so a job that flipped its status would change
 // nothing observable. A capability with no consumer is this repository's named
-// second error class (ADR 0009), so this package ships with exactly ONE job,
-// and that job was pre-authorized rather than invented.
+// second error class (ADR 0009), so every job the binary runs was
+// pre-authorized rather than invented: it shipped with ONE, and the two that
+// followed each closed a hole somebody had already written down.
 //
 // ADR 0016 built the operator's read surface for half-finished sagas and left
 // one half of it explicitly unclaimed: "It is a snapshot, not an alert. Nobody
@@ -16,7 +17,11 @@
 // running compensations — side effects — unwatched. Watching and reporting is
 // what 0016 left open.
 //
-// So: nothing here ever acts. See internal/jobs/sagawatch.
+// So: no job here ever undoes anything. That is narrower than "no job writes",
+// and the narrower line is the true one — internal/jobs/outboxrelay publishes
+// and marks rows, because sending a message a committed transaction already
+// promised to send is not a compensation. The two watchers
+// (internal/jobs/sagawatch, internal/jobs/paymentrecon) only read.
 //
 // # Election and liveness are two different questions
 //
@@ -160,10 +165,18 @@ func LockKey(name string) int64 {
 
 // Registry holds the jobs an application declared.
 //
-// Jobs are registered at the COMPOSITION ROOT, the same place modules are.
-// There is deliberately no Host.RegisterJob for plugins yet: an extension point
-// with nothing to extend it is the error class this package's own
-// documentation opens with, and it can be added the day a plugin brings a job.
+// Jobs are registered at the COMPOSITION ROOT, the same place modules are, and
+// that is still true of the ones a plugin brings: ADR 0019 deferred a
+// plugin-facing registration with a condition rather than a refusal — "it
+// arrives with the first plugin that brings a job" — and the plugin now
+// DECLARES while the composition root ADMITS. Every definition in here went
+// through internal/app's registerJobs, and every one of them was validated by
+// [Registry.Add] before it could reach a runner.
+//
+// A plugin cannot name [Definition]: this package is internal, so a plugin
+// written outside the module could not declare one. It fills in
+// [github.com/bdrtr/gobit/core/plugin.Job] instead, and the composition root is
+// the single place that translates.
 type Registry struct {
 	byName map[string]Definition
 	order  []string
