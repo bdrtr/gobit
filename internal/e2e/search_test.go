@@ -67,7 +67,7 @@ import (
 // cannot bring down the product write path.
 //
 // The same is NOT TRUE for the payment plugin, and that is why that plugin is
-// not installed on the ground: the scenario in sertlestirme_test.go asserts as a
+// not installed on the ground: the scenario in hardening_test.go asserts as a
 // precondition that the provider is absent BEFORE registration (see
 // [TestAPluginAddsAProviderWithoutTouchingTheCore]); a stripe plugin installed on
 // the ground would break that test. The decision is made per plugin.
@@ -209,18 +209,18 @@ func callSearch(t *testing.T, key string, query url.Values) *httptest.ResponseRe
 // searchEnvelope decodes the search response and verifies that the endpoint
 // returned 200.
 //
-// The response is decoded with [vitrinZarfi], that is with the SAME type as the
+// The response is decoded with [storefrontEnvelope], that is with the SAME type as the
 // store product list. This is not a convenience but a deliberate reading: the
 // plugin takes the records to be shown from the catalog's storefront surface and
 // does not reshape them, so the two endpoints' bodies have the same shape.
-func searchEnvelope(t *testing.T, key string, query url.Values) vitrinZarfi {
+func searchEnvelope(t *testing.T, key string, query url.Values) storefrontEnvelope {
 	t.Helper()
 
 	recorder := callSearch(t, key, query)
 	require.Equal(t, http.StatusOK, recorder.Code,
 		"the search endpoint must return 200; body: %s", recorder.Body.String())
 
-	var envelope vitrinZarfi
+	var envelope storefrontEnvelope
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope),
 		"could not decode the search response; body: %s", recorder.Body.String())
 
@@ -228,7 +228,7 @@ func searchEnvelope(t *testing.T, key string, query url.Values) vitrinZarfi {
 }
 
 // searchResults searches for a single word.
-func searchResults(t *testing.T, key, word string) vitrinZarfi {
+func searchResults(t *testing.T, key, word string) storefrontEnvelope {
 	t.Helper()
 
 	return searchEnvelope(t, key, url.Values{"q": {word}})

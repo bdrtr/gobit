@@ -47,7 +47,7 @@ import (
 //
 // # Symmetry with the read surface
 //
-// The channel catalog tests (kanal_katalogu_test.go) set up the same ground for
+// The channel catalog tests (channel_catalog_test.go) set up the same ground for
 // the READ surface. This file is its mirror image and shares its fixture: the
 // two surfaces giving the same answer on the SAME setup is what says the scope
 // is a single rule.
@@ -164,13 +164,13 @@ func setUpChannelCartVariant(ctx context.Context, name, channelID string) (strin
 	return variant.ID, nil
 }
 
-// anahtarliVitrinIstegi makes a store request with the GIVEN publishable key.
+// keyedStorefrontRequest makes a store request with the GIVEN publishable key.
 //
-// [vitrinIstegi] is this same helper pinned to the shared key; the two were
+// [storefrontRequest] is this same helper pinned to the shared key; the two were
 // split apart for the two-key scenarios. Producing a third copy would have been
 // the easiest way to build a request that does not go through the protection
 // stack.
-func anahtarliVitrinIstegi(t *testing.T, key, method, path, body string) *httptest.ResponseRecorder {
+func keyedStorefrontRequest(t *testing.T, key, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	request := httptest.NewRequest(method, path, bytes.NewReader([]byte(body)))
@@ -187,7 +187,7 @@ func anahtarliVitrinIstegi(t *testing.T, key, method, path, body string) *httpte
 func openCartWithKey(t *testing.T, key string) string {
 	t.Helper()
 
-	recorder := anahtarliVitrinIstegi(t, key, http.MethodPost, "/store/v1/carts",
+	recorder := keyedStorefrontRequest(t, key, http.MethodPost, "/store/v1/carts",
 		fmt.Sprintf(`{"country_code":%q}`, taxedCountry))
 	require.Equal(t, http.StatusCreated, recorder.Code,
 		"the cart must open; body: %s", recorder.Body.String())
@@ -202,7 +202,7 @@ func openCartWithKey(t *testing.T, key string) string {
 func tryAddLineItem(t *testing.T, key, cartID, variantID string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	return anahtarliVitrinIstegi(t, key, http.MethodPost,
+	return keyedStorefrontRequest(t, key, http.MethodPost,
 		"/store/v1/carts/"+cartID+"/line-items",
 		fmt.Sprintf(`{"variant_id":%q,"quantity":1}`, variantID))
 }
@@ -215,7 +215,7 @@ func tryAddLineItem(t *testing.T, key, cartID, variantID string) *httptest.Respo
 func cartLineCount(t *testing.T, key, cartID string) int {
 	t.Helper()
 
-	recorder := anahtarliVitrinIstegi(t, key, http.MethodGet, "/store/v1/carts/"+cartID, "")
+	recorder := keyedStorefrontRequest(t, key, http.MethodGet, "/store/v1/carts/"+cartID, "")
 	require.Equal(t, http.StatusOK, recorder.Code, "the cart must be readable; body: %s", recorder.Body.String())
 
 	var envelope struct {

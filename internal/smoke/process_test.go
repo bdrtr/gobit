@@ -111,7 +111,7 @@ type proc struct {
 // # Why not a fixed port
 //
 // Scenarios open servers on the same machine, sometimes at the same time (see
-// yaris_test.go). A fixed port would drop the second process with "address
+// race_test.go). A fixed port would drop the second process with "address
 // already in use" and blame the fault on the test itself.
 //
 // # Why this way

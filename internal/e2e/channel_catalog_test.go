@@ -308,14 +308,14 @@ func decodeChannelList(recorder *httptest.ResponseRecorder) ([]string, error) {
 	return envelope.Data.SalesChannelIDs, nil
 }
 
-// vitrinZarfi is the test-side counterpart of the store list response.
+// storefrontEnvelope is the test-side counterpart of the store list response.
 //
 // The envelope's "offset" and "limit" fields are DELIBERATELY not decoded: this
 // test's claim is which products come back and how many are counted, not
 // whether the pagination parameters are echoed. Of the product, only the
 // identity and the handle are read; the correctness of its fields is other
 // tests' business.
-type vitrinZarfi struct {
+type storefrontEnvelope struct {
 	Data []struct {
 		ID     string `json:"id"`
 		Handle string `json:"handle"`
@@ -324,7 +324,7 @@ type vitrinZarfi struct {
 }
 
 // kimlikler returns the product identities in the envelope.
-func (e vitrinZarfi) kimlikler() []string {
+func (e storefrontEnvelope) kimlikler() []string {
 	out := make([]string, 0, len(e.Data))
 	for _, product := range e.Data {
 		out = append(out, product.ID)
@@ -333,15 +333,15 @@ func (e vitrinZarfi) kimlikler() []string {
 	return out
 }
 
-// vitrinKatalogu calls the store list with the given publishable key.
-func vitrinKatalogu(t *testing.T, key string, query url.Values) vitrinZarfi {
+// storefrontCatalog calls the store list with the given publishable key.
+func storefrontCatalog(t *testing.T, key string, query url.Values) storefrontEnvelope {
 	t.Helper()
 
 	recorder := magazaIstegi(t, "/store/v1/products?"+query.Encode(), key)
 	require.Equal(t, http.StatusOK, recorder.Code,
 		"the store list must return 200; body: %s", recorder.Body.String())
 
-	var envelope vitrinZarfi
+	var envelope storefrontEnvelope
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope),
 		"the store list could not be decoded; body: %s", recorder.Body.String())
 
@@ -364,7 +364,7 @@ func TestTheStorefrontCatalogIsFilteredByTheRequestsSalesChannel(t *testing.T) {
 	ground := channelCatalogFixture(t)
 	query := koleksiyonSorgusu(ground.koleksiyonID)
 
-	first := vitrinKatalogu(t, publishableKey, query).kimlikler()
+	first := storefrontCatalog(t, publishableKey, query).kimlikler()
 	assert.ElementsMatch(t,
 		[]string{ground.firstChannelProduct.id, ground.unassignedProduct.id}, first,
 		"the first storefront must see its own product and the UNASSIGNED product")
@@ -372,7 +372,7 @@ func TestTheStorefrontCatalogIsFilteredByTheRequestsSalesChannel(t *testing.T) {
 		"a product assigned to another channel MUST NOT be visible in this storefront; "+
 			"if it is, the filter is not looking at the request's identity at all")
 
-	second := vitrinKatalogu(t, ground.ikinciAnahtar, query).kimlikler()
+	second := storefrontCatalog(t, ground.ikinciAnahtar, query).kimlikler()
 	assert.ElementsMatch(t,
 		[]string{ground.secondChannelProduct.id, ground.unassignedProduct.id}, second,
 		"the second storefront must see its own product and the UNASSIGNED product")
@@ -399,13 +399,13 @@ func TestTheStorefrontCounterReflectsTheFilteredSet(t *testing.T) {
 	ground := channelCatalogFixture(t)
 	query := koleksiyonSorgusu(ground.koleksiyonID)
 
-	first := vitrinKatalogu(t, publishableKey, query)
+	first := storefrontCatalog(t, publishableKey, query)
 	assert.Equal(t, 2, first.Count,
 		"the counter must count the filtered set; number of body rows: %d", len(first.Data))
 	assert.Len(t, first.Data, first.Count,
 		"in a result that fits on a single page the counter and the row count must not diverge")
 
-	second := vitrinKatalogu(t, ground.ikinciAnahtar, query)
+	second := storefrontCatalog(t, ground.ikinciAnahtar, query)
 	assert.Equal(t, 2, second.Count)
 	assert.Len(t, second.Data, second.Count)
 
@@ -420,7 +420,7 @@ func TestTheStorefrontCounterReflectsTheFilteredSet(t *testing.T) {
 }
 
 // adminCatalog calls the admin product list with the secret key.
-func adminCatalog(t *testing.T, query url.Values) vitrinZarfi {
+func adminCatalog(t *testing.T, query url.Values) storefrontEnvelope {
 	t.Helper()
 
 	recorder := adminRequest(t, http.MethodGet, "/admin/v1/products?"+query.Encode(),
@@ -428,7 +428,7 @@ func adminCatalog(t *testing.T, query url.Values) vitrinZarfi {
 	require.Equal(t, http.StatusOK, recorder.Code,
 		"the admin list must return 200; body: %s", recorder.Body.String())
 
-	var envelope vitrinZarfi
+	var envelope storefrontEnvelope
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope),
 		"the admin list could not be decoded; body: %s", recorder.Body.String())
 
@@ -527,7 +527,7 @@ func TestTheStorefrontDoesNotTakeTheChannelFromTheQueryString(t *testing.T) {
 	query := koleksiyonSorgusu(ground.koleksiyonID)
 	query.Set("sales_channel_id", ground.secondChannelID)
 
-	catalog := vitrinKatalogu(t, publishableKey, query)
+	catalog := storefrontCatalog(t, publishableKey, query)
 
 	assert.NotContains(t, catalog.kimlikler(), ground.secondChannelProduct.id,
 		"the channel identity in the query string MUST BE IGNORED; if it is not, the key's "+
@@ -565,9 +565,9 @@ func TestRemovingTheLastChannelBondShowsTheProductInEveryStorefront(t *testing.T
 	require.NoError(t, bindChannel(product.id, ground.secondChannelID))
 
 	query := koleksiyonSorgusu(collection.ID)
-	require.Empty(t, vitrinKatalogu(t, publishableKey, query).kimlikler(),
+	require.Empty(t, storefrontCatalog(t, publishableKey, query).kimlikler(),
 		"at first the product must be in the second storefront only")
-	require.Equal(t, []string{product.id}, vitrinKatalogu(t, ground.ikinciAnahtar, query).kimlikler())
+	require.Equal(t, []string{product.id}, storefrontCatalog(t, ground.ikinciAnahtar, query).kimlikler())
 
 	recorder, err := adminRequestWithBody(http.MethodDelete,
 		"/admin/v1/products/"+product.id+"/sales-channels/"+ground.secondChannelID, nil)
@@ -579,8 +579,8 @@ func TestRemovingTheLastChannelBondShowsTheProductInEveryStorefront(t *testing.T
 	require.NoError(t, err)
 	require.Empty(t, remaining, "after the last bond is removed the channel list must become empty")
 
-	assert.Equal(t, []string{product.id}, vitrinKatalogu(t, publishableKey, query).kimlikler(),
+	assert.Equal(t, []string{product.id}, storefrontCatalog(t, publishableKey, query).kimlikler(),
 		"a product left with no assignment must be visible in the FIRST storefront too")
-	assert.Equal(t, []string{product.id}, vitrinKatalogu(t, ground.ikinciAnahtar, query).kimlikler(),
+	assert.Equal(t, []string{product.id}, storefrontCatalog(t, ground.ikinciAnahtar, query).kimlikler(),
 		"a product left with no assignment must keep being visible in its own old storefront too")
 }

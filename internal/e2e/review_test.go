@@ -62,7 +62,7 @@ func reviewFixtureProduct(ctx context.Context, t *testing.T, handle string) stri
 func submitReview(t *testing.T, productID string, rating int, body string) string {
 	t.Helper()
 
-	recorder := vitrinIstegi(t, http.MethodPost,
+	recorder := storefrontRequest(t, http.MethodPost,
 		"/store/v1/products/"+productID+"/reviews",
 		fmt.Sprintf(`{"rating":%d,"title":"a title","body":%q,"author_name":"A customer"}`,
 			rating, body))
@@ -79,7 +79,7 @@ func submitReview(t *testing.T, productID string, rating int, body string) strin
 func storefrontReviewIDs(t *testing.T, productID string) []string {
 	t.Helper()
 
-	recorder := vitrinIstegi(t, http.MethodGet,
+	recorder := storefrontRequest(t, http.MethodGet,
 		"/store/v1/products/"+productID+"/reviews", "")
 	require.Equal(t, http.StatusOK, recorder.Code,
 		"the storefront listing must answer; body: %s", recorder.Body.String())
@@ -108,7 +108,7 @@ func storefrontReviewIDs(t *testing.T, productID string) []string {
 func storefrontSummary(t *testing.T, productID string) (count, averageHundredths int64) {
 	t.Helper()
 
-	recorder := vitrinIstegi(t, http.MethodGet,
+	recorder := storefrontRequest(t, http.MethodGet,
 		"/store/v1/products/"+productID+"/review-summary", "")
 	require.Equal(t, http.StatusOK, recorder.Code,
 		"the summary must answer; body: %s", recorder.Body.String())
@@ -213,7 +213,7 @@ func TestTheStorefrontCannotPublishItsOwnReview(t *testing.T) {
 
 	// The body carries a status. An unknown field is refused outright rather
 	// than ignored, so the attempt cannot succeed quietly.
-	recorder := vitrinIstegi(t, http.MethodPost,
+	recorder := storefrontRequest(t, http.MethodPost,
 		"/store/v1/products/"+productID+"/reviews",
 		`{"rating":5,"body":"mine","author_name":"me","status":"approved"}`)
 	// 422 and not 400: the core maps an invalid request to Unprocessable
@@ -231,7 +231,7 @@ func TestTheStorefrontCannotPublishItsOwnReview(t *testing.T) {
 	reviewID := submitReview(t, productID, 5, "still waiting")
 
 	for _, status := range []string{"submitted", "rejected", "approved"} {
-		recorder := vitrinIstegi(t, http.MethodGet,
+		recorder := storefrontRequest(t, http.MethodGet,
 			"/store/v1/products/"+productID+"/reviews?status="+status, "")
 		require.Equal(t, http.StatusOK, recorder.Code,
 			"an unknown query parameter is ignored rather than refused; body: %s",
@@ -253,7 +253,7 @@ func TestTheModerationEndpointsRefuseAStorefrontCaller(t *testing.T) {
 
 	reviewID := submitReview(t, productID, 5, "please publish me")
 
-	recorder := vitrinIstegi(t, http.MethodPost,
+	recorder := storefrontRequest(t, http.MethodPost,
 		"/admin/v1/reviews/"+reviewID+"/status", `{"status":"approved"}`)
 	assert.Equal(t, http.StatusUnauthorized, recorder.Code,
 		"a publishable key must not reach the moderation endpoint; body: %s",

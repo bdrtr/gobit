@@ -145,6 +145,61 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltildi
 
+- **Bir kök eklemek için yapılan temizlik, godoc'ların yirmi beş ölü dosya
+  adına atıf yaptığını ortaya çıkardı — ve o sınıfı hiçbir kapı görmüyordu.**
+
+  Başlangıç dar bir borçtu: `vitrin` bir kök değildi, ve ledger'da olmayan
+  dosyalarda dört Türkçe tanımlayıcı yaşıyordu. Dördü de çevrildi —
+  `vitrinIstegi` → `storefrontRequest`, `anahtarliVitrinIstegi` →
+  `keyedStorefrontRequest`, `vitrinKatalogu` → `storefrontCatalog`,
+  `vitrinZarfi` → `storefrontEnvelope`; 55 kullanım, yedi e2e dosyası. Adlar
+  icat edilmedi: `internal/smoke` paketi kendi `storefrontRequest`'ini zaten
+  taşıyordu, yani seçilen ad deponun kendi konvansiyonu. Sonra `vitrin` kök
+  listesine eklendi (186'dan 187'ye) ve çevrilmiş bir adı geri alan mutasyon
+  tanımlayıcı şeridinde düşüyor.
+
+  **Asıl bulgu bu temizliğin kenarında duruyordu.** `internal/smoke`'un
+  `vitrin` geçen tek yeri bir tanımlayıcı değil, paketin kendi senaryolarını
+  sayan godoc'undaki `vitrin_test.go` adıydı — ve öyle bir dosya YOK. Bakınca
+  aynı godoc'un saydığı sekiz senaryodan YEDİSİNİN adı ölüydü: hepsi bir
+  Türkçe→İngilizce yeniden adlandırma turunda değişmiş, godoc olduğu yerde
+  kalmıştı. Depo geneli tarandı: dokuz dosyada **yirmi beş** ölü ad. Hepsi
+  düzeltildi ve her eşleşme tahminle değil dosyanın KENDİ test adlarıyla
+  doğrulandı — örneğin godoc'un "kanalsız publishable anahtar 201 alır ama
+  vitrinde 401 yer" cümlesi `keys_test.go`'daki
+  `TestPublishableKeyWithoutChannelIsRejectedByStorefront` ile birebir.
+
+  Bu, deponun kendi ADIYLA andığı en inatçı kusur sınıfı — belgenin çürümesi —
+  ve yedi kapının yedisi bu yirmi beş ölü atfın üstünde YEŞİLDİ.
+
+  **Neden görülmüyordu, ve kapı neden dar:** mevcut atıf denetimi KÖKLÜ
+  yollara demirli (`internal/…` ile başlayan), yani
+  `internal/smoke/storefront_test.go`'yu görüyor ama `storefront_test.go`'yu
+  görmüyor. Bir paket kendi dosyalarını sayarken kısa biçimi yazar — yani
+  denetimin görmediği biçim, tam olarak bir paketin kendini anlattığı biçim.
+
+  Geniş hali ölçüldü ve REDDEDİLDİ: her çıplak `*.go` adını çözümlemek 49
+  çözülmeyen yazım buluyor ve neredeyse hiçbiri atıf değil — metot çağrıları
+  (`b.Go`, `x.Go`) ve dil denetiminin kendi tarayıcısına verdiği sahte dosya
+  adları (`planted.go`, `english.go`). `_test.go` ekiyle daraltınca 87 anmada
+  60 benzersiz ad kalıyor ve çözülmeyen TEK bir tane var, o da gerekçesiyle
+  muafiyet listesinde. Muafiyet listesi kendi yanlış pozitiflerini taşımak
+  zorunda kalan bir kapı, kapı sayılmaz.
+
+  Çözümleme depo geneli, dizin içi DEĞİL — ve bu da ölçüldü: 82 çıplak atfın
+  28'i başka bir paketteki test dosyasını anıyor (kompozisyon kökü kendini
+  denetleyen testi anıyor, bir workflow kendini süren uçtan uca testi), yani
+  dizinle sınırlı bir kural fazladan hiçbir şey yakalamadan 28 doğru atfı
+  düşürürdü. Verilen söz bu yüzden mevcut denetimin sözüyle aynı: adın DOĞRU
+  dosyaya gittiği değil, ÇÖZÜLDÜĞÜ.
+
+  Kapı üç mutasyonla kanıtlandı, hepsi sha256 doğrulamalı geri alma ile. Bir
+  TEST dosyasının yorumuna ekilen ölü ad yakalanıyor — bu en önemlisi, çünkü
+  yirmi beş çürüğün hepsi test dosyalarındaydı ve tarayıcının oraya bakmaması
+  kapıyı tam da varlık sebebine kör bırakırdı. Bir ÜRETİM dosyasına ekilen ölü
+  ad da yakalanıyor. Muafiyet silinince kapı `hatayolu_test.go` üzerinde
+  düşüyor, yani muafiyet süs değil taşıyıcı.
+
 - **Yol denetiminin kök listesinde beş dosyalık bir delik vardı, ve deliği
   bulan şey deliğe düşen bir dosya oldu.**
 

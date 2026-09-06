@@ -788,7 +788,7 @@ func TestGraphQLAndRESTReturnTheSameSet(t *testing.T) {
 
 	for name, key := range keys {
 		t.Run(name, func(t *testing.T) {
-			rest := vitrinKatalogu(t, key, query)
+			rest := storefrontCatalog(t, key, query)
 			gql := gqlCatalog(t, key, stage.collectionID, nil)
 
 			assert.ElementsMatch(t, rest.kimlikler(), gql.kimlikler(),

@@ -1211,6 +1211,198 @@ func TestThePathReferencesInCommentsResolve(t *testing.T) {
 			"moved file passes silently.")
 }
 
+// bareTestFileReference captures a TEST FILE named WITHOUT a directory.
+//
+// The leading character class excludes "/" deliberately. The tail of a rooted path
+// such as "internal/e2e/cart_flow_test.go" belongs to [rootedPathReference] and
+// [TestThePathReferencesInCommentsResolve] already audits it; counting it here as
+// well would report one rotten reference twice and leave the two audits disagreeing
+// about how many there are.
+var bareTestFileReference = regexp.MustCompile(
+	`(?:^|[^\w/.-])([a-z][a-z0-9_]*_test\.go)\b`)
+
+// testFileReferenceExemptions are the bare test-file names that deliberately do not
+// resolve. The shape and the price are [pathReferenceExemptions]': the day the file
+// exists the test fails and asks for the line to come off the books.
+var testFileReferenceExemptions = []pathReferenceExemption{
+	{
+		file: "internal/arch/language_test.go",
+		path: "hatayolu_test.go",
+		reason: "The godoc of TestRepoPathsAreEnglishOutsideLedger has to NAME the fault " +
+			"it exists to catch — a file that is English inside and Turkish in its name. " +
+			"The name is an EXAMPLE of the defect, not a claim about the tree; if such a " +
+			"file really existed, the audit that godoc introduces would be failing.",
+	},
+}
+
+// findTestFileExemption is [findPathExemption] for the bare-name list.
+func findTestFileExemption(file, mentioned string) int {
+	return slices.IndexFunc(testFileReferenceExemptions, func(e pathReferenceExemption) bool {
+		return e.file == file && e.path == mentioned
+	})
+}
+
+// testFileNames collects the base name of every _test.go file in the repository.
+//
+// The names are collected WITHOUT their directory on purpose, because that is the
+// question this audit can answer. A bare name carries no location, so the audit
+// promises only that a file by that name EXISTS — the same promise
+// [TestThePathReferencesInCommentsResolve] makes and the same one the scope rule at
+// the head of this file states. That it is the RIGHT file is not claimed.
+//
+// Anything stricter was measured and refused: 28 of the 82 bare references in this
+// repository name a test file in ANOTHER package (the composition root names the
+// audit that checks it, a workflow names the end-to-end test that drives it), so a
+// rule that resolved only inside the referring directory would fail 28 correct
+// references in order to catch nothing extra.
+func testFileNames(t *testing.T) map[string]bool {
+	t.Helper()
+
+	names := map[string]bool{}
+	for _, root := range productionTrees {
+		for _, filePath := range treeFiles(t, root) {
+			base := filepath.Base(filePath)
+			if strings.HasSuffix(base, "_test.go") {
+				names[base] = true
+			}
+		}
+	}
+
+	return names
+}
+
+// TestTheTestFileReferencesInCommentsResolve verifies that every test file named in
+// a comment WITHOUT a directory really exists.
+//
+// # Why this is separate from the rooted audit
+//
+// [TestThePathReferencesInCommentsResolve] is anchored on a top-level directory
+// name, so it sees "internal/smoke/storefront_test.go" and does NOT see
+// "storefront_test.go". The difference is not academic: a godoc that lists the files
+// of its OWN package writes them the short way, which is exactly where a package
+// describes itself and exactly what rots when the package is renamed file by file.
+//
+// This audit was written after that rot was measured rather than imagined. A round
+// of Turkish-to-English file renames left 22 dead names behind in comments across
+// nine files — among them a single godoc listing eight scenarios of which seven no
+// longer existed — and every gate in this repository was green throughout.
+//
+// # Why the pattern stops at _test.go
+//
+// The wider form was measured and refused. Resolving EVERY bare "*.go" name found 49
+// unresolved spellings, and almost all were not references at all: method calls
+// ("b.Go", "x.Go") and the synthetic file names the language audit feeds its own
+// scanner ("planted.go", "english.go"). Narrowing to the _test.go suffix leaves 60
+// names over 87 mentions with exactly ONE that does not resolve, and that one has a
+// justification in [testFileReferenceExemptions]. A gate whose exemption list would
+// have to hold its own false positives does not deserve the name.
+func TestTheTestFileReferencesInCommentsResolve(t *testing.T) {
+	t.Parallel()
+
+	scan := scanDocReferences(t)
+	existing := testFileNames(t)
+	used := make([]bool, len(testFileReferenceExemptions))
+	seen := 0
+
+	for _, file := range scan.files {
+		for _, group := range file.tree.Comments {
+			text := stripLinkBrackets(group.Text())
+			for _, match := range bareTestFileReference.FindAllStringSubmatch(text, -1) {
+				mentioned := match[1]
+				seen++
+				if existing[mentioned] {
+					continue
+				}
+				if i := findTestFileExemption(file.path, mentioned); i >= 0 {
+					used[i] = true
+					continue
+				}
+				t.Errorf("%s:%d: the test file %q named in a comment does not exist.\n"+
+					"The name was looked for among the base names of every _test.go file "+
+					"in the repository. If the file was renamed the reference must be "+
+					"renamed with it; if the name is an EXAMPLE rather than a reference, "+
+					"its justification belongs in testFileReferenceExemptions — an example "+
+					"without a justification cannot be told apart from a rotten reference.",
+					file.path, scan.fset.Position(group.Pos()).Line, mentioned)
+			}
+		}
+	}
+
+	for i, exemption := range testFileReferenceExemptions {
+		assert.True(t, used[i],
+			"exemption STALE: in %s the %q reference is no longer broken (either the "+
+				"reference was deleted or a file by that name really came into being).\n"+
+				"Justification: %s\nAn exemption that stays behind silently forgives the "+
+				"next broken reference.",
+			exemption.file, exemption.path, exemption.reason)
+	}
+
+	require.Positive(t, seen,
+		"NOT ONE bare test-file reference was found in the comments; the pattern must "+
+			"have gone BLIND.\nIt requires a lowercase start and the _test.go suffix, and "+
+			"it refuses a name preceded by a slash; a change to any of those three makes "+
+			"the audit walk the whole tree and see nothing.")
+}
+
+// TestTheTestFileReferenceScannerIsNotBlind pins down what
+// [bareTestFileReference] does and does not see.
+//
+// The pattern is the whole audit: everything downstream of it is a map lookup. A
+// pattern that quietly stopped matching would leave a test that walks every comment
+// in the repository, finds nothing, and reports success.
+func TestTheTestFileReferenceScannerIsNotBlind(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		text string
+		want []string
+	}{
+		{
+			name: "a bare name in a sentence is seen",
+			text: "the proof of that half lives in storefront_test.go",
+			want: []string{"storefront_test.go"},
+		},
+		{
+			name: "a list item is seen, which is the shape the rot was found in",
+			text: "  - keys_test.go: the setup trap a developer falls into",
+			want: []string{"keys_test.go"},
+		},
+		{
+			name: "two names on one line are both seen",
+			text: "b2b_test.go and graphql_test.go had never run in a real process",
+			want: []string{"b2b_test.go", "graphql_test.go"},
+		},
+		{
+			name: "the tail of a rooted path is left to the rooted audit",
+			text: "see internal/e2e/cart_flow_test.go for the same claim",
+			want: nil,
+		},
+		{
+			name: "a production file is not a test file",
+			text: "the wiring is in app.go and the seed in seed.go",
+			want: nil,
+		},
+		{
+			name: "a name that merely ends in the suffix without the separator is not seen",
+			text: "the type is called mytest.go in the fixture",
+			want: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var got []string
+			for _, match := range bareTestFileReference.FindAllStringSubmatch(tc.text, -1) {
+				got = append(got, match[1])
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 // stripLinkBrackets replaces the [ … ] blocks in a text with a space.
 func stripLinkBrackets(text string) string {
 	var b strings.Builder

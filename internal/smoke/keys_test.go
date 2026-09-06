@@ -31,7 +31,7 @@ import (
 //
 // No test in the repository expected the auth_no_sales_channel code; the
 // channel-less key path ran on neither the unit, nor the integration, nor the
-// end-to-end harness. internal/smoke's own helpers (istemci_test.go) ALWAYS
+// end-to-end harness. internal/smoke's own helpers (client_test.go) ALWAYS
 // create the key attached to a channel, which means the existing scenarios
 // walked right past the trap.
 //

@@ -243,7 +243,7 @@ func seedLoadCatalog(t *testing.T) string {
 	// The claim is checked THROUGH THE STOREFRONT and not against the table: a
 	// row that exists but is not visible in this channel would satisfy a count
 	// over product and still leave the load measuring an empty page.
-	catalog := vitrinKatalogu(t, key, url.Values{"limit": {strconv.Itoa(loadPageSize)}})
+	catalog := storefrontCatalog(t, key, url.Values{"limit": {strconv.Itoa(loadPageSize)}})
 	require.Len(t, catalog.Data, loadPageSize,
 		"the first page must be FULL; a shorter page means the load would be measured "+
 			"over fewer products than were seeded")

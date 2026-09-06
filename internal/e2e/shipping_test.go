@@ -462,7 +462,7 @@ func storeShippingOptions(t *testing.T, query url.Values) []map[string]any {
 		"/store/v1/shipping-options?"+query.Encode(), http.NoBody)
 	// The store surface has been demanding a publishable key since Phase 8; a
 	// request without a key becomes a 401 before it even reaches the router
-	// (see kimlik_test.go).
+	// (see identity_test.go).
 	request.Header.Set(corehttp.PublishableKeyHeader, publishableKey)
 	recorder := httptest.NewRecorder()
 	testRouter.ServeHTTP(recorder, request)

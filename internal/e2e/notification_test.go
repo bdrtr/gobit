@@ -491,7 +491,7 @@ func TestSecondEventForSameOrderProducesNoSecondNotification(t *testing.T) {
 //
 // BOTH of the two requests are necessary. A 401 on its own does not say that the
 // endpoint EXISTS: the guard runs before route matching, so a path that was never
-// defined returns 401 as well (see kimlik_test.go). The same address returning 200
+// defined returns 401 as well (see identity_test.go). The same address returning 200
 // with a valid token proves that what was refused really was this endpoint.
 //
 // The log carries no personal data but it does show which order was notified and

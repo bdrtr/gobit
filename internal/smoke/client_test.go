@@ -18,7 +18,7 @@ import (
 // This file holds the HTTP helpers shared by the scenarios of the two surfaces
 // that had never been run in a REAL PROCESS (the GraphQL storefront and B2B).
 //
-// [proc.request] in surec_test.go is deliberately narrow: it builds a request
+// [proc.request] in process_test.go is deliberately narrow: it builds a request
 // with no body and knows Bearer as the only identity form. The surfaces here,
 // on the other hand, send a JSON body, and on the storefront side the identity
 // is NOT in Authorization but in the publishable key header. That is why these
@@ -95,7 +95,7 @@ func (s *proc) storefrontRequest(method, path, key string, body any) (code int, 
 // The envelope ({"data": …}) is the contract of plan Section 8 and the
 // scenarios read it exactly as it comes off the wire; the modules' DTO types
 // are NOT imported. The reason is the same as for fetchToken in
-// acilis_test.go: a shared Go type would leave the test green even if a field
+// startup_test.go: a shared Go type would leave the test green even if a field
 // name changed — whereas the thing that changed is precisely the contract the
 // client sees.
 func zarfVerisi[T any](t *testing.T, response string) T {

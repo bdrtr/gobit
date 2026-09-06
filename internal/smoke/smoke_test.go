@@ -43,25 +43,25 @@
 //
 // # Which scenario guards which fault
 //
-//   - acilis_test.go: proves that a fresh installation becomes usable with no manual
+//   - startup_test.go: proves that a fresh installation becomes usable with no manual
 //     step. It is also today's answer to the fourth fault ("migrate-up was holding a
 //     feature back as a separate command"): migrations are applied AT STARTUP, and
 //     what verifies that is no longer a sentence in the Makefile but a process that
 //     boots against an empty database and can be logged into.
-//   - yaris_test.go: the first fault, the seeding race.
-//   - izleme_test.go: the second and third faults, the OTLP address format and the
+//   - race_test.go: the first fault, the seeding race.
+//   - tracing_test.go: the second and third faults, the OTLP address format and the
 //     name clash of the metric interval variable.
-//   - yapilandirma_test.go and kapanis_test.go: the two unclosed wings of the same
+//   - configuration_test.go and shutdown_test.go: the two unclosed wings of the same
 //     class — STARTING UP with a flawed configuration and FAILING TO SHUT DOWN on a
 //     signal.
 //   - b2b_test.go and graphql_test.go: two surfaces that had NEVER run in a real
 //     process; both exist solely thanks to a single registration line in the
 //     composition root.
-//   - anahtar_test.go: the SETUP TRAP a developer following the documentation falls
+//   - keys_test.go: the SETUP TRAP a developer following the documentation falls
 //     into — a publishable key created without a channel gets a 201 but always gets a
 //     401 on the storefront surface, and the diagnostic code is not in the response
 //     but in the server's log.
-//   - vitrin_test.go: that the path from cart to order really is OPEN. The static
+//   - storefront_test.go: that the path from cart to order really is OPEN. The static
 //     invariant in internal/arch sees that the flows are WIRED in the composition
 //     root but cannot see that the wiring RUNS; the proof of that half lives here.
 //
@@ -74,7 +74,7 @@
 // # Why a compiled binary and not go run
 //
 // "go run" puts a parent process in between and may not forward SIGTERM to the child;
-// one of the very things we want to test is signal behavior (see kapanis_test.go).
+// one of the very things we want to test is signal behavior (see shutdown_test.go).
 // Running the compiled binary directly guarantees that the signal the test sends lands
 // in the same place as the signal the orchestrator sends in production.
 package smoke
@@ -232,7 +232,7 @@ func buildBinary(ctx context.Context, target string) error {
 	cmd.Dir = root
 	// The environment IS INHERITED: the build needs GOCACHE, GOMODCACHE and GOPATH.
 	// The environment of the server PROCESS, by contrast, is built from scratch
-	// (see surec_test.go).
+	// (see process_test.go).
 	cmd.Env = os.Environ()
 
 	if output, err := cmd.CombinedOutput(); err != nil {

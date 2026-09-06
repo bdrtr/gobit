@@ -179,7 +179,7 @@ var turkishStems = []string{
 	"tarayici",
 	"tarih", "tek", "toplam", "toplu", "tuketici", "tutar", "urun", "uretim",
 	"ustunde",
-	"varyant", "veri", "veritabani", "vergi", "yakala", "yanit", "yapilandirma",
+	"varyant", "veri", "veritabani", "vergi", "vitrin", "yakala", "yanit", "yapilandirma",
 	"yardimci", "yaz", "yazmasi", "yeni", "yer", "yeter", "yetki", "yigin", "yol",
 	"yollar", "yonetim", "zaman",
 }

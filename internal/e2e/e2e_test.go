@@ -31,7 +31,7 @@
 //
 // On the discount side the promotion's TARGET RULE provides the same protection:
 // the Phase 7 scenario's automatic promotion only lands on its own variants
-// (see indirim_test.go), so the discount of the other scenarios stays zero. Had
+// (see discount_test.go), so the discount of the other scenarios stays zero. Had
 // the rule not been set, a single automatic promotion would have lowered other
 // scenarios' totals too, depending on the order in which the tests run.
 //
@@ -59,7 +59,7 @@
 // Bootstrap -> Start): the module the plugin brings goes through the same
 // lifecycle as the core modules and its subscriptions are wired before the first
 // product. The whole decision, and why the payment plugin is NOT installed on the
-// ground, is at the top of arama_test.go.
+// ground, is at the top of search_test.go.
 //
 // The saga engine does not run IN MEMORY but on pgstore, as in production
 // (core.workflow.store). The difference changes what the test sees: the
@@ -191,7 +191,7 @@ const (
 	// It is deliberately HIGHER than the production default (600): the shape of
 	// the stack stays the same as in production, but the limit must not fire in
 	// the middle of a scenario and take unrelated tests down. The limit's OWN
-	// behaviour is exercised on its own router (see sertlestirme_test.go).
+	// behaviour is exercised on its own router (see hardening_test.go).
 	testRateLimit = 1_000_000
 )
 
@@ -288,7 +288,7 @@ var (
 	//
 	// The Phase 5 and Phase 6 scenarios call the workflows directly and never
 	// touch the router; the "store surface" scenario of Phase 7 exercises exactly
-	// the behaviour of the HTTP edge (see kargo_test.go). An admin_only option not
+	// the behaviour of the HTTP edge (see shipping_test.go). An admin_only option not
 	// showing up in the storefront is not a SERVICE decision but a trust decision
 	// pinned down by that edge, and it can only be proven by going through the
 	// edge.
@@ -429,7 +429,7 @@ var (
 // left empty the warehouse is chosen per line, but when declared the old
 // behaviour is preserved exactly — and what these tests exercise is not warehouse
 // selection. The multi-warehouse path has its own separate proof and sets up its
-// own warehouses (see coklu_depo_test.go).
+// own warehouses (see multi_warehouse_test.go).
 var stockLocationID string
 
 // eventLog is the test-side record of the published "order.placed" events.
@@ -603,7 +603,7 @@ func setUpHarness(ctx context.Context) error {
 	// (Principle 2.4).
 	//
 	// The provider chosen is NOT the out-of-the-box "log" one but a SPY (see
-	// bildirim_test.go). There is a single reason for it: the claim "the
+	// notification_test.go). There is a single reason for it: the claim "the
 	// notification's recipient is the order's e-mail address" requires a place that
 	// SEES the address, and the address is deliberately stored nowhere — the
 	// delivery log has no column for it, and the "log" provider does not log it
@@ -615,7 +615,7 @@ func setUpHarness(ctx context.Context) error {
 	// image can only be exercised here: the two ends of the chain are in two
 	// separate modules (file uploads, product stores) and the two do not import
 	// each other, which means no unit test can see both at once (see
-	// dosya_test.go).
+	// file_test.go).
 	//
 	// The limit and the allow list are the PRODUCTION DEFAULTS (config constants);
 	// the test making up its own values would lead to e2e one day "proving" that it
@@ -683,7 +683,7 @@ func setUpHarness(ctx context.Context) error {
 	// The plugins are installed BEFORE the modules (the same order as main.go): the
 	// module a plugin BRINGS must go through the Register/migration/route cycle
 	// too. The rationale, and why installing them on the ground does not break the
-	// existing tests, is at the top of arama_test.go.
+	// existing tests, is at the top of search_test.go.
 	if err := setUpPlugins(ctx, registry, bus); err != nil {
 		return fmt.Errorf("could not install the plugins: %w", err)
 	}

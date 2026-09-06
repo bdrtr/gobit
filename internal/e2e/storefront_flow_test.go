@@ -85,7 +85,7 @@ func TestStorefrontCartBecomesOrder(t *testing.T) {
 
 	// --- line: NO price in the body, the server decides the price ---
 
-	added := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/line-items",
+	added := storefrontRequest(t, http.MethodPost, "/store/v1/carts/"+cartID+"/line-items",
 		fmt.Sprintf(`{"variant_id":%q,"quantity":%d}`, variantID, storefrontQuantity))
 	require.Equal(t, http.StatusCreated, added.Code, "body: %s", added.Body.String())
 
@@ -99,7 +99,7 @@ func TestStorefrontCartBecomesOrder(t *testing.T) {
 
 	// --- cart: read over HTTP the totals must be computed and FRESH ---
 
-	fetched := vitrinIstegi(t, http.MethodGet, "/store/v1/carts/"+cartID, "")
+	fetched := storefrontRequest(t, http.MethodGet, "/store/v1/carts/"+cartID, "")
 	require.Equal(t, http.StatusOK, fetched.Code, "body: %s", fetched.Body.String())
 
 	cart := storefrontData(t, fetched)
@@ -116,7 +116,7 @@ func TestStorefrontCartBecomesOrder(t *testing.T) {
 
 	// --- completion ---
 
-	done := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/complete",
+	done := storefrontRequest(t, http.MethodPost, "/store/v1/carts/"+cartID+"/complete",
 		storefrontCompletionBody(t, storefrontTotal))
 	require.Equal(t, http.StatusOK, done.Code, "body: %s", done.Body.String())
 
@@ -200,7 +200,7 @@ func TestStorefrontRejectsClientPrice(t *testing.T) {
 		"made-up title": fmt.Sprintf(`{"variant_id":%q,"quantity":1,"title":"Free"}`, variantID),
 	} {
 		t.Run(name, func(t *testing.T) {
-			rec := vitrinIstegi(t, http.MethodPost,
+			rec := storefrontRequest(t, http.MethodPost,
 				"/store/v1/carts/"+cartID+"/line-items", body)
 
 			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code,
@@ -245,7 +245,7 @@ func TestStorefrontRejectsClientRegion(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			priorCount := cartCount(ctx, t)
 
-			rejected := vitrinIstegi(t, http.MethodPost, "/store/v1/carts", body)
+			rejected := storefrontRequest(t, http.MethodPost, "/store/v1/carts", body)
 
 			assert.Equal(t, http.StatusUnprocessableEntity, rejected.Code,
 				"the storefront must not accept a field the server derives; body: %s",
@@ -289,7 +289,7 @@ func TestStorefrontUnknownCountryOpensNoCart(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			priorCount := cartCount(ctx, t)
 
-			rejected := vitrinIstegi(t, http.MethodPost, "/store/v1/carts", scenario.body)
+			rejected := storefrontRequest(t, http.MethodPost, "/store/v1/carts", scenario.body)
 
 			assert.Equal(t, scenario.status, rejected.Code,
 				"%s; body: %s", scenario.reason, rejected.Body.String())
@@ -337,13 +337,13 @@ func TestStorefrontCurrencyDerivedFromRegion(t *testing.T) {
 		t.Run(scenario.name, func(t *testing.T) {
 			cartID := openStorefrontCartInCountry(t, scenario.country, customerID, email)
 
-			fetched := vitrinIstegi(t, http.MethodGet, "/store/v1/carts/"+cartID, "")
+			fetched := storefrontRequest(t, http.MethodGet, "/store/v1/carts/"+cartID, "")
 			require.Equal(t, http.StatusOK, fetched.Code, "body: %s", fetched.Body.String())
 			assert.Equal(t, scenario.currency, storefrontData(t, fetched)["currency_code"],
 				"the cart's currency must be THE COUNTRY'S REGION'S; the client sent "+
 					"neither a region nor a currency")
 
-			added := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/line-items",
+			added := storefrontRequest(t, http.MethodPost, "/store/v1/carts/"+cartID+"/line-items",
 				fmt.Sprintf(`{"variant_id":%q,"quantity":1}`, variantID))
 			require.Equal(t, http.StatusCreated, added.Code, "body: %s", added.Body.String())
 
@@ -372,12 +372,12 @@ func TestStorefrontPlacesNoOrderOnUnapprovedTotal(t *testing.T) {
 		map[string]int64{taxedCurrency: storefrontUnitPrice}, storefrontInitialStock)
 
 	cartID := openStorefrontCart(t, customerID, email)
-	added := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/line-items",
+	added := storefrontRequest(t, http.MethodPost, "/store/v1/carts/"+cartID+"/line-items",
 		fmt.Sprintf(`{"variant_id":%q,"quantity":%d}`, variantID, storefrontQuantity))
 	require.Equal(t, http.StatusCreated, added.Code, "body: %s", added.Body.String())
 
 	// The approved total is one minor unit short: the customer saw ANOTHER amount.
-	conflict := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/complete",
+	conflict := storefrontRequest(t, http.MethodPost, "/store/v1/carts/"+cartID+"/complete",
 		storefrontCompletionBody(t, storefrontTotal-1))
 	require.Equal(t, http.StatusConflict, conflict.Code,
 		"a diverging total must be a 409; on a 500 the client would retry, whereas "+
@@ -393,7 +393,7 @@ func TestStorefrontPlacesNoOrderOnUnapprovedTotal(t *testing.T) {
 
 	// When the approved total is given CORRECTLY the same cart must be completable:
 	// a rejected attempt must NOT burn the workflow's idempotency key.
-	done := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/complete",
+	done := storefrontRequest(t, http.MethodPost, "/store/v1/carts/"+cartID+"/complete",
 		storefrontCompletionBody(t, storefrontTotal))
 	require.Equal(t, http.StatusOK, done.Code, "body: %s", done.Body.String())
 	assert.NotEmpty(t, storefrontData(t, done)["order_id"])
@@ -413,11 +413,11 @@ func TestStorefrontExpectedTotalIsMandatory(t *testing.T) {
 		map[string]int64{taxedCurrency: storefrontUnitPrice}, storefrontInitialStock)
 
 	cartID := openStorefrontCart(t, customerID, email)
-	added := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/line-items",
+	added := storefrontRequest(t, http.MethodPost, "/store/v1/carts/"+cartID+"/line-items",
 		fmt.Sprintf(`{"variant_id":%q,"quantity":%d}`, variantID, storefrontQuantity))
 	require.Equal(t, http.StatusCreated, added.Code, "body: %s", added.Body.String())
 
-	missing := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/complete",
+	missing := storefrontRequest(t, http.MethodPost, "/store/v1/carts/"+cartID+"/complete",
 		fmt.Sprintf(`{"payment_provider_id":%q}`, manual.ID))
 	assert.Equal(t, http.StatusUnprocessableEntity, missing.Code,
 		"no order may be placed without the approved total being declared; body: %s",
@@ -462,11 +462,11 @@ func TestStorefrontB2BLimitRejectionReportsReason(t *testing.T) {
 	b2bCalisan(ctx, t, customerID, &limit, b2bmodels.ResetNever)
 
 	cartID := openStorefrontCart(t, customerID, email)
-	added := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/line-items",
+	added := storefrontRequest(t, http.MethodPost, "/store/v1/carts/"+cartID+"/line-items",
 		fmt.Sprintf(`{"variant_id":%q,"quantity":%d}`, variantID, storefrontQuantity))
 	require.Equal(t, http.StatusCreated, added.Code, "body: %s", added.Body.String())
 
-	rejected := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/complete",
+	rejected := storefrontRequest(t, http.MethodPost, "/store/v1/carts/"+cartID+"/complete",
 		storefrontCompletionBody(t, storefrontTotal))
 
 	require.Equal(t, http.StatusConflict, rejected.Code,
@@ -507,7 +507,7 @@ func openStorefrontCart(t *testing.T, customerID, email string) string {
 func openStorefrontCartInCountry(t *testing.T, countryCode, customerID, email string) string {
 	t.Helper()
 
-	rec := vitrinIstegi(t, http.MethodPost, "/store/v1/carts", fmt.Sprintf(
+	rec := storefrontRequest(t, http.MethodPost, "/store/v1/carts", fmt.Sprintf(
 		`{"country_code":%q,"customer_id":%q,"email":%q}`, countryCode, customerID, email))
 	require.Equal(t, http.StatusCreated, rec.Code,
 		"could not open the cart; body: %s", rec.Body.String())
@@ -534,15 +534,15 @@ func storefrontCompletionBody(t *testing.T, approvedTotal int64) string {
 	return string(body)
 }
 
-// vitrinIstegi makes a store request with the publishable key.
+// storefrontRequest makes a store request with the publishable key.
 //
 // The key passes through the PRODUCTION guard stack: the request goes not to an
 // unguarded router but to the one assembled in the same order as in cmd/server
 // (see setUpHarness).
-func vitrinIstegi(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
+func storefrontRequest(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	return anahtarliVitrinIstegi(t, publishableKey, method, path, body)
+	return keyedStorefrontRequest(t, publishableKey, method, path, body)
 }
 
 // storefrontData returns the response envelope's "data" field as an object.
