@@ -907,3 +907,119 @@ func (r *Repo) visibleIDs(
 
 	return visible, nil
 }
+
+// OptionValueFilter narrows the storefront's option vocabulary.
+//
+// It carries no criterion of its own beyond visibility, and that is deliberate:
+// the vocabulary exists so a client can turn the word a shopper clicked into a
+// filter value, and a vocabulary narrowed by the filter it is meant to produce
+// would answer a question nobody asked yet.
+type OptionValueFilter struct {
+	// SalesChannelIDs keeps the same nil / empty-but-non-nil distinction as
+	// [ProductFilter]: nil does not filter, an empty slice filters and leaves
+	// only the products with no assignment.
+	SalesChannelIDs []string
+	// Status, when given, narrows to products in that status.
+	Status *string
+	Limit  int
+	Offset int
+}
+
+// optionValueBodySQL is the FROM and WHERE the vocabulary listing and its count
+// share, so the two cannot disagree about which set they describe.
+//
+// # Why the visibility of the PRODUCT decides
+//
+// An option belongs to exactly one product and a value to exactly one option,
+// so every row of this vocabulary exists BECAUSE some product carries it. A
+// value read off a draft product, or off one sold in a channel the caller is
+// not holding a key for, would tell that caller something the product listing
+// deliberately refuses to tell them — the vocabulary would be the hole in a
+// wall the listing keeps. So the same two conditions the storefront listing
+// applies are applied here, on the product the value hangs from.
+//
+// The soft-delete guard is applied on all THREE tables rather than on the
+// product alone: deleting an option is not a cascade, and a value whose option
+// was removed would otherwise keep appearing in the vocabulary of a product
+// that no longer offers it.
+func optionValueBodySQL(f OptionValueFilter) (body string, args []any) {
+	body = `FROM product_option_value v
+  JOIN product_option o ON o.id = v.option_id AND o.deleted_at IS NULL
+  JOIN product p ON p.id = o.product_id AND p.deleted_at IS NULL
+WHERE v.deleted_at IS NULL`
+
+	if f.Status != nil {
+		args = append(args, *f.Status)
+		body += "\n  AND p.status = $" + strconv.Itoa(len(args)) + "::text"
+	}
+	if f.SalesChannelIDs != nil {
+		args = append(args, f.SalesChannelIDs)
+		body += "\n  AND " + salesChannelAssigned("p.id", "$"+strconv.Itoa(len(args)))
+	}
+
+	return body, args
+}
+
+// listOptionValuesSQL builds the vocabulary page.
+//
+// The order is (title, value) and it is the only one that makes sense for a
+// vocabulary: a client renders it as a grouped list, and a grouping that
+// arrives interleaved has to be sorted again on the other side.
+//
+// Paging is OFFSET rather than a cursor, for the reason [corepage] gives for
+// keeping both: a vocabulary is small and is read from the top, and a cursor
+// buys its flat cost only at depths this listing does not reach.
+func listOptionValuesSQL(f OptionValueFilter) (query string, args []any) {
+	body, args := optionValueBodySQL(f)
+
+	limitParam := "$" + strconv.Itoa(len(args)+1)
+	offsetParam := "$" + strconv.Itoa(len(args)+2)
+	args = append(args, toInt32(f.Limit), toInt32(f.Offset))
+
+	return `SELECT DISTINCT o.title, v.value
+` + body + `
+ORDER BY o.title, v.value
+LIMIT ` + limitParam + `::int OFFSET ` + offsetParam + `::int`, args
+}
+
+// countOptionValuesSQL counts the DISTINCT pairs the listing would return.
+//
+// It is the same body with a count in front, which is what makes "the count and
+// the listing describe the same set" a property of the code. The count is of
+// the distinct PAIRS and not of the rows: two products offering "Color: red"
+// are one entry in the listing and must be one in the count.
+func countOptionValuesSQL(f OptionValueFilter) (query string, args []any) {
+	body, args := optionValueBodySQL(f)
+
+	return `SELECT count(*) FROM (SELECT DISTINCT o.title, v.value
+` + body + `) pairs`, args
+}
+
+// ListOptionValues returns a page of the storefront's option vocabulary.
+func (r *Repo) ListOptionValues(ctx context.Context, f OptionValueFilter) ([]models.OptionValuePair, error) {
+	query, args := listOptionValuesSQL(f)
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, wrapDB(err, "could not list option values")
+	}
+
+	list, err := pgx.CollectRows(rows, pgx.RowToStructByPos[models.OptionValuePair])
+	if err != nil {
+		return nil, wrapDB(err, "could not list option values")
+	}
+
+	return list, nil
+}
+
+// CountOptionValues counts the distinct pairs the vocabulary holds.
+func (r *Repo) CountOptionValues(ctx context.Context, f OptionValueFilter) (int, error) {
+	query, args := countOptionValuesSQL(f)
+
+	var n int64
+	if err := r.db.QueryRow(ctx, query, args...).Scan(&n); err != nil {
+		return 0, wrapDB(err, "could not read option value count")
+	}
+
+	return int(n), nil
+}

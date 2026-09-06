@@ -201,6 +201,37 @@ func (h *Handler) storeListCategories(w http.ResponseWriter, r *http.Request) {
 	writeList(w, r, result)
 }
 
+// storeListOptionValues GET /store/v1/option-values
+//
+// The fourth vocabulary endpoint, and the only one that returns TEXT rather
+// than ids: an option value belongs to exactly one product, so its id is
+// useless as a catalog filter. See service.Service.ListOptionValues.
+//
+// It is scoped by the request's sales channel for the same reason the listing
+// is — the values come from products, so an unscoped vocabulary would name what
+// the listing hides.
+func (h *Handler) storeListOptionValues(w http.ResponseWriter, r *http.Request) {
+	limit, offset, err := paging(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+
+		return
+	}
+
+	result, err := h.svc.ListOptionValues(r.Context(), service.ListOptionValuesOptions{
+		SalesChannelIDs: salesChannelIDs(r),
+		PublicOnly:      true,
+		Limit:           limit,
+		Offset:          offset,
+	})
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+
+		return
+	}
+	writeList(w, r, result)
+}
+
 // storeListTags GET /store/v1/tags
 func (h *Handler) storeListTags(w http.ResponseWriter, r *http.Request) {
 	limit, offset, err := paging(r)

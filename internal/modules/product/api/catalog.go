@@ -58,6 +58,13 @@ type Catalog interface {
 
 	CreateTag(ctx context.Context, value string) (models.Tag, error)
 	ListTags(ctx context.Context, limit, offset int) (service.ListResult[models.Tag], error)
+	// ListOptionValues is the fourth vocabulary read and the only one that
+	// returns TEXT rather than ids; the reason is in
+	// [service.Service.ListOptionValues].
+	ListOptionValues(
+		ctx context.Context,
+		opts service.ListOptionValuesOptions,
+	) (service.ListResult[models.OptionValuePair], error)
 	DeleteTag(ctx context.Context, id string) error
 
 	ListStoreProducts(ctx context.Context, opts service.StoreListOptions) (service.ListResult[service.StoreProduct], error)

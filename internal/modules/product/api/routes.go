@@ -78,6 +78,7 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/store/v1/collections", h.storeListCollections)
 	r.Get("/store/v1/categories", h.storeListCategories)
 	r.Get("/store/v1/tags", h.storeListTags)
+	r.Get("/store/v1/option-values", h.storeListOptionValues)
 
 	// The GraphQL storefront read surface. ONLY POST is registered; for why GET
 	// is not opened see [graph.NewHandler]. The path sitting under /store/v1

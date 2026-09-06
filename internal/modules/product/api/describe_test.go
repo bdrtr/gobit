@@ -592,6 +592,9 @@ func TestEveryStoreEndpointIsDescribed(t *testing.T) {
 		"GET /store/v1/collections",
 		"GET /store/v1/categories",
 		"GET /store/v1/tags",
+		// The fourth of them, and the only one returning TEXT: an option value
+		// belongs to exactly one product, so its id is useless as a filter.
+		"GET /store/v1/option-values",
 	}, found)
 }
 

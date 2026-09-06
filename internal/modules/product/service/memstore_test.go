@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 
@@ -1321,4 +1322,70 @@ func sliceWindow[T any](items []T, limit, offset int) []T {
 		items = items[:limit]
 	}
 	return items
+}
+
+// optionValuePairs mirrors the observable behavior of the real vocabulary
+// query: the product the value hangs from decides visibility, the soft-delete
+// guard is applied at all THREE levels, the pairs are DISTINCT and the order is
+// (title, value).
+//
+// A fake that skipped any of those would let a unit test pass on a rule the
+// database does not follow, which is the failure this repository has already
+// paid for once.
+func (m *memStore) optionValuePairs(f repository.OptionValueFilter) []models.OptionValuePair {
+	visible := repository.ProductFilter{Status: f.Status, SalesChannelIDs: f.SalesChannelIDs}
+
+	seen := map[models.OptionValuePair]struct{}{}
+	for id := range m.values {
+		value := m.values[id]
+		if value.DeletedAt != nil {
+			continue
+		}
+		option, ok := m.options[value.OptionID]
+		if !ok || option.DeletedAt != nil {
+			continue
+		}
+		product, ok := m.products[option.ProductID]
+		if !ok || product.DeletedAt != nil {
+			continue
+		}
+		if !m.matches(&product, visible) {
+			continue
+		}
+		seen[models.OptionValuePair{OptionTitle: option.Title, Value: value.Value}] = struct{}{}
+	}
+
+	out := make([]models.OptionValuePair, 0, len(seen))
+	for pair := range seen {
+		out = append(out, pair)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].OptionTitle != out[j].OptionTitle {
+			return out[i].OptionTitle < out[j].OptionTitle
+		}
+
+		return out[i].Value < out[j].Value
+	})
+
+	return out
+}
+
+func (m *memStore) ListOptionValues(_ context.Context, f repository.OptionValueFilter) ([]models.OptionValuePair, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ListOptionValues"); err != nil {
+		return nil, err
+	}
+
+	return sliceWindow(m.optionValuePairs(f), f.Limit, f.Offset), nil
+}
+
+func (m *memStore) CountOptionValues(_ context.Context, f repository.OptionValueFilter) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("CountOptionValues"); err != nil {
+		return 0, err
+	}
+
+	return len(m.optionValuePairs(f)), nil
 }

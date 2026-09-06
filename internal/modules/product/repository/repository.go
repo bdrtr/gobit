@@ -172,6 +172,13 @@ type Store interface {
 	CreateTag(ctx context.Context, t models.Tag) (models.Tag, error)
 	GetTagByValue(ctx context.Context, value string) (models.Tag, error)
 	ListTags(ctx context.Context, limit, offset int) ([]models.Tag, error)
+
+	// ListOptionValues and CountOptionValues return the storefront's option
+	// vocabulary: the DISTINCT (option title, value) text pairs the visible
+	// catalog offers. There is no id in the result on purpose — see
+	// [models.OptionValuePair].
+	ListOptionValues(ctx context.Context, f OptionValueFilter) ([]models.OptionValuePair, error)
+	CountOptionValues(ctx context.Context, f OptionValueFilter) (int, error)
 	CountTags(ctx context.Context) (int, error)
 	SoftDeleteTag(ctx context.Context, id string) error
 

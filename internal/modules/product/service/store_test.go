@@ -405,3 +405,75 @@ func TestTheDefaultOrderKeepsCursorsMintedBeforeItExisted(t *testing.T) {
 	// order at all is on the same page space.
 	assert.Equal(t, service.ProductListing, service.ProductListingFor(""))
 }
+
+// TestTheOptionVocabularyIsDistinctAcrossProducts is the reason the vocabulary
+// returns text and not ids.
+//
+// Two products that both offer "Color: red" hold two different rows — an
+// option row each and a value row each, because an option belongs to exactly
+// one product. A vocabulary keyed by id would hand the client both and the
+// client would render "red" twice; keyed by the text pair there is one entry,
+// which is what a filter facet has to be.
+func TestTheOptionVocabularyIsDistinctAcrossProducts(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	svc := newService(t, newMemStore(), newFakeLinker(), nil)
+
+	for _, title := range []string{"Shirt", "Trousers"} {
+		_, err := svc.CreateProduct(ctx, service.CreateProductInput{
+			Title:  title,
+			Status: models.StatusPublished,
+			Options: []service.CreateOptionInput{
+				{Title: "Color", Values: []string{"red"}},
+			},
+		})
+		require.NoError(t, err)
+	}
+
+	result, err := svc.ListOptionValues(ctx, service.ListOptionValuesOptions{PublicOnly: true})
+	require.NoError(t, err)
+
+	assert.Equal(t, []models.OptionValuePair{{OptionTitle: "Color", Value: "red"}}, result.Items,
+		"two products offering the same pair must produce ONE entry")
+	require.NotNil(t, result.Count)
+	assert.Equal(t, 1, *result.Count, "the count must count pairs, not rows")
+}
+
+// TestTheOptionVocabularyHidesWhatTheListingHides is the security half.
+//
+// Every entry in this vocabulary exists BECAUSE some product carries it, so an
+// unscoped vocabulary would name the option values of a DRAFT product — telling
+// a shopper exactly what the storefront listing refuses to tell them. The two
+// have to agree, and this is what says so.
+func TestTheOptionVocabularyHidesWhatTheListingHides(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	svc := newService(t, newMemStore(), newFakeLinker(), nil)
+
+	_, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Title:   "Published",
+		Status:  models.StatusPublished,
+		Options: []service.CreateOptionInput{{Title: "Color", Values: []string{"red"}}},
+	})
+	require.NoError(t, err)
+
+	_, err = svc.CreateProduct(ctx, service.CreateProductInput{
+		Title:   "Unreleased",
+		Status:  models.StatusDraft,
+		Options: []service.CreateOptionInput{{Title: "Color", Values: []string{"secret-teal"}}},
+	})
+	require.NoError(t, err)
+
+	public, err := svc.ListOptionValues(ctx, service.ListOptionValuesOptions{PublicOnly: true})
+	require.NoError(t, err)
+	assert.Equal(t, []models.OptionValuePair{{OptionTitle: "Color", Value: "red"}}, public.Items,
+		"a draft product's option value must not reach the storefront vocabulary")
+
+	// Without the narrowing the same call sees both, which is what proves the
+	// filter above is doing the work rather than the fixture being empty.
+	all, err := svc.ListOptionValues(ctx, service.ListOptionValuesOptions{})
+	require.NoError(t, err)
+	assert.Len(t, all.Items, 2, "unscoped, both values are there — so the scoping is what hid one")
+}

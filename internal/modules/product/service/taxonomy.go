@@ -309,6 +309,71 @@ func (s *Service) ListTags(ctx context.Context, limit, offset int) (ListResult[m
 	return ListResult[models.Tag]{Items: items, Count: &count, Offset: offset, Limit: limit}, nil
 }
 
+// ListOptionValuesOptions is the set of criteria of the option vocabulary.
+type ListOptionValuesOptions struct {
+	// SalesChannelIDs are the channels the request is bound to; the value comes
+	// from the request's IDENTITY and not from the query string, exactly as in
+	// [StoreListOptions].
+	SalesChannelIDs []string
+	// PublicOnly narrows the vocabulary to published products.
+	PublicOnly bool
+	Limit      int
+	Offset     int
+}
+
+// ListOptionValues returns the storefront's option vocabulary: the DISTINCT
+// (option title, value) pairs the VISIBLE catalog offers.
+//
+// # Why the vocabulary is text and carries no id
+//
+// It is the one vocabulary endpoint that could not copy the shape of the other
+// three. A collection, a category and a tag are entities a product REFERS to,
+// so their listing hands the client an id and the filter takes that id. An
+// option is not: `product_option.product_id` is NOT NULL, so an option belongs
+// to exactly one product and an option-value id names one product's one value.
+// A catalog filter on such an id would return at most one product, which is not
+// a filter. What a client needs here is the TEXT pair, and that is what this
+// returns.
+//
+// # Why the caller's visibility decides what is in it
+//
+// Every entry exists because some product carries it, so an unfiltered
+// vocabulary would name values off draft products and off products sold in
+// channels the caller holds no key for — telling the caller exactly what the
+// product listing refuses to tell them. The same two conditions the storefront
+// listing applies are applied here, on the product the value hangs from.
+func (s *Service) ListOptionValues(
+	ctx context.Context,
+	opts ListOptionValuesOptions,
+) (ListResult[models.OptionValuePair], error) {
+	limit, offset, err := normalizePaging(opts.Limit, opts.Offset)
+	if err != nil {
+		return ListResult[models.OptionValuePair]{}, err
+	}
+
+	filter := repository.OptionValueFilter{
+		SalesChannelIDs: opts.SalesChannelIDs,
+		Limit:           limit,
+		Offset:          offset,
+	}
+	if opts.PublicOnly {
+		published := models.StatusPublished.String()
+		filter.Status = &published
+	}
+
+	items, err := s.repo.ListOptionValues(ctx, filter)
+	if err != nil {
+		return ListResult[models.OptionValuePair]{}, err
+	}
+
+	count, err := s.repo.CountOptionValues(ctx, filter)
+	if err != nil {
+		return ListResult[models.OptionValuePair]{}, err
+	}
+
+	return ListResult[models.OptionValuePair]{Items: items, Count: &count, Offset: offset, Limit: limit}, nil
+}
+
 // DeleteTag SOFT deletes the tag.
 //
 // It has no guard, and that is the difference between a tag and the other two.

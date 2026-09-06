@@ -216,6 +216,26 @@ func describeStorefrontVocabulary(d *openapi.Doc) {
 			"200": openapi.Response("Tags", d.List(models.Tag{})),
 		},
 	})
+
+	d.Describe(http.MethodGet, "/store/v1/option-values", openapi.Operation{
+		Summary: "Lists the option vocabulary of the visible catalog.",
+		Description: "The DISTINCT (option title, value) pairs the catalog offers — " +
+			"\"Color: red\", \"Size: M\". " +
+			"It is the one vocabulary endpoint that returns TEXT and no id, and the " +
+			"reason is structural: an option belongs to exactly ONE product, so an " +
+			"option-value id names a single product's single value and filtering a " +
+			"catalog by it would return at most one product. " +
+			"Two products that both offer \"Color: red\" are two rows in the database " +
+			"and ONE entry here. " +
+			"The vocabulary is scoped exactly as the product listing is — published " +
+			"products, and the sales channels of the request's publishable key — " +
+			"because every entry exists BECAUSE some product carries it, and an " +
+			"unscoped vocabulary would name what the listing hides.",
+		Parameters: paging,
+		Responses: map[string]any{
+			"200": openapi.Response("Option values", d.List(models.OptionValuePair{})),
+		},
+	})
 }
 
 // graphqlRequest is the GraphQL request body.

@@ -2497,11 +2497,17 @@ product), so ADR 0001 does not block this one at all. Three things do:
   `product_option (product_id, title)` and
   `product_option_value (option_id, value)`; both lead with the PARENT id, which
   is exactly the column a catalog filter does not have.
-- **There is no vocabulary endpoint, and a vocabulary of ids would be useless.**
-  B3 built the collection, category and tag listings; option values got none,
-  and could not have used the same shape — what a client needs here is DISTINCT
-  (option title, value) TEXT pairs, and no query, no repository method and no
-  service method returns that today.
+- ~~**There is no vocabulary endpoint, and a vocabulary of ids would be
+  useless.**~~ **Built 2026-09-06.** `GET /store/v1/option-values` is the fourth
+  vocabulary endpoint and the only one that returns TEXT: it hands back the
+  DISTINCT (option title, value) pairs, because an option belongs to exactly one
+  product and an id would name one product's one value. It is SCOPED exactly as
+  the product listing is — published products and the channels of the request's
+  publishable key — and that is not a nicety: every entry exists BECAUSE some
+  product carries it, so an unscoped vocabulary would name the option values of
+  a draft product and be the hole in a wall the listing keeps. Proved at both
+  layers, and the mutation that drops the status predicate fails the unit test
+  AND the integration test.
 
 And one question category and tag never had to answer, because each shipped as a
 single scalar per axis: **multi-value.** "Red or blue, in size M" is OR within

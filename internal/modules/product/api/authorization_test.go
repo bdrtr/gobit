@@ -276,6 +276,15 @@ func (f *scopeCatalog) ListTags(context.Context, int, int) (service.ListResult[m
 	return service.ListResult[models.Tag]{}, nil
 }
 
+// ListOptionValues counts the call.
+func (f *scopeCatalog) ListOptionValues(
+	context.Context, service.ListOptionValuesOptions,
+) (service.ListResult[models.OptionValuePair], error) {
+	f.count()
+
+	return service.ListResult[models.OptionValuePair]{}, nil
+}
+
 // ListStoreProducts counts the call.
 func (f *scopeCatalog) ListStoreProducts(
 	context.Context, service.StoreListOptions,

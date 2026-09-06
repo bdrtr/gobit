@@ -30,6 +30,22 @@ type Variant struct {
 	OptionValues []OptionValue `json:"option_values,omitempty"`
 }
 
+// OptionValuePair is one entry of the storefront's option vocabulary: an option
+// TITLE together with one VALUE that appears under it.
+//
+// It carries no id, and that absence is the whole point. An option belongs to
+// exactly ONE product (`product_option.product_id` is NOT NULL) and a value to
+// exactly one option, so an option-value id names a single product's single
+// value — useless as a catalog filter, which is why the vocabulary is text.
+// Two products that both offer "Color: red" are two rows in the database and
+// ONE entry here.
+type OptionValuePair struct {
+	// OptionTitle is the axis: "Color", "Size".
+	OptionTitle string `json:"option_title"`
+	// Value is one value on that axis: "red", "M".
+	Value string `json:"value"`
+}
+
 // Option is an option axis of a product (e.g. "Size").
 type Option struct {
 	ID        string     `json:"id"`

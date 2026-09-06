@@ -615,6 +615,62 @@ func TestPagingByCursorCoversTheSetInBothOrders(t *testing.T) {
 	}
 }
 
+// TestTheOptionVocabularyIsDistinctAndScopedAgainstTheDatabase runs the two
+// claims of the vocabulary against real SQL.
+//
+// The unit tests make the same two assertions against the in-memory store, and
+// a fake that agreed with itself would prove nothing about DISTINCT or about
+// the status predicate — the exact class this repository has been bitten by.
+// Here the DISTINCT is PostgreSQL's and the filter is a WHERE clause.
+func TestTheOptionVocabularyIsDistinctAndScopedAgainstTheDatabase(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+
+	axis := "Color " + uniqueHandle("axis")
+	shared := "shared-" + uniqueHandle("v")
+	hidden := "hidden-" + uniqueHandle("v")
+
+	for range 2 {
+		_, err := svc.CreateProduct(ctx, service.CreateProductInput{
+			Handle:  uniqueHandle("vocab"),
+			Title:   "Vocab",
+			Status:  models.StatusPublished,
+			Options: []service.CreateOptionInput{{Title: axis, Values: []string{shared}}},
+		})
+		require.NoError(t, err)
+	}
+
+	_, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle:  uniqueHandle("vocab-draft"),
+		Title:   "Vocab draft",
+		Status:  models.StatusDraft,
+		Options: []service.CreateOptionInput{{Title: axis, Values: []string{hidden}}},
+	})
+	require.NoError(t, err)
+
+	values := func(opts service.ListOptionValuesOptions) []string {
+		opts.Limit = 100
+		page, err := svc.ListOptionValues(ctx, opts)
+		require.NoError(t, err)
+
+		var out []string
+		for _, pair := range page.Items {
+			if pair.OptionTitle == axis {
+				out = append(out, pair.Value)
+			}
+		}
+
+		return out
+	}
+
+	assert.Equal(t, []string{shared}, values(service.ListOptionValuesOptions{PublicOnly: true}),
+		"the two published products must collapse to ONE pair and the draft must not appear")
+
+	unscoped := values(service.ListOptionValuesOptions{})
+	assert.ElementsMatch(t, []string{shared, hidden}, unscoped,
+		"unscoped, both values are there — so the status predicate is what hid one")
+}
+
 // TestCreateVariantLosesRaceWithProductDeletion verifies that a variant cannot
 // be added to a product that is being deleted.
 //

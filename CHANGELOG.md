@@ -145,47 +145,6 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltildi
 
-- **Vitrin kataloğu artık sıralanabiliyor — ve satırın "tek tuzağı" dediği şey,
-  bindiği sözleşme tarafından zaten çözülmüştü** (B2'nin SORT yarısı).
-
-  REST'te `sort=newest|oldest`, GraphQL'de bağlı bir `ProductOrder` enum'u.
-  Küme KAPALI ve fiyat içinde değil: fiyat bu tablonun kolonu değil, ne anlama
-  geldiği de A16'nın sorusu. Değeri okunmayan bir sıra sessizce varsayılana
-  düşmüyor, REDDEDİLİYOR — istediği sırayı almayan bir istemci, bunu öyle
-  görünen bir katalogdan ayırt edemez.
-
-  **Hiçbir migration gerekmedi.** `product_created_at_idx` zaten
-  `(created_at DESC, id DESC)` diye tanımlı ve bir b-tree iki yönde de okunur,
-  yani eskiden-yeniye aynı indeksin ters yürütülmesi. Başlık sıralaması bilerek
-  yapılmadı: onun için indeks yok, ve ADR 0015'in kaydettiği C-locale kümesinde
-  sıra Türkçe için yanlış görünürdü — ölçülmüş bir tehlikeye bedava girilmez.
-
-  **Tuzak buydu ve zaten kapalıydı:** iki sıra AYNI anahtarı ters yönlerde
-  yürüdüğü için, birinde üretilmiş bir imleç ötekinin anahtar uzayında da
-  geçerli bir konumdur ve sessizce yanlış sayfayı verir. `internal/core/page`
-  bunu zaten reddediyor, çünkü imleç ait olduğu listelemenin ADINI taşıyor ve o
-  ad dönüşte denetleniyor. Bütün çözüm, sırayı o adın parçası yapmaktı.
-  Yeniden-eskiye sırası ÇIPLAK adı koruyor, böylece parametre var olmadan önce
-  üretilmiş imleçler hâlâ çözülüyor.
-
-  GraphQL enum'u modülün kendi tipine BAĞLANDI, üretilmiş ikinci bir tipe
-  değil — o yüzden değerleri SCREAMING_CASE değil, REST'in yazdığı gibi küçük
-  harf. Gerekçe gqlgen.yml'in kendi politikası: ayrı bir model katmanı bir
-  dönüştürücü ister, dönüştürücü de ikinci bir tanımdır.
-
-  **Üç mutasyon, ve üçüncüsü katmanların neyi koruduğunu gösteriyor.** Sırayı
-  listeleme adından çıkarmak tuzak testini düşürüyor; `oldest`'in yönünü ters
-  çevirmek yön-eşleme testini düşürüyor; ve sırayı servisten depoya
-  GEÇİRMEMEK bütün SQL testlerini YEŞİL bırakıp yalnızca gerçek veritabanındaki
-  testi düşürüyor — entegrasyon yarısı tam olarak bunun için var.
-
-  İki denetim bu turda benim işimi yakaladı ve ikisi de haklıydı: yeni
-  parametre belgelenmiş ama handler'ın okuduğu kümeye eklenmemişti, ve
-  `keysetSeek` yanlışlıkla `listProductsSQL`'in godoc'u ile gövdesinin arasına
-  girmişti. Üçüncüsü belge tarafında yakaladı: paketin adını `internal/`
-  öneki olmadan yazmıştım, doğrusu `internal/core/page`. Ayrıca artık yanlış olan bir cümle düzeltildi —
-  listelemenin godoc'u "sıra sabittir" diyordu; sabit olan ANAHTAR, yön değil.
-
 - **Dört karar satırı bir KONU adlandırıyordu; ölçülüp SORUYA çevrildi — ve ilk
   taslak yirmi dört yanlış iddia taşıyordu** (A4, A5, A11, A12).
 
@@ -1135,6 +1094,78 @@ Sabitlenme `1.0.0` ile olur.
   tahmin edilmeden bırakıldı.
 
 ### Eklendi
+
+- **Vitrinin dördüncü sözlük ucu kuruldu — ve tek metin döndüreni o**
+  (B2'nin OPTION VALUE yarısının ön koşulu).
+
+  `GET /store/v1/option-values`, kataloğun sunduğu **ayrık (seçenek başlığı,
+  değer)** çiftlerini döndürüyor. Kimlik döndürmemesi yapısal: `product_option`
+  bir ürüne, `product_option_value` bir seçeneğe ait — ikisi de NOT NULL — yani
+  bir seçenek-değeri kimliği tek bir ürünün tek bir değerini adlandırır ve
+  onunla katalog süzmek en çok bir ürün döndürür. Filtrenin ihtiyacı metin çifti.
+  Aynı çifti sunan iki ürün veritabanında iki satır, burada **bir** girdi.
+
+  **Kapsam bir incelik değil, güvenlik cümlesi.** Sözlüğün her girdisi bir ürün
+  onu taşıdığı için var; kapsanmamış bir sözlük TASLAK bir ürünün değerini ya da
+  çağıranın anahtarı olmayan bir kanalın değerini adlandırırdı — yani
+  listelemenin söylemeyi reddettiği şeyi söylerdi. O yüzden listelemenin
+  uyguladığı iki koşul, değerin astığı ürüne aynen uygulanıyor. Yumuşak silme
+  koruması üç düzeyde birden: seçeneği silmek bir cascade değil, ve silinmiş bir
+  seçeneğin değeri aksi hâlde sözlükte kalırdı.
+
+  **Sahte depo gerçeğin davranışını taklit ediyor** — ayrıklık, üç düzeyli silme
+  koruması ve (başlık, değer) sırası dahil. Aksi hâlde birim testi, veritabanının
+  izlemediği bir kuralda yeşil kalırdı; bu deponun bir kez ödediği kusur.
+
+  İki mutasyon: SQL'den `DISTINCT`'i çıkarmak entegrasyon testini düşürüyor,
+  `PublicOnly`'nin durum süzgecini kurmaması ise **hem** birim **hem** entegrasyon
+  testini düşürüyor.
+
+  Denetimler yine iki kez ısırdı ve ikisi de haklıydı: yeni uç belgelenmeden
+  `TestEveryStoreEndpointIsDescribed` geçmedi, ve `OptionValuePair`'i yanlışlıkla
+  `Option`'ın godoc'u ile gövdesinin arasına koymuştum — bu turda ikinci kez aynı
+  hata.
+
+- **Vitrin kataloğu artık sıralanabiliyor — ve satırın "tek tuzağı" dediği şey,
+  bindiği sözleşme tarafından zaten çözülmüştü** (B2'nin SORT yarısı).
+
+  REST'te `sort=newest|oldest`, GraphQL'de bağlı bir `ProductOrder` enum'u.
+  Küme KAPALI ve fiyat içinde değil: fiyat bu tablonun kolonu değil, ne anlama
+  geldiği de A16'nın sorusu. Değeri okunmayan bir sıra sessizce varsayılana
+  düşmüyor, REDDEDİLİYOR — istediği sırayı almayan bir istemci, bunu öyle
+  görünen bir katalogdan ayırt edemez.
+
+  **Hiçbir migration gerekmedi.** `product_created_at_idx` zaten
+  `(created_at DESC, id DESC)` diye tanımlı ve bir b-tree iki yönde de okunur,
+  yani eskiden-yeniye aynı indeksin ters yürütülmesi. Başlık sıralaması bilerek
+  yapılmadı: onun için indeks yok, ve ADR 0015'in kaydettiği C-locale kümesinde
+  sıra Türkçe için yanlış görünürdü — ölçülmüş bir tehlikeye bedava girilmez.
+
+  **Tuzak buydu ve zaten kapalıydı:** iki sıra AYNI anahtarı ters yönlerde
+  yürüdüğü için, birinde üretilmiş bir imleç ötekinin anahtar uzayında da
+  geçerli bir konumdur ve sessizce yanlış sayfayı verir. `internal/core/page`
+  bunu zaten reddediyor, çünkü imleç ait olduğu listelemenin ADINI taşıyor ve o
+  ad dönüşte denetleniyor. Bütün çözüm, sırayı o adın parçası yapmaktı.
+  Yeniden-eskiye sırası ÇIPLAK adı koruyor, böylece parametre var olmadan önce
+  üretilmiş imleçler hâlâ çözülüyor.
+
+  GraphQL enum'u modülün kendi tipine BAĞLANDI, üretilmiş ikinci bir tipe
+  değil — o yüzden değerleri SCREAMING_CASE değil, REST'in yazdığı gibi küçük
+  harf. Gerekçe gqlgen.yml'in kendi politikası: ayrı bir model katmanı bir
+  dönüştürücü ister, dönüştürücü de ikinci bir tanımdır.
+
+  **Üç mutasyon, ve üçüncüsü katmanların neyi koruduğunu gösteriyor.** Sırayı
+  listeleme adından çıkarmak tuzak testini düşürüyor; `oldest`'in yönünü ters
+  çevirmek yön-eşleme testini düşürüyor; ve sırayı servisten depoya
+  GEÇİRMEMEK bütün SQL testlerini YEŞİL bırakıp yalnızca gerçek veritabanındaki
+  testi düşürüyor — entegrasyon yarısı tam olarak bunun için var.
+
+  İki denetim bu turda benim işimi yakaladı ve ikisi de haklıydı: yeni
+  parametre belgelenmiş ama handler'ın okuduğu kümeye eklenmemişti, ve
+  `keysetSeek` yanlışlıkla `listProductsSQL`'in godoc'u ile gövdesinin arasına
+  girmişti. Üçüncüsü belge tarafında yakaladı: paketin adını `internal/`
+  öneki olmadan yazmıştım, doğrusu `internal/core/page`. Ayrıca artık yanlış olan bir cümle düzeltildi —
+  listelemenin godoc'u "sıra sabittir" diyordu; sabit olan ANAHTAR, yön değil.
 
 - **Yorum modülü: bir müşteri yorum yazabiliyor, ve onaylanana kadar hiçbir
   yerde görünmüyor** (B4). On yedinci modül.
