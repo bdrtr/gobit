@@ -97,6 +97,11 @@ type Repository interface {
 	UpdateCustomer(ctx context.Context, id string, patch models.CustomerPatch, now time.Time) (models.Customer, error)
 	PromoteGuest(ctx context.Context, id string, now time.Time) (models.Customer, error)
 	DeleteCustomer(ctx context.Context, id string, now time.Time) error
+	// AnonymizeCustomers is the storage half of [Service.Erase]. It is a
+	// separate method from DeleteCustomer and not a flag on it: the two acts
+	// write different columns for different reasons, and a shared method would
+	// have made "forget this person" one boolean away from "hide this record".
+	AnonymizeCustomers(ctx context.Context, customerID, email string, now time.Time) (models.ErasureCount, error)
 
 	CreateGroup(ctx context.Context, g models.CustomerGroup) (models.CustomerGroup, error)
 	GetGroup(ctx context.Context, id string) (models.CustomerGroup, error)

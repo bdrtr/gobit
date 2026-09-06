@@ -32,6 +32,111 @@ func (q *Queries) AccountEmailTakenByOther(ctx context.Context, arg AccountEmail
 	return exists, err
 }
 
+const anonymizeAddressesOfCustomer = `-- name: AnonymizeAddressesOfCustomer :execrows
+UPDATE customer_address SET
+    first_name  = '',
+    last_name   = '',
+    company     = '',
+    address_1   = $1,
+    address_2   = '',
+    city        = $1,
+    postal_code = '',
+    phone       = '',
+    updated_at  = $2
+WHERE customer_id = $3
+  AND (first_name  <> ''
+    OR last_name   <> ''
+    OR company     <> ''
+    OR address_1   <> $1
+    OR address_2   <> ''
+    OR city        <> $1
+    OR postal_code <> ''
+    OR phone       <> '')
+`
+
+type AnonymizeAddressesOfCustomerParams struct {
+	Placeholder string
+	UpdatedAt   pgtype.Timestamptz
+	CustomerID  string
+}
+
+// AnonymizeAddressesOfCustomer müşterinin TÜM adres satırlarını anonimleştirir.
+//
+// Adresler yumuşak silinmiş olsalar bile kapsama girer: silinmiş bir adres
+// satırı da kişinin sokağını ve telefonunu taşır.
+//
+// country_code KORUNUR. Ülke kodu kişiyi değil YARGI ALANINI adlandırır (vergi
+// ve saklama süresi oradan okunur) ve tek başına milyonlarca insana işaret eder.
+// Zaten boşaltılamazdı da: customer_address_country_check kodun tam iki BÜYÜK
+// harf olmasını ister. Korunduğu için sonuç raporunun Kept alanında bildirilir.
+//
+// address_1 ve city BOŞALTILAMAZ (NOT NULL + CHECK <> ”), yerlerine yer tutucu
+// yazılır; geri kalan adlı sütunların hepsi boş dizeye çekilir.
+//
+// WHERE'in ikinci yarısı sayının DOĞRULUĞU içindir: zaten anonim olan satır
+// güncellenmez. Koşul olmasaydı ikinci bir unutulma isteği hiçbir şey
+// değiştirmediği hâlde aynı satırları yeniden "yazıldı" diye sayar ve
+// updated_at'i ilerletirdi — yapılmamış bir işin makbuzu.
+func (q *Queries) AnonymizeAddressesOfCustomer(ctx context.Context, arg AnonymizeAddressesOfCustomerParams) (int64, error) {
+	result, err := q.db.Exec(ctx, anonymizeAddressesOfCustomer, arg.Placeholder, arg.UpdatedAt, arg.CustomerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const anonymizeCustomer = `-- name: AnonymizeCustomer :execrows
+UPDATE customer SET
+    email      = $1,
+    first_name = '',
+    last_name  = '',
+    phone      = '',
+    updated_at = $2
+WHERE id = $3
+  AND (email      <> $1
+    OR first_name <> ''
+    OR last_name  <> ''
+    OR phone      <> '')
+`
+
+type AnonymizeCustomerParams struct {
+	Email     string
+	UpdatedAt pgtype.Timestamptz
+	ID        string
+}
+
+// AnonymizeCustomer müşterinin ADLI kişisel sütunlarını üzerine yazar.
+//
+// Yazılmayan üç sütun ayrı ayrı düşünülmüştür:
+//
+//   - metadata SERBEST BİÇİMLİDİR ve gobit onu asla yeniden yazmaz (ADR 0029);
+//     içinde kişisel veri olup olmadığına karar vermek gömen uygulamanındır.
+//     Sonuç raporu bu yüzden onu Kept alanında bildirmek ZORUNDADIR.
+//   - deleted_at'e dokunulmaz: unutulma bir silme değildir ve silinmiş bir
+//     kaydı diriltmek de silinmemiş bir kaydı silmek de bu işin parçası değil.
+//   - has_account korunur; hesap olup olmadığı kişiyi tanımlamaz ama kısmi
+//     benzersizlik indeksinin kapsamını belirler.
+//
+// e-posta parametre olarak GELİR, SQL içinde türetilmez: kuralın tek kaynağı
+// models.AnonymousEmail'dir ve burada tekrarlansaydı iki dil aynı kuralı
+// ayrı ayrı taşır, biri değiştiğinde ötekini sessizce yanlışlardı.
+//
+// WHERE'in ikinci yarısı sayının DOĞRULUĞU içindir ve AnonymizeAddressesOfCustomer
+// ile AYNI kuralı uygular: satır ancak GERÇEKTEN bir şey taşıyorsa yazılır.
+// Koşul dört sütuna birden bakar, yalnızca e-postaya DEĞİL. Aradaki fark
+// ölçülebilir: anonimleştirilmiş kayıt SİLİNMEZ, canlı kalır ve UpdateCustomer
+// sütun sütun COALESCE eden bir yamadır — yönetici ya da vitrin, e-postaya hiç
+// dokunmadan taze bir first_name ve phone yazabilir. Yalnızca e-postaya bakan
+// bir koşul o satırı "zaten anonim" sayıp UPDATE'i tümüyle atlar ve kişinin adı
+// satırda dururken rapor "anonimleştirildi" derdi.
+func (q *Queries) AnonymizeCustomer(ctx context.Context, arg AnonymizeCustomerParams) (int64, error) {
+	result, err := q.db.Exec(ctx, anonymizeCustomer, arg.Email, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countCustomers = `-- name: CountCustomers :one
 SELECT count(*) FROM customer c
 WHERE c.deleted_at IS NULL
@@ -159,6 +264,10 @@ type InsertCustomerParams struct {
 }
 
 // customer sorguları. Tüm okumalar deleted_at IS NULL filtresi uygular.
+//
+// TEK istisna dosyanın sonundaki UNUTULMA (erasure) sorgularıdır ve istisna
+// bilinçlidir: yumuşak silinmiş bir satır kişisel verisini OLDUĞU GİBİ
+// taşımaya devam eder. Gerekçe [LockCustomerForErasure] başlığında yazılıdır.
 func (q *Queries) InsertCustomer(ctx context.Context, arg InsertCustomerParams) (Customer, error) {
 	row := q.db.QueryRow(ctx, insertCustomer,
 		arg.ID,
@@ -288,6 +397,128 @@ func (q *Queries) ListCustomersByIDs(ctx context.Context, ids []string) ([]Custo
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockCustomerForErasure = `-- name: LockCustomerForErasure :one
+SELECT id FROM customer
+WHERE id = $1
+FOR UPDATE
+`
+
+// LockCustomerForErasure unutulma isteğinin ULAŞTIĞI satırı kimliğe göre okur
+// ve işlem sonuna kadar kilitler.
+//
+// deleted_at SÜZGECİ YOKTUR ve bu, dosyanın geri kalanından ayrıldığı tek
+// noktadır. Sebep ölçülebilir: SoftDeleteCustomer yalnızca deleted_at ile
+// updated_at yazar, tek bir kişisel sütuna dokunmaz. Yumuşak silinmiş bir
+// müşterinin e-postası, adı ve telefonu bu yüzden tabloda AYNEN durur. Süzgeç
+// konsaydı, kaydı silinmiş bir kişiye "veriniz anonimleştirildi" denirken veri
+// yerinde kalırdı — ve rapor bunu hiçbir yerde söylemezdi.
+//
+// Silme (bookkeeping) ile unutulma (hukuki cevap) iki AYRI iştir; bu sorgunun
+// silinmiş satırı da görmesi o ayrımın veritabanı tarafındaki karşılığıdır.
+//
+// FOR UPDATE şarttır: kilit alınmadan okunan satırın üzerine yazılırken araya
+// giren bir güncelleme (örn. müşterinin vitrinde kendi adını değiştirmesi)
+// kaybolur ya da anonimleştirmeden SONRA yerine oturur; kilit, satırı okuyan
+// ile yazanın aynı işlem olmasını garanti eder.
+//
+// Sorgu YALNIZCA kimliği döner. Eskiden e-postayı da dönerdi çünkü satırın
+// zaten anonim olup olmadığına ondan karar veriliyordu; o karar artık
+// AnonymizeCustomer'ın WHERE'inde, sütunların GERÇEK değerlerine bakılarak
+// veriliyor (gerekçesi orada yazılıdır).
+func (q *Queries) LockCustomerForErasure(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, lockCustomerForErasure, id)
+	var id_2 string
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
+const lockCustomersByEmailForErasure = `-- name: LockCustomersByEmailForErasure :many
+SELECT id FROM customer
+WHERE email = $1
+ORDER BY id
+FOR UPDATE
+`
+
+// LockCustomersByEmailForErasure e-postaya göre ulaşılan TÜM satırları kilitler.
+//
+// Çoğul olması zorunludur: aynı e-postayla istenildiği kadar MİSAFİR kaydı
+// açılabilir (bkz. customer_account_email_uniq) ve hepsi aynı kişidir. Yalnızca
+// hesabı arayan bir sorgu (GetAccountByEmail) o kişinin misafir kayıtlarını
+// olduğu gibi bırakırdı.
+//
+// ORDER BY id yalnızca belirlilik için değildir: kilit sırasını SABİTLER.
+// Aynı e-postaya iki eşzamanlı unutulma isteği gelirse ikisi de satırları aynı
+// sırada kilitler ve karşılıklı bekleme (deadlock) yapısal olarak imkânsız olur.
+func (q *Queries) LockCustomersByEmailForErasure(ctx context.Context, email string) ([]string, error) {
+	rows, err := q.db.Query(ctx, lockCustomersByEmailForErasure, email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockCustomersByIDOrEmailForErasure = `-- name: LockCustomersByIDOrEmailForErasure :many
+SELECT id FROM customer
+WHERE id = $1 OR email = $2
+ORDER BY id
+FOR UPDATE
+`
+
+type LockCustomersByIDOrEmailForErasureParams struct {
+	ID    string
+	Email string
+}
+
+// LockCustomersByIDOrEmailForErasure kimliği VE e-postayı BİRLİKTE taşıyan
+// özneyi tek sorguda çözer.
+//
+// Böyle bir özne kural dışı değil, YÖNETİM UCUNUN normalidir (bkz.
+// internal/app/erasure.go: istek gövdesindeki iki alan da doğrudan
+// erasure.Subject'e geçer). Kaydı olan bir müşteri aynı adresle misafir olarak
+// da alışveriş yapmış olabilir; kimliği o kaydı, e-posta ötekileri gösterir ve
+// kişi hepsidir. "Kimlik varsa e-postaya bakma" kuralı tam da bu kişide
+// misafir satırlarını olduğu gibi bırakırdı.
+//
+// İki ayrı sorgu yerine TEK bir OR'lu sorgu olmasının sebebi kilit sırasıdır.
+// Önce kimliği, sonra e-postayı kilitleyen bir sıra, e-postayla gelen ikinci
+// bir isteğin id sırasıyla ilerlemesiyle ters düşebilirdi: (cust_C, adres) ile
+// gelen istek C'yi tutup A'yı beklerken, yalnız adresle gelen istek A'yı tutup
+// C'yi bekler — karşılıklı bekleme. Tek sorgu satırların HEPSİNİ tek bir id
+// sırasında kilitler, o sıra e-posta sorgusununkiyle aynıdır ve kilitlenme
+// yapısal olarak imkânsız kalır. Aynı satır iki koşulu birden sağlasa bile
+// sonuçta BİR kez görünür, dolayısıyla ayıklama (dedup) gerekmez.
+func (q *Queries) LockCustomersByIDOrEmailForErasure(ctx context.Context, arg LockCustomersByIDOrEmailForErasureParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, lockCustomersByIDOrEmailForErasure, arg.ID, arg.Email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

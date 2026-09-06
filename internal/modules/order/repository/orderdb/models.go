@@ -9,29 +9,30 @@ import (
 )
 
 type Order struct {
-	ID             string
-	DisplayID      int64
-	Status         string
-	RegionID       string
-	CustomerID     *string
-	Email          *string
-	CurrencyCode   string
-	CartID         *string
-	IdempotencyKey *string
-	Subtotal       int64
-	DiscountTotal  int64
-	TaxTotal       int64
-	ShippingTotal  int64
-	Total          int64
-	Metadata       []byte
-	PlacedAt       pgtype.Timestamptz
-	CompletedAt    pgtype.Timestamptz
-	CanceledAt     pgtype.Timestamptz
-	CancelReason   *string
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
-	DeletedAt      pgtype.Timestamptz
-	ArchivedAt     pgtype.Timestamptz
+	ID                   string
+	DisplayID            int64
+	Status               string
+	RegionID             string
+	CustomerID           *string
+	Email                *string
+	CurrencyCode         string
+	CartID               *string
+	IdempotencyKey       *string
+	Subtotal             int64
+	DiscountTotal        int64
+	TaxTotal             int64
+	ShippingTotal        int64
+	Total                int64
+	Metadata             []byte
+	PlacedAt             pgtype.Timestamptz
+	CompletedAt          pgtype.Timestamptz
+	CanceledAt           pgtype.Timestamptz
+	CancelReason         *string
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	DeletedAt            pgtype.Timestamptz
+	ArchivedAt           pgtype.Timestamptz
+	PersonalDataErasedAt pgtype.Timestamptz
 }
 
 type OrderAddress struct {

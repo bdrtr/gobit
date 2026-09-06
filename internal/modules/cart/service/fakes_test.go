@@ -705,3 +705,91 @@ func (f *fakeStore) SoftDeleteShippingMethodsByCart(_ context.Context, cartID st
 	}
 	return nil
 }
+
+// CartsForErasure returns the identifiers of the person's carts and records the
+// lock; if it is called outside a transaction it returns an error.
+//
+// A SOFT-DELETED cart is included, exactly as the real query includes it: the
+// question the erasure asks is what the database still holds about a person,
+// and a hidden row holds an address just as a visible one does. The fake would
+// otherwise agree with a statement that quietly skipped them.
+func (f *fakeStore) CartsForErasure(ctx context.Context, customerID, email string) ([]string, error) {
+	if err := requireTx(ctx, "CartsForErasure"); err != nil {
+		return nil, err
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := make([]string, 0, len(f.carts))
+	for id := range f.carts {
+		cart := f.carts[id]
+		if (customerID != "" && cart.CustomerID == customerID) || (email != "" && cart.Email == email) {
+			out = append(out, id)
+		}
+	}
+	slices.Sort(out)
+	f.lockedCarts = append(f.lockedCarts, out...)
+
+	return out, nil
+}
+
+// AnonymizeCartContacts nulls the e-mail of the given carts.
+//
+// The count is the rows the statement WOULD have written, which is every cart
+// that exists — not the ones whose e-mail actually changed. A fake that counted
+// changes would make the second sweep report a smaller number than the first
+// and would hide the very property the idempotence test is checking.
+func (f *fakeStore) AnonymizeCartContacts(_ context.Context, cartIDs []string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var written int64
+	for _, id := range cartIDs {
+		cart, ok := f.carts[id]
+		if !ok {
+			continue
+		}
+		cart.Email = ""
+		cart.UpdatedAt = f.nextStamp()
+		f.carts[id] = cart
+		written++
+	}
+
+	return written, nil
+}
+
+// AnonymizeCartAddresses nulls the personal columns of the given carts'
+// addresses.
+//
+// country_code and metadata are left where they are, because the statement in
+// queries/erasure.sql leaves them: a fake that emptied them too would let a
+// service test pass while the report named a column the database had actually
+// rewritten.
+func (f *fakeStore) AnonymizeCartAddresses(_ context.Context, cartIDs []string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	wanted := make(map[string]bool, len(cartIDs))
+	for _, id := range cartIDs {
+		wanted[id] = true
+	}
+
+	var written int64
+	for key := range f.addresses {
+		addr := f.addresses[key]
+		if !wanted[addr.CartID] {
+			continue
+		}
+		addr.SourceAddressID = ""
+		addr.FirstName, addr.LastName, addr.Company = "", "", ""
+		addr.Address1, addr.Address2 = "", ""
+		addr.City, addr.Province, addr.PostalCode = "", "", ""
+		addr.Phone = ""
+		addr.UpdatedAt = f.nextStamp()
+		f.addresses[key] = addr
+		written++
+	}
+
+	return written, nil
+}

@@ -126,6 +126,67 @@ answering an erasure request.
   and does not say for how long; under ADR 0029 that number is the embedder's,
   and until an embedder sets one, "retained" means "kept".
 
+## Amendment: the sub-question is answered, and two sentences above were wrong (2026-09-07)
+
+**The mechanism is the `BEFORE DELETE` trigger.** Migration
+`000002_an_issued_invoice_is_retained` carries it, on `invoices` AND on
+`invoice_lines`, with a `BEFORE TRUNCATE` companion on each and a custom
+SQLSTATE rather than `restrict_violation` — 23001 is also what a genuine
+`FOREIGN KEY ... ON DELETE RESTRICT` raises, so anyone mapping it onto "this is
+the retention refusal" would misclassify a real constraint failure.
+
+**`REVOKE DELETE` was not merely weaker, it does nothing at all here, and that
+is a measurement rather than an argument.** gobit's shipped role is a SUPERUSER
+— the compose file sets `POSTGRES_USER` to `gobit` and the configuration carries
+exactly one `DATABASE_URL`, so the migration role and the runtime role are the
+same account. Run against that role: `REVOKE DELETE ON invoices FROM gobit`
+succeeds, `pg_class.relacl` visibly changes, and the very next
+`DELETE FROM invoices` still reports `DELETE 1`. It leaves a catalog artefact
+that LOOKS like protection and stops nothing, which is worse than no guard.
+
+**A second hole was measured and closed.** With `invoices` guarded,
+`DELETE FROM invoice_lines WHERE invoice_id = ...` still succeeded, taking the
+retained `description` text and leaving the invoice's stored totals standing
+against lines that no longer existed. Both tables are guarded now.
+
+**A trigger CAN be bypassed by the role that owns it, and the first draft of
+this migration was open to it.** Measured against the applied migration as the
+same superuser role: `SET session_replication_role = 'replica'` followed by
+`DELETE FROM invoices` removed the document, because ordinary user triggers do
+not fire in replica mode. So the escape was a single session-level `SET`, not
+the deliberate `ALTER TABLE ... DISABLE TRIGGER` the header had called friction.
+
+**That hole is closed, and closing it was measured both ways.** The four
+triggers are declared `ENABLE ALWAYS`, which makes them fire in replica mode
+too. On a throwaway table against the shipped container, as the shipped role:
+
+| trigger | `session_replication_role = replica` |
+| --- | --- |
+| plain | `DELETE 1` — the row is gone |
+| `ENABLE ALWAYS` | `ERROR: refused` — the row stays |
+
+What remains is the honest limit and it is worth stating plainly: **the refusal
+stops the ordinary statement and every session-level override; it does not stop
+the role that OWNS the table from dropping or disabling the trigger.** Both
+remaining escapes are deliberate DDL, which is the shape this refusal was meant
+to have. A guard the application's own account can still drop is a ROLE
+SEPARATION problem, and this repository does not separate roles today — that is
+a gap against [ADR 0015](0015-postgresql-cluster-contract.md)'s privileges row,
+filed here rather than fixed, because fixing it means the migration role and the
+runtime role stop being one account and every deployment path has to say which
+is which.
+
+Two lessons, and the second is the one worth carrying:
+
+- **A guarantee stated absolutely is the kind of sentence the next person builds
+  on.** The original overstatement was caught because the claim was tested
+  rather than read.
+- **The argument for NOT doing something has to be true as well.** The draft
+  that left `ENABLE ALWAYS` out defended the omission with "this migration has
+  already been applied to live databases". The file had never been in a commit.
+  A false premise had almost bought a permanent weakening of the guard, and it
+  was the cheaper claim to check.
+
 ## Reopening the decision
 
 Reopen if a jurisdiction the framework targets requires erasure to override the

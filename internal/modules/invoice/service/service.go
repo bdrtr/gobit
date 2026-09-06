@@ -77,6 +77,12 @@ type Repo interface {
 	CreateInvoice(ctx context.Context, in models.Invoice) (models.Invoice, error)
 	GetInvoice(ctx context.Context, id string) (models.Invoice, error)
 	ListInvoices(ctx context.Context, filter models.Filter) ([]models.Invoice, int64, error)
+	// CountInvoicesByBuyerEmail is here for [Service.Erase] and for nothing
+	// else. It is on the interface rather than reached for directly because the
+	// erasure answer has to be provable without a database, and a fake that
+	// cannot be asked how many documents an address has cannot show that the
+	// count reported is the count that was found.
+	CountInvoicesByBuyerEmail(ctx context.Context, email string) (int64, error)
 	SetStatus(
 		ctx context.Context, id string, from, to models.Status, reason, providerID, externalID string,
 	) (models.Invoice, error)

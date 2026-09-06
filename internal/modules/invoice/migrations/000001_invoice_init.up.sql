@@ -14,6 +14,20 @@
 -- change is the STATUS and the fields that describe a transmission
 -- (provider_id, external_id, status_reason). A mistake is corrected with a
 -- cancellation and a new document, which is also how the law treats it.
+--
+-- # An issued document is also UNDELETABLE, and this file is not where that is
+--
+-- 000002 adds a BEFORE DELETE row trigger and a BEFORE TRUNCATE statement
+-- trigger to BOTH tables below, so the immutability this header describes now
+-- covers removal as well: an erasure request answers RETAINED for an invoice
+-- (ADR 0032) and the database enforces it rather than the module. The tables
+-- below therefore accept fewer statements than their DDL suggests, and the
+-- ON DELETE CASCADE on invoice_lines.invoice_id no longer means what it reads
+-- like — the cascade still happens, and the child trigger refuses it. The
+-- argument, the measurement that ruled out REVOKE DELETE, and the sanctioned
+-- escape sit at the head of 000002. 000002 also adds the only index this table
+-- has on a buyer column; the three indexes below are the whole story for
+-- everything else.
 
 -- invoice_series is the source of invoice numbers.
 --

@@ -77,6 +77,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/db"
+	"github.com/bdrtr/gobit/core/erasure"
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/module"
 	"github.com/bdrtr/gobit/core/query"
@@ -183,6 +184,39 @@ var _ module.Module = (*Module)(nil)
 // body: the endpoints that create users and keys would turn into methods
 // whose payload is unknown.
 var _ openapi.Describer = (*Module)(nil)
+
+// That it declares its personal data is pinned at compile time too.
+//
+// The rationale is the openapi.Describer pin's, and the price is heavier here:
+// [erasure.Declarer] is looked for WITH A TYPE ASSERTION as well (ADR 0029), so
+// a drifting method name or signature breaks nothing at build time — the module
+// would simply vanish from the sweep. For the document that costs a missing
+// path; here it would cost an administrator's e-mail address, name and password
+// hash going unmentioned in the answer a controller gives a person.
+//
+// There is NO [erasure.Eraser] pin because there is no eraser; the reason is
+// written on [Module.PersonalData].
+var _ erasure.Declarer = (*Module)(nil)
+
+// The tables the declaration names.
+//
+// They are written here rather than taken from the repository layer because the
+// declaration is about the SCHEMA, and the schema is what
+// migrations/000001_auth_init.up.sql says it is. The audit in erasure_test.go
+// reads that file and compares.
+const (
+	tableUser         = "auth_user"
+	tableIdentity     = "auth_identity"
+	tableSalesChannel = "sales_channel"
+	tableAPIKey       = "api_key"
+)
+
+// columnMetadata is the free-form jsonb three of those tables carry.
+//
+// It is a constant for the same reason the table names are: the declaration
+// names it three times, and three literals are three chances for one of them to
+// be spelled differently from the column the migration created.
+const columnMetadata = "metadata"
 
 // New produces an auth module that is not set up; the service is set up
 // inside [Module.Register].
@@ -296,6 +330,140 @@ func (m *Module) Routes(r chi.Router) {
 // would have silently emptied the document of a module that was not set up
 // too.
 func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
+
+// PersonalData declares EVERY column in which this module keeps personal data.
+//
+// # Why there is no eraser beside it
+//
+// This module's data subject IS A STAFF MEMBER, not a shopper. Every row here
+// belongs to somebody who logs in to the administration surface, and an erasure
+// request arriving from a customer is about a different person entirely. Wiring
+// [erasure.Eraser] here would mean that a shopper asking to be forgotten
+// deletes an operator — a colliding e-mail address is all it would take, and
+// the two tables are joined nowhere that would catch the mistake. A staff
+// member's own request is answered by the embedder through the user endpoints,
+// which is a path that already knows it is talking about an administrator.
+//
+// Declaring without erasing is not a half measure: the coordinator turns a
+// holder that declares and offers no erasure into a RETAINED entry in every
+// report, listing what it keeps (ADR 0033). So this method is what stops the
+// admin accounts from being INVISIBLE in the answer the controller gives, and
+// staying silent is what would have been the half measure.
+//
+// # Why it is on the module and why it is static
+//
+// A declaration is a property of the CODE, not of the data: the same sentences
+// on an empty database and a full one, readable by an audit with no connection
+// open (ADR 0029). That is why it hangs off the module rather than the service
+// and answers correctly before [Module.Register] has ever run.
+//
+// [erasure.Declaration.Holder] is deliberately LEFT EMPTY. The coordinator overwrites
+// it with the name the registry knows this module by, and writing "auth" here
+// would create a second copy of that name for the two to drift apart on.
+//
+// # Why it has to be exhaustive
+//
+// The list is the only answer an embedder has to "where is this person in your
+// database", and it is what an embedder publishes as its privacy notice. A
+// missing row does not shorten the list, it makes it FALSE — a column nobody
+// declared is a column no audit ever looks at. It is therefore derived
+// column-by-column from migrations/000001_auth_init.up.sql and its
+// exhaustiveness is pinned by TestPersonalDataCoversEveryPersonalColumn, which
+// reads that same file.
+//
+// # Two judgements worth writing down
+//
+// A BCRYPT HASH IS DECLARED. It is not readable and it was never meant to be,
+// but pseudonymised data is still personal data: the value is derived from a
+// secret this identified person chose, and because people reuse passwords a
+// leaked hash is a fact about them that reaches past this installation. The
+// contrast that decides it is api_key.token_hash, which is NOT declared: that
+// one hashes 256 random bits gobit generated itself, so it is derived from
+// nobody and tells you nothing about anybody.
+//
+// A LOGIN TIMESTAMP IS DECLARED. last_login_at is not an attribute of the
+// account, it is a record of something the person DID, and the row it sits in
+// names exactly who did it — when an administrator was last at their desk is
+// the kind of thing a data-subject request is entitled to be told about. The
+// contrast that decides it is api_key.last_used_at, which is NOT declared: a
+// key is a machine identity that any number of processes and people hold, so
+// its use timestamp points at no one person. The same reasoning brings
+// failed_attempts and locked_until in — a failed sign-in and a lock are events
+// in a named person's history, not properties of a table row.
+//
+// # Named against Open
+//
+// The split is a split of responsibility. gobit wrote the named columns and
+// knows what is in them. The open ones are filled by whoever runs the shop —
+// a description, a title, a metadata blob — and ADR 0029 leaves the judgement
+// of whether such a field holds personal data with the controller, so gobit
+// declares the place and does not look inside.
+func (m *Module) PersonalData() erasure.Declaration {
+	return erasure.Declaration{
+		Holdings: []erasure.Holding{
+			{
+				Table: tableUser, Column: "email", Kind: erasure.Named,
+				Why: "the work address of a staff member with access to the administration panel; it is also the name they log in with",
+			},
+			{
+				Table: tableUser, Column: "first_name", Kind: erasure.Named,
+				Why: "the staff member's first name as it was entered when their account was opened",
+			},
+			{
+				Table: tableUser, Column: "last_name", Kind: erasure.Named,
+				Why: "the staff member's last name as it was entered when their account was opened",
+			},
+			{
+				Table: tableUser, Column: "avatar_url", Kind: erasure.Named,
+				Why: "a link to the staff member's profile picture, which is an image of them and may in itself spell out their name or address",
+			},
+			{
+				Table: tableUser, Column: columnMetadata, Kind: erasure.Open,
+				Why: "free-form context the shop keeps about a staff member; gobit writes nothing into it and never rewrites it, so whether it holds personal data is the controller's judgement",
+			},
+			{
+				Table: tableIdentity, Column: "provider_identity", Kind: erasure.Named,
+				Why: "the staff member's identity at one login provider, and the column name understates it: on the built-in 'emailpass' provider this value IS their e-mail address, and on an external provider it is the account identifier that provider knows them by",
+			},
+			{
+				Table: tableIdentity, Column: "password_hash", Kind: erasure.Named,
+				Why: "a bcrypt hash of the password this staff member chose; it cannot be read back, but it is derived from a secret of theirs and people reuse passwords, so it is pseudonymised personal data rather than none",
+			},
+			{
+				Table: tableIdentity, Column: "failed_attempts", Kind: erasure.Named,
+				Why: "how many times in a row this staff member failed to sign in, which is a record of what they did and not a property of the account",
+			},
+			{
+				Table: tableIdentity, Column: "locked_until", Kind: erasure.Named,
+				Why: "the moment this staff member's sign-in lock expires, which says that their account was locked out and roughly when",
+			},
+			{
+				Table: tableIdentity, Column: "last_login_at", Kind: erasure.Named,
+				Why: "when this staff member last signed in, which places a named person at work at a given moment",
+			},
+			{
+				Table: tableIdentity, Column: columnMetadata, Kind: erasure.Open,
+				Why: "free-form context the shop keeps about one login method; gobit writes nothing into it and never rewrites it, so whether it holds personal data is the controller's judgement",
+			},
+			{
+				Table: tableSalesChannel, Column: "name", Kind: erasure.Open,
+				Why: "the name an operator gives a sales channel; it is usually a route to market such as 'Web', but a channel opened for a single dealer carries that dealer's name or their trading name",
+			},
+			{
+				Table: tableSalesChannel, Column: "description", Kind: erasure.Open,
+				Why: "free text an operator types about a sales channel, which is as likely to hold a contact person and their phone number as anything else",
+			},
+			{
+				Table: tableSalesChannel, Column: columnMetadata, Kind: erasure.Open,
+				Why: "free-form context the shop keeps about a sales channel; gobit writes nothing into it and never rewrites it, so whether it holds personal data is the controller's judgement",
+			},
+			{
+				Table: tableAPIKey, Column: "title", Kind: erasure.Open,
+				Why: "the label an operator types on an API key, which is commonly the name of the colleague or the partner the key was issued to",
+			},
+		},
+	}
+}
 
 // Service returns the service that was set up; nil if Register was not
 // called.

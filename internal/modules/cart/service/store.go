@@ -28,6 +28,11 @@ import (
 // of the write, and two concurrent additions could open two lines for the same
 // variant.
 //
+// [Store.CartsForErasure] takes the same lock for the same reason, on the carts
+// of one person; the two anonymizing writes that follow it work from the
+// identifiers it returned, so all three belong to a single [Store.WithTx] (see
+// erasure.go).
+//
 // [Store.WithReadTx] is for reads that do not write but make MORE THAN ONE query
 // (see [Service.GetCart]). It takes no lock; the only guarantee it gives is that
 // all of the queries inside it see the SAME state of the cart. The reason it is
@@ -102,6 +107,17 @@ type Store interface {
 	ListCartAddresses(ctx context.Context, cartID string) ([]models.CartAddress, error)
 	// SoftDeleteCartAddressesByCart soft deletes all of the cart's addresses.
 	SoftDeleteCartAddressesByCart(ctx context.Context, cartID string) error
+
+	// CartsForErasure returns the identifiers of the person's carts and LOCKS
+	// them; it can only be called inside [Store.WithTx]. An empty identifier
+	// means "do not match on this one", and both empty matches nothing.
+	CartsForErasure(ctx context.Context, customerID, email string) ([]string, error)
+	// AnonymizeCartContacts nulls the e-mail of the given carts and returns the
+	// number of rows written.
+	AnonymizeCartContacts(ctx context.Context, cartIDs []string) (int64, error)
+	// AnonymizeCartAddresses nulls the personal columns of the given carts'
+	// addresses and returns the number of rows written.
+	AnonymizeCartAddresses(ctx context.Context, cartIDs []string) (int64, error)
 
 	// CreateShippingMethod adds a shipping method to the cart.
 	CreateShippingMethod(ctx context.Context, method models.ShippingMethod) (models.ShippingMethod, error)

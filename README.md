@@ -1361,7 +1361,7 @@ kararı arayan okuyucuyu onu içermeyen bir listeye gönderir.
 | [0023](docs/adr/0023-a-promised-event-is-part-of-the-transaction.md) | Söz verilen olay | Olay, onu söz veren **işlemin içinde** yazılır (`core/eventbus/outbox`); yayımı zamanlanmış bir röle yapar |
 | [0024](docs/adr/0024-an-invoice-number-comes-from-a-row-not-a-sequence.md) | Fatura numarası | Numara sequence'tan değil, belgeyi yazan **aynı işlemde** bir seri SATIRI güncellenerek alınır |
 | [0025](docs/adr/0025-gobit-is-a-library-not-a-template.md) | gobit bir kütüphanedir | gobit kopyalanan bir şablon değil, projenin **import ettiği** bir kütüphanedir; müşteri projesi çekirdeği `go.mod`'da bağımlılık olarak izler |
-| [0026](docs/adr/0026-the-published-surface-is-fourteen-packages.md) | Yayımlanmış yüzey | Yayımlanan ağaç `core/`tur ve **on dört paket** taşır; aralarında hiçbir commerce modeli yoktur |
+| [0026](docs/adr/0026-the-published-surface-is-fourteen-packages.md) | Yayımlanmış yüzey | Yayımlanan ağaç `core/`tur ve **on beş paket** taşır; aralarında hiçbir commerce modeli yoktur. (Dosya adı "fourteen" der: sayı ADR yazıldığı gündeki sayıdır, `core/erasure` 2026-09-06'da eklendi — ADR 0026'nın kendi ek notuna bakınız. Dosya YENİDEN ADLANDIRILAMAZ, belge referans denetimi bu ADR'yi yoluyla çözer.) |
 | [0027](docs/adr/0027-the-composition-root-is-a-library-not-a-binary.md) | Kompozisyon kökü | Yaşam döngüsü `internal/app`'ta, modül kökündeki yayımlanmış cephenin arkasındadır; ikili gobit'i çalıştırabilen en küçük programdır (on beş satır) |
 | [0028](docs/adr/0028-an-inbound-callback-is-registered-not-bound.md) | Gelen sağlayıcı çağrısı | Eklenti bir callback route'u **bağlamaz, kaydeder** (`corehttp.CallbackRegistry`); bağlamayı router'ı kuran çekirdek yapar |
 

@@ -121,6 +121,12 @@ const (
 	// CodeNotReady reports that the service was constructed with a missing
 	// dependency.
 	CodeNotReady = "order_service_not_ready"
+	// CodeErasureSubjectEmpty reports that an erasure request named nobody.
+	//
+	// It is its own code because the answer to it is not "we found nothing":
+	// erasing everybody is not an erasure request, and a subject with no
+	// identifier would otherwise select every order in the installation.
+	CodeErasureSubjectEmpty = "order_erasure_subject_empty"
 )
 
 // Pagination limits (plan Section 8: limit/offset).

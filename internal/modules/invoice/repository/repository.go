@@ -30,6 +30,12 @@ const (
 	codeTxCommit    = "invoice_tx_commit_failed"
 	codeTxRequired  = "invoice_tx_required"
 	codeConflict    = "invoice_conflict"
+	// codeRetained reports that the database refused to remove a document.
+	//
+	// It names a REFUSAL rather than a fault: ADR 0032 keeps an issued invoice
+	// and migration 000002 enforces that in the schema, so a caller receiving
+	// this code has met a decision, not a broken query.
+	codeRetained = "invoice_retained"
 )
 
 // rollbackTimeout is the budget for the rollback of an interrupted transaction.
@@ -332,6 +338,29 @@ func (r *Repository) ListInvoices(
 	}
 
 	return out, total, nil
+}
+
+// CountInvoicesByBuyerEmail counts the documents issued to one address.
+//
+// It exists for the erasure contract and for nothing else, and its shape is
+// dictated by the table rather than chosen: invoices has no customer_id and no
+// order_id column, so the only handle this module has on a person is the
+// address printed on the document. The match is case-insensitive because
+// nothing forces buyer_email to lower case here — the column copies what the
+// document said — and 000002 indexes lower(buyer_email) so that this stays a
+// seek rather than a scan of every invoice ever issued.
+//
+// It counts rather than reads: the answer needs a NUMBER, and pulling whole
+// documents into memory in order to discard them would move a table's worth of
+// buyer data around to report that it was kept.
+func (r *Repository) CountInvoicesByBuyerEmail(ctx context.Context, email string) (int64, error) {
+	count, err := r.queries(ctx).CountInvoicesByBuyerEmail(ctx, email)
+	if err != nil {
+		return 0, wrapDB(err, codeQueryFailed,
+			"the invoices issued to the buyer address could not be counted")
+	}
+
+	return count, nil
 }
 
 // SetStatus moves the document and returns the row it wrote.

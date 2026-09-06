@@ -28,6 +28,17 @@
 //     changes it and TURNS IT INTO AN ORDER).
 //   - /admin/v1/carts — the admin API (READ ONLY).
 //
+// # The optional capabilities it implements
+//
+// [erasure.Eraser] and [erasure.Declarer] (ADR 0029, ADR 0033). The module
+// holds a live person's e-mail and the postal address they were going to be
+// delivered at, and it CAN resolve the subject — by customer id and by e-mail —
+// so it answers an erasure request rather than staying silent: it ANONYMIZES
+// every cart of that person, leaving what was in the basket and what it came to
+// where they are. Why the answer is not DELETE, which columns are rewritten,
+// which deliberately are not, and what the report has to say about the ones it
+// left are all in service/erasure.go.
+//
 // # The flows it uses
 //
 // All of the storefront's WRITING endpoints — opening a cart, adding a line,
@@ -69,6 +80,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/db"
+	"github.com/bdrtr/gobit/core/erasure"
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/module"
 	"github.com/bdrtr/gobit/core/query"
@@ -160,6 +172,20 @@ var _ module.Module = (*Module)(nil)
 // nothing would break at compile time — only the cart's endpoints would
 // silently fall out of the document. This line closes that silence.
 var _ openapi.Describer = (*Module)(nil)
+
+// That the module can answer an erasure request, and can say what it holds, is
+// pinned down at compile time as well.
+//
+// The two [erasure] interfaces are found by type assertion exactly as
+// [openapi.Describer] is (see internal/workflows/erasing), and the cost of a
+// drift is worse here than a missing path in a document: the module would fall
+// out of the sweep in silence, the report would not mention it, and a person
+// who asked to be forgotten would be told the work was done while every cart
+// still carried their address.
+var (
+	_ erasure.Eraser   = (*Module)(nil)
+	_ erasure.Declarer = (*Module)(nil)
+)
 
 // New produces a cart module ready to be registered.
 //
@@ -261,6 +287,56 @@ func (m *Module) Routes(r chi.Router) {
 // schema comes from the types, not from the service. Putting a check there
 // would silently empty the document of an unregistered module too.
 func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
+
+// Erase answers an erasure request about one person (ADR 0029).
+//
+// The work is the service's and the whole argument for what the cart does —
+// anonymize every cart of the person, and why NOT delete them — is in
+// service/erasure.go. This method only delegates, the way [Module.Describe]
+// only delegates: the module type is the surface the sweep finds, not a place
+// where a second copy of a rule can grow.
+//
+// Unlike [Module.Routes], an unregistered module returns an ERROR here instead
+// of doing nothing. A missing route is a request that fails visibly; a silent
+// "nothing to erase" from a module whose service was never wired is a false
+// answer to a person who asked to be forgotten, and it would reach them as a
+// completed report rather than as a fault (the sweep marks a failing holder and
+// says the erasure is partial — see internal/workflows/erasing).
+func (m *Module) Erase(ctx context.Context, subject erasure.Subject) (erasure.Result, error) {
+	if m.svc == nil {
+		return erasure.Result{}, errors.Internal(codeSetupFailed,
+			"the %s module was asked to erase a person before Register wired its service; "+
+				"nothing was erased and the report must not count this holder as done", ModuleName)
+	}
+
+	return m.svc.Erase(ctx, subject)
+}
+
+// PersonalData says where this module keeps personal data (ADR 0029).
+//
+// It takes no context and touches no database because a declaration is a
+// property of the CODE: it is the same sentence on an empty installation and a
+// full one, and an audit reads it without a connection. That is also why it
+// needs no Register check — unlike [Module.Erase], there is nothing here that
+// could be missing.
+//
+// [erasure.Declaration.Holder] is left EMPTY on purpose. The sweep overwrites
+// it with the name the registry knows this module by
+// (internal/workflows/erasing), so filling it in here would create a second
+// place where the module's name has to be kept true and no place where the two
+// are compared — and the report a controller reads would be attributed by the
+// loser of that drift. What a caller holding the module directly gets is a
+// declaration that names its columns and leaves the naming of the holder to
+// whoever assembled the report.
+//
+// The list itself lives in the service package next to the erasure that acts on
+// it ([service.PersonalDataHoldings]). Holding the declaration here and the
+// erasure there would be two lists that agree on the day they are written and
+// drift afterwards, and a declaration that has drifted from the code is worse
+// than none: it tells an auditor where to look and is wrong.
+func (m *Module) PersonalData() erasure.Declaration {
+	return erasure.Declaration{Holdings: service.PersonalDataHoldings()}
+}
 
 // Service returns the module's service; it is nil if Register was not called.
 //

@@ -12,6 +12,88 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **KVKK silme sözleşmesi kuruldu ve bu on yedi kararın beşincisi oldu**
+  (B17 → ADR 0033; ADR 0026 ve ADR 0032'ye birer ek not).
+
+  ADR 0029 gobit'e üç borç yazmıştı: üç sonuçlu bir sözleşme, bir tutucunun
+  sorulabilmesi için kancalar, ve her tutucunun ne sakladığının beyanı. Üçü de
+  inşa edildi.
+
+  **`core/erasure` on beşinci yayımlanmış paket oldu, ve gerekçe tercih değil
+  kuraldır.** `internal/arch/public_surface_test.go` üyeliği yazıyor: bir paket,
+  depo dışındaki bir programın derlenmek için onu ADLANDIRMAK zorunda olduğu
+  zaman yayımlanır. Gömen uygulamanın KENDİ modülü tam olarak öyle bir
+  programdır, `erasure.Eraser`'ı uygulamak için adlandırmak zorundadır, ve Go'nun
+  `internal` kuralı bunu imkânsız kılardı. Alternatifin arıza biçimi tahmin
+  değil, ağaçta ölçüldü: `internal/core/openapi.Describer` aynı tasarımdır —
+  tip iddiasıyla bulunan opsiyonel yetenek, `internal/` altında — ve ağaç
+  dışındaki örnek modül onu uygulayamadığı için o modülün uçları belgeden
+  sessizce düşüyor, hiçbir denetim tek kelime etmiyor. Bir şema için bedeli
+  eksik bir yol; bir silme için bedeli yeşil bir derleme ve unutulmak isteyen
+  birine verilmiş yanlış bir cevap.
+
+  **Tipleri `core/module`'e koymak daha ucuz görünüyordu ve tam da bu yüzden
+  reddedildi.** O kapı `core/` altındaki DİZİNLERİ listeyle karşılaştırıyor;
+  var olan bir pakete eklemek kalıcı bir uyumluluk sözü üretir ama listede
+  hiçbir satıra dokunmaz ve hiçbir ADR düzenlemesi gerektirmez — yani sözü, tek
+  işi "yayımlamak ADR'nin yanında görünen bir DÜZENLEMEDİR" olan kapının
+  altından geçirir.
+
+  **Olay GÖNDERİLMEDİ ve B8'in sözü harfiyen yerine getirilmedi.** Üç ölçüm
+  kapattı: (1) veri yolu CEVAP taşıyamaz — `Publish` beklemez, işleyicinin
+  hatası yayıncıya dönmez, bellek içi arka uç en-fazla-bir-kez ve süreç ölürse
+  olay kaybolur, hiçbir arka uç yeniden denemez; oysa ADR 0029'un birinci borcu
+  tutucu başına gerekçeli bir sonuçtur. (2) Konuyu denetleyecek kapı **bire
+  kadar sayıyor** — tek dinleyicili bir konu yeşilken kişisel veri tutan diğer
+  on bir yer olayı hiç duymaz. (3) Yumuşak silmeden tetiklenen bir olay gobit'in
+  POLİTİKA seçmesi olurdu: müşteri kaydını silmek defter işidir, silme ise
+  hukuki bir cevaptır. Yerine gelen kanca arayüzün kendisidir ve o bir cevap
+  döndürür. `gaps.md`'nin B8 satırı "karşılandı" gibi bırakılmadı, yeniden
+  yazıldı.
+
+  **Uç `/admin/v1/erasure`'dür, müşteri modülünde değil**, çünkü konunun müşteri
+  kaydı olmak zorunda değil: `invoices` tablosunda ne `customer_id` ne `order_id`
+  var, ve misafirin siparişi `customer_id` NULL iken `email` taşıyor.
+
+  **Sekiz tutucu cevap veriyor.** customer ve cart ANONYMIZED, order ANONYMIZED
+  (yerleşmemiş siparişte RETAINED), invoice RETAINED, auth/b2b/inventory/review
+  yalnızca BEYAN eder. Beyan eden ama silemeyen bir tutucu her raporda RETAINED
+  olarak görünüyor — yani bir modüle beyan eklemek onu o andan itibaren
+  görünür kılıyor, bakılacak ikinci bir liste olmadan. Modül ağacının dışındaki
+  üç depo da (`workflow/pgstore`, `core/audit`, `core/link`) aynı şekilde
+  cevaplıyor; saga deposunun tuttuğu checkout girdisi kopyası böylece her
+  raporda yazılı çıkıyor.
+
+  **Bir kural sözcüğü dürüst tutuyor:** gobit hiçbir serbest-metin sütununu
+  yeniden yazmıyor (ADR 0029 o yargıyı sorumluya bırakıyor), bu yüzden her
+  ANONYMIZED sonucu dokunmadığı açık sütunları `Kept` içinde ADLANDIRIYOR.
+
+  **ADR 0029'un "bu depoda olmayan" dediği denetim yazıldı.** Beyan ile şema iki
+  yönlü karşılaştırılıyor: beyan edilen sütun şemada olmalı, ve adı tartışmasız
+  bir kişiyi gösteren sütun beyan edilmeli. Muafiyet defteri BOŞ. Tek mutasyon
+  (bir sütun adına iki harf eklemek) iki yönü birden kırmızıya çevirdi.
+
+  **ADR 0032'nin açık alt-sorusu kapandı: BEFORE DELETE tetikleyicisi**, hem
+  `invoices` hem `invoice_lines` üzerinde, TRUNCATE eşlikçileriyle ve özel bir
+  SQLSTATE ile. `REVOKE DELETE` reddedildi çünkü **hiçbir şey yapmıyor**:
+  gobit'in dağıttığı rol superuser, revoke başarıyla dönüyor, `relacl` değişiyor
+  ve sonraki `DELETE` yine `DELETE 1` veriyor.
+
+  **Ve bu turda ADR 0032'nin kendi cümlesi düzeltildi.** "Kaçış bilerek davranan
+  bir DBA'dir" diyordu; ölçüm bunun yanlış olduğunu gösterdi — düz bir
+  tetikleyici `session_replication_role = replica` altında hiç çalışmıyor, yani
+  kaçış tek bir oturum ayarıydı. Delik `ENABLE ALWAYS TRIGGER` ile kapatıldı ve
+  iki yönlü ölçüldü: düz tetikleyici replica kipinde `DELETE 1`, ALWAYS
+  tetikleyici `ERROR: refused`. Kalan sınır dürüstçe yazıldı — tetikleyici
+  tabloyu SAHİPLENEN rolü durdurmaz, ve bu bir rol ayrımı sorunudur; ADR 0015'e
+  karşı boşluk olarak kaydedildi.
+
+  **İkinci ders daha pahalıydı:** `ENABLE ALWAYS`'i dışarıda bırakan taslak bunu
+  "bu migration zaten canlı veritabanlarına uygulandı" diye savunuyordu. Dosya
+  hiçbir commit'te yoktu. **Bir şeyi YAPMAMANIN gerekçesi de gerekçedir ve doğru
+  olmak zorundadır** — yanlış bir öncül, korumayı kalıcı olarak zayıflatmayı
+  neredeyse satın alıyordu.
+
 - **On yedi kararın ilk dördü verildi ve ADR olarak yazıldı: kök, çift ve tek
   canlı tehlike** (A2 → ADR 0029, A7 → ADR 0030, A12 → ADR 0031, A4 → ADR 0032).
 

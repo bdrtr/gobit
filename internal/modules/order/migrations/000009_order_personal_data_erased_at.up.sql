@@ -1,0 +1,89 @@
+-- personal_data_erased_at is the moment this order's personal columns were
+-- rewritten because the person asked to be forgotten.
+--
+-- # Why the column exists at all
+--
+-- The erasure contract (core/erasure, ADR 0029) requires Erase to be
+-- IDEMPOTENT: a controller who runs a sweep twice — because the first report
+-- was mislaid, or because a second request arrived — has to get the SAME
+-- outcome rather than an error, and a holder that has already anonymized its
+-- rows must answer "anonymized" again rather than "I found nothing".
+--
+-- Without a stamp this module cannot tell those two apart. Every column the
+-- anonymization nulls is NULLABLE for reasons that predate erasure — an order
+-- opened by administration has no e-mail (see CreateOrderInput.Email), a shop
+-- selling a download has no address at all — so an order with a NULL e-mail is
+-- either an order that was never given one or an order whose buyer was
+-- forgotten, and no read in this module can say which. The stamp is that
+-- difference, and this column is the only place it is recorded.
+--
+-- # Why the database does NOT supply it
+--
+-- No DEFAULT, deliberately, and the argument is 000007's for archived_at
+-- applied to a column where it bites harder. A DEFAULT now() would stamp the
+-- column when the ROW is written, so every order ever placed would claim its
+-- buyer had been forgotten at the moment of the sale — the report the
+-- controller repeats to a data subject would be built on that claim. And a
+-- column the database supplies is out of the column audit's scope by that
+-- audit's own rule (internal/arch TestEveryColumnIsWrittenBySomething), so the
+-- DEFAULT would buy silence as well: the day the anonymizing statement stopped
+-- naming this column, nothing would fail. The statement writes it, and the
+-- audit is what keeps that true.
+--
+-- # Why nullable
+--
+-- An order whose buyer never asked to be forgotten has no such moment, and NOT
+-- NULL would force one. The alternative 000004 accepted for tax_rate_bps — NOT
+-- NULL DEFAULT with a zero value — is not available here for the reason 000007
+-- already wrote down: 0 is a legitimate tax rate, whereas a zero timestamp is
+-- not a legitimate instant, and every reader would have to know the sentinel.
+--
+-- # The moment is the FIRST one, and the statement keeps it that way
+--
+-- The anonymizing UPDATE writes COALESCE(personal_data_erased_at, now())
+-- rather than now(). A second sweep must not move the moment of an erasure
+-- that happened earlier, or the record would say the person was forgotten on
+-- the day somebody re-ran a report. It is the rule models.AfterSalesNoop
+-- already states for the after-sales stamps — "the FIRST arrival keeps its
+-- moment" — applied to the one transition in this module that is EXPECTED to
+-- be asked for twice.
+--
+-- # Why the CHECK holds in one direction only
+--
+-- The mirror form the sibling stamps use — (email IS NULL) = (stamp IS NOT
+-- NULL) — cannot be added, and this time the obstacle is not rows written
+-- before the column existed. The e-mail is optional on every order, so "no
+-- e-mail and no erasure" is a legitimate row that the mirror would reject
+-- forever, not only during a backfill window.
+--
+-- What IS enforceable is the other direction, and it happens to be the one
+-- worth enforcing: a row stamped as erased that still carries an address is
+-- exactly the defect that would make the word "anonymized" a lie. It is the
+-- last defense behind the anonymizing statement, which nulls the column and
+-- writes the stamp in a SINGLE SET, and it also covers an intervention made
+-- directly with SQL — the argument orders_totals_consistent and
+-- orders_archived_stamp are justified by. Every row that exists when this
+-- migration runs satisfies it, because no row can carry the stamp yet.
+--
+-- What the constraint CANNOT see is the other table. Ten columns of
+-- order_addresses are nulled: nine of the TEN content columns migration 000005
+-- writes an address with (country_code is the tenth and is KEPT, because it is
+-- jurisdiction rather than identity), plus the source_address_id that points
+-- back into the buyer's address book. They are nulled
+-- in the same transaction and no CHECK can reach them from here (a CHECK sees
+-- one row of one table). That half is held by the
+-- transaction and by the integration test that re-reads every declared column,
+-- and it is written down here rather than left to be discovered.
+--
+-- # No index
+--
+-- Nothing filters on this column. The sweep finds a person's orders by
+-- customer_id (orders_customer_idx) or by e-mail, and the stamp is READ off
+-- the rows those handles already selected. An index here would cost a write on
+-- every order and serve no read.
+ALTER TABLE orders
+    ADD COLUMN IF NOT EXISTS personal_data_erased_at TIMESTAMPTZ;
+
+ALTER TABLE orders
+    ADD CONSTRAINT orders_personal_data_erased_stamp
+        CHECK (personal_data_erased_at IS NULL OR email IS NULL);

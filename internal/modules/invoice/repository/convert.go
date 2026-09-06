@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
@@ -14,13 +15,50 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/invoice/repository/invoicedb"
 )
 
+const (
+	// SQLStateRetained is the code the four triggers of migration 000002 raise
+	// when something tries to delete or truncate an invoice or one of its
+	// lines. It is the schema half of ADR 0032.
+	//
+	// It is a CUSTOM code rather than 23001 (restrict_violation) on purpose.
+	// 23001 is also what a genuine FOREIGN KEY ... ON DELETE RESTRICT raises,
+	// so anyone mapping it onto "this is the invoice retention refusal" would
+	// misclassify every real constraint failure they ever met — and would never
+	// notice, because both are refusals to delete a row. PostgreSQL assigns no
+	// condition class beginning with the letters G and B (its own run 00 to 58,
+	// plus F0, HV, P0 and XX), so this value cannot collide with one the server
+	// raises by itself.
+	//
+	// It is EXPORTED, unlike the other constants in this file, because the
+	// module's integration test asserts the SQLSTATE that comes back from a raw
+	// DELETE. That assertion is the only thing that would notice if the trigger
+	// were dropped from the schema, which is the same silence that disqualified
+	// REVOKE DELETE as the mechanism (see the head of migration 000002).
+	SQLStateRetained = "GB001"
+)
+
 // wrapDB turns a driver error into the module's typed error.
 //
-// pgx.ErrNoRows becomes NOT FOUND and everything else becomes an internal
-// fault: a missing row is an answer, a broken connection is not.
+// pgx.ErrNoRows becomes NOT FOUND, the retention refusal becomes FORBIDDEN and
+// everything else becomes an internal fault: a missing row is an answer, a
+// refusal somebody decided on is an answer, a broken connection is not.
 func wrapDB(err error, code, message string) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return coreerrors.NotFound(code, "%s", message)
+	}
+
+	// The module writes no DELETE at all, so nothing here is expected to hit
+	// the triggers today. The mapping exists anyway, and that is the point: the
+	// day somebody adds a delete path, the answer it gets is the module's
+	// retention error with a sentence a controller can repeat, rather than a
+	// 500 whose real reason sits only in the log.
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == SQLStateRetained {
+		// FORBIDDEN and not CONFLICT: a conflict invites the caller to look at
+		// the current state and try again, and there is no state an invoice can
+		// reach in which this succeeds. The act itself is refused.
+		return coreerrors.Wrap(err, coreerrors.KindForbidden, codeRetained,
+			"an issued invoice is retained and cannot be deleted (ADR 0032): %s", pgErr.Message)
 	}
 
 	return coreerrors.Wrap(err, coreerrors.KindInternal, code, "%s", message)

@@ -26,6 +26,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/db"
+	"github.com/bdrtr/gobit/core/erasure"
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/module"
 	"github.com/bdrtr/gobit/core/query"
@@ -59,6 +60,17 @@ const (
 	dbServiceName = "core.db"
 )
 
+// Kişisel veri bildiriminde geçen tablo adları.
+//
+// Sabitler yazım hatasını tek yere indirir, doğruluğu kanıtlamaz: bildirimin
+// gerçekten şemadaki sütunları adlandırdığını migration'ları okuyan denetim
+// gösterir (erasure_test.go).
+const (
+	tableStockLocations = "stock_locations"
+	tableInventoryItems = "inventory_items"
+	tableReservations   = "inventory_reservations"
+)
+
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
@@ -83,6 +95,17 @@ var _ module.Module = (*Module)(nil)
 // kırılmaz, yalnızca stok uçları belgeden sessizce düşerdi. Bu satır o
 // sessizliği kapatır.
 var _ openapi.Describer = (*Module)(nil)
+
+// Kişisel veriyi bildirebildiği de aynı sebeple sabitlenir.
+//
+// [erasure.Declarer] de opsiyoneldir ve süpürücü onu TİP İDDİASIYLA arar; pin
+// bu yüzden [openapi.Describer]'ınkinin yanındadır. Modül [erasure.Eraser]'ı
+// UYGULAMAZ ve bu bir yarım iş değildir: silme öznesi müşteri kimliği ile
+// e-posta taşır, bu modülün hiçbir sütunu ikisinden birini tutmaz, yani modül
+// bir kişiyi bulamaz. Bildiren ama silemeyen bir tutucuyu koordinatör her
+// raporda RETAINED olarak listeler — bildirim, modülün bir veri sahibine
+// verilen cevapta görünür olmasının tek yoludur.
+var _ erasure.Declarer = (*Module)(nil)
 
 // New kaydedilmeye hazır bir inventory modülü üretir.
 func New() *Module {
@@ -158,6 +181,111 @@ func (m *Module) Routes(r chi.Router) {
 // tiplerden gelir, servisten değil. Kontrol koymak, kurulmamış bir modülün
 // belgesini de sessizce boşaltırdı.
 func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
+
+// PersonalData modülün kişisel veriyi nerede tuttuğunu söyler (ADR 0029).
+//
+// Bağlam almaz ve veritabanına dokunmaz: bildirim KODUN özelliğidir, boş bir
+// kurulumda da dolu bir kurulumda da aynı cümledir, ve bir denetim onu
+// bağlantısız okur. Bu yüzden [Module.Routes]'un aksine servis kontrolü de
+// yoktur; Register edilmemiş bir modül de ne tuttuğunu söyleyebilmelidir.
+//
+// Holder BOŞ bırakılır. Koordinatör onu kayıt defterindeki adla doldurur; adı
+// bir de buraya yazmak, iki yerin sessizce ayrışabileceği bir kopya olurdu.
+//
+// # Bu adres kimin adresi
+//
+// Aşağıdaki bildirimin ağırlığı bir DEPO adresidir ve depo, alışveriş eden
+// kişinin değil İŞLETMECİNİN kendi yeridir. Küçük bir kurulumda çoğu zaman
+// işletmecinin EV adresidir: gerçek bir insana ait kişisel veri, ama o insan
+// mağazadan alışveriş eden veri sahibi değil, tüccarın kendisi. Ayrım iki
+// sonucu birden doğurur ve ikisi de bilerek verilmiştir.
+//
+// BİLDİRİLİR. Bildirim "bu kurulum kişisel veriyi nerede tutuyor" sorusunun
+// cevabıdır, "şu kişinin verisi nerede" sorusunun değil. Bildirilmezse
+// işletmecinin KENDİ erişim ya da silme talebi cevaplanamaz kalır, üstelik
+// modül hiçbir raporda hiç görünmez. Fatura modülü seller_address için aynı
+// sonuca vardı: şahıs işletmesinde satıcı bir gerçek kişidir.
+//
+// SİLİNMEZ. Bir müşterinin silme talebi mağazanın deposunu boşaltamaz.
+// Modülün [erasure.Eraser]'ı uygulamamasının ilk sebebi özneyi zaten
+// çözemiyor olması; ikincisi budur — bir alışverişçinin süpürmesinde bu
+// tabloda yapılacak iş YOKTUR.
+//
+// # Sözleşme bu ayrımı taşıyamıyor
+//
+// [erasure.Holding] Table, Column, Kind ve Why taşır; VERİ SAHİBİNİN SINIFINI
+// söyleyecek alanı yoktur. Ayrım bu yüzden her Why'ın ilk cümleciğine yazıldı
+// ("the operator's own premises rather than a shopper's"). Bugün elde olan tek
+// yer budur ve YETMEZ: süpürme raporu Why'ı taşımaz — bildirip silmeyen bir
+// tutucuyu RETAINED'a çeviren yol yalnızca "tablo.sütun" listeler ve cümleyi
+// kendisi yazar — yani ayrım yalnızca GET /admin/v1/erasure/personal-data
+// belgesinde görünür. Bir alışverişçiye verilen raporda deponun yedi sütunu,
+// kimin olduğunu söylemeden durur.
+//
+// # Named ile Open
+//
+// stock_locations'ın sütunlarını gobit TANIMLADI: address_1 bir posta adresi
+// satırıdır ve çerçeve alanın NE OLDUĞUNU bilir. Değeri operatörün yazmış
+// olması bunu değiştirmez; müşterinin adını da müşteri yazar. Serbest metin
+// alanları (title, description) Open'dır: içine ne konduğuna yalnızca gömen
+// uygulama karar verebilir ve gobit onları okumaz (ADR 0029).
+//
+// # Bildirilmeyenler
+//
+// inventory_levels HİÇ geçmez: iki kimlik ve iki sayıdan ibarettir, kişiye
+// dair tek bir metin taşımaz. inventory_reservations.line_item_id de geçmez —
+// sepet satırını gösteren çıplak bir yabancı kimliktir ve yanındaki sütunlar
+// anonimleştikten sonra hiç kimseyi göstermez. sku bir MAL kodudur.
+// Buna karşılık inventory_reservations.description modüldeki tek KİŞİ BAŞINA
+// satırın serbest metnidir — rezervasyon bir alışverişçinin sepet satırından
+// doğar — yani mağaza müşterisine ait kişisel verinin bu modülde durabileceği
+// tek yerdir.
+func (m *Module) PersonalData() erasure.Declaration {
+	return erasure.Declaration{
+		Holdings: []erasure.Holding{
+			{
+				Table: tableStockLocations, Column: "name", Kind: erasure.Named,
+				Why: "the operator's own premises rather than a shopper's — the warehouse or shop name, which in a one-person business is frequently the trader's own name",
+			},
+			{
+				Table: tableStockLocations, Column: "address_1", Kind: erasure.Named,
+				Why: "the operator's own premises rather than a shopper's — the street line the goods sit at, which for a sole trader is frequently a home address",
+			},
+			{
+				Table: tableStockLocations, Column: "address_2", Kind: erasure.Named,
+				Why: "the operator's own premises rather than a shopper's — flat, floor or door, which narrows the street line to a single household",
+			},
+			{
+				Table: tableStockLocations, Column: "city", Kind: erasure.Named,
+				Why: "the operator's own premises rather than a shopper's — the town the warehouse is in",
+			},
+			{
+				Table: tableStockLocations, Column: "province", Kind: erasure.Named,
+				Why: "the operator's own premises rather than a shopper's — the province or state of the warehouse address",
+			},
+			{
+				Table: tableStockLocations, Column: "postal_code", Kind: erasure.Named,
+				Why: "the operator's own premises rather than a shopper's — the postal code of the warehouse, which in some countries reaches one building",
+			},
+			{
+				Table: tableStockLocations, Column: "country_code", Kind: erasure.Named,
+				Why: "the operator's own premises rather than a shopper's — the country of the warehouse address, the least identifying part of it and declared because it is part of it",
+			},
+			{
+				Table: tableInventoryItems, Column: "title", Kind: erasure.Open,
+				Why: "free text the shop types to name a stock item; it names goods rather than people, but a made-to-order item is routinely titled after the person it is being made for and gobit does not read it",
+			},
+			{
+				Table: tableInventoryItems, Column: "description", Kind: erasure.Open,
+				Why: "free text the shop types about a stock item; gobit puts nothing in it and never reads it, so whether a person is described there is the controller's judgement",
+			},
+			{
+				Table: tableReservations, Column: "description", Kind: erasure.Open,
+				Why: "free text on a reservation, and the only column in this module on a row born of one shopper's checkout, so a note naming that shopper lands here; gobit writes nothing into it",
+			},
+		},
+	}
+}
 
 // mustSub alt dosya sistemini açar; açılamazsa panikler.
 //

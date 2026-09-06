@@ -71,6 +71,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/db"
+	"github.com/bdrtr/gobit/core/erasure"
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/module"
 	"github.com/bdrtr/gobit/internal/core/openapi"
@@ -88,6 +89,10 @@ const ServiceName = ModuleName + ".service"
 
 // svcDB is the name of the core database pool in the container.
 const svcDB = "core.db"
+
+// tableReviews is the module's only table; the personal-data declaration names
+// it and the audit test reads its columns out of the migration.
+const tableReviews = "reviews"
 
 // codeSetupFailed is returned when the module cannot be set up.
 const codeSetupFailed = "review_module_setup_failed"
@@ -122,6 +127,16 @@ var _ module.Module = (*Module)(nil)
 // break at compile time and this module's endpoints would simply drop out of
 // the document.
 var _ openapi.Describer = (*Module)(nil)
+
+// That it can say what it holds about people is pinned down the same way.
+//
+// [erasure.Declarer] is another OPTIONAL interface the composition root finds
+// with a type assertion, so a slipped name or signature would produce no build
+// error at all — it would produce a sweep in which this module never answers.
+// The cost of that is worse than a missing path in a document: a controller
+// answering a person would be told, in a report that looks complete, that
+// nothing here holds anything about them.
+var _ erasure.Declarer = (*Module)(nil)
 
 // New produces a review module ready to be registered.
 func New(opts Options) *Module {
@@ -182,6 +197,72 @@ func (m *Module) Routes(r chi.Router) {
 
 // Describe writes the module's endpoints into the OpenAPI document.
 func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
+
+// PersonalData declares every place this module keeps something about a person.
+//
+// It lives on the module and takes no database because a declaration is a
+// property of the CODE: it reads the same on an empty installation as on a full
+// one, an audit reads it without a connection, and a module whose Register
+// failed can still say what its tables hold.
+//
+// # This module holds personal data and cannot say WHOSE
+//
+// That is the whole reason [erasure.Declarer] and [erasure.Eraser] are two
+// interfaces instead of one, and this module is the case that forced them
+// apart (ADR 0033).
+//
+// A review carries exactly ONE identifying field, author_name, and the
+// migration header argues at length why it is the only one: a byline is data
+// given TO BE PUBLISHED, while an e-mail address, a network address or an order
+// id would be data taken for something else, so decision A15 refuses all three.
+// The consequence is the part that has to be said out loud here. Nothing on the
+// row points at a person this framework can look up — there is no customer id,
+// no address, no order — so an [erasure.Subject] resolves to no row in this
+// table, and matching on the byline is not a resolution: two shoppers share a
+// display name as easily as two people share a name, and erasing on that basis
+// would erase strangers.
+//
+// So the module declares and offers no erasure. The two alternatives were to
+// implement [erasure.Eraser] and report zero rows for everybody, which is a
+// well-formed lie, or to stay silent, which keeps this table out of every
+// report a controller ever publishes. Declaring puts it in each of them as a
+// Retained entry listing these columns, which is the true answer: the data is
+// here, gobit cannot reach the person in it, and what to do about that is the
+// embedder's decision with information gobit does not have.
+//
+// # What is not declared
+//
+// The row's id and product_id are identifiers and neither is a personal datum:
+// product_id says what the review is ABOUT, and an id resolves to nobody once
+// the columns beside it are gone. The rating, the status, the moderation
+// timestamp and the row timestamps hold nothing about anyone — no column
+// records WHICH operator decided. The audit that keeps this paragraph honest is
+// in erasure_test.go, and it reads the migration rather than this list.
+func (m *Module) PersonalData() erasure.Declaration {
+	// Holder is left empty deliberately: the coordinator fills it in from the
+	// name the registry knows this module by, and a second copy here would be
+	// free to drift from it.
+	return erasure.Declaration{
+		Holdings: []erasure.Holding{
+			{
+				Table: tableReviews, Column: "author_name", Kind: erasure.Named,
+				Why: "the byline a member of the public typed in order to have it printed under their review, and the only identifying thing stored about them; gobit cannot find this person's reviews from a customer id or an e-mail address, so acting on them is the embedder's decision with information gobit does not have",
+			},
+			{
+				Table: tableReviews, Column: "title", Kind: erasure.Open,
+				Why: "the headline the author typed; it is free text nobody validates and gobit does not read it, so it can carry a name, an address or a third party",
+			},
+			{
+				Table: tableReviews, Column: "body", Kind: erasure.Open,
+				Why: "the review itself, written by a member of the public about a product; it is their own words about their own purchase and gobit does not inspect them",
+			},
+			{
+				Table: tableReviews, Column: "moderation_note", Kind: erasure.Open,
+				Why: "free text an operator typed when approving or rejecting the review, which may quote or describe the author; gobit does not read it",
+			},
+		},
+	}
+}
 
 // mustSub returns the sub-filesystem or panics.
 //

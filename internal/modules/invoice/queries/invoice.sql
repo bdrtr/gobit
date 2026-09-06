@@ -84,3 +84,26 @@ SET status        = sqlc.arg('next_status')::text,
 WHERE id = sqlc.arg('id')::text
   AND status = sqlc.arg('current_status')::text
 RETURNING *;
+
+-- CountInvoicesByBuyerEmail counts the documents issued to one address.
+--
+-- It is the ONLY way this module can resolve a person, and that is a property
+-- of the table rather than a choice: invoices carries no customer_id and no
+-- order_id, so the single handle on a human being is the address printed on the
+-- document. The count is what the erasure contract reports as the number of
+-- rows retained (ADR 0032); it is a count and not a SELECT because nothing in
+-- the answer needs the documents themselves, and reading whole invoices to
+-- discard them would be a table's worth of buyer data pulled into memory in
+-- order to say "we kept them".
+--
+-- The comparison is case-insensitive and both sides are lowered. This module,
+-- unlike customer and auth, has NO check constraint forcing buyer_email to
+-- lower case — an invoice copies what the document said — so a case-sensitive
+-- match would report "0 retained" about a person whose invoice is in the table
+-- under one capital letter. The lower() on the column is written exactly as
+-- 000002 writes the invoices_buyer_email_idx expression, because an index on
+-- lower(buyer_email) is only usable by a predicate spelled the same way.
+--
+-- name: CountInvoicesByBuyerEmail :one
+SELECT count(*) FROM invoices
+WHERE lower(buyer_email) = lower(sqlc.arg('buyer_email')::text);

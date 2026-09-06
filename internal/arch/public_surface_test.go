@@ -31,6 +31,7 @@ var publishedPackages = []string{
 	"core/audit",
 	"core/container",
 	"core/db",
+	"core/erasure",
 	"core/errorreport",
 	"core/errors",
 	"core/eventbus",

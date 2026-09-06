@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/bdrtr/gobit/core/errors"
@@ -24,9 +25,14 @@ type fakeRepo struct {
 	series   map[string]models.Series
 	invoices map[string]models.Invoice
 
-	// takeErr and createErr script a failure.
+	// takeErr, createErr and countErr script a failure.
 	takeErr   error
 	createErr error
+	countErr  error
+
+	// countedEmail records the address the buyer count was asked for, so a test
+	// can show that the service passed the subject through untouched.
+	countedEmail string
 
 	// listResult and listCount are what the listing returns.
 	listResult []models.Invoice
@@ -137,6 +143,33 @@ func (f *fakeRepo) ListInvoices(
 	f.listFilter = filter
 
 	return f.listResult, f.listCount, nil
+}
+
+// CountInvoicesByBuyerEmail counts the stored documents issued to an address.
+//
+// It lowers both sides exactly as the real query does. Matching
+// case-sensitively here would make a fake that agrees with the service on
+// everything except the one behavior the column has no CHECK constraint to
+// guarantee, and the test that proves the count is case-insensitive would pass
+// against a fake and fail against Postgres.
+func (f *fakeRepo) CountInvoicesByBuyerEmail(_ context.Context, email string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.countErr != nil {
+		return 0, f.countErr
+	}
+
+	f.countedEmail = email
+
+	var count int64
+	for id := range f.invoices {
+		if strings.EqualFold(f.invoices[id].Buyer.Email, email) {
+			count++
+		}
+	}
+
+	return count, nil
 }
 
 // SetStatus writes the status only when the current one matches.

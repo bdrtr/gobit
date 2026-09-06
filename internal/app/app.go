@@ -346,6 +346,15 @@ func serve(opts Options) error {
 		return err
 	}
 
+	// The erasure surface is bound HERE and not earlier, for the same reason
+	// the schema is built here: the coordinator walks the registry, and a
+	// module brought in by a plugin only exists in it after MountRoutes. Bound
+	// during registerModules it would sweep gobit's own modules and quietly
+	// miss every holder of personal data a plugin added.
+	if _, err := registerErasure(c, router, registry.Modules()); err != nil {
+		return err
+	}
+
 	// The OpenAPI schema is GENERATED from the router tree, not written by
 	// hand: a hand-written schema starts lying silently at the first route
 	// change. The endpoint publishes only the route PATTERNS, not data.

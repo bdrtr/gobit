@@ -62,6 +62,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/db"
+	"github.com/bdrtr/gobit/core/erasure"
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/link"
 	"github.com/bdrtr/gobit/core/module"
@@ -100,6 +101,16 @@ const (
 	codeLinkDefine  = "b2b_link_define_failed"
 )
 
+// Kişisel veri tutan tabloların adları ([Module.PersonalData] bildirimi için).
+//
+// tableCompany, [ModuleName] ile aynı harflerle BAŞLAR ama ondan türetilmez:
+// biri veritabanındaki bir tablonun adı, öteki modülün container'daki adıdır ve
+// birinin değişmesi ötekini değiştirmez.
+const (
+	tableCompany  = "b2b_company"
+	tableEmployee = "b2b_company_employee"
+)
+
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
@@ -125,6 +136,21 @@ var _ module.Module = (*Module)(nil)
 // kırılmaz, yalnızca modülün uçları belgeden sessizce düşerdi. Bu satır o
 // sessizliği kapatır.
 var _ openapi.Describer = (*Module)(nil)
+
+// Kişisel veriyi BİLDİREBİLDİĞİ de derleme zamanında sabitlenir.
+//
+// Gerekçe [openapi.Describer] pininin aynısıdır ve bedeli daha ağırdır:
+// [erasure.Declarer] da TİP İDDİASIYLA aranır (ADR 0033), yani metot adı ya da
+// imzası kaydığında hiçbir şey derlemede kırılmaz — modül taramadan sessizce
+// düşer. Belge örneğinde bunun bedeli eksik bir yol, burada ise gömen
+// uygulamanın bir kişiye yayımladığı bildirimde şirket adının, fatura adresinin
+// ve o kişinin harcama limitinin HİÇ GÖRÜNMEMESİDİR.
+//
+// [erasure.Eraser] BİLİNÇLİ olarak sabitlenmez, çünkü uygulanmaz: bu modülün
+// silebileceği bir kişi kaydı yoktur (bkz. [Module.PersonalData]). Bildiren ama
+// silmeyen bir tutucu, koordinatörün her raporunda RETAINED satırı olarak
+// görünür; sessiz kalmak ise satırı hiç üretmezdi.
+var _ erasure.Declarer = (*Module)(nil)
 
 // New kurulmamış bir b2b modülü üretir; servis [Module.Register] içinde
 // kurulur. log nil ise loglar atılır.
@@ -220,6 +246,105 @@ func (m *Module) Routes(r chi.Router) {
 // tiplerden gelir, servisten değil. Kontrol koymak, kurulmamış bir modülün
 // belgesini de sessizce boşaltırdı.
 func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
+
+// PersonalData modülün kişisel veri tuttuğu HER sütunu bildirir.
+//
+// # Neden modülde, neden statik
+//
+// Bildirim KODUN bir özelliğidir, verinin değil: boş veritabanında da dolusunda
+// da aynı cümledir ve bir denetim onu bağlantı açmadan okur (ADR 0029). Bu
+// yüzden servise değil modüle bağlıdır ve Register çağrılmamışken de doğru
+// yanıt verir.
+//
+// Holder BOŞ bırakılır: koordinatör onu KAYIT DEFTERİNDEKİ adla doldurur (bkz.
+// internal/workflows/erasing, Coordinator.PersonalData). Buraya elle yazmak,
+// aynı adı iki yerde tutmak ve ikisinin ayrışmasını beklemek olurdu.
+//
+// # Neden şirket satırı kişisel veridir
+//
+// Modülün belgesi "alıcı bir TÜZEL KİŞİDİR" der ve bu, şirket satırının kişisel
+// veri taşımadığı anlamına GELMEZ: şahıs şirketinde tüzel kişinin adı o kişinin
+// KENDİ adıdır, fatura adresi de çoğu zaman evidir. Bir çerçeve, satırın hangi
+// şirket türüne ait olduğunu bilmez; bilmediği için de ikisini ayıramaz ve
+// ayıramadığı bir yerde bildirmemek, yanılmanın maliyetini kişiye yüklemek
+// olurdu.
+//
+// # Çalışan tablosunun kenar durumu
+//
+// b2b_company_employee'de kişiyi ADLANDIRAN tek bir sütun yoktur — ne ad, ne
+// e-posta, ne de bir customer_id (sütunun neden bulunmadığı migration'ın
+// başlığında yazılıdır). Buna karşılık tablonun HER SATIRI bir gerçek kişi
+// hakkındadır ve spending_limit o kişinin harcama yetkisidir. Bildirilen şey bu
+// yüzden bir kimlik değil, kişi hakkındaki OLGULARDIR: limit ve yönetici olma
+// durumu.
+//
+// Kimliği taşıyan bağ ("b2b_employee_customer") bu modülün servisinde bildirilir
+// ama tablosu core/link tarafından ÇALIŞMA ZAMANINDA yaratılır ve hiçbir
+// migration'da görünmez; o depoyu koordinatör AYRICA bildirir (bkz.
+// internal/workflows/erasing, linkHoldings). Burada onu da bildirmek, tek bir
+// veriyi iki tutucunun üstlenmesi olurdu.
+//
+// id ve company_id bildirilmez: bir anahtar satırı adlandırır, kişiyi değil ve
+// yanındaki sütunlar anonimleştikten sonra kimseyi göstermez. Bunu bildirmek,
+// kurulumdaki her yabancı anahtarı listeye sokardı.
+//
+// # Neden hepsi [erasure.Named]
+//
+// Bu modülde serbest metin bir sütun (metadata jsonb, açıklama, not) YOKTUR:
+// her sütunun ne taşıdığını gobit bilir, çünkü oraya doğrulayarak kendisi
+// yazar. Bildirimde tek bir [erasure.Open] satırının bulunmaması bu şemanın
+// ölçülmüş bir özelliğidir, atlanmış bir ihtimal değil.
+//
+// # Neden eksiksiz olmak zorunda
+//
+// Liste, gömen uygulamanın "bu kişi hakkında nerede ne var" sorusuna
+// verebileceği tek yanıttır; gömen onu gizlilik bildirimi olarak yayımlar.
+// Eksik bir satır listeyi kısaltmaz, YALAN hâline getirir. Bu yüzden liste
+// migrations/000001_b2b_init.up.sql'deki iki tablonun sütunlarından birebir
+// türetilir ve eksiksizliği testle sabitlenir (bkz.
+// TestPersonalDataCoversEveryPersonalColumn).
+func (m *Module) PersonalData() erasure.Declaration {
+	return erasure.Declaration{
+		Holdings: []erasure.Holding{
+			{
+				Table: tableCompany, Column: "name", Kind: erasure.Named,
+				Why: "the company's name, which for a sole trader is that person's own name",
+			},
+			{
+				Table: tableCompany, Column: "email", Kind: erasure.Named,
+				Why: "the e-mail address the company account is reached at, which for a one-person company is that person's own address",
+			},
+			{
+				Table: tableCompany, Column: "phone", Kind: erasure.Named,
+				Why: "the telephone number left for the company, which for a one-person company is that person's own number",
+			},
+			{
+				Table: tableCompany, Column: "address", Kind: erasure.Named,
+				Why: "the street line of the company's billing address, which is a person's home address whenever they trade from where they live",
+			},
+			{
+				Table: tableCompany, Column: "city", Kind: erasure.Named,
+				Why: "the city of the company's billing address",
+			},
+			{
+				Table: tableCompany, Column: "postal_code", Kind: erasure.Named,
+				Why: "the postal code of the company's billing address, which in some countries reaches a single building",
+			},
+			{
+				Table: tableCompany, Column: "country_code", Kind: erasure.Named,
+				Why: "the country of the company's billing address, which is also the jurisdiction whose tax and retention rules apply",
+			},
+			{
+				Table: tableEmployee, Column: "spending_limit", Kind: erasure.Named,
+				Why: "how much one employee may spend on their employer's account, a fact about that person although this table records no name, no address and no identifier of theirs",
+			},
+			{
+				Table: tableEmployee, Column: "is_company_admin", Kind: erasure.Named,
+				Why: "whether that same employee may administer their company's account, which describes the person's authority rather than the company",
+			},
+		},
+	}
+}
 
 // Service kurulmuş servisi döner; Register çağrılmadıysa nil.
 //

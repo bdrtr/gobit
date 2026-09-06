@@ -88,6 +88,31 @@ type Store interface {
 	// status.
 	ArchiveOrder(ctx context.Context, id string) (models.Order, error)
 
+	// OrdersForErasure returns the orders of the person named by the customer
+	// id and/or the e-mail, each with the facts that decide whether it is
+	// settled, and LOCKS them; it can only be called inside [Store.WithTx].
+	//
+	// Either identifier may be empty and one of them must not be: a guest order
+	// carries an e-mail and no customer id, so the two are OR-ed. Soft-deleted
+	// orders ARE returned — the question here is what the database still holds
+	// about a person, not what the business can still see.
+	OrdersForErasure(ctx context.Context, customerID, email string) ([]models.OrderErasureCandidate, error)
+	// AnonymizeOrderContacts sets the e-mail of the given orders to NULL and
+	// stamps them as erased, keeping the moment of the FIRST erasure.
+	//
+	// It returns the number of rows written. The count is not the number of
+	// orders that CHANGED: the statement is unconditional, so re-running it
+	// reports the same figure, which is what keeps the erasure report stable
+	// across the repeated sweeps the contract requires.
+	AnonymizeOrderContacts(ctx context.Context, orderIDs []string) (int64, error)
+	// AnonymizeOrderAddresses sets the name, company, street, city, province,
+	// postal code, phone and address-book pointer of the given orders'
+	// addresses to NULL, and returns the number of rows written.
+	//
+	// The ROW and its address_type and country_code survive; the reason is in
+	// queries/erasure.sql.
+	AnonymizeOrderAddresses(ctx context.Context, orderIDs []string) (int64, error)
+
 	// LockCustomerSpending locks the SUM of the customer's spend until the end
 	// of the transaction and can only be called inside [Store.WithTx].
 	//

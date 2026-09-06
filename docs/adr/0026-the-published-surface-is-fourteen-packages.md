@@ -188,6 +188,56 @@ possible it is the narrower promise. The bias of this ADR — publish late, publ
 what was measured — is reinforced by the case, not overturned by it. Recorded in
 docs/gaps.md row B13.
 
+## Amendment: `core/erasure` is the fifteenth package (2026-09-06)
+
+**The title and the table above say fourteen. The count is now FIFTEEN**, and
+the file is not renamed because the doc-reference audit resolves this ADR by its
+path and every citation in the tree would break. Read the title as the count on
+the day the decision was taken.
+
+| package | why an outside program must name it |
+| --- | --- |
+| core/erasure | the three-outcome erasure contract and the personal-data declaration a module implements (ADR 0029, ADR 0033) |
+
+ADR 0029 deferred exactly this question — "whether the declaration surface is a
+published package under ADR 0026 or stays internal is a question for whoever
+builds B17" — and B17 answered it against the membership rule rather than by
+preference. An embedding application's OWN module is a program outside this
+repository, it must name `erasure.Eraser`, `erasure.Outcome` and
+`erasure.Result` to implement the capability, and Go's internal rule makes that
+impossible from `internal/`. That module is also the one gobit knows nothing
+about, which makes it the likeliest holder of personal data the framework cannot
+see.
+
+**The failure mode of the alternative was not predicted, it was measured in this
+tree.** `internal/core/openapi.Describer` is the same design — an optional
+capability found by type assertion — living under internal/. All seventeen
+in-tree modules implement it; the out-of-tree example module cannot, so its
+routes are simply missing from the generated document and no audit says a word.
+For a schema that costs a missing path. For an erasure it would cost a green
+build and a false answer to a person who asked to be forgotten.
+
+**Why a new package and not three types added to `core/module`.** That
+alternative looked cheaper — `core/module` is already published, so no table row
+and no amendment — and that is precisely what disqualified it.
+`TestThePublishedPackagesAreTheDeclaredOnes` walks DIRECTORIES under `core/` and
+compares them with `publishedPackages`. Adding the contract to an existing
+package would have created a permanent compatibility promise while touching no
+entry in that list and requiring no edit here, which is the one thing this ADR's
+enforcement exists to prevent: publishing is meant to be an EDIT that shows up in
+the diff next to its justification. The secondary reason stands on its own —
+`module.Module` is the MANDATORY four-method contract every module satisfies, and
+an optional capability does not belong on it.
+
+This is consistent with the job amendment above rather than a departure from it.
+That case published a VALUE type into a package an author already names, and
+refused to publish the engine. This one publishes value types too — the sweep,
+the transactions, the HTTP surface and the schema refusals all stay internal —
+and needed its own directory only because no published package was already the
+right home. The bias is unchanged: publish late, publish what was measured, and
+publish the form rather than the machine. The package landed in the same change
+as its first three implementers and its first consumer, not ahead of them.
+
 ## Reopening
 
 Reopen if a customer project cannot express something without a package that

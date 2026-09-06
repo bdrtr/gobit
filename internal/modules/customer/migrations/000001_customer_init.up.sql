@@ -6,7 +6,19 @@
 -- tabloları arasındaki foreign key'ler serbesttir ve kullanılır.
 --
 -- Zaman sütunları TIMESTAMPTZ'dir ve daima UTC yazılır; silme SOFT'tur
--- (deleted_at) ve tüm okuma sorguları deleted_at IS NULL filtresi uygular.
+-- (deleted_at) ve okuma sorguları deleted_at IS NULL filtresi uygular.
+--
+-- Bu filtrenin TEK istisnası UNUTULMA (erasure) sorgularıdır: kişinin
+-- verisini kilitleyen ve üzerine yazan sorgular deleted_at'e HİÇ bakmaz (bkz.
+-- queries/customer.sql, LockCustomerForErasure). Sebebi ölçülebilir bir
+-- olgudur: yumuşak silme yalnızca deleted_at ile updated_at yazar, tek bir
+-- kişisel sütuna dokunmaz — silinmiş bir müşterinin e-postası, adı ve telefonu
+-- tabloda AYNEN durur. Filtre orada da uygulansaydı, kaydı silinmiş bir kişiye
+-- "veriniz anonimleştirildi" denirken verisi yerinde kalırdı.
+--
+-- Aynı istisna aşağıdaki indeks yorumlarını da bağlar: WHERE deleted_at IS NULL
+-- ile kurulmuş KISMİ indeksler unutulma sorgularına hizmet EDEMEZ, çünkü o
+-- sorgular indeksin kendi koşulunun dışına çıkar.
 
 -- customer hem misafir hem kayıtlı müşteriyi tutar; ikisini has_account ayırır.
 --
@@ -47,9 +59,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS customer_account_email_uniq
     ON customer (email)
     WHERE has_account AND deleted_at IS NULL;
 
--- E-postaya göre arama (GetCustomerByEmail, misafir eşleştirme) bu indeksi
+-- E-postaya göre arama (GetAccountByEmail, misafir eşleştirme) bu indeksi
 -- kullanır; kısmi benzersiz indeks yalnızca hesapları kapsadığı için
 -- misafir aramalarına yetmez.
+--
+-- E-postaya bakan UNUTULMA sorguları bu indeksi KULLANAMAZ: WHERE koşulu
+-- yüzünden indeks yalnızca canlı satırları taşır, o sorgular ise silinmiş
+-- satırları da arar. Onlar sıralı tarama (+ sıralama) yapar ve bu bilerek kabul
+-- edilmiştir; gerekçesi repository/erasure.go, lockErasureTargets belgesindedir.
+-- Yalnızca KİMLİK taşıyan unutulma sorgusu birincil anahtarla çalışır, taramaz.
+-- Konu HEM kimlik HEM e-posta taşıdığında kullanılan sorgu ise (id = $1 OR
+-- email = $2) birincil anahtarı KULLANAMAZ: OR'un iki yanı ayrı indeksler
+-- ister ve bu sorgu da silinmiş satırları aradığı için kısmi indeksin dışına
+-- çıkar. O da tarar, ve bu bilerek kabul edilmiştir.
 CREATE INDEX IF NOT EXISTS customer_email_idx
     ON customer (email)
     WHERE deleted_at IS NULL;

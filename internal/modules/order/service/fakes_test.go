@@ -121,6 +121,15 @@ type fakeStore struct {
 	// failCreateSummary, when it is set, makes CreateSummary return this error.
 	failCreateSummary error
 
+	// erased records when an order's personal columns were rewritten.
+	//
+	// It is a map of its own rather than a field on models.Order, because the
+	// model does not carry the stamp: no read path in the module needs it, and
+	// only the erasure candidate query selects the column. It is deliberately
+	// NOT part of [fakeSnapshot] either — no read-only path reads it, and the
+	// rollback of a transaction is handled per key by recordUndo.
+	erased map[string]time.Time
+
 	// hookCreateOrder, when it is set, is called ONCE at the BEGINNING of
 	// CreateOrder and is cleared afterwards.
 	//
@@ -142,6 +151,7 @@ func newFakeStore() *fakeStore {
 		retItems:  map[string]models.ReturnItem{},
 		exchanges: map[string]models.Exchange{},
 		claims:    map[string]models.Claim{},
+		erased:    map[string]time.Time{},
 	}
 }
 
@@ -1329,4 +1339,174 @@ func (p *fakeSpendingPolicy) calls() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return slices.Clone(p.asked)
+}
+
+// --- erasure -------------------------------------------------------------------
+
+// OrdersForErasure returns the person's orders with the settlement facts.
+//
+// It imitates what queries/erasure.sql does and nothing the SERVICE does: the
+// two identifiers are OR-ed, soft-deleted orders ARE returned (the erasure asks
+// what the store still holds, not what the business can see), the three money
+// totals are carried RAW rather than combined into an outstanding amount, and
+// an after-sales record counts only while it is in its requested state.
+//
+// The raw totals are the correction of a real defect rather than a style
+// choice: paid_total never shrinks (the summary merges it with GREATEST), so
+// reading "still owed" as total - (paid - refunded) left a fully refunded
+// order owing its whole value for ever, and the module answered RETAINED for
+// a person whose order had long since finished. WHICH of those facts refuses an erasure
+// is decided by models.OrderErasureCandidate.Unsettled, not here.
+//
+// That the real query really takes the row lock cannot be shown with a map; the
+// only observable half of that contract — it must be called inside a
+// transaction — is imitated, and the rest is proven in the integration test.
+func (f *fakeStore) OrdersForErasure(
+	ctx context.Context, customerID, email string,
+) ([]models.OrderErasureCandidate, error) {
+	if err := requireTx(ctx, "OrdersForErasure"); err != nil {
+		return nil, err
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var out []models.OrderErasureCandidate
+	// The maps are walked by KEY and read by index: an order row is three
+	// hundred bytes and a range value would copy every one of them per turn.
+	for id := range f.orders {
+		order := f.orders[id]
+		if !erasureSubjectMatches(order, customerID, email) {
+			continue
+		}
+
+		// The three money numbers are carried RAW, as the query carries them:
+		// the settlement rule needs paid and refunded apart, because they are
+		// lifetime totals that only grow (models.OrderErasureCandidate.Owed).
+		candidate := models.OrderErasureCandidate{
+			OrderID:       id,
+			DisplayID:     order.DisplayID,
+			Status:        order.Status,
+			CurrencyCode:  order.CurrencyCode,
+			Deleted:       order.DeletedAt != nil,
+			Total:         order.Total,
+			PaidTotal:     f.summaries[id].PaidTotal,
+			RefundedTotal: f.summaries[id].RefundedTotal,
+		}
+		if stamp, ok := f.erased[id]; ok {
+			moment := stamp
+			candidate.ErasedAt = &moment
+		}
+		// The soft-delete filter the real query carries on the three child
+		// tables is not imitated: no model here has a DeletedAt field, because
+		// the module has no surface that deletes an after-sales record.
+		for key := range f.returns {
+			ret := f.returns[key]
+			if ret.OrderID == id && ret.Status == models.ReturnRequested {
+				candidate.ReturnRequested = true
+			}
+		}
+		for key := range f.exchanges {
+			exchange := f.exchanges[key]
+			if exchange.OrderID == id && exchange.Status == models.ExchangeRequested {
+				candidate.ExchangeRequested = true
+			}
+		}
+		for key := range f.claims {
+			claim := f.claims[key]
+			if claim.OrderID == id && claim.Status == models.ClaimRequested {
+				candidate.ClaimRequested = true
+			}
+		}
+
+		out = append(out, candidate)
+	}
+
+	// The query returns the rows ordered by id, and the order is part of what
+	// it promises: it is the lock order, and it is what makes the retained
+	// order named in the report the same one on every run.
+	slices.SortFunc(out, func(a, b models.OrderErasureCandidate) int {
+		return strings.Compare(a.OrderID, b.OrderID)
+	})
+
+	return out, nil
+}
+
+// erasureSubjectMatches imitates the OR-ed WHERE of the candidate query.
+func erasureSubjectMatches(order models.Order, customerID, email string) bool {
+	if customerID != "" && order.CustomerID == customerID {
+		return true
+	}
+
+	return email != "" && order.Email == email
+}
+
+// AnonymizeOrderContacts nulls the e-mail of the given orders and stamps them.
+//
+// The stamp keeps the moment of the FIRST erasure, which is the COALESCE in the
+// real statement: a second sweep must not move the moment of something that
+// happened earlier.
+func (f *fakeStore) AnonymizeOrderContacts(ctx context.Context, orderIDs []string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var written int64
+	for _, id := range orderIDs {
+		order, ok := f.orders[id]
+		if !ok {
+			continue
+		}
+
+		order.Email = ""
+		order.UpdatedAt = f.nextStamp()
+		f.recordUndo(ctx, undoEntry(f.orders, id))
+		f.orders[id] = order
+
+		if _, already := f.erased[id]; !already {
+			f.recordUndo(ctx, undoEntry(f.erased, id))
+			f.erased[id] = f.nextStamp()
+		}
+		written++
+	}
+
+	return written, nil
+}
+
+// AnonymizeOrderAddresses empties the personal columns of the addresses.
+//
+// The ROW survives with its type and country, because an absent row already
+// means "this order never had an address" and the two facts must stay apart.
+func (f *fakeStore) AnonymizeOrderAddresses(ctx context.Context, orderIDs []string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var written int64
+	for _, id := range orderIDs {
+		stored := f.addresses[id]
+		if len(stored) == 0 {
+			continue
+		}
+
+		f.recordUndo(ctx, undoEntry(f.addresses, id))
+		emptied := make([]models.OrderAddress, 0, len(stored))
+		for i := range stored {
+			address := stored[i]
+			address.SourceAddressID = ""
+			address.FirstName = ""
+			address.LastName = ""
+			address.Company = ""
+			address.Address1 = ""
+			address.Address2 = ""
+			address.City = ""
+			address.Province = ""
+			address.PostalCode = ""
+			address.Phone = ""
+			address.UpdatedAt = f.nextStamp()
+			emptied = append(emptied, address)
+			written++
+		}
+		f.addresses[id] = emptied
+	}
+
+	return written, nil
 }
