@@ -145,6 +145,37 @@ Sabitlenme `1.0.0` ile olur.
   yazmıştı; modül üçüncüsünü kazanınca ikisi de kırıldı. Sayı artık okunuyor:
   biri geri alınacak adım sayısını mevcut sürümden türetiyor, diğeri
   dokunulmayan sahibin sürümünü geri almadan ÖNCE okuyup onunla karşılaştırıyor.
+- **Karar listesi bir SIRA olduğunu söylüyordu ama sırayı hiçbir yerde
+  yazmıyordu; ölçülüp yazıldı, ve bir kök ile bir ÇİFT çıktı.**
+
+  `gaps.md`'nin girişi bu grubun "bir ORDER" olduğunu söylüyor — bekledikçe
+  pahalılaşan önce. On yedi açık satırdan **sekizi** bir ilişki kaydediyor,
+  **dokuzu** hiçbir şey. Yazılı olan üç olgu şunlar:
+
+  **A2 köktür.** İki satırın birden üstünlük olarak andığı tek satır: A4'ün
+  adayları ona göre ŞEKİL değiştiriyor (gobit saklama politikasını kendi mi
+  seçer, yoksa mekanizmayı yayımlayıp pencereyi gömen mi koyar), ve B17 bütün
+  silme işi için "A2 ve A4 önce gelir" diyor. A2'yi cevaplamak bugün hiçbir şeye
+  mal olmuyor ve altındaki satırların önceliğini değil SEÇENEKLERİNİ değiştiriyor.
+
+  **A7 ile A12 bir ÇİFT, bir sıra değil.** Her birinin cevabı ötekinin girdisi:
+  A7'nin yetki hikâyesi "kısa ömürlü" kelimesine dayanıyor ki o tam da A12'nin
+  sabitlemediği sayı, ve A12'nin adaylarından biri — panelin sessizce
+  yenilemesi — A7 paneli bir API istemcisi yaparsa geçersiz. Birini tek başına
+  cevaplamak ötekini yarım bırakıyor.
+
+  **A16, A17 ve A18 kardeş, zincir değil.** Üçü de B2'nin süzgeç yüzeyinden
+  farklı günlerde çıktı ve hiçbiri ötekinin üstünde değil.
+
+  **Ve bir eksik geri kondu:** A4 satırı A2'yi üstünlük olarak anmıyordu — dört
+  kararı yazarken sıkıştırırken düşürmüşüm. A15 ve B17 ilişkiyi zaten
+  kaydediyordu, yani dosya kendi içinde biliyordu ama satırın kendisi
+  söylemiyordu. Bu, A15'in düzeltilme sebebinin aynısı: bir okuyucunun yanlış
+  sırada cevaplaması, aynı soruyu iki kez ödemek demek.
+
+  Sayımı yazarken önce yanlış yazdım (on altı açık satır, ilişkisiz on bir) ve
+  yayımlamadan ölçüp düzelttim: on yedi ve dokuz.
+
 - **İki modülün `api` paketinde hiç test yoktu, on üçünde vardı, ve bunu hiçbir
   şey sormuyordu** (D26).
 
