@@ -145,6 +145,52 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltildi
 
+- **Dört karar satırı bir KONU adlandırıyordu; ölçülüp SORUYA çevrildi — ve ilk
+  taslak yirmi dört yanlış iddia taşıyordu** (A4, A5, A11, A12).
+
+  `gaps.md` bu dördünü kendisi işaretlemişti: her biri konusunu söylüyor, aday
+  cevap söylemiyordu, yani "bir toplantıda cevaplanamaz, yalnızca yeniden
+  açılabilir". Aynı paragraf uyarısını da yazmıştı: **seçenekleri ölçmeden icat
+  etmek, karar kaydına yanlış bir seçenek koymanın yoludur.**
+
+  Uyarı doğru çıktı ve ölçülebilir biçimde. İlk tur dört soruyu da seçenekleriyle
+  yazdı; karşıt bir tur onları yeniden ölçtü ve **yirmi dört yanlış iddia**
+  buldu — auth modülüne dört tablo atfedilmişti, tek migration'ında beş var; bir
+  fiyat kuralı bağlamının tek üretim çağıranı olduğu yazılmıştı, yönetim ucu
+  `attr_` önekiyle serbest bir harita kuruyor; faturanın kişiyi altı adlandırılmış
+  kolonda tuttuğu söylenmişti, aynı satırda yedincisi duruyor ve serbest biçimli.
+  İkinci tur bunları düzeltti ve daha küçüklerini bıraktı.
+
+  **Bu yüzden satırlar bilerek KISA yazıldı.** Bir karar satırının ihtiyacı üçtür:
+  soru, birbirinden ayrı adaylar, her adayın bedeli. Sürekli yanlış çıkan şey bu
+  üçü değil, yanlarına eklenen envanterdi — panelin kaç alan istediği, hangi
+  dosyanın hangi satırı. Onlar onarılmadı, DÜŞÜRÜLDÜ: bir karar satırındaki her
+  fazladan ölçüm cümlesi, kaydın ağaç hakkında yanılması için yeni bir fırsattır.
+
+  **İki karar ölçülünce yer değiştirdi, ve bu ölçmenin kendi gerekçesi.**
+
+  A5'in tarif ettiği durum vitrinden ERİŞİLEBİLİR DEĞİL: `customer_group_customer`
+  bileşik anahtar taşıdığı için bir müşteri birden çok gruba girebiliyor, ama
+  sepet kural motorlarına varyant kimliğinden başka bir şey göndermiyor. Yani
+  satır önce "beraberlik nasıl bozulur" değil, "sepet ne göndermeli" sorusudur;
+  beraberlik ancak "hepsini gönder" seçilirse doğar, ve o da yalnızca
+  fiyatlandırmayı ilgilendirir çünkü merdiven zaten `better` ile kuruluyor.
+
+  A12'de pahalı sanılan yarı ZATEN KURULU: doğrulama salt kriptografik değil, her
+  istekte kullanıcıyı ve bir oturum çıpasını okuyup çıkıştan ya da parola
+  değişiminden önce üretilmiş jetonu reddediyor. Yani iptal var, kaba taneli de
+  olsa; "uzun ömür + iptal" bir yapılandırma işi, "kısa ömür + refresh" ise yeni
+  tablo ve yeni uç isteyen pahalı olan. Naif okumanın tam tersi.
+
+  A4'te asıl bulgu şu: faturayı hiçbir şey silemiyor ama koruma bir KISIT değil,
+  KODUN YOKLUĞU — modülün sorgularında, deposunda ve beş ucunda tek bir DELETE
+  yok, yani bir silme uygulaması bir cümle uzakta. A11'de ise soru sırası yanlış
+  çıktı: vitrinin alışverişçinin dili diye bir kavramı hiç yok, o yüzden "çeviri
+  nerede durur", "istek dilini nasıl söyler"in ardından gelir.
+
+  Kararların hiçbiri VERİLMEDİ. Bu satırların kuralı cevabın insana ait olması;
+  yazılan şey soru, adaylar ve bedeller.
+
 - **Belgelerin tamamı koda karşı ölçüldü: otuz sekiz iddia yanlıştı, ve üçü
   gaps.md'nin KENDİ tablosuyla çelişiyordu.**
 
