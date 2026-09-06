@@ -126,7 +126,8 @@ tutarsızlık sanmasın.
 **Olumsuz.** Üç bileşen benzer imzalara sahip ama farklı davranıyor; bunu
 bilmeyen biri `RateLimit(nil, nil)` yazıp korunduğunu sanabilir. Karşı önlem:
 her davranış için ayrı bir test var ve testlerin adları davranışı söylüyor
-(`TestRateLimitNilSinirlayiciNoOptur`, `TestIdempotencyNilDepoNoOptur`).
+(`core/http` içinde `TestRateLimitWithANilLimiterIsANoOp` ve
+`TestIdempotencyANilStoreIsANoOp`).
 
 **Bellek içi uygulamalar tek örnekliktir.** `MemoryLimiter` yatay ölçeklendiğinde
 gerçek sınır örnek sayısıyla çarpılır — bu bir *hız* sorunudur, tolere edilebilir.

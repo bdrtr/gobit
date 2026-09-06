@@ -170,8 +170,13 @@ production container it would raise a second server against the live database.
 
 - **The binary grows a verb, and a dispatcher.** Every future subcommand now has
   a place to go, which is convenient and is also how a composition root turns
-  into a toolbox. The wiring is guarded (`TestMainDispatchesRatherThanServingDirectly`)
-  but the growth is not.
+  into a toolbox. The wiring is guarded but the growth is not: the guard is
+  `TestTheBinaryDispatchesRatherThanServingDirectly` in
+  `internal/app/stuck_test.go`, which parses every non-test file under
+  `cmd/server` and fails unless `main`'s body reaches the published facade's
+  entry point. It was renamed and moved out of `package main` when ADR 0027 made
+  the composition root a library, so the invariant now spans two packages and is
+  checked from beside the subcommands whose deadness it guards against.
 - **It requires a shell on the host.** An operator with a browser and no
   `kubectl exec` cannot run it. That is a real gap and it is the reason
   Option B is not dead, only postponed.

@@ -227,7 +227,7 @@ bir veritabanında komut sahip başına birer boş tablo bırakır.
 
 Kablolamanın iki kanıtı vardır: `TestOnlyAnEmptyArgumentListCanStartTheServer`
 kaynağı gezip `serve`'ün TEK bir çağrı yerinden erişildiğini denetler,
-`TestMigrateAltKomutlariSunucuBaslatmadanKosar` ise gerçek ikiliyi çalıştırıp
+`TestMigrateSubcommandsRunWithoutStartingTheServer` ise gerçek ikiliyi çalıştırıp
 alt komutun çıktığını ve portu hiç bağlamadığını gösterir.
 
 ---

@@ -7,7 +7,9 @@ servise çıkarılabilir.
 Uygulama planının tamamı için: [`go-commerce-framework-plan.md`](./go-commerce-framework-plan.md)
 Mimarinin **neden** böyle kurulduğu için: [`docs/mimari.md`](./docs/mimari.md)
 
-**Mevcut durum: Faz 9 — Eklenti sistemi · Observability · Sertleştirme ✅**
+**Mevcut durum: Faz 10 — GraphQL vitrin yüzeyi · B2B (şirket · çalışan ·
+harcama limiti) ✅** — yol haritasının son fazı; aşağıdaki "Faz durumu"
+tablosunda Faz 0–10'un hepsi tamamlanmıştır.
 
 ## Hızlı başlangıç
 
@@ -131,7 +133,8 @@ core                  # YAYIMLANMIŞ sözleşmeler (ADR 0026): errors, db, conta
                       # module, eventbus, link, query, provider, plugin, http,
                       # audit, errorreport
 internal/app          # kompozisyon kökü: config -> logger -> container -> router ->
-                      # dinle; operatör alt komutları (migrate, stuck, recover, jobs)
+                      # dinle; operatör alt komutları (migrate, stuck, recover,
+                      # jobs, deadletters, seed)
 internal/core         # yayımlanmayan çekirdek: config, logger, job, workflow,
                       # observability, openapi, page
 internal/modules      # izole commerce modülleri (product, pricing, inventory, …)
@@ -149,13 +152,16 @@ deploy                # docker-compose, Dockerfile
 | Router | `chi` | Hafif, `net/http` uyumlu, middleware dostu |
 | DB erişimi | **`sqlc` + `pgx/v5`** | SQL-first ve modül başına codegen; ORM'in FK/graph modeli modül izolasyonuyla çelişiyor |
 | Migration | **`golang-migrate`** | `Module.Migrations() fs.FS` ile birebir uyum, modül başına `x-migrations-table` |
-| DI | **`samber/do` v2** | Kontrat isimli servis + generic resolve istiyor; lazy instantiation ve shutdown hook'ları hazır |
+| DI | ~~**`samber/do` v2**~~ **El yazması** (`core/container`) | ~~Kontrat isimli servis + generic resolve istiyor; lazy instantiation ve shutdown hook'ları hazır~~ **2026-09-06'da düzeltildi:** `samber/do` hiç bağımlılık olmadı — `go.mod` ve `go.sum` içinde adı geçmez. Bölüm 5.1 sözleşmesi `any` alan bir `Provide` istiyor, `do` ise tip parametreli olduğu için teşhis/conflict/kapatma sırası elden gidiyordu; karar [ADR 0002](docs/adr/0002-di-container-el-yazmasi.md)'de, gerekçe `core/container`'ın kendi godoc'unda ("Why not samber/do") yazılıdır |
 | Config | `caarlos0/env` | Yalnızca env okur; viper'ın dosya/uzak config yükü gereksiz |
 | Log | `log/slog` (stdlib) | Yapısal, bağımlılıksız |
 | GraphQL | **`99designs/gqlgen`** | Şema-önce: şema incelenebilir bir artefakt kalır ve üretilen tipli resolver'lar imza kaymasını derleme zamanında yakalar (sqlc ile aynı disiplin) |
 
-sqlc, golang-migrate ve samber/do **Faz 1–4 arasında** devreye girer; Faz 0
-yalnızca iskeleti kurar.
+~~sqlc, golang-migrate ve samber/do **Faz 1–4 arasında** devreye girer; Faz 0
+yalnızca iskeleti kurar.~~ **2026-09-06'da düzeltildi:** sqlc ve golang-migrate
+**Faz 1–4 arasında** devreye girdi, Faz 0 yalnızca iskeleti kurmuştu;
+`samber/do` ise hiç girmedi — yerini ADR 0002'nin el yazması `core/container`'ı
+aldı.
 
 ## Mimari kurallar lint ile zorlanır
 
@@ -986,14 +992,19 @@ değildir**: kimlik ve kota ayrı kararlardır.
 Modüller kendi alan olaylarını event bus'a yayımlar; aboneler (eklentiler,
 entegrasyonlar) onları dinler.
 
-Aboneler bugün: arama eklentisi (`product.*`) ve bildirim modülü
-(`order.placed`).
+Aboneler bugün dört tanedir: arama eklentisi `search-pg` (`product.*`),
+bildirim modülü (`order.placed`), tarayıcı push eklentisi `web-push`
+(`order.placed`) ve giden webhook eklentisi `webhook-out` (aşağıdaki dört
+konunun hepsi).
 
 | Olay | Yük |
 |---|---|
-| `order.placed` | `order_id`, `display_id`, `status`, `region_id`, `customer_id`, `currency_code`, `total`, `item_count` |
+| `order.placed` | `order_id`, `display_id`, `status`, `region_id`, `customer_id`, `currency_code`, `total`, `item_count`, `placed_at` |
 | `product.created` / `product.updated` | `product_id`, `status` |
 | `product.deleted` | `product_id` |
+
+`placed_at` bir zaman damgasıdır ama o da dizedir: siparişin konduğu an, UTC'ye
+çevrilip `time.RFC3339Nano` ile biçimlenerek yazılır (`EventFieldPlacedAt`).
 
 İki kural bağlayıcıdır:
 
@@ -1108,7 +1119,7 @@ gösterirdi. Kök sorgular ayrıca sabit bir taban taşır (bir veritabanı
 gidiş-dönüşü, seçilen alan azalınca ucuzlamaz).
 
 Kalibrasyon **ölçülmüştür** ve `graph/limits_test.go` içindeki
-`kalibrasyonBelgeleri` tablosunda sabitlenmiştir; bayt sütunu aynı dosyadaki
+`calibrationDocuments` tablosunda sabitlenmiştir; bayt sütunu aynı dosyadaki
 ölçüm fikstürüyle (4 KiB açıklamalı ürün, üç varyant, fiyat ve stok kayıtları)
 alınmıştır:
 
@@ -1312,8 +1323,16 @@ vitrinde ise yalnızca dürüst istemcinin hatasını yakalar.
 
 ## Mimari kararlar (ADR)
 
-Planın bıraktığı belirsizlikler `docs/adr/` altında karara bağlanır. ADR'ler plan
-dokümanı kadar bağlayıcıdır; çelişki hâlinde ADR geçerlidir.
+Planın bıraktığı belirsizlikler `docs/adr/` altında karara bağlanır; plandan
+sonra doğan kararlar da oraya yazılır. ADR'ler plan dokümanı kadar
+bağlayıcıdır; çelişki hâlinde ADR geçerlidir.
+
+Aşağıdaki tablo dizinin **tamamıdır**: bugün yirmi sekiz kayıt, 0001'den
+0028'e. Tablo elle tutulur ve bir kez eskimişti — en son 2026-09-03'te 0012
+satırı eklenmişti, oysa dizin o tarihten sonra on altı kayıt daha aldı ve
+tablo on ikide kaldı; eksikler 2026-09-06'da tamamlandı ve satırlar numara
+sırasına dizildi. Bir ADR eklendiğinde satırı da buraya girer: eksik bir satır,
+kararı arayan okuyucuyu onu içermeyen bir listeye gönderir.
 
 | # | Karar | Özet |
 |---|---|---|
@@ -1326,9 +1345,25 @@ dokümanı kadar bağlayıcıdır; çelişki hâlinde ADR geçerlidir.
 | [0007](docs/adr/0007-sertlestirme-arizada-davranis.md) | Sertleştirmede arıza davranışı | Tek tip kural yok: kimlik **kapalı kalır** (fail-closed), hız sınırı **açık kalır** (fail-open), idempotency ayırmada reddeder / kayıtta anahtarı serbest bırakır |
 | [0008](docs/adr/0008-musteri-kimligi-guven-siniri.md) | Müşteri kimliği güven sınırı | Çerçeve müşteri kimliğini **doğrulamaz**: `customer_id` bir iddiadır, harcama limiti yalnızca müşterisini **beyan eden** alışverişe uygulanır; doğrulama gömen uygulamanın işidir |
 | [0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md) | Çok kiracılılık | Sınır **kurulumdur, satır değil**: her kurulum tek kiracılıdır, izolasyon dağıtım katmanındadır; çerçeve kiracılar arası bir sınır tanımaz, uygular ve iddia etmez |
-| [0012](docs/adr/0012-repository-language-and-solid.md) | Depo dili ve SOLID | Çalışma dili **İngilizce**; geçiş kademeli ve **defterlidir** (`internal/arch/testdata/turkish_ledger.txt` yalnızca küçülür). Dedektör üç şeritlidir çünkü yalnız diyakritiğe bakan bir kural tek bir harf çevirisiyle yalan söyler. SOLID yalnızca **mekanik olarak ölçülebilen** yerde zorlanır; SRP-mikro ve LSP için denetim OLMADIĞI açıkça yazılıdır |
-| [0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md) | Yönetim paneli | Panel dördüncü bir ağaçta (`internal/adminui`) yaşar, oturumu **yalnızca kendi ağacında** geçerli bir çerezle taşır ve HTML'i çekirdeğin yazıcısından geçirir; yönetim API'si başlık-only kalır, CSRF bağışıklığı korunur |
 | [0010](docs/adr/0010-depo-secim-politikasi.md) | Depo seçim politikası | Lokasyon modeli kargo modülünün **kendi** şemasındadır; bölge bağı bir **kısıt**, öncelik bir **sıra**dır. Yüzey tek depo değil tercih sırası döner ve satır başına bir kez sorulur |
+| [0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md) | Yönetim paneli | Panel dördüncü bir ağaçta (`internal/adminui`) yaşar, oturumu **yalnızca kendi ağacında** geçerli bir çerezle taşır ve HTML'i çekirdeğin yazıcısından geçirir; yönetim API'si başlık-only kalır, CSRF bağışıklığı korunur |
+| [0012](docs/adr/0012-repository-language-and-solid.md) | Depo dili ve SOLID | Çalışma dili **İngilizce**; geçiş kademeli ve **defterlidir** (`internal/arch/testdata/turkish_ledger.txt` yalnızca küçülür). Dedektör üç şeritlidir çünkü yalnız diyakritiğe bakan bir kural tek bir harf çevirisiyle yalan söyler. SOLID yalnızca **mekanik olarak ölçülebilen** yerde zorlanır; SRP-mikro ve LSP için denetim OLMADIĞI açıkça yazılıdır |
+| [0013](docs/adr/0013-panel-write-surface.md) | Panelin yazma yüzeyi | Panel interop üzerinden değil, sahibi modülün yayımladığı **dar ve ilkel tipli** bir yönetim yazma yüzeyi üzerinden yazar |
+| [0014](docs/adr/0014-error-reporting.md) | Hata bildirimi | Arızalar bir çekirdek sözleşmesi (`provider.ErrorReporter`) üzerinden dışarıdaki bir toplayıcıya bildirilir; **neyin çıkabileceğine çekirdek karar verir**, eklenti değil |
+| [0015](docs/adr/0015-postgresql-cluster-contract.md) | PostgreSQL küme sözleşmesi | PostgreSQL desteklenen bir seçenek değil bir **temeldir**; ikinci bir veritabanı olmayacak ve kümeden beklenenler yazılı bir sözleşmedir |
+| [0016](docs/adr/0016-operator-read-surface-for-half-done-sagas.md) | Yarım kalmış saga'ların okuma yüzeyi | Listeleme ikilinin salt okunur `stuck` alt komutudur; sorgu çağıranın değil **şemanın** yanında, `internal/core/workflow/pgstore` içinde yaşar |
+| [0017](docs/adr/0017-recovering-abandoned-sagas-from-the-record.md) | Terk edilmiş saga'nın telafisi | Telafi zinciri, adımların kendi kalıcı çıktılarından **kayıttan yeniden kurulan** durumla koşar (`workflow.Recoverable`) |
+| [0018](docs/adr/0018-web-push-is-a-device-registry-not-a-channel.md) | Web push | Web push bir bildirim **kanalı değil**, eklentinin sahip olduğu bir **cihaz kaydıdır**: `plugins/webpush` kendi modülünü, tablosunu, route'larını ve `order.placed` abonesini getirir, hiçbir `NotificationProvider` kaydetmez |
+| [0019](docs/adr/0019-scheduled-work-is-elected-by-the-occurrence.md) | Zamanlanmış iş | İş **occurrence** ile seçilir, canlılığı oturum kapsamlı kilit yanıtlar; `internal/core/job` bugün üç işle gelir (`internal/jobs/sagawatch`, `paymentrecon`, `outboxrelay`) ve ilki yalnızca RAPOR eder |
+| [0020](docs/adr/0020-reconciliation-asks-the-provider-and-reports.md) | Mutabakat | Mutabakat sağlayıcıya **sorar** ve yalnızca duyduğunu raporlar; hiçbir şey yazmaz |
+| [0021](docs/adr/0021-the-server-decides-the-shipping-price.md) | Kargo fiyatı | Vitrin **hangi** kargo seçeneği olduğunu söyler, fiyatına **sunucu** karar verir — satır fiyatındaki kararın aynısı |
+| [0022](docs/adr/0022-the-saga-records-what-was-collected.md) | Tahsil edilenin kaydı | Checkout saga'sı tahsilattan sonra ödeme koleksiyonunu okur ve **gerçekten tahsil edilen** tutarları siparişe yazar |
+| [0023](docs/adr/0023-a-promised-event-is-part-of-the-transaction.md) | Söz verilen olay | Olay, onu söz veren **işlemin içinde** yazılır (`core/eventbus/outbox`); yayımı zamanlanmış bir röle yapar |
+| [0024](docs/adr/0024-an-invoice-number-comes-from-a-row-not-a-sequence.md) | Fatura numarası | Numara sequence'tan değil, belgeyi yazan **aynı işlemde** bir seri SATIRI güncellenerek alınır |
+| [0025](docs/adr/0025-gobit-is-a-library-not-a-template.md) | gobit bir kütüphanedir | gobit kopyalanan bir şablon değil, projenin **import ettiği** bir kütüphanedir; müşteri projesi çekirdeği `go.mod`'da bağımlılık olarak izler |
+| [0026](docs/adr/0026-the-published-surface-is-fourteen-packages.md) | Yayımlanmış yüzey | Yayımlanan ağaç `core/`tur ve **on dört paket** taşır; aralarında hiçbir commerce modeli yoktur |
+| [0027](docs/adr/0027-the-composition-root-is-a-library-not-a-binary.md) | Kompozisyon kökü | Yaşam döngüsü `internal/app`'ta, modül kökündeki yayımlanmış cephenin arkasındadır; ikili gobit'i çalıştırabilen en küçük programdır (on beş satır) |
+| [0028](docs/adr/0028-an-inbound-callback-is-registered-not-bound.md) | Gelen sağlayıcı çağrısı | Eklenti bir callback route'u **bağlamaz, kaydeder** (`corehttp.CallbackRegistry`); bağlamayı router'ı kuran çekirdek yapar |
 
 ADR 0001, planın Bölüm 2.1 ("erişim public service interface üzerinden") ile
 Bölüm 2.4 ("modüller derleme zamanında birbirine bağımlı olmaz") arasındaki
@@ -1379,13 +1414,18 @@ açıktır.
 
 **Kurulum ve işletim**
 
-- **Yönetim paneli kataloğun DÜZENLENEBİLİR kısmını taşır, yaratılabilir
+- **Yönetim paneli kataloğun DÜZENLENEBİLİR kısmını yazar, yaratılabilir
   kısmını değil.** `/admin/ui` altındaki panel
   ([ADR 0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md)) giriş, çıkış,
-  ürün listesi, ürün sayfası, varyant sayfası ve üç formu
-  ([ADR 0013](docs/adr/0013-panel-write-surface.md)) taşır: ürünün
+  ürün listesi, ürün sayfası, varyant sayfası, sipariş listesi, sipariş
+  sayfası, satış raporu, müşteri listesi, müşteri sayfası ve envanter listesi
+  taşır. Bunların içinde YAZAN yalnızca üç form vardır
+  ([ADR 0013](docs/adr/0013-panel-write-surface.md)): ürünün
   başlık/handle/durumu, varyantın para birimi başına TABAN fiyatı ve lokasyon
-  başına FİZİKSEL stoğu.
+  başına FİZİKSEL stoğu. Geri kalan her ekran salt okunurdur; envanterin ve
+  satılan satırın tekil sayfası ise hiç yoktur — bir stok kaleminin detayı
+  varyant sayfasındaki konum bazlı seviyeleridir, satılan bir satırın bağlamı
+  ise satırın bağlandığı sipariştir.
 
   Var olmayan bir şeyi yaratmak ve var olanı silmek hâlâ `/admin/v1` üzerinden,
   `Authorization: Bearer` ile yapılır: ürün, varyant, fiyat kümesi, stok kalemi,
@@ -1636,8 +1676,15 @@ aynı container adları, aynı modül sırası ve aynı koruma yığını
 kendisidir; testin kendi kopyası olsaydı üretimdeki sıra değiştiğinde test
 eski sırayı doğrulayıp yeşil kalırdı.
 
-CI (`.github/workflows/ci.yml`) her push ve PR'da `gofmt`, `go mod tidy`
-farkı, `golangci-lint`, `go vet` ve race'li testleri çalıştırır.
+~~CI (`.github/workflows/ci.yml`) her push ve PR'da `gofmt`, `go mod tidy`
+farkı, `golangci-lint`, `go vet` ve race'li testleri çalıştırır.~~
+**2026-09-06'da düzeltildi:** CI (`.github/workflows/ci.yml`) `main`'e her
+push'ta ve **her** PR'da `gofmt`, `go mod tidy` farkı, `golangci-lint`,
+`go vet` ve race'li testleri çalıştırır. Push tetikleyicisi `main` ile
+sınırlıdır (`on.push.branches: [main]`), yani açık PR'ı olmayan bir dala
+yapılan push hiçbir iş akışı başlatmaz; o dalın sinyali PR açıldığında gelir.
+Depoda tek iş akışı dosyası budur (`ls .github/workflows/`), yani açığı
+kapatan ikinci bir tetikleyici yoktur.
 
 ## Modül yolunu değiştirme
 

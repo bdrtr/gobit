@@ -94,9 +94,20 @@ Two things keep the larger number honest:
 
 ## What this does NOT do
 
-**An out-of-tree program still cannot boot gobit.** The composition root — 2,600
-non-test lines in cmd/server — is still a program, not a library. Publishing the
-contracts makes an out-of-tree PLUGIN possible; it does not yet make an
+**An out-of-tree program still cannot boot gobit.** ~~The composition root —
+2,600 non-test lines in cmd/server — is still a program, not a library.~~
+**Corrected 2026-09-06:** the conclusion held but the figure was never measured.
+At the commit that added this ADR, cmd/server's non-test files total 3,518
+lines, of which the lifecycle half — the part that is the composition root — is
+2,308 and the operator subcommands are the remaining 1,210. Those are the
+numbers ADR 0025 uses — it calls `cmd/server` "the starter's contents" and its
+3,518 lines "the lifecycle a customer project should not have to write" — and the
+ones the measurement table in ADR 0027 carries; no subset of the package comes
+to 2,600, so the two sibling ADRs and this one were describing the same quantity
+with different arithmetic. The lifecycle has since moved out of `package main`
+into internal/app (ADR 0027), which is why the figures above are stated as of
+this ADR's own date rather than as a current count. Publishing the contracts
+makes an out-of-tree PLUGIN possible; it does not yet make an
 out-of-tree APPLICATION possible. That is the remaining half of ADR 0025 and it
 is a separate step.
 
@@ -141,11 +152,41 @@ than a reference, and every one of those places failed open.
   that can catch a surface which is unusable rather than merely wrong: an
   unexported type in a contract, or a helper the caller needs that was never
   exported, is neither an import of internal/ nor a missing declaration.
-- **Publishing more is cheap; publishing less is not.** the job package will have
-  to be published the day a plugin can register a job, and that is a deliberate edit in
-  two places, not a file move.
+- **Publishing more is cheap; publishing less is not.** ~~the job package will
+  have to be published the day a plugin can register a job, and that is a
+  deliberate edit in two places, not a file move.~~ **Corrected 2026-09-06:**
+  that day arrived and the package was NOT published; the price named here was
+  refused rather than paid, and the amendment below records what was published
+  instead.
 - **The eight in-tree plugins are now written against published contracts.**
   They were the measurement; they are now also the example.
+
+## Amendment: a plugin registers a job and the job package stayed internal (2026-09-06)
+
+The Consequences above predicted that internal/core/job would have to be
+published the day a plugin could register a job. A plugin can — `Host.RegisterJob`
+in core/plugin takes a four-field `plugin.Job` (`Name`, `Every`, `MaxRun`,
+`Run`), and plugins/paymentpaytr and plugins/webhookout both call it — and the
+package was NOT published. No job package was added under core/; the scheduler
+stays in internal/core/job, and `publishedPackages` in internal/arch carries no
+job entry.
+
+The prediction was wrong about WHAT a plugin needs. It needs four VALUES, not the
+machine: publishing the package would have frozen the runner, the store contract,
+the advisory-lock class and the key algorithm into the compatibility promise —
+publishing the machine in order to hand out a form. The copy that this avoids is
+paid for rather than hoped away by `TestEveryJobDefinitionFieldReachesAPluginJob`
+in internal/app, which reflects over the scheduler's own `job.Definition` and
+fails the day it grows an exported field the published struct does not carry or
+cannot convert into; `addPluginJobs` is the one translation it guards. The
+membership rule stated above is what decided this and it is unchanged: an outside
+program must name `plugin.Job` to compile, and it never names the runner.
+
+The general form is the part worth keeping: **a contract can be published as a
+value type without publishing the engine that consumes it**, and where that is
+possible it is the narrower promise. The bias of this ADR — publish late, publish
+what was measured — is reinforced by the case, not overturned by it. Recorded in
+docs/gaps.md row B13.
 
 ## Reopening
 

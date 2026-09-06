@@ -27,11 +27,25 @@ outside `internal/` and `cmd/`. So the only way to use gobit is to clone it and
 edit `cmd/server`.
 
 The sharpest consequence: `plugins/` sits outside `internal/` and looks like an
-extension point, but every plugin in it imports `core/plugin` to
+extension point, ~~but every plugin in it imports `core/plugin` to
 satisfy the host contract. An out-of-tree plugin cannot. **The repository has a
 plugin system that no third party can write a plugin for** — not because the
 compile-time model was rejected, but because the contract it implements is
-unreachable.
+unreachable.~~
+
+**Corrected 2026-09-06:** the path in that sentence is an anachronism and the
+conclusion drawn from it has been superseded. On the date of this ADR the host
+contract lived UNDER `internal/`, and being there was the entire mechanism: the
+plugins in `plugins/` implemented a contract no other module was permitted to
+import, so the repository did have a plugin system no third party could write a
+plugin for. `core/plugin` did not exist until ADR 0026 carved it out, and that
+move rewrote the path in this paragraph, leaving it arguing that importing a
+PUBLISHED package is impossible. It is not: all nine plugin packages under
+`plugins/` import `core/plugin`, and so does `examples/plugin` — a separate Go
+module, which Go's own rule keeps out of `internal/`, and which
+`TestTheOutOfTreeExamplesCompile` in `internal/arch` compiles for exactly this
+proof. The unreachability this ADR argued from is gone; the direction it argued
+from that unreachability is what ADR 0026 and ADR 0027 carried out.
 
 ## Decision
 

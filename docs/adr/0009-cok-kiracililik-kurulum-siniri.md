@@ -6,10 +6,26 @@
 
 ## Bağlam
 
-Plan belgesi çok kiracılılığı iki yerde kapsam dışı bırakıyor
-(`go-commerce-framework-plan.md:35` ve `:396`) ama **neden** bıraktığını
-söylemiyor. Kavram depoda hiç geçmiyor: 72 tablonun hiçbirinde kiracı sütunu,
-hiçbir imzada kiracı parametresi, hiçbir ad alanında kiracı segmenti yok.
+Plan belgesi çok kiracılılığı iki yerde kapsam dışı bırakıyor — "Non-goals (ilk
+sürümde yok)" cümlesinde ve "10. Sonraki Sürüm Fikirleri (şimdilik kapsam dışı)"
+bölümünde — ama bu ADR yazılana kadar **neden** bıraktığını söylemiyordu. Kavram
+depoda hiç geçmiyor: 72 tablonun hiçbirinde kiracı sütunu, hiçbir imzada kiracı
+parametresi, hiçbir ad alanında kiracı segmenti yok.
+
+> ~~(plan belgesinin otuz beşinci ve üç yüz doksan altıncı satırlarına
+> yapılan iki satır-numarası göstergesi)~~ **2026-09-06'da
+> düzeltildi:** bu iki gösterge satır numarasıydı ve ikincisi daha yazıldığı gün
+> yanlıştı. Bu ADR'yi ekleyen commit (9aa8b60) planın gerekçe paragraflarını da
+> aynı anda ekleyip dosyayı yeniden sardı; o commit'te plan dosyasının 396.
+> satırı çoktan "İlk commit: `chore: project skeleton (phase 0)`" görev
+> maddesiydi ve ikinci kapsam dışı bırakma, "Sonraki Sürüm Fikirleri"
+> listesinin **içinden** çıkarılıp "**Çoklu-tenant bu listede değildir**"
+> cümlesine taşınmıştı. Yerine başlık yazılıyor: bir satır numarası, üstüne bir
+> satır eklendiği anda başka bir yeri gösterir ve bunu hiçbir şey bildirmez —
+> `TestTheDocsCarryNoLineNumberReference`'ın ölçüp yasakladığı çürüme biçimi
+> tam olarak budur. O yasak bu iki göstergeyi yakalayamamıştı, çünkü deseni
+> yalnızca `.go` uzantılı yolları arıyor; belgeden belgeye verilen satır
+> numarası kapının dışında kalıyor.
 
 > **Bu ADR'deki sayımlar KARAR TARİHİNE aittir** (2026-09-01) ve o gün ölçülmüş
 > hâlleriyle bırakılır; kararın dayandığı büyüklüğü gösterirler, bugünkü şemayı
@@ -92,9 +108,11 @@ o kapatılır; kiracı sınırı ondan sonra tartışılır.
 
 Kararın üç bağlayıcı sonucu vardır:
 
-1. **Belge gerçeği söyler.** Plan belgesinin iki satırı ve README artık kapsam
-   dışı bırakmanın **gerekçesini** taşır ve bu ADR'ye bağlanır. "Sonraki
-   sürümlere bırakılır" cümlesi tek başına hiçbir yerde kalmaz.
+1. **Belge gerçeği söyler.** Planın iki kapsam dışı bırakma yeri ve README artık
+   bırakmanın **gerekçesini** taşır ve bu ADR'ye bağlanır: "Non-goals"
+   cümlesinin altına eklenen paragraf ile "Sonraki Sürüm Fikirleri" bölümünü
+   kapatan "**Çoklu-tenant bu listede değildir**" cümlesi. "Sonraki sürümlere
+   bırakılır" cümlesi tek başına hiçbir yerde kalmaz.
 2. **A ile B arasındaki seçim ERTELENMEZ, TETİKLENİR.** Aşağıdaki "Kararın
    yeniden açılması" bölümü, kararı yeniden açacak veriyi ve o veri geldiğinde
    hangisinin seçileceğini belirleyen soruyu adıyla yazar. Karar bugün

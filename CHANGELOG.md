@@ -145,6 +145,70 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltildi
 
+- **Belgelerin tamamı koda karşı ölçüldü: otuz sekiz iddia yanlıştı, ve üçü
+  gaps.md'nin KENDİ tablosuyla çelişiyordu.**
+
+  Denetim otuz beş markdown dosyasını altı ayrı şeritten okudu ve her iddiayı
+  ağaca karşı ölçtü. Altmış üç bulgu çıktı, **otuz sekizi** karşıt doğrulamadan
+  sağ kaldı, yirmi beşi elendi — elenenler arasında sıralama, üslup ve
+  "tarihine göre doğru" olan sayımlar var, ve bir tanesi de bu turda benim
+  yanlış bildirdiğim bir defektti.
+
+  **En ağır sınıf: dosyanın okuyucuya iki zıt cevap vermesi.** `gaps.md`'nin
+  düzyazısı üç şeyin eksik olduğunu söylüyordu, üçü de yapılmıştı ve üçünün de
+  YAPILDIĞI aynı dosyanın tablosunda yazıyordu — sepetin adresleri siparişe
+  ulaşmıyor (B11 "Built" diyor, `order_addresses` migration'ı duruyor), eklenti
+  host'u iş kaydedemez (B13 "Built" diyor, `Host.RegisterJob` duruyor), ürün
+  görseli upload kaydına bağlı değil (B15 "built" diyor, `upload_id` kolonu
+  duruyor). Üçü de üstü çizilip tarihlendirildi.
+
+  **Bayat sayıların çoğunun tek bir sebebi vardı: review modülü.** Bir modülün
+  eklenmesi 16→17 modül, 24→25 şema, 71→72 tablo, 15→17 interop yüzeyi diye
+  onlarca cümleyi aynı anda bayatlattı. Sayılar yerinde düzeltildi; tarihiyle
+  birlikte yazılmış ve o gün doğru olan iki sayım ise KAYIT olarak bırakıldı ve
+  hangi ağacı anlattıkları açıkça söylendi, ki okuyucu iki cevap arasında
+  kalmasın.
+
+  `README` iki sert yanlış taşıyordu: teknoloji tablosu `samber/do`'yu DI
+  seçimi olarak sunuyordu — o kütüphane ne `go.mod`'da ne `go.sum`'da var,
+  container elle yazılmış — ve var olmayan bir tanıtıcıya atıf yapıyordu.
+
+  **Düzeltme turunun KENDİSİ altı yeni yanlış üretti ve denetim şeridi onları
+  yakaladı.** Bir dosyanın MinIO yüzünden dışarıda kaldığını "import etmiyor"
+  diye yazmak, üç işi tek iş saymak, `core/provider`'a olmayan bir vergi
+  sağlayıcısı eklemek, ADR 0025'ten hiç var olmayan bir cümleyi alıntılamak, ve
+  ADR 0011'e "bu tetik ölçümle düştü" diye yapılmamış bir ölçüm yazmak. Altısı
+  da tek tek yeniden ölçülüp düzeltildi. Ders kayda değer: bir belgeyi
+  düzeltmek, düzeltilen iddia kadar dikkat isteyen yeni bir iddia yazmaktır.
+
+  **İki kapı deliği kapatıldı, ikisi de bu turda canlı örnekle bulundu.**
+
+  Birincisi: satır numarası yasağının deseni yalnızca `.go` uzantısını
+  arıyordu, yani bir BELGEDEN bir belgeye verilen satır numarası yasağın
+  dışındaydı. Depoda tam bir tane vardı ve daha yazıldığı gün çürümüştü — ADR
+  0009 plan belgesinin iki satırını gösteriyordu ve ikincisi, ADR commit
+  edilmeden önce alakasız bir görev maddesine kaymıştı. Desen genişletildi ve
+  yeni yarısı kendi pozitif kontrolünü aldı.
+
+  İkincisi: bir BELGENİN ters tırnak içinde andığı test adı hiçbir denetimden
+  geçmiyordu. Mevcut markdown denetimi noktalı adları (`paket.Ad`) arıyor,
+  oysa bir test tam da nitelemesiz yazılan tek semboldür. Ölçüldü: 93 benzersiz
+  ad, 152 anma, sekizi var olmayan bir testi gösteriyordu — hepsi İngilizce
+  çevirinin taşıdığı Türkçe adlar, dört ADR'de, `docs/mimari.md`'de ve
+  CHANGELOG'da. Altısı düzeltildi; ikisi muafiyet aldı, çünkü onlar ölü adı
+  BİLDİRDİKLERİ KUSUR olarak alıntılıyor ve canlı adla değiştirmek bulgunun
+  kendisini yok ederdi.
+
+  Kapı ilk koşusunda yazdığım üçüncü muafiyeti ELEDİ: CHANGELOG o adı
+  `-run …` biçiminde, daha büyük bir alıntının içinde yazıyor, yani ad ters
+  tırnağı doldurmuyor ve desen orayı hiç görmüyor. Muafiyet kaldırıldı ve
+  görülmeyişin sebebi godoc'a yazıldı — kullanılmayan bir muafiyet, kapının
+  kapsamını sessizce büyütür.
+
+  Üç mutasyon, hepsi sha256 doğrulamalı geri alma ile: bir belgeye ekilen
+  `.md:NN` göstergesi yakalanıyor, ekilen var olmayan test adı yakalanıyor, ve
+  muafiyet silinince kapı onun satırında düşüyor.
+
 - **Bir kök eklemek için yapılan temizlik, godoc'ların yirmi beş ölü dosya
   adına atıf yaptığını ortaya çıkardı — ve o sınıfı hiçbir kapı görmüyordu.**
 
@@ -4892,8 +4956,8 @@ adımını YAZANLARI ilgilendiriyor.
   seçenekler ve gömen uygulamaya düşen işin listesi orada). Sınır README'nin
   B2B bölümüne, `order` modülünün godoc'una, `service.SpendingPolicy` ile
   `CreateOrderInput.CustomerID` alanlarına yazıldı ve `order`'da iki testle
-  sabitlendi (`TestMisafirSiparisindeHarcamaKuraliHicSorulmaz`,
-  `TestHarcamaKuraliBeyanEdilenMusteriyeUygulanir`). İki test bir yeteneği
+  sabitlendi (`TestTrustBoundaryGuestOrderIsNeverAskedForTheSpendingRule`,
+  `TestTheSpendingRuleIsAppliedToTheDeclaredCustomer`). İki test bir yeteneği
   değil bir kararı korur: kimlik doğrulama geldiğinde düşmeleri **beklenir**.
 
   B2B kurulumu olan gömen uygulamaların yapması gereken: vitrin yüzeyini bir

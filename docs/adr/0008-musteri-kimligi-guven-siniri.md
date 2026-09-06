@@ -72,8 +72,9 @@ Bunun üç sonucu vardır ve üçü de kayıt altındadır:
    arayüzü ve `CreateOrderInput.CustomerID` aynı sınırı kendi yerlerinde
    tekrarlıyor. Kuralın "her alışverişe uygulandığı" cümlesi hiçbir yerde
    kalmadı.
-2. **Sınır testle sabitlendi.** `TestMisafirSiparisindeHarcamaKuraliHicSorulmaz`
-   ve `TestHarcamaKuraliBeyanEdilenMusteriyeUygulanir`, sınırın bugünkü yerini
+2. **Sınır testle sabitlendi.** `internal/modules/order/service/spending_test.go`
+   içindeki `TestTrustBoundaryGuestOrderIsNeverAskedForTheSpendingRule` ve
+   `TestTheSpendingRuleIsAppliedToTheDeclaredCustomer`, sınırın bugünkü yerini
    davranış olarak tutar. İkisi de bir yeteneği değil bir **kararı** korur:
    kimlik doğrulayan bir katman eklendiğinde düşmeleri beklenir ve o gün
    düşmeleri, kararın gerçekten verildiğinin işaretidir.

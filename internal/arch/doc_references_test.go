@@ -1403,6 +1403,172 @@ func TestTheTestFileReferenceScannerIsNotBlind(t *testing.T) {
 	}
 }
 
+// markdownTestNameReference captures a backticked Go test name in a document.
+//
+// Backticks are required and the name must fill them: a document naming a test
+// is making a PROMISE that it exists, the same way a bracket does in a godoc,
+// while the same word in running prose is not. The Test prefix is what keeps
+// the rule cheap — it needs no symbol table, only the set of test functions the
+// scan already collected.
+var markdownTestNameReference = regexp.MustCompile("`(Test[A-Z_][A-Za-z0-9_]*)`")
+
+// testNameReferenceExemptions are the backticked test names that deliberately do
+// NOT resolve, with the reason. Shape and price are [pathReferenceExemptions]': the
+// day the name exists the test fails and asks for the line to come off.
+//
+// Both are the same shape and it is worth naming: a document that QUOTES a dead
+// name as the defect it is reporting. Rewriting those to a live name would
+// destroy the report.
+//
+// A third case of that shape exists and is NOT here, because the audit does not
+// see it: the CHANGELOG entry that reports the same load-test defect writes the
+// selector as a whole, `-run TestTemel…`, so the name does not FILL the
+// backticks. That is the pattern working as intended rather than a miss — the
+// promise this audit reads is a name standing alone in backticks, and widening
+// it to names embedded in a larger quoted string would make every quoted command
+// line a promise. The audit refuses an exemption it would never use, which is
+// how the omission stays visible.
+var testNameReferenceExemptions = []pathReferenceExemption{
+	{
+		file: "docs/adr/0012-repository-language-and-solid.md",
+		path: "TestKayitBayatlamiyor",
+		reason: "The ADR's argument is that transliterated Turkish survives a " +
+			"letter-based scan, and it has to SHOW a Turkish identifier written without " +
+			"Turkish letters to make the point. The name is an example of the naming " +
+			"habit, not a claim that this test exists.",
+	},
+	{
+		file: "docs/gaps.md",
+		path: "TestTemelYukAltindaDogruKalir",
+		reason: "D11 records the same finding as the CHANGELOG entry and quotes the " +
+			"same dead selector for the same reason: the row's whole content is that the " +
+			"name exists nowhere in the repository.",
+	},
+}
+
+// findTestNameExemption is [findPathExemption] for the backticked-test-name list.
+func findTestNameExemption(file, mentioned string) int {
+	return slices.IndexFunc(testNameReferenceExemptions, func(e pathReferenceExemption) bool {
+		return e.file == file && e.path == mentioned
+	})
+}
+
+// TestTheTestNamesInTheDocsResolve verifies that every Go test a DOCUMENT names in
+// backticks really exists.
+//
+// # The hole this closes
+//
+// [TestTheReferencesInTheDocsResolve] audits the references in a document that
+// carry a dot — "package.Name", "Type.Member" — because that is what a Go symbol
+// reference usually looks like. A test function is the one symbol that is normally
+// written with no qualifier at all, so `TestFoo` in a document went through every
+// audit in this file untouched.
+//
+// It was measured before it was written, on 2026-09-06, and the class was live:
+// 92 distinct backticked test names over 152 mentions, of which eight named a test
+// that no longer existed. All eight were Turkish names the English translation had
+// moved, in four ADRs, a README-level document and the CHANGELOG — the documents a
+// reader turns to precisely BECAUSE they explain why something is the way it is.
+//
+// # Why the pattern is this narrow
+//
+// A rule over every backticked identifier would need a symbol table and would
+// carry the false positives that come with one. Anchoring on the Test prefix costs
+// one regexp and resolves against the set of test names [scanDocReferences] has
+// already collected, and the measurement says the narrowing loses nothing: of the
+// 92 names, every miss was a real one.
+func TestTheTestNamesInTheDocsResolve(t *testing.T) {
+	t.Parallel()
+
+	scan := scanDocReferences(t)
+	used := make([]bool, len(testNameReferenceExemptions))
+	seen := 0
+
+	for _, doc := range markdownDocs(t) {
+		for i, line := range doc.lines {
+			for _, match := range markdownTestNameReference.FindAllStringSubmatch(line, -1) {
+				mentioned := match[1]
+				seen++
+				if scan.testNames[mentioned] {
+					continue
+				}
+				if k := findTestNameExemption(doc.path, mentioned); k >= 0 {
+					used[k] = true
+					continue
+				}
+				t.Errorf("%s:%d: the test %q named in a document does not exist.\n"+
+					"A document that names a test is promising the reader something to go "+
+					"and read. If the test was renamed the reference must move with it; if "+
+					"the name is QUOTED as a defect rather than pointed at, say so in "+
+					"testNameReferenceExemptions — the audit cannot tell the two apart and "+
+					"the reader cannot either without the reason written down.",
+					doc.path, i+1, mentioned)
+			}
+		}
+	}
+
+	for k, exemption := range testNameReferenceExemptions {
+		assert.True(t, used[k],
+			"exemption STALE: in %s the %q reference is no longer broken (either the "+
+				"reference was deleted or a test by that name came into being).\n"+
+				"Justification: %s",
+			exemption.file, exemption.path, exemption.reason)
+	}
+
+	require.Positive(t, seen,
+		"NOT ONE backticked test name was found in the documents; the pattern must "+
+			"have gone BLIND. It requires backticks around a name starting with Test.")
+}
+
+// TestTheTestNameScannerIsNotBlind pins down what [markdownTestNameReference] sees.
+func TestTheTestNameScannerIsNotBlind(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		text string
+		want []string
+	}{
+		{
+			name: "a backticked test name is seen",
+			text: "the boundary is pinned by `TestLedgerIsNotStale`",
+			want: []string{"TestLedgerIsNotStale"},
+		},
+		{
+			name: "two on one line are both seen",
+			text: "(`TestOne`, `TestTwo`) keep it",
+			want: []string{"TestOne", "TestTwo"},
+		},
+		{
+			name: "an unbackticked mention is prose, not a promise",
+			text: "see TestSomethingOrOther for the proof",
+			want: nil,
+		},
+		{
+			name: "a word that merely begins with Test is not a test name",
+			text: "the `Testament` type is unrelated",
+			want: nil,
+		},
+		{
+			name: "a qualified symbol is the other audit's business",
+			text: "`service.TestHelper` lives elsewhere",
+			want: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var got []string
+			for _, match := range markdownTestNameReference.FindAllStringSubmatch(tc.text, -1) {
+				got = append(got, match[1])
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 // stripLinkBrackets replaces the [ … ] blocks in a text with a space.
 func stripLinkBrackets(text string) string {
 	var b strings.Builder
@@ -2090,8 +2256,17 @@ func TestTheMarkdownReferenceScannerIsNotBlind(t *testing.T) {
 			"every name.")
 }
 
-// lineNumberReference captures the references in the form "file.go:line".
-var lineNumberReference = regexp.MustCompile(`[A-Za-z0-9_./-]+\.go:\d+`)
+// lineNumberReference captures the references in the form "file.go:line" and
+// "file.md:line".
+//
+// The .md half was added on 2026-09-06 after a measurement: the ban was written
+// for source files, and a document pointing INTO another document by line number
+// went straight through it. There was exactly one such reference in the tree and
+// it had already rotted — ADR 0009 cited two lines of the plan document, and the
+// second had moved to an unrelated task item before the ADR that cited it was
+// even committed. One instance is enough, because this is the cheapest possible
+// rule to state and the rot it prevents is silent.
+var lineNumberReference = regexp.MustCompile(`[A-Za-z0-9_./-]+\.(?:go|md):\d+`)
 
 // TestTheDocsCarryNoLineNumberReference FORBIDS the references made with a line
 // number.
@@ -2141,6 +2316,11 @@ func TestTheDocsCarryNoLineNumberReference(t *testing.T) {
 	// forever — while going on carrying the word "ban" in its name.
 	require.Regexp(t, lineNumberReference, "see core/http/guard.go:16",
 		"the pattern does not catch even its own example; the ban must have gone BLIND")
+	// The second half needs its own control: a pattern narrowed back to .go
+	// would leave the document-to-document form unbanned and this test green.
+	require.Regexp(t, lineNumberReference, "see docs/gaps.md:412",
+		"the pattern no longer catches a line number pointed INTO a document; that "+
+			"half of the ban must have gone BLIND")
 
 	report := func(source string, lineNo int, text string) {
 		for _, match := range lineNumberReference.FindAllString(text, -1) {

@@ -3,6 +3,9 @@
 - **Durum:** Kabul edildi
 - **Tarih:** 2026-09-03
 - **Faz:** 10 sonrası (yönetim paneli turu)
+- **Değiştirildi:** 2026-09-03 — Karar 6'nın ertelediği yazma sorusu
+  [ADR 0013](0013-panel-write-surface.md) ile kapatıldı. Dördüncü ağaç, kimlik
+  ve yazıcı kararları değişmedi.
 
 ## Bağlam
 
@@ -126,6 +129,22 @@ böyle bir yüzeyi hiç yok — yani yazma, üç modüle yeni sözleşmeler açm
 gerektirir ve her sözleşme derleyicisiz bir taahhüttür. Karar, gerçek ekranlar
 elde varken verilecek.
 
+**2026-09-03'te karar verildi:** Erteleme aynı gün kapandı.
+[ADR 0013](0013-panel-write-surface.md) yazmayı, her modülün kendi yayımladığı
+**ilkel tipli** dar bir yüzeye bağladı ve o yüzeyi interop'tan AYRI bir adla
+kaydetti — bugün üç tane: `product.admin`, `pricing.admin`, `inventory.admin`.
+Yazma deponun değil SERVİSİN üzerinden geçer, yani handle tekliği denetlenir ve
+`product.updated` yayımlanır. Panel bu adları **isteğe bağlı** çözer: ürün
+modülü olmayan bir kurulum yine panel alır, düzenleme formu sebebini söyleyen
+bir `503` döner. Karar 6'nın okuma yolu ana hatlarıyla durdu — katalog
+ekranları hâlâ Query katmanının `Graph` çağrısını container'dan adla çözülen
+dar arayüzden kullanıyor — ama DEĞİŞMEDEN kalmadı: ADR 0013 başlığında bu
+kararı değiştirdiğini yazar ve yönetim yüzeyine dar bir OKUMA hakkı da tanır,
+yalnızca modüller arası okuma katmanının izleyici kitlesi o veri için yanlış
+olduğunda (konum kırılımı rezerve miktarları ve iç depo adlarını taşır, o
+katmanın tüketicileri arasında ise vitrin vardır). Tur kazandırmak için
+yapılan bir okuma bu hakkın dışındadır.
+
 ## Sonuçlar
 
 **Olumlu**
@@ -195,8 +214,14 @@ eklerdi; jeton da tarayıcıda saklanmak zorunda kalırdı.
 **Panelin kendi HTTP API'sine çağrı yapması.** Panelin, bir API istemcisinin
 yapamayacağı hiçbir şeyi yapamayacağını garanti ederdi ve bu gerçek bir kazanç.
 Okuma dilimi için reddedildi: Query katmanı aynı ekranı tek turda kuruyor, oysa
-HTTP yolu her satır için ek çağrı ve ikinci bir serileştirme demek. Karar
-**yazma dilimi için yeniden açıktır** ve orada kazancı daha ağır basabilir.
+HTTP yolu her satır için ek çağrı ve ikinci bir serileştirme demek. ~~Karar
+**yazma dilimi için yeniden açıktır** ve orada kazancı daha ağır basabilir.~~
+**2026-09-03'te düzeltildi:** Yazma dilimi için de reddedildi.
+[ADR 0013](0013-panel-write-surface.md) aynı seçeneği üç bedelle kapattı: panel
+kendine bir yönetim jetonu üretip taşımak zorunda kalırdı — çerezin yol
+kapsamının tam olarak kaçındığı tehlike —, her düzenleme iki serileştirme
+öderdi, ve kendi bağlantı havuzu üzerinden kendini çağıran süreç doygunlukta
+yavaşlamak yerine kilitlenirdi.
 
 ## Kararın yeniden açılması
 
@@ -207,7 +232,13 @@ HTTP yolu her satır için ek çağrı ve ikinci bir serileştirme demek. Karar
    yol olur ve Karar 6 yeniden düşünülmelidir.
 2. **Yazma diliminin gerçek maliyeti ölçüldüğünde.** Üç modüle yeni dar yüzey
    açmak, panelin kendi API'sine HTTP çağrısı yapmasından pahalı çıkarsa
-   reddedilen o seçenek geri gelir.
+   reddedilen o seçenek geri gelir. **2026-09-03:** bu tetik, istediği
+   ölçüm hiç yapılmadan düştü. [ADR 0013](0013-panel-write-surface.md)
+   loopback'i maliyet karşılaştırmasıyla değil YAPISAL üç bedelle kapattı —
+   panelin kendine bir yönetim jetonu üretmesi, her düzenlemenin iki
+   serileştirme ödemesi, ve sürecin kendi bağlantı havuzu üzerinden kendini
+   çağırırken doygunlukta yavaşlamak yerine kilitlenmesi. Bundan sonraki
+   tetikleri o ADR yazıyor.
 3. **Panelin ayrı sürümlenmesi istendiğinde.** O gün CORS kararı yeniden
    tartılır; bugün reddedilme sebebi karşılığının olmamasıdır, imkânsızlığı
    değil.
@@ -220,3 +251,5 @@ HTTP yolu her satır için ek çağrı ve ikinci bir serileştirme demek. Karar
   onun kurduğu kalıbı ikinci kez uyguluyor.
 - [ADR 0007](0007-sertlestirme-arizada-davranis.md) — arızada davranış; panelin
   koruma halkası ve bayrak reddi oradan besleniyor.
+- [ADR 0013](0013-panel-write-surface.md) — Karar 6'nın ertelediği yazma
+  sorusunun cevabı; bu ADR'yi değiştirir.

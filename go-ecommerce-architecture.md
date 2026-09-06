@@ -88,7 +88,7 @@ handler → service → repository
   The transitions are enforced in code.
 - **Idempotency key:** mandatory for payment and order creation.
 - **Outbox pattern:** when an order is placed, work such as mail, stock and invoicing goes onto the queue as an event.
-- **Pagination:** cursor-based, not offset.
+- **Pagination:** ~~cursor-based, not offset.~~ **Corrected 2026-09-06:** both are published, and which one a listing gets is decided by how its table grows. Measured on 52,000 products with the listing index in place, offset costs 0.31 ms on the first page and 34.71 ms about 50,000 rows in, while a keyset seek stays flat at 0.06-0.08 ms — offset is linear in DEPTH, and depth is the only place it costs anything. So a cursor goes where the rows grow with the shop's trade (products, orders, customers, carts, invoices and reviews accept `after` and return `next_cursor`), offset alone where they grow with its configuration — tax rates, regions, channels, currencies are counted in hundreds — or are bounded by a parent. All 17 module list envelopes still carry `offset` and `limit`; `after` is additive, and `afterParam` in `internal/modules/product/api` refuses the two together because they name different positions. The evidence is in the `internal/core/page` package godoc and docs/gaps.md item 2.
 
 ---
 
@@ -239,7 +239,7 @@ A narrow panel that works completely beats a broad one that is half-finished. Th
 - [ ] Opening the transaction in the repository
 - [ ] Goroutine leaks
 - [ ] Global state
-- [ ] Offset pagination
+- [ ] ~~Offset pagination~~ **Corrected 2026-09-06:** offset pagination at DEPTH, on a table that grows without bound. Offset itself is a ratified decision, not a mistake — see section 5.
 - [ ] Embedding the prompt in code
 - [ ] Mocking the repository in tests
 - [ ] Growing the public API needlessly

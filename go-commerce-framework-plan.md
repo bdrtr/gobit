@@ -68,7 +68,7 @@ yeniden açacak sorular [ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.
 | Cache / kuyruk | Redis | İş kuyruğu için `hibiken/asynq` opsiyonel |
 | Workflow | Custom saga engine | İstenirse ileride Temporal'a köprü |
 | Config | **`caarlos0/env`** | 12-factor; viper'ın dosya/uzak config yükü gereksiz |
-| Validation | `go-playground/validator` | |
+| Validation | ~~`go-playground/validator`~~ **2026-09-06'da düzeltildi: el yazması** (modül başına `service/validate.go`) | Struct tag'li kütüphane BENİMSENMEDİ: `go.mod`/`go.sum`'da `go-playground` girdisi, kodda tek bir `validate:"…"` tag'i yok. Kural on modül servisinde elle yazılı ve tipli `core/errors.Invalid` hatasına bağlanıyor; gerekçe `internal/modules/auth/service/validate.go` godoc'unda: kontrol, migration'daki CHECK kısıtıyla BİREBİR aynı gereksinimi anlatsın diye kasten dar tutuldu |
 | Auth | JWT + session; OAuth opsiyonel | |
 | Loglama | `log/slog` (stdlib) | Structured, JSON |
 | Observability | OpenTelemetry (trace + metric) | |
@@ -80,22 +80,32 @@ yeniden açacak sorular [ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.
 ## 4. Dizin Yapısı
 
 ```
+gobit.go                   # kütüphane cephesi: New().Version().Add().Use().Main() (ADR 0027)
 /cmd
-  /server                  # main: config yükle, container kur, modülleri register et, API mount et
+  /server                  # örnek ikili: yalnızca gobit.New()…Main() çağırır, başka bir şey yapmaz
+/core                      # YAYIMLANMIŞ yüzey — on dört paket (ADR 0026)
+  /plugin                  # host sözleşmesi
+  /module                  # Module interface + registry
+  /provider                # provider interface'leri (payment, fulfillment, notification, file, error-reporter)
+  /errors                  # tipli hatalar
+  /http                    # router, middleware, response/error helper, auth middleware
+    /redisguard            # paylaşılan hız sınırı + idempotency deposu
+  /db                      # postgres bağlantı yönetimi, migration runner
+  /container               # DI + isimle çözümleme
+  /eventbus                # EventBus interface + inmemory/redis backend
+    /outbox                # commit'ten sağ çıkan olay (ADR 0023)
+  /query                   # cross-module query resolver
+  /link                    # Module Links servisi
+  /audit                   # yönetim route'larının bıraktığı kayıt
+  /errorreport             # reporter sözleşmesi
 /internal
-  /core
+  /app                     # KOMPOZİSYON KÖKÜ: config yükle, container kur, modülleri register et, API mount et (ADR 0027)
+  /adminui                 # yönetim arayüzü
+  /core                    # yayımlanmamış çekirdek
     /config                # config loader (env)
-    /errors                # tipli hatalar
     /logger                # slog kurulumu
-    /db                    # postgres bağlantı yönetimi, migration runner
-    /container             # DI + ModuleRegistry
-    /module                # Module interface + lifecycle
-    /eventbus              # EventBus interface + inmemory/redis backend
-    /link                  # Module Links servisi
-    /query                 # cross-module query resolver
     /workflow              # workflow engine (Step, Workflow, Executor, saga, state)
-    /provider              # provider interface'leri (payment, fulfillment, notification, file)
-    /http                  # router, middleware, response/error helper, auth middleware
+    /job  /observability  /openapi  /page
   /modules
     /product
       /models              # domain modelleri
@@ -109,12 +119,36 @@ yeniden açacak sorular [ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.
   /workflows               # cross-module workflow'lar (complete_cart, create_order, …)
 /plugins
   /payment-stripe          # örnek provider plugin
+/examples                  # dışarıdan gömme örnekleri (`starter`, `plugin`)
 /migrations                # global/çekirdek migration'lar (links tablosu vb.)
 /config                    # ortam config dosyaları
 /deploy                    # docker-compose, Dockerfile
 Makefile
 go.mod
 ```
+
+> **2026-09-06'da düzeltildi.** Ağacın ÇEKİRDEK yaprakları yukarıda kütüphane
+> taşınmasından sonraki hâline getirildi; özgün iki satır bir okuru var olmayan
+> yollara götürüyordu. (`/modules` altındaki liste planın yazdığı gibi bırakıldı:
+> orası bir envanter değil, modül iskeletinin örneğidir.)
+> ~~`/internal /core` altında `errors, db, container, module, eventbus, link,
+> query, provider, http`~~: bu dokuz paket ADR 0026 ile kök `core/` altına,
+> yayımlanmış yüzeye taşındı (`ls -d core/*/` → on iki dizin; `core/http/redisguard`
+> ve `core/eventbus/outbox` ile birlikte ADR 0026'nın saydığı on dört paket).
+> `internal/core` altında yalnızca `config`, `logger`, `workflow` ile
+> yayımlanmayan `job`, `observability`, `openapi`, `page` kaldı — yani
+> `github.com/bdrtr/gobit/internal/core/errors` gibi bir import yolu artık yok
+> ve zaten olsa da gömen bir proje onu kullanamazdı. Bu belgenin kendi Bölüm 3'ü
+> (`core/container`), Bölüm 5 kod başlıkları (`// core/module/module.go`) ve
+> Faz 9 notundaki `core/http/redisguard` satırı taşınmış yolları çoktan kullanıyordu;
+> düzeltilmemiş tek yer bu ağaçtı.
+> ~~`/server # main: config yükle, container kur, modülleri register et, API mount et`~~:
+> `cmd/server/main.go`'nun gövdesi bugün tek çağrıdır —
+> `gobit.New().Version(version).Main(os.Args[1:], os.Stdout)` — config yüklemez,
+> container kurmaz, API mount etmez. Kompozisyon kökü kök `gobit` paketinin
+> ardındaki `internal/app`'tir (ADR 0027), ki Bölüm 9'un 6. maddesi de bunu böyle
+> yazar. Ağaç ayrıca `gobit.go`, `internal/adminui` ve `examples/` girdilerini
+> hiç tanımıyordu.
 
 ---
 
@@ -334,9 +368,14 @@ type PaymentProvider interface {
 >
 > RBAC yalnızca auth'ta değil, **TÜM modüllerde** zorlanır: sözlük tek
 > kuraldan türer (`<modül>:read` / `<modül>:write`, `admin` üst yetki) ve
-> `internal/e2e/authorization_test.go` router ağacını GEZEREK 205 yönetim ucunun
+> `internal/e2e/authorization_test.go` router ağacını GEZEREK 237 yönetim ucunun
 > tamamında yetkisiz bir jetonun 403 aldığını denetler — elle yazılmış bir uç
-> listesi, eklenmesi unutulan ilk uçta kör kalırdı.
+> listesi, eklenmesi unutulan ilk uçta kör kalırdı. Sayı ölçümdür ve modül
+> eklendikçe büyür: 6 Eylül 2026'da test 237 alt-test üretti (her biri
+> `chi.Walk`'un bulduğu bir metot+yol çifti). Kayıtlı yönetim yüzeyi 240 uçtur;
+> kimliğin KENDİSİNİ kuran veya okuyan üçü — `authapi.LoginPath`,
+> `/admin/v1/auth/me`, `/admin/v1/auth/logout` — `unauthorizedExemptPaths` ile
+> muaftır.
 >
 > İlk yönetici bir TOHUM adımıyla doğar (`ADMIN_BOOTSTRAP_*`) ve tohum yalnızca
 > hiç kullanıcı yokken çalışır; bu adım olmadan yönetim uçları korumalı olduğu

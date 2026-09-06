@@ -107,22 +107,22 @@ belonging to that feature**, and the next round pays for the question twice.
 | B15 | **File read-back, ~~product-image ↔ upload link~~ built 2026-09-05**, file events still missing. `product_image.upload_id` plus the `upload_product_image` link (declared by PRODUCT — it writes the record the binding carries; the file module's own doc says it does not know what a file belongs to). The file module gained the interop surface it deliberately lacked, and the reasoning behind that absence turned out to be half wrong: the address shows the file and says nothing ABOUT it | anything that looks at a photo — the id half is answerable now; file EVENTS are not built | AI-powered features |
 | B16 | **A suggestion store** — system proposes, human applies | forecast and category suggestions. The pattern exists (`sagawatch`, ADR 0017); the storage does not | AI-powered features |
 | B17 | **KVKK erasure, export and retention** | a legal requirement; A2 and A4 come first | Turkey-specific |
-| B18 | ~~**A per-column round-trip test for every module**~~ **Built 2026-09-05** as `TestEveryColumnIsWrittenBySomething`: the schema and the queries are read TOGETHER, and a column no INSERT names and no UPDATE sets fails. DEFAULT and GENERATED columns are out of scope — the database supplies those | nothing — and it caught a standing finding on its first run (see D9). ~~**What it does NOT catch was measured on 2026-09-06 and it is three holes wide, one of them the very finding its own godoc names as the example — see D16**~~ **Two of those three closed on 2026-09-06, a fourth hole was found while closing them, and the third — text, not the call graph — is measured and deliberately open (D16). The fix surfaced NINE live findings on its first run, and EIGHT of the nine were answered later the same day — four by writing a delete that had never existed, four by DROPPING a column that was wrong. The ninth is not a placeholder any more: its exemption states the question (D18). And a hole of a DIFFERENT kind was found later the same day, from the other end: all of the above is about what the audit sees inside its scope, and the scope itself is 16 of the repository's 24 schemas — ten tables owned outside the module tree have no column audit at all. It was deliberately not widened and the reason is in D23** | Common Go mistakes |
+| B18 | ~~**A per-column round-trip test for every module**~~ **Built 2026-09-05** as `TestEveryColumnIsWrittenBySomething`: the schema and the queries are read TOGETHER, and a column no INSERT names and no UPDATE sets fails. DEFAULT and GENERATED columns are out of scope — the database supplies those | nothing — and it caught a standing finding on its first run (see D9). ~~**What it does NOT catch was measured on 2026-09-06 and it is three holes wide, one of them the very finding its own godoc names as the example — see D16**~~ **Two of those three closed on 2026-09-06, a fourth hole was found while closing them, and the third — text, not the call graph — is measured and deliberately open (D16). The fix surfaced NINE live findings on its first run, and EIGHT of the nine were answered later the same day — four by writing a delete that had never existed, four by DROPPING a column that was wrong. The ninth is not a placeholder any more: its exemption states the question (D18). And a hole of a DIFFERENT kind was found later the same day, from the other end: all of the above is about what the audit sees inside its scope, and the scope itself is 17 of the repository's 25 schemas — ten tables owned outside the module tree have no column audit at all. It was deliberately not widened and the reason is in D23** | Common Go mistakes |
 
 ### C. Features — after the above
 
 | # | feature | waits on |
 | --- | --- | --- |
 | C1 | **Back-in-stock waitlist.** ~~The cheapest real feature; every part exists and only a table is missing~~ — **that claim was wrong, measured 2026-09-05.** Three parts are missing, not one: the table, an inventory EVENT (the module publishes nothing at all, so there is no "it is back" to react to), and a subscriber to turn it into a message. The notification side does exist — `Service.Notify` — but it is reached by SUBSCRIBING, so the event is the load-bearing half. **A SECOND blocker was measured on the same day and it is a DECISION, not a gap: A15.** The table would hold an address this repository cannot verify, cannot let anyone unsubscribe from, and does not throttle per address | A15 first, then B7 (inventory events) |
-| C2 | ~~**Order timeline**~~ **Built 2026-09-05.** `GET /admin/v1/orders/{id}/timeline` — composed, not a table; every entry names the CLOCK that stamped it, because the capture and a parcel's transitions are on the application clock while everything else is on the database's. Undated facts (an exchange that finished) come back last rather than being dropped | ~~B5, B6~~ done |
-| C3 | **Operator assistant in the panel** — sixty-one primitive interop methods are already a tool catalogue, and identity exists inside the panel | a return-creation surface |
+| C2 | ~~**Order timeline**~~ **Built 2026-09-05.** `GET /admin/v1/orders/{id}/timeline` — composed, not a table; every entry names the CLOCK that stamped it, because the capture and a parcel's transitions are on the application clock while everything else is on the database's. ~~Undated facts (an exchange that finished) come back last rather than being dropped~~ **Corrected 2026-09-06 (D4): that sentence was false the day it was written.** The undated machinery stays — `sortTimeline` puts a nil `At` last and `TimelineEntry.At` is a pointer for that reason — but nothing produces an undated entry any more, and a finished exchange is not merely undated, it is unrepresentable: the order module's migration `000008_order_exchange_cancel` drops `order_exchanges.completed_at` and narrows the status CHECK to `('requested', 'canceled')`, the completed-exchange constant and the timeline's unreachable branch are deleted, and `TestExchangeStatusHasNoCompletedValue` keeps them gone. A withdrawn exchange is a DATED `exchange.canceled` entry | ~~B5, B6~~ done |
+| C3 | **Operator assistant in the panel** — sixty-four primitive interop methods are already a tool catalogue, and identity exists inside the panel | a return-creation surface |
 | C4 | **Consent records and data-subject endpoints** | A2, B17 |
 | C5 | **Outbound webhooks** (NATS after, if anyone asks) — **the sender was BUILT on 2026-09-06 as `plugins/webhookout`, and it is NOT INSTALLABLE. That was measured, not assumed.** What exists is whole and proved: a receiver is registered over `POST /admin/v1/webhooks`, which mints its signing secret server-side and returns it exactly ONCE; four topics are subscribed BY NAME, written out rather than ranged over, because the reverse topic gate resolves a subscription statically and a loop variable is a name it cannot resolve; an event on the bus writes one delivery row PER RECEIVER and does nothing else, since the bus logs a handler's error and counts the event processed, so anything the handler does not finish is lost for good; a minute-by-minute job claims what is due by moving `next_attempt_at` forward — a LEASE, not a held transaction, because an attempt is an HTTP request to a third party and a transaction spanning a pass of them would hold a pool connection for most of a minute exactly when the receiver has stopped answering; and every attempt is signed HMAC-SHA256 over a LENGTH-PREFIXED join of six values, the same rule ADR 0028's inbound ring uses, so a body cannot be moved onto another event's signature. The queue is deliberately NOT `event_outbox`, and the schema is the refusal: that table is keyed on the EVENT and carries one attempt counter, one next attempt and one dead-letter stamp, so an event owed to three receivers with one of them down has no expressible state in it — and putting webhook deliveries in the relay's pile would make a third party's decommissioned endpoint indistinguishable from gobit's own bus failing to accept an event, in the one listing an operator reads to tell those apart. A pile given up on FAILS the delivery run, and `GET /admin/v1/webhooks/deliveries?state=dead` plus redrive and discard are the two ways out. Plain http is refused unless the host is loopback; resolving the host to refuse a private address is NOT done and the refusal is argued — a resolve-then-connect check is not a check, and closing it properly means a dialer that refuses at connect time. Proved from a real cart through a real order to a receiver that holds nothing but the issued secret (`TestARealOrderReachesARealWebhookReceiver` in `internal/e2e`, observed passing 2026-09-06), which is the only place that can catch the order module and the plugin disagreeing about the event. **What is missing is ONE MAP ENTRY.** `webhook-out` is absent from the composition root's plugin catalog, so `PLUGINS=webhook-out` stops the boot with "unknown plugin". Measured with `go list -deps ./cmd/server`: the closure names eight plugins and not this one, so the package is not compiled into the binary at all and its migration is outside `gobit migrate` too. The plugin's own package doc says it is "named nowhere except one line in the composition root's catalog" — that line does not exist. Why no gate caught it is D22. **The catalog line landed 2026-09-06 and C5 is now WHOLE: `webhookout.Name` is in the installer's map, `go list -deps ./cmd/server` names the package, and its migration is inside the migrate surface.** | ~~B12~~ ~~B13~~ both done — retry, the dead letter and a plugin-registrable periodic pass are all built. The SENDER is built too; what is left is the catalog line, and nothing else |
 | C6 | **Carrier plugins** (Yurtici, Aras, MNG, PTT) | ~~B1~~ built (ADR 0028); B10's state machine is built and its quote input is not; **and a third blocker was measured 2026-09-06 that neither row named: a carrier has NOWHERE TO DELIVER what it receives.** The fulfillment module's cross-module write surface is five primitive methods and none of them can move a shipment to shipped, delivered or returned. The admin routes can, but a carrier's webhook holds no admin credential — that is the premise the callback ring is built on — and a plugin cannot call the service directly, because the plugin-import gate refuses the import and a structural interface cannot be written either while the method returns a module type the plugin's package cannot name. The method is deliberately NOT added ahead of the plugin (a cross-module surface with no consumer is a contract nothing can check), and the shape it should take is written down where it will be needed: ONE method carrying the carrier's OWN instant, because the tolerance is a property of the sequence rather than of any single transition, and because that instant is the one thing an admin route cannot supply and a carrier always can |
 | C7 | **Installment table** + iyzico/Param providers | A3 |
 | C8 | **Digital product delivery** — entitlement, expiring link, re-download policy | — |
 | C9 | **B2B: quotes, terms, minimum order** | A5 |
-| C10 | **NL search layer** | B2, B3 |
+| C10 | **NL search layer** | B2; ~~B3~~ **built 2026-09-05** — the word→id half is done (`GET /store/v1/{collections,categories,tags}`), so what NL search still waits on is the FILTER half, B2, of which sort and option value are builds while price and in-stock became A16 and A17 |
 | C11 | **Review summaries and Q&A** | ~~B4~~ **built 2026-09-06, so the DATA exists** — and the two hooks a summariser needs are deliberately absent, named in the review module's own package doc as arriving WITH their first reader. It publishes no read-layer provider, so nothing outside the module can read a review without importing it, which ADR 0001 forbids; and it publishes no event, so a stored summary has nothing to invalidate it. Both were withheld rather than forgotten: an interop surface no production file resolves fails the consumer audit, and a topic no production file subscribes to fails the topic gate whose exemption map is empty by policy. C11 is the reader that makes both landable, in one package with them. The `product.metadata` measurement below still says where the summary may NOT live |
 | C12 | **Subscriptions** — a second axis on the order, not a fifth status | B9 |
 | C13 | **Feature flags, then A/B** | A9 for the assignment key |
@@ -268,8 +268,23 @@ belonging to that feature**, and the next round pays for the question twice.
   transaction in the CONTEXT — the same ambient plumbing the other six modules
   already had — so the service decides the boundary and two repository calls
   can share one transaction. The signature had to come down to types both sides
-  share: ADR 0001 forbids the service importing the repository package, so no
-  type of that package can appear in the interface the service declares.
+  share: ~~ADR 0001 forbids the service importing the repository package, so no
+  type of that package can appear in the interface the service declares.~~
+  **Corrected 2026-09-06: no rule forbids it, and the attribution was wrong
+  twice over.** ADR 0001 decides inter-MODULE communication — a consumer-side
+  narrow interface with the implementation resolved from the container by name —
+  and its enforcement is depguard's cross-module deny list; it says nothing
+  about a repository package or about the boundary inside a module. The
+  in-module boundary that IS enforced is `layerRules` in `internal/arch`, cited
+  to ADR 0012, and it forbids a service importing `net/http`, chi and pgx —
+  `/repository` is forbidden to the `api` layer, not to the service. The tree
+  proves the point: the product service imports its own repository package in
+  five production files and takes `repository.Store` as a field and as a
+  parameter of the exported `NewCategoryProvider`. What the tax service does is
+  a CONVENTION its own godoc names as the IN-MODULE counterpart of ADR 0001's
+  pattern, and the pricing, auth, customer and b2b services say it in the same
+  words. The convention is what made the signature come down to shared types; a
+  prohibition would have made the product module a violation, and it is not.
 
   **And the entry was understating the problem in the way that matters: the day
   a caller needed this had already arrived, and a godoc was claiming it had
@@ -330,7 +345,7 @@ belonging to that feature**, and the next round pays for the question twice.
   title only.~~ Fixed 2026-09-05.
 - **D10** ~~Nothing stopped a module's SQL from naming another module's
   table.~~ **Closed 2026-09-05.** `TestModuleSQLNamesOnlyItsOwnTables` derives
-  the ownership map from the migrations — 71 tables over 16 modules, and
+  the ownership map from the migrations — 72 tables over 17 modules, and
   `sales_channel` turns out to be owned by AUTH, not by product — then reads USE
   from THREE surfaces: the query files, the module's OWN migrations (a data
   backfill would otherwise have a whole directory to hide in) and Go string
@@ -611,7 +626,7 @@ belonging to that feature**, and the next round pays for the question twice.
   string literal is data.
 
   **The third hole is still open, and that is now a measurement rather than an
-  omission.** Of the 445 sqlc queries under `internal/modules`, 9 have no
+  omission.** Of the 464 sqlc queries under `internal/modules`, 9 have no
   hand-written caller anywhere in `internal` or `core` — and all nine are
   SELECTs. So reading text instead of the call graph masks exactly ZERO columns
   today: every INSERT and every UPDATE in this repository has a caller. The
@@ -1049,8 +1064,9 @@ belonging to that feature**, and the next round pays for the question twice.
   because the reader is what was missing. A godoc in the panel already claimed
   this pinning worked; the sentence was false until this fix and is true now.
 
-  **Finding 3: the three migration gates read 16 of the repository's 24
-  migration directories.** Rollback, the cross-module foreign-key rule and the
+  **Finding 3: the three migration gates read 16 of the 24 migration directories
+  that existed when it was measured** — 17 of 25 since the review module landed
+  the same day (B4). Rollback, the cross-module foreign-key rule and the
   real-Postgres round trip all derived their input from the module list. The
   eight they never opened are four plugin schemas and the four CORE ones —
   `core/audit/migrations`, `core/eventbus/outbox/migrations`,
@@ -1064,7 +1080,9 @@ belonging to that feature**, and the next round pays for the question twice.
   A shared `migrationDirs` helper now discovers them from `productionTrees`
   under two floors — every module must still be found, and at least one set must
   be outside `internal/modules` so a future narrowing fails loudly — and the
-  integration gate round-trips all 24 on a real container.
+  integration gate round-trips all 25 on a real container. The helper DISCOVERS
+  them rather than being handed a list, so the review module's schema joined the
+  three gates without anyone editing them; only the written counts move.
 
   **A bug was introduced while fixing that and caught before it shipped**, and
   it is recorded because the mutation run is what exposed it: the first version
@@ -1080,7 +1098,7 @@ belonging to that feature**, and the next round pays for the question twice.
 
   | gate | what it lets through | why it was left |
   | --- | --- | --- |
-  | `TestEveryColumnIsWrittenBySomething` | the same 16 of 24 schemas. Ten tables owned outside the module tree have no "is this column ever written" audit at all | it reads writes from the modules' query files, and those packages build their SQL in Go. Widening the declaration side without the write side would report every one of their columns as dead — a pile of false accusations is how a gate gets deleted, and this package says so in three places. It is a scoping change, not a widening (see D16) |
+  | `TestEveryColumnIsWrittenBySomething` | the same 17 of 25 schemas. Ten tables owned outside the module tree have no "is this column ever written" audit at all | it reads writes from the modules' query files, and those packages build their SQL in Go. Widening the declaration side without the write side would report every one of their columns as dead — a pile of false accusations is how a gate gets deleted, and this package says so in three places. It is a scoping change, not a widening (see D16) |
   | `TestModuleSQLNamesOnlyItsOwnTables` | a module naming a PLUGIN's table. The ownership map skips any table no module owns | the file header ARGUES that allowance for core tables and run-time link tables and does not argue it for plugin tables. Measured: no module names a plugin table and no plugin names a module table today. The right order is to extend the header's argument first, and changing what "owner" means in a file whose header is an argued decision is not a silent edit |
   | `TestTheDefaultServeMuxIsNeverUsed` | an empty walk. It is the one prohibition gate in the package with no counter of its own and no positive control | cheap to fix and it lets through strictly less than the three above; it is protected indirectly, since the tree list it walks is pinned elsewhere and other gates share the walk |
   | `TestLayerPurityCatchesAViolation` | less than its name says. It plants into a RE-IMPLEMENTATION of the decision — its own fixture, its own inline match — so it proves the forbidden fragment is matchable and nothing about whether the real walk sees it | the pair is sound overall, because the gate it guards pins its own reader with a per-layer scanned counter against a written-down exemption map. The control alone is what is weak |
@@ -1191,11 +1209,17 @@ belonging to that feature**, and the next round pays for the question twice.
 ### F. Standing work
 
 - **Translation ledger: 260 files.** ADR 0012 lets it only shrink.
-- **Panel: five sections over four of sixteen modules; twelve modules have no
+- **Panel: five sections over four of seventeen modules; thirteen modules have no
   screen at all**, nothing can be created or deleted from it, and there is no
   extension point for a plugin to add one. The two counts came apart on
   2026-09-05: Sales is the fifth SECTION and the order module's SECOND screen,
-  so it changed the section count and not the module count.
+  so it changed the section count and not the module count. Review (B4,
+  2026-09-06) then moved the denominator without moving either — no file under
+  `internal/adminui` mentions it — and it is the first screenless module that is
+  NOT configuration: its moderation queue, the review listing filtered to
+  `submitted`, is daily operator work. The panel sections dated 2026-09-05 below
+  therefore describe a sixteen-module tree and are due a re-measure rather than
+  a correction.
 
 ## Data layer — measured 2026-09-04
 
@@ -1784,10 +1808,20 @@ the start.
 
 1. **There is no KVKK/GDPR erasure or export flow, and deletion is SOFT
    everywhere.** `DeleteCustomer` stamps `deleted_at`; nothing hard-deletes and
-   nothing anonymises. The word KVKK appears exactly once in the repository, in
+   nothing anonymises. ~~The word KVKK appears exactly once in the repository, in
    a notification test, observing that not storing a second copy of the
    recipient address keeps the number of places to clean small — which is the
-   right instinct and the only trace of the requirement anywhere.
+   right instinct and the only trace of the requirement anywhere.~~ **Corrected
+   2026-09-06: it appears twice in the code, and the load-bearing one is not the
+   test.** Both are in the notification module and both make the same argument:
+   the schema comment in the module's `000001_notification_init` migration, under
+   the heading that the recipient address is NOT STORED, says a second copy
+   raises the number of places that have to be cleaned up on an erasure request,
+   and `TestTheLogCarriesNORecipientAddressCOLUMN` holds that at the schema level
+   so code that does not write the address today cannot write it tomorrow. Both
+   strings predate this section by five days, so the count was wrong when it was
+   written rather than overtaken. It is still the right instinct and still the
+   only trace of the requirement in the code.
 
    Personal data is currently in at least seven places: `customer` (e-mail,
    names, phone), `customer_address`, `orders.email`, `carts.email`,
@@ -1896,10 +1930,16 @@ composition root is the only place that knows what is wired to what.
 
 ### Repository tests: real Postgres, and no mocking library at all
 
-There is no gomock, no mockery, no testify/mock in go.mod. Twenty-eight test
-files bring up a real PostgreSQL or Redis with testcontainers, and **fifteen of
-sixteen modules construct their REAL repository over a real pool** in their
-integration tests.
+There is no gomock, no mockery, no testify/mock in go.mod. ~~Twenty-eight test
+files bring up a real PostgreSQL or Redis with testcontainers~~ **Corrected
+2026-09-06: the figure was never twenty-eight.** Counted by the testcontainers
+IMPORT rather than by the word, thirty-two files brought one up on the date
+above and thirty-five do today; the word finds exactly one file the import
+does not — `internal/smoke/process_test.go`, which mentions testcontainers in
+prose without importing it — and one file the import DOES find is excluded on a
+different criterion: `plugins/files3/s3_integration_test.go` imports it and
+brings up MinIO rather than PostgreSQL or Redis. **Fifteen of sixteen modules construct their REAL
+repository over a real pool** in their integration tests.
 
 ### The one real gap on this list
 
@@ -2109,7 +2149,7 @@ inventing; it needs relocating and naming.
 | router access | chi; every module registers its own full paths, and the panel proves a fourth tree can mount its own | `core/http`, `Module.Routes` |
 | merged migrations | the registry already merges per-owner migration sources and refuses two owners claiming one table | `core/module`, `internal/app/migrate.go` |
 | a project can add its own module | `Registry.Add(mod Module)` — the exact method the brief needs | `core/module` |
-| `Product.Metadata` jsonb | present on product, variant, taxonomy, order, cart, customer, payment, invoice, fulfillment, tax and auth | eleven modules |
+| `Product.Metadata` jsonb | present on auth, cart, customer, fulfillment, invoice, order, payment, product, promotion and tax — inside product it reaches the variant and taxonomy tables too | ~~eleven modules~~ **ten; corrected 2026-09-06** — variant and taxonomy are product's OWN tables rather than modules of their own, and promotion, which has the column, was left out |
 | compile-time plugin registration | a plugin host with an Install phase, selected by configuration | `core/plugin`, `plugins/` |
 
 ### The plugin tree is not the extension point it looks like
@@ -2819,10 +2859,22 @@ Blocked below the AI, and in a way that is easy to miss.
   pipeline has no bytes to look at.
 - **The file module publishes no events**, so nothing can react to a photo
   arriving.
-- **A product image and its upload record are not linked.** `product_image.url`
+- ~~**A product image and its upload record are not linked.** `product_image.url`
   is free text, there is no `upload_id`, and a cross-module foreign key is
   forbidden (Principle 2.2). Given an image row there is no way to reach its
-  storage key.
+  storage key.~~ **Corrected 2026-09-06: the link was built later the same day
+  (B15).** `product_image.upload_id` is a nullable opaque text column with a
+  non-empty CHECK (product migration `000002_product_image_upload`) — no
+  cross-module foreign key, so Principle 2.2 is intact — written on image
+  create, carried on the admin image DTO, and readable in reverse through
+  `GET /admin/v1/product-images/by-upload/{upload_id}`; the binding is declared
+  by PRODUCT as `LinkUploadProductImage`, and `file.interop`'s `UploadJSON`
+  resolves the id to the upload record. What is still missing is narrower than
+  "not linked": the cross-module `uploadRecord` carries the URL, content type,
+  size and checksum but deliberately NOT the storage key, and `FileProvider`
+  still has only `Upload` and `Delete` — so a pipeline can now reach the RECORD
+  of the photo and still not its key or its bytes, which is the first bullet's
+  point.
 - **Images are write-once at product create** — no per-image endpoint and no
   `Images` field on the update input, so a pipeline could not write back what it
   found.
@@ -2830,19 +2882,23 @@ Blocked below the AI, and in a way that is easy to miss.
   `(product_id, category_id)` with no confidence, no source and no pending
   state, and the setter replaces the whole set atomically.
 
-Not one of these is about models or prompts. Four are ordinary plumbing
-decisions that would each be worth making on their own merits.
+Not one of these is about models or prompts. Four were ordinary plumbing
+decisions that would each be worth making on their own merits; the image ↔
+upload link was made on 2026-09-05, so three are left.
 
 ### The chat assistant: the tools already exist, the caller does not
 
 **This is the area that is genuinely close, and for a reason nobody planned.**
 
-There are **fifteen `*.interop` container surfaces carrying sixty-one methods**,
-and by written rule (ADR 0001/0006) every one takes and returns primitives,
-slices of primitives, or `json.RawMessage`, with composite schemas documented
-next to the method. That is a tool catalogue, built for module isolation and
-arriving fit for tool-use by accident. The container can even enumerate the
-names at runtime.
+There are **seventeen `*.interop` container surfaces carrying sixty-four
+methods** — twelve module ones and the five under `workflows.` — and by written
+rule (ADR 0001/0006) every one takes and returns primitives, slices of
+primitives, or `json.RawMessage`, with composite schemas documented next to the
+method. That is a tool catalogue, built for module isolation and arriving fit
+for tool-use by accident. The container can even enumerate the names at runtime.
+Re-measured 2026-09-06: the figures here were fifteen and sixty-one, and both
+had already moved by the close of the date above, because `file.interop` and
+`workflows.fulfilling.interop` were registered later that same day.
 
 What is missing is not the tools but three things around them:
 
@@ -2860,7 +2916,7 @@ What is missing is not the tools but three things around them:
 3. **Tool schemas cannot be generated.** The container returns names, not method
    metadata, and the OpenAPI document is missing a body schema for exactly the
    endpoints this feature needs. Hand-writing a schema per method is fine for
-   ten tools and not for sixty-one.
+   ten tools and not for sixty-four.
 
 ### Forecast suggestions: there is no history to forecast from
 
@@ -3028,7 +3084,7 @@ Four blockers, and each is a decision rather than a library choice:
    guard requires that header on every request. Real-time on the storefront
    needs an auth shape the browser can actually produce.
 
-### Checkout: better than the brief assumes, with one real hole
+### Checkout: better than the brief assumes, and its one hole is closed
 
 - **Guest checkout works and is the DEFAULT path**, not a mode. `Cart.Guest()`
   is a first-class state, `CompleteCartInput` has no customer field at all, and
@@ -3046,10 +3102,20 @@ Four blockers, and each is a decision rather than a library choice:
   about ten calls, and **email cannot be passed on the complete call** — it needs
   a separate write to the cart.
 
-**The real hole: the cart's addresses never reach the order.** `cart_addresses`
+~~**The real hole: the cart's addresses never reach the order.** `cart_addresses`
 exists; the order module has no address table, column or model field. This is
 also why the invoicing flow has to take the buyer's address from its caller —
-the order does not have one.
+the order does not have one.~~ **Corrected 2026-09-06: the hole was closed on
+2026-09-05, hours after this section was measured, and B11 above already records
+it.** The order module's migration `000005_order_addresses` creates
+`order_addresses` — one shipping and one billing per order, enforced by the
+unique index `order_addresses_one_per_type` — `models.Order` carries
+`ShippingAddress` and `BillingAddress`, and the cart's copies travel cart →
+interop → `checkout.SnapshotAddress` → order snapshot, written by
+`CreateOrderAddress` inside the order's OWN transaction. The invoicing flow does
+still take the buyer from its caller, but for the reason `invoicing.IssueInput`
+gives in its own godoc — the VKN or TCKN and the tax office are not in this
+repository's customer model at all — not because the order has no address.
 
 ### Saved cards and passkeys: neither exists, and saved cards share a
 prerequisite with subscriptions
@@ -3205,8 +3271,12 @@ No iyzico and no Param provider exist; Stripe is a declared skeleton.
 
 - **No consent record of any kind.** No table, no column, no timestamp of
   agreement — for marketing, for terms, for anything.
-- **None of the twenty-five ADRs covers privacy.** ADR 0008 governs the customer
+- **None of the twenty-eight ADRs covers privacy.** ADR 0008 governs the customer
   identity trust boundary, which is authentication, not data protection.
+  Re-counted 2026-09-06: `docs/adr/` holds 0001 through 0028, and the three that
+  landed after this bullet was written — the published surface, the composition
+  root and the inbound callback ring — do not touch data protection either, so
+  only the numeral moved.
 - **No export endpoint, and a customer cannot request their own deletion** — the
   store surface has no delete handler; the only delete is admin-only.
 - **`DeleteCustomer` is a pure soft delete**, and deliberately partial: group
@@ -3276,10 +3346,18 @@ already written down:
 
 No NATS, Kafka or RabbitMQ appears anywhere, including `go.mod`.
 
-And one structural blocker for shipping this as a plugin: **the plugin host
+~~And one structural blocker for shipping this as a plugin: **the plugin host
 cannot register a job.** Its surface is Container, Logger, Setting, AddModule,
 AddRoutes and four provider registrations — an outbound-delivery plugin could
-mount a route but could not schedule its own retry pass.
+mount a route but could not schedule its own retry pass.~~ **Corrected
+2026-09-06: the blocker was removed (B13) and the plugin it was blocking now
+ships (C5).** `plugin.Host.RegisterJob` exists, and the host's surface is
+fourteen methods rather than nine — Container, Logger, Setting, AddModule,
+AddRoutes, RegisterJob, Jobs, RegisterCallback, RegisterErrorReporter, Subscribe
+and the four provider registrations. `plugins/webhookout` is exactly the
+outbound-delivery plugin this paragraph called impossible: it mounts its route
+AND schedules its own minute-by-minute delivery pass through that surface, and
+`plugins/paymentpaytr`'s hourly `pendingWatch` was the first consumer.
 
 The outbox is the right foundation and it is already there (ADR 0023): the event
 is written inside the transaction that promises it, and a relay publishes it.
@@ -3436,8 +3514,11 @@ What is already true of the brief's other asks:
   binary via `embed.FS`, with the stylesheet's ETag derived from its own bytes.
   An SPA would use the same mechanism.
 - **RBAC exists**: the admin API is scope-guarded per endpoint.
-- **The metadata slot exists**: a `metadata` jsonb sits on eleven modules'
-  models, including product, variant and taxonomy. What is missing is the form
+- **The metadata slot exists**: a `metadata` jsonb sits on ~~eleven~~ **ten
+  (corrected 2026-09-06)** modules' models — auth, cart, customer, fulfillment,
+  invoice, order, payment, product, promotion and tax — and inside product it
+  reaches the variant and taxonomy tables as well, which are that module's own
+  and were being counted as two more modules. What is missing is the form
   generator, not the field.
 - **The extension points do not exist.** There is no `AddPage`, no widget slot,
   and the plugin host cannot add a panel page.
