@@ -10,6 +10,12 @@
 ## 0. AI Ajanı İçin Çalışma Talimatları
 
 1. Fazları **sırayla** uygula; faz atlama. Her faz bir öncekinin üstüne kurulur.
+   > **2026-09-06'da düzeltildi.** Bölüm 7'deki dokuz fazın **hepsi "Tamamlandı"
+   > işaretlidir**, yani bu madde artık yeni bir iş sıralamıyor ve bu doküman
+   > fazların NASIL inşa edildiğinin kaydı olarak okunmalıdır. Bugün sırayı veren
+   > yer `docs/gaps.md`'nin başındaki "What to do, in order" listesidir; o liste
+   > kararları (kod yazılmadan cevaplanması gerekenleri) temellerden ve
+   > özelliklerden AYIRIR, ve bu ayrımı bu doküman hiç taşımıyordu.
 2. Bölüm 2'deki **Mimari Prensipleri asla ihlal etme** (özellikle modül izolasyonu ve cross-module FK yasağı).
 3. Her core bileşen ve modül için **birim + entegrasyon testi** yaz. Entegrasyon testlerinde `testcontainers-go` kullan.
 4. Her fazın sonunda `make lint`, `make test` temiz geçmeli; ardından anlamlı bir commit at.
@@ -20,7 +26,18 @@
 
 ## 1. Proje Özeti
 
-**Hedef:** Geliştiricilerin üstüne kendi iş akışlarını ekleyebileceği, hazır commerce modülleri sunan bir framework. Tek binary olarak çalışır (modüler monolit), ama modüller izole olduğu için herhangi biri ileride ayrı servise çıkarılabilir.
+**Hedef:** Geliştiricilerin üstüne kendi iş akışlarını ekleyebileceği, hazır commerce modülleri sunan bir framework. ~~Tek binary olarak çalışır (modüler monolit)~~, ama modüller izole olduğu için herhangi biri ileride ayrı servise çıkarılabilir.
+
+> **2026-09-06'da düzeltildi.** Üstü çizili yarım cümle kütüphane geçişinden
+> önceki şekli anlatıyordu ve bir okurun gördüğü ilk paragraftı. Doğrusu:
+> **gobit bir KÜTÜPHANEDİR, şablon değil ([ADR 0025](docs/adr/0025-gobit-is-a-library-not-a-template.md))**;
+> tek binary'yi GÖMEN uygulama üretir ve `cmd/server` gobit'i çalıştırabilen en
+> küçük programdır — kopyalanacak örneğin ta kendisi
+> ([ADR 0027](docs/adr/0027-the-composition-root-is-a-library-not-a-binary.md)).
+> "Modüler monolit" tarifi ÇALIŞMA ZAMANI için hâlâ doğrudur (modüller tek
+> süreçte koşar); değişen şey derlemenin sahibidir. Kompozisyon kökü de
+> `cmd/server` değil, kök `gobit` paketindeki cephenin arkasındaki
+> `internal/app`'tir.
 
 **Temel yetenekler:**
 - İzole commerce modülleri (product, pricing, inventory, cart, order, payment, fulfillment, customer, promotion, tax …)
@@ -32,8 +49,23 @@
 - **Store API** (müşteri) + **Admin API** (yönetim)
 - Plugin sistemi (modül, subscriber, workflow, route, provider eklenebilir)
 
-**Non-goals (ilk sürümde yok):** Storefront UI, admin panel UI, GraphQL (REST ile başla),
+**Non-goals (ilk sürümde yok):** Storefront UI, ~~admin panel UI~~, ~~GraphQL (REST ile başla)~~,
 çoklu-tenant. Bunlar sonraki sürümlere bırakılır.
+
+> **2026-09-06'da düzeltildi.** Üstü çizili iki madde İNŞA EDİLDİ ve bu satır
+> onları hâlâ yokmuş gibi sayıyordu:
+>
+> - **Yönetim paneli var** — `internal/adminui`, sunucunun içinden servis edilen
+>   bir arayüz. Üstelik artık yalnızca "var" değil, şekli de karara bağlandı:
+>   [ADR 0030](docs/adr/0030-the-panel-becomes-an-admin-api-client.md) paneli
+>   `/admin/v1`'in sıradan bir istemcisi yapıyor.
+> - **GraphQL var** — `internal/modules/product/graph`, gqlgen üretimiyle, ve
+>   REST'in kardeşi olarak bakılıyor: vitrin süzgeçleri iki yüzeye de aynı anda
+>   ekleniyor (`docs/gaps.md`, B2 satırı).
+>
+> Doğru kalan iki madde Storefront UI ile çoklu-tenant'tır, ve ikisi aynı
+> cinsten değildir: birincisi henüz yapılmamıştır, ikincisi aşağıda yazıldığı
+> gibi KARARA BAĞLANMIŞTIR.
 
 Çoklu-tenant'ın kapsam dışı kalması bir sıralama tercihi değil, gerekçesi yazılmış
 bir karardır: **her gobit kurulumu tek kiracılıdır, izolasyon dağıtım katmanındadır**
@@ -118,7 +150,8 @@ gobit.go                   # kütüphane cephesi: New().Version().Add().Use().Ma
     /fulfillment  /customer  /promotion  /tax  /region  /auth
   /workflows               # cross-module workflow'lar (complete_cart, create_order, …)
 /plugins
-  /payment-stripe          # örnek provider plugin
+  /paymentstripe           # örnek provider plugin — DİZİN adı bitişik,
+                           # eklentinin ADI "payment-stripe" (PLUGINS= bunu alır)
 /examples                  # dışarıdan gömme örnekleri (`starter`, `plugin`)
 /migrations                # global/çekirdek migration'lar (links tablosu vb.)
 /config                    # ortam config dosyaları
@@ -149,6 +182,15 @@ go.mod
 > ardındaki `internal/app`'tir (ADR 0027), ki Bölüm 9'un 6. maddesi de bunu böyle
 > yazar. Ağaç ayrıca `gobit.go`, `internal/adminui` ve `examples/` girdilerini
 > hiç tanımıyordu.
+>
+> ~~`/plugins /payment-stripe`~~: aynı gün ölçüldü ve bu satır **BOŞ bir dizini**
+> gösteriyordu. `plugins/payment-stripe/` içinde Faz 0'dan kalma bir `.gitkeep`
+> dışında hiçbir şey yok; eklentinin kendisi `plugins/paymentstripe/`. Tireli
+> ad yanlış değildir — eklentinin ADI odur (`plugins/paymentstripe/plugin.go`,
+> `Name` sabiti) ve README'nin `PLUGINS=payment-stripe` satırı doğrudur; kusur
+> yalnızca dizin adıyla eklenti adının aynı sanılmasındaydı. **Belge kapısı bunu
+> yakalayamazdı**, çünkü kapı yolun ÇÖZÜLDÜĞÜNE bakar ve o dizin gerçekten
+> vardır — sadece boştur. Boş dizinin kendisi silinmedi; bu ayrı bir karardır.
 
 ---
 
@@ -438,9 +480,34 @@ type PaymentProvider interface {
 
 ## 10. Sonraki Sürüm Fikirleri (şimdilik kapsam dışı)
 
-GraphQL query yüzeyi, admin panel UI, storefront SDK, çoklu-depo gelişmiş stok,
-Temporal entegrasyonu, B2B (quote/şirket hesapları), arama (OpenSearch/Meilisearch
-entegrasyonu).
+~~GraphQL query yüzeyi, admin panel UI,~~ storefront SDK, ~~çoklu-depo gelişmiş stok,~~
+Temporal entegrasyonu, ~~B2B (quote/şirket hesapları),~~ ~~arama (OpenSearch/Meilisearch
+entegrasyonu)~~.
+
+> **2026-09-06'da ölçüldü ve listenin yarısı artık kapsam İÇİNDE.** Yedi maddenin
+> her biri tek tek bakıldı; üçü tümüyle, ikisi kısmen yapılmış, ikisi hâlâ doğru:
+>
+> - **GraphQL query yüzeyi — YAPILDI.** `internal/modules/product/graph`.
+> - **Admin panel UI — YAPILDI.** `internal/adminui`; şekli
+>   [ADR 0030](docs/adr/0030-the-panel-becomes-an-admin-api-client.md)'da.
+> - **Arama — YAPILDI, ama adı geçen motorla DEĞİL ve bu bir karardır.**
+>   `plugins/searchpg` aramayı PostgreSQL tam metin araması üzerine kurar;
+>   OpenSearch/Meilisearch bilinçli olarak seçilmedi ve dört maliyeti paket
+>   belgesinde adıyla yazılıdır (yeni dış bağımlılık, yeni compose servisi, yeni
+>   sağlık kontrolü, ve "indeks ile veritabanı ayrıştı" arıza sınıfı). Karar
+>   geri alınabilir ve eklenti sınırının değeri budur: motoru değiştirmek
+>   yalnızca o paketi değiştirir.
+> - **B2B — KISMEN.** Modül var (`internal/modules/b2b`): şirketler, çalışanlar
+>   ve sipariş modülünün istek anında adla çözdüğü bir harcama kuralı. Eksik
+>   olan quote akışıdır ve grup fiyatlaması bir KARARIN arkasındadır
+>   (`docs/gaps.md`, A5).
+> - **Çoklu-depo — KISMEN.** `stock_locations` ile `shipping_locations` şemada
+>   var; "gelişmiş" olanın ne olduğu bu satırda hiç tanımlanmamıştı.
+> - **Storefront SDK — HÂLÂ YOK.** Depo kökünde bir SDK ağacı yoktur; en yakın
+>   şey `make openapi-client`'tır ve o bir SDK değil, çalışan sunucunun
+>   şemasından istemci ÜRETEN bir hedeftir.
+> - **Temporal entegrasyonu — HÂLÂ YOK**, ve arayan sıfır sonuç verir: saga
+>   motoru Faz 3'te kendi içinde yazıldı.
 
 **Çoklu-tenant bu listede değildir**: "henüz sırası gelmedi" değil, karara bağlandı.
 [ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md) sınırı kurulum düzeyine
