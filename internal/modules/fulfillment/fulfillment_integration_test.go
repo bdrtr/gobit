@@ -312,7 +312,7 @@ func TestMigrationRollsBackWithDataPresent(t *testing.T) {
 	version, dirty, err := db.Version(ctx, testDSN, fulfillment.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "there must be no half-finished migration")
-	assert.Equal(t, uint(2), version,
+	assert.Equal(t, uint(3), version,
 		"the version is the NUMBER of migrations in the module; when a new file is added "+
 			"this goes up too. Were it held constant, an unapplied migration would "+
 			"silently go unnoticed")
@@ -545,7 +545,7 @@ func TestConcurrentCreatesProduceOneShipment(t *testing.T) {
 
 	var rowCount int64
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
-		`SELECT COUNT(*) FROM fulfillments WHERE idempotency_key = $1 AND deleted_at IS NULL`,
+		`SELECT COUNT(*) FROM fulfillments WHERE idempotency_key = $1`,
 		key).Scan(&rowCount))
 	assert.EqualValues(t, 1, rowCount, "the unique index must allow a single row")
 }
@@ -935,4 +935,74 @@ func TestOptionWithShipmentsCannotBeHardDeleted(t *testing.T) {
 
 	require.NoError(t, svc.DeleteShippingOption(ctx, option.ID),
 		"the soft delete must always be possible")
+}
+
+// --- the dropped soft-delete column (D18) --------------------------------
+
+// TestTheFulfillmentTableHasNoSoftDeleteColumn pins the removal made by
+// migration 000003.
+//
+// The column stood from the first migration and NOTHING ever wrote it, while
+// every read carried "deleted_at IS NULL" — a predicate that had never once
+// been false (docs/gaps.md D18). A shipment is the record of something that
+// happened; it is retired by the 'canceled' status, which a CHECK refuses to
+// accept without its moment.
+func TestTheFulfillmentTableHasNoSoftDeleteColumn(t *testing.T) {
+	ctx := context.Background()
+
+	var exists bool
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT EXISTS (
+             SELECT 1 FROM information_schema.columns
+             WHERE table_name = 'fulfillments' AND column_name = 'deleted_at')`,
+	).Scan(&exists))
+	assert.False(t, exists,
+		"fulfillments.deleted_at is back; while it exists the uniqueness rule reads "+
+			"'unique among LIVING rows' and a second live shipment can be written "+
+			"against the same idempotency key by stamping the first")
+}
+
+// TestTheIdempotencyGuardSurvivedTheDroppedColumn is the reason migration
+// 000003 rebuilds its indexes, and it is the most expensive thing that could
+// have gone wrong here.
+//
+// PostgreSQL drops any index whose PREDICATE names a dropped column — silently,
+// with no notice and no error. fulfillments_idempotency_uniq was partial on
+// deleted_at and it is the SINGLE POINT of the race that stops a retried saga
+// step from producing A SECOND SHIPPING LABEL. Measured on a real PostgreSQL 16
+// before the migration was written: on a probe table the DROP COLUMN took the
+// unique index with it and the duplicate key that had been impossible one
+// statement earlier was accepted, with the schema looking untouched.
+//
+// The test does not stop at "the index is listed". It writes the second row and
+// requires the database to refuse it: an index can exist under the right name
+// and cover the wrong columns, and only the write says which.
+func TestTheIdempotencyGuardSurvivedTheDroppedColumn(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	profile := newProfile(ctx, t, svc)
+	option := newOption(ctx, t, svc, profile.ID, 1_000)
+	key := "idem-" + models.NewFulfillmentID()
+
+	var definition string
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT indexdef FROM pg_indexes
+         WHERE tablename = 'fulfillments' AND indexname = 'fulfillments_idempotency_uniq'`,
+	).Scan(&definition), "the idempotency index is gone")
+	assert.Contains(t, definition, "UNIQUE")
+	assert.NotContains(t, definition, "deleted_at")
+
+	insert := `INSERT INTO fulfillments (id, reference, shipping_option_id, provider_id, idempotency_key)
+               VALUES ($1, $2, $3, 'manual', $4)`
+	_, err := testPool.Pool().Exec(ctx, insert,
+		models.NewFulfillmentID(), testReference, option.ID, key)
+	require.NoError(t, err)
+
+	_, err = testPool.Pool().Exec(ctx, insert,
+		models.NewFulfillmentID(), testReference, option.ID, key)
+	require.Error(t, err,
+		"a second shipment was written under the same idempotency key: the unique "+
+			"index is not there, and a retried saga step can print a second label")
+	assert.Contains(t, err.Error(), "fulfillments_idempotency_uniq")
 }

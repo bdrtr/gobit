@@ -229,6 +229,34 @@ func TestAFailureIsRecordedAsARunThatHappened(t *testing.T) {
 	assert.Equal(t, "0 of 3", run.Detail)
 }
 
+// TestASuccessfulRunsDetailSurvivesTheRoundTrip is the storage half of the
+// channel a successful run now has.
+//
+// The column and the UPDATE that writes it were always here; what was missing
+// was a caller that could hand a detail to a run with no error, so every value
+// this column has ever held arrived with a failure. This asserts the row does
+// not treat the two differently — a success with a detail must come back as a
+// SUCCESS that has one, not as something the listing renders as failed.
+func TestASuccessfulRunsDetailSurvivesTheRoundTrip(t *testing.T) {
+	store := freshStore(t)
+	ctx := t.Context()
+	due := time.Date(2026, 3, 14, 9, 0, 0, 0, time.UTC)
+
+	_, err := store.Claim(ctx, "outbox-relay", due)
+	require.NoError(t, err)
+	require.NoError(t, store.Finish(ctx, "outbox-relay", due, job.Outcome{
+		Detail: "published 12, failed 0",
+	}))
+
+	history, err := store.Last(ctx, []string{"outbox-relay"})
+	require.NoError(t, err)
+
+	run := history["outbox-relay"]
+	assert.True(t, run.Succeeded(), "a detail must not make a successful run look failed")
+	assert.Empty(t, run.Failure)
+	assert.Equal(t, "published 12, failed 0", run.Detail)
+}
+
 // TestLastReturnsTheMostRecentOccurrence proves the listing does not show an
 // old success while a newer failure exists.
 func TestLastReturnsTheMostRecentOccurrence(t *testing.T) {

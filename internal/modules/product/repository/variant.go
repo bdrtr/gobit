@@ -207,6 +207,42 @@ func (r *Repo) SoftDeleteOption(ctx context.Context, id string) error {
 	return nil
 }
 
+// SoftDeleteOptionValuesByOption deletes every live value of the option.
+//
+// It is called by the option's own delete and by nothing else; the caller wraps
+// the two statements in one transaction so an option can never be left deleted
+// with living values under it.
+func (r *Repo) SoftDeleteOptionValuesByOption(ctx context.Context, optionID string) error {
+	if _, err := r.q.SoftDeleteOptionValuesByOption(ctx, optionID); err != nil {
+		return wrapDB(err, "could not delete the option's values: %s", optionID)
+	}
+	return nil
+}
+
+// CountVariantsUsingOptionValue returns how many LIVE variants carry the value.
+func (r *Repo) CountVariantsUsingOptionValue(ctx context.Context, valueID string) (int, error) {
+	n, err := r.q.CountVariantsUsingOptionValue(ctx, valueID)
+	if err != nil {
+		return 0, wrapDB(err, "could not read the value's variant count: %s", valueID)
+	}
+	return int(n), nil
+}
+
+// SoftDeleteOptionValue deletes one option value (stamps deleted_at).
+//
+// The "is it in use" check is the service's; here an unknown or already deleted
+// id is errors.NotFound.
+func (r *Repo) SoftDeleteOptionValue(ctx context.Context, id string) error {
+	n, err := r.q.SoftDeleteOptionValue(ctx, id)
+	if err != nil {
+		return wrapDB(err, "could not delete option value: %s", id)
+	}
+	if n == 0 {
+		return notFound("option value", id)
+	}
+	return nil
+}
+
 // CreateOptionValue adds a value to the option.
 func (r *Repo) CreateOptionValue(ctx context.Context, v models.OptionValue) (models.OptionValue, error) {
 	row, err := r.q.CreateOptionValue(ctx, productdb.CreateOptionValueParams{

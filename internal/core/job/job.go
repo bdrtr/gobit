@@ -94,6 +94,12 @@ const (
 // after taking the lock, and the row that elects an occurrence is written
 // before the work rather than after. Anything that cannot tolerate that does
 // not belong in a job.
+//
+// It may leave the operator ONE LINE by calling [Report] with the context it
+// was handed, and that line reaches [Outcome.Detail] whether the run succeeds
+// or fails. The signature does not say so, which is the acknowledged cost of
+// carrying the channel in the context; [Report] argues why the alternatives
+// cost more.
 type Func func(ctx context.Context) error
 
 // Definition is one scheduled job.
@@ -109,8 +115,14 @@ type Definition struct {
 	// A cron expression carries a time zone, and a time zone carries daylight
 	// saving — which means an hour that happens twice and an hour that does not
 	// happen at all. "Every 24 hours" has neither. A job that genuinely must
-	// run at 02:00 local time belongs behind the operator's own cron calling
-	// `gobit job run`.
+	// run at 02:00 local time belongs behind the operator's own cron, calling a
+	// subcommand that hand-runs one job.
+	//
+	// That subcommand does NOT exist. [Runner.RunNow] is the function it would
+	// be built on and it has no caller outside this package's tests, so the
+	// escape hatch this paragraph offers is currently a design, not a feature.
+	// It is said here rather than left implied because the sentence above reads
+	// as advice, and advice that cannot be followed is worse than a refusal.
 	Every time.Duration
 
 	// MaxRun bounds one run. The context handed to Run carries it as a
@@ -270,9 +282,18 @@ type Outcome struct {
 	Err error
 	// Duration is how long the run took.
 	Duration time.Duration
-	// Detail is a short line the job may leave for the operator, such as a
-	// count. It is NOT free-form logging: it appears in `gobit jobs`, so it has
-	// to be one line and it must carry no personal data.
+	// Detail is a short line the job left for the operator, such as a count.
+	//
+	// It arrives by one of two channels, and both are needed because they
+	// answer for different halves of a run. [Report], called from inside the
+	// work, is the only one a SUCCESSFUL run has — until it existed a run that
+	// went well could say nothing at all, which is why the outbox relay used to
+	// have to FAIL in order to mention its dead letters. A JobDetail method on
+	// the returned error is the other, and it WINS when both are present: a
+	// failing run's line is about the failure.
+	//
+	// It is NOT free-form logging: it appears in `gobit jobs`, so it has to be
+	// one line and it must carry no personal data.
 	Detail string
 }
 

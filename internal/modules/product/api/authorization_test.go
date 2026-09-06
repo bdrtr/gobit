@@ -142,6 +142,30 @@ func (f *scopeCatalog) DeleteOption(context.Context, string) error {
 	return nil
 }
 
+// DeleteOptionValue counts the call.
+func (f *scopeCatalog) DeleteOptionValue(context.Context, string) error {
+	f.count()
+	return nil
+}
+
+// DeleteCollection counts the call.
+func (f *scopeCatalog) DeleteCollection(context.Context, string) error {
+	f.count()
+	return nil
+}
+
+// DeleteCategory counts the call.
+func (f *scopeCatalog) DeleteCategory(context.Context, string) error {
+	f.count()
+	return nil
+}
+
+// DeleteTag counts the call.
+func (f *scopeCatalog) DeleteTag(context.Context, string) error {
+	f.count()
+	return nil
+}
+
 // SetVariantPriceSet counts the call.
 func (f *scopeCatalog) SetVariantPriceSet(context.Context, string, string) error {
 	f.count()

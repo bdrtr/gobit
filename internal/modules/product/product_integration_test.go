@@ -1187,3 +1187,209 @@ func modelIDs[T interface {
 	}
 	return out
 }
+
+// --- taxonomy deletes (D18) ---------------------------------------------
+
+// TestDeletingATagHidesItFromItsProductsAndFreesItsValue proves against a real
+// database the two claims the fake cannot make.
+//
+// The first is the JOIN: ListTagsByProductIDs joins product_tag with
+// "t.deleted_at IS NULL", so a deleted tag falls off every product that carried
+// it WITHOUT a single row of product_tag_map being touched. That predicate was
+// written for a state the module could not reach until the delete existed.
+//
+// The second is the PARTIAL INDEX: product_tag_value_uniq is built
+// "WHERE deleted_at IS NULL" precisely so a deleted value does not block a new
+// tag. Nothing had ever exercised it, because nothing had ever deleted a tag.
+func TestDeletingATagHidesItFromItsProductsAndFreesItsValue(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+	value := uniqueHandle("misspelled")
+
+	tag, err := svc.CreateTag(ctx, value)
+	require.NoError(t, err)
+	keep, err := svc.CreateTag(ctx, uniqueHandle("kept"))
+	require.NoError(t, err)
+
+	product, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle: uniqueHandle("tagged"),
+		Title:  "Carries two tags",
+		Status: models.StatusPublished,
+		TagIDs: []string{tag.ID, keep.ID},
+	})
+	require.NoError(t, err)
+
+	before, err := svc.GetProduct(ctx, product.ID)
+	require.NoError(t, err)
+	require.Len(t, before.Tags, 2)
+
+	require.NoError(t, svc.DeleteTag(ctx, tag.ID))
+
+	after, err := svc.GetProduct(ctx, product.ID)
+	require.NoError(t, err)
+	require.Len(t, after.Tags, 1, "the deleted tag must fall off the product")
+	assert.Equal(t, keep.ID, after.Tags[0].ID, "the other tag must be untouched")
+
+	again, err := svc.CreateTag(ctx, value)
+	require.NoError(t, err, "the deleted tag's value must be free again")
+	assert.NotEqual(t, tag.ID, again.ID)
+}
+
+// TestDeletingACollectionReleasesItsProductsInTheDatabase proves that the
+// pointer is really cleared.
+//
+// product.collection_id says "ON DELETE SET NULL" and the database will never
+// run it here: a soft delete is an UPDATE and the collection's row stays where
+// it is. The listing filtered by collection_id is the check that matters —
+// it does not join the collection, so a product left pointing at a deleted
+// collection keeps coming back under it.
+func TestDeletingACollectionReleasesItsProductsInTheDatabase(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+
+	collection, err := svc.CreateCollection(ctx, service.CreateCollectionInput{
+		Title: "Summer 2026", Handle: uniqueHandle("summer-2026")})
+	require.NoError(t, err)
+
+	inside, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle:       uniqueHandle("in-collection"),
+		Title:        "In the collection",
+		Status:       models.StatusPublished,
+		CollectionID: &collection.ID,
+	})
+	require.NoError(t, err)
+
+	listed, err := svc.ListProducts(ctx, service.ListProductsOptions{CollectionID: &collection.ID})
+	require.NoError(t, err)
+	require.Len(t, listed.Items, 1)
+
+	require.NoError(t, svc.DeleteCollection(ctx, collection.ID))
+
+	_, err = svc.GetCollection(ctx, collection.ID)
+	assert.True(t, coreerrors.IsNotFound(err), "a deleted collection must not be readable: %v", err)
+
+	released, err := svc.GetProduct(ctx, inside.ID)
+	require.NoError(t, err)
+	assert.Nil(t, released.CollectionID, "the product must have been released")
+
+	empty, err := svc.ListProducts(ctx, service.ListProductsOptions{CollectionID: &collection.ID})
+	require.NoError(t, err)
+	assert.Empty(t, empty.Items,
+		"a deleted collection still lists products; the release did not run")
+}
+
+// TestDeletingAnOptionValueIsRefusedWhileAVariantCarriesIt proves the guard
+// against the real table.
+//
+// The count joins product_variant, and the second half of the test is what
+// makes that join matter: once the carrier is soft-deleted the same value can
+// be removed, because the binding row in product_variant_option_value is still
+// there and only the variant's own deleted_at tells the two cases apart.
+func TestDeletingAnOptionValueIsRefusedWhileAVariantCarriesIt(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+
+	created, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle: uniqueHandle("sized"),
+		Title:  "T-shirt",
+		Status: models.StatusPublished,
+		Options: []service.CreateOptionInput{
+			{Title: "Size", Values: []string{"S", "M"}},
+		},
+		Variants: []service.CreateVariantInput{
+			{Title: "Small", Options: map[string]string{"Size": "S"}},
+		},
+	})
+	require.NoError(t, err)
+
+	options, err := svc.ListOptions(ctx, created.ID)
+	require.NoError(t, err)
+	require.Len(t, options, 1)
+	require.Len(t, options[0].Values, 2)
+
+	var inUse, unused string
+	for _, value := range options[0].Values {
+		if value.Value == "S" {
+			inUse = value.ID
+		} else {
+			unused = value.ID
+		}
+	}
+
+	err = svc.DeleteOptionValue(ctx, inUse)
+	require.Error(t, err)
+	assert.True(t, coreerrors.IsConflict(err), "a conflict was expected: %v", err)
+
+	require.NoError(t, svc.DeleteOptionValue(ctx, unused))
+	read, err := svc.GetProduct(ctx, created.ID)
+	require.NoError(t, err)
+	require.Len(t, read.Options, 1)
+	assert.Len(t, read.Options[0].Values, 1, "the deleted value must fall out of the read")
+
+	require.NoError(t, svc.DeleteVariant(ctx, created.Variants[0].ID))
+	require.NoError(t, svc.DeleteOptionValue(ctx, inUse),
+		"once the carrier is deleted the value must be deletable")
+}
+
+// TestDeletingAnOptionLeavesNoLivingValue is the cascade, checked with SQL
+// rather than through a read.
+//
+// No read in this module can see the difference — every path to a value goes
+// through its option and the option is stamped — so the only honest way to
+// check it is to ask the table directly. That invisibility is exactly why
+// product_option_value.deleted_at stayed unwritten from the first migration
+// until 2026-09-06.
+func TestDeletingAnOptionLeavesNoLivingValue(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+
+	created, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle: uniqueHandle("cascade"),
+		Title:  "T-shirt",
+		Status: models.StatusPublished,
+		Options: []service.CreateOptionInput{
+			{Title: "Size", Values: []string{"S", "M"}},
+		},
+	})
+	require.NoError(t, err)
+
+	options, err := svc.ListOptions(ctx, created.ID)
+	require.NoError(t, err)
+	require.Len(t, options, 1)
+	optionID := options[0].ID
+
+	assert.Equal(t, 2, liveOptionValues(ctx, t, optionID))
+	require.NoError(t, svc.DeleteOption(ctx, optionID))
+	assert.Zero(t, liveOptionValues(ctx, t, optionID),
+		"the option's values are still alive under a deleted option")
+
+	// And the same claim for the delete that reaches every child at once.
+	second, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle: uniqueHandle("cascade-product"),
+		Title:  "Another T-shirt",
+		Status: models.StatusPublished,
+		Options: []service.CreateOptionInput{
+			{Title: "Size", Values: []string{"S", "M", "L"}},
+		},
+	})
+	require.NoError(t, err)
+	secondOptions, err := svc.ListOptions(ctx, second.ID)
+	require.NoError(t, err)
+	require.Len(t, secondOptions, 1)
+
+	require.NoError(t, svc.DeleteProduct(ctx, second.ID))
+	assert.Zero(t, liveOptionValues(ctx, t, secondOptions[0].ID),
+		"a deleted product left living option values behind")
+}
+
+// liveOptionValues counts the option's values that are not soft-deleted.
+func liveOptionValues(ctx context.Context, t *testing.T, optionID string) int {
+	t.Helper()
+
+	var n int
+	err := testPool.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM product_option_value WHERE option_id = $1 AND deleted_at IS NULL`,
+		optionID).Scan(&n)
+	require.NoError(t, err)
+	return n
+}

@@ -25,6 +25,13 @@
 --
 -- 000002 adds two more exceptions (shipping_locations and
 -- shipping_location_regions); their rationales sit at the head of that file.
+--
+-- 000003 makes a FIFTH exception out of a table this file created WITH a
+-- deleted_at: fulfillments. Nothing had ever written that column and a shipment
+-- is retired by its status, not by a deletion — which is the same argument this
+-- comment already makes for fulfillment_items. The column is dropped there and
+-- the rationale sits at the head of that file, so the CREATE TABLE below is the
+-- history rather than the current shape.
 
 -- shipping_profiles is the shipping profile: the container that groups which
 -- products are subject to which shipping rules.

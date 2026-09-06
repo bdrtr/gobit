@@ -47,7 +47,7 @@ func (q *Queries) GetRegion(ctx context.Context, id string) (Region, error) {
 const getRegionByCountry = `-- name: GetRegionByCountry :one
 SELECT r.id, r.name, r.currency_code, r.automatic_taxes, r.tax_rate, r.created_at, r.updated_at, r.deleted_at FROM country c
 JOIN region r ON r.id = c.region_id AND r.deleted_at IS NULL
-WHERE c.iso_2 = $1 AND c.deleted_at IS NULL
+WHERE c.iso_2 = $1
 `
 
 // GetRegionByCountry ülkeden bölgeye TEK turda gider.
@@ -182,7 +182,11 @@ type InsertRegionParams struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
-// region sorguları. Tüm okumalar deleted_at IS NULL filtresi uygular.
+// region sorguları.
+//
+// region tablosunun okumaları deleted_at IS NULL filtresi uygular; bölge
+// SOFT silinir (DeleteRegion). Aynı şey country ve currency için GEÇERLİ
+// DEĞİLDİR: onların sütunları 000003'te düşürüldü, gerekçe o dosyadadır.
 func (q *Queries) InsertRegion(ctx context.Context, arg InsertRegionParams) (Region, error) {
 	row := q.db.QueryRow(ctx, insertRegion,
 		arg.ID,

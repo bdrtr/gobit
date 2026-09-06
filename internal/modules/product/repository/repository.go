@@ -132,6 +132,13 @@ type Store interface {
 	GetOption(ctx context.Context, id string) (models.Option, error)
 	ListOptionsByProductIDs(ctx context.Context, productIDs []string) ([]models.Option, error)
 	SoftDeleteOption(ctx context.Context, id string) error
+	// SoftDeleteOptionValuesByOption stamps the option's values; it belongs in
+	// the same transaction as SoftDeleteOption.
+	SoftDeleteOptionValuesByOption(ctx context.Context, optionID string) error
+	// CountVariantsUsingOptionValue is the guard of SoftDeleteOptionValue: a
+	// value a living variant carries cannot be removed from under it.
+	CountVariantsUsingOptionValue(ctx context.Context, valueID string) (int, error)
+	SoftDeleteOptionValue(ctx context.Context, id string) error
 	CreateOptionValue(ctx context.Context, v models.OptionValue) (models.OptionValue, error)
 	ListOptionValuesByOptionIDs(ctx context.Context, optionIDs []string) ([]models.OptionValue, error)
 	ListOptionValuesByIDs(ctx context.Context, ids []string) ([]models.OptionValueRef, error)
@@ -143,6 +150,11 @@ type Store interface {
 	GetCollection(ctx context.Context, id string) (models.Collection, error)
 	ListCollections(ctx context.Context, limit, offset int) ([]models.Collection, error)
 	CountCollections(ctx context.Context) (int, error)
+	SoftDeleteCollection(ctx context.Context, id string) error
+	// ClearCollectionProducts nulls the collection_id of the products bound to
+	// the collection and returns how many it changed; it belongs in the same
+	// transaction as SoftDeleteCollection.
+	ClearCollectionProducts(ctx context.Context, collectionID string) (int, error)
 
 	CreateCategory(ctx context.Context, c models.Category) (models.Category, error)
 	GetCategory(ctx context.Context, id string) (models.Category, error)
@@ -152,11 +164,16 @@ type Store interface {
 	ListCategoriesByIDs(ctx context.Context, ids []string) ([]models.Category, error)
 	ListCategories(ctx context.Context, f CategoryFilter) ([]models.Category, error)
 	CountCategories(ctx context.Context, f CategoryFilter) (int, error)
+	// CountChildCategories is the guard of SoftDeleteCategory: a node with
+	// living children cannot be deleted out from under them.
+	CountChildCategories(ctx context.Context, id string) (int, error)
+	SoftDeleteCategory(ctx context.Context, id string) error
 
 	CreateTag(ctx context.Context, t models.Tag) (models.Tag, error)
 	GetTagByValue(ctx context.Context, value string) (models.Tag, error)
 	ListTags(ctx context.Context, limit, offset int) ([]models.Tag, error)
 	CountTags(ctx context.Context) (int, error)
+	SoftDeleteTag(ctx context.Context, id string) error
 
 	SetProductTags(ctx context.Context, productID string, tagIDs []string) error
 	SetProductCategories(ctx context.Context, productID string, categoryIDs []string) error

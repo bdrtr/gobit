@@ -72,9 +72,11 @@ type Currency struct {
 	// CreatedAt is the moment the record was created (UTC).
 	CreatedAt time.Time
 	// UpdatedAt is the moment the record was last updated (UTC).
+	//
+	// There is no DeletedAt, for the reason [Country] gives: the currency list
+	// is reference data seeded by a migration, and this module offers no write
+	// for it at all.
 	UpdatedAt time.Time
-	// DeletedAt is the soft delete moment; if nil the record is live.
-	DeletedAt *time.Time
 }
 
 // MinorUnitFactor returns how many minor units one major unit makes
@@ -118,9 +120,13 @@ type Country struct {
 	// CreatedAt is the moment the record was created (UTC).
 	CreatedAt time.Time
 	// UpdatedAt is the moment the record was last updated (UTC).
+	//
+	// There is no DeletedAt. The country list is REFERENCE DATA: its rows are
+	// written by the seed migration and the only write the module offers moves
+	// a country BETWEEN regions. The field and its column existed until
+	// 2026-09-06 and nothing had ever written either (docs/gaps.md D18); the
+	// argument is at the head of the module's migration 000003.
 	UpdatedAt time.Time
-	// DeletedAt is the soft delete moment; if nil the record is live.
-	DeletedAt *time.Time
 }
 
 // Region is a sales region: currency and tax behavior.

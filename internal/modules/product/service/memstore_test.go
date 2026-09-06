@@ -95,6 +95,29 @@ func (m *memStore) callCount(name string) int {
 	return m.calls[name]
 }
 
+// liveOptionValues counts the values that are not deleted; with an empty
+// optionID it counts them all.
+//
+// It reads the fake's own map rather than going through a repository method on
+// purpose: what the cascade tests need to see is the state NO read exposes —
+// a value that is still alive under a deleted option is invisible to every
+// query in the module, which is exactly how it stayed unwritten for so long.
+func (m *memStore) liveOptionValues(optionID string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id := range m.values {
+		value := m.values[id]
+		if value.DeletedAt != nil {
+			continue
+		}
+		if optionID == "" || value.OptionID == optionID {
+			n++
+		}
+	}
+	return n
+}
+
 // fail makes the given method return an error from now on.
 func (m *memStore) fail(name string, err error) {
 	m.mu.Lock()
@@ -410,6 +433,12 @@ func (m *memStore) SoftDeleteProductChildren(_ context.Context, productID string
 		if o := m.options[id]; o.ProductID == productID && o.DeletedAt == nil {
 			o.DeletedAt = &deletionTime
 			m.options[id] = o
+			for valueID := range m.values {
+				if v := m.values[valueID]; v.OptionID == id && v.DeletedAt == nil {
+					v.DeletedAt = &deletionTime
+					m.values[valueID] = v
+				}
+			}
 		}
 	}
 	return nil
@@ -686,6 +715,62 @@ func (m *memStore) SoftDeleteOption(_ context.Context, id string) error {
 	return nil
 }
 
+func (m *memStore) SoftDeleteOptionValuesByOption(_ context.Context, optionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("SoftDeleteOptionValuesByOption"); err != nil {
+		return err
+	}
+	for id := range m.values {
+		if v := m.values[id]; v.OptionID == optionID && v.DeletedAt == nil {
+			v.DeletedAt = &deletionTime
+			m.values[id] = v
+		}
+	}
+	return nil
+}
+
+// CountVariantsUsingOptionValue counts the LIVE variants carrying the value.
+//
+// The liveness check is not decoration: variantValues keeps the binding of a
+// deleted variant too, exactly as product_variant_option_value keeps its row,
+// and a count that ignored it would refuse a delete the real query allows.
+func (m *memStore) CountVariantsUsingOptionValue(_ context.Context, valueID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("CountVariantsUsingOptionValue"); err != nil {
+		return 0, err
+	}
+	n := 0
+	for variantID, byOption := range m.variantValues {
+		if v, ok := m.variants[variantID]; !ok || v.DeletedAt != nil {
+			continue
+		}
+		for _, id := range byOption {
+			if id == valueID {
+				n++
+				break
+			}
+		}
+	}
+	return n, nil
+}
+
+func (m *memStore) SoftDeleteOptionValue(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("SoftDeleteOptionValue"); err != nil {
+		return err
+	}
+	v, ok := m.values[id]
+	if !ok || v.DeletedAt != nil {
+		return errors.NotFound("product_not_found", "the option value was not found: %s", id)
+	}
+	v.DeletedAt = &deletionTime
+	m.values[id] = v
+	return nil
+}
+
 func (m *memStore) CreateOptionValue(_ context.Context, v models.OptionValue) (models.OptionValue, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -833,13 +918,58 @@ func (m *memStore) ListCollections(_ context.Context, limit, offset int) ([]mode
 	return sliceWindow(out, limit, offset), nil
 }
 
+// CountCollections counts the LIVE collections.
+//
+// It counted len(m.collections) until the delete existed, which was the same
+// divergence [memStore.matchingCategories] was written to end: the count
+// disagreeing with the listing it stands next to.
 func (m *memStore) CountCollections(_ context.Context) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.track("CountCollections"); err != nil {
 		return 0, err
 	}
-	return len(m.collections), nil
+	n := 0
+	for _, c := range m.collections {
+		if c.DeletedAt == nil {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (m *memStore) SoftDeleteCollection(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("SoftDeleteCollection"); err != nil {
+		return err
+	}
+	c, ok := m.collections[id]
+	if !ok || c.DeletedAt != nil {
+		return errors.NotFound("product_not_found", "the collection was not found: %s", id)
+	}
+	c.DeletedAt = &deletionTime
+	m.collections[id] = c
+	return nil
+}
+
+func (m *memStore) ClearCollectionProducts(_ context.Context, collectionID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ClearCollectionProducts"); err != nil {
+		return 0, err
+	}
+	released := 0
+	for id := range m.products {
+		p := m.products[id]
+		if p.DeletedAt != nil || p.CollectionID == nil || *p.CollectionID != collectionID {
+			continue
+		}
+		p.CollectionID = nil
+		m.products[id] = p
+		released++
+	}
+	return released, nil
 }
 
 func (m *memStore) CreateCategory(_ context.Context, c models.Category) (models.Category, error) {
@@ -937,6 +1067,37 @@ func (m *memStore) CountCategories(_ context.Context, f repository.CategoryFilte
 	return len(m.matchingCategories(f)), nil
 }
 
+func (m *memStore) CountChildCategories(_ context.Context, id string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("CountChildCategories"); err != nil {
+		return 0, err
+	}
+	n := 0
+	for key := range m.categories {
+		c := m.categories[key]
+		if c.DeletedAt == nil && c.ParentID != nil && *c.ParentID == id {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (m *memStore) SoftDeleteCategory(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("SoftDeleteCategory"); err != nil {
+		return err
+	}
+	c, ok := m.categories[id]
+	if !ok || c.DeletedAt != nil {
+		return errors.NotFound("product_not_found", "the category was not found: %s", id)
+	}
+	c.DeletedAt = &deletionTime
+	m.categories[id] = c
+	return nil
+}
+
 func (m *memStore) CreateTag(_ context.Context, t models.Tag) (models.Tag, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -979,13 +1140,35 @@ func (m *memStore) ListTags(_ context.Context, limit, offset int) ([]models.Tag,
 	return sliceWindow(out, limit, offset), nil
 }
 
+// CountTags counts the LIVE tags; see [memStore.CountCollections].
 func (m *memStore) CountTags(_ context.Context) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.track("CountTags"); err != nil {
 		return 0, err
 	}
-	return len(m.tags), nil
+	n := 0
+	for _, t := range m.tags {
+		if t.DeletedAt == nil {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (m *memStore) SoftDeleteTag(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("SoftDeleteTag"); err != nil {
+		return err
+	}
+	t, ok := m.tags[id]
+	if !ok || t.DeletedAt != nil {
+		return errors.NotFound("product_not_found", "the tag was not found: %s", id)
+	}
+	t.DeletedAt = &deletionTime
+	m.tags[id] = t
+	return nil
 }
 
 func (m *memStore) SetProductTags(_ context.Context, productID string, tagIDs []string) error {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/eventbus"
 	"github.com/bdrtr/gobit/core/eventbus/outbox"
+	"github.com/bdrtr/gobit/internal/core/job"
 	"github.com/bdrtr/gobit/internal/jobs/outboxrelay"
 )
 
@@ -312,4 +313,128 @@ func deadLetterReport(count int64) outbox.DeadLetterReport {
 			DeadLetteredAt: time.Now().Add(-time.Hour),
 		}},
 	}
+}
+
+// reportedBy runs one pass with a reporter attached and returns what the pass
+// left for `gobit jobs`, together with the run's own error.
+//
+// The reporter is installed the way the runner installs it. A pass run without
+// one — which is what [runRelay] does — reports into nothing, so this is the
+// only way to see the line the listing would print.
+func reportedBy(t *testing.T, r *fakeRelay, bus *fakeBus) (string, error) {
+	t.Helper()
+
+	ctx, reporter := job.WithReporter(context.Background())
+	err := outboxrelay.Definition(r, bus, slog.New(slog.DiscardHandler)).Run(ctx)
+
+	return reporter.Detail(), err
+}
+
+// TestASuccessfulPassSaysWhatItRelayed is the capability this job was converted
+// to.
+//
+// Before a successful run could report, the listing showed "ok" and an empty
+// cell for every healthy pass, so an operator asking "is the relay working"
+// learned only that it had not failed. The pass's counts existed — they were
+// logged — and a log is not the surface anybody opens first.
+func TestASuccessfulPassSaysWhatItRelayed(t *testing.T) {
+	r := &fakeRelay{pending: []outbox.Pending{
+		{ID: "order.placed:order_1", Name: "order.placed"},
+		{ID: "order.placed:order_2", Name: "order.placed"},
+	}}
+
+	detail, err := reportedBy(t, r, &fakeBus{})
+	require.NoError(t, err)
+
+	assert.Equal(t, "published 2, failed 0", detail)
+	assert.NotContains(t, detail, "\n", "Outcome.Detail is one line of a table")
+}
+
+// TestAQuietPassSaysSoRatherThanNothing keeps two different facts apart.
+//
+// An empty cell is what a job that has NEVER run looks like. "nothing to relay"
+// is an answer; a blank is an absence, and the listing already uses blank for
+// the absence.
+func TestAQuietPassSaysSoRatherThanNothing(t *testing.T) {
+	detail, err := reportedBy(t, &fakeRelay{}, &fakeBus{})
+	require.NoError(t, err)
+
+	assert.Equal(t, "nothing to relay", detail)
+}
+
+// TestAFullBatchSaysThereIsABacklog is the state the old listing could not
+// express at all.
+//
+// A relay that fills its limit every minute is losing ground, and it recorded
+// exactly the same row as a relay with nothing to do: outcome "ok", detail
+// blank. That is the fault this conversion exists to make visible.
+func TestAFullBatchSaysThereIsABacklog(t *testing.T) {
+	pending := make([]outbox.Pending, 200)
+	for i := range pending {
+		pending[i] = outbox.Pending{ID: "order.placed:order", Name: "order.placed"}
+	}
+
+	detail, err := reportedBy(t, &fakeRelay{pending: pending}, &fakeBus{})
+	require.NoError(t, err)
+
+	assert.Contains(t, detail, "published 200")
+	assert.Contains(t, detail, "backlog",
+		"a filled batch must be distinguishable from a quiet minute in the DETAIL "+
+			"column; it used to be printed as the same blank cell")
+}
+
+// TestAPassThatGaveUpOnSomethingSaysHowMany separates the pile from the moment.
+//
+// The pile's own size is printed by the failure (see
+// TestTheDetailReachesTheJobListing). This number is what the pass ADDED to it,
+// which is the difference between "the pile is old" and "the pile grew just
+// now" — two facts one count cannot carry.
+func TestAPassThatGaveUpOnSomethingSaysHowMany(t *testing.T) {
+	r := &fakeRelay{
+		pending:  []outbox.Pending{{ID: "order.placed:order_1", Name: "order.placed"}},
+		deadFrom: 1,
+		report: outbox.DeadLetterReport{Count: 1, Oldest: []outbox.DeadLetter{{
+			Name: "order.placed", ID: "order.placed:order_1", Attempts: 8,
+			LastError: "the receiver refused it",
+		}}},
+	}
+
+	detail, err := reportedBy(t, r, &fakeBus{err: errors.New("the bus is down")})
+	require.Error(t, err, "the pile it just created is not empty, so the run fails")
+
+	assert.Contains(t, detail, "1 newly given up on")
+}
+
+// TestAStandingPileStillFailsAndKeepsItsOwnDetail is the failure semantics,
+// pinned.
+//
+// This is the decision the new channel forced: a successful run CAN now report,
+// so "should the pile still fail?" became a question. It still fails, and the
+// DETAIL column still carries the pile rather than the pass's throughput —
+// byte for byte what it carried before any of this existed.
+//
+// The two halves are asserted separately because they are decided in two
+// places. This job decides what the failure SAYS; internal/core/job's runner
+// decides that an error's note beats a line reported mid-run, which is proved
+// there by TestAFailingRunReportsExactlyWhatItAlwaysDid.
+func TestAStandingPileStillFailsAndKeepsItsOwnDetail(t *testing.T) {
+	r := &fakeRelay{
+		pending: []outbox.Pending{{ID: "order.placed:order_1", Name: "order.placed"}},
+		report: outbox.DeadLetterReport{Count: 3, Oldest: []outbox.DeadLetter{{
+			Name: "order.placed", ID: "order.placed:order_9", Attempts: 8,
+			LastError: "the receiver refused it",
+		}}},
+	}
+
+	detail, err := reportedBy(t, r, &fakeBus{})
+	require.Error(t, err, "a standing pile is a FAULT and still fails the run")
+
+	assert.Equal(t, "published 1, failed 0", detail,
+		"the pass still reports what it relayed; it is simply not what gets recorded")
+
+	var noted interface{ JobDetail() string }
+	require.ErrorAs(t, err, &noted)
+	assert.Contains(t, noted.JobDetail(), "3 dead-lettered")
+	assert.NotContains(t, noted.JobDetail(), "published",
+		"the pile must not be diluted with throughput in the one cell an operator reads")
 }

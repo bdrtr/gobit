@@ -104,6 +104,9 @@ func (h *Handler) Routes(r chi.Router) {
 	read.Get("/admin/v1/products/{id}/options", h.adminListOptions)
 	write.Post("/admin/v1/product-options/{id}/values", h.adminAddOptionValue)
 	write.Delete("/admin/v1/product-options/{id}", h.adminDeleteOption)
+	// The value's own delete takes the VALUE's id, not the option's; see
+	// [Handler.adminDeleteOptionValue] for why it is not nested.
+	write.Delete("/admin/v1/product-option-values/{id}", h.adminDeleteOptionValue)
 
 	// --- Admin API: cross-module links ---
 	// The price and stock records are produced by pricing/inventory; the link
@@ -134,11 +137,21 @@ func (h *Handler) Routes(r chi.Router) {
 	write.Delete("/admin/v1/products/{id}/sales-channels/{sales_channel_id}", h.adminRemoveSalesChannel)
 	read.Get("/admin/v1/products/{id}/sales-channels", h.adminListSalesChannels)
 
-	// --- Admin API: taxonomy (a plain surface: list + create) ---
+	// --- Admin API: taxonomy (list, create, delete) ---
+	//
+	// The surface said "list + create" until 2026-09-06 and the delete was the
+	// missing third: all three tables have carried a deleted_at and a partial
+	// unique index built to free the handle on delete since the first
+	// migration, and nothing ever set the column, so a collection, category or
+	// tag created by mistake stayed on the storefront permanently
+	// (docs/gaps.md D18).
 	write.Post("/admin/v1/product-collections", h.adminCreateCollection)
 	read.Get("/admin/v1/product-collections", h.adminListCollections)
+	write.Delete("/admin/v1/product-collections/{id}", h.adminDeleteCollection)
 	write.Post("/admin/v1/product-categories", h.adminCreateCategory)
 	read.Get("/admin/v1/product-categories", h.adminListCategories)
+	write.Delete("/admin/v1/product-categories/{id}", h.adminDeleteCategory)
 	write.Post("/admin/v1/product-tags", h.adminCreateTag)
 	read.Get("/admin/v1/product-tags", h.adminListTags)
+	write.Delete("/admin/v1/product-tags/{id}", h.adminDeleteTag)
 }

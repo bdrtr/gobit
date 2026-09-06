@@ -1,8 +1,14 @@
--- country sorguları. Tüm okumalar deleted_at IS NULL filtresi uygular.
+-- country sorguları.
+--
+-- Tabloda deleted_at YOKTUR ve okumalar öyle bir süzgeç TAŞIMAZ. country
+-- REFERANS VERİDİR: satırları 000002'nin tohumu yazar, yaşam döngüsü
+-- migration'ındır ve modülün sunduğu tek yazma yolu ülkeyi bölgeler ARASINDA
+-- taşımaktır. Sütun 000001'den 000003'e kadar durdu, hiçbir zaman yazılmadı;
+-- gerekçe 000003'ün başındadır (docs/gaps.md D18).
 
 -- name: GetCountry :one
 SELECT * FROM country
-WHERE iso_2 = $1 AND deleted_at IS NULL;
+WHERE iso_2 = $1;
 
 -- GetCountryForUpdate ülkeyi okur ve satırını İŞLEM SONUNA KADAR kilitler.
 --
@@ -15,7 +21,7 @@ WHERE iso_2 = $1 AND deleted_at IS NULL;
 -- Kilit sırasının ikinci adımıdır: önce bölge (GetRegionForShare), sonra ülke.
 -- name: GetCountryForUpdate :one
 SELECT * FROM country
-WHERE iso_2 = $1 AND deleted_at IS NULL
+WHERE iso_2 = $1
 FOR UPDATE;
 
 -- ListCountries ülkeleri sayfalayarak döner; bölge süzgeci isteğe bağlıdır.
@@ -25,15 +31,13 @@ FOR UPDATE;
 -- olurdu ve bilinçli olarak sunulmaz: yönetim yüzeyi için tüm liste yeterlidir.
 -- name: ListCountries :many
 SELECT * FROM country
-WHERE deleted_at IS NULL
-  AND (sqlc.narg('region_id')::text IS NULL OR region_id = sqlc.narg('region_id')::text)
+WHERE (sqlc.narg('region_id')::text IS NULL OR region_id = sqlc.narg('region_id')::text)
 ORDER BY iso_2
 LIMIT @lim::integer OFFSET @off::integer;
 
 -- name: CountCountries :one
 SELECT count(*) FROM country
-WHERE deleted_at IS NULL
-  AND (sqlc.narg('region_id')::text IS NULL OR region_id = sqlc.narg('region_id')::text);
+WHERE (sqlc.narg('region_id')::text IS NULL OR region_id = sqlc.narg('region_id')::text);
 
 -- ListCountriesByRegions birden çok bölgenin ülkelerini TEK turda okur.
 --
@@ -41,13 +45,13 @@ WHERE deleted_at IS NULL
 -- N+1 demek olurdu (ADR 0004'ün toplu okuma şartı).
 -- name: ListCountriesByRegions :many
 SELECT * FROM country
-WHERE region_id = ANY(@region_ids::text[]) AND deleted_at IS NULL
+WHERE region_id = ANY(@region_ids::text[])
 ORDER BY region_id, iso_2;
 
 -- name: SetCountryRegion :one
 UPDATE country
 SET region_id = @region_id::text, updated_at = @updated_at::timestamptz
-WHERE iso_2 = @iso_2::text AND deleted_at IS NULL
+WHERE iso_2 = @iso_2::text
 RETURNING *;
 
 -- ClearCountryRegion ülkeyi bölgesinden ayırır.
@@ -57,7 +61,7 @@ RETURNING *;
 -- name: ClearCountryRegion :one
 UPDATE country
 SET region_id = NULL, updated_at = @updated_at::timestamptz
-WHERE iso_2 = @iso_2::text AND region_id = @region_id::text AND deleted_at IS NULL
+WHERE iso_2 = @iso_2::text AND region_id = @region_id::text
 RETURNING *;
 
 -- ClearRegionCountries bir bölgenin TÜM ülkelerini serbest bırakır.
@@ -68,4 +72,4 @@ RETURNING *;
 -- name: ClearRegionCountries :exec
 UPDATE country
 SET region_id = NULL, updated_at = @updated_at::timestamptz
-WHERE region_id = @region_id::text AND deleted_at IS NULL;
+WHERE region_id = @region_id::text;

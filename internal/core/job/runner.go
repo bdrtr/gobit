@@ -188,13 +188,28 @@ func (r *Runner) execute(ctx context.Context, d Definition, due time.Time) {
 	runCtx, cancel := context.WithTimeout(ctx, d.MaxRun)
 	defer cancel()
 
+	runCtx, reporter := WithReporter(runCtx)
+
 	started := r.now()
 	err := safely(runCtx, d.Run)
 	elapsed := r.now().Sub(started)
 
-	outcome := Outcome{Err: err, Duration: elapsed}
-	if reporter, ok := detailOf(err); ok {
-		outcome.Detail = reporter
+	// The detail has TWO sources now and the error's is the stronger one.
+	//
+	// A successful run's line is whatever it reported; a failing run's line is
+	// about the failure, and letting a half-written progress report overwrite
+	// the reason would hide it in the one column an operator reads during an
+	// incident. The precedence is also what makes this change invisible to
+	// everything that already worked: a run that fails with an error carrying a
+	// JobDetail reports exactly what it reported before [Report] existed.
+	//
+	// A run that fails WITHOUT such an error keeps whatever it reported before
+	// it failed, and that is deliberate rather than a leak — a pass cut off by
+	// its deadline having said "examined 30 of 50" is strictly better than the
+	// blank cell it used to leave.
+	outcome := Outcome{Err: err, Duration: elapsed, Detail: reporter.Detail()}
+	if detail, ok := detailOf(err); ok {
+		outcome.Detail = detail
 	}
 
 	// The outcome is recorded on a context DETACHED from the run's. A job that
@@ -223,10 +238,21 @@ func (r *Runner) execute(ctx context.Context, d Definition, due time.Time) {
 
 // RunNow runs one job immediately, ignoring the schedule but NOT the lock.
 //
-// This is what `gobit job run` calls. It still takes the lock, because the
-// operator running a job by hand while the scheduler is running it is exactly
-// the collision the lock exists for — and it is likeliest during an incident,
-// when somebody is impatient.
+// It still takes the lock, because the operator running a job by hand while
+// the scheduler is running it is exactly the collision the lock exists for —
+// and it is likeliest during an incident, when somebody is impatient.
+//
+// # It has no caller today, and that is stated rather than implied
+//
+// This paragraph used to say "this is what `gobit job run` calls". There is no
+// such subcommand: internal/app dispatches help, migrate, stuck, recover, jobs,
+// deadletters and seed, and nothing reaches here. The sentence is corrected
+// instead of deleted because the gap it names is real and somebody will want to
+// close it — and because it explains one thing about this path: [Report] is a
+// no-op here. RunNow records no outcome at all, so a line reported inside a
+// hand-run would have nowhere to go, and installing a reporter that nothing
+// reads would be the capability-with-no-consumer this repository names most
+// often.
 //
 // It does NOT claim an occurrence: a hand-run is deliberately outside the
 // schedule, and consuming the occurrence would make the scheduled run silently

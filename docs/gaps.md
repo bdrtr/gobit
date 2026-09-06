@@ -80,7 +80,7 @@ Four sequencing facts govern the whole list:
 | B15 | **File read-back, ~~product-image ↔ upload link~~ built 2026-09-05**, file events still missing. `product_image.upload_id` plus the `upload_product_image` link (declared by PRODUCT — it writes the record the binding carries; the file module's own doc says it does not know what a file belongs to). The file module gained the interop surface it deliberately lacked, and the reasoning behind that absence turned out to be half wrong: the address shows the file and says nothing ABOUT it | anything that looks at a photo — the id half is answerable now; file EVENTS are not built | AI-powered features |
 | B16 | **A suggestion store** — system proposes, human applies | forecast and category suggestions. The pattern exists (`sagawatch`, ADR 0017); the storage does not | AI-powered features |
 | B17 | **KVKK erasure, export and retention** | a legal requirement; A2 and A4 come first | Turkey-specific |
-| B18 | ~~**A per-column round-trip test for every module**~~ **Built 2026-09-05** as `TestEveryColumnIsWrittenBySomething`: the schema and the queries are read TOGETHER, and a column no INSERT names and no UPDATE sets fails. DEFAULT and GENERATED columns are out of scope — the database supplies those | nothing — and it caught a standing finding on its first run (see D9). ~~**What it does NOT catch was measured on 2026-09-06 and it is three holes wide, one of them the very finding its own godoc names as the example — see D16**~~ **Two of those three closed on 2026-09-06, a fourth hole was found while closing them, and the third — text, not the call graph — is measured and deliberately open (D16). The fix surfaced NINE live findings on its first run (D18)** | Common Go mistakes |
+| B18 | ~~**A per-column round-trip test for every module**~~ **Built 2026-09-05** as `TestEveryColumnIsWrittenBySomething`: the schema and the queries are read TOGETHER, and a column no INSERT names and no UPDATE sets fails. DEFAULT and GENERATED columns are out of scope — the database supplies those | nothing — and it caught a standing finding on its first run (see D9). ~~**What it does NOT catch was measured on 2026-09-06 and it is three holes wide, one of them the very finding its own godoc names as the example — see D16**~~ **Two of those three closed on 2026-09-06, a fourth hole was found while closing them, and the third — text, not the call graph — is measured and deliberately open (D16). The fix surfaced NINE live findings on its first run, and EIGHT of the nine were answered later the same day — four by writing a delete that had never existed, four by DROPPING a column that was wrong. The ninth is not a placeholder any more: its exemption states the question (D18)** | Common Go mistakes |
 
 ### C. Features — after the above
 
@@ -90,7 +90,7 @@ Four sequencing facts govern the whole list:
 | C2 | ~~**Order timeline**~~ **Built 2026-09-05.** `GET /admin/v1/orders/{id}/timeline` — composed, not a table; every entry names the CLOCK that stamped it, because the capture and a parcel's transitions are on the application clock while everything else is on the database's. Undated facts (an exchange that finished) come back last rather than being dropped | ~~B5, B6~~ done |
 | C3 | **Operator assistant in the panel** — sixty-one primitive interop methods are already a tool catalogue, and identity exists inside the panel | a return-creation surface |
 | C4 | **Consent records and data-subject endpoints** | A2, B17 |
-| C5 | **Outbound webhooks** (NATS after, if anyone asks) | ~~B12~~ ~~B13~~ both done — retry, the dead letter and a plugin-registrable periodic pass are all built. What is left is the SENDER itself, and it is now the only thing left |
+| C5 | **Outbound webhooks** (NATS after, if anyone asks) — **the sender was BUILT on 2026-09-06 as `plugins/webhookout`, and it is NOT INSTALLABLE. That was measured, not assumed.** What exists is whole and proved: a receiver is registered over `POST /admin/v1/webhooks`, which mints its signing secret server-side and returns it exactly ONCE; four topics are subscribed BY NAME, written out rather than ranged over, because the reverse topic gate resolves a subscription statically and a loop variable is a name it cannot resolve; an event on the bus writes one delivery row PER RECEIVER and does nothing else, since the bus logs a handler's error and counts the event processed, so anything the handler does not finish is lost for good; a minute-by-minute job claims what is due by moving `next_attempt_at` forward — a LEASE, not a held transaction, because an attempt is an HTTP request to a third party and a transaction spanning a pass of them would hold a pool connection for most of a minute exactly when the receiver has stopped answering; and every attempt is signed HMAC-SHA256 over a LENGTH-PREFIXED join of six values, the same rule ADR 0028's inbound ring uses, so a body cannot be moved onto another event's signature. The queue is deliberately NOT `event_outbox`, and the schema is the refusal: that table is keyed on the EVENT and carries one attempt counter, one next attempt and one dead-letter stamp, so an event owed to three receivers with one of them down has no expressible state in it — and putting webhook deliveries in the relay's pile would make a third party's decommissioned endpoint indistinguishable from gobit's own bus failing to accept an event, in the one listing an operator reads to tell those apart. A pile given up on FAILS the delivery run, and `GET /admin/v1/webhooks/deliveries?state=dead` plus redrive and discard are the two ways out. Plain http is refused unless the host is loopback; resolving the host to refuse a private address is NOT done and the refusal is argued — a resolve-then-connect check is not a check, and closing it properly means a dialer that refuses at connect time. Proved from a real cart through a real order to a receiver that holds nothing but the issued secret (`TestARealOrderReachesARealWebhookReceiver` in `internal/e2e`, observed passing 2026-09-06), which is the only place that can catch the order module and the plugin disagreeing about the event. **What is missing is ONE MAP ENTRY.** `webhook-out` is absent from the composition root's plugin catalog, so `PLUGINS=webhook-out` stops the boot with "unknown plugin". Measured with `go list -deps ./cmd/server`: the closure names eight plugins and not this one, so the package is not compiled into the binary at all and its migration is outside `gobit migrate` too. The plugin's own package doc says it is "named nowhere except one line in the composition root's catalog" — that line does not exist. Why no gate caught it is D22. **The catalog line landed 2026-09-06 and C5 is now WHOLE: `webhookout.Name` is in the installer's map, `go list -deps ./cmd/server` names the package, and its migration is inside the migrate surface.** | ~~B12~~ ~~B13~~ both done — retry, the dead letter and a plugin-registrable periodic pass are all built. The SENDER is built too; what is left is the catalog line, and nothing else |
 | C6 | **Carrier plugins** (Yurtici, Aras, MNG, PTT) | B1, B10 |
 | C7 | **Installment table** + iyzico/Param providers | A3 |
 | C8 | **Digital product delivery** — entitlement, expiring link, re-download policy | — |
@@ -632,17 +632,64 @@ Four sequencing facts govern the whole list:
   whole point of this entry: D9's ten are a DECISION and these nine are not
   decided at all.
 
-  **Their exemptions are PLACEHOLDERS for unclosed work, not decisions, and the
-  gate says so in the entries themselves.** Each of the nine opens with the
-  literal words "UNCLOSED FINDING, not a decision" and names what has not been
+  **Their exemptions were PLACEHOLDERS for unclosed work, not decisions, and the
+  gate said so in the entries themselves.** Each of the nine opened with the
+  literal words "UNCLOSED FINDING, not a decision" and named what had not been
   answered: whether a category should be deletable at all, whether closing a
   stock location is a delete or a status, whether a reservation released by
   `SetReservationStatus` needs a second way of saying what its status already
   says, and whether the seeded country and currency lists — whose rows are
-  re-pointed rather than removed — should carry the column at all. They exist
-  only so the gate can be green on the rest of the repository while these are
-  worked. Nothing was changed in the four modules: a schema change belongs to
-  whoever answers the question, not to the audit that asked it.
+  re-pointed rather than removed — should carry the column at all. They existed
+  only so the gate could be green on the rest of the repository while these were
+  worked, and nothing was changed in the four modules on the day they were
+  found: a schema change belongs to whoever answers the question, not to the
+  audit that asked it.
+
+  **Answered 2026-09-06, and the nine did not have one answer. That is the
+  finding.** Eight are closed and the closings go in OPPOSITE directions: four
+  columns were missing their WRITE, and four were the wrong column. Treating the
+  nine as one batch would have produced either four schema changes that destroy
+  a legitimate delete path or four deletes nothing should ever have. The ninth
+  is still open, and its exemption no longer merely admits that a question
+  exists — it states the question.
+
+  | column | outcome |
+  | --- | --- |
+  | product `product_collection.deleted_at` | **FIXED — the write was missing.** `Service.DeleteCollection`, bound to `DELETE /admin/v1/product-collections/{id}`. It releases the collection's products in the SAME transaction: a product points at its collection with a column of its own, that column's ON DELETE SET NULL cannot fire against a soft delete, and the storefront listing filters on the id WITHOUT joining the collection — so an old link would keep serving the products of a collection the merchant can no longer see |
+  | product `product_category.deleted_at` | **FIXED — the write was missing.** `Service.DeleteCategory`, and a node with children is REFUSED rather than resolved for the merchant. The tree is walked downwards from the root, so orphaned children do not merely dangle: the whole subtree disappears from every listing while its rows stay live. Re-parenting onto the grandparent and clearing the children's parent were both rejected in writing, the second because it promotes a subtree to the TOP LEVEL of the storefront menu |
+  | product `product_tag.deleted_at` | **FIXED — the write was missing.** `Service.DeleteTag`, with NO guard, and the difference from the other two is argued rather than assumed: a tag is a label, nothing in the catalog is structured by it, and every read of a product's tags already filters the join. The partial unique index that frees a deleted value for reuse had never once been exercised |
+  | product `product_option_value.deleted_at` | **FIXED — the write was missing, in both halves.** `Service.DeleteOptionValue` refuses a value a LIVE variant carries, because the variant read joins the value with a liveness filter: deleting one in use fails silently and shows the variant FEWER options than it has, so two variants differing only in that option become indistinguishable on the page and in the data. And `Service.DeleteOption` now stamps its values in the same transaction — leaving them live is how this column came to be the only child rows in the module that outlived their parent |
+  | fulfillment `fulfillments.deleted_at` | **DROPPED — the column was wrong** (`internal/modules/fulfillment/migrations/000003_fulfillments_are_never_deleted.up.sql`). A shipment is the record of something that happened and is retired by a STATUS with its own stamp; the head of the module's first migration already made exactly that argument for the shipment's LINES and never applied it to the shipment |
+  | inventory `inventory_reservations.deleted_at` | **DROPPED — the column was wrong** (`internal/modules/inventory/migrations/000002_reservations_are_never_deleted.up.sql`). The table's own rule, written at the head of its first migration and repeated over its query file, is that a reservation is never deleted. The column is a second way of saying what the status says, and the two can disagree; worse, making the release a delete collapses "already released" and "never existed" into one answer, which is precisely the distinction the checkout saga's idempotent compensation stands on |
+  | region `country.deleted_at` | **DROPPED — the column was wrong** (`internal/modules/region/migrations/000003_reference_data_is_not_soft_deleted.up.sql`). Reference data whose rows are written by a seed migration; the only writes that exist move a country BETWEEN regions, and that is not a deletion. It would also be actively harmful if anything ever set it: a stamped country resolves to no region forever, and checkout there stops with nothing in the catalog or the region list to explain why |
+  | region `currency.deleted_at` | **DROPPED — as country** |
+  | inventory `stock_locations.deleted_at` | **STILL OPEN — and the exemption now STATES the question instead of admitting there is one.** Measured 2026-09-06: writing the column is not enough, because the availability sums read the level rows with no join to the location at all, so a soft-deleted location would keep selling its stock while vanishing from the operator's screen and the reserve path would still hand it out. A hard delete is worse — the level and the reservation both reference the location ON DELETE CASCADE, so it would destroy the stock rows and the reservation history the module says must never be deleted. The location also has no UPDATE path, so a warehouse that closes cannot even be renamed. THE QUESTION is therefore not "delete or status" but what a closed location owes: whether its levels move, are zeroed or are only excluded from availability, and what happens to the reservations still active there. The column stays until that is answered because it may yet be the right carrier |
+
+  **The three drop migrations had to rebuild indexes, and one of them was
+  load-bearing.** PostgreSQL drops any index whose PREDICATE names a dropped
+  column, silently and with no notice, and every index on these tables was
+  partial on `deleted_at`. The migrations record measuring that against a real
+  PostgreSQL before they were written — a probe table with a UNIQUE partial
+  index accepted a duplicate key one statement after the drop. On `fulfillments`
+  the index at stake is the idempotency guard that stops a retried saga step
+  from producing A SECOND SHIPPING LABEL, so dropping the column without the
+  rebuild would have removed the guard and left the schema looking untouched.
+  Three tests pin the rebuild against the real database rather than the
+  migration text: `TestTheIdempotencyGuardSurvivedTheDroppedColumn`,
+  `TestDroppingTheColumnDidNotTakeTheReservationIndexesWithIt` and
+  `TestDroppingTheColumnDidNotTakeTheCountryIndexWithIt`. One index was renamed
+  rather than recreated under its old name: a name saying "alive" over an index
+  that no longer has a liveness predicate is the next reader's wrong assumption.
+
+  **What the exemption list looks like now.** Eleven entries: D9's ten, which
+  are a DECISION, and the one open question above. The words "UNCLOSED FINDING"
+  appear nowhere in it. The three migrations also say, each in its own words,
+  why their conclusion differs from D9's even though the ARGUMENT is the same —
+  a record of something that happened is kept, and the retreat from it is a
+  status. D9's ten carry no rule that the column can break; `fulfillments`
+  carried one, because its uniqueness index was written as "unique among LIVING
+  rows", so while the column stood there was a way to write a second live
+  shipment against the same idempotency key by stamping the first.
 - **D19** ~~`Service.SetPassword` read the user in one statement and wrote its
   identity in another; a delete landing in the gap burned an e-mail address
   permanently.~~ **Fixed 2026-09-06.** Found by asking D6's question of `auth`.
@@ -753,6 +800,133 @@ Four sequencing facts govern the whole list:
   interface entry and the fakes. That is this repository's named most expensive
   recurring defect (ADR 0009), and deleting a public service method is not a
   call to make inside a concurrency brief.
+- **D21** ~~**A job that succeeds cannot say anything.** The detail column of the
+  `gobit jobs` listing is reachable only through an ERROR, so the one channel
+  that reaches an operator is the one that also raises an alarm.~~ **Fixed
+  2026-09-06, and the premise was MEASURED before anything was built rather than
+  taken from the brief.** A throwaway probe against the real runner produced all
+  three cases: a successful run left the detail blank, a failing run whose error
+  carried a detail printed it, and a failing run whose error did not left it
+  blank. `Outcome.Detail` was seeded from the error and from nowhere else, under
+  a guard that only runs when the error is non-nil. So a pass that had something
+  to REPORT and nothing to complain about could only speak to the log.
+
+  The fix is a run-scoped reporter carried on the context: `WithReporter`
+  installs one, `Report` writes a line into it, and the runner seeds
+  `Outcome.Detail` from it. It is purely ADDITIVE — no signature changed, the
+  job definition grew no exported field, and the contract published the day
+  before was not touched.
+
+  **Two alternatives were rejected and the first was rejected by measurement.**
+  Widening the job body to return a string beside its error is dead on arrival:
+  `TestEveryJobDefinitionFieldReachesAPluginJob` requires every exported field
+  of the scheduler's own definition to have a CONVERTIBLE twin on the published
+  `plugin.Job`, whose work field is a function returning only an error, and a
+  reflection probe reports the two function types as non-convertible in BOTH
+  directions. The option could therefore only be taken by breaking a contract
+  published one day earlier or by weakening the very gate that guards the copy —
+  a large bill for handing three in-repo jobs a string. The second, an interface
+  a successful result may implement, is unbuildable rather than expensive:
+  success is a nil error, and nil implements nothing; making it work means
+  returning a non-nil error that is not a failure, after which every error check,
+  the outcome column and the listing's failure prefix all have to learn which
+  errors are not failures.
+
+  **The cost is paid openly.** A context channel hides itself: nothing in a
+  job's signature says it may report. That is mitigated three ways rather than
+  denied — the job body's godoc names the function, all three in-repo jobs call
+  it so the pattern is readable in the repository, and a call made outside a run
+  is a silent no-op, so the cost of not knowing is a missing line and never a
+  panic.
+
+  **Precedence keeps the change invisible to everything that already worked.**
+  An error carrying its own detail still OVERRIDES anything reported mid-run, so
+  a failing run reports exactly what it reported before; a mutation flipping the
+  two fails exactly one test. The one genuinely new failing-run behaviour — a
+  run that fails WITHOUT a detail of its own keeps whatever it last reported —
+  is reachable only from code that calls the new function.
+
+  **It shipped with three consumers, because a capability with no consumer is
+  this repository's named most expensive defect.** The outbox relay reports its
+  pass throughput, and that is what the blank cell was hiding: an idle minute, a
+  relay keeping up, and a relay filling its batch limit every minute with a
+  growing backlog were three different facts printed identically. The payment
+  reconciliation pass reports what it examined, agreed, found DIVERGENT and
+  could not reach; the saga watch reports the abandoned count. All three
+  previously had findings that reached the log and nothing else. The relay's
+  dead-letter pile still FAILS its run — re-decided rather than inherited, and
+  written into the package doc, because outcome is the column an operator scans
+  while detail is read afterwards, and anything watching that job's outcome
+  would have stopped firing the day a demotion shipped.
+
+  The chain is proved link by link where each link lives: report to outcome
+  against the real runner, outcome to the stored row and back against a real
+  PostgreSQL, and stored row to printed listing in the composition root.
+
+  **Found while in the files, reported and not built:** `Runner.RunNow` has no
+  caller outside its own tests, and its godoc claimed it is what `gobit job run`
+  calls. There is no such subcommand — the binary dispatches help, migrate,
+  stuck, recover, jobs, deadletters and seed. `Definition.Every` offered the
+  same nonexistent command as the escape hatch for calendar scheduling. Both
+  sentences now state the gap instead of asserting the feature.
+
+  **Still open, and it arrived the same day:** a PLUGIN cannot report a detail.
+  The published job contract's work field takes a context and returns an error,
+  and the reporter lives in an internal package a third-party plugin cannot
+  import — while the runner's decorated context is already handed to the
+  plugin's body, so the value is right there and only the key is unreachable.
+  The live example is `plugins/webhookout` (C5): its delivery pass reports its
+  throughput and its per-pass limit to the LOG, and reaches the listing only by
+  FAILING. The smallest closure is a published leaf package owning the context
+  key with the internal one re-exporting it, which adds three identifiers to the
+  compatibility promise against ADR 0026's anticipated price of publishing the
+  whole scheduler. Rejected in writing: having the scheduler import the plugin
+  surface instead, which is legal and inverts the dependency, and wrapping the
+  plugin's body at the composition root, which cannot invent a channel the
+  plugin can speak into.
+- **D22** **A plugin can be written, documented, tested end to end and audited,
+  and still be impossible to install.** Measured 2026-09-06 while recording C5.
+  `plugins/webhookout` compiles, carries unit, integration and end-to-end tests
+  that were observed passing, and is described at length in the environment
+  example under the name `webhook-out`. It is absent from the composition root's
+  plugin catalog, which is the only map the installer consults, so
+  `PLUGINS=webhook-out` stops the boot with "unknown plugin". The measurement is
+  `go list -deps ./cmd/server`: the binary's dependency closure names eight
+  plugins and not this one, so the package is not compiled in at all and its
+  migration is outside the migrate surface too.
+
+  **The gate built for exactly this class is green, and the reason is worth more
+  than the finding.** `TestThePluginNamesInTheDocsAreReal` has a reverse
+  direction whose godoc says it exists because "a plugin that is written but
+  announced nowhere is a capability without a consumer". Both of its directions
+  pass here, because it derives the set of registered names by PARSING the name
+  constant out of every file under the plugins tree rather than from the
+  catalog. So the forward direction asks whether a documented name is declared
+  somewhere, and the reverse asks whether a declared name is mentioned in the
+  document; neither asks the question the operator asks, which is whether the
+  binary knows the name. The consequence is the sharpest possible form of it:
+  the environment example now carries a copyable line naming this plugin, and
+  copying it produces precisely the startup failure the gate's own godoc
+  describes itself as preventing.
+
+  **Both fixes landed 2026-09-06.** The map entry is in, and the gate that was
+  missing is `TestEveryPluginIsInstallable`: it reads one side from the plugins
+  tree, as before, and the OTHER side from the composition root's catalog,
+  resolving each key through that file's own import table so an aliased import
+  cannot be read as a plugin that does not exist. It was proved on the defect
+  itself — deleting the catalog line makes it fail naming `webhook-out`, and the
+  file was restored from a scratch copy with a matching checksum rather than by
+  git.
+
+  **The lesson generalises past plugins, and it is why the new test says so in
+  its own godoc: a gate that derives BOTH sides of a comparison from the same
+  place proves the two agree with each other and nothing about the world.** The
+  test that was green here walked documents against source and source against
+  documents; both of its directions read the source tree, and the binary — the
+  thing the operator actually runs — was never asked. This is the same shape as
+  D16, where the column audit read a schema it reconstructed from CREATE TABLE
+  only, and the same as the earlier finding that a fake repository proves the
+  fake. Worth checking the remaining audits against.
 
 ### E. Out of framework scope — written, not forgotten
 

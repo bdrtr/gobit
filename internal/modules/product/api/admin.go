@@ -600,6 +600,25 @@ func (h *Handler) adminDeleteOption(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, deleted{ID: id, Object: "product_option", Deleted: true})
 }
 
+// adminDeleteOptionValue DELETE /admin/v1/product-option-values/{id}
+//
+// The path is not nested under the option. A value's id is unique on its own
+// and the nested form would let a caller name an option the value does not
+// belong to, which is a mismatch this handler would then have to check and
+// report — a whole error case bought for nothing.
+func (h *Handler) adminDeleteOptionValue(w http.ResponseWriter, r *http.Request) {
+	id, err := pathParam(r, "id")
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	if err := h.svc.DeleteOptionValue(r.Context(), id); err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	writeItem(w, r, http.StatusOK, deleted{ID: id, Object: "product_option_value", Deleted: true})
+}
+
 // adminSetPriceSet PUT /admin/v1/variants/{id}/price-set
 //
 // This is where the link is ESTABLISHED: the price set is produced by the
@@ -925,4 +944,55 @@ func (h *Handler) adminListTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeList(w, r, result)
+}
+
+// adminDeleteCollection DELETE /admin/v1/product-collections/{id}
+//
+// The response names only the collection. The products the delete released
+// carry no line here on purpose: a DELETE answers about the thing it deleted,
+// and a list of side effects on the response would be a second, unpaginated
+// listing that grows with the catalog.
+func (h *Handler) adminDeleteCollection(w http.ResponseWriter, r *http.Request) {
+	id, err := pathParam(r, "id")
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	if err := h.svc.DeleteCollection(r.Context(), id); err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	writeItem(w, r, http.StatusOK, deleted{ID: id, Object: "product_collection", Deleted: true})
+}
+
+// adminDeleteCategory DELETE /admin/v1/product-categories/{id}
+//
+// A category with subcategories comes back as 409; see
+// [service.Service.DeleteCategory] for why the refusal is the answer rather
+// than a rule that moves the children somewhere.
+func (h *Handler) adminDeleteCategory(w http.ResponseWriter, r *http.Request) {
+	id, err := pathParam(r, "id")
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	if err := h.svc.DeleteCategory(r.Context(), id); err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	writeItem(w, r, http.StatusOK, deleted{ID: id, Object: "product_category", Deleted: true})
+}
+
+// adminDeleteTag DELETE /admin/v1/product-tags/{id}
+func (h *Handler) adminDeleteTag(w http.ResponseWriter, r *http.Request) {
+	id, err := pathParam(r, "id")
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	if err := h.svc.DeleteTag(r.Context(), id); err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	writeItem(w, r, http.StatusOK, deleted{ID: id, Object: "product_tag", Deleted: true})
 }

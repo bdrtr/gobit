@@ -1,5 +1,10 @@
 -- fulfillments queries.
 --
+-- There is NO deleted_at on this table and no read carries such a filter. The
+-- column stood from 000001 to 000003, nothing ever wrote it, and a shipment's
+-- retirement is the 'canceled' status with its stamp; the argument is at the
+-- head of 000003 (docs/gaps.md D18).
+--
 -- The fulfillment row is written BEFORE GOING to the provider: the Reference
 -- field of the provider contract is "the id the caller gave to its own record",
 -- and it is what matches the two systems up during reconciliation. Had the
@@ -21,16 +26,16 @@ INSERT INTO fulfillments (
     id, reference, shipping_option_id, provider_id, status, idempotency_key,
     data, metadata
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-ON CONFLICT (idempotency_key) WHERE deleted_at IS NULL DO NOTHING
+ON CONFLICT (idempotency_key) DO NOTHING
 RETURNING *;
 
 -- name: GetFulfillment :one
 SELECT * FROM fulfillments
-WHERE id = $1 AND deleted_at IS NULL;
+WHERE id = $1;
 
 -- name: GetFulfillmentByIdempotencyKey :one
 SELECT * FROM fulfillments
-WHERE idempotency_key = $1 AND deleted_at IS NULL;
+WHERE idempotency_key = $1;
 
 -- LockFulfillment locks the fulfillment for the duration of the transaction and
 -- returns its current state.
@@ -41,13 +46,12 @@ WHERE idempotency_key = $1 AND deleted_at IS NULL;
 -- provider TWICE.
 -- name: LockFulfillment :one
 SELECT * FROM fulfillments
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 FOR UPDATE;
 
 -- name: ListFulfillments :many
 SELECT * FROM fulfillments
-WHERE deleted_at IS NULL
-  AND (sqlc.narg('reference')::text IS NULL OR reference = sqlc.narg('reference')::text)
+WHERE (sqlc.narg('reference')::text IS NULL OR reference = sqlc.narg('reference')::text)
   AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
@@ -56,15 +60,14 @@ LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
 -- round trip; no query per id (N+1) is made.
 -- name: GetFulfillmentsByIDs :many
 SELECT * FROM fulfillments
-WHERE id = ANY (sqlc.arg('ids')::text[]) AND deleted_at IS NULL
+WHERE id = ANY (sqlc.arg('ids')::text[])
 ORDER BY id;
 
 -- CountFulfillments applies the SAME filters as ListFulfillments; for the
 -- rationale see CountShippingProfiles.
 -- name: CountFulfillments :one
 SELECT COUNT(*) FROM fulfillments
-WHERE deleted_at IS NULL
-  AND (sqlc.narg('reference')::text IS NULL OR reference = sqlc.narg('reference')::text)
+WHERE (sqlc.narg('reference')::text IS NULL OR reference = sqlc.narg('reference')::text)
   AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text);
 
 -- UpdateFulfillmentProviderResult writes the provider's response onto the row.
@@ -83,7 +86,7 @@ SET external_id      = $2,
     delivered_at     = $8,
     canceled_at      = $9,
     updated_at       = now()
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 RETURNING *;
 
 -- UpdateFulfillmentStatus writes the status and the timestamp that accompanies
@@ -101,5 +104,5 @@ SET status          = $2,
     delivered_at    = $6,
     canceled_at     = $7,
     updated_at      = now()
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 RETURNING *;

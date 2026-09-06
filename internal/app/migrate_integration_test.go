@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -266,16 +267,25 @@ func TestStepsFlagReachesTheRollback(t *testing.T) {
 	require.NoError(t, db.Migrate(t.Context(), dsn, sources[0].src, sources[0].owner))
 	before, err := readOwnerState(t.Context(), dsn, "region")
 	require.NoError(t, err)
-	require.Equal(t, uint(2), before.version, "region must have two migrations for this to prove anything")
+	// The step count is READ, not written down. An earlier version of this test
+	// asserted region had exactly two migrations, and the module gaining a third
+	// broke it — on the PRECONDITION of the proof rather than on the proof, which
+	// is the most confusing way for a test to fail. What the proof actually needs
+	// is more than one step to take, so that asking for all of them and quietly
+	// taking one are different outcomes.
+	require.Greater(t, before.version, uint(1),
+		"region needs more than one migration for this to prove anything")
+	steps := strconv.FormatUint(uint64(before.version), 10)
 
 	var out bytes.Buffer
 	require.NoError(t, migrateDown(t.Context(), &out, dsn, sources,
-		[]string{"region", "-" + flagSteps, "2", "-" + flagConfirm, "region"}, "dev"))
+		[]string{"region", "-" + flagSteps, steps, "-" + flagConfirm, "region"}, "dev"))
 
 	after, err := readOwnerState(t.Context(), dsn, "region")
 	require.NoError(t, err)
 	assert.Equal(t, uint(0), after.version,
-		"two steps back from version 2 is zero; a run that quietly used the default would stop at 1")
+		"%s steps back from version %d is zero; a run that quietly used the default would stop at %d",
+		steps, before.version, before.version-1)
 }
 
 // TestDownRollsBackTheOwnerThatWasNAMED proves the named owner is the one that
@@ -296,13 +306,21 @@ func TestDownRollsBackTheOwnerThatWasNAMED(t *testing.T) {
 	}
 	require.True(t, tableExists(t, dsn, "region"), "region's schema must be up before we roll cart back")
 
+	// Region's version is READ before the rollback rather than written down here,
+	// for the reason given in [TestStepsFlagReachesTheRollback]: a hand-written
+	// number turns "the module gained a migration" into a failure of this test,
+	// which is about something else entirely.
+	regionBefore, err := readOwnerState(t.Context(), dsn, "region")
+	require.NoError(t, err)
+
 	var out bytes.Buffer
 	require.NoError(t, migrateDown(t.Context(), &out, dsn, sources,
 		[]string{"cart", "-" + flagSteps, "1", "-" + flagConfirm, "cart"}, "dev"))
 
 	regionState, err := readOwnerState(t.Context(), dsn, "region")
 	require.NoError(t, err)
-	assert.Equal(t, uint(2), regionState.version, "the owner that was NOT named must not move")
+	assert.Equal(t, regionBefore.version, regionState.version,
+		"the owner that was NOT named must not move")
 	assert.True(t, tableExists(t, dsn, "region"),
 		"another owner's schema was dropped by a rollback naming cart; receipt was %q", out.String())
 

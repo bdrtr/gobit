@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,6 +64,53 @@ func TestAFailedRunKeepsItsReason(t *testing.T) {
 
 	assert.Contains(t, out, "FAILED: the payment ledgers could not be compared")
 	assert.NotContains(t, out, "OVERDUE")
+}
+
+// TestASuccessfulRunsDetailIsPrinted is the far end of the channel a
+// successful run now has.
+//
+// The DETAIL column existed from the start and the runner could only fill it
+// from an ERROR, so every row an operator ever saw with something in this cell
+// was a row that had failed. A relay keeping up, a reconciliation that examined
+// twelve sessions and a job that has never run all rendered the same blank —
+// which is why the outbox relay had to fail in order to be seen.
+func TestASuccessfulRunsDetailIsPrinted(t *testing.T) {
+	out := render(t, []job.Definition{hourly("outbox-relay")}, map[string]job.Run{
+		"outbox-relay": {
+			Name:      "outbox-relay",
+			Due:       listingFixture.Add(-30 * time.Minute),
+			StartedAt: listingFixture.Add(-30 * time.Minute),
+			EndedAt:   listingFixture.Add(-29 * time.Minute),
+			Detail:    "published 12, failed 0",
+		},
+	})
+
+	assert.Contains(t, out, "ok", "the run succeeded and the outcome column has to say so")
+	assert.Contains(t, out, "published 12, failed 0",
+		"a successful run's detail has to reach the listing; if it does not, the only "+
+			"way a job can report a number is still to fail")
+	assert.NotContains(t, out, "FAILED")
+}
+
+// TestTheDetailColumnIsBlankWhenNothingWasReported keeps the cell honest for a
+// job that says nothing.
+//
+// Not every job has a number worth a column, and inventing a placeholder would
+// make the listing's most-read row noisier for no fact.
+func TestTheDetailColumnIsBlankWhenNothingWasReported(t *testing.T) {
+	out := render(t, []job.Definition{hourly("saga-watch")}, map[string]job.Run{
+		"saga-watch": {
+			Name:      "saga-watch",
+			Due:       listingFixture.Add(-30 * time.Minute),
+			StartedAt: listingFixture.Add(-30 * time.Minute),
+			EndedAt:   listingFixture.Add(-29 * time.Minute),
+		},
+	})
+
+	require.Len(t, strings.Split(strings.TrimRight(out, "\n"), "\n"), 2)
+	assert.Equal(t, "ok", strings.TrimSpace(
+		strings.TrimPrefix(strings.Split(out, "\n")[1], "saga-watch  1h0m0s  "+
+			listingFixture.Add(-29*time.Minute).Format(time.RFC3339)+"  ")))
 }
 
 // TestAnUnfinishedRunIsNotCalledRunning holds the listing's own admission.

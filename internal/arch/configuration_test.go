@@ -688,3 +688,198 @@ func repositoryTestNames(t *testing.T) map[string]struct{} {
 
 	return names
 }
+
+// catalogPath is the composition root file holding the installer's plugin map.
+const catalogPath = "internal/app/setup.go"
+
+// catalogVariable is the name of that map.
+const catalogVariable = "pluginCatalog"
+
+// installablePluginNames returns the plugin names the BINARY can actually
+// install, read from the composition root's catalog.
+//
+// The distinction from [pluginRegistryNames] is the whole point of this helper
+// and it was paid for. That function derives names by parsing "const Name" out
+// of the plugins tree, which answers "does a package by this name exist" — and
+// [TestThePluginNamesInTheDocsAreReal] asks its two questions in those terms:
+// is a documented name declared somewhere, and is a declared name documented.
+// Neither is the question the person installing gobit asks, which is whether
+// the binary KNOWS the name. On 2026-09-06 the difference was measured rather
+// than imagined: plugins/webhookout compiled, carried unit, integration and end
+// to end tests that were observed passing, and was described in the environment
+// example under a copyable name — and it was absent from this map, the only one
+// the installer consults, so copying that line stopped the boot with "unknown
+// plugin". "go list -deps ./cmd/server" named eight plugins and not that one:
+// the package was not compiled into the binary at all, and its migration was
+// outside the migrate surface with it.
+//
+// The keys are resolved through the file's own import table rather than by
+// assuming the package identifier matches the directory: an aliased import
+// would otherwise be read as a plugin that does not exist.
+func installablePluginNames(t *testing.T) map[string]bool {
+	t.Helper()
+
+	path := filepath.Join(repoRoot, catalogPath)
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, path, nil, 0)
+	require.NoError(t, err, "%s could not be parsed", catalogPath)
+
+	imports := make(map[string]string)
+	for _, spec := range parsed.Imports {
+		importPath := strings.Trim(spec.Path.Value, `"`)
+		local := importBase(importPath)
+		if spec.Name != nil {
+			local = spec.Name.Name
+		}
+		imports[local] = importPath
+	}
+
+	declared := pluginNameByImportPath(t)
+
+	names := make(map[string]bool)
+	for _, decl := range parsed.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.VAR {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			value, ok := spec.(*ast.ValueSpec)
+			if !ok || len(value.Names) != 1 || value.Names[0].Name != catalogVariable {
+				continue
+			}
+			require.Len(t, value.Values, 1, "%s must be a single map literal", catalogVariable)
+			lit, ok := value.Values[0].(*ast.CompositeLit)
+			require.True(t, ok, "%s must be a composite literal", catalogVariable)
+
+			for _, elt := range lit.Elts {
+				pair, ok := elt.(*ast.KeyValueExpr)
+				require.True(t, ok, "every %s entry must be a key/value pair", catalogVariable)
+				sel, ok := pair.Key.(*ast.SelectorExpr)
+				require.True(t, ok,
+					"every %s key must be a package-qualified constant; a literal string here would "+
+						"let the catalog and the plugin disagree silently", catalogVariable)
+				pkg, ok := sel.X.(*ast.Ident)
+				require.True(t, ok, "unresolvable %s key", catalogVariable)
+				require.Equal(t, "Name", sel.Sel.Name,
+					"every %s key must be the plugin's own Name constant", catalogVariable)
+
+				importPath, known := imports[pkg.Name]
+				require.True(t, known, "%s is not imported by %s", pkg.Name, catalogPath)
+				name, found := declared[importPath]
+				require.True(t, found,
+					"%s.Name is in the catalog but %s declares no Name constant", pkg.Name, importPath)
+				names[name] = true
+			}
+		}
+	}
+
+	require.NotEmpty(t, names, "no plugin was found in %s", catalogVariable)
+	return names
+}
+
+// pluginNameByImportPath maps a plugin package's import path to its Name value.
+func pluginNameByImportPath(t *testing.T) map[string]string {
+	t.Helper()
+
+	out := make(map[string]string)
+	root := filepath.Join(repoRoot, pluginsPath)
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		fset := token.NewFileSet()
+		parsed, parseErr := parser.ParseFile(fset, path, nil, 0)
+		if parseErr != nil {
+			return parseErr
+		}
+		for _, decl := range parsed.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				value, ok := spec.(*ast.ValueSpec)
+				if !ok || len(value.Names) != 1 || value.Names[0].Name != "Name" || len(value.Values) != 1 {
+					continue
+				}
+				lit, ok := value.Values[0].(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					continue
+				}
+				rel, relErr := filepath.Rel(repoRoot, filepath.Dir(path))
+				if relErr != nil {
+					return relErr
+				}
+				out[modulePath+"/"+filepath.ToSlash(rel)] = strings.Trim(lit.Value, `"`)
+			}
+		}
+		return nil
+	})
+	require.NoError(t, err, "%s could not be scanned", pluginsPath)
+
+	return out
+}
+
+// importBase is filepath.Base for a slash-separated import path.
+//
+// filepath.Base would be wrong on a platform whose separator is not a slash,
+// and an import path is always slash-separated regardless of the host.
+func importBase(importPath string) string {
+	if i := strings.LastIndex(importPath, "/"); i >= 0 {
+		return importPath[i+1:]
+	}
+
+	return importPath
+}
+
+// TestEveryPluginIsInstallable verifies that every plugin this repository ships
+// can actually be switched on.
+//
+// The rule is one sentence: a package under the plugins tree that declares a
+// Name constant must appear in the composition root's catalog. The catalog is
+// the only map the installer consults, so a plugin missing from it is not
+// merely undocumented — it is not compiled into the binary at all, and its
+// migration is outside the migrate surface with it.
+//
+// # Why this is a SEPARATE test from the documentation one
+//
+// [TestThePluginNamesInTheDocsAreReal] already walks both directions between
+// the documents and the source, and it was GREEN on the day a written, tested,
+// documented plugin could not be installed. It could not have caught it: it
+// derives the registered set by parsing the plugins tree, so both of its
+// directions ask about the source and neither asks about the binary. The
+// consequence was the sharpest available — the environment example carried a
+// copyable line naming the plugin, and copying it produced precisely the
+// startup failure that test's own godoc describes itself as preventing.
+//
+// The lesson is not about plugins. It is that a gate deriving BOTH sides of a
+// comparison from the same place proves they agree with each other and nothing
+// about the world. See [installablePluginNames] for where the two sides come
+// from here.
+func TestEveryPluginIsInstallable(t *testing.T) {
+	t.Parallel()
+
+	declared := pluginRegistryNames(t)
+	installable := installablePluginNames(t)
+
+	for name := range declared {
+		assert.True(t, installable[name],
+			"the %q plugin declares a Name but is absent from %s in %s.\n"+
+				"That map is the only one the installer reads, so PLUGINS=%s stops the boot with "+
+				"\"unknown plugin\" — and because nothing imports the package, it is not compiled "+
+				"into the binary and its migration never reaches the migrate surface either.\n"+
+				"Add it to the catalog, or delete the plugin: a plugin nobody can switch on is a "+
+				"capability with no consumer.",
+			name, catalogVariable, catalogPath, name)
+	}
+
+	for name := range installable {
+		assert.True(t, declared[name],
+			"%s in %s offers the %q plugin, but no package under %s declares that Name.\n"+
+				"The catalog and the plugin have drifted apart; one of them is wrong.",
+			catalogVariable, catalogPath, name, pluginsPath)
+	}
+}

@@ -65,6 +65,35 @@ func (r *Repo) CountCollections(ctx context.Context) (int, error) {
 	return int(n), nil
 }
 
+// SoftDeleteCollection deletes the collection (stamps deleted_at).
+//
+// A record that is already deleted or that never existed returns
+// errors.NotFound, for the reason [Repo.SoftDeleteProduct] gives.
+func (r *Repo) SoftDeleteCollection(ctx context.Context, id string) error {
+	n, err := r.q.SoftDeleteCollection(ctx, id)
+	if err != nil {
+		return wrapDB(err, "could not delete collection: %s", id)
+	}
+	if n == 0 {
+		return notFound("collection", id)
+	}
+	return nil
+}
+
+// ClearCollectionProducts releases the products bound to the collection and
+// returns how many were released.
+//
+// The count is returned rather than dropped because it is what the caller logs:
+// deleting a collection can silently change many products, and a number nobody
+// can see is a change nobody can audit.
+func (r *Repo) ClearCollectionProducts(ctx context.Context, collectionID string) (int, error) {
+	n, err := r.q.ClearCollectionProducts(ctx, &collectionID)
+	if err != nil {
+		return 0, wrapDB(err, "could not release the collection's products: %s", collectionID)
+	}
+	return int(n), nil
+}
+
 // CreateCategory writes a new category.
 func (r *Repo) CreateCategory(ctx context.Context, c models.Category) (models.Category, error) {
 	row, err := r.q.CreateCategory(ctx, productdb.CreateCategoryParams{
@@ -177,6 +206,30 @@ func (r *Repo) CountCategories(ctx context.Context, f CategoryFilter) (int, erro
 	return int(n), nil
 }
 
+// CountChildCategories returns the number of live children of the category.
+func (r *Repo) CountChildCategories(ctx context.Context, id string) (int, error) {
+	n, err := r.q.CountChildCategories(ctx, &id)
+	if err != nil {
+		return 0, wrapDB(err, "could not read the category's child count: %s", id)
+	}
+	return int(n), nil
+}
+
+// SoftDeleteCategory deletes the category (stamps deleted_at).
+//
+// The child check is NOT here: it belongs to the service, which is where the
+// two statements are ordered inside one transaction.
+func (r *Repo) SoftDeleteCategory(ctx context.Context, id string) error {
+	n, err := r.q.SoftDeleteCategory(ctx, id)
+	if err != nil {
+		return wrapDB(err, "could not delete category: %s", id)
+	}
+	if n == 0 {
+		return notFound("category", id)
+	}
+	return nil
+}
+
 // CreateTag writes a new tag.
 func (r *Repo) CreateTag(ctx context.Context, t models.Tag) (models.Tag, error) {
 	row, err := r.q.CreateTag(ctx, productdb.CreateTagParams{ID: t.ID, Value: t.Value})
@@ -219,6 +272,20 @@ func (r *Repo) CountTags(ctx context.Context) (int, error) {
 		return 0, wrapDB(err, "could not read tag count")
 	}
 	return int(n), nil
+}
+
+// SoftDeleteTag deletes the tag (stamps deleted_at).
+//
+// The bindings in product_tag_map stay; see the SQL for why.
+func (r *Repo) SoftDeleteTag(ctx context.Context, id string) error {
+	n, err := r.q.SoftDeleteTag(ctx, id)
+	if err != nil {
+		return wrapDB(err, "could not delete tag: %s", id)
+	}
+	if n == 0 {
+		return notFound("tag", id)
+	}
+	return nil
 }
 
 // SetProductTags REPLACES the product's tags with the given set.

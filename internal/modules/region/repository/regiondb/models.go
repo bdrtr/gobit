@@ -14,7 +14,6 @@ type Country struct {
 	RegionID  *string
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
-	DeletedAt pgtype.Timestamptz
 }
 
 type Currency struct {
@@ -24,7 +23,6 @@ type Currency struct {
 	DecimalDigits int32
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
-	DeletedAt     pgtype.Timestamptz
 }
 
 type Region struct {

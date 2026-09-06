@@ -41,14 +41,30 @@ import (
 // on is a product one; recording it here is what keeps it from being
 // rediscovered.
 //
-// # The unclosed findings
+// # The one open question
 //
-// The nine remaining entries all appeared the day this audit started binding a
-// column to its TABLE instead of matching bare names module-wide. Each is a
-// table whose module soft-deletes some of its tables and not this one, so the
-// written deleted_at of a sibling table covered it. Nobody has yet decided
-// whether these rows should be deletable or whether the column should go, which
-// is why none of them claims to be a decision.
+// Nine entries appeared the day this audit started binding a column to its
+// TABLE instead of matching bare names module-wide (docs/gaps.md D18). Each was
+// a table whose module soft-deletes some of its tables and not this one, so the
+// written deleted_at of a sibling covered it. They were placeholders: the audit
+// had found them and nobody had decided anything.
+//
+// Eight are answered and gone from this map, in two different directions:
+//
+//   - The WRITE WAS MISSING in product. Its migration declares soft delete as
+//     the module's model and builds a partial unique index on every handle so a
+//     deleted row frees its key, and every read join already filtered the
+//     column — only the delete had never been written, so a collection,
+//     category, tag or option value created by mistake was permanent. Four
+//     deletes now exist, with the guards the shape demanded.
+//   - THE COLUMN WAS WRONG in fulfillment, inventory and region, and the three
+//     migrations that dropped it argue it separately: a fulfillment and a
+//     reservation are records of something that happened and are retired by a
+//     STATUS, while country and currency are seeded reference data whose
+//     lifecycle belongs to a migration rather than to the API.
+//
+// The one that remains is not a placeholder. Its reason states the question,
+// what was measured, and what the answer would decide.
 var unwrittenColumns = map[string]string{
 	"order.orders.deleted_at": "the order module never soft-deletes; nothing sets this and " +
 		"every read filters on it",
@@ -63,31 +79,20 @@ var unwrittenColumns = map[string]string{
 	"payment.payments.deleted_at":         "as payment_collections.deleted_at",
 	"payment.refunds.deleted_at":          "as payment_collections.deleted_at",
 
-	"product.product_category.deleted_at": "UNCLOSED FINDING, not a decision. The module " +
-		"soft-deletes product, product_variant, product_option and product_image; this table " +
-		"is not one of them and nothing has ever set the column. It was invisible while the " +
-		"written set was keyed by bare name, because those four writes covered it. Whether a " +
-		"category should be deletable at all has not been decided.",
-	"product.product_collection.deleted_at":   "UNCLOSED FINDING, as product_category.deleted_at",
-	"product.product_tag.deleted_at":          "UNCLOSED FINDING, as product_category.deleted_at",
-	"product.product_option_value.deleted_at": "UNCLOSED FINDING, as product_category.deleted_at",
-	"region.country.deleted_at": "UNCLOSED FINDING, not a decision. Only the region table " +
-		"itself is soft-deleted in this module; country and currency carry the column and " +
-		"nothing writes either. The country list is seeded and its rows are re-pointed at a " +
-		"region rather than removed, so the column may well be wrong rather than unwritten — " +
-		"but that is a schema question nobody has answered.",
-	"region.currency.deleted_at": "UNCLOSED FINDING, as country.deleted_at",
-	"inventory.stock_locations.deleted_at": "UNCLOSED FINDING, not a decision. The module " +
-		"soft-deletes inventory_items and inventory_levels; a stock location has no delete " +
-		"path at all, and its column was covered by those two writes. Whether closing a " +
-		"location is a delete or a status has not been decided.",
-	"inventory.inventory_reservations.deleted_at": "UNCLOSED FINDING, not a decision. A " +
-		"reservation is released by SetReservationStatus rather than deleted, so the column " +
-		"is the second way of saying a thing the status already says.",
-	"fulfillment.fulfillments.deleted_at": "UNCLOSED FINDING, not a decision. The module " +
-		"soft-deletes shipping_profiles, shipping_options and shipping_option_rules; a " +
-		"fulfillment is never deleted, only advanced through UpdateFulfillmentStatus. Its " +
-		"column was covered by the three that are written.",
+	"inventory.stock_locations.deleted_at": "OPEN QUESTION, and what follows STATES it rather " +
+		"than merely admitted. A location has no delete path and no update path either: " +
+		"create, get and list are the whole surface, so a warehouse that closes cannot be " +
+		"retired or even renamed. Writing the column is NOT enough and that was measured on " +
+		"2026-09-06: AvailableQuantityByItemIDs and ListInventoryLevels sum inventory_levels " +
+		"with no join to stock_locations, so a soft-deleted location keeps selling its stock " +
+		"while vanishing from the operator's screen, and Reserve would still hand it out. " +
+		"Hard delete is worse: inventory_levels.location_id and " +
+		"inventory_reservations.location_id both CASCADE, so it would destroy the stock rows " +
+		"and the reservation history the module says must never be deleted. THE QUESTION is " +
+		"therefore not \"delete or status\" but what a closed location owes: whether its " +
+		"levels move, are zeroed or are simply excluded from availability, and what happens " +
+		"to the reservations still active there. Answering it decides the mechanism; the " +
+		"column stays until then because it may yet be the right carrier.",
 }
 
 // tableColumn is one column of one table.

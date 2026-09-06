@@ -37,15 +37,41 @@
 //     is given up on and leaves the relay's query.
 //   - DROPPING SILENTLY. An event the relay stops trying, with nobody told. The
 //     dead letter prevents this, and only because it is READ: this job asks for
-//     the pile on every pass and, when it is not empty, FAILS — which is the
-//     one channel that reaches `gobit jobs`, because a run's detail is recorded
-//     only alongside an error (internal/core/job/runner.go's execute). A job
-//     that reported "ok" while promised events sat undelivered would be the
+//     the pile on every pass and, when it is not empty, FAILS. A job that
+//     reported "ok" while promised events sat undelivered would be the
 //     write-only ledger this repository has already built once, in audit_log.
 //
 // The failure is not cosmetic and it does not clear itself. It stands until a
 // human redrives the events or discards them, which is the intended cost: the
 // alarm is the feature.
+//
+// # The pile still FAILS the run, and that was re-decided rather than inherited
+//
+// The failure used to be the ONLY channel out of here: a run's detail was
+// recorded only alongside an error, so a healthy pass could say nothing. That
+// is no longer true — [job.Report] gives a successful run a line — which turns
+// "the pile fails the run" from a consequence of the machinery into a choice,
+// and a choice has to be made rather than kept by accident.
+//
+// It still fails. Three reasons, in the order they matter:
+//
+//   - OUTCOME is the column an operator scans and DETAIL is the one they read
+//     afterwards. A standing fault demoted to a detail is a fault behind one
+//     more step, and this one is undelivered messages somebody is waiting for.
+//   - `gobit deadletters` is documented as the off switch for an alarm that
+//     STANDS until a human acts (see internal/app/deadletters.go). An alarm
+//     that reads "ok" needs no off switch, and the command's whole argument for
+//     existing goes with it.
+//   - Anything watching this job's outcome — a person during an incident, or a
+//     check built on the listing — would stop firing on the day the change
+//     shipped, silently, which is the failure mode this repository pays the
+//     most for.
+//
+// What the new channel carries here is the pass's THROUGHPUT, which is a
+// different fact and had nowhere to go before. An idle minute, a relay keeping
+// up, and a relay that has filled its limit every minute for an hour with a
+// growing backlog behind it were three different states printed as the same
+// blank cell.
 package outboxrelay
 
 import (
@@ -167,6 +193,18 @@ func run(ctx context.Context, r relay, bus publisher, log *slog.Logger) error {
 
 	reportPass(ctx, result, log)
 
+	// The pass's own numbers, on the channel that reaches `gobit jobs`.
+	//
+	// It is reported BEFORE the dead-letter read, so a pass that then fails —
+	// because the pile is not empty, or because the pile could not be read at
+	// all — has already said what it relayed. The failure's own detail wins
+	// over this line when it carries one (internal/core/job's Outcome.Detail),
+	// which is why the pile's report is unaffected by this call; what it
+	// rescues is the second case, where the relay worked and the READ broke,
+	// and the listing used to show a bare error with no sign that anything was
+	// delivered.
+	job.Report(ctx, summarize(result))
+
 	// Asked for on EVERY pass, including the ones that published nothing. A
 	// pile that is only counted when something happens is one that goes
 	// unnoticed during the quiet hour after the outage that filled it.
@@ -181,6 +219,39 @@ func run(ctx context.Context, r relay, bus publisher, log *slog.Logger) error {
 	}
 
 	return deadLetterError{report: deadLetters}
+}
+
+// summarize renders one pass as the single line `gobit jobs` prints.
+//
+// It is deliberately NOT the log's content. The log gets the event ids, three
+// severities and one record per condition, because a log is read forwards by
+// somebody reconstructing an incident; this is one cell of a table, read by
+// somebody deciding whether there IS an incident. So it carries the two counts
+// and the one state that the counts alone cannot express — a filled batch,
+// which is the difference between "the relay is working" and "the relay is
+// working and losing ground".
+func summarize(result outbox.RelayResult) string {
+	if result.Published == 0 && result.Failed == 0 {
+		// Said rather than left blank. A blank cell is what a job that has
+		// never reported looks like, and "the outbox was empty" is a real
+		// answer to "is the relay running".
+		return "nothing to relay"
+	}
+
+	line := fmt.Sprintf("published %d, failed %d", result.Published, result.Failed)
+
+	if given := len(result.DeadLettered); given > 0 {
+		// The ones given up on IN THIS PASS, which is not the pile: the pile is
+		// counted by the dead-letter report and printed by the failure. This
+		// number says the pile grew just now.
+		line += fmt.Sprintf(", %d newly given up on", given)
+	}
+
+	if result.Published+result.Failed == limit {
+		line += fmt.Sprintf("; the limit of %d was filled, so there is a backlog", limit)
+	}
+
+	return line
 }
 
 // reportPass logs what the pass did.
@@ -229,11 +300,16 @@ func reportPass(ctx context.Context, result outbox.RelayResult, log *slog.Logger
 // # Why a failure and not a log line
 //
 // Because a log line is not a read surface an operator visits. `gobit jobs` is
-// — it is the first thing asked during an incident — and it prints a DETAIL
-// column that internal/core/job's runner fills only from an error: a successful
-// run records no detail at all, by construction. So the choice was never
-// "failure or detail", it was "failure, or the pile is invisible to the one
-// listing built to be looked at".
+// — it is the first thing asked during an incident — and when this was written
+// the runner filled its DETAIL column only from an error, so the choice was not
+// a choice at all: it was "failure, or the pile is invisible to the one listing
+// built to be looked at".
+//
+// It IS a choice now. A successful run can leave a line ([job.Report]), so
+// "failure or detail" is a live question, and the package documentation answers
+// it: still a failure, because OUTCOME is the column that gets scanned and
+// `gobit deadletters` is the off switch for an alarm that stands. The reasoning
+// moved there rather than being repeated here.
 //
 // # Why it does not clear itself
 //

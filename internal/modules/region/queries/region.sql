@@ -1,4 +1,8 @@
--- region sorguları. Tüm okumalar deleted_at IS NULL filtresi uygular.
+-- region sorguları.
+--
+-- region tablosunun okumaları deleted_at IS NULL filtresi uygular; bölge
+-- SOFT silinir (DeleteRegion). Aynı şey country ve currency için GEÇERLİ
+-- DEĞİLDİR: onların sütunları 000003'te düşürüldü, gerekçe o dosyadadır.
 
 -- name: InsertRegion :one
 INSERT INTO region (id, name, currency_code, automatic_taxes, tax_rate, created_at, updated_at)
@@ -70,4 +74,4 @@ RETURNING id;
 -- name: GetRegionByCountry :one
 SELECT r.* FROM country c
 JOIN region r ON r.id = c.region_id AND r.deleted_at IS NULL
-WHERE c.iso_2 = $1 AND c.deleted_at IS NULL;
+WHERE c.iso_2 = $1;

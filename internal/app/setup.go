@@ -55,6 +55,7 @@ import (
 	"github.com/bdrtr/gobit/plugins/paymentpaytr"
 	"github.com/bdrtr/gobit/plugins/paymentstripe"
 	"github.com/bdrtr/gobit/plugins/searchpg"
+	"github.com/bdrtr/gobit/plugins/webhookout"
 	"github.com/bdrtr/gobit/plugins/webpush"
 )
 
@@ -141,6 +142,7 @@ var pluginCatalog = map[string]func() coreplugin.Plugin{
 	paymentstripe.Name:    func() coreplugin.Plugin { return paymentstripe.New() },
 	paymentpaytr.Name:     func() coreplugin.Plugin { return paymentpaytr.New() },
 	searchpg.Name:         func() coreplugin.Plugin { return searchpg.New() },
+	webhookout.Name:       func() coreplugin.Plugin { return webhookout.New() },
 	webpush.Name:          func() coreplugin.Plugin { return webpush.New() },
 }
 

@@ -238,7 +238,6 @@ func toCountry(row regiondb.Country) models.Country {
 		Name:      row.Name,
 		CreatedAt: toTime(row.CreatedAt),
 		UpdatedAt: toTime(row.UpdatedAt),
-		DeletedAt: toTimePtr(row.DeletedAt),
 	}
 	if row.RegionID != nil {
 		id := *row.RegionID
@@ -256,6 +255,5 @@ func toCurrency(row regiondb.Currency) models.Currency {
 		DecimalDigits: row.DecimalDigits,
 		CreatedAt:     toTime(row.CreatedAt),
 		UpdatedAt:     toTime(row.UpdatedAt),
-		DeletedAt:     toTimePtr(row.DeletedAt),
 	}
 }

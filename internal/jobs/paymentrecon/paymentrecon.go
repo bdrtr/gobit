@@ -28,6 +28,22 @@
 // than money. The repair stays a human's, with both ledgers in front of them.
 // What changes is that the human learns there is one.
 //
+// # What reaches `gobit jobs`, and what deliberately does not fail it
+//
+// Every pass leaves one line in the listing's DETAIL column ([job.Report]) —
+// examined, agreed, and each finding that is not zero. Until that channel
+// existed a pass could reach the listing only by FAILING, so this job's
+// findings reached nothing but the log: `gobit jobs` printed "ok" and an empty
+// cell for a pass that found money missing and for one that found nothing, and
+// an operator would have had to already suspect something to go looking in a
+// log for it.
+//
+// The pass still SUCCEEDS when it finds a divergence, and that is unchanged
+// rather than decided here. Whether money that disagrees should fail this job
+// the way a dead-letter pile fails the relay is a real question about an alarm,
+// and an alarm is not something to change while building the channel that made
+// the question askable. What changed is that the finding is now visible at all.
+//
 // # What it does NOT close
 //
 // A session whose row was never committed at all is invisible to this job, and
@@ -45,6 +61,7 @@ package paymentrecon
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -196,6 +213,13 @@ func run(ctx context.Context, r reconciler, log *slog.Logger) error {
 			"the payment ledgers could not be compared")
 	}
 
+	// Reported on EVERY pass, including the clean ones, and for the same reason
+	// the dead letters are asked for on every pass: a number that appears only
+	// when something is wrong is a number nobody has learned to read. An
+	// operator who sees "examined 12, agreed 12" every hour is one who notices
+	// "DIVERGENT 1" the hour it appears.
+	job.Report(ctx, summarize(report))
+
 	if report.Clean() {
 		// DEBUG, not INFO. A healthy installation runs this every hour forever,
 		// and a line that never changes is a line nobody reads — which is how
@@ -246,6 +270,50 @@ func run(ctx context.Context, r reconciler, log *slog.Logger) error {
 	}
 
 	return nil
+}
+
+// summarize renders one pass as the single line `gobit jobs` prints.
+//
+// The four findings are folded into ONE line here even though the log splits
+// them into four records on purpose. That is not a contradiction of the reason
+// they are split: the log is split because each finding needs a different
+// person, and a line in a table is not routed to anybody — it is read by
+// whoever typed the command, who needs to see at a glance that there is
+// something to route.
+//
+// A zero is omitted rather than printed as "unknown 0". The cell is scanned,
+// and four zeroes in it are four things to read past before reaching the one
+// that is not zero.
+func summarize(report paymentsvc.ReconciliationReport) string {
+	if report.Examined == 0 {
+		// Not blank: "nothing was suspect" and "this job has never run" must
+		// not look the same, and for this job in particular — its whole point
+		// is that an unasked question looks like an answered one.
+		return "nothing to compare"
+	}
+
+	line := fmt.Sprintf("examined %d, agreed %d", report.Examined, report.Agreed)
+
+	// DIVERGENT in capitals, alone among the four. It is the only one that
+	// means money moved with nothing here to show for it; the other three mean
+	// a question went unanswered.
+	if divergent := len(report.Divergences); divergent > 0 {
+		line += fmt.Sprintf(", DIVERGENT %d", divergent)
+	}
+	if report.Unknown > 0 {
+		line += fmt.Sprintf(", unknown %d", report.Unknown)
+	}
+	if report.Unreachable > 0 {
+		line += fmt.Sprintf(", unreachable %d", report.Unreachable)
+	}
+	if report.Unaskable > 0 {
+		line += fmt.Sprintf(", unaskable %d", report.Unaskable)
+	}
+	if report.Truncated {
+		line += fmt.Sprintf("; the limit of %d was filled, so the newest were not reached", limit)
+	}
+
+	return line
 }
 
 // reportDivergences logs the sessions where the money and the record disagree.

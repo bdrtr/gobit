@@ -11,7 +11,6 @@ import (
 
 const countCurrencies = `-- name: CountCurrencies :one
 SELECT count(*) FROM currency
-WHERE deleted_at IS NULL
 `
 
 func (q *Queries) CountCurrencies(ctx context.Context) (int64, error) {
@@ -22,8 +21,8 @@ func (q *Queries) CountCurrencies(ctx context.Context) (int64, error) {
 }
 
 const getCurrenciesByCodes = `-- name: GetCurrenciesByCodes :many
-SELECT code, symbol, name, decimal_digits, created_at, updated_at, deleted_at FROM currency
-WHERE code = ANY($1::text[]) AND deleted_at IS NULL
+SELECT code, symbol, name, decimal_digits, created_at, updated_at FROM currency
+WHERE code = ANY($1::text[])
 ORDER BY code
 `
 
@@ -47,7 +46,6 @@ func (q *Queries) GetCurrenciesByCodes(ctx context.Context, codes []string) ([]C
 			&i.DecimalDigits,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -61,11 +59,14 @@ func (q *Queries) GetCurrenciesByCodes(ctx context.Context, codes []string) ([]C
 
 const getCurrency = `-- name: GetCurrency :one
 
-SELECT code, symbol, name, decimal_digits, created_at, updated_at, deleted_at FROM currency
-WHERE code = $1 AND deleted_at IS NULL
+SELECT code, symbol, name, decimal_digits, created_at, updated_at FROM currency
+WHERE code = $1
 `
 
-// currency sorguları. Tüm okumalar deleted_at IS NULL filtresi uygular.
+// currency sorguları.
+//
+// Tabloda deleted_at YOKTUR ve okumalar öyle bir süzgeç TAŞIMAZ; gerekçe
+// country.sql'in başındaki ile aynıdır ve 000003'te yazılıdır.
 func (q *Queries) GetCurrency(ctx context.Context, code string) (Currency, error) {
 	row := q.db.QueryRow(ctx, getCurrency, code)
 	var i Currency
@@ -76,14 +77,12 @@ func (q *Queries) GetCurrency(ctx context.Context, code string) (Currency, error
 		&i.DecimalDigits,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const listCurrencies = `-- name: ListCurrencies :many
-SELECT code, symbol, name, decimal_digits, created_at, updated_at, deleted_at FROM currency
-WHERE deleted_at IS NULL
+SELECT code, symbol, name, decimal_digits, created_at, updated_at FROM currency
 ORDER BY code
 LIMIT $1 OFFSET $2
 `
@@ -109,7 +108,6 @@ func (q *Queries) ListCurrencies(ctx context.Context, arg ListCurrenciesParams) 
 			&i.DecimalDigits,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}

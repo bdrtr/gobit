@@ -12,6 +12,47 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **Yazılmış, belgelenmiş, uçtan uca test edilmiş bir eklenti KURULAMIYORDU —
+  ve bu sınıf için yazılmış kapı YEŞİLDİ** (C5, D22).
+
+  `plugins/webhookout` derleniyor, birim/entegrasyon/e2e testleri geçiyor ve
+  `.env.example`'da kopyalanabilir bir satırla anlatılıyordu. Kompozisyon
+  kökünün eklenti kataloğunda YOKTU — kurulumun baktığı tek harita orası — yani
+  `PLUGINS=webhook-out` açılışı "unknown plugin" ile durduruyordu. Ölçüm
+  `go list -deps ./cmd/server`: ikilinin bağımlılık kapanışı sekiz eklenti
+  sayıyor ve bunu saymıyordu, yani paket ikiliye hiç derlenmiyor ve
+  migration'ı da migrate yüzeyinin dışında kalıyordu.
+
+  **Kapının neden görmediği, bulgunun kendisinden değerli.**
+  `TestThePluginNamesInTheDocsAreReal` iki yönü de kontrol ediyor ve ikisi de
+  geçiyordu, çünkü kayıtlı ad kümesini `plugins/` ağacındaki `const Name`
+  değerlerini ayrıştırarak türetiyor. Yani "belgelenen ad bir yerde tanımlı mı"
+  ve "tanımlı ad belgede anılmış mı" diye soruyor; **operatörün sorduğu soruyu,
+  yani ikilinin o adı bilip bilmediğini hiç sormuyor.** Sonuç en keskin hâliyle:
+  belge, kopyalandığında kapının kendi godoc'unda önlediğini söylediği açılış
+  hatasını üreten bir satır taşıyordu.
+
+  İki düzeltme de yapıldı: katalog satırı, ve `TestEveryPluginIsInstallable` —
+  bir tarafı yine eklenti ağacından, ÖTEKİ tarafı kataloğun kendisinden okuyor,
+  ve her anahtarı o dosyanın kendi import tablosundan çözüyor ki takma adlı bir
+  import var olmayan bir eklenti gibi okunmasın. Kapı, sevk edilmiş kusurun tam
+  kendisiyle kanıtlandı: katalog satırı silindiğinde `webhook-out` adını vererek
+  düşüyor.
+
+  **Ders eklentileri aşıyor: bir karşılaştırmanın İKİ tarafını da aynı yerden
+  türeten kapı, ikisinin birbiriyle uyuştuğunu kanıtlar, dünya hakkında hiçbir
+  şey kanıtlamaz.** D16'da kolon denetimi yalnızca `CREATE TABLE`'dan kurduğu
+  bir şemayı okuyordu; daha öncesinde sahte deponun sahteyi kanıtladığı
+  bulunmuştu. Kalan denetimler bu gözle gözden geçirilmeli.
+
+- **`internal/app`'in migrate-down testleri, kanıtın kendisinde değil ÖN
+  KOŞULUNDA düşüyordu.** İki test region'ın "tam iki migration"ı olduğunu elle
+  yazmıştı; modül üçüncüsünü kazanınca ikisi de kırıldı. Sayı artık okunuyor:
+  biri geri alınacak adım sayısını mevcut sürümden türetiyor, diğeri
+  dokunulmayan sahibin sürümünü geri almadan ÖNCE okuyup onunla karşılaştırıyor.
+  Testin gevşemediği mutasyonla gösterildi — `-steps` yok sayıldığında hâlâ
+  düşüyor.
+
 - **gobit bir KÜTÜPHANE olacak, kopyalanan bir şablon değil** (ADR 0025).
 
   Bugün yapısal olarak şablon modeli ve bu bir tercih değil: 155.054 satırın
@@ -581,6 +622,280 @@ Sabitlenme `1.0.0` ile olur.
   tahmin edilmeden bırakıldı.
 
 ### Eklendi
+
+- **Giden webhook'ların GÖNDERİCİSİ yazıldı — ve bugün KURULAMIYOR; bu
+  varsayılmadı, ölçüldü** (C5, D22).
+
+  Altındaki her şey zaten yapılmıştı: outbox olayı, onu vaat eden işlemden sağ
+  çıkarıyor; röle başarısız bir yayını tavanlı bir merdivenle yeniden deniyor ve
+  vazgeçtiğini ölü mektuba yazıyor (B12); bir eklenti periyodik iş kaydedebiliyor
+  (B13). Eksik olan tek şey, yayımlanmış bir olayı gobit'in dışındaki birinin
+  alabileceği bir HTTP isteğine çeviren şeydi. `plugins/webhookout` odur.
+
+  **Sağlayıcı yuvası değil, KENDİ MODÜLÜNÜ getiren bir eklenti**, ve gerekçe ADR
+  0018'in web push için verdiği cevabın aynısı: bir sağlayıcı iş birimi başına
+  SEÇİLİR, oysa giden bir webhook'un ihtiyaç duyduğu şey çerçevenin ZATEN
+  TUTUYOR OLMASI gereken durumdur — bir URL, bir gizli anahtar ve bir konu
+  kümesi, üçü de herhangi bir olay yola çıkmadan önce bir insan tarafından
+  kaydedilmiş. Bildirim sağlayıcısının tek bir adres alanı var ve o bir dizge;
+  bir webhook adresi üç değerdir, ikisinin o sözleşmede duracak yeri yoktur.
+  Eklenti ayar İSTEMİYOR ve bu da bilinçli: bir alıcının URL'i, konuları ve
+  anahtarı ALICIYA aittir, sürece değil — ortam değişkenine yazılan bir alıcı
+  deploy olmadan eklenemezdi.
+
+  **Teslim kuyruğu bilerek `event_outbox` DEĞİL, ve reddin gerekçesi şemanın
+  kendisi.** O tablo OLAY üzerinde anahtarlı: tek bir deneme sayacı, tek bir
+  sonraki deneme anı, tek bir vazgeçme damgası — ve hiç hedef sütunu yok. Üç
+  alıcıya borçlu olunan, alıcılardan biri kapalı bir olayın o satırda ifade
+  edilebilir hiçbir hâli yok: yayımlandı diye kapatmak başarısızlığı kaybeder,
+  beklemede bırakmak 200 dönmüş iki alıcıya aynı olayı yeniden gönderir. Fan-out
+  HEDEF BAŞINA bir deneme sayacı ister, o da (alıcı, olay) başına bir satırdır.
+  İkinci gerekçe alarmın kendisi: röle işi ölü mektup yığını boş değilken
+  koşusunu DÜŞÜRÜYOR ve `gobit jobs` listesine ulaşan kanal budur; webhook
+  teslimlerini aynı yığına koymak, üçüncü tarafın kapattığı bir ucu gobit'in
+  kendi veri yolunun bir olayı kabul edememesinden ayırt edilemez kılardı — hem
+  de operatörün tam bu ikisini ayırmak için okuduğu tek listede.
+
+  **İmza şeması bir alıcının Go okumadan uygulayabileceği biçimde yazıldı.**
+  İmzalanan gövde değil: şema sürümü, zaman damgası, teslim kimliği, olay adı,
+  deneme sayısı ve ham gövde UZUNLUK ÖNEKLİ olarak birleştiriliyor, üstüne
+  HMAC-SHA256. Önek kuralı ADR 0028'in GELEN çağrı halkasının tekrar oynatma
+  anahtarını kurarken kullandığı kuralın aynısı, ve sebebi de aynı: onsuz,
+  ayıracı içeren bir değer iki farklı mesajı tek bir imzalı dizgeye
+  getirebilir — burada bu, bir gövdeyi başka bir olayın imzasının altına taşımak
+  demek olurdu. Sayılar da başlıkta GİDEN METİN olarak imzalanıyor, tamsayı
+  olarak değil: "03" ile "3" tek bir sayı ama iki ayrı bayt dizisidir, yani
+  doğrulamadan önce ayrıştıran taraf imzalanan şeyi çoktan değiştirmiştir.
+
+  **Bir geçiş işlemi TUTMUYOR, kiralıyor.** Röle kendi grubunu
+  `FOR UPDATE SKIP LOCKED` ile okuyup yayını o işlemin içinde yapar; orada
+  doğrudur, çünkü yayın yerel bir veri yolu çağrısıdır. Burada yanlış olurdu:
+  bir deneme, üçüncü tarafa yapılan ve on saniye zaman aşımı olan bir HTTP
+  isteğidir, ve bir geçiş boyunca açık tutulan işlem havuz bağlantısıyla
+  anlık görüntüyü dakikanın çoğunda tutardı — hem de tam olarak alıcının cevap
+  vermeyi bıraktığı, yani geçişin uzadığı anda. İşlem yalnızca istemi kapsıyor,
+  `next_attempt_at` ileri itiliyor, istekler elde hiçbir şey tutulmadan
+  yapılıyor. Bedeli yazılı: geçiş ortasında ölen bir süreç satırlarını kilitli
+  değil KİRALI bırakır ve satırlar kira dolunca kendiliğinden geri gelir.
+
+  **Merdiven rölenin merdiveni DEĞİL ve fark maddenin bütün noktası.** Rölenin
+  dört saat üç dakikası YEREL veri yoluna karşı ölçülmüştür ve süreç içi bir
+  yayın hatası için fazlasıyla uzundur. Bir webhook ise bir iş günü boyunca
+  kapalı kalabilen üçüncü tarafa gider, dört saat ise tek bir gecenin içindedir.
+  Buradaki merdiven on üç denemede yirmi altı saat otuz bir dakikayı kapsıyor:
+  cuma akşamı bozulan bir alıcıya cumartesi gecesi hâlâ borçluyuz, gerçekten
+  ortadan kalkmış bir alıcı ise bir gün ve biraz içinde ölü ilan ediliyor.
+  `TestTheRetryWindowOutlastsAReceiverBeingDownForADay` bu pencereyi tutuyor.
+  Kod yeniden kullanılamadı ve sebebi tercih değil: rölenin politikası dışa
+  açık, ama deneme sayısını gecikmeye çeviren aritmetiği dışa açık DEĞİL, yani
+  dışarıdaki bir çağıran politikayı tutabiliyor ve ona hiçbir şey soramıyor —
+  yayımlanmış yüzeyi depo içi bir tüketici için genişletmek ise ADR 0026'nın
+  reddettiği takas.
+
+  Gövde olayın yükünü olduğu gibi taşıyor ama `customer_id`'yi TAŞIMIYOR, ve
+  çıkarma GÖRÜNÜR: alan adı gövdedeki listede duruyor. Gerekçe ADR 0008 —
+  `/store/v1/customers/{id}` kimlik doğrulamasızdır, yani bir müşteri kimliği
+  tanımlayıcı değil, o müşterinin adı, e-postası ve bütün adresleri için
+  hamiline yazılı bir bilettir. Sessiz çıkarma daha kötü olurdu: alıcı, her
+  siparişte tetiklenen bir "misafir siparişi" dalı yazardı. Düz http de
+  reddediliyor, tek istisna loopback; ana makineyi çözüp özel adresi reddetmek
+  ise BİLEREK yapılmadı ve gerekçesi yazıldı — çöz-sonra-bağlan denetimi bir
+  denetim değildir, çünkü ad ikinci seferde başka türlü çözülebilir.
+
+  Uçtan uca kanıt gerçek bir sepetle: `TestARealOrderReachesARealWebhookReceiver`
+  gerçek checkout akışını, gerçek sipariş modülünü, gerçek veri yolunu,
+  eklentinin gerçek PostgreSQL kuyruğunu ve gerçek bir HTTP isteğini birbirine bağlıyor;
+  alıcının elinde yönetim ucunun BİR KEZ gösterdiği anahtardan başka bir şey
+  yokken imza doğrulanıyor. Eklentinin kendi entegrasyon testi bunu
+  kanıtlayamazdı: bir eklenti hiçbir modülü import edemez (ADR 0001), yani orada
+  olayı aboneye testin kendisi verir — sipariş modülünün GERÇEKTEN yayımladığı
+  olayın, eklentinin GERÇEKTEN aldığı olay olduğu yalnızca burada görülebilir.
+
+  **Ve eksik yarı gizlenmiyor: bu eklenti BUGÜN KURULAMIYOR.** `webhook-out`,
+  kompozisyon kökünün eklenti kataloğunda yok; kurulumu belirleyen tek harita o
+  olduğu için `PLUGINS=webhook-out` açılışı "bilinmeyen eklenti" ile durduruyor.
+  Ölçüm `go list -deps ./cmd/server`: ikilinin bağımlılık kapanışı sekiz eklenti
+  sayıyor ve bunu saymıyor — paket ikiliye hiç derlenmiyor, dolayısıyla
+  migrasyonu da migrate yüzeyinin dışında kalıyor. Eklentinin kendi paket
+  belgesi "kompozisyon kökünün kataloğundaki tek bir satır dışında hiçbir yerde
+  adı geçmez" diyor; o satır yok.
+
+  **Bu sınıfı yakalamak için yazılmış kapı ise YEŞİL, ve sebebi bulgunun
+  kendisinden daha değerli.** `TestThePluginNamesInTheDocsAreReal`'in ters yönü
+  tam olarak "yazılmış ama hiçbir yerde duyurulmamış bir eklenti, tüketicisi
+  olmayan bir yetenektir" diye var. Her iki yönü de burada geçiyor, çünkü
+  "kayıtlı" adları KATALOGDAN değil, eklentiler ağacındaki `Name` sabitlerini
+  ayrıştırarak çıkarıyor. Yani ileri yön "belgedeki bu ad bir yerde tanımlı mı",
+  ters yön "tanımlı bu ad belgede geçiyor mu" diye soruyor; ikisi de operatörün
+  sorduğu soruyu — ikili bu adı tanıyor mu — sormuyor. Sonuç en keskin hâliyle
+  ortada: `.env.example` artık kopyalanabilir bir örnek satır taşıyor ve o satırı
+  kopyalamak, kapının kendi godoc'unun önlediğini söylediği açılış hatasını
+  üretiyor. İki düzeltme de kaydedildi, yapılmadı: kompozisyon kökünde bir
+  harita satırı, ve adlarını kaynak ağacından değil katalogdan alan bir kapı
+  (`docs/gaps.md`, C5 ve D22).
+
+- **Hiçbir şeyin hiç yazmadığı dokuz sütun cevaplandı — ve dokuzun TEK bir
+  cevabı yokmuş** (D18).
+
+  Sütun denetimi yazılmış kümesini çıplak sütun ADI yerine TABLOYA göre tutmaya
+  başladığı gün dokuz canlı bulgu yüzeye çıkmıştı (D16, birinci kör nokta).
+  Dokuzu da `deleted_at`, dokuzu da aynı şekilde: modül tablolarının BAZILARINI
+  yumuşak siliyor, bu tablosunu silmiyor, ve kardeş tabloların yazması sayesinde
+  kapı yeşil kalıyor. O gün hiçbiri karara bağlanmamıştı; muafiyetleri
+  "UNCLOSED FINDING, not a decision" diye açılan YER TUTUCULARDI.
+
+  **Sekizi kapandı ve kapanışlar ZIT yönlere gidiyor. Asıl bulgu bu.** Dördünde
+  eksik olan YAZMAYDI; dördünde yanlış olan SÜTUNDU. Dokuzunu tek bir parti
+  gibi okumak, ya meşru bir silme yolunu yok eden dört şema değişikliği ya da
+  hiçbir şeyin ihtiyaç duymadığı dört silme üretirdi.
+
+  **Yazma eksikti: ürün modülü dört silme kazandı**, ve dördünün de yönetim
+  ucu var — bağlanmayan bir sorgu, sütun denetimini yeşile döndürüp sütunu tam
+  olarak eskisi kadar yazılamaz bırakırdı (D4'ün öğrettiği ders). Koleksiyonun
+  silinmesi ürünlerini AYNI İŞLEMDE serbest bırakıyor: ürün koleksiyonunu kendi
+  sütunuyla gösterir, o sütunun ON DELETE SET NULL kuralı yumuşak silmeye karşı
+  hiç çalışmaz, ve vitrin listesi koleksiyona JOIN yapmadan o kimliğe süzer —
+  yani eski bir bağlantıyı izleyen müşteri, satıcının artık göremediği bir
+  koleksiyonun ürünlerini görmeye devam ederdi. Kategoride ALT DÜĞÜMÜ olan bir
+  düğüm REDDEDİLİYOR: ağaç kökten aşağı yürütüldüğü için yetim kalan çocuklar
+  sadece boşta kalmaz, bütün alt ağaç satırları canlıyken her listeden kaybolur.
+  İki seçenek gerekçesiyle reddedildi — çocukları büyükanneye bağlamak satıcının
+  ağacının şeklini sormadan değiştirir, ebeveynlerini boşaltmak ise alt ağacı
+  vitrin menüsünün EN ÜST düzeyine terfi ettirir. Etikette hiçbir koruma yok ve
+  fark yazılı: etiket bir yaftadır, katalogda ondan yapılanmış bir şey yoktur ve
+  yanlış yazılmış bir yaftayı geri çekmek için ürünleri tek tek etiketten
+  çıkarmak istenmez. Seçenek değerinde ise CANLI bir varyantın taşıdığı değer
+  reddediliyor: varyant okuması değeri canlılık süzgeciyle birleştirdiğinden
+  silme gürültüyle düşmez, varyantı OLDUĞUNDAN AZ seçenekle gösterir — ve
+  yalnızca o seçenekte ayrışan iki varyant hem sayfada hem veride birbirinin
+  aynısı olur. Seçeneğin kendi silmesi de artık değerlerini aynı işlemde
+  damgalıyor; onları canlı bırakmak bu sütunun neden hiç yazılmamış olduğunun ta
+  kendisiydi.
+
+  **Sütun yanlıştı: üç migrasyon dört sütunu DÜŞÜRDÜ**, ve üçü de gerekçesini
+  ayrı ayrı yazıyor. Sevkiyat ile rezervasyon OLMUŞ BİR ŞEYİN KAYDIDIR ve
+  emekliliği bir DURUMDUR: sevkiyat modülünün ilk migrasyonu bu argümanı zaten
+  sevkiyat KALEMLERİ için yapmış, tabloya kendisine hiç uygulamamıştı; envanter
+  tarafında ise `deleted_at`, durumun söylediğini söyleyen ikinci bir yoldur ve
+  ikisi çelişebilir — dahası, bırakmayı silmeye çevirmek "zaten bırakıldı" ile
+  "hiç var olmadı" cevaplarını tek cevaba indirir, ki checkout saga'sının
+  telafi adımının idempotent olması tam da bu ayrıma dayanır. Ülke ile para
+  birimi ise REFERANS VERİDİR: satırlarını tohum migrasyonu yazar, var olan tek yazma
+  bir ülkeyi bölgeler ARASINDA taşır, ve sütun bir gün yazılsaydı aktif olarak
+  zararlı olurdu — damgalanmış bir ülke sonsuza kadar "bölgesi yok" cevabı verir
+  ve o ülkede ödeme, katalogda ya da bölge listesinde bunu açıklayan hiçbir şey
+  yokken durur.
+
+  **Sütun düşürmek indeksleri de düşürür ve biri taşıyıcıydı.** PostgreSQL,
+  YÜKLEMİ düşürülen sütunu adlandıran her indeksi sessizce ve uyarısız düşürür;
+  bu tabloların bütün indeksleri `deleted_at` üzerinde kısmiydi. Migrasyonlar
+  bunu yazılmadan ÖNCE gerçek bir PostgreSQL'de ölçtüklerini kaydediyor: kısmi
+  UNIQUE indeksli bir deneme tablosunda, bir ifade öncesine kadar imkânsız olan
+  yinelenen anahtar, sütun düşürüldükten sonra kabul edilmiş. Sevkiyatta söz
+  konusu indeks, yeniden denenen bir saga adımının İKİNCİ BİR KARGO ETİKETİ
+  üretmesini durduran idempotentlik korumasıydı — indeksleri yeniden kurmadan
+  sütunu düşürmek korumayı kaldırır ve şemayı el değmemiş gösterirdi. Üç test
+  bunu migrasyon metnine değil gerçek veritabanına karşı tutuyor:
+  `TestTheIdempotencyGuardSurvivedTheDroppedColumn`,
+  `TestDroppingTheColumnDidNotTakeTheReservationIndexesWithIt` ve
+  `TestDroppingTheColumnDidNotTakeTheCountryIndexWithIt`.
+
+  **Dokuzuncusu açık ve artık YER TUTUCU DEĞİL: muafiyeti soruyu SÖYLÜYOR.**
+  Stok lokasyonunda sütunu yazmak yetmiyor ve bu ölçüldü — uygunluk toplamları
+  seviye satırlarını lokasyona hiç JOIN yapmadan okuyor, yani yumuşak silinmiş
+  bir lokasyon operatörün ekranından kaybolurken stoğunu satmaya devam eder ve
+  rezervasyon yolu onu yine dağıtır. Sert silme daha kötü: hem seviye hem
+  rezervasyon lokasyona ON DELETE CASCADE ile bağlı, yani stok satırlarını ve
+  modülün "asla silinmemeli" dediği rezervasyon geçmişini yok ederdi. SORU
+  bu yüzden "silme mi durum mu" değil, kapanan bir lokasyonun neyi borçlu
+  olduğudur: seviyeleri taşınacak mı, sıfırlanacak mı, yoksa yalnızca
+  uygunluğun dışında mı tutulacak, ve orada hâlâ aktif olan rezervasyonlara ne
+  olacak. Muafiyet listesi bugün on bir satır: karar olan D9'un onu, ve bu bir
+  soru. "UNCLOSED FINDING" ifadesi listede hiç geçmiyor.
+
+- **Başarılı bir iş koşusu artık KONUŞABİLİYOR: `gobit jobs` listesinin detay
+  sütunu bir HATANIN arkasından çıktı** (D21).
+
+  Önce ölçüldü, sonra yazıldı — ve ölçüm brifingin öncülünü doğruladı. Gerçek
+  koşucuya karşı atılan tek kullanımlık bir sonda üç durumu da üretti: başarılı
+  koşu detayı BOŞ bırakıyordu, detay taşıyan bir hatayla düşen koşu onu
+  yazdırıyordu, detay taşımayan bir hatayla düşen koşu yine boş bırakıyordu.
+  `Outcome.Detail` yalnızca hatadan besleniyordu ve o da hata boş değilken
+  çalışan bir koruma altındaydı. Yani söyleyecek bir şeyi olan ve şikâyet edecek
+  bir şeyi olmayan bir geçiş, ancak günlüğe konuşabiliyordu.
+
+  Çözüm koşum kapsamında ve bağlamda taşınan bir raportör: `WithReporter` onu
+  kuruyor, `Report` bir satır yazıyor, koşucu `Outcome.Detail`'i ondan besliyor.
+  Tamamen EKLEMELİ — hiçbir imza değişmedi, iş tanımı yeni bir dışa açık alan
+  kazanmadı, bir gün önce yayımlanmış sözleşmeye dokunulmadı.
+
+  **İki seçenek reddedildi ve birincisi ÖLÇÜMLE reddedildi.** İş gövdesini
+  hatanın yanında bir dizge de döndürecek şekilde genişletmek daha baştan ölü:
+  `TestEveryJobDefinitionFieldReachesAPluginJob`, zamanlayıcının kendi tanımının
+  her dışa açık alanının yayımlanmış `plugin.Job` üzerinde DÖNÜŞTÜRÜLEBİLİR bir
+  ikizi olmasını şart koşuyor, o yapının iş alanı ise yalnızca hata döndüren bir
+  fonksiyon — ve bir yansıma sondası iki fonksiyon tipini İKİ YÖNDE de
+  dönüştürülemez raporluyor. Yani bu seçenek ancak bir gün önce yayımlanmış bir
+  sözleşmeyi kırarak ya da kopyayı koruyan kapıyı zayıflatarak alınabilirdi:
+  depo içindeki üç işe bir dizge vermek için çok büyük bir fatura, ve aşağı
+  akıştaki bir yazarın ödeyeceği sürüm "eklentiniz artık derlenmiyor" olurdu.
+  İkincisi — başarılı sonucun uygulayabileceği bir arayüz — pahalı değil,
+  İNŞA EDİLEMEZ: başarı `nil` bir hatadır ve `nil` hiçbir arayüzü uygulamaz;
+  çalışması için başarısızlık olmayan bir hata döndürmek gerekir, ondan sonra da
+  her hata kontrolünün, sonuç sütununun ve listedeki başarısızlık önekinin hangi
+  hataların başarısızlık OLMADIĞINI öğrenmesi gerekir.
+
+  **Bedel açıkça ödendi, inkâr edilmedi.** Bağlam kanalı kendini gizler: bir işin
+  imzasında rapor verebileceğini söyleyen hiçbir şey yoktur. Üç şeyle
+  hafifletildi — gövdenin godoc'u fonksiyonu adıyla anıyor, depodaki üç işin
+  üçü de çağırıyor (yani desen depoda okunabilir), ve koşum dışında yapılan bir
+  çağrı sessiz bir no-op: bilmemenin bedeli eksik bir satır, asla bir panik
+  değil.
+
+  **Öncelik, değişikliği zaten çalışan her şey için görünmez kılıyor.** Kendi
+  detayını taşıyan bir hata, koşum ortasında raporlanan her şeyi hâlâ EZİYOR;
+  yani düşen bir koşu tam olarak eskiden ne raporluyorsa onu raporluyor. İkisini
+  ters çeviren bir mutasyon tam bir testi düşürüyor. Gerçekten yeni olan tek
+  davranış — kendi detayı OLMADAN düşen bir koşunun son raporlanan satırı
+  koruması — yalnızca yeni fonksiyonu çağıran koddan erişilebilir.
+
+  **Yetenek ÜÇ TÜKETİCİYLE birlikte geldi**, çünkü tüketicisi olmayan bir
+  yetenek bu deponun adı konmuş en pahalı kusurudur. Outbox rölesi geçişinin
+  VERİMİNİ raporluyor, ve boş hücrenin sakladığı şey buydu: boş geçen bir
+  dakika, yetişen bir röle, ve her dakika grup sınırını doldururken yığını büyüyen
+  bir röle — üç ayrı olgu, aynı biçimde yazdırılıyordu. Ödeme mutabakatı
+  incelediğini, uyuştuğunu, AYRIŞTIĞINI ve ulaşamadığını raporluyor; saga gözcüsü
+  terk edilmiş sayısını. Üçünün de bulguları bugüne dek yalnızca günlüğe
+  ulaşıyordu. Rölenin ölü mektup yığını ise koşusunu DÜŞÜRMEYE devam ediyor —
+  devralınmadı, yeniden karara bağlandı ve paket belgesine yazıldı: SONUÇ
+  operatörün taradığı sütundur, detay sonradan okunur, ve bu işin sonucunu
+  izleyen her şey bir indirgeme yayımlandığı gün sessizce susardı.
+
+  Zincir her halkanın yaşadığı yerde ayrı ayrı kanıtlandı: rapordan sonuca
+  gerçek koşucuya karşı, sonuçtan saklanan satıra ve geri gerçek bir
+  PostgreSQL'e karşı, saklanan satırdan yazdırılan listeye kompozisyon kökünde.
+  Altı mutasyonun altısı da ısırdı ve her geri yükleme sha256 ile doğrulandı.
+
+  **Yolda bulundu, raporlandı ve YAPILMADI:** `Runner.RunNow`'un kendi testleri
+  dışında hiçbir çağıranı yok, ve godoc'u onu `gobit job run` komutunun
+  çağırdığını iddia ediyordu. Öyle bir alt komut yok — ikili help, migrate,
+  stuck, recover, jobs, deadletters ve seed dağıtıyor. `Definition.Every` de aynı
+  var olmayan komutu takvim zamanlaması için kaçış kapısı olarak öneriyordu. İki
+  cümle de artık özelliği iddia etmek yerine boşluğu söylüyor.
+
+  **Açık kalan ve aynı gün gelen:** bir EKLENTİ detay raporlayamıyor. Yayımlanmış
+  iş sözleşmesinin gövde alanı bağlam alıp hata döndürüyor, raportör ise üçüncü
+  tarafın import edemeyeceği bir internal pakette yaşıyor — oysa koşucunun
+  donattığı bağlam eklentinin gövdesine zaten veriliyor, yani değer orada,
+  ulaşılamayan tek şey anahtar. Canlı örnek aynı gün geldi: `plugins/webhookout`
+  teslim geçişi verimini ve geçiş sınırına dayandığını GÜNLÜĞE raporluyor,
+  listeye ise ancak DÜŞEREK ulaşıyor. En küçük kapanış, bağlam anahtarını taşıyan
+  yayımlanmış küçük bir yaprak paket ve onu yeniden dışa veren internal paket:
+  uyumluluk sözüne üç tanımlayıcı ekler, ADR 0026'nın öngördüğü fiyat ise
+  zamanlayıcının tamamını yayımlamaktı. Gerekçesiyle reddedilenler: zamanlayıcının
+  eklenti yüzeyini import etmesi (yasal, ama bağımlılığı ters çevirir) ve
+  eklentinin gövdesini kompozisyon kökünde sarmalamak (sarmalama, eklentinin
+  konuşabileceği bir kanalı icat edemez).
 
 - **Bir eklenti artık zamanlanmış iş kaydedebiliyor — ve uzatma noktası İLK
   TÜKETİCİSİYLE birlikte geldi** (B13).

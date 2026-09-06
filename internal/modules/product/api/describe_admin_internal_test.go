@@ -268,6 +268,10 @@ func adminEndpoints() []adminEndpoint {
 			record: deleted{},
 		},
 		{
+			method: http.MethodDelete, path: "/admin/v1/product-option-values/{id}", status: "200",
+			record: deleted{},
+		},
+		{
 			method: http.MethodPut, path: "/admin/v1/variants/{id}/price-set", status: "200",
 			request: linkRequest{}, record: filledVariantLinks(),
 		},
@@ -316,6 +320,10 @@ func adminEndpoints() []adminEndpoint {
 			record: filledCollection(), list: true,
 		},
 		{
+			method: http.MethodDelete, path: "/admin/v1/product-collections/{id}", status: "200",
+			record: deleted{},
+		},
+		{
 			method: http.MethodPost, path: "/admin/v1/product-categories", status: "201",
 			request: createCategoryRequest{}, record: filledCategory(),
 		},
@@ -324,12 +332,20 @@ func adminEndpoints() []adminEndpoint {
 			record: filledCategory(), list: true,
 		},
 		{
+			method: http.MethodDelete, path: "/admin/v1/product-categories/{id}", status: "200",
+			record: deleted{},
+		},
+		{
 			method: http.MethodPost, path: "/admin/v1/product-tags", status: "201",
 			request: createTagRequest{}, record: filledTag(),
 		},
 		{
 			method: http.MethodGet, path: "/admin/v1/product-tags", status: "200",
 			record: filledTag(), list: true,
+		},
+		{
+			method: http.MethodDelete, path: "/admin/v1/product-tags/{id}", status: "200",
+			record: deleted{},
 		},
 	}
 }

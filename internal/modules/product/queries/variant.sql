@@ -101,6 +101,62 @@ JOIN product_option o ON o.id = ov.option_id AND o.deleted_at IS NULL
 WHERE ov.id = ANY($1::text[]) AND ov.deleted_at IS NULL
 ORDER BY o.rank, ov.rank, ov.id;
 
+-- CountVariantsUsingOptionValue counts the LIVE variants that carry the value.
+--
+-- It guards the delete below. The join to product_variant is the whole point:
+-- product_variant_option_value has no deleted_at of its own, so a variant that
+-- was soft-deleted long ago still has its rows in that table, and counting them
+-- would refuse to delete a value that nothing living uses.
+-- name: CountVariantsUsingOptionValue :one
+SELECT count(*)
+FROM product_variant_option_value vov
+JOIN product_variant v ON v.id = vov.variant_id AND v.deleted_at IS NULL
+WHERE vov.value_id = $1;
+
+-- SoftDeleteOptionValue stamps one option value's deleted_at.
+--
+-- The write that was missing (docs/gaps.md D18). Its absence had a shape the
+-- other three do not: an option value is on the PRODUCT PAGE, so a value added
+-- with a typo — "Redd" next to "Red" — was on the storefront for good, and the
+-- only escape was to delete the whole option and build it again, which takes
+-- the variants' option assignments with it.
+--
+-- The FK from product_variant_option_value says ON DELETE CASCADE and cannot
+-- fire against a soft delete, which is why the guard is not left to the
+-- database: without it a value in use would vanish from
+-- ListVariantOptionValuesByVariantIDs (that query joins the value with
+-- "ov.deleted_at IS NULL") and the variant would silently show fewer options
+-- than it has — two variants that differ only in that option would become
+-- indistinguishable on the page.
+-- name: SoftDeleteOptionValue :execrows
+UPDATE product_option_value SET deleted_at = now(), updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL;
+
+-- SoftDeleteOptionValuesByOption deletes the values of ONE option.
+--
+-- Deleting an option already removes the whole option from every read (each one
+-- joins product_option with "deleted_at IS NULL"), so this statement changes
+-- nothing an API caller can see. It is here because the alternative is worse
+-- than invisible: leaving live values under a dead option makes
+-- product_option_value the one child table in this module whose rows outlive
+-- their parent, and the next reader of the schema has to discover that by
+-- experiment. No variant guard applies — the variants lost that option the
+-- moment the option itself was stamped.
+-- name: SoftDeleteOptionValuesByOption :execrows
+UPDATE product_option_value SET deleted_at = now(), updated_at = now()
+WHERE option_id = $1 AND deleted_at IS NULL;
+
+-- SoftDeleteOptionValuesByProduct deletes the values of ALL of a product's
+-- options.
+--
+-- The subquery does NOT filter the option's own deleted_at, deliberately: this
+-- runs in the same transaction as SoftDeleteOptionsByProduct and must give the
+-- same answer whichever of the two runs first.
+-- name: SoftDeleteOptionValuesByProduct :execrows
+UPDATE product_option_value SET deleted_at = now(), updated_at = now()
+WHERE deleted_at IS NULL
+  AND option_id IN (SELECT id FROM product_option WHERE product_id = $1);
+
 -- name: SetVariantOptionValue :exec
 -- Because the primary key is (variant_id, option_id), adding a second value to
 -- the same option produces an UPDATE rather than a new row.

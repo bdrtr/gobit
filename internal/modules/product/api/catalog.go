@@ -30,6 +30,7 @@ type Catalog interface {
 	ListOptions(ctx context.Context, productID string) ([]models.Option, error)
 	AddOptionValue(ctx context.Context, optionID, value string) (models.OptionValue, error)
 	DeleteOption(ctx context.Context, id string) error
+	DeleteOptionValue(ctx context.Context, id string) error
 
 	SetVariantPriceSet(ctx context.Context, variantID, priceSetID string) error
 	ClearVariantPriceSet(ctx context.Context, variantID string) error
@@ -48,13 +49,16 @@ type Catalog interface {
 	CreateCollection(ctx context.Context, in service.CreateCollectionInput) (models.Collection, error)
 	GetCollection(ctx context.Context, id string) (models.Collection, error)
 	ListCollections(ctx context.Context, limit, offset int) (service.ListResult[models.Collection], error)
+	DeleteCollection(ctx context.Context, id string) error
 
 	CreateCategory(ctx context.Context, in service.CreateCategoryInput) (models.Category, error)
 	GetCategory(ctx context.Context, id string) (models.Category, error)
 	ListCategories(ctx context.Context, opts service.ListCategoriesOptions) (service.ListResult[models.Category], error)
+	DeleteCategory(ctx context.Context, id string) error
 
 	CreateTag(ctx context.Context, value string) (models.Tag, error)
 	ListTags(ctx context.Context, limit, offset int) (service.ListResult[models.Tag], error)
+	DeleteTag(ctx context.Context, id string) error
 
 	ListStoreProducts(ctx context.Context, opts service.StoreListOptions) (service.ListResult[service.StoreProduct], error)
 	GetStoreProduct(ctx context.Context, idOrHandle string, salesChannelIDs []string) (service.StoreProduct, error)

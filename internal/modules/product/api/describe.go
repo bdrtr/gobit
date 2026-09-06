@@ -468,6 +468,16 @@ func describeAdminOptions(d *openapi.Doc) {
 			"200": openapi.Response("Deletion record", d.Item(deleted{})),
 		},
 	})
+
+	d.Describe(http.MethodDelete, "/admin/v1/product-option-values/{id}", openapi.Operation{
+		Summary: "Deletes a single option value.",
+		Description: "A value carried by a living variant is refused with 409; change " +
+			"those variants first. The id in the path is the VALUE's own id, not the " +
+			"option's.",
+		Responses: map[string]any{
+			"200": openapi.Response("Deletion record", d.Item(deleted{})),
+		},
+	})
 }
 
 // describeAdminLinks describes the variant's price/stock link endpoints.
@@ -589,6 +599,13 @@ func describeAdminTaxonomy(d *openapi.Doc) {
 		},
 	})
 
+	d.Describe(http.MethodDelete, "/admin/v1/product-collections/{id}", openapi.Operation{
+		Summary: "Deletes the collection and releases its products.",
+		Responses: map[string]any{
+			"200": openapi.Response("Deletion record", d.Item(deleted{})),
+		},
+	})
+
 	d.Describe(http.MethodPost, "/admin/v1/product-categories", openapi.Operation{
 		Summary:     "Creates a new category.",
 		RequestBody: d.RequestBody(createCategoryRequest{}),
@@ -607,6 +624,21 @@ func describeAdminTaxonomy(d *openapi.Doc) {
 		},
 	})
 
+	// The refusal is described in prose and NOT recorded as a separate "409".
+	// The reason is the payment module's, and it holds here: the error body is
+	// the core's shared envelope, and the way to refer to it (the name of the
+	// "Error" component) is an internal detail of the core — repeating it here
+	// would create a second record that breaks silently the day the name
+	// changes.
+	d.Describe(http.MethodDelete, "/admin/v1/product-categories/{id}", openapi.Operation{
+		Summary: "Deletes the category.",
+		Description: "A category that still has subcategories is refused with 409; " +
+			"move or delete the children first.",
+		Responses: map[string]any{
+			"200": openapi.Response("Deletion record", d.Item(deleted{})),
+		},
+	})
+
 	d.Describe(http.MethodPost, "/admin/v1/product-tags", openapi.Operation{
 		Summary:     "Creates a new tag.",
 		RequestBody: d.RequestBody(createTagRequest{}),
@@ -620,6 +652,15 @@ func describeAdminTaxonomy(d *openapi.Doc) {
 		Parameters: pagingParameters(),
 		Responses: map[string]any{
 			"200": openapi.Response("A page of tags", d.List(models.Tag{})),
+		},
+	})
+
+	d.Describe(http.MethodDelete, "/admin/v1/product-tags/{id}", openapi.Operation{
+		Summary: "Deletes the tag.",
+		Description: "The products that carried it are not changed; the tag simply stops " +
+			"appearing on them. The value becomes free for a new tag.",
+		Responses: map[string]any{
+			"200": openapi.Response("Deletion record", d.Item(deleted{})),
 		},
 	})
 }

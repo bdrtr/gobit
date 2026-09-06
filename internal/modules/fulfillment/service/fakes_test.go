@@ -521,7 +521,7 @@ func (f *fakeStore) InsertFulfillmentIfAbsent(
 	defer f.mu.Unlock()
 
 	for id := range f.fuls {
-		if f.fuls[id].DeletedAt == nil && f.fuls[id].IdempotencyKey == ful.IdempotencyKey {
+		if f.fuls[id].IdempotencyKey == ful.IdempotencyKey {
 			return models.Fulfillment{}, false, nil
 		}
 	}
@@ -542,7 +542,7 @@ func (f *fakeStore) FulfillmentsByIDs(_ context.Context, ids []string) ([]models
 	out := make([]models.Fulfillment, 0, len(ids))
 	for _, id := range slices.Sorted(slices.Values(ids)) {
 		ful, ok := f.fuls[id]
-		if !ok || ful.DeletedAt != nil {
+		if !ok {
 			continue
 		}
 		ful.Items = nil
@@ -557,7 +557,7 @@ func (f *fakeStore) GetFulfillment(_ context.Context, id string) (models.Fulfill
 	defer f.mu.Unlock()
 
 	ful, ok := f.fuls[id]
-	if !ok || ful.DeletedAt != nil {
+	if !ok {
 		return models.Fulfillment{}, errors.NotFound("fake_fulfillment_not_found",
 			"fulfillment not found: %s", id)
 	}
@@ -574,7 +574,7 @@ func (f *fakeStore) FulfillmentByIdempotencyKey(
 
 	for _, id := range slices.Sorted(maps.Keys(f.fuls)) {
 		ful := f.fuls[id]
-		if ful.DeletedAt == nil && ful.IdempotencyKey == key {
+		if ful.IdempotencyKey == key {
 			ful.Items = nil
 			return ful, nil
 		}
@@ -605,9 +605,6 @@ func (f *fakeStore) ListFulfillments(
 	var matched []models.Fulfillment
 	for _, id := range slices.Sorted(maps.Keys(f.fuls)) {
 		ful := f.fuls[id]
-		if ful.DeletedAt != nil {
-			continue
-		}
 		if filter.Reference != nil && ful.Reference != *filter.Reference {
 			continue
 		}
@@ -632,7 +629,7 @@ func (f *fakeStore) UpdateFulfillmentProviderResult(
 	defer f.mu.Unlock()
 
 	ful, ok := f.fuls[id]
-	if !ok || ful.DeletedAt != nil {
+	if !ok {
 		return models.Fulfillment{}, errors.NotFound("fake_fulfillment_not_found",
 			"fulfillment not found: %s", id)
 	}
@@ -659,7 +656,7 @@ func (f *fakeStore) UpdateFulfillmentStatus(
 	defer f.mu.Unlock()
 
 	ful, ok := f.fuls[id]
-	if !ok || ful.DeletedAt != nil {
+	if !ok {
 		return models.Fulfillment{}, errors.NotFound("fake_fulfillment_not_found",
 			"fulfillment not found: %s", id)
 	}

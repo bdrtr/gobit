@@ -26,6 +26,37 @@ LIMIT sqlc.arg('lim')::int OFFSET sqlc.arg('off')::int;
 -- name: CountCollections :one
 SELECT count(*) FROM product_collection WHERE deleted_at IS NULL;
 
+-- SoftDeleteCollection stamps the collection's deleted_at.
+--
+-- It is the write that was MISSING until 2026-09-06 (docs/gaps.md D18): every
+-- read here has filtered on "deleted_at IS NULL" since the first migration, the
+-- handle index was built partial so a deleted collection's handle would not
+-- block a new one — and nothing ever set the column, so a collection created by
+-- mistake stayed in the merchant's list and on the storefront forever.
+-- name: SoftDeleteCollection :execrows
+UPDATE product_collection SET deleted_at = now(), updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL;
+
+-- ClearCollectionProducts releases the products of a collection that is being
+-- deleted.
+--
+-- product.collection_id carries "ON DELETE SET NULL", and that clause CAN NEVER
+-- FIRE here: a soft delete is an UPDATE and the collection's row stays
+-- physically in place, so the database never runs the action the schema
+-- promises. Doing it in SQL of our own is the only way the promise holds.
+--
+-- The rejected alternative was to leave the pointer standing and let the reads
+-- hide the collection. It fails in a way the storefront shows: the product
+-- listing filters BY collection_id without joining the collection, so products
+-- would keep coming back for a collection nobody can see any more, and the
+-- product's own record would name a collection that resolves to nothing. The
+-- region module answered the identical question the identical way — see
+-- ClearRegionCountries in the region module's country.sql, called when a region
+-- is deleted.
+-- name: ClearCollectionProducts :execrows
+UPDATE product SET collection_id = NULL, updated_at = now()
+WHERE collection_id = $1 AND deleted_at IS NULL;
+
 -- name: CreateCategory :one
 INSERT INTO product_category (id, name, handle, description, parent_id, is_active, is_internal, rank)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -66,6 +97,25 @@ SELECT * FROM product_category
 WHERE id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY rank, id;
 
+-- CountChildCategories counts the LIVE children of a category.
+--
+-- It exists for one caller, the delete, and it is what turns "a category with
+-- children cannot be deleted" into a rule instead of an intention.
+-- name: CountChildCategories :one
+SELECT count(*) FROM product_category
+WHERE parent_id = $1 AND deleted_at IS NULL;
+
+-- SoftDeleteCategory stamps the category's deleted_at.
+--
+-- The write that was missing; see SoftDeleteCollection for what its absence
+-- cost. Its guard is CountChildCategories and it is enforced in the service,
+-- not here, because a statement that deleted only childless categories would
+-- report "no rows" for a category that EXISTS — and the caller could not tell
+-- that from a wrong id.
+-- name: SoftDeleteCategory :execrows
+UPDATE product_category SET deleted_at = now(), updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL;
+
 -- name: CreateTag :one
 INSERT INTO product_tag (id, value)
 VALUES ($1, $2)
@@ -88,6 +138,23 @@ SELECT count(*) FROM product_tag WHERE deleted_at IS NULL;
 SELECT * FROM product_tag
 WHERE id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY value, id;
+
+-- SoftDeleteTag stamps the tag's deleted_at.
+--
+-- The tag's bindings in product_tag_map are LEFT WHERE THEY ARE, and that is
+-- not an oversight: ListTagsByProductIDs already joins the tag with
+-- "t.deleted_at IS NULL", so a deleted tag disappears from every product that
+-- carried it without a single map row being touched. That join predicate was
+-- written for a state this module could not reach until now.
+--
+-- The rejected alternative was to delete the map rows in the same transaction.
+-- It is more work for the same visible result and it destroys the one thing the
+-- soft delete is for: undoing the delete would bring back a tag that is
+-- attached to nothing, so an operator who removed the wrong tag could not put
+-- the catalog back.
+-- name: SoftDeleteTag :execrows
+UPDATE product_tag SET deleted_at = now(), updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: AddProductTag :exec
 INSERT INTO product_tag_map (product_id, tag_id)

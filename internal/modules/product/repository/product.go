@@ -204,16 +204,26 @@ func (r *Repo) SoftDeleteProduct(ctx context.Context, id string) error {
 	return nil
 }
 
-// SoftDeleteProductChildren deletes the product's variants, options and
-// images.
+// SoftDeleteProductChildren deletes the product's variants, options, option
+// values and images.
 //
 // Why the delete is not left to the database CASCADE: CASCADE REALLY deletes
 // the row, whereas the delete here is SOFT and leaves a trace of the record.
 // The order matters as well; that is why the caller wraps it in a single
 // transaction (InTx).
+//
+// The option VALUES joined this list on 2026-09-06. They were the one child
+// table this method skipped, and nothing else wrote their deleted_at either, so
+// every value of every deleted product had stayed live since the module was
+// written (docs/gaps.md D18). No read showed it — each one reaches a value
+// through its option and the option was stamped — which is exactly why it
+// survived: the only witness was the column audit.
 func (r *Repo) SoftDeleteProductChildren(ctx context.Context, productID string) error {
 	if _, err := r.q.SoftDeleteVariantsByProduct(ctx, productID); err != nil {
 		return wrapDB(err, "could not delete the product's variants: %s", productID)
+	}
+	if _, err := r.q.SoftDeleteOptionValuesByProduct(ctx, productID); err != nil {
+		return wrapDB(err, "could not delete the product's option values: %s", productID)
 	}
 	if _, err := r.q.SoftDeleteOptionsByProduct(ctx, productID); err != nil {
 		return wrapDB(err, "could not delete the product's options: %s", productID)

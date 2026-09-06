@@ -323,11 +323,15 @@ type Fulfillment struct {
 	// Items are the items that go into the fulfillment.
 	Items []FulfillmentItem
 	// CreatedAt and UpdatedAt are UTC.
+	//
+	// There is no DeletedAt: a fulfillment is the record of a shipment that
+	// happened and is never deleted. Its retirement is the 'canceled' status
+	// together with CanceledAt, which a database CHECK refuses to let go
+	// missing. The field and its column existed until 2026-09-06 and nothing
+	// had ever written either (docs/gaps.md D18); the argument is at the head
+	// of the module's migration 000003.
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	// DeletedAt is the moment of the soft delete; if nil the fulfillment is
-	// alive.
-	DeletedAt *time.Time
 }
 
 // FulfillmentItem is a single item that goes into a fulfillment.

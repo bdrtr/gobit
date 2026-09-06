@@ -257,7 +257,7 @@ func (m *memRepo) GetRegionByCountry(_ context.Context, countryCode string) (mod
 	}
 
 	country, ok := m.countries[countryCode]
-	if !ok || country.DeletedAt != nil || country.RegionID == nil {
+	if !ok || country.RegionID == nil {
 		return models.Region{}, errors.NotFound("region_not_found",
 			"%s ülkesi için bölge bulunamadı", countryCode)
 	}
@@ -279,7 +279,7 @@ func (m *memRepo) AssignCountry(
 		return models.Country{}, err
 	}
 	country, ok := m.countries[countryCode]
-	if !ok || country.DeletedAt != nil {
+	if !ok {
 		return models.Country{}, errors.NotFound("country_not_found", "ülke bulunamadı: %s", countryCode)
 	}
 
@@ -306,7 +306,7 @@ func (m *memRepo) UnassignCountry(_ context.Context, regionID, countryCode strin
 	}
 
 	country, ok := m.countries[countryCode]
-	if !ok || country.DeletedAt != nil {
+	if !ok {
 		return errors.NotFound("country_not_found", "ülke bulunamadı: %s", countryCode)
 	}
 	if country.RegionID == nil || *country.RegionID != regionID {
@@ -328,7 +328,7 @@ func (m *memRepo) GetCountry(_ context.Context, code string) (models.Country, er
 	}
 
 	country, ok := m.countries[code]
-	if !ok || country.DeletedAt != nil {
+	if !ok {
 		return models.Country{}, errors.NotFound("country_not_found", "ülke bulunamadı: %s", code)
 	}
 	return country, nil
@@ -347,9 +347,6 @@ func (m *memRepo) ListCountries(
 
 	matched := make([]models.Country, 0, len(m.countries))
 	for _, country := range m.countries {
-		if country.DeletedAt != nil {
-			continue
-		}
 		if regionID != nil && (country.RegionID == nil || *country.RegionID != *regionID) {
 			continue
 		}
@@ -386,7 +383,7 @@ func (m *memRepo) ListCountriesByRegions(
 
 	byRegion := map[string][]models.Country{}
 	for _, country := range m.countries {
-		if country.DeletedAt != nil || country.RegionID == nil {
+		if country.RegionID == nil {
 			continue
 		}
 		if !slices.Contains(regionIDs, *country.RegionID) {
@@ -417,7 +414,7 @@ func (m *memRepo) GetCurrency(_ context.Context, code string) (models.Currency, 
 	}
 
 	currency, ok := m.currencies[code]
-	if !ok || currency.DeletedAt != nil {
+	if !ok {
 		return models.Currency{}, errors.NotFound("currency_not_found", "para birimi bulunamadı: %s", code)
 	}
 	return currency, nil
@@ -432,9 +429,7 @@ func (m *memRepo) ListCurrencies(_ context.Context, limit, offset int32) ([]mode
 
 	all := make([]models.Currency, 0, len(m.currencies))
 	for _, currency := range m.currencies {
-		if currency.DeletedAt == nil {
-			all = append(all, currency)
-		}
+		all = append(all, currency)
 	}
 	slices.SortFunc(all, func(a, b models.Currency) int {
 		switch {
@@ -464,7 +459,7 @@ func (m *memRepo) GetCurrenciesByCodes(_ context.Context, codes []string) ([]mod
 
 	out := make([]models.Currency, 0, len(codes))
 	for _, code := range codes {
-		if currency, ok := m.currencies[code]; ok && currency.DeletedAt == nil {
+		if currency, ok := m.currencies[code]; ok {
 			out = append(out, currency)
 		}
 	}

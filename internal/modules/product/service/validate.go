@@ -51,9 +51,16 @@ const (
 	codeInvalidInput = "product_invalid_input"
 	codeHandleTaken  = "product_handle_taken"
 	codeNotFound     = "product_not_found"
-	codeLinkFailed   = "product_link_failed"
-	codeQueryFailed  = "product_query_failed"
-	codeNotReady     = "product_service_not_ready"
+	// codeInUse reports that a taxonomy row cannot be deleted because something
+	// living still depends on it: a category with subcategories, an option
+	// value a variant carries. It is deliberately NOT codeHandleTaken — that
+	// one is about a name colliding at CREATE time, this one is about a
+	// structure standing at DELETE time, and a client that wants to explain the
+	// refusal has to tell them apart.
+	codeInUse       = "product_in_use"
+	codeLinkFailed  = "product_link_failed"
+	codeQueryFailed = "product_query_failed"
+	codeNotReady    = "product_service_not_ready"
 	// codeUploadReadFailed reports that the upload behind an image could not be
 	// read from the file module. It is NOT the code of "there is no such
 	// upload": that one is a validation error and carries codeInvalidInput, so

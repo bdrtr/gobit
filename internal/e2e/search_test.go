@@ -22,6 +22,7 @@ import (
 	productmodels "github.com/bdrtr/gobit/internal/modules/product/models"
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
 	"github.com/bdrtr/gobit/plugins/searchpg"
+	"github.com/bdrtr/gobit/plugins/webhookout"
 )
 
 // This file proves end to end that the search PLUGIN works in the real system:
@@ -121,6 +122,12 @@ var (
 func setUpPlugins(ctx context.Context, modules *module.Registry, bus eventbus.EventBus) error {
 	pluginRegistry = coreplugin.NewRegistry(nil)
 	pluginRegistry.Add(searchpg.New())
+	// The outbound webhook plugin is installed on the same ground, and it costs
+	// the other scenarios nothing: with no receiver registered its subscriber
+	// writes no row and its job is never run by this harness. What it buys is
+	// webhook_test.go, where the chain from a real order to a real signed HTTP
+	// request is the only place that chain exists in one piece.
+	pluginRegistry.Add(webhookout.New())
 
 	pluginHost = coreplugin.NewHost(ctr, modules, bus, nil, nil)
 

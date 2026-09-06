@@ -1,0 +1,56 @@
+-- country and currency lose their deleted_at columns.
+--
+-- This file is English because ADR 0012 makes language a property of the FILE
+-- and every new file is English; 000001 and 000002 are on the Turkish ledger
+-- and stay as they are.
+--
+-- # Why the columns go rather than gaining a writer
+--
+-- Both tables are REFERENCE DATA and 000001 says so in its own words. Their
+-- rows do not belong to the merchant: 249 countries and 41 currencies are put
+-- there by the seed in 000002 and their lifecycle is that migration's, not the
+-- API's. The module offers no create, no update and no delete for either — the
+-- ONLY writes that exist are SetCountryRegion, ClearCountryRegion and
+-- ClearRegionCountries, all three of which move a country BETWEEN regions.
+-- That is how a country leaves a region here, and it is not a deletion.
+--
+-- Neither column was ever written. Every read carried "deleted_at IS NULL", a
+-- predicate that has never once been false, and the audit built to catch that
+-- could not see it until 2026-09-06: the region table in the same module IS
+-- soft-deleted, and writes were matched by bare column name across the module
+-- (docs/gaps.md D16, D18).
+--
+-- # The same conclusion as fulfillment and inventory, a different argument
+--
+-- The other two removals in this repository (fulfillment 000003, inventory
+-- 000002) rest on the row being the RECORD OF SOMETHING THAT HAPPENED, retired
+-- by a status rather than by a deletion. That argument does not apply here:
+-- nothing happened, these rows are a list. The argument here is ownership — the
+-- table is filled and emptied by migrations, so a delete flag on it would be a
+-- second lifecycle competing with the one the seed already has.
+--
+-- It is also NOT the decision recorded as D9 for the order and payment modules.
+-- There the columns stay because the argument is only that a money record must
+-- be KEPT, which an unwritten column does not get in the way of. Here the
+-- column would be actively wrong if anything ever set it: a hand-written
+-- UPDATE stamping a country makes ResolveRegionForCountry answer "no region"
+-- for it forever, and checkout in that country stops with nothing in the
+-- catalog or the region list to explain why. A retirement mechanism for an ISO
+-- code — if one is ever needed — has to be explicit and visible, not a NULL
+-- check that every read carries and no screen displays.
+--
+-- # The index has to be rebuilt
+--
+-- PostgreSQL drops any index whose PREDICATE names a dropped column, silently
+-- and with no notice. country_region_id_idx is partial on deleted_at, so the
+-- statement below takes it; the CREATE that follows is what keeps it. Measured
+-- on a real PostgreSQL 16 before this migration was written, on a probe table
+-- carrying a UNIQUE partial index: the drop removed the index and the duplicate
+-- key that had been impossible one statement earlier was accepted.
+ALTER TABLE country DROP COLUMN IF EXISTS deleted_at;
+ALTER TABLE currency DROP COLUMN IF EXISTS deleted_at;
+
+-- The same index as 000001, minus the predicate that named the column.
+-- currency needs no such statement: its only index is the primary key on code,
+-- which never mentioned deleted_at.
+CREATE INDEX IF NOT EXISTS country_region_id_idx ON country (region_id);

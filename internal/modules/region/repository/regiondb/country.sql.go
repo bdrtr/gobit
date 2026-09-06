@@ -14,8 +14,8 @@ import (
 const clearCountryRegion = `-- name: ClearCountryRegion :one
 UPDATE country
 SET region_id = NULL, updated_at = $1::timestamptz
-WHERE iso_2 = $2::text AND region_id = $3::text AND deleted_at IS NULL
-RETURNING iso_2, name, region_id, created_at, updated_at, deleted_at
+WHERE iso_2 = $2::text AND region_id = $3::text
+RETURNING iso_2, name, region_id, created_at, updated_at
 `
 
 type ClearCountryRegionParams struct {
@@ -37,7 +37,6 @@ func (q *Queries) ClearCountryRegion(ctx context.Context, arg ClearCountryRegion
 		&i.RegionID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -45,7 +44,7 @@ func (q *Queries) ClearCountryRegion(ctx context.Context, arg ClearCountryRegion
 const clearRegionCountries = `-- name: ClearRegionCountries :exec
 UPDATE country
 SET region_id = NULL, updated_at = $1::timestamptz
-WHERE region_id = $2::text AND deleted_at IS NULL
+WHERE region_id = $2::text
 `
 
 type ClearRegionCountriesParams struct {
@@ -65,8 +64,7 @@ func (q *Queries) ClearRegionCountries(ctx context.Context, arg ClearRegionCount
 
 const countCountries = `-- name: CountCountries :one
 SELECT count(*) FROM country
-WHERE deleted_at IS NULL
-  AND ($1::text IS NULL OR region_id = $1::text)
+WHERE ($1::text IS NULL OR region_id = $1::text)
 `
 
 func (q *Queries) CountCountries(ctx context.Context, regionID *string) (int64, error) {
@@ -78,11 +76,17 @@ func (q *Queries) CountCountries(ctx context.Context, regionID *string) (int64, 
 
 const getCountry = `-- name: GetCountry :one
 
-SELECT iso_2, name, region_id, created_at, updated_at, deleted_at FROM country
-WHERE iso_2 = $1 AND deleted_at IS NULL
+SELECT iso_2, name, region_id, created_at, updated_at FROM country
+WHERE iso_2 = $1
 `
 
-// country sorguları. Tüm okumalar deleted_at IS NULL filtresi uygular.
+// country sorguları.
+//
+// Tabloda deleted_at YOKTUR ve okumalar öyle bir süzgeç TAŞIMAZ. country
+// REFERANS VERİDİR: satırları 000002'nin tohumu yazar, yaşam döngüsü
+// migration'ındır ve modülün sunduğu tek yazma yolu ülkeyi bölgeler ARASINDA
+// taşımaktır. Sütun 000001'den 000003'e kadar durdu, hiçbir zaman yazılmadı;
+// gerekçe 000003'ün başındadır (docs/gaps.md D18).
 func (q *Queries) GetCountry(ctx context.Context, iso2 string) (Country, error) {
 	row := q.db.QueryRow(ctx, getCountry, iso2)
 	var i Country
@@ -92,14 +96,13 @@ func (q *Queries) GetCountry(ctx context.Context, iso2 string) (Country, error) 
 		&i.RegionID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getCountryForUpdate = `-- name: GetCountryForUpdate :one
-SELECT iso_2, name, region_id, created_at, updated_at, deleted_at FROM country
-WHERE iso_2 = $1 AND deleted_at IS NULL
+SELECT iso_2, name, region_id, created_at, updated_at FROM country
+WHERE iso_2 = $1
 FOR UPDATE
 `
 
@@ -121,15 +124,13 @@ func (q *Queries) GetCountryForUpdate(ctx context.Context, iso2 string) (Country
 		&i.RegionID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const listCountries = `-- name: ListCountries :many
-SELECT iso_2, name, region_id, created_at, updated_at, deleted_at FROM country
-WHERE deleted_at IS NULL
-  AND ($1::text IS NULL OR region_id = $1::text)
+SELECT iso_2, name, region_id, created_at, updated_at FROM country
+WHERE ($1::text IS NULL OR region_id = $1::text)
 ORDER BY iso_2
 LIMIT $3::integer OFFSET $2::integer
 `
@@ -160,7 +161,6 @@ func (q *Queries) ListCountries(ctx context.Context, arg ListCountriesParams) ([
 			&i.RegionID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -173,8 +173,8 @@ func (q *Queries) ListCountries(ctx context.Context, arg ListCountriesParams) ([
 }
 
 const listCountriesByRegions = `-- name: ListCountriesByRegions :many
-SELECT iso_2, name, region_id, created_at, updated_at, deleted_at FROM country
-WHERE region_id = ANY($1::text[]) AND deleted_at IS NULL
+SELECT iso_2, name, region_id, created_at, updated_at FROM country
+WHERE region_id = ANY($1::text[])
 ORDER BY region_id, iso_2
 `
 
@@ -197,7 +197,6 @@ func (q *Queries) ListCountriesByRegions(ctx context.Context, regionIds []string
 			&i.RegionID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -212,8 +211,8 @@ func (q *Queries) ListCountriesByRegions(ctx context.Context, regionIds []string
 const setCountryRegion = `-- name: SetCountryRegion :one
 UPDATE country
 SET region_id = $1::text, updated_at = $2::timestamptz
-WHERE iso_2 = $3::text AND deleted_at IS NULL
-RETURNING iso_2, name, region_id, created_at, updated_at, deleted_at
+WHERE iso_2 = $3::text
+RETURNING iso_2, name, region_id, created_at, updated_at
 `
 
 type SetCountryRegionParams struct {
@@ -231,7 +230,6 @@ func (q *Queries) SetCountryRegion(ctx context.Context, arg SetCountryRegionPara
 		&i.RegionID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }

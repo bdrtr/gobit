@@ -11,7 +11,7 @@ import (
 
 const countActiveReservationsByItem = `-- name: CountActiveReservationsByItem :one
 SELECT COUNT(*) FROM inventory_reservations
-WHERE inventory_item_id = $1 AND status = 'active' AND deleted_at IS NULL
+WHERE inventory_item_id = $1 AND status = 'active'
 `
 
 func (q *Queries) CountActiveReservationsByItem(ctx context.Context, inventoryItemID string) (int64, error) {
@@ -26,7 +26,7 @@ const createReservation = `-- name: CreateReservation :one
 INSERT INTO inventory_reservations (
     id, inventory_item_id, location_id, quantity, line_item_id, status, description
 ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, inventory_item_id, location_id, quantity, line_item_id, status, description, created_at, updated_at, deleted_at
+RETURNING id, inventory_item_id, location_id, quantity, line_item_id, status, description, created_at, updated_at
 `
 
 type CreateReservationParams struct {
@@ -44,6 +44,11 @@ type CreateReservationParams struct {
 // Rezervasyon kaydı SİLİNMEZ, durumu değişir. Telafinin (release) idempotent
 // olması buna dayanır: ikinci çağrı kaydı bulur, "released" görür ve stoğa
 // ikinci kez dokunmadan başarıyla döner.
+//
+// Bu yüzden tabloda deleted_at YOKTUR ve okumalar öyle bir süzgeç TAŞIMAZ.
+// Sütun 000001'den beri duruyordu, hiçbir zaman yazılmadı ve her okuma bir kez
+// bile yanlış olmamış bir koşulu taşıyordu; 000002 onu düşürdü. Gerekçe o
+// migration'ın başındadır (docs/gaps.md D18).
 func (q *Queries) CreateReservation(ctx context.Context, arg CreateReservationParams) (InventoryReservation, error) {
 	row := q.db.QueryRow(ctx, createReservation,
 		arg.ID,
@@ -65,14 +70,13 @@ func (q *Queries) CreateReservation(ctx context.Context, arg CreateReservationPa
 		&i.Description,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getReservation = `-- name: GetReservation :one
-SELECT id, inventory_item_id, location_id, quantity, line_item_id, status, description, created_at, updated_at, deleted_at FROM inventory_reservations
-WHERE id = $1 AND deleted_at IS NULL
+SELECT id, inventory_item_id, location_id, quantity, line_item_id, status, description, created_at, updated_at FROM inventory_reservations
+WHERE id = $1
 `
 
 func (q *Queries) GetReservation(ctx context.Context, id string) (InventoryReservation, error) {
@@ -88,14 +92,13 @@ func (q *Queries) GetReservation(ctx context.Context, id string) (InventoryReser
 		&i.Description,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const lockReservation = `-- name: LockReservation :one
-SELECT id, inventory_item_id, location_id, quantity, line_item_id, status, description, created_at, updated_at, deleted_at FROM inventory_reservations
-WHERE id = $1 AND deleted_at IS NULL
+SELECT id, inventory_item_id, location_id, quantity, line_item_id, status, description, created_at, updated_at FROM inventory_reservations
+WHERE id = $1
 FOR UPDATE
 `
 
@@ -114,7 +117,6 @@ func (q *Queries) LockReservation(ctx context.Context, id string) (InventoryRese
 		&i.Description,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -122,7 +124,7 @@ func (q *Queries) LockReservation(ctx context.Context, id string) (InventoryRese
 const setReservationStatus = `-- name: SetReservationStatus :execrows
 UPDATE inventory_reservations
 SET status = $2, updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 `
 
 type SetReservationStatusParams struct {

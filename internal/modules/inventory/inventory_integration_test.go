@@ -182,7 +182,7 @@ func TestMigrationGeriAlinabilir(t *testing.T) {
 	version, dirty, err := db.Version(ctx, testDSN, inventory.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "yarıda kalmış migration olmamalı")
-	assert.Equal(t, uint(1), version)
+	assert.Equal(t, uint(2), version)
 }
 
 // TestCrossModuleForeignKeyYok modülün tablolarındaki TÜM foreign key'lerin
@@ -1090,7 +1090,7 @@ func aktifRezervasyonAdedi(ctx context.Context, t *testing.T, itemID string) int
 	var count int64
 	err := testPool.Pool().QueryRow(ctx,
 		`SELECT COUNT(*) FROM inventory_reservations
-         WHERE inventory_item_id = $1 AND status = 'active' AND deleted_at IS NULL`,
+         WHERE inventory_item_id = $1 AND status = 'active'`,
 		itemID).Scan(&count)
 	require.NoError(t, err)
 	return count

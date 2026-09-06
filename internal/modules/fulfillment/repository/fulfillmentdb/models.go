@@ -25,7 +25,6 @@ type Fulfillment struct {
 	Metadata         []byte
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
-	DeletedAt        pgtype.Timestamptz
 }
 
 type FulfillmentItem struct {

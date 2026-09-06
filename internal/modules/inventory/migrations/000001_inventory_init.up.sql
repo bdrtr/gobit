@@ -10,6 +10,12 @@
 -- Para birimi yoktur; bu modül yalnızca ADET taşır ve adetler BIGINT'tir.
 -- Zaman: tüm damgalar timestamptz (UTC). Silme yumuşaktır (deleted_at) ve
 -- tüm okuma sorguları deleted_at IS NULL filtresi uygular.
+--
+-- BİR İSTİSNA VARDIR ve bu dosyadan sonra eklenmiştir: 000002,
+-- inventory_reservations'ın deleted_at sütununu DÜŞÜRÜR. O sütunu hiçbir zaman
+-- hiçbir şey yazmadı; bir rezervasyon silinmez, durumu değişir (aşağıdaki
+-- tablo yorumunun kendisi bunu söyler). Gerekçe 000002'nin başındadır, yani
+-- aşağıdaki CREATE TABLE o tablo için TARİHTİR, güncel şema değil.
 
 -- stock_locations stoğun fiziksel olarak durduğu yerdir (depo, mağaza).
 CREATE TABLE IF NOT EXISTS stock_locations (

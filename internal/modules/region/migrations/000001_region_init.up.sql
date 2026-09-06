@@ -7,6 +7,12 @@
 --
 -- Zaman sütunları TIMESTAMPTZ'dir ve daima UTC yazılır; silme SOFT'tur
 -- (deleted_at) ve tüm okuma sorguları deleted_at IS NULL filtresi uygular.
+--
+-- BU KURAL YALNIZCA region TABLOSU İÇİN GEÇERLİDİR ve öyle olduğu bu dosyadan
+-- sonra anlaşıldı: 000003, currency ve country'nin deleted_at sütunlarını
+-- DÜŞÜRÜR. İkisi de REFERANS VERİDİR, satırlarını 000002'nin tohumu yazar ve
+-- sütunları hiçbir zaman yazılmadı. Gerekçe 000003'ün başındadır; aşağıdaki iki
+-- CREATE TABLE o sütunlar bakımından TARİHTİR, güncel şema değil.
 
 -- currency ISO 4217 para birimidir ve REFERANS VERİDİR.
 --

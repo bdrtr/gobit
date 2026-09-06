@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/repository"
 )
@@ -333,12 +334,73 @@ func nextRank(values []models.OptionValue) int32 {
 	return highest + 1
 }
 
-// DeleteOption SOFT deletes the option.
+// DeleteOption SOFT deletes the option AND its values.
+//
+// The values were left live here until 2026-09-06 and no read showed it: every
+// path to a value goes through its option and the option was stamped. What it
+// cost was not a wrong answer but a wrong SCHEMA — product_option_value was the
+// only child table in this module whose rows outlived their parent, which is
+// how its deleted_at came to be a column nothing had ever written
+// (docs/gaps.md D18).
+//
+// No variant guard applies, unlike [Service.DeleteOptionValue]: the variants
+// lose the whole option the moment the option itself is stamped, so stamping
+// the values under it removes nothing a caller can still see.
 func (s *Service) DeleteOption(ctx context.Context, id string) error {
 	if _, err := requireID("id", id); err != nil {
 		return err
 	}
-	return s.repo.SoftDeleteOption(ctx, id)
+
+	return s.repo.InTx(ctx, func(ctx context.Context, tx repository.Store) error {
+		// The option goes first: an unknown id has to stop before any value is
+		// touched, and SoftDeleteOption is the statement that knows.
+		if err := tx.SoftDeleteOption(ctx, id); err != nil {
+			return err
+		}
+		return tx.SoftDeleteOptionValuesByOption(ctx, id)
+	})
+}
+
+// DeleteOptionValue SOFT deletes ONE value of an option.
+//
+// # Why a value a variant carries is refused
+//
+// ListVariantOptionValuesByVariantIDs joins the value with
+// "ov.deleted_at IS NULL", so deleting a value in use does not fail loudly — it
+// makes the variant show FEWER options than it has. Two variants that differed
+// only in that option then look identical on the page and in the admin list,
+// and nothing in the data says which one the customer is buying. The FK on
+// product_variant_option_value says ON DELETE CASCADE and cannot help: a soft
+// delete is an UPDATE, so the cascade never runs.
+//
+// The count is of LIVE variants only. Counting the binding rows instead would
+// refuse to delete a value whose only carriers were deleted months ago, and the
+// merchant would have no way to find out why.
+//
+// # The window this does not close
+//
+// The count and the delete are two statements, so a variant bound to this value
+// between them keeps a binding to a deleted value. Closing it means a shared
+// lock on the value row in the variant write path, which today reads its values
+// with a plain SELECT; the same shape is recorded, unclosed and deliberately
+// so, in D19's note about LinkSalesChannel.
+func (s *Service) DeleteOptionValue(ctx context.Context, id string) error {
+	if _, err := requireID("id", id); err != nil {
+		return err
+	}
+
+	return s.repo.InTx(ctx, func(ctx context.Context, tx repository.Store) error {
+		users, err := tx.CountVariantsUsingOptionValue(ctx, id)
+		if err != nil {
+			return err
+		}
+		if users > 0 {
+			return errors.Conflict(codeInUse,
+				"the option value is carried by %d variants and cannot be deleted; change those variants first (%s)",
+				users, id)
+		}
+		return tx.SoftDeleteOptionValue(ctx, id)
+	})
 }
 
 // buildOptions validates the option inputs and turns them into models with ids.

@@ -13,8 +13,7 @@ import (
 
 const countFulfillments = `-- name: CountFulfillments :one
 SELECT COUNT(*) FROM fulfillments
-WHERE deleted_at IS NULL
-  AND ($1::text IS NULL OR reference = $1::text)
+WHERE ($1::text IS NULL OR reference = $1::text)
   AND ($2::text IS NULL OR status = $2::text)
 `
 
@@ -33,8 +32,8 @@ func (q *Queries) CountFulfillments(ctx context.Context, arg CountFulfillmentsPa
 }
 
 const getFulfillment = `-- name: GetFulfillment :one
-SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, deleted_at FROM fulfillments
-WHERE id = $1 AND deleted_at IS NULL
+SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at FROM fulfillments
+WHERE id = $1
 `
 
 func (q *Queries) GetFulfillment(ctx context.Context, id string) (Fulfillment, error) {
@@ -57,14 +56,13 @@ func (q *Queries) GetFulfillment(ctx context.Context, id string) (Fulfillment, e
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getFulfillmentByIdempotencyKey = `-- name: GetFulfillmentByIdempotencyKey :one
-SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, deleted_at FROM fulfillments
-WHERE idempotency_key = $1 AND deleted_at IS NULL
+SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at FROM fulfillments
+WHERE idempotency_key = $1
 `
 
 func (q *Queries) GetFulfillmentByIdempotencyKey(ctx context.Context, idempotencyKey string) (Fulfillment, error) {
@@ -87,14 +85,13 @@ func (q *Queries) GetFulfillmentByIdempotencyKey(ctx context.Context, idempotenc
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getFulfillmentsByIDs = `-- name: GetFulfillmentsByIDs :many
-SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, deleted_at FROM fulfillments
-WHERE id = ANY ($1::text[]) AND deleted_at IS NULL
+SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at FROM fulfillments
+WHERE id = ANY ($1::text[])
 ORDER BY id
 `
 
@@ -126,7 +123,6 @@ func (q *Queries) GetFulfillmentsByIDs(ctx context.Context, ids []string) ([]Ful
 			&i.Metadata,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -144,8 +140,8 @@ INSERT INTO fulfillments (
     id, reference, shipping_option_id, provider_id, status, idempotency_key,
     data, metadata
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-ON CONFLICT (idempotency_key) WHERE deleted_at IS NULL DO NOTHING
-RETURNING id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, deleted_at
+ON CONFLICT (idempotency_key) DO NOTHING
+RETURNING id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at
 `
 
 type InsertFulfillmentIfAbsentParams struct {
@@ -160,6 +156,11 @@ type InsertFulfillmentIfAbsentParams struct {
 }
 
 // fulfillments queries.
+//
+// There is NO deleted_at on this table and no read carries such a filter. The
+// column stood from 000001 to 000003, nothing ever wrote it, and a shipment's
+// retirement is the 'canceled' status with its stamp; the argument is at the
+// head of 000003 (docs/gaps.md D18).
 //
 // The fulfillment row is written BEFORE GOING to the provider: the Reference
 // field of the provider contract is "the id the caller gave to its own record",
@@ -205,15 +206,13 @@ func (q *Queries) InsertFulfillmentIfAbsent(ctx context.Context, arg InsertFulfi
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const listFulfillments = `-- name: ListFulfillments :many
-SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, deleted_at FROM fulfillments
-WHERE deleted_at IS NULL
-  AND ($1::text IS NULL OR reference = $1::text)
+SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at FROM fulfillments
+WHERE ($1::text IS NULL OR reference = $1::text)
   AND ($2::text IS NULL OR status = $2::text)
 ORDER BY created_at DESC, id DESC
 LIMIT $4::bigint OFFSET $3::bigint
@@ -257,7 +256,6 @@ func (q *Queries) ListFulfillments(ctx context.Context, arg ListFulfillmentsPara
 			&i.Metadata,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -270,8 +268,8 @@ func (q *Queries) ListFulfillments(ctx context.Context, arg ListFulfillmentsPara
 }
 
 const lockFulfillment = `-- name: LockFulfillment :one
-SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, deleted_at FROM fulfillments
-WHERE id = $1 AND deleted_at IS NULL
+SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at FROM fulfillments
+WHERE id = $1
 FOR UPDATE
 `
 
@@ -302,7 +300,6 @@ func (q *Queries) LockFulfillment(ctx context.Context, id string) (Fulfillment, 
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -318,8 +315,8 @@ SET external_id      = $2,
     delivered_at     = $8,
     canceled_at      = $9,
     updated_at       = now()
-WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, deleted_at
+WHERE id = $1
+RETURNING id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at
 `
 
 type UpdateFulfillmentProviderResultParams struct {
@@ -369,7 +366,6 @@ func (q *Queries) UpdateFulfillmentProviderResult(ctx context.Context, arg Updat
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -383,8 +379,8 @@ SET status          = $2,
     delivered_at    = $6,
     canceled_at     = $7,
     updated_at      = now()
-WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, deleted_at
+WHERE id = $1
+RETURNING id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at
 `
 
 type UpdateFulfillmentStatusParams struct {
@@ -431,7 +427,6 @@ func (q *Queries) UpdateFulfillmentStatus(ctx context.Context, arg UpdateFulfill
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }

@@ -225,7 +225,8 @@ func geriAlVeYenidenUygula(ctx context.Context, t *testing.T) {
 	version, dirty, err := db.Version(ctx, testDSN, region.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "yarıda kalmış migration olmamalı")
-	assert.Equal(t, uint(2), version, "şema (1) ve tohum (2) ayrı sürümlerdir")
+	assert.Equal(t, uint(3), version,
+		"şema (1), tohum (2) ve referans tablolarından deleted_at'ın düşürülmesi (3) ayrı sürümlerdir")
 
 	assert.Equal(t, int64(tohumdakiUlkeSayisi), sayim(ctx, t, `SELECT count(*) FROM country`),
 		"ülke tohumu yeniden uygulanmalı")

@@ -30,10 +30,28 @@
 // The repair is still `gobit recover <execution-id> -confirm`, run by a person
 // who looked. What changes is that the person now learns there is something to
 // look at.
+//
+// # Where "the person learns" actually happens
+//
+// It used to be one log line and nothing else, which is a weaker claim than the
+// paragraph above makes. A job that succeeds could not leave a line in
+// `gobit jobs` at all — the runner recorded a detail only alongside an error —
+// so the listing an operator opens FIRST showed "ok" and an empty cell for an
+// hour in which this job found abandoned sagas holding stock. [job.Report]
+// closes that, and the count now appears in the listing beside the run.
+//
+// The pass still succeeds when it finds one. Failing would put the row in the
+// OUTCOME column, which is louder, and louder is not obviously right here: what
+// this finds has been stuck for longer than a lease already and the repair is a
+// deliberate human command, so a standing failure would sit there for as long
+// as the operator takes to decide — training them to read past it. That is a
+// judgement, not a rule, and it is written down so the next person changes it
+// on purpose.
 package sagawatch
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -119,6 +137,11 @@ func run(ctx context.Context, r reader, log *slog.Logger) error {
 
 	abandoned := abandonedOnly(page.Executions)
 
+	// The count reaches `gobit jobs`, which is the listing an operator opens
+	// before they open a log. It is reported on the quiet passes too: "0
+	// abandoned" is the sentence that makes the hour it becomes 1 legible.
+	job.Report(ctx, summarize(len(abandoned), page.Truncated))
+
 	if len(abandoned) == 0 {
 		// Logged at DEBUG rather than INFO. A healthy installation runs this
 		// every hour forever, and a line that is always the same is a line
@@ -142,6 +165,22 @@ func run(ctx context.Context, r reader, log *slog.Logger) error {
 		"execution_ids", idsOf(abandoned))
 
 	return nil
+}
+
+// summarize renders one pass as the single line `gobit jobs` prints.
+//
+// The execution ids stay in the LOG and do not come here. The listing's cell is
+// one column of a table an operator scans; a run that found twenty abandoned
+// sagas would push every other job's row off the terminal, and the ids are
+// useless without the next command anyway — which is `gobit stuck`, and which
+// prints them.
+func summarize(abandoned int, truncated bool) string {
+	line := fmt.Sprintf("%d abandoned saga(s) holding work", abandoned)
+	if truncated {
+		line += fmt.Sprintf("; the limit of %d was filled, so there may be more", limit)
+	}
+
+	return line
 }
 
 // abandonedOnly keeps the class nothing else reports.

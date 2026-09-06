@@ -419,7 +419,6 @@ func toFulfillment(row fulfillmentdb.Fulfillment) (models.Fulfillment, error) {
 		Metadata:         meta,
 		CreatedAt:        toTime(row.CreatedAt),
 		UpdatedAt:        toTime(row.UpdatedAt),
-		DeletedAt:        toTimePtr(row.DeletedAt),
 	}, nil
 }
 
