@@ -145,6 +145,29 @@ Sabitlenme `1.0.0` ile olur.
   yazmıştı; modül üçüncüsünü kazanınca ikisi de kırıldı. Sayı artık okunuyor:
   biri geri alınacak adım sayısını mevcut sürümden türetiyor, diğeri
   dokunulmayan sahibin sürümünü geri almadan ÖNCE okuyup onunla karşılaştırıyor.
+- **İki modülün `api` paketinde hiç test yoktu, on üçünde vardı, ve bunu hiçbir
+  şey sormuyordu** (D26).
+
+  `invoice` ve yeni kurulan `review`. On üç akranın taşıdığı koruma, hiçbir
+  rotayla eşleşmeyen bir tanımı reddeden testtir. Sınıf açık değil —
+  kompozisyon kökü böyle bir tanımda AÇILMAYI reddediyor ve e2e şema testi de
+  görüyor — ama o cevap bütün sistemi gerektiriyor, yalnızca KAYITLI bir modülü
+  kapsıyor, ve review'ın kendi godoc'u bir kurulumu o kayıt satırını silmeye
+  davet ediyor.
+
+  İkisi de artık taşıyor. Review ayrıca kendi güvencesiyle ilgili iki test daha
+  aldı: vitrin listelemesi bir `status` parametresi sunmamalı — çünkü modülün
+  bütün iddiası onaylanmamış bir yorumun görünmez olması, ve istemci üreteci her
+  belgelenmiş parametreyi bir argümana çevirir — ve moderasyon kuyruğu onu
+  sunmalı. İkincisi olmadan birincisi boş bir belgeyle de sağlanırdı; yalnızca
+  yasaklayan bir iddia, içinde hiçbir şey olmayan bir belgeyle memnun olur.
+
+  Dört mutasyon: vitrine `status` eklemek, yönetimden çıkarmak, ve her iki
+  modülde var olmayan bir rotayı tanımlamak — dördü de yakalanıyor.
+
+  Bulgunun kendisi hatırlanmaya değer: **koruma paket başına yaşıyor ve yeni bir
+  paketin onu alıp almadığını hiçbir şey sormuyor.**
+
 - **Aynı makinenin öteki yönü de türetildi, ve iki yönü yazmak tarayıcıda DÖRT
   düzeltme gerektirdi** (D25'in devamı).
 

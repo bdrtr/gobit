@@ -1143,6 +1143,20 @@ belonging to that feature**, and the next round pays for the question twice.
   no row in the README's invariant table. Nothing is red, because that audit only
   checks README against the repository and not the reverse, but the row is
   missing.
+- **D26** ~~**Two module api packages had no test at all, while thirteen had
+  one, and nothing asked why.**~~ **Closed 2026-09-06.** `invoice` and the
+  newly-built `review` were the two, and the guard the other thirteen carry is
+  the one that refuses a description matching no route. The class is not open —
+  the composition root refuses to BOOT on it and the e2e schema test sees it too
+  — but that answer needs the whole system, it only covers a module that is
+  REGISTERED, and the review module's own godoc invites an installation to
+  delete its registration line. Both packages now carry it, and review carries
+  two more that are about its own guarantee rather than about documents: the
+  storefront listing must NOT offer a status parameter, and the moderation queue
+  MUST, which is what keeps the first from being satisfied by an empty document.
+  The finding itself is the shape worth remembering — the guard lives per
+  package, and nothing asks whether a NEW package got one.
+
 - **D25** **A handler can read a query parameter it never describes, and every
   gate in this repository stays green.** Proved by mutation on 2026-09-06: a
   branch reading `undocumented_switch` was planted in the storefront product
