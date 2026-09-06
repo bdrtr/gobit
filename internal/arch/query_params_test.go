@@ -52,7 +52,12 @@ type queryParamScan struct {
 	readers map[string]int
 	// read are the query parameter names the package reads.
 	read map[string]readSite
-	// described are the parameter names the package puts in the document.
+	// described are the QUERY parameter names the package puts in the document.
+	//
+	// Path parameters are deliberately not in it. Counting them would let a
+	// read of "id" be excused by a path declaration of the same name, and it
+	// would make every "{id}" route look like an unread description in the
+	// other direction.
 	described map[string]bool
 	// parameterBuilders are the package's functions returning openapi.Parameter.
 	parameterBuilders map[string]bool
@@ -64,34 +69,98 @@ type readSite struct {
 	line int
 }
 
-// queryGetArgument reports the argument of an "…URL.Query().Get(x)" call, or
-// nil when the expression is not one.
+// isQueryCall reports whether an expression is a "<something>.URL.Query()"
+// call.
 //
 // The shape is matched STRUCTURALLY rather than by the receiver's name: the
 // request is called "r" everywhere today, and a rule that said so would go
 // blind the day somebody named it "req".
-func queryGetArgument(call *ast.CallExpr) ast.Expr {
-	get, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || get.Sel.Name != "Get" || len(call.Args) != 1 {
-		return nil
-	}
-
-	queryCall, ok := get.X.(*ast.CallExpr)
+func isQueryCall(expr ast.Expr) bool {
+	call, ok := expr.(*ast.CallExpr)
 	if !ok {
-		return nil
+		return false
 	}
 
-	query, ok := queryCall.Fun.(*ast.SelectorExpr)
+	query, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok || query.Sel.Name != "Query" {
-		return nil
+		return false
 	}
 
 	url, ok := query.X.(*ast.SelectorExpr)
-	if !ok || url.Sel.Name != "URL" {
-		return nil
+
+	return ok && url.Sel.Name == "URL"
+}
+
+// queryVariables collects the local variables a function assigns the query to.
+//
+// A FOURTH spelling, and the one that hid two real descriptions from the
+// reverse direction until it was added: "query := r.URL.Query()" followed by
+// "query.Get(name)". The set is collected PER FUNCTION rather than per file on
+// purpose — a name that means the query in one function may mean something else
+// in another, and over-matching here would not merely add noise, it would let a
+// described-but-unread parameter look read.
+func queryVariables(fn *ast.FuncDecl) map[string]bool {
+	out := map[string]bool{}
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		assign, ok := node.(*ast.AssignStmt)
+		if !ok || len(assign.Rhs) != 1 || !isQueryCall(assign.Rhs[0]) {
+			return true
+		}
+		for _, target := range assign.Lhs {
+			if ident, ok := target.(*ast.Ident); ok {
+				out[ident.Name] = true
+			}
+		}
+
+		return true
+	})
+
+	return out
+}
+
+// isQueryReceiver reports whether an expression names the query: either the
+// inline call or one of the local variables holding it.
+func isQueryReceiver(vars map[string]bool, expr ast.Expr) bool {
+	if isQueryCall(expr) {
+		return true
+	}
+	ident, ok := expr.(*ast.Ident)
+
+	return ok && vars[ident.Name]
+}
+
+// queryAccessIn reports the parameter NAME expression an access to the query
+// string uses, or nil when the node is not such an access, with the enclosing
+// function's query variables in scope.
+//
+// It has to know FOUR spellings, and they were counted rather than guessed:
+// across the module api packages the repository writes Get(name) 56 times,
+// the index form twice and Has(name) once, and the fulfillment eligibility read
+// assigns the query to a local variable first. Reading only the first — which
+// is what this did at first — made the audit report parameters that ARE read as
+// unread, in two modules.
+func queryAccessIn(vars map[string]bool, node ast.Node) ast.Expr {
+	switch value := node.(type) {
+	case *ast.IndexExpr:
+		// The index form: the query map is subscripted by the name.
+		if isQueryReceiver(vars, value.X) {
+			return value.Index
+		}
+	case *ast.CallExpr:
+		// The method forms: Get and Has both take the name as their argument.
+		method, ok := value.Fun.(*ast.SelectorExpr)
+		if !ok || len(value.Args) != 1 {
+			return nil
+		}
+		if method.Sel.Name != "Get" && method.Sel.Name != "Has" {
+			return nil
+		}
+		if isQueryReceiver(vars, method.X) {
+			return value.Args[0]
+		}
 	}
 
-	return call.Args[0]
+	return nil
 }
 
 // stringLiteral unquotes a string literal expression, or returns "" for
@@ -171,6 +240,48 @@ func isOpenAPIParameterType(file *sourceFile, expr ast.Expr) bool {
 	return strings.HasSuffix(file.imports[pkg.Name], "/openapi")
 }
 
+// buildsQueryParameter reports whether a Parameter-returning function produces
+// a QUERY parameter.
+//
+// It is read from the literal the function returns rather than from its name:
+// every module writes its own copy of this helper and they are not obliged to
+// keep calling it queryParameter, but all of them have to write In: "query" for
+// the document to be right.
+func buildsQueryParameter(file *sourceFile, fn *ast.FuncDecl) bool {
+	found := false
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		lit, ok := node.(*ast.CompositeLit)
+		if !ok || !isOpenAPIParameterType(file, lit.Type) {
+			return true
+		}
+		if fieldString(lit, "In") == "query" {
+			found = true
+		}
+
+		return true
+	})
+
+	return found
+}
+
+// fieldString reads a string-literal field out of a composite literal.
+func fieldString(lit *ast.CompositeLit, field string) string {
+	for _, element := range lit.Elts {
+		pair, ok := element.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		key, ok := pair.Key.(*ast.Ident)
+		if !ok || key.Name != field {
+			continue
+		}
+
+		return stringLiteral(pair.Value)
+	}
+
+	return ""
+}
+
 // parameterNamesIn collects the Name values a composite literal describes.
 //
 // It has to handle TWO spellings, and the second one is why this function
@@ -198,20 +309,15 @@ func parameterNamesIn(file *sourceFile, lit *ast.CompositeLit, into map[string]b
 	}
 }
 
-// nameField adds the literal's Name field to the set.
+// nameField adds the literal's Name to the set, but only when the parameter
+// sits in the QUERY. See [queryParamScan.described] for why a path parameter is
+// not counted.
 func nameField(lit *ast.CompositeLit, into map[string]bool) {
-	for _, element := range lit.Elts {
-		pair, ok := element.(*ast.KeyValueExpr)
-		if !ok {
-			continue
-		}
-		key, ok := pair.Key.(*ast.Ident)
-		if !ok || key.Name != "Name" {
-			continue
-		}
-		if name := stringLiteral(pair.Value); name != "" {
-			into[name] = true
-		}
+	if fieldString(lit, "In") != "query" {
+		return
+	}
+	if name := fieldString(lit, "Name"); name != "" {
+		into[name] = true
 	}
 }
 
@@ -246,15 +352,12 @@ func scanQueryParams(t *testing.T, tree *sourceTree) map[string]*queryParamScan 
 				if !ok || fn.Body == nil {
 					continue
 				}
-				if returnsOpenAPIParameter(file, fn) {
+				if returnsOpenAPIParameter(file, fn) && buildsQueryParameter(file, fn) {
 					scan.parameterBuilders[fn.Name.Name] = true
 				}
+				vars := queryVariables(fn)
 				ast.Inspect(fn.Body, func(node ast.Node) bool {
-					call, ok := node.(*ast.CallExpr)
-					if !ok {
-						return true
-					}
-					argument := queryGetArgument(call)
+					argument := queryAccessIn(vars, node)
 					if argument == nil {
 						return true
 					}
@@ -269,38 +372,47 @@ func scanQueryParams(t *testing.T, tree *sourceTree) map[string]*queryParamScan 
 
 		// Pass two: the names themselves.
 		for _, file := range files {
-			ast.Inspect(file.tree, func(node ast.Node) bool {
-				switch value := node.(type) {
-				case *ast.CompositeLit:
-					parameterNamesIn(file, value, scan.described)
-				case *ast.CallExpr:
-					if argument := queryGetArgument(value); argument != nil {
-						if name := stringLiteral(argument); name != "" {
-							scan.read[name] = position(tree, file, value)
-						}
-
-						return true
-					}
-					callee, ok := value.Fun.(*ast.Ident)
-					if !ok {
-						return true
-					}
-					if scan.parameterBuilders[callee.Name] && len(value.Args) > 0 {
-						if name := stringLiteral(value.Args[0]); name != "" {
-							scan.described[name] = true
-						}
-
-						return true
-					}
-					if index, isReader := scan.readers[callee.Name]; isReader && index < len(value.Args) {
-						if name := stringLiteral(value.Args[index]); name != "" {
-							scan.read[name] = position(tree, file, value)
-						}
-					}
+			for _, decl := range file.tree.Decls {
+				fn, ok := decl.(*ast.FuncDecl)
+				if !ok || fn.Body == nil {
+					continue
 				}
 
-				return true
-			})
+				vars := queryVariables(fn)
+				ast.Inspect(fn.Body, func(node ast.Node) bool {
+					if argument := queryAccessIn(vars, node); argument != nil {
+						if name := stringLiteral(argument); name != "" {
+							scan.read[name] = position(tree, file, node)
+						}
+
+						return true
+					}
+
+					switch value := node.(type) {
+					case *ast.CompositeLit:
+						parameterNamesIn(file, value, scan.described)
+					case *ast.CallExpr:
+						callee, ok := value.Fun.(*ast.Ident)
+						if !ok {
+							return true
+						}
+						if scan.parameterBuilders[callee.Name] && len(value.Args) > 0 {
+							if name := stringLiteral(value.Args[0]); name != "" {
+								scan.described[name] = true
+							}
+
+							return true
+						}
+						if index, isReader := scan.readers[callee.Name]; isReader && index < len(value.Args) {
+							if name := stringLiteral(value.Args[index]); name != "" {
+								scan.read[name] = position(tree, file, value)
+							}
+						}
+					}
+
+					return true
+				})
+			}
 		}
 
 		if len(scan.described) == 0 {
@@ -434,6 +546,64 @@ func TestEveryQueryParameterAHandlerReadsIsDescribed(t *testing.T) {
 			"sites carry the literal.")
 }
 
+// TestEveryDescribedQueryParameterIsRead is the other half, and it derives what
+// was being kept by hand.
+//
+// Describing a parameter nothing reads promises the client a feature that does
+// not work: the generator puts an argument on the method, the caller fills it
+// in, the server ignores it. Several modules guard that today with a test that
+// compares the generated document against a list written INSIDE the test, so
+// the handler is never consulted and the two hand-maintained sides can drift
+// together. This one derives both sides from source, so the comparison says
+// something about the code rather than about the list.
+//
+// It does NOT retire those tests and must not be read as doing so: each of them
+// also says things this one cannot, per ENDPOINT rather than per package, and
+// at least one of them carries a security statement — that the sales channel is
+// taken from the request identity and must never be announced as a query
+// parameter.
+//
+// The comparison is per PACKAGE and not per endpoint, and the limit is worth
+// stating: a parameter described on one route and read on another passes here.
+// Catching that needs the route table, and the route table is a third source
+// this audit deliberately does not depend on yet.
+func TestEveryDescribedQueryParameterIsRead(t *testing.T) {
+	t.Parallel()
+
+	tree := scanProductionSource(t)
+	scans := scanQueryParams(t, tree)
+
+	require.NotEmpty(t, scans, "the scope rule must have gone blind")
+
+	described := 0
+	for importPath, scan := range scans {
+		described += len(scan.described)
+
+		names := make([]string, 0, len(scan.described))
+		for name := range scan.described {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+
+		for _, name := range names {
+			if _, read := scan.read[name]; read {
+				continue
+			}
+			t.Errorf("%s describes the query parameter %q and reads it nowhere.\n"+
+				"A described parameter nothing reads is a promise the server does not "+
+				"keep: the generated client offers it, the caller sends it and it is "+
+				"silently ignored. Read it, or stop describing it.",
+				importPath, name)
+		}
+	}
+
+	require.Positive(t, described,
+		"NOT ONE described query parameter was found; the description side must have "+
+			"gone BLIND.\nIt recognizes a call to a package-local function that returns "+
+			"an openapi.Parameter carrying In: \"query\", and an openapi.Parameter "+
+			"literal spelled out with the same field.")
+}
+
 // TestTheQueryParameterScannerIsNotBlind pins down what the scanner sees.
 //
 // The scanner is the whole audit: everything after it is a set difference. A
@@ -467,10 +637,45 @@ func TestTheQueryParameterScannerIsNotBlind(t *testing.T) {
 	// query, and counting it would make every "{id}" route a false positive.
 	assert.NotContains(t, scan.read, "id", "a path parameter must not be counted as a query read")
 
-	// The described side finds both spellings: the helper call and the
-	// composite literal.
+	// The described side finds a helper call...
 	assert.Contains(t, scan.described, "with_count", "a queryParameter(...) call must be seen")
-	assert.Contains(t, scan.described, "id", "an openapi.Parameter{Name: ...} literal must be seen")
+	// ...and REFUSES a path parameter, even though it is written as an
+	// openapi.Parameter literal with a Name. Counting it would excuse a query
+	// read of "id" and would make every "{id}" route look unread.
+	assert.NotContains(t, scan.described, "id", "a path parameter must not enter the query set")
+
+	// The composite-literal spelling IS seen when the parameter sits in the
+	// query; fulfillment writes one that way because it is repeatable.
+	fulfillment := ""
+	for importPath := range scans {
+		if strings.HasSuffix(importPath, "/modules/fulfillment/api") {
+			fulfillment = importPath
+		}
+	}
+	require.NotEmpty(t, fulfillment, "the fulfillment api package must be in scope")
+
+	// The two spellings that are NOT the common one, each pinned where it is
+	// actually written. Both were missing when this audit was first run and
+	// both made it report a parameter that IS read as unread.
+	//
+	//   query := r.URL.Query() … query.Get("currency_code")   — a variable
+	//   values, ok := r.URL.Query()[name]                     — an index
+	assert.Contains(t, scans[fulfillment].read, "currency_code",
+		"a read through a VARIABLE holding r.URL.Query() must be seen")
+
+	review := ""
+	for importPath := range scans {
+		if strings.HasSuffix(importPath, "/modules/review/api") {
+			review = importPath
+		}
+	}
+	require.NotEmpty(t, review, "the review api package must be in scope")
+	assert.Contains(t, scans[review].read, "status",
+		"a read through the INDEX form r.URL.Query()[name] must be seen")
+
+	assert.Contains(t, scans[fulfillment].described, "shipping_profile_id",
+		"an openapi.Parameter{In: \"query\"} literal must be seen; the ELIDED form inside "+
+			"a []openapi.Parameter slice is the one this scanner missed at first")
 
 	// The scope rule excludes a package that describes nothing.
 	for importPath := range scans {

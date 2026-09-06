@@ -145,6 +145,36 @@ Sabitlenme `1.0.0` ile olur.
   yazmıştı; modül üçüncüsünü kazanınca ikisi de kırıldı. Sayı artık okunuyor:
   biri geri alınacak adım sayısını mevcut sürümden türetiyor, diğeri
   dokunulmayan sahibin sürümünü geri almadan ÖNCE okuyup onunla karşılaştırıyor.
+- **Aynı makinenin öteki yönü de türetildi, ve iki yönü yazmak tarayıcıda DÖRT
+  düzeltme gerektirdi** (D25'in devamı).
+
+  `TestEveryDescribedQueryParameterIsRead`, belgenin sunduğu bir parametrenin
+  herhangi bir yerde okunup okunmadığını soruyor. Bu yönü bugüne kadar bazı
+  modüller testin **içine yazılmış** bir listeyle koruyordu — D25'i doğuran
+  "iki taraf da elle" şeklinin ta kendisi. Yeni denetim iki tarafını da
+  kaynaktan türetiyor. Ama o testleri emekliye ayırmıyor ve öyle okunmamalı:
+  onlar uç bazında konuşuyor ve en az biri bu denetimin taşıyamayacağı bir
+  güvenlik cümlesi taşıyor — satış kanalı istek kimliğinden gelir ve asla sorgu
+  parametresi olarak ilan edilmemelidir.
+
+  **Asıl ders tarayıcının kendisinde.** İki yönü yazmak dört düzeltme
+  gerektirdi ve dördü de kapı yayımlanmadan, kendi testleriyle yakalandı:
+
+  - Tanım tarafı, `[]openapi.Parameter{{…}}` dilimi içindeki **tipi elenmiş**
+    bileşik değişmezi görmüyordu.
+  - Okuma tarafı yalnızca `Query().Get(name)` biliyordu; **indeks** biçimini
+    (`Query()[name]`), `Query().Has(name)` biçimini ve sorguyu tutan yerel bir
+    **değişkeni** öğrenmesi gerekti.
+
+  Her delik, gerçekte belgelenmiş ya da gerçekte okunmuş bir şeyi "yok" diye
+  bildiriyordu — yani kapı, yanlış pozitifle doğar. Yazımlar tahmin edilmedi
+  SAYILDI: 56 `.Get(`, 2 indeks, 1 `.Has(`, artı kargo uygunluk okumasındaki
+  değişken biçimi. Dördü de artık körlük testinde birer vaka.
+
+  Mutasyonlar: hiç okunmayan bir parametre belgelenince kapı adıyla yakalıyor;
+  değişken izleme kaldırılınca hem körlük vakası düşüyor hem iki yanlış pozitif
+  geri geliyor.
+
 - **D25'in kapısı yazıldı ve ilk koşusunda iki canlı bulgu buldu** — ve
   reddettiğim naif biçim kayıt olarak duruyor.
 

@@ -1177,6 +1177,23 @@ belonging to that feature**, and the next round pays for the question twice.
   so its own test is stricter than the reason its file gives. Narrowing that is
   the module's decision, not the audit's.
 
+  **The OTHER direction was derived the same day.**
+  `TestEveryDescribedQueryParameterIsRead` asks whether a parameter the document
+  offers is read anywhere, which several modules were guarding with a list
+  written inside the test — the same both-sides-by-hand shape that let this
+  finding exist. It does not retire those tests: they also speak per ENDPOINT,
+  and one of them carries a security statement this one cannot.
+
+  **Writing the two directions cost FOUR corrections to the scanner, and every
+  one was caught by its own tests before the audit was believed.** The
+  description side missed the ELIDED composite literal inside a
+  `[]openapi.Parameter` slice; the read side knew only `Query().Get(name)` and
+  had to learn the INDEX form `Query()[name]`, the `Query().Has(name)` form and
+  a local VARIABLE holding the query. Each gap made the audit report something
+  that was in fact described or in fact read, and each is now a case in the
+  blindness test — the spellings were counted rather than guessed: 56, 2, 1 and
+  a variable form used in the fulfillment eligibility read.
+
   ~~**The gate this wants was priced and NOT written, because the naive form
   fails this repository's own standard.**~~ **The pricing below stands as the
   record of why the FIRST attempt was refused.** A first approximation — every
