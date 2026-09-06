@@ -139,6 +139,7 @@ import (
 	promotionsvc "github.com/bdrtr/gobit/internal/modules/promotion/service"
 	regionmod "github.com/bdrtr/gobit/internal/modules/region"
 	regionsvc "github.com/bdrtr/gobit/internal/modules/region/service"
+	reviewmod "github.com/bdrtr/gobit/internal/modules/review"
 	taxmod "github.com/bdrtr/gobit/internal/modules/tax"
 	taxsvc "github.com/bdrtr/gobit/internal/modules/tax/service"
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
@@ -647,6 +648,15 @@ func setUpHarness(ctx context.Context) error {
 	// router tree. It binds to no other module, so nothing else in this harness
 	// changes because it is registered.
 	registry.Add(invoicemod.New(invoicemod.Options{}))
+	// Review. It is here for the reason invoice is — its migration runs on a
+	// real database and its endpoints enter the authorization audit that walks
+	// the router tree — and for one this harness is the ONLY place that can
+	// serve: the module's whole claim is that an unapproved review is invisible
+	// on the storefront, and the storefront is a router built by the production
+	// guard stack. In the module's own tests the router is the module's; here
+	// the request goes through the same publishable-key check, the same quota
+	// and the same idempotency ring a shopper's would.
+	registry.Add(reviewmod.New(reviewmod.Options{}))
 
 	// The router is built as in PRODUCTION: the guard stack (rate limit -> identity
 	// -> idempotency) comes from the single definition in the core, the test has no

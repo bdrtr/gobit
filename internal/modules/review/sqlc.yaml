@@ -1,0 +1,20 @@
+# sqlc configuration — a SEPARATE file per module.
+#
+# A per-module config instead of a shared root sqlc.yaml is the tool-level
+# counterpart of module isolation (plan Section 2.1): when a module's schema or
+# queries change only its own package is regenerated, and two modules never have
+# to edit the same file.
+#
+# To generate: make gen
+version: "2"
+sql:
+  - engine: postgresql
+    schema: migrations
+    queries: queries
+    gen:
+      go:
+        package: reviewdb
+        out: repository/reviewdb
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        emit_empty_slices: true

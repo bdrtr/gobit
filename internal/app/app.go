@@ -65,6 +65,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	"github.com/bdrtr/gobit/internal/modules/promotion"
 	"github.com/bdrtr/gobit/internal/modules/region"
+	"github.com/bdrtr/gobit/internal/modules/review"
 	"github.com/bdrtr/gobit/internal/modules/tax"
 )
 
@@ -516,6 +517,24 @@ func registerModules(registry *module.Registry, cfg config.Config, log *slog.Log
 	// depends on it — the dependency runs the other way, and only through a
 	// caller that already holds both.
 	registry.Add(invoice.New(invoice.Options{Logger: log}))
+	// Review. It knows no other module either: what a review is ABOUT is a
+	// product identifier it stores and never validates, the same rule an order
+	// line follows for the variant it sold.
+	//
+	// Registering it opens a STOREFRONT WRITE, and that is a decision rather
+	// than a wiring detail — decision A15 in docs/gaps.md. The write is
+	// accepted from a party this framework cannot identify, and what makes that
+	// acceptable is the same argument the order module's return request rests
+	// on: nothing the writer does has any effect until an operator approves it.
+	// The module is built around that sentence — the storefront's reads carry
+	// status = 'approved' as a literal in their SQL — so a shop that registers
+	// this line is not opening a page anyone can write onto, it is opening a
+	// queue somebody has to work through.
+	//
+	// An installation that wants no reviews at all DELETES this line, the way a
+	// pure B2C installation may delete b2b's: the table then does not exist,
+	// the endpoints are not mounted, and nothing else changes.
+	registry.Add(review.New(review.Options{Logger: log}))
 
 	// The embedding program's own modules come LAST, for the same reason
 	// invoice does: nothing in the box depends on them, and the registry

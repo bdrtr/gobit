@@ -46,7 +46,7 @@ Four sequencing facts govern the whole list:
 | A3 | **May the customer pay a different amount than the merchant receives?** | installments (vade farki) AND multi-vendor commission. Today four guards including DB CHECKs forbid it | Turkey-specific, Commerce models |
 | A4 | **Invoice retention vs KVKK erasure** | all erasure work; unwritten, somebody deletes an invoice and puts a hole in the series ADR 0024 exists to prevent | Observability and security |
 | A5 | **Group-price selection for a customer in several groups** | B2B group pricing; the discount context has the identical hole | Commerce models |
-| A6 | **`allow_backorder`: give it a reader or stop publishing it** | pre-order; today a published flag does nothing, and the flags measurement names it as the live proof of ADR 0009's second error class | Commerce models |
+| A6 | **`allow_backorder`: give it a reader or stop publishing it** — still open, and **swept on 2026-09-06: it is one of FOUR, not one, and the four are one module's.** Every published boolean in the repository (35) was measured against every boolean column (17, in ten modules): `manage_inventory`, `allow_backorder`, `discountable` and `is_giftcard` are carried and never decided upon, and all four belong to the PRODUCT module. Every other stored boolean has a real reader — a Go branch, a SQL predicate, or both. So this row is not a stray flag needing attention, it is one DTO carrying four promises it does not keep, and the four want one answer rather than four. Two of them cannot acquire a reader inside the product module at all: the storefront carries the inventory record through UNINTERPRETED by ADR 0004, so the only possible reader of the stock pair is the checkout saga. What changed while the decision waits is the value's trustworthiness, not its meaning — see D2 | pre-order; today a published flag does nothing, and the flags measurement names it as the live proof of ADR 0009's second error class | Commerce models |
 | A7 | **Does the panel become an admin-API client?** (supersedes ADR 0011) — and if so, the auth story, because a cookie on `/admin/v1` destroys its CSRF immunity and a token in JS is the exposure the cookie avoids | the SPA, and the extension-point design | Admin panel |
 | A8 | **Catalog cacheability** — sales channel in the path, single-channel opt-in, or per-key caching accepted | edge caching. The repo already argued the default answer in the GraphQL handler | Storefront speed |
 | A9 | **Customer identity: ADR 0008 stands or is superseded** | customer login, passkeys, a customer-facing assistant, A/B assignment, and it is why the address book is unauthenticated | Storefront speed |
@@ -55,7 +55,7 @@ Four sequencing facts govern the whole list:
 | A12 | **JWT TTL policy** — there is no refresh flow, so the TTL is an unstated trade | session design | Observability and security |
 | A13 | **Metrics posture** — OTLP-only, or expose a scrape endpoint | the "measurable speed" claim | Observability and security |
 | A14 | **Price history: promote the accidental retention or drop it** | forecasting | AI-powered features |
-| A15 | ~~**May the storefront take an address it cannot verify, in order to mail it later?**~~ **The question was too narrow and it was widened on 2026-09-06: may the storefront accept content from a party it CANNOT IDENTIFY, for this framework to act on later?** The address measurement of 2026-09-05 stands unchanged — no customer identity, no verification, no double opt-in, no unsubscribe, no per-address throttle, and a notification module that deliberately stores no recipient address — but it describes a CLASS rather than the waitlist. Re-measured: the storefront's only principal is the publishable key, and every storefront write takes its subject from a path identifier the client chooses (the address book, and `POST /store/v1/orders/{id}/returns`). **The repository has already answered one instance of this question and its argument is written down**, in the order module's store handler: an unauthenticated write is acceptable there because a request is a REQUEST — it moves no stock and no money, an operator has to receive it before anything happens, and every endpoint that ACTS is admin-only and scoped. That argument hands the decision its discriminator, and it is a question somebody can answer per feature: **does a human stand between the write and its effect?** The waitlist fails it outright — the effect of a waitlist row is an outbound message and nobody approves it. A customer-written REVIEW (B4) has the same shape and the same discriminator settles it: published on APPROVAL, the return-request argument covers it unchanged and A15 is already answered for B4; published on SUBMISSION, it is not covered and B4 needs this sentence before its first table. Either way what is stored is personal data, so A2 sits upstream of both | the back-in-stock waitlist (C1), the review module (B4) and every future "tell me when" or "write us something" feature; A2 sits upstream of it | Commerce models |
+| A15 | ~~**May the storefront take an address it cannot verify, in order to mail it later?**~~ **The question was too narrow and it was widened on 2026-09-06: may the storefront accept content from a party it CANNOT IDENTIFY, for this framework to act on later?** The address measurement of 2026-09-05 stands unchanged — no customer identity, no verification, no double opt-in, no unsubscribe, no per-address throttle, and a notification module that deliberately stores no recipient address — but it describes a CLASS rather than the waitlist. Re-measured: the storefront's only principal is the publishable key, and every storefront write takes its subject from a path identifier the client chooses (the address book, and `POST /store/v1/orders/{id}/returns`). **The repository has already answered one instance of this question and its argument is written down**, in the order module's store handler: an unauthenticated write is acceptable there because a request is a REQUEST — it moves no stock and no money, an operator has to receive it before anything happens, and every endpoint that ACTS is admin-only and scoped. That argument hands the decision its discriminator, and it is a question somebody can answer per feature: **does a human stand between the write and its effect?** The waitlist fails it outright — the effect of a waitlist row is an outbound message and nobody approves it. A customer-written REVIEW (B4) has the same shape and the same discriminator settles it: published on APPROVAL, the return-request argument covers it unchanged and A15 is already answered for B4; published on SUBMISSION, it is not covered and B4 needs this sentence before its first table. Either way what is stored is personal data, so A2 sits upstream of both. **B4 took the first answer and shipped on 2026-09-06, so this decision now has a SECOND worked example — and it is worth reading for what it adds rather than for the fact that it agrees.** (i) The discriminator has to be held by the TYPE or it is only a promise. The return request's argument lives in prose; the review module's lives in two SQL literals and a method set where nothing on the storefront side accepts a status at all, which is the difference between passing this test today and passing it after the next refactor. (ii) **The discriminator constrains the SCHEMA, not only the flow** — the first example never showed this because a return request stores no author. Because the writer cannot be identified, three columns were refused: an order id (it would narrow spam and authenticate nobody, and a verified-purchase badge rendered from it would be a false statement made by the schema — a column that cannot mean what it will be read to mean is worse stored than absent), an email address (an unverified mailing list with no unsubscribe, the exact property that makes the waitlist fail this decision), and an IP address (it would be the only network identifier of a shopper stored anywhere here, and the quota that would use it already exists one layer up). What is left is one identifying field, and it is the one the author typed in order to have it printed. (iii) It does NOT dispose of A2, and the module does not pretend otherwise; it narrows what A2 has to reach to a single column. (iv) The waitlist still fails, and now for a sharper reason: a review's approval step IS the feature, while a waitlist's would be an operator approving each outbound message one at a time — the human cannot be inserted there without deleting the point of it | the back-in-stock waitlist (C1), ~~the review module (B4)~~ built, and every future "tell me when" or "write us something" feature; A2 sits upstream of it | Commerce models |
 | A16 | **What amount would a price filter compare against?** — measured 2026-09-05, and it came out of B2 as a DECISION rather than the build it was filed as. A product has no price. A price belongs to a `price_set`, the set reaches a VARIANT through a link, and one set holds many rows — currency × quantity tier × price list. "The price" is a selection FUNCTION of (currency, quantity, rule attributes, instant) resolved by five ordered tie-breakers (list tier, rule count, tier width, amount, id), not a column. The storefront is worse off than merely undefined: prices are fetched in a SECOND round trip made AFTER the page was cut by LIMIT/OFFSET, and what comes back is only the UNCONDITIONAL subset in every currency, with no currency, region or customer-group input — so there is not even a well-defined "the amount" on the page to filter on. Denormalising one into the catalog has NO invalidation signal: the pricing module publishes no events at all | the price filter AND the price sort in B2; "under 500 TL" in C10; a price column in any search index | AI-powered features |
 | A17 | **What does "in stock" mean for a PRODUCT?** — measured 2026-09-05, out of the same B2 row and the same kind of answer: nowhere in this repository is it defined. Availability is defined at two granularities and BOTH sit below the product. The product module may legally read a link table (there is an argued precedent), so its SQL can answer "has an inventory item" but NOT "has stock" — the quantity is `inventory_levels.stocked_quantity`, the inventory module's own column, and ADR 0001 stops there. A REGION-correct answer is a THREE-module question: `stock_locations` carries no region column at all, and the region-to-location map is `shipping_location_regions` — in FULFILLMENT, keyed (location_id, region_id), with the region→warehouse direction deliberately unindexed because nothing reads it. There is no denormalised stock column and the event-driven route to one is blocked by B7 | the in-stock filter in B2; real-time stock (C16) reads the same absence; the waitlist (C1) needs the same definition to know when to fire | AI-powered features |
 
@@ -93,7 +93,7 @@ belonging to that feature**, and the next round pays for the question twice.
 | B1 | ~~**A guarded inbound-callback class**~~ **Built 2026-09-05: ADR 0028.** `core/http.CallbackRegistry` — per-route quota, body limit, timeout, enforced signature check and a derived replay window; PayTR converted onto it at the same URL. Audit deliberately left out (see D1) | four carriers, e-invoice, every payment provider — the plumbing is there; a carrier still waits on B10 | Turkey-specific |
 | B2 | **Storefront filter surface** — ~~category, tag~~ **built 2026-09-05** (`category_id`, `tag_id`, in REST and GraphQL, EXISTS not joins so a product in several categories is returned once). ~~Still missing: price, in-stock, option value, sort~~ — **one bag holding four different kinds of work; measured and split 2026-09-05.** SORT is a straightforward build with one trap (the cursor). OPTION VALUE is a build behind one decision, entirely inside the product module. PRICE and IN-STOCK are NOT builds — they are decisions, and they are now **A16** and **A17**. ~~Also measured: the built half never reached the read layer, so the panel cannot filter by category while the storefront can~~ — **that half reached the read layer the same day.** The `product` provider takes `category_id` and `tag_id` too now (two switch cases, NO new SQL — the EXISTS subqueries were already in the listing and the count), it REFUSES either of them combined with `id`/`ids` rather than answering from relation slices it never loads, and the module offers a second read-layer entity, `category`, so a consumer can turn a name into an identifier. ~~What is still behind is exactly one filter: the storefront's text search~~ — **that one closed too, later the same day.** The provider answers `q` (the storefront's own spelling), trims it, treats an empty or whitespace term as NO filter, and REFUSES it beside `id`/`ids` on a measured argument rather than a taste. The panel grew the search box that consumes it. The cost was measured on the 52,004-product rig instead of guessed (`docs/catalog-search-cost.md`) and the finding inverts the expectation the missing index creates: a term matching 52,000 titles is answered in 0.03 ms, a term matching ONE product costs 9.1 ms and reads the whole table — **the rare search is the expensive one, and that is the one a search box receives** | ~~NL search~~ **C10 does not exist in code** — but `category_id` has a real named consumer since 2026-09-05: the panel's product list narrows the catalog through the read layer and offers a dropdown of category names. `tag_id` has none (see A16, A17 and the section below) | AI-powered features |
 | B3 | ~~**Storefront vocabulary endpoints**~~ **Built 2026-09-05.** `GET /store/v1/{collections,categories,tags}`. The category listing applies `is_active`/`is_internal` — two columns that existed since the first migration and that nothing read | NL search — the word→id half is done; the FILTER half is B2 | AI-powered features |
-| B4 | **Review module** — and it is not the pure build this row implied. **Measured 2026-09-06: A15 decides its first table.** A review is content written from the storefront by a party this repository cannot identify — the only principal there is the publishable key and every store write takes its subject from a client-chosen path identifier — so "verified purchase" cannot be established either, and the text is personal data that A2 sits upstream of. The discriminator A15 now carries answers it in one sentence: if a review is published on APPROVAL, the argument already written for the storefront return request covers it unchanged (an unauthenticated write whose every acting endpoint is admin-only and scoped); if it is published on SUBMISSION, nothing stands between an anonymous writer and the shop's product page and the decision has to be made first. Note which way the AI brief leans — moderation is its first use case, and moderation IS the operator in between | moderation (the AI brief's first use case), summaries, Q&A — and it is blocked by A15, not only by its own absence | AI subsystem |
+| B4 | ~~**Review module**~~ **Built 2026-09-06 — and A15 was applied rather than quoted, which is why the answer is in the SQL and not in a comment.** The discriminator settles the first table: a review is born `submitted`, the only path out is an admin endpoint, and the storefront's argument is therefore the return request's own, unchanged. The invisibility is a property of the TYPE, not of a call site — `ListApprovedReviews` and `SummarizeApprovedReviews` carry the status as a SQL LITERAL, the repository and the service expose them as separate methods that take no status at all, the storefront handler interface names them separately, and there is no storefront read of a single review by id, so the id a submission returns is an acknowledgement rather than a handle to an unapproved row. A shared query with a status parameter was refused for the reason that it would leave the whole design one missing assignment from publishing everything ever submitted. Four transition edges, each argued: submitted→approved, submitted→rejected, approved→rejected as the only way to unpublish, and rejected→approved as the only repair, because the author cannot resubmit. Self-edges are refused so the moderation moment never lies about when a human looked, and a FULL mirror CHECK ties `moderated_at` to the status in both directions — expressible for the same reason fulfillment's `returned_at` is, that nothing moves back out of the state it mirrors. Proved where the guards are real: `TestAnUnapprovedReviewIsInvisibleOnTheStorefront` and `TestTheStorefrontCannotPublishItsOwnReview` run through the production publishable-key check, prefix quota and idempotency ring, and the second one shows the door is CLOSED rather than merely ignored — a `status` field in the submission body is refused with 422, and a status query parameter on the storefront listing widens nothing. NOT built, each argued in the files rather than left as an apparent omission: no order id and so no "verified purchase" (it would narrow spam and authenticate nobody — it is the very credential the return request runs on — and a badge rendered from it would be a false statement made by the schema); no email and no IP, only the byline the author typed in order to have it printed; no read-layer provider, no interop surface and no event, because each would be a published capability with no consumer, which is what the audits refuse and what C11 will bring its own reader for. The AVERAGE is computed on read and that was MEASURED, not preferred — the numbers and the crossing point are in the review-summaries section | ~~moderation (the AI brief's first use case), summaries, Q&A — and it is blocked by A15, not only by its own absence~~ — the data exists. Moderation is a human's today and the AI half is still the `ai` package; C11 needs two hooks the module deliberately withheld, and its row says which | AI subsystem |
 | B5 | ~~**Order ↔ fulfillment link, and something that creates a fulfillment**~~ **Built 2026-09-05.** The fulfillment module declares `order_fulfillment` (one to many); `internal/workflows/fulfilling` opens a shipment for an order and binds the two; the order gets `POST`/`GET /admin/v1/orders/{id}/fulfillments`. NOT built: a shipment created at checkout — shipping stays a decision | the order timeline, carrier tracking, "where is the parcel" — answerable now. the link is expandable by the read layer too (D8) | Platform features |
 | B6 | ~~**A money-event read surface**~~ **Built 2026-09-05.** The payment collection entity offers `first_captured_at` and `last_refunded_at`, loaded by a SECOND batch query and only when asked for; the order's payment view and `GET /admin/v1/orders/{id}/payment` carry both. NOT added: `authorized_at` and `refunded_at` columns — neither exists in the schema at all | the timeline's two most-asked facts — answerable now | Platform features |
 | B7 | **Inventory movement ledger + inventory events.** Measured 2026-09-05: the EVENT cannot be landed on its own. `TestTheEventTopicsHaveASubscriber` refuses a topic no production file subscribes to, its exemption map is empty by policy, and the one plugin that reads the catalog indexes no stock — so there is no subscriber to give it today. The event and its first consumer are one package or neither | forecasting, real-time stock, and an audit trail stock does not have | AI-powered features, Storefront speed |
@@ -123,7 +123,7 @@ belonging to that feature**, and the next round pays for the question twice.
 | C8 | **Digital product delivery** — entitlement, expiring link, re-download policy | — |
 | C9 | **B2B: quotes, terms, minimum order** | A5 |
 | C10 | **NL search layer** | B2, B3 |
-| C11 | **Review summaries and Q&A** | B4 |
+| C11 | **Review summaries and Q&A** | ~~B4~~ **built 2026-09-06, so the DATA exists** — and the two hooks a summariser needs are deliberately absent, named in the review module's own package doc as arriving WITH their first reader. It publishes no read-layer provider, so nothing outside the module can read a review without importing it, which ADR 0001 forbids; and it publishes no event, so a stored summary has nothing to invalidate it. Both were withheld rather than forgotten: an interop surface no production file resolves fails the consumer audit, and a topic no production file subscribes to fails the topic gate whose exemption map is empty by policy. C11 is the reader that makes both landable, in one package with them. The `product.metadata` measurement below still says where the summary may NOT live |
 | C12 | **Subscriptions** — a second axis on the order, not a fifth status | B9 |
 | C13 | **Feature flags, then A/B** | A9 for the assignment key |
 | C14 | **Panel: extension points, then the SPA if A7 says so** | A7 |
@@ -142,7 +142,37 @@ belonging to that feature**, and the next round pays for the question twice.
   the build. Still NOT audited: writing a row for an actor this repository only
   asserts contradicts the audit contract in four places, and nothing reads
   `audit_log` yet. That is decision 1 of ADR 0028.
-- **D2** `allow_backorder` is published and does nothing (see A6).
+- **D2** `allow_backorder` is published and does nothing (see A6). **Measured
+  2026-09-06 and this line was three flags too narrow:** `manage_inventory`,
+  `discountable` and `is_giftcard` are in exactly the same state, all four in
+  the product module. Giving them a reader is still A6's decision, but the two
+  ways the stored values could rot while it waits are now closed, and the
+  closing was measured first. **The defaults were unpinned:** all three flags
+  that have a defaulting block were flipped one at a time
+  (`manage_inventory` true to false, `allow_backorder` false to true,
+  `discountable` true to false) and the whole product suite — unit AND
+  integration against a real PostgreSQL — stayed green on every flip.
+  `TestCreateVariantDefaultsToManagedStockWithoutBackorder` and
+  `TestCreateProductDefaultsToDiscountableAndNotAGiftcard` pin them now, with
+  `TestCreateVariantHonorsExplicitFlagValues` and
+  `TestCreateProductHonorsExplicitFlagValues` covering the other direction —
+  the flags are pointers precisely so a sent `false` differs from "not sent",
+  and a defaulting block that overwrites instead of filling in passes the
+  default tests untouched. **And a partial update could have reset them:**
+  `TestPartialVariantUpdateDoesNotResetTheFlags` proves against a real database
+  that an update naming neither flag preserves both. It cannot be a unit test —
+  the preservation is not written in Go at all, it is one `COALESCE` per column
+  in the product module's variant query, and the service package's fake store
+  models neither column.
+
+  The reasoning is the part worth keeping: **a flag nothing reads has no second
+  line of defence.** A flag that IS read fails some downstream test when its
+  default moves; a carried-only flag fails nothing, while the column keeps
+  accumulating a value per row. The damage surfaces on the day A6 is finally
+  answered and a reader acts on every row written in the meantime — with no
+  migration able to tell the intended values from the accidental ones. For a
+  carried-only flag the default IS the whole contract, because it is the only
+  part of the flag anything in the repository actually produces.
 - **D3** The address book's storefront endpoints are unauthenticated and keyed by
   a path id — personal data anyone can read and change. A known consequence of
   ADR 0008, in its sharpest form.
@@ -1909,17 +1939,28 @@ brief assumes, measured.
 
 ### Two assumptions that do not hold
 
-1. **There is no review module.** The sixteen modules are product, pricing,
-   inventory, region, customer, cart, payment, order, fulfillment, promotion,
-   tax, auth, file, notification, b2b and invoice. A customer cannot leave a
-   review, so `review.created` has nothing to fire from and moderation has
-   nothing to moderate.
+1. ~~**There is no review module.**~~ **Built 2026-09-06 (B4), and the count is
+   seventeen:** product, pricing, inventory, region, customer, cart, payment,
+   order, fulfillment, promotion, tax, auth, file, notification, b2b, invoice
+   and review. A customer can leave a review now and moderation has something to
+   moderate, so the half this item said had to come first is done — schema,
+   service, storefront write, admin read and a four-edge moderation state, with
+   the storefront's reads carrying `approved` as a SQL literal.
 
-   The first use case is therefore two pieces of work, not one: the review
-   module (schema, service, storefront write, admin read, moderation state) and
-   the AI subsystem. They are separable and the review module is the one that
-   has to come first — a moderation flow with no reviews is untestable in the
-   way that matters.
+   The other half of this item still stands and is now the ONLY half: the AI
+   subsystem does not exist. Read what that leaves precisely, because the
+   moderation FLOW is not the thing that is missing — it exists and it is a
+   HUMAN's, a queue at `GET /admin/v1/reviews?status=submitted` and one endpoint
+   that moves a review. What an AI would add is a SUGGESTION on that queue, not
+   a decision, which is the `sagawatch` shape ADR 0017 already argues for.
+
+   And the event this item named is still absent, deliberately: the module
+   publishes none, because `TestTheEventTopicsHaveASubscriber` refuses a topic
+   no production file subscribes to and its exemption map is empty by policy. A
+   review event and its first subscriber are one package or neither — exactly
+   the constraint B7 records for inventory. So "`review.created` reaching a
+   worker" is not free machinery waiting to be used; it is a second thing the
+   first AI use case has to bring with it.
 
 2. **pgvector is not available and is not free to add.** The cluster today has
    `pg_trgm` and `unaccent` available; `vector` is not. More to the point,
@@ -2203,6 +2244,72 @@ that ticks "allow backorder" today gets the same refusal it got before.
 Pre-order proper needs a little more — a promised date, and stock that may go
 negative in a controlled way — but the first move is smaller than the feature:
 either the flag gets its reader or it stops being published.
+
+**Swept on 2026-09-06, and this flag has three siblings.** The sweep was an
+instrument rather than a grep: a `go/ast` pass collecting side A — every `bool`
+and `*bool` struct field carrying a json tag, plus the read layer's record keys
+— and side B, the same name appearing in a CONDITION (an if, a for, a switch, a
+case, or an operand of not/and/or), with the `x != nil` patch-application shape
+excluded because it tests whether a field was SENT and not what it says. Every
+SQL predicate was scanned for the snake_case column alongside. Generated sqlc
+packages are skipped: their row structs mirror the column rather than publish it
+independently, and counting them would double every finding.
+
+Three numbers came back:
+
+- **35 published boolean flags; 17 boolean columns, across ten modules.**
+- **Never written: zero.** Every one of the 17 columns has an INSERT that names
+  it or an UPDATE that sets it. That is `TestEveryColumnIsWrittenBySomething`
+  (B18) doing its job across the whole boolean population, checked from the
+  outside rather than trusted.
+- **Carried but never decided upon: four** — `manage_inventory`,
+  `allow_backorder`, `discountable`, `is_giftcard`. Every other stored boolean
+  has a reader that changes what the system does: `is_active` and `is_internal`
+  cut the category listing, `is_disabled` is applied inside the key-to-channel
+  resolution itself, `admin_only` and `is_return` decide which shipping options
+  a cart may see, `requires_shipping` is read in the inventory queries, and so
+  on down the list.
+
+**The four are not scattered, and that is the finding.** One module publishes
+every unread boolean column in the repository; the other sixteen publish none.
+A6 therefore is not "a flag needs a reader" — it is the product module's DTO
+making four promises it does not keep, and answering it one flag at a time would
+leave three behind. Two of the four cannot even acquire a reader here: the
+storefront hands the inventory record through as a loosely typed record on
+purpose (the accepted price of ADR 0004, written on `StoreVariant`), so nothing
+in this module may interpret the stock pair and the only place that could is the
+checkout saga.
+
+**The sweep is deliberately NOT an arch test, and the reason is the more useful
+half of the measurement.** Run naively over Go field names it reports 15 flags
+and 11 of them are wrong — a 73% false-positive rate — because most booleans
+here are not stored flags at all but RESULT fields on a response DTO:
+`already_issued`, `already_open`, `released`, `cart_completed`,
+`summary_recorded`, `reservations_confirmed`. Nothing in this repository should
+read those; the CLIENT reads them. Anchoring the gate to a boolean COLUMN
+removes ten of the eleven and takes the report down to five.
+
+The eleventh survives the anchor and is still wrong, and it is the instructive
+one. `automatic_taxes` is a real column, published on the region DTO, and no
+branch in the region module reads it — but the cart does. The region module
+hands it across the boundary through a primitive interop method that returns it
+as an UNNAMED bool (`RegionTax` gives back a rate and an "automatic" flag), and
+the cart's tax step branches on it: not automatic, no tax line. The value flows;
+the NAME does not survive the crossing. That is ADR 0001's interop rule working
+exactly as designed, which means a name-based reader audit cannot be made sound
+against this repository's own house style — a gate failing the build on
+`automatic_taxes` would be teaching somebody to widen a published contract in
+order to satisfy a scanner. The finding is recorded here instead, which is the
+honest place for something a test cannot hold.
+
+Region is also the contrast that shows what pinning looks like: its service
+tests already assert both that a flag left out of an update is unchanged and
+that an explicit false is WRITTEN rather than read as "do not touch". Inventory
+pins its equivalent default too —
+`TestCreateInventoryItemVarsayilanSevkiyatGerektirir` fails at once when
+`requires_shipping` is flipped. Product pinned none of its four until
+2026-09-06, and that contrast is what makes this a gap rather than a house
+convention. What was pinned, and what it cost to find out it was not, is D2.
 
 **The waitlist ("tell me when it is back") is nothing today, and it is NOT the
 cheapest item on this list.** That claim stood in this file until 2026-09-05,
@@ -2644,11 +2751,46 @@ is currently four words short: price, in-stock, option value, sort. Two of the
 four are sentences somebody has to write (A16, A17), not code somebody has to
 type, and that is the only reason the order still holds.
 
-### Review summaries and Q&A: still blocked on the review module
+### Review summaries and Q&A: the data exists now, the two hooks do not
 
-The absence of review data is already recorded in the AI-subsystem section. The
-measurement adds two details that decide where a summary could live once reviews
-exist.
+**The review module landed on 2026-09-06 (B4), so "there are no reviews" is no
+longer the blocker.** What blocks C11 now is narrower and it is named in the
+module's own package doc: it publishes no read-layer provider and no event, and
+both absences are deliberate. A provider nothing resolves fails the consumer
+audit; a topic nothing subscribes to fails the topic gate. C11 is the first
+reader of both, so both land in the package that brings the reader — which is
+this repository's standing rule for a capability, applied rather than waived.
+
+Read the two hooks separately, because they are needed for different halves of
+the feature. Without a PROVIDER a summariser cannot read a review at all: it
+lives in another module and ADR 0001 forbids the import, so the read layer is
+the only door. Without an EVENT a stored summary has nothing to invalidate it,
+and the section below on `product.metadata` says why the summary has to be
+stored somewhere of its own rather than on the product.
+
+**One number a summariser should know before it stores anything.** The review
+module already computes the count and the average on READ, and that was measured
+rather than preferred: against PostgreSQL 16 on a rig of 505,000 reviews over
+20,001 products, with the module's partial index on the approved rows, the
+aggregate costs 0.17-0.21 ms for a product with 19 approved reviews, 1.3-2.0 ms
+at 5,000 and 9.3 ms at 50,000, against 33-38 ms with no index at all — where it
+is a full parallel sequential scan whose cost does not depend on the product's
+own review count. The first page of twenty reviews is 0.03-0.04 ms at every one
+of those sizes, because the LIMIT stops the index scan. The index is 40 MB
+against a 348 MB table.
+
+The crossing point is stated instead of hidden: the cost is linear in the ONE
+product's approved count, so only a shop with hundreds of thousands of reviews
+on a single product is buying anything with a stored counter — and it would buy
+those milliseconds by owing a correctness obligation to every path that writes a
+review. That is the same trade A16 records against denormalising a price into
+the catalog, and it fails for the same reason there: the missing piece is the
+invalidation signal. A TEXT summary is the opposite case and this is where the
+numbers stop applying — it cannot be recomputed per request at any price, so it
+must be stored, and storing it is precisely what needs the event.
+
+The measurement adds two more details that decide where such a summary could
+live.
 
 - **`product.metadata` is a whole-value REPLACE, not a merge.** The update is
   `metadata = COALESCE(@metadata, metadata)` and there is no jsonb `||` anywhere
@@ -2663,7 +2805,10 @@ OWN table, with its own migration ledger, no cross-module foreign key, and a
 rebuild driven by events. Note the constraint that comes with it — **only four
 domain events exist repo-wide** (`product.created`, `product.updated`,
 `product.deleted`, `order.placed`), so a summary invalidated by a new review
-needs a fifth, which is the review module's to publish.
+needs a fifth, which is the review module's to publish. That is still exactly
+true after B4 landed — the module publishes none — and it is now assignable
+rather than hypothetical: the topic, its first subscriber and the summary table
+are one change.
 
 ### Attribute extraction from photos: the image cannot be read back
 
@@ -2774,9 +2919,16 @@ metadata column between them.
 ### What the five have in common
 
 Four are blocked by something that is not AI — filters that do not exist,
-reviews that do not exist, images that cannot be read back, history that was
-never kept. The fifth is blocked by a decision (ADR 0008) rather than by
-machinery, and its machinery is unusually ready.
+~~reviews that do not exist~~ **reviews that exist since 2026-09-06 but publish
+no event and no read-layer entity**, images that cannot be read back, history
+that was never kept. The fifth is blocked by a decision (ADR 0008) rather than
+by machinery, and its machinery is unusually ready.
+
+The review item is worth watching as it moves, because it changed CATEGORY
+rather than closing: it used to be blocked by missing data, and it is now
+blocked by two withheld capabilities that its own first reader is supposed to
+bring. That is a smaller blocker and a differently shaped one — nobody has to
+design a schema for it, somebody has to write the consumer.
 
 The cheapest real move on this list is therefore not a model call. It is the
 storefront filter surface: the NL layer needs it, the panel would use it, and
@@ -3166,7 +3318,13 @@ Two things a flag design has to settle:
   which is consistent with ADR 0025 making gobit a library.
 
 The measurement also names `allow_backorder` again, as the live proof of what a
-flag without a reader becomes.
+flag without a reader becomes — and the 2026-09-06 sweep found it has three
+siblings in the same module, none of which a boolean-column count would have
+separated from the thirteen that do have readers. The sweep's own false
+positives are the lesson for a flag SUBSTRATE too: eleven of its fifteen naive
+findings were response fields reporting an outcome to a client, which is a
+different thing from a flag entirely, and a design that cannot tell the two
+apart in its own storage will not be able to audit itself either.
 
 ### Multi-store, multi-currency, multi-language: two of three
 

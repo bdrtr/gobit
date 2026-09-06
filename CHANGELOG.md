@@ -40,6 +40,42 @@ Sabitlenme `1.0.0` ile olur.
   cevaplamak önce seçenekleri icat etmeyi gerektiriyor. Seçenekler ölçülmeden
   uydurulmadı; eksiklik olduğu gibi kaydedildi.
 
+- **A15 uygulandı, alıntılanmadı: cevabı taşıyan şey SQL — bir yorum satırı
+  değil** (A15, B4).
+
+  Aynı gün yorum modülü yazıldı ve ayırt edici — yazma ile etkisi arasında bir
+  insan duruyor mu? — bir cümle olarak değil bir TİP olarak kuruldu. Yorum
+  `submitted` doğuyor, vitrinin gördüğü iki sorgu statüyü parametre değil SABİT
+  olarak taşıyor, repository ve servis onları statü almayan AYRI metotlar olarak
+  yayımlıyor, ve vitrin tarafında tek bir yoruma id ile bakan hiçbir uç yok —
+  yani gönderimin döndürdüğü id bir makbuz, onaylanmamış bir satırın kulpu
+  değil. Statü parametresi alan ORTAK bir sorgu bilerek reddedildi: tasarımın
+  tamamını, bugüne kadar gönderilmiş her şeyi yayımlamaya tek bir atama
+  uzaklıkta bırakırdı. İade talebinin gerekçesi düzyazıda duruyor; buradaki
+  gerekçe iki SQL sabitinde duruyor, ve fark bugün bu sınavı geçmekle bir
+  sonraki refactor'dan sonra da geçmek arasındaki fark.
+
+  **İkinci işlenmiş örneğin öğrettiği, birincisinin öğretemediği şey: ayırt
+  edici yalnızca AKIŞI değil ŞEMAYI da kısıtlıyor.** İade talebi yazarı hakkında
+  hiçbir şey saklamadığı için bu görünmemişti. Yazar kimliklendirilemediği için
+  üç kolon reddedildi ve üçünün gerekçesi ayrı. Sipariş id'si: spam'i daraltır,
+  kimseyi doğrulamaz — iade talebinin üzerinde çalıştığı kimlik bilgisinin ta
+  kendisi, yani onay sayfasını görmüş herkeste var — ve ondan basılacak bir
+  "doğrulanmış alışveriş" rozeti şemanın söylediği yanlış bir cümle olurdu;
+  okunacağı anlamı taşıyamayan bir kolon, saklanmasındansa olmaması iyidir.
+  E-posta: doğrulaması ve aboneliği bırakması olmayan bir posta listesi — bekleme
+  listesini A15'te düşüren tam da bu özellik, ve depo bu sınıfı zaten
+  reddediyor, çünkü notification modülü hiçbir alıcı adresi saklamıyor. IP: bu
+  depoda bir alışverişçinin saklanan tek ağ tanımlayıcısı olurdu, ve onu
+  kullanacak kota zaten bir katman yukarıda duruyor. Geriye tek bir kimlik alanı
+  kalıyor, o da yazarın BASILSIN diye yazdığı ad.
+
+  A2 bununla kapanmıyor ve modül kapandığını iddia etmiyor; A2'nin ulaşması
+  gereken yüzeyi tek kolona indiriyor. Bekleme listesi de hâlâ düşüyor, artık
+  daha keskin bir sebeple: yorumda onay adımı ÖZELLİĞİN kendisi, bekleme
+  listesinde ise giden her mesajı tek tek onaylayan bir operatör demek olurdu —
+  insanı araya koymak orada özelliği silmek olur.
+
 - **Yazılmış, belgelenmiş, uçtan uca test edilmiş bir eklenti KURULAMIYORDU —
   ve bu sınıf için yazılmış kapı YEŞİLDİ** (C5, D22).
 
@@ -108,6 +144,82 @@ Sabitlenme `1.0.0` ile olur.
   sistemi var.
 
 ### Düzeltildi
+
+- **Hiçbir şeyin OKUMADIĞI bayrağın VARSAYILANINI da hiçbir şey tutmuyordu — ve
+  `allow_backorder` yalnız değil, dördün biri** (A6, D2).
+
+  Önce ölçüm, çünkü işi yönlendiren o oldu. Depodaki her yayımlanmış boole
+  bayrağı bir `go/ast` aracıyla tarandı: A tarafı json etiketi taşıyan her
+  `bool`/`*bool` alan ve okuma katmanının kayıt anahtarları; B tarafı aynı adın
+  bir KOŞULDA geçmesi (if, for, switch, case, ya da değil/ve/veya işleneni),
+  `x != nil` yama şekli hariç — o alanın GÖNDERİLİP gönderilmediğini sınar,
+  ne dediğini değil — artı her SQL yükleminde snake_case kolonun aranması.
+  Üretilen sqlc paketleri atlandı: satır struct'ları kolonu yayımlamıyor,
+  aynalıyor.
+
+  Üç sayı çıktı. **35 yayımlanmış boole bayrağı; on modülde 17 boole kolonu.**
+  **Hiç yazılmayan: sıfır** — 17 kolonun her birini adıyla yazan bir INSERT ya
+  da bir UPDATE var, yani `TestEveryColumnIsWrittenBySomething` bu popülasyonun
+  tamamında işini yapıyor, ve bu dışarıdan kontrol edildi. **Taşınan ama
+  hakkında hiçbir karar verilmeyen: dört** — `manage_inventory`,
+  `allow_backorder`, `discountable`, `is_giftcard`. Geri kalan her saklanan
+  boole'nin sistemin davranışını değiştiren bir okuyucusu var.
+
+  **Asıl bulgu dördün dağınık OLMAMASI.** Deponun okunmayan bütün boole
+  kolonlarını tek bir modül yayımlıyor, diğer on altısı hiç yayımlamıyor. Yani
+  A6 "bir bayrağa okuyucu lazım" değil, ürün modülünün DTO'sunun tutmadığı dört
+  söz veriyor olması, ve bunu bayrak bayrak cevaplamak üçünü geride bırakır.
+  İkisi bu modülde okuyucu edinemez bile: vitrin envanter kaydını bilerek
+  YORUMLAMADAN geçiriyor (ADR 0004'ün kabul edilmiş bedeli), yani stok çiftini
+  okuyabilecek tek yer checkout saga'sı.
+
+  **Bayraklara okuyucu YAZILMADI, çünkü o bir karar (A6) ve hâlâ açık.** Bunun
+  yerine, karar beklerken saklanan değerin çürümesine açık iki kapı kapatıldı —
+  ve ikisi de önce ölçüldü. **Varsayılanlar tutulmuyordu:** varsayılan bloğu
+  olan üç bayrak teker teker ters çevrildi (`manage_inventory` true'dan false'a,
+  `allow_backorder` false'tan true'ya, `discountable` true'dan false'a) ve ürün
+  paketinin TÜM testleri — birim ve gerçek bir PostgreSQL'e karşı entegrasyon —
+  her üçünde de YEŞİL kaldı. Karşılaştırma da ölçüldü: inventory modülünün aynı
+  cinsten varsayılanı tutuluyor,
+  `TestCreateInventoryItemVarsayilanSevkiyatGerektirir` `requires_shipping` ters
+  çevrildiğinde anında düşüyor — yani bu bir ev âdeti değil, bir boşluktu. Dört
+  yeni birim testi hem varsayılanları hem de açıkça gönderilen değerin
+  KORUNDUĞUNU sabitliyor; bayrakların işaretçi olmasının sebebi zaten
+  gönderilmiş bir `false` ile "hiç gönderilmedi"yi ayırmak, ve dolduracağı yerde
+  üzerine yazan bir varsayılan bloğu yalnız varsayılan testlerinden geçer.
+  **Kısmi bir güncelleme de sıfırlayabilirdi:** ikinci kapı, hiçbir bayrağı
+  ADLANDIRMAYAN bir güncellemenin ikisini de olduğu gibi bıraktığını gerçek
+  veritabanına karşı kanıtlayan bir entegrasyon testi. Birim testi olamazdı —
+  koruma Go'da yazılı değil, varyant sorgusunda kolon başına bir `COALESCE`, ve
+  servis paketinin sahte deposu bu iki kolonu hiç modellemiyor.
+
+  **Saklanan gerekçe bu:** hiçbir şeyin okumadığı bir bayrağın ikinci savunma
+  hattı YOKTUR. Okunan bir bayrağın varsayılanı kaydığında ona dayanan bir test
+  kızarır; taşınan bir bayrağınki hiçbir şeyi kızartmaz, üstelik kolon her
+  satırda bir değer biriktirmeye devam eder. Hasar A6'nın cevaplandığı gün
+  yüzeye çıkar: yeni yazılan okuyucu, o güne kadar yazılmış her satıra göre
+  davranır ve hiçbir migration kasıtlı değerlerle kazara değerleri birbirinden
+  ayıramaz. Taşınan bir bayrak için varsayılan, sözleşmenin TAMAMIDIR — çünkü
+  bayrağın bu depoda gerçekten üretilen tek parçası odur.
+
+  **Ve bu tarama bilerek bir mimari kapıya dönüştürülmedi.** Go alan adları
+  üzerinde naif çalıştırıldığında 15 bayrak bildiriyor ve 11'i yanlış — %73
+  yanlış pozitif — çünkü buradaki boole'lerin çoğu saklanan bayrak değil, bir
+  yanıt DTO'sunda SONUÇ alanı (`already_issued`, `already_open`, `released`,
+  `cart_completed`, `summary_recorded`, `reservations_confirmed`): onları bu
+  deponun okumaması gerekiyor, onları İSTEMCİ okuyor. Kapıyı bir boole KOLONUNA
+  bağlamak 11'in 10'unu eliyor ve rapor beşe iniyor. On birincisi bağlamadan
+  sağ çıkıyor ve hâlâ yanlış, ve öğretici olan o: `automatic_taxes` gerçek bir
+  kolon, region DTO'sunda yayımlanıyor, region modülünde onu okuyan hiçbir dal
+  yok — ama sepet okuyor. Region onu modül sınırının ötesine, değeri ADSIZ bir
+  boole olarak döndüren ilkel bir interop metoduyla veriyor, ve sepetin vergi
+  adımı ona bakıp dallanıyor: otomatik değilse vergi satırı yok. Değer akıyor;
+  AD sınırı geçmiyor. Bu, ADR 0001'in interop kuralının tam da tasarlandığı gibi
+  çalışması — yani ada dayalı bir okuyucu denetimi bu deponun kendi ev üslubuna
+  karşı sağlam yapılamaz, ve `automatic_taxes` yüzünden derlemeyi düşüren bir
+  kapı birine yayımlanmış bir sözleşmeyi tarayıcıyı memnun etmek için
+  genişletmeyi öğretirdi. Bulgu bunun yerine `docs/gaps.md`'ye yazıldı; bir
+  testin tutamayacağı bir bulgunun dürüst yeri orası.
 
 - **Kapıların kendisi denetlendi: 89 kapıdan üçü, yazılma sebebi olan kusurun
   tam üzerinde YEŞİLDİ** (D23).
@@ -776,6 +888,80 @@ Sabitlenme `1.0.0` ile olur.
   tahmin edilmeden bırakıldı.
 
 ### Eklendi
+
+- **Yorum modülü: bir müşteri yorum yazabiliyor, ve onaylanana kadar hiçbir
+  yerde görünmüyor** (B4). On yedinci modül.
+
+  Vitrin uçları `POST` ve `GET /store/v1/products/{product_id}/reviews` ile
+  `GET /store/v1/products/{product_id}/review-summary`; yönetim uçları
+  `GET /admin/v1/reviews`, `GET /admin/v1/reviews/{id}` ve
+  `POST /admin/v1/reviews/{id}/status`. Altısının da bu değişikliğin İÇİNDE
+  tüketicisi var. Görünmezliğin nasıl kurulduğu ve neden bu şekilde kurulduğu
+  Kararlar bölümünde; burada ÖLÇÜLENLER var.
+
+  **Ortalama OKUMADA hesaplanıyor, ve bu bir tercih değil bir ölçüm.**
+  PostgreSQL 16 üzerinde 20.001 ürüne yayılmış 505.000 yorumluk bir düzenek
+  kuruldu ve ürün sayfasının çalıştırdığı toplama ölçüldü. İndekssiz: 33-38 ms,
+  tam paralel sıralı tarama, ve maliyet ürünün 19 yorumu da olsa 5.000 yorumu da
+  olsa AYNI. Modülün kısmi indeksiyle — onaylı satırlar üzerinde, `rating`
+  INCLUDE ile — 19 onaylı yorumda 0,17-0,21 ms, 5.000'de 1,3-2,0 ms, 50.000'de
+  9,3 ms. Yirmilik ilk sayfa her boyutta 0,03-0,04 ms, çünkü LIMIT indeks
+  taramasını durduruyor. İndeks, 348 MB'lık tabloya karşı 40 MB.
+
+  Geçiş noktası gizlenmedi, yazıldı: maliyet TEK ürünün onaylı yorum sayısıyla
+  doğrusal, yani saklanmış bir sayaç ancak tek bir ürüne yüz binlerce yorum
+  gelmiş bir dükkâna bir şey satar — ve o milisaniyeleri, yorum yazan her yola
+  bir doğruluk borcu yükleyerek satar. Bu, A16'nın fiyatı kataloğa
+  denormalize etmeye karşı kaydettiği takasın aynısı, ve eksik parça da aynı:
+  geçersiz kılma sinyali. Ortalama YÜZDE BİRLİK tam sayı olarak dönüyor
+  (433 = 4,33 yıldız); float olsaydı basılan sayı istemcinin nerede
+  yuvarladığına bağlı olurdu, ve yuvarlama kararı onu ifade edebilen tek yere
+  ait.
+
+  **Geçiş tablosu dört kenar ve her biri savunuldu:** submitted→approved,
+  submitted→rejected, yayından indirmenin tek yolu olarak approved→rejected, ve
+  tek onarım olarak rejected→approved — çünkü yazar yeniden gönderemiyor.
+  Kendine dönen kenarlar reddedildi ki `moderated_at` bir insanın ne zaman
+  baktığı konusunda yalan söylemesin. Şema tarafında üç kısıt gerçek bir
+  PostgreSQL'e karşı ısırıyor: yıldızın 1-5 aralığı, statünün üç kelimesi, ve
+  `moderated_at` ile statüyü iki yönde birden bağlayan TAM AYNA — fulfillment'ın
+  `returned_at`'i ile aynı sebeple ifade edilebiliyor, hiçbir geçiş
+  `submitted`'a geri dönmüyor.
+
+  **Reddedilen alternatif kaydedildi: konu ÜRÜN, varyant değil.** Ölçüldü —
+  vitrin bir ürünü adresleyebiliyor, varyantı adresleyemiyor: mağaza tarafında
+  varyant ucu hiç yok, yani varyant düzeyinde bir yorumun görüneceği bir sayfa
+  olmazdı. Kolon çıplak bir metin ve doğrulanmıyor; yabancı anahtar da yok,
+  çünkü Prensip 2.2 modül sınırında yasaklıyor ve order modülünün satırı sattığı
+  varyantı tam olarak aynı kurala göre saklıyor. Olmayan bir ürünün yorumunu
+  vitrinden uzak tutan şey, istenmeyen her yorumu uzak tutan şeyle aynı: onu
+  onaylamayan bir operatör.
+
+  **Kapılar iddiayla değil kusurla kanıtlandı.** Üretilen SQL'den onay filtresi
+  silindiğinde hem modülün entegrasyon testi hem e2e testi düşüyor; migration'a
+  yazarı olmayan bir kolon eklendiğinde `TestEveryColumnIsWrittenBySomething` o
+  kolonun adını vererek düşüyor; kompozisyon kökündeki kayıt satırı bir no-op ile
+  değiştirildiğinde kayıt kapısı paketi adıyla düşüyor; beşinci bir geçiş kenarı
+  açıldığında iki test birden düşüyor. Her mutasyondan önce dosya kopyalandı,
+  sonra kopyadan geri yüklendi ve sha256 ile doğrulandı.
+
+  **Yazılmayanlar, gerekçeleriyle.** Okuma katmanı sağlayıcısı, interop yüzeyi ve
+  olay: üçü de tüketicisi olmayan sözleşme olurdu — denetim zaten hiçbir üretim
+  dosyasının çözmediği bir interop yüzeyini ve hiçbir üretim dosyasının abone
+  olmadığı bir konuyu reddediyor — ve ilk okuyucuları C11, yani üçü onunla
+  birlikte gelir. `WithTx` benzeri bir işlem makinesi de yok: her yazma tek
+  deyim (bir INSERT, bir koşullu UPDATE), yani doğruluğunu kimsenin kontrol
+  edemeyeceği bir mekanizma olurdu; dosyada eksiklik gibi durmasın diye
+  gerekçesiyle yazıldı.
+
+  **Ve dürüstçe söylenen bir sınır: bu ucun kendine ait bir kotası YOK.**
+  Ölçüldü ve hem api paketinin doküman başlığına hem OpenAPI açıklamasına
+  yazıldı: `/store/v1` önekinin tamamı TEK bir kota taşıyor, bağlantı adresiyle
+  anahtarlanıyor (`TRUSTED_PROXY_HOPS` ayarlanmadıkça X-Forwarded-For hiç
+  okunmuyor, varsayılanı 0 — yani herhangi bir vekilin arkasında bütün vitrin
+  aynı kovayı paylaşıyor), ve `RATE_LIMIT_PER_MINUTE` sıfır ya da altındaysa
+  limitleyici hiç takılmıyor. Bir ürün sayfasını selden koruyan şey limit değil,
+  onay adımı.
 
 - **Bir koli GERİ DÖNEBİLİR: `returned` beşinci sevkiyat statüsü, ve tablo artık
   BİLDİRİM ile KOMUT'u ayırıyor** (B10).

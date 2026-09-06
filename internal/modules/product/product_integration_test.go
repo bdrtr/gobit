@@ -1393,3 +1393,81 @@ func liveOptionValues(ctx context.Context, t *testing.T, optionID string) int {
 	require.NoError(t, err)
 	return n
 }
+
+// TestPartialVariantUpdateDoesNotResetTheFlags proves that an update which does
+// not name manage_inventory or allow_backorder leaves both alone.
+//
+// # Why this needs a real database
+//
+// The preservation is not written in Go. The service copies the two *bool
+// straight from the input into the patch and the repository hands them to
+// sqlc; the whole rule lives in one SQL line each —
+// `manage_inventory = COALESCE(sqlc.narg('manage_inventory')::boolean,
+// manage_inventory)` in queries/variant.sql. The service package's fake
+// repository does not model those columns at all, so a unit test there would
+// pass against a query that had dropped the COALESCE and reset the column to
+// NULL, or to the argument, on every rename.
+//
+// # Why it is worth a test even though nothing reads the flags
+//
+// This is the second way a carried-only flag gets silently poisoned, and it is
+// worse than a wrong default because it needs no new products: it corrupts the
+// rows a shop has ALREADY curated. A merchant who set allow_backorder on a
+// pre-order line and later fixes a typo in its title would find the flag back
+// at its default, with no error and nothing to notice — the value is not read
+// today, so no behavior changes to give the loss away. It would surface only
+// when docs/gaps.md A6 is finally answered and a reader is written, by which
+// time the original intent is unrecoverable.
+//
+// # Both flags are set AGAINST their defaults first
+//
+// If the test wrote the default values it would pass against a query that
+// ignores the columns entirely and re-derives them, which is exactly the bug
+// class in question. Starting from manage_inventory=false and
+// allow_backorder=true means every wrong implementation — reset to default,
+// reset to the nil argument, swap the two columns — produces a different
+// answer from the right one.
+func TestPartialVariantUpdateDoesNotResetTheFlags(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+
+	created, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle: uniqueHandle("flag-preservation"),
+		Title:  "Pre-order shirt",
+		Status: models.StatusPublished,
+		Variants: []service.CreateVariantInput{{
+			Title: "One size",
+			// The opposite of both defaults, so that a "reset to default"
+			// implementation cannot pass.
+			ManageInventory: ptrBool(false),
+			AllowBackorder:  ptrBool(true),
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, created.Variants, 1)
+
+	variantID := created.Variants[0].ID
+	require.False(t, created.Variants[0].ManageInventory, "the setup value must be stored as sent")
+	require.True(t, created.Variants[0].AllowBackorder, "the setup value must be stored as sent")
+
+	// A rename: the flags are not named at all, which is the whole point.
+	updated, err := svc.UpdateVariant(ctx, variantID, service.UpdateVariantInput{
+		Title: ptrString("One size (renamed)"),
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "One size (renamed)", updated.Title, "the rename itself has to take effect")
+	assert.False(t, updated.ManageInventory,
+		"an update that does not name manage_inventory must leave it alone; "+
+			"nothing reads this flag today, so a reset would be silent until A6 is answered")
+	assert.True(t, updated.AllowBackorder,
+		"an update that does not name allow_backorder must leave it alone")
+
+	// Read it back through a SECOND query rather than trusting the RETURNING
+	// row: the update and the read use different statements, and a RETURNING
+	// clause can echo the intended value while the row on disk holds another.
+	reread, err := svc.GetVariant(ctx, variantID)
+	require.NoError(t, err)
+	assert.False(t, reread.ManageInventory, "the stored row, not just the RETURNING row, keeps the flag")
+	assert.True(t, reread.AllowBackorder, "the stored row, not just the RETURNING row, keeps the flag")
+}
