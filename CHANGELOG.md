@@ -12,6 +12,37 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **"Bir kararın arkasında" diyen bir satırın kararı yazılmamıştı; yazıldı ve
+  karar metin eşleşmesi çıktı** (A18, B2'nin OPTION VALUE yarısı).
+
+  Satır kendini "bir kararın arkasındaki bir iş" diye tarif ediyordu ama kararın
+  NE olduğunu söylemiyordu — A4, A5, A11 ve A12'de düzeltilen kusurun aynısı,
+  bir başlık altında. Ölçülünce baştaki soru şu çıktı: **bir alışverişçi
+  "Color: red" diye süzdüğünde neyi eşleşme sayacağız?**
+
+  Üç aday, üçü de ağaca karşı fiyatlandırıldı. **(1) Birebir** — hiçbir yeni
+  makine istemiyor, ve sıradan istemci farkı hiç görmüyor, çünkü sözlük ucu
+  değeri BİREBİR veriyor ve az önce aldığı şeyle süzen istemci daima eşleşiyor;
+  bedel elle yazılmış URL'de: "Kirmizi" hiçbir şey bulmuyor ve çağıran bunu boş
+  bir kataloğdan ayırt edemiyor. **(2) Büyük/küçük harf duyarsız** — kataloğun
+  `q` aramasının zaten kullandığı şekil, ama bir ifade indeksi istiyor ki bu
+  depoda **hiç yok**, ve ADR 0015'in canlı tehlikesini miras alıyor: `--locale=C`
+  ile kurulmuş bir kümede katlama ASCII dışına işlemiyor ve süzgeç sessizce boş
+  dönüyor. **(3) ASCII'ye katlama** — `slugify` ve `turkishASCII`'nin handle'lar
+  için zaten yaptığı normalleştirme, yani deponun zaten güvendiği bir kural, ve
+  (2)'nin sahip olmadığı özelliğe sahip: küme yerelinden BAĞIMSIZ. Bedeli
+  saklanan normalleştirilmiş bir kolon, artı bir itiraf — satıcının ayrı tutmak
+  istemiş olabileceği değerleri BİRLEŞTİRİR.
+
+  Hangisi seçilirse indeksi de o seçiyor, o yüzden "öncülük eden indeks yok"
+  ayrı bir soru değil.
+
+  **Ve B8'in engeli kaydedildi.** B7 satırı "abonesi olmayan bir konuyu denetim
+  reddediyor" engelini yazıyor; B8 aynı engele sahipti ve yazmıyordu.
+  `customer.deleted`'ın istediği abone erasure koordinatörü, o da B17, o da A2 ve
+  A4'ü bekliyor. Yani olay ile ilk tüketicisi tek paket ya da hiçbiri —
+  deponun B7 ve B13'te iki kez ödediği kural.
+
 - **Bir kararın adı, onu bulan ÖZELLİĞİN adı olursa, sonraki tur aynı soruyu
   ikinci kez öder** (A15, B4).
 
