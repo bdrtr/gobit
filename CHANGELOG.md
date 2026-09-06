@@ -12,6 +12,49 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **Saga deposu artik kendi satirlarini siliyor, ve "budama" degil DUZENLEME
+  cikti** (ADR 0033'e ek not).
+
+  ADR 0033 `workflow_executions.input` kopyasini kapatilacak ilk sey olarak
+  yazmisti. Kapandi, ama yoldaki uc olcum degisiklikten daha degerli.
+
+  **Girisin gerekcesi yanlisti.** Kayit "CALISAN bir yurutme telafi icin
+  girdisine ihtiyac duyar, terminal olan duymaz" diyordu; yani budama statuye
+  gore kapsanmaliydi. Olculdu: motorun kurtarma yolu girdiyi adim baglamina
+  KOPYALIYOR ve kimse geri okumuyor — `internal/workflows`, `internal/modules`,
+  `plugins` ve `core` genelinde `StepContext.Input` sifir yerde kullaniliyor —
+  ve burada kosan tek is akisinin bes telafisi yalnizca `cart_id`, `amount` ve
+  `currency_code` okuyor. Terminal yurutmeler girdiye hic dokunmuyor.
+
+  **Tek gercek okuyucu motor degil, bir operator komutu:**
+  `gobit recover <id> -confirm` yarim kalmis saga'nin tanimini kaydin
+  GIRDISINDEN yeniden kuruyor ve cart_id'siz bir plani reddediyor (ADR 0017).
+  Sekli secen sey bu oldu: silme girdiyi DUSURMEK yerine DUZENLIYOR — `email`
+  bosaliyor, iki adres JSON null oluyor, kurtarmanin okudugu her alan kaliyor.
+
+  **Statu suzgeci gerekmedi ve elle tutulan bir liste olurdu.** Motorda
+  `IsTerminal` diye bir sey yok ve `status` serbest metin, arkasinda enum
+  bulunmuyor; "terminal" ancak veritabaninin zorlamadigi bir Go dilimi olabilirdi.
+
+  Silme `internal/core/workflow/pgstore`'da yasiyor — o iki tablonun sahibi o.
+  Koordinator onu container'dan ADLA cozuyor; `FromContainer`'in
+  `*container.Container` parametresi bunun icin. Depo yoksa beyan-yalniz bir
+  yedek cevapliyor, ve `TestTheSagaStoreIsReachedFromTheRealCompositionRoot`
+  gercek kok ona ulasmayi biraktigi gun kirmiziya donuyor — yedek sessizce
+  uretime kacamiyor. Ad mutasyonu her iki muhafizi da atesledi.
+
+  **Beyan da duzeltildi:** koordinator iki `output` sutununu kisisel olabilir
+  diye ilan ediyordu. Degiller — yurutmenin ve her adimin ciktisi kimlik ve
+  tutar. Kimseyi tutmayan bir sutunu ilan etmek, sorumluyu yanlis yere baktirir.
+
+  **Ve bir oz-duzeltme:** ifadenin ilk hali `jsonb_typeof(input) = 'object'` ile
+  basliyordu, gerekcesi "`||` bir skalerde hata verir" idi. PostgreSQL 16'ya
+  karsi olculdu: VERMIYOR. Ustelik koruma zaten atesleneMEZDI, cunku `->>` bir
+  nesne olmayanda SQL NULL donduruyor ve satir hic secilmiyor. Koruma zararsiz
+  diye birakilmadi, KALDIRILDI: ateslenemeyen ve dogru olmayan bir cumleyle
+  savunulan bir koruma, sonraki okuru ona guvenmeye davet eder. Bunu ISIRMAYAN
+  bir mutasyon buldu.
+
 - **KVKK silme sözleşmesi kuruldu ve bu on yedi kararın beşincisi oldu**
   (B17 → ADR 0033; ADR 0026 ve ADR 0032'ye birer ek not).
 

@@ -94,8 +94,10 @@ was left with `Result.Why` explaining it. Without that rule the word
 declaration obligation is written in terms of modules, and taking it literally
 would have produced a report that is true of every module and false about the
 installation. `internal/core/workflow/pgstore`, `core/audit` and `core/link`
-hold personal data, cannot be reached by walking the module registry, and each
-answers `RETAINED` with its reason. Every erasure report therefore carries the
+hold personal data and cannot be reached by walking the module registry. The
+saga store answers for ITSELF — it is resolved from the container by name and
+erases its own rows (see the amendment below); `core/audit` and `core/link`
+answer `RETAINED` from a static holder, each with its reason. Every erasure report therefore carries the
 gap in writing rather than leaving it to a document nobody reads while answering
 a data subject.
 
@@ -194,13 +196,26 @@ controller's judgement, not gobit's. Naming what was left is the honest form.
 
 ## What this deliberately does NOT do
 
-- **It does not prune `workflow_executions.input`.** The saga store keeps a
-  verbatim copy of the checkout input — the cart, with the e-mail and both
-  addresses — and nothing in this repository deletes from that table outside a
-  test. A RUNNING execution needs its input to compensate (ADR 0017); a terminal
-  one does not, so the pruning is buildable and is not built. It is reported as
-  `RETAINED` on every sweep rather than omitted, and it is the first thing whoever
-  continues this work should close.
+- ~~**It does not prune `workflow_executions.input`.**~~ **Built 2026-09-07, and
+  the sentence this replaces was wrong about the reason as well as the fact.**
+  It said a RUNNING execution needs its input to compensate and a terminal one
+  does not, so pruning would have to be status-scoped. Measured: the engine
+  copies the stored input into the recovery step context and NOTHING reads it
+  back (zero uses of `StepContext.Input` across `internal/workflows`,
+  `internal/modules`, `plugins` and `core`), the five compensations of the only
+  workflow that runs here read `cart_id`, `amount` and `currency_code` and
+  nothing else, and terminal executions are answered from `output` and `failure`
+  without touching the input at all. The ONE genuine reader is
+  `gobit recover <id> -confirm`, which rebuilds the compensation chain from the
+  input and refuses a plan with no cart id.
+  So the erasure EDITS the input instead of dropping it: `email` becomes empty
+  and both addresses become JSON null, and everything a recovery reads stays.
+  A status filter is not needed and would have been expensive to get right —
+  measured, there is no `IsTerminal` anywhere in the engine and `status` is free
+  text with no enum behind it, so "terminal" would have been a hand-kept list in
+  Go that the database does not enforce. The store answers `ANONYMIZED` now,
+  from `internal/core/workflow/pgstore`, which owns those two tables and
+  therefore owns the statement.
 - **It does not give the review or auth modules an eraser.** Review cannot
   resolve a subject at all. Auth's subject is a staff member, a different class
   of data subject from a shopper, and sweeping it from a shopper's request would
@@ -238,6 +253,59 @@ controller's judgement, not gobit's. Naming what was left is the honest form.
   (the invoice) and a copy nobody has built the pruning for (the saga store) —
   and only the `Why` text tells them apart. That was accepted because the
   alternative was to leave the second one out of the report entirely.
+
+## Amendment: the saga store erases its own rows (2026-09-07)
+
+The Consequences below recorded the saga store's copy of the checkout input as
+the first thing to close. It is closed, and three things were measured on the
+way that are worth more than the change itself.
+
+**The reason the original entry gave was wrong.** It said a RUNNING execution
+needs its input to compensate, so pruning would have to be scoped to terminal
+executions. The engine's recovery path copies the stored input into the step
+context and nothing reads it back — zero uses of `StepContext.Input` across
+`internal/workflows`, `internal/modules`, `plugins` and `core` — and the five
+compensations of the only workflow that runs here read `cart_id`, `amount` and
+`currency_code`. Terminal executions never touch the input at all.
+
+**The one real reader is an operator command, not the engine.**
+`gobit recover <execution-id> -confirm` rebuilds a half-finished saga's
+definition FROM the record's input and refuses a plan with no cart id
+([ADR 0017](0017-recovering-abandoned-sagas-from-the-record.md)). That single
+fact is what chose the shape: the erasure EDITS the input rather than dropping
+it. `email` becomes empty, both addresses become JSON null, and every field a
+recovery reads survives. Trading a recoverable checkout for a privacy answer
+would have been a bad bargain in both directions, since the person is gone
+either way.
+
+**A status filter is not needed, and would have been a hand-kept list.** There
+is no `IsTerminal` anywhere in the engine and `status` is free text with no enum
+behind it, so "terminal" could only have been a slice in Go the database does
+not enforce. Once the fields a recovery actually reads were measured, the
+distinction stopped buying anything.
+
+**Where it lives.** In `internal/core/workflow/pgstore`, which owns those two
+tables — the same rule that keeps a module's SQL inside the module. The
+coordinator resolves it from the container by name, which is what its
+`*container.Container` parameter is for; when the store is absent the
+declaration-only stub still answers, and
+`TestTheSagaStoreIsReachedFromTheRealCompositionRoot` fails the day the real
+root stops reaching it, so the stub cannot ship silently.
+
+**A correction to the declaration, too.** The coordinator used to declare both
+`output` columns as possibly personal. They are not: the execution's output and
+every step's output are identifiers and amounts. Declaring a column that holds
+nobody sends a controller looking in the wrong place, so the store's own
+declaration names `input` and the two free-text `failure` columns and stops.
+
+**And one self-correction worth keeping.** The first version of the statement
+opened with `jsonb_typeof(input) = 'object'`, defended by the sentence "the `||`
+operator raises on a scalar". Measured against PostgreSQL 16, it does not — and
+the guard could not fire anyway, because `->>` on a non-object returns SQL NULL
+so the row is never selected. The guard was removed rather than kept as
+harmless: a protection that cannot fire, defended by a claim that is not true,
+invites the next reader to trust it. It was found by a mutation that failed to
+bite.
 
 ## Reopening the decision
 

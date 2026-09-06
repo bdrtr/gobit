@@ -3,8 +3,18 @@ package erasing
 import (
 	"context"
 
+	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/erasure"
 )
+
+// ServiceWorkflowStore is the saga store's name in the container.
+//
+// It is spelled out here rather than imported, because the composition root's
+// copy of the name is unexported and a workflow may not import the root. The
+// repetition is the ordinary price of resolution by name in this repository,
+// and [TestTheSagaStoreIsReachedFromTheRealCompositionRoot] in internal/app is
+// what keeps the two spellings equal.
+const ServiceWorkflowStore = "core.workflow.store"
 
 // outsideTheModuleTree returns the holders of personal data that are NOT
 // modules, and therefore cannot be discovered by walking the registry.
@@ -32,13 +42,9 @@ import (
 // module through core/plugin's Host.AddModule, which adds it to the SAME
 // registry the composition root walks. They are ordinary holders and answer for
 // themselves, or they do not, and either way the audit sees them.
-func outsideTheModuleTree() []holder {
+func outsideTheModuleTree(c *container.Container) []holder {
 	return []holder{
-		{
-			name:     workflowStoreHolder,
-			eraser:   staticHolder{name: workflowStoreHolder, why: workflowStoreWhy, kept: workflowStoreColumns()},
-			declarer: staticHolder{name: workflowStoreHolder, why: workflowStoreWhy, holdings: workflowStoreHoldings()},
-		},
+		sagaStoreHolder(c),
 		{
 			name:     auditHolder,
 			eraser:   staticHolder{name: auditHolder, why: auditWhy, kept: auditColumns()},
@@ -50,6 +56,42 @@ func outsideTheModuleTree() []holder {
 			declarer: staticHolder{name: linkHolder, why: linkWhy, holdings: linkHoldings()},
 		},
 	}
+}
+
+// sagaStoreHolder returns the saga store, asked for by name.
+//
+// This is the ONE thing the coordinator resolves from the container, and it is
+// why FromContainer takes one. The store owns its own two tables and therefore
+// owns the statement that empties them — the same rule that keeps a module's
+// SQL inside the module — so the capability lives there and is reached here.
+//
+// # The fallback is not a degraded mode, it is a testability seam
+//
+// When the store is absent the holder still appears, declaring what those
+// tables hold and answering RETAINED. That case is reachable only from a
+// coordinator built on an empty container, which is what a unit test does; the
+// real composition root always provides the store, and
+// TestTheSagaStoreIsReachedFromTheRealCompositionRoot in internal/app fails the
+// day it stops. Without that test the fallback would be exactly the silent hole
+// this whole mechanism exists to prevent — a report that looks complete while
+// one holder quietly answered from a stub.
+func sagaStoreHolder(c *container.Container) holder {
+	h := holder{name: workflowStoreHolder}
+
+	if eraser, err := container.Resolve[erasure.Eraser](c, ServiceWorkflowStore); err == nil {
+		h.eraser = eraser
+	}
+
+	if declarer, err := container.Resolve[erasure.Declarer](c, ServiceWorkflowStore); err == nil {
+		h.declarer = declarer
+	}
+
+	if h.eraser == nil && h.declarer == nil {
+		h.eraser = staticHolder{name: workflowStoreHolder, why: workflowStoreWhy, kept: workflowStoreColumns()}
+		h.declarer = staticHolder{name: workflowStoreHolder, why: workflowStoreWhy, holdings: workflowStoreHoldings()}
+	}
+
+	return h
 }
 
 // The tables the two named stores keep the data in.

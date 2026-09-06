@@ -46,13 +46,14 @@
 // Those last are precisely the modules gobit knows nothing about and therefore
 // the ones most likely to hold personal data it cannot see.
 //
-// The *container.Container parameter is kept even though nothing is resolved
-// from it today, and that is deliberate rather than an oversight:
-// internal/arch's TestEveryWorkflowIsSetUpInTheCompositionRoot finds a workflow
-// package by looking for an exported constructor that takes a container. Drop
-// the parameter as an unused-argument tidy-up and this package silently leaves
-// the audit's scope — it would still be built by the composition root, and
-// nothing would check that it still was.
+// The *container.Container parameter carries one real resolution — the saga
+// store, which owns two tables outside every module and therefore owns the
+// statement that empties them (see [sagaStoreHolder]). It would be worth
+// keeping even if it carried none: internal/arch's
+// TestEveryWorkflowIsSetUpInTheCompositionRoot finds a workflow package by
+// looking for an exported constructor that takes a container, so dropping the
+// parameter as a tidy-up would leave this package built by the composition root
+// and outside the audit that checks it still is.
 package erasing
 
 import (
@@ -127,7 +128,7 @@ func FromContainer(c *container.Container, mods []module.Module) (*Coordinator, 
 		co.holders = append(co.holders, h)
 	}
 
-	co.holders = append(co.holders, outsideTheModuleTree()...)
+	co.holders = append(co.holders, outsideTheModuleTree(c)...)
 
 	return co, nil
 }
