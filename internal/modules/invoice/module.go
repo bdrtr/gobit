@@ -58,10 +58,10 @@ import (
 
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/db"
-	"github.com/bdrtr/gobit/core/erasure"
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/link"
 	"github.com/bdrtr/gobit/core/module"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/core/openapi"
 	"github.com/bdrtr/gobit/internal/modules/invoice/api"
 	"github.com/bdrtr/gobit/internal/modules/invoice/repository"
@@ -142,15 +142,15 @@ var _ openapi.Describer = (*Module)(nil)
 // That the module answers an erasure request, and can say what it keeps, is
 // pinned down at compile time for the same reason.
 //
-// [erasure.Eraser] and [erasure.Declarer] are found by type assertion too, so a
+// [personaldata.Eraser] and [personaldata.Declarer] are found by type assertion too, so a
 // renamed method or a changed signature would not break the build — this module
 // would simply stop being asked, and an erasure report would come back without
 // it. A missing OpenAPI path costs a reader an endpoint; a holder missing from
 // an erasure report costs a controller a true answer to a person who asked to
 // be forgotten (ADR 0029).
 var (
-	_ erasure.Eraser   = (*Module)(nil)
-	_ erasure.Declarer = (*Module)(nil)
+	_ personaldata.Eraser   = (*Module)(nil)
+	_ personaldata.Declarer = (*Module)(nil)
 )
 
 // New produces an invoice module ready to be registered.
@@ -243,9 +243,9 @@ func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 // a Retained with no count. A report that silently carried a zero would tell a
 // controller that this person has no invoices, which is not something an
 // unregistered module is in any position to say.
-func (m *Module) Erase(ctx context.Context, s erasure.Subject) (erasure.Result, error) {
+func (m *Module) Erase(ctx context.Context, s personaldata.Subject) (personaldata.Result, error) {
 	if m.svc == nil {
-		return erasure.Result{}, errors.Internal(codeNotRegistered,
+		return personaldata.Result{}, errors.Internal(codeNotRegistered,
 			"the %s module was asked to erase before Register ran, so it cannot say what it holds",
 			ModuleName)
 	}
@@ -279,8 +279,8 @@ func (m *Module) Erase(ctx context.Context, s erasure.Subject) (erasure.Result, 
 // sole trader's own address counts ZERO invoices and lists nothing, because
 // nothing about these columns was looked at — Erase resolves through
 // buyer_email alone. Declaring a column is not a promise to erase it or even to
-// search it, and that is why [erasure.Declarer] is a separate interface from
-// [erasure.Eraser]. What the declaration owes in exchange is to not let the two
+// search it, and that is why [personaldata.Declarer] is a separate interface from
+// [personaldata.Eraser]. What the declaration owes in exchange is to not let the two
 // be mistaken for each other: a column declared as a place a person is, that
 // the module silently never visits, reads as a reach this module does not have.
 // Reaching a seller's own data is the controller's job and the declaration says
@@ -289,74 +289,74 @@ func (m *Module) Erase(ctx context.Context, s erasure.Subject) (erasure.Result, 
 // [service.RetainedColumns] does not list must SAY that Erase never searches
 // it.
 //
-// The remaining three are [erasure.Open]: metadata is a jsonb the caller fills
+// The remaining three are [personaldata.Open]: metadata is a jsonb the caller fills
 // and nothing validates, invoice_lines.description is caller text, and
 // status_reason is a sentence an operator typed. gobit does not read them and
 // does not guess what is in them, and ADR 0032 states the consequence as a rule
 // the embedder answers for: personal data written into those fields is retained
 // under the same refusal as the named columns.
-func (m *Module) PersonalData() erasure.Declaration {
-	return erasure.Declaration{
+func (m *Module) PersonalData() personaldata.Declaration {
+	return personaldata.Declaration{
 		Holder: ModuleName,
-		Holdings: []erasure.Holding{
+		Holdings: []personaldata.Holding{
 			{
-				Table: tableInvoices, Column: "buyer_name", Kind: erasure.Named,
+				Table: tableInvoices, Column: "buyer_name", Kind: personaldata.Named,
 				Why: "the name of the person or company the document was issued to, as it is printed on it",
 			},
 			{
-				Table: tableInvoices, Column: "buyer_tax_number", Kind: erasure.Named,
+				Table: tableInvoices, Column: "buyer_tax_number", Kind: personaldata.Named,
 				Why: "the buyer's tax or national identification number, when the document carries one",
 			},
 			{
-				Table: tableInvoices, Column: "buyer_tax_office", Kind: erasure.Named,
+				Table: tableInvoices, Column: "buyer_tax_office", Kind: personaldata.Named,
 				Why: "the tax office the buyer is registered with, which locates them administratively",
 			},
 			{
-				Table: tableInvoices, Column: "buyer_email", Kind: erasure.Named,
+				Table: tableInvoices, Column: "buyer_email", Kind: personaldata.Named,
 				Why: "the buyer's e-mail address; it is also the ONLY column by which this module can find a person at all",
 			},
 			{
-				Table: tableInvoices, Column: "buyer_address", Kind: erasure.Named,
+				Table: tableInvoices, Column: "buyer_address", Kind: personaldata.Named,
 				Why: "the buyer's postal address as printed on the document",
 			},
 			{
-				Table: tableInvoices, Column: "buyer_country_code", Kind: erasure.Named,
+				Table: tableInvoices, Column: "buyer_country_code", Kind: personaldata.Named,
 				Why: "the buyer's country, which is part of the address and decides how the sale was taxed",
 			},
 			{
-				Table: tableInvoices, Column: "seller_name", Kind: erasure.Named,
+				Table: tableInvoices, Column: "seller_name", Kind: personaldata.Named,
 				Why: "the name of the party that ISSUED the document; for a sole trader that is a person's name. Erase never searches this column and never lists it as kept: a subject is resolved through the buyer address alone, so reaching a seller here is the controller's own job",
 			},
 			{
-				Table: tableInvoices, Column: "seller_tax_number", Kind: erasure.Named,
+				Table: tableInvoices, Column: "seller_tax_number", Kind: personaldata.Named,
 				Why: "the seller's tax or national identification number, which for a sole trader identifies a person. Erase never searches this column and never lists it as kept; it identifies the issuer of the document",
 			},
 			{
-				Table: tableInvoices, Column: "seller_tax_office", Kind: erasure.Named,
+				Table: tableInvoices, Column: "seller_tax_office", Kind: personaldata.Named,
 				Why: "the tax office the seller is registered with, which locates the issuer administratively. Erase never searches this column and never lists it as kept",
 			},
 			{
-				Table: tableInvoices, Column: "seller_email", Kind: erasure.Named,
+				Table: tableInvoices, Column: "seller_email", Kind: personaldata.Named,
 				Why: "the seller's e-mail address as printed on the document. Erase never searches this column and never lists it as kept: an erasure request naming this very address counts ZERO invoices, because only lower(buyer_email) is matched",
 			},
 			{
-				Table: tableInvoices, Column: "seller_address", Kind: erasure.Named,
+				Table: tableInvoices, Column: "seller_address", Kind: personaldata.Named,
 				Why: "the seller's postal address, which for a sole trader is frequently a home address. Erase never searches this column and never lists it as kept, so an audit of a sole trader's own data starts here rather than from an erasure report",
 			},
 			{
-				Table: tableInvoices, Column: "seller_country_code", Kind: erasure.Named,
+				Table: tableInvoices, Column: "seller_country_code", Kind: personaldata.Named,
 				Why: "the seller's country, part of the printed address. Erase never searches this column and never lists it as kept",
 			},
 			{
-				Table: tableInvoices, Column: "status_reason", Kind: erasure.Open,
+				Table: tableInvoices, Column: "status_reason", Kind: personaldata.Open,
 				Why: "free text an operator typed when the document was canceled or re-sent; it may name or describe anyone, and gobit does not read it",
 			},
 			{
-				Table: tableInvoices, Column: "metadata", Kind: erasure.Open,
+				Table: tableInvoices, Column: "metadata", Kind: personaldata.Open,
 				Why: "a jsonb the caller fills and nothing validates; whatever the embedder put there about the buyer is here and gobit does not inspect it",
 			},
 			{
-				Table: tableInvoiceLines, Column: "description", Kind: erasure.Open,
+				Table: tableInvoiceLines, Column: "description", Kind: personaldata.Open,
 				Why: "the printed text of a line, supplied by the caller; an engraving, a delivery note or a customer's own words can be in it",
 			},
 		},

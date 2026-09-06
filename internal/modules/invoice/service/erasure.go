@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/bdrtr/gobit/core/erasure"
+	"github.com/bdrtr/gobit/core/personaldata"
 )
 
 // Holder is the name this module answers an erasure request under.
@@ -49,7 +49,7 @@ var openColumns = []string{
 // whyRetained is the sentence a controller repeats to a data subject.
 //
 // It says both things the contract owes: WHY the refusal stands, and what the
-// free-form half of [erasure.Result.Kept] means. The second half is the one
+// free-form half of [personaldata.Result.Kept] means. The second half is the one
 // that is easy to leave out and the one that keeps the report honest — a list
 // of columns with no note that three of them were never looked at would let a
 // reader assume gobit knows what is in them.
@@ -66,7 +66,7 @@ const whyRetained = "an issued invoice is a legal document that gobit keeps rath
 // "the buyer columns listed here still name this person", which is FALSE of
 // somebody who never bought anything, and it was being handed out with a count
 // of zero and all nine columns beside it — a well-formed refusal about a person
-// who is not in this table at all. The outcome stays [erasure.Retained] and the
+// who is not in this table at all. The outcome stays [personaldata.Retained] and the
 // sentence says why: Retained is what this module DOES, not what it found.
 const whyNothingHere = "the address this request carried was looked for in every document's " +
 	"buyer address and matched none, so this module holds nothing about this person and there " +
@@ -89,8 +89,8 @@ const whyUnresolved = "the only handle an invoice has on a person is the buyer a
 
 // Erase answers an erasure request about a person: it keeps the documents.
 //
-// This is the whole of ADR 0032 expressed in the [erasure.Eraser] contract, and
-// the answer is the same for every subject and every database: [erasure.Retained].
+// This is the whole of ADR 0032 expressed in the [personaldata.Eraser] contract, and
+// the answer is the same for every subject and every database: [personaldata.Retained].
 // The reason is [Service.Issue]'s reason turned around — within a series the
 // numbers run without a gap, a deleted document is a gap, and a tax authority
 // reading one sees a document that was issued and then made to disappear. The
@@ -110,11 +110,11 @@ const whyUnresolved = "the only handle an invoice has on a person is the buyer a
 // # Why the count is worth taking at all
 //
 // The outcome does not depend on it, so a fixed Retained with no query would
-// have been cheaper. It is taken because [erasure.Result.Rows] is what a
+// have been cheaper. It is taken because [personaldata.Result.Rows] is what a
 // controller puts in front of a data subject, and "we are keeping documents
 // about you" reads very differently from "we are keeping the four invoices
 // issued to you". A refusal that cannot say how much it kept is the refusal
-// ADR 0029 wrote [erasure.Retained] to avoid.
+// ADR 0029 wrote [personaldata.Retained] to avoid.
 //
 // Rows counts INVOICES and not invoice lines. A line is a part of a document
 // rather than a separate place the person is held, and a subject told that 37
@@ -123,13 +123,13 @@ const whyUnresolved = "the only handle an invoice has on a person is the buyer a
 //
 // # Three answers, not one, and only one of them lists columns
 //
-// The OUTCOME is [erasure.Retained] in all three cases, because the outcome is
+// The OUTCOME is [personaldata.Retained] in all three cases, because the outcome is
 // this module's policy and not a summary of what the query found. Answering
-// [erasure.Deleted] with zero rows would be the contract's own idiom for
+// [personaldata.Deleted] with zero rows would be the contract's own idiom for
 // "nothing here" and it is refused anyway: read by a controller it says the
 // invoice module deletes on request, which is the single thing about this
-// module that must never be believed. What varies is [erasure.Result.Kept] and
-// [erasure.Result.Why]:
+// module that must never be believed. What varies is [personaldata.Result.Kept] and
+// [personaldata.Result.Why]:
 //
 //   - documents were found — Kept lists the buyer columns and the free-form
 //     ones, and Why is the refusal ([whyRetained]).
@@ -139,16 +139,16 @@ const whyUnresolved = "the only handle an invoice has on a person is the buyer a
 //   - the address matched nothing — Kept is EMPTY and Why says so
 //     ([whyNothingHere]).
 //
-// The empty Kept is deliberate and is worth defending, because [erasure.Result]
+// The empty Kept is deliberate and is worth defending, because [personaldata.Result]
 // calls Kept required with Retained. That requirement is there to stop a
 // refusal that cannot say what it kept. This refusal kept nothing OF THIS
 // PERSON: naming nine columns that hold nobody in order to satisfy the rule
 // would be the dishonest way to obey a rule written to force honesty, and the
 // sentence in Why is what a controller repeats instead.
-func (s *Service) Erase(ctx context.Context, subject erasure.Subject) (erasure.Result, error) {
-	result := erasure.Result{
+func (s *Service) Erase(ctx context.Context, subject personaldata.Subject) (personaldata.Result, error) {
+	result := personaldata.Result{
 		Holder:  Holder,
-		Outcome: erasure.Retained,
+		Outcome: personaldata.Retained,
 	}
 
 	email := strings.TrimSpace(subject.Email)
@@ -169,10 +169,10 @@ func (s *Service) Erase(ctx context.Context, subject erasure.Subject) (erasure.R
 	count, err := s.repo.CountInvoicesByBuyerEmail(ctx, email)
 	if err != nil {
 		// A holder that cannot complete its work returns an error rather than
-		// an outcome (see [erasure.Eraser]). Answering Retained with a count of
+		// an outcome (see [personaldata.Eraser]). Answering Retained with a count of
 		// zero here would be the worst available answer: it is the shape of a
 		// real reply, and the controller would repeat it.
-		return erasure.Result{}, err
+		return personaldata.Result{}, err
 	}
 
 	result.Rows = int(count)
@@ -198,7 +198,7 @@ func (s *Service) Erase(ctx context.Context, subject erasure.Subject) (erasure.R
 
 // keptColumns returns the "table.column" entries a retained invoice keeps.
 //
-// A fresh slice each time, because [erasure.Result] is handed to a caller this
+// A fresh slice each time, because [personaldata.Result] is handed to a caller this
 // package knows nothing about and a shared backing array would let one
 // report's Kept be reordered by whoever sorted another one.
 func keptColumns() []string {

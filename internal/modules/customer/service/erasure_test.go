@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/core/erasure"
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/modules/customer/models"
 )
 
@@ -176,7 +176,7 @@ func TestErasureRefusesASubjectThatNamesNobody(t *testing.T) {
 	ctx := context.Background()
 	svc, repo := newErasureService(t)
 
-	_, err := svc.Erase(ctx, erasure.Subject{})
+	_, err := svc.Erase(ctx, personaldata.Subject{})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 	assert.Equal(t, CodeErasureSubjectEmpty, errors.CodeOf(err))
@@ -195,10 +195,10 @@ func TestErasureAnonymizesEveryNamedColumn(t *testing.T) {
 	address, err := svc.CreateAddress(ctx, created.ID, personalAddress())
 	require.NoError(t, err)
 
-	result, err := svc.Erase(ctx, erasure.Subject{CustomerID: created.ID})
+	result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: created.ID})
 	require.NoError(t, err)
 
-	assert.Equal(t, erasure.Anonymized, result.Outcome)
+	assert.Equal(t, personaldata.Anonymized, result.Outcome)
 	assert.Equal(t, ErasureHolder, result.Holder)
 	assert.Equal(t, 2, result.Rows, "one customer row and one address row were written")
 
@@ -240,12 +240,12 @@ func TestErasureAlwaysReportsWhatItKept(t *testing.T) {
 	created, err := svc.CreateCustomer(ctx, personalCustomer())
 	require.NoError(t, err)
 
-	erased, err := svc.Erase(ctx, erasure.Subject{CustomerID: created.ID})
+	erased, err := svc.Erase(ctx, personaldata.Subject{CustomerID: created.ID})
 	require.NoError(t, err)
-	stranger, err := svc.Erase(ctx, erasure.Subject{CustomerID: "cust_NOBODY"})
+	stranger, err := svc.Erase(ctx, personaldata.Subject{CustomerID: "cust_NOBODY"})
 	require.NoError(t, err)
 
-	for name, result := range map[string]erasure.Result{"erased": erased, "stranger": stranger} {
+	for name, result := range map[string]personaldata.Result{"erased": erased, "stranger": stranger} {
 		assert.Equal(t,
 			[]string{"customer.metadata", "customer_group.metadata", "customer_address.country_code"},
 			result.Kept, "%s: the refusals belong to the module, not to one person's data", name)
@@ -255,7 +255,7 @@ func TestErasureAlwaysReportsWhatItKept(t *testing.T) {
 	// The report is handed to whoever answers the data subject; if the slice
 	// were shared, one caller sorting it would edit this module's declaration.
 	erased.Kept[0] = "edited by the caller"
-	again, err := svc.Erase(ctx, erasure.Subject{CustomerID: created.ID})
+	again, err := svc.Erase(ctx, personaldata.Subject{CustomerID: created.ID})
 	require.NoError(t, err)
 	assert.Equal(t, "customer.metadata", again.Kept[0])
 }
@@ -274,14 +274,14 @@ func TestErasureIsIdempotent(t *testing.T) {
 	_, err = svc.CreateAddress(ctx, created.ID, personalAddress())
 	require.NoError(t, err)
 
-	first, err := svc.Erase(ctx, erasure.Subject{CustomerID: created.ID})
+	first, err := svc.Erase(ctx, personaldata.Subject{CustomerID: created.ID})
 	require.NoError(t, err)
-	require.Equal(t, erasure.Anonymized, first.Outcome)
+	require.Equal(t, personaldata.Anonymized, first.Outcome)
 	firstState := repo.customers[created.ID]
 
-	second, err := svc.Erase(ctx, erasure.Subject{CustomerID: created.ID})
+	second, err := svc.Erase(ctx, personaldata.Subject{CustomerID: created.ID})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, second.Outcome, "the outcome is the answer and it does not change")
+	assert.Equal(t, personaldata.Anonymized, second.Outcome, "the outcome is the answer and it does not change")
 	assert.Equal(t, 0, second.Rows, "nothing was written, and the count is the receipt for this call")
 	assert.Equal(t, firstState, repo.customers[created.ID],
 		"a second erasure must not even move updated_at")
@@ -307,12 +307,12 @@ func TestErasureUsesBothHandlesOfOneSubject(t *testing.T) {
 	secondGuest, err := svc.RegisterGuest(ctx, personalCustomer())
 	require.NoError(t, err)
 
-	result, err := svc.Erase(ctx, erasure.Subject{
+	result, err := svc.Erase(ctx, personaldata.Subject{
 		CustomerID: account.ID,
 		Email:      "ayse@example.com",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, result.Outcome)
+	assert.Equal(t, personaldata.Anonymized, result.Outcome)
 
 	for _, id := range []string{account.ID, firstGuest.ID, secondGuest.ID} {
 		assert.Equal(t, models.AnonymousEmail(id), repo.customers[id].Email,
@@ -341,9 +341,9 @@ func TestErasureClearsPersonalColumnsWrittenAfterAnErasure(t *testing.T) {
 	created, err := svc.CreateCustomer(ctx, personalCustomer())
 	require.NoError(t, err)
 
-	first, err := svc.Erase(ctx, erasure.Subject{CustomerID: created.ID})
+	first, err := svc.Erase(ctx, personaldata.Subject{CustomerID: created.ID})
 	require.NoError(t, err)
-	require.Equal(t, erasure.Anonymized, first.Outcome)
+	require.Equal(t, personaldata.Anonymized, first.Outcome)
 
 	// The record is still live and still writable; this is the storefront or an
 	// admin filling the row back in, with no idea it was erased.
@@ -353,9 +353,9 @@ func TestErasureClearsPersonalColumnsWrittenAfterAnErasure(t *testing.T) {
 	require.Equal(t, models.AnonymousEmail(created.ID), repo.customers[created.ID].Email,
 		"the patch must leave the e-mail alone, which is exactly what makes it dangerous")
 
-	second, err := svc.Erase(ctx, erasure.Subject{CustomerID: created.ID})
+	second, err := svc.Erase(ctx, personaldata.Subject{CustomerID: created.ID})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, second.Outcome)
+	assert.Equal(t, personaldata.Anonymized, second.Outcome)
 	assert.Equal(t, 1, second.Rows, "the customer row held a name again and had to be written")
 
 	stored := repo.customers[created.ID]
@@ -382,9 +382,9 @@ func TestErasureByEmailReachesEveryGuestRecord(t *testing.T) {
 	require.NotEqual(t, first.ID, second.ID)
 
 	// The subject is given in the case the person typed it, not in storage form.
-	result, err := svc.Erase(ctx, erasure.Subject{Email: "  Ayse@Example.COM  "})
+	result, err := svc.Erase(ctx, personaldata.Subject{Email: "  Ayse@Example.COM  "})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, result.Outcome)
+	assert.Equal(t, personaldata.Anonymized, result.Outcome)
 	assert.Equal(t, 3, result.Rows)
 
 	for _, id := range []string{first.ID, second.ID, account.ID} {
@@ -394,9 +394,9 @@ func TestErasureByEmailReachesEveryGuestRecord(t *testing.T) {
 
 	// Nothing points back at the old address any more, which is why the second
 	// pass by e-mail finds nobody — and still answers Anonymized.
-	repeat, err := svc.Erase(ctx, erasure.Subject{Email: "ayse@example.com"})
+	repeat, err := svc.Erase(ctx, personaldata.Subject{Email: "ayse@example.com"})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, repeat.Outcome)
+	assert.Equal(t, personaldata.Anonymized, repeat.Outcome)
 	assert.Equal(t, 0, repeat.Rows)
 }
 
@@ -410,22 +410,22 @@ func TestErasureOfAnUnknownSubjectIsNotAnError(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newErasureService(t)
 
-	byID, err := svc.Erase(ctx, erasure.Subject{CustomerID: "cust_0000000000000000000000000"})
+	byID, err := svc.Erase(ctx, personaldata.Subject{CustomerID: "cust_0000000000000000000000000"})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, byID.Outcome)
+	assert.Equal(t, personaldata.Anonymized, byID.Outcome)
 	assert.Equal(t, 0, byID.Rows)
 
 	// An id that is not even shaped like this module's is the same answer: it
 	// names a person some other holder knows, not a bad request.
-	byForeignID, err := svc.Erase(ctx, erasure.Subject{CustomerID: "some-other-system-id"})
+	byForeignID, err := svc.Erase(ctx, personaldata.Subject{CustomerID: "some-other-system-id"})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, byForeignID.Outcome)
+	assert.Equal(t, personaldata.Anonymized, byForeignID.Outcome)
 
 	// A malformed address is not rejected either; it is simply an address this
 	// module stores nothing under.
-	byEmail, err := svc.Erase(ctx, erasure.Subject{Email: "not-an-address"})
+	byEmail, err := svc.Erase(ctx, personaldata.Subject{Email: "not-an-address"})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, byEmail.Outcome)
+	assert.Equal(t, personaldata.Anonymized, byEmail.Outcome)
 	assert.Equal(t, 0, byEmail.Rows)
 }
 
@@ -446,9 +446,9 @@ func TestErasureReachesADeletedRecord(t *testing.T) {
 	require.Equal(t, "ayse@example.com", repo.customers[created.ID].Email,
 		"the soft delete must leave the personal columns alone, or this test proves nothing")
 
-	result, err := svc.Erase(ctx, erasure.Subject{CustomerID: created.ID})
+	result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: created.ID})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, result.Outcome)
+	assert.Equal(t, personaldata.Anonymized, result.Outcome)
 
 	stored := repo.customers[created.ID]
 	assert.Equal(t, models.AnonymousEmail(created.ID), stored.Email)
@@ -461,7 +461,7 @@ func TestErasureReachesADeletedRecord(t *testing.T) {
 func TestErasureIsRefusedByAnUnconfiguredService(t *testing.T) {
 	var svc *Service
 
-	_, err := svc.Erase(context.Background(), erasure.Subject{CustomerID: "cust_1"})
+	_, err := svc.Erase(context.Background(), personaldata.Subject{CustomerID: "cust_1"})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err))
 }

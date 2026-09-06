@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/core/erasure"
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/modules/cart/models"
 	"github.com/bdrtr/gobit/internal/modules/cart/service"
 )
@@ -75,10 +75,10 @@ func TestEraseAnonymizesTheCartsOfACustomer(t *testing.T) {
 	ctx := context.Background()
 	cart := newErasureCart(ctx, t, svc, customerID)
 
-	result, err := svc.Erase(ctx, erasure.Subject{CustomerID: customerID})
+	result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID})
 	require.NoError(t, err)
 
-	assert.Equal(t, erasure.Anonymized, result.Outcome)
+	assert.Equal(t, personaldata.Anonymized, result.Outcome)
 	assert.Equal(t, service.ErasureHolder, result.Holder)
 	// One cart row and one address row: Rows counts what was written, and the
 	// figure is what a controller compares one report against the next with.
@@ -118,7 +118,7 @@ func TestEraseNamesEveryColumnItLeft(t *testing.T) {
 	ctx := context.Background()
 	cart := newErasureCart(ctx, t, svc, customerID)
 
-	result, err := svc.Erase(ctx, erasure.Subject{CustomerID: customerID})
+	result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID})
 	require.NoError(t, err)
 
 	assert.ElementsMatch(t, []string{
@@ -158,10 +158,10 @@ func TestEraseFindsAGuestCartByEmail(t *testing.T) {
 	ctx := context.Background()
 	cart := newErasureCart(ctx, t, svc, "")
 
-	result, err := svc.Erase(ctx, erasure.Subject{Email: erasureEmail})
+	result, err := svc.Erase(ctx, personaldata.Subject{Email: erasureEmail})
 	require.NoError(t, err)
 
-	assert.Equal(t, erasure.Anonymized, result.Outcome)
+	assert.Equal(t, personaldata.Anonymized, result.Outcome)
 	assert.Equal(t, 2, result.Rows)
 
 	detail, err := svc.GetCart(ctx, cart.ID)
@@ -182,7 +182,7 @@ func TestEraseReachesBothCartsOfTheSamePerson(t *testing.T) {
 	signedIn := newErasureCart(ctx, t, svc, customerID)
 	guest := newErasureCart(ctx, t, svc, "")
 
-	result, err := svc.Erase(ctx, erasure.Subject{CustomerID: customerID, Email: erasureEmail})
+	result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID, Email: erasureEmail})
 	require.NoError(t, err)
 
 	assert.Equal(t, 4, result.Rows, "two carts and their two addresses")
@@ -204,9 +204,9 @@ func TestEraseIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	newErasureCart(ctx, t, svc, customerID)
 
-	first, err := svc.Erase(ctx, erasure.Subject{CustomerID: customerID})
+	first, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID})
 	require.NoError(t, err)
-	second, err := svc.Erase(ctx, erasure.Subject{CustomerID: customerID})
+	second, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID})
 	require.NoError(t, err)
 
 	assert.Equal(t, first.Outcome, second.Outcome)
@@ -227,14 +227,14 @@ func TestASecondSweepForAGuestFindsNothingAndStillAnswersAnonymized(t *testing.T
 	ctx := context.Background()
 	newErasureCart(ctx, t, svc, "")
 
-	first, err := svc.Erase(ctx, erasure.Subject{Email: erasureEmail})
+	first, err := svc.Erase(ctx, personaldata.Subject{Email: erasureEmail})
 	require.NoError(t, err)
 	require.Equal(t, 2, first.Rows)
 
-	second, err := svc.Erase(ctx, erasure.Subject{Email: erasureEmail})
+	second, err := svc.Erase(ctx, personaldata.Subject{Email: erasureEmail})
 	require.NoError(t, err)
 
-	assert.Equal(t, erasure.Anonymized, second.Outcome)
+	assert.Equal(t, personaldata.Anonymized, second.Outcome)
 	assert.Zero(t, second.Rows)
 	assert.Empty(t, second.Kept,
 		"a person with no rows here is not told to go looking through columns that hold nothing about them")
@@ -251,10 +251,10 @@ func TestEraseAnswersAnonymizedForAPersonWithNoCart(t *testing.T) {
 	ctx := context.Background()
 	newCart(ctx, t, svc)
 
-	result, err := svc.Erase(ctx, erasure.Subject{CustomerID: "cust_SOMEBODY_ELSE"})
+	result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: "cust_SOMEBODY_ELSE"})
 	require.NoError(t, err)
 
-	assert.Equal(t, erasure.Anonymized, result.Outcome)
+	assert.Equal(t, personaldata.Anonymized, result.Outcome)
 	assert.Zero(t, result.Rows)
 	assert.Empty(t, result.Kept)
 	assert.Empty(t, result.Why)
@@ -273,7 +273,7 @@ func TestEraseRefusesASubjectThatNamesNobody(t *testing.T) {
 	// test watches is whether the REFUSED request added a lock of its own.
 	locksBefore := len(store.lockedCarts)
 
-	_, err := svc.Erase(ctx, erasure.Subject{})
+	_, err := svc.Erase(ctx, personaldata.Subject{})
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
@@ -291,7 +291,7 @@ func TestEraseRefusesASubjectThatNamesNobody(t *testing.T) {
 func TestEraseRefusesAMalformedEmail(t *testing.T) {
 	svc, _ := newService(t)
 
-	_, err := svc.Erase(context.Background(), erasure.Subject{Email: "not-an-address"})
+	_, err := svc.Erase(context.Background(), personaldata.Subject{Email: "not-an-address"})
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
@@ -310,7 +310,7 @@ func TestEraseTakesTheCartLock(t *testing.T) {
 	// the lock this call takes, not about the cart having ever been locked.
 	locksBefore := len(store.lockedCarts)
 
-	_, err := svc.Erase(ctx, erasure.Subject{CustomerID: customerID})
+	_, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID})
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{cart.ID}, store.lockedCarts[locksBefore:])
@@ -342,7 +342,7 @@ func TestEraseDoesNotChangeTheShapeOfTheCart(t *testing.T) {
 		}},
 	}))
 
-	_, err = svc.Erase(ctx, erasure.Subject{CustomerID: customerID})
+	_, err = svc.Erase(ctx, personaldata.Subject{CustomerID: customerID})
 	require.NoError(t, err)
 
 	after, err := svc.GetCart(ctx, cart.ID)
@@ -387,7 +387,7 @@ func TestEraseReachesACompletedCart(t *testing.T) {
 	_, err = svc.MarkCompleted(ctx, cart.ID)
 	require.NoError(t, err)
 
-	result, err := svc.Erase(ctx, erasure.Subject{CustomerID: customerID})
+	result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID})
 	require.NoError(t, err)
 	assert.Equal(t, 2, result.Rows)
 
@@ -411,10 +411,10 @@ func TestEraseReachesASoftDeletedCart(t *testing.T) {
 	cart := newErasureCart(ctx, t, svc, customerID)
 	require.NoError(t, svc.DeleteCart(ctx, cart.ID))
 
-	result, err := svc.Erase(ctx, erasure.Subject{CustomerID: customerID})
+	result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID})
 	require.NoError(t, err)
 
-	assert.Equal(t, erasure.Anonymized, result.Outcome)
+	assert.Equal(t, personaldata.Anonymized, result.Outcome)
 	assert.Empty(t, store.carts[cart.ID].Email, "a hidden row holds an e-mail like any other")
 	// The row COUNT is deliberately not asserted here, and the reason is a
 	// divergence worth knowing about: this fake drops a soft-deleted cart's

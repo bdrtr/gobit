@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/bdrtr/gobit/core/container"
-	"github.com/bdrtr/gobit/core/erasure"
+	"github.com/bdrtr/gobit/core/personaldata"
 )
 
 // ServiceWorkflowStore is the saga store's name in the container.
@@ -27,7 +27,7 @@ const ServiceWorkflowStore = "core.workflow.store"
 // personal data, they were measured rather than guessed, and none of them can
 // be reached by a type assertion over module.Registry.Modules().
 //
-// Each of them answers [erasure.Retained] with the reason written out. That is
+// Each of them answers [personaldata.Retained] with the reason written out. That is
 // not a euphemism for "not built": it is the accurate word. The data is kept,
 // gobit knows exactly what and where, and the decision to keep it — for now, in
 // the workflow store's case — is recorded in ADR 0033 rather than left to be
@@ -78,11 +78,11 @@ func outsideTheModuleTree(c *container.Container) []holder {
 func sagaStoreHolder(c *container.Container) holder {
 	h := holder{name: workflowStoreHolder}
 
-	if eraser, err := container.Resolve[erasure.Eraser](c, ServiceWorkflowStore); err == nil {
+	if eraser, err := container.Resolve[personaldata.Eraser](c, ServiceWorkflowStore); err == nil {
 		h.eraser = eraser
 	}
 
-	if declarer, err := container.Resolve[erasure.Declarer](c, ServiceWorkflowStore); err == nil {
+	if declarer, err := container.Resolve[personaldata.Declarer](c, ServiceWorkflowStore); err == nil {
 		h.declarer = declarer
 	}
 
@@ -119,28 +119,28 @@ const (
 // staticHolder is a holder whose answer does not depend on the subject.
 //
 // It cannot count rows and does not pretend to: Rows stays zero, and
-// [erasure.Result.Rows] is documented as informational precisely so that a
+// [personaldata.Result.Rows] is documented as informational precisely so that a
 // holder which cannot count is not forced to invent a number.
 type staticHolder struct {
 	name     string
 	why      string
 	kept     []string
-	holdings []erasure.Holding
+	holdings []personaldata.Holding
 }
 
 // Erase answers Retained without looking anything up.
-func (s staticHolder) Erase(_ context.Context, _ erasure.Subject) (erasure.Result, error) {
-	return erasure.Result{
+func (s staticHolder) Erase(_ context.Context, _ personaldata.Subject) (personaldata.Result, error) {
+	return personaldata.Result{
 		Holder:  s.name,
-		Outcome: erasure.Retained,
+		Outcome: personaldata.Retained,
 		Kept:    s.kept,
 		Why:     s.why,
 	}, nil
 }
 
 // PersonalData declares what the store holds.
-func (s staticHolder) PersonalData() erasure.Declaration {
-	return erasure.Declaration{Holder: s.name, Holdings: s.holdings}
+func (s staticHolder) PersonalData() personaldata.Declaration {
+	return personaldata.Declaration{Holder: s.name, Holdings: s.holdings}
 }
 
 const workflowStoreWhy = "the saga store keeps each execution's input, and the checkout workflow's input is " +
@@ -159,27 +159,27 @@ func workflowStoreColumns() []string {
 	}
 }
 
-func workflowStoreHoldings() []erasure.Holding {
-	return []erasure.Holding{
+func workflowStoreHoldings() []personaldata.Holding {
+	return []personaldata.Holding{
 		{
-			Table: tableWorkflowExecutions, Column: "input", Kind: erasure.Named,
+			Table: tableWorkflowExecutions, Column: "input", Kind: personaldata.Named,
 			Why: "the workflow's arguments; for checkout this is the cart, including the shopper's " +
 				"e-mail address and the shipping and billing addresses in full",
 		},
 		{
-			Table: tableWorkflowExecutions, Column: "output", Kind: erasure.Open,
+			Table: tableWorkflowExecutions, Column: "output", Kind: personaldata.Open,
 			Why: "the workflow's result, whose shape each workflow chooses",
 		},
 		{
-			Table: tableWorkflowExecutions, Column: "failure", Kind: erasure.Open,
+			Table: tableWorkflowExecutions, Column: "failure", Kind: personaldata.Open,
 			Why: "the error text of a failed run, which commonly echoes the input that caused it",
 		},
 		{
-			Table: tableWorkflowSteps, Column: "output", Kind: erasure.Open,
+			Table: tableWorkflowSteps, Column: "output", Kind: personaldata.Open,
 			Why: "one step's result; a step that read the customer returns what it read",
 		},
 		{
-			Table: tableWorkflowSteps, Column: "failure", Kind: erasure.Open,
+			Table: tableWorkflowSteps, Column: "failure", Kind: personaldata.Open,
 			Why: "one step's error text, with the same echo problem as the execution's",
 		},
 	}
@@ -194,18 +194,18 @@ func auditColumns() []string {
 	return []string{tableAuditLog + ".actor_id", tableAuditLog + ".path", tableAuditLog + ".request_id"}
 }
 
-func auditHoldings() []erasure.Holding {
-	return []erasure.Holding{
+func auditHoldings() []personaldata.Holding {
+	return []personaldata.Holding{
 		{
-			Table: tableAuditLog, Column: "actor_id", Kind: erasure.Named,
+			Table: tableAuditLog, Column: "actor_id", Kind: personaldata.Named,
 			Why: "the identifier of the staff member or API key that made the request",
 		},
 		{
-			Table: tableAuditLog, Column: "path", Kind: erasure.Named,
+			Table: tableAuditLog, Column: "path", Kind: personaldata.Named,
 			Why: "the request path, and an admin path carries the identifier of the record it acted on",
 		},
 		{
-			Table: tableAuditLog, Column: "request_id", Kind: erasure.Open,
+			Table: tableAuditLog, Column: "request_id", Kind: personaldata.Open,
 			Why: "joins the row to the process log lines of the same request, whatever those contain",
 		},
 	}
@@ -221,10 +221,10 @@ func linkColumns() []string {
 	return []string{tableLink + ".from_id", tableLink + ".to_id"}
 }
 
-func linkHoldings() []erasure.Holding {
-	return []erasure.Holding{
+func linkHoldings() []personaldata.Holding {
+	return []personaldata.Holding{
 		{
-			Table: tableLink, Column: "to_id", Kind: erasure.Named,
+			Table: tableLink, Column: "to_id", Kind: personaldata.Named,
 			Why: "the identifier of the record on the far side of a link; for b2b_employee_customer " +
 				"that is a customer id. The table name is chosen by whoever declares the link, so " +
 				"there is no fixed name to give here",

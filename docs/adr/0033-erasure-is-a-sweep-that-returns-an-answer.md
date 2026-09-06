@@ -46,7 +46,7 @@ reach either.
 **An erasure is a synchronous sweep across every holder of personal data, and it
 returns one report.**
 
-**1. The vocabulary is published as `core/erasure`.** ADR 0029 deferred this
+**1. The vocabulary is published as `core/personaldata`.** ADR 0029 deferred this
 question to whoever built the mechanism; the amendment on
 [ADR 0026](0026-the-published-surface-is-fourteen-packages.md) carries the
 argument and the fifteenth table row. Only the vocabulary is published —
@@ -124,7 +124,7 @@ ADR 0012 makes language a property of the FILE, and three of the modules that
 declare their holdings are still Turkish files. Their declaration strings are
 nevertheless English, and the rule is worth stating because it is the first
 place the language ratchet meets a published contract: **the `Why` text is DATA
-that crosses into `core/erasure` and is read by the embedder, not prose about
+that crosses into `core/personaldata` and is read by the embedder, not prose about
 the code.** One report assembles the sentences of every holder, so a per-file
 rule would produce an answer to a data subject written in two languages. The
 existing precedent points the other way — the OpenAPI descriptions are emitted

@@ -62,7 +62,7 @@ Sabitlenme `1.0.0` ile olur.
   sorulabilmesi için kancalar, ve her tutucunun ne sakladığının beyanı. Üçü de
   inşa edildi.
 
-  **`core/erasure` on beşinci yayımlanmış paket oldu, ve gerekçe tercih değil
+  **`core/personaldata` on beşinci yayımlanmış paket oldu, ve gerekçe tercih değil
   kuraldır.** `internal/arch/public_surface_test.go` üyeliği yazıyor: bir paket,
   depo dışındaki bir programın derlenmek için onu ADLANDIRMAK zorunda olduğu
   zaman yayımlanır. Gömen uygulamanın KENDİ modülü tam olarak öyle bir

@@ -71,9 +71,9 @@ import (
 
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/db"
-	"github.com/bdrtr/gobit/core/erasure"
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/module"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/core/openapi"
 	"github.com/bdrtr/gobit/internal/modules/review/api"
 	"github.com/bdrtr/gobit/internal/modules/review/repository"
@@ -130,13 +130,13 @@ var _ openapi.Describer = (*Module)(nil)
 
 // That it can say what it holds about people is pinned down the same way.
 //
-// [erasure.Declarer] is another OPTIONAL interface the composition root finds
+// [personaldata.Declarer] is another OPTIONAL interface the composition root finds
 // with a type assertion, so a slipped name or signature would produce no build
 // error at all — it would produce a sweep in which this module never answers.
 // The cost of that is worse than a missing path in a document: a controller
 // answering a person would be told, in a report that looks complete, that
 // nothing here holds anything about them.
-var _ erasure.Declarer = (*Module)(nil)
+var _ personaldata.Declarer = (*Module)(nil)
 
 // New produces a review module ready to be registered.
 func New(opts Options) *Module {
@@ -207,7 +207,7 @@ func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 //
 // # This module holds personal data and cannot say WHOSE
 //
-// That is the whole reason [erasure.Declarer] and [erasure.Eraser] are two
+// That is the whole reason [personaldata.Declarer] and [personaldata.Eraser] are two
 // interfaces instead of one, and this module is the case that forced them
 // apart (ADR 0033).
 //
@@ -217,13 +217,13 @@ func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 // id would be data taken for something else, so decision A15 refuses all three.
 // The consequence is the part that has to be said out loud here. Nothing on the
 // row points at a person this framework can look up — there is no customer id,
-// no address, no order — so an [erasure.Subject] resolves to no row in this
+// no address, no order — so an [personaldata.Subject] resolves to no row in this
 // table, and matching on the byline is not a resolution: two shoppers share a
 // display name as easily as two people share a name, and erasing on that basis
 // would erase strangers.
 //
 // So the module declares and offers no erasure. The two alternatives were to
-// implement [erasure.Eraser] and report zero rows for everybody, which is a
+// implement [personaldata.Eraser] and report zero rows for everybody, which is a
 // well-formed lie, or to stay silent, which keeps this table out of every
 // report a controller ever publishes. Declaring puts it in each of them as a
 // Retained entry listing these columns, which is the true answer: the data is
@@ -238,26 +238,26 @@ func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 // timestamp and the row timestamps hold nothing about anyone — no column
 // records WHICH operator decided. The audit that keeps this paragraph honest is
 // in erasure_test.go, and it reads the migration rather than this list.
-func (m *Module) PersonalData() erasure.Declaration {
+func (m *Module) PersonalData() personaldata.Declaration {
 	// Holder is left empty deliberately: the coordinator fills it in from the
 	// name the registry knows this module by, and a second copy here would be
 	// free to drift from it.
-	return erasure.Declaration{
-		Holdings: []erasure.Holding{
+	return personaldata.Declaration{
+		Holdings: []personaldata.Holding{
 			{
-				Table: tableReviews, Column: "author_name", Kind: erasure.Named,
+				Table: tableReviews, Column: "author_name", Kind: personaldata.Named,
 				Why: "the byline a member of the public typed in order to have it printed under their review, and the only identifying thing stored about them; gobit cannot find this person's reviews from a customer id or an e-mail address, so acting on them is the embedder's decision with information gobit does not have",
 			},
 			{
-				Table: tableReviews, Column: "title", Kind: erasure.Open,
+				Table: tableReviews, Column: "title", Kind: personaldata.Open,
 				Why: "the headline the author typed; it is free text nobody validates and gobit does not read it, so it can carry a name, an address or a third party",
 			},
 			{
-				Table: tableReviews, Column: "body", Kind: erasure.Open,
+				Table: tableReviews, Column: "body", Kind: personaldata.Open,
 				Why: "the review itself, written by a member of the public about a product; it is their own words about their own purchase and gobit does not inspect them",
 			},
 			{
-				Table: tableReviews, Column: "moderation_note", Kind: erasure.Open,
+				Table: tableReviews, Column: "moderation_note", Kind: personaldata.Open,
 				Why: "free text an operator typed when approving or rejecting the review, which may quote or describe the author; gobit does not read it",
 			},
 		},

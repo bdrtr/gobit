@@ -53,7 +53,7 @@
 //
 // # The optional capabilities it implements
 //
-// [erasure.Eraser] and [erasure.Declarer] (ADR 0029). The module holds the
+// [personaldata.Eraser] and [personaldata.Declarer] (ADR 0029). The module holds the
 // buyer's e-mail and the address the order was shipped to, so it answers an
 // erasure request rather than staying silent: it ANONYMIZES a settled order —
 // the sale, its lines and its totals survive without the person — and RETAINS
@@ -92,9 +92,9 @@ import (
 
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/db"
-	"github.com/bdrtr/gobit/core/erasure"
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/module"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/core/openapi"
 	"github.com/bdrtr/gobit/internal/modules/order/api"
@@ -200,15 +200,15 @@ var _ openapi.Describer = (*Module)(nil)
 // That the module can answer an erasure request, and can say what it holds, is
 // pinned down at compile time as well.
 //
-// The two [erasure] interfaces are found by type assertion exactly as
+// The two [personaldata] interfaces are found by type assertion exactly as
 // [openapi.Describer] is (see internal/workflows/erasing), and the cost of a
 // drift is worse here than a missing path in a document: the module would fall
 // out of the sweep in silence, the report would not mention it, and a person
 // who asked to be forgotten would be told the work was done while every order
 // still carried their address.
 var (
-	_ erasure.Eraser   = (*Module)(nil)
-	_ erasure.Declarer = (*Module)(nil)
+	_ personaldata.Eraser   = (*Module)(nil)
+	_ personaldata.Declarer = (*Module)(nil)
 )
 
 // New produces an order module ready to be registered.
@@ -352,9 +352,9 @@ func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 // answer to a person who asked to be forgotten, and it would reach them as a
 // completed report rather than as a fault (the sweep marks a failing holder and
 // says the erasure is partial — see internal/workflows/erasing).
-func (m *Module) Erase(ctx context.Context, subject erasure.Subject) (erasure.Result, error) {
+func (m *Module) Erase(ctx context.Context, subject personaldata.Subject) (personaldata.Result, error) {
 	if m.svc == nil {
-		return erasure.Result{}, errors.Internal(codeSetupFailed,
+		return personaldata.Result{}, errors.Internal(codeSetupFailed,
 			"the %s module was asked to erase a person before Register wired its service; "+
 				"nothing was erased and the report must not count this holder as done", ModuleName)
 	}
@@ -375,8 +375,8 @@ func (m *Module) Erase(ctx context.Context, subject erasure.Subject) (erasure.Re
 // erasure there would be two lists that agree on the day they are written and
 // drift afterwards, and a declaration that has drifted from the code is worse
 // than none: it tells an auditor where to look and is wrong.
-func (m *Module) PersonalData() erasure.Declaration {
-	return erasure.Declaration{
+func (m *Module) PersonalData() personaldata.Declaration {
+	return personaldata.Declaration{
 		Holder:   ModuleName,
 		Holdings: service.PersonalDataHoldings(),
 	}

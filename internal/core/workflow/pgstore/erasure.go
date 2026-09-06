@@ -3,7 +3,7 @@ package pgstore
 import (
 	"context"
 
-	"github.com/bdrtr/gobit/core/erasure"
+	"github.com/bdrtr/gobit/core/personaldata"
 )
 
 // ErasureHolder is the name this store answers an erasure request under.
@@ -19,8 +19,8 @@ const ErasureHolder = "internal/core/workflow/pgstore"
 // and would silently drop this store out of every erasure report — the one
 // failure this mechanism exists to prevent.
 var (
-	_ erasure.Eraser   = (*store)(nil)
-	_ erasure.Declarer = (*store)(nil)
+	_ personaldata.Eraser   = (*store)(nil)
+	_ personaldata.Declarer = (*store)(nil)
 )
 
 // tableExecutions and tableSteps are the two tables this store owns.
@@ -118,10 +118,10 @@ WHERE (
 // holder the same subject and most holders will not have heard of them; zero
 // rows with an Anonymized outcome is the honest answer, and the caller can tell
 // it apart from a refusal by the outcome rather than by the count.
-func (s *store) Erase(ctx context.Context, subject erasure.Subject) (erasure.Result, error) {
-	result := erasure.Result{
+func (s *store) Erase(ctx context.Context, subject personaldata.Subject) (personaldata.Result, error) {
+	result := personaldata.Result{
 		Holder:  ErasureHolder,
-		Outcome: erasure.Anonymized,
+		Outcome: personaldata.Anonymized,
 		Kept:    keptAfterErasure(),
 		Why:     whyKept,
 	}
@@ -132,12 +132,12 @@ func (s *store) Erase(ctx context.Context, subject erasure.Subject) (erasure.Res
 
 	pool, err := s.rawPool()
 	if err != nil {
-		return erasure.Result{}, err
+		return personaldata.Result{}, err
 	}
 
 	tag, err := pool.Exec(ctx, redactInputSQL, subject.CustomerID, subject.Email, redaction)
 	if err != nil {
-		return erasure.Result{}, wrapDB(err, CodeQueryFailed,
+		return personaldata.Result{}, wrapDB(err, CodeQueryFailed,
 			"the personal fields of the execution records could not be emptied")
 	}
 
@@ -172,22 +172,22 @@ func keptAfterErasure() []string {
 // before this eraser existed, and the narrowing is the measurement: the earlier
 // version listed both `output` columns as possibly personal because nobody had
 // looked at what goes into them. They hold identifiers and amounts.
-func (s *store) PersonalData() erasure.Declaration {
-	return erasure.Declaration{
-		Holdings: []erasure.Holding{
+func (s *store) PersonalData() personaldata.Declaration {
+	return personaldata.Declaration{
+		Holdings: []personaldata.Holding{
 			{
-				Table: tableExecutions, Column: "input", Kind: erasure.Named,
+				Table: tableExecutions, Column: "input", Kind: personaldata.Named,
 				Why: "the saga's arguments; for the one workflow that runs here it is the checkout " +
 					"plan, which carries the shopper's e-mail address and the shipping and billing " +
 					"addresses in full. An erasure empties exactly those three and leaves the rest, " +
 					"because the rest is what an abandoned saga is recovered from",
 			},
 			{
-				Table: tableExecutions, Column: "failure", Kind: erasure.Open,
+				Table: tableExecutions, Column: "failure", Kind: personaldata.Open,
 				Why: "the error text of a failed run, which commonly echoes the input that caused it",
 			},
 			{
-				Table: tableSteps, Column: "failure", Kind: erasure.Open,
+				Table: tableSteps, Column: "failure", Kind: personaldata.Open,
 				Why: "one step's error text, with the same echo problem as the execution's",
 			},
 		},

@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/core/erasure"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 	"github.com/bdrtr/gobit/internal/modules/order/service"
 )
@@ -65,10 +65,10 @@ func TestEraseForgetsAnOrderThatWasREFUNDEDInFull(t *testing.T) {
 	_, err = env.svc.CompleteOrder(ctx, ord.ID)
 	require.NoError(t, err)
 
-	result, err := env.svc.Erase(ctx, erasure.Subject{CustomerID: testCustomerID})
+	result, err := env.svc.Erase(ctx, personaldata.Subject{CustomerID: testCustomerID})
 	require.NoError(t, err)
 
-	assert.Equal(t, erasure.Anonymized, result.Outcome,
+	assert.Equal(t, personaldata.Anonymized, result.Outcome,
 		"the money has stopped moving on this order and nothing is owed in either direction; "+
 			"retaining it refuses to forget a refunded buyer for ever: %s", result.Why)
 	assert.Positive(t, result.Rows, "the order row had to be rewritten")
@@ -108,10 +108,10 @@ func TestEraseStillHoldsAnOrderWhoseMoneyIsMoving(t *testing.T) {
 			_, err = env.svc.CompleteOrder(ctx, ord.ID)
 			require.NoError(t, err)
 
-			result, err := env.svc.Erase(ctx, erasure.Subject{CustomerID: testCustomerID})
+			result, err := env.svc.Erase(ctx, personaldata.Subject{CustomerID: testCustomerID})
 			require.NoError(t, err)
 
-			assert.Equal(t, erasure.Retained, result.Outcome,
+			assert.Equal(t, personaldata.Retained, result.Outcome,
 				"money is still owed in one direction or the other: %s", result.Why)
 			assert.Contains(t, result.Why, "money is still outstanding on the order")
 		})
@@ -139,10 +139,10 @@ func TestTheRetainedSentenceSeparatesTheTwoKindsOfKeptColumn(t *testing.T) {
 	_, err := env.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	result, err := env.svc.Erase(ctx, erasure.Subject{CustomerID: testCustomerID})
+	result, err := env.svc.Erase(ctx, personaldata.Subject{CustomerID: testCustomerID})
 	require.NoError(t, err)
 
-	require.Equal(t, erasure.Retained, result.Outcome)
+	require.Equal(t, personaldata.Retained, result.Outcome)
 	require.NotEmpty(t, result.Why)
 
 	assert.Contains(t, result.Kept, "orders.email",
@@ -169,12 +169,12 @@ func TestTheRetainedSentenceSeparatesTheTwoKindsOfKeptColumn(t *testing.T) {
 // buyer". It is not derived from anything by this module: the caller puts it in
 // the interop snapshot, the module checks only that it is non-empty, unpadded
 // and short enough, and stores the text. That is a column whose content the
-// embedder controls, which is what [erasure.Open] means — and an embedder is
+// embedder controls, which is what [personaldata.Open] means — and an embedder is
 // free to build the key out of the buyer's e-mail.
 func TestTheDeclarationNamesTheIdempotencyKey(t *testing.T) {
 	t.Parallel()
 
-	var declared *erasure.Holding
+	var declared *personaldata.Holding
 	for _, holding := range service.PersonalDataHoldings() {
 		if holding.Table == "orders" && holding.Column == "idempotency_key" {
 			found := holding
@@ -184,7 +184,7 @@ func TestTheDeclarationNamesTheIdempotencyKey(t *testing.T) {
 
 	require.NotNil(t, declared,
 		"orders.idempotency_key holds whatever the caller typed and the declaration has to say so")
-	assert.Equal(t, erasure.Open, declared.Kind,
+	assert.Equal(t, personaldata.Open, declared.Kind,
 		"gobit does not build this value and does not read what is in it")
 	assert.NotEmpty(t, declared.Why)
 
@@ -205,10 +205,10 @@ func TestTheDeclarationNamesTheIdempotencyKey(t *testing.T) {
 		service.SummaryTotalsInput{PaidTotal: ord.Total})
 	require.NoError(t, err)
 
-	result, err := env.svc.Erase(ctx, erasure.Subject{CustomerID: testCustomerID})
+	result, err := env.svc.Erase(ctx, personaldata.Subject{CustomerID: testCustomerID})
 	require.NoError(t, err)
 
-	require.Equal(t, erasure.Anonymized, result.Outcome, result.Why)
+	require.Equal(t, personaldata.Anonymized, result.Outcome, result.Why)
 	assert.Contains(t, result.Kept, "orders.idempotency_key")
 
 	kept, err := env.svc.GetOrder(ctx, ord.ID)

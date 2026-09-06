@@ -31,7 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/core/erasure"
+	"github.com/bdrtr/gobit/core/personaldata"
 	cartmod "github.com/bdrtr/gobit/internal/modules/cart"
 	"github.com/bdrtr/gobit/internal/modules/cart/models"
 	"github.com/bdrtr/gobit/internal/modules/cart/service"
@@ -129,9 +129,9 @@ func TestErasureEmptiesEveryDeclaredColumnItDoesNotKeep(t *testing.T) {
 	const customerID = "cust_ERASURE_DECLARED"
 	cart := newErasureCart(ctx, t, svc, customerID, "declared.erasure@example.com")
 
-	result, err := svc.Erase(ctx, erasure.Subject{CustomerID: customerID})
+	result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID})
 	require.NoError(t, err)
-	require.Equal(t, erasure.Anonymized, result.Outcome)
+	require.Equal(t, personaldata.Anonymized, result.Outcome)
 	// One cart row and its two addresses.
 	assert.Equal(t, 3, result.Rows)
 
@@ -145,7 +145,7 @@ func TestErasureEmptiesEveryDeclaredColumnItDoesNotKeep(t *testing.T) {
 		if kept[key] {
 			continue
 		}
-		require.Equal(t, erasure.Named, holding.Kind,
+		require.Equal(t, personaldata.Named, holding.Kind,
 			"%s is an OPEN column and was not reported as kept; gobit does not rewrite "+
 				"free-form data, so an answer that does not name it is claiming something "+
 				"it did not do", key)
@@ -169,7 +169,7 @@ func TestErasureLeavesTheFreeFormColumnsWhereTheyAre(t *testing.T) {
 	const customerID = "cust_ERASURE_OPEN"
 	cart := newErasureCart(ctx, t, svc, customerID, "open.erasure@example.com")
 
-	_, err := svc.Erase(ctx, erasure.Subject{CustomerID: customerID})
+	_, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID})
 	require.NoError(t, err)
 
 	detail, err := svc.GetCart(ctx, cart.ID)
@@ -191,10 +191,10 @@ func TestErasureFindsAGuestCartByEmail(t *testing.T) {
 
 	// The subject arrives as the shopper typed it; the column holds the folded
 	// form, and matching with anything else would silently miss every row.
-	result, err := svc.Erase(ctx, erasure.Subject{Email: "Guest.Erasure@Example.COM"})
+	result, err := svc.Erase(ctx, personaldata.Subject{Email: "Guest.Erasure@Example.COM"})
 	require.NoError(t, err)
 
-	assert.Equal(t, erasure.Anonymized, result.Outcome)
+	assert.Equal(t, personaldata.Anonymized, result.Outcome)
 	assert.Equal(t, 3, result.Rows)
 	assert.Zero(t, countNotNull(ctx, t, "carts", "email", cart.ID))
 	assert.Zero(t, countNotNull(ctx, t, "cart_addresses", "last_name", cart.ID))
@@ -209,9 +209,9 @@ func TestErasureIsIdempotentOnTheDatabase(t *testing.T) {
 	const customerID = "cust_ERASURE_TWICE"
 	newErasureCart(ctx, t, svc, customerID, "twice.erasure@example.com")
 
-	first, err := svc.Erase(ctx, erasure.Subject{CustomerID: customerID})
+	first, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID})
 	require.NoError(t, err)
-	second, err := svc.Erase(ctx, erasure.Subject{CustomerID: customerID})
+	second, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID})
 	require.NoError(t, err)
 
 	assert.Equal(t, first.Outcome, second.Outcome)
@@ -253,9 +253,9 @@ func TestErasureReachesHiddenAndClosedCarts(t *testing.T) {
 	_, err = svc.MarkCompleted(ctx, completed.ID)
 	require.NoError(t, err)
 
-	result, err := svc.Erase(ctx, erasure.Subject{CustomerID: customerID})
+	result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, result.Outcome)
+	assert.Equal(t, personaldata.Anonymized, result.Outcome)
 
 	for _, id := range []string{deleted.ID, completed.ID} {
 		assert.Zero(t, countNotNull(ctx, t, "carts", "email", id),
@@ -289,7 +289,7 @@ func TestErasureLeavesOtherPeopleAlone(t *testing.T) {
 	mine := newErasureCart(ctx, t, svc, customerID, "one.erasure@example.com")
 	somebodyElse := newErasureCart(ctx, t, svc, "cust_ERASURE_OTHER", "other.erasure@example.com")
 
-	_, err := svc.Erase(ctx, erasure.Subject{CustomerID: customerID})
+	_, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID})
 	require.NoError(t, err)
 
 	assert.Zero(t, countNotNull(ctx, t, "carts", "email", mine.ID))

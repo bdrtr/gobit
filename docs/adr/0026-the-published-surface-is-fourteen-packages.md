@@ -188,7 +188,7 @@ possible it is the narrower promise. The bias of this ADR — publish late, publ
 what was measured — is reinforced by the case, not overturned by it. Recorded in
 docs/gaps.md row B13.
 
-## Amendment: `core/erasure` is the fifteenth package (2026-09-06)
+## Amendment: `core/personaldata` is the fifteenth package (2026-09-06)
 
 **The title and the table above say fourteen. The count is now FIFTEEN**, and
 the file is not renamed because the doc-reference audit resolves this ADR by its
@@ -197,7 +197,18 @@ the day the decision was taken.
 
 | package | why an outside program must name it |
 | --- | --- |
-| core/erasure | the three-outcome erasure contract and the personal-data declaration a module implements (ADR 0029, ADR 0033) |
+| core/personaldata | the vocabulary of what a module holds about a person: the three-outcome erasure contract and the declaration a module implements (ADR 0029, ADR 0033) |
+
+**The package carried the name "erasure" under the published tree for two days
+and was renamed on 2026-09-07, before it appeared in any tag.** The measurement that forced it:
+a third of the package was already mis-filed under the old name. `Declaration`,
+`Holding` and `Kind` describe what a module KEEPS, not what an erasure does, and
+`Declarer.PersonalData` has nothing to do with erasing at all — so the name was
+wrong on the day it was written and the second capability only made it visible.
+Verified before acting, because this repository has been bitten by exactly this
+kind of premise: `git ls-tree` over all eight tags finds no directory of that
+name under the published tree, so no released surface carried it and the rename
+cost nothing outside this repository. Renaming it later would have cost a major version.
 
 ADR 0029 deferred exactly this question — "whether the declaration surface is a
 published package under ADR 0026 or stays internal is a question for whoever

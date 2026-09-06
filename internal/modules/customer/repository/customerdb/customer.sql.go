@@ -493,7 +493,7 @@ type LockCustomersByIDOrEmailForErasureParams struct {
 //
 // Böyle bir özne kural dışı değil, YÖNETİM UCUNUN normalidir (bkz.
 // internal/app/erasure.go: istek gövdesindeki iki alan da doğrudan
-// erasure.Subject'e geçer). Kaydı olan bir müşteri aynı adresle misafir olarak
+// personaldata.Subject'e geçer). Kaydı olan bir müşteri aynı adresle misafir olarak
 // da alışveriş yapmış olabilir; kimliği o kaydı, e-posta ötekileri gösterir ve
 // kişi hepsidir. "Kimlik varsa e-postaya bakma" kuralı tam da bu kişide
 // misafir satırlarını olduğu gibi bırakırdı.

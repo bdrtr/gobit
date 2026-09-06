@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bdrtr/gobit/core/erasure"
 	"github.com/bdrtr/gobit/core/module"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/core/config"
 )
 
@@ -200,7 +200,7 @@ func TestEveryDeclaredHoldingIsWellFormed(t *testing.T) {
 	seen := 0
 
 	for _, mod := range registeredModules(t) {
-		declarer, ok := mod.(erasure.Declarer)
+		declarer, ok := mod.(personaldata.Declarer)
 		if !ok {
 			continue
 		}
@@ -212,9 +212,9 @@ func TestEveryDeclaredHoldingIsWellFormed(t *testing.T) {
 				t.Errorf("the %s module declares a holding with no table or no column: %+v", mod.Name(), h)
 			}
 
-			if h.Kind != erasure.Named && h.Kind != erasure.Open {
+			if h.Kind != personaldata.Named && h.Kind != personaldata.Open {
 				t.Errorf("the %s module declares %s.%s with kind %q; it has to be %q or %q",
-					mod.Name(), h.Table, h.Column, h.Kind, erasure.Named, erasure.Open)
+					mod.Name(), h.Table, h.Column, h.Kind, personaldata.Named, personaldata.Open)
 			}
 
 			if strings.TrimSpace(h.Why) == "" {
@@ -244,21 +244,21 @@ func TestEveryEraserAlsoDeclares(t *testing.T) {
 	erasers := 0
 
 	for _, mod := range registeredModules(t) {
-		if _, ok := mod.(erasure.Eraser); !ok {
+		if _, ok := mod.(personaldata.Eraser); !ok {
 			continue
 		}
 
 		erasers++
 
-		if _, ok := mod.(erasure.Declarer); !ok {
-			t.Errorf("the %s module implements erasure.Eraser and not erasure.Declarer.\n"+
+		if _, ok := mod.(personaldata.Declarer); !ok {
+			t.Errorf("the %s module implements personaldata.Eraser and not personaldata.Declarer.\n"+
 				"It can say it erased something and cannot say what it held, so nothing can "+
 				"check the claim and no controller can describe it.", mod.Name())
 		}
 	}
 
 	if erasers == 0 {
-		t.Fatal("no module implements erasure.Eraser; the audit has gone blind")
+		t.Fatal("no module implements personaldata.Eraser; the audit has gone blind")
 	}
 }
 
@@ -327,7 +327,7 @@ func registeredModules(t *testing.T) []module.Module {
 
 // declaredHoldings indexes a module's declaration by "table.column".
 func declaredHoldings(mod module.Module) map[string]bool {
-	declarer, ok := mod.(erasure.Declarer)
+	declarer, ok := mod.(personaldata.Declarer)
 	if !ok {
 		return nil
 	}

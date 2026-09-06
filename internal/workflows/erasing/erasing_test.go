@@ -12,9 +12,9 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/bdrtr/gobit/core/container"
-	"github.com/bdrtr/gobit/core/erasure"
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/module"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/workflows/erasing"
 )
 
@@ -27,8 +27,8 @@ import (
 // with no personal data must be skipped, not asked and ignored.
 type fakeModule struct {
 	name    string
-	erase   func(context.Context, erasure.Subject) (erasure.Result, error)
-	declare func() erasure.Declaration
+	erase   func(context.Context, personaldata.Subject) (personaldata.Result, error)
+	declare func() personaldata.Declaration
 }
 
 func (f *fakeModule) Name() string                                         { return f.name }
@@ -39,29 +39,29 @@ func (f *fakeModule) Routes(chi.Router)                                    {}
 // eraserModule adds the Eraser capability to a fake module.
 type eraserModule struct{ *fakeModule }
 
-func (e eraserModule) Erase(ctx context.Context, s erasure.Subject) (erasure.Result, error) {
+func (e eraserModule) Erase(ctx context.Context, s personaldata.Subject) (personaldata.Result, error) {
 	return e.erase(ctx, s)
 }
 
 // declarerModule adds the Declarer capability.
 type declarerModule struct{ *fakeModule }
 
-func (d declarerModule) PersonalData() erasure.Declaration { return d.declare() }
+func (d declarerModule) PersonalData() personaldata.Declaration { return d.declare() }
 
 // bothModule adds both.
 type bothModule struct{ *fakeModule }
 
-func (b bothModule) Erase(ctx context.Context, s erasure.Subject) (erasure.Result, error) {
+func (b bothModule) Erase(ctx context.Context, s personaldata.Subject) (personaldata.Result, error) {
 	return b.erase(ctx, s)
 }
-func (b bothModule) PersonalData() erasure.Declaration { return b.declare() }
+func (b bothModule) PersonalData() personaldata.Declaration { return b.declare() }
 
 // answers builds a module that answers with the given outcome.
-func answers(name string, outcome erasure.Outcome, rows int) module.Module {
+func answers(name string, outcome personaldata.Outcome, rows int) module.Module {
 	return eraserModule{&fakeModule{
 		name: name,
-		erase: func(context.Context, erasure.Subject) (erasure.Result, error) {
-			return erasure.Result{Outcome: outcome, Rows: rows}, nil
+		erase: func(context.Context, personaldata.Subject) (personaldata.Result, error) {
+			return personaldata.Result{Outcome: outcome, Rows: rows}, nil
 		},
 	}}
 }
@@ -79,8 +79,8 @@ func coordinator(t *testing.T, mods ...module.Module) *erasing.Coordinator {
 }
 
 // resultsOf indexes a report's results by holder.
-func resultsOf(report erasure.Report) map[string]erasure.Result {
-	out := make(map[string]erasure.Result, len(report.Results))
+func resultsOf(report personaldata.Report) map[string]personaldata.Result {
+	out := make(map[string]personaldata.Result, len(report.Results))
 	for _, r := range report.Results {
 		out[r.Holder] = r
 	}
@@ -97,9 +97,9 @@ func resultsOf(report erasure.Report) map[string]erasure.Result {
 func TestASubjectThatNamesNobodyIsRefused(t *testing.T) {
 	t.Parallel()
 
-	co := coordinator(t, answers("customer", erasure.Anonymized, 1))
+	co := coordinator(t, answers("customer", personaldata.Anonymized, 1))
 
-	_, err := co.Erase(t.Context(), erasure.Subject{})
+	_, err := co.Erase(t.Context(), personaldata.Subject{})
 	if err == nil {
 		t.Fatal("a subject with no customer id and no e-mail was accepted; it names everybody")
 	}
@@ -121,16 +121,16 @@ func TestEitherIdentifierIsEnough(t *testing.T) {
 
 	for _, tc := range []struct {
 		name    string
-		subject erasure.Subject
+		subject personaldata.Subject
 	}{
-		{"only the customer id", erasure.Subject{CustomerID: "cus_1"}},
-		{"only the e-mail", erasure.Subject{Email: "a@b.example"}},
-		{"both", erasure.Subject{CustomerID: "cus_1", Email: "a@b.example"}},
+		{"only the customer id", personaldata.Subject{CustomerID: "cus_1"}},
+		{"only the e-mail", personaldata.Subject{Email: "a@b.example"}},
+		{"both", personaldata.Subject{CustomerID: "cus_1", Email: "a@b.example"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			co := coordinator(t, answers("customer", erasure.Anonymized, 1))
+			co := coordinator(t, answers("customer", personaldata.Anonymized, 1))
 
 			if _, err := co.Erase(t.Context(), tc.subject); err != nil {
 				t.Fatalf("the sweep was refused: %v", err)
@@ -146,10 +146,10 @@ func TestAModuleWithoutTheCapabilitiesIsSkipped(t *testing.T) {
 
 	co := coordinator(t,
 		&fakeModule{name: "pricing"},
-		answers("customer", erasure.Anonymized, 1),
+		answers("customer", personaldata.Anonymized, 1),
 	)
 
-	report, err := co.Erase(t.Context(), erasure.Subject{CustomerID: "cus_1"})
+	report, err := co.Erase(t.Context(), personaldata.Subject{CustomerID: "cus_1"})
 	if err != nil {
 		t.Fatalf("the sweep failed: %v", err)
 	}
@@ -171,14 +171,14 @@ func TestAHolderMayDeclareWithoutErasing(t *testing.T) {
 
 	co := coordinator(t, declarerModule{&fakeModule{
 		name: "review",
-		declare: func() erasure.Declaration {
-			return erasure.Declaration{Holdings: []erasure.Holding{
-				{Table: "reviews", Column: "author_name", Kind: erasure.Named, Why: "the byline"},
+		declare: func() personaldata.Declaration {
+			return personaldata.Declaration{Holdings: []personaldata.Holding{
+				{Table: "reviews", Column: "author_name", Kind: personaldata.Named, Why: "the byline"},
 			}}
 		},
 	}})
 
-	report, err := co.Erase(t.Context(), erasure.Subject{CustomerID: "cus_1"})
+	report, err := co.Erase(t.Context(), personaldata.Subject{CustomerID: "cus_1"})
 	if err != nil {
 		t.Fatalf("the sweep failed: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestAHolderMayDeclareWithoutErasing(t *testing.T) {
 		t.Fatal("a declare-only holder is missing from the report; the sweep is silent about data it knows is there")
 	}
 
-	if res.Outcome != erasure.Retained {
+	if res.Outcome != personaldata.Retained {
 		t.Errorf("a holder that cannot erase answered %q, want retained", res.Outcome)
 	}
 
@@ -226,22 +226,22 @@ func TestAHolderThatDoesBothAppearsInBoth(t *testing.T) {
 
 	co := coordinator(t, bothModule{&fakeModule{
 		name: "customer",
-		erase: func(context.Context, erasure.Subject) (erasure.Result, error) {
-			return erasure.Result{Outcome: erasure.Anonymized, Rows: 1}, nil
+		erase: func(context.Context, personaldata.Subject) (personaldata.Result, error) {
+			return personaldata.Result{Outcome: personaldata.Anonymized, Rows: 1}, nil
 		},
-		declare: func() erasure.Declaration {
-			return erasure.Declaration{Holdings: []erasure.Holding{
-				{Table: "customer", Column: "email", Kind: erasure.Named, Why: "the address"},
+		declare: func() personaldata.Declaration {
+			return personaldata.Declaration{Holdings: []personaldata.Holding{
+				{Table: "customer", Column: "email", Kind: personaldata.Named, Why: "the address"},
 			}}
 		},
 	}})
 
-	report, err := co.Erase(t.Context(), erasure.Subject{CustomerID: "cus_1"})
+	report, err := co.Erase(t.Context(), personaldata.Subject{CustomerID: "cus_1"})
 	if err != nil {
 		t.Fatalf("the sweep failed: %v", err)
 	}
 
-	if got := resultsOf(report)["customer"].Outcome; got != erasure.Anonymized {
+	if got := resultsOf(report)["customer"].Outcome; got != personaldata.Anonymized {
 		t.Errorf("the sweep did not carry the module's outcome, got %q", got)
 	}
 
@@ -268,12 +268,12 @@ func TestTheRegistryNamesTheHolder(t *testing.T) {
 
 	co := coordinator(t, eraserModule{&fakeModule{
 		name: "customer",
-		erase: func(context.Context, erasure.Subject) (erasure.Result, error) {
-			return erasure.Result{Holder: "something else entirely", Outcome: erasure.Anonymized}, nil
+		erase: func(context.Context, personaldata.Subject) (personaldata.Result, error) {
+			return personaldata.Result{Holder: "something else entirely", Outcome: personaldata.Anonymized}, nil
 		},
 	}})
 
-	report, err := co.Erase(t.Context(), erasure.Subject{CustomerID: "cus_1"})
+	report, err := co.Erase(t.Context(), personaldata.Subject{CustomerID: "cus_1"})
 	if err != nil {
 		t.Fatalf("the sweep failed: %v", err)
 	}
@@ -296,14 +296,14 @@ func TestAFailingHolderDoesNotStopTheSweep(t *testing.T) {
 	co := coordinator(t,
 		eraserModule{&fakeModule{
 			name: "order",
-			erase: func(context.Context, erasure.Subject) (erasure.Result, error) {
-				return erasure.Result{}, errors.New("the connection went away")
+			erase: func(context.Context, personaldata.Subject) (personaldata.Result, error) {
+				return personaldata.Result{}, errors.New("the connection went away")
 			},
 		}},
-		answers("customer", erasure.Anonymized, 3),
+		answers("customer", personaldata.Anonymized, 3),
 	)
 
-	report, err := co.Erase(t.Context(), erasure.Subject{CustomerID: "cus_1"})
+	report, err := co.Erase(t.Context(), personaldata.Subject{CustomerID: "cus_1"})
 	if err == nil {
 		t.Fatal("a holder failed and the sweep reported success")
 	}
@@ -330,7 +330,7 @@ func TestTheStoresOutsideTheModuleTreeAlwaysAnswer(t *testing.T) {
 
 	co := coordinator(t)
 
-	report, err := co.Erase(t.Context(), erasure.Subject{Email: "a@b.example"})
+	report, err := co.Erase(t.Context(), personaldata.Subject{Email: "a@b.example"})
 	if err != nil {
 		t.Fatalf("the sweep failed: %v", err)
 	}
@@ -343,7 +343,7 @@ func TestTheStoresOutsideTheModuleTreeAlwaysAnswer(t *testing.T) {
 			continue
 		}
 
-		if res.Outcome != erasure.Retained {
+		if res.Outcome != personaldata.Retained {
 			t.Errorf("%s answered %q; a store nothing prunes has to answer retained", name, res.Outcome)
 		}
 
@@ -356,20 +356,20 @@ func TestTheStoresOutsideTheModuleTreeAlwaysAnswer(t *testing.T) {
 // TestEveryRetainedResultSaysWhatAndWhy enforces the contract's own rule across
 // whatever the coordinator assembles.
 //
-// core/erasure documents Kept and Why as required with Retained, and a
+// core/personaldata documents Kept and Why as required with Retained, and a
 // documented requirement nothing checks is a comment. This is the check.
 func TestEveryRetainedResultSaysWhatAndWhy(t *testing.T) {
 	t.Parallel()
 
-	co := coordinator(t, answers("invoice", erasure.Retained, 2))
+	co := coordinator(t, answers("invoice", personaldata.Retained, 2))
 
-	report, err := co.Erase(t.Context(), erasure.Subject{Email: "a@b.example"})
+	report, err := co.Erase(t.Context(), personaldata.Subject{Email: "a@b.example"})
 	if err != nil {
 		t.Fatalf("the sweep failed: %v", err)
 	}
 
 	for _, res := range report.Results {
-		if res.Outcome != erasure.Retained {
+		if res.Outcome != personaldata.Retained {
 			continue
 		}
 
@@ -394,7 +394,7 @@ func TestTheReportIsStamped(t *testing.T) {
 
 	co := coordinator(t)
 
-	report, err := co.Erase(t.Context(), erasure.Subject{Email: "a@b.example"})
+	report, err := co.Erase(t.Context(), personaldata.Subject{Email: "a@b.example"})
 	if err != nil {
 		t.Fatalf("the sweep failed: %v", err)
 	}

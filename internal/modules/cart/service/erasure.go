@@ -3,12 +3,12 @@ package service
 import (
 	"context"
 
-	"github.com/bdrtr/gobit/core/erasure"
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/personaldata"
 )
 
 // This file is the cart module's answer to an erasure request (ADR 0029,
-// core/erasure, and the mechanism in ADR 0033).
+// core/personaldata, and the mechanism in ADR 0033).
 //
 // # The answer is ANONYMIZED, and the alternative was DELETE
 //
@@ -58,13 +58,13 @@ import (
 // blanking a metadata column with extra steps — the thing ADR 0033 rejected by
 // name, since it destroys the embedder's data on a guess about its contents and
 // takes back a judgement ADR 0029 leaves with the controller. What this module
-// owes instead is to NAME them, which [erasure.Result.Kept] does.
+// owes instead is to NAME them, which [personaldata.Result.Kept] does.
 //
 // # Why the report has to name what stayed
 //
 // gobit never rewrites a free-form column. The consequence is that
 // "anonymized" is only honest if the answer SAYS which columns were left, which
-// is what [erasure.Result.Kept] carries and why [personalColumns] is a single
+// is what [personaldata.Result.Kept] carries and why [personalColumns] is a single
 // table that produces both the declaration and the kept list: two lists written
 // separately drift, and the day they drift the module reports a column it did
 // not look at as clean.
@@ -75,7 +75,7 @@ import (
 // this package cannot import the package that wires it (the ADR 0001
 // direction); the repetition is the price this module's other cross-package
 // name constants pay for the same isolation. The sweep overwrites
-// [erasure.Result.Holder] with the registry's name anyway
+// [personaldata.Result.Holder] with the registry's name anyway
 // (internal/workflows/erasing) — this value is what a caller holding the
 // service directly gets, and what the log line says.
 const ErasureHolder = EntityName
@@ -109,7 +109,7 @@ const columnMetadata = "metadata"
 // whether the erasure rewrites it.
 //
 // The two facts sit in one row on purpose. The module's PersonalData answers
-// "where could this person be" and [erasure.Result.Kept] answers "where could
+// "where could this person be" and [personaldata.Result.Kept] answers "where could
 // they still be afterwards"; the second is the first minus the columns the
 // anonymizing statements null. Kept as separate lists they would agree on the
 // day they were written and diverge on the day a column was added to one of
@@ -127,7 +127,7 @@ const columnMetadata = "metadata"
 // integration test is for.
 type personalColumn struct {
 	// holding is what the declaration says about the column.
-	holding erasure.Holding
+	holding personaldata.Holding
 	// erased reports that the anonymizing statements set the column to NULL.
 	erased bool
 }
@@ -156,8 +156,8 @@ type personalColumn struct {
 // tables, and within a table in the order the columns are declared.
 var personalColumns = []personalColumn{
 	{
-		holding: erasure.Holding{
-			Table: tableCarts, Column: "customer_id", Kind: erasure.Named,
+		holding: personaldata.Holding{
+			Table: tableCarts, Column: "customer_id", Kind: personaldata.Named,
 			Why: "the customer module's identifier for the shopper; a guest cart has none",
 		},
 		// It is the handle a repeated sweep finds these rows by
@@ -167,92 +167,92 @@ var personalColumns = []personalColumn{
 		erased: false,
 	},
 	{
-		holding: erasure.Holding{
-			Table: tableCarts, Column: "email", Kind: erasure.Named,
+		holding: personaldata.Holding{
+			Table: tableCarts, Column: "email", Kind: personaldata.Named,
 			Why: "the address the shopper gave; on a guest cart it is the only handle to them",
 		},
 		erased: true,
 	},
 	{
-		holding: erasure.Holding{
-			Table: tableCarts, Column: columnMetadata, Kind: erasure.Open,
+		holding: personaldata.Holding{
+			Table: tableCarts, Column: columnMetadata, Kind: personaldata.Open,
 			Why: "the caller's own data on the cart; gobit does not look inside it",
 		},
 		erased: false,
 	},
 	{
-		holding: erasure.Holding{
-			Table: tableCartLineItems, Column: columnMetadata, Kind: erasure.Open,
+		holding: personaldata.Holding{
+			Table: tableCartLineItems, Column: columnMetadata, Kind: personaldata.Open,
 			Why: "the caller's own data on a line — a personalisation, an engraving, a gift note",
 		},
 		erased: false,
 	},
 	{
-		holding: erasure.Holding{
-			Table: tableCartAddresses, Column: "source_address_id", Kind: erasure.Named,
+		holding: personaldata.Holding{
+			Table: tableCartAddresses, Column: "source_address_id", Kind: personaldata.Named,
 			Why: "which entry of the shopper's address book this copy was taken from",
 		},
 		erased: true,
 	},
 	{
-		holding: erasure.Holding{
-			Table: tableCartAddresses, Column: "first_name", Kind: erasure.Named,
+		holding: personaldata.Holding{
+			Table: tableCartAddresses, Column: "first_name", Kind: personaldata.Named,
 			Why: "the shopper's given name as it was written on the cart",
 		},
 		erased: true,
 	},
 	{
-		holding: erasure.Holding{
-			Table: tableCartAddresses, Column: "last_name", Kind: erasure.Named,
+		holding: personaldata.Holding{
+			Table: tableCartAddresses, Column: "last_name", Kind: personaldata.Named,
 			Why: "the shopper's family name as it was written on the cart",
 		},
 		erased: true,
 	},
 	{
-		holding: erasure.Holding{
-			Table: tableCartAddresses, Column: "company", Kind: erasure.Named,
+		holding: personaldata.Holding{
+			Table: tableCartAddresses, Column: "company", Kind: personaldata.Named,
 			Why: "the company on the address; a one-person business is a person",
 		},
 		erased: true,
 	},
 	{
-		holding: erasure.Holding{
-			Table: tableCartAddresses, Column: "address_1", Kind: erasure.Named,
+		holding: personaldata.Holding{
+			Table: tableCartAddresses, Column: "address_1", Kind: personaldata.Named,
 			Why: "the street the cart would have been shipped to or billed to",
 		},
 		erased: true,
 	},
 	{
-		holding: erasure.Holding{
-			Table: tableCartAddresses, Column: "address_2", Kind: erasure.Named,
+		holding: personaldata.Holding{
+			Table: tableCartAddresses, Column: "address_2", Kind: personaldata.Named,
 			Why: "the rest of the street address — the building, the floor, the flat",
 		},
 		erased: true,
 	},
 	{
-		holding: erasure.Holding{
-			Table: tableCartAddresses, Column: "city", Kind: erasure.Named,
+		holding: personaldata.Holding{
+			Table: tableCartAddresses, Column: "city", Kind: personaldata.Named,
 			Why: "the city of the address",
 		},
 		erased: true,
 	},
 	{
-		holding: erasure.Holding{
-			Table: tableCartAddresses, Column: "province", Kind: erasure.Named,
+		holding: personaldata.Holding{
+			Table: tableCartAddresses, Column: "province", Kind: personaldata.Named,
 			Why: "the province or district of the address",
 		},
 		erased: true,
 	},
 	{
-		holding: erasure.Holding{
-			Table: tableCartAddresses, Column: "postal_code", Kind: erasure.Named,
+		holding: personaldata.Holding{
+			Table: tableCartAddresses, Column: "postal_code", Kind: personaldata.Named,
 			Why: "the postal code, which in a small district reaches a household on its own",
 		},
 		erased: true,
 	},
 	{
-		holding: erasure.Holding{
-			Table: tableCartAddresses, Column: "country_code", Kind: erasure.Named,
+		holding: personaldata.Holding{
+			Table: tableCartAddresses, Column: "country_code", Kind: personaldata.Named,
 			Why: "the country the cart was addressed to; it is the one address column the erasure keeps",
 		},
 		// The row itself has to survive — an absent address row already means
@@ -262,22 +262,22 @@ var personalColumns = []personalColumn{
 		erased: false,
 	},
 	{
-		holding: erasure.Holding{
-			Table: tableCartAddresses, Column: "phone", Kind: erasure.Named,
+		holding: personaldata.Holding{
+			Table: tableCartAddresses, Column: "phone", Kind: personaldata.Named,
 			Why: "the number given for the delivery",
 		},
 		erased: true,
 	},
 	{
-		holding: erasure.Holding{
-			Table: tableCartAddresses, Column: columnMetadata, Kind: erasure.Open,
+		holding: personaldata.Holding{
+			Table: tableCartAddresses, Column: columnMetadata, Kind: personaldata.Open,
 			Why: "the caller's own data on the address — delivery instructions are typed here",
 		},
 		erased: false,
 	},
 	{
-		holding: erasure.Holding{
-			Table: tableCartShippingMethods, Column: "data", Kind: erasure.Open,
+		holding: personaldata.Holding{
+			Table: tableCartShippingMethods, Column: "data", Kind: personaldata.Open,
 			Why: "the delivery provider's own data on the chosen method — a pickup branch or a locker is typed here",
 		},
 		erased: false,
@@ -287,15 +287,15 @@ var personalColumns = []personalColumn{
 // PersonalDataHoldings returns everything this module says it keeps about
 // people.
 //
-// The module type turns it into an [erasure.Declaration]; the list lives here
+// The module type turns it into an [personaldata.Declaration]; the list lives here
 // because the erasure that acts on it lives here, and a declaration written in
 // a second place is a declaration that can disagree with the code that erases.
 //
 // A fresh slice is returned on every call: the declaration is read by an audit
 // that has no reason to be careful with it, and handing out the package's own
 // slice would let one caller's append reach every later one.
-func PersonalDataHoldings() []erasure.Holding {
-	out := make([]erasure.Holding, 0, len(personalColumns))
+func PersonalDataHoldings() []personaldata.Holding {
+	out := make([]personaldata.Holding, 0, len(personalColumns))
 	for i := range personalColumns {
 		out = append(out, personalColumns[i].holding)
 	}
@@ -317,8 +317,8 @@ func keptAfterAnonymize() []string {
 	return out
 }
 
-// columnPath spells one holding the way [erasure.Result.Kept] wants it.
-func columnPath(h erasure.Holding) string { return h.Table + "." + h.Column }
+// columnPath spells one holding the way [personaldata.Result.Kept] wants it.
+func columnPath(h personaldata.Holding) string { return h.Table + "." + h.Column }
 
 // whyAnonymized explains the kept list of an anonymized answer.
 //
@@ -360,7 +360,7 @@ const whyAnonymized = "the name, address and phone on every cart of this person 
 // The limit is worth stating plainly, because it is a property of the data and
 // not of this code: for a GUEST cart — one with no customer id — the e-mail is
 // the only handle, and erasing it is erasing the handle. A second call for such
-// a subject finds nothing, so it answers [erasure.Anonymized] with zero rows
+// a subject finds nothing, so it answers [personaldata.Anonymized] with zero rows
 // and an empty kept list. The outcome is unchanged, which is what the contract
 // requires; the FIRST report is the one that names what stayed, and the
 // controller has to keep it.
@@ -379,10 +379,10 @@ const whyAnonymized = "the name, address and phone on every cart of this person 
 // Writing the e-mail of somebody who asked to be forgotten into a log would put
 // it back into the installation through the one door the erasure does not
 // reach.
-func (s *Service) Erase(ctx context.Context, subject erasure.Subject) (erasure.Result, error) {
+func (s *Service) Erase(ctx context.Context, subject personaldata.Subject) (personaldata.Result, error) {
 	customerID, email, err := normalizeErasureSubject(subject)
 	if err != nil {
-		return erasure.Result{}, err
+		return personaldata.Result{}, err
 	}
 
 	var (
@@ -414,7 +414,7 @@ func (s *Service) Erase(ctx context.Context, subject erasure.Subject) (erasure.R
 		return nil
 	})
 	if err != nil {
-		return erasure.Result{}, err
+		return personaldata.Result{}, err
 	}
 
 	result := erasureResult(rows, carts)
@@ -441,8 +441,8 @@ func (s *Service) Erase(ctx context.Context, subject erasure.Subject) (erasure.R
 // address is twice the writing of a cart with neither. The figure is stable
 // across a repeated sweep whenever the subject has a customer id, because both
 // statements are unconditional over the same set of ids.
-func erasureResult(rows int64, carts int) erasure.Result {
-	result := erasure.Result{Holder: ErasureHolder, Outcome: erasure.Anonymized, Rows: int(rows)}
+func erasureResult(rows int64, carts int) personaldata.Result {
+	result := personaldata.Result{Holder: ErasureHolder, Outcome: personaldata.Anonymized, Rows: int(rows)}
 	if carts == 0 {
 		// The person had nothing here. The kept list stays EMPTY rather than
 		// listing the free-form columns: those columns hold nothing about
@@ -473,7 +473,7 @@ func erasureResult(rows int64, carts int) erasure.Result {
 // request; the sweep refuses it first (internal/workflows/erasing) and this is
 // the last defense, because a holder reached directly would otherwise take a
 // zero-value subject and lock every cart in the installation.
-func normalizeErasureSubject(subject erasure.Subject) (customerID, email string, err error) {
+func normalizeErasureSubject(subject personaldata.Subject) (customerID, email string, err error) {
 	if subject.CustomerID != "" {
 		if err := requireID("customer_id", subject.CustomerID); err != nil {
 			return "", "", err

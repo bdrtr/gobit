@@ -62,10 +62,10 @@ import (
 
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/db"
-	"github.com/bdrtr/gobit/core/erasure"
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/link"
 	"github.com/bdrtr/gobit/core/module"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/core/openapi"
 	"github.com/bdrtr/gobit/internal/modules/b2b/api"
 	"github.com/bdrtr/gobit/internal/modules/b2b/repository"
@@ -140,17 +140,17 @@ var _ openapi.Describer = (*Module)(nil)
 // Kişisel veriyi BİLDİREBİLDİĞİ de derleme zamanında sabitlenir.
 //
 // Gerekçe [openapi.Describer] pininin aynısıdır ve bedeli daha ağırdır:
-// [erasure.Declarer] da TİP İDDİASIYLA aranır (ADR 0033), yani metot adı ya da
+// [personaldata.Declarer] da TİP İDDİASIYLA aranır (ADR 0033), yani metot adı ya da
 // imzası kaydığında hiçbir şey derlemede kırılmaz — modül taramadan sessizce
 // düşer. Belge örneğinde bunun bedeli eksik bir yol, burada ise gömen
 // uygulamanın bir kişiye yayımladığı bildirimde şirket adının, fatura adresinin
 // ve o kişinin harcama limitinin HİÇ GÖRÜNMEMESİDİR.
 //
-// [erasure.Eraser] BİLİNÇLİ olarak sabitlenmez, çünkü uygulanmaz: bu modülün
+// [personaldata.Eraser] BİLİNÇLİ olarak sabitlenmez, çünkü uygulanmaz: bu modülün
 // silebileceği bir kişi kaydı yoktur (bkz. [Module.PersonalData]). Bildiren ama
 // silmeyen bir tutucu, koordinatörün her raporunda RETAINED satırı olarak
 // görünür; sessiz kalmak ise satırı hiç üretmezdi.
-var _ erasure.Declarer = (*Module)(nil)
+var _ personaldata.Declarer = (*Module)(nil)
 
 // New kurulmamış bir b2b modülü üretir; servis [Module.Register] içinde
 // kurulur. log nil ise loglar atılır.
@@ -288,11 +288,11 @@ func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 // yanındaki sütunlar anonimleştikten sonra kimseyi göstermez. Bunu bildirmek,
 // kurulumdaki her yabancı anahtarı listeye sokardı.
 //
-// # Neden hepsi [erasure.Named]
+// # Neden hepsi [personaldata.Named]
 //
 // Bu modülde serbest metin bir sütun (metadata jsonb, açıklama, not) YOKTUR:
 // her sütunun ne taşıdığını gobit bilir, çünkü oraya doğrulayarak kendisi
-// yazar. Bildirimde tek bir [erasure.Open] satırının bulunmaması bu şemanın
+// yazar. Bildirimde tek bir [personaldata.Open] satırının bulunmaması bu şemanın
 // ölçülmüş bir özelliğidir, atlanmış bir ihtimal değil.
 //
 // # Neden eksiksiz olmak zorunda
@@ -303,43 +303,43 @@ func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 // migrations/000001_b2b_init.up.sql'deki iki tablonun sütunlarından birebir
 // türetilir ve eksiksizliği testle sabitlenir (bkz.
 // TestPersonalDataCoversEveryPersonalColumn).
-func (m *Module) PersonalData() erasure.Declaration {
-	return erasure.Declaration{
-		Holdings: []erasure.Holding{
+func (m *Module) PersonalData() personaldata.Declaration {
+	return personaldata.Declaration{
+		Holdings: []personaldata.Holding{
 			{
-				Table: tableCompany, Column: "name", Kind: erasure.Named,
+				Table: tableCompany, Column: "name", Kind: personaldata.Named,
 				Why: "the company's name, which for a sole trader is that person's own name",
 			},
 			{
-				Table: tableCompany, Column: "email", Kind: erasure.Named,
+				Table: tableCompany, Column: "email", Kind: personaldata.Named,
 				Why: "the e-mail address the company account is reached at, which for a one-person company is that person's own address",
 			},
 			{
-				Table: tableCompany, Column: "phone", Kind: erasure.Named,
+				Table: tableCompany, Column: "phone", Kind: personaldata.Named,
 				Why: "the telephone number left for the company, which for a one-person company is that person's own number",
 			},
 			{
-				Table: tableCompany, Column: "address", Kind: erasure.Named,
+				Table: tableCompany, Column: "address", Kind: personaldata.Named,
 				Why: "the street line of the company's billing address, which is a person's home address whenever they trade from where they live",
 			},
 			{
-				Table: tableCompany, Column: "city", Kind: erasure.Named,
+				Table: tableCompany, Column: "city", Kind: personaldata.Named,
 				Why: "the city of the company's billing address",
 			},
 			{
-				Table: tableCompany, Column: "postal_code", Kind: erasure.Named,
+				Table: tableCompany, Column: "postal_code", Kind: personaldata.Named,
 				Why: "the postal code of the company's billing address, which in some countries reaches a single building",
 			},
 			{
-				Table: tableCompany, Column: "country_code", Kind: erasure.Named,
+				Table: tableCompany, Column: "country_code", Kind: personaldata.Named,
 				Why: "the country of the company's billing address, which is also the jurisdiction whose tax and retention rules apply",
 			},
 			{
-				Table: tableEmployee, Column: "spending_limit", Kind: erasure.Named,
+				Table: tableEmployee, Column: "spending_limit", Kind: personaldata.Named,
 				Why: "how much one employee may spend on their employer's account, a fact about that person although this table records no name, no address and no identifier of theirs",
 			},
 			{
-				Table: tableEmployee, Column: "is_company_admin", Kind: erasure.Named,
+				Table: tableEmployee, Column: "is_company_admin", Kind: personaldata.Named,
 				Why: "whether that same employee may administer their company's account, which describes the person's authority rather than the company",
 			},
 		},

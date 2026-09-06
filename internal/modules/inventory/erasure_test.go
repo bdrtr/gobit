@@ -3,7 +3,7 @@
 //
 // These tests need NO database and carry no build tag. A declaration is a
 // property of the code rather than of the data — the same sentence on an empty
-// installation and a full one — which is why [erasure.Declarer] takes no
+// installation and a full one — which is why [personaldata.Declarer] takes no
 // context and returns no error, and why the audit of it has to be runnable by
 // somebody who has the repository and nothing else.
 package inventory_test
@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/core/erasure"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/modules/inventory"
 )
 
@@ -162,7 +162,7 @@ func TestEveryHoldingCanBeReadOffOneReport(t *testing.T) {
 	for _, holding := range inventory.New().PersonalData().Holdings {
 		key := holding.Table + "." + holding.Column
 
-		assert.Contains(t, []erasure.Kind{erasure.Named, erasure.Open}, holding.Kind,
+		assert.Contains(t, []personaldata.Kind{personaldata.Named, personaldata.Open}, holding.Kind,
 			"%s: a holding with no kind says nothing about who wrote the column", key)
 
 		require.NotEmpty(t, holding.Why,
@@ -178,7 +178,7 @@ func TestEveryHoldingCanBeReadOffOneReport(t *testing.T) {
 	}
 }
 
-// TestTheDeclarationDoesNotNeedRegister holds the property [erasure.Declarer]
+// TestTheDeclarationDoesNotNeedRegister holds the property [personaldata.Declarer]
 // states in its own words.
 //
 // A declaration is a property of the code, so an audit reads it with no database

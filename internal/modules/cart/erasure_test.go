@@ -9,14 +9,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/core/erasure"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/modules/cart"
 	"github.com/bdrtr/gobit/internal/modules/cart/service"
 )
 
 // These tests need NO database. A declaration is a property of the code and not
 // of the data — the same sentence on an empty database and a full one — which
-// is why [erasure.Declarer] takes no context and returns no error, and why the
+// is why [personaldata.Declarer] takes no context and returns no error, and why the
 // audit of it belongs in a plain unit test that an auditor can run anywhere.
 
 // migrationFile is the module's only migration; the declaration is checked
@@ -104,7 +104,7 @@ func TestPersonalDataCoversEveryPersonalColumn(t *testing.T) {
 		assert.False(t, declared[key], "%s is declared twice", key)
 		declared[key] = true
 
-		assert.Contains(t, []erasure.Kind{erasure.Named, erasure.Open}, holding.Kind,
+		assert.Contains(t, []personaldata.Kind{personaldata.Named, personaldata.Open}, holding.Kind,
 			"%s: a holding with no kind says nothing about who wrote it", key)
 		assert.NotEmpty(t, holding.Why,
 			"%s: a column named without a reason cannot be repeated to a data subject", key)
@@ -153,7 +153,7 @@ func TestPersonalDataCoversEveryPersonalColumn(t *testing.T) {
 // TestTheDeclarationLeavesTheHolderToTheSweep pins a field that is empty ON
 // PURPOSE.
 //
-// The coordinator overwrites [erasure.Declaration.Holder] with the name the
+// The coordinator overwrites [personaldata.Declaration.Holder] with the name the
 // registry knows this module by (internal/workflows/erasing), so a name written
 // in here would be a second place to keep true with nothing comparing the two —
 // and the report a controller reads would be attributed by whichever of them

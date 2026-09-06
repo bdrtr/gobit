@@ -36,8 +36,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/core/erasure"
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/modules/order"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 	"github.com/bdrtr/gobit/internal/modules/order/service"
@@ -175,10 +175,10 @@ func TestErasureAnonymizesASettledOrder(t *testing.T) {
 	ord := placeOrderFor(t, svc, customerID, email)
 	settleOrder(t, svc, ord)
 
-	result, err := svc.Erase(ctx, erasure.Subject{CustomerID: customerID, Email: email})
+	result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID, Email: email})
 	require.NoError(t, err)
 
-	assert.Equal(t, erasure.Anonymized, result.Outcome)
+	assert.Equal(t, personaldata.Anonymized, result.Outcome)
 	assert.Equal(t, order.ModuleName, result.Holder,
 		"the holder has to be the module's name; the sweep prints it next to the other holders")
 	assert.Equal(t, 3, result.Rows, "one order row and its two address rows were written")
@@ -213,7 +213,7 @@ func TestErasureAnonymizesASettledOrder(t *testing.T) {
 			continue
 		}
 
-		require.Equal(t, erasure.Named, holding.Kind,
+		require.Equal(t, personaldata.Named, holding.Kind,
 			"%s is erased and declared open; gobit does not rewrite a free-form column", path)
 		assert.True(t, columnIsNullEverywhere(t, holding.Table, holding.Column, ord.ID),
 			"%s is neither kept nor NULL: the report says this person was anonymized and the "+
@@ -307,10 +307,10 @@ func TestErasureForgetsAnOrderThatWasRefundedInFull(t *testing.T) {
 		"the collected amount is a LIFETIME total and the refund does not take it back down")
 	require.Equal(t, ord.Total, summary.RefundedTotal)
 
-	result, err := svc.Erase(ctx, erasure.Subject{CustomerID: customerID, Email: email})
+	result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID, Email: email})
 	require.NoError(t, err)
 
-	assert.Equal(t, erasure.Anonymized, result.Outcome,
+	assert.Equal(t, personaldata.Anonymized, result.Outcome,
 		"nothing is owed in either direction on a sale that was collected and given back: %s",
 		result.Why)
 	assert.Equal(t, 3, result.Rows, "one order row and its two address rows were written")
@@ -339,14 +339,14 @@ func TestErasureIsIdempotent(t *testing.T) {
 	ord := placeOrderFor(t, svc, customerID, email)
 	settleOrder(t, svc, ord)
 
-	first, err := svc.Erase(ctx, erasure.Subject{CustomerID: customerID, Email: email})
+	first, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID, Email: email})
 	require.NoError(t, err)
-	require.Equal(t, erasure.Anonymized, first.Outcome)
+	require.Equal(t, personaldata.Anonymized, first.Outcome)
 
 	firstStamp := erasureStamp(t, ord.ID)
 	require.NotNil(t, firstStamp)
 
-	second, err := svc.Erase(ctx, erasure.Subject{CustomerID: customerID, Email: email})
+	second, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID, Email: email})
 	require.NoError(t, err)
 
 	assert.Equal(t, first.Outcome, second.Outcome,
@@ -424,10 +424,10 @@ func TestErasureRetainsAnUnsettledOrder(t *testing.T) {
 			ord := placeOrderFor(t, svc, tc.customerID, tc.email)
 			fragment := tc.unsettle(t, ord)
 
-			result, err := svc.Erase(ctx, erasure.Subject{CustomerID: tc.customerID, Email: tc.email})
+			result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: tc.customerID, Email: tc.email})
 			require.NoError(t, err)
 
-			assert.Equal(t, erasure.Retained, result.Outcome)
+			assert.Equal(t, personaldata.Retained, result.Outcome)
 			assert.Equal(t, 0, result.Rows, "nothing was rewritten")
 			assert.Contains(t, result.Why, fragment,
 				"the reason has to name WHICH fact refused the erasure")
@@ -467,10 +467,10 @@ func TestErasureAnonymizesTheSettledOrdersOfARetainedPerson(t *testing.T) {
 	settleOrder(t, svc, settled)
 	open := placeOrderFor(t, svc, customerID, email)
 
-	result, err := svc.Erase(ctx, erasure.Subject{CustomerID: customerID, Email: email})
+	result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID, Email: email})
 	require.NoError(t, err)
 
-	assert.Equal(t, erasure.Retained, result.Outcome,
+	assert.Equal(t, personaldata.Retained, result.Outcome,
 		"the person's data is still held, so the honest single answer is Retained")
 	assert.Equal(t, 3, result.Rows, "the settled order and its two addresses were still written")
 	assert.Contains(t, result.Why, strconv.FormatInt(open.DisplayID, 10))
@@ -508,10 +508,10 @@ func TestErasureLeavesTheCancellationReason(t *testing.T) {
 	ord := placeOrderFor(t, svc, customerID, email)
 	require.NoError(t, svc.CancelOrder(ctx, ord.ID, reason))
 
-	result, err := svc.Erase(ctx, erasure.Subject{CustomerID: customerID, Email: email})
+	result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID, Email: email})
 	require.NoError(t, err)
 
-	assert.Equal(t, erasure.Anonymized, result.Outcome,
+	assert.Equal(t, personaldata.Anonymized, result.Outcome,
 		"a canceled order carries an outstanding amount forever; that must not hold a person "+
 			"forever with it")
 	assert.True(t, columnIsNullEverywhere(t, "orders", "email", ord.ID))
@@ -540,15 +540,15 @@ func TestErasureFindsAGuestOrderByEMailAlone(t *testing.T) {
 	require.Empty(t, ord.CustomerID, "this is a guest order")
 	settleOrder(t, svc, ord)
 
-	first, err := svc.Erase(ctx, erasure.Subject{Email: email})
+	first, err := svc.Erase(ctx, personaldata.Subject{Email: email})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, first.Outcome)
+	assert.Equal(t, personaldata.Anonymized, first.Outcome)
 	assert.Equal(t, 3, first.Rows)
 	assert.True(t, columnIsNullEverywhere(t, "order_addresses", "last_name", ord.ID))
 
-	second, err := svc.Erase(ctx, erasure.Subject{Email: email})
+	second, err := svc.Erase(ctx, personaldata.Subject{Email: email})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, second.Outcome,
+	assert.Equal(t, personaldata.Anonymized, second.Outcome,
 		"the outcome may not change; the person is still not in this module")
 	assert.Equal(t, 0, second.Rows,
 		"the handle itself was erased, so the second sweep finds nothing to write")
@@ -565,7 +565,7 @@ func TestErasureFindsAGuestOrderByEMailAlone(t *testing.T) {
 func TestErasureRefusesASubjectThatNamesNobody(t *testing.T) {
 	svc, _ := newService(t)
 
-	_, err := svc.Erase(context.Background(), erasure.Subject{})
+	_, err := svc.Erase(context.Background(), personaldata.Subject{})
 	require.Error(t, err)
 	assert.True(t, errors.IsInvalid(err), "it is the caller's mistake, not a fault: %v", err)
 	assert.Equal(t, service.CodeErasureSubjectEmpty, errors.CodeOf(err))
@@ -587,10 +587,10 @@ func TestErasureNormalizesTheSubjectEMail(t *testing.T) {
 	ord := placeOrderFor(t, svc, "", email)
 	settleOrder(t, svc, ord)
 
-	result, err := svc.Erase(ctx, erasure.Subject{Email: strings.ToUpper(email)})
+	result, err := svc.Erase(ctx, personaldata.Subject{Email: strings.ToUpper(email)})
 	require.NoError(t, err)
 
-	assert.Equal(t, erasure.Anonymized, result.Outcome)
+	assert.Equal(t, personaldata.Anonymized, result.Outcome)
 	assert.Equal(t, 3, result.Rows, "the capitalized address had to find the same order")
 }
 
@@ -602,7 +602,7 @@ func TestErasureNormalizesTheSubjectEMail(t *testing.T) {
 // erasure. The sweep turns an error into a PARTIAL report instead, which is the
 // answer that is true.
 func TestTheModuleRefusesToEraseBeforeItIsWired(t *testing.T) {
-	_, err := order.New().Erase(context.Background(), erasure.Subject{CustomerID: "cus_X"})
+	_, err := order.New().Erase(context.Background(), personaldata.Subject{CustomerID: "cus_X"})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInternal, errors.KindOf(err),
 		"a module that was not wired is a setup fault, not a bad request: %v", err)
@@ -627,7 +627,7 @@ func TestThePersonalDataDeclarationIsReadable(t *testing.T) {
 		seen[path] = struct{}{}
 
 		assert.NotEmpty(t, holding.Why, "%s is declared without saying what it holds", path)
-		assert.Contains(t, []erasure.Kind{erasure.Named, erasure.Open}, holding.Kind,
+		assert.Contains(t, []personaldata.Kind{personaldata.Named, personaldata.Open}, holding.Kind,
 			"%s has no kind, so nothing says whether gobit wrote the person in there", path)
 	}
 

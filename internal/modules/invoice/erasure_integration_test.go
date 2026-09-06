@@ -31,7 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/core/erasure"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/modules/invoice"
 	"github.com/bdrtr/gobit/internal/modules/invoice/models"
 	"github.com/bdrtr/gobit/internal/modules/invoice/repository"
@@ -304,11 +304,11 @@ func TestTheRetainedCountComesFromTheDatabase(t *testing.T) {
 
 	svc := newService(t)
 
-	result, err := svc.Erase(ctx, erasure.Subject{Email: "ADA.LOVELACE@example.com"})
+	result, err := svc.Erase(ctx, personaldata.Subject{Email: "ADA.LOVELACE@example.com"})
 	require.NoError(t, err)
 
 	assert.Equal(t, invoice.ModuleName, result.Holder)
-	assert.Equal(t, erasure.Retained, result.Outcome)
+	assert.Equal(t, personaldata.Retained, result.Outcome)
 	assert.Equal(t, 2, result.Rows, "both spellings of the address are the same person")
 	assert.NotEmpty(t, result.Why)
 	assert.Contains(t, result.Kept, "invoices.metadata",
@@ -317,7 +317,7 @@ func TestTheRetainedCountComesFromTheDatabase(t *testing.T) {
 	// Idempotency, against the real database rather than against a fake: the
 	// contract requires a second sweep to give the same answer, and here it is
 	// a property of the method reading rather than writing.
-	again, err := svc.Erase(ctx, erasure.Subject{Email: "ADA.LOVELACE@example.com"})
+	again, err := svc.Erase(ctx, personaldata.Subject{Email: "ADA.LOVELACE@example.com"})
 	require.NoError(t, err)
 	assert.Equal(t, result, again)
 }

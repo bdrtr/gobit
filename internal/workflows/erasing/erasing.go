@@ -1,6 +1,6 @@
 // Package erasing runs an erasure request across every holder of personal data.
 //
-// It is the first consumer of core/erasure, and it is a flow rather than a
+// It is the first consumer of core/personaldata, and it is a flow rather than a
 // module method for the reason ADR 0006 gives: erasing a person touches the
 // customer record, the sales, the documents and whatever the embedder added,
 // and no module may know another (Principle 2.1/2.4). Deciding across them is
@@ -63,9 +63,9 @@ import (
 	"time"
 
 	"github.com/bdrtr/gobit/core/container"
-	"github.com/bdrtr/gobit/core/erasure"
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/module"
+	"github.com/bdrtr/gobit/core/personaldata"
 )
 
 // Error codes.
@@ -96,8 +96,8 @@ type Coordinator struct {
 // declare what it keeps and cannot resolve a subject to erase.
 type holder struct {
 	name     string
-	eraser   erasure.Eraser
-	declarer erasure.Declarer
+	eraser   personaldata.Eraser
+	declarer personaldata.Declarer
 }
 
 // FromContainer builds the coordinator from the registered modules.
@@ -114,10 +114,10 @@ func FromContainer(c *container.Container, mods []module.Module) (*Coordinator, 
 		// The capabilities are OPTIONAL and found by type assertion, the way
 		// this repository already finds provider.SessionInspector: a module
 		// with no personal data implements neither and pays nothing.
-		if e, ok := mod.(erasure.Eraser); ok {
+		if e, ok := mod.(personaldata.Eraser); ok {
 			h.eraser = e
 		}
-		if d, ok := mod.(erasure.Declarer); ok {
+		if d, ok := mod.(personaldata.Declarer); ok {
 			h.declarer = d
 		}
 
@@ -143,15 +143,15 @@ func FromContainer(c *container.Container, mods []module.Module) (*Coordinator, 
 //
 // A failure is not a fourth outcome. ADR 0029's three outcomes describe what a
 // holder DID; a holder that could not act did not do any of them, and folding
-// a fault into [erasure.Retained] would make a broken query indistinguishable
+// a fault into [personaldata.Retained] would make a broken query indistinguishable
 // from a lawful refusal — the exact confusion the third outcome exists to end.
-func (co *Coordinator) Erase(ctx context.Context, s erasure.Subject) (erasure.Report, error) {
+func (co *Coordinator) Erase(ctx context.Context, s personaldata.Subject) (personaldata.Report, error) {
 	if s.CustomerID == "" && s.Email == "" {
-		return erasure.Report{}, coreerrors.Invalid(CodeNoSubject,
+		return personaldata.Report{}, coreerrors.Invalid(CodeNoSubject,
 			"an erasure request has to name somebody: give a customer id, an e-mail address, or both")
 	}
 
-	report := erasure.Report{Subject: s, At: co.now()}
+	report := personaldata.Report{Subject: s, At: co.now()}
 
 	var failures []error
 
@@ -206,14 +206,14 @@ func (co *Coordinator) Erase(ctx context.Context, s erasure.Subject) (erasure.Re
 // A holder that declares NOTHING produces no result: it has already said it
 // keeps nothing about anybody, and repeating that per sweep would bury the
 // holders that do.
-func undeclaredEraser(h holder) (erasure.Result, bool) {
+func undeclaredEraser(h holder) (personaldata.Result, bool) {
 	if h.declarer == nil {
-		return erasure.Result{}, false
+		return personaldata.Result{}, false
 	}
 
 	declared := h.declarer.PersonalData()
 	if len(declared.Holdings) == 0 {
-		return erasure.Result{}, false
+		return personaldata.Result{}, false
 	}
 
 	kept := make([]string, 0, len(declared.Holdings))
@@ -221,9 +221,9 @@ func undeclaredEraser(h holder) (erasure.Result, bool) {
 		kept = append(kept, hold.Table+"."+hold.Column)
 	}
 
-	return erasure.Result{
+	return personaldata.Result{
 		Holder:  h.name,
-		Outcome: erasure.Retained,
+		Outcome: personaldata.Retained,
 		Kept:    kept,
 		Why: "this holder declares personal data and offers no erasure; what it keeps is listed above " +
 			"and the embedder, as controller, decides what to do about it",
@@ -237,8 +237,8 @@ func undeclaredEraser(h holder) (erasure.Result, bool) {
 // principle, because nothing tells it where to look. It takes no context and
 // touches no database — a declaration is a property of the code, so it reads
 // the same on an empty installation as on a full one.
-func (co *Coordinator) PersonalData() []erasure.Declaration {
-	out := make([]erasure.Declaration, 0, len(co.holders))
+func (co *Coordinator) PersonalData() []personaldata.Declaration {
+	out := make([]personaldata.Declaration, 0, len(co.holders))
 
 	for _, h := range co.holders {
 		if h.declarer == nil {

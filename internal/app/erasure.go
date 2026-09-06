@@ -8,10 +8,10 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/bdrtr/gobit/core/container"
-	"github.com/bdrtr/gobit/core/erasure"
 	"github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/module"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/workflows/erasing"
 )
 
@@ -42,7 +42,7 @@ const (
 // erasureRequest is the body of the sweep endpoint.
 //
 // Both fields are optional and at least one is required, which is the contract
-// core/erasure.Subject documents: an invoice can only be found by the address
+// core/personaldata.Subject documents: an invoice can only be found by the address
 // printed on it, and a guest's order carries an e-mail with no customer id.
 type erasureRequest struct {
 	// CustomerID is the customer module's identifier for the person.
@@ -147,7 +147,7 @@ func eraseHandler(co *erasing.Coordinator) http.HandlerFunc {
 			return
 		}
 
-		report, err := co.Erase(ctx, erasure.Subject{CustomerID: req.CustomerID, Email: req.Email})
+		report, err := co.Erase(ctx, personaldata.Subject{CustomerID: req.CustomerID, Email: req.Email})
 		if err != nil {
 			corehttp.WriteError(ctx, w, err)
 			return
@@ -189,7 +189,7 @@ func personalDataHandler(co *erasing.Coordinator) http.HandlerFunc {
 }
 
 // reportDTO turns the coordinator's report into the wire shape.
-func reportDTO(report erasure.Report) erasureReportDTO {
+func reportDTO(report personaldata.Report) erasureReportDTO {
 	results := make([]erasureResultDTO, 0, len(report.Results))
 	for _, res := range report.Results {
 		results = append(results, erasureResultDTO{

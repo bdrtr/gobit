@@ -63,9 +63,9 @@ import (
 
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/db"
-	"github.com/bdrtr/gobit/core/erasure"
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/module"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/core/openapi"
 	"github.com/bdrtr/gobit/internal/modules/customer/api"
@@ -136,11 +136,11 @@ var _ openapi.Describer = (*Module)(nil)
 // silindi" denirken e-postasının, adının ve adresinin yerinde kalmasıdır.
 //
 // İki arayüz AYRI AYRI sabitlenir çünkü ayrı yeteneklerdir: bildirebilen ama
-// silemeyen bir tutucu vardır (bkz. erasure.Declarer belgesi) ve tek bir pin
+// silemeyen bir tutucu vardır (bkz. personaldata.Declarer belgesi) ve tek bir pin
 // ikisini birbirine bağlardı.
 var (
-	_ erasure.Eraser   = (*Module)(nil)
-	_ erasure.Declarer = (*Module)(nil)
+	_ personaldata.Eraser   = (*Module)(nil)
+	_ personaldata.Declarer = (*Module)(nil)
 )
 
 // New kurulmamış bir customer modülü üretir; servis [Module.Register] içinde
@@ -228,7 +228,7 @@ func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 // ready denetimi nil alıcıyı da kapsar ve tipli bir Unavailable hatası döner.
 // Sessiz bir "0 satır anonimleştirildi" yanıtı ise kabul edilemezdi — kurulmamış
 // bir modül, hiç veri tutmayan bir modül gibi görünürdü.
-func (m *Module) Erase(ctx context.Context, s erasure.Subject) (erasure.Result, error) {
+func (m *Module) Erase(ctx context.Context, s personaldata.Subject) (personaldata.Result, error) {
 	return m.svc.Erase(ctx, s)
 }
 
@@ -257,7 +257,7 @@ func (m *Module) Erase(ctx context.Context, s erasure.Subject) (erasure.Result, 
 // değil. metadata'sı ise başka bir şeydir: customer.metadata ile aynı cinsten,
 // gömen uygulamanın SERBESTÇE yazdığı bir jsonb'dir ve gobit içine bakmaz.
 // Bakmadığı için de "kişisel veri değildir" diyemez — o kararı ADR 0029 gömen
-// uygulamaya bırakır — ve bu yüzden [erasure.Open] olarak BİLDİRİLİR, hiçbir
+// uygulamaya bırakır — ve bu yüzden [personaldata.Open] olarak BİLDİRİLİR, hiçbir
 // öznede yeniden yazılmasa bile; Erase onu her cevapta Kept'te sayar (bkz.
 // service.Service.Erase).
 //
@@ -268,71 +268,71 @@ func (m *Module) Erase(ctx context.Context, s erasure.Subject) (erasure.Result, 
 // olarak budur. Kimlik bildirilseydi, kişiyi göstermeyi bırakmış bir anahtarı
 // "kişisel veri" diye listelemiş olurduk.
 //
-// [erasure.Named] ile [erasure.Open] ayrımı sorumluluk ayrımıdır: adlı sütunu
+// [personaldata.Named] ile [personaldata.Open] ayrımı sorumluluk ayrımıdır: adlı sütunu
 // oraya gobit yazdı ve ne olduğunu bilir, açık sütuna ne yazıldığına ise
 // yalnızca gömen uygulama karar verebilir.
-func (m *Module) PersonalData() erasure.Declaration {
-	return erasure.Declaration{
+func (m *Module) PersonalData() personaldata.Declaration {
+	return personaldata.Declaration{
 		Holder: ModuleName,
-		Holdings: []erasure.Holding{
+		Holdings: []personaldata.Holding{
 			{
-				Table: tableCustomer, Column: "email", Kind: erasure.Named,
+				Table: tableCustomer, Column: "email", Kind: personaldata.Named,
 				Why: "the address the person gave; it is also how a guest checkout is recognized",
 			},
 			{
-				Table: tableCustomer, Column: "first_name", Kind: erasure.Named,
+				Table: tableCustomer, Column: "first_name", Kind: personaldata.Named,
 				Why: "the person's first name as they typed it",
 			},
 			{
-				Table: tableCustomer, Column: "last_name", Kind: erasure.Named,
+				Table: tableCustomer, Column: "last_name", Kind: personaldata.Named,
 				Why: "the person's last name as they typed it",
 			},
 			{
-				Table: tableCustomer, Column: "phone", Kind: erasure.Named,
+				Table: tableCustomer, Column: "phone", Kind: personaldata.Named,
 				Why: "the person's phone number, used to reach them about an order",
 			},
 			{
-				Table: tableCustomer, Column: "metadata", Kind: erasure.Open,
+				Table: tableCustomer, Column: "metadata", Kind: personaldata.Open,
 				Why: "free-form context the shop writes about the customer; gobit puts nothing in it and never rewrites it, so whether it holds personal data is the controller's judgement",
 			},
 			{
-				Table: tableGroup, Column: "metadata", Kind: erasure.Open,
+				Table: tableGroup, Column: "metadata", Kind: personaldata.Open,
 				Why: "free-form context the shop writes about a customer segment; the group is not a person, but the blob is the shop's to fill and gobit never looks inside it, so whether it names anybody is the controller's judgement",
 			},
 			{
-				Table: tableAddress, Column: "first_name", Kind: erasure.Named,
+				Table: tableAddress, Column: "first_name", Kind: personaldata.Named,
 				Why: "the first name on a saved address, which may be the customer's or a recipient's",
 			},
 			{
-				Table: tableAddress, Column: "last_name", Kind: erasure.Named,
+				Table: tableAddress, Column: "last_name", Kind: personaldata.Named,
 				Why: "the last name on a saved address, which may be the customer's or a recipient's",
 			},
 			{
-				Table: tableAddress, Column: "company", Kind: erasure.Named,
+				Table: tableAddress, Column: "company", Kind: personaldata.Named,
 				Why: "the company the address is delivered to; for a sole trader it names the person",
 			},
 			{
-				Table: tableAddress, Column: "address_1", Kind: erasure.Named,
+				Table: tableAddress, Column: "address_1", Kind: personaldata.Named,
 				Why: "the street line of a saved address — where the person lives or takes deliveries",
 			},
 			{
-				Table: tableAddress, Column: "address_2", Kind: erasure.Named,
+				Table: tableAddress, Column: "address_2", Kind: personaldata.Named,
 				Why: "the second address line: flat, floor or door, which narrows the street line to a household",
 			},
 			{
-				Table: tableAddress, Column: "city", Kind: erasure.Named,
+				Table: tableAddress, Column: "city", Kind: personaldata.Named,
 				Why: "the city of a saved address",
 			},
 			{
-				Table: tableAddress, Column: "postal_code", Kind: erasure.Named,
+				Table: tableAddress, Column: "postal_code", Kind: personaldata.Named,
 				Why: "the postal code of a saved address; in some countries it reaches a single building",
 			},
 			{
-				Table: tableAddress, Column: "phone", Kind: erasure.Named,
+				Table: tableAddress, Column: "phone", Kind: personaldata.Named,
 				Why: "the contact phone left on a saved address for the courier",
 			},
 			{
-				Table: tableAddress, Column: "country_code", Kind: erasure.Named,
+				Table: tableAddress, Column: "country_code", Kind: personaldata.Named,
 				Why: "the country of a saved address; it is declared but deliberately NOT erased, because it names the jurisdiction whose tax and retention rules apply, a two-letter code points at tens of millions of people, and the column's CHECK constraint refuses an empty value",
 			},
 		},

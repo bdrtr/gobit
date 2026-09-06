@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/bdrtr/gobit/core/container"
-	"github.com/bdrtr/gobit/core/erasure"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
 	"github.com/bdrtr/gobit/internal/workflows/erasing"
 )
@@ -65,7 +65,7 @@ func TestTheSagaStoreIsReachedFromTheRealCompositionRoot(t *testing.T) {
 		t.Fatalf("the coordinator could not be built: %v", err)
 	}
 
-	report, err := co.Erase(t.Context(), erasure.Subject{Email: "someone@example.test"})
+	report, err := co.Erase(t.Context(), personaldata.Subject{Email: "someone@example.test"})
 	if err == nil {
 		t.Fatal("the poolless store answered without failing; the coordinator is using its stub, " +
 			"so every report would claim a sweep that did not happen")
@@ -92,7 +92,7 @@ func TestTheSagaStoreIsReachedFromTheRealCompositionRoot(t *testing.T) {
 func TestTheSagaStoreDeclaresWhatItHolds(t *testing.T) {
 	t.Parallel()
 
-	declarer, ok := pgstore.New(nil, slog.New(slog.DiscardHandler)).(erasure.Declarer)
+	declarer, ok := pgstore.New(nil, slog.New(slog.DiscardHandler)).(personaldata.Declarer)
 	if !ok {
 		t.Fatal("the saga store no longer declares its personal data; it would vanish from every report")
 	}
@@ -108,7 +108,7 @@ func TestTheSagaStoreDeclaresWhatItHolds(t *testing.T) {
 		if h.Table == "workflow_executions" && h.Column == "input" {
 			sawInput = true
 
-			if h.Kind != erasure.Named {
+			if h.Kind != personaldata.Named {
 				t.Errorf("the input column is declared %q; gobit writes the person there itself", h.Kind)
 			}
 		}

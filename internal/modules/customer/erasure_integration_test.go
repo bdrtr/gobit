@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/core/erasure"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/modules/customer"
 	"github.com/bdrtr/gobit/internal/modules/customer/models"
 	"github.com/bdrtr/gobit/internal/modules/customer/repository"
@@ -169,9 +169,9 @@ func TestErasureOverwritesEveryNamedColumn(t *testing.T) {
 
 	created := personalRecord(ctx, t, svc, true)
 
-	result, err := svc.Erase(ctx, erasure.Subject{CustomerID: created.ID})
+	result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: created.ID})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, result.Outcome)
+	assert.Equal(t, personaldata.Anonymized, result.Outcome)
 	assert.Equal(t, customer.ModuleName, result.Holder)
 	assert.Equal(t, 2, result.Rows, "one customer row and one address row")
 	assert.Equal(t,
@@ -209,14 +209,14 @@ func TestErasureIsIdempotentInTheDatabase(t *testing.T) {
 
 	created := personalRecord(ctx, t, svc, true)
 
-	first, err := svc.Erase(ctx, erasure.Subject{CustomerID: created.ID})
+	first, err := svc.Erase(ctx, personaldata.Subject{CustomerID: created.ID})
 	require.NoError(t, err)
-	require.Equal(t, erasure.Anonymized, first.Outcome)
+	require.Equal(t, personaldata.Anonymized, first.Outcome)
 	afterFirst := readCustomer(ctx, t, created.ID)
 
-	second, err := svc.Erase(ctx, erasure.Subject{CustomerID: created.ID})
+	second, err := svc.Erase(ctx, personaldata.Subject{CustomerID: created.ID})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, second.Outcome,
+	assert.Equal(t, personaldata.Anonymized, second.Outcome,
 		"a controller who runs the sweep twice gets the same answer, not an error")
 	assert.Equal(t, 0, second.Rows, "nothing was left to write")
 	assert.Equal(t, afterFirst, readCustomer(ctx, t, created.ID),
@@ -244,9 +244,9 @@ func TestErasureReachesASoftDeletedRecord(t *testing.T) {
 	require.Equal(t, created.Email, deleted.Email,
 		"the soft delete must leave the personal columns alone, or this test proves nothing")
 
-	result, err := svc.Erase(ctx, erasure.Subject{CustomerID: created.ID})
+	result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: created.ID})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, result.Outcome)
+	assert.Equal(t, personaldata.Anonymized, result.Outcome)
 
 	row := readCustomer(ctx, t, created.ID)
 	assert.Equal(t, models.AnonymousEmail(created.ID), row.Email)
@@ -283,9 +283,9 @@ func TestErasureByEmailReachesEveryRecordUnderThatAddress(t *testing.T) {
 		ids = append(ids, created.ID)
 	}
 
-	result, err := svc.Erase(ctx, erasure.Subject{Email: shared})
+	result, err := svc.Erase(ctx, personaldata.Subject{Email: shared})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, result.Outcome)
+	assert.Equal(t, personaldata.Anonymized, result.Outcome)
 	assert.Equal(t, 3, result.Rows, "two guest records and one account")
 
 	for _, id := range ids {
@@ -295,9 +295,9 @@ func TestErasureByEmailReachesEveryRecordUnderThatAddress(t *testing.T) {
 	// The address that pointed at these rows is exactly what the first pass
 	// destroyed, so the second one reaches nobody — and still answers
 	// Anonymized rather than reporting the person as unknown.
-	repeat, err := svc.Erase(ctx, erasure.Subject{Email: shared})
+	repeat, err := svc.Erase(ctx, personaldata.Subject{Email: shared})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, repeat.Outcome)
+	assert.Equal(t, personaldata.Anonymized, repeat.Outcome)
 	assert.Equal(t, 0, repeat.Rows)
 }
 
@@ -316,9 +316,9 @@ func TestTwoErasedAccountsDoNotCollide(t *testing.T) {
 	second := personalRecord(ctx, t, svc, true)
 
 	for _, id := range []string{first.ID, second.ID} {
-		result, err := svc.Erase(ctx, erasure.Subject{CustomerID: id})
+		result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: id})
 		require.NoError(t, err, "the second erasure must not hit the unique index")
-		require.Equal(t, erasure.Anonymized, result.Outcome)
+		require.Equal(t, personaldata.Anonymized, result.Outcome)
 	}
 
 	assert.NotEqual(t,
@@ -338,19 +338,19 @@ func TestErasureOfSomebodyThisModuleNeverSawIsNotAnError(t *testing.T) {
 	ctx := context.Background()
 	svc := erasureService(t)
 
-	byID, err := svc.Erase(ctx, erasure.Subject{CustomerID: models.NewCustomerID(nowUTC())})
+	byID, err := svc.Erase(ctx, personaldata.Subject{CustomerID: models.NewCustomerID(nowUTC())})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, byID.Outcome)
+	assert.Equal(t, personaldata.Anonymized, byID.Outcome)
 	assert.Equal(t, 0, byID.Rows)
 
-	byEmail, err := svc.Erase(ctx, erasure.Subject{Email: erasureEmail()})
+	byEmail, err := svc.Erase(ctx, personaldata.Subject{Email: erasureEmail()})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, byEmail.Outcome)
+	assert.Equal(t, personaldata.Anonymized, byEmail.Outcome)
 	assert.Equal(t, 0, byEmail.Rows)
 
 	// A subject naming nobody at all is the one refusal: erasing "everyone" is
 	// not an erasure request.
-	_, err = svc.Erase(ctx, erasure.Subject{})
+	_, err = svc.Erase(ctx, personaldata.Subject{})
 	require.Error(t, err)
 }
 
@@ -386,9 +386,9 @@ func TestErasureUsesBothHandlesAgainstTheDatabase(t *testing.T) {
 		ids = append(ids, created.ID)
 	}
 
-	result, err := svc.Erase(ctx, erasure.Subject{CustomerID: accountID, Email: shared})
+	result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: accountID, Email: shared})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, result.Outcome)
+	assert.Equal(t, personaldata.Anonymized, result.Outcome)
 	assert.Equal(t, 3, result.Rows,
 		"three rows, each written once: the account matches both handles and must not be written twice")
 
@@ -416,9 +416,9 @@ func TestErasureClearsColumnsWrittenAfterAnErasure(t *testing.T) {
 
 	created := personalRecord(ctx, t, svc, true)
 
-	first, err := svc.Erase(ctx, erasure.Subject{CustomerID: created.ID})
+	first, err := svc.Erase(ctx, personaldata.Subject{CustomerID: created.ID})
 	require.NoError(t, err)
-	require.Equal(t, erasure.Anonymized, first.Outcome)
+	require.Equal(t, personaldata.Anonymized, first.Outcome)
 
 	name, phone := "Ayse", "+90 555 111 2222"
 	_, err = svc.UpdateCustomer(ctx, created.ID, service.UpdateCustomerInput{
@@ -429,9 +429,9 @@ func TestErasureClearsColumnsWrittenAfterAnErasure(t *testing.T) {
 	require.Equal(t, models.AnonymousEmail(created.ID), readCustomer(ctx, t, created.ID).Email,
 		"the patch leaves the e-mail alone, which is precisely what makes it dangerous")
 
-	second, err := svc.Erase(ctx, erasure.Subject{CustomerID: created.ID})
+	second, err := svc.Erase(ctx, personaldata.Subject{CustomerID: created.ID})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, second.Outcome)
+	assert.Equal(t, personaldata.Anonymized, second.Outcome)
 	assert.Equal(t, 1, second.Rows, "the customer row held a name again and had to be written")
 
 	row := readCustomer(ctx, t, created.ID)

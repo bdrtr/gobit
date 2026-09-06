@@ -6,8 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/bdrtr/gobit/core/erasure"
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/modules/customer/models"
 )
 
@@ -27,7 +27,7 @@ const ErasureHolder = "customer"
 const CodeErasureSubjectEmpty = "customer_erasure_subject_empty"
 
 // erasureKept names what stays behind after this module anonymizes a person,
-// as "table.column" entries for [erasure.Result.Kept].
+// as "table.column" entries for [personaldata.Result.Kept].
 //
 // Every entry is a deliberate refusal rather than an oversight:
 //
@@ -75,7 +75,7 @@ const erasureWhy = "The metadata on a customer and on a customer group is free-f
 // column with NO foreign key — there are no cross-module foreign keys
 // (Principle 2.2) — so deleting the customer row would leave those references
 // pointing at nothing, silently, with no constraint anywhere to notice. The
-// honest answer is therefore [erasure.Anonymized]: the row stays, the id stays,
+// honest answer is therefore [personaldata.Anonymized]: the row stays, the id stays,
 // and everything the row said about the person is overwritten.
 //
 // # Why this is not DeleteCustomer
@@ -91,7 +91,7 @@ const erasureWhy = "The metadata on a customer and on a customer group is free-f
 //
 // # Resolving the subject
 //
-// [erasure.Subject] requires no particular identifier and this module uses
+// [personaldata.Subject] requires no particular identifier and this module uses
 // EVERY one it is given. A subject carrying both an id and an e-mail resolves
 // to the union of what each reaches, not to the id alone: a registered customer
 // who has also checked out as a guest under the same address has one row under
@@ -125,9 +125,9 @@ const erasureWhy = "The metadata on a customer and on a customer group is free-f
 // pointed at them is exactly what the first call destroyed. It still answers
 // Anonymized, and it must — the alternative is a holder that reports a person
 // as unknown moments after erasing them.
-func (s *Service) Erase(ctx context.Context, subject erasure.Subject) (erasure.Result, error) {
+func (s *Service) Erase(ctx context.Context, subject personaldata.Subject) (personaldata.Result, error) {
 	if err := s.ready(); err != nil {
-		return erasure.Result{}, err
+		return personaldata.Result{}, err
 	}
 
 	customerID := strings.TrimSpace(subject.CustomerID)
@@ -138,13 +138,13 @@ func (s *Service) Erase(ctx context.Context, subject erasure.Subject) (erasure.R
 	email := models.NormalizeEmail(subject.Email)
 
 	if customerID == "" && email == "" {
-		return erasure.Result{}, errors.Invalid(CodeErasureSubjectEmpty,
+		return personaldata.Result{}, errors.Invalid(CodeErasureSubjectEmpty,
 			"an erasure request must name a customer id or an e-mail address")
 	}
 
 	count, err := s.repo.AnonymizeCustomers(ctx, customerID, email, s.clock())
 	if err != nil {
-		return erasure.Result{}, err
+		return personaldata.Result{}, err
 	}
 
 	// Neither the e-mail nor the id is enough to identify the person in a log
@@ -163,9 +163,9 @@ func (s *Service) Erase(ctx context.Context, subject erasure.Subject) (erasure.R
 		slog.Int("rewritten", count.Rewritten),
 	)
 
-	return erasure.Result{
+	return personaldata.Result{
 		Holder:  ErasureHolder,
-		Outcome: erasure.Anonymized,
+		Outcome: personaldata.Anonymized,
 		Rows:    count.Rewritten,
 		// The slice is copied because the caller receives it: a report handed
 		// out is read by whoever answers the data subject, and a caller sorting

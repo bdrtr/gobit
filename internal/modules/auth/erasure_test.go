@@ -11,13 +11,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/core/erasure"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/modules/auth"
 )
 
 // These tests need NO database and no setup. A declaration is a property of the
 // code rather than of the data — the same sentences on an empty installation as
-// on a full one — which is why [erasure.Declarer] takes no context and returns
+// on a full one — which is why [personaldata.Declarer] takes no context and returns
 // no error, and why the audit of it is a plain unit test anybody can run.
 //
 // The audit is written against the MIGRATION and not against the declaration.
@@ -165,7 +165,7 @@ func TestTheDeclarationReadsAsAnAnswerToAPerson(t *testing.T) {
 	for _, holding := range auth.New(auth.Options{}).PersonalData().Holdings {
 		key := holding.Table + "." + holding.Column
 
-		assert.Contains(t, []erasure.Kind{erasure.Named, erasure.Open}, holding.Kind,
+		assert.Contains(t, []personaldata.Kind{personaldata.Named, personaldata.Open}, holding.Kind,
 			"%s: a holding with no kind says nothing about whether gobit or the shop wrote it", key)
 
 		require.NotEmpty(t, holding.Why,
@@ -179,7 +179,7 @@ func TestTheDeclarationReadsAsAnAnswerToAPerson(t *testing.T) {
 
 // TestTheHolderIsLeftForTheCoordinator pins the empty Holder.
 //
-// The coordinator overwrites [erasure.Declaration.Holder] with the name the
+// The coordinator overwrites [personaldata.Declaration.Holder] with the name the
 // module registry knows this module by, so writing "auth" here would be a
 // second copy of that name with nothing keeping the two together. The failure
 // it would eventually produce is quiet: a report naming a holder no registry
@@ -200,14 +200,14 @@ func TestTheHolderIsLeftForTheCoordinator(t *testing.T) {
 func TestTheAuthModuleOffersNoErasure(t *testing.T) {
 	var module any = auth.New(auth.Options{})
 
-	_, ok := module.(erasure.Eraser)
+	_, ok := module.(personaldata.Eraser)
 	assert.False(t, ok,
 		"the auth module has grown an Erase method. Its rows belong to staff, not "+
 			"to shoppers, so a customer's erasure request would now delete an "+
 			"administrator; declaring is how this module answers, and the coordinator "+
 			"reports it as RETAINED on every sweep.")
 
-	_, ok = module.(erasure.Declarer)
+	_, ok = module.(personaldata.Declarer)
 	assert.True(t, ok, "the module has to declare, or its staff accounts are invisible in every report")
 }
 

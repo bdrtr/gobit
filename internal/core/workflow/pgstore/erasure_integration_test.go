@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/core/erasure"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/core/workflow"
 )
 
@@ -90,10 +90,10 @@ func readPlanInput(t *testing.T, id string) map[string]any {
 }
 
 // planEraser returns the store as an eraser.
-func planEraser(t *testing.T) erasure.Eraser {
+func planEraser(t *testing.T) personaldata.Eraser {
 	t.Helper()
 
-	e, ok := newStore().(erasure.Eraser)
+	e, ok := newStore().(personaldata.Eraser)
 	require.True(t, ok, "the store no longer offers the erasure capability")
 
 	return e
@@ -110,9 +110,9 @@ func TestErasureEmptiesThePersonAndKeepsThePlan(t *testing.T) {
 	ctx := context.Background()
 	id := seedPlanExecution(t, "cus_keep", "keep@example.test")
 
-	result, err := planEraser(t).Erase(ctx, erasure.Subject{CustomerID: "cus_keep"})
+	result, err := planEraser(t).Erase(ctx, personaldata.Subject{CustomerID: "cus_keep"})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, result.Outcome)
+	assert.Equal(t, personaldata.Anonymized, result.Outcome)
 	assert.Equal(t, 1, result.Rows)
 
 	got := readPlanInput(t, id)
@@ -145,10 +145,10 @@ func TestErasureFindsTheSubjectByEitherHandle(t *testing.T) {
 	byID := seedPlanExecution(t, "cus_byid", "byid@example.test")
 	byEmail := seedPlanExecution(t, "", "byemail@example.test")
 
-	_, err := planEraser(t).Erase(ctx, erasure.Subject{CustomerID: "cus_byid"})
+	_, err := planEraser(t).Erase(ctx, personaldata.Subject{CustomerID: "cus_byid"})
 	require.NoError(t, err)
 
-	_, err = planEraser(t).Erase(ctx, erasure.Subject{Email: "byemail@example.test"})
+	_, err = planEraser(t).Erase(ctx, personaldata.Subject{Email: "byemail@example.test"})
 	require.NoError(t, err)
 
 	assert.Equal(t, "", readPlanInput(t, byID)["email"])
@@ -165,15 +165,15 @@ func TestErasureIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	id := seedPlanExecution(t, "cus_twice", "twice@example.test")
 
-	first, err := planEraser(t).Erase(ctx, erasure.Subject{CustomerID: "cus_twice"})
+	first, err := planEraser(t).Erase(ctx, personaldata.Subject{CustomerID: "cus_twice"})
 	require.NoError(t, err)
 	require.Equal(t, 1, first.Rows)
 
 	before := readPlanInput(t, id)
 
-	second, err := planEraser(t).Erase(ctx, erasure.Subject{CustomerID: "cus_twice"})
+	second, err := planEraser(t).Erase(ctx, personaldata.Subject{CustomerID: "cus_twice"})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Anonymized, second.Outcome, "a repeat is still an anonymization, not an error")
+	assert.Equal(t, personaldata.Anonymized, second.Outcome, "a repeat is still an anonymization, not an error")
 	assert.Equal(t, 0, second.Rows, "the second pass must not rewrite an already-empty record")
 
 	assert.Equal(t, before, readPlanInput(t, id), "the second pass changed the row")
@@ -190,7 +190,7 @@ func TestErasureLeavesOtherPeopleAlone(t *testing.T) {
 	mine := seedPlanExecution(t, "cus_mine", "mine@example.test")
 	theirs := seedPlanExecution(t, "cus_theirs", "theirs@example.test")
 
-	_, err := planEraser(t).Erase(ctx, erasure.Subject{CustomerID: "cus_mine", Email: "mine@example.test"})
+	_, err := planEraser(t).Erase(ctx, personaldata.Subject{CustomerID: "cus_mine", Email: "mine@example.test"})
 	require.NoError(t, err)
 
 	assert.Equal(t, "", readPlanInput(t, mine)["email"])
@@ -221,7 +221,7 @@ func TestErasureIsUnmovedByAMalformedInput(t *testing.T) {
 
 	ordinary := seedPlanExecution(t, "cus_ok", "ok@example.test")
 
-	result, err := planEraser(t).Erase(ctx, erasure.Subject{CustomerID: "cus_ok"})
+	result, err := planEraser(t).Erase(ctx, personaldata.Subject{CustomerID: "cus_ok"})
 	require.NoError(t, err, "a record whose input is not an object must not fail the sweep")
 	assert.Equal(t, 1, result.Rows)
 	assert.Equal(t, "", readPlanInput(t, ordinary)["email"])
@@ -238,7 +238,7 @@ func TestErasureWithoutASubjectTouchesNothing(t *testing.T) {
 	ctx := context.Background()
 	id := seedPlanExecution(t, "cus_untouched", "untouched@example.test")
 
-	result, err := planEraser(t).Erase(ctx, erasure.Subject{})
+	result, err := planEraser(t).Erase(ctx, personaldata.Subject{})
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.Rows)
 
@@ -247,14 +247,14 @@ func TestErasureWithoutASubjectTouchesNothing(t *testing.T) {
 
 // TestTheErasureResultAlwaysSaysWhatItKept holds the contract's own rule.
 //
-// core/erasure documents that an Anonymized result names the free-form columns
+// core/personaldata documents that an Anonymized result names the free-form columns
 // it did not rewrite, because otherwise the word "anonymized" covers a field
 // nobody looked at. The two failure columns are those fields here.
 func TestTheErasureResultAlwaysSaysWhatItKept(t *testing.T) {
 	ctx := context.Background()
 	seedPlanExecution(t, "cus_kept", "kept@example.test")
 
-	result, err := planEraser(t).Erase(ctx, erasure.Subject{CustomerID: "cus_kept"})
+	result, err := planEraser(t).Erase(ctx, personaldata.Subject{CustomerID: "cus_kept"})
 	require.NoError(t, err)
 
 	assert.NotEmpty(t, result.Why)

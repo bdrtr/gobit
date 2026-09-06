@@ -1,4 +1,4 @@
-// Package erasure is the vocabulary a data controller uses to erase a person.
+// Package personaldata is the vocabulary a data controller uses to erase a person.
 //
 // ADR 0029 makes the EMBEDDING application the data controller and gives
 // gobit three obligations and no more: a contract with three outcomes, hooks so
@@ -52,7 +52,7 @@
 // own storage. A module that anonymizes nine columns and leaves a tenth is
 // worse than one that never implemented the interface, because the report it
 // produces is what the controller repeats to the data subject.
-package erasure
+package personaldata
 
 import (
 	"context"

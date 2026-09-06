@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/core/erasure"
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/modules/invoice/models"
 	"github.com/bdrtr/gobit/internal/modules/invoice/service"
 )
@@ -35,13 +35,13 @@ func TestAnInvoiceIsAlwaysRetained(t *testing.T) {
 	repo.seed(buyerInvoice("inv-1", "ada@example.com"))
 	svc := service.New(repo, service.Options{})
 
-	found, err := svc.Erase(context.Background(), erasure.Subject{Email: "ada@example.com"})
+	found, err := svc.Erase(context.Background(), personaldata.Subject{Email: "ada@example.com"})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Retained, found.Outcome)
+	assert.Equal(t, personaldata.Retained, found.Outcome)
 
-	absent, err := svc.Erase(context.Background(), erasure.Subject{Email: "nobody@example.com"})
+	absent, err := svc.Erase(context.Background(), personaldata.Subject{Email: "nobody@example.com"})
 	require.NoError(t, err)
-	assert.Equal(t, erasure.Retained, absent.Outcome,
+	assert.Equal(t, personaldata.Retained, absent.Outcome,
 		"a person with no invoices here is still answered RETAINED: this module never deletes")
 	assert.Zero(t, absent.Rows)
 }
@@ -61,7 +61,7 @@ func TestTheRetainedCountIsTheCountThatWasFound(t *testing.T) {
 	repo.seed(buyerInvoice("inv-3", "grace@example.com"))
 	svc := service.New(repo, service.Options{})
 
-	result, err := svc.Erase(context.Background(), erasure.Subject{Email: "ada@example.com"})
+	result, err := svc.Erase(context.Background(), personaldata.Subject{Email: "ada@example.com"})
 	require.NoError(t, err)
 	assert.Equal(t, 2, result.Rows)
 	assert.Equal(t, service.Holder, result.Holder)
@@ -82,14 +82,14 @@ func TestTheAddressIsMatchedWithoutRegardToCase(t *testing.T) {
 	repo.seed(buyerInvoice("inv-1", "Ada@Example.COM"))
 	svc := service.New(repo, service.Options{})
 
-	result, err := svc.Erase(context.Background(), erasure.Subject{Email: "ada@example.com"})
+	result, err := svc.Erase(context.Background(), personaldata.Subject{Email: "ada@example.com"})
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Rows)
 }
 
 // TestASecondEraseAnswersTheSame is the idempotency the contract requires.
 //
-// [erasure.Eraser] says a controller who runs a sweep twice must get the same
+// [personaldata.Eraser] says a controller who runs a sweep twice must get the same
 // outcome rather than an error or a "nothing found". Here it is a property
 // rather than a promise, because the method only reads — and the assertion is
 // written down so that the day somebody adds a write, this is what stops them.
@@ -100,9 +100,9 @@ func TestASecondEraseAnswersTheSame(t *testing.T) {
 	repo.seed(buyerInvoice("inv-1", "ada@example.com"))
 	svc := service.New(repo, service.Options{})
 
-	first, err := svc.Erase(context.Background(), erasure.Subject{Email: "ada@example.com"})
+	first, err := svc.Erase(context.Background(), personaldata.Subject{Email: "ada@example.com"})
 	require.NoError(t, err)
-	second, err := svc.Erase(context.Background(), erasure.Subject{Email: "ada@example.com"})
+	second, err := svc.Erase(context.Background(), personaldata.Subject{Email: "ada@example.com"})
 	require.NoError(t, err)
 
 	assert.Equal(t, first, second)
@@ -125,7 +125,7 @@ func TestTheRefusalNamesTheFreeFormColumnsItLeft(t *testing.T) {
 	repo.seed(buyerInvoice("inv-1", "ada@example.com"))
 	svc := service.New(repo, service.Options{})
 
-	result, err := svc.Erase(context.Background(), erasure.Subject{Email: "ada@example.com"})
+	result, err := svc.Erase(context.Background(), personaldata.Subject{Email: "ada@example.com"})
 	require.NoError(t, err)
 
 	require.NotEmpty(t, result.Kept)
@@ -148,7 +148,7 @@ func TestTheRefusalNamesTheFreeFormColumnsItLeft(t *testing.T) {
 
 // TestKeptIsNotSharedBetweenReports guards a value that leaves this package.
 //
-// [erasure.Result] is handed to a caller this module knows nothing about. If
+// [personaldata.Result] is handed to a caller this module knows nothing about. If
 // two reports shared one backing array, a caller that sorted or truncated one
 // of them would silently rewrite the other, and the second report would be
 // wrong in a way that nothing in this module could produce or explain.
@@ -159,12 +159,12 @@ func TestKeptIsNotSharedBetweenReports(t *testing.T) {
 	repo.seed(buyerInvoice("inv-1", "ada@example.com"))
 	svc := service.New(repo, service.Options{})
 
-	first, err := svc.Erase(context.Background(), erasure.Subject{Email: "ada@example.com"})
+	first, err := svc.Erase(context.Background(), personaldata.Subject{Email: "ada@example.com"})
 	require.NoError(t, err)
 	original := first.Kept[0]
 	first.Kept[0] = "mutated.by.the.caller"
 
-	second, err := svc.Erase(context.Background(), erasure.Subject{Email: "ada@example.com"})
+	second, err := svc.Erase(context.Background(), personaldata.Subject{Email: "ada@example.com"})
 	require.NoError(t, err)
 	assert.Equal(t, original, second.Kept[0])
 }
@@ -184,10 +184,10 @@ func TestASubjectWithNoAddressIsNotAnsweredAsAbsent(t *testing.T) {
 	repo.seed(buyerInvoice("inv-1", "ada@example.com"))
 	svc := service.New(repo, service.Options{})
 
-	result, err := svc.Erase(context.Background(), erasure.Subject{CustomerID: "cus_1"})
+	result, err := svc.Erase(context.Background(), personaldata.Subject{CustomerID: "cus_1"})
 	require.NoError(t, err)
 
-	assert.Equal(t, erasure.Retained, result.Outcome)
+	assert.Equal(t, personaldata.Retained, result.Outcome)
 	assert.Zero(t, result.Rows)
 	assert.NotEmpty(t, result.Kept)
 	assert.Contains(t, result.Why, "no address",
@@ -211,10 +211,10 @@ func TestAPersonWithNoInvoicesIsNotToldTheirsAreKept(t *testing.T) {
 	repo.seed(buyerInvoice("inv-1", "ada@example.com"))
 	svc := service.New(repo, service.Options{})
 
-	result, err := svc.Erase(context.Background(), erasure.Subject{Email: "nobody@example.com"})
+	result, err := svc.Erase(context.Background(), personaldata.Subject{Email: "nobody@example.com"})
 	require.NoError(t, err)
 
-	assert.Equal(t, erasure.Retained, result.Outcome,
+	assert.Equal(t, personaldata.Retained, result.Outcome,
 		"the outcome is this module's policy, not a summary of what the query found")
 	assert.Zero(t, result.Rows)
 	assert.Empty(t, result.Kept,
@@ -240,7 +240,7 @@ func TestTheEmptyAddressNeverMatchesEveryDocument(t *testing.T) {
 	repo.seed(buyerInvoice("inv-2", ""))
 	svc := service.New(repo, service.Options{})
 
-	result, err := svc.Erase(context.Background(), erasure.Subject{Email: "   "})
+	result, err := svc.Erase(context.Background(), personaldata.Subject{Email: "   "})
 	require.NoError(t, err)
 	assert.Zero(t, result.Rows)
 }
@@ -248,7 +248,7 @@ func TestTheEmptyAddressNeverMatchesEveryDocument(t *testing.T) {
 // TestACountThatFailsIsAnErrorAndNotARetainedZero holds the line between a
 // refusal and a fault.
 //
-// [erasure.Eraser] draws it explicitly: a holder exercising a refusal answers
+// [personaldata.Eraser] draws it explicitly: a holder exercising a refusal answers
 // Retained, and a holder that cannot complete its work returns an error. A
 // broken query dressed as "retained, 0 rows" has the shape of a real reply, and
 // the controller would repeat it to the data subject.
@@ -259,9 +259,9 @@ func TestACountThatFailsIsAnErrorAndNotARetainedZero(t *testing.T) {
 	repo.countErr = errors.Internal("fake_count_broken", "the connection went away")
 	svc := service.New(repo, service.Options{})
 
-	result, err := svc.Erase(context.Background(), erasure.Subject{Email: "ada@example.com"})
+	result, err := svc.Erase(context.Background(), personaldata.Subject{Email: "ada@example.com"})
 	require.Error(t, err)
-	assert.Equal(t, erasure.Result{}, result)
+	assert.Equal(t, personaldata.Result{}, result)
 }
 
 // TestTheDeclaredColumnsAndTheRefusedOnesAgree pins the two lists together.

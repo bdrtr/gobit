@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/core/erasure"
 	"github.com/bdrtr/gobit/core/module"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/modules/b2b"
 )
 
@@ -80,7 +80,7 @@ func TestPersonalDataCoversEveryPersonalColumn(t *testing.T) {
 		assert.False(t, declared[key], "%s is declared twice", key)
 		declared[key] = true
 
-		assert.Contains(t, []erasure.Kind{erasure.Named, erasure.Open}, holding.Kind,
+		assert.Contains(t, []personaldata.Kind{personaldata.Named, personaldata.Open}, holding.Kind,
 			"%s: a holding with no kind says nothing about who wrote the value", key)
 		require.NotEmpty(t, holding.Why,
 			"%s: a column named without a reason cannot be repeated to a data subject", key)
@@ -135,7 +135,7 @@ func TestPersonalDataCoversEveryPersonalColumn(t *testing.T) {
 // Without this test the two holdings would be the first thing a later reader
 // deleted as noise, because the table they point at looks empty of people.
 func TestTheEmployeeFactsAreDeclaredEvenThoughTheTableNamesNobody(t *testing.T) {
-	declared := map[string]erasure.Holding{}
+	declared := map[string]personaldata.Holding{}
 	for _, holding := range b2b.New(nil).PersonalData().Holdings {
 		if holding.Table == "b2b_company_employee" {
 			declared[holding.Column] = holding
@@ -178,7 +178,7 @@ func TestTheHolderIsLeftForTheCoordinator(t *testing.T) {
 func TestTheModuleIsFoundAsADeclarer(t *testing.T) {
 	var mod module.Module = b2b.New(nil)
 
-	declarer, ok := mod.(erasure.Declarer)
+	declarer, ok := mod.(personaldata.Declarer)
 	require.True(t, ok, "a module the sweep cannot recognize is silently missing from every report")
 	assert.NotEmpty(t, declarer.PersonalData().Holdings,
 		"a module that declares nothing produces no entry at all, and this one holds people")

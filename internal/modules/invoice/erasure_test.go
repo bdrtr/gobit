@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/core/erasure"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/modules/invoice"
 	"github.com/bdrtr/gobit/internal/modules/invoice/service"
 )
@@ -66,7 +66,7 @@ func TestEveryRetainedColumnIsDeclared(t *testing.T) {
 // The fix that is being pinned here is a SENTENCE, so the test reads sentences:
 // a declared column the refusal never names has to say in its own Why that
 // Erase does not search it. Declaring without erasing is legitimate
-// ([erasure.Declarer] is a separate interface for exactly that reason);
+// ([personaldata.Declarer] is a separate interface for exactly that reason);
 // declaring without SAYING it is what leaves a reader believing in a reach this
 // module does not have.
 func TestADeclaredColumnTheRefusalNeverReachesSaysSo(t *testing.T) {
@@ -109,28 +109,28 @@ func TestADeclaredColumnTheRefusalNeverReachesSaysSo(t *testing.T) {
 func TestTheDeclarationNamesEveryPersonalColumnOfTheSchema(t *testing.T) {
 	t.Parallel()
 
-	expected := map[string]erasure.Kind{
-		"invoices.buyer_name":          erasure.Named,
-		"invoices.buyer_tax_number":    erasure.Named,
-		"invoices.buyer_tax_office":    erasure.Named,
-		"invoices.buyer_email":         erasure.Named,
-		"invoices.buyer_address":       erasure.Named,
-		"invoices.buyer_country_code":  erasure.Named,
-		"invoices.seller_name":         erasure.Named,
-		"invoices.seller_tax_number":   erasure.Named,
-		"invoices.seller_tax_office":   erasure.Named,
-		"invoices.seller_email":        erasure.Named,
-		"invoices.seller_address":      erasure.Named,
-		"invoices.seller_country_code": erasure.Named,
-		"invoices.status_reason":       erasure.Open,
-		"invoices.metadata":            erasure.Open,
-		"invoice_lines.description":    erasure.Open,
+	expected := map[string]personaldata.Kind{
+		"invoices.buyer_name":          personaldata.Named,
+		"invoices.buyer_tax_number":    personaldata.Named,
+		"invoices.buyer_tax_office":    personaldata.Named,
+		"invoices.buyer_email":         personaldata.Named,
+		"invoices.buyer_address":       personaldata.Named,
+		"invoices.buyer_country_code":  personaldata.Named,
+		"invoices.seller_name":         personaldata.Named,
+		"invoices.seller_tax_number":   personaldata.Named,
+		"invoices.seller_tax_office":   personaldata.Named,
+		"invoices.seller_email":        personaldata.Named,
+		"invoices.seller_address":      personaldata.Named,
+		"invoices.seller_country_code": personaldata.Named,
+		"invoices.status_reason":       personaldata.Open,
+		"invoices.metadata":            personaldata.Open,
+		"invoice_lines.description":    personaldata.Open,
 	}
 
 	declaration := invoice.New(invoice.Options{}).PersonalData()
 	assert.Equal(t, invoice.ModuleName, declaration.Holder)
 
-	got := map[string]erasure.Kind{}
+	got := map[string]personaldata.Kind{}
 	for _, holding := range declaration.Holdings {
 		key := holding.Table + "." + holding.Column
 		assert.NotEmpty(t, holding.Why, "%s is declared without saying what it holds", key)
@@ -140,7 +140,7 @@ func TestTheDeclarationNamesEveryPersonalColumnOfTheSchema(t *testing.T) {
 	assert.Equal(t, expected, got)
 }
 
-// TestTheDeclarationDoesNotNeedRegister holds a property [erasure.Declarer]
+// TestTheDeclarationDoesNotNeedRegister holds a property [personaldata.Declarer]
 // states in its own words: a declaration is a property of the code rather than
 // of the data.
 //
@@ -163,8 +163,8 @@ func TestAnUnregisteredModuleRefusesToEraseRatherThanAnswerZero(t *testing.T) {
 	t.Parallel()
 
 	result, err := invoice.New(invoice.Options{}).
-		Erase(context.Background(), erasure.Subject{Email: "ada@example.com"})
+		Erase(context.Background(), personaldata.Subject{Email: "ada@example.com"})
 
 	require.Error(t, err)
-	assert.Equal(t, erasure.Result{}, result)
+	assert.Equal(t, personaldata.Result{}, result)
 }

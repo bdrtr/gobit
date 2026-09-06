@@ -11,14 +11,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/core/erasure"
+	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/modules/review"
 )
 
 // The tests in this file need NO database and carry no build tag on purpose.
 // A declaration is a property of the code rather than of the data — the same
 // sentence on an empty installation and a full one — which is why
-// [erasure.Declarer] takes no context and returns no error, and why the audit
+// [personaldata.Declarer] takes no context and returns no error, and why the audit
 // of it has to be runnable by anybody, anywhere, without Docker.
 
 // migrationFile is the module's only migration. The declaration is checked
@@ -72,7 +72,7 @@ var notPersonalColumns = []string{
 func TestTheDeclarationCoversEveryPersonalColumn(t *testing.T) {
 	t.Parallel()
 
-	declared := map[string]erasure.Kind{}
+	declared := map[string]personaldata.Kind{}
 
 	for _, holding := range review.New(review.Options{}).PersonalData().Holdings {
 		key := holding.Table + "." + holding.Column
@@ -82,7 +82,7 @@ func TestTheDeclarationCoversEveryPersonalColumn(t *testing.T) {
 
 		assert.Equal(t, reviewsTable, holding.Table,
 			"%s: this module owns one table and can only be declaring about that one", key)
-		assert.Contains(t, []erasure.Kind{erasure.Named, erasure.Open}, holding.Kind,
+		assert.Contains(t, []personaldata.Kind{personaldata.Named, personaldata.Open}, holding.Kind,
 			"%s: a holding with no kind says nothing about whether gobit knows what is in it", key)
 
 		declared[key] = holding.Kind
@@ -123,7 +123,7 @@ func TestTheDeclarationCoversEveryPersonalColumn(t *testing.T) {
 // One report assembles the sentences of every holder side by side, so each one
 // has to read as a clause in that list: present, English, and starting
 // lower-case. ADR 0033 writes the language rule down — the Why is DATA crossing
-// into core/erasure and read by the embedder, not prose about the code, so it
+// into core/personaldata and read by the embedder, not prose about the code, so it
 // stays English even where the file around it is not.
 func TestEveryWhyIsASentenceThatLandsInSomebodyElsesReport(t *testing.T) {
 	t.Parallel()
@@ -169,16 +169,16 @@ func TestTheModuleDeclaresAndCannotErase(t *testing.T) {
 
 	m := review.New(review.Options{})
 
-	_, declares := any(m).(erasure.Declarer)
+	_, declares := any(m).(personaldata.Declarer)
 	assert.True(t, declares, "the module has to declare, or it is absent from every erasure report")
 
-	_, erases := any(m).(erasure.Eraser)
+	_, erases := any(m).(personaldata.Eraser)
 	assert.False(t, erases,
 		"this module gained an Eraser; it cannot resolve a subject, so read ADR 0033 and "+
 			"the migration header before deciding this is right")
 }
 
-// TestTheDeclarationDoesNotNeedRegister holds the property [erasure.Declarer]
+// TestTheDeclarationDoesNotNeedRegister holds the property [personaldata.Declarer]
 // states in its own words.
 //
 // The module built here never registers: it has no pool, no service and no
