@@ -31,8 +31,17 @@ type fakeRepo struct {
 	countErr  error
 
 	// countedEmail records the address the buyer count was asked for, so a test
-	// can show that the service passed the subject through untouched.
+	// can show WHAT the service looked the person up by. It is no longer the
+	// subject untouched: since migration 000003 the service folds with
+	// models.NormalizeEmail before it asks, and the value recorded here is what
+	// proves it did.
 	countedEmail string
+
+	// refoldPages is what the re-fold pass reads, keyed by the cursor it asks
+	// with, and refoldWrites records what it wrote.
+	refoldPages  map[string][]models.BuyerEmailHandle
+	refoldWrites map[string]string
+	refoldErr    error
 
 	// listResult and listCount are what the listing returns.
 	listResult []models.Invoice
@@ -270,4 +279,31 @@ func issuedInvoice(id string, status models.Status) models.Invoice {
 		CurrencyCode: "TRY",
 		Total:        2400,
 	}
+}
+
+// ListBuyerEmailsForRefold hands back the page scripted for this cursor.
+func (f *fakeRepo) ListBuyerEmailsForRefold(
+	_ context.Context, afterID string, _ int32,
+) ([]models.BuyerEmailHandle, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.refoldErr != nil {
+		return nil, f.refoldErr
+	}
+
+	return f.refoldPages[afterID], nil
+}
+
+// SetBuyerEmailFolded records the handle the pass decided on.
+func (f *fakeRepo) SetBuyerEmailFolded(_ context.Context, id, folded string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.refoldWrites == nil {
+		f.refoldWrites = map[string]string{}
+	}
+	f.refoldWrites[id] = folded
+
+	return nil
 }

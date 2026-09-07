@@ -266,9 +266,12 @@ func (m *Module) Erase(ctx context.Context, s personaldata.Subject) (personaldat
 // Twelve are the two PARTIES the document prints, copied in full at the moment
 // it was issued (migration 000001) and never updated afterwards.
 //
-// The BUYER half is the reachable half. lower(buyer_email) is the only handle
+// The BUYER half is the reachable half. The buyer's address is the only handle
 // this module has on a person — invoices carries no customer_id and no order_id
-// — so those six columns are what a Retained answer names as kept.
+// — so those six columns are what a Retained answer names as kept. The handle
+// is buyer_email_folded, written by Go beside the printed address; ADR 0038 has
+// why it is a column of its own rather than a lower() in the predicate, which is
+// what it was until 2026-09-07.
 //
 // The SELLER half is declared, is never searched and is never reported, and
 // each of its six entries says that in its own Why rather than leaving a reader
@@ -337,7 +340,7 @@ func (m *Module) PersonalData() personaldata.Declaration {
 			},
 			{
 				Table: tableInvoices, Column: "seller_email", Kind: personaldata.Named,
-				Why: "the seller's e-mail address as printed on the document. Erase never searches this column and never lists it as kept: an erasure request naming this very address counts ZERO invoices, because only lower(buyer_email) is matched",
+				Why: "the seller's e-mail address as printed on the document. Erase never searches this column and never lists it as kept: an erasure request naming this very address counts ZERO invoices, because only the buyer's folded address is matched",
 			},
 			{
 				Table: tableInvoices, Column: "seller_address", Kind: personaldata.Named,

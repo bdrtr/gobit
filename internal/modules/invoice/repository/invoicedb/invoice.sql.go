@@ -31,7 +31,7 @@ func (q *Queries) CountInvoices(ctx context.Context, arg CountInvoicesParams) (i
 
 const countInvoicesByBuyerEmail = `-- name: CountInvoicesByBuyerEmail :one
 SELECT count(*) FROM invoices
-WHERE lower(buyer_email) = lower($1::text)
+WHERE buyer_email_folded = $1::text
 `
 
 // CountInvoicesByBuyerEmail counts the documents issued to one address.
@@ -45,15 +45,19 @@ WHERE lower(buyer_email) = lower($1::text)
 // discard them would be a table's worth of buyer data pulled into memory in
 // order to say "we kept them".
 //
-// The comparison is case-insensitive and both sides are lowered. This module,
-// unlike customer and auth, has NO check constraint forcing buyer_email to
-// lower case — an invoice copies what the document said — so a case-sensitive
-// match would report "0 retained" about a person whose invoice is in the table
-// under one capital letter. The lower() on the column is written exactly as
-// 000002 writes the invoices_buyer_email_idx expression, because an index on
-// lower(buyer_email) is only usable by a predicate spelled the same way.
-func (q *Queries) CountInvoicesByBuyerEmail(ctx context.Context, buyerEmail string) (int64, error) {
-	row := q.db.QueryRow(ctx, countInvoicesByBuyerEmail, buyerEmail)
+// The predicate matches buyer_email_folded, which is written by Go, and it does
+// NOT fold anything itself. It used to read "lower(buyer_email) = lower($1)",
+// and the reason that changed is in migration 000003: lower() is the CLUSTER's
+// fold, on a --locale=C database it folds ASCII only, and this count is what
+// decides whether a data subject is told their documents are held or that they
+// are not here. The caller passes an address already folded by
+// models.NormalizeEmail — the same function the other five holders of an
+// address fold with, compared against them by an audit in internal/arch.
+//
+// An equality on a plain column, so invoices_buyer_email_folded_idx serves it as
+// a seek rather than a scan of every invoice ever issued.
+func (q *Queries) CountInvoicesByBuyerEmail(ctx context.Context, buyerEmailFolded string) (int64, error) {
+	row := q.db.QueryRow(ctx, countInvoicesByBuyerEmail, buyerEmailFolded)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -66,17 +70,17 @@ INSERT INTO invoices (
     seller_name, seller_tax_number, seller_tax_office,
     seller_email, seller_address, seller_country_code,
     buyer_name, buyer_tax_number, buyer_tax_office,
-    buyer_email, buyer_address, buyer_country_code,
+    buyer_email, buyer_email_folded, buyer_address, buyer_country_code,
     subtotal, discount_total, tax_total, total,
     issued_at, metadata
 ) VALUES (
     $1, $2, $3, $4, $5, $6,
     $7, $8, $9, $10, $11, $12,
-    $13, $14, $15, $16, $17, $18,
-    $19, $20, $21, $22,
-    $23, $24
+    $13, $14, $15, $16, $17, $18, $19,
+    $20, $21, $22, $23,
+    $24, $25
 )
-RETURNING id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at
+RETURNING id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded
 `
 
 type CreateInvoiceParams struct {
@@ -96,6 +100,7 @@ type CreateInvoiceParams struct {
 	BuyerTaxNumber    string
 	BuyerTaxOffice    string
 	BuyerEmail        string
+	BuyerEmailFolded  string
 	BuyerAddress      string
 	BuyerCountryCode  string
 	Subtotal          int64
@@ -129,6 +134,7 @@ func (q *Queries) CreateInvoice(ctx context.Context, arg CreateInvoiceParams) (I
 		arg.BuyerTaxNumber,
 		arg.BuyerTaxOffice,
 		arg.BuyerEmail,
+		arg.BuyerEmailFolded,
 		arg.BuyerAddress,
 		arg.BuyerCountryCode,
 		arg.Subtotal,
@@ -169,6 +175,7 @@ func (q *Queries) CreateInvoice(ctx context.Context, arg CreateInvoiceParams) (I
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.BuyerEmailFolded,
 	)
 	return i, err
 }
@@ -227,7 +234,7 @@ func (q *Queries) CreateInvoiceLine(ctx context.Context, arg CreateInvoiceLinePa
 }
 
 const getInvoice = `-- name: GetInvoice :one
-SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at FROM invoices WHERE id = $1
+SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded FROM invoices WHERE id = $1
 `
 
 func (q *Queries) GetInvoice(ctx context.Context, id string) (Invoice, error) {
@@ -263,12 +270,13 @@ func (q *Queries) GetInvoice(ctx context.Context, id string) (Invoice, error) {
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.BuyerEmailFolded,
 	)
 	return i, err
 }
 
 const getInvoiceByNumber = `-- name: GetInvoiceByNumber :one
-SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at FROM invoices WHERE number = $1
+SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded FROM invoices WHERE number = $1
 `
 
 func (q *Queries) GetInvoiceByNumber(ctx context.Context, number string) (Invoice, error) {
@@ -304,8 +312,62 @@ func (q *Queries) GetInvoiceByNumber(ctx context.Context, number string) (Invoic
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.BuyerEmailFolded,
 	)
 	return i, err
+}
+
+const listInvoiceBuyerEmailsForRefold = `-- name: ListInvoiceBuyerEmailsForRefold :many
+SELECT id, buyer_email, buyer_email_folded
+FROM invoices
+WHERE buyer_email <> ''
+  AND id > $1::text
+ORDER BY id
+LIMIT $2::bigint
+`
+
+type ListInvoiceBuyerEmailsForRefoldParams struct {
+	AfterID  string
+	RowLimit int64
+}
+
+type ListInvoiceBuyerEmailsForRefoldRow struct {
+	ID               string
+	BuyerEmail       string
+	BuyerEmailFolded string
+}
+
+// ListInvoiceBuyerEmailsForRefold pages the documents that carry a buyer
+// address, for the one-time Go re-fold migration 000003 describes.
+//
+// It reads ALL of them rather than only the ones that look non-ASCII, and that
+// is deliberate. The obvious narrowing -- "where the address is not pure ASCII"
+// -- would miss a second way the SQL backfill and the Go fold disagree:
+// btrim() strips SPACES, while Go's strings.TrimSpace strips tabs, newlines and
+// the rest of Unicode's whitespace too, so a plain ASCII address stored with a
+// trailing tab folds differently on the two sides. Deciding in Go which rows are
+// wrong needs the Go function, so every row with an address is handed to it.
+//
+// Keyset by id, because this runs against a table that is only ever appended to
+// and may be large; an OFFSET walk would re-read what it has already passed.
+func (q *Queries) ListInvoiceBuyerEmailsForRefold(ctx context.Context, arg ListInvoiceBuyerEmailsForRefoldParams) ([]ListInvoiceBuyerEmailsForRefoldRow, error) {
+	rows, err := q.db.Query(ctx, listInvoiceBuyerEmailsForRefold, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListInvoiceBuyerEmailsForRefoldRow{}
+	for rows.Next() {
+		var i ListInvoiceBuyerEmailsForRefoldRow
+		if err := rows.Scan(&i.ID, &i.BuyerEmail, &i.BuyerEmailFolded); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listInvoiceLines = `-- name: ListInvoiceLines :many
@@ -385,7 +447,7 @@ func (q *Queries) ListInvoiceLinesForInvoices(ctx context.Context, invoiceIds []
 }
 
 const listInvoices = `-- name: ListInvoices :many
-SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at FROM invoices
+SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded FROM invoices
 WHERE ($1::text IS NULL OR status = $1::text)
   AND ($2::text IS NULL OR kind = $2::text)
   AND (created_at, id) < (
@@ -457,6 +519,7 @@ func (q *Queries) ListInvoices(ctx context.Context, arg ListInvoicesParams) ([]I
 			&i.Metadata,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.BuyerEmailFolded,
 		); err != nil {
 			return nil, err
 		}
@@ -468,6 +531,37 @@ func (q *Queries) ListInvoices(ctx context.Context, arg ListInvoicesParams) ([]I
 	return items, nil
 }
 
+const setInvoiceBuyerEmailFolded = `-- name: SetInvoiceBuyerEmailFolded :execrows
+UPDATE invoices
+SET buyer_email_folded = $1::text
+WHERE id = $2::text
+`
+
+type SetInvoiceBuyerEmailFoldedParams struct {
+	BuyerEmailFolded string
+	ID               string
+}
+
+// SetInvoiceBuyerEmailFolded rewrites one document's erasure handle.
+//
+// # This is not an edit to the document, and the columns it does not touch say so
+//
+// An issued invoice is immutable (ADR 0024) and the queries above honor that:
+// there is no UPDATE for its amounts, its parties or its lines. This statement
+// writes buyer_email_folded and nothing else. It leaves buyer_email — what the
+// document PRINTS — exactly as it was, and it deliberately does not touch
+// updated_at: that column records when the document's state last moved, and a
+// maintenance pass correcting an index handle did not move it. Bumping it would
+// make every invoice in the table look freshly transmitted to whoever reads
+// that column next.
+func (q *Queries) SetInvoiceBuyerEmailFolded(ctx context.Context, arg SetInvoiceBuyerEmailFoldedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setInvoiceBuyerEmailFolded, arg.BuyerEmailFolded, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setInvoiceStatus = `-- name: SetInvoiceStatus :one
 UPDATE invoices
 SET status        = $1::text,
@@ -477,7 +571,7 @@ SET status        = $1::text,
     updated_at    = now()
 WHERE id = $5::text
   AND status = $6::text
-RETURNING id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at
+RETURNING id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded
 `
 
 type SetInvoiceStatusParams struct {
@@ -534,6 +628,7 @@ func (q *Queries) SetInvoiceStatus(ctx context.Context, arg SetInvoiceStatusPara
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.BuyerEmailFolded,
 	)
 	return i, err
 }

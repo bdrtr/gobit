@@ -25,6 +25,19 @@ const maxIDLen = 255
 // other hand, would get caught by the CHECK constraint in the migration and
 // return a meaningless database error to the client. The pattern expresses
 // exactly the same requirement as that constraint.
+//
+// # Why this is STRICTER than cart's and order's
+//
+// Those two accept an address with no dot in the domain and this one does not,
+// and the difference is deliberate in both directions rather than an oversight
+// in either. An address on a cart or an order is CONTACT for one transaction:
+// refusing it stops a sale, and the cost of accepting a bad one is an
+// undelivered receipt. An address here is an IDENTITY — it is unique, it is
+// where a password reset is sent, and an account nobody can reach is
+// unrecoverable.
+//
+// What must NOT differ is the storage form, and it does not: all five modules
+// fold with the same expression, and internal/arch compares them.
 func normalizeEmail(email string) (string, error) {
 	normalized := models.NormalizeEmail(email)
 	if normalized == "" {

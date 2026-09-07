@@ -677,6 +677,7 @@ Usage:
   %s %-34s return ONE dead letter to the queue
   %s %-34s delete ONE dead letter for good
   %s %-34s rebuild the measurement catalog
+  %s %-34s re-fold every invoice's buyer-address handle
   %s %-34s print this text
 
 %s %s flags:
@@ -711,6 +712,7 @@ there is deliberately no "migrate up", so a deploy cannot forget it.
 		binaryName, deadLettersCommand+" "+cmdRedrive+" <id> [flags]",
 		binaryName, deadLettersCommand+" "+cmdDiscard+" <id> [flags]",
 		binaryName, seedCommand+" [flags]",
+		binaryName, refoldInvoicesCommand,
 		binaryName, cmdHelp,
 		cmdMigrate, cmdDown,
 		flagSteps+" N", defaultDownSteps,

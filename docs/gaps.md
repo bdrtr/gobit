@@ -1221,6 +1221,95 @@ a repository that no longer exists.
   no row in the README's invariant table. Nothing is red, because that audit only
   checks README against the repository and not the reverse, but the row is
   missing.
+- **D27** **A data subject can be told "you are not here" by the one holder that
+  is legally required to keep their document.** Found 2026-09-07 while auditing
+  the agreement between the five Go `NormalizeEmail` copies, and it is the
+  SIXTH folding rule — the one written in SQL, which the audit of the five could
+  not see.
+
+  Six modules store an e-mail column: `auth`, `b2b`, `cart`, `customer`,
+  `invoice`, `order`. Five fold in Go with `strings.ToLower(strings.TrimSpace())`.
+  `invoice` deliberately does not: the column copies what the document said,
+  which ADR 0024's immutability requires, so `buyer_email` is stored VERBATIM and
+  the match is done in the query instead — `WHERE lower(buyer_email) =
+  lower($1::text)`, with `Service.Erase` passing `strings.TrimSpace(subject.Email)`
+  and no fold at all on the Go side. The design is written down in
+  `invoice/repository/repository.go` and it is coherent; what it assumes is that
+  `lower()` folds.
+
+  **It does not, and that was measured rather than argued.** The development
+  cluster reports `datcollate=C, datctype=C, datlocprovider=c`, and on it
+  `lower('O with diaeresis')` returns the letter unchanged while
+  `lower('ALI@X.COM')` returns `ali@x.com`. Reproduced against that cluster with
+  the module's own predicate: a row holding the address as the document recorded
+  it, matched with the folded form every OTHER holder stores, counts **0**; with
+  the document's own casing it counts 1; and the ASCII control counts 1. So the
+  failure needs a non-ASCII address AND an operator who types the form the
+  customer record shows — which is the form an admin panel would display.
+
+  What the person is told is the part that matters. Zero rows is not a silent
+  branch in this module: it returns `whyNothingHere`, whose whole purpose is to
+  distinguish "nobody looked" from "we looked and you are not here". The second
+  sentence is the one a controller repeats to the data subject, and on that
+  cluster it is false while the invoice is held.
+
+  **Why no gate caught it.** `core/db/casefold.go` exists for exactly this class
+  and probes two paths — `ILIKE` and `to_tsvector` — because the two can
+  disagree. `lower()` is a third and is not probed. The probe also only WARNS,
+  never refusing to boot, and that decision is argued in its own godoc for the
+  case it was written for: "a catalog written entirely in ASCII works perfectly
+  on a C-locale cluster." True of a product search; not true of an erasure,
+  where the cost is not a missed search result but a false statement to a person
+  exercising a legal right.
+
+  **FIXED the same day, and the fix is ADR 0038.** `invoice` now folds in Go
+  like the other five: migration 000003 adds `buyer_email_folded`, written by
+  `models.NormalizeEmail` at insert and indexed, and the erasure count is a plain
+  equality against it. What the document PRINTS is untouched — `buyer_email`
+  still holds what was said, because ADR 0024 makes the document immutable — so
+  the folded value is a handle beside it rather than an edit to it. Verified
+  against the C-locale cluster on the real schema: the new predicate finds the
+  row the old one missed, the old predicate still counts 0 on the same input, and
+  `EXPLAIN (ANALYZE)` over 20,000 rows reports an Index Only Scan on
+  `invoices_buyer_email_folded_idx` with 3 buffers, so the index claim in the
+  query's godoc is measured rather than asserted.
+
+  **The audit that could not see it now can, and it takes the SCHEMA as ground
+  truth.** `internal/arch/email_test.go` grew a third test: a module declaring a
+  column named `*email*` must either fold in Go — and so be in the compared set —
+  or carry a WRITTEN exemption. Six modules declare one and all six are now
+  compared. The exemption map survives, empty, with the entry that used to be in
+  it recorded in a comment: an audit whose escape hatch was deleted is one
+  somebody works around instead. All three tests were mutation-proved (a module
+  folding differently, an unregistered sixth normalizer, a missing exemption),
+  as were the two re-fold tests.
+
+  **What is NOT fixed, and is deliberately left open.** The SQL backfill in
+  000003 is correct for ASCII and only for ASCII — a migration is SQL, and SQL is
+  the thing that cannot fold reliably here, so the rows the defect is about are
+  exactly the rows the backfill gets wrong. The remedy is `gobit refold-invoices`,
+  a Go pass that re-folds every handle Go would have written differently, and it
+  is a COMMAND rather than a step at boot: it is needed once per installation and
+  only by one with non-ASCII buyer addresses, and a full table walk in every
+  shop's startup path to fix a row most of them do not have is the wrong trade.
+  An operator who never runs it keeps the defect for those rows.
+
+  **And the probe still does not cover `lower()`.** `core/db/casefold.go` checks
+  `ILIKE` and `to_tsvector`. Nothing in the tree depends on `lower()` folding
+  non-ASCII any more, so the hole is not live — but it is a hole, and the next
+  query written with `lower()` reopens it silently. The probe's warn-only
+  decision is argued in its godoc for SEARCH ("a catalog written entirely in
+  ASCII works perfectly on a C-locale cluster"), and that argument does not
+  transfer to a path whose failure is a false statement to a data subject; if
+  `lower()` is ever added to the probe, that asymmetry is the thing to decide
+  first.
+
+  **The lesson, which is the part worth keeping.** Five copies of a Go function
+  were audited into agreement and the audit was green, while the SIXTH holder
+  folded somewhere the audit could not read. A comparison is only as wide as its
+  notion of who is being compared, and the fix was not a better comparison of the
+  five — it was asking the schema who holds an address.
+
 - **D26** ~~**Two module api packages had no test at all, while thirteen had
   one, and nothing asked why.**~~ **Closed 2026-09-06.** `invoice` and the
   newly-built `review` were the two, and the guard the other thirteen carry is

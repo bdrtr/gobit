@@ -9,7 +9,10 @@
 // are UTC.
 package models
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Amount and quantity limits.
 //
@@ -380,4 +383,38 @@ type ShippingMethod struct {
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// NormalizeEmail folds an e-mail into its storage form: trimmed, lower-cased.
+//
+// # Every module has this function and they all have to agree
+//
+// There are six copies of it in this repository — auth, b2b, cart, customer,
+// invoice and order. They cannot be collapsed INTO ONE ANOTHER, because a
+// module may not import another module's models (Principle 2.1). They could be
+// collapsed into core/, which a module may import; ADR 0038 weighs that and
+// refuses it, and names the measurement that would reopen the question.
+//
+// What the six have to hold is a property nothing in Go can check: all of them
+// must produce the same bytes for the same address. It is not a tidiness claim.
+// A guest order carries an e-mail and no customer id; the day that person
+// registers, the two records meet only if both surfaces folded the address the
+// same way. A data-subject erasure resolves one person across every holder at
+// once, and a holder that folded differently answers "nothing found" for
+// somebody it is holding. Neither failure raises an error; both look exactly
+// like an absence.
+//
+// The agreement is audited from outside, in internal/arch — over every copy the
+// tree contains, and over every module that declares an e-mail COLUMN. The
+// second half is what caught invoice folding in SQL rather than in Go, on a
+// cluster where SQL folds ASCII and nothing else.
+//
+// # Why lower-casing the local part is deliberate
+//
+// RFC 5321 leaves the part before the @ case-sensitive. In practice no provider
+// uses that distinction, and honoring it would let one person hold two
+// accounts. Commercial correctness comes ahead of the letter of the standard
+// here, and that is a decision rather than an oversight.
+func NormalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
 }

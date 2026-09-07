@@ -209,14 +209,19 @@ func (r *Repository) CreateInvoice(ctx context.Context, in models.Invoice) (mode
 		BuyerTaxNumber:    in.Buyer.TaxNumber,
 		BuyerTaxOffice:    in.Buyer.TaxOffice,
 		BuyerEmail:        in.Buyer.Email,
-		BuyerAddress:      in.Buyer.Address,
-		BuyerCountryCode:  in.Buyer.CountryCode,
-		Subtotal:          in.Subtotal,
-		DiscountTotal:     in.DiscountTotal,
-		TaxTotal:          in.TaxTotal,
-		Total:             in.Total,
-		IssuedAt:          fromTime(in.IssuedAt),
-		Metadata:          metadata,
+		// The printed address is stored verbatim above; this is the handle the
+		// erasure resolves a person by, folded by the same Go function the other
+		// five modules fold with. Migration 000003 carries the reason it is a
+		// column rather than a lower() in the predicate.
+		BuyerEmailFolded: models.NormalizeEmail(in.Buyer.Email),
+		BuyerAddress:     in.Buyer.Address,
+		BuyerCountryCode: in.Buyer.CountryCode,
+		Subtotal:         in.Subtotal,
+		DiscountTotal:    in.DiscountTotal,
+		TaxTotal:         in.TaxTotal,
+		Total:            in.Total,
+		IssuedAt:         fromTime(in.IssuedAt),
+		Metadata:         metadata,
 	})
 	if err != nil {
 		return models.Invoice{}, wrapDB(err, codeQueryFailed, "the invoice could not be written")
@@ -330,10 +335,14 @@ func (r *Repository) ListInvoices(
 // It exists for the erasure contract and for nothing else, and its shape is
 // dictated by the table rather than chosen: invoices has no customer_id and no
 // order_id column, so the only handle this module has on a person is the
-// address printed on the document. The match is case-insensitive because
-// nothing forces buyer_email to lower case here — the column copies what the
-// document said — and 000002 indexes lower(buyer_email) so that this stays a
-// seek rather than a scan of every invoice ever issued.
+// address printed on the document.
+//
+// The caller passes an address ALREADY FOLDED by [models.NormalizeEmail], and
+// the predicate is a plain equality against buyer_email_folded. It used to fold
+// in the query, with lower() on both sides, and migration 000003 has the
+// measurement that ended that: lower() is the cluster's fold, a --locale=C
+// database folds ASCII only, and this count is what decides whether a data
+// subject is told their documents are held or that they are not here.
 //
 // It counts rather than reads: the answer needs a NUMBER, and pulling whole
 // documents into memory in order to discard them would move a table's worth of
@@ -376,4 +385,47 @@ func (r *Repository) SetStatus(
 	}
 
 	return toInvoice(row)
+}
+
+// ListBuyerEmailsForRefold pages the documents carrying a buyer address.
+//
+// It exists for [gobit refold-invoices] and for nothing else. Migration 000003
+// explains why a pass is needed at all: the backfill in that migration has to
+// be written in SQL, and SQL is the thing that cannot fold reliably on a
+// cluster whose ctype is C, so the rows the defect is about are exactly the ones
+// the backfill gets wrong.
+func (r *Repository) ListBuyerEmailsForRefold(
+	ctx context.Context, afterID string, limit int32,
+) ([]models.BuyerEmailHandle, error) {
+	rows, err := r.queries(ctx).ListInvoiceBuyerEmailsForRefold(ctx,
+		invoicedb.ListInvoiceBuyerEmailsForRefoldParams{AfterID: afterID, RowLimit: int64(limit)})
+	if err != nil {
+		return nil, wrapDB(err, codeQueryFailed,
+			"the invoices carrying a buyer address could not be read")
+	}
+
+	out := make([]models.BuyerEmailHandle, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, models.BuyerEmailHandle{
+			ID:         row.ID,
+			BuyerEmail: row.BuyerEmail,
+			Folded:     row.BuyerEmailFolded,
+		})
+	}
+
+	return out, nil
+}
+
+// SetBuyerEmailFolded rewrites one document's erasure handle.
+//
+// It writes buyer_email_folded alone. What the document prints is untouched,
+// and so is updated_at — see the query's own comment for why that matters.
+func (r *Repository) SetBuyerEmailFolded(ctx context.Context, id, folded string) error {
+	if _, err := r.queries(ctx).SetInvoiceBuyerEmailFolded(ctx,
+		invoicedb.SetInvoiceBuyerEmailFoldedParams{ID: id, BuyerEmailFolded: folded}); err != nil {
+		return wrapDB(err, codeQueryFailed,
+			"the buyer address handle of an invoice could not be rewritten")
+	}
+
+	return nil
 }

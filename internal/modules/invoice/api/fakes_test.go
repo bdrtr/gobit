@@ -268,3 +268,15 @@ func (m *memRepo) SetStatus(
 
 	return models.Invoice{}, errors.NotFound("fake_invoice_missing", "no such invoice: %s", id)
 }
+
+// ListBuyerEmailsForRefold is unused by the API tests: the re-fold pass is a
+// maintenance command with no endpoint, and this exists so the fake still
+// satisfies service.Repo.
+func (m *memRepo) ListBuyerEmailsForRefold(
+	_ context.Context, _ string, _ int32,
+) ([]models.BuyerEmailHandle, error) {
+	return nil, nil
+}
+
+// SetBuyerEmailFolded is unused by the API tests, for the same reason.
+func (m *memRepo) SetBuyerEmailFolded(_ context.Context, _, _ string) error { return nil }

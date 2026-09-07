@@ -346,15 +346,33 @@ func alphaCode(label, standard, code string, length int) (string, error) {
 	return normalized, nil
 }
 
-// normalizeEmail validates the email and converts it to lowercase; an empty one
-// is accepted.
+// normalizeEmail validates the e-mail and folds it to its storage form; an
+// empty one is accepted.
 //
-// The validation is DELIBERATELY shallow: full RFC 5322 validation is famous for
-// rejecting valid addresses, and whether the address is really deliverable can
-// only be told by a send. The only thing sought here is that the field be in a
-// USABLE shape as an email.
+// # The folding is [models.NormalizeEmail] and not an expression written here
+//
+// It used to be the expression, spelled out inline, and the two are the same
+// bytes — which is exactly why it had to move. Five modules fold an address and
+// they all have to agree; a copy that lives inside a service function is a copy
+// no audit can reach, so the day one of them changed, the disagreement would be
+// found by a customer whose guest order never met their new account.
+//
+// # The validation is DELIBERATELY shallower here than in auth or customer
+//
+// Full RFC 5322 validation is famous for rejecting valid addresses, and whether
+// an address is deliverable can only be told by sending to it. What is sought
+// here is that the field be USABLE as an e-mail.
+//
+// The identity modules (auth, customer, b2b) are stricter — they require a dot
+// in the domain — and the difference is not an oversight in either direction.
+// An address on this record is CONTACT for one transaction: rejecting it stops
+// a sale, and the cost of accepting a bad one is an undelivered receipt. An
+// address on an account is an IDENTITY: it is unique, it is what a password
+// reset is sent to, and an account nobody can reach is unrecoverable. The two
+// asymmetric rules follow from that asymmetry, and the STORAGE FORM — which is
+// what has to agree — is identical in both.
 func normalizeEmail(email string) (string, error) {
-	normalized := strings.ToLower(strings.TrimSpace(email))
+	normalized := models.NormalizeEmail(email)
 	if normalized == "" {
 		return "", nil
 	}

@@ -2,9 +2,9 @@ package service
 
 import (
 	"context"
-	"strings"
 
 	"github.com/bdrtr/gobit/core/personaldata"
+	"github.com/bdrtr/gobit/internal/modules/invoice/models"
 )
 
 // Holder is the name this module answers an erasure request under.
@@ -151,7 +151,14 @@ func (s *Service) Erase(ctx context.Context, subject personaldata.Subject) (pers
 		Outcome: personaldata.Retained,
 	}
 
-	email := strings.TrimSpace(subject.Email)
+	// Folded by GO, not by the query. This line used to be a TrimSpace and the
+	// lower() lived in the predicate; migration 000003 carries the measurement
+	// that ended that arrangement — lower() is the cluster's fold, a --locale=C
+	// database folds ASCII only, and the zero this produced was reported to a
+	// data subject as "we looked and you are not here" while their document was
+	// held. models.NormalizeEmail is the same function the other five holders
+	// fold with, and an audit in internal/arch compares all six.
+	email := models.NormalizeEmail(subject.Email)
 	if email == "" {
 		// Not an error, and deliberately not a zero-row "nothing here" either.
 		// The subject may well have invoices under an address this request did

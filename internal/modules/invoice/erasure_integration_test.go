@@ -267,14 +267,24 @@ func TestTheReplicationRoleEscapeIsClosed(t *testing.T) {
 // TestTheBuyerEmailIndexExistsAndMatchesTheQuery keeps an index and the
 // predicate that needs it spelled the same way.
 //
-// An index on lower(buyer_email) is usable ONLY by a predicate written
-// lower(buyer_email) = ..., so the two are one decision written in two files.
+// It used to assert an index on lower(buyer_email), because the predicate was
+// written that way too, and the two were one decision in two files. Migration
+// 000003 ended that arrangement: lower() is the CLUSTER's fold and a --locale=C
+// database folds ASCII only, so the erasure now matches a column Go folded
+// (ADR 0038). The pairing this test holds is therefore a plainer one — a b-tree
+// on buyer_email_folded, and an equality predicate against it.
+//
+// The 000002 index must be GONE, and that half is not tidiness: left behind it
+// would cost a write on every invoice ever issued and serve no read, and its
+// presence would be the visible sign that a database had been migrated with a
+// copy of 000003 that forgot to drop it.
+//
 // The PLAN is deliberately not asserted: the test database holds a few dozen
-// rows and Postgres is right to scan them sequentially, so a plan assertion
-// here would measure the row count rather than the schema and would have to be
-// weakened until it measured nothing. What can be asserted without lying is
-// that the index is there and that its definition is the expression the query
-// uses.
+// rows and Postgres is right to scan them sequentially, so a plan assertion here
+// would measure the row count rather than the schema and would have to be
+// weakened until it measured nothing. (It was measured separately, on a table of
+// 20,000 rows, where the planner reports an Index Only Scan on this index — see
+// ADR 0038.)
 func TestTheBuyerEmailIndexExistsAndMatchesTheQuery(t *testing.T) {
 	ctx := context.Background()
 
@@ -282,10 +292,49 @@ func TestTheBuyerEmailIndexExistsAndMatchesTheQuery(t *testing.T) {
 
 	err := testPool.Pool().QueryRow(ctx,
 		`SELECT indexdef FROM pg_indexes
-		  WHERE schemaname = 'public' AND indexname = 'invoices_buyer_email_idx'`).
+		  WHERE schemaname = 'public' AND indexname = 'invoices_buyer_email_folded_idx'`).
 		Scan(&definition)
-	require.NoError(t, err, "migration 000002 has to create the buyer address index")
-	assert.Contains(t, definition, "lower(buyer_email)")
+	require.NoError(t, err, "migration 000003 has to create the folded buyer address index")
+	assert.Contains(t, definition, "buyer_email_folded")
+	assert.NotContains(t, definition, "lower(",
+		"the fold belongs to Go now; an expression index here would put the cluster back in the loop")
+
+	var leftovers int
+
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM pg_indexes
+		  WHERE schemaname = 'public' AND indexname = 'invoices_buyer_email_idx'`).
+		Scan(&leftovers))
+	assert.Zero(t, leftovers,
+		"000002's expression index served the old predicate and nothing else; 000003 drops it")
+}
+
+// TestTheFoldedHandleIsWrittenAndTheDocumentIsNot is the pair migration 000003
+// splits apart, checked against a real row.
+//
+// The whole design rests on two columns meaning different things: buyer_email is
+// what the document PRINTS and is immutable (ADR 0024), buyer_email_folded is the
+// handle an erasure resolves by. A single implementation writing the folded value
+// into both would pass every erasure test in this file and quietly edit a legal
+// document, so the two are asserted separately and on purpose.
+func TestTheFoldedHandleIsWrittenAndTheDocumentIsNot(t *testing.T) {
+	ctx := context.Background()
+
+	// A buyer nobody else in this file issues to: the tests share one database,
+	// and an address that folded onto another test's person would change that
+	// test's count instead of checking this one.
+	issued := issueForBuyer(t, "FLD", "  Grace.Hopper@Example.COM  ")
+
+	var printed, folded string
+
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT buyer_email, buyer_email_folded FROM invoices WHERE id = $1`, issued.ID).
+		Scan(&printed, &folded))
+
+	assert.Equal(t, "  Grace.Hopper@Example.COM  ", printed,
+		"the document prints what it was given; an invoice is a snapshot")
+	assert.Equal(t, "grace.hopper@example.com", folded,
+		"the handle is what models.NormalizeEmail produces, which is what the other five holders store")
 }
 
 // TestTheRetainedCountComesFromTheDatabase is the erasure answer end to end.

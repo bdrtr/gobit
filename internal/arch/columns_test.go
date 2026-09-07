@@ -309,11 +309,15 @@ type migrationSchema map[string]map[string]bool
 //
 // Skipping is what a scanner does; it is also what made this gate green while
 // its own documentation named the column it was missing. ALTER TABLE has
-// actions this replay does not model — RENAME COLUMN changes a column's name
-// and ALTER COLUMN ... SET DEFAULT changes whether the database supplies it —
-// and both would leave the replayed schema quietly wrong. They are reported as
-// findings so the reader is forced to teach the replay rather than discover
-// years later that it guessed.
+// actions this replay does not model — RENAME COLUMN changes a column's name,
+// and it would leave the replayed schema quietly wrong — so they are reported
+// as findings, and the reader is forced to teach the replay rather than
+// discover years later that it guessed.
+//
+// ALTER COLUMN used to be in that list and is now modeled (see
+// [schemaReplay.alterColumn]), which is the mechanism working as intended: the
+// finding was raised by a real migration, and it was answered by teaching
+// rather than by widening the harmless list.
 type schemaReplay struct {
 	tables     migrationSchema
 	unreadable []string
@@ -391,6 +395,8 @@ func (r *schemaReplay) alterTable(statement []sqlToken) {
 			r.addColumn(name, action)
 		case action[0].text == "drop" && !namesAConstraint(action):
 			r.dropColumn(name, action)
+		case action[0].text == "alter":
+			r.alterColumn(name, action)
 		case action[0].text == "add" || action[0].text == "drop":
 			// A constraint, not a column. Constraints are the schema's own
 			// business: they change what a value may BE, never whether the
@@ -401,6 +407,68 @@ func (r *schemaReplay) alterTable(statement []sqlToken) {
 		default:
 			r.note("ALTER TABLE "+name+" action", action)
 		}
+	}
+}
+
+// alterColumn applies an ALTER COLUMN action to a column the replay already has.
+//
+// # Why this is modeled rather than reported
+//
+// It used to be reported, and the header above still describes why: "ALTER
+// COLUMN ... SET DEFAULT changes whether the database supplies it", so leaving
+// it unread would make the replayed schema quietly wrong. Reporting was the
+// right first move — it forced the question instead of guessing — and this is
+// the answer to it, prompted by the first migration in the tree to use the form
+// (invoice 000003, which adds a NOT NULL column with a default so it can be
+// added to a table that has rows, then DROPS the default so the INSERT is
+// forced to name it).
+//
+// # Only two things can move a column across this audit's boundary
+//
+// The boundary is "does the database supply a value". DEFAULT and identity are
+// the two ways it can, so those are the sub-actions that write the flag. The
+// rest — a type change, SET NOT NULL, statistics, storage, compression — change
+// what the value may be or how it is kept, never who provides it, and they
+// leave the flag alone. Anything else is still reported, which is what keeps
+// this from becoming the scanner the header warns about.
+func (r *schemaReplay) alterColumn(table string, action []sqlToken) {
+	at := skipWords(action, 1, "column")
+	if at >= len(action) || !action[at].word {
+		r.note("ALTER TABLE "+table+" ALTER", action)
+
+		return
+	}
+
+	column := action[at].text
+	if _, declared := r.tables[table][column]; !declared {
+		// A column the replay never saw declared. Writing the flag would invent
+		// a column out of an ALTER, which is how a replay starts describing a
+		// schema nobody wrote.
+		r.note("ALTER TABLE "+table+" ALTER of an undeclared column", action)
+
+		return
+	}
+
+	at++
+
+	switch {
+	case wordAt(action, at, "set") && wordAt(action, at+1, "default"),
+		wordAt(action, at, "add") && wordAt(action, at+1, "generated"):
+		r.tables[table][column] = true
+	case wordAt(action, at, "drop") && wordAt(action, at+1, "default"),
+		wordAt(action, at, "drop") && wordAt(action, at+1, "identity"):
+		r.tables[table][column] = false
+	case wordAt(action, at, "type"),
+		wordAt(action, at, "set") && wordAt(action, at+1, "data"),
+		wordAt(action, at, "set") && wordAt(action, at+1, "not"),
+		wordAt(action, at, "drop") && wordAt(action, at+1, "not"),
+		wordAt(action, at, "set") && wordAt(action, at+1, "statistics"),
+		wordAt(action, at, "set") && wordAt(action, at+1, "storage"),
+		wordAt(action, at, "set") && wordAt(action, at+1, "compression"):
+		// What the value may be, or how it is stored. Neither decides who
+		// supplies it.
+	default:
+		r.note("ALTER TABLE "+table+" ALTER COLUMN action", action)
 	}
 }
 
@@ -477,9 +545,12 @@ var tableConstraintLeads = map[string]bool{
 // harmlessAlterActions are the ALTER TABLE actions that cannot change the
 // column set or who supplies a value.
 //
-// ALTER and RENAME are deliberately ABSENT: "ALTER COLUMN x SET DEFAULT" moves
-// a column out of this audit's scope and "RENAME COLUMN" changes its name, so
-// both must be reported as unreadable until the replay learns them.
+// RENAME is deliberately ABSENT: "RENAME COLUMN" changes a column's name, so it
+// must be reported as unreadable until the replay learns it. ALTER is absent for
+// the opposite reason — it is not harmless and it is not unreadable either; it
+// has its own reader in [schemaReplay.alterColumn], because "ALTER COLUMN x SET
+// DEFAULT" moves a column out of this audit's scope and "DROP DEFAULT" moves it
+// back in.
 var harmlessAlterActions = map[string]bool{
 	"validate": true,
 	"enable":   true,
@@ -1015,8 +1086,30 @@ var columnScannerCases = []columnScannerCase{
 		unreadable: true,
 	},
 	{
-		name:       "ALTER COLUMN SET DEFAULT is reported rather than ignored",
-		sql:        "CREATE TABLE alpha (id TEXT);\nALTER TABLE alpha ALTER COLUMN id SET DEFAULT '';",
+		name:     "ALTER COLUMN SET DEFAULT hands the column to the database",
+		sql:      "CREATE TABLE alpha (id TEXT);\nALTER TABLE alpha ALTER COLUMN id SET DEFAULT '';",
+		tables:   []string{"alpha.id"},
+		supplied: []string{"alpha.id"},
+	},
+	{
+		name:   "ALTER COLUMN DROP DEFAULT takes it back",
+		sql:    "CREATE TABLE alpha (id TEXT DEFAULT '');\nALTER TABLE alpha ALTER COLUMN id DROP DEFAULT;",
+		tables: []string{"alpha.id"},
+	},
+	{
+		name:   "ALTER COLUMN SET NOT NULL decides nothing about who supplies the value",
+		sql:    "CREATE TABLE alpha (id TEXT DEFAULT '');\nALTER TABLE alpha ALTER COLUMN id SET NOT NULL;",
+		tables: []string{"alpha.id"}, supplied: []string{"alpha.id"},
+	},
+	{
+		name:       "an ALTER COLUMN action the reader does not know is still reported",
+		sql:        "CREATE TABLE alpha (id TEXT);\nALTER TABLE alpha ALTER COLUMN id SET SOMETHING NEW;",
+		tables:     []string{"alpha.id"},
+		unreadable: true,
+	},
+	{
+		name:       "ALTER COLUMN of a column nobody declared is reported",
+		sql:        "CREATE TABLE alpha (id TEXT);\nALTER TABLE alpha ALTER COLUMN ghost DROP DEFAULT;",
 		tables:     []string{"alpha.id"},
 		unreadable: true,
 	},

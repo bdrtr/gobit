@@ -13,6 +13,7 @@
 package models
 
 import (
+	"strings"
 	"time"
 
 	"github.com/bdrtr/gobit/internal/core/page"
@@ -295,4 +296,50 @@ type Filter struct {
 	// It is applied TOGETHER with Offset so the query keeps one shape; the API
 	// refuses the two at once, because they name two different positions.
 	After page.Cursor
+}
+
+// NormalizeEmail folds an e-mail into its storage form: trimmed, lower-cased.
+//
+// # This module folds in Go now, and it did not before
+//
+// It is the SIXTH copy of a function auth, customer, b2b, order and cart also
+// carry (see ADR 0038). They cannot be collapsed into one another — a module
+// may not import another module's models (Principle 2.1) — and hoisting them
+// into core/ was weighed and refused, so what holds them together is an audit
+// in internal/arch that compares all six against one another.
+//
+// Until 2026-09-07 this module had no such function and folded in SQL instead,
+// with "lower(buyer_email) = lower($1)". That is not the same rule: lower() is
+// the CLUSTER's, and on a database created with --locale=C it folds ASCII and
+// nothing else. Measured on that cluster, an erasure naming the folded form
+// every other holder stores counted ZERO invoices for a person whose document
+// was in the table, and the module answered that it had looked and they were
+// not there. The ASCII case matched, which is why it went unnoticed. D27 has
+// the reproduction.
+//
+// # The printed address is still stored VERBATIM
+//
+// This function does NOT touch what the document says. [Party.Email] is copied
+// onto the row exactly as it was given, because an invoice is a snapshot and
+// ADR 0024 makes it immutable; the folded form is written BESIDE it, into
+// buyer_email_folded, purely as the handle the erasure resolves a person by.
+// Folding what is printed would edit a legal document to make a query easier.
+func NormalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
+// BuyerEmailHandle is one document's erasure handle: what it prints, and what
+// the erasure resolves it by.
+//
+// It exists for the one-time re-fold pass migration 000003 asks for, and it
+// carries both columns because the pass has to DECIDE rather than overwrite:
+// re-folding a handle that is already right would rewrite every invoice in the
+// table to change nothing.
+type BuyerEmailHandle struct {
+	// ID is the document's id, and the pass's keyset cursor.
+	ID string
+	// BuyerEmail is what the document prints, verbatim and untouched.
+	BuyerEmail string
+	// Folded is the handle as it currently stands.
+	Folded string
 }

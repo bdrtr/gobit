@@ -84,6 +84,10 @@ type Repo interface {
 	SetStatus(
 		ctx context.Context, id string, from, to models.Status, reason, providerID, externalID string,
 	) (models.Invoice, error)
+	// The two below are here for [Service.RefoldBuyerEmails], the one-time
+	// maintenance pass migration 000003 asks for, and for nothing else.
+	ListBuyerEmailsForRefold(ctx context.Context, afterID string, limit int32) ([]models.BuyerEmailHandle, error)
+	SetBuyerEmailFolded(ctx context.Context, id, folded string) error
 }
 
 // Options are the service's settings.

@@ -203,6 +203,26 @@ func (e CompanyEmployee) HasSpendingLimit() bool { return e.SpendingLimit != nil
 // "muhasebe@x.com" are meant to denote the same address, both have to come down
 // to the same bytes, otherwise the e-mail filter would take them for two
 // different ones.
+//
+// # There are six of these and they all have to agree
+//
+// auth, b2b, cart, customer, invoice and order each carry this function. They
+// cannot be collapsed INTO ONE ANOTHER — a module may not import another
+// module's models (Principle 2.1) — but that is not the same as saying the
+// duplication is forced: a module may import core/, so hoisting the rule there
+// would collapse all six. ADR 0038 weighs that and refuses it, and says which
+// measurement would reopen the question.
+//
+// The agreement between them is one no compiler holds: a guest order meets the
+// account that person later opens only if both surfaces folded the address to
+// the same bytes, and a data-subject erasure finds a holder's rows only if that
+// holder folded the subject the same way the framework did on the way in.
+// Neither failure raises anything — both look like an absence.
+//
+// It is audited from outside, in internal/arch, over every copy the tree
+// contains including the one somebody adds tomorrow, and over every module that
+// declares an e-mail COLUMN — which is how invoice was found folding in SQL
+// instead, and reporting to a data subject that they were not here.
 func NormalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }

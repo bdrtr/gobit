@@ -10,15 +10,15 @@ INSERT INTO invoices (
     seller_name, seller_tax_number, seller_tax_office,
     seller_email, seller_address, seller_country_code,
     buyer_name, buyer_tax_number, buyer_tax_office,
-    buyer_email, buyer_address, buyer_country_code,
+    buyer_email, buyer_email_folded, buyer_address, buyer_country_code,
     subtotal, discount_total, tax_total, total,
     issued_at, metadata
 ) VALUES (
     $1, $2, $3, $4, $5, $6,
     $7, $8, $9, $10, $11, $12,
-    $13, $14, $15, $16, $17, $18,
-    $19, $20, $21, $22,
-    $23, $24
+    $13, $14, $15, $16, $17, $18, $19,
+    $20, $21, $22, $23,
+    $24, $25
 )
 RETURNING *;
 
@@ -96,14 +96,58 @@ RETURNING *;
 -- discard them would be a table's worth of buyer data pulled into memory in
 -- order to say "we kept them".
 --
--- The comparison is case-insensitive and both sides are lowered. This module,
--- unlike customer and auth, has NO check constraint forcing buyer_email to
--- lower case — an invoice copies what the document said — so a case-sensitive
--- match would report "0 retained" about a person whose invoice is in the table
--- under one capital letter. The lower() on the column is written exactly as
--- 000002 writes the invoices_buyer_email_idx expression, because an index on
--- lower(buyer_email) is only usable by a predicate spelled the same way.
+-- The predicate matches buyer_email_folded, which is written by Go, and it does
+-- NOT fold anything itself. It used to read "lower(buyer_email) = lower($1)",
+-- and the reason that changed is in migration 000003: lower() is the CLUSTER's
+-- fold, on a --locale=C database it folds ASCII only, and this count is what
+-- decides whether a data subject is told their documents are held or that they
+-- are not here. The caller passes an address already folded by
+-- models.NormalizeEmail — the same function the other five holders of an
+-- address fold with, compared against them by an audit in internal/arch.
+--
+-- An equality on a plain column, so invoices_buyer_email_folded_idx serves it as
+-- a seek rather than a scan of every invoice ever issued.
 --
 -- name: CountInvoicesByBuyerEmail :one
 SELECT count(*) FROM invoices
-WHERE lower(buyer_email) = lower(sqlc.arg('buyer_email')::text);
+WHERE buyer_email_folded = sqlc.arg('buyer_email_folded')::text;
+
+-- ListInvoiceBuyerEmailsForRefold pages the documents that carry a buyer
+-- address, for the one-time Go re-fold migration 000003 describes.
+--
+-- It reads ALL of them rather than only the ones that look non-ASCII, and that
+-- is deliberate. The obvious narrowing -- "where the address is not pure ASCII"
+-- -- would miss a second way the SQL backfill and the Go fold disagree:
+-- btrim() strips SPACES, while Go's strings.TrimSpace strips tabs, newlines and
+-- the rest of Unicode's whitespace too, so a plain ASCII address stored with a
+-- trailing tab folds differently on the two sides. Deciding in Go which rows are
+-- wrong needs the Go function, so every row with an address is handed to it.
+--
+-- Keyset by id, because this runs against a table that is only ever appended to
+-- and may be large; an OFFSET walk would re-read what it has already passed.
+--
+-- name: ListInvoiceBuyerEmailsForRefold :many
+SELECT id, buyer_email, buyer_email_folded
+FROM invoices
+WHERE buyer_email <> ''
+  AND id > sqlc.arg('after_id')::text
+ORDER BY id
+LIMIT sqlc.arg('row_limit')::bigint;
+
+-- SetInvoiceBuyerEmailFolded rewrites one document's erasure handle.
+--
+-- # This is not an edit to the document, and the columns it does not touch say so
+--
+-- An issued invoice is immutable (ADR 0024) and the queries above honor that:
+-- there is no UPDATE for its amounts, its parties or its lines. This statement
+-- writes buyer_email_folded and nothing else. It leaves buyer_email — what the
+-- document PRINTS — exactly as it was, and it deliberately does not touch
+-- updated_at: that column records when the document's state last moved, and a
+-- maintenance pass correcting an index handle did not move it. Bumping it would
+-- make every invoice in the table look freshly transmitted to whoever reads
+-- that column next.
+--
+-- name: SetInvoiceBuyerEmailFolded :execrows
+UPDATE invoices
+SET buyer_email_folded = sqlc.arg('buyer_email_folded')::text
+WHERE id = sqlc.arg('id')::text;

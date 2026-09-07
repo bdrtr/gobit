@@ -38,6 +38,7 @@ type Invoice struct {
 	Metadata          []byte
 	CreatedAt         pgtype.Timestamptz
 	UpdatedAt         pgtype.Timestamptz
+	BuyerEmailFolded  string
 }
 
 type InvoiceLine struct {
