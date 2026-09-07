@@ -1723,6 +1723,24 @@ or a workflow, that composes the three.
    this surface, when, did it succeed — and the WHAT is read from the record,
    which carries its own `updated_at`.
 
+   **And for two days it was a table nothing read.** `Store` had one method and
+   it was `Write`, while FOUR other places in this repository cite this very
+   table as "the write-only ledger we have already built once" — the outbox, the
+   webhook plugin's migration and module, and the relay job. The lesson was
+   applied everywhere except where it was learned. Closed properly on 2026-09-07
+   by ADR 0037: `Store.List`, `GET /admin/v1/audit-log` behind `audit:read`,
+   keyset paging, and a THIRD index — the two the migration shipped both lead
+   with another column, so the question an operator asks first ("what happened
+   most recently") had no index at all and was a sequential scan of the whole
+   log. Measured with EXPLAIN rather than asserted, because this repository has
+   already shipped a godoc claiming "the index is used" that turned out false.
+
+   The decision inside the decision: **reading the log is recorded.** The rule
+   that excludes reads exists because "somebody listed the orders answers no
+   question"; that reason does not survive contact with this one path, which is
+   the read an intruder makes. The exception is a list of EXACT paths with one
+   entry, because its cost is exactly its breadth.
+
    The original finding: Nothing records who changed what. The admin API
    authenticates and authorises every write (forty scopes), and then forgets it
    happened. The only durable trace of any change is the row's `updated_at`.

@@ -25,6 +25,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -259,5 +260,218 @@ func TestAStatusOutsideTheHTTPRangeIsRefusedAndSaysSo(t *testing.T) {
 			"the error has to name the request whose trail was lost; a bare constraint name identifies nothing")
 		assert.Zero(t, countRows(ctx, t, id),
 			"the write was refused, so no half-row may be left behind under that id")
+	}
+}
+
+// seedRows writes n audit rows for the given actor and path, oldest first.
+//
+// The ids are zero-padded so that lexicographic order matches insertion order:
+// created_at is the primary sort key and rows written in the same microsecond
+// fall back to the id, which is exactly the tie the keyset boundary has to
+// survive.
+func seedRows(ctx context.Context, t *testing.T, prefix, actorID, path string, n int) {
+	t.Helper()
+
+	store := audit.NewStore(pool())
+	for i := range n {
+		require.NoError(t, store.Write(ctx, fmt.Sprintf("%s_%04d", prefix, i), audit.Entry{
+			ActorID: actorID, ActorKind: "user",
+			Method: "POST", Path: path, Status: 200,
+			RequestID: fmt.Sprintf("req_%04d", i),
+		}))
+	}
+}
+
+// planOf returns the EXPLAIN output of a query as one string.
+func planOf(ctx context.Context, t *testing.T, sql string, args ...any) string {
+	t.Helper()
+
+	rows, err := pool().Query(ctx, "EXPLAIN (COSTS OFF) "+sql, args...)
+	require.NoError(t, err)
+
+	defer rows.Close()
+
+	var plan strings.Builder
+
+	for rows.Next() {
+		var line string
+		require.NoError(t, rows.Scan(&line))
+		plan.WriteString(line)
+		plan.WriteString("\n")
+	}
+
+	require.NoError(t, rows.Err())
+
+	return plan.String()
+}
+
+// TestEveryListingShapeReachesAnIndex is the claim this package has already got
+// wrong once, so it is measured rather than written down.
+//
+// [audit.Store.List] answers three questions and the schema carries three
+// indexes, one per question. Nothing in Go connects them: the SQL orders by
+// created_at while two of the indexes lead with another column, and whether the
+// planner can use them at all depends on the column ORDER inside each index and
+// on the row comparison in the keyset boundary. A wrong answer here is silent —
+// the endpoint returns the right rows either way — and it only shows up as a
+// sequential scan of an append-only log that grows forever.
+//
+// This repository has shipped a godoc claiming "the index is used" that turned
+// out to be false when it was finally measured. That is why the claim lives in
+// EXPLAIN output and not in a sentence.
+//
+// The rows seeded below are what makes the plan meaningful: on an empty table
+// PostgreSQL prefers a sequential scan no matter what indexes exist, so a test
+// that seeded nothing would prove the opposite of what it claims to.
+func TestEveryListingShapeReachesAnIndex(t *testing.T) {
+	ctx := context.Background()
+	seedRows(ctx, t, "aud_plan_a", "usr_planned", "/admin/v1/planned", 300)
+	seedRows(ctx, t, "aud_plan_b", "usr_other", "/admin/v1/other", 300)
+
+	require.NoError(t, analyzeAuditLog(ctx))
+
+	for name, tc := range map[string]struct {
+		actorID, path string
+		index         string
+		why           string
+	}{
+		"the recent-activity question": {
+			index: "audit_log_created_at_idx",
+			why: "an operator asks what happened most recently BEFORE they know whose " +
+				"or which; without this index that is a scan and a sort of the whole log",
+		},
+		"what did this person do": {
+			actorID: "usr_planned",
+			index:   "audit_log_actor_idx",
+			why:     "the actor index leads with actor_id and carries created_at second",
+		},
+		"what happened to this endpoint": {
+			path:  "/admin/v1/planned",
+			index: "audit_log_path_idx",
+			why:   "the path index leads with path and carries created_at second",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			plan := planOf(ctx, t, audit.ListSQLForTest(),
+				tc.actorID, tc.path, nil, "", 50)
+
+			assert.Contains(t, plan, tc.index,
+				"the %q shape did not reach %s.\n%s\nPlan:\n%s",
+				name, tc.index, tc.why, plan)
+			assert.NotContains(t, plan, "Seq Scan",
+				"the %q shape fell back to a sequential scan of the whole log.\nPlan:\n%s",
+				name, plan)
+		})
+	}
+}
+
+// TestTheKeysetBoundaryIsAnIndexConditionAndNotAFilter pins the SHAPE of the
+// paging comparison, which is the difference between a cheap deep page and an
+// expensive one.
+//
+// The boundary is written as a ROW comparison, (created_at, id) < (a, b), which
+// matches the index's own column order and becomes an Index Cond. Spelled the
+// equivalent way — "created_at < a OR (created_at = a AND id < b)" — it is the
+// same truth and a worse plan: the OR cannot be an index condition, so the index
+// returns every row from the top of the listing and a Filter throws away the
+// ones before the boundary. Both produce identical results, so no test that
+// checks the ROWS can tell them apart, and the cost only appears on deep pages
+// of a large log.
+func TestTheKeysetBoundaryIsAnIndexConditionAndNotAFilter(t *testing.T) {
+	ctx := context.Background()
+	seedRows(ctx, t, "aud_keyset", "usr_keyset", "/admin/v1/keyset", 300)
+
+	require.NoError(t, analyzeAuditLog(ctx))
+
+	plan := planOf(ctx, t, audit.ListSQLForTest(),
+		"", "", time.Now().UTC(), "aud_keyset_0200", 50)
+
+	assert.Contains(t, plan, "Index Cond",
+		"the paging boundary is not an index condition; a deep page now walks and "+
+			"discards every row above it.\nPlan:\n%s", plan)
+}
+
+// analyzeAuditLog makes the planner's statistics current.
+//
+// Without it the seeded rows are invisible to the planner — a freshly filled
+// table still looks empty in pg_class — and every plan above would be a
+// sequential scan for a reason that has nothing to do with the indexes.
+func analyzeAuditLog(ctx context.Context) error {
+	_, err := pool().Exec(ctx, "ANALYZE audit_log")
+
+	return err
+}
+
+// TestAListingComesBackNewestFirstAndPagesWithoutRepeatingARow is the reader's
+// behaviour, as an operator following an incident experiences it.
+//
+// Newest first is not a preference: an incident is read backwards from now. And
+// the paging claim is the one offset cannot make — rows keep arriving while the
+// reader walks, and with offset every arrival shifts the next page by one, so a
+// row is silently skipped or seen twice. The write in the middle of this test is
+// what makes that difference visible: with keyset paging the walk is unaffected.
+func TestAListingComesBackNewestFirstAndPagesWithoutRepeatingARow(t *testing.T) {
+	ctx := context.Background()
+	store := audit.NewStore(pool())
+	seedRows(ctx, t, "aud_walk", "usr_walk", "/admin/v1/walk", 10)
+
+	first, err := store.List(ctx, audit.Filter{ActorID: "usr_walk", Limit: 4})
+	require.NoError(t, err)
+	require.Len(t, first, 4)
+
+	for i := 1; i < len(first); i++ {
+		assert.False(t, first[i].CreatedAt.After(first[i-1].CreatedAt),
+			"the listing has to be newest first; an incident is read backwards from now")
+	}
+
+	// A row arrives while the reader is walking. Under offset paging this is
+	// exactly what makes the next page skip a row.
+	seedRows(ctx, t, "aud_walk_late", "usr_walk", "/admin/v1/walk", 1)
+
+	last := first[len(first)-1]
+
+	second, err := store.List(ctx, audit.Filter{
+		ActorID: "usr_walk", Limit: 4,
+		AfterAt: last.CreatedAt, AfterID: last.ID,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, second)
+
+	seen := map[string]bool{}
+	for _, r := range first {
+		seen[r.ID] = true
+	}
+
+	for _, r := range second {
+		assert.False(t, seen[r.ID],
+			"%s appeared on two pages; the keyset boundary is not exclusive", r.ID)
+	}
+}
+
+// TestAFilterAnswersOnlyItsOwnQuestion proves the two filters really narrow.
+//
+// A filter that silently did nothing would look identical on a table holding one
+// actor's rows, which is what a small fixture usually holds. Both actors and
+// both paths are seeded so that a no-op filter fails.
+func TestAFilterAnswersOnlyItsOwnQuestion(t *testing.T) {
+	ctx := context.Background()
+	store := audit.NewStore(pool())
+	seedRows(ctx, t, "aud_mine", "usr_mine", "/admin/v1/mine", 3)
+	seedRows(ctx, t, "aud_yours", "usr_yours", "/admin/v1/yours", 3)
+
+	byActor, err := store.List(ctx, audit.Filter{ActorID: "usr_mine", Limit: 50})
+	require.NoError(t, err)
+	require.NotEmpty(t, byActor)
+
+	for _, r := range byActor {
+		assert.Equal(t, "usr_mine", r.ActorID, "another caller's row entered the listing")
+	}
+
+	byPath, err := store.List(ctx, audit.Filter{Path: "/admin/v1/yours", Limit: 50})
+	require.NoError(t, err)
+	require.NotEmpty(t, byPath)
+
+	for _, r := range byPath {
+		assert.Equal(t, "/admin/v1/yours", r.Path, "another endpoint's row entered the listing")
 	}
 }

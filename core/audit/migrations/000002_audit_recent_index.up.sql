@@ -1,0 +1,28 @@
+-- The index the "latest activity" question needs, which the first migration did
+-- not have.
+--
+-- # Why it was missing, and how that stayed invisible
+--
+-- 000001 created two indexes for the two questions its own comment names: "what
+-- did this person do" (actor_id) and "what happened to this endpoint" (path).
+-- Both are correct and both are LEADING-COLUMN indexes: neither can satisfy an
+-- ordering by created_at on its own, because created_at is their second column.
+--
+-- Nothing noticed, because nothing ever read the table. The reader arrived with
+-- ADR 0037 and brought a third question with it — "what happened most recently",
+-- the one an operator asks before they know whose or which — and that question
+-- had no index at all. Without this one it is a sequential scan of the whole log
+-- plus a sort, on every call, growing with the table.
+--
+-- # Why a third index is affordable HERE and would not be everywhere
+--
+-- audit_log is append-only and created_at is monotonic, so this index is the
+-- cheapest kind to maintain: every insert lands in the rightmost leaf and no
+-- page is ever split in the middle. The cost is one more B-tree write per
+-- audited request, which is already a request that wrote to the database.
+--
+-- The id is the second column for the same reason it is in the other two:
+-- created_at is not unique, and a keyset page boundary over a non-unique key
+-- either repeats a row or drops one.
+CREATE INDEX IF NOT EXISTS audit_log_created_at_idx
+    ON audit_log (created_at DESC, id DESC);

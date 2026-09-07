@@ -23,8 +23,49 @@ type AuditWriter interface {
 //
 // Reads are left out: knowing that somebody listed the orders answers no
 // question, and recording every read would bury the writes in volume.
+//
+// That reasoning has exactly one exception and it is not a method, it is a PATH
+// — see [AuditOptions.ReadPaths].
 var auditedMethods = []string{
 	http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete,
+}
+
+// AuditOptions tunes what [Audit] records beyond the writes.
+type AuditOptions struct {
+	// ReadPaths are the exact paths whose READS are recorded as well.
+	//
+	// # Why an exception exists at all
+	//
+	// The rule above excludes reads because "somebody listed the orders" answers
+	// no question. That reason does not survive contact with one path: the audit
+	// log's own. Who READ the record of who did what is precisely the question an
+	// incident asks, and it is the one read an intruder makes — they cannot alter
+	// the log, but they can learn from it what is known about them.
+	//
+	// # Why paths and not a predicate
+	//
+	// A predicate would let a caller audit reads by shape ("everything under
+	// /admin/v1/customers") and the rule's cost is exactly its breadth: every
+	// audited read is a row, and a log that records reads in volume buries the
+	// writes it exists for. An exact-path list cannot grow by accident and can be
+	// read at the composition root in one glance.
+	//
+	// The comparison is exact and ignores the query string, so a listing's
+	// filters do not multiply into distinct entries; what is recorded is that the
+	// path was read, by whom, and with what outcome.
+	ReadPaths []string
+}
+
+// AuditOption configures [Audit].
+type AuditOption func(*AuditOptions)
+
+// AuditReadsOf records the READS of the given exact paths as well as the writes.
+//
+// It is a functional option rather than a fourth parameter because [Audit] is a
+// published symbol and an installation that audits no reads — which is every
+// installation that does not expose the audit log — should not have to say so.
+func AuditReadsOf(paths ...string) AuditOption {
+	return func(o *AuditOptions) { o.ReadPaths = append(o.ReadPaths, paths...) }
 }
 
 // Audit records who called which write and what came back.
@@ -50,14 +91,22 @@ var auditedMethods = []string{
 // change with no trail. Closing that window would mean the audit row joining
 // every module's transaction — the coupling ADR 0023 accepted for events,
 // which this record does not earn.
-func Audit(writer AuditWriter, newID func() string, log *slog.Logger) func(http.Handler) http.Handler {
+func Audit(
+	writer AuditWriter, newID func() string, log *slog.Logger, opts ...AuditOption,
+) func(http.Handler) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
 
+	var settings AuditOptions
+	for _, opt := range opts {
+		opt(&settings)
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !slices.Contains(auditedMethods, r.Method) {
+			if !slices.Contains(auditedMethods, r.Method) &&
+				!slices.Contains(settings.ReadPaths, r.URL.Path) {
 				next.ServeHTTP(w, r)
 
 				return

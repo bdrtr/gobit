@@ -143,6 +143,27 @@ The vocabulary derives from a single rule:
 `order:write`, `promotion:write` … `admin` is the **super-scope** and covers them
 all.
 
+Four scopes name a resource that is not a module, because the surface they guard
+belongs to no module: `personal-data:read`, `personal-data:disclose`,
+`personal-data:erase` ([ADR 0029](adr/0029-the-embedder-is-the-data-controller.md))
+and `audit:read` ([ADR 0037](adr/0037-the-audit-log-gains-a-reader.md)). They are
+separate because each is a distinct power: an operator trusted to refund an order
+is not thereby trusted to read the trail of every colleague's actions, and
+reading the map of what is held about people is not permission to read a person.
+There is deliberately no `audit:write` — rows are written by the framework and by
+nothing else, and a scope naming a power nobody has is one somebody will try.
+
+**The audit log** records one row per admin write — who called it, what they
+called, what came back — and is read at `GET /admin/v1/audit-log`, newest first,
+with keyset paging. It records the REQUEST rather than the change; what changed
+is read from the record, which carries its own `updated_at`. Storefront requests
+are not recorded (that surface is unauthenticated by decision) and neither are
+reads — with ONE exception, this endpoint itself. Who read the record of who did
+what is the question an incident starts with, and it is the one read somebody
+with a stolen admin token makes. There is no endpoint that deletes a row and no
+retention window; pruning is an operator's scheduled statement, because a log
+the API can prune is a log an intruder can prune.
+
 The one exception is the auth module's write endpoints: there, instead of
 `auth:write`, `admin` itself is required. What is written at those endpoints is
 authority itself (a user's authority, a key's authority, the channel a key will

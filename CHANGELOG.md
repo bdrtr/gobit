@@ -12,6 +12,53 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **Denetim gunlugu (`audit_log`) nihayet OKUNABILIYOR** (ADR 0037) — ve
+  okunmasi da kaydediliyor.
+
+  Tablo iki gundur vardi, her yonetici yazmasinda satir uretiyordu ve `Store`'un
+  TEK metodu `Write`'ti. Bu bir unutma degil: depo bu tabloyu **dort ayri
+  yerde** kendi hatasi olarak anıyor — outbox, webhook eklentisinin migration'i
+  ve modulu, ve relay isi. Dordunde de ders uygulanmis (olu mektup listesi,
+  operator yuzeyi, cikislar, alarm), yalnizca dersin ogrenildigi yerde
+  uygulanmamis.
+
+  Tablo OKUNMAK UZERE kurulmustu: migration'i iki indeks tasiyor ve kendi
+  yorumu iki soruyu adiyla yaziyor — "bu kisi ne yapti" ve "bu uca ne oldu",
+  ikisi de en yeniden eskiye, ikisi de id'yi esitlik bozucu olarak tasiyor,
+  yani KEYSET sayfa sekli. Tasarim bir okuyucuyu ongormus, okuyucu hic
+  yazilmamis; o iki indeks bugune kadar saf yazma maliyetiydi.
+
+  **Ucuncu bir indeks eklendi ve gerekliligi olculdu.** Var olan ikisi de baska
+  bir kolonla basliyor, dolayisiyla hicbiri `created_at` siralamasini tek
+  basina karsilayamaz. Okuyucu ucuncu soruyu getirdi — "en son ne oldu", yani
+  operatorun kimin ya da hangisi oldugunu bilmeden ONCE sordugu soru — ve o
+  sorunun hic indeksi yoktu. EXPLAIN ile kanitlandi: indeks olmadan Seq Scan,
+  varken Index Scan. Iddiayi cumleye degil teste yazdim, cunku bu depo daha once
+  "indeks kullanilir" diyen ve olculdugunde yanlis cikan bir godoc gonderdi.
+
+  **Sayfalama KEYSET, offset degil.** Ekleme-yalniz ve en yeniden okunan bir
+  gunluk, offset'in en kotu oldugu sekildir: okuyucu yururken gelen her satir
+  sonraki sayfayi bir kaydirir, yani olayi takip eden kisi bir satiri sessizce
+  atlar ya da iki kez gorur. Sinir `(created_at, id) < (a, b)` satir
+  karsilastirmasi olarak yazildi — ayni dogruyu `OR`'la yazmak Index Cond
+  olmaktan cikip Filter'a duser ve bu da mutasyonla kanitlandi.
+
+  **Ve asil karar: bu ucun OKUNMASI denetleniyor.** Orta katman yalnizca
+  degistiren dort metodu kaydeder ve gerekcesi "birinin siparisleri
+  listeledigini bilmek hicbir soruya cevap vermez"tir. O gerekce tam olarak bu
+  yolda gecersiz: kimin ne yaptiginin KAYDINI kimin okudugu, bir olayin
+  basladigi sorudur — ve saldirganin yaptigi tek okumadir (gunlugu
+  degistiremez, ama kendisi hakkinda nelerin bilindigini ogrenebilir). Istisna
+  bir kural degil TAM YOL listesidir ve tek girdi tasir, cunku bu kararin
+  bedeli tam olarak genisligidir; sorgu dizesi de yok sayilir, yoksa bir
+  listelemenin suzgecleri tek ucu sinirsiz sayida girdiye cevirirdi.
+
+  Uc sorgu seklinin ucu de, sinir karsilastirmasi, ve istisnanin dar kalmasi
+  ayri ayri mutasyonla kanitlandi. Ayrica e2e defterinin GOREMEDIGI bir bosluk
+  kapatildi: kok-bagli rotalar (denetim gunlugu, kisisel veri) e2e
+  yonlendiricisinde yok, yani anlatilmadan kalabilirlerdi; internal/app'te iki
+  yonlu bir denetim eklendi.
+
 - **search eklentisi Ingilizceye cevrildi ve iki ucu anlatildi** — sema defteri
   SIFIRA indi, dil defteri 214'ten 202'ye.
 

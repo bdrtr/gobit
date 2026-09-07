@@ -112,6 +112,14 @@ type GuardOptions struct {
 	// AuditLogger receives the failures of the audit writer; nil uses the
 	// default logger.
 	AuditLogger *slog.Logger
+	// AuditedReads are the exact admin paths whose READS are recorded too.
+	//
+	// Empty is the ordinary case and the right default: the audit log excludes
+	// reads on purpose. The exception this exists for is the audit log's own
+	// endpoint — who read the record of who did what is the question an incident
+	// asks (ADR 0037). See [AuditOptions.ReadPaths] for why the exception is a
+	// list of exact paths rather than a rule.
+	AuditedReads []string
 
 	// CORSOrigins are the sites allowed to call the STORE surface from a
 	// browser; empty means no CORS at all.
@@ -235,7 +243,8 @@ func APIGuards(opts GuardOptions) []func(http.Handler) http.Handler {
 	// change something one is not allowed to change is exactly the line an
 	// incident is looking for.
 	if opts.Audit != nil && opts.AuditID != nil {
-		stack = append(stack, Scoped(admin, nil, Audit(opts.Audit, opts.AuditID, opts.AuditLogger)))
+		stack = append(stack, Scoped(admin, nil,
+			Audit(opts.Audit, opts.AuditID, opts.AuditLogger, AuditReadsOf(opts.AuditedReads...))))
 	}
 
 	if opts.Limiter != nil {

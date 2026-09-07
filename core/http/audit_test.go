@@ -188,3 +188,101 @@ func TestARefusedWriteNamesNobodyAndIsStillRecorded(t *testing.T) {
 	assert.Empty(t, writer.entries[0].ActorID)
 	assert.Equal(t, http.StatusUnauthorized, writer.entries[0].Status)
 }
+
+// auditServerReading wraps a handler that records the reads of the given paths.
+func auditServerReading(writer corehttp.AuditWriter, status int, paths ...string) http.Handler {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(status)
+	})
+
+	audited := corehttp.Audit(writer, func() string { return "audit_1" }, nil,
+		corehttp.AuditReadsOf(paths...))(inner)
+
+	return corehttp.RequestLogger(discardLogger())(audited)
+}
+
+// readRequest builds a GET carrying an admin identity, for the given path.
+func readRequest(path string) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+
+	return r.WithContext(corehttp.WithPrincipal(r.Context(), corehttp.Principal{
+		ID: "user_1", Kind: "user",
+	}))
+}
+
+// TestTheOneReadThatIsAudited is the exception to the rule above, and both
+// halves of it.
+//
+// The rule excludes reads because "somebody listed the orders" answers no
+// question. That reason does not survive contact with one path: the audit log's
+// own. Who READ the record of who did what is the question an incident asks, and
+// it is the one read an intruder makes — they cannot alter the log, but they can
+// learn from it what is known about them.
+//
+// The second half matters as much as the first. An exception that leaked would
+// bury the writes it exists to protect: the audited path is compared EXACTLY, so
+// a neighboring path, a prefix of it and a longer path that starts with it are
+// all still unrecorded.
+func TestTheOneReadThatIsAudited(t *testing.T) {
+	const audited = "/admin/v1/audit-log"
+
+	writer := &fakeAudit{}
+	h := auditServerReading(writer, http.StatusOK, audited)
+
+	h.ServeHTTP(httptest.NewRecorder(), readRequest(audited))
+
+	require.Len(t, writer.entries, 1,
+		"reading the record of who did what is the question an incident starts with")
+	assert.Equal(t, http.MethodGet, writer.entries[0].Method)
+	assert.Equal(t, audited, writer.entries[0].Path)
+	assert.Equal(t, "user_1", writer.entries[0].ActorID)
+
+	for _, other := range []string{
+		"/admin/v1/orders",
+		"/admin/v1/audit",
+		"/admin/v1/audit-logs",
+		"/admin/v1/audit-log/extra",
+	} {
+		writer.entries = nil
+		h.ServeHTTP(httptest.NewRecorder(), readRequest(other))
+
+		assert.Empty(t, writer.entries,
+			"%s was recorded; the exception is one exact path, and an exception that "+
+				"spreads buries the writes the log exists for", other)
+	}
+}
+
+// TestTheAuditedReadCarriesItsQueryStringNowhere pins that the recorded path is
+// the PATH.
+//
+// A listing's filters are query parameters, and recording them would turn one
+// audited endpoint into an unbounded set of distinct entries — every filter
+// combination its own row, and an operator paging through an incident writing a
+// row per page. What the record has to answer is that the log was read, by whom,
+// and with what outcome.
+func TestTheAuditedReadCarriesItsQueryStringNowhere(t *testing.T) {
+	const audited = "/admin/v1/audit-log"
+
+	writer := &fakeAudit{}
+	h := auditServerReading(writer, http.StatusOK, audited)
+
+	h.ServeHTTP(httptest.NewRecorder(), readRequest(audited+"?actor_id=usr_1&limit=10"))
+
+	require.Len(t, writer.entries, 1, "the query string must not stop the path from matching")
+	assert.Equal(t, audited, writer.entries[0].Path,
+		"the row records the path; filters would multiply one endpoint into many entries")
+}
+
+// TestWithNoAuditedReadsNothingChanges keeps the exception opt-in.
+//
+// Every installation that does not expose the audit log passes no paths at all,
+// and for those the rule is exactly what it was: writes only.
+func TestWithNoAuditedReadsNothingChanges(t *testing.T) {
+	writer := &fakeAudit{}
+	h := auditServerReading(writer, http.StatusOK)
+
+	h.ServeHTTP(httptest.NewRecorder(), readRequest("/admin/v1/audit-log"))
+
+	assert.Empty(t, writer.entries,
+		"with no audited reads declared the middleware records writes only")
+}

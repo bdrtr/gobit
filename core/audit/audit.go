@@ -18,6 +18,7 @@ import (
 	"context"
 	"embed"
 	"io/fs"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -32,6 +33,21 @@ var migrationFiles embed.FS
 
 // CodeWriteFailed reports that the audit row could not be written.
 const CodeWriteFailed = "audit_write_failed"
+
+// CodeReadFailed reports that the audit log could not be read.
+const CodeReadFailed = "audit_read_failed"
+
+// MaxLimit is the most rows one List call returns.
+//
+// It is a CAP rather than a default: a caller asking for more is refused rather
+// than quietly served fewer, because a listing silently truncated is one a
+// reader believes is complete. The number is the same as the modules' bulk-read
+// limit and is repeated by hand for the same reason theirs are — this package
+// cannot import a module.
+const MaxLimit = 100
+
+// DefaultLimit is how many rows come back when a caller names no limit.
+const DefaultLimit = 50
 
 // Migrations returns this schema's migration files with the directory prefix
 // stripped, the way db.Migrate expects them.
@@ -60,6 +76,89 @@ type Entry struct {
 	// RequestID ties the row to the log lines of the same request.
 	RequestID string
 }
+
+// Record is one audit row as a reader sees it.
+//
+// It embeds [Entry] rather than repeating its fields: what is stored and what is
+// read back are the same facts, and two flat structs would be two places for a
+// field to be added to.
+type Record struct {
+	// ID is the row's identifier, and it is also half of the paging position.
+	ID string
+	// Entry is what was recorded.
+	Entry
+	// CreatedAt is when the row was written, from the DATABASE clock.
+	CreatedAt time.Time
+}
+
+// Filter narrows and positions a listing.
+//
+// # The two filters are the two INDEXES, and that is not a coincidence
+//
+// The schema carries exactly two indexes and its own comment names why: "what
+// did this person do" and "what happened to this endpoint". Those are the two
+// fields here. A filter with no index behind it would look identical to a caller
+// and scan the whole table, which on an append-only log is the failure that
+// arrives quietly and late.
+//
+// # The position is a TIME and an ID, not an opaque string
+//
+// Encoding a cursor is an HTTP concern and the code for it lives in an internal
+// package a published one may not import. More importantly the split is right:
+// this store's business is a keyset position, and what a caller wraps it in is
+// theirs. The composition root's endpoint encodes both halves into one opaque
+// value; an embedder is free not to.
+type Filter struct {
+	// ActorID limits the listing to one caller. Empty means every caller.
+	ActorID string
+	// Path limits the listing to one endpoint. Empty means every endpoint.
+	//
+	// It matches EXACTLY. A prefix match would need a different index and would
+	// invite "/admin/v1/" as an argument, which is the whole table with extra
+	// steps.
+	Path string
+	// AfterAt and AfterID are the position the page starts BELOW, in the
+	// listing's own order (newest first). Both zero means the first page.
+	//
+	// They are used together and never apart: created_at alone is not unique —
+	// two rows written in the same microsecond would make a page boundary drop
+	// or repeat a row — which is why the indexes carry the id as their last
+	// column.
+	AfterAt time.Time
+	AfterID string
+	// Limit is how many rows to return; zero means [DefaultLimit].
+	Limit int
+}
+
+// listSQL reads a page of audit rows, newest first.
+//
+// # Why one statement with two optional filters
+//
+// The two filters are independent and either may be absent, so the alternative
+// is four hand-written statements. The empty-string guards below let one
+// statement serve all four shapes, and the plan still reaches the right index
+// because a comparison against a constant empty string is folded away.
+//
+// That the index is really used is not a claim here: it is measured in
+// audit_integration_test.go with EXPLAIN, on all three shapes. This repository
+// has already shipped a godoc asserting "the index is used" that turned out to
+// be false, which is why the claim lives in a test rather than in a sentence.
+//
+// # The keyset comparison is a ROW comparison
+//
+// (created_at, id) < (a, b) is one comparison against the index's own column
+// order, and PostgreSQL turns it into an index condition. Writing it as
+// "created_at < a OR (created_at = a AND id < b)" is the same truth and a worse
+// plan: the OR is not an index condition and becomes a filter over the rows the
+// index returns.
+const listSQL = `
+SELECT id, actor_id, actor_kind, method, path, status, request_id, created_at
+FROM audit_log
+WHERE ($1::text = '' OR actor_id = $1::text)
+  AND ($2::text = '' OR path = $2::text)
+  AND ($3::timestamptz IS NULL OR (created_at, id) < ($3::timestamptz, $4::text))
+ORDER BY created_at DESC, id DESC
+LIMIT $5`
 
 // insertSQL writes one row.
 const insertSQL = `
@@ -105,3 +204,93 @@ func (s *Store) Write(ctx context.Context, id string, e Entry) error {
 
 	return nil
 }
+
+// List reads a page of audit rows, newest first.
+//
+// # Why the audit log needed a reader at all
+//
+// It did not have one. The table was built with two indexes for two named
+// operator questions and nothing in the repository ever read a row — while four
+// other places (the outbox, the webhook dead letters, the job runner and the
+// relay) cite this very table as "the write-only ledger this repository has
+// already built once". The lesson was learned everywhere except where it was
+// learned. See ADR 0037.
+//
+// # Paging is KEYSET, not offset
+//
+// An audit log is append-only and read newest-first, which is the shape offset
+// is worst at: the deeper the page, the more rows the database walks and
+// discards, and a row written during the walk shifts every later page by one —
+// so a reader following an incident can miss a row or see it twice. The keyset
+// position is exact and its cost does not grow with depth.
+//
+// A page shorter than the limit is the last page. The caller reads the position
+// of the next page off the LAST record it received; there is no separate
+// "has more" flag, because computing one means asking for a row you then throw
+// away.
+func (s *Store) List(ctx context.Context, f Filter) ([]Record, error) {
+	limit := f.Limit
+	switch {
+	case limit == 0:
+		limit = DefaultLimit
+	case limit < 0:
+		return nil, errors.Invalid(CodeReadFailed, "a page size cannot be negative, %d given", limit)
+	case limit > MaxLimit:
+		return nil, errors.Invalid(CodeReadFailed,
+			"a page can hold at most %d rows, %d requested", MaxLimit, limit)
+	}
+
+	// The two halves of the position travel together or not at all. A time with
+	// no id would make the boundary ambiguous between rows sharing a timestamp,
+	// and an id with no time has nothing to compare against.
+	if f.AfterAt.IsZero() != (f.AfterID == "") {
+		return nil, errors.Invalid(CodeReadFailed,
+			"a paging position needs both a moment and an id, or neither")
+	}
+
+	var after any
+	if !f.AfterAt.IsZero() {
+		after = f.AfterAt
+	}
+
+	rows, err := s.pool.Query(ctx, listSQL, f.ActorID, f.Path, after, f.AfterID, limit)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, CodeReadFailed,
+			"the audit log could not be read")
+	}
+	defer rows.Close()
+
+	out := make([]Record, 0, limit)
+
+	for rows.Next() {
+		var r Record
+		if err := rows.Scan(&r.ID, &r.ActorID, &r.ActorKind,
+			&r.Method, &r.Path, &r.Status, &r.RequestID, &r.CreatedAt); err != nil {
+			return nil, errors.Wrap(err, errors.KindInternal, CodeReadFailed,
+				"an audit row could not be read")
+		}
+
+		out = append(out, r)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, CodeReadFailed,
+			"the audit log page could not be completed")
+	}
+
+	return out, nil
+}
+
+// ListSQLForTest exposes the listing statement to this package's integration
+// test.
+//
+// It is exported for one reason and the reason is worth the ugliness: the claim
+// that each listing shape reaches its index can only be checked by handing the
+// REAL statement to EXPLAIN. A test that retyped the SQL would measure the
+// planner's opinion of a copy, and the copy would go on passing after the
+// original changed — which is precisely the class of defect this package has
+// already shipped once, in a godoc that said "the index is used".
+//
+// It returns the statement and nothing else; there is nothing here a caller can
+// use to reach the database.
+func ListSQLForTest() string { return listSQL }

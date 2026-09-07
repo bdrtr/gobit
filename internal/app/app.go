@@ -355,6 +355,12 @@ func serve(opts Options) error {
 		return err
 	}
 
+	// The audit log's reader. It is bound here for the same reason: the store is
+	// core rather than a module, and no module owns the record of what every
+	// module's endpoints were asked to do. The table existed for a long time
+	// with two indexes and nothing that read a row (ADR 0037).
+	registerAuditLog(router, auditStore(c, log))
+
 	// The OpenAPI schema is GENERATED from the router tree, not written by
 	// hand: a hand-written schema starts lying silently at the first route
 	// change. The endpoint publishes only the route PATTERNS, not data.
@@ -369,6 +375,8 @@ func serve(opts Options) error {
 	// most concentrated personal data in the system is the last one that should
 	// be undocumented.
 	describePersonalData(doc)
+	// The audit log's endpoint belongs to no module either.
+	describeAuditLog(doc)
 	router.Get(openAPIPath, doc.Handler(router))
 	checkSchema(ctx, doc, router, log)
 

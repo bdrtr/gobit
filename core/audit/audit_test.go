@@ -1,7 +1,9 @@
 package audit_test
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,4 +67,63 @@ func TestAnEntryWithNoMethodOrPathIsRefusedBeforeTheDatabaseIsTouched(t *testing
 		_ = store.Write(t.Context(), "aud_1", audit.Entry{Method: "POST", Path: "/admin/v1/products", Status: 200})
 	}, "the control for the three cases above: a complete entry DOES reach the nil pool and blows up, "+
 		"so the entries that came back with an error were stopped before the INSERT")
+}
+
+// TestAPageSizeOutsideTheBoundIsRefusedBeforeTheDatabaseIsTouched pins the two
+// refusals [audit.Store.List] makes without a connection.
+//
+// # Why a cap is refused rather than clamped
+//
+// A caller asking for a thousand rows and quietly receiving a hundred believes
+// it holds the whole answer. During an incident that belief is the failure: the
+// row somebody is looking for is in the part that was silently dropped, and
+// nothing in the response says a part was dropped. Refusing costs the caller one
+// corrected request and tells them the truth.
+//
+// # Why half a position is refused
+//
+// The keyset position is a moment AND an id, and the id is not decoration: two
+// rows can share a created_at, so a boundary that names only the moment either
+// repeats the rows at the edge or drops them. A caller that supplies one half
+// has a bug, and answering them with a page computed from half a boundary would
+// hide it behind results that look plausible.
+//
+// Both checks run before the pool is touched, which is why this test needs no
+// database: a nil store proves the refusal happened first.
+func TestAPageSizeOutsideTheBoundIsRefusedBeforeTheDatabaseIsTouched(t *testing.T) {
+	t.Parallel()
+
+	store := audit.NewStore(nil)
+
+	for name, f := range map[string]audit.Filter{
+		"a negative page":      {Limit: -1},
+		"a page above the cap": {Limit: audit.MaxLimit + 1},
+		"a moment with no id":  {AfterAt: time.Unix(1, 0)},
+		"an id with no moment": {AfterID: "aud_1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := store.List(context.Background(), f)
+
+			require.Error(t, err, "the pool is nil; reaching it would panic rather than fail")
+			assert.True(t, errors.IsInvalid(err),
+				"a caller's mistake has to come back as a caller's mistake: %v", err)
+		})
+	}
+}
+
+// TestTheDefaultPageSizeIsBelowTheCap keeps the two numbers from crossing.
+//
+// They are two constants in one file and nothing binds them. A default above the
+// cap would make every call that names no limit fail validation — that is, the
+// ordinary call, on an endpoint whose whole purpose is to be opened during an
+// incident by somebody who did not read the parameters.
+func TestTheDefaultPageSizeIsBelowTheCap(t *testing.T) {
+	t.Parallel()
+
+	assert.Positive(t, audit.DefaultLimit, "a default of zero would mean an empty page")
+	assert.LessOrEqual(t, audit.DefaultLimit, audit.MaxLimit,
+		"the default page size has to fit inside the cap, or every call that names "+
+			"no limit is refused")
 }

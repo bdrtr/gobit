@@ -128,6 +128,11 @@ func guardStack(
 		CORSOrigins: cfg.CORSAllowedOrigins,
 		AuditID:     newAuditID,
 		AuditLogger: log,
+		// The audit log's OWN listing is the one read this framework records.
+		// The rule that excludes reads exists because "somebody listed the
+		// orders" answers no question; who read the record of who did what is
+		// the question an incident starts with (ADR 0037).
+		AuditedReads: []string{auditLogPath},
 		// The login endpoint is EXEMPT from the guard: the request whose
 		// identity is to be checked is the one about to establish it. The path
 		// is not spelled out here, it is read from the auth module's constant.
