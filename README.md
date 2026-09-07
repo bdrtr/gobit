@@ -72,6 +72,7 @@ Elle ayarlanması gereken avuç dolusu şunlardır:
 | `DATABASE_URL` | `APP_ENV=production` iken **zorunlu** — ezilmemişse uygulama açılışta durur |
 | `REDIS_URL` | aynı kural |
 | `JWT_SECRET` | verilmezse kimlik katmanı **her isteği reddeder** (ADR 0007) |
+| `JWT_TTL` | yönetici oturumunun ömrü; varsayılan 12 saat, **yenilenmez** (ADR 0031). Paylaşılan ortamda üst sınır 24 saattir |
 | `APP_ENV` | `development` dışındaki her değer paylaşılan ortam sayılır ve uyarıları açar |
 | `EVENT_BUS` · `GUARD_BACKEND` | birden çok örnek çalıştırıyorsanız ikisi de `redis` olmalıdır |
 | `PLUGINS` | kurulacak eklentilerin adları, örneğin `PLUGINS=search-pg` |

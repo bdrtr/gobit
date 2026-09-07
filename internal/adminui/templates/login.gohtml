@@ -9,11 +9,17 @@ form field names are the panel's business, not the API contract's.
 The error message is printed conditionally and is an ordinary field, so escaping
 applies to it as well. Field-level validation errors do not exist in the
 framework, so a single box is shown.
+
+The hidden "next" field is the page the operator was interrupted on. It is
+attacker-influenceable by construction, so it is checked AGAIN on the way out
+(safeReturnTarget) rather than trusted because this template wrote it; what the
+template contributes is the escaping every field here gets.
 */ -}}
 {{ define "body" }}
 <h1>Sign in</h1>
 {{ if .Error }}<p role="alert">{{ .Error }}</p>{{ end }}
 <form method="post" action="{{ .LoginPath }}">
+  {{ if .Next }}<input type="hidden" name="next" value="{{ .Next }}">{{ end }}
   <label>Email
     <input type="email" name="email" value="{{ .Email }}" required autocomplete="username">
   </label>

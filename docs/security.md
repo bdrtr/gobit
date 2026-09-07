@@ -237,6 +237,22 @@ If `JWT_SECRET` is not given, a **startup-specific random** secret is generated 
 development (sessions drop on restart) and a warning is logged; in shared
 environments config validation makes the secret mandatory.
 
+**A session ends at a wall-clock deadline and never renews** ([ADR
+0031](adr/0031-the-admin-session-is-twelve-hours.md)). `JWT_TTL` is twelve
+hours by default: longer than a working shift, so an operator who starts a task
+finishes it, and shorter than a day, so a token taken from a machine in the
+evening is dead by the next morning. There is no refresh flow, which means the
+lifetime is the WHOLE of the exposure — the two revocations above are the only
+thing that shortens it, and nobody performs them for a token they do not know
+was taken. That is why `APP_ENV` other than `development` caps `JWT_TTL` at
+**twenty-four hours** and refuses to start above it: a week-long admin session
+is not a preference the framework can tell apart from a mistake.
+
+What an operator sees at the deadline is a login page saying the session
+expired, with the page they were on carried through the sign-in and restored
+afterwards. Both halves are panel-only: a JSON client gets a 401 and is expected
+to sign in again itself.
+
 ## Hardening
 
 ### The defaults that ship

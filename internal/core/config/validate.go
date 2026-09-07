@@ -159,6 +159,14 @@ func (c Config) Validate() error {
 		if len(c.JWTSecret) < minJWTSecretLen {
 			return fmt.Errorf("config: JWT_SECRET has to be at least %d characters while APP_ENV=%s", minJWTSecretLen, c.AppEnv)
 		}
+		// The session never renews (ADR 0031), so the lifetime IS the exposure.
+		// The ordinary "> 0" check above accepts a month; this is the half of
+		// the range that is a mistake rather than a preference.
+		if c.JWTTTL > MaxSharedJWTTTL {
+			return fmt.Errorf(
+				"config: JWT_TTL cannot be longer than %s while APP_ENV=%s (%s given; the admin session never renews, so its lifetime is the whole exposure)",
+				MaxSharedJWTTTL, c.AppEnv, c.JWTTTL)
+		}
 	}
 	return nil
 }

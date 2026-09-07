@@ -7,6 +7,15 @@ import (
 	corehttp "github.com/bdrtr/gobit/core/http"
 )
 
+// sessionExpiredMessage is what an operator sees when a session ran out.
+//
+// It is a constant because it is printed from two branches of [UI.Protect] that
+// mean the same thing to the person reading it — the cookie was dropped by the
+// browser at the deadline, or the cookie survived and the token inside it did
+// not — and two spellings of one sentence is how a message quietly becomes two
+// different messages.
+const sessionExpiredMessage = "Your session has expired. Please sign in again."
+
 // loginPage writes the login form with the given status code.
 //
 // The status is chosen BY THE CALLER: the form on its own is a 200, the same
@@ -19,6 +28,11 @@ func (u *UI) loginPage(w http.ResponseWriter, r *http.Request, status int, messa
 		"LoginPath": LoginPath,
 		errorKey:    message,
 		"Email":     r.PostFormValue("email"),
+		// The page being asked for survives the sign-in as a hidden field. On
+		// the guard's path it is the page the operator was interrupted on; on a
+		// failed submission it is whatever the previous attempt carried, so a
+		// mistyped password does not silently drop the destination.
+		"Next": nextOf(r),
 	})
 }
 
@@ -72,7 +86,8 @@ func (u *UI) submitLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeCookie(w, token, expiresAt, u.secureCookie)
-	corehttp.WriteRedirect(r.Context(), w, URLPrefix)
+	writeMarker(w, expiresAt, u.secureCookie)
+	corehttp.WriteRedirect(r.Context(), w, returnTargetOf(r))
 }
 
 // submitLogout ends the session.
@@ -98,5 +113,25 @@ func (u *UI) submitLogout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	clearCookie(w, u.secureCookie)
+	// A deliberate sign-out is not an expiry, and the next visit to the login
+	// page must not claim it was one.
+	clearMarker(w, u.secureCookie)
 	corehttp.WriteRedirect(r.Context(), w, LoginPath)
+}
+
+// nextOf is the return-to the login form should carry.
+//
+// A GET that the guard turned into a login page knows the destination from the
+// request itself; a re-rendered form after a bad password knows it only from
+// what the previous submission sent back. Taking the first that is usable keeps
+// the destination alive across a failed attempt, which is when losing it would
+// be most annoying.
+func nextOf(r *http.Request) string {
+	if target := requestedPath(r); target != "" {
+		return target
+	}
+	if target := r.PostFormValue(nextField); safeReturnTarget(target) {
+		return target
+	}
+	return ""
 }

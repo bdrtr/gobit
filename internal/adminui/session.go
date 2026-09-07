@@ -76,3 +76,100 @@ func readCookie(r *http.Request) string {
 	}
 	return cookie.Value
 }
+
+// MarkerName is the name of the cookie that remembers a session EXISTED.
+//
+// # It carries no credential, and that is the whole point
+//
+// Its value is a constant. It authenticates nothing, it is never read by the
+// guard to decide access, and stealing it wins an attacker the knowledge that
+// somebody once signed in — which the login page itself already implies.
+//
+// # The defect it repairs, which ADR 0031 measured and accepted
+//
+// The session cookie's lifetime is deliberately tied to the token's expiry, so
+// a NATURALLY expired session sends no cookie at all. [UI.Protect] then takes
+// its empty-token branch, which is the same branch a first-time visitor takes,
+// and the honest thing to print there is nothing. The sentence an operator
+// most needs — "your session has expired" — sat on the branch reached when a
+// cookie exists but its token does not, and the cookie design makes that branch
+// unreachable in the ordinary case.
+//
+// A marker that OUTLIVES the token separates the two states without weakening
+// either: the credential still dies on the deadline, and the panel can still
+// tell "you were here" from "you have never been here".
+//
+// # Why not simply let the session cookie outlive its token
+//
+// Because that is the "logged in but nothing opens" failure [writeCookie]
+// names: the browser would keep sending a dead token, every request would fail
+// in the guard, and the user would believe they were signed in. Splitting the
+// two cookies keeps the credential's lifetime honest and gives the MESSAGE its
+// own, longer one.
+const MarkerName = "gobit_admin_seen"
+
+// markerValue is the only value the marker ever carries.
+const markerValue = "1"
+
+// markerGrace is how long the marker outlives the token it explains.
+//
+// It is bounded rather than permanent because the marker's job is to explain a
+// lapse that JUST happened. A week is long enough that an operator who signs in
+// on Monday and returns after a holiday weekend still gets the sentence, and
+// short enough that the panel does not tell somebody who last used it in another
+// season that their session "has expired".
+const markerGrace = 7 * 24 * time.Hour
+
+// writeMarker records that a session existed.
+//
+// Path, HttpOnly, Secure and SameSite are copied from [writeCookie] on purpose.
+// HttpOnly is not protecting a secret here — there is no secret — it is keeping
+// the two cookies from drifting into two different sets of flags, which is how
+// [clearCookie]'s godoc says a cookie survives the deletion meant for it.
+func writeMarker(w http.ResponseWriter, expiresAt time.Time, secure bool) {
+	//nolint:gosec // G124: see writeCookie; Secure follows the same decision.
+	http.SetCookie(w, &http.Cookie{
+		Name:     MarkerName,
+		Value:    markerValue,
+		Path:     URLPrefix,
+		Expires:  expiresAt.Add(markerGrace),
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+// clearMarker drops the marker.
+//
+// It is called in two places and they mean different things. A deliberate sign
+// out clears it because "you signed out" is not "your session expired", and
+// printing the second after the first would be a lie the panel tells itself.
+// The guard clears it after PRINTING the sentence, because the message is about
+// a transition: a reload of the login page should show the form, not repeat an
+// expiry that has already been explained.
+func clearMarker(w http.ResponseWriter, secure bool) {
+	//nolint:gosec // G124: see writeCookie.
+	http.SetCookie(w, &http.Cookie{
+		Name:     MarkerName,
+		Value:    "",
+		Path:     URLPrefix,
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+// hasMarker reports whether a session existed on this browser.
+//
+// The VALUE is compared and not merely the presence of the cookie: a cookie
+// whose value is empty is what a browser sends for a cookie somebody deleted
+// badly, and treating that as "a session existed" would print the expiry
+// sentence at a moment nothing expired.
+func hasMarker(r *http.Request) bool {
+	cookie, err := r.Cookie(MarkerName)
+	if err != nil {
+		return false
+	}
+	return cookie.Value == markerValue
+}

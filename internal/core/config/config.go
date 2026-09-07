@@ -16,6 +16,28 @@ import (
 // bytes); anything shorter can be found by brute force.
 const minJWTSecretLen = 32
 
+// MaxSharedJWTTTL is the longest admin session accepted in shared environments.
+//
+// ADR 0031 ratified a session that ends at a wall-clock deadline and never
+// renews. A lifetime is therefore the whole of the exposure: there is no
+// refresh to shorten, and no revocation short of a logout or a password change,
+// which the identity layer's session anchor does enforce but which nobody
+// performs for a token they do not know was taken.
+//
+// Twenty-four hours is twice the default, and the doubling is where the line
+// is drawn rather than at a round number: twelve hours was chosen so that "a
+// token taken from a machine at the end of a day is dead by the next one", and
+// a day is the last value that still keeps that sentence true. A week-long or
+// month-long admin session on a shared deployment is not a preference, it is a
+// configuration mistake the framework can see from here, and refusing it at
+// boot is cheaper than discovering it in an incident.
+//
+// It is a SHARED-environment rule only, following the precedent set a few lines
+// above it: local development is the one place where the framework's secret and
+// TLS requirements are relaxed, and a developer who wants a session that
+// outlasts a week of debugging is not creating the risk this bound exists for.
+const MaxSharedJWTTTL = 24 * time.Hour
+
 // devAppEnv is the only environment where the secret and TLS requirements are RELAXED.
 const devAppEnv = "development"
 

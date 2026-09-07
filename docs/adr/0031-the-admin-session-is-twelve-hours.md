@@ -95,18 +95,74 @@ the answer collapses into one of the two above.
 **Positive**
 
 - **No new table, no new route, no ADR superseded.** The decision is a number, a
-  bound and two sentences of documentation.
+  bound and two sentences of documentation. ~~The blank message is a message and
+  a return-to, not a mechanism.~~ **Corrected 2026-09-07 while building it: the
+  message half NEEDED a mechanism, and the sentence above was written without
+  measuring it.** See the amendment below.
 - **A7 can be written.** [ADR 0030](0030-the-panel-becomes-an-admin-api-client.md)
   turns on the words "short-lived", and this ADR is where that number now lives.
 
 **Negative, and accepted**
 
 - **An operator is logged out at the deadline**, mid-task if the deadline lands
-  there, and today with no explanation.
+  there. ~~and today with no explanation.~~ **The explanation shipped on
+  2026-09-07**; the logout itself stays, and it is still the price of this
+  decision.
 - **Revocation stays coarse.** Logout and password change kill every session of
   that identity; there is no per-device revocation and this ADR does not add
   one. `auth/service/session.go` already refuses that surface "until it is
   really needed", and this decision does not make it needed.
+
+## Amendment, 2026-09-07 — what building the three obligations changed
+
+All three shipped: the bound, the documentation, and the message. Two of them
+turned out differently from what this ADR predicted, and both differences are
+the ADR's error rather than the implementation's.
+
+**The bound is twenty-four hours, and the number is an argument rather than a
+round figure.** `config.MaxSharedJWTTTL`, enforced only when `APP_ENV` is not
+`development`, beside the signing-secret rule and for the same reason. It is
+twice the default deliberately: the case for twelve hours above is that "a token
+taken from a machine at the end of a day is dead by the next one", and a day is
+the LAST value that keeps that sentence true. Anything longer survives a night,
+and a week survives a holiday. Local development is left unbounded because it is
+already the one environment where the secret and TLS rules are relaxed.
+
+**"It is a message and a return-to, not a mechanism" was wrong, and the way it
+was wrong is the interesting part.** The claim treated the blank login page as a
+missing string. It is not: the guard's empty-token branch is reached by TWO
+different people — somebody whose session just lapsed, and somebody who has
+never signed in — and the session cookie cannot tell them apart, because this
+ADR's own cookie design deletes it in both cases. Printing the sentence
+unconditionally does not fix the defect, it moves it: the first-time visitor is
+then told their session expired. The distinction needs state that OUTLIVES the
+credential, so the fix is a second cookie (`gobit_admin_seen`) carrying a
+constant, no credential, and a lifetime a week past the token's. The credential
+still dies exactly on the deadline, which is the property this ADR wanted to
+keep; what gained a longer life is the MESSAGE, which is not a secret.
+
+It is dropped on a deliberate sign-out — "you signed out" is not "your session
+expired" — and dropped again as the sentence is printed, because the message is
+about a transition and a reload should show a form rather than repeat an expiry
+already explained.
+
+**The return-to is an open-redirect guard, and its first draft had a dead branch
+hiding a live hole.** The draft compared raw strings: refuse a leading `//`,
+then require the panel prefix. Mutation testing showed the `//` branch could be
+deleted with no test noticing — a protocol-relative URL cannot also start with
+`/admin/ui`, so the prefix check had already refused it. Looking for a case
+where that branch DID matter found the hole facing the other way:
+`/admin/ui/../../admin/v1/orders` carries the prefix as a raw string, so the
+draft ACCEPTED it, and a browser resolves it outside the panel. The shipped
+version parses the target, refuses any scheme or host (an attacker's URL can
+carry the panel's exact path — `https://evil.example/admin/ui/orders` — and only
+the host says otherwise), resolves `..`, and refuses a backslash because
+`path.Clean` does not see it while some browsers fold it. Each of the four is
+mutation-proved to be load-bearing.
+
+**What this cost that the ADR did not price:** one constant, three cookie
+helpers, a sanitiser, a hidden form field, and eleven tests. It is still small,
+and it is not "a message".
 
 ## Reopening the decision
 

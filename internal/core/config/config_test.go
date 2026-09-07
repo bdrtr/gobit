@@ -472,7 +472,7 @@ func TestSharedEnvironmentsRequireASigningSecret(t *testing.T) {
 	}{
 		"staging, no secret given at all": {environment: "staging", secret: "", rejected: true},
 		"staging, far too short a secret": {environment: "staging", secret: "short", rejected: true},
-		"staging 31 karakter":             {environment: "staging", secret: "0123456789abcdef0123456789abcde", rejected: true},
+		"staging, one character short":    {environment: "staging", secret: "0123456789abcdef0123456789abcde", rejected: true},
 		"staging, a strong secret":        {environment: "staging", secret: productionJWTSecret},
 		// The production rows are the regression shield of the existing guard: while
 		// the gate is widened we also check that production was not loosened.
@@ -502,6 +502,79 @@ func TestSharedEnvironmentsRequireASigningSecret(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.environment, "the error message has to say which environment is enforcing it")
 		})
 	}
+}
+
+// TestASharedEnvironmentBoundsTheAdminSessionLifetime verifies the upper end of
+// JWT_TTL, which for a long time had no upper end at all.
+//
+// # Why an upper bound exists here and nowhere else
+//
+// ADR 0031 ratified a session that ends at a wall-clock deadline and NEVER
+// renews. There is no refresh to shorten the window and no revocation short of
+// a logout or a password change, so the lifetime is the whole of the exposure.
+// Before this, Validate accepted any positive duration: a month-long admin
+// session passed startup silently, and the only place it would ever be noticed
+// is an incident.
+//
+// # The rows are the edges, because a bound is only ever wrong at its edges
+//
+// Exactly [config.MaxSharedJWTTTL] is accepted and one second past it is not —
+// a bound written with the wrong comparison passes every test that only tries
+// values far from the line.
+//
+// # Local development is deliberately unbounded
+//
+// It is the one environment where the framework's secret and TLS requirements
+// are already relaxed, and a developer who wants a session that outlasts a week
+// of debugging is not creating the risk this bound exists for.
+func TestASharedEnvironmentBoundsTheAdminSessionLifetime(t *testing.T) {
+	tests := map[string]struct {
+		environment string
+		ttl         string
+		rejected    bool
+	}{
+		"staging, the default":              {environment: "staging", ttl: "12h"},
+		"staging, exactly the bound":        {environment: "staging", ttl: "24h"},
+		"staging, one second past it":       {environment: "staging", ttl: "24h1s", rejected: true},
+		"staging, a week":                   {environment: "staging", ttl: "168h", rejected: true},
+		"production, a month":               {environment: "production", ttl: "720h", rejected: true},
+		"production, a working day":         {environment: "production", ttl: "9h"},
+		"development, a month is their own": {environment: "development", ttl: "720h"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			setUpSharedEnvironment(t, tt.environment)
+			t.Setenv("JWT_SECRET", productionJWTSecret)
+			t.Setenv("JWT_TTL", tt.ttl)
+
+			_, err := config.Load()
+			if !tt.rejected {
+				require.NoError(t, err, "a lifetime inside the bound was rejected")
+
+				return
+			}
+
+			require.Error(t, err, "an admin session this long is a configuration mistake, not a preference")
+			assert.Contains(t, err.Error(), "JWT_TTL")
+			assert.Contains(t, err.Error(), tt.environment,
+				"the error message has to say which environment is enforcing it")
+		})
+	}
+}
+
+// TestTheSessionLifetimeStillHasToBePositive is the lower end's regression
+// shield.
+//
+// The upper bound was added beside it, and a bound written as a single range
+// check is the shape that quietly replaces the other end.
+func TestTheSessionLifetimeStillHasToBePositive(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("JWT_TTL", "0s")
+
+	_, err := config.Load()
+	require.Error(t, err, "a zero-length session must still be refused")
+	assert.Contains(t, err.Error(), "JWT_TTL")
 }
 
 // TestSharedEnvironmentsRejectUnencryptedTracing verifies that the TLS-less OTLP

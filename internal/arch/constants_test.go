@@ -382,6 +382,45 @@ func TestTheBootstrapPasswordFloorIsAboveAuths(t *testing.T) {
 			"if they are equalized the gate in config adds nothing")
 }
 
+// TestTheDefaultSessionLifetimeIsInsideItsOwnBound verifies that the admin
+// session's shipped default is a value a shared deployment can actually boot
+// with.
+//
+// # The failure it exists for is a boot failure, not a security hole
+//
+// ADR 0031 set two numbers: a twelve-hour default and, in shared environments, a
+// twenty-four-hour ceiling. They are two ends of one decision but there is no
+// compiler binding between them — the default is an `envDefault` struct tag and
+// the ceiling is a constant read a hundred lines away in Validate. Raise the
+// default past the ceiling and EVERY shared deployment that has not set JWT_TTL
+// by hand stops at startup, with an error telling the operator that a value they
+// never chose is out of range. That is a shipped default the framework refuses
+// to run with, which is the kind of contradiction nothing else in the tree would
+// catch.
+//
+// # Why STRICTLY less and not "at most"
+//
+// Equal would boot, and would also mean the ceiling stops doing anything: it
+// would refuse nothing that the default did not already sit on. A bound whose
+// only accepted value is the default is a bound that has quietly become a
+// constant, and this is where that would be noticed.
+//
+// # Why here
+//
+// The default lives in the struct tag rather than in a Go constant, so reading
+// it means loading the configuration — which the arch package can do and which
+// keeps the assertion on the VALUE that ships rather than on a copy of it.
+func TestTheDefaultSessionLifetimeIsInsideItsOwnBound(t *testing.T) {
+	cfg, err := config.Load()
+	require.NoError(t, err, "the default configuration must load")
+
+	assert.Less(t, cfg.JWTTTL, config.MaxSharedJWTTTL,
+		"the shipped JWT_TTL default (%s) must be STRICTLY below the shared-environment "+
+			"ceiling (%s): at or above it, every shared deployment that never set JWT_TTL "+
+			"fails to start over a value nobody chose",
+		cfg.JWTTTL, config.MaxSharedJWTTTL)
+}
+
 // The trees the symmetry audit walks, and its own name.
 const (
 	// configDirName is the core's configuration package. Its source is PARSED,

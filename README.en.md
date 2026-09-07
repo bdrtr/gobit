@@ -74,6 +74,7 @@ The handful that has to be set by hand:
 | `DATABASE_URL` | **mandatory** when `APP_ENV=production` — if it has not been overridden the application stops at startup |
 | `REDIS_URL` | the same rule |
 | `JWT_SECRET` | without it the identity layer **rejects every request** (ADR 0007) |
+| `JWT_TTL` | how long an admin session lasts; twelve hours by default and it **never renews** (ADR 0031). Capped at twenty-four hours in a shared environment |
 | `APP_ENV` | any value other than `development` counts as a shared environment and turns the warnings on |
 | `EVENT_BUS` · `GUARD_BACKEND` | both must be `redis` if you run more than one instance |
 | `PLUGINS` | the names of the plugins to install, for example `PLUGINS=search-pg` |

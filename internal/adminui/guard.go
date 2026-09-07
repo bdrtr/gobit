@@ -46,7 +46,17 @@ func (u *UI) Protect(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := readCookie(r)
 		if token == "" {
-			u.loginPage(w, r, http.StatusUnauthorized, "")
+			// Two states arrive here and they deserve different sentences: a
+			// person who has never signed in, and a person whose session ran
+			// out. The session cookie cannot tell them apart, because it is
+			// gone in both cases by design — see [MarkerName], which is the
+			// cookie that can.
+			message := ""
+			if hasMarker(r) {
+				message = sessionExpiredMessage
+				clearMarker(w, u.secureCookie)
+			}
+			u.loginPage(w, r, http.StatusUnauthorized, message)
 			return
 		}
 
@@ -61,7 +71,8 @@ func (u *UI) Protect(next http.Handler) http.Handler {
 			// It must be dropped, otherwise the browser keeps sending the same
 			// dead token and the login page returns 401 forever.
 			clearCookie(w, u.secureCookie)
-			u.loginPage(w, r, http.StatusUnauthorized, "Your session has expired. Please sign in again.")
+			clearMarker(w, u.secureCookie)
+			u.loginPage(w, r, http.StatusUnauthorized, sessionExpiredMessage)
 			return
 		}
 
