@@ -84,13 +84,14 @@ type ProductOption struct {
 }
 
 type ProductOptionValue struct {
-	ID        string
-	OptionID  string
-	Value     string
-	Rank      int32
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
-	DeletedAt pgtype.Timestamptz
+	ID          string
+	OptionID    string
+	Value       string
+	Rank        int32
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+	DeletedAt   pgtype.Timestamptz
+	ValueFolded string
 }
 
 type ProductTag struct {

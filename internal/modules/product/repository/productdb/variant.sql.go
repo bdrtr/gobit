@@ -76,23 +76,32 @@ func (q *Queries) CreateOption(ctx context.Context, arg CreateOptionParams) (Pro
 }
 
 const createOptionValue = `-- name: CreateOptionValue :one
-INSERT INTO product_option_value (id, option_id, value, rank)
-VALUES ($1, $2, $3, $4)
-RETURNING id, option_id, value, rank, created_at, updated_at, deleted_at
+INSERT INTO product_option_value (id, option_id, value, value_folded, rank)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, option_id, value, rank, created_at, updated_at, deleted_at, value_folded
 `
 
 type CreateOptionValueParams struct {
-	ID       string
-	OptionID string
-	Value    string
-	Rank     int32
+	ID          string
+	OptionID    string
+	Value       string
+	ValueFolded string
+	Rank        int32
 }
 
+// CreateOptionValue writes the value as the merchant typed it AND the form it is
+// matched by.
+//
+// value keeps what was typed, because that is what the vocabulary endpoint hands
+// back and what a merchant recognises. value_folded is models.FoldOptionValue's
+// result and is what a filter compares against; migration 000003 carries why the
+// fold belongs to Go rather than to the query.
 func (q *Queries) CreateOptionValue(ctx context.Context, arg CreateOptionValueParams) (ProductOptionValue, error) {
 	row := q.db.QueryRow(ctx, createOptionValue,
 		arg.ID,
 		arg.OptionID,
 		arg.Value,
+		arg.ValueFolded,
 		arg.Rank,
 	)
 	var i ProductOptionValue
@@ -104,6 +113,7 @@ func (q *Queries) CreateOptionValue(ctx context.Context, arg CreateOptionValuePa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.ValueFolded,
 	)
 	return i, err
 }
@@ -308,7 +318,7 @@ func (q *Queries) ListOptionValuesByIDs(ctx context.Context, dollar_1 []string) 
 }
 
 const listOptionValuesByOptionIDs = `-- name: ListOptionValuesByOptionIDs :many
-SELECT id, option_id, value, rank, created_at, updated_at, deleted_at FROM product_option_value
+SELECT id, option_id, value, rank, created_at, updated_at, deleted_at, value_folded FROM product_option_value
 WHERE option_id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY option_id, rank, id
 `
@@ -330,6 +340,7 @@ func (q *Queries) ListOptionValuesByOptionIDs(ctx context.Context, dollar_1 []st
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.ValueFolded,
 		); err != nil {
 			return nil, err
 		}

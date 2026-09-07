@@ -230,7 +230,7 @@ func TestMigrationUpDownIsReversible(t *testing.T) {
 	// written out rather than derived on purpose: a count taken from the
 	// embedded files would agree with itself whatever happened, and what this
 	// line is for is noticing that a migration was added.
-	assert.Equal(t, uint(2), version)
+	assert.Equal(t, uint(3), version)
 
 	require.NoError(t, db.MigrateDown(ctx, dsn, mod.Migrations(), mod.Name(), 0),
 		"the schema must be reversible")

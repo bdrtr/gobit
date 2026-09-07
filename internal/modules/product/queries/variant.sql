@@ -83,8 +83,15 @@ UPDATE product_option SET deleted_at = now(), updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: CreateOptionValue :one
-INSERT INTO product_option_value (id, option_id, value, rank)
-VALUES ($1, $2, $3, $4)
+-- CreateOptionValue writes the value as the merchant typed it AND the form it is
+-- matched by.
+--
+-- value keeps what was typed, because that is what the vocabulary endpoint hands
+-- back and what a merchant recognises. value_folded is models.FoldOptionValue's
+-- result and is what a filter compares against; migration 000003 carries why the
+-- fold belongs to Go rather than to the query.
+INSERT INTO product_option_value (id, option_id, value, value_folded, rank)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: ListOptionValuesByOptionIDs :many

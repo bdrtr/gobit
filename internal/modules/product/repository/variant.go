@@ -249,7 +249,11 @@ func (r *Repo) CreateOptionValue(ctx context.Context, v models.OptionValue) (mod
 		ID:       v.ID,
 		OptionID: v.OptionID,
 		Value:    v.Value,
-		Rank:     v.Rank,
+		// The matching form is derived HERE rather than taken from the caller,
+		// so that no write path can store a value whose folded form disagrees
+		// with it. Migration 000003 carries why the fold is Go's.
+		ValueFolded: models.FoldOptionValue(v.Value),
+		Rank:        v.Rank,
 	})
 	if err != nil {
 		return models.OptionValue{}, wrapDB(err, "could not create option value (option: %s)", v.OptionID)

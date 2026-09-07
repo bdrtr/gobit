@@ -103,6 +103,16 @@ var caseFoldingDeclarations = map[string]string{
 		"`gobit refold-invoices`. It is declared here rather than exempted because a reader " +
 		"who finds it must not conclude the repository thinks lower() is safe. D27",
 
+	"internal/modules/product/migrations/000003_option_values_carry_a_matching_form.up.sql": "" +
+		"KNOWN WRONG FOR NON-ASCII, ON PURPOSE, and the migration's header says so. The " +
+		"statement is the one-time backfill `UPDATE product_option_value SET value_folded = " +
+		"lower(btrim(value))`. A migration is SQL, and SQL is the fold that cannot be trusted " +
+		"here (ADR 0038), so the rows it gets wrong are exactly the non-ASCII ones ADR 0039 " +
+		"exists for. It is written this way because a migration has no other way to write it, " +
+		"and the convergence belongs at startup as the invoice module's does. It is declared " +
+		"rather than exempted so that a reader does not conclude the repository thinks lower() " +
+		"is safe. ADR 0039",
+
 	"promotion_code_check": "SOUND, and it is the contrast worth reading next to the three " +
 		"above. `code = upper(code)` is locale-dependent in general, but promotion codes " +
 		"cannot contain a non-ASCII letter: service.normalizeCode admits only A-Z, 0-9, " +
