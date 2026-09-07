@@ -12,6 +12,32 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **Webhook eklentisinin operator yuzeyi hem TIPLENDI hem anlatildi**, ve
+  tiplemek bir kusur ortaya cikardi.
+
+  Eklentinin alti ucu, yayimlanan defterin ikinci grubundaydi: hicbir gerekce
+  tasimiyorlardi, yalnizca Describe'lari hic yazilmamisti. Yazmak icin once
+  yanitlarin TIPLENMESI gerekti — iki liste ucu, duzlestirilmis bir
+  `map[string]any` donduruyordu, yani semasi ancak elle yazilabilirdi ve elle
+  yazilan sema ilk alan eklenmesinde sessizce yalan olurdu.
+
+  **Tiplerken cikan kusur:** olu mektup listesi `total` alanini tasiyor — sayfa
+  degil TUM yigin — ve bu, birinin uyandirilip uyandirilmayacagina karar veren
+  sayi. Yigin bosken cevap SIFIR, ve sifir bu ucun verdigi en yararli cevap:
+  olayla ugrasan operator bittigini oradan ogreniyor. Duz bir `int64` uzerindeki
+  `omitempty` tam o degeri dusururdu; yani uc, "yigin temiz" cevabini hic
+  konusmayarak verirdi ve istemci bunu "bu listede total yok"tan ayiramazdi.
+  Alan POINTER yapildi, ve boylece yoklukla sifir birbirinden ayrildi.
+
+  Iki testle tutuldu ve ikisi AYNI SEY DEGIL: eklentinin kendi testi TIPIN
+  kodlanmasini, e2e testi UCUN kendisini tutuyor. Ayrimi mutasyon gosterdi —
+  bekleyen listeye yeniden deneme bilgisi yazan bir mutasyon tip testini yesil
+  biraktı, uc testi ısırdı.
+
+  Defter 33'ten 27'ye indi. Kalan iki uc tek bir eklentininki, ve GRUP 2'nin son
+  sakini olarak bir eklenti kalmasi kendi basina bulgu: eklenti de her modul gibi
+  bir modul getiriyor, yani ikisini de anlatmaktan hicbir sey alikoymamisti.
+
 - **Sema kelime dagarcigi YAYIMLANDI, ve sessizlige bir ses kondu** (ADR 0035;
   ADR 0026'ya ek not — on altinci paket).
 

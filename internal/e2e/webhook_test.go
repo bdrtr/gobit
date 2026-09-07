@@ -312,6 +312,59 @@ func TestTheAdminSurfaceNeverShowsASecretAgain(t *testing.T) {
 	assert.Contains(t, recorder.Body.String(), "forwarded_topics")
 }
 
+// TestTheDeliveryListingReportsAnEmptyPileAsZero checks, on the real endpoint,
+// the number an operator is looking for when they are nearly finished.
+//
+// # Zero is the useful answer, and it is the one an encoding drops
+//
+// "total" is the WHOLE dead pile rather than the page, and it is what decides
+// whether anybody is woken up. When the pile is empty the answer is 0, which is
+// how somebody working through an incident learns they are done. An encoding
+// that omits empty values deletes exactly that value, and the endpoint then
+// answers "clear" by saying nothing — indistinguishable, to a client, from a
+// listing that carries no total at all.
+//
+// The plugin's own test pins the TYPE's marshaling. This one pins the ENDPOINT,
+// which is a different claim: it is what fails if a handler stops setting the
+// field, and a mutation on the handler proved the type test alone does not catch
+// that.
+//
+// # And the two listings are not the same shape
+//
+// A pending listing must NOT carry retry advice — no ceiling, no exits — because
+// nothing has been given up on yet. Writing those fields anyway would document
+// how to redrive deliveries that are still being retried on their own.
+func TestTheDeliveryListingReportsAnEmptyPileAsZero(t *testing.T) {
+	recorder, err := adminRequestWithBody(http.MethodGet, "/admin/v1/webhooks/deliveries?state=dead", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, recorder.Code, "body: %s", recorder.Body.String())
+
+	var dead map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &dead))
+
+	total, carried := dead["total"]
+	require.True(t, carried,
+		"the dead-letter listing did not report a total. An operator cannot tell "+
+			"\"the pile is clear\" from \"this listing has no total\", which is the one "+
+			"question they came here to answer. Body: %s", recorder.Body.String())
+	assert.NotNil(t, total)
+	assert.Contains(t, dead, "attempts_allowed")
+	assert.Contains(t, dead, "exits", "a dead delivery has to say how to get out of the pile")
+
+	recorder, err = adminRequestWithBody(http.MethodGet, "/admin/v1/webhooks/deliveries?state=pending", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, recorder.Code, "body: %s", recorder.Body.String())
+
+	var pending map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &pending))
+
+	assert.NotContains(t, pending, "exits",
+		"a pending listing must not offer the exits from a pile nothing has fallen into")
+	assert.NotContains(t, pending, "attempts_allowed",
+		"a delivery still being retried has no ceiling to report to an operator")
+	assert.Equal(t, "pending", pending["state"])
+}
+
 // TestATopicGobitDoesNotPublishIsRefused is the visible half of a name-based
 // subscription, over the real API.
 func TestATopicGobitDoesNotPublishIsRefused(t *testing.T) {

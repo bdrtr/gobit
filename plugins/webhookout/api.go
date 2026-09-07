@@ -91,6 +91,64 @@ type deliveryResponse struct {
 	Age string `json:"age"`
 }
 
+// endpointListResponse is the answer of GET /admin/v1/webhooks.
+//
+// The forwarded set travels INSIDE the listing rather than beside it, because it
+// is the answer to the question that brought the operator here — "why is my
+// receiver not getting X" — and reading it next to the receivers is cheaper than
+// finding it in a changelog.
+type endpointListResponse struct {
+	Data            []endpointResponse `json:"data"`
+	Count           int                `json:"count"`
+	ForwardedTopics []string           `json:"forwarded_topics"`
+}
+
+// deliveryListResponse is the answer of GET /admin/v1/webhooks/deliveries.
+//
+// # One type for two listings, and the pointers are why
+//
+// "state=dead" carries five extra facts and "state=pending" carries none of
+// them. The optional fields are POINTERS and slices rather than plain values so
+// that a zero is told apart from an absence: the dead listing writes "total": 0
+// when the pile is empty — which is the number an operator most wants to see —
+// and `omitempty` on a plain int64 would DROP exactly that, turning "the pile is
+// clear" into "no answer".
+//
+// The schema derived from this type therefore requires data, count and state and
+// declares the rest optional, which is true of both listings and of neither on
+// its own.
+type deliveryListResponse struct {
+	Data  []deliveryResponse `json:"data"`
+	Count int                `json:"count"`
+	State string             `json:"state"`
+	// Total is the WHOLE pile, not the page. It is the number that decides
+	// whether anybody is woken up, and a listing that reported only what fitted
+	// would report the page size during an incident of any size.
+	Total           *int64   `json:"total,omitempty"`
+	AttemptsAllowed *int64   `json:"attempts_allowed,omitempty"`
+	RetryWindow     string   `json:"retry_window,omitempty"`
+	Exits           []string `json:"exits,omitempty"`
+}
+
+// deletedResponse is the answer of DELETE /admin/v1/webhooks/{id}.
+type deletedResponse struct {
+	ID      string `json:"id"`
+	Deleted bool   `json:"deleted"`
+}
+
+// deliveryActionResponse is the answer of a redrive or a discard.
+type deliveryActionResponse struct {
+	ID     string `json:"id"`
+	Action string `json:"action"`
+	// Remaining is how much of the dead pile is left after the action.
+	Remaining int64 `json:"remaining"`
+	// JobAlarmClears says whether this action was the one that silenced the
+	// operator alarm. It is reported rather than left to be inferred: the alarm
+	// also watches orphaned rows, so an empty pile is NOT on its own the same
+	// as a quiet alarm.
+	JobAlarmClears bool `json:"job_alarm_clears"`
+}
+
 // singleEnvelope is the shape of a single-object answer.
 //
 // It is the repository's envelope, not one invented for this plugin: the value
@@ -99,23 +157,6 @@ type deliveryResponse struct {
 // client carry two conventions for one API.
 type singleEnvelope struct {
 	Data any `json:"data"`
-}
-
-// writeList answers with the list envelope plus a listing's own extra fields.
-//
-// The list goes under "data" with its count beside it, and a listing's extra
-// facts — the forwarded topic set, the size of the whole dead-letter pile — are
-// FLATTENED alongside rather than nested, so a reader does not have to know
-// which listing put what where.
-func writeList(ctx context.Context, w http.ResponseWriter, items any, count int,
-	extra map[string]any,
-) {
-	body := map[string]any{"data": items, "count": count}
-	for key, value := range extra {
-		body[key] = value
-	}
-
-	corehttp.WriteJSON(ctx, w, http.StatusOK, body)
 }
 
 // handleCreate registers a receiver.
@@ -192,11 +233,9 @@ func (m *webhookModule) handleList(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// The forwarded set travels with the listing because it is the answer to
-	// the question that brought the operator here: "why is my receiver not
-	// getting X". It is cheaper to read it next to the receivers than to find it
-	// in a changelog.
-	writeList(ctx, w, items, len(items), map[string]any{"forwarded_topics": ForwardedTopics})
+	corehttp.WriteJSON(ctx, w, http.StatusOK, endpointListResponse{
+		Data: items, Count: len(items), ForwardedTopics: ForwardedTopics,
+	})
 }
 
 // handleDelete removes a receiver.
@@ -225,7 +264,7 @@ func (m *webhookModule) handleDelete(w http.ResponseWriter, r *http.Request) {
 	m.log.InfoContext(ctx, "a webhook receiver was removed", "endpoint_id", id)
 
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{
-		Data: map[string]any{"id": id, "deleted": true},
+		Data: deletedResponse{ID: id, Deleted: true},
 	})
 }
 
@@ -270,15 +309,16 @@ func (m *webhookModule) handleDeliveries(w http.ResponseWriter, r *http.Request)
 		}
 
 		items := renderDeliveries(report.Oldest)
-		writeList(ctx, w, items, len(items), map[string]any{
-			"state": stateDead,
-			// The whole pile, not the page. It is the number that decides
-			// whether anybody is woken up, and a listing that reported only
-			// what fitted would report "100" during an incident of any size.
-			"total":            report.Count,
-			"attempts_allowed": maxAttempts,
-			"retry_window":     deliveryWindow().String(),
-			"exits": []string{
+		total := report.Count
+		allowed := maxAttempts
+		corehttp.WriteJSON(ctx, w, http.StatusOK, deliveryListResponse{
+			Data:            items,
+			Count:           len(items),
+			State:           stateDead,
+			Total:           &total,
+			AttemptsAllowed: &allowed,
+			RetryWindow:     deliveryWindow().String(),
+			Exits: []string{
 				"POST /admin/v1/webhooks/deliveries/{id}/redrive",
 				"POST /admin/v1/webhooks/deliveries/{id}/discard",
 			},
@@ -292,7 +332,9 @@ func (m *webhookModule) handleDeliveries(w http.ResponseWriter, r *http.Request)
 		}
 
 		items := renderDeliveries(rows)
-		writeList(ctx, w, items, len(items), map[string]any{"state": statePending})
+		corehttp.WriteJSON(ctx, w, http.StatusOK, deliveryListResponse{
+			Data: items, Count: len(items), State: statePending,
+		})
 	default:
 		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
 			"state has to be %q or %q; %q was given", stateDead, statePending, state))
@@ -359,11 +401,11 @@ func (m *webhookModule) act(
 	m.log.InfoContext(ctx, "a dead webhook delivery was acted on",
 		"delivery_id", id, "action", verb, "remaining", report.Count)
 
-	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: map[string]any{
-		"id":               id,
-		"action":           verb,
-		"remaining":        report.Count,
-		"job_alarm_clears": report.Count == 0 && orphans == 0,
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: deliveryActionResponse{
+		ID:             id,
+		Action:         verb,
+		Remaining:      report.Count,
+		JobAlarmClears: report.Count == 0 && orphans == 0,
 	}})
 }
 

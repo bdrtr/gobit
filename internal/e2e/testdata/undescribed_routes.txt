@@ -30,12 +30,13 @@
 # These lines are NOT paid by editing a module. The decision is filed in
 # docs/gaps.md section G.
 #
-# GROUP 2 — NO REASON ON FILE (8 routes)
+# GROUP 2 — NO REASON ON FILE (2 routes)
 #
 # Nothing anywhere explains these; they are endpoints whose Describe was simply
-# never written. Both plugins are here and no module is, which is its own
-# finding: a plugin brings a module like any other, so nothing stopped either of
-# them from describing its endpoints — nobody did.
+# never written. What is left is one plugin, and that a PLUGIN is the last
+# holdout was its own finding: a plugin brings a module like any other, so
+# nothing ever stopped either of them from describing its endpoints — nobody
+# did, and nothing could say so.
 #
 # The first measurement had THIRTEEN here. Five were order after-sales routes,
 # and they were worse than unexplained: order/api's Describe godoc named five
@@ -76,13 +77,6 @@ POST /admin/v1/orders/{id}/cancel
 POST /admin/v1/orders/{id}/complete
 
 # --- group 2: no reason on file ----------------------------------------------
-# the webhook plugin's operator surface
-DELETE /admin/v1/webhooks/{id}
-GET /admin/v1/webhooks/
-GET /admin/v1/webhooks/deliveries
-POST /admin/v1/webhooks/
-POST /admin/v1/webhooks/deliveries/{id}/discard
-POST /admin/v1/webhooks/deliveries/{id}/redrive
 # the search plugin
 GET /store/v1/search
 POST /admin/v1/search/reindex
