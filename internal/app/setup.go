@@ -56,7 +56,12 @@ func describeAPI(title, apiVersion string, modules []module.Module) *openapi.Doc
 			continue
 		}
 
-		describer.Describe(doc)
+		// The module's own Name becomes the namespace of every component its
+		// description registers (ADR 0036). It is applied HERE because this is
+		// the only place that holds both the module and the document — the same
+		// reason the Describer assertion is here rather than in the core — and
+		// because a module does not know it is being described.
+		doc.ForModule(mod.Name(), func() { describer.Describe(doc) })
 	}
 
 	return doc

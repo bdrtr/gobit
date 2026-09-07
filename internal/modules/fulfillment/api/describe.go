@@ -93,6 +93,7 @@ func Describe(d *openapi.Doc) {
 	describeOptions(d)
 	describeEligibility(d)
 	describeFulfillments(d)
+
 }
 
 // describeProfiles describes the shipping profile endpoints.
@@ -171,14 +172,21 @@ func describeLocationPolicies(d *openapi.Doc) {
 	})
 }
 
-// describeOptions describes those shipping option endpoints that can be
-// described.
+// describeOptions describes the shipping option endpoints.
 //
-// The four endpoints carrying the option's OWN body are deliberately left out;
-// the rationale is in the [Describe] godoc. What remains here are the ones that
-// never touch the option record: deletion (which has no body) and the rules
-// (which have their own DTO).
+// ~~The four endpoints carrying the option's OWN body are deliberately left
+// out; the rationale is in the [Describe] godoc.~~ **2026-09-07: they are in,
+// and they are in [describeOptionRecords].** The rationale was real — the
+// option record's component name collided with the product module's — and the
+// note was right that the fix belonged in the core rather than here (ADR 0036).
+//
+// What stays in THIS function are the endpoints that never touch the option
+// record: deletion (which has no body) and the rules (which have their own DTO).
+// The split by body rather than by subject is what the collision left behind and
+// it is worth keeping: it is the line along which the debt was paid.
 func describeOptions(d *openapi.Doc) {
+	describeOptionRecords(d)
+
 	d.Describe(http.MethodDelete, pathAdminOption, openapi.Operation{
 		Summary: "Soft deletes the shipping option.",
 		Responses: map[string]any{

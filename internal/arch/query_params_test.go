@@ -441,38 +441,28 @@ type queryParamExemption struct {
 
 // queryParamExemptions are the reads this audit deliberately allows.
 //
-// Both entries are the same finding and the same decision. The audit found them
-// on its first run: the shipping-option listing filters by a provider and by a
-// price type and the document mentions neither. The module did not forget them
-// — it leaves the WHOLE of the shipping-option CRUD undescribed, argued in its
-// describe.go godoc, because optionDTO asks the document for the component
-// name "Option" and the product module's models.Option asks for the same one; a
-// collision brings down the whole of /openapi.json, and renaming either type
-// breaks a published client.
+// **It is EMPTY, and it was emptied by the thing it was waiting for.**
 //
-// What is worth writing down is that the decision's REASON does not reach this
-// far. The collision is about the response SCHEMA, and a query parameter never
-// touches optionDTO — the core even supplies the shared error responses when an
-// operation names none, so the filters could be described without naming a 2xx
-// at all. Describing them was tried and refused by the module's own
-// TestOptionEndpointsAreDeliberatelyUndescribed, which forbids even a summary:
-// that test is STRICTER than the reason its file gives. Narrowing it is the
-// module's decision to make, not this audit's, so the reads are exempted here
-// and the tension is recorded rather than quietly resolved.
-var queryParamExemptions = []queryParamExemption{
-	{
-		importPath: "github.com/bdrtr/gobit/internal/modules/fulfillment/api",
-		name:       "provider_id",
-		reason: "The shipping-option CRUD is undescribed by a recorded decision (a " +
-			"component-name collision with the product module). The decision's reason " +
-			"covers the body, not the filters; narrowing it belongs to that module.",
-	},
-	{
-		importPath: "github.com/bdrtr/gobit/internal/modules/fulfillment/api",
-		name:       "price_type",
-		reason:     "As provider_id, on the same endpoint and the same decision.",
-	},
-}
+// It held two entries and they were the same finding: the shipping-option
+// listing filtered by a provider and by a price type and the document mentioned
+// neither. The module had not forgotten them — it left the WHOLE of the
+// shipping-option CRUD undescribed, because optionDTO asked the document for the
+// component name "Option" and the product module's models.Option asked for the
+// same one, and a collision brings down the whole of /openapi.json.
+//
+// What the exemptions recorded was a TENSION rather than a gap: the collision is
+// about the response schema, and a query parameter never touches optionDTO, so
+// the filters could have been described without naming a 2xx at all. The
+// module's own guard test was stricter than its own stated reason. The note said
+// narrowing that was the module's decision, not this audit's — and on 2026-09-07
+// the decision was taken one level up instead (ADR 0036: a component name
+// carries its module), the CRUD was described, the guard test was deleted, and
+// both exemptions went stale on the same run.
+//
+// The list stays, empty, because the mechanism is the point: the audit's own
+// staleness check is what turned two forgiven reads back into a question, and
+// deleting the list would take that away from the next one.
+var queryParamExemptions []queryParamExemption
 
 // exemptQueryParam reports whether the read is justified, and marks it used.
 func exemptQueryParam(used []bool, importPath, name string) bool {

@@ -6,7 +6,7 @@ import (
 	"github.com/bdrtr/gobit/core/openapi"
 )
 
-// tutarNotu tutar taşıyan uçların açıklamasına eklenen birim uyarısıdır.
+// amountNote tutar taşıyan uçların açıklamasına eklenen birim uyarısıdır.
 //
 // Şema tipten "integer"/"int64" üretir ama TİP tek başına BİRİMİ söylemez:
 // istemci geliştiricisi 100,50 TL'yi gönderemeyeceğini görüp yuvarlamayı ya da
@@ -18,7 +18,7 @@ import (
 // ve Go alanları açıklama taşımaz. Alan başına açıklama, çekirdeğe yeni bir
 // mekanizma (etiketten okunan description) eklemek demekti ve bu, tek bir
 // modülün içinden verilecek bir karar değildir.
-const tutarNotu = "Tutarlar MINOR UNIT tam sayıdır (kuruş/cent): " +
+const amountNote = "Tutarlar MINOR UNIT tam sayıdır (kuruş/cent): " +
 	"100,50 TL için 10050 gönderilir; 100.50 gibi ondalıklı bir değer geçersizdir."
 
 // Describe payment'ın uçlarını OpenAPI belgesine işler.
@@ -113,13 +113,17 @@ func Describe(d *openapi.Doc) {
 	describeOturumlar(d)
 	describeTahsilatlar(d)
 	describeMagaza(d)
+
+	// Dört koleksiyon ucu; neden ayrı bir dosyada olduğu ve ADR 0036'ya kadar
+	// neden anlatılmadıkları describe_collection.go içinde.
+	describeCollections(d)
 }
 
 // describeOturumlar yönetim yüzeyindeki ödeme oturumu uçlarını anlatır.
 func describeOturumlar(d *openapi.Doc) {
 	d.Describe(http.MethodGet, pathAdminCollectionSess, openapi.Operation{
 		Summary:     "Koleksiyonun ödeme oturumlarını listeler.",
-		Description: tutarNotu,
+		Description: amountNote,
 		Responses: map[string]any{
 			// Liste SAYFALANMAZ; zarf yine de aynıdır (bkz. [writeList]):
 			// count satır sayısıdır ve limit ile aynıdır.
@@ -129,7 +133,7 @@ func describeOturumlar(d *openapi.Doc) {
 
 	d.Describe(http.MethodPost, pathAdminCollectionSess, openapi.Operation{
 		Summary: "Koleksiyon için bir sağlayıcıda ödeme oturumu açar.",
-		Description: tutarNotu + " amount verilmezse koleksiyonun KALAN tutarının " +
+		Description: amountNote + " amount verilmezse koleksiyonun KALAN tutarının " +
 			"tamamı için oturum açılır. idempotency_key zorunludur: aynı anahtarla " +
 			"gelen ikinci istek yeni oturum AÇMAZ, var olanı döner.",
 		RequestBody: d.RequestBody(createSessionRequest{}),
@@ -141,7 +145,7 @@ func describeOturumlar(d *openapi.Doc) {
 
 	d.Describe(http.MethodGet, pathAdminSession, openapi.Operation{
 		Summary:     "Ödeme oturumunu kimliğiyle döner.",
-		Description: tutarNotu,
+		Description: amountNote,
 		Responses: map[string]any{
 			"200": openapi.Response("Ödeme oturumu", d.Item(sessionDTO{})),
 		},
@@ -155,7 +159,7 @@ func describeOturumlar(d *openapi.Doc) {
 		// Burada tekrarlamak, ad değiştiği gün sessizce kırılan ikinci bir
 		// kayıt yaratırdı. Ret bir sunucu hatası değildir; istenen geçişin
 		// gerçekleşmemesidir ve gerekçe oturumun kendisinde döner.
-		Description: tutarNotu + " Sağlayıcı reddederse istek 409 ile döner ve " +
+		Description: amountNote + " Sağlayıcı reddederse istek 409 ile döner ve " +
 			"gerekçe oturumun decline_reason alanında görünür.",
 		Responses: map[string]any{
 			// Yetkilendirme yeni bir kayıt üretmez, var olan oturumu ilerletir:
@@ -166,7 +170,7 @@ func describeOturumlar(d *openapi.Doc) {
 
 	d.Describe(http.MethodPost, pathAdminSessionCapture, openapi.Operation{
 		Summary: "Bloke edilmiş tutarı tahsil eder.",
-		Description: tutarNotu + " Gövde hiç gönderilmeyebilir; amount verilmezse " +
+		Description: amountNote + " Gövde hiç gönderilmeyebilir; amount verilmezse " +
 			"ya da sıfırsa bloke tutarın TAMAMI tahsil edilir.",
 		RequestBody: istegeBagliGovde(d, amountRequest{}),
 		Responses: map[string]any{
@@ -189,7 +193,7 @@ func describeOturumlar(d *openapi.Doc) {
 func describeTahsilatlar(d *openapi.Doc) {
 	d.Describe(http.MethodGet, pathAdminCollectionPays, openapi.Operation{
 		Summary:     "Koleksiyonun tahsilatlarını listeler.",
-		Description: tutarNotu,
+		Description: amountNote,
 		Responses: map[string]any{
 			"200": openapi.Response("Koleksiyonun tahsilatları", d.List(paymentDTO{})),
 		},
@@ -197,7 +201,7 @@ func describeTahsilatlar(d *openapi.Doc) {
 
 	d.Describe(http.MethodGet, pathAdminPayment, openapi.Operation{
 		Summary:     "Tahsilatı kimliğiyle döner.",
-		Description: tutarNotu,
+		Description: amountNote,
 		Responses: map[string]any{
 			"200": openapi.Response("Tahsilat kaydı", d.Item(paymentDTO{})),
 		},
@@ -205,7 +209,7 @@ func describeTahsilatlar(d *openapi.Doc) {
 
 	d.Describe(http.MethodGet, pathAdminPaymentRefund, openapi.Operation{
 		Summary:     "Tahsilatın iadelerini listeler.",
-		Description: tutarNotu,
+		Description: amountNote,
 		Responses: map[string]any{
 			"200": openapi.Response("Tahsilatın iadeleri", d.List(refundDTO{})),
 		},
@@ -213,7 +217,7 @@ func describeTahsilatlar(d *openapi.Doc) {
 
 	d.Describe(http.MethodPost, pathAdminPaymentRefund, openapi.Operation{
 		Summary: "Tahsilatı kısmen ya da tamamen iade eder.",
-		Description: tutarNotu + " amount verilmezse ya da sıfırsa tahsilatın " +
+		Description: amountNote + " amount verilmezse ya da sıfırsa tahsilatın " +
 			"KALAN tutarının tamamı iade edilir.",
 		RequestBody: d.RequestBody(refundRequest{}),
 		Responses: map[string]any{
@@ -232,7 +236,7 @@ func describeTahsilatlar(d *openapi.Doc) {
 func describeMagaza(d *openapi.Doc) {
 	d.Describe(http.MethodPost, pathStoreCollectSess, openapi.Operation{
 		Summary: "Müşteri adına, koleksiyonun kalan tutarı için ödeme oturumu açar.",
-		Description: tutarNotu + " Tutar İSTEMCİDEN alınmaz: oturum her zaman " +
+		Description: amountNote + " Tutar İSTEMCİDEN alınmaz: oturum her zaman " +
 			"koleksiyonun kalan tutarının tamamını kapar. Gövdede amount " +
 			"gönderilirse istek reddedilir; data içindeki sağlayıcı davranış " +
 			"anahtarları da kabul edilmez.",

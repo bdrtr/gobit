@@ -39,7 +39,14 @@ func belge(t *testing.T) (yollar, bilesenler map[string]any) {
 	t.Helper()
 
 	doc := openapi.New("test", "v1")
-	Describe(doc)
+	// The namespace the composition root applies to this module (ADR 0036).
+	// Without it the test would build a document whose component names differ
+	// from the shipped one by exactly the prefix that IS the published
+	// contract. The name is a literal because an api package cannot import
+	// the module package that holds the constant — that import goes the other
+	// way. What keeps the literal honest is the audit in internal/app, which
+	// reads the REAL registry.
+	doc.ForModule("payment", func() { Describe(doc) })
 
 	r := chi.NewRouter()
 	New(nil).Routes(r)
@@ -273,15 +280,33 @@ func anlatilanUclar() []ucBeklentisi {
 		{
 			metod: http.MethodPost, yol: pathStoreSessionCancel, durum: "204",
 		},
+		// Dört koleksiyon ucu. 2026-09-07'ye kadar bu tabloda değillerdi ve
+		// bunun bir sebebi vardı: bileşen adı çakışması yüzünden anlatılamıyor,
+		// ayrı bir listede "bilinen eksik" olarak tutuluyorlardı. ADR 0036 adın
+		// önüne modül adını koydu, çakışma bitti, liste ve onu bekçileyen test
+		// kaldırıldı — o testin kendi belgesinin yazdığı gibi.
+		{
+			metod: http.MethodPost, yol: pathAdminCollections, durum: "201",
+			istek: createCollectionRequest{}, yanit: doluKoleksiyon(),
+		},
+		{
+			metod: http.MethodGet, yol: pathAdminCollections, durum: "200",
+			yanit: doluKoleksiyon(), liste: true,
+		},
+		{
+			metod: http.MethodGet, yol: pathAdminCollection, durum: "200",
+			yanit: doluKoleksiyon(),
+		},
+		{
+			metod: http.MethodGet, yol: pathStoreCollection, durum: "200",
+			yanit: doluKoleksiyon(),
+		},
 	}
 }
 
-// anlatilmayanUclar çakışma yüzünden gövdesi anlatılmayan uçlardır.
-var anlatilmayanUclar = []string{
-	http.MethodPost + " " + pathAdminCollections,
-	http.MethodGet + " " + pathAdminCollections,
-	http.MethodGet + " " + pathAdminCollection,
-	http.MethodGet + " " + pathStoreCollection,
+// doluKoleksiyon omitempty alanları da yazılan bir koleksiyon kaydı üretir.
+func doluKoleksiyon() collectionDTO {
+	return collectionDTO{Metadata: map[string]any{"k": "v"}}
 }
 
 // doluOturum omitempty alanları da yazılan bir ödeme oturumu üretir.
@@ -453,40 +478,6 @@ func TestAnlatilanUclarinTumuTabloda(t *testing.T) {
 		"tabloda olmayan bir uç sınanmamış demektir")
 }
 
-// TestKoleksiyonUclariBelgedeGovdesiz anlatılmayan dört ucun belgeden
-// DÜŞMEDİĞİNİ, yalnızca gövdesiz kaldığını doğrular.
-//
-// Eksiklik BİLİNÇLİDİR: [collectionDTO] ile [createCollectionRequest]'in
-// isteyeceği "Collection" ve "CreateCollectionRequest" bileşen adları product
-// modülünde zaten kayıtlıdır; anlatmak belgenin TAMAMINI üretilemez kılardı
-// (bkz. [Describe]). Uçlar yine de yolu, metodu ve güvenliğiyle görünür —
-// istemci onların var olduğunu bilir, yalnızca şeklini bilmez.
-//
-// Çakışma bir gün tiplerden biri yeniden adlandırılarak çözülürse bu test
-// düşer; o zaman yapılacak şey uçları [anlatilanUclar] tablosuna taşıyıp bu
-// testi KALDIRMAKTIR.
-func TestKoleksiyonUclariBelgedeGovdesiz(t *testing.T) {
-	t.Parallel()
-
-	yollar, _ := belge(t)
-
-	for _, kayit := range anlatilmayanUclar {
-		metod, yol, _ := strings.Cut(kayit, " ")
-
-		op := islem(t, yollar, metod, yol)
-		assert.Nil(t, op["summary"], "%s hâlâ anlatılmamış olmalı", kayit)
-		assert.Nil(t, op["requestBody"], "%s gövdesiz kalmalı", kayit)
-
-		yanitlar, ok := op["responses"].(map[string]any)
-		require.True(t, ok)
-
-		for kod := range yanitlar {
-			assert.NotEqual(t, "2", kod[:1],
-				"%s için başarılı yanıt anlatılmamış olmalı", kayit)
-		}
-	}
-}
-
 // TestTutarAlanlariMinorUnitTamSayidir para taşıyan her alanın tam sayı olarak
 // anlatıldığını doğrular.
 //
@@ -522,7 +513,7 @@ func TestTutarAlanlariMinorUnitTamSayidir(t *testing.T) {
 			m, ok := alanSemasi.(map[string]any)
 			require.True(t, ok)
 
-			assert.Equal(t, "integer", m["type"], "%s.%s tam sayı olmalı", ad, alan)
+			assert.Equal(t, tutarTipi, tutarTipiOku(m), "%s.%s tam sayı olmalı", ad, alan)
 			assert.Equal(t, "int64", m["format"], "%s.%s int64 olmalı", ad, alan)
 
 			sayilan++
@@ -530,6 +521,56 @@ func TestTutarAlanlariMinorUnitTamSayidir(t *testing.T) {
 	}
 
 	assert.Positive(t, sayilan, "en az bir tutar alanı anlatılmış olmalı")
+}
+
+// tutarTipi para taşıyan bir alanın taşımak zorunda olduğu JSON Schema tipidir.
+const tutarTipi = "integer"
+
+// tutarTipiOku alan şemasının tipini, NULLABLE sarmalını soyarak döner.
+//
+// İşaretçi bir alan ("amount *int64") şemaya ["integer","null"] olarak çıkar ve
+// bu, sarmalın kendisi kadar bilinçlidir: [createCollectionRequest] içinde
+// gönderilmemiş tutarla sıfır gönderilmiş tutar AYRI şeylerdir ve ikisi de ayrı
+// mesajla reddedilir. Testin iddiası "para kayan noktaya uğramaz"dır; nullable
+// bir tam sayı bu iddiayı bozmaz, "number" ya da "string" bozar.
+//
+// Sarmalı soymayan hâli 2026-09-07'ye kadar YEŞİLDİ, çünkü tutar taşıyan tek
+// işaretçi alan, bileşen adı çakışması yüzünden belgeye hiç girmeyen bir tipin
+// içindeydi (ADR 0036). Yani test doğruydu ve ölçtüğü küme eksikti.
+func tutarTipiOku(sema map[string]any) any {
+	switch tip := sema["type"].(type) {
+	case []any:
+		for _, ad := range tip {
+			if ad != "null" {
+				return ad
+			}
+		}
+
+		return tip
+	default:
+		return tip
+	}
+}
+
+// TestTutarTipiOkuSarmaliSoyarAmaYanlisTipiGECIRMEZ yardımcının kendisini tutar.
+//
+// Yardımcı, üstündeki testin TEK karar noktasıdır: yanlış yazılmış bir hâli —
+// örneğin sarmalın içine hiç bakmayıp "integer" döneni — testi yeşil bırakır ve
+// ["number","null"] tipli bir tutar alanı fark edilmeden geçer. Bunu mutasyonla
+// ölçtüm: öyle bir hâl DERLENİYOR ve hiçbir test ses çıkarmıyordu.
+//
+// Bir testin karar noktası, ölçtüğü şey kadar kanıt ister.
+func TestTutarTipiOkuSarmaliSoyarAmaYanlisTipiGECIRMEZ(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "integer", tutarTipiOku(map[string]any{"type": "integer"}),
+		"sarmalsız tip olduğu gibi dönmeli")
+	assert.Equal(t, "integer", tutarTipiOku(map[string]any{"type": []any{"integer", "null"}}),
+		"işaretçi alanın nullable sarmalı soyulmalı")
+	assert.Equal(t, "number", tutarTipiOku(map[string]any{"type": []any{"number", "null"}}),
+		"sarmalın İÇİ yanlışsa yardımcı bunu SAKLAMAMALI; sakladığı hâl derleniyor "+
+			"ve üstteki testi yeşil bırakıyor")
+	assert.Equal(t, "string", tutarTipiOku(map[string]any{"type": "string"}))
 }
 
 // TestTutarTasiyanUclarBirimiYaziyor tutar taşıyan her ucun birimi AÇIKÇA

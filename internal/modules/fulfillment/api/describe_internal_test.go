@@ -33,7 +33,14 @@ func document(t *testing.T) (paths, components map[string]any) {
 	t.Helper()
 
 	doc := openapi.New("test", "v1")
-	Describe(doc)
+	// The namespace the composition root applies to this module (ADR 0036).
+	// Without it the test would build a document whose component names differ
+	// from the shipped one by exactly the prefix that IS the published
+	// contract. The name is a literal because an api package cannot import
+	// the module package that holds the constant — that import goes the other
+	// way. What keeps the literal honest is the audit in internal/app, which
+	// reads the REAL registry.
+	doc.ForModule("fulfillment", func() { Describe(doc) })
 
 	r := chi.NewRouter()
 	New(nil).Routes(r)
@@ -283,20 +290,43 @@ func describedEndpoints() []endpointExpectation {
 			method: http.MethodPost, path: pathAdminReturned, status: "200",
 			response: filledFulfillment(),
 		},
+		// The four endpoints carrying the option RECORD. They were not in this
+		// table until 2026-09-07 and there was a reason: optionDTO wanted the
+		// component name the product module's models.Option already held, and
+		// describing them would have made the WHOLE document unbuildable. ADR
+		// 0036 put the module's name in front of the component's, so this type
+		// is "FulfillmentOption" now and nothing here was renamed.
+		{
+			method: http.MethodPost, path: pathAdminOptions, status: "201",
+			request: createOptionRequest{}, response: filledOption(),
+		},
+		{
+			method: http.MethodGet, path: pathAdminOptions, status: "200",
+			response: filledOption(), list: true,
+		},
+		{
+			method: http.MethodGet, path: pathAdminOption, status: "200",
+			response: filledOption(),
+		},
+		{
+			method: http.MethodPatch, path: pathAdminOption, status: "200",
+			request: updateOptionRequest{}, response: filledOption(),
+		},
 	}
 }
 
-// undescribedOptionEndpoints are the endpoints left undescribed because they
-// carry [optionDTO].
+// filledOption produces an option record whose omitempty fields are written too.
 //
-// The rationale is in the [Describe] godoc: a component name collision would
-// bring down document generation entirely.
-func undescribedOptionEndpoints() []endpointExpectation {
-	return []endpointExpectation{
-		{method: http.MethodPost, path: pathAdminOptions},
-		{method: http.MethodGet, path: pathAdminOptions},
-		{method: http.MethodGet, path: pathAdminOption},
-		{method: http.MethodPatch, path: pathAdminOption},
+// "rules" is one of them, and it is why the sample carries a rule rather than an
+// empty slice: the comparison is "the schema's field set = the encoded key set",
+// and an option with no rules encodes no "rules" key at all. The endpoint really
+// can answer with rules — GET on a single option returns them — so the schema
+// declares the field and the sample has to write it.
+func filledOption() optionDTO {
+	return optionDTO{
+		Data:     map[string]any{"k": "v"},
+		Metadata: map[string]any{"k": "v"},
+		Rules:    []ruleDTO{{}},
 	}
 }
 
@@ -457,36 +487,6 @@ func TestShipRequestBodyIsNotRequired(t *testing.T) {
 	body, ok := op["requestBody"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, false, body["required"])
-}
-
-// TestOptionEndpointsAreDeliberatelyUndescribed verifies that the colliding
-// endpoints stay WITHOUT A BODY.
-//
-// The test fixes a "missing" state and that is deliberate: [optionDTO] asks for
-// the "Option" component name, the product module's models.Option asks for the
-// same name, and two types asking for the same name brings down document
-// generation ENTIRELY. That is why the endpoints were left undescribed. If
-// someone adds a body one day, /openapi.json starts returning 500, and this
-// test puts the reason for that change here in writing.
-func TestOptionEndpointsAreDeliberatelyUndescribed(t *testing.T) {
-	t.Parallel()
-
-	paths, _ := document(t)
-
-	for _, endpoint := range undescribedOptionEndpoints() {
-		op := operation(t, paths, endpoint.method, endpoint.path)
-
-		assert.NotContains(t, op, "summary", "%s must be left undescribed", endpoint.key())
-		assert.NotContains(t, op, "requestBody", "%s must stay without a body", endpoint.key())
-
-		responses, ok := op["responses"].(map[string]any)
-		require.True(t, ok)
-
-		for code := range responses {
-			assert.NotEqual(t, "2", code[:1],
-				"%s must not promise a success response: %s", endpoint.key(), code)
-		}
-	}
 }
 
 // TestEveryDescribedEndpointIsInTheTable verifies that every described endpoint

@@ -12,6 +12,65 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **Bilesen adi artik sahibi olan modulu tasiyor** (ADR 0036) — ve dun acilan
+  otuz sekiz kisilik defterin yirmi besi ayni gun odendi.
+
+  Bir OpenAPI bilesenin adi yalnizca Go tip adindan turetiliyordu, yani iki
+  modul ayni anda `Address` sahibi olamiyordu. Ariza orantili degil: iki farkli
+  tip bir ad istediginde `Doc.Build` HATA doner ve /openapi.json HER modul icin
+  500 olur. Bir modulun ad secimi baska bir modulun semasini dusuruyordu.
+
+  **Dort modul bunu birbirinden bagimsiz olarak yasadi ve dordu de ayni seyi
+  yapti:** belgeyi dusurmektense uclarini govdesiz biraktilar. customer-cart
+  "Address", payment-product "Collection", fulfillment-product "Option",
+  order-cart "LineItem" — toplam yirmi bes uc. Dordu de ayrica, kendi
+  kelimeleriyle, cozumun cekirdege ait oldugunu yazdi: bilesen adi istemci
+  ureteclerinin URETTIGI SINIF ADIDIR, yani yayimlanmis sozlesmedir, ve iki
+  modulu birden ilgilendiren bir karar tek modulun icinden alinamaz. Dordu de
+  her noktada haklıydı.
+
+  **Karar:** ad, anlatilan modulun adiyla oneklenir — `CustomerAddress`,
+  `CartAddress`. Onek, tip adi zaten onunla basliyorsa DUSER, yani product
+  modulunun `Product`'i `ProductProduct` olmaz. Ad uzayi modulun kendi
+  `Name()`'inden gelir ve kompozisyon kokunde uygulanir: hem modul listesini
+  hem belgeyi tutan tek yer orasi.
+
+  **Reddedilenler, ve neden:** *import yolundan turetmek* — bariz alternatif,
+  ama bir TAHMIN ve sessizce yaniliyor; "api"/"models"in rol segmenti oldugunu
+  bilmesi gerekir, gomen uygulamanin duzeni icin cevabi yoktur, ve yanlis tahmin
+  hata vermez, uretilen her istemcide yanlis sinif adi verir. *Yalnizca
+  cakismada oneklemek* — en az adi yeniden adlandiran aday ve SIRAYA bagli tek
+  aday; iki cakisan tipten hangisinin ciplak adi tutacagi kayit sirasina
+  bagli olurdu. Ayni hatanin daha sessiz bir surumu de karar sirasinda cikti:
+  hangi modullerin KURULU oldugana bagli bir kural, ayni surumun iki kurulumuna
+  iki farkli sozlesme verirdi. *Tipleri modullerde yeniden adlandirmak* — dort
+  modulun de reddettigi ve hakli olarak reddettigi sey.
+
+  **Bedeli ve kabulu:** bu, bir onceki kararla yayimlanmis bir paketin ikinci
+  gununde KIRICI bir yeniden adlandirmadir. `0.x` politikasi altinda kabul
+  edildi ve bir istemci var olduktan sonra odemekten iyidir.
+
+  **Ilk denemede e2e kosumu kaydi ve bu kendi bulgusu:** kosum, kokun describe
+  dongusunun KOPYASINI tutuyor. Ad uzayi uretime indi, kopyaya inmedi, ve
+  kosumun belgesi hic uretilemez hale geldi — cunku kopyada customer ile cart
+  hala carpisiyordu. Daha kotusu, e2e_test.go'nun kendi yorumu "test ayri bir
+  KOPYA kurmuyor" diyordu; belge ayniydi ama onu DOLDURAN dongu kopyaydi ve
+  cumle hicbir sey tekrarlanmiyormus gibi okunuyordu. Ikisi de duzeltildi ve cift
+  artik disaridan denetleniyor (`TestTheDescribeLoopsAgree`) — modul kumesini
+  denetleyen komsusuyla ayni gerekceyle: bir sozu, yanina yazilan bir satir
+  degil, disaridan bakan bir test tutar.
+
+  **Kapilar kendi islerini yapti.** Sorgu parametresi denetiminin iki muafiyeti
+  BAYAT dustu (gerekce ortadan kalkinca) ve liste bosaltildi; mekanizma kalsin
+  diye fonksiyon silinmedi. Dil circiri, Ingilizce yazdigim iki yeni dosyada
+  Turkce tanimlayici yakaladi (`bosYanit`, `tutarNotu`) — ikisi de Ingilizceye
+  cevrildi, defter buyumedi. Ve payment'in tutar testi, ilk kez belgeye giren
+  bir isaretci alan yuzunden kirildi: test dogruydu, olctugu KUME eksikti.
+
+  Defter 38'den 2'ye indi. Kalan iki uc bir sema sorunu degil: search
+  eklentisinin paketi hala Turkce ve ADR 0012'nin circiri yeni dosyanin
+  Ingilizce olmasini istiyor, yani onlari odemenin durust yolu paketi cevirmek.
+
 - **Webhook eklentisinin operator yuzeyi hem TIPLENDI hem anlatildi**, ve
   tiplemek bir kusur ortaya cikardi.
 

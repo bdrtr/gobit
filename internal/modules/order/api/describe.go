@@ -55,7 +55,7 @@ const amountNote = "Amounts are MINOR UNIT integers (kurus/cent): " +
 // on the service having been constructed; yet the document can be produced, and
 // has to be producible, even when Register has never run.
 //
-// # FIVE ENDPOINTS LEFT UNDESCRIBED: the component name "LineItem" COLLIDES
+// # ~~FIVE ENDPOINTS LEFT UNDESCRIBED~~ — the collision was fixed in the core
 //
 // The name of the schema component is derived from the Go type name (the first
 // letter is capitalized, the "DTO" suffix is dropped), that is, [lineItemDTO]
@@ -76,13 +76,19 @@ const amountNote = "Amounts are MINOR UNIT integers (kurus/cent): " +
 //   - POST /admin/v1/orders/{id}/complete
 //   - POST /admin/v1/orders/{id}/archive
 //
-// All five appear in the document with their path, method and security; only
-// their bodies are missing. The fix is to RENAME one of the types, and that
-// decision cannot be made from inside this module: the component name is the
-// CLASS NAME that client generators PRODUCE, that is, a published contract, and
-// changing it once a client has been generated is breaking. Taking a decision
-// that concerns two modules at once from inside a single module would break the
-// other module's client without warning.
+// ~~All five appear in the document with their path, method and security; only
+// their bodies are missing.~~ **2026-09-07: all five are described, in
+// [describeOrderDetail].** The paragraph above stays because its diagnosis was
+// right and its refusal was right: the fix IS a rename of a published class
+// name, and it IS a decision that concerns two modules at once, so taking it
+// from inside this one would have broken the cart module's client without
+// warning.
+//
+// What the paragraph got wrong was only the shape of the answer. ADR 0036 did
+// not rename either type; it gave the component name a NAMESPACE — the name of
+// the module being described — so this package's type is "OrderLineItem" and
+// cart's is "CartLineItem". Both were renamed, both deliberately, in one place,
+// with one decision.
 //
 // # ~~There is NO other undescribed endpoint~~ — there were five more
 //
@@ -460,6 +466,7 @@ func describeTimeline(d *openapi.Doc) {
 	})
 
 	describeAfterSales(d)
+	describeOrderDetail(d)
 }
 
 // describeAfterSales records the return, refund and claim endpoints.

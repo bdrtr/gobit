@@ -39,7 +39,14 @@ func adminDoc(t *testing.T) (paths, components map[string]any) {
 	t.Helper()
 
 	doc := openapi.New("test", "v1")
-	Describe(doc)
+	// The namespace the composition root applies to this module (ADR 0036).
+	// Without it the test would build a document whose component names differ
+	// from the shipped one by exactly the prefix that IS the published
+	// contract. The name is a literal because an api package cannot import
+	// the module package that holds the constant — that import goes the other
+	// way. What keeps the literal honest is the audit in internal/app, which
+	// reads the REAL registry.
+	doc.ForModule("product", func() { Describe(doc) })
 
 	r := chi.NewRouter()
 	New(nil, graph.Options{}).Routes(r)

@@ -136,6 +136,20 @@ type Doc struct {
 	schemaOwners map[string]reflect.Type
 	// schemaClashes is the report of DIFFERENT types wanting the same component name.
 	schemaClashes []string
+	// namespace is the module whose Describe is running right now, or "".
+	//
+	// It is set by the composition root around each module's Describe call (see
+	// [Doc.ForModule]) and is what turns a component name into a namespaced one.
+	// It is a field rather than a parameter because the types are registered
+	// LAZILY and several frames down: a module calls [Doc.Item], which reaches
+	// [Doc.SchemaOf], which descends through the struct's fields registering a
+	// component for each named struct it meets. Threading the module through all
+	// of that would put a parameter on every published schema helper for the sake
+	// of a value that never changes inside one call.
+	//
+	// The description API is single threaded and runs before the server listens
+	// (see describeVersion), which is what makes a field safe here.
+	namespace string
 	// describeVersion is the version the description records are at.
 	//
 	// [Doc.Describe] and the component registration ([Doc.structSchemaOrRef])
@@ -220,6 +234,50 @@ func New(title, version string) *Doc {
 type Describer interface {
 	// Describe writes the module's endpoints into the document (with [Doc.Describe]).
 	Describe(d *Doc)
+}
+
+// ForModule runs describe with the given module's name as the component
+// NAMESPACE.
+//
+// # The problem it solves, which four modules diagnosed independently
+//
+// A component's name used to come from the Go type name alone, so two modules
+// could not both own a type called Address. Two types wanting one name is not a
+// degraded endpoint: [Doc.Build] FAILS and /openapi.json returns 500 for every
+// module. Four modules hit it — customer against cart on "Address", payment
+// against product on "Collection", fulfillment against product on "Option",
+// order against cart on "LineItem" — and all four made the same choice, which
+// was the right one: they left their endpoints undescribed rather than take the
+// whole document down. All four also wrote that the fix belonged in the core.
+// This is that fix (ADR 0036).
+//
+// # The namespace is the module's NAME, not a guess from its import path
+//
+// A path heuristic was the obvious alternative and it was rejected: it has to
+// know that "api" and "models" are role segments to be stepped over, it has no
+// answer for an embedder whose types live somewhere it has never seen, and a
+// wrong guess does not fail — it produces a wrong class name in every generated
+// client. [github.com/bdrtr/gobit/core/module.Module] already carries a Name,
+// it is already the module's identity for its container services and its
+// migration table, and an out-of-tree module has one for free.
+//
+// # Why the composition root calls this and not the module
+//
+// The module does not know it is being described; it implements [Describer] and
+// hands over its endpoints. The root is the one place that holds both the module
+// list and the document, which is the same reason [Describer] itself is resolved
+// there by type assertion rather than in the core.
+//
+// The namespace is cleared afterwards even if describe panics, because a
+// namespace that leaked into the next module would name its components after
+// somebody else.
+func (d *Doc) ForModule(name string, describe func()) {
+	previous := d.namespace
+	d.namespace = name
+
+	defer func() { d.namespace = previous }()
+
+	describe()
 }
 
 // Describe records the operation details of a route.

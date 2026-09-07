@@ -75,6 +75,10 @@ func Describe(d *openapi.Doc) {
 	describeMusteriler(d)
 	describeGruplar(d)
 	describeVitrin(d)
+
+	// The twelve address endpoints; see describe_address.go for why they are in
+	// a file of their own and why they were undescribed until ADR 0036.
+	describeAddresses(d)
 }
 
 // describeMusteriler müşterinin yönetim uçlarını anlatır.
@@ -136,7 +140,7 @@ func describeMusteriler(d *openapi.Doc) {
 	d.Describe(http.MethodDelete, "/admin/v1/customers/{id}", openapi.Operation{
 		Summary: "Müşteriyi ve adreslerini yumuşak siler.",
 		Responses: map[string]any{
-			"204": bosYanit("Müşteri silindi"),
+			"204": emptyResponse("Müşteri silindi"),
 		},
 	})
 
@@ -203,7 +207,7 @@ func describeGruplar(d *openapi.Doc) {
 	d.Describe(http.MethodDelete, "/admin/v1/customer-groups/{id}", openapi.Operation{
 		Summary: "Müşteri grubunu yumuşak siler.",
 		Responses: map[string]any{
-			"204": bosYanit("Grup silindi"),
+			"204": emptyResponse("Grup silindi"),
 		},
 	})
 
@@ -215,7 +219,7 @@ func describeGruplar(d *openapi.Doc) {
 		Description: "İşlem idempotenttir; zaten üye olan müşteri için de 204 döner.",
 		RequestBody: d.RequestBody(groupMemberRequest{}),
 		Responses: map[string]any{
-			"204": bosYanit("Müşteri gruba eklendi"),
+			"204": emptyResponse("Müşteri gruba eklendi"),
 		},
 	})
 
@@ -223,7 +227,7 @@ func describeGruplar(d *openapi.Doc) {
 		openapi.Operation{
 			Summary: "Müşteriyi gruptan çıkarır.",
 			Responses: map[string]any{
-				"204": bosYanit("Müşteri gruptan çıkarıldı"),
+				"204": emptyResponse("Müşteri gruptan çıkarıldı"),
 			},
 		})
 }
@@ -274,12 +278,12 @@ func sorguParametresi(ad, tip, aciklama string) openapi.Parameter {
 	}
 }
 
-// bosYanit GÖVDESİZ bir yanıt tanımı üretir.
+// emptyResponse GÖVDESİZ bir yanıt tanımı üretir.
 //
 // [openapi.Response] her zaman bir gövde şeması yazar; 204'ün gövdesi ise
 // YOKTUR (bkz. corehttp.WriteJSON'a nil verilen çağrılar). Boş bir şema
 // yazmak "bir şey dönüyor ama şekli bilinmiyor" demek olurdu ve istemci
 // üreteci okunacak bir gövde bekleyen bir metot üretirdi.
-func bosYanit(aciklama string) map[string]any {
+func emptyResponse(aciklama string) map[string]any {
 	return map[string]any{"description": aciklama}
 }

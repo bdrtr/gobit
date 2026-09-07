@@ -71,10 +71,15 @@ method and its security, only without a body — a generated client for it
 compiles and sends nothing, and a reader cannot tell "takes no body" from
 "nobody wrote it down". Two things now say so out loud: the server logs the list
 at startup, and `internal/e2e/testdata/undescribed_routes.txt` holds it as a
-ledger that **may only shrink**. Thirty-three routes are on it today. Twenty-five
-are one root cause — two modules cannot both own a Go type called `Address`,
-because the component name comes from the type name — and the fix is a namespace
-decision recorded in [`gaps.md`](gaps.md) rather than an edit in any module.
+ledger that **may only shrink**. It opened at thirty-eight and stands at two.
+
+A component's name carries the module that owns it — `CustomerAddress`,
+`CartAddress` ([ADR 0036](adr/0036-a-component-name-carries-its-module.md)).
+Without that, two modules could not both have a Go type called `Address`, and
+the failure was not proportional: a name clash makes the WHOLE document
+unbuildable, so four modules left twenty-five endpoints bodiless rather than
+take `/openapi.json` down for everyone. The prefix is dropped when the type name
+already begins with it, so `Product` stays `Product`.
 
 You can generate a client from the schema:
 

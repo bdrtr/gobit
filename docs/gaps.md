@@ -1362,7 +1362,24 @@ a repository that no longer exists.
 
 ### G. Found while building, not yet decided
 
-- **An OpenAPI component's name is derived from the Go type name, so two
+- ~~**An OpenAPI component's name is derived from the Go type name, so two
+  modules cannot both have an `Address`.**~~ **ANSWERED THE SAME DAY — ADR 0036.**
+  The name now carries the module being described (`CustomerAddress`,
+  `CartAddress`), applied by the composition root from `module.Module.Name()`,
+  with the prefix dropped when the type name already begins with it so `Product`
+  does not become `ProductProduct`. All twenty-five endpoints were described and
+  **no type in any of the four modules was renamed** — which is what the four
+  notes were protecting when they refused to rename one. Candidate 2 (prefix only
+  on collision) was rejected on the order-dependence named below, and a quieter
+  version of the same fault surfaced while deciding: a rule that depends on which
+  modules are INSTALLED would give two installations of one version two different
+  contracts. The path-heuristic candidate was rejected for being a guess that
+  cannot fail loudly. What the decision cost is written in the ADR: it is a
+  breaking rename of a package published one decision earlier, and the e2e
+  harness's copy of the describe loop drifted on the first try — now audited by
+  `TestTheDescribeLoopsAgree`. Original entry below.
+
+  **An OpenAPI component's name is derived from the Go type name, so two
   modules cannot both have an `Address`.** Measured 2026-09-07 by the audit ADR
   0035 added, and the finding is not new — it was already written down TWICE, in
   `internal/modules/customer/api/describe.go` and

@@ -27,12 +27,19 @@ type ClashingRecord struct {
 // has been generated is breaking. Without the normalization, "StoreProduct"
 // (exported) would stand next to "cartDTO" (unexported) in one document and the
 // generated client would carry two different naming schemes.
+//
+// The namespace column is the third normalization (ADR 0036) and the only one
+// that is not lossless. Its rows carry the four collisions that made it
+// necessary and the two shapes of its "already prefixed" clause, because a rule
+// that prefixes unconditionally produces "ProductProduct" and one that never
+// prefixes is the rule that broke.
 func TestComponentNameDoesNotLeakGoDetails(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]struct {
-		goName string
-		want   string
+		namespace string
+		goName    string
+		want      string
 	}{
 		"an unexported name is upper-cased": {goName: "cartDTO", want: "Cart"},
 		"the DTO suffix is dropped":         {goName: "addressDTO", want: "Address"},
@@ -40,13 +47,43 @@ func TestComponentNameDoesNotLeakGoDetails(t *testing.T) {
 		"request types stay meaningful":     {goName: "createCartRequest", want: "CreateCartRequest"},
 		"a name that is only DTO survives":  {goName: "DTO", want: "DTO"},
 		"an empty name stays empty":         {goName: "", want: ""},
+
+		// The collision that made the namespace necessary: one type name, two
+		// modules, and before this the document would not build at all.
+		"the customer's address": {
+			namespace: "customer", goName: "addressDTO", want: "CustomerAddress",
+		},
+		"the cart's address": {
+			namespace: "cart", goName: "addressDTO", want: "CartAddress",
+		},
+		"the product's collection": {
+			namespace: "product", goName: "Collection", want: "ProductCollection",
+		},
+		"the payment's collection": {
+			namespace: "payment", goName: "collectionDTO", want: "PaymentCollection",
+		},
+
+		// The "already prefixed" clause, in both directions.
+		"a type already named after its module keeps its name": {
+			namespace: "product", goName: "productDTO", want: "Product",
+		},
+		"and the check ignores the case of the first letter": {
+			namespace: "payment", goName: "PaymentSession", want: "PaymentSession",
+		},
+		"a name that merely starts with the same letters is still prefixed": {
+			namespace: "cart", goName: "cardDTO", want: "CartCard",
+		},
+
+		// A component registered outside any module keeps the bare name; those
+		// belong to gobit rather than to a module.
+		"no namespace, no prefix": {goName: "personalDataDTO", want: "PersonalData"},
 	}
 
 	for name, tt := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, tt.want, componentName(tt.goName))
+			assert.Equal(t, tt.want, componentName(tt.namespace, tt.goName))
 		})
 	}
 }

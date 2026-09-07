@@ -453,7 +453,27 @@ func nullable(schema map[string]any) map[string]any {
 // would want "Cart") and it is NOT SILENT: [Doc.reportClash] reports that two
 // types want the same name and building the document returns an error. A silent
 // overwrite would mean one DTO's schema describing another type.
-func componentName(goTypeName string) string {
+//
+// # The NAMESPACE, and why the name is not the type name alone
+//
+// A third normalization was added on 2026-09-07 and it is the one that is not
+// lossless: the name is prefixed with the module being described ([Doc.ForModule]).
+// Without it two modules could not both own a type called Address, and four of
+// them could not — the collision does not degrade one endpoint, it makes the
+// WHOLE document unbuildable, so four modules left twenty-five endpoints
+// bodiless rather than take /openapi.json down. ADR 0036 has the whole of it.
+//
+// The prefix is DROPPED when the type name already begins with it, so the
+// product module's Product stays "Product" rather than becoming
+// "ProductProduct". The comparison is case-insensitive on the first letter only
+// — "product"/"Product" — because that is exactly the difference the second
+// normalization above creates.
+//
+// A namespace-less registration (a type described outside any module, at the
+// composition root) keeps the bare name. That is deliberate: those components
+// belong to gobit itself rather than to a module, and there is no module name to
+// give them.
+func componentName(namespace, goTypeName string) string {
 	if goTypeName == "" {
 		return ""
 	}
@@ -464,7 +484,26 @@ func componentName(goTypeName string) string {
 		name = goTypeName
 	}
 
-	r := []rune(name)
+	name = upperFirst(name)
+
+	prefix := upperFirst(namespace)
+	if prefix == "" || strings.HasPrefix(name, prefix) {
+		return name
+	}
+
+	return prefix + name
+}
+
+// upperFirst upper-cases the first rune and leaves the rest alone.
+//
+// strings.Title would also touch the letter after every separator, which would
+// rewrite type names rather than normalize their first letter.
+func upperFirst(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	r := []rune(s)
 	r[0] = unicode.ToUpper(r[0])
 
 	return string(r)
@@ -472,7 +511,7 @@ func componentName(goTypeName string) string {
 
 // structSchemaOrRef registers a named struct as a component and returns a "$ref".
 func (d *Doc) structSchemaOrRef(t reflect.Type, seen map[reflect.Type]bool) map[string]any {
-	name := componentName(t.Name())
+	name := componentName(d.namespace, t.Name())
 	if name == "" {
 		// An anonymous struct has no name and cannot go into a component — but it
 		// cannot reference ITSELF either, so writing it inline is safe.

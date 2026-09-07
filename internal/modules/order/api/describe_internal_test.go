@@ -41,7 +41,14 @@ func document(t *testing.T) (paths, components map[string]any) {
 	t.Helper()
 
 	doc := openapi.New("test", "v1")
-	Describe(doc)
+	// The namespace the composition root applies to this module (ADR 0036).
+	// Without it the test would build a document whose component names differ
+	// from the shipped one by exactly the prefix that IS the published
+	// contract. The name is a literal because an api package cannot import
+	// the module package that holds the constant — that import goes the other
+	// way. What keeps the literal honest is the audit in internal/app, which
+	// reads the REAL registry.
+	doc.ForModule("order", func() { Describe(doc) })
 
 	r := chi.NewRouter()
 	New(nil, nil, nil, nil).Routes(r)
@@ -349,6 +356,46 @@ func describedEndpoints() []endpointExpectation {
 			request:  storeReturnRequest{Lines: []storeReturnLine{{OrderLineItemID: "oli_1", Quantity: 1}}},
 			response: filledReturn(),
 		},
+		// The five endpoints that answer with the order and its lines. They were
+		// not in this table until 2026-09-07 and there was a reason: lineItemDTO
+		// wanted the component name cart/api's type of the same name already
+		// held, and describing them would have made the WHOLE document
+		// unbuildable — cart's endpoints included. ADR 0036 gave the name a
+		// namespace instead of renaming either type.
+		{
+			method: http.MethodGet, path: "/admin/v1/orders/{id}", status: "200",
+			response: filledOrderDetail(),
+		},
+		{
+			method: http.MethodGet, path: "/store/v1/orders/{id}", status: "200",
+			response: filledOrderDetail(),
+		},
+		{
+			method: http.MethodPost, path: "/admin/v1/orders/{id}/cancel", status: "200",
+			request: cancelOrderRequest{}, response: filledOrderDetail(),
+		},
+		{
+			method: http.MethodPost, path: "/admin/v1/orders/{id}/complete", status: "200",
+			response: filledOrderDetail(),
+		},
+		{
+			method: http.MethodPost, path: "/admin/v1/orders/{id}/archive", status: "200",
+			response: filledOrderDetail(),
+		},
+	}
+}
+
+// filledOrderDetail produces an order detail whose omitempty fields are written
+// too.
+//
+// The line item carries its own metadata for the same reason the order does: the
+// comparison is "the schema's field set = the encoded key set", and a zero
+// sample would drop exactly the fields that carry omitempty.
+func filledOrderDetail() orderDetailDTO {
+	return orderDetailDTO{
+		orderDTO: filledOrder(),
+		Items:    []lineItemDTO{{Metadata: map[string]any{"k": "v"}}},
+		Summary:  summaryDTO{},
 	}
 }
 
@@ -372,16 +419,6 @@ func filledOrderPayment() orderPaymentDTO {
 		FirstCapturedAt:  &now,
 		LastRefundedAt:   &now,
 	}
-}
-
-// undescribedEndpoints are the endpoints whose bodies are left undescribed
-// because of the collision.
-var undescribedEndpoints = []string{
-	http.MethodGet + " /store/v1/orders/{id}",
-	http.MethodGet + " /admin/v1/orders/{id}",
-	http.MethodPost + " /admin/v1/orders/{id}/cancel",
-	http.MethodPost + " /admin/v1/orders/{id}/complete",
-	http.MethodPost + " /admin/v1/orders/{id}/archive",
 }
 
 // filledOrder produces an order record whose omitempty fields are written too.
@@ -571,42 +608,6 @@ func TestEveryDescribedEndpointIsInTheTable(t *testing.T) {
 
 	assert.ElementsMatch(t, expected, found,
 		"an endpoint that is not in the table means an untested endpoint")
-}
-
-// TestLineItemEndpointsStayInDocumentWithoutBodies verifies that the five
-// undescribed endpoints DO NOT DROP OUT of the document, that they only stay
-// without a body.
-//
-// The gap itself is tested because the gap is DELIBERATE: [orderDetailDTO]
-// carries its line items with [lineItemDTO] and the "LineItem" component name
-// that type would ask for is already registered in the cart module; describing
-// it would have made the WHOLE document unproducible (see [Describe]). The
-// endpoints still appear with their path, method and security — the client
-// knows that they exist, it only does not know their shape.
-//
-// If the collision is one day resolved by renaming one of the types, this test
-// fails; what has to be done then is to move the endpoints into the
-// [describedEndpoints] table and REMOVE this test.
-func TestLineItemEndpointsStayInDocumentWithoutBodies(t *testing.T) {
-	t.Parallel()
-
-	paths, _ := document(t)
-
-	for _, entry := range undescribedEndpoints {
-		method, path, _ := strings.Cut(entry, " ")
-
-		op := operation(t, paths, method, path)
-		assert.Nil(t, op["summary"], "%s has to still be undescribed", entry)
-		assert.Nil(t, op["requestBody"], "%s has to stay without a body", entry)
-
-		responses, ok := op["responses"].(map[string]any)
-		require.True(t, ok)
-
-		for code := range responses {
-			assert.NotEqual(t, "2", code[:1],
-				"the successful response for %s has to stay undescribed", entry)
-		}
-	}
 }
 
 // parameterNames returns the names of the operation's parameters in the given

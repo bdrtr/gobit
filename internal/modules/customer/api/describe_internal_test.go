@@ -32,7 +32,14 @@ func belge(t *testing.T) (yollar, bilesenler map[string]any) {
 	t.Helper()
 
 	doc := openapi.New("test", "v1")
-	Describe(doc)
+	// The namespace the composition root applies to this module (ADR 0036).
+	// Without it the test would build a document whose component names differ
+	// from the shipped one by exactly the prefix that IS the published
+	// contract. The name is a literal because an api package cannot import
+	// the module package that holds the constant — that import goes the other
+	// way. What keeps the literal honest is the audit in internal/app, which
+	// reads the REAL registry.
+	doc.ForModule("customer", func() { Describe(doc) })
 
 	r := chi.NewRouter()
 	New(nil).Routes(r)
@@ -192,7 +199,7 @@ func (u ucBeklentisi) anahtar() string { return u.metod + " " + u.yol }
 // çünkü karşılaştırma "şemanın properties kümesi = kodlanan anahtar kümesi"
 // biçimindedir ve boş bir örnek omitempty alanları hiç yazmazdı.
 func anlatilanUclar() []ucBeklentisi {
-	return []ucBeklentisi{
+	uclar := []ucBeklentisi{
 		{
 			metod: http.MethodPost, yol: "/admin/v1/customers", durum: "201",
 			istek: customerRequest{}, yanit: doluMusteri(),
@@ -261,31 +268,72 @@ func anlatilanUclar() []ucBeklentisi {
 			istek: updateCustomerRequest{}, yanit: doluMusteri(),
 		},
 	}
+
+	// On iki adres ucu, iki yüzey için AYNI şekilde. Elle on iki satır yazmak
+	// yerine türetilmeleri bilinçli: iki yüzeyin sözleşmesi gerçekten aynı ve
+	// elle yazılmış iki blok, birinin diğerinden ayrılabileceği bir yer açardı.
+	for _, onek := range []string{"/admin/v1", "/store/v1"} {
+		koleksiyon := onek + "/customers/{id}/addresses"
+		tekil := koleksiyon + "/{address_id}"
+
+		uclar = append(uclar,
+			ucBeklentisi{
+				metod: http.MethodGet, yol: koleksiyon, durum: "200",
+				yanit: doluAdres(), liste: true,
+			},
+			ucBeklentisi{
+				metod: http.MethodPost, yol: koleksiyon, durum: "201",
+				istek: addressRequest{}, yanit: doluAdres(),
+			},
+			ucBeklentisi{
+				metod: http.MethodPut, yol: tekil, durum: "200",
+				istek: updateAddressRequest{}, yanit: doluAdres(),
+			},
+			ucBeklentisi{metod: http.MethodDelete, yol: tekil, durum: "204"},
+			ucBeklentisi{
+				metod: http.MethodPost, yol: tekil + "/default-shipping", durum: "200",
+				yanit: doluAdres(),
+			},
+			ucBeklentisi{
+				metod: http.MethodPost, yol: tekil + "/default-billing", durum: "200",
+				yanit: doluAdres(),
+			},
+		)
+	}
+
+	return uclar
 }
 
-// anlatilmayanUclar bileşen adı çakışması yüzünden ANLATILMAMIŞ uçlardır.
+// doluAdres karşılaştırmaya girecek adres örneğidir.
 //
-// Liste bir eksiğin kaydıdır, kabulü değil: gerekçesi [Describe] belgesindedir
-// ([addressDTO] ve [addressRequest], cart/api'deki aynı adlı tiplerle aynı
-// bileşen adını ister ve belge tümden üretilemez hâle gelirdi). Yazılı
-// olmasının sebebi, [TestUclarinTumuAnlatildiVeyaBilinenEksik] testinin YENİ
-// eklenmiş bir ucu bu eksiklerden ayırabilmesidir; liste olmasaydı, anlatılmayı
-// unutulan her yeni uç sessizce "bilinen eksik" gibi görünürdü.
+// Sıfır değer YETER ve bu, komşusu [doluMusteri]'den ayrıldığı yerdir:
+// [addressDTO] hiçbir alanında omitempty taşımaz, yani her alan her zaman
+// yazılır. Karşılaştırma "şemanın alan kümesi = kodlanan anahtar kümesi"
+// biçiminde olduğu için, omitempty taşıyan bir tipte boş örnek testi ucun
+// kendisiyle ilgisi olmayan bir sebeple kırardı; burada kıramaz. Fonksiyon
+// yine de var, cünkü tipe bir gün omitempty eklenirse doldurulacak yer belli
+// olsun.
+func doluAdres() addressDTO {
+	return addressDTO{}
+}
+
+// anlatilmayanUclar ~~bileşen adı çakışması yüzünden ANLATILMAMIŞ uçlardır~~
+// artık BOŞTUR.
+//
+// **2026-09-07: liste ödendi.** Gerekçe gerçekti — [addressDTO] ve
+// [addressRequest], cart/api'deki aynı adlı tiplerle aynı bileşen adını ister
+// ve belge tümden üretilemez hâle gelirdi — ama çözümün yeri de doğru
+// bilinmişti: çekirdek. ADR 0036 bileşen adının önüne anlatılan modülün adını
+// koydu, bu tipler "CustomerAddress" oldu, cart'ınkiler "CartAddress" oldu ve
+// bu pakette tek bir tip yeniden adlandırılmadı.
+//
+// Fonksiyon KALDI ve boş döner. Silmek, aynı sınıf eksiğin bir dahaki sefere
+// yeniden icat edilmesi demekti; boş bir liste ise [TestUclarinTumuAnlatildiVeyaBilinenEksik]
+// testinin "bilinen eksik" dalını canlı tutar, yani bir gün gerçekten
+// anlatılamayan bir uç çıkarsa yazılacak yer bellidir. Testin bayat satır
+// denetimi de yerinde: listeye konan bir uç anlatılırsa test kırılır.
 func anlatilmayanUclar() []string {
-	return []string{
-		"GET /admin/v1/customers/{id}/addresses",
-		"POST /admin/v1/customers/{id}/addresses",
-		"PUT /admin/v1/customers/{id}/addresses/{address_id}",
-		"DELETE /admin/v1/customers/{id}/addresses/{address_id}",
-		"POST /admin/v1/customers/{id}/addresses/{address_id}/default-shipping",
-		"POST /admin/v1/customers/{id}/addresses/{address_id}/default-billing",
-		"GET /store/v1/customers/{id}/addresses",
-		"POST /store/v1/customers/{id}/addresses",
-		"PUT /store/v1/customers/{id}/addresses/{address_id}",
-		"DELETE /store/v1/customers/{id}/addresses/{address_id}",
-		"POST /store/v1/customers/{id}/addresses/{address_id}/default-shipping",
-		"POST /store/v1/customers/{id}/addresses/{address_id}/default-billing",
-	}
+	return nil
 }
 
 // doluMusteri omitempty alanları da yazılan bir müşteri kaydı üretir.

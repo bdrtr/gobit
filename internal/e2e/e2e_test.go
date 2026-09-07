@@ -301,11 +301,23 @@ var (
 	testModules []module.Module
 	// testDoc is THE VERY document the /openapi.json endpoint serves.
 	//
-	// The test not building a separate copy is deliberate: a copy would verify not
-	// the generated schema but the schema the test built itself, and it would stay
-	// green when the two diverged. The reason the variable is also kept around is
-	// [openapi.Doc.UnmatchedDescriptions]: descriptions that match no route are
-	// INVISIBLE in the JSON body and can only be read off the document.
+	// The test not building a separate DOCUMENT is deliberate: a second document
+	// would verify not the generated schema but the schema the test built itself,
+	// and it would stay green when the two diverged. The reason the variable is
+	// also kept around is [openapi.Doc.UnmatchedDescriptions]: descriptions that
+	// match no route are INVISIBLE in the JSON body and can only be read off the
+	// document.
+	//
+	// ~~The test not building a separate copy is deliberate.~~ **Corrected
+	// 2026-09-07:** the document is the served one, but the LOOP that fills it
+	// ([describeDocument]) is a copy of the composition root's, and the sentence
+	// above read as though nothing were duplicated. It drifted the day the
+	// component namespace was added (ADR 0036) — production namespaced its
+	// components, this copy did not, and the harness's document stopped building
+	// because two modules' Address components collided in it. The pair is now
+	// audited from outside by TestTheDescribeLoopsAgree, for the same reason
+	// TestEveryRegisteredModuleIsSetUpInTheE2EHarness audits the module set: what
+	// enforces a promise is not a line written next to it.
 	testDoc *openapi.Doc
 )
 
