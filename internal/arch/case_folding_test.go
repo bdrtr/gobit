@@ -36,17 +36,41 @@ import (
 // looking at one says which. So each one is made to carry the difference in
 // writing.
 //
-// # What is in scope, and what is deliberately not
+// # The scan is DEFAULT-DENY, and the first version of this file was not
 //
-// CHECK constraints and query predicates: both DECIDE something — what may be
-// stored, and which rows come back — so a fold that varies by installation
-// varies the answer.
+// This audit shipped on 2026-09-07 looking for CHECK constraints and query
+// predicates, because those were the two shapes that had actually gone wrong. It
+// justified the omission of everything else with a sentence — "an index does not
+// decide an answer; it decides how fast one is reached" — which is FALSE for a
+// UNIQUE expression index, where the fold decides whether an INSERT succeeds.
+// There is no such index in the tree, so nothing was broken; the reasoning was,
+// and it was the same mistake one round earlier that this file exists to catch:
+// a claim about a whole class, drawn from the members that had already failed.
 //
-// Index expressions are NOT in scope. An index does not decide an answer; it
-// decides how fast one is reached, and an expression index that no predicate
-// matches is a slow query rather than a wrong one. The predicate that would need
-// such an index is caught by the other half of this audit, which is where the
-// correctness actually lives.
+// So the rule is inverted. EVERY lower(), upper() and ILIKE in a migration is a
+// site that must be declared, whatever construct it sits in, and the only
+// automatic pass is the one case that can be argued to the end:
+//
+//   - A NON-UNIQUE index expression. It does not decide any answer — an
+//     expression index that no predicate matches is an unused index, and a
+//     predicate that does match it is caught by the query half below. A UNIQUE
+//     one is a different object with a different job and gets no pass.
+//
+// # The plpgsql blind spot, which was structural rather than an oversight
+//
+// This repository writes plpgsql function bodies as SINGLE-QUOTED string
+// literals, and migration 000002 of the invoice module explains why at length:
+// the SQL audits here blank quoted literals before reading, so a dollar-quoted
+// body would be parsed as live SQL and cut the file into fragments. The
+// consequence for THIS audit is that [blankSQLNoise] erases every trigger body
+// before it is looked at — a CHECK's worth of logic could fold case inside one
+// and this file would have reported nothing, cleanly and forever.
+//
+// Function bodies are therefore extracted from the RAW text and scanned
+// separately, and [TestThePlpgsqlBodyScannerCanSee] holds that half honest: it
+// asserts the extractor finds the bodies that do exist, because a scanner that
+// silently stopped matching would leave the check green and empty, which is
+// precisely the shape it was added to remove.
 
 // caseFoldingDeclarations names every CHECK constraint whose result depends on
 // the cluster, and states what it holds and what it does not.
@@ -69,6 +93,16 @@ var caseFoldingDeclarations = map[string]string{
 		"the unique index on the column then cannot prevent. D28",
 	"b2b_company_email_check": "HOLDS ONLY FOR ASCII, as auth_user_email_check does. The " +
 		"length half of this constraint is locale-independent and unaffected. D28",
+	"internal/modules/invoice/migrations/000003_the_buyer_address_is_folded_by_go.up.sql": "" +
+		"KNOWN WRONG FOR NON-ASCII, ON PURPOSE, and the migration's own header says so at " +
+		"length. The statement is the one-time backfill `UPDATE invoices SET " +
+		"buyer_email_folded = lower(btrim(buyer_email))`. A migration is SQL, and SQL is the " +
+		"thing that cannot fold reliably here, so the rows this backfill gets wrong are " +
+		"exactly the rows the defect was about. It is written this way because there is no " +
+		"other way to write it, and the correction is a Go pass an operator runs once: " +
+		"`gobit refold-invoices`. It is declared here rather than exempted because a reader " +
+		"who finds it must not conclude the repository thinks lower() is safe. D27",
+
 	"promotion_code_check": "SOUND, and it is the contrast worth reading next to the three " +
 		"above. `code = upper(code)` is locale-dependent in general, but promotion codes " +
 		"cannot contain a non-ASCII letter: service.normalizeCode admits only A-Z, 0-9, " +
@@ -78,11 +112,15 @@ var caseFoldingDeclarations = map[string]string{
 		"cases a written claim rather than an accident.",
 }
 
-// TestEveryLocaleDependentCheckConstraintIsDeclared is the audit.
-func TestEveryLocaleDependentCheckConstraintIsDeclared(t *testing.T) {
+// TestEverySqlThatFoldsCaseIsDeclared is the audit.
+//
+// It is keyed on the SITE rather than on the construct, so a fold that moves
+// from a CHECK into a DEFAULT, a unique index or a trigger body does not escape
+// by changing shape.
+func TestEverySqlThatFoldsCaseIsDeclared(t *testing.T) {
 	t.Parallel()
 
-	found := localeDependentConstraints(t)
+	found := localeDependentSites(t)
 
 	// The blindness guard. This audit's population is small and hand-declared,
 	// so a scanner that quietly stopped matching would leave it green and empty
@@ -90,32 +128,83 @@ func TestEveryLocaleDependentCheckConstraintIsDeclared(t *testing.T) {
 	// gates (D23). The number is not pinned; the fact that it found the known
 	// ones is.
 	require.NotEmpty(t, found,
-		"no locale-dependent CHECK constraint was found anywhere in the tree, which cannot "+
-			"be true while auth, customer, b2b and promotion each have one; the SQL scan "+
-			"has gone blind and this audit is comparing nothing against nothing")
+		"no locale-dependent SQL was found anywhere in the migration tree, which cannot "+
+			"be true while auth, customer, b2b and promotion each carry a folding CHECK; "+
+			"the SQL scan has gone blind and this audit is comparing nothing against nothing")
 
-	for _, name := range found {
-		reason, declared := caseFoldingDeclarations[name]
+	declared := map[string]bool{}
 
-		assert.Truef(t, declared,
-			"the CHECK constraint %q folds case in SQL and says nothing about the cluster.\n"+
+	for _, site := range found {
+		if site.autoPass {
+			continue
+		}
+
+		reason, ok := caseFoldingDeclarations[site.name]
+		declared[site.name] = true
+
+		assert.Truef(t, ok,
+			"%s in %s folds case in SQL and says nothing about the cluster (%s).\n"+
 				"lower(), upper() and ILIKE fold the letters the cluster's CTYPE knows, which on "+
-				"a --locale=C database is ASCII and nothing else — so this constraint enforces a "+
-				"different rule on different installations and reads like one rule.\n"+
+				"a --locale=C database is ASCII and nothing else — so this enforces a different "+
+				"rule on different installations while reading like one rule.\n"+
 				"Add an entry to caseFoldingDeclarations stating what it holds and what it does "+
-				"not. If the values it guards cannot contain a non-ASCII letter, say WHERE that "+
-				"is enforced, the way promotion_code_check does.", name)
+				"not. If the values it touches cannot contain a non-ASCII letter, say WHERE that "+
+				"is enforced, the way promotion_code_check does.",
+			site.kind, site.path, nameOrUnnamed(site.name))
 
-		if declared {
+		if ok {
 			assert.NotEmptyf(t, strings.TrimSpace(reason),
-				"%s is declared with an EMPTY reason, which is a silence with a name on it", name)
+				"%s is declared with an EMPTY reason, which is a silence with a name on it", site.name)
 		}
 	}
 
 	for name := range caseFoldingDeclarations {
-		assert.Containsf(t, found, name,
-			"caseFoldingDeclarations names %q but no such locale-dependent CHECK constraint "+
-				"was found; the map is describing a constraint that has been renamed or dropped", name)
+		assert.Truef(t, declared[name],
+			"caseFoldingDeclarations names %q but no locale-dependent SQL was found under that "+
+				"name; the map is describing something that has been renamed or dropped", name)
+	}
+}
+
+// nameOrUnnamed renders a site's key for the failure message.
+func nameOrUnnamed(name string) string {
+	if name == "" {
+		return "it has no name to declare it by, which is the first thing to fix"
+	}
+
+	return "named " + name
+}
+
+// TestThePlpgsqlBodyScannerCanSee keeps the trigger-body half from being green
+// and empty.
+//
+// [plpgsqlBodies] reads the raw file because every other reader in this package
+// blanks quoted literals, and a plpgsql body IS a quoted literal here. That makes
+// it the one part of this audit that could silently stop working without any
+// declaration going missing: no body would be found, none would fold, and the
+// gate would pass. So the extractor is asked to find what is known to be there.
+//
+// The invoice module's 000002 is the only migration in the repository with
+// procedural code — its own header says so, and says it was verified before it
+// was written — so these three are the whole population.
+func TestThePlpgsqlBodyScannerCanSee(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile(filepath.Join(repoRoot, modulesDir,
+		"invoice", "migrations", "000002_an_issued_invoice_is_retained.up.sql"))
+	require.NoError(t, err, "the only migration carrying plpgsql could not be read")
+
+	bodies := plpgsqlBodies(string(raw))
+
+	for _, name := range []string{
+		"invoices_refuse_delete", "invoice_lines_refuse_delete", "invoices_refuse_truncate",
+	} {
+		body, found := bodies[name]
+		assert.Truef(t, found,
+			"the plpgsql body of %s was not extracted; the trigger-body half of this audit "+
+				"is reading nothing and would stay green through anything written in one", name)
+		assert.Containsf(t, body, "RAISE EXCEPTION",
+			"the body extracted for %s is not the function's code, so what this audit scans "+
+				"is not what the database runs", name)
 	}
 }
 
@@ -151,38 +240,115 @@ func TestNoQueryPredicateFoldsCaseInSQL(t *testing.T) {
 			"saying why this one is different.", strings.Join(offenders, "\n  "))
 }
 
-// localeDependentConstraints returns the name of every CHECK constraint whose
-// body calls lower() or upper().
+// foldingSite is one place in a migration where SQL folds case.
+type foldingSite struct {
+	// name is what a declaration is keyed by: a constraint name, an index name,
+	// a function name. Empty when the construct carries none, which is itself a
+	// finding.
+	name string
+	// kind says what the fold sits in, for the failure message.
+	kind string
+	// path is the migration it was found in.
+	path string
+	// autoPass is true for the one construct argued out of scope in the header:
+	// a non-unique index expression.
+	autoPass bool
+}
+
+// localeDependentSites returns every place in the migration tree where SQL folds
+// case, whatever construct it sits in.
 //
 // It tokenizes rather than greps, for the reason the other SQL audits here do: a
 // mention in a comment or inside a quoted string is not an expression, and a
-// line-based scan would count one of those and miss a CHECK written across two
-// lines.
-func localeDependentConstraints(t *testing.T) []string {
+// line-based scan would count one of those and miss an expression written across
+// two lines. Function bodies ARE quoted strings in this repository, so they are
+// recovered separately by [plpgsqlBodies] — see the header.
+func localeDependentSites(t *testing.T) []foldingSite {
 	t.Helper()
 
-	var names []string
+	var sites []foldingSite
 
 	forEachSQLFile(t, "migrations", func(path string, body string) {
-		tokens := tokenizeSQL(blankSQLNoise(body))
+		for _, statement := range sqlStatements(blankSQLNoise(body)) {
+			sites = append(sites, foldingSitesIn(t, path, statement)...)
+		}
 
-		for i := range tokens {
-			if !wordAt(tokens, i, "check") {
+		for name, code := range plpgsqlBodies(body) {
+			if !foldsCase(tokenizeSQL(code)) {
 				continue
 			}
 
-			inner, _, ok := parenBody(tokens, i+1)
-			if !ok || !foldsCase(inner) {
-				continue
+			sites = append(sites, foldingSite{name: name, kind: "plpgsql function body", path: path})
+		}
+	})
+
+	slices.SortFunc(sites, func(a, b foldingSite) int { return strings.Compare(a.name+a.path, b.name+b.path) })
+
+	return sites
+}
+
+// foldingSitesIn returns the folding sites of one statement.
+func foldingSitesIn(t *testing.T, path string, statement []sqlToken) []foldingSite {
+	t.Helper()
+
+	if !foldsCase(statement) {
+		return nil
+	}
+
+	// An index is the one construct with an automatic pass, and only when it is
+	// NOT unique. The distinction is the whole correction this file carries: a
+	// unique index decides whether a write succeeds, which is an answer.
+	if wordAt(statement, 0, "create") {
+		unique := wordAt(statement, 1, "unique")
+
+		at := 1
+		if unique {
+			at = 2
+		}
+
+		if wordAt(statement, at, "index") {
+			at = skipWords(statement, at+1, "concurrently")
+			at = skipWords(statement, at, "if", "not", "exists")
+			name, _ := qualifiedSQLName(statement, at)
+
+			kind := "index expression"
+			if unique {
+				kind = "UNIQUE index expression"
 			}
 
-			// The name is the token after CONSTRAINT, which is the form every
-			// table constraint in this repository uses. A CHECK written without
-			// one is reported rather than skipped: an unnamed constraint cannot
-			// be declared, and cannot be dropped by an operator either.
+			return []foldingSite{{name: name, kind: kind, path: path, autoPass: !unique}}
+		}
+
+		if wordAt(statement, 1, "function") {
+			// The signature folds case, which is not the body; the body is read
+			// separately. Reported so it cannot hide here.
+			name, _ := qualifiedSQLName(statement, 2)
+
+			return []foldingSite{{name: name, kind: "function signature", path: path}}
+		}
+	}
+
+	// Everything else: find the CHECK constraints inside, and if the statement
+	// folds somewhere that is NOT a CHECK, report that too rather than assuming
+	// the CHECKs account for all of it.
+	var (
+		sites   []foldingSite
+		inCheck int
+	)
+
+	for i := range statement {
+		if !wordAt(statement, i, "check") {
+			continue
+		}
+
+		inner, next, ok := parenBody(statement, i+1)
+		if !ok {
+			continue
+		}
+		if foldsCase(inner) {
 			name := ""
-			if wordAt(tokens, i-2, "constraint") {
-				name = tokens[i-1].text
+			if wordAt(statement, i-2, "constraint") {
+				name = statement[i-1].text
 			}
 
 			require.NotEmptyf(t, name,
@@ -190,13 +356,98 @@ func localeDependentConstraints(t *testing.T) []string {
 					"declared in caseFoldingDeclarations and an operator cannot name it to "+
 					"drop it. Give it a name.", path)
 
-			names = append(names, name)
+			sites = append(sites, foldingSite{name: name, kind: "CHECK constraint", path: path})
 		}
-	})
 
-	slices.Sort(names)
+		inCheck += next - i
+	}
 
-	return slices.Compact(names)
+	// A statement that folds case in more places than its CHECKs account for is
+	// a DEFAULT, a GENERATED expression or something nobody has met yet. It is
+	// reported without a name so the failure says where to look, rather than
+	// being silently covered by a sibling CHECK's declaration.
+	if len(sites) == 0 {
+		// Keyed by PATH, because the construct carries no name. That is stable
+		// enough to declare against: a migration is immutable once it has been
+		// applied anywhere, which is the same property the migration runner
+		// depends on.
+		sites = append(sites, foldingSite{
+			name: path,
+			kind: "an expression outside any CHECK (a DEFAULT, a GENERATED column, a data " +
+				"migration, or a shape this audit has not met)",
+			path: path,
+		})
+	}
+
+	return sites
+}
+
+// plpgsqlBodies returns the code of every plpgsql function in an SQL file, by
+// function name.
+//
+// It reads the RAW text, because the bodies are single-quoted string literals
+// and every other reader in this package blanks those away. Doubled quotes are
+// the escape, which is the convention migration 000002 of the invoice module
+// documents and depends on.
+func plpgsqlBodies(raw string) map[string]string {
+	bodies := map[string]string{}
+	lowered := strings.ToLower(raw)
+
+	for at := 0; ; {
+		marker := strings.Index(lowered[at:], "language plpgsql as")
+		if marker < 0 {
+			return bodies
+		}
+
+		marker += at
+		open := strings.IndexByte(raw[marker:], '\'')
+		if open < 0 {
+			return bodies
+		}
+
+		open += marker
+
+		// Walk to the closing quote, treating '' as an escaped quote.
+		end := open + 1
+		for end < len(raw) {
+			if raw[end] != '\'' {
+				end++
+
+				continue
+			}
+			if end+1 < len(raw) && raw[end+1] == '\'' {
+				end += 2
+
+				continue
+			}
+
+			break
+		}
+
+		bodies[plpgsqlNameBefore(raw[:marker])] = raw[open+1 : min(end, len(raw))]
+		at = min(end+1, len(raw))
+	}
+}
+
+// plpgsqlNameBefore returns the function name of the CREATE FUNCTION that the
+// given prefix ends with.
+func plpgsqlNameBefore(prefix string) string {
+	lowered := strings.ToLower(prefix)
+
+	marker := strings.LastIndex(lowered, "create function")
+	if marker < 0 {
+		marker = strings.LastIndex(lowered, "create or replace function")
+	}
+	if marker < 0 {
+		return ""
+	}
+
+	rest := strings.TrimSpace(prefix[marker+len("create function"):])
+	if paren := strings.IndexByte(rest, '('); paren >= 0 {
+		rest = rest[:paren]
+	}
+
+	return strings.TrimSpace(rest)
 }
 
 // foldingInQueryFiles returns how many query files were read and every one whose

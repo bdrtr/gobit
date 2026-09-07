@@ -1276,11 +1276,49 @@ a repository that no longer exists.
     correct for search, and for this it is the difference between an operator
     knowing and not knowing, since the constraint cannot be repaired without
     recreating the cluster anyway.
-  - **`internal/arch/case_folding_test.go`** requires every CHECK constraint that
+  - **`internal/arch/case_folding_test.go`** requires every piece of SQL that
     folds case to carry a written declaration of what it holds, and REFUSES any
     query predicate that folds in SQL at all — the shape ADR 0038 removed.
-    Mutation-proved three ways: an undeclared constraint, a new folding
-    predicate, and a folding CHECK with no name.
+
+  **The audit shipped with the same defect it exists to catch, and that was
+  found by rereading it the next turn.** Its first version looked for CHECK
+  constraints and query predicates — the two shapes that had actually gone wrong
+  — and justified excluding everything else with a sentence: *"an index does not
+  decide an answer; it decides how fast one is reached."* That is FALSE for a
+  UNIQUE expression index, where the fold decides whether an INSERT succeeds.
+  There is no such index in the tree, so nothing was broken — the REASONING was,
+  and it is the identical move that produced this finding one turn earlier: a
+  claim about a whole class, generalized from the members that had already
+  failed.
+
+  It also had a **structural blind spot**. This repository writes plpgsql bodies
+  as single-quoted string literals (invoice 000002 explains why: the SQL audits
+  blank quoted literals, so a dollar-quoted body would be parsed as live SQL).
+  `blankSQLNoise` therefore erased every trigger body before the audit looked at
+  it. A CHECK's worth of folding logic could have lived in one and the gate would
+  have reported nothing, cleanly and forever.
+
+  Both are closed. The scan is now **default-deny**: every `lower()`, `upper()`
+  and `ILIKE` in a migration is a site that must be declared, whatever construct
+  it sits in, with exactly one automatic pass — a NON-unique index expression,
+  which is argued to the end rather than assumed. Function bodies are extracted
+  from the raw text and scanned separately, and `TestThePlpgsqlBodyScannerCanSee`
+  asserts the extractor still finds the three bodies that exist, because that
+  half is the one that could go green-and-empty without any declaration going
+  missing.
+
+  Default-deny immediately found a site the shape-based version had missed, and
+  it is in the code from D27's own fix: the backfill `UPDATE invoices SET
+  buyer_email_folded = lower(btrim(buyer_email))` in migration 000003. Nothing is
+  wrong with it — the migration's header argues at length that it is correct for
+  ASCII and only for ASCII, and `gobit refold-invoices` is the correction — but
+  it is a locale-dependent fold that no gate had ever named, and a reader finding
+  it needed to be told the repository knows. It now carries a declaration.
+
+  Mutation-proved six ways: an undeclared constraint, a new folding predicate, a
+  folding CHECK with no name, a UNIQUE expression index, a folding DEFAULT, and a
+  fold hidden inside a plpgsql trigger body. A plain non-unique index still
+  passes, which is the exception holding rather than the audit being asleep.
 
   **Two measurements came out of it that were not the point.**
 

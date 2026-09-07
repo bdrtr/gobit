@@ -178,7 +178,11 @@ a different answer, and it is still open.
 
   `lower()` is now the probe's third path, the constraints carry written
   declarations of what they hold, and `internal/arch/case_folding_test.go`
-  refuses a new one that does not. D28 has the reproduction.
+  refuses any SQL in a migration that folds case without one — default-deny,
+  across CHECK constraints, unique indexes, DEFAULT and GENERATED expressions,
+  data migrations and plpgsql trigger bodies alike. D28 has the reproduction, and
+  also the record of that audit shipping with a false scope justification of its
+  own before it was inverted.
 
   **The mistake is the part worth keeping.** This bullet was written while
   removing the last `lower()` from a query, and it generalized from "the
