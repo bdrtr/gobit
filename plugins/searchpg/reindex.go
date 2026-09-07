@@ -7,155 +7,158 @@ import (
 	"github.com/bdrtr/gobit/core/query"
 )
 
-// Hata kodları.
+// The error codes.
 const (
 	codeReindexFailed = "searchpg_reindex_failed"
 	codeCatalogIDs    = "searchpg_catalog_ids_invalid"
 )
 
-// reindexSayfaBoyu yeniden indekslemenin tek turda işlediği ürün sayısıdır.
+// reindexPageSize is how many products one round of the reindex handles.
 //
-// Sayfalama ZORUNLUDUR: tüm katalogu tek seferde belleğe almak, katalog
-// büyüdükçe büyüyen ve bir gün süreci öldüren bir istek üretirdi.
+// Paging is MANDATORY: pulling the whole catalog into memory at once would
+// produce a request that grows with the catalog and kills the process one day.
 //
-// Değer kataloğun toplu okuma sınırını (product service.MaxLimit) AŞMAZ; aşsaydı
-// sayfanın kimlikleri tek bir "product.interop" çağrısına sığmaz ve tur ilk
-// sayfada hata alırdı.
-const reindexSayfaBoyu = 100
+// The value does NOT exceed the catalog's bulk-read limit (product
+// service.MaxLimit); if it did, a page's ids would not fit into a single
+// "product.interop" call and the round would fail on its first page.
+const reindexPageSize = 100
 
-// yenidenIndeksSonucu bir yeniden indeksleme turunun özetidir.
-type yenidenIndeksSonucu struct {
-	// Indexed bu turda yazılan (eklenen ya da güncellenen) belge sayısıdır.
+// reindexResult is the summary of one reindex round.
+type reindexResult struct {
+	// Indexed is how many documents this round wrote (added or updated).
 	Indexed int `json:"indexed"`
-	// Removed süpürmede silinen bayat kayıt sayısıdır.
+	// Removed is how many stale rows the sweep deleted.
 	Removed int64 `json:"removed"`
-	// Pages okunan katalog sayfası sayısıdır; operasyon için maliyet göstergesi.
+	// Pages is how many catalog pages were read; a cost indicator for operations.
 	Pages int `json:"pages"`
 }
 
-// yenidenIndeksle tüm yayındaki katalogu baştan indeksler.
+// reindex indexes the whole published catalog from scratch.
 //
-// Boş bir indeks hiçbir işe yaramaz ve olaylar yalnızca AÇILIŞTAN SONRAKİ
-// değişiklikleri taşır: eklenti var olan bir kuruluma takıldığında, veri yolu
-// bir süre erişilemez kaldığında ya da bir olay kaçtığında indeksi gerçekle
-// buluşturan tek yol budur (bkz. events.go, hata politikası).
+// An empty index is of no use at all, and the events carry only the changes
+// AFTER STARTUP: when the plugin is fitted to an existing installation, when the
+// bus is unreachable for a while, or when an event is missed, this is the only
+// way to bring the index back to the truth (see events.go, the error policy).
 //
-// # Kimlikler nereden geliyor
+// # Where the ids come from
 //
-// Ürün kimlikleri çekirdeğin Query katmanından SAYFA SAYFA okunur; katalog
-// tablosuna doğrudan SQL atılmaz. İki sebep: modülün tablosu onun iç meselesidir
-// ve bir eklentinin ona bağlanması, şema değiştiğinde eklentiyi sessizce
-// bozardı; ayrıca Query, modülleri import etmeden okumanın çekirdekteki tanımlı
-// yoludur (ADR 0004).
+// The product ids are read PAGE BY PAGE from the core's Query layer; no SQL is
+// sent to the catalog table directly. Two reasons: a module's table is its own
+// internal business and a plugin binding to it would break silently when the
+// schema changed; and Query is the core's defined way of reading without
+// importing a module (ADR 0004).
 //
-// Süzgeç "status = published"tır: vitrinde görünmeyen bir ürünü indekslemenin
-// anlamı yoktur ve okunmayan her sayfa, ödenmeyen bir katalog turudur.
+// The filter is "status = published": there is no point indexing a product the
+// storefront does not show, and every page not read is a catalog round not paid
+// for.
 //
-// # Neden ÖNCE yaz, SONRA süpür
+// # Why WRITE first and SWEEP after
 //
-// Tur, veritabanı saatinden alınan bir eşikle başlar; her yazma damgayı
-// tazeler; tur BİTTİĞİNDE eşikten eski kalan satırlar silinir. Böylece artık
-// yayında olmayan ya da silinmiş ürünler indeksten düşer — hiçbir olay
-// almadan.
+// The round begins with a threshold taken from the database clock; every write
+// refreshes the stamp; when the round FINISHES the rows older than the threshold
+// are deleted. Products that are no longer published, or were deleted, thereby
+// fall out of the index — without any event arriving.
 //
-// Sıra terse çevrilip önce silinseydi (TRUNCATE + doldur), tur boyunca arama
-// BOŞ dönerdi. Süpürme yalnızca TAM tamamlanan turdan sonra çalışır: yarıda
-// kalan bir turun ardından süpürmek, okunamamış sayfalardaki geçerli kayıtları
-// silmek olurdu.
+// Had the order been reversed and the deletion come first (TRUNCATE + fill),
+// search would answer EMPTY for the whole round. The sweep runs only after a
+// COMPLETELY finished round: sweeping after a round that stopped halfway would
+// delete the valid rows on the pages that were never read.
 //
-// # Kabul edilen sınırlar
+// # The accepted limits
 //
-//   - Sayfalama OFFSET tabanlıdır. Tur sırasında bir ürün silinirse sonraki
-//     sayfa bir kayıt kaydırır ve o kayıt bu turda okunmaz; süpürme onu
-//     indeksten düşürebilir. Bir sonraki tur ya da ürünün ilk yazması onarır.
-//   - Tur, çağıranın bağlamına bağlıdır: istemci koparsa iş yarıda kalır ve
-//     süpürme YAPILMAZ, yani indeks bozulmaz — yalnızca güncellenmemiş kalır.
-func (m *modul) yenidenIndeksle(ctx context.Context) (yenidenIndeksSonucu, error) {
-	if err := m.hazir(); err != nil {
-		return yenidenIndeksSonucu{}, err
+//   - The paging is OFFSET based. If a product is deleted during the round, the
+//     next page shifts by one record, that record is not read in this round, and
+//     the sweep may drop it from the index. The next round, or the product's next
+//     write, repairs it.
+//   - The round is bound to the caller's context: if the client goes away the
+//     work stops halfway and the sweep does NOT run, so the index is not
+//     corrupted — it is only left un-updated.
+func (m *searchModule) reindex(ctx context.Context) (reindexResult, error) {
+	if err := m.ready(); err != nil {
+		return reindexResult{}, err
 	}
 	if m.graph == nil {
-		return yenidenIndeksSonucu{}, coreerrors.Unavailable(codeNotRegistered,
-			"%s modülü query katmanını çözmedi; yeniden indeksleme yapılamaz", ModuleName)
+		return reindexResult{}, coreerrors.Unavailable(codeNotRegistered,
+			"the %s module did not resolve the query layer; a reindex cannot be run", ModuleName)
 	}
 
-	esik, err := m.indeks.Now(ctx)
+	threshold, err := m.index.Now(ctx)
 	if err != nil {
-		return yenidenIndeksSonucu{}, err
+		return reindexResult{}, err
 	}
 
-	var sonuc yenidenIndeksSonucu
-	for offset := 0; ; offset += reindexSayfaBoyu {
-		ids, err := m.urunKimlikleri(ctx, offset)
+	var result reindexResult
+	for offset := 0; ; offset += reindexPageSize {
+		ids, err := m.productIDs(ctx, offset)
 		if err != nil {
-			return yenidenIndeksSonucu{}, err
+			return reindexResult{}, err
 		}
 		if len(ids) == 0 {
 			break
 		}
-		sonuc.Pages++
+		result.Pages++
 
-		belgeler, err := m.belgeler(ctx, ids)
+		documents, err := m.documents(ctx, ids)
 		if err != nil {
-			return yenidenIndeksSonucu{}, err
+			return reindexResult{}, err
 		}
-		if err := m.indeks.Upsert(ctx, belgeler); err != nil {
-			return yenidenIndeksSonucu{}, err
+		if err := m.index.Upsert(ctx, documents); err != nil {
+			return reindexResult{}, err
 		}
-		sonuc.Indexed += len(belgeler)
+		result.Indexed += len(documents)
 
-		// Eksik sayfa son sayfadır; bir tur daha atıp boş sayfa okumaya gerek
-		// yok.
-		if len(ids) < reindexSayfaBoyu {
+		// A short page is the last page; there is no need for another round that
+		// reads an empty one.
+		if len(ids) < reindexPageSize {
 			break
 		}
 	}
 
-	silinen, err := m.indeks.Sweep(ctx, esik)
+	removed, err := m.index.Sweep(ctx, threshold)
 	if err != nil {
-		return yenidenIndeksSonucu{}, err
+		return reindexResult{}, err
 	}
-	sonuc.Removed = silinen
+	result.Removed = removed
 
-	m.log.InfoContext(ctx, "arama indeksi yeniden kuruldu",
-		"indekslenen", sonuc.Indexed,
-		"silinen", sonuc.Removed,
-		"sayfa", sonuc.Pages)
+	m.log.InfoContext(ctx, "the search index was rebuilt",
+		"indexed", result.Indexed,
+		"removed", result.Removed,
+		"pages", result.Pages)
 
-	return sonuc, nil
+	return result, nil
 }
 
-// urunKimlikleri yayındaki ürünlerin kimliklerini tek sayfa okur.
+// productIDs reads one page of the published products' ids.
 //
-// Query'den YALNIZCA "id" alanı istenir: kayıtların geri kalanı burada
-// kullanılmaz, çünkü indekslenecek metin vitrin gösteriminden gelir
-// (bkz. [modul.belgeler]). Tüm alanları istemek, katalog sayfası başına
-// gereksiz bir taşıma maliyeti olurdu.
-func (m *modul) urunKimlikleri(ctx context.Context, offset int) ([]string, error) {
-	kayitlar, err := m.graph.Graph(ctx, query.GraphSpec{
+// ONLY the "id" field is asked of Query: the rest of a record is not used here,
+// because the text to be indexed comes from the storefront representation (see
+// [searchModule.documents]). Asking for every field would be a needless transport cost
+// per catalog page.
+func (m *searchModule) productIDs(ctx context.Context, offset int) ([]string, error) {
+	records, err := m.graph.Graph(ctx, query.GraphSpec{
 		Entity:  catalogEntity,
 		Fields:  []string{query.IDField},
 		Filters: map[string]any{catalogStatusFilter: catalogStatusPublished},
-		Limit:   reindexSayfaBoyu,
+		Limit:   reindexPageSize,
 		Offset:  offset,
 	})
 	if err != nil {
 		return nil, coreerrors.Wrap(err, coreerrors.KindOf(err), codeReindexFailed,
-			"katalog kimlikleri okunamadı (offset %d)", offset)
+			"the catalog ids could not be read (offset %d)", offset)
 	}
 
-	ids := make([]string, 0, len(kayitlar))
-	for _, kayit := range kayitlar {
-		ham, ok := kayit[query.IDField]
+	ids := make([]string, 0, len(records))
+	for _, record := range records {
+		raw, ok := record[query.IDField]
 		if !ok {
 			return nil, coreerrors.Internal(codeCatalogIDs,
-				"katalog kaydında %q alanı yok (offset %d)", query.IDField, offset)
+				"the catalog record has no %q field (offset %d)", query.IDField, offset)
 		}
-		id, ok := ham.(string)
+		id, ok := raw.(string)
 		if !ok || id == "" {
 			return nil, coreerrors.Internal(codeCatalogIDs,
-				"katalog kaydındaki %q alanı boş ya da dize değil (gelen tip: %T)",
-				query.IDField, ham)
+				"the %q field of the catalog record is empty or not a string (%T arrived)",
+				query.IDField, raw)
 		}
 		ids = append(ids, id)
 	}

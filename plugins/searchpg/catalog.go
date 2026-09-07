@@ -9,164 +9,178 @@ import (
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 )
 
-// Bu dosya eklentinin KATALOĞA bakan tek yüzüdür (ADR 0001, ADR 0006).
+// This file is the plugin's ONLY face toward the CATALOG (ADR 0001, ADR 0006).
 //
-// Eklenti hiçbir modülü import edemez, dolayısıyla product'ın tiplerini
-// adlandıramaz. Erişim üç parçadan oluşur ve üçü de burada durur:
+// The plugin cannot import any module and therefore cannot name product's
+// types. The access is made of three parts and all three stand here:
 //
-//  1. İhtiyaç duyulan DAR arayüz bu pakette tanımlanır ([StoreProductReader]).
-//  2. Somut yüzey container'dan ADLA çözülür ("product.interop").
-//  3. Taşınan veri JSON'dur; şema aşağıda AÇIKÇA yazılıdır.
+//  1. The NARROW interface it needs is defined in this package
+//     ([StoreProductReader]).
+//  2. The concrete surface is resolved from the container BY NAME
+//     ("product.interop").
+//  3. What travels is JSON, and the schema is written out EXPLICITLY below.
 //
-// Ürünün vitrin gösterimi burada YENİDEN TANIMLANMAZ. Arama ucu kayıtları ham
-// JSON olarak geçirir (bkz. [katalog.urunler]) ve yalnızca indekslenecek
-// alanlar ayrıştırılır ([urunGosterimi]). Gösterimin ikinci bir kopyasını
-// tutmak, product'a eklenen bir alanın aramada sessizce kaybolması demekti.
+// The product's storefront representation is NOT redefined here. The search
+// endpoint passes the records through as raw JSON (see [catalog.products]) and
+// only the fields to be indexed are parsed ([productView]). Keeping a second
+// copy of the representation would mean a field added to product disappearing
+// silently from search.
 
-// Hata kodları.
+// The error codes.
 const (
 	codeCatalogMissing  = "searchpg_catalog_unavailable"
 	codeCatalogRead     = "searchpg_catalog_read_failed"
 	codeCatalogResponse = "searchpg_catalog_response_invalid"
 )
 
-// StoreProductReader eklentinin katalogdan istediği DAR yüzeydir.
+// StoreProductReader is the NARROW surface the plugin asks of the catalog.
 //
-// Tüketici tarafında tanımlanır ve product'ın "product.interop" kaydı onu
-// YAPISAL olarak karşılar; iki taraf arasında derleme zamanı bağı YOKTUR ve
-// olamaz (Prensip 2.4). İmzanın ilkel ve stdlib tipleriyle konuşması bu yüzden
-// zorunludur: product'ın bir tipi adlandırılsaydı, o tip burada tanımlanmış
-// BAŞKA bir tip olur ve somut yüzey bu arayüzü karşılamazdı.
+// It is defined on the CONSUMER side and product's "product.interop"
+// registration satisfies it STRUCTURALLY; there is no compile-time bond between
+// the two sides and there cannot be (Principle 2.4). That the signature speaks
+// in primitives and stdlib types is therefore mandatory: had a type of
+// product's been named, that type would be a DIFFERENT type defined here and
+// the concrete surface would not satisfy this interface.
 //
-// İstek ve yanıt şemaları [katalogIstegi] ve [katalogYaniti] belgelerindedir.
+// The request and response schemas are documented on [catalogRequest] and
+// [catalogResponse].
 type StoreProductReader interface {
 	StoreProductsByIDsJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
 }
 
-// katalogIstegi "product.interop" isteğinin JSON şemasıdır.
+// catalogRequest is the JSON schema of the "product.interop" request.
 //
 //	{"ids": ["prod_..."], "sales_channel_ids": ["sc_..."]}
 //
-// # sales_channel_ids'in nil olması ANLAMLIDIR
+// # A nil sales_channel_ids MEANS something
 //
-// Alan katalogta tanımlıdır ve burada YENİDEN YORUMLANMAZ: null (nil dilim)
-// "istek kanal kimliği taşımıyor" demektir ve süzgeç uygulanmaz; boş dizi
-// "kimlik var ama kanalı yok" demektir ve süzgeç uygulanır. İki durum arasında
-// omitempty ile kaybolacak bir fark vardır, bu yüzden alan HER ZAMAN yazılır.
+// The field is defined by the catalog and is NOT reinterpreted here: null (a nil
+// slice) means "the request carries no channel id" and no filter is applied,
+// while an empty array means "there is an identity and it has no channel" and
+// the filter IS applied. There is a difference between the two states that
+// omitempty would erase, which is why the field is ALWAYS written.
 //
-// İki çağıran iki farklı değer verir ve ikisi de doğrudur:
+// Two callers pass two different values and both are right:
 //
-//   - Arama ucu isteğin KİMLİĞİNDEN gelen kanalları geçirir (bkz. [kanallar]).
-//   - Olay işleyicisi nil geçirir: indeks kanaldan BAĞIMSIZDIR, çünkü süzme
-//     okuma anında yapılır. Kanal başına ayrı indeks tutmak, aynı ürünü
-//     kanal sayısı kadar yazmak ve kanal ataması değiştiğinde indeksi yeniden
-//     kurmak demekti.
-type katalogIstegi struct {
+//   - The search endpoint passes the channels that come from the request's
+//     IDENTITY (see [channels]).
+//   - The event handler passes nil: the index is INDEPENDENT of the channel,
+//     because the filtering happens at read time. Keeping a separate index per
+//     channel would mean writing the same product once per channel and
+//     rebuilding the index whenever a channel assignment changed.
+type catalogRequest struct {
 	IDs             []string `json:"ids"`
 	SalesChannelIDs []string `json:"sales_channel_ids"`
 }
 
-// katalogYaniti "product.interop" yanıtının JSON şemasıdır.
+// catalogResponse is the JSON schema of the "product.interop" response.
 //
-//	{"products": [ <vitrin ürün kaydı>, ... ]}
+//	{"products": [ <storefront product record>, ... ]}
 //
-// Kayıtlar HAM bırakılır: arama ucu onları olduğu gibi yazar, indeksleme ise
-// yalnızca ihtiyaç duyduğu alanları ayrıştırır. Kaydın tam şeklini bu pakette
-// tanımlamak, vitrin gösteriminin ikinci bir kopyasını üretirdi.
-type katalogYaniti struct {
+// The records are left RAW: the search endpoint writes them out as they are,
+// while the indexing parses only the fields it needs. Defining the record's full
+// shape in this package would produce a second copy of the storefront
+// representation.
+type catalogResponse struct {
 	Products []json.RawMessage `json:"products"`
 }
 
-// katalog "product.interop" yüzeyine TEMBEL erişimdir.
+// catalog is LAZY access to the "product.interop" surface.
 //
-// Tembellik zorunludur: eklenti Setup'ı modüllerden ÖNCE çalışır ve o anda
-// container'da böyle bir kayıt yoktur. Çözüm ilk kullanıma ertelenir, yani
-// ilk arama isteğine ya da ilk katalog olayına.
-type katalog struct {
-	// c kaydın aranacağı container'dır; nil olabilir (gömülü kullanım/test).
+// The laziness is mandatory: the plugin's Setup runs BEFORE the modules and at
+// that moment there is no such registration in the container. The resolution is
+// deferred to first use — that is, to the first search request or the first
+// catalog event.
+type catalog struct {
+	// c is the container the registration is looked up in; it may be nil
+	// (embedded use, tests).
 	c *container.Container
 
-	// mu okuyucunun tek kez çözülmesini sağlar.
+	// mu makes sure the reader is resolved once.
 	//
-	// sync.Once BİLİNÇLİ olarak kullanılmadı: Once, ilk çağrının SONUCUNU da
-	// kalıcı kılar ve product henüz kayıtlı değilken düşen tek bir çözüm,
-	// süreç ömrü boyunca aramayı ölü bırakırdı. Kilit yalnızca BAŞARILI sonucu
-	// saklar; hata bir sonraki istekte yeniden denenir.
-	mu      sync.Mutex
-	okuyucu StoreProductReader
+	// sync.Once was DELIBERATELY not used: Once also makes the first call's
+	// RESULT permanent, and a single resolution that failed while product was not
+	// yet registered would leave search dead for the life of the process. The
+	// lock keeps only a SUCCESSFUL result; a failure is retried on the next
+	// request.
+	mu     sync.Mutex
+	reader StoreProductReader
 }
 
-// newKatalog verilen container üzerinde çalışan tembel katalog erişimi kurar.
-func newKatalog(c *container.Container) *katalog { return &katalog{c: c} }
+// newCatalog builds lazy catalog access over the given container.
+func newCatalog(c *container.Container) *catalog { return &catalog{c: c} }
 
-// coz katalog yüzeyini container'dan çözer ve sonucu saklar.
-func (k *katalog) coz() (StoreProductReader, error) {
+// resolve resolves the catalog surface from the container and keeps the result.
+func (k *catalog) resolve() (StoreProductReader, error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 
-	if k.okuyucu != nil {
-		return k.okuyucu, nil
+	if k.reader != nil {
+		return k.reader, nil
 	}
 	if k.c == nil {
 		return nil, coreerrors.Unavailable(codeCatalogMissing,
-			"container yok; %q yüzeyi çözülemez", catalogInteropName)
+			"there is no container; the %q surface cannot be resolved", catalogInteropName)
 	}
 
-	okuyucu, err := container.Resolve[StoreProductReader](k.c, catalogInteropName)
+	reader, err := container.Resolve[StoreProductReader](k.c, catalogInteropName)
 	if err != nil {
-		// Sınıf KORUNUR: kayıt yoksa NotFound, tip uymuyorsa Internal gelir ve
-		// ikisi farklı arızalardır — biri "product kurulu değil", öteki
-		// "yüzeyin imzası değişmiş".
+		// The CLASS is preserved: a missing registration gives NotFound and a type
+		// mismatch gives Internal, and the two are different faults — one is
+		// "product is not installed", the other "the surface's signature has
+		// changed".
 		return nil, coreerrors.Wrap(err, coreerrors.KindOf(err), codeCatalogMissing,
-			"katalog okuma yüzeyi %q çözülemedi; product modülü kurulu mu?", catalogInteropName)
+			"the catalog read surface %q could not be resolved; is the product module installed?", catalogInteropName)
 	}
 
-	k.okuyucu = okuyucu
+	k.reader = reader
 
-	return okuyucu, nil
+	return reader, nil
 }
 
-// urunler verilen kimliklerin VİTRİN kayıtlarını ham JSON olarak döner.
+// products returns the STOREFRONT records of the given ids as raw JSON.
 //
-// Kayıtların sırası isteğin kimlik sırasıdır (alaka sırası); bulunamayan,
-// yayında olmayan ya da isteğin kanallarında görünmeyen kimlik SESSİZCE
-// atlanır. Kural kataloğa aittir ve burada tekrarlanmaz.
+// The order of the records is the request's id order (the relevance order); an
+// id that is not found, is not published, or does not appear in the request's
+// channels is skipped SILENTLY. The rule belongs to the catalog and is not
+// repeated here.
 //
-// Boş kimlik listesi için katalog HİÇ ÇAĞRILMAZ: sonuç zaten boştur ve boş bir
-// tur atmak, arama hiçbir şey bulmadığında gereksiz bir gidiş-dönüş demekti.
-func (k *katalog) urunler(ctx context.Context, ids, kanallar []string) ([]json.RawMessage, error) {
+// For an empty id list the catalog is NOT CALLED AT ALL: the result is already
+// empty, and taking an empty turn would be a needless round trip every time
+// search finds nothing.
+func (k *catalog) products(ctx context.Context, ids, channels []string) ([]json.RawMessage, error) {
 	if len(ids) == 0 {
 		return []json.RawMessage{}, nil
 	}
 
-	okuyucu, err := k.coz()
+	reader, err := k.resolve()
 	if err != nil {
 		return nil, err
 	}
 
-	istek, err := json.Marshal(katalogIstegi{IDs: ids, SalesChannelIDs: kanallar})
+	request, err := json.Marshal(catalogRequest{IDs: ids, SalesChannelIDs: channels})
 	if err != nil {
 		return nil, coreerrors.Wrap(err, coreerrors.KindInternal, codeCatalogRead,
-			"katalog isteği kodlanamadı (%d kimlik)", len(ids))
+			"the catalog request could not be encoded (%d ids)", len(ids))
 	}
 
-	ham, err := okuyucu.StoreProductsByIDsJSON(ctx, istek)
+	raw, err := reader.StoreProductsByIDsJSON(ctx, request)
 	if err != nil {
-		// Sınıf korunur: katalog sınırı aşan bir istek için Invalid döner ve
-		// bunu Internal'a çevirmek, çağıranın düzeltebileceği bir hatayı
-		// sunucu arızası gibi göstermek olurdu.
+		// The class is preserved: the catalog returns Invalid for a request that
+		// exceeds its limit, and turning that into Internal would present a fault
+		// the caller can fix as a server failure.
 		return nil, coreerrors.Wrap(err, coreerrors.KindOf(err), codeCatalogRead,
-			"katalog kayıtları okunamadı (%d kimlik)", len(ids))
+			"the catalog records could not be read (%d ids)", len(ids))
 	}
 
-	var yanit katalogYaniti
-	if err := json.Unmarshal(ham, &yanit); err != nil {
+	var response catalogResponse
+	if err := json.Unmarshal(raw, &response); err != nil {
 		return nil, coreerrors.Wrap(err, coreerrors.KindInternal, codeCatalogResponse,
-			"katalog yanıtı çözümlenemedi; %q yüzeyinin şeması değişmiş olabilir", catalogInteropName)
+			"the catalog response could not be decoded; the schema of the %q surface may have changed", catalogInteropName)
 	}
-	if yanit.Products == nil {
+	if response.Products == nil {
 		return []json.RawMessage{}, nil
 	}
 
-	return yanit.Products, nil
+	return response.Products, nil
 }

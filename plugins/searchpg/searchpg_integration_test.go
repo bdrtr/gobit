@@ -1,19 +1,19 @@
 //go:build integration
 
-// Bu dosyadaki testler gerçek bir PostgreSQL örneği (dolayısıyla Docker)
-// gerektirir; `make test` hızlı kalsın diye `integration` etiketiyle
-// ayrılmıştır. Çalıştırmak için: make test-integration
+// The tests in this file need a real PostgreSQL instance (and therefore Docker);
+// they are separated behind the `integration` tag so that `make test` stays
+// fast. To run them: make test-integration
 //
-// Buradaki iddiaların hiçbiri sahteyle kanıtlanamaz: tsvector eşleşmesi, alaka
-// sıralaması, websearch_to_tsquery'nin bozuk girdiyi sözdizimi hatasına
-// ÇEVİRMEMESİ, süpürmenin yalnızca bayat satırları silmesi ve migration'ın
-// gerçekten geri alınabilmesi ancak sunucunun kendisine sorularak görülür.
+// None of the claims here can be proved with a fake: the tsvector match, the
+// relevance ranking, websearch_to_tsquery NOT turning broken input into a syntax
+// error, the sweep deleting only the stale rows, and the migration really being
+// reversible are visible only by asking the server itself.
 //
-// Katalog burada da SAHTEDİR ve olmak zorundadır: eklenti hiçbir modülü import
-// edemez (internal/arch TestPluginsDoNotImportModules) ve yasak test
-// dosyalarını da kapsar. Yani bu dosya "indeks + uçlar gerçek veritabanında
-// çalışıyor" der; "product'ın JSON şeması bu sahteyle aynı" DEMEZ — o bağ
-// yalnızca uçtan uca bir kurulumda kanıtlanabilir (bkz. görev raporu).
+// The catalog is FAKE here too and has to be: the plugin cannot import any module
+// (internal/arch TestPluginsDoNotImportModules) and the ban covers the test files
+// too. So this file says "the index and the endpoints work against a real
+// database"; it does NOT say "product's JSON schema is the same as this fake" —
+// that bond can only be proved in an end-to-end installation.
 package searchpg
 
 import (
@@ -41,9 +41,9 @@ import (
 const postgresImage = "postgres:16-alpine"
 
 var (
-	// testPool tüm testlerin paylaştığı havuzdur.
+	// testPool is the pool every test shares.
 	testPool *db.Pool
-	// testDSN paylaşılan veritabanının adresidir.
+	// testDSN is the shared database's address.
 	testDSN string
 )
 
@@ -51,8 +51,8 @@ func TestMain(m *testing.M) {
 	os.Exit(runWithPostgres(m))
 }
 
-// runWithPostgres tek bir Postgres konteyneri kaldırır, eklentinin şemasını
-// uygular ve tüm testleri onun üzerinde çalıştırır.
+// runWithPostgres brings up a single Postgres container, applies the plugin's
+// schema and runs every test against it.
 func runWithPostgres(m *testing.M) int {
 	ctx := context.Background()
 
@@ -64,31 +64,31 @@ func runWithPostgres(m *testing.M) int {
 	)
 	defer func() {
 		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-			fmt.Fprintf(os.Stderr, "postgres konteyneri durdurulamadı: %v\n", termErr)
+			fmt.Fprintf(os.Stderr, "the postgres container could not be stopped: %v\n", termErr)
 		}
 	}()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "postgres konteyneri başlatılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the postgres container could not be started: %v\n", err)
 		return 1
 	}
 
 	testDSN, err = ctr.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı adresi alınamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection address could not be read: %v\n", err)
 		return 1
 	}
 
-	// Şema, üretimdeki yolla AYNI şekilde uygulanır: modülün Migrations()'ı ve
-	// modül adı. Elle CREATE TABLE yazmak, migration'ın kendisini sınamadan
-	// bırakırdı.
+	// The schema is applied the SAME way as in production: the module's
+	// Migrations() and the module name. Writing CREATE TABLE by hand would leave
+	// the migration itself untested.
 	if err = db.Migrate(ctx, testDSN, migrationsRoot, ModuleName); err != nil {
-		fmt.Fprintf(os.Stderr, "searchpg şeması uygulanamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the searchpg schema could not be applied: %v\n", err)
 		return 1
 	}
 
 	testPool, err = db.New(ctx, db.DefaultConfig(testDSN), nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı havuzu açılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection pool could not be opened: %v\n", err)
 		return 1
 	}
 	defer testPool.Close()
@@ -96,48 +96,49 @@ func runWithPostgres(m *testing.M) int {
 	return m.Run()
 }
 
-// gercekIndeks boş bir indeks tablosu üzerinde depo döner.
-func gercekIndeks(t *testing.T) *indeks {
+// realIndex returns a store over an empty index table.
+func realIndex(t *testing.T) *index {
 	t.Helper()
 
 	_, err := testPool.Pool().Exec(t.Context(), "TRUNCATE searchpg_product")
 	require.NoError(t, err)
 
-	return newIndeks(testPool.Pool())
+	return newIndex(testPool.Pool())
 }
 
-// yaz verilen belgeleri indekse yazar.
-func yaz(t *testing.T, i *indeks, belgeler ...belge) {
+// write verilen belgeleri indekse yazar.
+func write(t *testing.T, i *index, documents ...document) {
 	t.Helper()
 
-	require.NoError(t, i.Upsert(t.Context(), belgeler))
+	require.NoError(t, i.Upsert(t.Context(), documents))
 }
 
-// TestIndeksYazarAramaVeSiler indeksin temel döngüsünü gerçek SQL'de doğrular.
+// TestTheIndexWritesSearchesAndDeletes verifies the index's basic cycle against
+// real SQL.
 //
-// Test verisi ASCII'dir ve bu bilinçlidir: PostgreSQL'in küçük harfe çevirmesi
-// veritabanının ctype ayarına bağlıdır ve C locale ile kurulmuş bir kümede
-// ASCII dışı harfler KATLANMAZ. Testin konteynerin locale'ine bağlı olması,
-// eklentinin davranışı hakkında yanlış bir güven verirdi.
-func TestIndeksYazarAramaVeSiler(t *testing.T) {
-	i := gercekIndeks(t)
+// The test data is ASCII and that is deliberate: PostgreSQL's lower-casing
+// depends on the database's ctype setting, and on a cluster created with the C
+// locale non-ASCII letters are NOT folded. Making the test depend on the
+// container's locale would give false confidence about the plugin's behavior.
+func TestTheIndexWritesSearchesAndDeletes(t *testing.T) {
+	i := realIndex(t)
 
-	yaz(t, i,
-		belge{urunID: "prod_1", baslik: "Mavi gomlek", anahtar: "mavi-gomlek SKU-1", metin: "Pamuklu yazlik"},
-		belge{urunID: "prod_2", baslik: "Siyah pantolon", anahtar: "siyah-pantolon SKU-2", metin: "Kot pantolon"},
+	write(t, i,
+		document{productID: "prod_1", title: "Blue shirt", keywords: "blue-shirt SKU-1", body: "Cotton summer"},
+		document{productID: "prod_2", title: "Black trousers", keywords: "black-trousers SKU-2", body: "Denim trousers"},
 	)
 
-	ids, err := i.Search(t.Context(), "gomlek", 10, 0)
+	ids, err := i.Search(t.Context(), "shirt", 10, 0)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"prod_1"}, ids)
 
-	// SKU aranabilir olmalı: müşteri ürün kodunu yapıştırdığında ürünü bulmalı.
+	// The SKU has to be searchable: pasting a product code has to find the product.
 	ids, err = i.Search(t.Context(), "SKU-2", 10, 0)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"prod_2"}, ids)
 
-	// Büyük/küçük harf duyarsızlığı 'simple' sözlüğünün verdiğidir.
-	ids, err = i.Search(t.Context(), "GOMLEK", 10, 0)
+	// Case insensitivity is what the 'simple' dictionary gives.
+	ids, err = i.Search(t.Context(), "SHIRT", 10, 0)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"prod_1"}, ids)
 
@@ -145,193 +146,198 @@ func TestIndeksYazarAramaVeSiler(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), silinen)
 
-	ids, err = i.Search(t.Context(), "gomlek", 10, 0)
+	ids, err = i.Search(t.Context(), "shirt", 10, 0)
 	require.NoError(t, err)
-	assert.Empty(t, ids, "silinen ürün aramada görünmemeli")
+	assert.Empty(t, ids, "a deleted product must not appear in search")
 }
 
-// TestAlakaSiralamasiAgirliklariKullanir başlıkta geçen bir kelimenin
-// açıklamada geçenden ÖNCE geldiğini doğrular.
+// TestRelevanceRankingUsesTheWeights verifies that a word appearing in the title
+// comes BEFORE one appearing in the description.
 //
-// Ağırlık olmasaydı sıralama rastgeleye yakın olurdu ve "alaka sırası" iddiası
-// boş kalırdı: uzun açıklamalı bir ürün, tam adı aranan üründen önce gelirdi.
-func TestAlakaSiralamasiAgirliklariKullanir(t *testing.T) {
-	i := gercekIndeks(t)
+// Without the weights the ordering would be close to random and the claim
+// "relevance order" would be empty: a product with a long description would come
+// before the product whose exact name was searched for.
+func TestRelevanceRankingUsesTheWeights(t *testing.T) {
+	i := realIndex(t)
 
-	yaz(t, i,
-		belge{urunID: "prod_baslik", baslik: "Sneaker", anahtar: "", metin: "Rahat ayakkabi"},
-		belge{urunID: "prod_metin", baslik: "Bot", anahtar: "", metin: "Sneaker gibi rahat bir bot"},
-		belge{urunID: "prod_anahtar", baslik: "Terlik", anahtar: "sneaker-benzeri", metin: ""},
+	write(t, i,
+		document{productID: "prod_title", title: "Sneaker", keywords: "", body: "Comfortable footwear"},
+		document{productID: "prod_body", title: "Boot", keywords: "", body: "As comfortable as a sneaker"},
+		document{productID: "prod_keywords", title: "Slipper", keywords: "sneaker-like", body: ""},
 	)
 
 	ids, err := i.Search(t.Context(), "sneaker", 10, 0)
 	require.NoError(t, err)
-	require.Len(t, ids, 3, "üç kayıt da eşleşmeli")
-	assert.Equal(t, "prod_baslik", ids[0], "başlık eşleşmesi (A) en önde olmalı")
-	assert.Equal(t, "prod_metin", ids[2], "açıklama eşleşmesi (C) en arkada olmalı")
+	require.Len(t, ids, 3, "all three records have to match")
+	assert.Equal(t, "prod_title", ids[0], "the title match (A) has to be first")
+	assert.Equal(t, "prod_body", ids[2], "the description match (C) has to be last")
 }
 
-// TestSiralamaAgirligiYakinliktanOndeTutar çok kelimeli bir sorguda ALAN
-// AĞIRLIĞININ kelime yakınlığını yendiğini doğrular.
+// TestRankingPutsWeightAheadOfProximity verifies that on a multi-word query
+// FIELD WEIGHT beats word proximity.
 //
-// İki fikstür de "mavi" ve "gomlek" kelimelerinin ikisini birden taşır; fark
-// nerede taşıdıklarıdır. prod_baslik ikisini de BAŞLIĞINDA (A) ama aralarında
-// dört kelimeyle taşır, prod_anahtar ise ANAHTAR alanında (B) yan yana. Sıra
-// bu yüzden sıralama fonksiyonunu AYIRT EDER ve testin varlık sebebi budur:
+// Both fixtures carry the words "blue" and "shirt"; the difference is where.
+// prod_title carries both IN ITS TITLE (A) but with four words between them,
+// while prod_keywords carries them side by side in the KEYWORD field (B). The
+// order therefore TELLS THE RANKING FUNCTIONS APART, and that is why this test
+// exists:
 //
-//	ts_rank    -> prod_baslik (0,915) > prod_anahtar (0,396)
-//	ts_rank_cd -> prod_anahtar (0,4)  > prod_baslik (0,2)
+//	ts_rank    -> prod_title (0,915) > prod_keywords (0,396)
+//	ts_rank_cd -> prod_keywords (0,4)  > prod_title (0,2)
 //
-// [searchSQL] ts_rank kullanır: ts_rank_cd, eşleşen HER belge için ~12 µs
-// harcıyor ve 52 bin eşleşmeli bir sorguyu 663 ms'ye çıkarıyordu (ölçüm
-// [searchSQL] belgesindedir). Bu test o kararı davranışla sabitler — sıralama
-// ts_rank_cd'ye geri dönerse burada kırılır — ve aynı anda vazgeçilen şeyi de
-// yazar: yakınlık artık bir sinyal değildir, ağırlık her zaman öndedir.
-func TestSiralamaAgirligiYakinliktanOndeTutar(t *testing.T) {
-	i := gercekIndeks(t)
+// [searchSQL] uses ts_rank: ts_rank_cd spent ~12 µs on EVERY matching document
+// and pushed a query with 52 thousand matches to 663 ms (the measurement is
+// documented on [searchSQL]). This test fixes that decision in behavior — it
+// breaks here if the ranking goes back to ts_rank_cd — and at the same time it
+// writes down what was given up: proximity is no longer a signal, weight is
+// always ahead.
+func TestRankingPutsWeightAheadOfProximity(t *testing.T) {
+	i := realIndex(t)
 
-	yaz(t, i,
-		belge{urunID: "prod_baslik", baslik: "Mavi ceket pantolon ayakkabi ve gomlek"},
-		belge{urunID: "prod_anahtar", baslik: "Terlik", anahtar: "mavi gomlek"},
+	write(t, i,
+		document{productID: "prod_title", title: "Blue jacket trousers shoes and shirt"},
+		document{productID: "prod_keywords", title: "Slipper", keywords: "blue shirt"},
 	)
 
-	ids, err := i.Search(t.Context(), "mavi gomlek", 10, 0)
+	ids, err := i.Search(t.Context(), "blue shirt", 10, 0)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"prod_baslik", "prod_anahtar"}, ids,
-		"başlıkta (A) geçen ürün, anahtar alanında (B) yan yana geçen üründen önce gelmeli")
+	assert.Equal(t, []string{"prod_title", "prod_keywords"}, ids,
+		"the product matching in the title (A) has to come before the one matching side by side in the keywords field (B)")
 }
 
-// TestAciklamaUzunluguSiralamayiDegistirmez uzun açıklamalı bir ürünün, aynı
-// başlık eşleşmesine sahip kısa açıklamalı bir üründen GERİYE DÜŞMEDİĞİNİ
-// doğrular.
+// TestDescriptionLengthDoesNotChangeRanking verifies that a product with a long
+// description does NOT FALL BEHIND one with a short description and the same
+// title match.
 //
-// [searchSQL] ts_rank'i normalizasyon argümanı OLMADAN çağırır, yani belge
-// uzunluğu skora hiç girmez. Argüman eklemek tek karakterlik bir değişikliktir
-// ve sessizce başka bir alaka modeli kurar: ts_rank(..., 2) skoru belge
-// uzunluğuna böler ve aşağıdaki iki üründen uzun açıklamalıyı 0,608'den
-// 0,043'e düşürür — kataloğunu ayrıntılı yazan satıcı, aynı ürün için
-// aramada geriye düşerdi. İki fikstürün eşleşmesi de YALNIZCA başlıktadır,
-// dolayısıyla normalizasyon olmadan skorlar birebir eşittir ve sırayı
-// product_id belirler.
-func TestAciklamaUzunluguSiralamayiDegistirmez(t *testing.T) {
-	i := gercekIndeks(t)
+// [searchSQL] calls ts_rank WITHOUT a normalization argument, so document length
+// never enters the score. Adding the argument is a one-character change and it
+// quietly installs a different relevance model: ts_rank(..., 2) divides the score
+// by the document length and drops the longer-described of the two products below
+// from 0.608 to 0.043 — a seller who writes their catalog in detail would fall
+// behind in search for the same product. Both fixtures match ONLY in the title,
+// so without normalization the scores are exactly equal and the order is
+// decided by product_id.
+func TestDescriptionLengthDoesNotChangeRanking(t *testing.T) {
+	i := realIndex(t)
 
-	yaz(t, i,
-		belge{
-			urunID: "prod_a_uzun",
-			baslik: "Sneaker",
-			metin: "bu urunun aciklamasi uzundur ve pek cok kelime tasir " +
-				"katalogda ayrintili anlatilmistir",
+	write(t, i,
+		document{
+			productID: "prod_a_long",
+			title:     "Sneaker",
+			body: "the description of this item is long and carries many words " +
+				"it is written out in detail in the catalog",
 		},
-		belge{urunID: "prod_b_kisa", baslik: "Sneaker"},
+		document{productID: "prod_b_short", title: "Sneaker"},
 	)
 
 	ids, err := i.Search(t.Context(), "sneaker", 10, 0)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"prod_a_uzun", "prod_b_kisa"}, ids,
-		"eşit başlık eşleşmesinde sırayı belge uzunluğu değil product_id belirlemeli")
+	assert.Equal(t, []string{"prod_a_long", "prod_b_short"}, ids,
+		"with an equal title match the order has to be decided by product_id, not document length")
 }
 
-// TestHaricTutmaSiralamayiKorur "- ile hariç tut" sorgusunda sıralamanın ALAKAYA
-// göre kaldığını doğrular.
+// TestExclusionKeepsTheRanking verifies that on an "exclude with -" query the
+// ordering stays BY RELEVANCE.
 //
-// ts_rank, içinde olumsuzlama taşıyan bir sorguda HER belgeye 0 verir (ölçüm
-// [searchSQL] belgesindedir). Sıralama ham sorguyla yapılsaydı skorlar eşitlenir
-// ve sıra product_id'ye, yani indekslenme sırasına düşerdi. Fikstür bunu GÖRÜNÜR
-// kılmak için kurulmuştur: alaka sırası (başlık önce) product_id sırasının
-// TERSİDİR, dolayısıyla skor çöktüğünde test düşer.
+// ts_rank gives EVERY document 0 on a query carrying a negation (the measurement
+// is documented on [searchSQL]). Had the ranking used the raw query, the scores
+// would level out and the order would fall to product_id, that is, to indexing
+// order. The fixture is built to make that VISIBLE: the relevance order (title
+// first) is the REVERSE of the product_id order, so the test fails when the score
+// collapses.
 //
-//	querytree ile        prod_b_baslik 0,6079 > prod_a_metin 0,1216
-//	querytree olmadan    ikisi de 0,0000 -> sıra product_id
+//	querytree ile        prod_b_title 0,6079 > prod_a_body 0,1216
+//	without querytree    both 0.0000 -> the order is product_id
 //
-// prod_c_mavi elemenin hâlâ çalıştığını gösterir: sıralama olumlu kısımla
-// yapılırken hariç tutma WHERE'de kalır.
-func TestHaricTutmaSiralamayiKorur(t *testing.T) {
-	i := gercekIndeks(t)
+// prod_c_blue shows that the filtering still works: while the ranking uses the
+// positive part, the exclusion stays in the WHERE.
+func TestExclusionKeepsTheRanking(t *testing.T) {
+	i := realIndex(t)
 
-	yaz(t, i,
-		belge{urunID: "prod_a_metin", baslik: "Terlik", metin: "bu urun gomlek ile giyilir"},
-		belge{urunID: "prod_b_baslik", baslik: "Gomlek"},
-		belge{urunID: "prod_c_mavi", baslik: "Mavi gomlek"},
+	write(t, i,
+		document{productID: "prod_a_body", title: "Slipper", body: "this item is worn with a shirt"},
+		document{productID: "prod_b_title", title: "Shirt"},
+		document{productID: "prod_c_blue", title: "Blue shirt"},
 	)
 
-	ids, err := i.Search(t.Context(), "gomlek -mavi", 10, 0)
+	ids, err := i.Search(t.Context(), "shirt -blue", 10, 0)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"prod_b_baslik", "prod_a_metin"}, ids,
-		"hariç tutmalı sorguda da başlık (A) eşleşmesi açıklama (C) eşleşmesinden önce gelmeli")
+	assert.Equal(t, []string{"prod_b_title", "prod_a_body"}, ids,
+		"even on a query with an exclusion the title (A) match has to come before the description (C) match")
 }
 
-// TestYalnizcaHaricTutmaSorgusuCalisir yalnızca hariç tutmadan oluşan bir
-// sorgunun hata ÜRETMEDİĞİNİ ve elemeyi yaptığını doğrular.
+// TestAQueryOfOnlyExclusionsWorks verifies that a query made only of exclusions
+// produces NO error and still filters.
 //
-// Sıralama ifadesi bu sorguda querytree'den 'T' alır — sıralanacak olumlu sinyal
-// yoktur — ve sıra product_id'ye düşer. Test o sınırı DAVRANIŞLA yazar: sonuç
-// kümesi doğrudur, sırası indekslenme sırasıdır ve bu bilinen bir sınırdır
-// (bkz. [searchSQL]). Ayrıca 'T' metninin tsquery'ye çevrilmesi bir sözdizimi
-// hatası üretseydi, arama kutusuna "-mavi" yazan alışverişçi 500 alırdı; bu
-// testin ikinci işi odur.
-func TestYalnizcaHaricTutmaSorgusuCalisir(t *testing.T) {
-	i := gercekIndeks(t)
+// On that query the ranking expression gets 'T' from querytree — there is no
+// positive signal to rank by — and the order falls to product_id. The test writes
+// that limit down IN BEHAVIOUR: the result set is right, its order is the
+// indexing order, and that is a known limit (see [searchSQL]). And had turning
+// the text 'T' into a tsquery produced a syntax error, a shopper typing "-blue"
+// into the search box would get a 500; that is this test's second job.
+func TestAQueryOfOnlyExclusionsWorks(t *testing.T) {
+	i := realIndex(t)
 
-	yaz(t, i,
-		belge{urunID: "prod_1", baslik: "Gomlek"},
-		belge{urunID: "prod_2", baslik: "Mavi gomlek"},
-		belge{urunID: "prod_3", baslik: "Terlik"},
+	write(t, i,
+		document{productID: "prod_1", title: "Shirt"},
+		document{productID: "prod_2", title: "Blue shirt"},
+		document{productID: "prod_3", title: "Terlik"},
 	)
 
-	ids, err := i.Search(t.Context(), "-mavi", 10, 0)
-	require.NoError(t, err, "hariç tutma sorgusu hata üretmemeli")
+	ids, err := i.Search(t.Context(), "-blue", 10, 0)
+	require.NoError(t, err, "an exclusion query must produce no error")
 	assert.Equal(t, []string{"prod_1", "prod_3"}, ids,
-		"mavi geçen ürün elenmeli, kalanlar product_id sırasında gelmeli")
+		"the product containing blue has to be filtered out and the rest come in product_id order")
 }
 
-// TestSiralamaIfadesiSorguBasinaBirKezHesaplanir sıralama sorgusunun SKALER ALT
-// SORGU olarak kaldığını plan üzerinden doğrular.
+// TestTheRankingExpressionIsComputedOncePerQuery verifies through the PLAN that
+// the ranking query stays a SCALAR SUBQUERY.
 //
-// Karar HIZ içindir ve sonucu DEĞİŞTİRMEZ: alt sorgu kaldırılıp ifade satır
-// içine alınsa da her belge aynı skoru alır, dolayısıyla sıralamayı sınayan
-// hiçbir test bunu göremez (mutasyonla doğrulandı: alt sorguyu kaldıran değişim
-// paketteki tüm testleri geçiyordu). Görünür olduğu tek yer plandır: alt sorgu
-// InitPlan'a çevrilir ve sorgu başına bir kez hesaplanır, satır içi ifade ise
-// genel planda satır başına yeniden ayrıştırılır (52 bin eşleşmede 25,4 ms'ye
-// karşı 46,7 ms; ölçüm [searchSQL] belgesindedir).
-func TestSiralamaIfadesiSorguBasinaBirKezHesaplanir(t *testing.T) {
-	i := gercekIndeks(t)
-	yaz(t, i, belge{urunID: "prod_1", baslik: "Gomlek"})
+// The decision is for SPEED and does NOT change the result: with the subquery
+// removed and the expression inlined, every document gets the same score, so no
+// test that exercises the ordering can see it (verified by mutation: the change
+// removing the subquery passed every test in the package). The only place it is
+// visible is the plan: a subquery becomes an InitPlan and is computed once per
+// query, while an inline expression is reparsed per row on the generic plan
+// (25.4 ms against 46.7 ms on 52 thousand matches; the measurement is documented
+// on [searchSQL]).
+func TestTheRankingExpressionIsComputedOncePerQuery(t *testing.T) {
+	i := realIndex(t)
+	write(t, i, document{productID: "prod_1", title: "Shirt"})
 
-	rows, err := testPool.Pool().Query(t.Context(), "EXPLAIN (COSTS OFF) "+searchSQL, "gomlek", 10, 0)
+	rows, err := testPool.Pool().Query(t.Context(), "EXPLAIN (COSTS OFF) "+searchSQL, "shirt", 10, 0)
 	require.NoError(t, err)
 	defer rows.Close()
 
 	var plan strings.Builder
 	for rows.Next() {
-		var satir string
-		require.NoError(t, rows.Scan(&satir))
-		plan.WriteString(satir)
+		var line string
+		require.NoError(t, rows.Scan(&line))
+		plan.WriteString(line)
 		plan.WriteString("\n")
 	}
 	require.NoError(t, rows.Err())
 
 	assert.Contains(t, plan.String(), "InitPlan",
-		"sıralama sorgusu InitPlan olmalı; satır içine alınırsa genel planda satır başına hesaplanır:\n%s", plan.String())
+		"the ranking query has to be an InitPlan; inlined it is computed per row on the generic plan:\n%s", plan.String())
 }
 
-// TestSayfalamaDeterministiktir eşit alakalı kayıtların sayfalar arasında
-// KAYMADIĞINI doğrular.
+// TestPagingIsDeterministic verifies that equally relevant records do not SHIFT
+// between pages.
 //
-// İkinci sıralama anahtarı olmasaydı, aynı sorgu iki sayfada aynı ürünü
-// gösterebilir ya da bir ürünü hiç göstermeyebilirdi.
-func TestSayfalamaDeterministiktir(t *testing.T) {
-	i := gercekIndeks(t)
+// Without the second sort key the same query could show one product on two pages
+// or show a product on none.
+func TestPagingIsDeterministic(t *testing.T) {
+	i := realIndex(t)
 
-	var belgeler []belge
+	var documents []document
 	for n := range 5 {
-		belgeler = append(belgeler, belge{
-			urunID: "prod_" + strconv.Itoa(n),
-			baslik: "Ayni baslik",
+		documents = append(documents, document{
+			productID: "prod_" + strconv.Itoa(n),
+			title:     "Ayni title",
 		})
 	}
-	yaz(t, i, belgeler...)
+	write(t, i, documents...)
 
 	ilk, err := i.Search(t.Context(), "ayni", 2, 0)
 	require.NoError(t, err)
@@ -342,42 +348,43 @@ func TestSayfalamaDeterministiktir(t *testing.T) {
 
 	tum := append(append(append([]string{}, ilk...), ikinci...), ucuncu...)
 	assert.Equal(t, []string{"prod_0", "prod_1", "prod_2", "prod_3", "prod_4"}, tum,
-		"sayfalar çakışmadan ve boşluk bırakmadan tüm kayıtları vermeli")
+		"the pages have to give every record with no overlap and no gap")
 }
 
-// TestBozukSorgu500Uretmez kullanıcı metninin sorguyu düşürmediğini doğrular.
+// TestABrokenQueryDoesNotProduceA500 verifies that a user's text does not bring
+// the query down.
 //
-// to_tsquery seçilseydi bu girdiler sözdizimi hatası verir ve arama kutusuna ne
-// yazıldığına bağlı 500'ler üretirdi; websearch_to_tsquery hepsini metin olarak
-// ele alır.
-func TestBozukSorgu500Uretmez(t *testing.T) {
-	i := gercekIndeks(t)
-	yaz(t, i, belge{urunID: "prod_1", baslik: "Mavi gomlek"})
+// Had to_tsquery been chosen, these inputs would give a syntax error and produce
+// 500s depending on what somebody typed into the search box;
+// websearch_to_tsquery treats all of them as text.
+func TestABrokenQueryDoesNotProduceA500(t *testing.T) {
+	i := realIndex(t)
+	write(t, i, document{productID: "prod_1", title: "Blue shirt"})
 
-	for _, sorgu := range []string{"& &", "!", "a | | b", "((", "'", `"`, "-"} {
-		ids, err := i.Search(t.Context(), sorgu, 10, 0)
-		require.NoError(t, err, "sorgu %q hata üretmemeli", sorgu)
-		assert.Empty(t, ids, "anlamsız sorgu eşleşme döndürmemeli: %q", sorgu)
+	for _, query := range []string{"& &", "!", "a | | b", "((", "'", `"`, "-"} {
+		ids, err := i.Search(t.Context(), query, 10, 0)
+		require.NoError(t, err, "the query %q must produce no error", query)
+		assert.Empty(t, ids, "a meaningless query must return no match: %q", query)
 	}
 
-	// websearch'ün getirdiği sözdizimi de çalışmalı: tırnak tam ifade demektir.
-	ids, err := i.Search(t.Context(), `"mavi gomlek"`, 10, 0)
+	// The syntax websearch brings has to work too: a quote means an exact phrase.
+	ids, err := i.Search(t.Context(), `"blue shirt"`, 10, 0)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"prod_1"}, ids)
 }
 
-// TestUpsertAyniKimligiGunceller ikinci yazmanın yeni satır AÇMADIĞINI
-// doğrular; abonenin idempotent olması buna dayanır.
-func TestUpsertAyniKimligiGunceller(t *testing.T) {
-	i := gercekIndeks(t)
+// TestUpsertUpdatesTheSameID verifies that a second write does NOT open a new
+// row; the subscriber being idempotent rests on it.
+func TestUpsertUpdatesTheSameID(t *testing.T) {
+	i := realIndex(t)
 
-	yaz(t, i, belge{urunID: "prod_1", baslik: "Eski baslik"})
-	yaz(t, i, belge{urunID: "prod_1", baslik: "Yeni baslik"})
+	write(t, i, document{productID: "prod_1", title: "Eski title"})
+	write(t, i, document{productID: "prod_1", title: "Yeni title"})
 
-	var satir int
+	var rowCount int
 	require.NoError(t, testPool.Pool().
-		QueryRow(t.Context(), "SELECT count(*) FROM searchpg_product").Scan(&satir))
-	assert.Equal(t, 1, satir, "aynı ürün için tek satır olmalı")
+		QueryRow(t.Context(), "SELECT count(*) FROM searchpg_product").Scan(&rowCount))
+	assert.Equal(t, 1, rowCount, "there has to be one row per product")
 
 	ids, err := i.Search(t.Context(), "yeni", 10, 0)
 	require.NoError(t, err)
@@ -385,145 +392,147 @@ func TestUpsertAyniKimligiGunceller(t *testing.T) {
 
 	ids, err = i.Search(t.Context(), "eski", 10, 0)
 	require.NoError(t, err)
-	assert.Empty(t, ids, "güncellenen belge eski metniyle eşleşmemeli")
+	assert.Empty(t, ids, "an updated document must not match its old text")
 }
 
-// TestSupurmeSadeceBayatlariSiler süpürmenin turdan sonra yazılan satırlara
-// dokunmadığını doğrular.
+// TestTheSweepDeletesOnlyStaleRows verifies that the sweep does not touch the
+// rows written after the round.
 //
-// Eşik veritabanı saatinden alınır; uygulama saati kullanılsaydı iki saat
-// arasındaki kayma taze kayıtları bayat gösterebilirdi.
-func TestSupurmeSadeceBayatlariSiler(t *testing.T) {
-	i := gercekIndeks(t)
+// The threshold comes from the database clock; had the application clock been
+// used, the drift between the two could make fresh rows look stale.
+func TestTheSweepDeletesOnlyStaleRows(t *testing.T) {
+	i := realIndex(t)
 
-	yaz(t, i, belge{urunID: "prod_bayat", baslik: "Eski"})
+	write(t, i, document{productID: "prod_bayat", title: "Eski"})
 
-	esik, err := i.Now(t.Context())
+	threshold, err := i.Now(t.Context())
 	require.NoError(t, err)
 
-	yaz(t, i, belge{urunID: "prod_taze", baslik: "Yeni"})
+	write(t, i, document{productID: "prod_taze", title: "Yeni"})
 
-	silinen, err := i.Sweep(t.Context(), esik)
+	silinen, err := i.Sweep(t.Context(), threshold)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), silinen)
 
 	ids, err := i.Search(t.Context(), "eski", 10, 0)
 	require.NoError(t, err)
-	assert.Empty(t, ids, "eşikten eski satır silinmiş olmalı")
+	assert.Empty(t, ids, "a row older than the threshold has to have been deleted")
 
 	ids, err = i.Search(t.Context(), "yeni", 10, 0)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"prod_taze"}, ids, "turda tazelenen satır KALMALI")
+	assert.Equal(t, []string{"prod_taze"}, ids, "a row refreshed during the round has to STAY")
 }
 
-// TestSemaGINIndeksiKurar migration'ın gerçekten bir GIN indeksi ürettiğini
-// doğrular.
+// TestTheSchemaCreatesAGINIndex verifies that the migration really produces a
+// GIN index.
 //
-// "CREATE INDEX IF NOT EXISTS", aynı adda başka bir ilişki varsa hata değil
-// NOTICE üretip atlar; yani indeks sessizce hiç kurulmamış olabilir. O
-// durumda her arama tam tablo taramasına düşer ve bu, katalog büyüyene kadar
-// hiçbir testte görünmez (core/link'in verifySchema gerekçesiyle aynı).
-func TestSemaGINIndeksiKurar(t *testing.T) {
-	var tanim string
+// "CREATE INDEX IF NOT EXISTS" produces a NOTICE rather than an error and skips
+// when another relation of the same name exists; that is, the index may quietly
+// never have been created. In that case every search falls to a full table scan
+// and that is invisible in every test until the catalog grows (the same reasoning
+// as core/link's verifySchema).
+func TestTheSchemaCreatesAGINIndex(t *testing.T) {
+	var definition string
 	err := testPool.Pool().QueryRow(t.Context(), `
 		SELECT indexdef FROM pg_indexes
 		WHERE tablename = 'searchpg_product' AND indexname = 'searchpg_product_document_idx'`).
-		Scan(&tanim)
+		Scan(&definition)
 
-	require.NoError(t, err, "belge indeksi kurulmuş olmalı")
-	assert.Contains(t, tanim, "USING gin", "belge indeksi GIN olmalı")
+	require.NoError(t, err, "the document index has to have been created")
+	assert.Contains(t, definition, "USING gin", "the document index has to be a GIN one")
 }
 
-// TestAramaUcuGercekIndeksleCalisir vitrin ucunu uçtan uca doğrular: gerçek
-// indeks kimlikleri verir, katalog kayıtları döner.
-func TestAramaUcuGercekIndeksleCalisir(t *testing.T) {
-	i := gercekIndeks(t)
-	k := newSahteKatalog()
-	k.urunEkle("prod_1", "Mavi gomlek", "Pamuklu")
-	k.urunEkle("prod_2", "Siyah pantolon", "Kot")
-	yaz(t, i,
-		belge{urunID: "prod_1", baslik: "Mavi gomlek", metin: "Pamuklu"},
-		belge{urunID: "prod_2", baslik: "Siyah pantolon", metin: "Kot"},
+// TestTheSearchEndpointRunsAgainstARealIndex verifies the storefront endpoint end
+// to end: a real index gives the ids and the catalog gives the records.
+func TestTheSearchEndpointRunsAgainstARealIndex(t *testing.T) {
+	i := realIndex(t)
+	k := newFakeCatalog()
+	k.addProduct("prod_1", "Blue shirt", "Cotton")
+	k.addProduct("prod_2", "Black trousers", "Denim")
+	write(t, i,
+		document{productID: "prod_1", title: "Blue shirt", body: "Cotton"},
+		document{productID: "prod_2", title: "Black trousers", body: "Denim"},
 	)
 
-	m := testModul(i, k)
-	rec := istek(m, http.MethodGet, SearchPath+"?q=gomlek", magazaKimligi())
+	m := testModule(i, k)
+	rec := request(m, http.MethodGet, SearchPath+"?q=shirt", storePrincipal())
 
-	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), `"id":"prod_1"`)
 	assert.NotContains(t, rec.Body.String(), `"id":"prod_2"`)
 }
 
-// TestYenidenIndekslemeGercekVeritabaniniTazeler tam turun hem yazdığını hem
-// bayat kayıtları düşürdüğünü doğrular.
+// TestReindexingRefreshesARealDatabase verifies that a full round both writes and
+// drops the stale rows.
 //
-// Bu, eklentinin var olan bir kuruluma takıldığında ya da bir olay kaçtığında
-// tek onarım yoludur.
-func TestYenidenIndekslemeGercekVeritabaniniTazeler(t *testing.T) {
-	i := gercekIndeks(t)
+// This is the only repair path when the plugin is fitted to an existing
+// installation or when an event is missed.
+func TestReindexingRefreshesARealDatabase(t *testing.T) {
+	i := realIndex(t)
 
-	// Artık yayında olmayan (kataloğun döndürmediği) bayat bir kayıt.
-	yaz(t, i, belge{urunID: "prod_kaldirilmis", baslik: "Kaldirilmis urun"})
+	// A stale row for a product that is no longer published (the catalog does not
+	// return it).
+	write(t, i, document{productID: "prod_withdrawn", title: "Withdrawn item"})
 
-	k := newSahteKatalog()
-	graph := &sahteGraph{}
+	k := newFakeCatalog()
+	graph := &fakeGraph{}
 	for n := range 3 {
 		id := "prod_" + strconv.Itoa(n)
 		graph.ids = append(graph.ids, id)
-		k.urunEkle(id, "Urun "+strconv.Itoa(n), "aciklama")
+		k.addProduct(id, "Item "+strconv.Itoa(n), "a description")
 	}
 
-	m := testModul(i, k)
+	m := testModule(i, k)
 	m.graph = graph
 
-	sonuc, err := m.yenidenIndeksle(t.Context())
+	result, err := m.reindex(t.Context())
 	require.NoError(t, err)
 
-	assert.Equal(t, 3, sonuc.Indexed)
-	assert.Equal(t, int64(1), sonuc.Removed, "yayından kalkmış ürün süpürülmeli")
-	assert.Equal(t, 1, sonuc.Pages)
+	assert.Equal(t, 3, result.Indexed)
+	assert.Equal(t, int64(1), result.Removed, "an unpublished product has to be swept")
+	assert.Equal(t, 1, result.Pages)
 
-	ids, err := i.Search(t.Context(), "urun", 10, 0)
+	ids, err := i.Search(t.Context(), "item", 10, 0)
 	require.NoError(t, err)
 	assert.Len(t, ids, 3)
 
-	ids, err = i.Search(t.Context(), "kaldirilmis", 10, 0)
+	ids, err = i.Search(t.Context(), "withdrawn", 10, 0)
 	require.NoError(t, err)
-	assert.Empty(t, ids, "bayat kayıt aramada görünmemeli")
+	assert.Empty(t, ids, "a stale row must not appear in search")
 }
 
-// TestOlayAkisiGercekIndekseYazar abone -> katalog -> indeks yolunu gerçek
-// tabloda doğrular.
-func TestOlayAkisiGercekIndekseYazar(t *testing.T) {
-	i := gercekIndeks(t)
-	k := newSahteKatalog()
-	k.urunEkle("prod_1", "Mavi gomlek", "Pamuklu yazlik")
-	m := testModul(i, k)
+// TestTheEventStreamWritesToARealIndex verifies the subscriber -> catalog ->
+// index path against a real table.
+func TestTheEventStreamWritesToARealIndex(t *testing.T) {
+	i := realIndex(t)
+	k := newFakeCatalog()
+	k.addProduct("prod_1", "Blue shirt", "Cotton summer")
+	m := testModule(i, k)
 
-	require.NoError(t, m.urunYazildi(t.Context(), olay(eventProductCreated, "prod_1")))
-	ids, err := i.Search(t.Context(), "gomlek", 10, 0)
+	require.NoError(t, m.productWritten(t.Context(), event(eventProductCreated, "prod_1")))
+	ids, err := i.Search(t.Context(), "shirt", 10, 0)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"prod_1"}, ids)
 
-	require.NoError(t, m.urunSilindi(t.Context(), olay(eventProductDeleted, "prod_1")))
-	ids, err = i.Search(t.Context(), "gomlek", 10, 0)
+	require.NoError(t, m.productDeleted(t.Context(), event(eventProductDeleted, "prod_1")))
+	ids, err = i.Search(t.Context(), "shirt", 10, 0)
 	require.NoError(t, err)
-	assert.Empty(t, ids, "silme olayı indeksten düşürmeli")
+	assert.Empty(t, ids, "a deletion event has to remove it from the index")
 }
 
-// TestModulRegisterCekirdektenCozer modülün yalnızca çekirdek servisleri
-// istediğini ve eksikse açılışı DÜŞÜRDÜĞÜNÜ doğrular.
-func TestModulRegisterCekirdektenCozer(t *testing.T) {
+// TestRegisterResolvesFromTheCore verifies that the module asks only for core
+// services and BRINGS STARTUP DOWN when one is missing.
+func TestRegisterResolvesFromTheCore(t *testing.T) {
 	log := slog.New(slog.DiscardHandler)
 
-	t.Run("eksik çekirdek servisi", func(t *testing.T) {
+	t.Run("a missing core service", func(t *testing.T) {
 		c := container.New(log)
 		t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
 
-		m := newModul(c, log)
+		m := newSearchModule(c, log)
 		err := m.Register(t.Context(), c)
 
-		require.Error(t, err, "core.db yokken kayıt düşmeli")
+		require.Error(t, err, "registration has to fail while core.db is absent")
 		assert.Equal(t, codeSetupFailed, coreerrors.CodeOf(err))
 	})
 
@@ -535,39 +544,39 @@ func TestModulRegisterCekirdektenCozer(t *testing.T) {
 		require.NoError(t, c.Provide(svcDB, testPool))
 		require.NoError(t, c.Provide(svcQuery, query.New(links, c, nil)))
 
-		m := newModul(c, log)
+		m := newSearchModule(c, log)
 		require.NoError(t, m.Register(t.Context(), c))
 
-		// Uçlar ancak kayıttan SONRA bağlanır.
-		desenler := chiDesenleri(testRouter(m))
+		// The endpoints are bound only AFTER the registration.
+		desenler := chiPatterns(testRouter(m))
 		assert.Contains(t, desenler, "GET "+SearchPath)
 		assert.Contains(t, desenler, "POST "+ReindexPath)
 	})
 }
 
-// TestMigrationGeriAlinipYenidenUygulanabilir şemanın up -> down -> up
-// döngüsünden geçtiğini doğrular.
+// TestTheMigrationCanBeRolledBackAndReapplied verifies that the schema survives
+// an up -> down -> up cycle.
 //
-// internal/arch'ın aynı kapısı yalnızca internal/modules altını tarar; geri
-// alınamayan bir migration, golang-migrate'in sürüm defterini "dirty" bırakır
-// ve o noktadan sonra sunucu bir daha AÇILMAZ.
+// internal/arch's gate of the same name scans only under internal/modules; a
+// migration that cannot be rolled back leaves golang-migrate's version ledger
+// "dirty", and from that point on the server does NOT COME UP again.
 //
-// Test EN SONA konmuştur: tabloyu düşürüp yeniden kurar, yani kendisinden
-// sonra çalışacak testler boş bir tabloyla başlar.
-func TestMigrationGeriAlinipYenidenUygulanabilir(t *testing.T) {
+// The test is placed LAST: it drops the table and creates it again, so any test
+// running after it would start with an empty table.
+func TestTheMigrationCanBeRolledBackAndReapplied(t *testing.T) {
 	ctx := t.Context()
 
 	require.NoError(t, db.MigrateDown(ctx, testDSN, migrationsRoot, ModuleName, 0),
-		"şema geri alınabilmeli")
+		"the schema has to be reversible")
 
-	var kalan int
+	var remaining int
 	require.NoError(t, testPool.Pool().QueryRow(ctx, `
-		SELECT count(*) FROM pg_tables WHERE tablename = 'searchpg_product'`).Scan(&kalan))
-	assert.Zero(t, kalan, "geri alma tabloyu düşürmeli")
+		SELECT count(*) FROM pg_tables WHERE tablename = 'searchpg_product'`).Scan(&remaining))
+	assert.Zero(t, remaining, "the rollback has to drop the table")
 
 	require.NoError(t, db.Migrate(ctx, testDSN, migrationsRoot, ModuleName),
-		"şema yeniden uygulanabilmeli")
+		"the schema has to be reappliable")
 
-	_, err := newIndeks(testPool.Pool()).Search(ctx, "gomlek", 10, 0)
-	assert.NoError(t, err, "yeniden kurulan şema kullanılabilir olmalı")
+	_, err := newIndex(testPool.Pool()).Search(ctx, "shirt", 10, 0)
+	assert.NoError(t, err, "the reapplied schema has to be usable")
 }

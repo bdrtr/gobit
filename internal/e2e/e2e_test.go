@@ -64,7 +64,7 @@
 // The saga engine does not run IN MEMORY but on pgstore, as in production
 // (core.workflow.store). The difference changes what the test sees: the
 // idempotency key and the execution state really are written to the database, so
-// the claim "the same cart cannot be completed twice" exercises the behaviour of
+// the claim "the same cart cannot be completed twice" exercises the behavior of
 // a durable record rather than that of an in-process map.
 //
 // # Why the expected amounts are written by hand
@@ -149,7 +149,7 @@ import (
 )
 
 // postgresImage is the database image the tests share; the SAME version is used
-// as in the module integration tests, so that schema behaviour does not diverge
+// as in the module integration tests, so that schema behavior does not diverge
 // between the two places.
 const postgresImage = "postgres:16-alpine"
 
@@ -192,7 +192,7 @@ const (
 	// It is deliberately HIGHER than the production default (600): the shape of
 	// the stack stays the same as in production, but the limit must not fire in
 	// the middle of a scenario and take unrelated tests down. The limit's OWN
-	// behaviour is exercised on its own router (see hardening_test.go).
+	// behavior is exercised on its own router (see hardening_test.go).
 	testRateLimit = 1_000_000
 )
 
@@ -289,7 +289,7 @@ var (
 	//
 	// The Phase 5 and Phase 6 scenarios call the workflows directly and never
 	// touch the router; the "store surface" scenario of Phase 7 exercises exactly
-	// the behaviour of the HTTP edge (see shipping_test.go). An admin_only option not
+	// the behavior of the HTTP edge (see shipping_test.go). An admin_only option not
 	// showing up in the storefront is not a SERVICE decision but a trust decision
 	// pinned down by that edge, and it can only be proven by going through the
 	// edge.
@@ -440,7 +440,7 @@ var (
 // The scenarios that share the warehouse DECLARE the location to the workflow
 // (checkoutwf.CompleteCartInput.LocationID): the field is optional now and when
 // left empty the warehouse is chosen per line, but when declared the old
-// behaviour is preserved exactly — and what these tests exercise is not warehouse
+// behavior is preserved exactly — and what these tests exercise is not warehouse
 // selection. The multi-warehouse path has its own separate proof and sets up its
 // own warehouses (see multi_warehouse_test.go).
 var stockLocationID string
@@ -646,13 +646,13 @@ func setUpHarness(ctx context.Context) error {
 		JWTIssuer: "gobit-e2e",
 		// The bcrypt cost is LOWERED for the test: the default cost adds ~100ms to
 		// every login call and the identity scenarios perform dozens of logins. The
-		// cost parameter ITSELF is not exercised here; the behaviour of password
+		// cost parameter ITSELF is not exercised here; the behavior of password
 		// verification is.
 		BcryptCost: bcrypt.MinCost,
 	}))
 	// Section 10: B2B. It is registered as in PRODUCTION, because what is exercised
 	// is not the module's own endpoints but the fact that its being registered
-	// CHANGES the order module's behaviour: order resolves the spend rule from the
+	// CHANGES the order module's behavior: order resolves the spend rule from the
 	// container under the name "b2b.interop", and without the registration it
 	// counts every customer as unlimited.
 	registry.Add(b2bmod.New(nil))
@@ -687,7 +687,7 @@ func setUpHarness(ctx context.Context) error {
 			// this file exercises not an end-to-end setup but some other
 			// configuration it built itself. The difference bit exactly here: when
 			// cart creation was taken out of the ring in production, the tests
-			// here went on passing as before and started documenting a behaviour
+			// here went on passing as before and started documenting a behavior
 			// that no longer existed.
 			IdempotencyExempt: []string{graph.Path, cartapi.StoreCartsPath},
 		}),

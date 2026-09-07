@@ -439,7 +439,7 @@ func TestStorefrontExpectedTotalIsMandatory(t *testing.T) {
 // engine's own constant ("workflow_step_failed") and "spending_limit" appeared
 // nowhere in the response; the reason lived only in the server log.
 //
-// The difference is behavioural, not cosmetic. A 409 is exactly the class a
+// The difference is behavioral, not cosmetic. A 409 is exactly the class a
 // RETRY DOES NOT SOLVE: a storefront that cannot tell them apart either tells
 // the user "a temporary error, try again" and turns away, for nothing, the
 // employee who needs their limit raised, or treats every 409 as permanent and
@@ -517,7 +517,7 @@ func openStorefrontCartInCountry(t *testing.T, countryCode, customerID, email st
 
 // storefrontCompletionBody builds the body of the completion request.
 //
-// The payment behaviour comes from the manual provider's session data (see
+// The payment behavior comes from the manual provider's session data (see
 // [paymentBehavior]); the saga itself has no test hook whatsoever. The body
 // carries NO location and cannot: which warehouse to ship out of is a shipping
 // decision and the workflow makes it per line itself.

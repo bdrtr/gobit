@@ -10,177 +10,183 @@ import (
 	corehttp "github.com/bdrtr/gobit/core/http"
 )
 
-// Eklentinin açtığı uçlar ve istedikleri yetki.
+// The endpoints the plugin opens and the scopes they require.
 const (
-	// SearchPath vitrin arama ucudur.
+	// SearchPath is the storefront search endpoint.
 	SearchPath = "/store/v1/search"
-	// ReindexPath tam yeniden indeksleme ucudur.
+	// ReindexPath is the full reindex endpoint.
 	ReindexPath = "/admin/v1/search/reindex"
-	// ScopeWrite yeniden indeksleme ucunun istediği yetkidir.
+	// ScopeWrite is the scope the reindex endpoint requires.
 	//
-	// Sözlük modüllerinkiyle AYNI biçimdedir ("<modül>:write"). Okuma yetkisi
-	// tanımlanmadı: bu modülün tek yönetim ucu YAZAN bir uçtur ve verilmeyen
-	// bir yetki adı, ilk kez dağıtıldığı gün ne işe yaradığı bilinmeyen bir
-	// addır (product api/routes.go'daki gerekçeyle aynı).
+	// It has the SAME shape as the modules' ("<module>:write"). No read scope was
+	// defined: this module's only admin endpoint is one that WRITES, and a scope
+	// name that is never handed out is a name nobody knows the purpose of on the
+	// day it is first deployed (the same reasoning as product's api/routes.go).
 	ScopeWrite = ModuleName + ":write"
 )
 
-// Sorgu parametrelerinin adları.
+// The names of the query parameters.
 const (
 	paramQuery  = "q"
 	paramLimit  = "limit"
 	paramOffset = "offset"
 )
 
-// Arama isteğinin sınırları.
+// The limits of a search request.
 const (
-	// varsayilanLimit limit verilmediğinde dönen kayıt sayısıdır.
-	varsayilanLimit = 20
-	// maxLimit tek istekte dönebilecek en fazla kayıt sayısıdır.
+	// defaultLimit is how many records come back when no limit is given.
+	defaultLimit = 20
+	// maxLimit is the most records one request can return.
 	//
-	// Değer kataloğun toplu okuma sınırıyla (product service.MaxLimit) AYNIDIR
-	// ve elle tekrarlanmıştır. Aşılırsa istek burada değil katalogta reddedilir
-	// ve kullanıcı, aramanın kendi sınırı yerine başka bir modülün hata
-	// mesajını görürdü.
+	// The value is the SAME as the catalog's bulk-read limit (product
+	// service.MaxLimit) and it is repeated by hand. Were it exceeded, the request
+	// would be refused by the CATALOG rather than here and the user would see
+	// another module's error message instead of search's own limit.
 	maxLimit = 100
-	// maxSorguBaytlari sorgu metninin bayt sınırıdır. Sınırsız bir metin,
-	// websearch_to_tsquery'yi tek istekle megabaytlarca girdiyi ayrıştırmaya
-	// zorlardı; arama kutusuna sığan hiçbir sorgu bu sınıra yaklaşmaz.
-	maxSorguBaytlari = 256
+	// maxQueryBytes is the byte limit of the query text. An unbounded text
+	// would force websearch_to_tsquery to parse megabytes of input in a single
+	// request; no query that fits in a search box comes near this limit.
+	maxQueryBytes = 256
 )
 
-// Hata kodları.
+// The error codes.
 const (
 	codeQueryMissing  = "searchpg_query_missing"
 	codeQueryTooLong  = "searchpg_query_too_long"
 	codeBadQueryParam = "searchpg_bad_query_param"
 )
 
-// listeZarfi liste yanıtlarının zarfıdır (plan Bölüm 8).
+// listEnvelope is the envelope of the list responses (plan Section 8).
 //
-// Count bu YANITTAKİ kayıt sayısıdır, indeksteki toplam eşleşme değil ve bu
-// bilinçlidir: kanal süzgeci kayıtlar okunurken katalogta uygulanır, yani
-// gerçek toplam ancak TÜM eşleşmeler okunup süzüldükten sonra bilinebilirdi.
-// İndeksten okunan ham eşleşme sayısını yazmak ise daha kötüsü olurdu — sayı,
-// istemcinin asla göremeyeceği ürünleri de sayan bir yalan olurdu.
+// Count is the number of records IN THIS RESPONSE, not the total number of
+// matches in the index, and that is deliberate: the channel filter is applied by
+// the catalog while the records are read, so the real total could only be known
+// after EVERY match had been read and filtered. Writing the raw match count from
+// the index would be worse — the number would be a lie that counted products the
+// client can never see.
 //
-// Bunun görünür sonucu: bir sayfa, daha fazla eşleşme olduğu hâlde limitten AZ
-// kayıt dönebilir. İstemci "boş sayfa gelene kadar" sayfalamalıdır.
-type listeZarfi struct {
+// The visible consequence: a page may come back with FEWER records than the
+// limit even though more matches exist. A client should page "until an empty
+// page arrives".
+type listEnvelope struct {
 	Data   []json.RawMessage `json:"data"`
 	Count  int               `json:"count"`
 	Offset int               `json:"offset"`
 	Limit  int               `json:"limit"`
 }
 
-// tekilZarf tekil yanıtların zarfıdır.
-type tekilZarf struct {
+// singleEnvelope is the envelope of the single-object responses.
+type singleEnvelope struct {
 	Data any `json:"data"`
 }
 
-// ara GET /store/v1/search
+// search is GET /store/v1/search.
 //
-// Akış: indeksten ALAKA SIRALI kimlikler bulunur, kayıtlar kataloğun
-// "product.interop" yüzeyinden AYNI SIRAYLA okunur. Yanıttaki her kayıt,
-// vitrinin ürün ucunun yazdığı gövdeyle birebir aynı şekildedir; eklenti onu
-// yeniden biçimlendirmez.
+// The flow: RELEVANCE-ORDERED ids are found in the index, and the records are
+// read from the catalog's "product.interop" surface IN THE SAME ORDER. Every
+// record in the response has exactly the shape the storefront's product endpoint
+// writes; the plugin does not reshape it.
 //
-// Yayın durumu ve satış kanalı süzgeci katalogta uygulanır (bkz. paket
-// belgesi). Bu yüzden indekste kalmış bayat bir kayıt bile başkasının
-// kanalındaki ürünü SIZDIRAMAZ: süzgeci geçemeyen kimlik yanıta hiç girmez.
-func (m *modul) ara(w http.ResponseWriter, r *http.Request) {
+// The publication status and the sales channel filter are applied by the catalog
+// (see the package documentation). That is why even a stale row left in the
+// index cannot LEAK a product from somebody else's channel: an id that does not
+// pass the filter never enters the response.
+func (m *searchModule) search(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	sorgu, err := aramaSorgusu(r)
+	query, err := searchQuery(r)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
-	limit, offset, err := sayfalama(r)
-	if err != nil {
-		corehttp.WriteError(ctx, w, err)
-		return
-	}
-
-	ids, err := m.indeks.Search(ctx, sorgu, limit, offset)
+	limit, offset, err := paging(r)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
 
-	urunler, err := m.katalog.urunler(ctx, ids, kanallar(r))
+	ids, err := m.index.Search(ctx, query, limit, offset)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
 
-	corehttp.WriteJSON(ctx, w, http.StatusOK, listeZarfi{
-		Data:   urunler,
-		Count:  len(urunler),
+	products, err := m.catalog.products(ctx, ids, channels(r))
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	corehttp.WriteJSON(ctx, w, http.StatusOK, listEnvelope{
+		Data:   products,
+		Count:  len(products),
 		Offset: offset,
 		Limit:  limit,
 	})
 }
 
-// yenidenIndeksleUcu POST /admin/v1/search/reindex
+// reindexEndpoint is POST /admin/v1/search/reindex.
 //
-// Tüm katalogu baştan indeksler ve SENKRON çalışır: yanıt, iş bittiğinde
-// sayılarla birlikte döner. Arka plana atmak (202 Accepted) çağırana yalnızca
-// "başladı" demek olurdu ve sonucu görebileceği bir yer olmadığı için
-// başarısız bir tur sessizce kaybolurdu. Bedeli, büyük katalogda uzun süren
-// bir istektir; bu uç bir operasyon aracıdır ve müşteri yolunda değildir.
+// It indexes the whole catalog from scratch and runs SYNCHRONOUSLY: the response
+// comes back with the counts when the work is done. Pushing it to the background
+// (202 Accepted) would tell the caller only "it started", and because there is
+// nowhere for them to see the outcome, a failed round would disappear silently.
+// The price is a long request on a large catalog; this endpoint is an operations
+// tool and is not on the customer's path.
 //
-// # Bilinen sınır: sunucu yazma zaman aşımı
+// # A known limit: the server's write timeout
 //
-// WRITE_TIMEOUT (varsayılan 30s) yeterince büyük bir katalogda dolabilir. O
-// durumda YANIT istemciye ulaşmaz ama İŞ tamamlanır: zaman aşımı bağlantının
-// yazma süresini keser, handler'ı durdurmaz — indeks yine kurulur, çağıran
-// yalnızca sayıları göremez. Ölçek buraya geldiğinde doğru adım ucu arka plana
-// atmak değil (sonucun görülebileceği bir yer yok), turu operatörün
-// çalıştırdığı sayfa aralıklarına bölmektir.
-func (m *modul) yenidenIndeksleUcu(w http.ResponseWriter, r *http.Request) {
+// WRITE_TIMEOUT (30s by default) can be exhausted on a large enough catalog. In
+// that case the RESPONSE does not reach the client but the WORK completes: the
+// timeout cuts the connection's write deadline, it does not stop the handler —
+// the index is still built and the caller simply does not see the counts. When
+// the scale reaches here, the right step is not to push the endpoint into the
+// background (there is nowhere to see the outcome) but to split the round into
+// page ranges the operator runs.
+func (m *searchModule) reindexEndpoint(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	sonuc, err := m.yenidenIndeksle(ctx)
+	result, err := m.reindex(ctx)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
 
-	corehttp.WriteJSON(ctx, w, http.StatusOK, tekilZarf{Data: sonuc})
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: result})
 }
 
-// aramaSorgusu istekten arama metnini okur.
+// searchQuery reads the search text from the request.
 //
-// Boş sorgu REDDEDİLİR. "Tüm katalogu döndür" anlamına gelseydi, aramanın
-// listeleme ucunun ikinci bir kopyası olması ve boş bir arama kutusunun
-// yanlışlıkla tüm katalogu çekmesi demekti; kataloğu listelemenin yolu zaten
-// GET /store/v1/products'tır.
-func aramaSorgusu(r *http.Request) (string, error) {
-	sorgu := strings.TrimSpace(r.URL.Query().Get(paramQuery))
-	if sorgu == "" {
+// An empty query is REFUSED. Had it meant "return the whole catalog", search
+// would be a second copy of the listing endpoint and an empty search box would
+// pull the entire catalog by accident; the way to list the catalog is already
+// GET /store/v1/products.
+func searchQuery(r *http.Request) (string, error) {
+	query := strings.TrimSpace(r.URL.Query().Get(paramQuery))
+	if query == "" {
 		return "", coreerrors.Invalid(codeQueryMissing,
-			"%s parametresi zorunludur ve boş olamaz", paramQuery)
+			"the %s parameter is required and cannot be empty", paramQuery)
 	}
-	if len(sorgu) > maxSorguBaytlari {
+	if len(query) > maxQueryBytes {
 		return "", coreerrors.Invalid(codeQueryTooLong,
-			"%s parametresi en fazla %d bayt olabilir (verilen: %d)",
-			paramQuery, maxSorguBaytlari, len(sorgu))
+			"the %s parameter can be at most %d bytes (%d given)",
+			paramQuery, maxQueryBytes, len(query))
 	}
 
-	return sorgu, nil
+	return query, nil
 }
 
-// sayfalama limit ve offset parametrelerini okur.
+// paging reads the limit and offset parameters.
 //
-// Sınırı aşan limit KIRPILMAZ, reddedilir: sessizce kırpılan bir limit,
-// istemcinin istediğinden az kayıt almasına ve bunu hiç görmemesine yol açar.
-func sayfalama(r *http.Request) (limit, offset int, err error) {
-	limit, err = tamSayiParam(r, paramLimit, varsayilanLimit)
+// A limit above the maximum is NOT clamped, it is refused: a limit clamped
+// silently makes a client receive fewer records than it asked for and never
+// notice.
+func paging(r *http.Request) (limit, offset int, err error) {
+	limit, err = intParam(r, paramLimit, defaultLimit)
 	if err != nil {
 		return 0, 0, err
 	}
-	offset, err = tamSayiParam(r, paramOffset, 0)
+	offset, err = intParam(r, paramOffset, 0)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -188,51 +194,53 @@ func sayfalama(r *http.Request) (limit, offset int, err error) {
 	switch {
 	case limit < 1:
 		return 0, 0, coreerrors.Invalid(codeBadQueryParam,
-			"%s en az 1 olmalı (verilen: %d)", paramLimit, limit)
+			"%s has to be at least 1 (%d given)", paramLimit, limit)
 	case limit > maxLimit:
 		return 0, 0, coreerrors.Invalid(codeBadQueryParam,
-			"%s en fazla %d olabilir (verilen: %d)", paramLimit, maxLimit, limit)
+			"%s can be at most %d (%d given)", paramLimit, maxLimit, limit)
 	case offset < 0:
 		return 0, 0, coreerrors.Invalid(codeBadQueryParam,
-			"%s negatif olamaz (verilen: %d)", paramOffset, offset)
+			"%s cannot be negative (%d given)", paramOffset, offset)
 	}
 
 	return limit, offset, nil
 }
 
-// tamSayiParam sorgu parametresini tam sayı olarak okur; yoksa varsayılanı döner.
-func tamSayiParam(r *http.Request, ad string, varsayilan int) (int, error) {
-	ham := r.URL.Query().Get(ad)
-	if ham == "" {
-		return varsayilan, nil
+// intParam reads a query parameter as an integer; it returns the default
+// when the parameter is absent.
+func intParam(r *http.Request, name string, fallback int) (int, error) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return fallback, nil
 	}
 
-	deger, err := strconv.Atoi(ham)
+	value, err := strconv.Atoi(raw)
 	if err != nil {
 		return 0, coreerrors.Wrap(err, coreerrors.KindInvalid, codeBadQueryParam,
-			"%s parametresi tam sayı olmalı (verilen: %q)", ad, ham)
+			"the %s parameter has to be an integer (%q given)", name, raw)
 	}
 
-	return deger, nil
+	return value, nil
 }
 
-// kanallar isteğin bağlı olduğu satış kanallarını DOĞRULANMIŞ KİMLİKTEN okur.
+// channels reads the sales channels the request is bound to FROM THE VERIFIED
+// IDENTITY.
 //
-// Sorgu dizesine HİÇ BAKILMAZ ve bu bir güvenlik kararıdır: "?sales_channel_id="
-// kabul edilseydi, elindeki herhangi bir publishable anahtarla gelen bir
-// istemci başka bir kanalın katalogunda arama yapabilirdi. Kimliği çekirdeğin
-// corehttp.RequireStore middleware'i koyar.
+// The query string is NOT consulted at all, and that is a security decision:
+// had "?sales_channel_id=" been accepted, a client holding any publishable key
+// could search another channel's catalog. The identity is placed by the core's
+// corehttp.RequireStore middleware.
 //
-// nil ile boş dilim farkı ANLAMLIDIR ve katalogta tanımlıdır; burada product
-// modülünün vitrin ucuyla (api/store.go salesChannelIDs) BİREBİR aynı eşleme
-// yapılır:
+// The difference between nil and an empty slice MEANS something and is defined
+// by the catalog; the mapping here is EXACTLY the one in the product module's
+// storefront endpoint (api/store.go salesChannelIDs):
 //
-//   - Kimlik yoksa nil: mağaza kimlik doğrulaması bu kurulumda bağlı değildir
-//     ve süzgeç uygulanmaz. Aksi hâlde auth'suz bir kurulumda arama sessizce
-//     hiçbir sonuç döndürmezdi.
-//   - Kimlik varsa nil ASLA dönülmez: kanalsız bir kimlik BOŞ KÜME demektir,
-//     "süzme yok" demek değil.
-func kanallar(r *http.Request) []string {
+//   - No identity gives nil: store authentication is not wired in this
+//     installation and no filter is applied. Otherwise search would silently
+//     return nothing on an installation without auth.
+//   - With an identity nil is NEVER returned: an identity with no channel means
+//     an EMPTY SET, not "no filtering".
+func channels(r *http.Request) []string {
 	principal, ok := corehttp.PrincipalFromContext(r.Context())
 	if !ok {
 		return nil

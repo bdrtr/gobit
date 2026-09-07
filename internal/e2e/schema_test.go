@@ -600,7 +600,14 @@ func readUndescribedLedger(t *testing.T) map[string]bool {
 		entries[line] = true
 	}
 
-	require.NotEmpty(t, entries, "the ledger parsed to nothing; the audit has gone blind")
+	// The guard is on the FILE, not on the list. An empty list is the goal and
+	// became the truth on 2026-09-07; a missing or unreadable file is the failure
+	// this check exists for, and the ReadFile above is what catches it. Requiring
+	// entries would have turned the debt reaching zero into a red gate — the one
+	// outcome the ratchet was built to reach.
+	require.Contains(t, string(body), "MAY ONLY SHRINK",
+		"the ledger's header is gone; the file may have been replaced by something "+
+			"that parses to an empty list for a different reason than the debt being paid")
 
 	return entries
 }
@@ -633,6 +640,11 @@ func readUndescribedLedger(t *testing.T) map[string]bool {
 // repository already owns the right instrument for this shape — the language
 // ratchet in internal/arch/testdata — and this is the same one: the list MAY
 // ONLY SHRINK.
+//
+// It reached zero on the day it was opened, and the empty file STAYS. Deleting
+// it would delete the ratchet: with no list, the next undescribed route has
+// nothing to fail against, and the check that made this debt visible would have
+// been thrown away by the debt being paid.
 //
 // Both directions are enforced, and the second is the one that makes it a
 // ratchet rather than a permission slip. A route missing from the ledger is NEW

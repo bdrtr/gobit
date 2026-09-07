@@ -12,6 +12,58 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **search eklentisi Ingilizceye cevrildi ve iki ucu anlatildi** — sema defteri
+  SIFIRA indi, dil defteri 214'ten 202'ye.
+
+  Bu iki is birbirine bagliydi ve birlikte yapilmasinin sebebi bir tercih degil
+  bir CIRCIRDI: uclari anlatmak, paketin tiplerini bir describe dosyasindan
+  adlandirmak demekti; paket ise Turkceydi (on iki dosya defterde) ve ADR
+  0012'nin circiri yeni dosyanin Ingilizce olmasini istiyor. Ingilizce bir
+  dosyadan listeZarfi ve tekilZarf adlandirmak, iki kuralin arasindan
+  sizmak olurdu. Durust yol paketi cevirmekti.
+
+  Cevirirken bir seyi yanlis sirada yaptim ve kaydediyorum: once tanimlayicilari
+  yeniden adlandirdim, sonra duzyazyi cevirecektim. Yeniden adlandirma Turkce
+  YORUMLARI da vurdu — "o anahtar" ifadesi "o keywords" oldu — cunku Turkce
+  duzyazi, tanimlayici adlariyla ayni kelimeleri kullaniyor. Geri alip sirayi
+  ters cevirdim: once duzyazi Ingilizce oldu, sonra tanimlayicilar; ikinci
+  gecis artik hicbir seyi bozamazdi. Bir paketi cevirirken sira, isin kendisi
+  kadar onemli.
+
+  Dil dedektoru is basindaydi ve kalanlari tek tek gosterdi: ara, yaz, esik,
+  istek, kanal, kayitlar, toplam, "alan yok", "prod_yok". Bunlarin cogu, benim
+  Ingilizce sandigim dosyalarda kalmis Turkce tanimlayicilardi.
+
+  **Ve dedektorun goremedigi bir sey entegrasyon testlerini kirdi.** Fikstur
+  METINLERINI cevirirken, "Mavi gomlek" basligi "Blue shirt" oldu ama onu arayan
+  `?q=gomlek` sorgusu yerinde kaldi: iki uc test, hicbir sey bulamadigi icin
+  dustu. Ders, cevirinin kendisinden daha genel — mekanik bir degistirme VERIYI
+  de kesiyorsa, veriyle onu SORGULAYAN ifade birbirinden ayrilabilir ve derleyici
+  bunu goremez. Dedektor de goremezdi: her iki taraf da ayri ayri gecerliydi.
+  Yakalayan sey testin kendisiydi.
+
+  Bir muafiyet eklendi ve gerekcesi yazildi: paket belgesinde "Gömlek"/"gömlek"
+  cifti VERIDIR, duzyazi degil — paragrafin konusu C locale ile kurulmus bir
+  kumenin ASCII disi harfleri katlamamasi, ve bunu ASCII bir ciftle anlatmak
+  var olmayan bir sorunu belgelemek olurdu (core/db/casefold.go'nun ayni
+  gerekcesi). Ayni paragraftaki "kalem"/"kalemler" ornegi de Turkce ama
+  diyakritik tasimadigi icin dedektorun uc seridinin hicbirine takilmiyor;
+  bunu sansa birakmak yerine muafiyetin belgesine YAZDIM.
+
+  Ucun semasi ozellikle ZAYIF ve durust: arama sonucundaki kayit, katalogtan
+  gelen ham JSON'dur ve vitrinin urun ucunun gövdesiyle birebir aynidir. Eklenti
+  product'i import edemeyecegi icin (ADR 0001) o tipi adlandiramaz, ve seklini
+  burada tanimlamak vitrin gosteriminin ikinci bir kopyasini uretirdi — yani
+  catalog.go'nun tam olarak reddettigi sey. Bu yuzden oge, alanlari sabit
+  olmayan bir nesne olarak bildiriliyor ve aciklama gercek seklin nerede
+  yazildigini soyluyor. Uydurulmus bir alan listesi, product bir alan
+  kazandigi gun yalan soylemeye baslardi.
+
+  Defter sifirlaninca korlugu koruyan iddia da yanlis hale geldi: "liste bos
+  parse edildi" kontrolu, borcun ODENMESINI kirmizi kapiya cevirirdi. Koruma
+  dogru seye baglandi — dosyanin BASLIGI — ve bos dosya yerinde birakildi:
+  silmek, circiri borcla birlikte silmek olurdu.
+
 - **Bilesen adi artik sahibi olan modulu tasiyor** (ADR 0036) — ve dun acilan
   otuz sekiz kisilik defterin yirmi besi ayni gun odendi.
 

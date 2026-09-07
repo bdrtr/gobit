@@ -200,15 +200,3 @@ internal/modules/tax/service/validate_test.go
 internal/modules/tax/tax_integration_test.go
 plugins/paymentstripe/plugin.go
 plugins/paymentstripe/plugin_test.go
-plugins/searchpg/api.go
-plugins/searchpg/catalog.go
-plugins/searchpg/events.go
-plugins/searchpg/index.go
-plugins/searchpg/migrations/000001_searchpg_init.down.sql
-plugins/searchpg/migrations/000001_searchpg_init.up.sql
-plugins/searchpg/module.go
-plugins/searchpg/plugin.go
-plugins/searchpg/plugin_test.go
-plugins/searchpg/reindex.go
-plugins/searchpg/searchpg_integration_test.go
-plugins/searchpg/searchpg_internal_test.go

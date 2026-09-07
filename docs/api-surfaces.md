@@ -71,7 +71,9 @@ method and its security, only without a body — a generated client for it
 compiles and sends nothing, and a reader cannot tell "takes no body" from
 "nobody wrote it down". Two things now say so out loud: the server logs the list
 at startup, and `internal/e2e/testdata/undescribed_routes.txt` holds it as a
-ledger that **may only shrink**. It opened at thirty-eight and stands at two.
+ledger that **may only shrink**. It opened at thirty-eight and is at ZERO — the
+empty file stays, because deleting it would delete the ratchet along with the
+debt and the next forgotten endpoint would have nothing to fail against.
 
 A component's name carries the module that owns it — `CustomerAddress`,
 `CartAddress` ([ADR 0036](adr/0036-a-component-name-carries-its-module.md)).

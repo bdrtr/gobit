@@ -839,7 +839,7 @@ func gqlAliasPileUp(n int) string {
 // TestGraphQLComplexityLimitIsEnforcedInProductionStack verifies that the limits
 // are REALLY wired in the production setup.
 //
-// The behaviour of the limits is exercised in detail in the unit tests; what is
+// The behavior of the limits is exercised in detail in the unit tests; what is
 // exercised here is the WIRING: on this ground too the module is set up with
 // ZERO-valued options just as in production (see e2e_test.go, the line where the
 // product module is added), and that a zero value means "the package default" and
@@ -898,7 +898,7 @@ func TestGraphQLComplexityLimitIsEnforcedInProductionStack(t *testing.T) {
 // limiter counted that as ONE request. That is why the gate is separate and does
 // not take the place of complexity.
 //
-// What is exercised here is not the behaviour exercised in detail in the unit
+// What is exercised here is not the behavior exercised in detail in the unit
 // tests but that the gate is WIRED in the production setup: on the e2e ground too
 // the module is set up with zero-valued options, and that a zero value means "the
 // package default" and not "unlimited" can be seen only in a real setup.

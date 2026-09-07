@@ -1,69 +1,73 @@
-// Package searchpg gobit'e ürün araması ekleyen eklentidir.
+// Package searchpg is the plugin that adds product search to gobit.
 //
-// # Arama motoru DIŞ BİR SERVİS DEĞİLDİR
+// # The search engine is NOT an external service
 //
-// İndeks ve sorgu PostgreSQL'in tam metin aramasıdır: belge bir tsvector
-// sütununda yaşar, eşleşme GIN indeksiyle bulunur, sıralama ts_rank ile
-// yapılır (neden ts_rank_cd değil: bkz. [searchSQL], ölçümle birlikte).
-// Meilisearch/OpenSearch bilinçli olarak SEÇİLMEDİ — ikisi de yeni bir
-// dış bağımlılık, yeni bir compose servisi, yeni bir sağlık kontrolü ve yeni
-// bir "indeks ile veritabanı ayrıştı" arıza sınıfı getirirdi. Zaten var olan
-// PostgreSQL, ölçek büyümeden önce GERÇEK bir arama verir.
+// The index and the query are PostgreSQL's own full text search: a document
+// lives in a tsvector column, a match is found through a GIN index, and the
+// ranking is done with ts_rank (why not ts_rank_cd: see [searchSQL], with the
+// measurement). Meilisearch and OpenSearch were deliberately NOT chosen — each
+// would bring a new external dependency, a new compose service, a new health
+// check and a new failure class of "the index and the database have parted
+// company". The PostgreSQL that is already there gives a REAL search before the
+// scale grows.
 //
-// Karar geri alınabilirdir ve eklenti sınırının değeri tam olarak budur:
-// motoru değiştirmek YALNIZCA bu paketi değiştirir. Ne çekirdek, ne product
-// modülü, ne de başka bir modül bu eklentinin var olduğunu bilir; kurulum
-// dosyasındaki tek satır ve PLUGINS ortam değişkeni dışında hiçbir yerde adı
-// geçmez.
+// The decision is reversible, and that is exactly what the plugin boundary is
+// worth: changing the engine changes ONLY this package. Neither the core, nor
+// the product module, nor any other module knows this plugin exists; its name
+// appears nowhere outside one line in the installation file and the PLUGINS
+// environment variable.
 //
-// # Kullandığı üç uzatma noktası
+// # The three extension points it uses
 //
-//  1. [coreplugin.Host.AddModule] — eklenti KENDİ modülünü getirir: kendi
-//     tablosu, kendi migration'ı, kendi sürüm defteri ("searchpg") ve kendi
-//     route'ları. Modül, çekirdek modüllerle AYNI yaşam döngüsünden geçer.
-//  2. [coreplugin.Host.Subscribe] — "product.created", "product.updated" ve
-//     "product.deleted" olaylarını dinleyip indeksi taze tutar.
-//  3. Modülün Routes'u — GET /store/v1/search ve
-//     POST /admin/v1/search/reindex uçlarını açar.
+//  1. [coreplugin.Host.AddModule] — the plugin brings its OWN module: its own
+//     table, its own migration, its own version ledger ("searchpg") and its own
+//     routes. The module goes through the SAME lifecycle as the core modules.
+//  2. [coreplugin.Host.Subscribe] — it listens to "product.created",
+//     "product.updated" and "product.deleted" to keep the index fresh.
+//  3. The module's Routes — it opens GET /store/v1/search and
+//     POST /admin/v1/search/reindex.
 //
-// # Hiçbir modülü import ETMEZ
+// # It imports NO module
 //
-// Eklenti product'ı import edemez (internal/arch TestPluginsDoNotImportModules).
-// Katalog kaydına, bu pakette tanımlı [StoreProductReader] dar arayüzüyle ve
-// container'dan ADLA ("product.interop") ulaşır; çözüm TEMBELDİR, çünkü Setup
-// anında hiçbir modül henüz ayağa kalkmamıştır (bkz. [katalog.coz]).
+// The plugin cannot import product (internal/arch TestPluginsDoNotImportModules).
+// It reaches the catalog record through the narrow [StoreProductReader]
+// interface defined in this package and BY NAME from the container
+// ("product.interop"); the resolution is LAZY, because at Setup time no module
+// has come up yet (see [catalog.resolve]).
 //
-// # Kanal süzmesi burada TEKRARLANMAZ
+// # Channel filtering is NOT repeated here
 //
-// Hangi ürünün hangi satış kanalında görüneceği kataloğun kuralıdır. Eklenti
-// indeksten yalnızca ALAKA SIRALI KİMLİK üretir; gösterilecek kayıtları
-// "product.interop" üzerinden ister ve kanal kimliklerini isteğe ekler.
-// Süzgeci burada yeniden yazmak, kuralın ikinci bir tanımını üretir ve iki
-// tanım ayrıştığı gün arama, kanal süzmesinin BYPASS'ı hâline gelirdi.
+// Which product appears in which sales channel is the CATALOG's rule. The
+// plugin produces only RELEVANCE-ORDERED IDS from the index; it asks for the
+// records to show through "product.interop" and adds the channel ids to the
+// request. Rewriting the filter here would produce a second definition of the
+// rule, and the day the two definitions parted company, search would become a
+// BYPASS of channel filtering.
 //
-// # Metin arama yapılandırması: 'simple'
+// # The text search configuration: 'simple'
 //
-// Belgeler ve sorgular 'simple' sözlüğüyle üretilir, yani kök bulma (stemming)
-// ve durak kelime atma YOKTUR. Alternatif olan 'english', Türkçe bir katalogda
-// kelimeleri yanlış köklere indirir ("kalemler" -> "kalemler" değil, İngilizce
-// kurallarıyla budanır) ve PostgreSQL'in gömülü bir Türkçe sözlüğü yoktur.
-// Kurulumun dilini bilmeyen bir çerçevede, yanlış dilde kök bulmaktansa hiç
-// kök bulmamak öngörülebilirdir. Bedeli açıktır ve kabul edilmiştir: "kalem"
-// araması "kalemler" yazan ürünü BULMAZ. Bu sınır aşıldığında doğru adım
-// buraya bir sözlük ayarı sızdırmak değil, motoru değiştirmektir.
+// Documents and queries are produced with the 'simple' dictionary, which means
+// there is NO stemming and NO stop-word removal. The alternative, 'english',
+// reduces words to the wrong stems in a Turkish catalog — "kalemler" is not cut
+// back to "kalem" but pruned by English rules — and PostgreSQL ships no built-in
+// Turkish dictionary. In a framework that does not know its installation's
+// language, no stemming at all is more predictable than stemming in the wrong
+// one. The price is plain and it is accepted: a search for "kalem" does NOT find
+// a product that says "kalemler". When that limit is reached, the right step is
+// to change the engine rather than to leak a dictionary setting in here.
 //
-// Büyük/küçük harf katlaması PostgreSQL'in ctype ayarına bağlıdır: C locale ile
-// kurulmuş bir kümede ASCII DIŞI harfler katlanmaz ve "Gömlek" araması "gömlek"
-// yazan ürünü bulmaz. Kümenin UTF-8 bir locale ile kurulmuş olması bu yüzden
-// aramanın bir ön koşuludur.
+// Case folding depends on PostgreSQL's ctype setting: on a cluster created with
+// the C locale, NON-ASCII letters are not folded and a search for "Gömlek" does
+// not find a product that says "gömlek". That the cluster was created with a
+// UTF-8 locale is therefore a precondition of search.
 //
-// # Kullanım
+// # Use
 //
 //	PLUGINS=search-pg
 //
-// Ayrı bir yapılandırma istemez; indeks tablosu açılışta migration ile kurulur.
-// Boş bir indeks hiçbir şey döndürmez, bu yüzden var olan bir katalogda ilk
-// adım POST /admin/v1/search/reindex çağırmaktır.
+// It asks for no configuration of its own; the index table is created at startup
+// by the migration. An empty index returns nothing, so on an existing catalog
+// the first step is to call POST /admin/v1/search/reindex.
 package searchpg
 
 import (
@@ -72,105 +76,108 @@ import (
 	coreplugin "github.com/bdrtr/gobit/core/plugin"
 )
 
-// Name eklentinin kayıttaki adıdır; PLUGINS listesine bu ad yazılır.
+// Name is the plugin's name in the registry; this is what goes in the PLUGINS list.
 const Name = "search-pg"
 
-// ModuleName eklentinin getirdiği modülün adıdır.
+// ModuleName is the name of the module this plugin brings.
 //
-// Eklenti adından FARKLIDIR ve olmak zorundadır: modül adı doğrudan bir SQL
-// tablo adına ("searchpg_schema_migrations") dönüşür ve core/db'nin sahip
-// deseni tireye izin vermez. Ad ayrıca yönetim ucunun istediği yetkinin de
-// önekidir (bkz. [ScopeWrite]).
+// It DIFFERS from the plugin's name and it has to: the module name turns
+// directly into an SQL table name ("searchpg_schema_migrations") and core/db's
+// ownership pattern does not allow a hyphen. The name is also the prefix of the
+// scope the admin endpoint requires (see [ScopeWrite]).
 const ModuleName = "searchpg"
 
-// Bu blok modüller arası SÖZLEŞMEDİR ve değerleri ELLE tekrarlanmıştır.
+// This block is a CONTRACT between modules and its values are repeated BY HAND.
 //
-// Eklenti hiçbir modülü import edemediği için (ADR 0001) bu adlar product'ın
-// sabitlerine bağlanamaz; tıpkı çekirdeğin coreplugin.PaymentProvidersName'i
-// elle tekrarlaması gibi. Elle tekrarlanan her sabit sessizce ayrışmaya
-// açıktır ve buradaki ayrışmanın bedeli somuttur: olay adı değişirse eklenti
-// hiç olay almaz, interop adı değişirse arama ucu her istekte 503 döner.
-// Hiçbir derleyici bunu yakalamaz — arch testleri eklentiyi bu yönden
-// denetlemiyor (bkz. paket testlerindeki not).
+// Because a plugin cannot import any module (ADR 0001), these names cannot be
+// bound to product's constants — exactly as the core repeats
+// coreplugin.PaymentProvidersName by hand. Every hand-repeated constant is open
+// to silent drift, and the cost of drift here is concrete: if an event name
+// changes the plugin receives no events at all, and if the interop name changes
+// the search endpoint answers 503 on every request. No compiler catches either —
+// the arch tests do not audit a plugin from this direction (see the note in the
+// package's tests).
 const (
-	// catalogInteropName product modülünün İLKEL okuma yüzeyinin
-	// container'daki adıdır (product.InteropName).
+	// catalogInteropName is the container name of the product module's PRIMITIVE
+	// read surface (product.InteropName).
 	catalogInteropName = "product.interop"
-	// catalogEntity ürünlerin Query katmanındaki entity adıdır; yeniden
-	// indeksleme kimlikleri bu adla sayfalar (product service.EntityProduct).
+	// catalogEntity is the products' entity name in the Query layer; the reindex
+	// pages ids under this name (product service.EntityProduct).
 	catalogEntity = "product"
-	// catalogStatusFilter Query sağlayıcısının yayın durumu filtresidir.
+	// catalogStatusFilter is the Query provider's publication status filter.
 	catalogStatusFilter = "status"
-	// catalogStatusPublished vitrinde görünen tek yayın durumudur.
+	// catalogStatusPublished is the only publication status visible in the storefront.
 	catalogStatusPublished = "published"
-	// eventProductCreated yeni ürün olayıdır (product service.EventProductCreated).
+	// eventProductCreated is the new-product event (product service.EventProductCreated).
 	eventProductCreated = "product.created"
-	// eventProductUpdated ürün güncelleme olayıdır.
+	// eventProductUpdated is the product update event.
 	eventProductUpdated = "product.updated"
-	// eventProductDeleted ürün silme olayıdır.
+	// eventProductDeleted is the product deletion event.
 	eventProductDeleted = "product.deleted"
-	// eventFieldProductID olay yükündeki ürün kimliği anahtarıdır.
+	// eventFieldProductID is the product id key in the event payload.
 	eventFieldProductID = "product_id"
 )
 
-// Container'da çözülen ÇEKİRDEK servislerin adları.
+// The names of the CORE services resolved from the container.
 const (
 	svcDB    = "core.db"
 	svcQuery = "core.query"
 )
 
-// Plugin PostgreSQL tabanlı arama eklentisidir.
+// Plugin is the PostgreSQL-backed search plugin.
 type Plugin struct {
-	// mod eklentinin getirdiği modüldür; abonelikler de onun metodlarıdır.
-	// Setup'ta kurulur, [modul.Register] ile tamamlanır.
-	mod *modul
+	// mod is the module the plugin brings; the subscriptions are its methods too.
+	// It is built in Setup and completed by [searchModule.Register].
+	mod *searchModule
 }
 
-// Eklentinin çekirdek sözleşmesini karşıladığı derleme zamanında sabitlenir.
+// That the plugin satisfies the core contract is fixed at compile time.
 var _ coreplugin.Plugin = (*Plugin)(nil)
 
-// New eklentiyi kurar.
+// New builds the plugin.
 func New() *Plugin { return &Plugin{} }
 
-// Name eklentinin adını döner.
+// Name returns the plugin's name.
 func (p *Plugin) Name() string { return Name }
 
-// Setup modülü kayda ekler ve katalog olaylarına abone olur.
+// Setup adds the module to the registry and subscribes to the catalog events.
 //
-// Yapılandırma İSTEMEZ ve bu yüzden hiçbir ayarı doğrulamaz; paymentstripe'ın
-// aksine burada "eksikse açılışı durdur" denecek bir ayar yoktur (bkz. paket
-// belgesi).
+// It asks for NO configuration and therefore validates none; unlike
+// paymentstripe there is no setting here to say "stop startup if it is missing"
+// about (see the package documentation).
 //
-// # Burada container'dan hiçbir şey ÇÖZÜLMEZ
+// # NOTHING is resolved from the container here
 //
-// Setup, modüller ayağa kalkmadan ÖNCE çalışır: "product.interop" bu anda
-// container'da yoktur ve çözmeye çalışmak açılışı, hiçbir şeyin gerçekten
-// eksik olmadığı bir hatayla düşürürdü. Kayıt yalnızca modülü ve abonelikleri
-// bildirir; katalog erişimi ilk kullanımda çözülür (bkz. [katalog.coz]).
+// Setup runs BEFORE the modules come up: "product.interop" is not in the
+// container at this moment, and trying to resolve it would bring startup down
+// with an error where nothing is actually missing. The registration only
+// DECLARES the module and the subscriptions; catalog access is resolved on
+// first use (see [catalog.resolve]).
 //
-// # Abonelik NEDEN Host üzerinden
+// # Why the subscription goes THROUGH the Host
 //
-// Veri yolu doğrudan alınıp Subscribe çağrılsaydı, abonelik product modülü
-// Register olmadan kurulurdu ve ilk olay, indeks tablosu henüz göçürülmemişken
-// gelebilirdi. [coreplugin.Host.Subscribe] kaydı KUYRUĞA alır ve modüller
-// ayağa kalktıktan sonra uygular.
+// Had the bus been taken directly and Subscribe called on it, the subscription
+// would be set up without the product module having registered, and the first
+// event could arrive while the index table had not been migrated yet.
+// [coreplugin.Host.Subscribe] QUEUES the registration and applies it after the
+// modules have come up.
 func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
-	p.mod = newModul(h.Container(), h.Logger())
+	p.mod = newSearchModule(h.Container(), h.Logger())
 
-	// 1. uzatma noktası: eklenti KENDİ modülünü getirir.
+	// Extension point 1: the plugin brings its OWN module.
 	h.AddModule(p.mod)
 
-	// 2. uzatma noktası: katalog olayları. Yazma ve güncelleme AYNI işleyiciye
-	// gider: ikisinde de doğru davranış "kaydı oku, indekse yaz"dır ve iki ayrı
-	// işleyici yazmak aynı kodun ikinci kopyasını üretirdi.
-	h.Subscribe(eventProductCreated, p.mod.urunYazildi)
-	h.Subscribe(eventProductUpdated, p.mod.urunYazildi)
-	h.Subscribe(eventProductDeleted, p.mod.urunSilindi)
+	// Extension point 2: the catalog events. A write and an update go to the SAME
+	// handler: in both cases the right behavior is "read the record, write it to
+	// the index", and two separate handlers would be a second copy of one body.
+	h.Subscribe(eventProductCreated, p.mod.productWritten)
+	h.Subscribe(eventProductUpdated, p.mod.productWritten)
+	h.Subscribe(eventProductDeleted, p.mod.productDeleted)
 
-	h.Logger().Info("arama eklentisi kuruldu",
-		"modul", ModuleName,
-		"arama_ucu", SearchPath,
-		"yeniden_indeksleme_ucu", ReindexPath)
+	h.Logger().Info("the search plugin was set up",
+		"module", ModuleName,
+		"search_endpoint", SearchPath,
+		"reindex_endpoint", ReindexPath)
 
 	return nil
 }

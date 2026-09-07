@@ -201,7 +201,7 @@ func TestDisclosureShowsEveryDeclaredColumnOfEveryRow(t *testing.T) {
 	}
 }
 
-// TestDisclosureReachesASoftDeletedRow is the one behaviour that separates these
+// TestDisclosureReachesASoftDeletedRow is the one behavior that separates these
 // statements from every other read in the module.
 //
 // Every other query filters `deleted_at IS NULL`, because a soft-deleted row is

@@ -16,7 +16,7 @@ import (
 	"github.com/bdrtr/gobit/core/query"
 )
 
-// Hata kodları; çağıran taraf coreerrors.CodeOf ile bunlara bakabilir.
+// The error codes; a caller can look at them with coreerrors.CodeOf.
 const (
 	codeSetupFailed   = "searchpg_module_setup_failed"
 	codeNotRegistered = "searchpg_module_not_registered"
@@ -25,127 +25,130 @@ const (
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
-// migrationsRoot gömülü dosyaların "migrations/" öneki soyulmuş hâlidir:
-// db.Migrate kaynağı KÖKTEN okur.
+// migrationsRoot is the embedded files with their "migrations/" prefix
+// stripped: db.Migrate reads its source FROM THE ROOT.
 var migrationsRoot = mustSub(migrationFiles, "migrations")
 
-// modul eklentinin getirdiği commerce modülüdür.
+// searchModule is the commerce module this plugin brings.
 //
-// Eklentiye ait olması davranışını değiştirmez: çekirdek onu diğer modüllerden
-// AYIRT ETMEZ ve aynı yaşam döngüsünden geçirir (Register -> migration ->
-// route). Modülün ilginç yanı, verisinin KENDİNE ait olması ama kayıtların
-// başka bir modüle ait olmasıdır; ikisi arasındaki tek bağ, kimlik dizgesi ve
-// "product.interop" yüzeyidir.
-type modul struct {
-	// katalog vitrin kayıtlarının TEMBEL çözülen okuma yüzeyidir.
-	katalog *katalog
-	// log modülün adıyla etiketlenmiş logger'dır.
+// Belonging to a plugin changes nothing about its behavior: the core does NOT
+// tell it apart from the others and puts it through the same lifecycle
+// (Register -> migration -> routes). What is interesting about it is that the
+// DATA is its own while the RECORDS belong to another module; the only bond
+// between the two is an identifier string and the "product.interop" surface.
+type searchModule struct {
+	// catalog is the LAZILY resolved read surface over the storefront records.
+	catalog *catalog
+	// log is the logger tagged with the module's name.
 	log *slog.Logger
 
-	// indeks arama tablosudur; Register'da kurulur, öncesinde nil'dir.
-	indeks depo
-	// graph yeniden indeksleme sırasında ürün kimliklerini sayfalar.
-	// Çekirdeğin Query katmanıdır; Register'da çözülür.
+	// index is the search table; it is built in Register and is nil before that.
+	index store
+	// graph pages the product ids during a reindex. It is the core's Query layer
+	// and is resolved in Register.
 	graph query.Query
 }
 
-// Modülün çekirdek sözleşmesini karşıladığı derleme zamanında sabitlenir.
-var _ module.Module = (*modul)(nil)
+// That the module satisfies the core contract is fixed at compile time.
+var _ module.Module = (*searchModule)(nil)
 
-// newModul kaydedilmeye hazır bir modül üretir.
+// newSearchModule produces a module ready to be registered.
 //
-// Bağımlılıklar burada DEĞİL Register'da çözülür; container yalnızca katalog
-// yüzeyinin tembel çözümü için saklanır (bkz. [katalog]).
-func newModul(c *container.Container, log *slog.Logger) *modul {
+// The dependencies are resolved in Register and NOT here; the container is kept
+// only for the lazy resolution of the catalog surface (see [catalog]).
+func newSearchModule(c *container.Container, log *slog.Logger) *searchModule {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &modul{katalog: newKatalog(c), log: log.With("modul", ModuleName)}
+	return &searchModule{catalog: newCatalog(c), log: log.With("searchModule", ModuleName)}
 }
 
-// Name modülün benzersiz adını döner.
-func (m *modul) Name() string { return ModuleName }
+// Name returns the module's unique name.
+func (m *searchModule) Name() string { return ModuleName }
 
-// Migrations modülün migration dosyalarını döner.
+// Migrations returns the module's migration files.
 //
-// Sürüm defteri modül adına göre ayrıdır ("searchpg_schema_migrations"), yani
-// eklentinin şeması hiçbir modülün defteriyle karışmaz; eklenti kaldırıldığında
-// geriye yalnızca kendi tablosu kalır.
-func (m *modul) Migrations() fs.FS { return migrationsRoot }
+// The version ledger is separate per module name ("searchpg_schema_migrations"),
+// so the plugin's schema never mixes with any module's ledger; when the plugin
+// is removed what stays behind is only its own table.
+func (m *searchModule) Migrations() fs.FS { return migrationsRoot }
 
-// Register indeks deposunu ve Query katmanını kurar.
+// Register builds the index store and the Query layer.
 //
-// Yalnızca ÇEKİRDEK servisler çözülür: "core.db" ve "core.query" modüller ayağa
-// kalkmadan önce container'a konur. BAŞKA MODÜLLERİN servisleri burada
-// çözülmez — bu aşamada kayıtlı olmayabilirler (bkz. module.Module belgesi) ve
-// eklentinin modülü, kayıt sırasının SONUNDA eklendiği için "product zaten
-// kayıtlıdır" varsayımı bugün doğru olsa da yarın sessizce bozulurdu. Katalog
-// yüzeyi bu yüzden ilk kullanımda çözülür.
+// Only CORE services are resolved: "core.db" and "core.query" are put into the
+// container before the modules come up. Another MODULE's services are not
+// resolved here — they may not be registered at this stage (see the
+// module.Module documentation), and because a plugin's module is added at the
+// END of the registration order, the assumption "product is already registered"
+// would be true today and silently wrong tomorrow. That is why the catalog
+// surface is resolved on first use.
 //
-// İkisinden biri eksikse açılış DURUR. Sessiz atlama seçilmedi: indekssiz
-// çalışan bir arama ucu, her sorguya boş liste dönerdi ve bu ancak müşteriler
-// hiçbir ürünü bulamadığında, yani üretimde fark edilirdi.
-func (m *modul) Register(_ context.Context, c *container.Container) error {
+// If either is missing, startup STOPS. Skipping quietly was not chosen: a search
+// endpoint running without an index would answer every query with an empty list,
+// and that is noticed only when customers cannot find any product — that is, in
+// production.
+func (m *searchModule) Register(_ context.Context, c *container.Container) error {
 	pool, err := container.Resolve[*db.Pool](c, svcDB)
 	if err != nil {
 		return coreerrors.Wrap(err, coreerrors.KindOf(err), codeSetupFailed,
-			"%s modülü veritabanı havuzunu çözemedi (%q)", ModuleName, svcDB)
+			"the %s module could not resolve the database pool (%q)", ModuleName, svcDB)
 	}
 	graph, err := container.Resolve[query.Query](c, svcQuery)
 	if err != nil {
 		return coreerrors.Wrap(err, coreerrors.KindOf(err), codeSetupFailed,
-			"%s modülü query katmanını çözemedi (%q)", ModuleName, svcQuery)
+			"the %s module could not resolve the query layer (%q)", ModuleName, svcQuery)
 	}
 
-	m.indeks = newIndeks(pool.Pool())
+	m.index = newIndex(pool.Pool())
 	m.graph = graph
 
 	return nil
 }
 
-// Routes modülün vitrin ve yönetim uçlarını router'a bağlar.
+// Routes binds the module's storefront and admin endpoints to the router.
 //
-// Register çalışmadıysa hiçbir uç bağlanmaz: indeksi olmayan bir handler'ın
-// ilk istekte hata üretmesindense ucun hiç var olmaması yeğdir (product
-// modülünün Routes'uyla aynı gerekçe).
+// If Register did not run, NO endpoint is bound: rather than a handler with no
+// index producing an error on the first request, it is better for the endpoint
+// not to exist at all (the same reasoning as the product module's Routes).
 //
-// # Yetki
+// # Scopes
 //
-// Vitrin ucu yetki İSTEMEZ: /store/v1'in kimliği publishable anahtardır ve o
-// anahtar tanımı gereği yetki taşımaz. Yönetim ucu [ScopeWrite] ister; kimlik
-// katmanını (corehttp.RequireAdmin) router'ı kuran taraf takar.
-func (m *modul) Routes(r chi.Router) {
-	if m.indeks == nil {
+// The storefront endpoint requires NO scope: /store/v1's identity is the
+// publishable key, and that key carries no scope by definition. The admin
+// endpoint requires [ScopeWrite]; the identity layer (corehttp.RequireAdmin) is
+// attached by whoever builds the router.
+func (m *searchModule) Routes(r chi.Router) {
+	if m.index == nil {
 		return
 	}
 
-	r.Get(SearchPath, m.ara)
-	r.With(corehttp.RequireScope(ScopeWrite)).Post(ReindexPath, m.yenidenIndeksleUcu)
+	r.Get(SearchPath, m.search)
+	r.With(corehttp.RequireScope(ScopeWrite)).Post(ReindexPath, m.reindexEndpoint)
 }
 
-// hazir modülün istek karşılamaya hazır olup olmadığını bildirir.
+// ready reports whether the module can serve a request.
 //
-// Register çalışmadan bir handler'a girilmesi normal akışta imkânsızdır
-// (Routes o durumda hiçbir uç bağlamaz), ama olay işleyicileri Routes'tan
-// bağımsız çalışır: abonelik çekirdek tarafından kurulur ve modül Register
-// edilmemişse indeks nil kalır. Panik yerine tipli hata dönmek, arızayı
-// logda görünür kılar.
-func (m *modul) hazir() error {
-	if m.indeks == nil {
+// Entering a handler without Register having run is impossible in the ordinary
+// flow (Routes binds no endpoint in that case), but the event handlers run
+// INDEPENDENTLY of Routes: the subscription is set up by the core, and if the
+// module was not registered the index stays nil. Returning a typed error rather
+// than panicking makes the fault visible in the log.
+func (m *searchModule) ready() error {
+	if m.index == nil {
 		return coreerrors.Unavailable(codeNotRegistered,
-			"%s modülü kaydedilmedi; arama indeksi kullanılamaz", ModuleName)
+			"the %s module was not registered; the search index is unavailable", ModuleName)
 	}
 	return nil
 }
 
-// mustSub alt dizini açar; açılamazsa panikler.
+// mustSub opens the subdirectory and panics if it cannot.
 //
-// Panik burada güvenlidir: dizin adı derleme zamanında sabittir ve go:embed
-// dosyaların varlığını zaten derleme zamanında doğrulamıştır.
+// The panic is safe here: the directory name is fixed at compile time, and the
+// embed directive has already verified at compile time that the files exist.
 func mustSub(files embed.FS, dir string) fs.FS {
 	sub, err := fs.Sub(files, dir)
 	if err != nil {
-		panic("searchpg: gömülü migration dizini açılamadı: " + err.Error())
+		panic("searchpg: the embedded migration directory could not be opened: " + err.Error())
 	}
 	return sub
 }

@@ -259,6 +259,23 @@ var diacriticDataExemptions = map[string][]string{
 	"docs/adr/0015-postgresql-cluster-contract.md": {
 		"`çanta`", "`Çanta`", "q=çanta", "q=Çanta",
 	},
+	// The search plugin's package documentation, translated on 2026-09-07. Its
+	// two Turkish words are the SUBJECT of the paragraph they sit in, not prose:
+	// the point is that a C-locale cluster does not fold non-ASCII case, so the
+	// example has to be a pair of letters that differ only in case OUTSIDE ASCII.
+	// An ASCII pair would fold on every cluster and the paragraph would document
+	// a problem that does not exist — the same reasoning as core/db/casefold.go's
+	// entry above, which is where this behavior is actually probed.
+	//
+	// The stemming example a few lines earlier ("kalem"/"kalemler") is Turkish
+	// too and is NOT here: it carries no diacritic, so this lane never sees it.
+	// That is worth writing down rather than leaving as luck — the detector's
+	// blind spot for diacritic-free Turkish is known, and the words survive here
+	// for the same reason as these two: they are the data the sentence is about.
+	"plugins/searchpg/plugin.go": {
+		// One line each; the subtraction is per line.
+		`a search for "Gömlek" does`, `a product that says "gömlek". That the cluster`,
+	},
 	// ADR 0009 was translated on 2026-09-07 and every Turkish word left in it is
 	// a QUOTATION of a heading in a file that is still Turkish — the plan and the
 	// README. Translating a quotation would make it stop being one: the whole

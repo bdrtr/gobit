@@ -23,115 +23,115 @@ import (
 	"github.com/bdrtr/gobit/core/query"
 )
 
-// Bu dosya eklentinin akışlarını PostgreSQL OLMADAN sınar: indeks deposu ve
-// katalog yüzeyi sahteyle değiştirilir. Testler paket İÇİNDEDİR çünkü iki
-// yüzey de (depo, StoreProductReader'ın somut kullanımı) dışa açık değildir;
-// dışa açmak, yalnızca test edilebilirlik için sözleşme genişletmek olurdu.
+// This file tests the plugin's flows WITHOUT PostgreSQL: the index store and the
+// catalog surface are replaced by fakes. The tests are INSIDE the package
+// because neither surface (store, and the concrete use of StoreProductReader) is
+// exported; exporting them would be widening the contract for testability alone.
 //
-// Gerçek SQL'e bağlı iddialar (tsvector eşleşmesi, alaka sıralaması, süpürme)
-// searchpg_integration_test.go dosyasındadır.
+// The claims that depend on real SQL (the tsvector match, relevance ranking, the
+// sweep) live in searchpg_integration_test.go.
 
-// sahteDepo indeks tablosunun bellek içi taklididir.
-type sahteDepo struct {
+// fakeStore is the in-memory imitation of the index table.
+type fakeStore struct {
 	mu sync.Mutex
 
-	belgeler map[string]belge
-	// aramaSonucu Search'ün döneceği kimliklerdir; sıra ARAMA tarafından
-	// verilir ve handler'ın onu koruduğu bu sayede sınanabilir.
-	aramaSonucu []string
-	sonSorgu    string
-	sonLimit    int
-	sonOffset   int
-	aramaCagri  int
+	documents map[string]document
+	// searchResult holds the ids Search will return; the ORDER is given by the
+	// search, which is how the handler preserving it can be tested.
+	searchResult []string
+	lastQuery    string
+	lastLimit    int
+	lastOffset   int
+	searchCalls  int
 
-	upsertHatasi error
-	aramaHatasi  error
-	silmeHatasi  error
+	upsertErr error
+	searchErr error
+	deleteErr error
 
-	supurmeCagri int
-	supurmeEsigi time.Time
-	simdi        time.Time
+	sweepCalls     int
+	sweepThreshold time.Time
+	now            time.Time
 }
 
-// newSahteDepo boş bir sahte depo üretir.
-func newSahteDepo() *sahteDepo {
-	return &sahteDepo{
-		belgeler: map[string]belge{},
-		simdi:    time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC),
+// newFakeStore produces an empty fake store.
+func newFakeStore() *fakeStore {
+	return &fakeStore{
+		documents: map[string]document{},
+		now:       time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC),
 	}
 }
 
-// Upsert belgeleri belleğe yazar.
-func (d *sahteDepo) Upsert(_ context.Context, belgeler []belge) error {
+// Upsert writes the documents into memory.
+func (d *fakeStore) Upsert(_ context.Context, documents []document) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if d.upsertHatasi != nil {
-		return d.upsertHatasi
+	if d.upsertErr != nil {
+		return d.upsertErr
 	}
-	for _, b := range belgeler {
-		d.belgeler[b.urunID] = b
+	for _, b := range documents {
+		d.documents[b.productID] = b
 	}
 
 	return nil
 }
 
-// Delete verilen kimlikleri bellekten siler.
-func (d *sahteDepo) Delete(_ context.Context, urunIDs ...string) (int64, error) {
+// Delete removes the given ids from memory.
+func (d *fakeStore) Delete(_ context.Context, productIDs ...string) (int64, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if d.silmeHatasi != nil {
-		return 0, d.silmeHatasi
+	if d.deleteErr != nil {
+		return 0, d.deleteErr
 	}
-	var silinen int64
-	for _, id := range urunIDs {
-		if _, ok := d.belgeler[id]; ok {
-			delete(d.belgeler, id)
-			silinen++
+	var removed int64
+	for _, id := range productIDs {
+		if _, ok := d.documents[id]; ok {
+			delete(d.documents, id)
+			removed++
 		}
 	}
 
-	return silinen, nil
+	return removed, nil
 }
 
-// Search önceden verilmiş sonucu döner ve çağrının parametrelerini kaydeder.
-func (d *sahteDepo) Search(_ context.Context, sorgu string, limit, offset int) ([]string, error) {
+// Search returns the preset result and records the call's parameters.
+func (d *fakeStore) Search(_ context.Context, text string, limit, offset int) ([]string, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	d.aramaCagri++
-	d.sonSorgu, d.sonLimit, d.sonOffset = sorgu, limit, offset
-	if d.aramaHatasi != nil {
-		return nil, d.aramaHatasi
+	d.searchCalls++
+	d.lastQuery, d.lastLimit, d.lastOffset = text, limit, offset
+	if d.searchErr != nil {
+		return nil, d.searchErr
 	}
 
-	return slices.Clone(d.aramaSonucu), nil
+	return slices.Clone(d.searchResult), nil
 }
 
-// Sweep süpürme çağrısını kaydeder; bellekte bir şey silmez.
-func (d *sahteDepo) Sweep(_ context.Context, esik time.Time) (int64, error) {
+// Sweep records the sweep call; it deletes nothing from memory.
+func (d *fakeStore) Sweep(_ context.Context, threshold time.Time) (int64, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	d.supurmeCagri++
-	d.supurmeEsigi = esik
+	d.sweepCalls++
+	d.sweepThreshold = threshold
 
 	return 0, nil
 }
 
-// Now sabit bir zaman döner.
-func (d *sahteDepo) Now(_ context.Context) (time.Time, error) {
-	return d.simdi, nil
+// Now returns a fixed time.
+func (d *fakeStore) Now(_ context.Context) (time.Time, error) {
+	return d.now, nil
 }
 
-// kimlikler indekste bulunan ürün kimliklerini sıralı döner.
-func (d *sahteDepo) kimlikler() []string {
+// ids returns the product ids in the index, sorted.
+func (d *fakeStore) ids() []string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	out := make([]string, 0, len(d.belgeler))
-	for id := range d.belgeler {
+	out := make([]string, 0, len(d.documents))
+	for id := range d.documents {
 		out = append(out, id)
 	}
 	slices.Sort(out)
@@ -139,107 +139,107 @@ func (d *sahteDepo) kimlikler() []string {
 	return out
 }
 
-// belgeAl kimliğin belgesini döner.
-func (d *sahteDepo) belgeAl(id string) (belge, bool) {
+// fetchDocument returns the document of an id.
+func (d *fakeStore) fetchDocument(id string) (document, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	b, ok := d.belgeler[id]
+	b, ok := d.documents[id]
 
 	return b, ok
 }
 
-// sahteKatalog "product.interop" yüzeyinin taklididir.
+// fakeCatalog is the imitation of the "product.interop" surface.
 //
-// Kanal süzgecini GERÇEĞİYLE AYNI anlamda uygular (nil: süzme yok, boş dilim:
-// kanalsız ürünler); testlerin sınadığı davranış eklentinin bu ayrımı doğru
-// TAŞIYIP taşımadığıdır, kuralın kendisi değil.
-type sahteKatalog struct {
+// It applies the channel filter with the SAME meaning as the real one (nil: no
+// filtering, empty slice: products with no channel); what the tests exercise is
+// whether the plugin CARRIES that distinction correctly, not the rule itself.
+type fakeCatalog struct {
 	mu sync.Mutex
 
-	urunler  map[string]json.RawMessage
-	kanallar map[string][]string
+	products map[string]json.RawMessage
+	channels map[string][]string
 
-	sonIstek katalogIstegi
-	cagri    int
-	hata     error
+	lastRequest catalogRequest
+	calls       int
+	err         error
 }
 
-// newSahteKatalog boş bir sahte katalog üretir.
-func newSahteKatalog() *sahteKatalog {
-	return &sahteKatalog{
-		urunler:  map[string]json.RawMessage{},
-		kanallar: map[string][]string{},
+// newFakeCatalog produces an empty fake catalog.
+func newFakeCatalog() *fakeCatalog {
+	return &fakeCatalog{
+		products: map[string]json.RawMessage{},
+		channels: map[string][]string{},
 	}
 }
 
-// urunEkle katalogda görünen bir ürün tanımlar.
-func (k *sahteKatalog) urunEkle(id, baslik, aciklama string) {
-	k.urunKaydiEkle(id, json.RawMessage(`{
+// addProduct defines a product visible in the catalog.
+func (k *fakeCatalog) addProduct(id, title, description string) {
+	k.addProductRecord(id, json.RawMessage(`{
 		"id": "`+id+`",
 		"handle": "`+id+`-handle",
-		"title": "`+baslik+`",
-		"description": "`+aciklama+`",
+		"title": "`+title+`",
+		"description": "`+description+`",
 		"variants": [{"id": "variant_`+id+`", "title": "Tek", "sku": "SKU-`+id+`"}],
-		"tags": [{"id": "ptag_1", "value": "yeni"}],
+		"tags": [{"id": "ptag_1", "value": "new"}],
 		"price_set": {"amount": 1000}
 	}`))
 }
 
-// urunKaydiEkle ham bir katalog kaydı tanımlar.
-func (k *sahteKatalog) urunKaydiEkle(id string, kayit json.RawMessage) {
+// addProductRecord defines a raw catalog record.
+func (k *fakeCatalog) addProductRecord(id string, record json.RawMessage) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 
-	k.urunler[id] = kayit
+	k.products[id] = record
 }
 
-// kanalAta ürünü verilen satış kanallarına bağlar.
-func (k *sahteKatalog) kanalAta(id string, kanallar ...string) {
+// assignChannel binds the product to the given sales channels.
+func (k *fakeCatalog) assignChannel(id string, channels ...string) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 
-	k.kanallar[id] = kanallar
+	k.channels[id] = channels
 }
 
-// StoreProductsByIDsJSON istenen kimliklerin kayıtlarını sırayla döner.
-func (k *sahteKatalog) StoreProductsByIDsJSON(
+// StoreProductsByIDsJSON returns the records of the asked ids, in order.
+func (k *fakeCatalog) StoreProductsByIDsJSON(
 	_ context.Context, request json.RawMessage,
 ) (json.RawMessage, error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 
-	k.cagri++
-	if err := json.Unmarshal(request, &k.sonIstek); err != nil {
+	k.calls++
+	if err := json.Unmarshal(request, &k.lastRequest); err != nil {
 		return nil, err
 	}
-	if k.hata != nil {
-		return nil, k.hata
+	if k.err != nil {
+		return nil, k.err
 	}
 
-	out := make([]json.RawMessage, 0, len(k.sonIstek.IDs))
-	for _, id := range k.sonIstek.IDs {
-		kayit, ok := k.urunler[id]
-		if !ok || !k.gorunur(id, k.sonIstek.SalesChannelIDs) {
+	out := make([]json.RawMessage, 0, len(k.lastRequest.IDs))
+	for _, id := range k.lastRequest.IDs {
+		record, ok := k.products[id]
+		if !ok || !k.visible(id, k.lastRequest.SalesChannelIDs) {
 			continue
 		}
-		out = append(out, kayit)
+		out = append(out, record)
 	}
 
-	return json.Marshal(katalogYaniti{Products: out})
+	return json.Marshal(catalogResponse{Products: out})
 }
 
-// gorunur ürünün istenen kanallarda görünüp görünmediğini bildirir.
-func (k *sahteKatalog) gorunur(id string, istenen []string) bool {
+// visible reports whether the product appears in the requested channels.
+func (k *fakeCatalog) visible(id string, istenen []string) bool {
 	if istenen == nil {
 		return true
 	}
-	atanan, ok := k.kanallar[id]
+	atanan, ok := k.channels[id]
 	if !ok || len(atanan) == 0 {
 		return true
 	}
-	for _, kanal := range atanan {
-		if slices.Contains(istenen, kanal) {
+	for _, channel := range atanan {
+		if slices.Contains(istenen, channel) {
 			return true
 		}
 	}
@@ -247,26 +247,26 @@ func (k *sahteKatalog) gorunur(id string, istenen []string) bool {
 	return false
 }
 
-// sahteGraph çekirdeğin Query katmanının taklididir.
-type sahteGraph struct {
+// fakeGraph is the imitation of the core's Query layer.
+type fakeGraph struct {
 	mu sync.Mutex
 
-	ids        []string
-	offsetler  []int
-	sonSpec    query.GraphSpec
-	hata       error
-	hataOffset int
+	ids       []string
+	offsetler []int
+	lastSpec  query.GraphSpec
+	err       error
+	errOffset int
 }
 
-// Graph verilen sayfayı kimlik kayıtları olarak döner.
-func (g *sahteGraph) Graph(_ context.Context, spec query.GraphSpec) ([]query.Record, error) {
+// Graph returns the given page as id records.
+func (g *fakeGraph) Graph(_ context.Context, spec query.GraphSpec) ([]query.Record, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	g.sonSpec = spec
+	g.lastSpec = spec
 	g.offsetler = append(g.offsetler, spec.Offset)
-	if g.hata != nil && spec.Offset == g.hataOffset {
-		return nil, g.hata
+	if g.err != nil && spec.Offset == g.errOffset {
+		return nil, g.err
 	}
 
 	if spec.Offset >= len(g.ids) {
@@ -282,25 +282,25 @@ func (g *sahteGraph) Graph(_ context.Context, spec query.GraphSpec) ([]query.Rec
 	return out, nil
 }
 
-// testModul sahte bağımlılıklarla kurulmuş bir modül üretir.
-func testModul(d depo, k StoreProductReader) *modul {
-	m := newModul(nil, slog.New(slog.DiscardHandler))
-	m.indeks = d
-	m.katalog = &katalog{okuyucu: k}
+// testModule produces a module built with fake dependencies.
+func testModule(d store, k StoreProductReader) *searchModule {
+	m := newSearchModule(nil, slog.New(slog.DiscardHandler))
+	m.index = d
+	m.catalog = &catalog{reader: k}
 
 	return m
 }
 
-// testRouter modülün uçlarını bağlanmış bir router döner.
-func testRouter(m *modul) chi.Router {
+// testRouter returns a router with the module's endpoints bound.
+func testRouter(m *searchModule) chi.Router {
 	r := chi.NewRouter()
 	m.Routes(r)
 
 	return r
 }
 
-// istek verilen hedefe istek atar; kimlik verilirse context'e konur.
-func istek(m *modul, method, target string, principal *corehttp.Principal) *httptest.ResponseRecorder {
+// request verilen hedefe request atar; kimlik verilirse context'e konur.
+func request(m *searchModule, method, target string, principal *corehttp.Principal) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, target, http.NoBody)
 	if principal != nil {
 		req = req.WithContext(corehttp.WithPrincipal(req.Context(), *principal))
@@ -311,196 +311,197 @@ func istek(m *modul, method, target string, principal *corehttp.Principal) *http
 	return rec
 }
 
-// magazaKimligi verilen kanallara bağlı bir mağaza kimliği üretir.
-func magazaKimligi(kanallar ...string) *corehttp.Principal {
-	if kanallar == nil {
-		kanallar = []string{}
+// storePrincipal produces a store identity bound to the given channels.
+func storePrincipal(channels ...string) *corehttp.Principal {
+	if channels == nil {
+		channels = []string{}
 	}
 
-	return &corehttp.Principal{ID: "pk_test", Kind: "api_key", SalesChannelIDs: kanallar}
+	return &corehttp.Principal{ID: "pk_test", Kind: "api_key", SalesChannelIDs: channels}
 }
 
-// olay verilen ada ve ürün kimliğine sahip bir olay üretir.
-func olay(ad, urunID string) eventbus.Event {
-	return eventbus.Event{Name: ad, Data: map[string]any{eventFieldProductID: urunID}}
+// event produces an event with the given name and product id.
+func event(ad, productID string) eventbus.Event {
+	return eventbus.Event{Name: ad, Data: map[string]any{eventFieldProductID: productID}}
 }
 
-// TestUrunYazildiKataloguOkuyupIndeksler abonenin olayı alınca kaydı okuduğunu
-// ve ağırlıklı belgeyi yazdığını doğrular.
-func TestUrunYazildiKataloguOkuyupIndeksler(t *testing.T) {
+// TestProductWrittenReadsTheCatalogAndIndexes verifies that on receiving the
+// event the subscriber reads the record and writes the weighted document.
+func TestProductWrittenReadsTheCatalogAndIndexes(t *testing.T) {
 	t.Parallel()
 
-	d, k := newSahteDepo(), newSahteKatalog()
-	k.urunEkle("prod_1", "Mavi Gömlek", "Pamuklu yazlık gömlek")
-	m := testModul(d, k)
+	d, k := newFakeStore(), newFakeCatalog()
+	k.addProduct("prod_1", "Blue Shirt", "A cotton summer shirt")
+	m := testModule(d, k)
 
-	require.NoError(t, m.urunYazildi(t.Context(), olay(eventProductCreated, "prod_1")))
+	require.NoError(t, m.productWritten(t.Context(), event(eventProductCreated, "prod_1")))
 
-	b, ok := d.belgeAl("prod_1")
-	require.True(t, ok, "ürün indekslenmiş olmalı")
-	assert.Equal(t, "Mavi Gömlek", b.baslik, "başlık A ağırlığına gider")
-	assert.Equal(t, "Pamuklu yazlık gömlek", b.metin, "açıklama C ağırlığına gider")
-	assert.Contains(t, b.anahtar, "SKU-prod_1", "SKU aranabilir olmalı")
-	assert.Contains(t, b.anahtar, "prod_1-handle", "handle aranabilir olmalı")
-	assert.Contains(t, b.anahtar, "yeni", "etiket değeri aranabilir olmalı")
+	b, ok := d.fetchDocument("prod_1")
+	require.True(t, ok, "the product has to have been indexed")
+	assert.Equal(t, "Blue Shirt", b.title, "the title goes to weight A")
+	assert.Equal(t, "A cotton summer shirt", b.body, "the description goes to weight C")
+	assert.Contains(t, b.keywords, "SKU-prod_1", "the SKU has to be searchable")
+	assert.Contains(t, b.keywords, "prod_1-handle", "the handle has to be searchable")
+	assert.Contains(t, b.keywords, "new", "the tag value has to be searchable")
 }
 
-// TestIndeksKanaldanBagimsizdir olay işleyicisinin katalogtan kanal SÜZMEDEN
-// okuduğunu doğrular.
+// TestTheIndexIsIndependentOfTheChannel verifies that the event handler reads
+// from the catalog WITHOUT a channel filter.
 //
-// İndeks kanal başına tutulsaydı aynı ürün kanal sayısı kadar yazılır ve kanal
-// ataması değiştiğinde indeksin yeniden kurulması gerekirdi; süzme okuma
-// anında yapılır.
-func TestIndeksKanaldanBagimsizdir(t *testing.T) {
+// Were the index kept per channel, the same product would be written once per
+// channel and the index would have to be rebuilt whenever a channel assignment
+// changed; the filtering happens at read time.
+func TestTheIndexIsIndependentOfTheChannel(t *testing.T) {
 	t.Parallel()
 
-	d, k := newSahteDepo(), newSahteKatalog()
-	k.urunEkle("prod_1", "Mavi Gömlek", "")
-	k.kanalAta("prod_1", "sc_web")
-	m := testModul(d, k)
+	d, k := newFakeStore(), newFakeCatalog()
+	k.addProduct("prod_1", "Blue Shirt", "")
+	k.assignChannel("prod_1", "sc_web")
+	m := testModule(d, k)
 
-	require.NoError(t, m.urunYazildi(t.Context(), olay(eventProductUpdated, "prod_1")))
+	require.NoError(t, m.productWritten(t.Context(), event(eventProductUpdated, "prod_1")))
 
-	assert.Equal(t, []string{"prod_1"}, d.kimlikler())
-	assert.Nil(t, k.sonIstek.SalesChannelIDs,
-		"indeksleme okuması kanal kimliği taşımamalı (nil = süzgeç yok)")
+	assert.Equal(t, []string{"prod_1"}, d.ids())
+	assert.Nil(t, k.lastRequest.SalesChannelIDs,
+		"the indexing read must carry no channel id (nil = no filter)")
 }
 
-// TestOlaydakiStatusYerineKatalogOkunur bayat bir status alanının indeksi
-// YANLIŞ yönde etkilemediğini doğrular.
+// TestTheCatalogIsReadInsteadOfTheEventsStatus verifies that a stale status field
+// does not push the index in the WRONG direction.
 //
-// Olay "taslak" diyor ama katalog ürünü hâlâ vitrinde gösteriyor: doğru davranış
-// ürünü indekslemektir. Kısayol alınsaydı ürün, ters sırada teslim edilen iki
-// olay yüzünden aramadan sessizce düşerdi.
-func TestOlaydakiStatusYerineKatalogOkunur(t *testing.T) {
+// The event says "draft" but the catalog still shows the product in the
+// storefront: the right behavior is to index it. Had the shortcut been taken,
+// the product would fall out of search silently because two events were
+// delivered out of order.
+func TestTheCatalogIsReadInsteadOfTheEventsStatus(t *testing.T) {
 	t.Parallel()
 
-	d, k := newSahteDepo(), newSahteKatalog()
-	k.urunEkle("prod_1", "Mavi Gömlek", "")
-	m := testModul(d, k)
+	d, k := newFakeStore(), newFakeCatalog()
+	k.addProduct("prod_1", "Blue Shirt", "")
+	m := testModule(d, k)
 
-	e := olay(eventProductUpdated, "prod_1")
+	e := event(eventProductUpdated, "prod_1")
 	e.Data["status"] = "draft"
-	require.NoError(t, m.urunYazildi(t.Context(), e))
+	require.NoError(t, m.productWritten(t.Context(), e))
 
-	assert.Equal(t, []string{"prod_1"}, d.kimlikler(),
-		"karar olayın söylediğine değil kataloğun O ANKİ durumuna dayanmalı")
+	assert.Equal(t, []string{"prod_1"}, d.ids(),
+		"the decision has to rest on the catalog's CURRENT state, not on what the event says")
 }
 
-// TestVitrindeGorunmeyenUrunIndekstenDuser yayından kalkan ürünün indeksten
-// silindiğini doğrular.
-func TestVitrindeGorunmeyenUrunIndekstenDuser(t *testing.T) {
+// TestAProductNotVisibleInTheStorefrontLeavesTheIndex verifies that an
+// unpublished product is deleted from the index.
+func TestAProductNotVisibleInTheStorefrontLeavesTheIndex(t *testing.T) {
 	t.Parallel()
 
-	d, k := newSahteDepo(), newSahteKatalog()
-	require.NoError(t, d.Upsert(t.Context(), []belge{{urunID: "prod_1", baslik: "Eski"}}))
-	m := testModul(d, k)
+	d, k := newFakeStore(), newFakeCatalog()
+	require.NoError(t, d.Upsert(t.Context(), []document{{productID: "prod_1", title: "Eski"}}))
+	m := testModule(d, k)
 
-	// Katalog bu kimliği HİÇ döndürmüyor: yayından kalkmış, arşivlenmiş ya da
-	// silinmiş demektir.
-	require.NoError(t, m.urunYazildi(t.Context(), olay(eventProductUpdated, "prod_1")))
+	// The catalog returns this id NOT AT ALL: it was unpublished, archived or
+	// deleted.
+	require.NoError(t, m.productWritten(t.Context(), event(eventProductUpdated, "prod_1")))
 
-	assert.Empty(t, d.kimlikler(), "vitrinde görünmeyen ürün indekste kalmamalı")
+	assert.Empty(t, d.ids(), "a product not visible in the storefront must not stay in the index")
 }
 
-// TestUrunSilindiKataloguOkumaz silme olayının katalogla hiç konuşmadığını
-// doğrular.
+// TestProductDeletedDoesNotReadTheCatalog verifies that the deletion event never
+// speaks to the catalog.
 //
-// Soft silinmiş kayıt zaten hiçbir okumadan dönmez; okuma turu boşa gidecek bir
-// gidiş-dönüş olurdu.
-func TestUrunSilindiKataloguOkumaz(t *testing.T) {
+// A soft-deleted record comes back from no read anyway; the read round would be a
+// wasted round trip.
+func TestProductDeletedDoesNotReadTheCatalog(t *testing.T) {
 	t.Parallel()
 
-	d, k := newSahteDepo(), newSahteKatalog()
-	require.NoError(t, d.Upsert(t.Context(), []belge{{urunID: "prod_1", baslik: "Eski"}}))
-	m := testModul(d, k)
+	d, k := newFakeStore(), newFakeCatalog()
+	require.NoError(t, d.Upsert(t.Context(), []document{{productID: "prod_1", title: "Eski"}}))
+	m := testModule(d, k)
 
-	require.NoError(t, m.urunSilindi(t.Context(), olay(eventProductDeleted, "prod_1")))
+	require.NoError(t, m.productDeleted(t.Context(), event(eventProductDeleted, "prod_1")))
 
-	assert.Empty(t, d.kimlikler())
-	assert.Zero(t, k.cagri, "silme olayı katalogu okumamalı")
+	assert.Empty(t, d.ids())
+	assert.Zero(t, k.calls, "the deletion event must not read the catalog")
 }
 
-// TestSilmeIdempotenttir aynı silme olayının ikinci teslimi hata üretmediğini
-// doğrular.
+// TestDeletionIsIdempotent verifies that a second delivery of the same deletion
+// event produces no error.
 //
-// Redis backend'i EN AZ BİR KEZ teslim eder; ikinci teslimde hata dönen bir
-// işleyici, her yeniden başlatmada gürültü üretirdi.
-func TestSilmeIdempotenttir(t *testing.T) {
+// The Redis backend delivers AT LEAST ONCE; a handler that returned an error on
+// the second delivery would produce noise on every restart.
+func TestDeletionIsIdempotent(t *testing.T) {
 	t.Parallel()
 
-	m := testModul(newSahteDepo(), newSahteKatalog())
+	m := testModule(newFakeStore(), newFakeCatalog())
 
-	require.NoError(t, m.urunSilindi(t.Context(), olay(eventProductDeleted, "prod_yok")))
-	require.NoError(t, m.urunSilindi(t.Context(), olay(eventProductDeleted, "prod_yok")))
+	require.NoError(t, m.productDeleted(t.Context(), event(eventProductDeleted, "prod_absent")))
+	require.NoError(t, m.productDeleted(t.Context(), event(eventProductDeleted, "prod_absent")))
 }
 
-// TestBozukOlayYukuReddedilir sözleşmeye uymayan yükün hata döndürdüğünü
-// doğrular.
-func TestBozukOlayYukuReddedilir(t *testing.T) {
+// TestABrokenEventPayloadIsRefused verifies that a payload not matching the
+// contract returns an error.
+func TestABrokenEventPayloadIsRefused(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]map[string]any{
-		"alan yok":     {},
-		"dize değil":   {eventFieldProductID: 42},
-		"boş":          {eventFieldProductID: "   "},
-		"yanlış tipte": {eventFieldProductID: []string{"prod_1"}},
+		"no field":       {},
+		"not a string":   {eventFieldProductID: 42},
+		"empty":          {eventFieldProductID: "   "},
+		"the wrong type": {eventFieldProductID: []string{"prod_1"}},
 	}
 
 	for ad, yuk := range tests {
 		t.Run(ad, func(t *testing.T) {
 			t.Parallel()
 
-			d := newSahteDepo()
-			m := testModul(d, newSahteKatalog())
+			d := newFakeStore()
+			m := testModule(d, newFakeCatalog())
 
-			err := m.urunYazildi(t.Context(), eventbus.Event{Name: eventProductCreated, Data: yuk})
+			err := m.productWritten(t.Context(), eventbus.Event{Name: eventProductCreated, Data: yuk})
 
 			require.Error(t, err)
-			assert.True(t, coreerrors.IsInvalid(err), "yük hatası KindInvalid olmalı: %v", err)
-			assert.Empty(t, d.kimlikler(), "bozuk yükten indekse kayıt yazılmamalı")
+			assert.True(t, coreerrors.IsInvalid(err), "a payload error has to be KindInvalid: %v", err)
+			assert.Empty(t, d.ids(), "no row may be written to the index from a broken payload")
 		})
 	}
 }
 
-// TestKatalogHatasiYutulmaz indeksleme hatasının olayı sessizce
-// tüketmediğini doğrular.
+// TestACatalogErrorIsNotSwallowed verifies that an indexing error does not
+// consume the event silently.
 //
-// Hata dönmek veri yolunda YENİDEN DENEMEYE yol açmaz (sözleşme gereği olay her
-// hâlükârda ACK'lenir); tek etkisi hatanın olay adı ve kimliğiyle birlikte
-// loglanmasıdır. nil dönmek, indeksin geride kaldığını her yerde görünmez
-// kılardı.
-func TestKatalogHatasiYutulmaz(t *testing.T) {
+// Returning an error does NOT cause a retry on the bus (by contract the event is
+// ACKed either way); its only effect is that the error is logged together with
+// the event's name and id. Returning nil would make the index falling behind
+// invisible everywhere.
+func TestACatalogErrorIsNotSwallowed(t *testing.T) {
 	t.Parallel()
 
-	d, k := newSahteDepo(), newSahteKatalog()
-	k.hata = coreerrors.Unavailable("test_catalog_down", "katalog erişilemez")
-	m := testModul(d, k)
+	d, k := newFakeStore(), newFakeCatalog()
+	k.err = coreerrors.Unavailable("test_catalog_down", "the catalog is unreachable")
+	m := testModule(d, k)
 
-	err := m.urunYazildi(t.Context(), olay(eventProductCreated, "prod_1"))
+	err := m.productWritten(t.Context(), event(eventProductCreated, "prod_1"))
 
 	require.Error(t, err)
 	assert.Equal(t, coreerrors.KindUnavailable, coreerrors.KindOf(err),
-		"katalogun hata sınıfı korunmalı; erişilemezlik sunucu hatası olarak raporlanmamalı")
+		"the catalog's error class has to be preserved; unavailability must not be reported as a server error")
 }
 
-// TestKayitsizModulHataDoner Register çalışmadan gelen olayın panik değil
-// tipli hata ürettiğini doğrular.
-func TestKayitsizModulHataDoner(t *testing.T) {
+// TestAnUnregisteredModuleReturnsAnError verifies that an event arriving without
+// Register having run produces a typed error rather than a panic.
+func TestAnUnregisteredModuleReturnsAnError(t *testing.T) {
 	t.Parallel()
 
-	m := newModul(nil, nil)
-	m.katalog = &katalog{okuyucu: newSahteKatalog()}
+	m := newSearchModule(nil, nil)
+	m.catalog = &catalog{reader: newFakeCatalog()}
 
-	err := m.urunYazildi(t.Context(), olay(eventProductCreated, "prod_1"))
+	err := m.productWritten(t.Context(), event(eventProductCreated, "prod_1"))
 
 	require.Error(t, err)
 	assert.Equal(t, codeNotRegistered, coreerrors.CodeOf(err))
-	assert.Empty(t, chiDesenleri(testRouter(m)), "indeks yokken hiçbir uç bağlanmamalı")
+	assert.Empty(t, chiPatterns(testRouter(m)), "no endpoint may be bound while there is no index")
 }
 
-// chiDesenleri router ağacındaki route desenlerini döner.
-func chiDesenleri(r chi.Router) []string {
+// chiPatterns returns the route patterns in the router tree.
+func chiPatterns(r chi.Router) []string {
 	var out []string
 	_ = chi.Walk(r, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		out = append(out, method+" "+route)
@@ -511,334 +512,336 @@ func chiDesenleri(r chi.Router) []string {
 	return out
 }
 
-// TestAramaIndekstenKimlikAlipKatalogtanOkur arama akışının tamamını doğrular:
-// indeks kimlik ve SIRA verir, katalog kayıtları döner.
-func TestAramaIndekstenKimlikAlipKatalogtanOkur(t *testing.T) {
+// TestSearchTakesIDsFromTheIndexAndRecordsFromTheCatalog verifies the whole
+// search flow: the index gives the ids and the ORDER, the catalog gives the
+// records.
+func TestSearchTakesIDsFromTheIndexAndRecordsFromTheCatalog(t *testing.T) {
 	t.Parallel()
 
-	d, k := newSahteDepo(), newSahteKatalog()
-	k.urunEkle("prod_2", "Gömlek", "")
-	k.urunEkle("prod_1", "Gömlek Beyaz", "")
-	// Alaka sırasını arama verir; handler onu KORUMALIDIR.
-	d.aramaSonucu = []string{"prod_2", "prod_1"}
-	m := testModul(d, k)
+	d, k := newFakeStore(), newFakeCatalog()
+	k.addProduct("prod_2", "Shirt", "")
+	k.addProduct("prod_1", "Shirt White", "")
+	// The relevance order comes from the search; the handler MUST preserve it.
+	d.searchResult = []string{"prod_2", "prod_1"}
+	m := testModule(d, k)
 
-	rec := istek(m, http.MethodGet, SearchPath+"?q=gomlek&limit=5&offset=10", magazaKimligi())
+	rec := request(m, http.MethodGet, SearchPath+"?q=shirt&limit=5&offset=10", storePrincipal())
 
-	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
-	assert.Equal(t, "gomlek", d.sonSorgu)
-	assert.Equal(t, 5, d.sonLimit)
-	assert.Equal(t, 10, d.sonOffset)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	assert.Equal(t, "shirt", d.lastQuery)
+	assert.Equal(t, 5, d.lastLimit)
+	assert.Equal(t, 10, d.lastOffset)
 
-	var yanit struct {
+	var response struct {
 		Data   []map[string]any `json:"data"`
 		Count  int              `json:"count"`
 		Offset int              `json:"offset"`
 		Limit  int              `json:"limit"`
 	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &yanit))
-	require.Len(t, yanit.Data, 2)
-	assert.Equal(t, "prod_2", yanit.Data[0]["id"], "indeksin verdiği alaka sırası korunmalı")
-	assert.Equal(t, "prod_1", yanit.Data[1]["id"])
-	assert.Equal(t, 2, yanit.Count)
-	assert.Equal(t, 10, yanit.Offset)
-	assert.Equal(t, 5, yanit.Limit)
-	assert.Contains(t, yanit.Data[0], "price_set",
-		"kayıtlar vitrin gösteriminin AYNISI olmalı; eklenti onları yeniden biçimlendirmez")
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+	require.Len(t, response.Data, 2)
+	assert.Equal(t, "prod_2", response.Data[0]["id"], "the relevance order the index gave has to be preserved")
+	assert.Equal(t, "prod_1", response.Data[1]["id"])
+	assert.Equal(t, 2, response.Count)
+	assert.Equal(t, 10, response.Offset)
+	assert.Equal(t, 5, response.Limit)
+	assert.Contains(t, response.Data[0], "price_set",
+		"the records have to be EXACTLY the storefront representation; the plugin does not reshape them")
 }
 
-// TestAramaKanallariKimliktenOkur kanal süzgecinin isteğin KİMLİĞİNDEN
-// geldiğini ve sorgu dizesinin hiç okunmadığını doğrular.
+// TestSearchReadsTheChannelsFromTheIdentity verifies that the channel filter
+// comes from the request's IDENTITY and that the query string is never read.
 //
-// Sorgu dizesi kabul edilseydi, herhangi bir publishable anahtarla gelen bir
-// istemci başka bir kanalın katalogunda arama yapabilirdi.
-func TestAramaKanallariKimliktenOkur(t *testing.T) {
+// Had the query string been accepted, a client arriving with any publishable key
+// could search another channel's catalog.
+func TestSearchReadsTheChannelsFromTheIdentity(t *testing.T) {
 	t.Parallel()
 
-	d, k := newSahteDepo(), newSahteKatalog()
-	k.urunEkle("prod_web", "Gömlek", "")
-	k.kanalAta("prod_web", "sc_web")
-	k.urunEkle("prod_pos", "Gömlek", "")
-	k.kanalAta("prod_pos", "sc_pos")
-	d.aramaSonucu = []string{"prod_web", "prod_pos"}
-	m := testModul(d, k)
+	d, k := newFakeStore(), newFakeCatalog()
+	k.addProduct("prod_web", "Shirt", "")
+	k.assignChannel("prod_web", "sc_web")
+	k.addProduct("prod_pos", "Shirt", "")
+	k.assignChannel("prod_pos", "sc_pos")
+	d.searchResult = []string{"prod_web", "prod_pos"}
+	m := testModule(d, k)
 
-	rec := istek(m, http.MethodGet,
-		SearchPath+"?q=gomlek&sales_channel_ids=sc_pos", magazaKimligi("sc_web"))
+	rec := request(m, http.MethodGet,
+		SearchPath+"?q=shirt&sales_channel_ids=sc_pos", storePrincipal("sc_web"))
 
-	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
-	assert.Equal(t, []string{"sc_web"}, k.sonIstek.SalesChannelIDs,
-		"kanallar yalnızca doğrulanmış kimlikten okunmalı")
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	assert.Equal(t, []string{"sc_web"}, k.lastRequest.SalesChannelIDs,
+		"the channels may be read only from the verified identity")
 
-	var yanit struct {
+	var response struct {
 		Data []map[string]any `json:"data"`
 	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &yanit))
-	require.Len(t, yanit.Data, 1, "başka kanalın ürünü sonuçta görünmemeli")
-	assert.Equal(t, "prod_web", yanit.Data[0]["id"])
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+	require.Len(t, response.Data, 1, "another channel's product must not appear in the result")
+	assert.Equal(t, "prod_web", response.Data[0]["id"])
 }
 
-// TestKimliksizIstekteKanalSuzgeciUygulanmaz mağaza kimliği hiç bağlanmamış bir
-// kurulumda aramanın çalışmaya devam ettiğini doğrular.
-func TestKimliksizIstekteKanalSuzgeciUygulanmaz(t *testing.T) {
+// TestARequestWithNoIdentityGetsNoChannelFilter verifies that search keeps
+// working on an installation where store identity was never wired.
+func TestARequestWithNoIdentityGetsNoChannelFilter(t *testing.T) {
 	t.Parallel()
 
-	d, k := newSahteDepo(), newSahteKatalog()
-	k.urunEkle("prod_1", "Gömlek", "")
-	k.kanalAta("prod_1", "sc_web")
-	d.aramaSonucu = []string{"prod_1"}
-	m := testModul(d, k)
+	d, k := newFakeStore(), newFakeCatalog()
+	k.addProduct("prod_1", "Shirt", "")
+	k.assignChannel("prod_1", "sc_web")
+	d.searchResult = []string{"prod_1"}
+	m := testModule(d, k)
 
-	rec := istek(m, http.MethodGet, SearchPath+"?q=gomlek", nil)
+	rec := request(m, http.MethodGet, SearchPath+"?q=shirt", nil)
 
-	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
-	assert.Nil(t, k.sonIstek.SalesChannelIDs, "kimlik yoksa süzgeç uygulanmamalı (nil)")
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	assert.Nil(t, k.lastRequest.SalesChannelIDs, "with no identity no filter may be applied (nil)")
 }
 
-// TestKanalsizKimlikBosKumedir kanalı olmayan bir kimliğin "süzme yok" ile
-// KARIŞTIRILMADIĞINI doğrular.
+// TestAnIdentityWithNoChannelIsAnEmptySet verifies that an identity with no
+// channel is NOT CONFUSED with "no filtering".
 //
-// İkisi bir tutulsaydı, kanalsız bir anahtara tüm kanalların katalogu açılırdı.
-func TestKanalsizKimlikBosKumedir(t *testing.T) {
+// Had the two been treated as one, a key with no channel would be handed every
+// channel's catalog.
+func TestAnIdentityWithNoChannelIsAnEmptySet(t *testing.T) {
 	t.Parallel()
 
-	d, k := newSahteDepo(), newSahteKatalog()
-	k.urunEkle("prod_1", "Gömlek", "")
-	d.aramaSonucu = []string{"prod_1"}
-	m := testModul(d, k)
+	d, k := newFakeStore(), newFakeCatalog()
+	k.addProduct("prod_1", "Shirt", "")
+	d.searchResult = []string{"prod_1"}
+	m := testModule(d, k)
 
-	rec := istek(m, http.MethodGet, SearchPath+"?q=gomlek", magazaKimligi())
+	rec := request(m, http.MethodGet, SearchPath+"?q=shirt", storePrincipal())
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.NotNil(t, k.sonIstek.SalesChannelIDs, "kanalsız kimlik nil değil BOŞ küme göndermeli")
-	assert.Empty(t, k.sonIstek.SalesChannelIDs)
+	assert.NotNil(t, k.lastRequest.SalesChannelIDs, "an identity with no channel has to send an EMPTY set, not nil")
+	assert.Empty(t, k.lastRequest.SalesChannelIDs)
 }
 
-// TestBosSonuctaKatalogHicCagrilmaz eşleşme yokken gereksiz bir tur
-// atılmadığını doğrular.
-func TestBosSonuctaKatalogHicCagrilmaz(t *testing.T) {
+// TestAnEmptyResultNeverCallsTheCatalog verifies that no needless round is taken
+// when there is no match.
+func TestAnEmptyResultNeverCallsTheCatalog(t *testing.T) {
 	t.Parallel()
 
-	d, k := newSahteDepo(), newSahteKatalog()
-	m := testModul(d, k)
+	d, k := newFakeStore(), newFakeCatalog()
+	m := testModule(d, k)
 
-	rec := istek(m, http.MethodGet, SearchPath+"?q=hicbirsey", magazaKimligi())
+	rec := request(m, http.MethodGet, SearchPath+"?q=hicbirsey", storePrincipal())
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Zero(t, k.cagri, "boş kimlik listesi için katalog çağrılmamalı")
+	assert.Zero(t, k.calls, "the catalog must not be called for an empty id list")
 	assert.JSONEq(t, `{"data":[],"count":0,"offset":0,"limit":20}`, rec.Body.String(),
-		"boş sonuç null değil BOŞ dizi olmalı")
+		"an empty result has to be an EMPTY array, not null")
 }
 
-// TestGecersizAramaParametreleriReddedilir sınır ve biçim hatalarının 422
-// döndürdüğünü doğrular.
-func TestGecersizAramaParametreleriReddedilir(t *testing.T) {
+// TestInvalidSearchParametersAreRefused verifies that bound and format errors
+// return 422.
+func TestInvalidSearchParametersAreRefused(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{
-		"sorgu yok":        SearchPath,
-		"sorgu boş":        SearchPath + "?q=",
-		"sorgu boşluk":     SearchPath + "?q=%20%20",
-		"limit sıfır":      SearchPath + "?q=a&limit=0",
-		"limit sınır üstü": SearchPath + "?q=a&limit=" + strconv.Itoa(maxLimit+1),
-		"limit sayı değil": SearchPath + "?q=a&limit=abc",
-		"offset negatif":   SearchPath + "?q=a&offset=-1",
+		"no query":                SearchPath,
+		"an empty query":          SearchPath + "?q=",
+		"a whitespace query":      SearchPath + "?q=%20%20",
+		"a zero limit":            SearchPath + "?q=a&limit=0",
+		"a limit above the bound": SearchPath + "?q=a&limit=" + strconv.Itoa(maxLimit+1),
+		"a non-numeric limit":     SearchPath + "?q=a&limit=abc",
+		"offset negatif":          SearchPath + "?q=a&offset=-1",
 	}
 
 	for ad, hedef := range tests {
 		t.Run(ad, func(t *testing.T) {
 			t.Parallel()
 
-			d := newSahteDepo()
-			rec := istek(testModul(d, newSahteKatalog()), http.MethodGet, hedef, magazaKimligi())
+			d := newFakeStore()
+			rec := request(testModule(d, newFakeCatalog()), http.MethodGet, hedef, storePrincipal())
 
-			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "gövde: %s", rec.Body.String())
-			assert.Zero(t, d.aramaCagri, "geçersiz istek indekse hiç gitmemeli")
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body: %s", rec.Body.String())
+			assert.Zero(t, d.searchCalls, "an invalid request must never reach the index")
 		})
 	}
 }
 
-// TestUzunSorguReddedilir sınırsız bir metnin sorgu ayrıştırıcısına
-// verilmediğini doğrular.
-func TestUzunSorguReddedilir(t *testing.T) {
+// TestAnOverlongQueryIsRefused verifies that an unbounded text is never handed
+// to the query parser.
+func TestAnOverlongQueryIsRefused(t *testing.T) {
 	t.Parallel()
 
-	uzun := make([]byte, maxSorguBaytlari+1)
+	uzun := make([]byte, maxQueryBytes+1)
 	for i := range uzun {
 		uzun[i] = 'a'
 	}
 
-	d := newSahteDepo()
-	rec := istek(testModul(d, newSahteKatalog()), http.MethodGet,
-		SearchPath+"?q="+string(uzun), magazaKimligi())
+	d := newFakeStore()
+	rec := request(testModule(d, newFakeCatalog()), http.MethodGet,
+		SearchPath+"?q="+string(uzun), storePrincipal())
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-	assert.Zero(t, d.aramaCagri)
+	assert.Zero(t, d.searchCalls)
 }
 
-// TestYenidenIndeksleme katalogun sayfa sayfa okunduğunu ve turun sonunda
-// süpürüldüğünü doğrular.
-func TestYenidenIndeksleme(t *testing.T) {
+// TestReindexing verifies that the catalog is read page by page and swept at the
+// end of the round.
+func TestReindexing(t *testing.T) {
 	t.Parallel()
 
-	d, k := newSahteDepo(), newSahteKatalog()
-	graph := &sahteGraph{}
-	// İki tam sayfa + eksik bir sayfa: son sayfanın kısa olması döngüyü
-	// bitirmeli, fazladan bir tur atılmamalı.
-	toplam := reindexSayfaBoyu*2 + 7
-	for i := range toplam {
+	d, k := newFakeStore(), newFakeCatalog()
+	graph := &fakeGraph{}
+	// Two full pages plus a short one: the last page being short has to end the
+	// loop, with no extra round taken.
+	total := reindexPageSize*2 + 7
+	for i := range total {
 		id := "prod_" + strconv.Itoa(i)
 		graph.ids = append(graph.ids, id)
-		k.urunEkle(id, "Ürün "+strconv.Itoa(i), "")
+		k.addProduct(id, "Product "+strconv.Itoa(i), "")
 	}
 
-	m := testModul(d, k)
+	m := testModule(d, k)
 	m.graph = graph
 
-	sonuc, err := m.yenidenIndeksle(t.Context())
+	sonuc, err := m.reindex(t.Context())
 
 	require.NoError(t, err)
-	assert.Equal(t, toplam, sonuc.Indexed)
+	assert.Equal(t, total, sonuc.Indexed)
 	assert.Equal(t, 3, sonuc.Pages)
-	assert.Equal(t, []int{0, reindexSayfaBoyu, reindexSayfaBoyu * 2}, graph.offsetler,
-		"sayfalama offset'i sayfa boyu kadar ilerlemeli")
-	assert.Len(t, d.kimlikler(), toplam)
+	assert.Equal(t, []int{0, reindexPageSize, reindexPageSize * 2}, graph.offsetler,
+		"paging offset'i sayfa boyu kadar ilerlemeli")
+	assert.Len(t, d.ids(), total)
 
-	assert.Equal(t, catalogEntity, graph.sonSpec.Entity)
-	assert.Equal(t, []string{query.IDField}, graph.sonSpec.Fields,
-		"kimlikten başka alan istenmemeli")
+	assert.Equal(t, catalogEntity, graph.lastSpec.Entity)
+	assert.Equal(t, []string{query.IDField}, graph.lastSpec.Fields,
+		"no field other than the id may be asked for")
 	assert.Equal(t, map[string]any{catalogStatusFilter: catalogStatusPublished},
-		graph.sonSpec.Filters, "yalnızca yayındaki ürünler indekslenmeli")
+		graph.lastSpec.Filters, "only published products may be indexed")
 
-	assert.Equal(t, 1, d.supurmeCagri, "tur bitince tam bir süpürme yapılmalı")
-	assert.Equal(t, d.simdi, d.supurmeEsigi, "eşik VERİTABANI saatinden alınmalı")
+	assert.Equal(t, 1, d.sweepCalls, "one full sweep has to happen when the round ends")
+	assert.Equal(t, d.now, d.sweepThreshold, "the threshold has to come from the DATABASE clock")
 }
 
-// TestYarimKalanTurSupurmez hata alan bir turun geçerli kayıtları silmediğini
-// doğrular.
+// TestAHalfFinishedRoundDoesNotSweep verifies that a round which failed does not
+// delete the valid rows.
 //
-// Süpürme yarıda kalan turdan sonra çalışsaydı, okunamamış sayfalardaki tüm
-// ürünler indeksten düşerdi — yani onarım aracı, kataloğu aramadan silen bir
-// araca dönüşürdü.
-func TestYarimKalanTurSupurmez(t *testing.T) {
+// Had the sweep run after a round that stopped halfway, every product on the
+// pages that were never read would fall out of the index — that is, the repair
+// tool would turn into a tool that deletes the catalog from search.
+func TestAHalfFinishedRoundDoesNotSweep(t *testing.T) {
 	t.Parallel()
 
-	d, k := newSahteDepo(), newSahteKatalog()
-	graph := &sahteGraph{hata: coreerrors.Unavailable("test_query_down", "query düştü"), hataOffset: reindexSayfaBoyu}
-	for i := range reindexSayfaBoyu * 2 {
+	d, k := newFakeStore(), newFakeCatalog()
+	graph := &fakeGraph{err: coreerrors.Unavailable("test_query_down", "the query layer went down"), errOffset: reindexPageSize}
+	for i := range reindexPageSize * 2 {
 		id := "prod_" + strconv.Itoa(i)
 		graph.ids = append(graph.ids, id)
-		k.urunEkle(id, "Ürün", "")
+		k.addProduct(id, "Product", "")
 	}
 
-	m := testModul(d, k)
+	m := testModule(d, k)
 	m.graph = graph
 
-	_, err := m.yenidenIndeksle(t.Context())
+	_, err := m.reindex(t.Context())
 
 	require.Error(t, err)
-	assert.Zero(t, d.supurmeCagri, "yarım kalan turdan sonra süpürme yapılmamalı")
-	assert.Len(t, d.kimlikler(), reindexSayfaBoyu, "ilk sayfa yine de yazılmış olmalı")
+	assert.Zero(t, d.sweepCalls, "no sweep may happen after a round that stopped halfway")
+	assert.Len(t, d.ids(), reindexPageSize, "the first page still has to have been written")
 }
 
-// TestYenidenIndekslemeUcuYetkiIster yönetim ucunun korumasız olmadığını
-// doğrular.
-func TestYenidenIndekslemeUcuYetkiIster(t *testing.T) {
+// TestTheReindexEndpointRequiresTheScope verifies that the admin endpoint is not
+// unprotected.
+func TestTheReindexEndpointRequiresTheScope(t *testing.T) {
 	t.Parallel()
 
-	m := testModul(newSahteDepo(), newSahteKatalog())
-	m.graph = &sahteGraph{}
+	m := testModule(newFakeStore(), newFakeCatalog())
+	m.graph = &fakeGraph{}
 
 	t.Run("kimliksiz", func(t *testing.T) {
 		t.Parallel()
 
-		rec := istek(m, http.MethodPost, ReindexPath, nil)
+		rec := request(m, http.MethodPost, ReindexPath, nil)
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	})
 
 	t.Run("yetkisiz", func(t *testing.T) {
 		t.Parallel()
 
-		rec := istek(m, http.MethodPost, ReindexPath,
+		rec := request(m, http.MethodPost, ReindexPath,
 			&corehttp.Principal{ID: "usr_1", Kind: "user", Scopes: []string{"product:read"}})
 		assert.Equal(t, http.StatusForbidden, rec.Code)
 	})
 
-	t.Run("modül yetkisi", func(t *testing.T) {
+	t.Run("the module scope", func(t *testing.T) {
 		t.Parallel()
 
-		rec := istek(m, http.MethodPost, ReindexPath,
+		rec := request(m, http.MethodPost, ReindexPath,
 			&corehttp.Principal{ID: "usr_1", Kind: "user", Scopes: []string{ScopeWrite}})
-		assert.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+		assert.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	})
 
-	t.Run("üst yetki", func(t *testing.T) {
+	t.Run("the parent scope", func(t *testing.T) {
 		t.Parallel()
 
-		rec := istek(m, http.MethodPost, ReindexPath,
+		rec := request(m, http.MethodPost, ReindexPath,
 			&corehttp.Principal{ID: "usr_1", Kind: "user", Scopes: []string{corehttp.ScopeAdmin}})
-		assert.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+		assert.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	})
 }
 
-// TestKatalogTembelCozulur yüzeyin Setup'ta değil İLK KULLANIMDA çözüldüğünü
-// ve başarısız bir çözümün kalıcı olmadığını doğrular.
+// TestTheCatalogIsResolvedLazily verifies that the surface is resolved ON FIRST
+// USE rather than in Setup, and that a failed resolution is not permanent.
 //
-// sync.Once kullanılsaydı, product henüz kayıtlı değilken düşen tek bir çözüm
-// süreç ömrü boyunca aramayı ölü bırakırdı.
-func TestKatalogTembelCozulur(t *testing.T) {
+// Had sync.Once been used, a single resolution that failed while product was not
+// yet registered would leave search dead for the life of the process.
+func TestTheCatalogIsResolvedLazily(t *testing.T) {
 	t.Parallel()
 
 	c := container.New(slog.New(slog.DiscardHandler))
 	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
 
-	k := newKatalog(c)
+	k := newCatalog(c)
 
-	_, err := k.urunler(t.Context(), []string{"prod_1"}, nil)
-	require.Error(t, err, "kayıt yokken okuma hata dönmeli")
+	_, err := k.products(t.Context(), []string{"prod_1"}, nil)
+	require.Error(t, err, "a read with no registration has to return an error")
 	assert.Equal(t, codeCatalogMissing, coreerrors.CodeOf(err))
 
-	// Kayıt SONRADAN yapılır; bu, modüllerin eklenti Setup'ından sonra ayağa
-	// kalkmasının taklididir.
-	sahte := newSahteKatalog()
-	sahte.urunEkle("prod_1", "Gömlek", "")
-	require.NoError(t, c.Provide(catalogInteropName, sahte))
+	// The registration happens AFTERWARDS; this imitates the modules coming up
+	// after the plugin's Setup.
+	fake := newFakeCatalog()
+	fake.addProduct("prod_1", "Shirt", "")
+	require.NoError(t, c.Provide(catalogInteropName, fake))
 
-	kayitlar, err := k.urunler(t.Context(), []string{"prod_1"}, nil)
-	require.NoError(t, err, "kayıt yapıldıktan sonra çözüm başarılı olmalı")
-	require.Len(t, kayitlar, 1)
+	records, err := k.products(t.Context(), []string{"prod_1"}, nil)
+	require.NoError(t, err, "the resolution has to succeed once the registration is made")
+	require.Len(t, records, 1)
 
-	// İkinci çağrı önbelleklenmiş yüzeyi kullanır.
-	_, err = k.urunler(t.Context(), []string{"prod_1"}, nil)
+	// The second call uses the cached surface.
+	_, err = k.products(t.Context(), []string{"prod_1"}, nil)
 	require.NoError(t, err)
-	assert.Equal(t, 2, sahte.cagri)
+	assert.Equal(t, 2, fake.calls)
 }
 
-// TestKatalogBosKimlikIcinCagrilmaz boş listede container'a bile
-// gidilmediğini doğrular.
-func TestKatalogBosKimlikIcinCagrilmaz(t *testing.T) {
+// TestTheCatalogIsNotCalledForAnEmptyIDSet verifies that with an empty list not
+// even the container is consulted.
+func TestTheCatalogIsNotCalledForAnEmptyIDSet(t *testing.T) {
 	t.Parallel()
 
-	k := newKatalog(nil)
+	k := newCatalog(nil)
 
-	kayitlar, err := k.urunler(t.Context(), nil, nil)
+	records, err := k.products(t.Context(), nil, nil)
 
-	require.NoError(t, err, "boş kimlik listesi çözüm bile gerektirmemeli")
-	assert.Empty(t, kayitlar)
+	require.NoError(t, err, "an empty id list must not even require a resolution")
+	assert.Empty(t, records)
 }
 
-// TestBozukKatalogKaydiReddedilir kimliksiz bir kaydın indekse yazılmadığını
-// doğrular.
-func TestBozukKatalogKaydiReddedilir(t *testing.T) {
+// TestABrokenCatalogRecordIsRefused verifies that a record with no id is not
+// written to the index.
+func TestABrokenCatalogRecordIsRefused(t *testing.T) {
 	t.Parallel()
 
-	d, k := newSahteDepo(), newSahteKatalog()
-	k.urunKaydiEkle("prod_1", json.RawMessage(`{"title": "Kimliksiz"}`))
-	m := testModul(d, k)
+	d, k := newFakeStore(), newFakeCatalog()
+	k.addProductRecord("prod_1", json.RawMessage(`{"title": "Kimliksiz"}`))
+	m := testModule(d, k)
 
-	err := m.urunYazildi(t.Context(), olay(eventProductCreated, "prod_1"))
+	err := m.productWritten(t.Context(), event(eventProductCreated, "prod_1"))
 
 	require.Error(t, err)
 	assert.Equal(t, codeCatalogResponse, coreerrors.CodeOf(err))
-	assert.Empty(t, d.kimlikler(), "birincil anahtarı boş bir satır yazılmamalı")
+	assert.Empty(t, d.ids(), "a row whose primary key is empty must not be written")
 }

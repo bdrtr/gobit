@@ -10,7 +10,12 @@
 # that stays behind quietly forgives the next one.
 #
 # Opened 2026-09-07 at THIRTY-EIGHT, the day core/openapi was published (ADR
-# 0035) and the question could be asked at all. Two remain.
+# 0035) and the question could be asked at all. It reached ZERO the same day.
+#
+# The file stays, empty. Deleting it would delete the ratchet with it: the audit
+# requires the list to parse to SOMETHING, so an empty file is what keeps the
+# gate honest while there is no debt — the next undescribed route fails as NEW
+# DEBT rather than quietly joining a list nobody re-reads.
 #
 # What the thirty-six were, because the shape is worth keeping:
 #
@@ -35,14 +40,11 @@
 #   - SIX were the webhook plugin's operator surface, which needed its responses
 #     TYPED before they could be described.
 #
-# WHAT IS LEFT, and it is not a schema problem
-#
-# The search plugin's two endpoints. Describing them means naming this
-# package's types from a describe function, and plugins/searchpg is still
-# written in Turkish (twelve files on the language ledger). ADR 0012's ratchet
-# says a new file is English and the ledger may only shrink, so the honest way
-# to pay these two is to translate the package rather than to write an English
-# file that names listeZarfi and tekilZarf. That is a translation task, and it
-# is tracked as one.
-GET /store/v1/search
-POST /admin/v1/search/reindex
+#   - TWO were the search plugin's, and they were not a schema problem at all.
+#     Describing them meant naming that package's types from a describe file, and
+#     plugins/searchpg was still written in Turkish — twelve files on the
+#     language ledger. ADR 0012's ratchet says a new file is English and the
+#     ledger may only shrink, so the honest way to pay them was to TRANSLATE the
+#     package rather than write an English file naming listeZarfi and tekilZarf.
+#     The package was translated the same day and the language ledger fell from
+#     214 to 202.

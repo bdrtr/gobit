@@ -220,7 +220,7 @@ func TestAParentCategoryBecomesDeletableOnceItsChildrenAre(t *testing.T) {
 // deliberate exception rather than a pattern: the queries exist for the
 // storefront's handle addressing ("/collections/summer"), the caller has not
 // been written yet, and a statement nobody has ever run is a statement nobody
-// knows the behaviour of.
+// knows the behavior of.
 //
 // The claim is the one the handle promise rests on. The unique index on the
 // handle is PARTIAL — it only covers live rows — so deleting a collection frees

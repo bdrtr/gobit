@@ -46,7 +46,7 @@ import (
 // # The payment provider
 //
 // The provider is the manual/test provider (internal/modules/payment/manual) and
-// its behaviour is steered by session data: the [manual.DataKeyOutcome] key says
+// its behavior is steered by session data: the [manual.DataKeyOutcome] key says
 // whether the authorization will be accepted or declined. The data is given to the
 // workflow through the [checkoutwf.CompleteCartInput.PaymentData] field and is
 // forwarded to the provider AS IS; that is, there is no test hook in the saga
@@ -461,7 +461,7 @@ func TestSagaRollsBackWhenPaymentFails(t *testing.T) {
 			"in which telling the customer to 'try again' is impossible")
 	require.Equal(t, int64(1), updated.Quantity, "the update must really be applied")
 
-	// --- 4) order.placed: the OBSERVED behaviour ---
+	// --- 4) order.placed: the OBSERVED behavior ---
 	//
 	// The event HAS BEEN PUBLISHED and that is correct: the order REALLY did come into
 	// being for a moment, and an event is the announcement of a fact that happened.
@@ -673,7 +673,7 @@ const (
 // successfully cannot be ordered a second time, and documents WHERE the second call
 // stops.
 //
-// # Observed behaviour
+// # Observed behavior
 //
 // The second call NEVER REACHES the saga engine. The preparation phase (prepare)
 // runs BEFORE the engine's idempotency check and its first job is to refresh the
@@ -682,7 +682,7 @@ const (
 // error returned is the cart computation's conflict (code: cartwf.CodeCartCompleted),
 // not the engine's "this key has already been used" answer.
 //
-// # Why this is the RIGHT behaviour
+// # Why this is the RIGHT behavior
 //
 // There are three lines of defence and the second call hits the CHEAPEST one:
 //
@@ -816,17 +816,17 @@ func prepareCart(
 }
 
 // paymentBehavior produces the session data that determines the manual provider's
-// authorization behaviour.
+// authorization behavior.
 //
 // The data is given to the workflow as PaymentData and is forwarded to the provider
 // AS IS; there is no test hook in the saga itself. The key and the values come from
 // the manual package's constants: had they been written out as strings, the tests
 // would keep compiling when the provider changed the contract but would silently
-// start probing the DEFAULT behaviour.
+// start probing the DEFAULT behavior.
 func paymentBehavior(t *testing.T, outcome string) json.RawMessage {
 	t.Helper()
 
 	raw, err := json.Marshal(map[string]string{manual.DataKeyOutcome: outcome})
-	require.NoError(t, err, "the payment behaviour data could not be encoded")
+	require.NoError(t, err, "the payment behavior data could not be encoded")
 	return raw
 }

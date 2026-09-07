@@ -406,7 +406,7 @@ const (
 	declaredRemaining int64 = 2
 )
 
-// TestDeclaredLocationSkipsSelection proves that the old behaviour of a call
+// TestDeclaredLocationSkipsSelection proves that the old behavior of a call
 // that DECLARES a location is preserved exactly.
 //
 // The backward-compatibility test is set up so that it means something in a

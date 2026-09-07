@@ -20,132 +20,133 @@ import (
 	"github.com/bdrtr/gobit/plugins/searchpg"
 )
 
-// Bu dosya eklentiyi DIŞARIDAN, çekirdeğin gördüğü yüzeyle sınar: kayıt
-// noktaları, adlar ve kurulumun neyi çözmediği.
+// This file tests the plugin FROM OUTSIDE, through the surface the core sees:
+// the registration points, the names, and what setup does NOT resolve.
 //
-// Eklenti hiçbir modülü import EDEMEZ (internal/arch
-// TestPluginsDoNotImportModules) ve bu yasak test dosyalarını da kapsar;
-// bu yüzden burada gerçek product modülü YOKTUR. Katalog, container'a
-// "product.interop" adıyla konan sahte bir yüzeyle temsil edilir — çekirdek de
-// product'ı tam olarak böyle görür.
+// The plugin CANNOT import any module (internal/arch
+// TestPluginsDoNotImportModules) and the ban covers the test files too, so there
+// is NO real product module here. The catalog is represented by a fake surface
+// placed in the container under the name "product.interop" — which is exactly
+// how the core sees product as well.
 
-// sahteVeriYolu abonelikleri kaydeden bir olay veri yoludur.
-type sahteVeriYolu struct {
-	mu        sync.Mutex
-	abonelik  []string
-	yayimlama []eventbus.Event
+// fakeBus is an event bus that records the subscriptions.
+type fakeBus struct {
+	mu         sync.Mutex
+	subscribed []string
+	published  []eventbus.Event
 }
 
-var _ eventbus.EventBus = (*sahteVeriYolu)(nil)
+var _ eventbus.EventBus = (*fakeBus)(nil)
 
-// Publish olayı listeye alır.
-func (b *sahteVeriYolu) Publish(_ context.Context, e eventbus.Event) error {
+// Publish adds the event to the list.
+func (b *fakeBus) Publish(_ context.Context, e eventbus.Event) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	b.yayimlama = append(b.yayimlama, e)
+	b.published = append(b.published, e)
 
 	return nil
 }
 
-// Subscribe abone olunan olay adını kaydeder.
-func (b *sahteVeriYolu) Subscribe(eventName string, _ eventbus.Handler) error {
+// Subscribe records the subscribed event name.
+func (b *fakeBus) Subscribe(eventName string, _ eventbus.Handler) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	b.abonelik = append(b.abonelik, eventName)
+	b.subscribed = append(b.subscribed, eventName)
 
 	return nil
 }
 
-// Shutdown hiçbir şey yapmaz.
-func (b *sahteVeriYolu) Shutdown(_ context.Context) error { return nil }
+// Shutdown does nothing.
+func (b *fakeBus) Shutdown(_ context.Context) error { return nil }
 
-// kurulum eklentiyi verilen container üzerinde Start'a kadar götürür.
-func kurulum(t *testing.T, c *container.Container) (*module.Registry, *sahteVeriYolu, error) {
+// setUp takes the plugin as far as Start over the given container.
+func setUp(t *testing.T, c *container.Container) (*module.Registry, *fakeBus, error) {
 	t.Helper()
 
 	log := slog.New(slog.DiscardHandler)
-	moduller := module.NewRegistry(log, nil)
-	bus := &sahteVeriYolu{}
+	modules := module.NewRegistry(log, nil)
+	bus := &fakeBus{}
 
 	reg := coreplugin.NewRegistry(log)
 	reg.Add(searchpg.New())
 
-	h := coreplugin.NewHost(c, moduller, bus, log, nil)
+	h := coreplugin.NewHost(c, modules, bus, log, nil)
 	if err := reg.Install(t.Context(), h); err != nil {
-		return moduller, bus, err
+		return modules, bus, err
 	}
 
-	return moduller, bus, reg.Start(t.Context(), h)
+	return modules, bus, reg.Start(t.Context(), h)
 }
 
-// TestKurulumModuluVeAbonelikleriKaydeder eklentinin üç uzatma noktasının
-// ikisini kurulumda kullandığını doğrular.
-func TestKurulumModuluVeAbonelikleriKaydeder(t *testing.T) {
+// TestSetupRegistersTheModuleAndItsSubscriptions verifies that the plugin uses
+// two of its three extension points at setup.
+func TestSetupRegistersTheModuleAndItsSubscriptions(t *testing.T) {
 	t.Parallel()
 
 	c := container.New(slog.New(slog.DiscardHandler))
 	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
 
-	moduller, bus, err := kurulum(t, c)
+	modules, bus, err := setUp(t, c)
 	require.NoError(t, err)
 
-	kayitli := moduller.Modules()
-	require.Len(t, kayitli, 1, "eklenti KENDİ modülünü kayda eklemeli")
-	assert.Equal(t, searchpg.ModuleName, kayitli[0].Name())
-	assert.NotNil(t, kayitli[0].Migrations(), "modül kendi migration'ını getirmeli")
+	registered := modules.Modules()
+	require.Len(t, registered, 1, "the plugin has to add its OWN module to the registry")
+	assert.Equal(t, searchpg.ModuleName, registered[0].Name())
+	assert.NotNil(t, registered[0].Migrations(), "the module has to bring its own migration")
 
 	assert.Equal(t,
 		[]string{"product.created", "product.updated", "product.deleted"},
-		bus.abonelik,
-		"indeks üç katalog olayıyla taze tutulur; adlar modüller arası sözleşmedir")
+		bus.subscribed,
+		"the index is kept fresh by three catalog events; the names are a contract between modules")
 }
 
-// TestKurulumBosContainerdaCalisir Setup'ın container'dan HİÇBİR ŞEY
-// çözmediğini doğrular.
+// TestSetupRunsOnAnEmptyContainer verifies that Setup resolves NOTHING from the
+// container.
 //
-// Kurulum sırasında modüller henüz ayağa kalkmamıştır: "product.interop" o anda
-// container'da YOKTUR. Eklenti onu Setup'ta çözmeye çalışsaydı, product kurulu
-// olsa bile açılış hata verirdi — hiçbir şeyin gerçekten eksik olmadığı bir
-// hatayla.
-func TestKurulumBosContainerdaCalisir(t *testing.T) {
+// During setup the modules have not come up yet: "product.interop" is NOT in the
+// container at that moment. Had the plugin tried to resolve it in Setup, startup
+// would fail even with product installed — with an error where nothing is
+// actually missing.
+func TestSetupRunsOnAnEmptyContainer(t *testing.T) {
 	t.Parallel()
 
 	c := container.New(slog.New(slog.DiscardHandler))
 	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
 
-	moduller, _, err := kurulum(t, c)
+	modules, _, err := setUp(t, c)
 
-	require.NoError(t, err, "kurulum boş bir container'da da tamamlanmalı")
-	assert.Len(t, moduller.Modules(), 1)
-	assert.False(t, c.Has("product.interop"), "kurulum katalog kaydını ARAMAMALI, yaratmamalı")
+	require.NoError(t, err, "setup has to complete on an empty container too")
+	assert.Len(t, modules.Modules(), 1)
+	assert.False(t, c.Has("product.interop"), "setup must NOT look for the catalog registration, nor create it")
 }
 
-// TestKurulumAyarIstemez eklentinin yapılandırmasız kurulduğunu doğrular.
+// TestSetupAsksForNoConfiguration verifies that the plugin is set up without any
+// configuration.
 //
-// paymentstripe'ın aksine burada eksikse açılışı durduracak bir ayar yoktur;
-// indeks tablosu migration'la kurulur ve arama motoru zaten var olan
-// PostgreSQL'dir.
-func TestKurulumAyarIstemez(t *testing.T) {
+// Unlike paymentstripe there is no setting here that would stop startup when it
+// is missing; the index table is created by the migration and the search engine
+// is the PostgreSQL that is already there.
+func TestSetupAsksForNoConfiguration(t *testing.T) {
 	t.Parallel()
 
 	c := container.New(slog.New(slog.DiscardHandler))
 	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
 
-	_, _, err := kurulum(t, c)
+	_, _, err := setUp(t, c)
 
 	assert.NoError(t, err)
 }
 
-// TestEklentiRouteKancasiKullanmaz uçların MODÜL yaşam döngüsünden geldiğini
-// doğrular.
+// TestThePluginUsesNoRouteHook verifies that the endpoints come from the MODULE
+// lifecycle.
 //
-// coreplugin.Host.AddRoutes ile bağlanan route'lar modül route'larından SONRA
-// ve ayrı bir çakışma denetiminden geçerek eklenir. Arama uçları oraya değil
-// modülün Routes'una aittir: uçlar modülün servisine bağlıdır ve modül
-// kaydedilmemişse hiç var olmamalıdırlar.
-func TestEklentiRouteKancasiKullanmaz(t *testing.T) {
+// Routes bound through coreplugin.Host.AddRoutes are added AFTER the module
+// routes and go through a separate conflict check. The search endpoints belong
+// to the module's Routes and not there: they depend on the module's service, and
+// if the module was not registered they must not exist at all.
+func TestThePluginUsesNoRouteHook(t *testing.T) {
 	t.Parallel()
 
 	c := container.New(slog.New(slog.DiscardHandler))
@@ -154,71 +155,72 @@ func TestEklentiRouteKancasiKullanmaz(t *testing.T) {
 	log := slog.New(slog.DiscardHandler)
 	reg := coreplugin.NewRegistry(log)
 	reg.Add(searchpg.New())
-	h := coreplugin.NewHost(c, module.NewRegistry(log, nil), &sahteVeriYolu{}, log, nil)
+	h := coreplugin.NewHost(c, module.NewRegistry(log, nil), &fakeBus{}, log, nil)
 	require.NoError(t, reg.Install(t.Context(), h))
 
 	router := chi.NewRouter()
 	require.NoError(t, reg.MountRoutes(router, h))
 
-	var desenler []string
+	var patterns []string
 	require.NoError(t, chi.Walk(router,
 		func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
-			desenler = append(desenler, method+" "+route)
+			patterns = append(patterns, method+" "+route)
 
 			return nil
 		}))
-	assert.Empty(t, desenler, "eklenti route kancasına hiçbir uç bağlamamalı")
+	assert.Empty(t, patterns, "the plugin must bind no endpoint to the route hook")
 }
 
-// TestAdlarSozlesmedir dışarıdan görünen adların bilinçli seçimler olduğunu
-// sabitler.
+// TestTheNamesAreAContract fixes that the externally visible names are
+// deliberate choices.
 //
-// Eklenti adı PLUGINS listesine yazılır; modül adı ise doğrudan bir SQL tablo
-// adına ("searchpg_schema_migrations") ve yetki önekine dönüşür. Bu yüzden
-// ikisi ayrıdır: modül adı tire taşıyamaz (bkz. core/db.MigrationsTable).
-func TestAdlarSozlesmedir(t *testing.T) {
+// The plugin's name goes into the PLUGINS list; the module's name turns directly
+// into an SQL table name ("searchpg_schema_migrations") and into a scope prefix.
+// That is why the two differ: a module name cannot carry a hyphen (see
+// core/db.MigrationsTable).
+func TestTheNamesAreAContract(t *testing.T) {
 	t.Parallel()
 
 	assert.Equal(t, "search-pg", searchpg.Name)
 	assert.Equal(t, "searchpg", searchpg.ModuleName)
 	assert.Equal(t, "searchpg:write", searchpg.ScopeWrite,
-		"yetki sözlüğü modüllerinkiyle aynı biçimde olmalı: <modül>:write")
+		"the scope vocabulary has to have the same shape as the modules': <module>:write")
 	assert.Equal(t, "/store/v1/search", searchpg.SearchPath)
 	assert.Equal(t, "/admin/v1/search/reindex", searchpg.ReindexPath)
 	assert.NotEqual(t, searchpg.Name, searchpg.ModuleName,
-		"modül adı migration sürüm tablosuna dönüşür ve tire taşıyamaz")
+		"the module name turns into the migration version table and cannot carry a hyphen")
 }
 
-// TestMigrationlarGeriAlinabilir her up dosyasının down çiftini doğrular.
+// TestTheMigrationsCanBeRolledBack verifies that every up file has a down pair.
 //
-// internal/arch'taki aynı adlı kapı YALNIZCA internal/modules altını tarar;
-// plugins/ ağacı hiçbir mimari testin kapsamında değildir. Geri alınamayan bir
-// migration, açılışta uygulanan bir şemayı geri alınamaz kılar.
-func TestMigrationlarGeriAlinabilir(t *testing.T) {
+// The gate of the same name in internal/arch scans ONLY under internal/modules;
+// the plugins/ tree is in no architecture test's scope. A migration that cannot
+// be rolled back makes a schema applied at startup impossible to roll back.
+func TestTheMigrationsCanBeRolledBack(t *testing.T) {
 	t.Parallel()
 
-	moduller, _, err := kurulum(t, container.New(slog.New(slog.DiscardHandler)))
+	modules, _, err := setUp(t, container.New(slog.New(slog.DiscardHandler)))
 	require.NoError(t, err)
-	require.Len(t, moduller.Modules(), 1)
+	require.Len(t, modules.Modules(), 1)
 
-	src := moduller.Modules()[0].Migrations()
+	src := modules.Modules()[0].Migrations()
 	require.NotNil(t, src)
 
-	girdiler, err := fs.ReadDir(src, ".")
+	entries, err := fs.ReadDir(src, ".")
 	require.NoError(t, err)
 
-	var uplar []string
-	mevcut := map[string]struct{}{}
-	for _, girdi := range girdiler {
-		mevcut[girdi.Name()] = struct{}{}
-		if strings.HasSuffix(girdi.Name(), ".up.sql") {
-			uplar = append(uplar, girdi.Name())
+	var ups []string
+	present := map[string]struct{}{}
+	for _, entry := range entries {
+		present[entry.Name()] = struct{}{}
+		if strings.HasSuffix(entry.Name(), ".up.sql") {
+			ups = append(ups, entry.Name())
 		}
 	}
 
-	require.NotEmpty(t, uplar, "eklenti kendi şemasını getirmeli")
-	for _, up := range uplar {
+	require.NotEmpty(t, ups, "the plugin has to bring its own schema")
+	for _, up := range ups {
 		down := strings.TrimSuffix(up, ".up.sql") + ".down.sql"
-		assert.Contains(t, mevcut, down, "%s dosyasının down çifti olmalı", up)
+		assert.Contains(t, present, down, "%s has to have a down pair", up)
 	}
 }
