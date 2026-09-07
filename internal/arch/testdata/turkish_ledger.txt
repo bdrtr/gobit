@@ -9,7 +9,6 @@
 #
 CHANGELOG.md
 README.md
-go-commerce-framework-plan.md
 internal/modules/b2b/api/admin.go
 internal/modules/b2b/api/api.go
 internal/modules/b2b/api/api_test.go

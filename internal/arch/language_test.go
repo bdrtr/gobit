@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -546,12 +547,57 @@ func scanSource(rel string, src []byte, exemptions map[string][]string) (hits []
 	return hits, false
 }
 
+// trackedFiles returns every path git tracks, as a set of repo-relative slash
+// paths.
+//
+// # Why the scan asks git rather than the filesystem
+//
+// ADR 0012's ratchet is about the language of the REPOSITORY, and a working
+// directory is not the repository: a developer's scratch file, a build artefact,
+// anything .gitignore keeps out — none of it ships, and none of it is debt
+// anybody can pay by translating it.
+//
+// This was not a theoretical distinction. A planning document at the repository
+// root, Turkish and gitignored, was carried in the ledger for exactly this
+// reason: the scan found it, so the ledger had to list it, so the ledger named a
+// file CI could not see. Every push was then red on
+// [TestLedgerIsNotStale] — "go-commerce-framework-plan.md is no longer a scanned
+// file" — while every developer's machine stayed green, because the file was
+// sitting right there. It is the same shape as the compiled binary that occupied
+// a directory name in plugins/webhookout's census: a gitignored artefact making
+// a local green FAKE, which is the failure mode this repository has now met
+// twice.
+//
+// A failure to run git is fatal rather than a fallback to "scan everything". A
+// gate that quietly widens its own scope when a tool is missing is a gate whose
+// result nobody can read.
+func trackedFiles(t *testing.T) map[string]bool {
+	t.Helper()
+
+	out, err := exec.Command("git", "-C", repoRoot, "ls-files", "-z").Output()
+	require.NoError(t, err,
+		"git ls-files could not be run, so the scan cannot tell a tracked file from a "+
+			"developer's scratch file; refusing to guess")
+
+	tracked := map[string]bool{}
+	for _, path := range strings.Split(string(out), "\x00") {
+		if path != "" {
+			tracked[path] = true
+		}
+	}
+
+	require.NotEmpty(t, tracked, "git ls-files reported no files at all; the scan has gone BLIND")
+
+	return tracked
+}
+
 // scannedFiles walks the repository and returns the repo-relative paths the
 // content scan covers, sorted.
 func scannedFiles(t *testing.T) []string {
 	t.Helper()
 
 	var found []string
+	tracked := trackedFiles(t)
 	roots := append(slices.Clone(scannedRoots), ".")
 
 	for _, root := range roots {
@@ -580,7 +626,13 @@ func scannedFiles(t *testing.T) []string {
 			if relErr != nil {
 				return relErr
 			}
-			found = append(found, filepath.ToSlash(rel))
+			slash := filepath.ToSlash(rel)
+			// A file the repository does not TRACK is not the repository's
+			// language debt. See [trackedFiles].
+			if !tracked[slash] {
+				return nil
+			}
+			found = append(found, slash)
 			return nil
 		})
 		require.NoError(t, err, "%s could not be walked", root)

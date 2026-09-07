@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -69,8 +70,8 @@ func relayedPass(t *testing.T, dsn string, events ...eventbus.Event) scheduled {
 	cfg, err := config.Load()
 	require.NoError(t, err)
 
-	var logs bytes.Buffer
-	log := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	logs := &syncBuffer{}
+	log := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	app, closeApp, err := openApplication(ctx, cfg, log, errorreport.NewSink(), Options{})
 	require.NoError(t, err, "the installation the runner needs could not be opened")
@@ -123,6 +124,47 @@ func relayedPass(t *testing.T, dsn string, events ...eventbus.Event) scheduled {
 	}
 
 	return scheduled{logs: logs.String(), delivered: collected, history: history}
+}
+
+// syncBuffer is a bytes.Buffer that may be written and read from different
+// goroutines.
+//
+// # Why the plain buffer was a race
+//
+// The scheduler under test is a goroutine: [job.Runner.Start] launches it and
+// returns, and its passes write into the logger this test hands the composition
+// root. Reading the same buffer with String() at the end of the helper is
+// therefore a read concurrent with a write, and the race detector says so —
+// bytes.Buffer.String() against internal/core/job/runner.go's log line.
+//
+// It went unseen for as long as it did because of WHERE -race runs: the
+// integration lane is the only one that exercises this file, and it is run with
+// -race in CI and, by habit, without it locally. A test that is only ever
+// checked for races on a machine nobody watches is a test whose races are found
+// by whoever pushes next.
+//
+// Stopping the runner first does not close the hole. stopJobs asks the scheduler
+// to stop; it does not join a pass that is already inside a handler, so the last
+// line of a pass in flight can still land after the read begins.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+// Write appends to the buffer under the lock.
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.Write(p)
+}
+
+// String returns what has been written so far, under the same lock.
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.String()
 }
 
 // waitForPass returns the job ledger once every named job has a finished run.
