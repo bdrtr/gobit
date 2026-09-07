@@ -689,8 +689,21 @@ func repositoryTestNames(t *testing.T) map[string]struct{} {
 	return names
 }
 
-// catalogPath is the composition root file holding the installer's plugin map.
-const catalogPath = "internal/app/setup.go"
+// catalogDir is the composition root PACKAGE holding the installer's plugin map.
+//
+// It names a directory rather than a file, and that is a correction rather than
+// a preference. It used to be "internal/app/setup.go", and on 2026-09-07 that
+// file was split by subject: the catalog moved to plugins.go and this audit
+// failed with "no plugin was found in pluginCatalog" — a message that describes
+// a missing catalog rather than a moved one, so the failure did not say what
+// had happened.
+//
+// The general shape is the one this repository has paid for before: a detector
+// that treats a FILENAME as its contract goes wrong the day somebody reorganizes
+// the thing it audits, and it goes wrong in a direction that reads like a real
+// finding. Scanning the package answers the same question and cannot be moved
+// out from under.
+const catalogDir = "internal/app"
 
 // catalogVariable is the name of that map.
 const catalogVariable = "pluginCatalog"
@@ -719,10 +732,7 @@ const catalogVariable = "pluginCatalog"
 func installablePluginNames(t *testing.T) map[string]bool {
 	t.Helper()
 
-	path := filepath.Join(repoRoot, catalogPath)
-	fset := token.NewFileSet()
-	parsed, err := parser.ParseFile(fset, path, nil, 0)
-	require.NoError(t, err, "%s could not be parsed", catalogPath)
+	parsed := fileDeclaring(t, catalogDir, catalogVariable)
 
 	imports := make(map[string]string)
 	for _, spec := range parsed.Imports {
@@ -764,7 +774,7 @@ func installablePluginNames(t *testing.T) map[string]bool {
 					"every %s key must be the plugin's own Name constant", catalogVariable)
 
 				importPath, known := imports[pkg.Name]
-				require.True(t, known, "%s is not imported by %s", pkg.Name, catalogPath)
+				require.True(t, known, "%s is not imported by %s", pkg.Name, catalogDir)
 				name, found := declared[importPath]
 				require.True(t, found,
 					"%s.Name is in the catalog but %s declares no Name constant", pkg.Name, importPath)
@@ -873,13 +883,66 @@ func TestEveryPluginIsInstallable(t *testing.T) {
 				"into the binary and its migration never reaches the migrate surface either.\n"+
 				"Add it to the catalog, or delete the plugin: a plugin nobody can switch on is a "+
 				"capability with no consumer.",
-			name, catalogVariable, catalogPath, name)
+			name, catalogVariable, catalogDir, name)
 	}
 
 	for name := range installable {
 		assert.True(t, declared[name],
 			"%s in %s offers the %q plugin, but no package under %s declares that Name.\n"+
 				"The catalog and the plugin have drifted apart; one of them is wrong.",
-			catalogVariable, catalogPath, name, pluginsPath)
+			catalogVariable, catalogDir, name, pluginsPath)
 	}
+}
+
+// fileDeclaring finds the file in dir that declares the named package-level
+// variable, and parses it.
+//
+// It exists so an audit can name WHAT it is looking for instead of WHERE it
+// used to be. A helper that took a path would put the audit back one file
+// reorganization away from a failure that reads like a real finding.
+func fileDeclaring(t *testing.T, dir, variable string) *ast.File {
+	t.Helper()
+
+	root := filepath.Join(repoRoot, dir)
+	entries, err := os.ReadDir(root)
+	require.NoError(t, err, "%s could not be read", dir)
+
+	fset := token.NewFileSet()
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") ||
+			strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+
+		parsed, parseErr := parser.ParseFile(fset, filepath.Join(root, entry.Name()), nil, 0)
+		require.NoError(t, parseErr, "%s/%s could not be parsed", dir, entry.Name())
+
+		for _, decl := range parsed.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.VAR {
+				continue
+			}
+
+			for _, spec := range gen.Specs {
+				value, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+
+				for _, name := range value.Names {
+					if name.Name == variable {
+						return parsed
+					}
+				}
+			}
+		}
+	}
+
+	t.Fatalf("no file in %s declares %s.\n"+
+		"Either it was renamed — in which case this audit is asking about something that no "+
+		"longer exists — or it moved out of the package, which is a bigger change than a "+
+		"rename and should be argued rather than discovered here.", dir, variable)
+
+	return nil
 }

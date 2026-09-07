@@ -559,48 +559,6 @@ func registerModules(registry *module.Registry, cfg config.Config, log *slog.Log
 	}
 }
 
-// installPlugins selects the plugins named in the configuration and runs their
-// Setup phase against a host bound to registry.
-//
-// It is three lines pulled into a function for the same reason
-// [registerModules] is: a plugin may bring a MODULE OF ITS OWN, with its own
-// table and its own migration — searchpg does — and that module exists nowhere
-// but in the registry this call fills. The migrate subcommands have to see it
-// too, or `migrate status` would silently omit an owner whose schema is in the
-// database and `migrate down searchpg` would answer "unknown owner" about a
-// module the server migrates on every boot.
-//
-// Setup neither connects nor migrates: the host QUEUES the provider and
-// subscriber registrations for [github.com/bdrtr/gobit/core/plugin.Registry.Start],
-// which the migrate path never calls. That is why bus may be nil there.
-func installPlugins(
-	ctx context.Context,
-	cfg config.Config,
-	c *container.Container,
-	registry *module.Registry,
-	bus eventbus.EventBus,
-	log *slog.Logger,
-	extra []coreplugin.Plugin,
-) (*coreplugin.Registry, *coreplugin.Host, error) {
-	plugins, err := selectPlugins(cfg.Plugins, log)
-	if err != nil {
-		return nil, nil, err
-	}
-	// A plugin handed in by the embedding program is not named in the
-	// configuration and does not have to be: the program that compiled it in
-	// has already made the selection that PLUGINS names for the ones in the box.
-	for _, p := range extra {
-		plugins.Add(p)
-	}
-
-	host := coreplugin.NewHost(c, registry, bus, log, pluginSettings())
-	if err := plugins.Install(ctx, host); err != nil {
-		return nil, nil, err
-	}
-
-	return plugins, host, nil
-}
-
 // setupRedis opens the Redis client if it is needed, registers it in the
 // container and adds it to the DEGRADING readiness checks.
 //

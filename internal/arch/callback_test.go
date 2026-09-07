@@ -124,12 +124,37 @@ func TestEveryStateChangingRouteIsGuarded(t *testing.T) {
 func TestTheGuardedPrefixesStillExist(t *testing.T) {
 	t.Parallel()
 
-	source, err := os.ReadFile(filepath.Join(repoRoot, "internal", "app", "setup.go"))
+	// The whole PACKAGE is read, not one file. This used to open
+	// internal/app/setup.go by name, and on 2026-09-07 that file was split by
+	// subject: the prefixes moved to guards.go and the audit failed saying the
+	// composition root no longer mentions them — which is a sentence about a
+	// deleted guard, not about a moved declaration. A detector that treats a
+	// FILENAME as its contract fails in a direction that reads like a real
+	// finding, and this repository has paid for that shape before.
+	root := filepath.Join(repoRoot, "internal", "app")
+	entries, err := os.ReadDir(root)
 	require.NoError(t, err, "the composition root could not be read")
 
+	var source strings.Builder
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") ||
+			strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+
+		body, readErr := os.ReadFile(filepath.Join(root, entry.Name()))
+		require.NoError(t, readErr, "internal/app/%s could not be read", entry.Name())
+
+		source.Write(body)
+	}
+
+	require.Positive(t, source.Len(),
+		"no production file was read out of the composition root; this audit proved nothing")
+
 	for _, prefix := range copiedPrefixes {
-		require.Contains(t, string(source), `"`+prefix+`"`,
-			"the composition root no longer mentions the %q prefix.\n"+
+		require.Contains(t, source.String(), `"`+prefix+`"`,
+			"the composition root no longer mentions the %q prefix anywhere.\n"+
 				"guardedPrefixes is a copy of what it installs; if the prefix moved, this "+
 				"audit is checking routes against a guard that is not there.", prefix)
 	}

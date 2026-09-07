@@ -1,0 +1,480 @@
+package checkout
+
+// This file holds the saga's FIRST step: reserving the stock.
+//
+// The step's quartet (Name/Restore/Invoke/Compensate) stands here together with
+// the private helpers only it calls — choosing the location, reserving the
+// line, ranking the candidates, unwinding a half-finished reservation — and
+// with [reservationRef], the trace a reservation leaves behind. The steps do
+// not call one another; what all five DO share stays in steps.go.
+
+import (
+	"context"
+	"encoding/json"
+	"slices"
+
+	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/internal/core/workflow"
+)
+
+// reservationRef is the trace of a reservation taken for one line.
+type reservationRef struct {
+	// LineItemID is the cart line the reservation was opened for.
+	LineItemID string `json:"line_item_id"`
+	// ReservationID is the reservation identifier the inventory module produced.
+	ReservationID string `json:"reservation_id"`
+	// LocationID is the location the stock was RESERVED at.
+	//
+	// It is not needed in order to release it — compensation uses only the
+	// reservation identifier — but it IS written to the record: because the
+	// location can be picked per line (see [CompleteCartInput.LocationID]), the
+	// lines of one order may have been reserved from different warehouses. An
+	// operator intervening by hand must be able to answer the "which warehouse"
+	// question from the execution record; without the field the answer could only
+	// be found by asking the inventory module one line at a time.
+	LocationID string `json:"location_id"`
+}
+
+// reserveInventoryStep reserves stock for every line of the cart.
+type reserveInventoryStep struct {
+	w    *Workflows
+	plan *checkoutPlan
+}
+
+// reserveOutput is the inventory step's output written to the execution record.
+type reserveOutput struct {
+	// Reservations are the reservations that were taken.
+	Reservations []reservationRef `json:"reservations"`
+}
+
+// Name returns the step's name.
+func (s *reserveInventoryStep) Name() string { return StepReserveInventory }
+
+// Restore rebuilds the reservations that were taken FROM THE RECORD.
+//
+// The only thing compensation needs is the reservation identifiers, and they are
+// already durable in the step's output: [reserveOutput]. That is why the stock
+// of an abandoned execution can be released even after the process has died.
+//
+// An empty output returns an ERROR: the output of a step that took reservations
+// cannot be empty, and quietly putting an empty slice in its place would make
+// compensation claim "done" without having found the stock it is meant to
+// release.
+func (s *reserveInventoryStep) Restore(sc *workflow.StepContext, output json.RawMessage) error {
+	var out reserveOutput
+	if err := json.Unmarshal(output, &out); err != nil {
+		return errors.Wrap(err, errors.KindInternal, CodeSharedStateInvalid,
+			"the output of step %q could not be decoded", StepReserveInventory)
+	}
+	if len(out.Reservations) == 0 {
+		return errors.Internal(CodeSharedStateInvalid,
+			"the record of step %q holds no reservation; compensation cannot know what to release",
+			StepReserveInventory)
+	}
+
+	sc.Shared[sharedReservations] = out.Reservations
+
+	return nil
+}
+
+// Invoke reserves stock per line and writes the identifiers into the shared map.
+//
+// The identifiers are written AFTER every successful reservation, not once they
+// are all done: compensation (and the engine's best-effort compensation) reads
+// that map as the only source of truth it has, and if it cannot find the trace
+// of a half-finished step there, the reserved stock would stay dangling.
+//
+// # A half-finished step does its OWN cleanup
+//
+// If a line blows up, the reservations taken up to that point are released HERE.
+// The reason is the engine's contract: a step that fails on its single attempt
+// is NOT compensated, so the debt of "either succeed completely or leave no work
+// behind" belongs to the step (see the internal/core/workflow package comment). If the
+// cleanup blows up as well, the error is wrapped with
+// [workflow.ErrUncompensated]: seeing the sentinel, the engine writes the
+// execution as compensation_failed rather than "rolled back", and manual
+// intervention is requested.
+//
+// # An EMPTY reservation identifier does not count as success
+//
+// If the inventory module returns an empty identifier without an error, the
+// reservation WAS made but we do NOT have its trace: neither this step nor
+// compensation can release it. Accepting it silently would leave a reservation
+// that appears on no list dangling forever; that is why the case is reported
+// with [workflow.ErrUncompensated] and the reservations taken up to that point
+// are released all the same.
+//
+// # The location is decided PER line
+//
+// If the caller did not name a location, the warehouse of every line is decided
+// separately (see [reserveInventoryStep.locationFor]) and the lines of one order
+// may be reserved from different warehouses. The candidates and the preference
+// order are resolved immediately BEFORE the reservation, not during preparation:
+// the candidates are a fact read without a lock, and every millisecond between
+// the read and the reservation is a chance for a warehouse that made the list to
+// be exhausted by the time Reserve is reached. The race does not close
+// completely — the only thing that closes it is Reserve's own lock — but the
+// window is not widened for nothing; that is why the ordering is asked for ONCE
+// per line.
+//
+// The ordering is a new point at which a line can blow up as well, and just like
+// the reservation it falls to [reserveInventoryStep.unwind]: the reservations of
+// the previous lines are released. In a multi-warehouse cart this happens more
+// easily — the first line may have been reserved from one warehouse while the
+// second line is found in no warehouse at all.
+func (s *reserveInventoryStep) Invoke(ctx context.Context, sc *workflow.StepContext) (any, error) {
+	refs := make([]reservationRef, 0, len(s.plan.Lines))
+
+	for i := range s.plan.Lines {
+		line := s.plan.Lines[i]
+
+		locationID, reservationID, err := s.reserveLine(ctx, line)
+		if err != nil {
+			return nil, s.unwind(ctx, sc, refs, line, locationID, err)
+		}
+		if reservationID == "" {
+			return nil, s.unwind(ctx, sc, refs, line, locationID, errors.Join(
+				errors.Internal(CodeEmptyIdentifier,
+					"the inventory module returned an EMPTY reservation identifier for line %s; the reserved stock cannot be released",
+					line.LineItemID),
+				workflow.ErrUncompensated))
+		}
+
+		refs = append(refs, reservationRef{
+			LineItemID:    line.LineItemID,
+			ReservationID: reservationID,
+			LocationID:    locationID,
+		})
+		sc.Shared[sharedReservations] = refs
+	}
+
+	s.w.log.DebugContext(ctx, "stock reserved",
+		"cart_id", s.plan.CartID, "lines", len(refs))
+	return reserveOutput{Reservations: refs}, nil
+}
+
+// locationFor returns the CANDIDATE locations the line's stock can be reserved
+// from.
+//
+// It returns a LIST rather than a single location, and the reason is concrete:
+// the candidates are read without a lock, the reservation is made under a lock,
+// and in the window between them the chosen warehouse can run out. Had it
+// returned a single location the caller would have nowhere to fall back to, and
+// the order would be dropped while stock sat in another warehouse (see
+// [reserveInventoryStep.reserveLine]).
+//
+// # If the caller named one there is NO CHOICE
+//
+// If [CompleteCartInput.LocationID] is set, a single-element list is returned
+// and no module is asked. The location named is not a preference but an
+// INSTRUCTION; treating it as a "candidate" and having the fulfillment module
+// approve it could silently change the caller's decision.
+//
+// # If it is empty the candidates come from the INVENTORY module
+//
+// Which warehouses hold enough units is a FACT and it is the inventory module's
+// job. Which of them it ships from is a DECISION and it belongs to the
+// fulfillment module (see [reserveInventoryStep.rankCandidates]). The split is
+// deliberate: gathering the two halves on one surface would tie the stock query
+// to fulfillment policy, or fulfillment policy to the stock schema.
+//
+// # If there is no candidate THIS package makes the call
+//
+// The inventory module returns an empty list, not an error (see
+// [Inventory.LocationsWithStock]); it is this step that draws the "cannot be
+// ordered" conclusion, and the class is the SAME one Reserve returns on
+// insufficient stock (errors.Conflict, [CodeReservationFailed]). Asking the
+// fulfillment module about an empty list would produce an error of the same
+// class too, but it would point at the wrong module: what is missing is not a
+// warehouse to ship from but the STOCK to reserve, and what the operator needs
+// to see in the message is the item and the quantity.
+func (s *reserveInventoryStep) locationFor(ctx context.Context, line planLine) ([]string, error) {
+	if s.plan.LocationID != "" {
+		return []string{s.plan.LocationID}, nil
+	}
+
+	candidates, err := s.w.inventory.LocationsWithStock(ctx, line.InventoryItemID, line.Quantity)
+	if err != nil {
+		return nil, err
+	}
+	if len(candidates) == 0 {
+		return nil, errors.Conflict(CodeReservationFailed,
+			"no location can reserve %d of item %s", line.Quantity, line.InventoryItemID)
+	}
+
+	return candidates, nil
+}
+
+// reserveLine reserves the line's stock and returns the location that was used.
+//
+// # Why we do not settle for a single candidate
+//
+// The candidate list is read WITHOUT A LOCK, while the reservation is made under
+// a lock. In the window between them the warehouse at the head of the order may
+// have run out of stock, and Reserve then returns errors.Conflict. An
+// implementation that settled for one candidate would drop the WHOLE order — and
+// that while ANOTHER warehouse held enough stock.
+//
+// This is not merely a theoretical race: the order is deterministic, meaning
+// every concurrently arriving order tries the SAME warehouse and they all
+// collide on the same row. A deterministic order does not reduce contention, it
+// concentrates it.
+//
+// # The order is asked for ONCE
+//
+// The fulfillment module is called once per line and gives the preference order;
+// falling back means moving on to the next entry in that list. Asking again on
+// every exhaustion would produce the same answer (the order is deterministic)
+// but would re-read the policy records every time: N queries instead of one for
+// a line with N candidates, and every one of them a round trip that lengthens
+// the race window between the candidates being read WITHOUT A LOCK and the
+// reservation being made UNDER one.
+//
+// # Why this is NOT retrying the step
+//
+// The engine's step retry is deliberately off (see [Workflows.CompleteCart]): if
+// Reserve is called twice it produces two reservations. There is no such risk
+// here — the call being fallen back from FAILED, which means it left no
+// reservation behind. What is being tried is not the same work but ANOTHER
+// warehouse for the same work.
+//
+// # A fallback happens only on a CONFLICT
+//
+// errors.Conflict means "not enough stock" in the [Inventory.Reserve] contract,
+// and another warehouse may answer differently. The other error classes (an
+// unreachable database, invalid input) give the SAME answer at every warehouse;
+// insisting on them would hide the fault and multiply the latency by the number
+// of candidates.
+//
+// If the caller DID name a location the order has a single entry and there is
+// nowhere to fall back to: the location named is not a preference but an
+// instruction.
+//
+// # The loop TERMINATES
+//
+// The order is a finite slice and every turn advances by one element;
+// termination is bounded by the length of the slice, independently of what the
+// fulfillment module returns. This is the second gain from asking for the order
+// once: termination used to depend on the chosen candidate being removable from
+// the list — that is, on the module not going OUTSIDE the candidate set.
+func (s *reserveInventoryStep) reserveLine(
+	ctx context.Context, line planLine,
+) (locationID, reservationID string, err error) {
+	candidates, err := s.locationFor(ctx, line)
+	if err != nil {
+		return "", "", err
+	}
+
+	ranked, err := s.rankCandidates(ctx, line, candidates)
+	if err != nil {
+		return "", "", err
+	}
+
+	var lastErr error
+
+	for i, chosen := range ranked {
+		reservationID, err := s.w.inventory.Reserve(ctx,
+			line.InventoryItemID, chosen, line.Quantity, line.LineItemID)
+
+		switch {
+		case err == nil:
+			return chosen, reservationID, nil
+		case !errors.IsConflict(err):
+			return chosen, "", err
+		}
+
+		lastErr = err
+
+		s.w.log.DebugContext(ctx, "warehouse exhausted, moving on to the next candidate",
+			"cart_id", s.plan.CartID, "line_item_id", line.LineItemID,
+			"location_id", chosen, "rank_length", len(ranked), "rank_index", i)
+	}
+
+	return "", "", lastErr
+}
+
+// rankCandidates has the fulfillment module rank the candidates into PREFERENCE ORDER.
+//
+// If the caller named a location there is no ordering and no module is asked:
+// the location named is not a preference but an INSTRUCTION; treating it as a
+// "candidate" and having the fulfillment module approve it could silently change
+// the caller's decision.
+//
+// Otherwise the question splits in TWO: which warehouses hold enough stock is a
+// FACT (the inventory module, already called and in our hands), which of them it
+// ships from is a DECISION (the fulfillment module). This package building the
+// order would be the worst of all — the cart flow has nothing to say about
+// warehouse policy.
+//
+// The only context that enters the decision is the order's REGION, and it comes
+// from the plan. The fulfillment module knows from its own records whether a
+// warehouse serves that region; what this package carries is not the policy but
+// the policy's QUESTION. Anything beyond the region (e.g. the delivery address)
+// is deliberately not passed on: the execution record is a durable ledger and
+// plan Section 8 asks that sensitive data not be written there.
+//
+// # The answer is checked in three places
+//
+// If the fulfillment module returns an empty order, an identifier that is not a
+// candidate, or the same candidate twice, the error is errors.Internal. All
+// three are violations of the contract, and had they not been checked the fault
+// would have surfaced one module away from its cause: a reservation would be
+// tried at a warehouse that is not a candidate, and a duplicated candidate would
+// lead to the same warehouse being visited twice.
+func (s *reserveInventoryStep) rankCandidates(
+	ctx context.Context, line planLine, candidates []string,
+) ([]string, error) {
+	if s.plan.LocationID != "" {
+		return []string{s.plan.LocationID}, nil
+	}
+
+	ranked, err := s.w.fulfillment.RankLocations(ctx, s.plan.RegionID, candidates)
+	if err != nil {
+		return nil, err
+	}
+	if len(ranked) == 0 {
+		return nil, errors.Internal(CodeReservationFailed,
+			"the fulfillment module returned an EMPTY order out of %d candidates (item %s)",
+			len(candidates), line.InventoryItemID)
+	}
+
+	seen := make(map[string]struct{}, len(ranked))
+	for _, chosen := range ranked {
+		if !slices.Contains(candidates, chosen) {
+			return nil, errors.Internal(CodeReservationFailed,
+				"the fulfillment module ranked a location that is not a candidate: %s (item %s)",
+				chosen, line.InventoryItemID)
+		}
+		if _, dup := seen[chosen]; dup {
+			return nil, errors.Internal(CodeReservationFailed,
+				"the fulfillment module ranked the same location twice: %s (item %s)",
+				chosen, line.InventoryItemID)
+		}
+		seen[chosen] = struct{}{}
+	}
+
+	return ranked, nil
+}
+
+// unwind does the half-finished reservation's own cleanup and produces the final
+// error.
+//
+// The cleanup is retried with the SAME policy as the engine's compensation (see
+// [retryCleanup]) and every attempt touches only the REMAINING reservations:
+// releasing an already released reservation is pointless, and pruning the list
+// keeps it visible which identifier is really left dangling.
+//
+// locationID is the line's warehouse and it is empty in TWO cases: when the
+// order could not be built at all (there is no candidate, or all of them were
+// filtered out) and when ALL the warehouses in the order were tried and
+// exhausted. The message says "unselected" in both, and that is what the message
+// DOES NOT SAY — which of the two happened is read FROM THE CODE (if there is no
+// candidate, this package's code; if the filtering emptied it, the fulfillment
+// module's code; if it was exhausted, the inventory module's code). Writing the
+// plan's location would be wrong: the field is optional, and putting an empty
+// field into the message in a flow that picks a warehouse per line would make
+// the operator say "we tried to reserve at an empty location".
+//
+// # The CODE of the underlying error is preserved
+//
+// The wrapping class (Kind) was already inherited from the underlying error; the
+// code is inherited too, and [CodeReservationFailed] is only a FALLBACK for an
+// error that carries no code. The pattern is taken from the engine's own
+// wrapping (see [github.com/bdrtr/gobit/internal/core/workflow.CodeStepFailed])
+// and the rationale is written down there with a measured price: the transport
+// layer writes a single machine-readable field (the code) into the body, and if
+// that field flattens to a single value the client cannot tell different faults
+// apart.
+//
+// The price is even more concrete here. Three separate worlds blow up in the
+// same class (409) in this step: no warehouse holds enough stock, the chosen
+// warehouse was exhausted in the race, or no candidate SERVES the order's
+// region. The third is NOT a stock problem but the consequence of a fulfillment
+// policy the operator wrote, and its fix lies somewhere else. Had the code been
+// overwritten, "stock could not be reserved" would be reported with full shelves
+// and the operator would not find the place to look — the message chain carries
+// the cause, but the transport layer only publishes the outermost message.
+func (s *reserveInventoryStep) unwind(
+	ctx context.Context,
+	sc *workflow.StepContext,
+	refs []reservationRef,
+	line planLine,
+	locationID string,
+	cause error,
+) error {
+	location := locationID
+	if location == "" {
+		location = "unselected"
+	}
+	code := errors.CodeOf(cause)
+	if code == "" {
+		code = CodeReservationFailed
+	}
+	failure := errors.Wrap(cause, errors.KindOf(cause), code,
+		"stock could not be reserved for line %s (item %s, location %s, quantity %d)",
+		line.LineItemID, line.InventoryItemID, location, line.Quantity)
+	if len(refs) == 0 {
+		return failure
+	}
+
+	cctx, cancel := cleanupContext(ctx)
+	defer cancel()
+
+	remaining := refs
+	releaseErr := retryCleanup(cctx, func() error {
+		var err error
+		remaining, err = s.w.releaseAll(cctx, remaining)
+		return err
+	})
+	sc.Shared[sharedReservations] = remaining
+	if releaseErr == nil {
+		return failure
+	}
+
+	s.w.log.ErrorContext(ctx, "the half-finished stock reservation could not be released; manual intervention is required",
+		"cart_id", s.plan.CartID, "leaked", len(remaining), "error", releaseErr)
+
+	return errors.Wrap(errors.Join(failure, releaseErr, workflow.ErrUncompensated),
+		errors.KindInternal, CodeReservationLeaked,
+		"cart %s has %d reservations left dangling", s.plan.CartID, len(remaining))
+}
+
+// Compensate releases all the stock that was reserved; it is IDEMPOTENT.
+//
+// An already released reservation does not fail on the second call, so
+// compensation can be retried. The ones that could not be released STAY in the
+// shared map: if compensation is retried only those are tried, and the engine's
+// record shows which reservation is dangling.
+//
+// If a capture was made the stock is NOT RELEASED (see
+// [Workflows.skipAfterCapture]): a paid order stays standing and its goods must
+// still be reserved; releasing them would mean selling the same stock a second
+// time.
+func (s *reserveInventoryStep) Compensate(ctx context.Context, sc *workflow.StepContext) error {
+	skip, err := s.w.skipAfterCapture(ctx, sc, StepReserveInventory, s.plan.CartID)
+	if err != nil {
+		return err
+	}
+	if skip {
+		return nil
+	}
+
+	refs, err := sharedRefs(sc)
+	if err != nil {
+		return err
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+
+	remaining, releaseErr := s.w.releaseAll(ctx, refs)
+	sc.Shared[sharedReservations] = remaining
+	if releaseErr != nil {
+		return errors.Wrap(releaseErr, errors.KindOf(releaseErr), CodeReservationLeaked,
+			"cart %s has %d reservations that could not be released", s.plan.CartID, len(remaining))
+	}
+
+	s.w.log.InfoContext(ctx, "compensation: stock reservations released",
+		"cart_id", s.plan.CartID, "reservations", len(refs))
+	return nil
+}

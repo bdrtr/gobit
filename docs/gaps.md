@@ -1287,8 +1287,16 @@ consumer-blocked rows unblock in pairs rather than one at a time.
   the gate is PREVENTIVE, which is also why it was not worth shipping in a
   hurry.
 
-- **D24** **A carrier's events arrive out of order, and the shipment state
-  machine refused all of it — while tolerating repeats.** Measured 2026-09-06 by
+- **D24** ~~**A carrier's events arrive out of order, and the shipment state
+  machine refused all of it — while tolerating repeats.**~~ **Fixed, and the
+  entry read as OPEN long after it was — noticed 2026-09-07 while auditing this
+  section.** The fourth outcome is in the tree as `models.ActionRecord`
+  (internal/modules/fulfillment/models/status.go), carrying the argument this
+  entry prescribes verbatim, and `CancelAction` documents why cancellation stays
+  strict. The measurement below stands as the record of what was wrong; only the
+  heading was stale. Worth noting as a class: a fix can land while its own
+  inventory row keeps reading as work to do, and the next person plans against
+  the row rather than the tree. Measured 2026-09-06 by
   printing the whole transition table from a throwaway probe rather than reading
   it by eye, and the shape of the answer is what makes it worth an entry: a
   second ship, deliver or cancel landed on a no-op, so IDEMPOTENCE was handled,

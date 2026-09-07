@@ -13,6 +13,177 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/repository/orderdb"
 )
 
+// CreateReturn opens a new return record.
+func (r *Repository) CreateReturn(ctx context.Context, ret models.Return) (models.Return, error) {
+	meta, err := fromJSONMap(ret.Metadata)
+	if err != nil {
+		return models.Return{}, err
+	}
+
+	row, err := r.queries(ctx).CreateOrderReturn(ctx, orderdb.CreateOrderReturnParams{
+		ID:           ret.ID,
+		OrderID:      ret.OrderID,
+		Status:       ret.Status.String(),
+		RefundAmount: ret.RefundAmount,
+		Reason:       nullString(ret.Reason),
+		Note:         nullString(ret.Note),
+		Metadata:     meta,
+	})
+	if err != nil {
+		return models.Return{}, classify(err, codeQueryFailed, "could not create the return record")
+	}
+	return toReturn(row)
+}
+
+// GetReturn returns the return record by its identifier; NotFound if there is
+// none.
+func (r *Repository) GetReturn(ctx context.Context, id string) (models.Return, error) {
+	row, err := r.queries(ctx).GetOrderReturn(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.Return{}, coreerrors.NotFound(codeReturnNotFound, "return record not found: %s", id)
+		}
+		return models.Return{}, classify(err, codeQueryFailed, "could not read the return record")
+	}
+	return toReturn(row)
+}
+
+// ListReturns pages the order's return records; the second value is the total
+// count.
+func (r *Repository) ListReturns(ctx context.Context, filter models.ChildFilter) ([]models.Return, int64, error) {
+	rows, err := r.queries(ctx).ListOrderReturns(ctx, orderdb.ListOrderReturnsParams{
+		OrderID:   filter.OrderID,
+		RowLimit:  filter.Limit,
+		RowOffset: filter.Offset,
+	})
+	if err != nil {
+		return nil, 0, classify(err, codeQueryFailed, "could not list the return records")
+	}
+	total, err := r.queries(ctx).CountOrderReturns(ctx, filter.OrderID)
+	if err != nil {
+		return nil, 0, classify(err, codeQueryFailed, "could not count the return records")
+	}
+	items, err := toReturns(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+// CreateExchange opens a new exchange record.
+func (r *Repository) CreateExchange(ctx context.Context, exchange models.Exchange) (models.Exchange, error) {
+	meta, err := fromJSONMap(exchange.Metadata)
+	if err != nil {
+		return models.Exchange{}, err
+	}
+
+	row, err := r.queries(ctx).CreateOrderExchange(ctx, orderdb.CreateOrderExchangeParams{
+		ID:            exchange.ID,
+		OrderID:       exchange.OrderID,
+		Status:        exchange.Status.String(),
+		DifferenceDue: exchange.DifferenceDue,
+		Note:          nullString(exchange.Note),
+		Metadata:      meta,
+	})
+	if err != nil {
+		return models.Exchange{}, classify(err, codeQueryFailed, "could not create the exchange record")
+	}
+	return toExchange(row)
+}
+
+// GetExchange returns the exchange record by its identifier; NotFound if there
+// is none.
+func (r *Repository) GetExchange(ctx context.Context, id string) (models.Exchange, error) {
+	row, err := r.queries(ctx).GetOrderExchange(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.Exchange{}, coreerrors.NotFound(codeExchangeNotFound, "exchange record not found: %s", id)
+		}
+		return models.Exchange{}, classify(err, codeQueryFailed, "could not read the exchange record")
+	}
+	return toExchange(row)
+}
+
+// ListExchanges pages the order's exchange records; the second value is the
+// total count.
+func (r *Repository) ListExchanges(ctx context.Context, filter models.ChildFilter) ([]models.Exchange, int64, error) {
+	rows, err := r.queries(ctx).ListOrderExchanges(ctx, orderdb.ListOrderExchangesParams{
+		OrderID:   filter.OrderID,
+		RowLimit:  filter.Limit,
+		RowOffset: filter.Offset,
+	})
+	if err != nil {
+		return nil, 0, classify(err, codeQueryFailed, "could not list the exchange records")
+	}
+	total, err := r.queries(ctx).CountOrderExchanges(ctx, filter.OrderID)
+	if err != nil {
+		return nil, 0, classify(err, codeQueryFailed, "could not count the exchange records")
+	}
+	items, err := toExchanges(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+// CreateClaim opens a new claim record.
+func (r *Repository) CreateClaim(ctx context.Context, claim models.Claim) (models.Claim, error) {
+	meta, err := fromJSONMap(claim.Metadata)
+	if err != nil {
+		return models.Claim{}, err
+	}
+
+	row, err := r.queries(ctx).CreateOrderClaim(ctx, orderdb.CreateOrderClaimParams{
+		ID:           claim.ID,
+		OrderID:      claim.OrderID,
+		ClaimType:    claim.Type.String(),
+		Status:       claim.Status.String(),
+		RefundAmount: claim.RefundAmount,
+		Reason:       nullString(claim.Reason),
+		Note:         nullString(claim.Note),
+		Metadata:     meta,
+	})
+	if err != nil {
+		return models.Claim{}, classify(err, codeQueryFailed, "could not create the claim record")
+	}
+	return toClaim(row)
+}
+
+// GetClaim returns the claim record by its identifier; NotFound if there is
+// none.
+func (r *Repository) GetClaim(ctx context.Context, id string) (models.Claim, error) {
+	row, err := r.queries(ctx).GetOrderClaim(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.Claim{}, coreerrors.NotFound(codeClaimNotFound, "claim record not found: %s", id)
+		}
+		return models.Claim{}, classify(err, codeQueryFailed, "could not read the claim record")
+	}
+	return toClaim(row)
+}
+
+// ListClaims pages the order's claim records; the second value is the total
+// count.
+func (r *Repository) ListClaims(ctx context.Context, filter models.ChildFilter) ([]models.Claim, int64, error) {
+	rows, err := r.queries(ctx).ListOrderClaims(ctx, orderdb.ListOrderClaimsParams{
+		OrderID:   filter.OrderID,
+		RowLimit:  filter.Limit,
+		RowOffset: filter.Offset,
+	})
+	if err != nil {
+		return nil, 0, classify(err, codeQueryFailed, "could not list the claim records")
+	}
+	total, err := r.queries(ctx).CountOrderClaims(ctx, filter.OrderID)
+	if err != nil {
+		return nil, 0, classify(err, codeQueryFailed, "could not count the claim records")
+	}
+	items, err := toClaims(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
 // LockReturn locks the return row until the end of the transaction and returns
 // its current form.
 //
