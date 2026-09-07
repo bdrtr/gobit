@@ -162,10 +162,29 @@ a different answer, and it is still open.
 - **Six copies of one function are still six copies.** The audit makes a
   disagreement loud; it does not make one impossible, and that is a weaker
   guarantee than this repository usually accepts.
-- **`lower()` is still unprobed.** `core/db/casefold.go` checks `ILIKE` and
-  `to_tsvector`. Nothing in the tree now depends on `lower()` folding non-ASCII,
-  so the hole is not live — but it is a hole, and the next query written with
-  `lower()` reopens it silently. D27 carries it.
+- **~~`lower()` is still unprobed. Nothing in the tree now depends on `lower()`
+  folding non-ASCII, so the hole is not live.~~ THE SECOND SENTENCE WAS FALSE and
+  it was checked the next day (2026-09-07).** Three modules depend on exactly
+  that: `auth`, `customer` and `b2b` each guard their e-mail column with
+  `CHECK (email <> '' AND email = lower(email))`. Measured on a `--locale=C`
+  cluster, that constraint REFUSES the unfolded ASCII address `Ada@Example.com`
+  and ACCEPTS an unfolded Turkish one, because `lower()` leaves those capitals
+  alone and the value therefore equals its own `lower()` — so the guard that is
+  meant to be the last defense behind the Go fold stops guarding at the ASCII
+  boundary, and two rows for one person is what the unique index on that column
+  then cannot prevent. `promotion_code_check` has the same shape and is SOUND, for
+  a reason that had never been written down: its validator admits only `A-Z`,
+  `0-9`, `-` and `_`.
+
+  `lower()` is now the probe's third path, the constraints carry written
+  declarations of what they hold, and `internal/arch/case_folding_test.go`
+  refuses a new one that does not. D28 has the reproduction.
+
+  **The mistake is the part worth keeping.** This bullet was written while
+  removing the last `lower()` from a query, and it generalized from "the
+  predicates are clean" to "the tree is clean" without looking at constraints at
+  all. A claim about what a whole repository does not do is a claim that has to
+  be searched for, not inferred from the thing just fixed.
 
 ## What this deliberately does NOT do
 

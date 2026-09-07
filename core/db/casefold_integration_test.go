@@ -21,12 +21,15 @@ import (
 // This file proves that opening a pool against a cluster which cannot fold
 // non-ASCII case SAYS SO, and that a correctly created cluster stays quiet.
 //
-// # Why two containers
+// # Why four containers
 //
 // One container cannot prove anything here. A probe hard-wired to "everything
 // is fine" would pass a single-cluster test, and that is precisely the bug the
 // probe exists to prevent — a silent all-clear. The claim is that the check
-// DISCRIMINATES, so both sides have to be shown.
+// DISCRIMINATES, so every side has to be shown: a cluster that folds nothing, a
+// cluster that folds everything, a cluster that folds two of the three paths,
+// and — added 2026-09-07 — one where the three flags do not move together at
+// all, which is what stops the check from being collapsed into any one of them.
 //
 // # Why the assertion is on the LOG
 //
@@ -40,8 +43,22 @@ import (
 const caseFoldingWarning = "folds ASCII case only"
 
 // clusterWithLocale starts a Postgres container created with the given initdb
-// locale and returns its DSN.
+// locale, at the UTF8 encoding this repository's compose pins, and returns its
+// DSN.
 func clusterWithLocale(t *testing.T, locale string) string {
+	t.Helper()
+
+	return clusterWithInitdbArgs(t, "--encoding=UTF8 --locale="+locale)
+}
+
+// clusterWithInitdbArgs starts a Postgres container with initdb arguments given
+// in full.
+//
+// It exists because the ENCODING is a variable and not a constant: every test
+// above holds it at UTF8, which is what deploy/docker-compose.yml pins, and one
+// test below deliberately does not — see
+// [TestAnAsciiEncodedClusterShowsWhyTheCheckIsAConjunction].
+func clusterWithInitdbArgs(t *testing.T, args string) string {
 	t.Helper()
 
 	ctx := context.Background()
@@ -51,11 +68,11 @@ func clusterWithLocale(t *testing.T, locale string) string {
 		tcpostgres.WithPassword("gobit"),
 		tcpostgres.BasicWaitStrategies(),
 		testcontainers.WithEnv(map[string]string{
-			"POSTGRES_INITDB_ARGS": "--encoding=UTF8 --locale=" + locale,
+			"POSTGRES_INITDB_ARGS": args,
 		}),
 	)
 	t.Cleanup(func() { _ = testcontainers.TerminateContainer(ctr) })
-	require.NoError(t, err, "the %s container could not be started", locale)
+	require.NoError(t, err, "the container for %q could not be started", args)
 
 	dsn, err := ctr.ConnectionString(ctx, "sslmode=disable")
 	require.NoError(t, err)
@@ -96,6 +113,10 @@ func TestAnAsciiOnlyClusterWarnsAtStartup(t *testing.T) {
 		"ILIKE is what the storefront's own ?q= filter uses")
 	assert.Equal(t, false, line["full_text"],
 		"to_tsvector is what the search plugin indexes with")
+	assert.Equal(t, false, line["case_lower"],
+		"lower() is what the e-mail CHECK constraints in auth, customer and b2b are written with")
+	assert.Contains(t, line["effect_identity"], "two accounts",
+		"the identity cost is not a search miss and the warning has to say so")
 	assert.Contains(t, line["fix"], "C.UTF-8",
 		"the warning has to name the fix; an operator cannot act on a diagnosis alone")
 }
@@ -140,6 +161,44 @@ func TestAnIcuClusterIsStillWarnedAbout(t *testing.T) {
 		"ICU does fold the pattern matcher, and the warning must say so")
 	assert.Equal(t, false, line["full_text"],
 		"ICU does NOT fold the text-search parser; this is the half that stays broken")
+	assert.Equal(t, true, line["case_lower"],
+		"ICU folds lower() too, so the e-mail constraints are sound on this cluster "+
+			"even though the search index is not")
+}
+
+// TestAnAsciiEncodedClusterShowsWhyTheCheckIsAConjunction is the configuration
+// that used to be missing, and it is the one that makes [db.CaseFolding.OK] more
+// than a habit.
+//
+// That method's godoc used to record, as a measured fact, that no configuration
+// had been found where the text-search parser folds and the pattern matcher does
+// not — so `return c.FullText` alone would have behaved identically. It kept the
+// conjunction anyway, on the ground that the equivalence belonged to PostgreSQL
+// rather than to gobit. This is the counterexample, and it was found by varying
+// the one thing every other test here holds fixed: the ENCODING.
+//
+// Left to itself under --locale=C, initdb chooses SQL_ASCII, and there
+// to_tsvector reports a match while ILIKE does not. The shortcut would have
+// called this cluster healthy. gobit's own compose passes --encoding=UTF8, so
+// this is not a cluster this repository produces — but the probe exists for the
+// installation running its own PostgreSQL, which is exactly the one that never
+// saw that flag.
+func TestAnAsciiEncodedClusterShowsWhyTheCheckIsAConjunction(t *testing.T) {
+	t.Parallel()
+
+	output := openAndCaptureLog(t, clusterWithInitdbArgs(t, "--locale=C"))
+
+	require.Contains(t, output, caseFoldingWarning,
+		"a cluster whose ILIKE cannot fold must be warned about however its text search behaves")
+
+	line := logLineContaining(t, output, caseFoldingWarning)
+	assert.Equal(t, false, line["pattern_matching"],
+		"ILIKE does not fold here, which is what the operator has to be told")
+	assert.Equal(t, true, line["full_text"],
+		"the text-search parser DOES report a match on this cluster; this is the row that "+
+			"falsifies \"full text implies pattern\" and the reason OK() is a conjunction")
+	assert.Equal(t, false, line["case_lower"],
+		"lower() does not fold, so the e-mail guards do not guard here either")
 }
 
 // logLineContaining returns the decoded JSON log record carrying the substring.

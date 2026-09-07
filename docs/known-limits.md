@@ -110,13 +110,24 @@ past and is not corrected retroactively.
   from the region record; in an installation with no region defined at all one
   sees `19990 TRY (minor units)`. Assuming a fixed 100 would show the WRONG
   amount for currencies with 0 and 3 digits, such as JPY and KWD.
-- **Search depends on the database cluster's CTYPE setting, and that setting is
-  fixed at initdb time.** Both the storefront's own `?q=` filter
-  (`title ILIKE`) and the `search-pg` plugin's index (`to_tsvector`) leave case
-  folding to PostgreSQL. A cluster created with `--locale=C` folds ASCII only,
-  so a search for a lowercase word carrying a non-ASCII letter does NOT FIND the
-  product whose title carries the uppercase form of that letter — with no error,
-  silently. (The letter pair that shows it is pinned by the probe in
+- **Search AND the e-mail guards depend on the database cluster's CTYPE setting,
+  and that setting is fixed at initdb time.** Three things leave case folding to
+  PostgreSQL: the storefront's own `?q=` filter (`title ILIKE`), the `search-pg`
+  plugin's index (`to_tsvector`), and the `CHECK (email = lower(email))`
+  constraint that `auth`, `customer` and `b2b` each put on their e-mail column. A
+  cluster created with `--locale=C` folds ASCII only, so a search for a lowercase
+  word carrying a non-ASCII letter does NOT FIND the product whose title carries
+  the uppercase form of that letter — with no error, silently.
+
+  The third one fails differently and it is worth stating on its own: the
+  constraint keeps accepting rows, it just stops refusing the wrong ones. On such
+  a cluster it still rejects an unfolded ASCII address and accepts an unfolded
+  non-ASCII one, so the last defense behind gobit's own folding is absent for
+  exactly the addresses that need it. **This is defense in depth, not the
+  mechanism** — every write path in those three modules folds in Go first
+  (ADR 0038), so an installation is not storing unfolded addresses because of it.
+  What is lost is the backstop against a direct SQL write. The startup probe
+  reports this path as `case_lower`. (The letter pair that shows it is pinned by the probe in
   `core/db/casefold.go` and quoted in
   [ADR 0015](adr/0015-postgresql-cluster-contract.md). It is not repeated here
   because ADR 0012 forbids a Turkish letter in a translated file, and an

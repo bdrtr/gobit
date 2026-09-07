@@ -1221,6 +1221,101 @@ a repository that no longer exists.
   no row in the README's invariant table. Nothing is red, because that audit only
   checks README against the repository and not the reverse, but the row is
   missing.
+- **D28** **A guard that stops guarding at the ASCII boundary, and the ADR that
+  had just declared the class closed.** Found 2026-09-07, one day after D27, by
+  checking a sentence rather than trusting it.
+
+  ADR 0038 ended with: "Nothing in the tree now depends on `lower()` folding
+  non-ASCII, so the hole is not live." **False.** Three modules do — `auth`,
+  `customer` and `b2b` each guard their e-mail column in their `000001`:
+
+      CONSTRAINT auth_user_email_check CHECK (email <> '' AND email = lower(email))
+
+  Reproduced on the development cluster (`datcollate=C`, `datctype=C`,
+  `encoding=UTF8`), against a table carrying only that constraint:
+
+  | inserted | result |
+  |---|---|
+  | `Ada@Example.com` (unfolded, ASCII) | **refused** |
+  | unfolded, with a Turkish capital I and O-diaeresis | **accepted and stored** |
+
+  `lower()` leaves those capitals alone on that cluster, so the value equals its
+  own `lower()` and the CHECK is satisfied by a row it exists to refuse. The
+  column's unique index then cannot help: two spellings of one address are two
+  different byte strings, so one person holds two accounts — which is the exact
+  outcome the fold was introduced to prevent, and which `auth/models` states as
+  its reason for lower-casing the local part at all.
+
+  **How live is it.** Not very, and that is worth being precise about rather than
+  dramatic: every write and lookup path in all three modules was traced and they
+  all fold through `models.NormalizeEmail` first — `CreateUser`, `UpdateUser`,
+  `GetUserByEmail`, the list filters, the b2b company create/update/filter, the
+  customer equivalents, and the erasure and disclosure resolvers. The constraint
+  is defense in depth against a direct SQL write or a future path that forgets.
+  What was wrong was not the data; it was believing the backstop was there.
+
+  **The contrast that makes the finding legible.** `promotion_code_check` is
+  `CHECK (code <> '' AND code = upper(code))` — the same locale-dependent shape,
+  and it is SOUND. `service.normalizeCode` admits only `A-Z`, `0-9`, `-` and `_`
+  and rejects everything else, so the values that can reach the column are ASCII
+  by construction and `upper()` cannot disagree with Go about them on any
+  cluster. That reason existed and had never been written down anywhere, which
+  meant the three unsound constraints and the one sound one were indistinguishable
+  by reading.
+
+  **Fixed by making the dependency speak, not by weakening the constraints.**
+  Rewriting them as `lower(email COLLATE "C")` was considered and refused: it
+  would make the guarantee uniform across clusters by REMOVING real protection on
+  correctly created ones, and the problem was never that the constraint was too
+  strong — it was that nobody could say what it held. So:
+
+  - **`lower()` is the startup probe's third path** (`core/db/casefold.go`),
+    reported as `case_lower` beside `pattern_matching` and `full_text`, with a
+    second effect line naming the identity cost rather than the search cost. The
+    probe still only warns, and that decision now has an argued scope: it is
+    correct for search, and for this it is the difference between an operator
+    knowing and not knowing, since the constraint cannot be repaired without
+    recreating the cluster anyway.
+  - **`internal/arch/case_folding_test.go`** requires every CHECK constraint that
+    folds case to carry a written declaration of what it holds, and REFUSES any
+    query predicate that folds in SQL at all — the shape ADR 0038 removed.
+    Mutation-proved three ways: an undeclared constraint, a new folding
+    predicate, and a folding CHECK with no name.
+
+  **Two measurements came out of it that were not the point.**
+
+  1. **The ENCODING is a fourth variable and it falsifies a claim `OK()` carried.**
+     That method's godoc recorded that no configuration had been found where the
+     text-search parser folds and the pattern matcher does not, so `return
+     c.FullText` would have behaved identically — it kept the conjunction anyway
+     on principle. Left to itself under `--locale=C`, initdb picks `SQL_ASCII`,
+     and there `to_tsvector` reports a match while `ILIKE` does not. The
+     principle was right and now has its counterexample; it is a test
+     (`TestAnAsciiEncodedClusterShowsWhyTheCheckIsAConjunction`), and collapsing
+     `OK()` to the shortcut fails it. gobit's compose pins `--encoding=UTF8`, so
+     this is not a cluster this repository produces — an embedder running their
+     own PostgreSQL is exactly who the probe is for.
+  2. **CTYPE is the knob, not collation.** A cluster made with
+     `--lc-collate=C --lc-ctype=C.UTF-8` folds all three paths, so an operator
+     reading `datcollate` to decide whether they are affected is reading the
+     wrong column.
+
+  **And the development database on the machine this was found on is the broken
+  configuration.** The running `gobit-postgres` container was created 2026-08-23
+  with `POSTGRES_INITDB_ARGS=--encoding=UTF8 --locale=C`, which is what
+  `deploy/docker-compose.yml` used to say before it was corrected to `C.UTF-8`.
+  The locale is fixed at initdb time and the data directory keeps it, so
+  recreating the container changes nothing — the VOLUME has to go. Until it does,
+  storefront search, the searchpg index and the three e-mail guards are all
+  silently ASCII-only on that machine.
+
+  **The lesson.** D27's fix removed the last `lower()` from a query and the ADR
+  generalized from "the predicates are clean" to "the tree is clean". A claim
+  about what a whole repository does NOT do has to be searched for; it cannot be
+  inferred from the thing that was just fixed. The audit added here is the
+  mechanical form of that search, which is the only form that survives the next
+  person who is sure.
+
 - **D27** **A data subject can be told "you are not here" by the one holder that
   is legally required to keep their document.** Found 2026-09-07 while auditing
   the agreement between the five Go `NormalizeEmail` copies, and it is the
@@ -1294,15 +1389,10 @@ a repository that no longer exists.
   shop's startup path to fix a row most of them do not have is the wrong trade.
   An operator who never runs it keeps the defect for those rows.
 
-  **And the probe still does not cover `lower()`.** `core/db/casefold.go` checks
-  `ILIKE` and `to_tsvector`. Nothing in the tree depends on `lower()` folding
-  non-ASCII any more, so the hole is not live — but it is a hole, and the next
-  query written with `lower()` reopens it silently. The probe's warn-only
-  decision is argued in its godoc for SEARCH ("a catalog written entirely in
-  ASCII works perfectly on a C-locale cluster"), and that argument does not
-  transfer to a path whose failure is a false statement to a data subject; if
-  `lower()` is ever added to the probe, that asymmetry is the thing to decide
-  first.
+  **~~And the probe still does not cover `lower()`. Nothing in the tree depends on
+  `lower()` folding non-ASCII any more, so the hole is not live.~~ CLOSED
+  2026-09-07, and the second sentence was FALSE — see D28.** Three CHECK
+  constraints depended on it. `lower()` is now the probe's third path.
 
   **The lesson, which is the part worth keeping.** Five copies of a Go function
   were audited into agreement and the audit was green, while the SIXTH holder

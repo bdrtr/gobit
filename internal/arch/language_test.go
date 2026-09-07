@@ -253,6 +253,10 @@ var diacriticDataExemptions = map[string][]string{
 	"docs/adr/0012-repository-language-and-solid.md": {"`çğıöşüÇĞİÖŞÜ`"},
 	"core/db/casefold.go": {
 		"'Ç' ILIKE 'ç'", "'ÇANTA'", "'çanta'", `"çanta"`, `"Çanta"`,
+		// The third probe path, added 2026-09-07 with lower(). Same argument as
+		// the pair above: an ASCII pair would fold on every cluster and the
+		// probe would test nothing.
+		"lower('Ç') = 'ç'",
 	},
 	// ADR 0015 records the same defect and has to quote the same two words to
 	// show it: the whole finding is that one of them does not match the other.
