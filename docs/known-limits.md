@@ -1,0 +1,334 @@
+# Known limits
+
+What this framework does NOT do, and the argument for each absence.
+
+It is for the person deciding whether gobit fits: an operator sizing a
+deployment, an engineer embedding it, a reviewer asking what was traded away.
+Nothing here is a to-do list. Every entry was investigated, decided on, and its
+justification lives in the godoc of the code it constrains — an opening nobody
+wrote down is an opening nobody closed.
+
+The entry point for the framework itself is the [README](../README.md); the
+decisions are under `docs/adr/`.
+
+This file is in English because ADR 0012 makes language a property of the file
+and every new file is English.
+
+---
+
+This document describes **today**: what follows are limits that still hold on
+`main`. A version name is deliberately NOT written — it would be a dated claim
+needing an update at every release cut, and one that goes quietly stale when it
+does not get one. What has closed DROPS OUT of here; which release closed it
+stands in [`CHANGELOG.md`](../CHANGELOG.md), because that is a record of the
+past and is not corrected retroactively.
+
+## Identity and authorization
+
+- **The customer identity is not verified.** `customer_id` is not a fact but a
+  claim that asks for no proof. Its three separate consequences for the spending
+  limit were measured on a real binary with a single publishable key and are
+  recorded with the B2B spending rule in the [README](../README.md): sending no
+  `customer_id` at all (a guest cart, no limit applies), sending somebody else's
+  (the spend falls from THEIR window), and opening a fresh guest record with
+  `POST /store/v1/customers` and sending that (the new record belongs to no
+  company and is therefore ruleless). The correct sentence for the limit is not
+  "the spending limit is not enforced" but "the limit is applied only to a
+  shopping that **declares** its customer". The decision is in
+  [ADR 0008](adr/0008-musteri-kimligi-guven-siniri.md); the side that has to
+  build the verification is the embedding application.
+- **Storefront carts carry no ownership check** — the model is a capability URL:
+  the cart identifier is minted from a 48-bit timestamp plus 80 bits of
+  cryptographic randomness, it cannot be guessed, and knowing it carries the
+  right of access. The storefront therefore has no list endpoint, because a list
+  endpoint would turn knowing one identifier into reading every cart. The rules
+  of the model, and what it does NOT cover, are written with the cart flows in
+  the [README](../README.md).
+- **Session revocation is wholesale only.** `POST /admin/v1/auth/logout` and a
+  password change drop ALL of the caller's sessions; there is no endpoint that
+  drops a single device (see `internal/modules/auth/api`).
+
+## Sales channel scope
+
+- **A product with no channel assignment is visible in every channel.** The rule
+  is deliberate and backward compatible (on the day it was turned on, the strict
+  alternative would have emptied every existing catalog) but it has a trap:
+  deleting the last channel binding does not hide the product, it opens it to
+  every storefront. `status` is what hides it. The single source of the rule is
+  the SQL template in
+  `internal/modules/product/repository/saleschannel.go`.
+- **The scope is enforced ON ENTRY; the quantity of a line already in the cart
+  can be raised afterwards.** The path that updates a line quantity
+  (`internal/workflows/cart/update_line_item.go`) and the completion flow do not
+  ask the scope again. The consequence: even after a product has been moved to
+  another channel, a client that already has a line for it in its cart can buy
+  MORE of that product. This is the price of the decision whose justification is
+  written with the cart flows in the [README](../README.md) — the alternative
+  was a catalog edit making a customer's full cart unpayable.
+
+## Installation and operation
+
+- **The admin panel writes the EDITABLE part of the catalog, not the creatable
+  part.** The panel under `/admin/ui`
+  ([ADR 0011](adr/0011-yonetim-paneli-dorduncu-agac.md)) carries login, logout,
+  the product list, the product page, the variant page, the order list, the
+  order page, the sales report, the customer list, the customer page and the
+  inventory list. Of those, only THREE forms WRITE
+  ([ADR 0013](adr/0013-panel-write-surface.md)): a product's
+  title/handle/status, a variant's BASE price per currency, and PHYSICAL stock
+  per location. Every other screen is read-only; and there is no single-item
+  page for inventory or for a sold line at all — the detail of a stock item IS
+  its per-location levels on the variant page, and the context of a sold line IS
+  the order the line is attached to.
+
+  Creating something that does not exist and deleting something that does still
+  happens over `/admin/v1`, with `Authorization: Bearer`: product, variant,
+  price set, stock item, stock location, links. Campaign prices and prices
+  carrying a RULE are not shown in the panel and cannot be edited there either —
+  the form knows only the base price. This is not a presentation preference: the
+  price write is lossless and writes the prices it does not see back
+  UNCHANGED, but it does not let them be edited.
+
+  There are two more write limits. Concurrent editing is last-writer-wins: there
+  is no version field in the form and no optimistic lock under it. And editing
+  one price regenerates ALL the price identifiers in that set, because the
+  writer underneath does not update the set, it rewrites it; those identifiers
+  are named only by pricing's own `price_rule` rows, so the effect stays inside
+  the module.
+
+  Every new write means a primitively typed admin surface method in the owning
+  module and a form in the panel; both show up in a diff. The panel does not
+  import a module, so the write path has to go through the surface the module
+  publishes.
+
+  The panel's session cookie is NOT ACCEPTED by the admin API, and that is a
+  decision rather than a shortcoming: the API's CSRF immunity comes from the
+  token living in a header the browser does not add by itself.
+
+  The catalog screen shows a price as a raw minor-unit integer, and says so,
+  when the currency's number of decimal places is NOT KNOWN. The scale is read
+  from the region record; in an installation with no region defined at all one
+  sees `19990 TRY (minor units)`. Assuming a fixed 100 would show the WRONG
+  amount for currencies with 0 and 3 digits, such as JPY and KWD.
+- **Search depends on the database cluster's CTYPE setting, and that setting is
+  fixed at initdb time.** Both the storefront's own `?q=` filter
+  (`title ILIKE`) and the `search-pg` plugin's index (`to_tsvector`) leave case
+  folding to PostgreSQL. A cluster created with `--locale=C` folds ASCII only,
+  so a search for a lowercase word carrying a non-ASCII letter does NOT FIND the
+  product whose title carries the uppercase form of that letter — with no error,
+  silently. (The letter pair that shows it is pinned by the probe in
+  `core/db/casefold.go` and quoted in
+  [ADR 0015](adr/0015-postgresql-cluster-contract.md). It is not repeated here
+  because ADR 0012 forbids a Turkish letter in a translated file, and an
+  ASCII substitute would demonstrate nothing — an ASCII pair folds on every
+  cluster.)
+
+  `deploy/docker-compose.yml` now uses `--locale=C.UTF-8`, and the application
+  probes the state at startup and warns when it is broken. But **an existing
+  data directory keeps its old locale**: fixing an installation created with
+  `--locale=C` takes a dump/restore. If you bring your own Postgres, the
+  cluster's CTYPE has to be a UTF-8 aware locale; an ICU provider is NOT
+  ENOUGH — it fixes `ILIKE` and leaves the search index broken.
+- **Search scores EVERY matching document; the cost grows linearly with the
+  catalog.** A GIN index cannot satisfy the `ORDER BY`, so returning a single
+  page reads and scores ALL of the matching rows. Measured (52,000-document
+  index, a word occurring throughout the catalog, LIMIT 20): the ranking used to
+  take **663 ms** and today takes **24 ms**, and **24 ms** of that is the match
+  scan itself — that is, there is nothing left to win from the ranking, the
+  remaining cost is the scan, and on a 500,000-product catalog the same word
+  rises to half a second. Going below that means the index satisfying the
+  ordering as well (RUM); adding a mandatory EXTENSION is
+  [ADR 0015](adr/0015-postgresql-cluster-contract.md)'s dated decision and
+  cannot be taken as a one-line speedup.
+
+  A second limit follows it: **an exclusion carries no relevance.** Scoring is
+  done with the positive part of the query, so `gomlek -mavi` is still ordered
+  by relevance; but a query consisting ONLY of an exclusion (`-mavi`) leaves no
+  positive signal to rank by, and the results come back in indexing order.
+- **The storefront listing's TOTAL COUNT gets more expensive as the catalog
+  grows.** The `count` field of the `GET /store/v1/products` response has to
+  count the whole of the set the sales channel filter is applied to; the page
+  size does not change that. Measured (52,000 products, 52,000 channel
+  assignments, local Postgres): the plain unfiltered count **2 ms**, the
+  channel-filtered count **64 ms**, all the remaining SQL of the same request
+  **1 ms**. So on a large catalog almost the whole of a storefront request is
+  the counter.
+
+  This is not a defect but the price of the pagination contract: if a total is
+  asked for, a total is counted. The list query itself does not carry this cost
+  (measured: 0.14 ms), so the only thing that gets slower is `count`.
+
+  The counter CANNOT BE MADE CHEAPER, but it can now be NOT ASKED FOR:
+  `?with_count=false` (in GraphQL, not selecting the `count` field) does not run
+  the counting query at all and the envelope carries no `count` field. The
+  default did not change. Why it cannot be made cheaper was measured: the
+  channel filter runs one subquery per product and that subquery is ALREADY
+  index-only (`EXPLAIN`: `Heap Fetches: 0`), so the set to be walked cannot be
+  shrunk, only left unwalked. The panel's product list never pays this price —
+  it deliberately pages without counting
+  (`TestProductListPagesWithoutCounting`).
+- **Building a cart writes rows in the SQUARE of the line count** — but it no
+  longer RUNS statements in the square. Every request that adds a line rewrites
+  the amount of all the cart's lines, so building a 100-line cart still writes
+  5,050 line amounts; what changed is that this is done with 100 UPDATEs instead
+  of 5,050. The time spent under the cart's lock thereby became almost
+  independent of the line count (measured, 100 lines: the write phase 8.0 ms →
+  0.55 ms).
+
+  The remaining limit is in two places: the number of ROWS written is still
+  quadratic, and the real time under the lock is now the commit's WAL flush
+  (measured on a durable cluster, 6.2 ms independently of the line count) —
+  there is no way to shorten that at this layer.
+
+  Today's protection is a CEILING: a cart carries at most 100 distinct lines and
+  anything beyond that is refused with `cart_workflow_line_limit_reached`. The
+  ceiling looks at the snapshot taken outside the cart's lock, so two concurrent
+  additions can exceed it by a few lines; it is not a hard upper bound but a
+  gate that cuts off unbounded growth.
+- **An interrupted payment leaves reserved stock waiting for MANUAL
+  intervention.** The cart flow runs synchronously inside the HTTP request; if
+  the process dies in the middle (a deploy, an OOM, a pod eviction) the
+  compensation NEVER runs and the stock reserved up to that moment hangs in
+  `inventory_reservations`. The `SHUTDOWN_TIMEOUT` default is **15 seconds** and
+  the saga's budget is **2 minutes** — so an ordinary deploy can produce this.
+  The application WARNS about that gap at startup.
+
+  It is no longer silent: when an execution's LEASE expires the next attempt
+  closes it and, if work had been done, writes `compensation_failed` and logs at
+  ERROR saying manual intervention is needed (so it reaches the collector when
+  error reporting is on). Which reservation is left hanging stands in the
+  `output` field of the step records.
+
+  It can now also be LISTED: `gobit stuck` prints the half-done executions and,
+  for each, which of its steps is still holding what. It covers both classes at
+  once, because the status query alone is not enough: if the process died in the
+  middle of the saga and the customer never came back, the record does not even
+  GET a `compensation_failed` — it stays `running` forever, and the command
+  finds that class as "lease expired and still holding a step".
+
+  **The compensation can now be run FROM THE RECORDS**
+  ([ADR 0017](adr/0017-recovering-abandoned-sagas-from-the-record.md)): a caller
+  returning with the same key finds the abandoned execution, the shared state is
+  rebuilt from the steps' own durable outputs and the chain runs; the record
+  becomes `failed` and releases its key, so the stock is released and the
+  customer can pay for their cart again.
+
+  **At one point it deliberately STOPS, and that point is the payment.** The
+  engine writes a step's record after Invoke returns, so a process dying inside
+  the collection leaves no trace at all; if recovery counted it as "never ran",
+  a customer whose card had been charged would have their stock released, their
+  key freed, and would be charged a SECOND TIME. That is why a collection step
+  with no record stops the recovery, and the decision is left to manual
+  intervention.
+
+  **Recovery can now also be TRIGGERED:**
+  `gobit recover <execution-id> -confirm <execution-id>` runs an execution's
+  compensation chain. The engine's own recovery happens by coincidence — a
+  caller returning with the same key triggers it — and that covers the customer
+  who retries, nobody else. An abandoned cart has no returning caller;
+  `gobit stuck` lists it and there would be NOBODY TO RELEASE it.
+
+  The command carries the same gate as the other irreversible command
+  (`migrate down`): without `-confirm` repeating the identifier, nothing runs at
+  all. The engine's own refusals are a second gate and the command CANNOT
+  OVERRIDE them — a live lease, a record in a terminal state, and a collection
+  step with no record stop the run whatever is typed.
+
+  A scheduled sweeper is still deliberately ABSENT: recovery runs work that has
+  side effects, and handing that to an unwatched background job is the "decide
+  silently" class this repository refuses. Here a HUMAN makes the decision and
+  names the execution.
+
+  **Recovery is EXCLUSIVE.** An abandoned record is in nobody's ownership, so
+  every caller arriving with the same key finds it; without a claim they would
+  all run the compensation chain (measured with four concurrent callers: the
+  chain ran FOUR times). The engine now CLAIMS the record BEFORE recovering: a
+  single conditional UPDATE, holding only while the record is still `running`
+  AND `updated_at` is the value the decision was based on. Once the winner
+  stamps it the others are eliminated, and the lease is refreshed throughout the
+  recovery. Measurement: the same four callers, ONE compensation.
+
+  The capability is OPTIONAL (`workflow.ClaimingStore`); no method was added to
+  `Store` so that the contract of anyone who wrote the store elsewhere does not
+  break. The price of that is that a wrapper EMBEDDING `Store` silently hides
+  the capability — an embedded interface carries only its own methods. The
+  decision is in
+  [ADR 0017](adr/0017-recovering-abandoned-sagas-from-the-record.md).
+- **Error reporting is a SIGN, not a copy of the event.** The `error-sentry` and
+  `error-otlp` plugins ([ADR 0014](adr/0014-error-reporting.md)) send the
+  collector the failure code, the safe message and the `request_id`; everything
+  else stays in the log. This is deliberate — the reporter never sees the error
+  itself, so it cannot leak it — but the consequence is this: whoever reads a
+  report must have access to the log as well.
+
+  Three concrete limits: a report carries no METHOD and no PATH (the access log
+  carries those, and that line is skipped on purpose, because it would report
+  the same failure a second time); the "safe message" rests on a godoc promise
+  and no audit MECHANICALLY verifies that a caller did not write an email
+  address into it; and the default allow list holds no business identifier at
+  all, so fields such as `user_id` enter a report only if the installation adds
+  them to the list.
+- **There is no multi-tenancy.** One tenant = one installation = one database =
+  one process; several INSTANCES are not several TENANTS, because instances
+  share the same database and the same catalog. The detail is with the
+  single-instance discussion in the [README](../README.md), the decision in
+  [ADR 0009](adr/0009-cok-kiracililik-kurulum-siniri.md).
+- **Migration rollback is for ONE owner and does not KNOW the order.** The
+  surface now exists (`gobit migrate status`,
+  `gobit migrate down <owner> -confirm <owner>`) and the forward direction stays
+  automatic at startup. But the command rolls back one owner, not several: the
+  operator calls the modules that have to be rolled back together one after
+  another, and the command does not say which order is the right one. Because
+  there are no cross-module foreign keys, this is not a constraint today.
+
+  The second limit is a WAIT, and it cannot be interrupted: golang-migrate takes
+  the advisory lock with `context.Background()`, so while somebody else holds
+  the lock neither a deadline nor Ctrl-C ends the waiting (measured: a version
+  read whose context expired in 5 s had still not returned 15 s later).
+  `migrate status` takes the lock while reading versions too, so a command run
+  in the middle of an ongoing deploy can wait silently.
+- **The location policy expresses region SCOPE and PREFERENCE order, and nothing
+  else.** Stock distribution ("put the location with the most stock first"),
+  cost, and an order-level decision ("ship all lines from a single location")
+  CANNOT BE EXPRESSED; why each of them cannot is written in
+  [ADR 0010](adr/0010-depo-secim-politikasi.md). Priority is per **location**,
+  so "A first for R1, B first for R2" cannot be written either — the only thing
+  writable per region is exclusion.
+- **A wrong region binding CLOSES the store and consumes the cart permanently.**
+  Binding a region identifier that does not exist (or deleting a region and
+  reopening it under the same name — the new record gets a new identifier)
+  eliminates that location for every cart; in a single-location installation the
+  result is that every completion is refused although the catalog is full. The
+  fallen cart can never be completed again, because the completion flow's
+  idempotency key derives from the cart identifier. The failure is visible, but
+  the visibility has a limit: only the CODE reaches the storefront body
+  (`fulfillment_no_serviceable_location`); the dump that names what the
+  candidates are actually bound to is in the server log and in the
+  `workflow_executions` record. The way back is a single admin write — but it
+  depends on the operator being able to reach that record.
+- **A region binding is a CONSTRAINT, not a PREFERENCE.** An operator who binds
+  two locations to separate regions has accepted that the order FALLS when the
+  first location's stock runs out in a race. "A first, B when it runs out" is
+  written with PRIORITY, not with a region binding.
+- **Deleting the last region binding does not hide the location, it opens it to
+  ALL regions** — the same as the sales channel rule, with one difference: there
+  the price is visibility, here it is a dropped order.
+
+## The limit of the invariants
+
+- **Cross-module signatures are not checked at compile time.** A narrow
+  interface plus resolution by name from the container is
+  [ADR 0001](adr/0001-modul-arasi-iletisim.md)'s accepted price: a field name
+  drifting apart leaves both packages' unit tests green, and the two ends meet
+  over a real container in e2e.
+- **`TestEveryWorkflowIsSetUpInTheCompositionRoot` is a SYNTACTIC proxy.** It
+  asks the question "can a wrong configuration stop startup" as "does the path
+  to setup go through a `go` expression"; when the `go` is hidden behind a
+  one-line indirection the audit passes while the property does not hold
+  (measured in a real process). The shapes it catches are the ones written by
+  accident, the shape it misses is the one that would have to be written
+  deliberately — but the sentence "startup fails closed" does NOT FOLLOW from
+  this invariant. The scope is written in
+  `internal/arch/registration_test.go`.
+- **The load test is in-process** (`make load-test`, `internal/e2e`): it tests
+  correctness under load, it does not produce a capacity plan.

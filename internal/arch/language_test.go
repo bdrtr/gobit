@@ -272,10 +272,14 @@ var diacriticDataExemptions = map[string][]string{
 		"İlk commit", "Çoklu-tenant bu listede değildir",
 		"örnek mi, birden çok mu?", "Aynı ölçütün henüz uygulanmadığı yer",
 	},
-	// The architecture document's one remaining Turkish is a LINK ANCHOR derived
+	// ~~The architecture document's one remaining Turkish is a LINK ANCHOR derived
 	// from a README heading that is still Turkish. Changing it would not
-	// translate anything; it would break the link.
-	"docs/mimari.md": {"#api-güvenliği", "API güvenliği"},
+	// translate anything; it would break the link.~~
+	// **Removed 2026-09-07:** the README's API security section moved to
+	// docs/security.md, which is English, so the link now points at an English
+	// anchor and the document carries no Turkish at all. This is the shape an
+	// exemption is supposed to end in — the debt was paid by moving the text,
+	// not by widening the hole.
 }
 
 // turkishHit is one lane firing on one line.

@@ -321,7 +321,8 @@ awaiting manual intervention only **one** is found by a status query.
 
 ## 8. Identity and hardening
 
-For the detail see [README → API güvenliği](../README.md#api-güvenliği).
+For the detail see [`docs/security.md`](security.md) — the two surfaces, the
+sales-channel filter, the scope dictionary and the hardening rings.
 Architecturally, three points matter:
 
 1. **The core does not know HOW identity is verified.** `corehttp.Authenticator`
@@ -418,7 +419,59 @@ unexpected organization.
 
 ---
 
-## 10. Known limits
+## 10. Technology choices
+
+| Area | Choice | Justification |
+|---|---|---|
+| Router | `chi` | Lightweight, `net/http`-compatible, middleware-friendly |
+| DB access | **`sqlc` + `pgx/v5`** | SQL-first and codegen per module; an ORM's FK/graph model conflicts with module isolation |
+| Migration | **`golang-migrate`** | An exact fit for `Module.Migrations() fs.FS`, with an `x-migrations-table` per module |
+| DI | ~~**`samber/do` v2**~~ **hand-written** (`core/container`) | ~~It offers contract-named services plus a generic resolve; lazy instantiation and shutdown hooks come ready~~ **Corrected on 2026-09-06:** `samber/do` was never a dependency — its name appears in neither `go.mod` nor `go.sum`. The Section 5.1 contract wants a `Provide` that takes `any`, and because `do` is type-parameterized the diagnostics, the conflict detection and the shutdown order were all lost; the decision is in [ADR 0002](adr/0002-di-container-el-yazmasi.md) and the justification is written in `core/container`'s own godoc ("Why not samber/do") |
+| Config | `caarlos0/env` | Reads the environment only; viper's file/remote config weight is unnecessary |
+| Log | `log/slog` (stdlib) | Structural, dependency-free |
+| GraphQL | **`99designs/gqlgen`** | Schema-first: the schema stays an inspectable artifact and the generated typed resolvers catch a signature drift at compile time (the same discipline as sqlc) |
+
+~~sqlc, golang-migrate and samber/do come into play **between Phases 1 and 4**;
+Phase 0 only sets up the skeleton.~~ **Corrected on 2026-09-06:** sqlc and
+golang-migrate did come into play **between Phases 1 and 4** and Phase 0 had only
+set up the skeleton; `samber/do` never came into play at all — its place was
+taken by ADR 0002's hand-written `core/container`.
+
+---
+
+## 11. The core packages
+
+What sits under `core/` is the PUBLISHED surface: a program outside this
+repository may import it, and every exported name there is a promise (ADR 0026).
+What sits under `internal/core/` is not published; it can still change.
+
+| Package | Responsibility |
+|---|---|
+| `internal/core/config` | env-based 12-factor config + validation, the production guard |
+| `internal/core/logger` | slog JSON/text handler |
+| `core/errors` | Typed errors (`Kind`), re-exports the stdlib `errors` helpers |
+| `core/db` | pgxpool pool + a migration runner with a separate version table per module |
+| `core/container` | Named registration, generic `Resolve[T]`, lazy singleton, cycle detection, shutdown in reverse order |
+| `core/module` | The `module.Module` contract + `module.Registry` (register → migrate → routes) |
+| `core/eventbus` | `EventBus` + InMemory (dev) and Redis Streams (prod, consumer group + XACK) |
+| `core/http` | chi router, RequestID/RequestLogger/Recoverer/Telemetry, RequireAdmin/RequireStore/RequireScope, the `Scoped`/`APIGuards` protection stack, rate limit, idempotency, `Kind`→status mapping |
+| `core/link` | Module Links — relations between modules without an FK; cardinality is enforced by a database constraint |
+| `core/query` | Cross-module reads — fetch the root, resolve the link, batch fetch, merge; N+1 is structurally impossible |
+| `internal/core/workflow` | The saga engine — compensation in reverse order, retry, idempotency key, panic isolation |
+| `internal/core/workflow/pgstore` | The Postgres store of the execution state (`workflow_executions`) |
+| `internal/workflows/cart` | The cart flows: create_cart, add_line_item, update_line_item, calculate_totals. `internal/app` registers them under the name `workflows.cart.interop`, and the `cart` module's storefront endpoints resolve that name |
+| `internal/workflows/checkout` | The `complete_cart` saga: reserve stock → order → authorize → capture → close the cart. Registered as `workflows.checkout.interop`; `POST /store/v1/carts/{id}/complete` calls it |
+| `core/provider` | The payment/shipping provider contracts (plan Section 5.6) |
+| `core/plugin` | The plugin contract + two-phase installation (`Install` → modules → `Start`) |
+| `internal/core/observability` | OpenTelemetry trace + metric setup; genuinely off when there is no collector |
+| `internal/core/openapi` | OpenAPI schema generation from the router tree (`/openapi.json`) |
+
+Which backend the event bus runs on, and what each one loses, is in
+[`docs/operating.md`](operating.md).
+
+---
+
+## 12. Known limits
 
 | Limit | Effect | Way out |
 |---|---|---|
