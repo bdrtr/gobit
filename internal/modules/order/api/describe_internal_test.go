@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/internal/core/openapi"
+	"github.com/bdrtr/gobit/core/openapi"
 )
 
 // envelopeDataField is the name of the record-carrying field of the response
@@ -311,6 +311,66 @@ func describedEndpoints() []endpointExpectation {
 				Clock: "application", Detail: "captured", Amount: 1000, Currency: "TRY",
 			},
 		},
+		// The five after-sales endpoints. They were bound long before they were
+		// described and this table did not notice, because a table is a list of
+		// what somebody remembered — the direction that FINDS a forgotten
+		// endpoint is the one that walks the real router, and it did not exist
+		// until ADR 0035. Now that they are described, this table is what keeps
+		// them tested.
+		{
+			method: http.MethodGet, path: "/admin/v1/orders/{id}/payment", status: "200",
+			response: filledOrderPayment(),
+		},
+		{
+			method: http.MethodPost,
+			path:   "/admin/v1/orders/{id}/returns/{returnId}/receive",
+			status: "200", request: receiveReturnRequest{},
+			response: receiveReturnResponse{RestockedLines: 1, RestockedUnits: 2, Warnings: []string{"w"}},
+		},
+		{
+			method: http.MethodPost,
+			path:   "/admin/v1/orders/{id}/returns/{returnId}/refund",
+			status: "200", request: refundReturnRequest{},
+			response: refundReturnResponse{RefundedAmount: 1000, SummaryRecorded: true, Warnings: []string{"w"}},
+		},
+		{
+			// The claim settlement borrows both the request and the answer from
+			// the refund above, because settling a claim IS a refund. The row is
+			// written out rather than shared: two endpoints that happen to carry
+			// the same body today are still two contracts, and a shared row
+			// would hide the day one of them grows a field.
+			method: http.MethodPost,
+			path:   "/admin/v1/orders/{id}/claims/{claimId}/settle",
+			status: "200", request: refundReturnRequest{},
+			response: refundReturnResponse{RefundedAmount: 1000, SummaryRecorded: true, Warnings: []string{"w"}},
+		},
+		{
+			method: http.MethodPost, path: "/store/v1/orders/{id}/returns", status: "201",
+			request:  storeReturnRequest{Lines: []storeReturnLine{{OrderLineItemID: "oli_1", Quantity: 1}}},
+			response: filledReturn(),
+		},
+	}
+}
+
+// filledOrderPayment produces a payment position whose nullable moments are
+// written too.
+//
+// Both times are POINTERS and both are set here for the reason the type's own
+// comment gives: they are null until money moves, and a sample that left them
+// nil would not write the keys the schema declares.
+func filledOrderPayment() orderPaymentDTO {
+	now := time.Now().UTC()
+
+	return orderPaymentDTO{
+		CollectionID:     "paycol_1",
+		Status:           "captured",
+		Amount:           1000,
+		AuthorizedAmount: 1000,
+		CapturedAmount:   1000,
+		RefundedAmount:   0,
+		CurrencyCode:     "TRY",
+		FirstCapturedAt:  &now,
+		LastRefundedAt:   &now,
 	}
 }
 

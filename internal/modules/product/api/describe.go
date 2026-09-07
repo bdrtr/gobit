@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/bdrtr/gobit/internal/core/openapi"
+	"github.com/bdrtr/gobit/core/openapi"
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"

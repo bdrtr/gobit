@@ -1362,6 +1362,37 @@ a repository that no longer exists.
 
 ### G. Found while building, not yet decided
 
+- **An OpenAPI component's name is derived from the Go type name, so two
+  modules cannot both have an `Address`.** Measured 2026-09-07 by the audit ADR
+  0035 added, and the finding is not new — it was already written down TWICE, in
+  `internal/modules/customer/api/describe.go` and
+  `internal/modules/payment/api/describe.go`, independently, by two modules that
+  reached the same conclusion in nearly the same words: the fix belongs in the
+  core. What was new is the NUMBER. Sixteen endpoints ship with a path, a method
+  and no body because of it: twelve customer-address routes (`addressDTO` and
+  `addressRequest` collide with `cart/api`'s same-named types) and four
+  payment-collection routes (`collectionDTO` collides with `product/api`'s).
+  The collision is not a degraded endpoint — `Doc.Build` FAILS and
+  `/openapi.json` returns 500 for every module — so both modules chose bodiless
+  endpoints over taking the document down, which was the right call and is why
+  nothing was broken enough to be noticed.
+  **The DECISION is how a component name gets a namespace**, and there are three
+  candidates. *(1) Always prefix with the owning module* — `CartAddress`,
+  `CustomerAddress`, `ProductCollection`, `PaymentCollection`. Deterministic,
+  needs no per-type choice, and renames EVERY component that works today,
+  including ones with no collision. *(2) Prefix only on collision* — renames the
+  fewest names and is the only candidate that is ORDER-DEPENDENT: which of two
+  colliding types keeps the bare name would depend on registration order, which
+  makes a published contract nondeterministic. It should be rejected for that
+  alone. *(3) The module declares the name* — nothing renames unless somebody
+  asks, and the existing clash detector still refuses a silent collision; the
+  price is a name chosen by hand per type, which is the thing that drifts.
+  Whichever wins, it is a RENAME in the published contract now that
+  `core/openapi` is published (ADR 0035), and component names are what a client
+  generator turns into class names. The ledger at
+  `internal/e2e/testdata/undescribed_routes.txt` has the sixteen listed and will
+  fail the day they are described and the lines stay behind.
+
 - **The migration role and the runtime role are ONE superuser account, and a
   schema-level refusal can therefore be lifted by the application itself.**
   Found 2026-09-07 while building the invoice retention guard (ADR 0032) and

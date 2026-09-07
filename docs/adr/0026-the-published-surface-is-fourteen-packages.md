@@ -221,12 +221,15 @@ about, which makes it the likeliest holder of personal data the framework cannot
 see.
 
 **The failure mode of the alternative was not predicted, it was measured in this
-tree.** `internal/core/openapi.Describer` is the same design — an optional
-capability found by type assertion — living under internal/. All seventeen
+tree.** `core/openapi.Describer` is the same design — an optional
+capability found by type assertion — ~~living under internal/. All seventeen
 in-tree modules implement it; the out-of-tree example module cannot, so its
-routes are simply missing from the generated document and no audit says a word.
-For a schema that costs a missing path. For an erasure it would cost a green
-build and a false answer to a person who asked to be forgotten.
+routes are simply missing from the generated document and no audit says a
+word.~~ **and it stayed there until 2026-09-07, when this paragraph's own
+argument was finally applied to the package it was drawn from — see the
+amendment below.** For a schema that costs a missing path. For an erasure it
+would cost a green build and a false answer to a person who asked to be
+forgotten.
 
 **Why a new package and not three types added to `core/module`.** That
 alternative looked cheaper — `core/module` is already published, so no table row
@@ -248,6 +251,44 @@ and needed its own directory only because no published package was already the
 right home. The bias is unchanged: publish late, publish what was measured, and
 publish the form rather than the machine. The package landed in the same change
 as its first three implementers and its first consumer, not ahead of them.
+
+## Amendment: `core/openapi` is the sixteenth package (2026-09-07)
+
+[ADR 0035](0035-the-schema-vocabulary-is-published.md) publishes the schema
+package. The reasoning is not new — it is the paragraph struck through above,
+which used the schema package as the WORKED EXAMPLE of what leaving an optional
+capability under `internal/` costs, and then left it there. An argument good
+enough to publish the erasure vocabulary was good enough for the package it was
+borrowed from — and it was written HERE, one day earlier, about that package by
+name. The useful finding is not the fix but the shape: an argument can be
+carried to its conclusion for one case and left standing over the example it
+was drawn from, in the same paragraph, without anybody noticing.
+
+Two things this ADR's own machinery got right and one it did not.
+
+**It got the enforcement right.** Adding the package meant editing
+`publishedPackages` — one line, in the diff, next to this amendment. That is
+exactly the "publishing is an EDIT" property the Decision argued for, and it
+worked without anybody remembering to make it work.
+
+**It got the dependency question right by accident, and the accident is worth
+naming.** `Doc.Build` takes `chi.Routes`, so publishing this package puts a
+third-party type in the compatibility promise. That would have been a real
+objection except that `module.Module` already requires `Routes(chi.Router)` —
+chi has been in the published surface since the first version of this ADR. The
+check was worth making before deciding and it is worth writing down that the
+answer was checked rather than assumed.
+
+**What it did not have is a way to notice.** The membership rule is enforced in
+both directions for the packages that ARE under `core/`: a directory without a
+list entry fails, a list entry without a directory fails. Nothing walks
+`internal/` asking "does anything in here have to be named from outside?" — and
+that question is exactly the one that went unanswered for the schema package
+while this very ADR spelled out the answer. No test is proposed for it here,
+because the rule needs a judgement about what an outside program NEEDS and this
+repository has no way to compute that. What can be said is that the omission was
+found by a package comment written for a different decision, and that is not a
+mechanism.
 
 ## Reopening
 

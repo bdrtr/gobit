@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/bdrtr/gobit/internal/core/openapi"
+	"github.com/bdrtr/gobit/core/openapi"
 )
 
 // The JSON Schema names appearing in the parameter schemas.

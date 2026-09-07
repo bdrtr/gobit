@@ -13,7 +13,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/module"
-	"github.com/bdrtr/gobit/internal/core/openapi"
+	"github.com/bdrtr/gobit/core/openapi"
 )
 
 // silentModule is a module that does NOT describe itself.

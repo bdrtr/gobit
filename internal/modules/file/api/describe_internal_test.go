@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/internal/core/openapi"
+	"github.com/bdrtr/gobit/core/openapi"
 )
 
 // The test is in the INTERNAL package because the body being described

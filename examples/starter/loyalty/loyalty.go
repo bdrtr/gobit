@@ -5,6 +5,14 @@
 // repository satisfies the published contract, enters the same registry as the
 // modules in the box, and its migrations and routes are handled by the same
 // lifecycle.
+//
+// Since ADR 0035 it also DESCRIBES its endpoint, and that method is the point of
+// the ADR rather than a decoration. Until then the schema vocabulary lived under
+// internal/, so this file could not name it: the route below went into
+// /openapi.json with a path, a method and no body, and no audit anywhere said
+// so. The proof that the impossibility is gone is that [Module.Describe]
+// compiles HERE, in a separate Go module, and not that an in-tree module can
+// still do what it always could.
 package loyalty
 
 import (
@@ -17,6 +25,7 @@ import (
 	"github.com/bdrtr/gobit/core/container"
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/module"
+	"github.com/bdrtr/gobit/core/openapi"
 )
 
 // Module is the customer project's own module.
@@ -44,5 +53,24 @@ func (m *Module) Routes(r chi.Router) {
 	})
 }
 
-// compile-time proof that a module written outside gobit satisfies the contract.
-var _ module.Module = (*Module)(nil)
+// Describe writes the module's endpoint into the OpenAPI document.
+//
+// The path and method have to be spelled exactly as [Module.Routes] binds them;
+// a description that matches no route does not silently vanish, the core reports
+// it through [openapi.Doc.UnmatchedDescriptions]. The reverse direction — a
+// route no description matched — is [openapi.Doc.UndescribedRoutes], and it is
+// what an embedder who forgets this method will see.
+func (m *Module) Describe(d *openapi.Doc) {
+	d.Describe(http.MethodGet, "/store/v1/loyalty/balance", openapi.Operation{
+		Summary:     "The customer's loyalty point balance",
+		Description: "Always answers zero; the example module keeps no state.",
+		Tags:        []string{"Loyalty"},
+	})
+}
+
+// compile-time proof that a module written outside gobit satisfies the contract,
+// and that the OPTIONAL schema capability is reachable from outside it too.
+var (
+	_ module.Module     = (*Module)(nil)
+	_ openapi.Describer = (*Module)(nil)
+)

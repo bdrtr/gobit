@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -19,7 +20,7 @@ import (
 
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/module"
-	"github.com/bdrtr/gobit/internal/core/openapi"
+	"github.com/bdrtr/gobit/core/openapi"
 	authapi "github.com/bdrtr/gobit/internal/modules/auth/api"
 )
 
@@ -569,6 +570,105 @@ func TestSchemaDescriptionsMatchRealRoutes(t *testing.T) {
 
 	assert.Empty(t, testDoc.UnmatchedDescriptions(),
 		"every described endpoint must be found in the router tree; an unmatched record means a route whose path has changed or that has been deleted")
+}
+
+// undescribedLedger is the file listing the routes that carry no body yet.
+const undescribedLedger = "testdata/undescribed_routes.txt"
+
+// readUndescribedLedger returns the ledger's entries, without comments or blanks.
+func readUndescribedLedger(t *testing.T) map[string]bool {
+	t.Helper()
+
+	body, err := os.ReadFile(undescribedLedger)
+	require.NoError(t, err, "the ledger has to be readable; without it the audit forgives everything")
+
+	entries := map[string]bool{}
+
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		entries[line] = true
+	}
+
+	require.NotEmpty(t, entries, "the ledger parsed to nothing; the audit has gone blind")
+
+	return entries
+}
+
+// TestEveryRealRouteIsDescribed verifies the direction the repository was
+// missing until 2026-09-07.
+//
+// # A bodiless endpoint does not look missing
+//
+// [TestSchemaDescriptionsMatchRealRoutes] above answers "a description with no
+// route". This one answers "a route with no description", and it is the harder
+// failure to see: an undescribed endpoint still appears in /openapi.json with
+// its path, its method and its security, only without a body. A generated
+// client for it compiles and sends nothing; a reader has no way to tell "this
+// takes no body" from "nobody wrote down what it takes".
+//
+// # It cannot be proved anywhere but here
+//
+// A module's Routes method binds nothing until its services exist, and its
+// services do not exist without a database — a walk over modules built from an
+// empty config finds ZERO routes, and an assertion over it passes while reading
+// nothing. That was measured while writing this test, in the unit tree, and it
+// is why the audit lives beside the running server: this router carries the
+// modules AND the routes the plugins bring.
+//
+// # Why a ledger and not a clean assertion
+//
+// Because the first measurement found THIRTY-EIGHT of them, and a gate that goes
+// red for a debt nobody can pay in one commit is a gate somebody deletes. The
+// repository already owns the right instrument for this shape — the language
+// ratchet in internal/arch/testdata — and this is the same one: the list MAY
+// ONLY SHRINK.
+//
+// Both directions are enforced, and the second is the one that makes it a
+// ratchet rather than a permission slip. A route missing from the ledger is NEW
+// debt and fails. A route ON the ledger that has since been described also
+// fails, because a paid line left behind silently forgives the next endpoint
+// somebody forgets.
+//
+// # Describer stays optional; invisible is what it stops being
+//
+// [openapi.Describer] is deliberately not part of the module contract — a
+// required method would produce a crop of empty implementations. A module may
+// still choose not to implement it. What it may no longer do is bind a route
+// that nothing describes while the repository stays quiet, and the same list is
+// logged at startup so an EMBEDDER whose own module forgets sees it too — which
+// was impossible before ADR 0035 published this vocabulary, because a module
+// outside the repository could not implement the interface at all.
+func TestEveryRealRouteIsDescribed(t *testing.T) {
+	schemaDocument(t)
+
+	ledger := readUndescribedLedger(t)
+	bare := map[string]bool{}
+
+	for _, route := range testDoc.UndescribedRoutes() {
+		bare[route] = true
+	}
+
+	for route := range bare {
+		assert.True(t, ledger[route],
+			"NEW DEBT: %q enters /openapi.json with a path, a method and NO BODY.\n"+
+				"That is a valid OpenAPI model, which is exactly why nothing else notices.\n"+
+				"To do: describe it in the owning module's Describe method, spelling the "+
+				"method and pattern exactly as its Routes method binds them. The ledger at "+
+				"%s may only SHRINK; adding a line to it is not the fix.",
+			route, undescribedLedger)
+	}
+
+	for route := range ledger {
+		assert.True(t, bare[route],
+			"STALE LEDGER LINE: %q is listed as undescribed but it now HAS a description.\n"+
+				"Take the line out of %s. A paid line that stays behind quietly forgives the "+
+				"next endpoint somebody forgets to describe.",
+			route, undescribedLedger)
+	}
 }
 
 // reservedNames are the names of the shared components the core PUBLISHES.

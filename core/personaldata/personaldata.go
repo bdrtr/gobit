@@ -21,7 +21,7 @@
 // legal duty.
 //
 // The failure mode of the alternative is not predicted, it is already in the
-// tree: internal/core/openapi.Describer is the same design — an optional
+// tree: core/openapi.Describer is the same design — an optional
 // capability found by type assertion — living under internal/. Every in-tree
 // module implements it and the out-of-tree example module cannot, so that
 // module's routes are simply missing from the document and no audit says a

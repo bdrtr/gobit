@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/bdrtr/gobit/internal/core/openapi"
+	"github.com/bdrtr/gobit/core/openapi"
 )
 
 // tutarNotu tutar taşıyan uçların açıklamasına eklenen birim uyarısıdır.

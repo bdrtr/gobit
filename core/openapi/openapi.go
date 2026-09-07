@@ -321,6 +321,51 @@ func (d *Doc) UnmatchedDescriptions() []string {
 	return missing
 }
 
+// UndescribedRoutes returns the routes that no description matched during
+// [Doc.Build].
+//
+// # It is the mirror of [Doc.UnmatchedDescriptions], and it was missing
+//
+// That method answers "a description with no route"; this one answers "a route
+// with no description", and until 2026-09-07 only the first direction existed.
+// The asymmetry was not harmless. A [Describer] is optional by design — an
+// undescribed endpoint is a valid model, it appears with its path, method and
+// security, only without a body — but "optional" and "invisible" are different
+// things, and the second is what the repository had.
+//
+// The defect that measured it is recorded in [ADR 0035]: this package used to
+// live under internal/, so a module written OUTSIDE the repository could not
+// implement Describer at all. Its endpoints went into the document bodiless and
+// nothing anywhere said so. Publishing the package removes the impossibility;
+// this method removes the silence, which is the half that would still have been
+// missing for an embedder who simply forgot.
+//
+// # Why it warns rather than fails
+//
+// Startup does not stop for it, on the same distinction as the rest of the
+// schema check: a schema is documentation, not the product's correctness. What
+// an operator gets is a list they can act on, not a store that will not open.
+//
+// The result is sorted, and each entry is "METHOD path".
+//
+// [ADR 0035]: https://github.com/bdrtr/gobit/blob/main/docs/adr/0035-the-schema-vocabulary-is-published.md
+func (d *Doc) UndescribedRoutes() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	var bare []string
+
+	for k := range d.seen {
+		if _, ok := d.enrichment[k]; !ok {
+			bare = append(bare, k)
+		}
+	}
+
+	sort.Strings(bare)
+
+	return bare
+}
+
 // operation builds the OpenAPI operation for a single route.
 func (d *Doc) operation(method, path string) Operation {
 	op := d.enrichment[key(method, path)]

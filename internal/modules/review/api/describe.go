@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/bdrtr/gobit/internal/core/openapi"
+	"github.com/bdrtr/gobit/core/openapi"
 	"github.com/bdrtr/gobit/internal/modules/review/models"
 	"github.com/bdrtr/gobit/internal/modules/review/service"
 )

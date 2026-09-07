@@ -452,7 +452,7 @@ var coreWriterExemptions = []coreWriterExemption{
 			"check results",
 	},
 	{
-		file:     "internal/core/openapi/openapi.go",
+		file:     "core/openapi/openapi.go",
 		function: "Handler",
 		calls:    []string{"w.Write"},
 		// The body is the ALREADY ENCODED and cached OpenAPI document; it is not

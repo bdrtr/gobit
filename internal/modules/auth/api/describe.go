@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/bdrtr/gobit/internal/core/openapi"
+	"github.com/bdrtr/gobit/core/openapi"
 )
 
 // The JSON Schema names that appear in the schema and parameter definitions.
@@ -83,7 +83,7 @@ const (
 //
 // In the [LoginPath] operation the Security field is DELIBERATELY left empty.
 // The core recognizes the login path and writes the empty array there, which
-// means "explicitly unprotected" (see internal/core/openapi, security). Writing
+// means "explicitly unprotected" (see core/openapi, security). Writing
 // a value here by hand would have copied the decision into two places; the day
 // the two drifted apart, the endpoint that hands out the token would appear in
 // the schema as asking for a token and the client generator would produce a

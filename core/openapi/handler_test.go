@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/internal/core/openapi"
+	"github.com/bdrtr/gobit/core/openapi"
 )
 
 // countingRouter is a router wrapper that counts how many times it is WALKED.
@@ -151,7 +151,7 @@ func TestAnUnbuildableDocumentComesBackInTheCoreErrorEnvelope(t *testing.T) {
 
 	assert.Equal(t, "openapi_document_unavailable", envelope.Error.Code,
 		"the client has to recognize the error by its CODE")
-	assert.NotContains(t, body, "internal/core/openapi",
+	assert.NotContains(t, body, "core/openapi",
 		"the package path of the clashing types MUST NOT LEAK to the client")
 	assert.NotContains(t, body, "belongs to the core",
 		"the raw text of the build error MUST NOT LEAK to the client")

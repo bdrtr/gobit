@@ -95,7 +95,7 @@ import (
 	"github.com/bdrtr/gobit/core/db"
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/module"
-	"github.com/bdrtr/gobit/internal/core/openapi"
+	"github.com/bdrtr/gobit/core/openapi"
 	"github.com/bdrtr/gobit/internal/modules/file/api"
 	"github.com/bdrtr/gobit/internal/modules/file/local"
 	"github.com/bdrtr/gobit/internal/modules/file/repository"

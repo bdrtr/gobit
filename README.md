@@ -84,17 +84,17 @@ Elle ayarlanması gereken avuç dolusu şunlardır:
 
 ```
 gobit.go              # YAYIMLANMIŞ cephe: New().Version().Add().Use().Main()
-core                  # YAYIMLANMIŞ sözleşmeler — on beş paket (ADR 0026):
+core                  # YAYIMLANMIŞ sözleşmeler — on altı paket (ADR 0026):
                       # errors, db, container, module, eventbus (+outbox), link,
                       # query, provider, plugin, http (+redisguard), audit,
-                      # errorreport, personaldata
+                      # errorreport, personaldata, openapi
 internal/app          # KOMPOZİSYON KÖKÜ (ADR 0027): config -> logger ->
                       # container -> router -> dinle; operatör alt komutları
                       # (migrate, stuck, recover, jobs, deadletters, seed)
 cmd/server            # ikili: gobit'i çalıştırabilen en küçük program — ve
                       # kopyalanacak örnek
 internal/core         # yayımlanmayan çekirdek: config, logger, job, workflow,
-                      # observability, openapi, page
+                      # observability, page
 internal/modules      # on yedi izole commerce modülü (product, pricing,
                       # inventory, cart, order, payment, …)
 internal/workflows    # modüller arası saga'lar (cart, checkout, invoicing,

@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/bdrtr/gobit/internal/core/openapi"
+	"github.com/bdrtr/gobit/core/openapi"
 )
 
 // The JSON Schema names that appear in the parameter schemas.
@@ -84,7 +84,28 @@ const amountNote = "Amounts are MINOR UNIT integers (kurus/cent): " +
 // that concerns two modules at once from inside a single module would break the
 // other module's client without warning.
 //
-// # There is NO other undescribed endpoint
+// # ~~There is NO other undescribed endpoint~~ — there were five more
+//
+// **Corrected 2026-09-07.** The sentence was true when it was written and stopped
+// being true when the after-sales routes arrived; nothing in the repository
+// could contradict it until [openapi.Doc.UndescribedRoutes] existed (ADR 0035),
+// and the first measurement found these:
+//
+//   - GET  /admin/v1/orders/{id}/payment
+//   - POST /admin/v1/orders/{id}/returns/{returnId}/receive
+//   - POST /admin/v1/orders/{id}/returns/{returnId}/refund
+//   - POST /admin/v1/orders/{id}/claims/{claimId}/settle
+//   - POST /store/v1/orders/{id}/returns
+//
+// None of them is blocked by the collision above — they answer with return,
+// refund and claim payloads, not with [orderDetailDTO] — so unlike the five
+// named there, these were simply never written. They are described below.
+//
+// The lesson worth keeping is the FORM of the claim rather than the omission: a
+// sentence that says "there is no other X" is a claim about the whole tree made
+// from inside one file, and it goes stale the moment somebody adds an X
+// somewhere the sentence's author is not looking. It survived because it was
+// unfalsifiable here, not because it was checked.
 //
 // The order CREATION endpoint is absent from the document as well, because it
 // has no route at all; the rationale is in the package documentation (an
@@ -435,6 +456,117 @@ func describeTimeline(d *openapi.Doc) {
 			"showing it.",
 		Responses: map[string]any{
 			"200": openapi.Response("The order's timeline", d.Item(timelineEntryDTO{})),
+		},
+	})
+
+	describeAfterSales(d)
+}
+
+// describeAfterSales records the return, refund and claim endpoints.
+//
+// # Why they are in a function of their own
+//
+// Not for length. These five are the ones the "there is no other undescribed
+// endpoint" sentence above did not know about, and keeping them together keeps
+// the correction and its subject in one place. None of them is blocked by the
+// component-name collision that keeps the order DETAIL endpoints bodiless: they
+// answer with receipt, refund and claim payloads, and never touch
+// [orderDetailDTO] or the [lineItemDTO] inside it.
+func describeAfterSales(d *openapi.Doc) {
+	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/payment", openapi.Operation{
+		Summary: "The order's payment position in one record.",
+		Description: "Answers what a shop asks when it looks at an order: how much was " +
+			"agreed, how much is authorized, how much has actually moved and how much has " +
+			"gone back. " + amountNote +
+			"\n\n" +
+			"The two moments are NULLABLE and the null is meaningful: \"first_captured_at\" " +
+			"is empty until money moves for the first time and \"last_refunded_at\" until a " +
+			"refund goes out. A zero time would read as the first of January in year one to " +
+			"whoever is drawing a timeline, which is why the field is a null rather than a " +
+			"zero. " +
+			"\n\n" +
+			"The figures come from the payment module's collection for this order; this " +
+			"endpoint READS them and owns none of them.",
+		Responses: map[string]any{
+			"200": openapi.Response("The order's payment position", d.Item(orderPaymentDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/returns/{returnId}/receive", openapi.Operation{
+		Summary: "Records that returned goods arrived and puts their stock back.",
+		Description: "The body names the stock LOCATION the goods arrived at, and it is " +
+			"required: a receipt without a location would put the units back into a " +
+			"warehouse nobody chose. " +
+			"\n\n" +
+			"A 200 CARRYING WARNINGS is a real outcome and not a contradiction. The goods " +
+			"arrived — that is a physical fact — and the record says so, while something " +
+			"about the stock still needs a human: a line whose variant no longer exists, a " +
+			"location that refused the units. Refusing the receipt instead would deny the " +
+			"fact and leave the operator with no record to work from. Read " +
+			"\"restocked_lines\" and \"restocked_units\" for what DID happen and " +
+			"\"warnings\" for what did not; an empty warnings list is the ordinary case " +
+			"and the field is then absent.",
+		RequestBody: d.RequestBody(receiveReturnRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("What the receipt restocked, and what needs a human",
+				d.Item(receiveReturnResponse{})),
+		},
+	})
+
+	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/returns/{returnId}/refund", openapi.Operation{
+		Summary: "Sends money back for a received return.",
+		Description: "It is a SEPARATE call from receiving on purpose: receiving is a " +
+			"physical fact, refunding is a decision the shop makes after looking at what " +
+			"arrived. One endpoint doing both would refund goods nobody has inspected. " +
+			"\n\n" +
+			"\"amount\" ZERO is not a no-op — it means everything the payment collection " +
+			"has left, which is what \"give the customer their money back\" means when " +
+			"nobody named a figure. Send an explicit amount for a partial refund. " +
+			amountNote +
+			"\n\n" +
+			"\"reason\" is free text kept on the refund record and is optional. " +
+			"\"summary_recorded\" says whether the return's own summary was updated; a " +
+			"false there with a non-zero \"refunded_amount\" means the money went back and " +
+			"the bookkeeping did not, which is exactly what the warnings are for.",
+		RequestBody: d.RequestBody(refundReturnRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("How much went back, and what needs a human",
+				d.Item(refundReturnResponse{})),
+		},
+	})
+
+	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/claims/{claimId}/settle", openapi.Operation{
+		Summary: "Settles a claim by refunding it.",
+		Description: "The body and the answer are the refund endpoint's, because settling a " +
+			"claim IS a refund: zero means whatever the collection has left, and the same " +
+			"two figures come back. " + amountNote +
+			"\n\n" +
+			"A claim to be settled with a REPLACEMENT comes back as a CONFLICT, and the " +
+			"message says why: shipping goods against an existing order is not something " +
+			"this framework can do. Stamping such a claim complete would record a settlement " +
+			"that never reached the customer, which is worse than refusing it.",
+		RequestBody: d.RequestBody(refundReturnRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("How much was refunded against the claim",
+				d.Item(refundReturnResponse{})),
+		},
+	})
+
+	d.Describe(http.MethodPost, "/store/v1/orders/{id}/returns", openapi.Operation{
+		Summary: "The customer asks to send order lines back.",
+		Description: "This is a REQUEST and not a return: it opens a record for the shop to " +
+			"act on, and nothing moves until an operator receives the goods. " +
+			"\n\n" +
+			"At least one line is required. The body names order line items and quantities " +
+			"and CANNOT name a refund figure — the created record's refund amount is left at " +
+			"zero for the shop to fill in. A body that could say what the return is worth " +
+			"would let a customer decide their own refund, which is the same defect as a " +
+			"cart that names its own shipping price. " +
+			"\n\n" +
+			"\"reason\" is optional free text.",
+		RequestBody: d.RequestBody(storeReturnRequest{}),
+		Responses: map[string]any{
+			"201": openapi.Response("The opened return request", d.Item(returnDTO{})),
 		},
 	})
 }

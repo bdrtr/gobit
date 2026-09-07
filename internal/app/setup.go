@@ -14,12 +14,12 @@ import (
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/link"
 	"github.com/bdrtr/gobit/core/module"
+	"github.com/bdrtr/gobit/core/openapi"
 	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	coreprovider "github.com/bdrtr/gobit/core/provider"
 	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/adminui"
 	"github.com/bdrtr/gobit/internal/core/config"
-	"github.com/bdrtr/gobit/internal/core/openapi"
 	"github.com/bdrtr/gobit/internal/core/workflow"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
@@ -196,10 +196,12 @@ func dbConfig(cfg config.Config) db.Config {
 // The document is CACHED and the cache refreshes itself when the route tree or
 // the description version changes (see [openapi.Doc.Handler]); the build here
 // is only for the check, and it also makes the first request cheaper.
-// Without the check both failures would stay SILENT: the description of a
-// route whose path has changed drops out of the document, while two modules
-// with an identically named DTO make the document impossible to build at all —
-// and both would only be seen when somebody opened /openapi.json.
+// Without the check three failures would stay SILENT: the description of a
+// route whose path has changed drops out of the document, a route nobody
+// described enters it bodiless, and two modules with an identically named DTO
+// make the document impossible to build at all — all three would only be seen
+// when somebody opened /openapi.json, and the second one not even then, because
+// a bodiless endpoint looks like an endpoint.
 //
 // Startup does NOT stop (ADR 0007's distinction): a schema is documentation,
 // not the product's correctness. A wrong schema breaks no order; closing the
@@ -211,6 +213,18 @@ func checkSchema(ctx context.Context, doc *openapi.Doc, r chi.Routes, log *slog.
 		log.WarnContext(ctx, "openapi: there are descriptions matching no route",
 			"records", missing,
 			"meaning", "the route's path may have changed or been deleted; the description does not enter the document")
+	}
+
+	// The mirror direction, and it is the one an EMBEDDER needs. Every module in
+	// the box describes itself; a module written outside the repository is the
+	// one most likely not to, and before ADR 0035 it could not even if it wanted
+	// to. Its endpoints enter the document bodiless — a valid model, but a silent
+	// one, and this line is the only place that silence is broken.
+	if bare := doc.UndescribedRoutes(); len(bare) > 0 {
+		log.WarnContext(ctx, "openapi: there are routes no description matched",
+			"routes", bare,
+			"meaning", "these endpoints appear in the document with a path, a method and no body; "+
+				"a module describes its own endpoints by implementing openapi.Describer")
 	}
 
 	if err != nil {

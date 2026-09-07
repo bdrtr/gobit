@@ -11,8 +11,8 @@ import (
 	"github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/module"
+	"github.com/bdrtr/gobit/core/openapi"
 	"github.com/bdrtr/gobit/core/personaldata"
-	"github.com/bdrtr/gobit/internal/core/openapi"
 	"github.com/bdrtr/gobit/internal/workflows/datasubject"
 )
 

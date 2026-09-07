@@ -467,7 +467,7 @@ What sits under `internal/core/` is not published; it can still change.
 | `core/provider` | The payment/shipping provider contracts (plan Section 5.6) |
 | `core/plugin` | The plugin contract + two-phase installation (`Install` → modules → `Start`) |
 | `internal/core/observability` | OpenTelemetry trace + metric setup; genuinely off when there is no collector |
-| `internal/core/openapi` | OpenAPI schema generation from the router tree (`/openapi.json`) |
+| `core/openapi` | OpenAPI schema generation from the router tree (`/openapi.json`); published so an out-of-tree module can describe its own endpoints (ADR 0035) |
 
 Which backend the event bus runs on, and what each one loses, is in
 [`docs/operating.md`](operating.md).

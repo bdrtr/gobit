@@ -39,6 +39,7 @@ var publishedPackages = []string{
 	"core/http/redisguard",
 	"core/link",
 	"core/module",
+	"core/openapi",
 	"core/personaldata",
 	"core/plugin",
 	"core/provider",

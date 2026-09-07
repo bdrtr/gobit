@@ -86,17 +86,17 @@ are in [`docs/operating.md`](./docs/operating.md).
 
 ```
 gobit.go              # the PUBLISHED facade: New().Version().Add().Use().Main()
-core                  # the PUBLISHED contracts — fifteen packages (ADR 0026):
+core                  # the PUBLISHED contracts — sixteen packages (ADR 0026):
                       # errors, db, container, module, eventbus (+outbox), link,
                       # query, provider, plugin, http (+redisguard), audit,
-                      # errorreport, personaldata
+                      # errorreport, personaldata, openapi
 internal/app          # the COMPOSITION ROOT (ADR 0027): config -> logger ->
                       # container -> router -> listen; the operator subcommands
                       # (migrate, stuck, recover, jobs, deadletters, seed)
 cmd/server            # the binary: the smallest program that can run gobit —
                       # and the example to copy
 internal/core         # the unpublished core: config, logger, job, workflow,
-                      # observability, openapi, page
+                      # observability, page
 internal/modules      # seventeen isolated commerce modules (product, pricing,
                       # inventory, cart, order, payment, …)
 internal/workflows    # cross-module sagas (cart, checkout, invoicing,

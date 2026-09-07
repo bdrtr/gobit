@@ -59,6 +59,23 @@ func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 A method was NOT added to the `module.Module` contract: an undescribed module is
 a valid model too, and making it mandatory would have broken every module.
 
+`core/openapi` is a **published** package ([ADR
+0035](adr/0035-the-schema-vocabulary-is-published.md)), so a module written
+outside this repository describes its endpoints the same way. Until 2026-09-07
+it was not: the package sat under `internal/`, an out-of-tree module could not
+name the type, and its endpoints entered the document bodiless with nothing
+saying so.
+
+**A bodiless endpoint does not look missing.** It appears with its path, its
+method and its security, only without a body — a generated client for it
+compiles and sends nothing, and a reader cannot tell "takes no body" from
+"nobody wrote it down". Two things now say so out loud: the server logs the list
+at startup, and `internal/e2e/testdata/undescribed_routes.txt` holds it as a
+ledger that **may only shrink**. Thirty-three routes are on it today. Twenty-five
+are one root cause — two modules cannot both own a Go type called `Address`,
+because the component name comes from the type name — and the fix is a namespace
+decision recorded in [`gaps.md`](gaps.md) rather than an edit in any module.
+
 You can generate a client from the schema:
 
 ```bash

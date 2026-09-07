@@ -12,6 +12,68 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **Sema kelime dagarcigi YAYIMLANDI, ve sessizlige bir ses kondu** (ADR 0035;
+  ADR 0026'ya ek not — on altinci paket).
+
+  `openapi.Describer` OPSIYONEL bir yetenek: uygulayan modul uclarinin
+  govdesini `/openapi.json`'a yazar, uygulamayan modul de belgede yolu, metodu
+  ve guvenligiyle gorunur. Paket `internal/` altindaydi ve Go'nun kendi
+  `internal` kurali bu yerlesimi bir ayrintidan KARARA cevirmisti: depo disinda
+  yazilmis bir modul arayuzu uygulayamiyordu. "Tercih etmiyordu" degil — tipi
+  adlandiramiyordu.
+
+  Bu tahmin degil, agacta olculmus bir kusurdu. `examples/starter/loyalty` AYRI
+  bir Go modulu ve `GET /store/v1/loyalty/balance` ucunu baglıyor; o uc belgeye
+  govdesiz giriyordu ve hicbir sey bunu soylemiyordu.
+
+  **Gerekce zaten yazilmisti — bir gun once, ayni ADR'de, bu paketin adiyla.**
+  `core/personaldata`'nin neden yayimlandigini anlatan ADR 0026 eki, alternatifin
+  ariza bicimini gostermek icin ornek olarak SEMA PAKETINI kullaniyordu; sonra
+  onu oldugu yerde birakti. Asil bulgu duzeltme degil sekil: bir arguman tek bir
+  vaka icin sonuna kadar goturulup, ayni paragrafta ondan turetildigi ornegin
+  uzerinde durur ve kimse fark etmez.
+
+  **Yayimlamak yuzeye yeni bir bagimlilik EKLEMIYOR.** `Doc.Build` `chi.Routes`
+  aliyor, ama chi zaten yayimlanmis yuzeyde: `module.Module`, `Routes(chi.Router)`
+  istiyor. Karardan once bakilmasi gereken itiraz buydu ve tutmuyor.
+
+  **Ikinci yari sessizlikti.** `Doc.UnmatchedDescriptions` "rotasi olmayan
+  anlatim"i basindan beri cevaplıyordu. Aynasi — "anlatimi olmayan rota" — hic
+  yoktu. Govdesiz bir uc EKSIK gorunmez, hicbir sey almayan bir uc gibi gorunur;
+  yani unutan ic modul de sinyal uretmiyordu. `Doc.UndescribedRoutes` eklendi,
+  acilista uyari olarak dokuluyor, ve e2e'de kapiya baglandi.
+
+  **Ilk olcum OTUZ SEKIZ cikti**, ve kapı bu yuzden bir CIRCIR: defter
+  `internal/e2e/testdata/undescribed_routes.txt` ve YALNIZCA KUCULEBILIR — dil
+  borcunun defteriyle ayni alet, ayni sebeple. Iki yon de zorunlu: defterde
+  olmayan govdesiz rota YENI BORC, defterde olup artik anlatilmis rota ise BAYAT
+  SATIR, cunku odenmis bir satirin arkada kalmasi bir sonraki unutmayi sessizce
+  affeder. Ucu de mutasyonla kanitlandi (korluk dahil).
+
+  **Otuz sekizin yirmi besi TEK kok neden**, ve agac bunu zaten teshis etmisti —
+  dort kez, birbirinden bagimsiz olarak, dordu de "cozum cekirdekte" diyerek.
+  Bilesen adi Go tip adindan turetiliyor, yani iki modul ayni anda `Address`
+  sahibi olamiyor: `customer/api` ile `cart/api` "Address", `payment/api` ile
+  `product/api` "Collection", `fulfillment/api` ile `product/models` "Option",
+  `order/api` ile `cart/api` "LineItem" istiyor. Cakisma tek bir ucu bozmuyor —
+  `Doc.Build` HATA donuyor ve /openapi.json HER modul icin 500 oluyor — bu yuzden
+  dordu de belgeyi dusurmektense govdesiz uc birakmayi secti. Dogru karardi ve
+  hicbir sey fark edilecek kadar bozulmadigi icin kaldi. Karar (ad uzayi)
+  docs/gaps.md G bolumune yazildi.
+
+  **Kalan on ucun sekizi hicbir gerekce tasimiyor** — iki eklentinin uclari — ve
+  besi tasidigindan kotuydu: `order/api`'nin Describe belgesi "BASKA anlatilmayan
+  uc YOK" basligi altinda bes uc sayiyordu, oysa satis sonrasi rotalari o cumleden
+  sonra eklenmisti ve bes tane daha vardi. Cumle dogruydu, dogru olmaktan cikti,
+  ve bugune kadar depoda onu yalanlayabilecek hicbir sey yoktu. Besi de anlatildi
+  (iade teslim, iade parasi, talep kapatma, siparisin odeme durumu, musterinin
+  iade talebi), cumle duzeltildi, defter 38'den 33'e indi.
+
+  Ogrenilecek sey eksikten cok IDDIANIN BICIMI: "baska X yok" diyen bir cumle,
+  tek bir dosyanin icinden tum agac hakkinda verilmis bir hukumdur ve yazarinin
+  bakmadigi bir yere X eklendigi anda bayatlar. Yalanlanamaz oldugu icin yasadi,
+  denetlendigi icin degil.
+
 - **Saga deposu artik kendi satirlarini siliyor, ve "budama" degil DUZENLEME
   cikti** (ADR 0033'e ek not).
 
@@ -68,10 +130,12 @@ Sabitlenme `1.0.0` ile olur.
   zaman yayımlanır. Gömen uygulamanın KENDİ modülü tam olarak öyle bir
   programdır, `erasure.Eraser`'ı uygulamak için adlandırmak zorundadır, ve Go'nun
   `internal` kuralı bunu imkânsız kılardı. Alternatifin arıza biçimi tahmin
-  değil, ağaçta ölçüldü: `internal/core/openapi.Describer` aynı tasarımdır —
-  tip iddiasıyla bulunan opsiyonel yetenek, `internal/` altında — ve ağaç
+  değil, ağaçta ölçüldü: `core/openapi.Describer` aynı tasarımdır —
+  tip iddiasıyla bulunan opsiyonel yetenek, o gün `internal/` altında — ve ağaç
   dışındaki örnek modül onu uygulayamadığı için o modülün uçları belgeden
-  sessizce düşüyor, hiçbir denetim tek kelime etmiyor. Bir şema için bedeli
+  sessizce düşüyordu, hiçbir denetim tek kelime etmiyordu. **Bu ölçüm 2026-09-07'de
+  kendi düzeltmesini doğurdu: paket yayımlandı (ADR 0035), örnek modül artık
+  uçlarını anlatıyor, ve sessizliğin yerine bir ses kondu.** Bir şema için bedeli
   eksik bir yol; bir silme için bedeli yeşil bir derleme ve unutulmak isteyen
   birine verilmiş yanlış bir cevap.
 
@@ -3928,7 +3992,7 @@ Sabitlenme `1.0.0` ile olur.
 
 - **`internal/core` ağacında Türkçe kalmadı** (ADR 0012'nin cırcırı). Workflow
   turunun ardından gelen dört turda `core/http`'nin kalan dosyaları,
-  `redisguard`, `core/query`, `internal/core/openapi` ve `internal/core/config` çevrildi; defter
+  `redisguard`, `core/query`, `core/openapi` ve `internal/core/config` çevrildi; defter
   708 dosyadan **680**'e indi ve defterde artık `internal/core/` ile başlayan
   TEK BİR satır yok. Kalan borç `internal/modules/*`, `internal/e2e`,
   `internal/arch`'ın kendi testleri ve ADR 0001-0011'de.
@@ -6176,7 +6240,7 @@ bir açık, kimsenin kapatmadığı açıktır.
 
 API artık kendini anlatıyor: şemadan çalışan bir istemci üretilebiliyor.
 
-**Kırıcı değişiklik YOKTUR.** `internal/core/openapi` paketinin dışa açık
+**Kırıcı değişiklik YOKTUR.** `core/openapi` paketinin dışa açık
 API'si yalnızca büyüdü (metot eklendi, hiçbiri kaldırılmadı) ve kaldırılan
 `List` bileşeni v0.2.0'da zaten yayımlanmıyordu — eklenmesi ve kaldırılması
 aynı yayımlanmamış pencerede oldu, yani kimsenin ürettiği bir istemciye
