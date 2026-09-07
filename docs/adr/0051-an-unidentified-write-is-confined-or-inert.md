@@ -358,9 +358,23 @@ has to remember.
 
 ## What this deliberately does NOT do
 
-- **It does not build the gate.** No route-to-table audit is added and no
-  existing test is widened. The gate is a separate piece of work with its own
-  record, and until it lands this decision is held the weaker way and says so.
+- ~~**It does not build the gate.**~~ **Built 2026-09-08, in
+  `internal/arch/storefront_boundary_test.go`.** Both boundaries are now checked
+  against the routes the router actually registers: no storefront write decodes a
+  request field the operator controls, and no storefront read offers one as a
+  query parameter. The population is resolved from PATHS rather than from names,
+  and that mattered — a scan for handlers called store-something misses the
+  payment module's two, and a scan for types named storeSomethingRequest finds
+  exactly the two worked examples this record already cites, so either would have
+  passed by looking in the wrong place. Twenty-two storefront write routes and
+  the read routes beside them are in scope, and both gates refuse to run on an
+  empty scan. Mutation-proved four ways: a status field added to the review
+  submission, a status parameter added to the review listing, and each of the two
+  blindness guards.
+
+  What it still does NOT do is the route-to-table audit — nothing here reads the
+  SCHEMA, so the third part of this decision, that the discriminator constrains
+  the columns a table may carry, remains held by review rather than by a gate.
 - **It does not forbid the waitlist forever.** What fails here is the waitlist as
   specified — an unverified address turned into a message by a subscriber. A
   design where the destination is verified, or where the actuation is something

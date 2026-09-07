@@ -1221,6 +1221,31 @@ a repository that no longer exists.
   no row in the README's invariant table. Nothing is red, because that audit only
   checks README against the repository and not the reverse, but the row is
   missing.
+- **D31** **A data race in the migration-cancellation test, seen ONCE and not
+  reproduced.** Observed 2026-09-08 during a full `make test-integration` run:
+  `TestCancellationActuallyStopsRemainingMigrations` in `core/db` failed with
+  "race detected during execution of test". It is recorded because an
+  unreproduced race is still a race, and the alternative to writing it down is
+  forgetting it.
+
+  **What was tried.** The test alone under `-race`: passed. The whole `core/db`
+  package alone under `-race`, three times: no race. The whole integration lane
+  again: clean, exit 0. So it appears only under the full parallel run and not
+  reliably even there — which is consistent with a genuine race whose window is
+  narrow, and equally consistent with contention between testcontainers in that
+  lane.
+
+  **What is NOT known.** The report was not captured; the failure was noticed in
+  a filtered summary and every attempt to reproduce it since has been clean, so
+  there is no stack to point at. Nothing in this round touched `core/db` —
+  measured, zero changed files under that path — so it is not new work.
+
+  **What would settle it.** Running the integration lane with
+  `-race -count=N` on the cancellation test alongside its siblings, or capturing
+  the full lane's output to a file rather than filtering it, which is what would
+  have preserved the report this time. That is the actual lesson: the run was
+  filtered through grep and the stack went with it.
+
 - **D30** **A plugin held four columns of personal data, declared none of them,
   and the audit that exists to catch exactly this cannot see a plugin at all.**
   Found 2026-09-07 out of ADR 0051, which asked what a storefront may accept from
