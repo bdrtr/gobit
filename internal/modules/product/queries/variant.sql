@@ -181,3 +181,32 @@ JOIN product_option_value ov ON ov.id = vov.value_id AND ov.deleted_at IS NULL
 JOIN product_option o ON o.id = vov.option_id AND o.deleted_at IS NULL
 WHERE vov.variant_id = ANY($1::text[])
 ORDER BY vov.variant_id, o.rank, o.id;
+
+-- ListNonAsciiOptionValuesForRefold pages the option values whose text is not
+-- pure ASCII, for the startup convergence ADR 0039 leaves open.
+--
+-- Migration 000003's backfill folded with lower(btrim()), and on a cluster whose
+-- ctype is C that differs from models.FoldOptionValue ONLY where the value carries
+-- a letter outside ASCII. A pure-ASCII value folds identically under both on every
+-- cluster, so a row this skips cannot be one of the rows the pass exists to find.
+--
+-- name: ListNonAsciiOptionValuesForRefold :many
+SELECT id, option_id, value, value_folded
+FROM product_option_value
+WHERE deleted_at IS NULL
+  AND value <> ''
+  AND value !~ '^[[:ascii:]]*$'
+  AND id > sqlc.arg('after_id')::text
+ORDER BY id
+LIMIT sqlc.arg('row_limit')::bigint;
+
+-- SetOptionValueFolded rewrites one option value's matching form.
+--
+-- It writes value_folded alone: `value` is what the merchant typed and what the
+-- vocabulary endpoint hands back, and updated_at is not touched because the
+-- merchant did not change anything.
+--
+-- name: SetOptionValueFolded :execrows
+UPDATE product_option_value
+SET value_folded = sqlc.arg('value_folded')::text
+WHERE id = sqlc.arg('id')::text;

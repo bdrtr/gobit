@@ -131,10 +131,24 @@ same shape ADR 0038 gave the invoice buyer address.
 
 - **It does not build the filter.** That is B2's, and it now has its rule and its
   index.
-- **It does not add the startup convergence pass.** The invoice module has one
-  (`refoldInvoiceHandles`); option values need the same, and until it exists an
-  installation whose values are non-ASCII carries whatever the SQL backfill made
-  of them. This is the first thing to build on top of this decision.
+- ~~**It does not add the startup convergence pass.**~~ **Built 2026-09-07, in the
+  same round.** `refoldOptionValues` runs beside `refoldInvoiceHandles` after
+  `registry.Bootstrap`, reads only the non-ASCII values — the only shape the SQL
+  backfill can have got wrong — and writes only where the stored form differs from
+  the Go fold.
+
+  It also had to answer a case the decision above did not anticipate. **The
+  convergence can be REFUSED by the very index this ADR adds**, and the case is
+  ordinary: on a `--locale=C` cluster the SQL backfill leaves the dotted and
+  dotless spellings of one Turkish word at DIFFERENT folded forms, so 000003's
+  unique index accepts both rows; the Go fold brings them together and the update
+  violates it. So the migration succeeds and the convergence collides, which is
+  the opposite order from the one the Consequences above describe.
+
+  The pass therefore does not stop and does not choose. It converges what it can,
+  and logs each collision at ERROR with the option and both forms, because those
+  two rows are one value typed twice and only the merchant knows which spelling to
+  keep. Nothing is deleted and nothing is renamed.
 - **It does not touch the `q` search.** ADR 0015's hazard stands for `ILIKE` and
   `to_tsvector`; this decision is about matching a value a client chose from a
   vocabulary, not text a shopper typed into a search box.

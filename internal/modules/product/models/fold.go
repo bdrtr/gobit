@@ -114,3 +114,21 @@ func FoldOptionValue(value string) string {
 
 	return b.String()
 }
+
+// OptionValueHandle is one option value's stored text and its matching form.
+//
+// It exists for the convergence pass ADR 0039 leaves open, and it carries the
+// option id as well as the two strings because the failure that pass has to
+// report is a COLLISION WITHIN AN OPTION: two spellings of one value that the
+// SQL backfill left apart and the Go fold brings together.
+type OptionValueHandle struct {
+	// ID is the value's id, and the pass's keyset cursor.
+	ID string
+	// OptionID is the option the value belongs to, which is the scope the
+	// uniqueness of the folded form is enforced in.
+	OptionID string
+	// Value is what the merchant typed, untouched.
+	Value string
+	// Folded is the matching form as it currently stands.
+	Folded string
+}

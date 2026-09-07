@@ -7,6 +7,8 @@ import (
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/internal/modules/invoice"
 	invoicesvc "github.com/bdrtr/gobit/internal/modules/invoice/service"
+	"github.com/bdrtr/gobit/internal/modules/product"
+	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
 // invoiceHandleRefolder is the invoice service as the startup gate needs it.
@@ -100,4 +102,65 @@ func refoldInvoiceHandles(ctx context.Context, c *container.Container, log *slog
 		slog.Int("rewritten", report.Rewritten),
 		slog.String("why", "migration 000003's backfill is written in SQL, which folds ASCII only "+
 			"on a --locale=C cluster; these rows were resolvable by no erasure request until now"))
+}
+
+// optionValueRefolder is the product service as the startup gate needs it.
+type optionValueRefolder interface {
+	RefoldOptionValues(ctx context.Context) (productsvc.RefoldReport, error)
+}
+
+// refoldOptionValues corrects, at startup, the option-value matching forms that
+// migration 000003 could not correct by itself.
+//
+// It is [refoldInvoiceHandles] applied to the second column in this repository
+// that a migration had to backfill with a fold SQL cannot perform (ADR 0039), and
+// it is a startup step for the same reason: the defect is silent, it makes a
+// storefront filter miss products that are there, and leaving it to an operator's
+// command is what was corrected once already.
+//
+// # A collision is REPORTED, never guessed at
+//
+// The pass can be refused by the per-option unique index, and the case is
+// ordinary rather than exotic: on a --locale=C cluster the SQL backfill leaves
+// two spellings of one word at different folded forms, the index accepts both,
+// and the Go fold brings them together. Those two rows are one value typed twice
+// and only the merchant knows which spelling to keep, so each is logged at ERROR
+// with the option and both forms. Nothing is deleted and nothing is renamed.
+func refoldOptionValues(ctx context.Context, c *container.Container, log *slog.Logger) {
+	svc, err := container.Resolve[optionValueRefolder](c, product.ServiceName)
+	if err != nil {
+		// The product module is not installed, which is an ordinary shape for a
+		// library an embedder chooses modules from.
+		return
+	}
+
+	report, err := svc.RefoldOptionValues(ctx)
+	if err != nil {
+		log.ErrorContext(ctx, "the option-value matching forms could not be checked at startup",
+			"error", err,
+			slog.Int("examined", report.Examined),
+			slog.Int("rewritten", report.Rewritten),
+			slog.String("effect", "a storefront filter may miss products whose option value "+
+				"carries a letter outside ASCII"))
+
+		return
+	}
+
+	for _, collision := range report.Collisions {
+		log.ErrorContext(ctx, "two option values in one option are the same value typed twice",
+			slog.String("option_id", collision.OptionID),
+			slog.String("value", collision.Value),
+			slog.String("folded", collision.Folded),
+			slog.String("effect", "this value keeps a matching form no filter will look for, "+
+				"because another value in the same option already holds the one it needs"),
+			slog.String("fix", "remove or rename one of the two spellings; gobit will not "+
+				"choose between them"))
+	}
+
+	if report.Rewritten > 0 {
+		log.InfoContext(ctx, "option-value matching forms were re-folded at startup",
+			slog.Int("examined", report.Examined),
+			slog.Int("rewritten", report.Rewritten),
+			slog.Int("collisions", len(report.Collisions)))
+	}
 }

@@ -27,14 +27,17 @@ import (
 type memStore struct {
 	mu sync.Mutex
 
-	products    map[string]models.Product
-	variants    map[string]models.Variant
-	options     map[string]models.Option
-	values      map[string]models.OptionValue
-	images      map[string]models.Image
-	collections map[string]models.Collection
-	categories  map[string]models.Category
-	tags        map[string]models.Tag
+	products map[string]models.Product
+	variants map[string]models.Variant
+	options  map[string]models.Option
+	values   map[string]models.OptionValue
+	// valuesFolded is the matching form per value id, standing in for the
+	// value_folded column and its per-option unique index.
+	valuesFolded map[string]string
+	images       map[string]models.Image
+	collections  map[string]models.Collection
+	categories   map[string]models.Category
+	tags         map[string]models.Tag
 
 	// variantValues is the variant -> (option -> value) mapping.
 	variantValues map[string]map[string]string
@@ -1388,4 +1391,101 @@ func (m *memStore) CountOptionValues(_ context.Context, f repository.OptionValue
 	}
 
 	return len(m.optionValuePairs(f)), nil
+}
+
+// ListNonAsciiOptionValuesForRefold serves the startup convergence from the
+// values this fake holds, applying the same non-ASCII narrowing the query does.
+func (m *memStore) ListNonAsciiOptionValuesForRefold(
+	_ context.Context, afterID string, limit int32,
+) ([]models.OptionValueHandle, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	ids := make([]string, 0, len(m.values))
+	for id := range m.values {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	out := make([]models.OptionValueHandle, 0, limit)
+	for _, id := range ids {
+		if id <= afterID || int32(len(out)) >= limit {
+			continue
+		}
+
+		value := m.values[id]
+		if value.Value == "" || isASCII(value.Value) {
+			continue
+		}
+
+		out = append(out, models.OptionValueHandle{
+			ID:       value.ID,
+			OptionID: value.OptionID,
+			Value:    value.Value,
+			Folded:   m.valuesFolded[value.ID],
+		})
+	}
+
+	return out, nil
+}
+
+// SetOptionValueFolded records a matching form, refusing one another value in the
+// same option already holds — which is the unique index this fake stands in for.
+func (m *memStore) SetOptionValueFolded(_ context.Context, id, folded string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	target, known := m.values[id]
+	if !known {
+		return errors.NotFound("product_option_value_not_found", "no such option value")
+	}
+
+	// By key rather than by value: models.OptionValue is wide enough that gocritic
+	// counts the per-iteration copy, and only two of its fields are read here.
+	for otherID := range m.values {
+		if otherID != id && m.values[otherID].OptionID == target.OptionID &&
+			m.valuesFolded[otherID] == folded {
+			return errors.Conflict("product_option_value_folded_conflict",
+				"another value in this option already folds to %q", folded)
+		}
+	}
+
+	if m.valuesFolded == nil {
+		m.valuesFolded = map[string]string{}
+	}
+	m.valuesFolded[id] = folded
+
+	return nil
+}
+
+// isASCII reports whether every byte is ASCII, the same narrowing the query's
+// regex performs.
+func isASCII(s string) bool {
+	for i := range len(s) {
+		if s[i] > 127 {
+			return false
+		}
+	}
+
+	return true
+}
+
+// setFolded seeds a stored matching form, standing in for what migration 000003's
+// SQL backfill left in value_folded.
+func (m *memStore) setFolded(id, folded string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.valuesFolded == nil {
+		m.valuesFolded = map[string]string{}
+	}
+	m.valuesFolded[id] = folded
+}
+
+// foldedOf returns the stored matching form of a value.
+func (m *memStore) foldedOf(id string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.valuesFolded[id]
 }

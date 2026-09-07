@@ -271,6 +271,61 @@ func (q *Queries) GetVariantBySKU(ctx context.Context, sku *string) (ProductVari
 	return i, err
 }
 
+const listNonAsciiOptionValuesForRefold = `-- name: ListNonAsciiOptionValuesForRefold :many
+SELECT id, option_id, value, value_folded
+FROM product_option_value
+WHERE deleted_at IS NULL
+  AND value <> ''
+  AND value !~ '^[[:ascii:]]*$'
+  AND id > $1::text
+ORDER BY id
+LIMIT $2::bigint
+`
+
+type ListNonAsciiOptionValuesForRefoldParams struct {
+	AfterID  string
+	RowLimit int64
+}
+
+type ListNonAsciiOptionValuesForRefoldRow struct {
+	ID          string
+	OptionID    string
+	Value       string
+	ValueFolded string
+}
+
+// ListNonAsciiOptionValuesForRefold pages the option values whose text is not
+// pure ASCII, for the startup convergence ADR 0039 leaves open.
+//
+// Migration 000003's backfill folded with lower(btrim()), and on a cluster whose
+// ctype is C that differs from models.FoldOptionValue ONLY where the value carries
+// a letter outside ASCII. A pure-ASCII value folds identically under both on every
+// cluster, so a row this skips cannot be one of the rows the pass exists to find.
+func (q *Queries) ListNonAsciiOptionValuesForRefold(ctx context.Context, arg ListNonAsciiOptionValuesForRefoldParams) ([]ListNonAsciiOptionValuesForRefoldRow, error) {
+	rows, err := q.db.Query(ctx, listNonAsciiOptionValuesForRefold, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListNonAsciiOptionValuesForRefoldRow{}
+	for rows.Next() {
+		var i ListNonAsciiOptionValuesForRefoldRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OptionID,
+			&i.Value,
+			&i.ValueFolded,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOptionValuesByIDs = `-- name: ListOptionValuesByIDs :many
 SELECT ov.id, ov.option_id, ov.value, ov.rank, o.product_id, o.title AS option_title
 FROM product_option_value ov
@@ -563,6 +618,30 @@ func (q *Queries) ListVariantsByProductIDs(ctx context.Context, dollar_1 []strin
 		return nil, err
 	}
 	return items, nil
+}
+
+const setOptionValueFolded = `-- name: SetOptionValueFolded :execrows
+UPDATE product_option_value
+SET value_folded = $1::text
+WHERE id = $2::text
+`
+
+type SetOptionValueFoldedParams struct {
+	ValueFolded string
+	ID          string
+}
+
+// SetOptionValueFolded rewrites one option value's matching form.
+//
+// It writes value_folded alone: `value` is what the merchant typed and what the
+// vocabulary endpoint hands back, and updated_at is not touched because the
+// merchant did not change anything.
+func (q *Queries) SetOptionValueFolded(ctx context.Context, arg SetOptionValueFoldedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setOptionValueFolded, arg.ValueFolded, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setVariantOptionValue = `-- name: SetVariantOptionValue :exec

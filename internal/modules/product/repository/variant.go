@@ -359,3 +359,44 @@ func (r *Repo) ListVariantOptionValues(ctx context.Context, variantIDs []string)
 	}
 	return out, nil
 }
+
+// ListNonAsciiOptionValuesForRefold pages the option values whose text is not
+// pure ASCII.
+//
+// It is the startup convergence's scope; the query's own comment carries why the
+// narrowing is sound.
+func (r *Repo) ListNonAsciiOptionValuesForRefold(
+	ctx context.Context, afterID string, limit int32,
+) ([]models.OptionValueHandle, error) {
+	rows, err := r.q.ListNonAsciiOptionValuesForRefold(ctx,
+		productdb.ListNonAsciiOptionValuesForRefoldParams{AfterID: afterID, RowLimit: int64(limit)})
+	if err != nil {
+		return nil, wrapDB(err, "could not read the option values carrying non-ASCII text")
+	}
+
+	out := make([]models.OptionValueHandle, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, models.OptionValueHandle{
+			ID:       row.ID,
+			OptionID: row.OptionID,
+			Value:    row.Value,
+			Folded:   row.ValueFolded,
+		})
+	}
+
+	return out, nil
+}
+
+// SetOptionValueFolded rewrites one option value's matching form.
+//
+// A uniqueness violation here is NOT a fault to be retried: it means two
+// spellings of one value share an option, and wrapDB turns it into a conflict the
+// caller can recognize and report.
+func (r *Repo) SetOptionValueFolded(ctx context.Context, id, folded string) error {
+	if _, err := r.q.SetOptionValueFolded(ctx,
+		productdb.SetOptionValueFoldedParams{ID: id, ValueFolded: folded}); err != nil {
+		return wrapDB(err, "could not rewrite the matching form of an option value")
+	}
+
+	return nil
+}

@@ -140,6 +140,12 @@ type Store interface {
 	CountVariantsUsingOptionValue(ctx context.Context, valueID string) (int, error)
 	SoftDeleteOptionValue(ctx context.Context, id string) error
 	CreateOptionValue(ctx context.Context, v models.OptionValue) (models.OptionValue, error)
+	// The two below are the startup convergence ADR 0039 leaves open, and
+	// nothing else calls them.
+	ListNonAsciiOptionValuesForRefold(
+		ctx context.Context, afterID string, limit int32,
+	) ([]models.OptionValueHandle, error)
+	SetOptionValueFolded(ctx context.Context, id, folded string) error
 	ListOptionValuesByOptionIDs(ctx context.Context, optionIDs []string) ([]models.OptionValue, error)
 	ListOptionValuesByIDs(ctx context.Context, ids []string) ([]models.OptionValueRef, error)
 	SetVariantOptionValue(ctx context.Context, variantID, optionID, valueID string) error

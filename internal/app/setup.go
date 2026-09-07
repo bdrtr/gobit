@@ -496,6 +496,7 @@ func openApplication(
 	// run there) and its service (registered there). See [refoldInvoiceHandles]
 	// for why this is a startup step rather than an operator's command.
 	refoldInvoiceHandles(ctx, c, log)
+	refoldOptionValues(ctx, c, log)
 
 	// The cross-module workflows can only be set up HERE: each of them resolves
 	// the surfaces of several modules by name from the container, and those
