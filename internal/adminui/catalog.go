@@ -301,14 +301,6 @@ type categoryList struct {
 	Unavailable bool
 }
 
-// Error codes the catalog can produce.
-const (
-	// CodeCatalogUnavailable reports that the read layer could not answer.
-	CodeCatalogUnavailable = "adminui_catalog_unavailable"
-	// CodeProductNotFound reports that the requested product does not exist.
-	CodeProductNotFound = "adminui_product_not_found"
-)
-
 // productRow is one line of the product list.
 type productRow struct {
 	ID        string

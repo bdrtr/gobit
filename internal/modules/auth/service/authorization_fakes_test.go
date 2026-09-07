@@ -56,10 +56,6 @@ func (d *fakeRepo) ListUsers(
 	return nil, 0, nil
 }
 
-func (d *fakeRepo) GetUsersByIDs(_ context.Context, _ []string) ([]models.User, error) {
-	return nil, nil
-}
-
 func (d *fakeRepo) UpdateUser(
 	_ context.Context,
 	id string,

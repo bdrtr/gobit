@@ -159,21 +159,6 @@ func (r *Repository) CreateSeries(ctx context.Context, s models.Series) (models.
 	return toSeries(row), nil
 }
 
-// SeriesByPrefixYear returns the series of the given prefix and year.
-func (r *Repository) SeriesByPrefixYear(
-	ctx context.Context, prefix string, year int32,
-) (models.Series, error) {
-	row, err := r.queries(ctx).GetSeriesByPrefixYear(ctx, invoicedb.GetSeriesByPrefixYearParams{
-		Prefix: prefix,
-		Year:   year,
-	})
-	if err != nil {
-		return models.Series{}, wrapDB(err, codeNotFound, "the series could not be read")
-	}
-
-	return toSeries(row), nil
-}
-
 // ListSeries returns every series, newest year first.
 func (r *Repository) ListSeries(ctx context.Context) ([]models.Series, error) {
 	rows, err := r.queries(ctx).ListSeries(ctx)

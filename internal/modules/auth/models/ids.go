@@ -21,11 +21,6 @@ const (
 	SalesChannelIDPrefix = "sc_"
 )
 
-// idBodyLen is the character count of the body excluding the prefix: 16 bytes
-// encoded as Crockford Base32 without padding come out to exactly 26
-// characters.
-const idBodyLen = 26
-
 // idEncoding is unpadded encoding over the Crockford Base32 alphabet. Because
 // the alphabet is in ascending order in ASCII, the encoded string preserves the
 // same lexicographic order as the bytes it encodes; identifiers stay sortable
@@ -81,7 +76,3 @@ func NewAPIKeyID(t time.Time) string { return NewID(APIKeyIDPrefix, t) }
 
 // NewSalesChannelID produces a new sales channel identifier.
 func NewSalesChannelID(t time.Time) string { return NewID(SalesChannelIDPrefix, t) }
-
-// IDBodyLength returns the length of the body excluding the prefix; it is the
-// single source of truth for tests and validation.
-func IDBodyLength() int { return idBodyLen }

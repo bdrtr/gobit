@@ -178,43 +178,6 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]AuthUse
 	return items, nil
 }
 
-const listUsersByIDs = `-- name: ListUsersByIDs :many
-SELECT id, email, first_name, last_name, avatar_url, scopes, metadata, created_at, updated_at, deleted_at FROM auth_user
-WHERE id = ANY($1::text[]) AND deleted_at IS NULL
-ORDER BY id
-`
-
-func (q *Queries) ListUsersByIDs(ctx context.Context, ids []string) ([]AuthUser, error) {
-	rows, err := q.db.Query(ctx, listUsersByIDs, ids)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []AuthUser{}
-	for rows.Next() {
-		var i AuthUser
-		if err := rows.Scan(
-			&i.ID,
-			&i.Email,
-			&i.FirstName,
-			&i.LastName,
-			&i.AvatarUrl,
-			&i.Scopes,
-			&i.Metadata,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.DeletedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const lockLiveUser = `-- name: LockLiveUser :one
 SELECT id, email, first_name, last_name, avatar_url, scopes, metadata, created_at, updated_at, deleted_at FROM auth_user
 WHERE id = $1 AND deleted_at IS NULL

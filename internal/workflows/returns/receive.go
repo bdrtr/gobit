@@ -141,6 +141,16 @@ func (w *Workflows) readReturn(ctx context.Context, returnID string) (returnDeta
 // A line that cannot be restocked does not stop the others: they are separate
 // products in separate bins, and refusing to put the second one back because
 // the first failed would make one fault into two.
+//
+// # A swallowed restock failure has NO error code, on purpose
+//
+// Every fault here is put in [ReceiveResult.Warnings] and logged at error
+// level; none of them becomes an error the caller can match on, because none of
+// them makes the call fail — [Workflows.ReceiveReturn] explains why the goods
+// being in the building settles that question. An error code would promise a
+// caller a failure it can branch on, and there is no such failure to branch on:
+// the receipt succeeded, and what did not happen is named in the warning and in
+// the log line, which is where an operator picks up the work by hand.
 func (w *Workflows) restock(
 	ctx context.Context, detail returnDetail, locationID string, result *ReceiveResult,
 ) {

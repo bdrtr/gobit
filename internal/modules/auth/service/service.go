@@ -146,7 +146,6 @@ type Repository interface {
 	GetUser(ctx context.Context, id string) (models.User, error)
 	GetUserByEmail(ctx context.Context, email string) (models.User, error)
 	ListUsers(ctx context.Context, filter models.UserFilter, limit, offset int64) ([]models.User, int64, error)
-	GetUsersByIDs(ctx context.Context, ids []string) ([]models.User, error)
 	UpdateUser(ctx context.Context, id string, patch models.UserPatch, now time.Time) (models.User, error)
 	DeleteUser(ctx context.Context, id string, now time.Time) error
 

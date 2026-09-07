@@ -153,23 +153,6 @@ func (r *Repo) ListUsers(
 	return users, total, nil
 }
 
-// GetUsersByIDs returns the users matching the given ids in a SINGLE query. No
-// record is returned for an id that is not found; that is not an error.
-func (r *Repo) GetUsersByIDs(ctx context.Context, ids []string) ([]models.User, error) {
-	if err := r.ready(); err != nil {
-		return nil, err
-	}
-	if len(ids) == 0 {
-		return []models.User{}, nil
-	}
-
-	rows, err := r.q.ListUsersByIDs(ctx, ids)
-	if err != nil {
-		return nil, wrapDB(err, "could not read the users")
-	}
-	return toUsers(rows)
-}
-
 // UpdateUser updates the given fields of the user.
 //
 // If the email changes, the provider_identity field of the login identity is

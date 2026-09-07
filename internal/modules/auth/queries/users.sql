@@ -56,11 +56,6 @@ WHERE deleted_at IS NULL
   AND (sqlc.narg('email')::text IS NULL OR email = sqlc.narg('email')::text)
   AND (sqlc.narg('scope')::text IS NULL OR sqlc.narg('scope')::text = ANY(scopes));
 
--- name: ListUsersByIDs :many
-SELECT * FROM auth_user
-WHERE id = ANY(@ids::text[]) AND deleted_at IS NULL
-ORDER BY id;
-
 -- UpdateUser leaves the fields that were not supplied AS THEY ARE.
 --
 -- This partial update, written with COALESCE, preserves the distinction

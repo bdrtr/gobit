@@ -59,29 +59,6 @@ func (q *Queries) GetSeries(ctx context.Context, id string) (InvoiceSeries, erro
 	return i, err
 }
 
-const getSeriesByPrefixYear = `-- name: GetSeriesByPrefixYear :one
-SELECT id, prefix, year, last_number, created_at, updated_at FROM invoice_series WHERE prefix = $1 AND year = $2
-`
-
-type GetSeriesByPrefixYearParams struct {
-	Prefix string
-	Year   int32
-}
-
-func (q *Queries) GetSeriesByPrefixYear(ctx context.Context, arg GetSeriesByPrefixYearParams) (InvoiceSeries, error) {
-	row := q.db.QueryRow(ctx, getSeriesByPrefixYear, arg.Prefix, arg.Year)
-	var i InvoiceSeries
-	err := row.Scan(
-		&i.ID,
-		&i.Prefix,
-		&i.Year,
-		&i.LastNumber,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const listSeries = `-- name: ListSeries :many
 SELECT id, prefix, year, last_number, created_at, updated_at FROM invoice_series
 ORDER BY year DESC, prefix

@@ -31,8 +31,6 @@ import (
 const (
 	// CodeInvalidInput reports that the request could not be accepted.
 	CodeInvalidInput = "invoice_invalid_input"
-	// CodeNotFound reports that the document does not exist.
-	CodeNotFound = "invoice_not_found"
 	// CodeTransition reports a status move the document may not make.
 	CodeTransition = "invoice_invalid_transition"
 	// CodeNumbering reports that a number could not be allocated.

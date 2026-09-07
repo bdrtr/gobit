@@ -16,7 +16,9 @@
 //   - "auth.interop" — the authenticator that satisfies the core's
 //     corehttp.Authenticator interface STRUCTURALLY. The core resolves it BY
 //     NAME and does not import auth (ADR 0001).
-//   - "auth.service" — the cross-module primitive call surface (see
+//   - "auth.service" — the module's own service. It is registered by name so
+//     that it can be resolved WITHOUT importing auth; internal/app does so
+//     through narrow interfaces it declares itself (see
 //     internal/modules/auth/service, interop.go).
 //   - "sales_channel.query" — the read provider opened to the Query layer
 //     (ADR 0004). Users and API keys are NOT OPENED ON THIS SURFACE.
@@ -92,9 +94,9 @@ const (
 	// ModuleName is the module's unique name; it is also the prefix of the
 	// migration version table.
 	ModuleName = "auth"
-	// ServiceName is the name of the service in the container. Consuming
-	// modules resolve it under this name and through the narrow interface
-	// they define THEMSELVES (ADR 0001).
+	// ServiceName is the name of the service in the container. A consumer
+	// resolves it under this name and through the narrow interface it
+	// defines ITSELF (ADR 0001); today that consumer is internal/app.
 	ServiceName = ModuleName + ".service"
 	// InteropName is the name of the authenticator in the container.
 	//

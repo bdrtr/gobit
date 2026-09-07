@@ -48,8 +48,6 @@ const (
 	CodeInvalidInput = "pricing_invalid_input"
 	// CodeNotCalculable reports that no valid price was found in the given context.
 	CodeNotCalculable = "price_not_calculable"
-	// CodePriceSetNotFound reports that the requested price set was not found.
-	CodePriceSetNotFound = "price_set_not_found"
 )
 
 // Paging limits. If no limit is given the default is applied, if an excessively

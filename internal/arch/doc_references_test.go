@@ -1094,7 +1094,7 @@ func markdownDocs(t *testing.T) []markdownDoc {
 //
 // Only rooted paths are audited. Relative mentions ("see interop.go",
 // "service/provider.go") are OUT OF SCOPE and this is a measured decision: a file
-// with the same name exists in sixteen modules at once (one interop.go per module),
+// with the same name exists in seventeen modules at once (one interop.go per module),
 // the headings sqlc generates mention the query files from a sibling directory, and
 // third-party file names (transport/http_post.go) have the same shape as well. An
 // audit that tried to resolve relative names would either count all of them as
@@ -1773,7 +1773,7 @@ var mdOptionHeadingWords = []string{
 //
 //   - Relative mentions ("core/link", "cart/api/store.go") are not seen. The
 //     justification is the same as [rootedPathReference]'s and rests on the same
-//     measurement: a file with the same name exists in sixteen modules at once.
+//     measurement: a file with the same name exists in seventeen modules at once.
 //   - SINGLE-ELEMENT bare names ("salesChannelVisibleTemplate", "ModuleRegistry")
 //     are not seen. See [TestTheReferencesInTheDocsResolve].
 //   - The symbols of third-party packages are not verified (see [lookUpInPackage]).

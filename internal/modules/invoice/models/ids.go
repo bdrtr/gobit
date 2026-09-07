@@ -25,9 +25,6 @@ const (
 // sortable by time.
 var idEncoding = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding)
 
-// IDBodyLen is the number of characters of the body that follows the prefix.
-const IDBodyLen = 26
-
 // NewInvoiceID produces a new invoice identifier.
 func NewInvoiceID() string { return newID(InvoiceIDPrefix, time.Now()) }
 

@@ -19,10 +19,6 @@ import (
 // explicit validation error instead of a "not found".
 const DeliveryIDPrefix = "notif_"
 
-// idBodyLen is the character count of the body beyond the prefix: 16 bytes
-// encoded as unpadded Crockford Base32 come out to exactly 26 characters.
-const idBodyLen = 26
-
 // idEncoding is the unpadded encoding over the Crockford Base32 alphabet.
 // Because the alphabet is in ascending order in ASCII, the encoded string
 // keeps the same lexicographic order as the bytes it encodes; identifiers stay
@@ -66,7 +62,3 @@ func NewID(prefix string, t time.Time) string {
 
 // NewDeliveryID produces a new delivery log identifier.
 func NewDeliveryID(t time.Time) string { return NewID(DeliveryIDPrefix, t) }
-
-// IDBodyLength returns the length of the body beyond the prefix; it is the
-// single source of truth for tests and for validation.
-func IDBodyLength() int { return idBodyLen }

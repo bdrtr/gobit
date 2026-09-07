@@ -34,7 +34,6 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
@@ -313,12 +312,4 @@ func newMeterProvider(
 		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exp,
 			sdkmetric.WithInterval(interval))),
 	), nil
-}
-
-// Attrs returns the common attributes to be added to slog records.
-func Attrs(opts Options) []attribute.KeyValue {
-	return []attribute.KeyValue{
-		semconv.ServiceName(opts.ServiceName),
-		semconv.ServiceVersion(opts.ServiceVersion),
-	}
 }

@@ -69,8 +69,6 @@ const (
 	CodeInvalidInput = "tax_invalid_input"
 	// CodeUnconfigured reports that the service was not set up.
 	CodeUnconfigured = "tax_service_unconfigured"
-	// CodeRegionNotFound reports that the requested tax region was not found.
-	CodeRegionNotFound = "tax_region_not_found"
 	// CodeParentInvalid reports that a province region's root is invalid.
 	CodeParentInvalid = "tax_parent_invalid"
 	// CodeRootExists reports that the country already has a root tax region.

@@ -12,9 +12,6 @@ RETURNING *;
 -- name: GetSeries :one
 SELECT * FROM invoice_series WHERE id = $1;
 
--- name: GetSeriesByPrefixYear :one
-SELECT * FROM invoice_series WHERE prefix = $1 AND year = $2;
-
 -- name: ListSeries :many
 SELECT * FROM invoice_series
 ORDER BY year DESC, prefix;

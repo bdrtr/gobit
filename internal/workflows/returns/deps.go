@@ -69,8 +69,6 @@ const (
 	CodeReturnUnreadable = "returns_workflow_return_unreadable"
 	// CodeNoInventoryItem reports that a returned variant has no inventory item.
 	CodeNoInventoryItem = "returns_workflow_no_inventory_item"
-	// CodeRestockFailed reports that the stock could not be put back.
-	CodeRestockFailed = "returns_workflow_restock_failed"
 	// CodeNoPayment reports that the order has no payment collection bound.
 	CodeNoPayment = "returns_workflow_no_payment"
 	// CodeRefundFailed reports that the money could not be sent back.

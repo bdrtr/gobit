@@ -362,7 +362,8 @@ type layerRule struct {
 //
 // depguard guards the boundary BETWEEN modules and says nothing about the one
 // inside a module. These two rules are the SRP the repository actually already
-// obeys — measured: 15 modules, 30 packages, 0 violations — written down so it
+// obeys — measured 2026-09-07: 17 modules, 34 packages, 0 violations — written
+// down so it
 // stays obeyed.
 //
 // They are not a size metric. Nothing here counts methods or lines; each rule
@@ -466,7 +467,7 @@ func TestLayerPurity(t *testing.T) {
 // layerExemptions names the (module, layer) pairs that legitimately have no
 // such directory.
 //
-// It is EMPTY today: all 15 modules carry both an api and a service directory.
+// It is EMPTY today: all 17 modules carry both an api and a service directory.
 // The map exists so that a module which genuinely has no HTTP surface can say
 // so in one reviewed line, instead of the counter above being loosened into an
 // assertion that no longer catches a renamed layer.

@@ -138,12 +138,19 @@ izolasyonu kırardı. Bu yüzden **arayüz tüketicinin kendi paketinde** tanım
 ve somut servis container'dan **adla** çözülür ([ADR 0001](adr/0001-modul-arasi-iletisim.md)):
 
 ```go
-// product modülünde, auth import EDİLMEDEN:
-type SalesChannelReader interface {
-    ActiveSalesChannelIDs(ctx context.Context) ([]string, error)
+// order modülünde, b2b import EDİLMEDEN:
+type SpendingPolicy interface {
+    SpendingLimitJSON(ctx context.Context, customerID string) (json.RawMessage, error)
 }
-channels, err := container.Resolve[SalesChannelReader](c, "auth.service")
+policy, err := container.Resolve[SpendingPolicy](c, "b2b.interop")
 ```
+
+Örnek uydurma değil, ağaçtaki canlı dikiştir: arayüz
+`internal/modules/order/service/spending.go`'de TÜKETEN tarafta tanımlıdır, ad
+`internal/modules/order/module.go`'da bir sabittir ve b2b modülü kurulu değilse
+çözüm başarısız olur — sipariş de o durumda harcama sınırı olmadan geçer. İmzanın
+`json.RawMessage` döndürmesi de tesadüf değil: iki modülün paylaştığı tek şey bir
+ŞEMA olsun ki, ne biri ötekinin tipini adlandırsın ne de ortak bir paket doğsun.
 
 Yayımlanan yüzeyler bilinçli olarak **dardır ve ilkel tiplerle** konuşur: her
 metot bir sözleşmedir ve derleyici onu denetlemez — arayüz TÜKETEN tarafta

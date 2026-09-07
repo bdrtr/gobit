@@ -9,9 +9,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth/models"
 )
 
-// This file carries the two surfaces auth opens to the OUTSIDE.
-//
-// # 1. The authentication surface
+// This file carries the authentication surface auth opens to the OUTSIDE.
 //
 // [Interop] satisfies the core's corehttp.Authenticator interface
 // STRUCTURALLY and is registered in the container under the name
@@ -23,23 +21,26 @@ import (
 // second type carrying the same name breaks structural compatibility and the
 // core interface could not be satisfied.
 //
-// # 2. The cross-module primitive surface
+// # How the outside reaches auth otherwise
 //
-// Other modules (e.g. product's catalog filtering by sales channel) CANNOT
-// import auth; this is why the methods opened to them use ONLY primitive and
-// stdlib types, and the consumer redefines the same signature in its own
-// package:
+// Auth carries NO cross-module primitive call surface: there is no method
+// that another module resolves under the name "auth.service" and calls with
+// primitive types only. Two paths are open instead, and they are the ones to
+// read before adding a third:
 //
-//	// in the product module, WITHOUT importing auth:
-//	type SalesChannelReader interface {
-//	    ActiveSalesChannelIDs(ctx context.Context) ([]string, error)
-//	}
-//	channels, err := container.Resolve[SalesChannelReader](c, "auth.service")
+//   - The Query layer. The "sales_channel" provider opens the channels for
+//     READING to a module that cannot import auth (ADR 0004, provider.go).
+//     This is the path when the fields of a channel are wanted.
+//   - The composition root. internal/app resolves "auth.service" through
+//     narrow interfaces it declares ITSELF (seed.go's rigStorefront,
+//     app.go's adminUsers). That package already imports every module, so it
+//     may name auth's own input and output types; a MODULE may not.
 //
-// The surface is deliberately NARROW: every method added here is a contract
-// auth can never change again. If all the fields of a channel are needed, the
-// right path is not a new primitive method but the Query layer (see
-// provider.go).
+// If a module ever does need a primitive-typed call, the method is added
+// here and the consumer redefines the same signature in its own package,
+// resolving "auth.service" by name (ADR 0001). Such a surface stays
+// deliberately NARROW: every method added to it is a contract auth can never
+// change again.
 
 // Principal.Kind values; this is the vocabulary the core expects.
 const (
@@ -300,53 +301,4 @@ func looksLikeJWT(credential string) bool {
 		return false
 	}
 	return parts[0] != "" && parts[1] != ""
-}
-
-// ActiveSalesChannelIDs returns the identifiers of the enabled sales channels.
-//
-// It is a cross-module primitive surface: the consumer (e.g. a module doing
-// catalog filtering) redefines this signature in its own package and resolves
-// the concrete service from the container under the name "auth.service"
-// (ADR 0001).
-//
-// Disabled and deleted channels ARE NOT RETURNED. If there is no channel at
-// all, an empty (non-nil) slice is returned.
-func (s *Service) ActiveSalesChannelIDs(ctx context.Context) ([]string, error) {
-	if err := s.ready(); err != nil {
-		return nil, err
-	}
-
-	disabled := false
-	ids := make([]string, 0, DefaultLimit)
-	for offset := int64(0); ; offset += MaxLimit {
-		channels, total, err := s.repo.ListSalesChannels(ctx,
-			models.SalesChannelFilter{IsDisabled: &disabled}, MaxLimit, offset)
-		if err != nil {
-			return nil, err
-		}
-		for i := range channels {
-			ids = append(ids, channels[i].ID)
-		}
-		// It stops if the page comes back empty or the total count has been
-		// reached; without the second condition one more round would be made
-		// after the last page.
-		if len(channels) == 0 || int64(len(ids)) >= total {
-			break
-		}
-	}
-	return ids, nil
-}
-
-// SalesChannelName returns the channel's name; errors.NotFound if there is no
-// such channel.
-//
-// It is a cross-module primitive surface. If all the fields of the channel are
-// needed, the right path is the Query layer (the "sales_channel" provider, see
-// provider.go).
-func (s *Service) SalesChannelName(ctx context.Context, channelID string) (string, error) {
-	channel, err := s.GetSalesChannel(ctx, channelID)
-	if err != nil {
-		return "", err
-	}
-	return channel.Name, nil
 }

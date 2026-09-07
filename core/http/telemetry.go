@@ -1,7 +1,6 @@
 package http
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 	"time"
@@ -176,24 +175,4 @@ func routePattern(r *http.Request) string {
 	}
 
 	return unknownRoute
-}
-
-// SpanFromContext returns the active span from the context.
-//
-// It is safe to call with tracing off: OTel returns a no-op span.
-func SpanFromContext(ctx context.Context) trace.Span {
-	return trace.SpanFromContext(ctx)
-}
-
-// TraceIDFromContext returns the id of the active trace, or an empty string.
-//
-// It is meant for log records: binding an error log to its trace is the
-// ucuz yolu budur.
-func TraceIDFromContext(ctx context.Context) string {
-	sc := trace.SpanContextFromContext(ctx)
-	if !sc.IsValid() {
-		return ""
-	}
-
-	return sc.TraceID().String()
 }

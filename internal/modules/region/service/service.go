@@ -42,8 +42,6 @@ import (
 const (
 	// CodeInvalidInput reports that the input did not pass validation.
 	CodeInvalidInput = "region_invalid_input"
-	// CodeRegionNotFound reports that the requested region was not found.
-	CodeRegionNotFound = "region_not_found"
 	// CodeCountryUnassigned reports that the country is attached to no region.
 	CodeCountryUnassigned = "country_has_no_region"
 	// CodeCountryRegionMissing reports that the region the country is attached

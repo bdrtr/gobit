@@ -10,15 +10,14 @@ import (
 
 // CORS headers, spelled once.
 const (
-	headerOrigin         = "Origin"
-	headerAllowOrigin    = "Access-Control-Allow-Origin"
-	headerAllowMethods   = "Access-Control-Allow-Methods"
-	headerAllowHeaders   = "Access-Control-Allow-Headers"
-	headerExposeHeaders  = "Access-Control-Expose-Headers"
-	headerMaxAge         = "Access-Control-Max-Age"
-	headerRequestMethod  = "Access-Control-Request-Method"
-	headerRequestHeaders = "Access-Control-Request-Headers"
-	headerVary           = "Vary"
+	headerOrigin        = "Origin"
+	headerAllowOrigin   = "Access-Control-Allow-Origin"
+	headerAllowMethods  = "Access-Control-Allow-Methods"
+	headerAllowHeaders  = "Access-Control-Allow-Headers"
+	headerExposeHeaders = "Access-Control-Expose-Headers"
+	headerMaxAge        = "Access-Control-Max-Age"
+	headerRequestMethod = "Access-Control-Request-Method"
+	headerVary          = "Vary"
 )
 
 // AnyOrigin is the wildcard an installation can configure to open the store

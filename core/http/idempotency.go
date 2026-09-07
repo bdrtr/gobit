@@ -616,8 +616,6 @@ type entry struct {
 	key string
 	// resp is the completed response; it is nil while in flight.
 	resp *IdempotentResponse
-	// fingerprint is the fingerprint given at reservation time.
-	fingerprint string
 	// expiresAt is the end of the record's validity.
 	expiresAt time.Time
 	// charge is this entry's byte cost deducted from the budget.
@@ -803,12 +801,17 @@ func (s *MemoryIdempotencyStore) Budget() int64 { return s.budget }
 
 // Begin reserves the key or returns the existing record.
 //
+// The fingerprint is IGNORED here. It is compared on a FINISHED record only, and
+// there it is read off [IdempotentResponse.Fingerprint], which
+// [MemoryIdempotencyStore.Complete] stores; keeping a second copy on the
+// reservation would be a value nothing reads.
+//
 // The COPY of the replayed record is taken OUTSIDE the lock; its measurement and
 // reasoning are in [MemoryIdempotencyStore]'s lock section.
 func (s *MemoryIdempotencyStore) Begin(
-	_ context.Context, key, fp string,
+	_ context.Context, key, _ string,
 ) (*IdempotentResponse, bool, error) {
-	rec, err := s.reserve(s.now(), key, fp)
+	rec, err := s.reserve(s.now(), key)
 	if rec == nil || err != nil {
 		return nil, false, err
 	}
@@ -830,7 +833,7 @@ func (s *MemoryIdempotencyStore) Begin(
 // resp field with a new pointer and never updates the struct it points at in
 // place. If that rule is broken the copying here races.
 func (s *MemoryIdempotencyStore) reserve(
-	now time.Time, key, fp string,
+	now time.Time, key string,
 ) (*IdempotentResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -839,7 +842,7 @@ func (s *MemoryIdempotencyStore) reserve(
 
 	g, ok := s.entry[key]
 	if !ok {
-		fresh := &entry{key: key, fingerprint: fp, expiresAt: now.Add(s.ttl)}
+		fresh := &entry{key: key, expiresAt: now.Add(s.ttl)}
 		fresh.node = s.queue.PushBack(fresh)
 		s.entry[key] = fresh
 
@@ -907,7 +910,6 @@ func (s *MemoryIdempotencyStore) write(
 	}
 
 	g.resp = kopya
-	g.fingerprint = kopya.Fingerprint
 	g.expiresAt = now.Add(s.ttl)
 	g.charge = charge
 	s.charge += g.charge
