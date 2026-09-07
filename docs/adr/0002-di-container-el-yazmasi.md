@@ -1,71 +1,76 @@
-# ADR 0002 — DI container: kütüphane yerine el yazması
+# ADR 0002 — DI container: hand-written instead of a library
 
-- **Durum:** Kabul edildi
-- **Tarih:** 2026-08-23
-- **Faz:** 1
+- **Status:** Accepted
+- **Date:** 2026-08-23
+- **Phase:** 1
 
-## Bağlam
+## Context
 
-Plan Bölüm 3, DI için `samber/do` v2'yi öneriyor. Bölüm 5.1'deki sözleşme ise
-bağlayıcı:
+Plan Section 3 recommends `samber/do` v2 for DI. The contract in Section 5.1,
+however, is binding:
 
 ```go
 func (c *Container) Provide(name string, ctor any) error
 func Resolve[T any](c *Container, name string) (T, error)
 ```
 
-Yani **isimli kayıt** + **`any` alan yapıcı** + **generic çözüm**.
+That is, **named registration** + **a constructor taken as `any`** +
+**generic resolution**.
 
-`samber/do` v2'nin kayıt yüzeyi ise tip parametrelidir (`do.ProvideNamed[T]`).
-`any` alan bir `Provide`'ı onun üstüne kurmanın tek yolu her servisi do'ya `any`
-olarak vermektir — ve o anda do'nun getirdiği üç şeyin üçü de elden gider.
+`samber/do` v2's registration surface, by contrast, is type-parameterized
+(`do.ProvideNamed[T]`). The only way to build a `Provide` that takes `any` on
+top of it is to hand every service to do as `any` — and at that moment all three
+of the things do brings are lost.
 
-## Değerlendirme
+## Evaluation
 
-| do'nun sunduğu | `any`'ye düzleşince ne oluyor |
+| What do offers | What happens once it is flattened to `any` |
 |---|---|
-| Tipli hata mesajları | Tip bilgisi kaybolduğu için ADR 0001'in istediği "kayıtlı somut tip vs beklenen tip" teşhisi üretilemez |
-| Çift kayıt koruması | do **panic** eder; sözleşme `errors.Conflict` istiyor |
-| Kapatma | do kendi bağımlılık grafiğine göre ve yalnızca kendi `Shutdowner` arayüzünü tanıyarak kapatır; sözleşme **kayıt sırasının tersini** ve `io.Closer` desteğini şart koşuyor |
+| Typed error messages | Because the type information is gone, the "registered concrete type vs expected type" diagnosis ADR 0001 asks for cannot be produced |
+| Double-registration protection | do **panics**; the contract asks for `errors.Conflict` |
+| Shutdown | do shuts down according to its own dependency graph and recognizes only its own `Shutdowner` interface; the contract requires the **reverse of registration order** and support for `io.Closer` |
 
-Geriye do'dan yalnızca mutex'li bir map kalıyordu.
+What was left of do was a map with a mutex.
 
-## Karar
+## Decision
 
-`core/container` sözleşmenin istediği davranışı **doğrudan yazar**;
-`samber/do` bağımlılığı eklenmez.
+`core/container` **writes the behavior the contract asks for directly**; the
+`samber/do` dependency is not added.
 
-Dışarıya yalnızca Bölüm 5.1'deki yüzey göründüğü için karar geri alınabilir:
-gövde ileride bir kütüphaneye taşınabilir, çağıranlar etkilenmez.
+Because only the surface from Section 5.1 is visible from the outside, the
+decision is reversible: the body can later be moved onto a library without
+affecting callers.
 
-Paketin sağladığı, sözleşmenin ötesindeki davranışlar:
+The behaviors the package provides beyond the contract:
 
-- **Tembel singleton** — yapıcı ilk `Resolve`'da ve eşzamanlı 100 çağrıda bile
-  tam olarak bir kez çalışır.
-- **Bağımlılık döngüsü tespiti** — `A -> B -> A` deadlock yerine bekleme
-  grafiğini içeren net bir hata döner.
-- **Teşhis edilebilir tip uyumsuzluğu** — hata mesajı hem kayıtlı somut tipi
-  hem beklenen arayüzü ve eksik/uyumsuz metodu yazar. ADR 0001'in tüketici
-  tarafı interface örüntüsünde uyumsuzluk derleyici tarafından değil çalışma
-  zamanında yakalandığı için mesaj kalitesi kritiktir.
-- **Ters sırada kapatma** — `io.Closer` ve `Shutdowner` uygulayan servisler
-  kayıt sırasının tersine kapatılır; panikler yakalanır, hatalar birleştirilir.
+- **Lazy singleton** — the constructor runs exactly once, on the first
+  `Resolve`, even under 100 concurrent calls.
+- **Dependency cycle detection** — `A -> B -> A` returns a clear error carrying
+  the wait graph instead of deadlocking.
+- **Diagnosable type mismatch** — the error message names both the registered
+  concrete type and the expected interface, and the missing or mismatched
+  method. Because in ADR 0001's consumer-side interface pattern a mismatch is
+  caught at runtime rather than by the compiler, message quality is critical.
+- **Shutdown in reverse order** — services implementing `io.Closer` and
+  `Shutdowner` are closed in the reverse of registration order; panics are
+  caught, errors are joined.
 
-## Sonuçlar
+## Consequences
 
-**Olumlu:** Sözleşme birebir karşılanır, bağımlılık sayısı artmaz, hata
-mesajları alan ihtiyacına göre biçimlendirilebilir.
+**Positive:** The contract is met exactly, the dependency count does not grow,
+and error messages can be shaped to the needs of the field.
 
-**Olumsuz:** Eşzamanlılık ve kapatma sırası artık bizim sorumluluğumuzdadır.
-Karşılığında paket yoğun biçimde test edilmiştir (eşzamanlı yapıcı, döngü,
-kapanışla yarışan çözüm, panik yayan servis).
+**Negative:** Concurrency and shutdown ordering are now our responsibility. In
+return, the package is heavily tested (concurrent constructor, cycle,
+resolution racing a shutdown, a service that panics).
 
-**Bilinen sınır:** `Shutdown`, uçuşta olan bir yapıcıyı yalnızca kendisine
-verilen ctx bütçesi kadar bekler. Bütçe dolarsa o servis kapatılmadan kalır ve
-bu durum `Shutdown`'ın döndürdüğü birleşik hataya yazılır. Pratik sonuç:
-`Shutdown`'a verilen süre en yavaş yapıcıdan uzun olmalıdır.
+**Known limit:** `Shutdown` waits for an in-flight constructor only as long as
+the ctx budget it was given. If the budget runs out that service is left
+unclosed, and this is written into the joined error `Shutdown` returns. The
+practical consequence: the time given to `Shutdown` must be longer than the
+slowest constructor.
 
-## İlgili
+## Related
 
-- Plan Bölüm 3 (bu ADR ile güncellendi), Bölüm 5.1
-- [ADR 0001](0001-modul-arasi-iletisim.md) — teşhis edilebilir tip uyumsuzluğu ihtiyacının kaynağı
+- Plan Section 3 (updated by this ADR), Section 5.1
+- [ADR 0001](0001-modul-arasi-iletisim.md) — the origin of the need for a diagnosable type mismatch

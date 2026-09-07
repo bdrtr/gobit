@@ -1,81 +1,87 @@
-# ADR 0003 — Migration iptali: bağlantı sahipliği bizde
+# ADR 0003 — Migration cancellation: we own the connection
 
-- **Durum:** Kabul edildi
-- **Tarih:** 2026-08-23
-- **Faz:** 1
+- **Status:** Accepted
+- **Date:** 2026-08-23
+- **Phase:** 1
 
-## Bağlam
+## Context
 
-`Module.Migrations() fs.FS` sözleşmesi gereği migration'lar `golang-migrate` ile
-uygulanıyor. Ancak kütüphanenin PostgreSQL sürücüsü **kurulumdan sonra hiçbir
-yerde çağıranın context'ini kullanmıyor**:
+Under the `Module.Migrations() fs.FS` contract, migrations are applied with
+`golang-migrate`. But the library's PostgreSQL driver **never uses the caller's
+context anywhere after setup**:
 
-- `Run`, `Version`, `SetVersion`, `Drop` — hepsi `context.Background()`
-- `Lock` — `SELECT pg_advisory_lock($1)` üzerinde, kaynak kodun kendi yorumuyla
-  *"will wait indefinitely until the lock can be acquired"*
+- `Run`, `Version`, `SetVersion`, `Drop` — all `context.Background()`
+- `Lock` — on `SELECT pg_advisory_lock($1)`, which by the source code's own
+  comment *"will wait indefinitely until the lock can be acquired"*
 
-Bu, iki somut arızaya yol açıyor:
+This leads to two concrete faults:
 
-1. **Süresiz asılma.** Paketleri düşüren bir güvenlik duvarının arkasındaki
-   veritabanına yapılan `Migrate` çağrısı, çağıranın 30 saniyelik bütçesine
-   rağmen işletim sistemi TCP zaman aşımına kadar (dakikalar) bloke olur. İki
-   replika aynı anda açılıyorsa ikincisi advisory lock üzerinde süresiz bekler.
-2. **Sessiz yarım şema.** İptal yalnızca *beklemeyi* durdurup işi arka planda
-   bırakırsa, çağıran "yarıda kesildi" hatası alır ama terk edilen goroutine
-   kalan migration'ları uygulamaya devam eder. Şema, hata dönmüş bir çağrının
-   ardından sessizce tamamlanır.
+1. **Indefinite hang.** A `Migrate` call against a database behind a firewall
+   that drops packets blocks until the operating system's TCP timeout (minutes),
+   despite the caller's 30-second budget. If two replicas come up at the same
+   time, the second waits indefinitely on the advisory lock.
+2. **A silent half-schema.** If cancellation only stops the *waiting* and leaves
+   the work running in the background, the caller gets a "cut off midway" error
+   while the abandoned goroutine goes on applying the remaining migrations. The
+   schema silently completes after a call that returned an error.
 
-## Değerlendirilen seçenekler
+## Alternatives considered
 
-**A. Yalnızca `GracefulStop`** — golang-migrate migration'lar *arasında* durur.
-Uçuştaki tek bir uzun migration'ı ve `Lock()` beklemesini durduramaz.
+**A. `GracefulStop` alone** — golang-migrate stops *between* migrations. It
+cannot stop a single long migration in flight, nor the `Lock()` wait.
 
-**B. DSN'e zaman aşımı parametreleri** (`connect_timeout`, `x-statement-timeout`)
-— tek bir *ifadeyi* sınırlar. Arka arkaya çalışan kısa ifadelerden oluşan bir
-migration dizisini durdurmaz; ölçüldü, durdurmadı.
+**B. Timeout parameters in the DSN** (`connect_timeout`, `x-statement-timeout`)
+— these bound a single *statement*. They do not stop a migration sequence made
+of short statements running back to back; measured, it did not stop it.
 
-**C. Goroutine'i terk edip ctx sınırında dönmek** — çağıran zamanında döner ama
-2 numaralı arıza aynen kalır. Ölçüldü: iptal raporlandıktan sonra kalan
-migration'lar uygulandı ve sürüm 3'e çıktı.
+**C. Abandon the goroutine and return at the ctx boundary** — the caller returns
+on time, but fault number 2 remains exactly as it was. Measured: after the
+cancellation was reported the remaining migrations were applied and the version
+went to 3.
 
-**D. Bağlantının sahibi olmak** — `*sql.Conn`'u biz açarız, sürücüye
-`postgres.WithConnection(ctx, conn, cfg)` ile veririz. İptalde bağlantıyı
-kapatırız: uçuştaki ifade kopar, sonraki her ifade başarısız olur.
+**D. Own the connection** — we open the `*sql.Conn` ourselves and hand it to the
+driver with `postgres.WithConnection(ctx, conn, cfg)`. On cancellation we close
+the connection: the in-flight statement is severed, and every subsequent
+statement fails.
 
-## Karar
+## Decision
 
-**D**, A ile birlikte ve katmanlı olarak.
+**D**, together with A and in layers.
 
-`core/db`'deki `session` tipi bağlantının sahibidir. İptalde sırayla:
+The `session` type in `core/db` owns the connection. On cancellation, in order:
 
-1. `GracefulStop` — sonraki migration'ın *başlaması* engellenir,
-2. `conn.Close()` — *uçuştaki* ifade koparılır,
-3. işin gerçekten sonlanması beklenir (`cancelGracePeriod`); goroutine terk
-   edilmez, sonlanmazsa bu durum hata mesajında açıkça belirtilir,
-4. çağıran döndükten sonra `defer session.close()` kalan tüm kaynakları kapatır.
+1. `GracefulStop` — the next migration is prevented from *starting*,
+2. `conn.Close()` — the *in-flight* statement is severed,
+3. the work is waited on to actually finish (`cancelGracePeriod`); the goroutine
+   is not abandoned, and if it does not finish that fact is stated explicitly in
+   the error message,
+4. after the caller has returned, `defer session.close()` releases every
+   remaining resource.
 
-Yan kazanç: versiyon tablosu artık DSN'e `x-migrations-table` yazarak değil,
-`postgres.Config.MigrationsTable` ile veriliyor — DSN'e parametre enjekte etmek
-gerekmiyor. DSN şeması `sql.Open`'ın tembelliği yüzünden gizlenmesin diye
-bağlanmadan önce ayrıca doğrulanıyor.
+A side benefit: the version table is now supplied through
+`postgres.Config.MigrationsTable` rather than by writing `x-migrations-table`
+into the DSN — no parameter has to be injected into the DSN. So that the DSN
+scheme is not hidden by `sql.Open`'s laziness, it is additionally validated
+before connecting.
 
-## Sonuçlar
+## Consequences
 
-**Olumlu:** `ctx` gerçekten sınır koyar; iptal edilen bir migration akışı
-dönüşten sonra ilerlemez; erişilemez sunucuda çağrı bütçe içinde döner.
+**Positive:** `ctx` really does set a bound; a canceled migration flow does not
+advance after the return; against an unreachable server the call returns within
+budget.
 
-**Olumsuz:** `database/sql` + `pgx/stdlib` katmanı, `pgxpool`'un yanında ikinci
-bir bağlantı yolu demek. Migration tek bağlantı üzerinde yürüdüğü için
-(`SetMaxOpenConns(1)` — advisory lock'un aynı bağlantıda alınıp bırakılması
-zorunlu) maliyeti ihmal edilebilir.
+**Negative:** The `database/sql` + `pgx/stdlib` layer means a second connection
+path alongside `pgxpool`. Because a migration runs over a single connection
+(`SetMaxOpenConns(1)` — the advisory lock must be taken and released on the same
+connection), the cost is negligible.
 
-**Test notu:** Düzeltme katmanlı olduğu için tek tek mutasyonlar (yalnızca
-`GracefulStop`'u ya da yalnızca `conn.Close()`'u kaldırmak) regresyon testini
-düşürmez — diğer katman yakalar. `TestCancellationActuallyStopsRemainingMigrations`
-uçtan uca özelliği sınar ve tam mutasyonda (goroutine tümüyle terk edilmiş)
-sürüm 3'e çıkarak düşer; bu doğrulandı.
+**Test note:** Because the fix is layered, individual mutations (removing only
+`GracefulStop`, or only `conn.Close()`) do not fail the regression test — the
+other layer catches it. `TestCancellationActuallyStopsRemainingMigrations`
+exercises the property end to end and, under the full mutation (the goroutine
+abandoned entirely), fails by going to version 3; this was verified.
 
-## İlgili
+## Related
 
-- Plan Bölüm 8 (Migration konvansiyonları), Faz 1
+- Plan Section 8 (Migration conventions), Phase 1
 - `core/db/migrate.go` — `session.run`

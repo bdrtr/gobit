@@ -1144,6 +1144,259 @@ func TestRecoverRefusesALiveLease(t *testing.T) {
 	assert.Empty(t, rec.snapshot(), "a live saga must not be compensated")
 }
 
+// claimAnswer wraps a stale-on-read store and gives a FIXED answer to the claim.
+//
+// The claim is a CAS against the record's own UpdatedAt, and [staleOnRead]
+// invents that timestamp on every read — so a claim forwarded to the real store
+// underneath would always lose, for the wrong reason. Here the answer is stated
+// outright, which is what lets the two losing outcomes be told apart: "another
+// process holds it" (won false, err nil) and "the Store did not answer" (err
+// set). Nothing else in the engine distinguishes those two, and they must not be
+// reported to the operator the same way.
+type claimAnswer struct {
+	*staleOnRead
+
+	won bool
+	err error
+}
+
+func (s *claimAnswer) ClaimAbandoned(context.Context, string, time.Time) (bool, error) {
+	return s.won, s.err
+}
+
+// recoverWithClaim builds a recoverer over a store that answers the claim the
+// given way, holding an abandoned record that DID work.
+func recoverWithClaim(t *testing.T, key string, won bool, claimErr error) (workflow.Recoverer, workflow.Store, string) {
+	t.Helper()
+
+	base := workflow.NewMemoryStore()
+	store := &claimAnswer{
+		staleOnRead: &staleOnRead{Store: base, age: time.Hour},
+		won:         won,
+		err:         claimErr,
+	}
+	engine := workflow.New(store, testLogger())
+
+	recoverer, ok := engine.(workflow.Recoverer)
+	require.True(t, ok, "the engine MUST offer the recovery capability")
+
+	id := abandonedRecord(t, base, key, time.Hour, workflow.StepRecord{
+		Index: 0, Name: "reserve", Status: workflow.StepInvoked, Attempts: 1,
+		Output: json.RawMessage(`"res_1"`),
+	})
+
+	return recoverer, base, id
+}
+
+// TestRecoverRefusesARecordANOTHERProcessIsAlreadyRecovering is the refusal that
+// keeps two operators — or an operator and a returning customer — from undoing
+// the same saga at the same time.
+//
+// The record that reaches this point is abandoned and DID work: stock is
+// reserved and a payment may be authorized. Recovery undoes exactly that. If two
+// processes both get past the claim, both walk the same chain from the same
+// records: the same reservation is released twice and the same payment is voided
+// twice. Neither compensation can tell that it is the second one — the records
+// they read are identical — so the second release comes off a count that has
+// already been given back, and the shop oversells goods it does not have.
+//
+// The claim is the ONLY thing standing there. Everything above it (the lease
+// check, the status check) is read-then-decide against a record both processes
+// see the same way, so both pass. That is why the losing arm gets its own test
+// even though the winning arm is exercised by every other Recover test.
+//
+// # The refusal is a CONFLICT and says "running"
+//
+// The kind is what the admin surface turns into a status code, and this is a
+// 409: the operator's request was not wrong, it was early. Telling them
+// "unavailable" would send them to look at the database — see
+// [TestRecoverReportsAClaimTheStoreCouldNotAnswer] for the case where that IS
+// the right place to send them.
+//
+// # Nothing is written
+//
+// The loser leaves the record exactly as it stands. Had it persisted a status,
+// the winner's own terminal write would land on top of a record the loser had
+// already closed and released the key of — which is the same double recovery,
+// arrived at from the other side.
+func TestRecoverRefusesARecordANOTHERProcessIsAlreadyRecovering(t *testing.T) {
+	rec := &recorder{}
+	recoverer, base, id := recoverWithClaim(t, "cart-claimed", false, nil)
+	wf := workflow.Workflow{Name: "idem", Steps: []workflow.Step{
+		&recoverStep{name: "reserve", output: "res_1", rec: rec},
+	}}
+
+	err := recoverer.Recover(t.Context(), wf, id, workflow.WithLease(time.Minute))
+
+	require.Error(t, err, "a record another process holds must not be recovered a second time")
+	assert.True(t, errors.IsConflict(err),
+		"the caller was early, not wrong; a conflict is what the admin surface turns into a 409")
+	assert.Equal(t, workflow.CodeExecutionRunning, errors.CodeOf(err),
+		"the code has to say the execution is being worked on, not that the store failed")
+	assert.Empty(t, rec.snapshot(),
+		"the compensation MUST NOT run: releasing the same reservation twice oversells the stock")
+
+	stored, gerr := base.Get(t.Context(), id)
+	require.NoError(t, gerr)
+	assert.Equal(t, workflow.StatusRunning, stored.Status,
+		"the loser writes NOTHING; the winner is the only process allowed to give this record a terminal state")
+	assert.Equal(t, "cart-claimed", stored.IdempotencyKey,
+		"the key stays held: releasing it would let a new saga start on top of work the winner is still undoing")
+}
+
+// TestRecoverReportsAClaimTheStoreCouldNotAnswer covers the OTHER losing arm,
+// and the reason it is not folded into the one above is that the two answers
+// send the operator to different places.
+//
+// A claim that comes back with an ERROR is not "somebody else has it" — it is
+// "nobody knows". The engine falls to the safe side and does nothing, exactly as
+// it does for unreadable steps ([TestAnUndecidableRecordIsNOTClaimed]): claiming
+// without being able to write would let two processes compensate the same saga,
+// which is the failure the claim exists to prevent in the first place.
+//
+// What the operator is told has to differ, though, because their next action
+// differs. "Another process is recovering it" means wait and try again, and the
+// record will be gone. "The Store did not answer" means the database is the
+// problem and retrying changes nothing until it is fixed — so the kind is
+// UNAVAILABLE (a 503, a retryable outage) and the code names the store rather
+// than the execution. An operator sent to wait on an execution nobody is
+// recovering waits forever, on a saga that is holding stock the whole time.
+func TestRecoverReportsAClaimTheStoreCouldNotAnswer(t *testing.T) {
+	rec := &recorder{}
+	recoverer, base, id := recoverWithClaim(t, "cart-undecided", false,
+		errors.Unavailable("store_down", "the claim could not be written"))
+	wf := workflow.Workflow{Name: "idem", Steps: []workflow.Step{
+		&recoverStep{name: "reserve", output: "res_1", rec: rec},
+	}}
+
+	err := recoverer.Recover(t.Context(), wf, id, workflow.WithLease(time.Minute))
+
+	require.Error(t, err, "a claim that could not be written is not a claim that was won")
+	assert.True(t, errors.HasKind(err, errors.KindUnavailable),
+		"the database is the fault, and a retryable outage is not the same answer as a conflict")
+	assert.Equal(t, workflow.CodeStoreFailed, errors.CodeOf(err),
+		"the code has to point at the store; sending the operator to wait on another process "+
+			"leaves the saga holding stock while nobody recovers it")
+	assert.Empty(t, rec.snapshot(),
+		"an undecided claim MUST NOT compensate: two processes on the same chain is exactly what the claim prevents")
+
+	stored, gerr := base.Get(t.Context(), id)
+	require.NoError(t, gerr)
+	assert.Equal(t, workflow.StatusRunning, stored.Status,
+		"the record is left exactly as it stands so the next caller sees the same thing this one did")
+}
+
+// readGate holds every caller inside Get until the expected number of them have
+// arrived, and FORWARDS the claim capability by hand (see [closeCounter] for why
+// that line is written out).
+//
+// It exists to make a race test that CANNOT pass by luck. [Recover] reads the
+// record, decides on it, and only then claims; four goroutines left to the
+// scheduler mostly interleave so that the winner has already closed the record
+// before the others read it, and every one of them is then turned away by the
+// status check — which means the claim could be deleted outright and the test
+// would still go green most runs. Measured: with the claim's losing arms removed
+// the unsynchronized version passed on a single run and only failed at -count=30.
+//
+// Holding everyone inside Get removes the scheduler from the question. All four
+// leave the read with the SAME record in hand, so all four get past the status
+// and lease checks, and the claim is the only thing left standing between them.
+type readGate struct {
+	workflow.Store
+
+	expected int
+
+	mu     sync.Mutex
+	seen   int
+	opened chan struct{}
+}
+
+func newReadGate(store workflow.Store, expected int) *readGate {
+	return &readGate{Store: store, expected: expected, opened: make(chan struct{})}
+}
+
+func (s *readGate) Get(ctx context.Context, execID string) (*workflow.Execution, error) {
+	exec, err := s.Store.Get(ctx, execID)
+
+	s.mu.Lock()
+	s.seen++
+	if s.seen == s.expected {
+		close(s.opened)
+	}
+	s.mu.Unlock()
+
+	<-s.opened
+
+	return exec, err
+}
+
+func (s *readGate) ClaimAbandoned(ctx context.Context, execID string, seen time.Time) (bool, error) {
+	claimer, ok := s.Store.(workflow.ClaimingStore)
+	if !ok {
+		return true, nil
+	}
+
+	return claimer.ClaimAbandoned(ctx, execID, seen)
+}
+
+// TestOnlyOneOfFourRecoverCallsGetsTheRecord is the same invariant as
+// [TestOnlyOneCallerCLOSESTheAbandonedRecord] on the OTHER entrance.
+//
+// That test races callers coming back with an idempotency key; this one races
+// the on-demand command. The two paths reach [Recover]'s guards through
+// different code, and the engine's exclusivity is only as good as the weaker of
+// them: an operator running the recovery command in two terminals — or a script
+// that retried on a timeout — arrives here and not there.
+//
+// Nothing lies to the engine here. The claim is the real memory-store
+// compare-and-swap on a record that is genuinely stale; the only interference is
+// [readGate], which holds all four callers inside the read so that they reach
+// the claim together instead of single file. That is what makes the result a
+// proof rather than a coincidence: with the callers serialized by the scheduler
+// the status check does the refusing and the claim is never asked, so the test
+// would pass with the claim deleted.
+func TestOnlyOneOfFourRecoverCallsGetsTheRecord(t *testing.T) {
+	const callers = 4
+
+	store := &closeCounter{Store: workflow.NewMemoryStore(), closes: map[string]int{}}
+	gate := newReadGate(store, callers)
+	engine := workflow.New(gate, testLogger())
+	recoverer, ok := engine.(workflow.Recoverer)
+	require.True(t, ok)
+
+	wf := workflow.Workflow{Name: "idem", Steps: steps(step(&recorder{}, "a"))}
+	// The record is written through the counter rather than the gate: opening it
+	// is not one of the four reads the gate is waiting for.
+	id := abandonedRecord(t, store, "cart-recover-race", time.Hour)
+
+	results := make([]error, callers)
+
+	var wg sync.WaitGroup
+	for i := range results {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i] = recoverer.Recover(t.Context(), wf, id, workflow.WithLease(time.Minute))
+		}()
+	}
+	wg.Wait()
+
+	winners := 0
+	for _, err := range results {
+		if err == nil {
+			winners++
+
+			continue
+		}
+		assert.Equal(t, workflow.CodeExecutionRunning, errors.CodeOf(err),
+			"a caller that lost the claim has to be told the record is being recovered right now: %v", err)
+	}
+
+	assert.Equal(t, 1, winners, "exactly one caller may recover the record; the others have to be refused")
+	assert.Equal(t, 1, store.count(id),
+		"the record may be closed ONCE: a second close releases a key the first caller already released")
+}
+
 // TestRecoverRefusesATerminalRecord verifies that a record that is already in a
 // terminal state is left alone: there is nothing to undo, and running the chain
 // over it would call every Compensate a second time for nothing.

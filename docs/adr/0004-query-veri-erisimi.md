@@ -1,89 +1,92 @@
-# ADR 0004 — Query katmanı modüllerden veriyi nasıl çeker
+# ADR 0004 — How the Query layer pulls data out of the modules
 
-- **Durum:** Kabul edildi
-- **Tarih:** 2026-08-23
-- **Faz:** 2
+- **Status:** Accepted
+- **Date:** 2026-08-23
+- **Phase:** 2
 
-## Bağlam
+## Context
 
-Plan Bölüm 5.3, Query katmanının akışını tarif ediyor: *kök modülden kayıtları
-çek → link'lerle ilgili ID'leri bul → ilgili modüllerin servislerinden batch ile
-getir → birleştir.*
+Plan Section 5.3 describes the Query layer's flow: *pull the records from the
+root module → find the related IDs through the links → fetch them in batch from
+the related modules' services → merge.*
 
-Ama "modülün servisinden getir" kısmı bir çelişkiyle karşılaşıyor:
+But the "fetch from the module's service" part runs into a contradiction:
 
-- `core/query` çekirdektedir, **Prensip 2.4** gereği modülleri tanıyamaz.
-- **ADR 0001** gereği modüller arası derleme zamanı bağımlılığı yoktur.
-- Yine de Query, çalışma zamanında `product`, `pricing`, `inventory` gibi
-  **önceden bilinmeyen** modüllerden veri çekebilmelidir.
+- `core/query` is core, and by **Principle 2.4** it may not know the modules.
+- By **ADR 0001** there is no compile-time dependency between modules.
+- Query must nevertheless be able to pull data at runtime from modules such as
+  `product`, `pricing`, `inventory` that are **not known in advance**.
 
-Yani Query'nin hangi modüle sorduğunu derleme zamanında bilmesi imkânsızdır.
+That is, it is impossible for Query to know at compile time which module it is
+asking.
 
-## Değerlendirilen seçenekler
+## Alternatives considered
 
-**A. Query modülleri import etsin** — Prensip 2.4'ün doğrudan ihlali; ayrıca
-her yeni modül çekirdeği değiştirmeyi gerektirirdi.
+**A. Let Query import the modules** — a direct violation of Principle 2.4; it
+would also make every new module a change to the core.
 
-**B. Query doğrudan SQL yazsın** — tablolara çekirdekten erişmek Prensip 2.1'i
-(veri sahipliği) ihlal eder ve cross-module JOIN kapısını açar.
+**B. Let Query write SQL directly** — reaching the tables from the core violates
+Principle 2.1 (data ownership) and opens the door to cross-module JOINs.
 
-**C. Modüller kendilerini bir sağlayıcı olarak kaydeder** — her modül
-`Register` sırasında container'a `"<modül>.query"` adıyla dar bir arayüz koyar.
-Query bunu **isimle** çözer. Derleme zamanı bağımlılığı yok, çekirdek modül
-tanımıyor, yeni modül çekirdeğe dokunmadan sorgulanabilir hâle geliyor.
+**C. Modules register themselves as a provider** — during `Register` each module
+puts a narrow interface into the container under the name `"<module>.query"`.
+Query resolves it **by name**. No compile-time dependency, the core knows no
+module, and a new module becomes queryable without touching the core.
 
-## Karar
+## Decision
 
-**Seçenek C.** `core/query` şu dar arayüzü tanımlar; modüller onu karşılayan
-somut bir tip kaydeder:
+**Alternative C.** `core/query` declares the following narrow interface; modules
+register a concrete type that satisfies it:
 
 ```go
-// Record bir kaydın alan adı -> değer eşlemesidir.
+// Record is a record's field name -> value mapping.
 type Record map[string]any
 
-// Provider bir modülün Query katmanına açtığı okuma yüzeyidir.
-// Modül bunu Register sırasında "<modül adı>.query" adıyla container'a koyar.
+// Provider is the read surface a module opens to the Query layer.
+// The module puts it into the container during Register under "<module name>.query".
 type Provider interface {
-    // Entity sağlayıcının sunduğu entity adıdır (örn. "product").
+    // Entity is the entity name the provider offers (e.g. "product").
     Entity() string
 
-    // List kök kayıtları döner. Query bunu YALNIZCA kök entity için çağırır.
+    // List returns the root records. Query calls it ONLY for the root entity.
     List(ctx context.Context, opts ListOptions) ([]Record, error)
 
-    // FetchByIDs verilen ID'lere karşılık gelen kayıtları döner.
-    // Bulunamayan ID için kayıt DÖNMEZ; bu bir hata değildir.
-    // Query bunu link'lerden çıkan ID kümesiyle BATCH olarak çağırır (N+1 yok).
+    // FetchByIDs returns the records corresponding to the given IDs.
+    // For an ID it cannot find it returns NO record; that is not an error.
+    // Query calls it IN BATCH with the ID set coming out of the links (no N+1).
     FetchByIDs(ctx context.Context, ids []string, fields []string) ([]Record, error)
 }
 ```
 
-Sağlayıcı, ADR 0001'in tüketici tarafı interface örüntüsünün özel bir hâlidir:
-arayüzü **tüketen** taraf (`core/query`) tanımlar, sağlayan modül yalnızca
-imzayı karşılar ve hiçbir şey import etmez.
+The provider is a special case of ADR 0001's consumer-side interface pattern:
+the **consuming** side (`core/query`) declares the interface, and the providing
+module only satisfies the signature and imports nothing.
 
-## Sonuçlar
+## Consequences
 
-**Olumlu**
+**Positive**
 
-- Yeni bir modül sorgulanabilir hâle gelmek için çekirdeğe dokunmaz; tek yaptığı
-  `Register` içinde bir satır kayıt eklemektir.
-- `FetchByIDs` batch olduğu için genişletme (expand) başına tek çağrı yapılır;
-  N+1 yapısal olarak engellenir.
-- Query test edilirken gerçek modül gerekmez; sahte sağlayıcı birkaç satırdır.
+- A new module does not touch the core to become queryable; all it does is add
+  one line of registration inside `Register`.
+- Because `FetchByIDs` is a batch call, one call is made per expansion; N+1 is
+  structurally prevented.
+- Testing Query needs no real module; a fake provider is a few lines.
 
-**Olumsuz / bedeli**
+**Negative / the price**
 
-- Alan seçimi (`fields`) ve filtreleme sağlayıcıya bırakılır; Query bunları
-  doğrulayamaz. Sağlayıcı desteklemediği bir alan görürse `errors.Invalid`
-  dönmelidir.
-- `Record` gevşek tiplidir (`map[string]any`). Bu, çekirdeğin modül modellerini
-  tanımamasının kaçınılmaz bedelidir; tip güvenliği API sınırında (store/admin
-  handler'larında) yeniden kazanılır.
-- Sağlayıcı kaydı unutulursa hata çalışma zamanında ortaya çıkar. Query bu
-  durumda `errors.NotFound` ile **hangi adın aranıp bulunamadığını** yazmalıdır.
+- Field selection (`fields`) and filtering are left to the provider; Query
+  cannot validate them. A provider that sees a field it does not support must
+  return `errors.Invalid`.
+- `Record` is loosely typed (`map[string]any`). That is the unavoidable price of
+  the core not knowing the modules' models; type safety is regained at the API
+  boundary (in the store/admin handlers).
+- If the provider registration is forgotten, the error surfaces at runtime. In
+  that case Query must write **which name was looked up and not found**, with
+  `errors.NotFound`.
 
-## İlgili
+## Related
 
-- Plan Bölüm 2.1, 2.4, Bölüm 5.3, Faz 2
-- [ADR 0001](0001-modul-arasi-iletisim.md) — tüketici tarafı interface örüntüsü
-- [ADR 0002](0002-di-container-el-yazmasi.md) — isimle çözümün teşhis edilebilir olması
+- Plan Sections 2.1, 2.4, Section 5.3, Phase 2
+- [ADR 0001](0001-modul-arasi-iletisim.md) — the consumer-side interface pattern
+- [ADR 0002](0002-di-container-el-yazmasi.md) — resolution by name being
+  diagnosable

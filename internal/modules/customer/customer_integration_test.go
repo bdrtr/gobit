@@ -1029,3 +1029,82 @@ func TestSilinmekteOlanMusteriyeAdresEklenemez(t *testing.T) {
 	assert.Equal(t, int64(0), adresSayisi,
 		"silinmiş müşterinin altında canlı adres kalmamalı")
 }
+
+// TestVarsayilanFaturaAdresiEskisiniTemizler fatura tarafındaki varsayılan
+// atamasının ESKİ işareti temizleyerek yazdığını doğrular.
+//
+// Kargo tarafı TestVarsayilanAdresServisYoluyla ile sabitlenmişti; fatura
+// tarafı AYNI kuralı AYRI iki sorguyla uygular (ClearDefaultBilling ve
+// MarkDefaultBilling) ve o iki sorgu bugüne kadar hiçbir testte
+// ÇALIŞMAMIŞTI — yani kuralın fatura yarısı yalnızca kodun kargo yarısına
+// benzemesine dayanıyordu.
+//
+// Temizleme adımı fatura tarafında atlanırsa kısmi benzersiz indeks ikinci
+// işaretlemeyi reddeder ve sonuç şudur: müşteri fatura adresini BİR KEZ
+// seçebilir, ikinci seçiminde "çakışma" alır ve adresini bir daha
+// değiştiremez. Kısıt veritabanında olduğu için iddia yalnızca gerçek bir
+// veritabanıyla sınanabilir; sahte depo iki işareti de yan yana kabul ederdi.
+func TestVarsayilanFaturaAdresiEskisiniTemizler(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+	musteri := yeniHesap(ctx, t, svc)
+
+	ilk, err := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
+	require.NoError(t, err)
+	ikinci, err := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
+	require.NoError(t, err)
+
+	isaretli, err := svc.SetDefaultBillingAddress(ctx, musteri.ID, ilk.ID)
+	require.NoError(t, err)
+	assert.True(t, isaretli.IsDefaultBilling, "işaretlenen adres işaretli dönmeli")
+
+	_, err = svc.SetDefaultBillingAddress(ctx, musteri.ID, ikinci.ID)
+	require.NoError(t, err, "yeni fatura adresi eskisini temizleyerek yazılmalı")
+
+	assert.Equal(t, 1, varsayilanSayisi(ctx, t, musteri.ID, "is_default_billing"),
+		"müşterinin tek bir varsayılan fatura adresi kalmalı")
+
+	eskisi, err := svc.GetAddress(ctx, musteri.ID, ilk.ID)
+	require.NoError(t, err)
+	assert.False(t, eskisi.IsDefaultBilling, "eski fatura adresinin işareti kaldırılmalı")
+
+	yenisi, err := svc.GetAddress(ctx, musteri.ID, ikinci.ID)
+	require.NoError(t, err)
+	assert.True(t, yenisi.IsDefaultBilling, "yeni adres varsayılan fatura adresi olmalı")
+	assert.False(t, yenisi.IsDefaultShipping,
+		"fatura işareti kargo işaretini TAŞIMAZ; iki alan ayrı ayrı seçilir")
+}
+
+// TestVarsayilanFaturaliAdresEklemeEskisiniTemizler varsayılan fatura adresi
+// olarak EKLENEN yeni bir adresin eski işareti temizlediğini doğrular.
+//
+// Bu, işaretin ikinci yazma yoludur ve ayrı sınanır: müşteri fatura adresini
+// çoğu zaman ayrı bir uçla "seçmez", ödeme adımında yeni adresi doğrudan
+// varsayılan olarak EKLER. O yolda temizleme atlanırsa ekleme isteğinin
+// kendisi kısmi benzersiz indekse takılır — yani müşteri yeni fatura adresini
+// kaydedemez ve gördüğü şey, adresinde bir yanlışlık varmış gibi görünen bir
+// çakışma hatasıdır.
+func TestVarsayilanFaturaliAdresEklemeEskisiniTemizler(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+	musteri := yeniHesap(ctx, t, svc)
+
+	girdi := gecerliAdres()
+	girdi.IsDefaultBilling = true
+
+	ilk, err := svc.CreateAddress(ctx, musteri.ID, girdi)
+	require.NoError(t, err)
+	assert.True(t, ilk.IsDefaultBilling, "işaretli eklenen adres işaretli dönmeli")
+
+	ikinci, err := svc.CreateAddress(ctx, musteri.ID, girdi)
+	require.NoError(t, err,
+		"varsayılan fatura adresi olarak eklenen ikinci adres KABUL EDİLMELİ; eski işaret ekleme sırasında temizlenir")
+	assert.True(t, ikinci.IsDefaultBilling)
+
+	assert.Equal(t, 1, varsayilanSayisi(ctx, t, musteri.ID, "is_default_billing"),
+		"ekleme sonrasında da tek varsayılan fatura adresi kalmalı")
+
+	eskisi, err := svc.GetAddress(ctx, musteri.ID, ilk.ID)
+	require.NoError(t, err)
+	assert.False(t, eskisi.IsDefaultBilling, "eski fatura adresinin işareti kaldırılmalı")
+}

@@ -63,8 +63,20 @@ linters:
       rules:
         # Principle 2.4: core does not know the modules.
         core-does-not-know-modules:
+          # BOTH core trees, and the second glob was missing until 2026-09-07.
+          # ADR 0026 moved the published half of the core out to top-level
+          # `core/` and this rule kept pointing only at what stayed behind, so
+          # for thirteen packages it matched nothing and enforced nothing.
+          #
+          # It was not a live hazard, and that is worth writing down rather than
+          # implying: the published tree is held to a STRICTER rule on the arch
+          # side — TestNoPublishedPackageImportsAnInternalOne forbids importing
+          # internal/ at all, which includes internal/modules. So the lint rule
+          # was silently redundant rather than silently absent. It is corrected
+          # because a rule that matches nothing reads as a rule that passes.
           files:
             - "**/internal/core/**"
+            - "core/**"
           deny:
             - pkg: "github.com/bdrtr/gobit/internal/modules"
               desc: "Principle 2.4 - core does not know the modules; the dependency direction is module -> core."

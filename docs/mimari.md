@@ -1,415 +1,451 @@
-# gobit — Mimari
+# gobit — Architecture
 
-Bu belge sistemin **neden** böyle kurulduğunu anlatır. Ne yaptığı için
-[README](../README.md), tek tek kararlar için [`docs/adr/`](adr/), kapsam ve
-fazlar için [uygulama planı](../go-commerce-framework-plan.md).
+This document explains **why** the system is built this way. For what it does,
+see the [README](../README.md); for the individual decisions,
+[`docs/adr/`](adr/); for scope and phases, the
+[implementation plan](../go-commerce-framework-plan.md).
 
-Çelişki hâlinde sıra: **ADR > plan > bu belge**.
+In case of conflict the order is: **ADR > plan > this document**.
 
 ---
 
-## 1. Tek cümlede
+## 1. In one sentence
 
-gobit, tek binary olarak çalışan bir **modüler monolit**tir: modüller derleme
-zamanında birbirinden habersizdir, bu yüzden herhangi biri ileride ayrı bir
-servise çıkarılabilir.
+gobit is a **modular monolith** that runs as a single binary: the modules are
+unaware of each other at compile time, which is why any one of them can later be
+extracted into a separate service.
 
-"Modüler monolit" burada bir slogan değil, denetlenen bir kısıttır. İzolasyon
-üç ayrı yerde zorlanır:
+"Modular monolith" is not a slogan here, it is an enforced constraint. Isolation
+is enforced in three separate places:
 
-| Kısıt | Nerede zorlanır |
+| Constraint | Where it is enforced |
 |---|---|
-| `internal/core/**` modülleri import edemez | `.golangci.yml` depguard |
-| Modüller birbirini import edemez | depguard + `internal/arch` (ikinci savunma hattı) |
-| `internal/workflows/**` modülleri import edemez | `internal/arch` (ADR 0006) |
-| `plugins/**` modülleri import edemez | `internal/arch` |
-| Cross-module foreign key yok | `internal/arch` (migration dosyalarını tarar) |
-| Para tam sayı minor unit | `internal/arch` |
+| the core cannot import the modules | `.golangci.yml` depguard (both `core/**` and `internal/core/**`), and for the published half more strictly by `internal/arch` — it may not import `internal/` at all |
+| Modules cannot import each other | depguard + `internal/arch` (second line of defense) |
+| `internal/workflows/**` cannot import the modules | `internal/arch` (ADR 0006) |
+| `plugins/**` cannot import the modules | `internal/arch` |
+| No cross-module foreign key | `internal/arch` (scans the migration files) |
+| Money is an integer minor unit | `internal/arch` |
 
-Bir kural inceleme turunda yakalanabiliyorsa testte de yakalanabilir; testte
-yakalanınca bir daha hiç yazılmaz.
+If a rule can be caught in a review round, it can be caught in a test too; once
+it is caught in a test it is never written again.
 
 ---
 
-## 2. Katmanlar
+## 2. Layers
 
 ```
-cmd/server            KOMPOZİSYON KÖKÜ — her şeyi bilen tek yer
+gobit.go              the published facade an embedding program calls (ADR 0027)
   │
-  ├── internal/core       çekirdek: modülleri TANIMAZ
-  ├── internal/modules    commerce modülleri: birbirini TANIMAZ
-  ├── internal/workflows  modüller arası saga'lar: modülleri TANIMAZ
-  └── plugins             eklentiler: modülleri TANIMAZ
+internal/app          COMPOSITION ROOT — the one place that knows everything
+  │
+  ├── core            the PUBLISHED surface: does NOT KNOW the modules (ADR 0026)
+  ├── internal/core   the unpublished core: does NOT KNOW the modules
+  ├── internal/modules    commerce modules: do NOT KNOW each other
+  ├── internal/workflows  cross-module sagas: do NOT KNOW the modules
+  ├── internal/adminui    the panel: a fourth tree (ADR 0011)
+  └── plugins             plugins: do NOT KNOW the modules
 ```
 
-Dikkat çeken şey, "tanımaz"ların çokluğudur. Kimin kiminle konuşacağına dair
-**her karar tek bir dosyada** (`cmd/server`) verilir; geri kalan her paket
-yalnızca kendi ihtiyacını tarif eder.
+What stands out is the number of "does not know"s. **Every decision** about who
+talks to whom is made **in one package** (`internal/app`); every other package
+only describes what it needs. It was `cmd/server` until ADR 0027 moved the
+lifecycle behind the facade, so that an embedding project could add its own
+module without owning a copy of the composition root; `cmd/server` is now the
+smallest program that can run gobit, and it is also the example one copies.
 
-Bunun bedeli, bağlantıların derleyici tarafından denetlenememesidir: bir
-modülün yayımladığı imza ile tüketicinin beklediği imza ayrışırsa hata
-çalışma anında görünür. Bedel bilinçli olarak kabul edildi ve iki şeyle
-karşılandı: (1) uçtan uca testler üretim kablolamasını **birebir** kurar,
-(2) her interop yüzeyinin gerçek bağımlılıklarla koşan bir entegrasyon testi
-vardır.
+The price of this is that the connections cannot be checked by the compiler: if
+the signature a module publishes and the signature its consumer expects drift
+apart, the error shows up at run time. The price was accepted deliberately and
+is met with two things: (1) the end-to-end tests build the production wiring
+**exactly**, (2) every interop surface has an integration test that runs against
+real dependencies.
 
 ---
 
-## 3. Bir isteğin yaşam döngüsü
+## 3. The life cycle of a request
 
 ```
-istek
- └─ RequestID          her isteğe izlenebilir kimlik
-     └─ Telemetry      span aç (route deseni handler'dan SONRA bilinir)
+request
+ └─ RequestID          a traceable identity for every request
+     └─ Telemetry      open a span (the route pattern is known AFTER the handler)
          └─ RequestLogger
-             └─ Recoverer          panik -> 500, bağlantı kopmaz
-                 └─ Hız sınırı     /admin/v1 ve /store/v1 kapsamında
-                     └─ Kimlik     giriş ucu MUAF
+             └─ Recoverer          panic -> 500, the connection does not drop
+                 └─ Rate limit     scoped to /admin/v1 and /store/v1
+                     └─ Identity   the login endpoint is EXEMPT
                          └─ Idempotency
-                             └─ chi route eşleşmesi
+                             └─ chi route match
                                  └─ handler -> service -> repository
 ```
 
-Sıranın her halkası bir arıza senaryosuna cevaptır:
+Every link in the order answers a failure scenario:
 
-- **RequestID en başta**: logger ve recoverer isteği kimliğiyle raporlayabilsin.
-- **Telemetry, Recoverer'ın ÜSTÜNDE**: handler panikleyip Recoverer 500 yazınca
-  span o durumu görsün. Altında kalsaydı en çok bakılacak istek en eksik
-  kaydedilen olurdu.
-- **Hız sınırı, kimlikten ÖNCE**: parola deneyen saldırgan her denemede bcrypt
-  ve veritabanı maliyetini ödetmesin.
-- **Idempotency, kimlikten SONRA**: kayıt anahtarı çağıranın kimliğiyle
-  birlikte tutulsun; iki farklı çağıranın aynı anahtarı çakışmasın.
+- **RequestID first**: so the logger and the recoverer can report the request by
+  its identity.
+- **Telemetry ABOVE the Recoverer**: so that when the handler panics and the
+  Recoverer writes a 500, the span sees that state. Below it, the request that
+  gets looked at most would be the one recorded most incompletely.
+- **Rate limit BEFORE identity**: so an attacker guessing passwords does not
+  make every attempt cost a bcrypt and a database round trip.
+- **Idempotency AFTER identity**: so the record key is held together with the
+  caller's identity; two different callers must not collide on the same key.
 
-Middleware'ler router **kurulurken** takılır — chi, route kaydından sonra
-`r.Use` çağrılmasını panikle reddeder. Modüller ise route'larını **tam yolla**
-düz bir router'a kaydeder (aynı öneki iki kez `Mount` etmek panik üretirdi),
-yani chi'nin doğal kapsamlama aracı elden gider. `corehttp.Scoped` o boşluğu
-doldurur: kapsam, router ağacında değil middleware'in kendi içinde kurulur.
+Middleware is attached **while the router is being built** — chi refuses with a
+panic if `r.Use` is called after a route has been registered. Modules, on the
+other hand, register their routes on a flat router with the **full path**
+(mounting the same prefix twice would panic), so chi's natural scoping tool is
+lost. `corehttp.Scoped` fills that gap: the scope is established inside the
+middleware itself rather than in the router tree.
 
-Yığının **sırası tek bir yerde** yazılıdır (`corehttp.APIGuards`) ve uçtan uca
-testler o yığının ta kendisini kurar. Testin kendi kopyası olsaydı üretimdeki
-sıra değiştiğinde test eski sırayı doğrulayıp yeşil kalırdı.
+The stack's **order is written in a single place** (`corehttp.APIGuards`) and
+the end-to-end tests build that very stack. If the test had its own copy, then
+when the production order changed the test would verify the old order and stay
+green.
 
-### Hata → status eşlemesi
+### Error → status mapping
 
-Servisler tipli hata döner (`core/errors.Kind`), HTTP katmanı eşler. Handler'lar
-status kodu **seçmez**:
+Services return typed errors (`core/errors.Kind`) and the HTTP layer maps them.
+Handlers **do not choose** the status code:
 
-| Kind | Status | İstemciye mesaj |
+| Kind | Status | Message to the client |
 |---|---|---|
-| `NotFound` | 404 | evet |
-| `Invalid` | 422 | evet |
-| `Conflict` | 409 | evet |
-| `Unauthorized` | 401 | evet |
-| `Forbidden` | 403 | evet |
-| `TooManyRequests` | 429 | evet |
-| `Unavailable` | 503 | evet |
-| `Internal` | 500 | **hayır** (loglanır) |
+| `NotFound` | 404 | yes |
+| `Invalid` | 422 | yes |
+| `Conflict` | 409 | yes |
+| `Unauthorized` | 401 | yes |
+| `Forbidden` | 403 | yes |
+| `TooManyRequests` | 429 | yes |
+| `Unavailable` | 503 | yes |
+| `Internal` | 500 | **no** (logged) |
 
 ---
 
-## 4. Bir modülün yaşam döngüsü
+## 4. The life cycle of a module
 
-`module.Registry` üç aşamayı **tüm modüller için sırayla** yürütür:
+`module.Registry` runs three stages **in order, for all the modules**:
 
 ```
-1. Register(ctx, container)   tüm modüller  ─┐
-2. Migrations()               tüm modüller   │  aşamalar arası bariyer
-3. Routes(router)             tüm modüller  ─┘
+1. Register(ctx, container)   all modules  ─┐
+2. Migrations()               all modules   │  barrier between stages
+3. Routes(router)             all modules  ─┘
 ```
 
-Bariyer zorunludur: bir modülün handler'ı başka modülün servisini güvenle
-çözebilsin diye tüm `Register`'lar bitmeden `Routes`'a geçilmez. Buna karşılık
-`Register` **içinde** başka bir modülün servisi çözülemez — o anda henüz
-kayıtlı olmayabilir. Gerekiyorsa tembel bir yapıcı verilir ve çözüm ilk
-kullanımda yapılır.
+The barrier is mandatory: `Routes` is not reached until every `Register` has
+finished, so that one module's handler can safely resolve another module's
+service. Conversely, another module's service cannot be resolved **inside**
+`Register` — at that moment it may not be registered yet. If it is needed, a
+lazy constructor is handed over and the resolution happens on first use.
 
-Her modül kendi migration klasörüne ve kendi versiyon tablosuna sahiptir
-(`x-migrations-table`), yani bir modülün şema geçmişi diğerlerinden bağımsız
-ilerler.
+Every module owns its own migration folder and its own version table
+(`x-migrations-table`), so one module's schema history advances independently of
+the others.
 
 ---
 
-## 5. Modüller arası iletişim
+## 5. Cross-module communication
 
-Go'da interface'ler paketlerde yaşar; sağlayıcının interface'ini import etmek
-izolasyonu kırardı. Bu yüzden **arayüz tüketicinin kendi paketinde** tanımlanır
-ve somut servis container'dan **adla** çözülür ([ADR 0001](adr/0001-modul-arasi-iletisim.md)):
+In Go, interfaces live in packages; importing the provider's interface would
+break isolation. This is why **the interface is defined in the consumer's own
+package** and the concrete service is resolved from the container **by name**
+([ADR 0001](adr/0001-modul-arasi-iletisim.md)):
 
 ```go
-// order modülünde, b2b import EDİLMEDEN:
+// in the order module, WITHOUT importing b2b:
 type SpendingPolicy interface {
     SpendingLimitJSON(ctx context.Context, customerID string) (json.RawMessage, error)
 }
 policy, err := container.Resolve[SpendingPolicy](c, "b2b.interop")
 ```
 
-Örnek uydurma değil, ağaçtaki canlı dikiştir: arayüz
-`internal/modules/order/service/spending.go`'de TÜKETEN tarafta tanımlıdır, ad
-`internal/modules/order/module.go`'da bir sabittir ve b2b modülü kurulu değilse
-çözüm başarısız olur — sipariş de o durumda harcama sınırı olmadan geçer. İmzanın
-`json.RawMessage` döndürmesi de tesadüf değil: iki modülün paylaştığı tek şey bir
-ŞEMA olsun ki, ne biri ötekinin tipini adlandırsın ne de ortak bir paket doğsun.
+The example is not invented, it is a live seam in the tree: the interface is
+defined on the CONSUMING side in
+`internal/modules/order/service/spending.go`, the name is a constant in
+`internal/modules/order/module.go`, and if the b2b module is not installed the
+resolution fails — in which case the order goes through without a spending
+limit. That the signature returns `json.RawMessage` is not an accident either:
+the only thing two modules share should be a SCHEMA, so that neither names the
+other's type nor gives birth to a shared package.
 
-Yayımlanan yüzeyler bilinçli olarak **dardır ve ilkel tiplerle** konuşur: her
-metot bir sözleşmedir ve derleyici onu denetlemez — arayüz TÜKETEN tarafta
-tanımlıdır, sağlayıcı onu yapısal olarak karşılar. `0.x` boyunca bir imza
-değişebilir ama bedeli görünür olmalıdır: kırıcı değişiklik olarak
-`CHANGELOG.md`'ye yazılır ve adla çözülen dikişin kanıtı e2e testidir, çünkü
-ayrışan bir imza iki paketin birim testlerini de yeşil bırakır. Zengin veri
-gerekiyorsa doğru yol yeni bir ilkel metot değil, Query katmanıdır.
+The published surfaces are deliberately **narrow and speak in primitive types**:
+every method is a contract and the compiler does not check it — the interface is
+defined on the CONSUMING side and the provider satisfies it structurally.
+Through `0.x` a signature may change, but the price has to be visible: it is
+written into `CHANGELOG.md` as a breaking change, and the proof of a
+resolved-by-name seam is the e2e test, because a drifted signature leaves both
+packages' unit tests green as well. If rich data is needed, the right path is
+not a new primitive method but the Query layer.
 
-Container'daki ad sözlüğü:
+The name dictionary in the container:
 
-| Ad | İçerik |
+| Name | Contents |
 |---|---|
-| `<modül>.service` | modüller arası ilkel çağrı yüzeyi |
-| `<modül>.interop` | saga/çekirdek için dar yüzey |
-| `<entity>.query` | Query katmanına açılan okuma sağlayıcısı ([ADR 0004](adr/0004-query-veri-erisimi.md)) |
-| `<modül>.providers` | sağlayıcı kaydı (payment, fulfillment) |
-| `core.*` | altyapı: db, redis, eventbus, workflow, link, query |
+| `<module>.service` | the primitive cross-module call surface |
+| `<module>.interop` | the narrow surface for sagas/core |
+| `<entity>.query` | the read provider opened to the Query layer ([ADR 0004](adr/0004-query-veri-erisimi.md)) |
+| `<module>.providers` | provider registry (payment, fulfillment) |
+| `core.*` | infrastructure: db, redis, eventbus, workflow, link, query |
 
 ---
 
-## 6. Veri
+## 6. Data
 
-- **SQL-first**: `sqlc` + `pgx/v5`, modül başına ayrı codegen. ORM'in FK/graph
-  modeli modül izolasyonuyla çelişirdi.
-- **Cross-module foreign key YOK** (Prensip 2.2). İlişkiler `core/link` ile
-  kurulur; kardinalite veritabanı kısıtıyla zorlanır ama tablolar arası FK
-  kurulmaz ([ADR 0005](adr/0005-link-semasi-migration-disinda.md)).
-- **Cross-module okuma** `core/query` ile yapılır: kök çek → link çöz → batch
-  getir → birleştir. N+1 yapısal olarak imkânsızdır.
-- **Para** tam sayı minor unit (kuruş/cent); float yoktur, para birimi ayrı
-  alandır.
-- **Zaman** UTC; `created_at/updated_at/deleted_at`, yumuşak silme
-  `deleted_at` ile. İstisnalar sayılıdır ve her biri kendi tablosunun başında
-  gerekçelendirilir: sahibinden ayrı yaşamayan satırlar, taklit edilen dış
-  sistemlerin defterleri ve **yapılandırma tabloları** (yumuşak silinmiş bir
-  ayar satırının etkisi, hiç var olmamış bir satırınkiyle aynıdır).
+- **SQL-first**: `sqlc` + `pgx/v5`, separate codegen per module. An ORM's
+  FK/graph model would conflict with module isolation.
+- **NO cross-module foreign key** (Principle 2.2). Relations are established
+  with `core/link`; cardinality is enforced by a database constraint, but no FK
+  is created between tables
+  ([ADR 0005](adr/0005-link-semasi-migration-disinda.md)).
+- **Cross-module reads** go through `core/query`: fetch the root → resolve the
+  link → batch fetch → merge. N+1 is structurally impossible.
+- **Money** is an integer minor unit (kurus/cent); there is no float, and the
+  currency is a separate column.
+- **Time** is UTC; `created_at/updated_at/deleted_at`, with soft deletion via
+  `deleted_at`. The exceptions are counted and each one is justified at the top
+  of its own table: rows that do not live apart from their owner, the ledgers of
+  simulated external systems, and **configuration tables** (a soft-deleted
+  setting row has the same effect as a row that never existed).
 
-### Şema yüzeyi: durum ve geri alma
+### The schema surface: status and rollback
 
-İleri yön **açılışta otomatiktir** ve öyle kalır: ayrı bir "migrate up" komutu
-YOKTUR, çünkü şemayı ayrı bir adımda ilerleten her kurulumda er geç "şemayı
-güncellemeyi unuttum" olur. İkilinin argümansız çalıştırılması sunucuyu
-başlatır ve bu, sunucuyu başlatmanın **tek** yoludur.
+The forward direction **is automatic at startup** and stays that way: there is
+NO separate "migrate up" command, because in every installation that advances
+the schema in a separate step it eventually becomes "I forgot to update the
+schema". Running the binary with no arguments starts the server, and that is the
+**only** way to start the server.
 
-Geri alma ise elle çağrılır (`internal/app/migrate.go`):
+Rolling back, on the other hand, is invoked by hand (`internal/app/migrate.go`):
 
 ```
-gobit migrate status                     her sahibin sürümünü ve dirty durumunu bildirir
-gobit migrate down <sahip> -confirm <sahip>   TEK bir sahibi geri alır
-gobit help                               yüzeyin tamamı
+gobit migrate status                     reports each owner's version and dirty state
+gobit migrate down <owner> -confirm <owner>   rolls back ONE owner
+gobit help                               the whole surface
 ```
 
-Üç karar yazılıdır:
+Three decisions are written down:
 
-- **Onay, sahip adının TEKRARIDIR.** `-confirm` verilmezse komut planı basar
-  (hangi sahip, hangi sürüm, kaç adım) ve **sıfırdan farklı** kodla döner.
-  Reddin kendisi kuru koşudur; planı basıp 0 dönmek, bayrağı unutan bir betiğe
-  hiç olmamış bir geri almayı başarı diye bildirirdi. Çıplak bir `-yes`
-  seçilmedi: runbook'tan kopyalanan komut satırıyla birlikte o bayrak da
-  kopyalanır ve **başka** bir sahibi onaylamış olur. `-steps` varsayılanı 1'dir
-  ve 1'in altı reddedilir; `db.MigrateDown` "adım <= 0"ı TÜMÜ diye okur.
-- **Dirty defter REDDEDİLİR ve onay bunu geçersiz kılmaz.** Dirty, önceki
-  koşumun yarıda kaldığı demektir: geçerli sürümün `.up.sql`'inin bir kısmı
-  koşmuş, bir kısmı koşmamıştır. Eşleşen `.down.sql` ise HEPSİNİN koştuğu
-  duruma göre yazılmıştır, yani onu koşturmak komutun doğrulayamayacağı bir
-  tahmindir. Hata, onarılacak tablonun adını (`<sahip>_schema_migrations`)
-  taşır; golang-migrate'in kendi mesajı taşımaz.
-- **Kapanış satırı istenen adım sayısından değil, DEFTERDEN okunur.**
-  golang-migrate istenenden az adım gidebilir; istekten üretilen bir mesaj,
-  işletmecinin inandığı ama şemanın taşımadığı bir sayı olurdu. Sürüm hiç
-  oynamadıysa komut hata döner.
+- **The confirmation is a REPETITION of the owner's name.** Without `-confirm`
+  the command prints the plan (which owner, which version, how many steps) and
+  returns a **non-zero** code. The refusal is itself the dry run; printing the
+  plan and returning 0 would report a rollback that never happened as a success
+  to a script that forgot the flag. A bare `-yes` was not chosen: a command line
+  copied out of a runbook carries that flag along with it and ends up confirming
+  a **different** owner. `-steps` defaults to 1 and anything below 1 is refused;
+  `db.MigrateDown` reads "steps <= 0" as ALL.
+- **A dirty ledger is REFUSED and the confirmation does not override it.** Dirty
+  means the previous run stopped halfway: part of the current version's
+  `.up.sql` ran and part of it did not. The matching `.down.sql`, however, is
+  written for the state in which ALL of it ran, so running it is a guess the
+  command cannot verify. The error carries the name of the table to be repaired
+  (`<owner>_schema_migrations`); golang-migrate's own message does not.
+- **The closing line is read from the LEDGER, not from the number of steps
+  asked for.** golang-migrate may go fewer steps than asked; a message produced
+  from the request would be a number the operator believes but the schema does
+  not carry. If the version did not move at all, the command returns an error.
 
-Alt komutlar modül listesini `cmd/server`'daki kayıttan okur; eklentinin
-getirdiği modül (`searchpg`) de dâhildir. İkinci bir liste tutulsaydı, `migrate
-status` bir gün veritabanında tabloları duran bir sahibi sessizce atlardı.
+The subcommands read the module list from the registration in `cmd/server`,
+including the module a plugin brings in (`searchpg`). If a second list were
+kept, `migrate status` would one day silently skip an owner whose tables are
+sitting in the database.
 
-`migrate status` sürümü okurken eksik olan `<sahip>_schema_migrations`
-tablosunu YARATIR (sürücünün davranışı) ve bunu raporun altında söyler; taze
-bir veritabanında komut sahip başına birer boş tablo bırakır.
+While reading the version, `migrate status` CREATES the missing
+`<owner>_schema_migrations` table (the driver's behavior) and says so at the
+bottom of the report; on a fresh database the command leaves one empty table per
+owner behind.
 
-Kablolamanın iki kanıtı vardır: `TestOnlyAnEmptyArgumentListCanStartTheServer`
-kaynağı gezip `serve`'ün TEK bir çağrı yerinden erişildiğini denetler,
-`TestMigrateSubcommandsRunWithoutStartingTheServer` ise gerçek ikiliyi çalıştırıp
-alt komutun çıktığını ve portu hiç bağlamadığını gösterir.
-
----
-
-## 7. İş akışları (saga)
-
-Modüller arası her çok adımlı işlem `internal/core/workflow` üzerinde bir saga'dır:
-ardışık yürütme, hata hâlinde **ters sırada** telafi, retry, idempotency
-anahtarı ve panik izolasyonu. Yürütme durumu Postgres'e yazılır, yani
-"aynı sepet iki kez tamamlanamaz" iddiası süreç içi bir haritanın değil kalıcı
-bir kaydın davranışıdır.
-
-`internal/workflows` de modülleri import etmez ([ADR 0006](adr/0006-workflow-modul-erisimi.md));
-aynı dar arayüz + adla çözüm kuralı burada da geçerlidir.
-
-**Çok depolu ayırma** sagaya sonradan eklendi ve seam'i iki modüle bölünmüştür:
-stok "hangi depolarda yeterli adet var" olgusunu, fulfillment "hangisinden
-gönderelim" kararını verir. Saga hiçbirini kendi vermez — sepet akışının depo
-politikası hakkında söyleyecek bir sözü yoktur. Fulfillment'ın kararı satır
-başına BİR KEZ sorulur ve tek bir depo değil bir TERCİH SIRASI döner: modül
-hedef bölgeye hizmet etmeyen depoları eler, kalanları işletmecinin öncelik
-sırasına dizer. Aday listesi kilitsiz okunduğu için sıranın başındaki depo
-ayırma anında tükenmiş olabilir; o durumda sıradaki adaya geçilir ve kargo
-modülüne yeniden sorulmaz. Bu, adımı yeniden denemek DEĞİLDİR (o kapalıdır,
-çünkü `Reserve`'ün tekrarı ikinci bir rezervasyon üretir) — başarısız bir çağrı
-hiçbir rezervasyon bırakmamıştır. Sıradaki adayların **hepsi elenmişse** satır
-düşer; hata o zaman kargo modülünün kendi kodunu taşır ve stok yetersizliğinden
-ayırt edilebilir.
-
-**Pivot adımlar** ayrıca belgelenir. `capture_payment` bir pivottur: tahsilat
-denendikten sonra geri alma yapılmaz, çünkü belirsiz bir tahsilatı "iptal
-edildi" saymak parayı kaybetmenin en sessiz yoludur. Kalan risk ve mutabakat
-ihtiyacı `internal/workflows/checkout/doc.go` içinde yazılıdır.
-
-**Yarım kalan yürütmeleri LİSTELEYEN yüzey ikilide bir alt komuttur**
-(`gobit stuck`, [ADR 0016](adr/0016-operator-read-surface-for-half-done-sagas.md)).
-Kayıtlar çekirdeğin tablolarındadır ve çekirdeğin modüller gibi bir HTTP ucu
-yoktur; panel ise ADR 0011'in Karar 6'sını yeniden açmadan bu ekranı taşıyamaz.
-Komut YALNIZCA OKUR ve öyle kalır: hâlâ koşan bir saga'nın stoğunu bırakmak onu
-ikinci kez ayırtır. Bırakmayı yapan şey KURTARMADIR ve o listeden değil,
-motordan gelir: aynı idempotency anahtarıyla geri dönen bir çağıran terk edilmiş
-yürütmeyi bulur ve telafi zinciri kayıtlardan çalıştırılır
-([ADR 0017](adr/0017-recovering-abandoned-sagas-from-the-record.md)). Kimse
-dönmezse ya da zincir tahsilat adımında durmuşsa kayıt listede kalır ve iş elle
-yapılır.
-
-Komutun kapsadığı iki sınıf aynı koşul DEĞİLDİR ve ikincisi ölçülerek bulundu:
-`compensation_failed` kayıtları motorca kapatılmış ve ERROR loglanmıştır, ama o
-duruma geçmek için **bir şeyin olması** gerekir: motor onu ya CANLI yazar (bir
-adım ve onun telafisi aynı çağrıda düşer) ya da TEKRAR yolunda (kirası dolmuş
-bir kayda yeniden gelinir). Süreç saga'nın ortasında ÖLDÜYSE ve müşteri bir daha
-dönmediyse ikisi de olmaz: sepet `running` kalır, stoğu tutar ve hiçbir log
-satırında geçmez. Ölçüm: altı kayıtlık düzenekte elle müdahale
-bekleyen iki yürütmeden yalnızca **biri** durum sorgusuyla bulunuyor.
+The wiring has two proofs: `TestOnlyAnEmptyArgumentListCanStartTheServer` walks
+the source and checks that `serve` is reached from exactly ONE call site, while
+`TestMigrateSubcommandsRunWithoutStartingTheServer` runs the real binary and
+shows that the subcommand exits and never binds the port.
 
 ---
 
-## 8. Kimlik ve sertleştirme
+## 7. Workflows (sagas)
 
-Ayrıntı için [README → API güvenliği](../README.md#api-güvenliği). Mimari
-açıdan üç nokta önemlidir:
+Every multi-step cross-module operation is a saga on `internal/core/workflow`:
+sequential execution, compensation **in reverse order** on failure, retry, an
+idempotency key and panic isolation. The execution state is written to Postgres,
+so the claim "the same cart cannot be completed twice" is the behavior of a
+durable record rather than of an in-process map.
 
-1. **Çekirdek kimliği NASIL doğruladığını bilmez.** `corehttp.Authenticator`
-   tüketici tarafında (çekirdekte) tanımlıdır, auth modülü onu **yapısal
-   olarak** karşılar ve container'dan adla çözülür. Çekirdek auth'u import
-   etmez.
-2. **Koruma modülde değil kompozisyon kökünde takılır.** Modül hangi uçlarının
-   korunması gerektiğini godoc'unda bildirir; bağlamayı router'ı kuran taraf
-   yapar.
-3. **Kimlik ve yetki ayrı katmandır.** `RequireAdmin` "kimsin"i çözer,
-   `RequireScope` "ne yapabilirsin"i zorlar. Yetki yükseltme ayrıca servis
-   katmanında da kapatılır: çağıran, kendisinde olmayan bir yetkiyi veremez.
-   Tek katman yeterli olmazdı — middleware haritası bir gün gevşetilebilir,
-   servis kuralı ise verinin yanında durur.
-4. **Arıza davranışı bileşene göre değişir** ([ADR 0007](adr/0007-sertlestirme-arizada-davranis.md)):
-   kimlik fail-closed, hız sınırı fail-open, idempotency ayırmada reddeder ve
-   kayıtta anahtarı serbest bırakır. Tek tip kural yoktur çünkü "bu bileşen
-   olmadan ne bozulur" sorusunun cevabı her satırda farklıdır.
+`internal/workflows` does not import the modules either
+([ADR 0006](adr/0006-workflow-modul-erisimi.md)); the same narrow interface +
+resolution by name rule applies here too.
 
-Yetki sözlüğü tek kuraldan türer — `<modül>:read` okuma, `<modül>:write` yazma,
-`admin` hepsini kapsar — ve her modülün `api` paketi kendi sabitlerini yayımlar.
-Zorlamayı eklemeyi unutan bir modül sessiz kalamaz: `internal/e2e/authorization_test.go`
-router ağacını **gezip** her `/admin/v1` ucuna yetkisiz bir jetonla gider ve 403
-bekler. Elle yazılmış bir uç listesi, listeye eklenmesi unutulan ilk uçta kör
-kalırdı — ve unutulacak uç, tam da yeni yazılmış olandır.
+**Multi-warehouse allocation** was added to the saga later and its seam is split
+across two modules: inventory states the fact of "which warehouses have enough
+units", fulfillment makes the decision of "which one we ship from". The saga
+makes neither by itself — the cart flow has nothing to say about warehouse
+policy. Fulfillment's decision is asked ONCE per line and returns not a single
+warehouse but a PREFERENCE ORDER: the module eliminates the warehouses that do
+not serve the target region and lines the rest up in the operator's priority
+order. Because the candidate list is read without a lock, the warehouse at the
+head of the order may be exhausted by the time of the allocation; in that case
+the next candidate is taken and the shipping module is not asked again. This is
+NOT retrying the step (that is closed, because repeating `Reserve` would produce
+a second reservation) — a failed call has left no reservation behind. If **all**
+of the remaining candidates are eliminated, the line falls; the error then
+carries the shipping module's own code and can be distinguished from
+insufficient stock.
 
-Kimlik doğrulayıcı router'dan **sonra** doğduğu için
-`corehttp.DeferredAuthenticator` ile bağlanır; bağlanmadan gelen istek
-reddedilir.
+**Pivot steps** are documented separately. `capture_payment` is a pivot: no
+rollback is performed once the capture has been attempted, because treating an
+uncertain capture as "canceled" is the quietest way to lose money. The residual
+risk and the reconciliation need are written in
+`internal/workflows/checkout/doc.go`.
+
+**The surface that LISTS half-finished executions is a subcommand of the
+binary** (`gobit stuck`,
+[ADR 0016](adr/0016-operator-read-surface-for-half-done-sagas.md)). The records
+are in the core's tables and the core does not have an HTTP endpoint the way the
+modules do; the panel, for its part, cannot carry this screen without reopening
+ADR 0011's Decision 6. The command ONLY READS and stays that way: releasing the
+stock of a saga that is still running would allocate it a second time. The thing
+that does the releasing is RECOVERY, and it comes not from that list but from
+the engine: a caller returning with the same idempotency key finds the abandoned
+execution and the compensation chain is run from the records
+([ADR 0017](adr/0017-recovering-abandoned-sagas-from-the-record.md)). If nobody
+returns, or if the chain stopped at the capture step, the record stays in the
+list and the work is done by hand.
+
+The two classes the command covers are NOT the same condition, and the second
+was found by measurement: `compensation_failed` records have been closed by the
+engine and logged at ERROR, but for that state to be reached **something has to
+happen**: the engine writes it either LIVE (a step and its compensation fail in
+the same call) or on the REPEAT path (a record whose lease has expired is come
+back to). If the process DIED in the middle of the saga and the customer never
+returned, neither happens: the cart stays `running`, holds its stock and appears
+in no log line. The measurement: in a six-record rig, of the two executions
+awaiting manual intervention only **one** is found by a status query.
 
 ---
 
-## 9. Genişletme noktaları
+## 8. Identity and hardening
 
-### Yeni modül
+For the detail see [README → API güvenliği](../README.md#api-güvenliği).
+Architecturally, three points matter:
 
-1. `internal/modules/<ad>/` altında `module.go`, `models`, `repository`,
+1. **The core does not know HOW identity is verified.** `corehttp.Authenticator`
+   is defined on the consumer side (in the core), the auth module satisfies it
+   **structurally**, and it is resolved from the container by name. The core
+   does not import auth.
+2. **The guard is attached in the composition root, not in the module.** A
+   module declares in its godoc which of its endpoints need protecting; the
+   binding is done by whoever builds the router.
+3. **Identity and authorization are separate layers.** `RequireAdmin` resolves
+   "who are you", `RequireScope` enforces "what may you do". Privilege
+   escalation is closed in the service layer as well: a caller cannot grant a
+   scope they do not hold themselves. One layer would not be enough — the
+   middleware map can be loosened one day, whereas the service rule stands next
+   to the data.
+4. **Failure behavior varies by component**
+   ([ADR 0007](adr/0007-sertlestirme-arizada-davranis.md)): identity is
+   fail-closed, the rate limit is fail-open, idempotency refuses on reservation
+   and releases the key on record. There is no uniform rule, because the answer
+   to "what breaks without this component" is different on every line.
+
+The scope dictionary derives from a single rule — `<module>:read` for reading,
+`<module>:write` for writing, `admin` covers everything — and every module's
+`api` package publishes its own constants. A module that forgets to add the
+enforcement cannot stay silent: `internal/e2e/authorization_test.go` **walks**
+the router tree, goes to every `/admin/v1` endpoint with an unauthorized token
+and expects a 403. A hand-written endpoint list would go blind at the first
+endpoint somebody forgot to add — and the endpoint that gets forgotten is
+precisely the one just written.
+
+Because the authenticator is born **after** the router, it is bound via
+`corehttp.DeferredAuthenticator`; a request that arrives before the binding is
+refused.
+
+---
+
+## 9. Extension points
+
+### A new module
+
+1. Under `internal/modules/<name>/`: `module.go`, `models`, `repository`,
    `service`, `api`, `migrations`, `queries`, `sqlc.yaml`.
-2. `.golangci.yml` içine `modul-izolasyonu-<ad>` depguard bloğu ekle **ve**
-   diğer modüllerin bloklarına yeni modülü ekle.
-3. `cmd/server` ve `internal/e2e` içindeki modül listesine ekle — ikisi aynı
-   sırayı taşır.
+2. Add a `modul-izolasyonu-<ad>` depguard block to `.golangci.yml` **and** add
+   the new module to the other modules' blocks.
+3. Add it to the module list in `cmd/server` and in `internal/e2e` — the two
+   carry the same order.
 
-### Yeni alan olayı
+### A new domain event
 
-Modülün `service` paketinde olay adını ve yük anahtarlarını **sabit** olarak
-yayımla; ad, Redis backend'inde aynı zamanda stream adıdır ve değişmesi tüm
-abonelerin sessizce olay almayı bırakması demektir. Yük dar tutulur ve tüm
-değerler dize olur (gerekçe: `order/service/events.go`).
+In the module's `service` package, publish the event name and the payload keys
+as **constants**; on the Redis backend the name is also the stream name, and
+changing it means every subscriber silently stops receiving the event. The
+payload is kept narrow and all values are strings (rationale:
+`order/service/events.go`).
 
-Yayım hatasının yazmayı düşürüp düşürmeyeceği modüle göre değişir: siparişte
-saga içindedir, katalogda commit'ten sonradır ve hata dönmek çağırana
-"uygulanmadı" demek olurdu.
+Whether a publish failure fails the write varies by module: in order it is
+inside the saga, in catalog it is after the commit, and returning an error there
+would be telling the caller "it was not applied".
 
-### Yeni eklenti
+### A new plugin
 
-`plugins/<ad>/` altında `coreplugin.Plugin` uygulayan bir paket; sözleşme
-`core/provider`'dan, kayıt noktası `coreplugin.Host`'tan alınır. Kurulum
-dosyasına (`internal/app/setup.go`) katalog satırı eklenir, `PLUGINS` ile
-seçilir. Çekirdek ve modüller **değişmez**.
+A package under `plugins/<name>/` implementing `coreplugin.Plugin`; the contract
+comes from `core/provider` and the registration point from `coreplugin.Host`. A
+catalog line is added to the setup file (`internal/app/setup.go`) and selected
+with `PLUGINS`. The core and the modules **do not change**.
 
-Kurulum iki fazlıdır: `Install` modüllerden önce (eklentinin getirdiği modül de
-yaşam döngüsünden geçsin), `Start` modüllerden sonra (sağlayıcı kaydı ancak
-hedef modül ayağa kalkınca vardır).
+Installation has two phases: `Install` before the modules (so a module a plugin
+brings in also goes through the life cycle), `Start` after the modules (a
+provider registration only exists once the target module is up).
 
-Go'nun standart `plugin` paketi (.so) bilinçli olarak kullanılmadı: yalnızca
-Linux/macOS'ta çalışır, çapraz derlemeyi desteklemez ve eklenti ile ana ikilinin
-**tüm** bağımlılıklarının bit düzeyinde aynı sürümde derlenmiş olmasını şart
-koşar. Bu kısıtlar "çalışırken tak" vaadini pratikte "her eklenti için tüm
-uygulamayı yeniden derle"ye çevirir — yani derleme zamanı kaydının zaten
-sağladığı şeye, üstüne kırılganlık ekleyerek.
+Go's standard `plugin` package (.so) was deliberately not used: it works only on
+Linux/macOS, does not support cross-compilation, and requires that **all** the
+dependencies of the plugin and of the main binary be compiled at bit-identical
+versions. These constraints turn the promise of "plug it in while running" into
+"recompile the whole application for every plugin" in practice — that is, into
+what compile-time registration already provides, with fragility added on top.
 
-### Yeni modülün yetki sözlüğü
+### A new module's scope dictionary
 
-Modülün `api` paketi `ScopeRead = "<modül>:read"` ve
-`ScopeWrite = "<modül>:write"` sabitlerini yayımlar; `Routes` içinde okuma ve
-yazma alt router'ları `corehttp.RequireScope` ile kurulur. Unutmak sessiz
-değildir: `internal/e2e/authorization_test.go` router ağacını gezip her `/admin/v1`
-ucuna yetkisiz bir jetonla gider.
+The module's `api` package publishes the constants
+`ScopeRead = "<module>:read"` and `ScopeWrite = "<module>:write"`; inside
+`Routes`, the read and write sub-routers are built with
+`corehttp.RequireScope`. Forgetting is not silent:
+`internal/e2e/authorization_test.go` walks the router tree and goes to every
+`/admin/v1` endpoint with an unauthorized token.
 
-### Yeni sağlayıcı (payment/fulfillment)
+### A new provider (payment/fulfillment)
 
-`core/provider` sözleşmesini uygula ve `<modül>.providers` kaydına ekle.
-Aynı kimlikle ikinci bir kayıt reddedilir ve mevcut sağlayıcı korunur:
-sessizce üzerine yazmak, hangi sağlayıcının çalıştığını yükleme sırasına
-bırakırdı — ödemede bunun bedeli paranın beklenmedik bir kuruluşa gitmesidir.
+Implement the `core/provider` contract and add it to the `<module>.providers`
+registry. A second registration under the same identity is refused and the
+existing provider is kept: silently overwriting would leave which provider runs
+up to the load order — and in payment the price of that is money going to an
+unexpected organization.
 
 ---
 
-## 10. Bilinen sınırlar
+## 10. Known limits
 
-| Sınır | Etki | Çıkış yolu |
+| Limit | Effect | Way out |
 |---|---|---|
-| Modüller arası imzalar derleme zamanında denetlenmez | Ayrışma çalışma anında görünür | Her interop yüzeyi için entegrasyon testi (mevcut kural) |
-| Oturum iptali yalnızca **toptan** | Tek cihazı düşürmek yok | jti bazlı kara liste — her istekte okunan yeni bir depo demektir |
-| Yük testi süreç içi | Kapasite planı üretmez | Gerçek dağıtımda dış yük aracı |
-| Geri alma TEK sahip içindir ve sırayı bilmez | Modülleri birlikte geri almak isteyen işletmeci komutu sahip başına tekrarlar; hangi sırada geri alınacağını komut söylemez | Modüller arası FK olmadığı için sıra bugün bir kısıt değil; gerçekten gerektiğinde bir sıra tanımı eklenir |
-| Yarım kalmış migration'ı ONARACAK bir komut yok | `migrate down` dirty defteri reddeder ve elle onarıma yollar; "force" yüzeyi yoktur | Bilinçli: sürümü doğru bilen tek taraf, yarım şemaya bakan insandır |
-| Kurtarma TETİKLENEMEZ, denk gelinir | Terk edilmiş bir yürütmenin telafisi ancak aynı anahtarla geri dönen bir çağıran olunca koşar (ADR 0017); kimse dönmezse kayıt `running` kalır ve `gobit stuck` onu listelemeye devam eder | Zamanlanmış bir süpürücü bilinçli olarak yok: kurtarma yan etkisi olan bir iş çalıştırır. Gerekirse operatörün TETİKLEYEBİLECEĞİ bir komut, süpürücüden önce gelir |
-| Tahsilat noktasında kurtarma DURUR | Kaydı olmayan tahsilat adımı "çalışmadı" sayılamaz (motor kaydı Invoke döndükten sonra yazar), yani kart çekilmiş olabilir; zincir elle müdahalede kalır | Adım kaydını Invoke'tan ÖNCE yazmak sınırı daraltırdı ama kaldırmazdı; ADR 0017'de reddedildi |
-| Yarım kalan yürütme listesi tarayıcıdan görünmez | Kabuğu olmayan operatör komutu koşamaz | Panelde bir ekran — ama ADR 0011'in Karar 6'sını bilerek yeniden açmak gerekir |
-| Yetki sözlüğü modül başına iki girdi | Kaynak bazlı ayrım yok (örn. yalnızca varyant okuma) | Ayrım gerçekten gerektiğinde eklenir; şimdiden eklemek yanlış bir kesinlik hissi verirdi |
-| Bellek içi idempotency deposu bir bayt bütçesiyle sınırlı | Bütçe dolunca **en eski** kayıt düşer; o anahtarla gelen tekrar yeniden işlenir (mükerrer yan etki) | `GUARD_BACKEND=redis`, ya da daha büyük `IDEMPOTENCY_MAX_MEMORY_BYTES` |
+| Cross-module signatures are not checked at compile time | Drift shows up at run time | An integration test for every interop surface (the existing rule) |
+| Session revocation is only **wholesale** | No dropping a single device | A jti-based blacklist — which means a new store read on every request |
+| Load testing is in-process | Does not produce a capacity plan | An external load tool against a real deployment |
+| Rollback is for ONE owner and does not know the order | An operator who wants to roll back modules together repeats the command per owner; the command does not say in which order to roll back | Because there are no cross-module FKs, order is not a constraint today; a definition of order is added when it is genuinely needed |
+| There is no command that REPAIRS a half-finished migration | `migrate down` refuses a dirty ledger and sends you to a manual repair; there is no "force" surface | Deliberate: the only party that knows the version correctly is the human looking at the half schema |
+| Recovery cannot be TRIGGERED, it is stumbled into | The compensation of an abandoned execution only runs when a caller returns with the same key (ADR 0017); if nobody returns, the record stays `running` and `gobit stuck` keeps listing it | A scheduled sweeper is deliberately absent: recovery runs work that has side effects. If needed, a command the operator CAN TRIGGER comes before a sweeper |
+| Recovery STOPS at the capture point | An unrecorded capture step cannot be counted as "did not run" (the engine writes the record after Invoke returns), so the card may have been charged; the chain stays in manual intervention | Writing the step record BEFORE Invoke would narrow the limit but not remove it; rejected in ADR 0017 |
+| The list of half-finished executions is not visible from a browser | An operator without a shell cannot run the command | A screen in the panel — but that requires knowingly reopening ADR 0011's Decision 6 |
+| The scope dictionary is two entries per module | No resource-level distinction (e.g. reading variants only) | The distinction is added when it is genuinely needed; adding it now would give a false sense of precision |
+| The in-memory idempotency store is bounded by a byte budget | When the budget fills, the **oldest** record is dropped; a repeat arriving with that key is processed again (duplicate side effect) | `GUARD_BACKEND=redis`, or a larger `IDEMPOTENCY_MAX_MEMORY_BYTES` |
 
-Çok örneklilik artık bir sınır değil bir **ayardır**: `GUARD_BACKEND=redis` hız
-sınırını ve idempotency deposunu paylaşılan hâle getirir (bkz.
-`core/http/redisguard`). Varsayılan `memory` bilinçlidir — tek örnekli
-geliştirme kurulumu Redis istememelidir — ama paylaşılan bir ortamda açılışta
-uyarı üretir.
+Multi-instance is no longer a limit but a **setting**: `GUARD_BACKEND=redis`
+makes the rate limit and the idempotency store shared (see
+`core/http/redisguard`). The `memory` default is deliberate — a single-instance
+development setup should not require Redis — but on a shared environment it
+produces a warning at startup.
 
-Bellek içi deponun bütçesi (`IDEMPOTENCY_MAX_MEMORY_BYTES`, varsayılan 64 MiB)
-tablodaki satırın sebebidir: bütçesiz hâlde tek sınır TTL'di ve kaydı açan
-anahtarı İSTEMCİ seçtiği için o sınır büyümeyi hiçbir yerde durdurmuyordu
-(ölçüm: 64 KiB gövdeli 10.000 kayıt 630,69 MiB). Bütçe dolunca yeni isteği
-reddetmek yerine en eski kaydın düşürülmesi bilinçli bir seçimdir — reddetmek,
-uydurma anahtarlar gönderen tek bir istemciye mağazanın tüm mutasyon trafiğini
-kapatma imkânı verirdi. Tahliye WARN loglanır ve bütçe her açılışta yazılır;
-gerekçenin tamamı `corehttp.MemoryIdempotencyStore` godoc'undadır.
+The in-memory store's budget (`IDEMPOTENCY_MAX_MEMORY_BYTES`, 64 MiB by
+default) is the reason for that row in the table: without a budget the only
+limit was the TTL, and because the CLIENT chooses the key that opens a record,
+that limit stopped growth nowhere (measurement: 10,000 records with 64 KiB
+bodies came to 630.69 MiB). Dropping the oldest record when the budget fills,
+rather than refusing the new request, is a deliberate choice — refusing would
+give a single client sending made-up keys the ability to shut down the shop's
+entire mutation traffic. The eviction is logged at WARN and the budget is
+written at every startup; the full rationale is in the
+`corehttp.MemoryIdempotencyStore` godoc.

@@ -44,6 +44,15 @@ type fakeCatalog struct {
 	salesChannelIDs    func(ctx context.Context, productID string) ([]string, error)
 
 	imagesOfUpload func(ctx context.Context, uploadID string) ([]models.Image, error)
+
+	// The storefront's four vocabulary reads; see store_taxonomy_test.go.
+	listCollections  func(ctx context.Context, limit, offset int) (service.ListResult[models.Collection], error)
+	listCategories   func(ctx context.Context, opts service.ListCategoriesOptions) (service.ListResult[models.Category], error)
+	listTags         func(ctx context.Context, limit, offset int) (service.ListResult[models.Tag], error)
+	listOptionValues func(
+		ctx context.Context,
+		opts service.ListOptionValuesOptions,
+	) (service.ListResult[models.OptionValuePair], error)
 }
 
 func (f *fakeCatalog) CreateProduct(ctx context.Context, in service.CreateProductInput) (models.Product, error) {
@@ -110,6 +119,34 @@ func (f *fakeCatalog) ProductSalesChannelIDs(ctx context.Context, productID stri
 
 func (f *fakeCatalog) ImagesOfUpload(ctx context.Context, uploadID string) ([]models.Image, error) {
 	return f.imagesOfUpload(ctx, uploadID)
+}
+
+func (f *fakeCatalog) ListCollections(
+	ctx context.Context,
+	limit, offset int,
+) (service.ListResult[models.Collection], error) {
+	return f.listCollections(ctx, limit, offset)
+}
+
+func (f *fakeCatalog) ListCategories(
+	ctx context.Context,
+	opts service.ListCategoriesOptions,
+) (service.ListResult[models.Category], error) {
+	return f.listCategories(ctx, opts)
+}
+
+func (f *fakeCatalog) ListTags(
+	ctx context.Context,
+	limit, offset int,
+) (service.ListResult[models.Tag], error) {
+	return f.listTags(ctx, limit, offset)
+}
+
+func (f *fakeCatalog) ListOptionValues(
+	ctx context.Context,
+	opts service.ListOptionValuesOptions,
+) (service.ListResult[models.OptionValuePair], error) {
+	return f.listOptionValues(ctx, opts)
 }
 
 // newRouter builds a router wired to the fake service.

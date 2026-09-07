@@ -1,19 +1,20 @@
-# ADR 0008 — Müşteri kimliği: çerçevenin sınırı, gömen uygulamanın sorumluluğu
+# ADR 0008 — Customer identity: the framework's boundary, the embedder's responsibility
 
-- **Durum:** Kabul edildi
-- **Tarih:** 2026-09-01
-- **Faz:** 10 sonrası (v0.4.0 sertleştirme turu)
+- **Status:** Accepted
+- **Date:** 2026-09-01
+- **Phase:** after 10 (the v0.4.0 hardening round)
 
-## Bağlam
+## Context
 
-Depo, B2B harcama limitini **uygulanan bir kural** olarak anlatıyor: README'nin
-"Kontrol nerede ve neden orada" bölümü, `order` modülünün godoc'u ve
-`internal/e2e/b2b_test.go` hep aynı cümleyi kuruyor — limiti aşan alışveriş
-siparişe dönüşmez, parası çekilmez, stok hareketsiz kalır. Bunların **hepsi
-doğru**. Eksik olan, kuralın hangi **koşulda** uygulandığıydı.
+The repository describes the B2B spending limit as an **enforced rule**: the
+README's "Kontrol nerede ve neden orada" section, the `order` module's godoc and
+`internal/e2e/b2b_test.go` all build the same sentence — a purchase exceeding
+the limit does not become an order, no money is captured, stock stays
+untouched. All of that is **true**. What was missing was the **condition** under
+which the rule is enforced.
 
-Kural `order.CreateOrder` içinde, `CreateOrderInput.CustomerID` üzerinden
-çalışır. O kimlik zincirin başına vitrin sepetinin gövdesinden girer:
+The rule runs inside `order.CreateOrder`, over `CreateOrderInput.CustomerID`.
+That identity enters the head of the chain from the body of the storefront cart:
 
 ```
 POST /store/v1/carts  {"country_code":"TR","customer_id":"cus_…"}
@@ -21,119 +22,131 @@ POST /store/v1/carts  {"country_code":"TR","customer_id":"cus_…"}
      -> b2b.interop.SpendingLimitJSON("cus_…")
 ```
 
-Mağaza yüzeyinin tek kimliği **publishable API anahtarıdır** ve o bir satış
-kanalını temsil eder, bir müşteriyi değil: `corehttp.Principal` alanları
-`ID`, `Kind`, `Scopes` ve `SalesChannelIDs`'tir — müşteri kimliği **yoktur**.
-Yani `customer_id` bir olgu değil, hiçbir kanıt istemeyen bir **sahiplik
-iddiasıdır**; `cart/api/store.go` bunu kendi godoc'unda zaten yazıyordu.
+The store surface's only identity is the **publishable API key**, and that
+represents a sales channel, not a customer: the fields of `corehttp.Principal`
+are `ID`, `Kind`, `Scopes` and `SalesChannelIDs` — there is **no** customer
+identity. So `customer_id` is not a fact but an **ownership claim** requiring no
+evidence at all; `cart/api/store.go` already said so in its own godoc.
 
-Gerçek ikili üzerinde, tek bir publishable anahtarla ölçüldü. Aynı sepet, aynı
-istemci, tek fark gövdedeki alan (limit `50_000`, sepet toplamı `76_800`):
+Measured on the real binary, with a single publishable key. The same cart, the
+same client, the only difference the field in the body (limit `50_000`, cart
+total `76_800`):
 
-| İstek gövdesi | Sonuç |
+| Request body | Result |
 |---|---|
 | `{"country_code":"TR","customer_id":"cus_…"}` | `409 order_spending_limit_exceeded` |
-| `{"country_code":"TR"}` | `200`, sipariş açılır (`customer_id: ""`) |
+| `{"country_code":"TR"}` | `200`, the order opens (`customer_id: ""`) |
 
-Aynı ölçümün ikinci yarısı: **yabancı bir istemci** başkasının `customer_id`'si
-ile alışverişi tamamladığında sipariş o müşterinin adına yazıldı ve harcama
-onun penceresinden düştü — sonraki adımda **çalışanın kendi alışverişi**
-`409` aldı. Yani iddia yalnızca kaçış değil, adı bilinen bir çalışanın harcama
-hakkını **yakma** yoludur ve publishable anahtar bir sır olmadığı için bunu
-tarayıcıdaki herkes yapabilir.
+The second half of the same measurement: when a **foreign client** completed a
+purchase with somebody else's `customer_id`, the order was written in that
+customer's name and the spend came out of their window — at the next step the
+**employee's own purchase** took a `409`. So the claim is not just an escape
+hatch, it is a way to **burn** the spending allowance of an employee whose name
+is known, and because the publishable key is not a secret anyone in the browser
+can do it.
 
-Üçüncü bir biçim daha var ve seçenekleri o eliyor: `POST /store/v1/customers`
-publishable anahtarla **yeni bir misafir kaydı açar**. Yani "kimlik beyan
-etmek zorunludur" demek bile yetmez; kaçan taraf bir istek daha atıp hiçbir
-şirkete bağlı olmayan taze bir kimlik üretir.
+There is a third form as well, and it eliminates the options:
+`POST /store/v1/customers` **opens a new guest record** with a publishable key.
+So even saying "declaring an identity is mandatory" is not enough; the escaping
+party sends one more request and produces a fresh identity bound to no company
+at all.
 
-Dördüncüsü, atfın **sepet açılışına bağlı olmamasıdır**: misafir olarak açılan
-bir sepet `POST /store/v1/carts/{id}` ile başkasının `customer_id`'sine
-devredilebilir ve sipariş o kimliğe yazılır (ölçüldü: devir `200`, sipariş
-kurbanın adına). Bu, "açılışta kimlik iste" biçimindeki her kapıyı da eler:
-atıf sepetin ÖMRÜ boyunca beyana dayanır, tek bir anına değil.
+The fourth is that attribution **is not tied to cart creation**: a cart opened
+as a guest can be handed over to somebody else's `customer_id` with
+`POST /store/v1/carts/{id}` and the order is written to that identity (measured:
+the handover `200`, the order in the victim's name). This also eliminates every
+gate of the form "ask for an identity at creation": attribution rests on the
+declaration throughout the cart's LIFETIME, not at a single moment of it.
 
-## Karar
+## Decision
 
-**Müşteri kimliğinin doğrulanması çerçevenin değil, gömen uygulamanın işidir.
-gobit bu turda kimlik doğrulama İNŞA ETMEZ; sınırı çizer, belgeler ve testle
-sabitler.**
+**Verifying customer identity is the embedding application's job, not the
+framework's. gobit DOES NOT BUILD identity verification this round; it draws the
+boundary, documents it and pins it with tests.**
 
-Sınırın tam ifadesi şudur:
+The exact statement of the boundary is this:
 
-> Harcama limiti, **müşterisini beyan eden** alışverişlere uygulanır. Beyanın
-> doğruluğunu gobit doğrulamaz. Beyan etmeyen alışverişe hiçbir limit
-> uygulanmaz.
+> The spending limit applies to purchases that **declare their customer**. gobit
+> does not verify the truth of the declaration. No limit is applied to a
+> purchase that does not declare one.
 
-Bunun üç sonucu vardır ve üçü de kayıt altındadır:
+This has three consequences, and all three are on the record:
 
-1. **Belge gerçeğe çekildi.** README'nin B2B bölümü artık kuralın koşulunu
-   ölçülmüş hâliyle yazıyor; `order` modülünün godoc'u, `SpendingPolicy`
-   arayüzü ve `CreateOrderInput.CustomerID` aynı sınırı kendi yerlerinde
-   tekrarlıyor. Kuralın "her alışverişe uygulandığı" cümlesi hiçbir yerde
-   kalmadı.
-2. **Sınır testle sabitlendi.** `internal/modules/order/service/spending_test.go`
-   içindeki `TestTrustBoundaryGuestOrderIsNeverAskedForTheSpendingRule` ve
-   `TestTheSpendingRuleIsAppliedToTheDeclaredCustomer`, sınırın bugünkü yerini
-   davranış olarak tutar. İkisi de bir yeteneği değil bir **kararı** korur:
-   kimlik doğrulayan bir katman eklendiğinde düşmeleri beklenir ve o gün
-   düşmeleri, kararın gerçekten verildiğinin işaretidir.
-3. **Gömen uygulamaya düşen iş adlandırıldı.** Vitrin yüzeyini bir müşteri
-   oturumuyla koruyan taraf odur: `customer_id` gövdeden değil oturumdan
-   gelmeli, uyuşmazlıkta `errors.Forbidden` dönmelidir. Kodda değişecek yer
-   dardır ve işaretlidir — `cart/api/store.go`'daki sepet açma, `b2b/api`'nin
-   `storeCustomerID` yardımcısı ve `order`'ın `spendingRuleFor` girişi.
+1. **The documentation was pulled to the truth.** The README's B2B section now
+   states the rule's condition in its measured form; the `order` module's godoc,
+   the `SpendingPolicy` interface and `CreateOrderInput.CustomerID` repeat the
+   same boundary in their own places. The sentence saying the rule "applies to
+   every purchase" is left nowhere.
+2. **The boundary was pinned with tests.**
+   `TestTrustBoundaryGuestOrderIsNeverAskedForTheSpendingRule` and
+   `TestTheSpendingRuleIsAppliedToTheDeclaredCustomer` in
+   `internal/modules/order/service/spending_test.go` hold today's position of
+   the boundary as behaviour. Both of them protect a **decision** rather than a
+   capability: when a layer that verifies identity is added they are expected to
+   fail, and their failing on that day is the sign that the decision was really
+   taken.
+3. **The work falling to the embedder was named.** It is the embedder who
+   protects the storefront surface with a customer session: `customer_id` must
+   come from the session, not from the body, and a mismatch must return
+   `errors.Forbidden`. The place that will change in the code is narrow and
+   marked — cart creation in `cart/api/store.go`, `b2b/api`'s `storeCustomerID`
+   helper and `order`'s `spendingRuleFor` entry point.
 
-## Sonuçlar
+## Consequences
 
-**Olumlu.** Deponun en pahalı arıza sınıfı, "kod doğru ama belge yanlış
-söylüyor"du; bu ADR onu kapatıyor. B2B kurulumu yapan operatör, limitin neyi
-garanti ettiğini kurulumdan **önce** okur: limit, muhasebe disiplinini
-kimliğin doğrulandığı bir vitrinde uygular; kimliğin doğrulanmadığı bir
-vitrinde ise yalnızca dürüst istemcinin hatasını yakalar.
+**Positive.** The repository's most expensive class of fault was "the code is
+right but the documentation says something wrong"; this ADR closes it. The
+operator setting up B2B reads what the limit guarantees **before** installing:
+the limit enforces accounting discipline on a storefront where identity is
+verified; on a storefront where it is not, it only catches the honest client's
+mistake.
 
-**Olumlu.** Sınır bir yere **yazıldığı** için ölçülebilir hâle geldi: bugün
-`order`'da iki test, README'de bir tablo satırı. Yarın kimlik doğrulama
-geldiğinde değişmesi gereken yerlerin listesi tahmin değil, referans.
+**Positive.** Because the boundary was **written down** somewhere, it became
+measurable: today, two tests in `order` and one table row in the README.
+Tomorrow, when identity verification arrives, the list of places that have to
+change is a reference, not a guess.
 
-**Olumsuz.** Çerçeve, kendi başına çalıştırıldığında B2B harcama limitini
-**garanti etmiyor** ve bu, özelliğin pazarlanabilir gücünü düşürüyor. Kabul
-edildi: yanlış bir garanti vermek, hiç garanti vermemekten pahalıdır — güvenilen
-bir limit, güvenilmeyen bir limitten daha tehlikelidir.
+**Negative.** The framework **does not guarantee** the B2B spending limit when
+run on its own, and that lowers the feature's marketable strength. Accepted:
+giving a wrong guarantee is more expensive than giving none — a limit that is
+trusted is more dangerous than a limit that is not.
 
-**Olumsuz.** Sınır iki katmana dağılmış durumda: kimliği **kabul eden** yer
-`cart`'ın vitrin ucu, kuralı **uygulayan** yer `order`. Gömen uygulamanın
-ikisini birden okuması gerekir. Karşı önlem, iki yerin de birbirine ve bu
-ADR'ye atıf yapmasıdır.
+**Negative.** The boundary is spread across two layers: the place that
+**accepts** the identity is `cart`'s storefront endpoint, the place that
+**enforces** the rule is `order`. The embedder has to read both. The
+countermeasure is that both places refer to each other and to this ADR.
 
-## Reddedilen seçenekler
+## Rejected alternatives
 
-**Asgari bir kapı: "limitli bir müşterinin sepeti misafir olarak
-tamamlanamasın."** Uygulanamaz, çünkü `order` misafir sepetinin limitli bir
-çalışana ait olduğunu **bilemez**: elinde boş bir `customer_id`'den başka bir
-şey yoktur. Bağı kurabilecek tek alan sepetin e-postasıdır ve o da doğrulanmamış,
-istemcinin serbestçe seçtiği (ve `POST /store/v1/carts/{id}` ile
-değiştirebildiği) bir alandır. Üstelik `order`'ı bir e-posta → müşteri
-çözücüsüne dönüştürmek, müşteri **sayımı** için yeni bir kapı açardı: sipariş
-ucunun cevabı "bu e-posta kayıtlı mı" sorusunu yanıtlar hâle gelirdi. Kısacası
-kapı, kaçışı kapatmadan yeni bir açık üretirdi.
+**A minimal gate: "the cart of a limited customer must not be completed as a
+guest."** Not implementable, because `order` **cannot know** that a guest cart
+belongs to a limited employee: it holds nothing but an empty `customer_id`. The
+only field that could establish the link is the cart's email, and that too is
+unverified, freely chosen by the client (and changeable via
+`POST /store/v1/carts/{id}`). On top of that, turning `order` into an
+email → customer resolver would open a new gate for customer **enumeration**:
+the order endpoint's answer would come to answer the question "is this email
+registered". In short, the gate would produce a new hole without closing the
+escape.
 
-**`customer_id` beyanını ZORUNLU kılmak.** İlk bakışta misafir kaçışını
-kapatıyor. Kapatmıyor: `POST /store/v1/customers` publishable anahtarla yeni
-bir misafir kaydı açar, o kayıt hiçbir şirkete bağlı değildir ve limiti de
-yoktur. Bedeli ise gerçek: misafir alışverişi vitrinin **varsayılan yoludur** ve
-bu değişiklik onu her kurulumda kırardı — kapatmadığı bir açık uğruna.
+**Making the `customer_id` declaration MANDATORY.** At first glance it closes
+the guest escape. It does not: `POST /store/v1/customers` opens a new guest
+record with a publishable key, that record is bound to no company and has no
+limit either. The price, meanwhile, is real: guest purchasing is the
+storefront's **default path** and this change would break it in every
+installation — for the sake of a hole it does not close.
 
-**Beyanın kanıtını istemek (imzalı müşteri belirteci).** Doğru çözüm bu, ama
-bu turun işi değil: belirteci **kim üretir** (auth mu, gömen uygulama mı),
-ömrü ne kadardır, misafirden kayıtlı müşteriye geçişte sepet nasıl devrolur,
-`corehttp.Principal` müşteri kimliğini taşımaya başladığında admin yüzeyindeki
-yetki modeli nasıl etkilenir — hepsi ayrı kararlardır. Yarım bir kimlik
-katmanı, olmayan bir kimlik katmanından daha tehlikelidir: doğruladığını sanan
-bir sunucu, doğrulamadığını bilen bir sunucudan daha kötü kararlar verir.
+**Asking for proof of the declaration (a signed customer token).** This is the
+right solution, but not this round's work: **who issues** the token (auth, or
+the embedder), how long it lives, how the cart is handed over on the transition
+from guest to registered customer, how the authorization model on the admin
+surface is affected once `corehttp.Principal` starts carrying a customer
+identity — all of these are separate decisions. A half identity layer is more
+dangerous than a missing one: a server that thinks it verifies makes worse
+decisions than a server that knows it does not.
 
-**Ortam değişkeniyle kapatılabilir bir "katı mod".** ADR 0007'nin gerekçesiyle
-aynı sebeple reddedildi: yanlışlıkla `false` verilen bir anahtar, korumayı
-hiçbir hata üretmeden kaldırır. Burada ayrıca yanlış tarafa da düşerdi —
-"katı mod açık" diyen bir kurulum, gerçekte doğrulanmamış bir beyana
-güvenmeye devam ederdi.
+**A "strict mode" that can be turned off with an environment variable.**
+Rejected for the same reason as ADR 0007's argument: a flag accidentally set to
+`false` removes the protection without producing a single error. Here it would
+also land on the wrong side — an installation saying "strict mode on" would in
+reality carry on trusting an unverified declaration.

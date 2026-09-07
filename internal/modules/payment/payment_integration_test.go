@@ -54,9 +54,9 @@ var modulTablolari = []string{
 // Test verisinde kullanılan sabitler. Referans BAŞKA bir modüle (sepet ya da
 // sipariş) aittir; bu modül varlığını doğrulamaz (Prensip 2.2).
 const (
-	testReferans = "cart_TEST"
-	testPara     = "TRY"
-	testTutar    = int64(50_000)
+	testReference = "cart_TEST"
+	testCurrency  = "TRY"
+	testAmount    = int64(50_000)
 )
 
 var (
@@ -116,9 +116,9 @@ func runWithPostgres(m *testing.M) int {
 	return m.Run()
 }
 
-// yeniServis gerçek depo ve GERÇEK manuel sağlayıcı üzerinde çalışan bir
+// newService gerçek depo ve GERÇEK manuel sağlayıcı üzerinde çalışan bir
 // servis kurar.
-func yeniServis(t *testing.T) (*service.Service, *manual.Provider) {
+func newService(t *testing.T) (*service.Service, *manual.Provider) {
 	t.Helper()
 
 	repo := repository.New(testPool.Pool())
@@ -217,9 +217,9 @@ func yeniKoleksiyon(ctx context.Context, t *testing.T, svc *service.Service) mod
 	t.Helper()
 
 	col, err := svc.CreatePaymentCollection(ctx, service.CreateCollectionInput{
-		Reference:    testReferans,
-		Amount:       testTutar,
-		CurrencyCode: testPara,
+		Reference:    testReference,
+		Amount:       testAmount,
+		CurrencyCode: testCurrency,
 	})
 	require.NoError(t, err)
 	return col
@@ -251,7 +251,7 @@ func tabloVar(ctx context.Context, t *testing.T, table string) bool {
 func TestMigrationVeriVarkenGeriAlinabilir(t *testing.T) {
 	ctx := context.Background()
 	src := payment.New().Migrations()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 
 	col := yeniKoleksiyon(ctx, t, svc)
 	ses, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
@@ -361,7 +361,7 @@ func TestCrossModuleForeignKeyYok(t *testing.T) {
 // ayrıştığı bir hata ancak iki tarafa birden bakılarak görülür.
 func TestUctanUcaOdemeAkisi(t *testing.T) {
 	ctx := context.Background()
-	svc, prov := yeniServis(t)
+	svc, prov := newService(t)
 	col := yeniKoleksiyon(ctx, t, svc)
 
 	ses, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
@@ -377,7 +377,7 @@ func TestUctanUcaOdemeAkisi(t *testing.T) {
 	authorized, err := svc.AuthorizePayment(ctx, ses.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.SessionAuthorized, authorized.Status)
-	assert.Equal(t, testTutar, authorized.AuthorizedAmount)
+	assert.Equal(t, testAmount, authorized.AuthorizedAmount)
 
 	saglayiciOturum, err := prov.GetSession(ctx, ses.ExternalID)
 	require.NoError(t, err)
@@ -387,24 +387,24 @@ func TestUctanUcaOdemeAkisi(t *testing.T) {
 	guncelKol, err = svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.CollectionAuthorized, guncelKol.Status)
-	assert.Equal(t, testTutar, guncelKol.AuthorizedAmount)
+	assert.Equal(t, testAmount, guncelKol.AuthorizedAmount)
 
 	pay, err := svc.CapturePayment(ctx, ses.ID, 0)
 	require.NoError(t, err)
-	assert.Equal(t, testTutar, pay.Amount)
-	assert.Equal(t, testPara, pay.CurrencyCode)
+	assert.Equal(t, testAmount, pay.Amount)
+	assert.Equal(t, testCurrency, pay.CurrencyCode)
 
 	saglayiciOturum, err = prov.GetSession(ctx, ses.ExternalID)
 	require.NoError(t, err)
-	assert.Equal(t, testTutar, saglayiciOturum.CapturedAmount)
+	assert.Equal(t, testAmount, saglayiciOturum.CapturedAmount)
 
 	guncelKol, err = svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.CollectionCaptured, guncelKol.Status)
 
-	refund, err := svc.RefundPayment(ctx, pay.ID, testTutar/2, "kısmi iade")
+	refund, err := svc.RefundPayment(ctx, pay.ID, testAmount/2, "kısmi iade")
 	require.NoError(t, err)
-	assert.Equal(t, testTutar/2, refund.Amount)
+	assert.Equal(t, testAmount/2, refund.Amount)
 
 	guncelKol, err = svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
@@ -416,11 +416,11 @@ func TestUctanUcaOdemeAkisi(t *testing.T) {
 	guncelKol, err = svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.CollectionRefunded, guncelKol.Status)
-	assert.Equal(t, testTutar, guncelKol.RefundedAmount)
+	assert.Equal(t, testAmount, guncelKol.RefundedAmount)
 
 	saglayiciOturum, err = prov.GetSession(ctx, ses.ExternalID)
 	require.NoError(t, err)
-	assert.Equal(t, testTutar, saglayiciOturum.RefundedAmount,
+	assert.Equal(t, testAmount, saglayiciOturum.RefundedAmount,
 		"iade sağlayıcının defterine de yansımalı")
 }
 
@@ -474,7 +474,7 @@ func TestEszamanliIkiAuthorizeTekYetkilendirmeUretir(t *testing.T) {
 
 	guncelKol, err := svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Equal(t, testTutar, guncelKol.AuthorizedAmount,
+	assert.Equal(t, testAmount, guncelKol.AuthorizedAmount,
 		"bloke tutar TEK yetkilendirme kadar olmalı, katları değil")
 	assert.Equal(t, models.CollectionAuthorized, guncelKol.Status)
 }
@@ -487,7 +487,7 @@ func TestEszamanliIkiAuthorizeTekYetkilendirmeUretir(t *testing.T) {
 // önce kilidin çalıştığı burada görülür.
 func TestEszamanliIkiCreateSessionTekOturumUretir(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 	col := yeniKoleksiyon(ctx, t, svc)
 	anahtar := "concurrent-create-" + col.ID
 
@@ -533,7 +533,7 @@ func TestEszamanliIkiCreateSessionTekOturumUretir(t *testing.T) {
 // telafiyi tamamen kilitleyen bir hata olurdu.
 func TestCancelIdempotencyGercekVeritabaninda(t *testing.T) {
 	ctx := context.Background()
-	svc, prov := yeniServis(t)
+	svc, prov := newService(t)
 	col := yeniKoleksiyon(ctx, t, svc)
 	ses, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
 		IdempotencyKey: "cancel-" + col.ID,
@@ -611,7 +611,7 @@ func TestEszamanliIkiCancelTekTelafiUretir(t *testing.T) {
 // saklandığı için yetkilendirme AYRI bir istekte de aynı biçimde davranır.
 func TestRedliAkisTelafiyeAcik(t *testing.T) {
 	ctx := context.Background()
-	svc, prov := yeniServis(t)
+	svc, prov := newService(t)
 	col := yeniKoleksiyon(ctx, t, svc)
 
 	ses, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
@@ -655,7 +655,7 @@ func TestRedliAkisTelafiyeAcik(t *testing.T) {
 // edilebilmelidir.
 func TestSaglayiciHatasiEnjeksiyonuIslemiGeriAlir(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 	col := yeniKoleksiyon(ctx, t, svc)
 
 	ses, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
@@ -688,7 +688,7 @@ func TestSaglayiciHatasiEnjeksiyonuIslemiGeriAlir(t *testing.T) {
 // senaryoda çalışmak zorundadır.
 func TestSaglayiciDurumuSurecDisindaYasar(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 	col := yeniKoleksiyon(ctx, t, svc)
 	ses, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
 		IdempotencyKey: "restart-" + col.ID,
@@ -696,7 +696,7 @@ func TestSaglayiciDurumuSurecDisindaYasar(t *testing.T) {
 	require.NoError(t, err)
 
 	// "Süreç yeniden başladı": tamamen YENİ bir sağlayıcı ve servis örneği.
-	yenidenSvc, yenidenProv := yeniServis(t)
+	yenidenSvc, yenidenProv := newService(t)
 
 	saglayiciOturum, err := yenidenProv.GetSession(ctx, ses.ExternalID)
 	require.NoError(t, err, "sağlayıcı oturumu yeniden başlatmadan sonra da bulunmalı")
@@ -717,7 +717,7 @@ func TestSaglayiciDurumuSurecDisindaYasar(t *testing.T) {
 // açmamalıdır; kısıt son savunmadır ve doğrudan sağlayıcıya gidilerek sınanır.
 func TestAyniAnahtarSaglayiciDefterindeDeTekOturumAcar(t *testing.T) {
 	ctx := context.Background()
-	svc, prov := yeniServis(t)
+	svc, prov := newService(t)
 	col := yeniKoleksiyon(ctx, t, svc)
 	anahtar := "provider-idem-" + col.ID
 
@@ -842,10 +842,10 @@ func TestModulContainerdaAdlariKaydeder(t *testing.T) {
 // entegrasyon testi ZORUNLUDUR.
 func TestInteropUctanUcaAkisGercekVeritabaninda(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 	iop := service.NewInterop(svc)
 
-	colID, err := iop.CreateCollection(ctx, testReferans, testPara, testTutar)
+	colID, err := iop.CreateCollection(ctx, testReference, testCurrency, testAmount)
 	require.NoError(t, err)
 
 	sesID, err := iop.OpenSession(ctx, colID, manual.ID, "interop-"+colID)
@@ -854,7 +854,7 @@ func TestInteropUctanUcaAkisGercekVeritabaninda(t *testing.T) {
 	durum, bloke, err := iop.Authorize(ctx, sesID)
 	require.NoError(t, err)
 	assert.Equal(t, models.SessionAuthorized.String(), durum)
-	assert.Equal(t, testTutar, bloke, "yüzey bloke edilen TUTARI da taşımalı")
+	assert.Equal(t, testAmount, bloke, "yüzey bloke edilen TUTARI da taşımalı")
 
 	payID, err := iop.Capture(ctx, sesID, 0)
 	require.NoError(t, err)
@@ -862,8 +862,8 @@ func TestInteropUctanUcaAkisGercekVeritabaninda(t *testing.T) {
 	kolDurum, kolTutar, _, kolTahsil, _, err := iop.Collection(ctx, colID)
 	require.NoError(t, err)
 	assert.Equal(t, models.CollectionCaptured.String(), kolDurum)
-	assert.Equal(t, testTutar, kolTutar)
-	assert.Equal(t, testTutar, kolTahsil, "saga ödemenin TAM olduğunu sayıdan doğrulayabilmeli")
+	assert.Equal(t, testAmount, kolTutar)
+	assert.Equal(t, testAmount, kolTahsil, "saga ödemenin TAM olduğunu sayıdan doğrulayabilmeli")
 
 	refundID, err := iop.Refund(ctx, payID, 0, "interop iadesi")
 	require.NoError(t, err)
@@ -872,7 +872,7 @@ func TestInteropUctanUcaAkisGercekVeritabaninda(t *testing.T) {
 	kolDurum, _, _, _, kolIade, err := iop.Collection(ctx, colID)
 	require.NoError(t, err)
 	assert.Equal(t, models.CollectionRefunded.String(), kolDurum)
-	assert.Equal(t, testTutar, kolIade)
+	assert.Equal(t, testAmount, kolIade)
 }
 
 // TestInteropEksikOdemeGercekVeritabaninda saga'nın ödemenin EKSİK olduğunu
@@ -884,10 +884,10 @@ func TestInteropUctanUcaAkisGercekVeritabaninda(t *testing.T) {
 // görünüyordu ve saga'nın bakacağı hiçbir sayı yoktu.
 func TestInteropEksikOdemeGercekVeritabaninda(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 	iop := service.NewInterop(svc)
 
-	colID, err := iop.CreateCollection(ctx, testReferans, testPara, testTutar)
+	colID, err := iop.CreateCollection(ctx, testReference, testCurrency, testAmount)
 	require.NoError(t, err)
 	sesID, err := iop.OpenSessionWithData(ctx, colID, manual.ID, "interop-partial-"+colID,
 		[]byte(`{"manual_authorized_amount":1}`))
@@ -904,7 +904,7 @@ func TestInteropEksikOdemeGercekVeritabaninda(t *testing.T) {
 	kolDurum, kolTutar, kolBloke, kolTahsil, _, err := iop.Collection(ctx, colID)
 	require.NoError(t, err)
 	assert.Equal(t, models.CollectionPartiallyCaptured.String(), kolDurum)
-	assert.Equal(t, testTutar, kolTutar)
+	assert.Equal(t, testAmount, kolTutar)
 	assert.Zero(t, kolBloke, "çekilmeyen blokaj asılı kalmamalı")
 	assert.Equal(t, int64(1), kolTahsil)
 	assert.Less(t, kolTahsil, kolTutar, "saga bu karşılaştırmayla siparişi onaylamamalı")
@@ -919,7 +919,7 @@ func TestInteropEksikOdemeGercekVeritabaninda(t *testing.T) {
 // bu ancak gerçek toplama sorgusuyla kanıtlanır.
 func TestAyniKoleksiyondaIkiTamOturumAcilamazGercekVeritabaninda(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 	col := yeniKoleksiyon(ctx, t, svc)
 
 	_, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
@@ -944,7 +944,7 @@ func TestAyniKoleksiyondaIkiTamOturumAcilamazGercekVeritabaninda(t *testing.T) {
 // ile modülün kaydının ayrışması da ancak iki tarafa birden bakılarak görülür.
 func TestKismiTahsilatGercekVeritabaninda(t *testing.T) {
 	ctx := context.Background()
-	svc, prov := yeniServis(t)
+	svc, prov := newService(t)
 	col := yeniKoleksiyon(ctx, t, svc)
 	ses, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
 		IdempotencyKey: "partial-capture-" + col.ID,
@@ -976,10 +976,10 @@ func TestKismiTahsilatGercekVeritabaninda(t *testing.T) {
 // yüzeyden telafi edebildiğini doğrular.
 func TestInteropRedliOturumTelafiEdilebilir(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 	iop := service.NewInterop(svc)
 
-	colID, err := iop.CreateCollection(ctx, testReferans, testPara, testTutar)
+	colID, err := iop.CreateCollection(ctx, testReference, testCurrency, testAmount)
 	require.NoError(t, err)
 
 	sesID, err := iop.OpenSessionWithData(ctx, colID, manual.ID, "interop-decline-"+colID,
@@ -1001,7 +1001,7 @@ func TestInteropRedliOturumTelafiEdilebilir(t *testing.T) {
 // yüzeyinin gerçek satırlar üzerinde çalıştığını doğrular (ADR 0004).
 func TestQuerySaglayicisiGercekVeritabaninda(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 	col := yeniKoleksiyon(ctx, t, svc)
 	p := service.NewQueryProvider(svc)
 
@@ -1011,8 +1011,8 @@ func TestQuerySaglayicisiGercekVeritabaninda(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, records, 1, "bulunamayan kimlik için kayıt DÖNMEZ")
 	assert.Equal(t, col.ID, records[0][service.FieldID])
-	assert.Equal(t, testReferans, records[0][service.FieldReference])
-	assert.Equal(t, testTutar, records[0][service.FieldAmount])
+	assert.Equal(t, testReference, records[0][service.FieldReference])
+	assert.Equal(t, testAmount, records[0][service.FieldAmount])
 	assert.Equal(t, models.CollectionNotPaid.String(), records[0][service.FieldStatus])
 }
 
@@ -1028,10 +1028,10 @@ func TestQuerySaglayicisiGercekVeritabaninda(t *testing.T) {
 // sınanamaz: orada aynı oturum, burada FARKLI oturumlar yarışır.
 func TestEszamanliFarkliOturumlarKoleksiyonTutariniKaybetmez(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 	col := yeniKoleksiyon(ctx, t, svc)
 
-	yarim := testTutar / 2
+	yarim := testAmount / 2
 	ilk, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
 		Amount:         yarim,
 		IdempotencyKey: "split-1-" + col.ID,
@@ -1065,7 +1065,7 @@ func TestEszamanliFarkliOturumlarKoleksiyonTutariniKaybetmez(t *testing.T) {
 
 	guncelKol, err := svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Equal(t, testTutar, guncelKol.AuthorizedAmount,
+	assert.Equal(t, testAmount, guncelKol.AuthorizedAmount,
 		"iki oturumun bloke tutarı TOPLANMALI; biri diğerini ezmemeli")
 	assert.Equal(t, models.CollectionAuthorized, guncelKol.Status)
 }
@@ -1125,6 +1125,6 @@ func TestEszamanliIkiCaptureTekTahsilatUretir(t *testing.T) {
 
 	guncelKol, err := svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Equal(t, testTutar, guncelKol.CapturedAmount,
+	assert.Equal(t, testAmount, guncelKol.CapturedAmount,
 		"tahsil edilen tutar TEK tahsilat kadar olmalı, katları değil")
 }

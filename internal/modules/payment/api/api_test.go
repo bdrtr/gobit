@@ -605,3 +605,259 @@ func TestMagazaUclariYetkiIstemez(t *testing.T) {
 		})
 	}
 }
+
+// --- okuma yüzeyi ------------------------------------------------------------
+//
+// Aşağıdaki dört uç (koleksiyonun oturumları, koleksiyonun tahsilatları,
+// tahsilatın kendisi, tahsilatın iadeleri) operatörün PARA KAYITLARINA tek
+// bakış yüzeyidir. Yazma uçlarından farkları, hata verdiklerinde kimsenin
+// haberi olmamasıdır: yanlış kaydı okuyan bir uç da 200 döner, boş yerine null
+// dönen bir liste de. Bu yüzden her biri ayrı ayrı sınanır.
+
+// TestOkumaUclariKaydinKimliginiYoldanAlir okuma uçlarının URL'deki kaydı
+// sorduğunu doğrular.
+//
+// Bir okuma handler'ının tek işi budur: yoldan gelen kimliği servise geçirmek.
+// Kimlik kaybolsa (boş dizeye düşse) ya da başka bir yol parçasından okunsa uç
+// yine 200 döner ve zarf yine doğru görünür — operatör, sorduğu tahsilatın
+// yanıtını aldığını sanır. Para kayıtlarında bu, bir iadeyi başka bir
+// tahsilatın altında aramak demektir.
+func TestOkumaUclariKaydinKimliginiYoldanAlir(t *testing.T) {
+	tests := map[string]struct {
+		path    string
+		beklHam string
+		sorulan func(*fakePayments) string
+	}{
+		"koleksiyonun oturumları": {
+			path:    "/admin/v1/payment-collections/paycol_9/payment-sessions",
+			beklHam: "paycol_9",
+			sorulan: func(f *fakePayments) string { return f.sonOturumListesiKimligi },
+		},
+		"koleksiyonun tahsilatları": {
+			path:    "/admin/v1/payment-collections/paycol_9/payments",
+			beklHam: "paycol_9",
+			sorulan: func(f *fakePayments) string { return f.sonTahsilatListesiKimligi },
+		},
+		"tahsilatın kendisi": {
+			path:    "/admin/v1/payments/pay_9",
+			beklHam: "pay_9",
+			sorulan: func(f *fakePayments) string { return f.sonTahsilatKimligi },
+		},
+		"tahsilatın iadeleri": {
+			path:    "/admin/v1/payments/pay_9/refunds",
+			beklHam: "pay_9",
+			sorulan: func(f *fakePayments) string { return f.sonIadeListesiKimligi },
+		},
+	}
+
+	for ad, tt := range tests {
+		t.Run(ad, func(t *testing.T) {
+			svc := &fakePayments{}
+			r := yeniRouter(svc)
+
+			rec := istek(t, r, http.MethodGet, tt.path, "")
+
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			assert.Equal(t, tt.beklHam, tt.sorulan(svc),
+				"uç, yoldaki kaydı değil başka bir kimliği sordu")
+		})
+	}
+}
+
+// TestBosOkumaListeleriBosDiziDoner kaydı olmayan bir listenin null DEĞİL boş
+// dizi döndüğünü doğrular.
+//
+// Go'da nil bir dilim JSON'da null olarak kodlanır. Zarfın "data" alanı null
+// dönerse istemci tarafındaki her döngü ya patlar ya da sessizce atlanır; daha
+// kötüsü, "bu tahsilatın iadesi yok" ile "iade listesi alınamadı" ayırt
+// edilemez hâle gelir. Operatörün mutabakat sorusu tam olarak budur ve iki
+// yanıt farklı şeyler demektir.
+func TestBosOkumaListeleriBosDiziDoner(t *testing.T) {
+	paths := map[string]string{
+		"koleksiyonun oturumları":   "/admin/v1/payment-collections/paycol_1/payment-sessions",
+		"koleksiyonun tahsilatları": "/admin/v1/payment-collections/paycol_1/payments",
+		"tahsilatın iadeleri":       "/admin/v1/payments/pay_1/refunds",
+	}
+
+	for ad, path := range paths {
+		t.Run(ad, func(t *testing.T) {
+			r := yeniRouter(&fakePayments{})
+
+			rec := istek(t, r, http.MethodGet, path, "")
+
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			body := govde(t, rec)
+			assert.Equal(t, []any{}, body["data"],
+				"kayıt yokken liste null değil boş dizi olmalı: %s", rec.Body.String())
+			assert.InDelta(t, 0, body["count"], 0)
+		})
+	}
+}
+
+// TestOkumaUclariServisinHataSinifiniKorur okuma uçlarının da status kodu
+// SEÇMEDİĞİNİ doğrular.
+//
+// Olmayan bir koleksiyonun oturumları sorulduğunda 404 dönmelidir; 500 dönmek,
+// kimliği yanlış yazan operatöre "sunucu bozuldu" demek ve onu kendi hatasını
+// aramak yerine bir olay kaydı açmaya göndermek olurdu. Yazma uçları için
+// zaten sınanan bu kural (bkz. TestHataSiniflariStatusKodunaEslenir) okuma
+// uçlarında ayrıca doğrulanır: dördü de hatayı kendi elleriyle yazmaya kalksa
+// diğer testlerin hiçbiri kırılmazdı.
+func TestOkumaUclariServisinHataSinifiniKorur(t *testing.T) {
+	paths := map[string]string{
+		"koleksiyonun oturumları":   "/admin/v1/payment-collections/paycol_yok/payment-sessions",
+		"koleksiyonun tahsilatları": "/admin/v1/payment-collections/paycol_yok/payments",
+		"tahsilatın kendisi":        "/admin/v1/payments/pay_yok",
+		"tahsilatın iadeleri":       "/admin/v1/payments/pay_yok/refunds",
+	}
+
+	for ad, path := range paths {
+		t.Run(ad, func(t *testing.T) {
+			r := yeniRouter(&fakePayments{err: notFound()})
+
+			rec := istek(t, r, http.MethodGet, path, "")
+
+			assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+			assert.Equal(t, "payment_collection_not_found", hataKodu(t, rec),
+				"hata kodu servisten geldiği gibi taşınmalı")
+		})
+	}
+}
+
+// TestIadeListesiMutabakatIcinTutariVeSebebiTasir yapılmış bir iadenin
+// listede TAM olarak göründüğünü doğrular.
+//
+// Bu uç, operatörün "bu tahsilattan ne kadar geri gitti ve neden" sorusuna
+// verilen tek yanıttır. Tutarı düşen bir DTO, kısmi iadeleri toplamı tutmayan
+// bir tabloya çevirir; sebebi düşen bir DTO ise iki iadeyi birbirinden ayırt
+// edilemez kılar. İkisi de sessizdir: yanıt yine 200 ve yine dolu bir liste
+// olur. Zarfın "count" alanı da sayfanın değil dönen satırların sayısıdır ve
+// sayfalanmayan uçlarda istemcinin gördüğü tek sayıdır.
+func TestIadeListesiMutabakatIcinTutariVeSebebiTasir(t *testing.T) {
+	svc := &fakePayments{refunds: []models.Refund{
+		{ID: "refund_2", PaymentID: "pay_1", Amount: 250, Reason: "müşteri talebi"},
+		{ID: "refund_1", PaymentID: "pay_1", Amount: 750, Reason: "hasarlı ürün"},
+	}}
+	r := yeniRouter(svc)
+
+	rec := istek(t, r, http.MethodGet, "/admin/v1/payments/pay_1/refunds", "")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := govde(t, rec)
+	assert.InDelta(t, 2, body["count"], 0, "count dönen satır sayısı olmalı")
+
+	data, ok := body["data"].([]any)
+	require.True(t, ok, "iade listesi bekleniyordu: %s", rec.Body.String())
+	require.Len(t, data, 2)
+
+	ilk, ok := data[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "refund_2", ilk["id"])
+	assert.Equal(t, "pay_1", ilk["payment_id"], "iade hangi tahsilata ait olduğunu taşımalı")
+	assert.InDelta(t, 250, ilk["amount"], 0, "iade tutarı yanıtta görünmeli")
+	assert.Equal(t, "müşteri talebi", ilk["reason"], "iadenin sebebi yanıtta görünmeli")
+
+	ikinci, ok := data[1].(map[string]any)
+	require.True(t, ok)
+	assert.InDelta(t, 750, ikinci["amount"], 0)
+	assert.Equal(t, "hasarlı ürün", ikinci["reason"])
+}
+
+// TestTahsilatDetayiIadeEdilenTutariGosterir tahsilatın tekil okumasının
+// iade edilmiş tutarı taşıdığını doğrular.
+//
+// "Bu tahsilattan ne kadarı hâlâ bizde" sorusunun yanıtı tek bir alandır ve
+// listeden değil, buradan okunur. Alan düşerse tahsilat tam tutarıyla
+// görünmeye devam eder — yani tamamı iade edilmiş bir tahsilat, hiç iade
+// edilmemiş bir tahsilattan ayırt edilemez. Yanıtın tekil zarfla (liste
+// zarfıyla değil) döndüğü de burada sabitlenir; iki şekil arasında geçiş
+// istemcinin okumasını sessizce boşa çıkarırdı.
+func TestTahsilatDetayiIadeEdilenTutariGosterir(t *testing.T) {
+	svc := &fakePayments{payment: models.Payment{
+		ID: "pay_1", PaymentSessionID: "payses_1", PaymentCollectionID: "paycol_1",
+		Amount: 1000, CurrencyCode: "TRY", RefundedAmount: 400,
+	}}
+	r := yeniRouter(svc)
+
+	rec := istek(t, r, http.MethodGet, "/admin/v1/payments/pay_1", "")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	data, ok := govde(t, rec)["data"].(map[string]any)
+	require.True(t, ok, "tekil zarf bekleniyordu: %s", rec.Body.String())
+	assert.Equal(t, "pay_1", data["id"])
+	assert.InDelta(t, 1000, data["amount"], 0)
+	assert.InDelta(t, 400, data["refunded_amount"], 0,
+		"iade edilen tutar görünmezse tamamı iade edilmiş tahsilat dokunulmamış görünür")
+	assert.Equal(t, "paycol_1", data["payment_collection_id"])
+}
+
+// TestOturumListesiKoleksiyonunOturumlariniDoner koleksiyonun oturum
+// listesinin satırları taşıdığını doğrular.
+//
+// Koleksiyonda birden çok oturum olması normaldir: reddedilen ya da bırakılan
+// her deneme bir satır bırakır ve "müşteri neden ödeyemedi" sorusu ancak bu
+// listeye bakılarak yanıtlanır. Liste yalnızca sonuncuyu ya da yalnızca
+// açık olanı gösterirse o soru cevapsız kalır.
+func TestOturumListesiKoleksiyonunOturumlariniDoner(t *testing.T) {
+	svc := &fakePayments{sessions: []models.PaymentSession{
+		{ID: "payses_2", PaymentCollectionID: "paycol_1", Status: models.SessionPending, Amount: 1000},
+		{
+			ID: "payses_1", PaymentCollectionID: "paycol_1", Status: models.SessionFailed,
+			Amount: 1000, DeclineReason: "yetersiz bakiye",
+		},
+	}}
+	r := yeniRouter(svc)
+
+	rec := istek(t, r, http.MethodGet,
+		"/admin/v1/payment-collections/paycol_1/payment-sessions", "")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := govde(t, rec)
+	assert.InDelta(t, 2, body["count"], 0)
+
+	data, ok := body["data"].([]any)
+	require.True(t, ok, "oturum listesi bekleniyordu: %s", rec.Body.String())
+	require.Len(t, data, 2, "başarısız deneme de listede kalmalı")
+
+	basarisiz, ok := data[1].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "failed", basarisiz["status"])
+	assert.Equal(t, "yetersiz bakiye", basarisiz["decline_reason"],
+		"reddin sebebi listede de görünmeli; teşhis tek tek oturum okumaya kalmamalı")
+}
+
+// TestTahsilatListesiKoleksiyonunTahsilatlariniDoner koleksiyonun tahsilat
+// listesinin satırları taşıdığını doğrular.
+//
+// Kısmi tahsilat birden çok satır üretir ve koleksiyonun captured_amount
+// alanı bunların TOPLAMIDIR. Toplam ile satırlar ayrışırsa bu ancak listeye
+// bakılarak görülür; tek bir toplam sayı hangi tahsilatın eksik yazıldığını
+// söylemez.
+func TestTahsilatListesiKoleksiyonunTahsilatlariniDoner(t *testing.T) {
+	svc := &fakePayments{payments: []models.Payment{
+		{ID: "pay_2", PaymentCollectionID: "paycol_1", Amount: 400, CurrencyCode: "TRY"},
+		{ID: "pay_1", PaymentCollectionID: "paycol_1", Amount: 600, CurrencyCode: "TRY"},
+	}}
+	r := yeniRouter(svc)
+
+	rec := istek(t, r, http.MethodGet, "/admin/v1/payment-collections/paycol_1/payments", "")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := govde(t, rec)
+	assert.InDelta(t, 2, body["count"], 0)
+
+	data, ok := body["data"].([]any)
+	require.True(t, ok, "tahsilat listesi bekleniyordu: %s", rec.Body.String())
+	require.Len(t, data, 2, "kısmi tahsilatların HEPSİ listede olmalı")
+
+	var toplam float64
+	for i := range data {
+		satir, satirOK := data[i].(map[string]any)
+		require.True(t, satirOK)
+		tutar, tutarOK := satir["amount"].(float64)
+		require.True(t, tutarOK, "tutar alanı olmalı: %s", rec.Body.String())
+		toplam += tutar
+	}
+	assert.InDelta(t, 1000, toplam, 0,
+		"satırların toplamı koleksiyonun tahsil edilen tutarını vermeli")
+}

@@ -1,300 +1,334 @@
-# ADR 0009 — Çok kiracılılık: sınır kurulumdur, satır değil
+# ADR 0009 — Multi-tenancy: the boundary is the installation, not the row
 
-- **Durum:** Kabul edildi
-- **Tarih:** 2026-09-01
-- **Faz:** 10 sonrası (v0.4.0 sertleştirme turu)
+- **Status:** Accepted
+- **Date:** 2026-09-01
+- **Phase:** after 10 (the v0.4.0 hardening round)
 
-## Bağlam
+## Context
 
-Plan belgesi çok kiracılılığı iki yerde kapsam dışı bırakıyor — "Non-goals (ilk
-sürümde yok)" cümlesinde ve "10. Sonraki Sürüm Fikirleri (şimdilik kapsam dışı)"
-bölümünde — ama bu ADR yazılana kadar **neden** bıraktığını söylemiyordu. Kavram
-depoda hiç geçmiyor: 72 tablonun hiçbirinde kiracı sütunu, hiçbir imzada kiracı
-parametresi, hiçbir ad alanında kiracı segmenti yok.
+The plan document puts multi-tenancy out of scope in two places — in the
+"Non-goals (ilk sürümde yok)" sentence and in the "10. Sonraki Sürüm Fikirleri
+(şimdilik kapsam dışı)" section — but until this ADR was written it did not say
+**why** it did. The concept does not occur in the repository at all: not one of
+the 72 tables has a tenant column, no signature has a tenant parameter, no
+namespace has a tenant segment.
 
-> ~~(plan belgesinin otuz beşinci ve üç yüz doksan altıncı satırlarına
-> yapılan iki satır-numarası göstergesi)~~ **2026-09-06'da
-> düzeltildi:** bu iki gösterge satır numarasıydı ve ikincisi daha yazıldığı gün
-> yanlıştı. Bu ADR'yi ekleyen commit (9aa8b60) planın gerekçe paragraflarını da
-> aynı anda ekleyip dosyayı yeniden sardı; o commit'te plan dosyasının 396.
-> satırı çoktan "İlk commit: `chore: project skeleton (phase 0)`" görev
-> maddesiydi ve ikinci kapsam dışı bırakma, "Sonraki Sürüm Fikirleri"
-> listesinin **içinden** çıkarılıp "**Çoklu-tenant bu listede değildir**"
-> cümlesine taşınmıştı. Yerine başlık yazılıyor: bir satır numarası, üstüne bir
-> satır eklendiği anda başka bir yeri gösterir ve bunu hiçbir şey bildirmez —
-> `TestTheDocsCarryNoLineNumberReference`'ın ölçüp yasakladığı çürüme biçimi
-> tam olarak budur. O yasak bu iki göstergeyi yakalayamamıştı, çünkü deseni
-> yalnızca `.go` uzantılı yolları arıyor; belgeden belgeye verilen satır
-> numarası kapının dışında kalıyor.
+> ~~(two line-number references pointing at the thirty-fifth and the three
+> hundred and ninety-sixth line of the plan document)~~ **Corrected on
+> 2026-09-06:** those two references were line numbers, and the second was
+> already wrong the day it was written. The commit that added this ADR (9aa8b60)
+> added the plan's justification paragraphs at the same time and rewrapped the
+> file; in that commit line 396 of the plan file was already the task item
+> "İlk commit: `chore: project skeleton (phase 0)`", and the second out-of-scope
+> statement had been lifted **out of** the "Sonraki Sürüm Fikirleri" list and
+> moved into the sentence "**Çoklu-tenant bu listede değildir**". A heading goes
+> in their place: a line number points somewhere else the moment a line is added
+> above it, and nothing reports that — this is exactly the form of rot
+> `TestTheDocsCarryNoLineNumberReference` measures and forbids. That ban had not
+> caught these two references, because its pattern only looks for paths with a
+> `.go` extension; a line number given from one document to another stays
+> outside the gate.
 
-> **Bu ADR'deki sayımlar KARAR TARİHİNE aittir** (2026-09-01) ve o gün ölçülmüş
-> hâlleriyle bırakılır; kararın dayandığı büyüklüğü gösterirler, bugünkü şemayı
-> değil. Sayı büyüdükçe kararın gerekçesi ZAYIFLAMAZ, güçlenir. Şemanın bugünkü
-> tablo sayısı `README.md`'nin "Tek örnek mi, birden çok mu?" başlığındadır ve
-> orası bugünü anlatır. İki sayı ayrıştığında geçerli olan, sorulan soruya göre
-> değişir: "karar neye dayandı" için buradaki, "bugün ne var" için README'deki.
+> **The counts in this ADR belong to the DECISION DATE** (2026-09-01) and are
+> left as they were measured that day; they show the size the decision rested
+> on, not today's schema. The justification does NOT WEAKEN as the numbers grow,
+> it strengthens. The schema's table count today is under `README.md`'s "Tek
+> örnek mi, birden çok mu?" heading, and that is the place that describes today.
+> When the two numbers diverge, which one holds depends on the question asked:
+> for "what did the decision rest on", the one here; for "what is there today",
+> the one in the README.
 
-Gerekçesiz bir kapsam dışı bırakma bir karar değildir; her turda yeniden
-tartışılır ve bu arada kapılar sessizce kapanır. Bu ADR o boşluğu kapatıyor.
+An out-of-scope statement without a justification is not a decision; it gets
+re-argued every round, and meanwhile doors close quietly. This ADR closes that
+gap.
 
-Karara zemin olsun diye üç bağımsız çalışma yapıldı: kiracı başına veritabanı
-(A), paylaşılan şemada satır düzeyi ayrım (B) ve mevcut mekanizmaların sızıntı
-avı. Avın sayımı işin büyüklüğünü veriyor: 72 tabloda **0** tanesi "bu satır
-kime ait" sorusunu yanıtlayabiliyor; 55 sqlc dosyasında **403** adlandırılmış
-sorgu; container'a kayıtlı **13** `query.Provider`; **19** üretim çağrı yerinde
-`db.Pool.Pool()`; koruma yığını **2** yol önekini sarıyor.
+Three independent studies were done to give the decision its ground: a database
+per tenant (A), row-level separation in a shared schema (B), and a leak hunt
+over the existing mechanisms. The hunt's count gives the size of the work: of
+the 72 tables, **0** can answer the question "whose row is this"; 55 sqlc files
+hold **403** named queries; **13** `query.Provider`s are registered in the
+container; `db.Pool.Pool()` stands at **19** production call sites; the guard
+stack wraps **2** path prefixes.
 
-Ama kararı belirleyen şey bu hacim değil, üç yapısal olgu oldu.
+But what settled the decision was not this volume — it was three structural
+facts.
 
-**Birincisi: kapsam kuralının provası bugün YARIM duruyor.** Depodaki tek kapsam
-mekanizması satış kanalı süzgecidir ve README onu bir *yetkilendirme* olarak
-anlatıyor ("Kanal sorgu dizesinden alınmaz, kimlikten gelir — alınsaydı süzgeç
-bir yetkilendirme olmaktan çıkardı"). Süzgeç okuma yüzeyinde titizce uygulanmış:
-liste, sayaç, tekil ve toplu görünürlük hepsi tek bir SQL şablonundan geçiyor
-(`internal/modules/product/repository/saleschannel.go`). Yazma yolunda ise yok:
+**First: the rehearsal of a scoping rule stands HALF DONE today.** The only
+scoping mechanism in the repository is the sales channel filter, and the README
+describes it as an *authorization* ("the channel is not taken from the query
+string, it comes from the identity — had it been taken from there, the filter
+would have stopped being an authorization"). The filter is meticulously applied
+on the read surface: listing, counting, single and bulk visibility all go
+through one single SQL template
+(`internal/modules/product/repository/saleschannel.go`). On the write path it is
+absent:
 
-Vitrin sepet ucu `variant_id`'yi istemci gövdesinden alıyordu ve akış onu Query
-ile **küresel** çözüyordu — yalnızca `id` filtresiyle. Yani B kanalının
-publishable anahtarıyla gelen istemci, katalogda göremediği bir A-kanalı
-varyantını sepete ekleyip satın alabiliyordu. Bu, deponun daha önce bir kez
-ödediği arızanın (kanal bağı yazılıyor ama okunmuyordu) **yazma tarafıydı**.
-Yarım uygulanmış bir kapsam kuralının üzerine ondan daha büyük ikinci bir kapsam
-kuralı koymak, tam olarak bu deponun en pahalı hata sınıfını ölçekleyerek
-tekrarlamak olurdu.
+The storefront cart endpoint took `variant_id` from the client body and the flow
+resolved it **globally** through Query — with an `id` filter alone. That is, a
+client arriving with channel B's publishable key could add to its cart and buy
+an A-channel variant it cannot see in the catalog. This was the **write side**
+of the fault the repository has already paid for once (the channel binding was
+being written but was not being read). Putting a second, larger scoping rule on
+top of a half-implemented one would have been exactly this repository's most
+expensive class of mistake, repeated at scale.
 
-> **Bu gerekçe ARTIK GEÇERLİ DEĞİL ve kaydı öyle bırakılmıyor.** Açık, bu ADR'nin
-> kendisi tarafından tetiklendi ve aynı gün kapatıldı: akış varyantı artık
-> isteğin doğrulanmış kimliğinden gelen kanallarla kapsayarak okuyor, görünürlük
-> yüklemi tek yerde (`salesChannelVisibleTemplate`) kalıyor ve kapsam dışı
-> varyant, hiç var olmayan varyantla aynı hatayı dönüyor. Gerçek süreçte
-> ölçüldü (404 / sepet boş), mutasyonla açığın üretilebilirliği kanıtlandı
-> (süzgeç kaldırılınca 201) ve `internal/arch` altına bir proxy değişmez kondu.
+> **THIS JUSTIFICATION NO LONGER HOLDS, and the record is not left as if it
+> did.** The hole was triggered by this ADR itself and was closed the same day:
+> the flow now reads the variant scoped by the channels that come from the
+> request's authenticated identity, the visibility predicate stays in one place
+> (`salesChannelVisibleTemplate`), and an out-of-scope variant returns the same
+> error as a variant that never existed. It was measured on the real process
+> (404 / empty cart), the hole's reproducibility was proven by mutation (201
+> once the filter is removed), and a proxy invariant was placed under
+> `internal/arch`.
 >
-> Karar bu gerekçe olmadan da **ayakta duruyor**: aşağıdaki iki sebep taşıyıcı
-> olanlardır ve ikisi de dokunulmadan kaldı. Gerekçe silinmiyor çünkü bir ADR'nin
-> değeri vardığı sonuç kadar, o sonuca hangi olguyla varıldığının kaydıdır;
-> okuyanın bugünkü kodda karşılığı olmayan bir kanıt bloğuna güvenmesi ise ayrı
-> bir arıza olurdu.
+> The decision **stands** without this justification too: the two reasons below
+> are the load-bearing ones and both were left untouched. The justification is
+> not deleted, because an ADR is worth as much for the record of WHICH fact led
+> to its conclusion as it is for the conclusion itself; a reader trusting an
+> evidence block with no counterpart in today's code would be a separate fault.
 
-**İkincisi: iki tasarım da VERİYİ yalıtıyor, ikisi de YAPILANDIRMAYI
-yalıtmıyor.** Ödeme sağlayıcı defteri kimliği yalnızca `id` ile tutar ve aynı
-`id` ikinci kez kaydedilemez (`internal/modules/payment/service/registry.go`);
-eklentiler `PLUGINS` ortam değişkeninden seçilip açılışta bir kez kurulur
-(`core/plugin`); Stripe gizli anahtarı, SMTP göndereni, `FILE_ROOT`,
-`JWT_SECRET` ve tüm kotalar süreç başına tek bir `Config`'ten gelir. Kendi
-ödeme hesabı, kendi gönderen adresi ve kendi kotası olamayan bir kiracı, kiracı
-değil bir bölmedir. Bu bileşen A'da da B'de de **tasarlanmamıştır** ve izolasyon
-seçiminin kendisinden büyüktür.
+**Second: both designs isolate the DATA, neither isolates the
+CONFIGURATION.** The payment provider registry keys an identity by `id` alone
+and the same `id` cannot be registered a second time
+(`internal/modules/payment/service/registry.go`); plugins are chosen from the
+`PLUGINS` environment variable and installed once at startup (`core/plugin`);
+the Stripe secret key, the SMTP sender, `FILE_ROOT`, `JWT_SECRET` and every
+quota come from a single `Config` per process. A tenant that cannot have its own
+payment account, its own sender address and its own quota is not a tenant but a
+compartment. That component is **not designed** in A or in B, and it is bigger
+than the isolation choice itself.
 
-**Üçüncüsü: yüzey kiracıya göre değişemez, yalnızca veri değişebilir.**
-Route'lar tek router'a bir kez bağlanır ve chi aynı deseni ikinci kez mount
-etmede panikler (`core/http.Scoped` godoc'u); OpenAPI belgesinin
-önbelleği tek yuvalıdır. Bu bir arıza değil, kabul edilmesi gereken bir sınırdır
-ve hangi seçenek seçilirse seçilsin geçerlidir.
+**Third: the surface cannot vary per tenant, only the data can.** Routes are
+bound once to a single router and chi panics on mounting the same pattern a
+second time (the `core/http.Scoped` godoc); the OpenAPI document's cache has a
+single slot. This is not a fault but a limit that has to be accepted, and it
+holds whichever option is chosen.
 
-## Karar
+## Decision
 
-**gobit v1'de çok kiracılılık İNŞA EDİLMEZ. Sınırın ifadesi şudur:**
+**Multi-tenancy IS NOT BUILT in gobit v1. The boundary is stated as follows:**
 
-> Her gobit kurulumu **tek kiracılıdır**. İzolasyon uygulama katmanında değil,
-> **dağıtım katmanındadır**: bir kiracı = bir kurulum = bir veritabanı = bir
-> süreç. Çerçeve kiracılar arası bir sınır **tanımaz**, dolayısıyla onu
-> **uygulamaz** ve uyguladığını **iddia etmez**.
+> Every gobit installation is **single-tenant**. Isolation is not in the
+> application layer, it is in the **deployment layer**: one tenant = one
+> installation = one database = one process. The framework **does not
+> recognize** a boundary between tenants, therefore does not **enforce** one and
+> does not **claim** to enforce one.
 
-Bu, "sonraki sürüme bırakıldı"nın gerekçelendirilmiş hâlidir, ertelemesi değil.
-İki cümleyle: bir kiracı sınırı ancak yarım uygulanmışsa tehlikelidir, ve bu
-depo bugün daha küçük bir kapsam kuralını bile yarım uygulamış durumdadır. Önce
-o kapatılır; kiracı sınırı ondan sonra tartışılır.
+This is the justified form of "left to a later release", not its postponement.
+In two sentences: a tenant boundary is dangerous precisely when it is half
+implemented, and this repository has today half implemented even a smaller
+scoping rule. That one gets closed first; the tenant boundary is argued after
+it.
 
-Kararın üç bağlayıcı sonucu vardır:
+The decision has three binding consequences:
 
-1. **Belge gerçeği söyler.** Planın iki kapsam dışı bırakma yeri ve README artık
-   bırakmanın **gerekçesini** taşır ve bu ADR'ye bağlanır: "Non-goals"
-   cümlesinin altına eklenen paragraf ile "Sonraki Sürüm Fikirleri" bölümünü
-   kapatan "**Çoklu-tenant bu listede değildir**" cümlesi. "Sonraki sürümlere
-   bırakılır" cümlesi tek başına hiçbir yerde kalmaz.
-2. **A ile B arasındaki seçim ERTELENMEZ, TETİKLENİR.** Aşağıdaki "Kararın
-   yeniden açılması" bölümü, kararı yeniden açacak veriyi ve o veri geldiğinde
-   hangisinin seçileceğini belirleyen soruyu adıyla yazar. Karar bugün
-   verilemiyor çünkü elimizde o veri yok — beklenen kiracı sayısı ve kiracı
-   başına sağlayıcı kimliği gereksinimi bilinmiyor.
-3. **Bugün üç şey yapılır.** Hiçbiri kiracılık işi değildir; üçü de kararın
-   yönünden bağımsız olarak bugünkü depoyu düzeltir ve hiçbiri geri alınacak bir
-   yatırım yaratmaz. Kiracı adına bir kavram, bir alan ya da bir ayar
-   **ayrılmaz**: tüketicisi olmayan bir yetenek, bu deponun adını koyduğu ikinci
-   hata sınıfıdır.
+1. **The documents tell the truth.** The plan's two out-of-scope places and the
+   README now carry the **justification** for leaving it out and link to this
+   ADR: the paragraph added under the "Non-goals" sentence, and the sentence
+   "**Çoklu-tenant bu listede değildir**" that closes the "Sonraki Sürüm
+   Fikirleri" section. The sentence "left to later releases" stands alone
+   nowhere.
+2. **The choice between A and B IS NOT DEFERRED, it is TRIGGERED.** The
+   "Reopening the decision" section below writes by name the data that would
+   reopen the decision and the question that determines which one gets chosen
+   when that data arrives. The decision cannot be made today because we do not
+   have that data — the expected number of tenants and the requirement for
+   per-tenant provider credentials are unknown.
+3. **Three things get done today.** None of them is tenancy work; all three fix
+   today's repository independently of the decision's direction and none of them
+   creates an investment that will have to be undone. No concept, no field and
+   no setting is **reserved** in tenancy's name: a capability with no consumer is
+   the second class of mistake this repository has named.
 
-   - **Kanal kuralının yazma tarafı.** Ya vitrin sepet yolu kanala süzülür, ya
-     da açık README'nin "Aynı ölçütün henüz uygulanmadığı yer" bölümüne ölçülmüş
-     hâliyle yazılır. Kayda geçmemiş bir açık, kimsenin kapatmadığı açıktır.
-   - **`eventbus.Handler` godoc'u davranışıyla uzlaştırılır.** Godoc "verilen
-     ctx, Publish'i çağıran isteğin ctx'inden türetilir" diyor; bu yalnızca
-     in-memory backend için doğrudur (`eventbus.inMemoryBus.Publish` çağıranın
-     `ctx`'inden türetir, `eventbus.redisBus.dispatch` veri yolunun kök
-     ctx'inden). Varsayılan `EVENT_BUS=inmemory` olduğu için ctx'te bir şey
-     taşıyan her tasarım testlerde yeşil geçip üretimde kırılır. Sözün
-     düzeltilmesi bir paragraftır ve kiracılıktan
-     bağımsız olarak bugün yanlıştır.
-   - **Hız sınırının kimliğe göre anahtarlanması ya bağlanır ya silinir.**
-     Üretimde hiçbir tüketicisi olmayan bir `core/http.KeyFunc`
-     uygulaması duruyordu (yalnızca kendi testi çağırıyordu) ve godoc'u "kimliği
-     doğrulanmış çağrıyı kimliğine göre anahtarlar" diyordu; oysa koruma
-     yığınında hız sınırı kimlikten **önce** koşar
-     (`core/http.APIGuards`), yani bağlansaydı her zaman IP'ye
-     düşerdi. Aynı yerde hem tüketicisiz bir yetenek hem de godoc'u
-     davranışından ayrışan bir fonksiyon duruyordu.
+   - **The write side of the channel rule.** Either the storefront cart path
+     gets filtered by channel, or the hole gets written, as measured, into the
+     README's "Aynı ölçütün henüz uygulanmadığı yer" section. A hole that is not
+     recorded is a hole nobody closes.
+   - **The `eventbus.Handler` godoc gets reconciled with its behavior.** The
+     godoc says "the given ctx derives from the ctx of the request that called
+     Publish"; that is true only for the in-memory backend
+     (`eventbus.inMemoryBus.Publish` derives it from the caller's `ctx`,
+     `eventbus.redisBus.dispatch` from the bus's root ctx). Because the default
+     is `EVENT_BUS=inmemory`, every design that carries something in the ctx
+     passes green in the tests and breaks in production. Fixing the sentence is
+     one paragraph, and it is wrong today independently of
+     tenancy.
+   - **Rate limiting keyed by identity either gets wired up or gets deleted.**
+     A `core/http.KeyFunc` implementation with no consumer in production was
+     standing there (only its own test called it) and its godoc said it "keys an
+     authenticated call by its identity"; but in the guard stack the rate limit
+     runs **before** identity (`core/http.APIGuards`), so had it been wired up
+     it would always have fallen back to the IP. In one place stood both a
+     capability with no consumer and a function whose godoc had drifted from its
+     behavior.
 
-     > **Kapatıldı: fonksiyon silindi.** Hız sınırı bugün yalnızca IP anahtarlar
-     > (`core/http.ClientIPKey`, üretimde
-     > `core/http.TrustedProxyIPKey`); kimliğe göre anahtarlama
-     > yeteneği depoda **yoktur**. Kimlik başına kota istendiği gün yeniden
-     > yazılır ve o gün sıranın kendisi de (hız sınırı kimlikten önce koşuyor)
-     > birlikte çözülmelidir — yoksa yeni yazılan da aynı sebeple IP'ye düşer.
+     > **Closed: the function was deleted.** The rate limit today keys on the IP
+     > alone (`core/http.ClientIPKey`, in production
+     > `core/http.TrustedProxyIPKey`); the capability of keying by identity
+     > **does not exist** in the repository. It gets rewritten the day a quota
+     > per identity is wanted, and on that day the ordering itself (the rate
+     > limit runs before identity) has to be solved along with it — otherwise
+     > the newly written one falls back to the IP for the same reason.
 
-## Sonuçlar
+## Consequences
 
-**Olumlu.** Çerçeve, vermediği bir garantiyi vermiş gibi görünmüyor. "Kiracı
-süzgeci var" sanılan bir dönem hiç başlamıyor — ki bu dönemin bedeli, satış
-kanalı provasında ölçüldüğü gibi, insanların güvendiği ama çalışmayan bir
-sınırdır ve kiracı ölçeğinde bedeli başka bir müşterinin verisidir.
+**Positive.** The framework does not look as if it gave a guarantee it does not
+give. A period in which people believe "there is a tenant filter" never begins —
+and the price of that period, as measured in the sales channel rehearsal, is a
+boundary people trust that does not work, and at tenant scale its price is
+another customer's data.
 
-**Olumlu.** "Bir kiracı = bir kurulum" bir kaçamak değil, çerçeveler için
-meşru ve yaygın bir konumdur. Tek binary, tek DSN, açılışta otomatik migration
-ve tek yönetici tohumu — deponun bütün açılış sekansı zaten bu modeli anlatıyor.
-Karar, kodun hâlihazırda söylediği şeyi belgeye yazıyor.
+**Positive.** "One tenant = one installation" is not an evasion but a legitimate
+and common position for frameworks. A single binary, a single DSN, automatic
+migration at startup and a single admin seed — the repository's whole startup
+sequence already describes this model. The decision writes into the documents
+what the code already says.
 
-**Olumlu.** Seçim ertelenmiş olsa da **kapılar sayılı hâle geldi**: aşağıdaki
-"Kapanmakta olan kapılar" listesi, bugün ücretsiz olan ama yarın pahalıya
-kapanacak kararları adıyla taşıyor. Liste tahmin değil, ölçüm.
+**Positive.** Even though the choice is deferred, **the doors have become
+counted**: the "Doors that are closing" list below carries by name the decisions
+that are free today and will close expensively tomorrow. The list is
+measurement, not prediction.
 
-**Olumsuz.** Aynı ürünü birden çok müşteriye tek kurulumdan satmak isteyen
-operatör gobit ile bunu yapamaz; N müşteri N kurulum, N veritabanı ve N süreç
-demektir. Bu, küçük kiracıların çok olduğu bir ürün için gerçek bir maliyettir
-ve pazarlanabilir gücü düşürür. Kabul edildi: yanlış bir izolasyon iddiası,
-hiç iddia etmemekten pahalıdır.
+**Negative.** An operator who wants to sell the same product to several
+customers from a single installation cannot do it with gobit; N customers means
+N installations, N databases and N processes. For a product with many small
+tenants this is a real cost and it lowers the sellable strength. Accepted: a
+false isolation claim is more expensive than claiming nothing at all.
 
-**Olumsuz.** Karar ertelendiği için A→B ya da B→A geçiş maliyeti de ertelenmiş
-oluyor; gün geldiğinde ödenecek. Karşı önlem, aşağıdaki kapı listesinin bu ADR
-ile birlikte yaşamasıdır.
+**Negative.** Because the decision is deferred, the cost of an A→B or B→A
+migration is deferred with it; it will be paid on the day it comes. The
+countermeasure is that the door list below lives together with this ADR.
 
-## Kapanmakta olan kapılar
+## Doors that are closing
 
-Bunlar bugün bir iş emri **değildir**; kiracılık gündeme geldiğinde ne kadar
-pahalıya mal olacağını belirleyen ölçümlerdir ve gözden kaçmasınlar diye
-yazılıyorlar.
+These are **not** a work order today; they are the measurements that determine
+how expensive tenancy will be when it comes up, and they are written down so
+they do not get missed.
 
-- **`orders.display_id` `GENERATED ALWAYS AS IDENTITY` ile tek diziden gelir.**
-  Paylaşılan şema (B) seçilirse kiracı başına sipariş numaralandırması ancak
-  sütunun tümden değiştirilmesiyle olur; sütuna kiracı öneki eklemek yetmez.
-  Kiracı başına veritabanı (A) bunu bedavaya çözer.
-- **`ScopeAdmin` bir jokerdir** (`HasScope`: `s == scope || s == ScopeAdmin`) ve
-  `POST /admin/v1/users` gövdeden keyfi `Scopes` kabul edip verilmezse `"admin"`
-  uyguluyor. Kiracılık geldiği gün "platform yetkisi" bir **scope** olamaz —
-  her kiracı yöneticisi kendine basardı. `Principal.Kind`'a üçüncü bir değer
-  olmalıdır ve bu, dağıtılmış scope dizeleri çoğaldıkça pahalılaşan bir karardır.
-- **`workflow_executions_idempotency_key_uniq` `(workflow, idempotency_key)`
-  üzerindedir** ve aynı anahtarla ikinci çağrı adımları koşturmadan
-  `prev.Output`'u döner. Bugün tek kiracıda bu, belgelenmiş idempotency
-  modelidir; kiracı eklendiği gün indeks `(tenant, workflow, key)` olmazsa mutlu
-  yolda çapraz kiracı sipariş çıktısı teslim eder.
-- **`db.Pool.Pool()` 19 üretim çağrı yerinde açıkta** ve 14 repository yapıcısı
-  `*pgxpool.Pool` alıyor. `product` zaten bir arayüz aldığı için desen depoda
-  kanıtlı; ama yapıcı imzaları README'nin pazarladığı gömülü kullanımın parçası,
-  yani daraltmak dışa açık bir kırılmadır ve tetiksiz yapılmaz.
-- **`internal/core/workflow/pgstore/migrations` modül dışında bir çekirdek
-  şemadır** ve `TestCrossModuleForeignKeyYok` yalnızca `internal/modules/*`
-  altını geziyor. Tablo başına bir değişmez yazılacağı gün gezintinin
-  `migrations` dizinlerini **keşfetmesi** gerekir, listelemesi değil — yoksa
-  çekirdek şemalar sessizce kapsam dışında kalır.
+- **`orders.display_id` comes from a single sequence with `GENERATED ALWAYS AS
+  IDENTITY`.** If the shared schema (B) is chosen, per-tenant order numbering
+  can only happen by replacing the column outright; adding a tenant prefix to
+  the column is not enough. A database per tenant (A) solves this for free.
+- **`ScopeAdmin` is a wildcard** (`HasScope`: `s == scope || s == ScopeAdmin`)
+  and `POST /admin/v1/users` accepts arbitrary `Scopes` from the body and
+  applies `"admin"` when none is given. The day tenancy arrives, "platform
+  authority" cannot be a **scope** — every tenant admin would stamp it on
+  themselves. There has to be a third value on `Principal.Kind`, and that is a
+  decision that grows more expensive as scattered scope strings multiply.
+- **`workflow_executions_idempotency_key_uniq` is over `(workflow,
+  idempotency_key)`** and a second call with the same key returns `prev.Output`
+  without running the steps. In a single tenant today this is the documented
+  idempotency model; the day a tenant is added, unless the index becomes
+  `(tenant, workflow, key)` it will deliver cross-tenant order output on the
+  happy path.
+- **`db.Pool.Pool()` is exposed at 19 production call sites** and 14 repository
+  constructors take a `*pgxpool.Pool`. `product` already takes an interface, so
+  the pattern is proven in the repository; but the constructor signatures are
+  part of the embedded use the README sells, so narrowing them is a public break
+  and is not done without a trigger.
+- **`internal/core/workflow/pgstore/migrations` is a core schema outside a
+  module** and `TestCrossModuleForeignKeyYok` only walks under
+  `internal/modules/*`. The day an invariant per table gets written, the walk has
+  to **discover** `migrations` directories rather than list them — otherwise
+  core schemas quietly stay out of scope.
 
-## Reddedilen seçenekler
+## Rejected alternatives
 
-**(A) Kiracı başına veritabanı.** Zorlama gücü en yüksek seçenek ve tek
-gerekçesi teorik değil ölçülmüş: 14 repository havuzu yalnızca `xxxdb.New(pool)`
-ve `pool.Begin/BeginTx` için kullanıyor, yani tek bir `db.Conn` arayüzü 19 çağrı
-yerinin tamamında yerine geçer ve **403 sqlc sorgusunun hiçbiri değişmez**.
-Kural ikinci bir yere yazılmadığı için birinci hata sınıfı ortadan kalkar; 43
-benzersizlik kısıtı, `display_id` dizisi, otomatik promosyon taraması ve
-kiracılar arası link satırı **imkânsız** hâle gelir; kiracı silmek bir liste
-değil `DROP DATABASE` olur. Reddedilmesinin sebebi zayıflığı değil bedeli:
-kimlik bilgileri kontrol düzlemine taşınmak zorundadır (bir anahtarın hangi
-kiracıya ait olduğu, o kiracının havuzu açılmadan **önce** bilinmelidir), yani
-`auth` normal bir modül olmaktan çıkar ve "kiracıyı sil = veritabanını düşür"
-artık doğru olmaz; migration açılış yolundan çıkar ve "binary'yi çalıştır, şema
-hazır" özelliği kalıcı olarak kaybolur; kiracı sayısı sürecin bağlantı bütçesine
-çivilenir (yüzler, on binler değil). En pahalısı ise tek yönlü kapıdır: hiçbir
-tabloda kiracı sütunu olmadığı için sonradan paylaşılan şemaya geçmek 64 tabloya
-sütun eklemek ve zorlama katmanlarının tamamını yeniden yazmak demektir.
+**(A) A database per tenant.** The option with the greatest enforcing power, and
+its single justification is measured rather than theoretical: the 14 repository
+pools use the pool only for `xxxdb.New(pool)` and `pool.Begin/BeginTx`, so a
+single `db.Conn` interface takes its place at all 19 call sites and **none of
+the 403 sqlc queries changes**. Because the rule is not written in a second
+place the first class of mistake disappears; 43 uniqueness constraints, the
+`display_id` sequence, the automatic promotion scan and a cross-tenant link row
+become **impossible**; deleting a tenant becomes a `DROP DATABASE` rather than a
+list. The reason for rejecting it is not its weakness but its price: the
+credentials have to move to a control plane (which tenant a key belongs to has
+to be known **before** that tenant's pool is opened), so `auth` stops being an
+ordinary module and "delete the tenant = drop the database" is no longer true;
+migration leaves the startup path and the "run the binary, the schema is ready"
+property is lost permanently; the number of tenants is nailed to the process's
+connection budget (hundreds, not tens of thousands). The most expensive one is
+the one-way door: because no table has a tenant column, moving to a shared
+schema afterwards means adding a column to 64 tables and rewriting every one of
+the enforcement layers.
 
-**(B) Paylaşılan şemada satır düzeyi ayrım, uygulama katmanında zorlanır.**
-Açılış sekansı değişmez, kiracı açmak bir satır eklemektir, on binlerce küçük
-kiracıya ölçeklenir ve hız sınırı sıralaması ile `ScopeAdmin` jokeri gibi A'nın
-sessiz geçtiği iki gerçek sorunu adıyla çözer. Reddedilmesinin sebebi, satın
-aldığı garantinin cinsidir: zorlama, `.sql` dosyalarını ve Go kaynağındaki SQL
-sabitlerini tarayan **sözdizimsel bir denetleyicinin** doğruluğuna bağlıdır.
-Çalışma zamanı kapısı (kiracısız ifade koşmaz) "bir kiracı var" der, denetim
-"yüklem var" der; ikisi birlikte bile "yüklemdeki değer doğru kiracıdır"
-demez. Ayrıca 403 sorgunun tamamı yeniden yazılır, her modülün her entegrasyon
-fikstürü kiracı kurmak zorunda kalır ve mevcut kurulumların göçü zorunludur.
-Erteleyerek reddediliyor, kalıcı olarak değil.
+**(B) Row-level separation in a shared schema, enforced in the application
+layer.** The startup sequence does not change, opening a tenant is adding a row,
+it scales to tens of thousands of small tenants, and it solves by name two real
+problems A passes over in silence — the rate limit ordering and the `ScopeAdmin`
+wildcard. The reason for rejecting it is the KIND of guarantee it buys:
+enforcement depends on the correctness of a **syntactic checker** that scans the
+`.sql` files and the SQL constants in the Go source. The runtime gate (no
+statement runs without a tenant) says "there is a tenant", the check says "there
+is a predicate"; even the two together do not say "the value in the predicate is
+the right tenant". Beyond that, all 403 queries get rewritten, every integration
+fixture of every module has to set up a tenant, and migrating the existing
+installations becomes mandatory. It is rejected by deferral, not permanently.
 
-**(C) Melez: B'nin sütunu bugün, A'nın yerleştirmesi yarın.** Teknik olarak en
-savunulabilir uzun vadeli biçim ve tek yönlü kapı argümanı bunu destekliyor:
-**B'den A'ya geçiş yalnızca bir veri taşımasıdır ve sütunları korur; A'dan B'ye
-geçiş sütunları yoktan var etmektir.** En güçlü uç noktası da buradadır —
-kiracı sütunu + `FORCE ROW LEVEL SECURITY` + her ifadeyi işlem içine alıp
-`SET LOCAL` ile kiracıyı kurmak, B'nin bıraktığı "denetleyicimiz bir biçimi
-kaçırabilir" boşluğunu tamamen kapatır, çünkü reddeden taraf motorun kendisi
-olur. Bugün reddedilmesinin sebebi maliyetin **en yüksek** olması (B'nin tüm
-bedeli + 403 okumanın tamamının işleme alınması) ve satın aldığı şeyin hâlâ
-yukarıdaki üç "hiçbiri çözmüyor" kaleminden hiçbirini kapatmaması. Karar
-yeniden açıldığında **başlangıç adayı budur**, A ya da B değil.
+**(C) Hybrid: B's column today, A's placement tomorrow.** Technically the most
+defensible long-term shape, and the one-way-door argument supports it: **going
+from B to A is only a data move and it preserves the columns; going from A to B
+is conjuring the columns out of nothing.** Its strongest end point is here too —
+a tenant column + `FORCE ROW LEVEL SECURITY` + wrapping every statement in a
+transaction that sets the tenant with `SET LOCAL` closes completely the "our
+checker can miss a form" gap B leaves, because the party doing the refusing
+becomes the engine itself. The reason for rejecting it today is that the cost is
+the **highest** (all of B's price + putting all 403 reads into transactions) and
+that what it buys still closes none of the three "solves nothing" items above.
+When the decision is reopened, **this is the starting candidate**, not A or B.
 
-**Kiracıyı `X-Tenant-ID` başlığından ya da gövdeden okumak.** ADR 0008'in harfi
-harfine tekrarı ve o karar ölçümüyle birlikte verildi: `customer_id` "bir olgu
-değil, hiçbir kanıt istemeyen bir sahiplik iddiasıdır" ve gövdeden geldiği için
-başkasının harcama hakkını yakmaya yetti. Kiracı başlığı aynı iddianın çok daha
-büyük patlama yarıçaplı hâlidir. Hangi seçenek seçilirse seçilsin kiracı yalnızca
-kimlik bilgisinin **satırından** okunur; JWT claim'inden bile değil, çünkü elde
-duran bir jeton askıya alınmış ya da taşınmış bir kiracıyı taşıyabilir ve
-kullanıcı satırı zaten okunuyor.
+**Reading the tenant from an `X-Tenant-ID` header or from the body.** A
+letter-for-letter repeat of ADR 0008, and that decision was made together with
+its measurement: `customer_id` is "not a fact but an ownership claim requiring no
+evidence at all", and because it came from the body it was enough to burn
+somebody else's spending allowance. A tenant header is the same claim with a far
+larger blast radius. Whichever option is chosen, the tenant is read only from
+the credential's **row**; not even from a JWT claim, because a token in hand can
+carry a tenant that has been suspended or moved, and the user row is being read
+anyway.
 
-**Ortam değişkeniyle açılıp kapanan bir "çok kiracılı mod".** ADR 0007'nin
-gerekçesi: yanlışlıkla `false` verilen bir anahtar korumayı hiçbir hata
-üretmeden kaldırır. Burada ayrıca yanlış tarafa da düşerdi — "kapalı" bir
-kurulum, kiracı sütunu dolu bir veritabanını süzgeçsiz okurdu.
+**A "multi-tenant mode" turned on and off with an environment variable.** ADR
+0007's justification: a switch accidentally set to `false` removes the
+protection without producing any error. Here it would fall to the wrong side as
+well — an installation that is "off" would read a database full of tenant
+columns without a filter.
 
-**Bugünden `Principal`'a bir `TenantID` alanı ya da bir `tenant` paketi
-eklemek.** Reddedildi ve bu ADR'nin en somut "yapmayın" maddesidir. Alanı
-okuyacak hiçbir yer olmadan eklemek, deponun ikinci hata sınıfını (tüketicisi
-olmayan yetenek) bilerek üretmek olurdu; üstelik alan bir kez orada durduğunda
-"kiracı desteği var" cümlesi kendiliğinden kurulur. Kavramın adını şimdiden
-ayırmanın hiçbir teknik faydası yok: depoda `tenant` ile çakışan bir ad yok,
-yani ayrılacak bir şey de yok.
+**Adding a `TenantID` field to `Principal` or a `tenant` package today.**
+Rejected, and this is this ADR's most concrete "do not do this" item. Adding the
+field with nowhere to read it would be deliberately producing the repository's
+second class of mistake (a capability with no consumer); on top of that, once
+the field stands there the sentence "there is tenant support" builds itself.
+Reserving the concept's name in advance has no technical benefit: there is no
+name in the repository that collides with `tenant`, so there is nothing to
+reserve either.
 
-## Kararın yeniden açılması
+## Reopening the decision
 
-Bu karar bir kapanış değil, tetiklenmiş bir bekleyiştir. Yeniden açan üç soru
-var ve ikisinin cevabı bugün elimizde **yok**; karar tam olarak bu yüzden
-verilemiyor:
+This decision is not a closure but a triggered wait. Three questions reopen it
+and the answers to two of them we do **not** have today; that is exactly why the
+decision cannot be made:
 
-1. **Süreç başına beklenen kiracı sayısı nedir?** Yüzler ise A; on binler ise
-   B ya da C. Bu bir ayar değil, çataldır: A'nın kiracı başına havuzu, canlı
-   kiracı sayısını Postgres'in bağlantı tavanına bağlar.
-2. **Kiracının kendi sağlayıcı kimliği olacak mı?** (kendi Stripe hesabı, kendi
-   gönderen adresi, kendi kotası.) Cevap "evet" ise, izolasyon seçiminden
-   **önce** kiracı başına yapılandırma bileşeni tasarlanmalıdır; o bileşen A'da
-   da B'de de yoktur ve ikisinden de büyüktür. Cevap "hayır" ise istenen şey
-   muhtemelen çok kiracılılık değil, çok mağazalılıktır — ve onun cevabı bugün
-   depoda zaten var olan satış kanalıdır, önce yazma tarafı kapatılarak.
-3. **Kiracı başına geri yükleme ya da veri yerleşimi (residency) isteniyor
-   mu?** İsteniyorsa A'nın kozu belirleyicidir: `pg_dump` kiracı başınadır ve
-   bir kiracıyı başka sunucuya taşımak kontrol düzleminde tek satırdır.
+1. **What is the expected number of tenants per process?** Hundreds means A;
+   tens of thousands means B or C. This is not a setting but the fork: A's pool
+   per tenant ties the number of live tenants to Postgres's connection ceiling.
+2. **Will a tenant have its own provider credentials?** (its own Stripe account,
+   its own sender address, its own quota.) If the answer is "yes", the
+   per-tenant configuration component has to be designed **before** the
+   isolation choice; that component exists neither in A nor in B and is bigger
+   than both. If the answer is "no", what is wanted is probably not
+   multi-tenancy but multi-store — and its answer is the sales channel that
+   already exists in the repository today, with the write side closed first.
+3. **Is per-tenant restore or data residency wanted?** If it is, A's trump card
+   decides it: `pg_dump` is per tenant, and moving a tenant to another server is
+   a single row in the control plane.
 
-Karar yeniden açıldığında gözden geçirilecekler: yukarıdaki "Kapanmakta olan
-kapılar" listesinin her maddesi (o güne kadar hangileri kapandı, bedeli ne
-oldu), README'nin "Aynı ölçütün henüz uygulanmadığı yer" bölümü (kanal kuralının
-yazma tarafı kapandı mı) ve ADR 0004 ile 0005 — `query.Provider.FetchByIDs`
-imzasında süzgeç parametresi yoktur ve link tabloları çalışma anında kurulur;
-ikisi de kiracı sınırının **geçirilemediği** yerlerdir ve o gün ya değişmeli ya
-da kiracı sınırı onların altından geçmelidir.
+When the decision is reopened, the things to review are: every item in the
+"Doors that are closing" list above (which of them had closed by then, and at
+what price), the README's "Aynı ölçütün henüz uygulanmadığı yer" section (was
+the write side of the channel rule closed) and ADR 0004 together with ADR 0005 —
+the `query.Provider.FetchByIDs` signature has no filter parameter and link
+tables are set up at run time; both are places a tenant boundary **cannot be
+threaded through**, and on that day either they have to change or the tenant
+boundary has to pass underneath them.

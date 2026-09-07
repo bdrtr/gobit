@@ -80,6 +80,34 @@ func TestTheProductionTreeListCoversTheRepository(t *testing.T) {
 	listed := map[string]bool{}
 	for _, tree := range productionTrees {
 		listed[tree] = true
+
+		// The OTHER direction, and it was missing until 2026-09-07. This test
+		// checked that every directory holding production Go is on the list; it
+		// did not check that everything ON the list is a directory. A phantom
+		// root is the quieter half of the same defect — the walk finds nothing
+		// there and the audit passes having looked nowhere.
+		//
+		// It is not hypothetical. plugins/webhookout kept the same kind of list
+		// and carried "server" on it, which is not a tree in this repository:
+		// the composition root's binary lives at cmd/server. What the entry
+		// matched was the COMPILED BINARY that a local build leaves at the
+		// repository root and that .gitignore keeps out of the repository, so
+		// the check passed on every developer's machine and failed on every CI
+		// run, for eight pushes.
+		if tree == repositoryRoot {
+			continue
+		}
+
+		info, statErr := os.Stat(filepath.Join(repoRoot, tree))
+		require.NoError(t, statErr,
+			"productionTrees names %q and there is no such path.\n"+
+				"Every audit in this package narrows to this list, so a root that does not "+
+				"exist is a whole tree nothing looks at — and the audits that use it keep "+
+				"reporting success.", tree)
+		require.True(t, info.IsDir(),
+			"productionTrees names %q and it is a FILE, not a directory.\n"+
+				"A build artifact with the right name will satisfy a careless existence "+
+				"check while the tree it was meant to name is never walked.", tree)
 	}
 
 	// The root is not one of its own directory entries, so it is counted here.

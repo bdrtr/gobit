@@ -1,288 +1,314 @@
-# ADR 0010 — Depo seçimi: kapsam bir KISIT, tercih bir SIRA
+# ADR 0010 — Warehouse selection: coverage is a CONSTRAINT, preference is an ORDER
 
-- **Durum:** Kabul edildi
-- **Tarih:** 2026-09-02
-- **Faz:** 10 sonrası (çoklu-depo turu)
+- **Status:** Accepted
+- **Date:** 2026-09-02
+- **Phase:** after 10 (the multi-warehouse round)
 
-## Bağlam
+## Context
 
-Çoklu depo Faz 6'dan beri destekleniyor: bir siparişin satırları farklı
-depolardan ayrılabiliyor. Dikiş iki modüle bölünmüş durumda ve bölünme
-bilinçliydi — "hangi depolarda yeterli stok var" bir **olgu** (stok modülü),
-"hangisinden gönderelim" bir **karar** (kargo modülü).
+Multiple warehouses have been supported since Phase 6: an order's lines can be
+split across different warehouses. The seam is divided across two modules and
+the division was deliberate — "which warehouses have enough stock" is a **fact**
+(the stock module), "which one do we ship from" is a **decision** (the
+fulfillment module).
 
-Kararın bir sorunu vardı ve `README.md` onu bilinen sınırlar arasında yazıyordu:
+The decision had a problem, and `README.md` wrote it down among the known
+limits:
 
-> **Depo seçimi bir POLİTİKA taşımaz.** Çoklu depo desteklenir (adaylar stok
-> olgusundan gelir, seçimi kargo modülü yapar) ama bugünkü kural "kimliği en
-> küçük aday"dır: yakınlık, maliyet ve stok dağılımı İFADE EDİLEMEZ, çünkü
-> modülün bir lokasyon modeli yoktur.
+> **Warehouse selection carries no POLICY.** Multiple warehouses are supported
+> (the candidates come from the stock fact, the fulfillment module makes the
+> choice) but today's rule is "the candidate with the smallest identifier":
+> proximity, cost and stock distribution CANNOT BE EXPRESSED, because the module
+> has no location model.
 
-Yani karar doğru yerdeydi ama karar verecek veri yoktu. İşletmeci "önce
-İstanbul deposundan gönder" ya da "Avrupa siparişlerini Almanya deposundan
-çıkar" diyemiyordu; sonucu kimliklerin sözlüksel sırası belirliyordu.
+That is, the decision was in the right place but there was no data to decide
+with. The operator could not say "ship from the Istanbul warehouse first" or
+"send European orders out of the Germany warehouse"; the lexicographic order of
+the identifiers settled the outcome.
 
-Bu ADR o veriyi getiren kararı ve onunla birlikte gelen üç yeni tuzağı kayda
-geçiriyor.
+This ADR records the decision that brought that data, and the three new traps
+that came with it.
 
-## Karar
+## Decision
 
-### 1. Lokasyon modeli fulfillment'ın KENDİ şemasındadır
+### 1. The location model is in fulfillment's OWN schema
 
-İki tablo eklendi (`shipping_locations`, `shipping_location_regions`). Depo
-kimliği stok modülünündür, **opaktır ve foreign key değildir** (Prensip 2.2).
-Yabancı bir kimliği böyle tutmak yeni değil — `shipping_options.region_id` de
-öyle — ama o kimliğin **birincil anahtar** olması yeni bir kalıptır ve
-gerekçesi migration'ın başında durur: politika satırının deposundan bağımsız bir
-varlığı yoktur.
+Two tables were added (`shipping_locations`, `shipping_location_regions`). The
+warehouse identifier belongs to the stock module, it is **opaque and is not a
+foreign key** (Principle 2.2). Holding a foreign identifier this way is not new
+— `shipping_options.region_id` does the same — but that identifier being the
+**primary key** is a new pattern, and its justification stands at the head of
+the migration: a policy row has no existence independent of its warehouse.
 
-Modül **ad ve adres kopyalamaz**. Deponun nerede olduğu stok modülünün
-verisidir; burada duran şey yalnızca kargo niteliğidir.
+The module **does not copy names or addresses**. Where the warehouse is is the
+stock module's data; what stands here is only the shipping quality.
 
-### 2. Politikanın girdisi sepetin BÖLGESİDİR
+### 2. The policy's input is the cart's REGION
 
-`checkoutPlan` zaten bölge taşıyordu. Bu yüzden:
+`checkoutPlan` already carried the region. Because of that:
 
-- Vitrin sözleşmesi (`POST /store/v1/carts/{id}/complete`) **değişmedi** —
-  müşteriye depo seçtirme yasağı korundu.
-- Yürütme kaydına **kişisel veri girmedi**; teslimat adresi bilinçli olarak
-  taşınmadı (plan Bölüm 8).
-- Sepet anlık görüntüsü değişmedi.
+- The storefront contract (`POST /store/v1/carts/{id}/complete`) **did not
+  change** — the ban on letting the customer choose a warehouse was preserved.
+- **No personal data entered the execution record**; the delivery address was
+  deliberately not carried (plan Section 8).
+- The cart snapshot did not change.
 
-"Yakınlık" bu sistemde coğrafi mesafe **değil**, kargo bölgesi kapsamıdır.
-Depoların koordinatı yoktur ve uydurulmadı.
+"Proximity" in this system is **not** geographic distance, it is shipping region
+coverage. Warehouses have no coordinates and none were made up.
 
-### 3. Yüzey tek lokasyon değil TERCİH SIRASI döner
+### 3. The surface returns a PREFERENCE ORDER, not a single location
 
-`SelectLocation(ctx, candidates) (string, error)` kaldırıldı; yerine
-`RankLocations(ctx, destinationRegionID, candidates) ([]string, error)` geldi.
-İki değişiklik birden var ve ikisinin de ayrı sebebi var.
+`SelectLocation(ctx, candidates) (string, error)` was removed;
+`RankLocations(ctx, destinationRegionID, candidates) ([]string, error)` took its
+place. There are two changes at once and each has its own reason.
 
-**Bölge parametresi**, godoc'ta yazılı bir taahhüdü kırıyor: eski metin
-"politika bu metodun İÇİNDE zenginleşir; çağıranın gördüğü imza değişmez"
-diyordu. Taahhüt yanlıştı ve nerede yanlış olduğu ölçülebilir: eksik olan
-yalnızca deponun kendisi değil, gönderinin NEREYE gittiğiydi. İkincisi modülün
-içinde zenginleşmeyle elde edilemez — çağıranın elindedir.
+**The region parameter** breaks a promise written in the godoc: the old text
+said "the policy grows richer INSIDE this method; the signature the caller sees
+does not change". The promise was wrong, and where it was wrong is measurable:
+what was missing was not only the warehouse itself, it was WHERE the shipment
+was going. The second cannot be obtained by growing richer inside the module —
+it is in the caller's hands.
 
-**Sıra dönmesi** bir maliyet kararıdır. Çağıran, tükenen bir depodan sonra
-sıradakini dener; eski yüzeyle bu, her tükenişte politikanın yeniden
-sorulması ve aynı politika kayıtlarının yeniden okunması demekti — N adaylı bir
-satır için bir sorgu yerine N sorgu. Sıra deterministik olduğu için o N-1 çağrı
-zaten aynı cevabı üretiyordu.
+**Returning an order** is a cost decision. The caller tries the next one after a
+warehouse runs out; with the old surface that meant asking the policy again on
+every stock-out and reading the same policy records again — N queries instead of
+one for a line with N candidates. Because the order is deterministic, those N-1
+calls were already producing the same answer.
 
-Yan kazanç: sepet akışının döngüsünün sonlanması artık modülün ne döndüğünden
-bağımsızdır. Eskiden sonlanma, seçilen adayın listeden düşürülebilmesine — yani
-modülün aday kümesinin dışına çıkmamasına — bağlıydı; şimdi sonlu bir dilimin
-uzunluğuyla sınırlıdır.
+A side gain: the termination of the cart flow's loop no longer depends on what
+the module returns. Termination used to depend on the chosen candidate being
+removable from the list — that is, on the module not stepping outside the
+candidate set; now it is bounded by the length of a finite slice.
 
-### 4. Kural: ELE, SIRALA, EŞİTLİĞİ BOZ
+### 4. The rule: ELIMINATE, RANK, BREAK THE TIE
 
-1. **Eleme** — bir depoya en az bir bölge bağlanmışsa ve hedef bölge onların
-   arasında değilse aday düşer. Hiç bağı olmayan depo **tüm** bölgelere hizmet
-   eder.
-2. **Sıralama** — kalanlar önceliğe göre dizilir; küçük olan öne geçer. Kaydı
-   olmayan depo sıfır önceliktedir.
-3. **Eşitlik bozma** — eşit öncelikte kimliği küçük olan öne geçer.
+1. **Elimination** — if at least one region is bound to a warehouse and the
+   destination region is not among them, the candidate drops. A warehouse with
+   no binding at all serves **every** region.
+2. **Ranking** — the remaining ones are lined up by priority; the smaller one
+   goes first. A warehouse with no record is at priority zero.
+3. **Tie breaking** — at equal priority the smaller identifier goes first.
 
-Politika kaydı hiç yoksa sonuç tek başına üçüncü adımdır: **seçilen depo** bu
-değişiklikten önceki davranışın aynısıdır. Katı alternatif (politikası olmayan
-depo aday olamaz) açıldığı gün mevcut kurulumların tüm siparişlerini durdururdu.
+If there is no policy record at all, the result is the third step alone: **the
+selected warehouse** is exactly the same as the behavior before this change. The
+strict alternative (a warehouse with no policy cannot be a candidate) would, the
+day it was switched on, stop every order of every existing installation.
 
-Aynısı kalmayan iki şey "Sonuçlar"da yazılıdır ve ikisi de kayıtsız kurulumu da
-etkiler: satır başına bir SQL sorgusu ve stok ayırma hatalarının kodu.
+The two things that do not stay the same are written in "Consequences", and both
+of them affect an installation with no records too: one SQL query per line, and
+the code of stock reservation failures.
 
-### 5. Eleme boş küme üretirse sınıf Conflict, kod AYRIDIR
+### 5. If elimination produces an empty set the kind is Conflict, the code is SEPARATE
 
-Yeni kod `fulfillment_no_serviceable_location`; "hiç aday yok" hâlinin kodundan
-ayrıdır çünkü işletmecinin yapacağı iş de ayrıdır — birinde stok yoktur,
-diğerinde bölge kapsamı yanlış kurulmuştur.
+The new code is `fulfillment_no_serviceable_location`; it is separate from the
+code for the "no candidates at all" state because the work the operator has to
+do is separate too — in one there is no stock, in the other the region coverage
+has been set up wrong.
 
-Sınıfın Conflict olmasının gerekçesi çağıranın dallanması **değildir**: sepet
-akışı seçim hatasını sınıfına bakmadan yukarı verir. Gerçek dayanak ikilidir ve
-ikisi de ölçülebilir:
+The justification for the kind being Conflict is **not** the caller's branching:
+the cart flow passes a selection error upwards without looking at its kind. The
+real ground is twofold and both halves are measurable:
 
-- Sepet akışı adım hatasını sararken **sınıfı devralır** ve HTTP durumu oradan
-  gelir. Invalid seçilseydi dünyanın durumundan kaynaklanan bir arıza, müşteriye
-  "gövdeni düzelt" diyen 422 olurdu.
-- Motorun varsayılan yeniden deneme yüklemi `KindConflict`'i **denemez**,
-  `KindInternal`'ı **dener**. Internal seçilseydi, telafi yeniden denemesi
-  açıldığı gün işletmecinin elle düzeltmesi gereken bir yapılandırma hatası
-  geçici arıza sanılıp tekrarlanırdı.
+- While wrapping a step failure the cart flow **inherits the kind** and the HTTP
+  status comes from there. Had Invalid been chosen, a fault caused by the state
+  of the world would have become a 422 telling the customer "fix your body".
+- The engine's default retry predicate **does not retry** `KindConflict`, it
+  **does retry** `KindInternal`. Had Internal been chosen, a configuration error
+  the operator has to fix by hand would be mistaken for a transient fault and
+  repeated the day compensation retries were switched on.
 
-### 6. Sepet akışı alt hatanın KODUNU korur
+### 6. The cart flow preserves the underlying error's CODE
 
-Adım hatasını saran yer, kodu kendi sabitiyle eziyordu; artık alt hatanın kodu
-devralınır ve `checkout_workflow_reservation_failed` yalnızca kodsuz bir hata
-için yedektir.
+The place that wraps a step failure was overwriting the code with its own
+constant; now the underlying error's code is inherited and
+`checkout_workflow_reservation_failed` is only a fallback for an error with no
+code.
 
-Bu, bu turda alınmış ikinci bir karardır ve bu özelliğin **ön koşuludur**.
-Taşıma katmanı gövdeye tek bir makine okunur alan yazar; kod ezilseydi yanlış
-kurulmuş bir bölge bağı, dolu raflarla "stok ayrılamadı" diye raporlanır ve
-operatör bakması gereken yeri bulamazdı. Kalıp yeni değildir: motor aynı hatayı
-bir tur önce kendi sarmalamasında düzeltmişti ve gerekçesi orada, B2B harcama
-limitiyle ölçülmüş hâlde yazılıdır.
+This is a second decision taken in this round and it is a **precondition** of
+this feature. The transport layer writes a single machine-readable field into
+the body; had the code been overwritten, a wrongly set up region binding would
+be reported as "stock could not be reserved" with full shelves, and the operator
+would not find the place they have to look at. The pattern is not new: the
+engine had fixed the same fault in its own wrapping a round earlier, and its
+justification is written there, measured against the B2B spending limit.
 
-### 7. Bildirilen lokasyon yolu DEĞİŞMEDİ
+### 7. The declared-location path DID NOT CHANGE
 
-Çağıran lokasyon bildirirse politika hiç çalışmaz ve hiçbir modüle sorulmaz.
-Bildirilen lokasyon bir tercih değil talimattır.
+If the caller declares a location the policy does not run at all and no module
+is asked. A declared location is not a preference but an instruction.
 
-## Sonuçlar
+## Consequences
 
-**Olumlu**
+**Positive**
 
-- İşletmeci tercih sırasını ve hizmet kapsamını ifade edebilir; sonucu
-  kimliklerin sözlüksel sırası belirlemez.
-- Politika okuması satır başına tek sorgudur ve sıra bir kez hesaplanır.
-- Eleme yüzünden düşen bir sipariş, stok yetersizliğinden **ayırt edilebilir**.
-  Ayrımı taşıyan şey KODDUR ve vitrine ulaşan tek şey odur; mesaj her üç
-  durumda da aynıdır çünkü taşıma katmanı gövdeye yalnızca en dıştaki mesajı
-  yazar. Adayların bölge dökümünü içeren metin **sunucu logunda ve yürütme
-  kaydındadır**, yani okuyucusu operatördür.
-- Geriye uyumluluk kayıtsız kurulumlarda SEÇİLEN DEPO için tamdır ve testle
-  sabitlenmiştir. Hata KODU için değildir (bkz. Karar 6) ve satır başına bir
-  SQL sorgusu eklenmiştir — eski seçim saf bir fonksiyondu ve veritabanına hiç
-  dokunmuyordu, yani kayıtsız bir kurulum bile artık bu yolda bir arıza
-  görebilir.
+- The operator can express the preference order and the service coverage; the
+  lexicographic order of the identifiers does not settle the outcome.
+- Reading the policy is a single query per line and the order is computed once.
+- An order that drops because of elimination **can be told apart** from
+  insufficient stock. What carries the distinction is THE CODE and that is the
+  only thing that reaches the storefront; the message is the same in all three
+  cases, because the transport layer writes only the outermost message into the
+  body. The text containing the candidates' region breakdown **is in the server
+  log and in the execution record**, that is, its reader is the operator.
+- Backward compatibility is complete for the SELECTED WAREHOUSE on installations
+  with no records, and it is pinned by a test. It is not complete for the error
+  CODE (see Decision 6), and one SQL query per line has been added — the old
+  selection was a pure function and did not touch the database at all, so even
+  an installation with no records can now see a fault on this path.
 
-**Olumsuz — kabul edilen bedeller**
+**Negative — accepted prices**
 
-- **Yanlış bir bölge bağı mağazayı kapatır.** Var olmayan bir bölge kimliği
-  bağlamak (ya da bir bölgeyi silip aynı adla yeniden açmak — yeni kayıt yeni
-  kimlik alır) o depoyu her sepette eler. Tek depolu bir kurulumda sonucu, dolu
-  bir katalogla her tamamlamanın reddedilmesidir.
+- **A wrong region binding closes the shop.** Binding a region identifier that
+  does not exist (or deleting a region and reopening it under the same name —
+  the new record gets a new identifier) eliminates that warehouse on every cart.
+  On a single-warehouse installation the result is that every completion is
+  refused with a full catalog.
 
-  Bedelin ağırlığı burada bitmiyor: tamamlama akışının idempotency anahtarı
-  sepet kimliğinden türer ve başarısız bir yürütme aynı anahtarla tekrar
-  koşamaz. Yani eleme yüzünden düşen sepet **kalıcı olarak** tükenir; müşteri
-  yeni bir sepet açmak zorundadır. Bu yakma bugün de vardı ama tetikleyicisi bir
-  stok olgusuydu; artık tek bir yönetim yazması da tetikleyebiliyor.
+  The weight of the price does not end there: the completion flow's idempotency
+  key derives from the cart identifier and a failed execution cannot run again
+  with the same key. So a cart that drops because of elimination is
+  **permanently** burned; the customer has to open a new cart. This burning
+  existed before too, but its trigger was a stock fact; now a single admin write
+  can trigger it as well.
 
-  Karşılığı: arıza görünürdür ve geri dönüşü tek bir yönetim yazmasıdır. Ama
-  görünürlüğün SINIRI da yazılmalı: vitrin istemcisi yalnızca kodu görür
-  (`fulfillment_no_serviceable_location`), adayların bölge dökümünü içeren
-  mesaj sunucu logunda ve yürütme kaydında kalır. Yani geri dönüş yolu,
-  operatörün loga ya da yürütme kaydına erişebilmesine bağlıdır.
+  In exchange: the fault is visible and the way back is a single admin write.
+  But the LIMIT of that visibility has to be written down too: the storefront
+  client sees only the code (`fulfillment_no_serviceable_location`), and the
+  message containing the candidates' region breakdown stays in the server log
+  and in the execution record. So the way back depends on the operator being
+  able to reach the log or the execution record.
 
-- **Bağ bir TERCİH değil KISITTIR ve geri düşme kümesini daraltır.** İki depoyu
-  ayrı bölgelere bağlayan bir işletmeci, ilk deponun stoğu yarışta tükendiğinde
-  siparişin düşmesini kabul etmiş olur — oysa politika olmadan o sipariş
-  diğerinden çıkardı. "İstanbul'u tercih et ama tükenirse Ankara'dan gönder"
-  bölge bağıyla yazılmaz, **öncelikle** yazılır. Bölge bağı yalnızca "bu depo
-  oraya gönderemez" için doğrudur.
+- **A binding is not a PREFERENCE but a CONSTRAINT, and it narrows the fallback
+  set.** An operator who binds two warehouses to separate regions has accepted
+  that the order drops when the first warehouse's stock runs out in the race —
+  whereas without a policy that order would have gone out of the other one.
+  "Prefer Istanbul but ship from Ankara if it runs out" is not written with a
+  region binding, it is written with **priority**. A region binding is correct
+  only for "this warehouse cannot ship there".
 
-- **Son bağı silmek depoyu gizlemez, tüm bölgelere açar.** Kural satış kanalı
-  kapsamınınkiyle aynıdır ve aynı tuzağı taşır; asimetri şudur: orada yanlış bir
-  kapsam ürünü gizler, burada siparişi düşürür.
+- **Deleting the last binding does not hide the warehouse, it opens it to every
+  region.** The rule is the same as the sales channel scope's and it carries the
+  same trap; the asymmetry is this: there a wrong scope hides a product, here it
+  drops the order.
 
-- **Yönetim listelemesi yetim satır gösterebilir.** Stok modülünde silinmiş bir
-  depo için kalan politika satırı asla **seçilemez** ama listede **görünür**;
-  ad ve adres taşımadığı için ekranda çözülemeyen opak bir kimlik olarak durur.
+- **The admin listing can show orphan rows.** A policy row left behind for a
+  warehouse deleted in the stock module can never be **selected** but is
+  **visible** in the listing; because it carries no name and no address, it
+  stands on the screen as an opaque identifier that cannot be resolved.
 
-- **`fulfillment:write` artık sipariş yolunu durdurabilir.** Yetki sözlüğü
-  değişmedi; gerekçesi "Reddedilen seçenekler"dedir.
+- **`fulfillment:write` can now stop the order path.** The scope vocabulary did
+  not change; the justification is in "Rejected alternatives".
 
-- **Kırıcı değişiklik.** `fulfillment.interop` yüzeyinin bir metodu adıyla ve
-  imzasıyla değişti; gömülü kullanan kodu etkiler. Derleyicinin denetlemediği
-  tek dikiş, arayüzün container'dan **adla** çözüldüğü yerdir ve onun kanıtı
-  yalnızca uçtan uca testtir.
+- **A breaking change.** One method of the `fulfillment.interop` surface changed
+  in name and in signature; it affects code that embeds it. The one seam the
+  compiler does not check is where the interface is resolved from the container
+  **by name**, and its only proof is the end-to-end test.
 
-## İFADE EDİLEMEYENLER
+## WHAT CANNOT BE EXPRESSED
 
-Yüzeyin ne garanti etmediği, garanti ettiği kadar önemlidir:
+What the surface does not guarantee is as important as what it does:
 
-- **Stok dağılımı.** "En çok stoğu olan depoyu öne al" yazılamaz. İki sebebi
-  var: lokasyon kırılımında satılabilir adet stok modülünün ilkel yüzeyinde
-  yoktur ve o yüzeye eklemek, mağazaya lokasyon kırılımı sızdırmama kararıyla
-  temas eder; ikincisi ve daha ağırı, determinizmin dayanağını değiştirir —
-  politika **işletmecinin ayarıdır** ve değişmesi beklenen bir sonuçtur, oysa
-  stok hızlı değişen bir olgudur ve aynı savunma orada çalışmaz.
-- **Maliyet.** Depo ile taşıyıcı arasında bir tarife modeli yoktur; yazılsaydı
-  dayandığı veri uydurma olurdu.
-- **Sipariş düzeyinde karar.** Sıra satır başına sorulur ve yüzey sepetin
-  tamamını görmez; "tüm satırları tek depodan çıkar" ya da "gönderi sayısını
-  azalt" ifade edilemez.
-- **(depo, bölge) çifti başına tercih.** Öncelik **depo** başınadır. "R1 için
-  önce A, R2 için önce B" yazılamaz; bölge başına yazılabilen tek şey
-  dışlamadır.
+- **Stock distribution.** "Put the warehouse with the most stock first" cannot
+  be written. There are two reasons: the sellable count in the location
+  breakdown is not on the stock module's primitive surface, and adding it there
+  touches the decision not to leak the location breakdown to the storefront; the
+  second and heavier one is that it changes what determinism rests on — the
+  policy is **the operator's setting** and its changing is an expected
+  consequence, whereas stock is a fast-changing fact and the same defense does
+  not work there.
+- **Cost.** There is no tariff model between a warehouse and a carrier; had one
+  been written, the data it rested on would be made up.
+- **A decision at the order level.** The order is asked for per line and the
+  surface does not see the whole cart; "take all the lines out of a single
+  warehouse" or "reduce the number of shipments" cannot be expressed.
+- **A preference per (warehouse, region) pair.** Priority is per **warehouse**.
+  "A first for R1, B first for R2" cannot be written; the only thing writable
+  per region is exclusion.
 
-## Reddedilen seçenekler
+## Rejected alternatives
 
-**Lokasyon detayını stok modülünün ilkel yüzeyine eklemek.** En az kod isteyen
-yol buydu ve tek doğruluk kaynağını korurdu. Reddedildi çünkü o yüzeyin godoc'u
-kapıyı yazılı olarak kapatmış durumda: "hangi depodan gönderelim" sorusunu
-taşımaz, o bir kargo kararıdır. Kapıyı açmak, stok sorgusunu kargo politikasına
-bağımlı kılardı — bu ADR'nin korumaya çalıştığı bölünmenin ta kendisi.
+**Adding the location detail to the stock module's primitive surface.** This was
+the path that needed the least code and it would have preserved the single
+source of truth. Rejected because that surface's godoc has closed the door in
+writing: it does not carry the question "which warehouse do we ship from", that
+is a shipping decision. Opening the door would have made the stock query depend
+on the shipping policy — the very division this ADR is trying to protect.
 
-**Depoyu Query katmanına ikinci bir entity olarak açmak.** Okuma yolu tek
-noktadan geçerdi ve süzme bedava gelirdi. Reddedildi çünkü stok modülünün
-yönetim yüzeyi "mağazaya lokasyon kırılımı sızmaz" sınırını yazılı olarak
-koyuyor ve ikinci bir entity, o sınırla temas eden yeni bir okuma yolu açardı.
+**Opening the warehouse as a second entity in the Query layer.** The read path
+would have gone through a single point and filtering would have come for free.
+Rejected because the stock module's admin surface puts the boundary "no location
+breakdown leaks to the storefront" in writing, and a second entity would have
+opened a new read path touching that boundary.
 
-**Bölge bağını sıralama anahtarı yapmak, katı kesiği bir bayrağın arkasına
-almak.** Hizmet eden depolar öne, etmeyenler sona dizilirdi; "hizmet eden depo
-yok" hatası stok varken asla oluşmazdı. Reddedildi çünkü kavramı bozar:
-"hizmet ettiği bölgeler" bir tercih değil, taşıyıcının kapsama alanıdır ve
-kapsam dışına göndermek graceful bir geri düşüş değil, imkânsız bir gönderidir.
-Tercih zaten ifade edilebiliyor — öncelikle. İki kavramı tek alana yüklemek,
-işletmeciye hangisini yazdığını sormaz hâle getirirdi. Bedeli "Olumsuz"da
-adıyla yazılıdır.
+**Making the region binding a ranking key and putting the strict cut behind a
+flag.** The serving warehouses would be lined up first and the non-serving ones
+last; the "no serviceable warehouse" error would never occur while there is
+stock. Rejected because it breaks the concept: "the regions it serves" is not a
+preference but the carrier's coverage area, and shipping outside the coverage is
+not a graceful fallback but an impossible shipment. Preference can already be
+expressed — with priority. Loading two concepts onto one field would make it
+impossible to ask the operator which of them they had written. Its price is
+written by name under "Negative".
 
-**Politika yazmaya üçüncü bir yetki (`fulfillment:policy`) vermek.** Bu ucun
-etki alanı modüldeki diğer yazma uçlarından gerçekten geniştir. Reddedildi
-çünkü yetki dağarcığı tek bir kuraldan türer (`<modül>:read` / `<modül>:write`,
-`admin` üst yetki) ve yüzlerce yönetim ucu bu kuralla denetlenir. Tek bir uca
-özel bir ad, kuralı öğrenilemez ve denetlenemez kılardı; kazanç ise sınırlı
-olurdu, çünkü `fulfillment:write` taşıyan kimlik zaten bir yönetim kimliğidir.
+**Giving policy writing a third scope (`fulfillment:policy`).** This endpoint's
+blast radius really is wider than the module's other write endpoints. Rejected
+because the scope vocabulary derives from a single rule (`<module>:read` /
+`<module>:write`, `admin` as the super scope) and hundreds of admin endpoints
+are checked with that rule. A name special to one single endpoint would make the
+rule unlearnable and unauditable; the gain would be limited, because an identity
+carrying `fulfillment:write` is already an admin identity.
 
-**Politikayı kapatan bir ortam değişkeni.** Depoda bir emsal aranabilir ama
-bulunan şey tam olarak bu değildir: b2b modülünü kapatan bir anahtarın neden
-EKLENMEDİĞİ `CHANGELOG.md`'de yazılıdır ("yanlışlıkla `false` verilen bir
-anahtar harcama limitini hiçbir hata üretmeden kaldırırdı") ve o gerekçe buraya
-**doğrudan taşınamaz**: oradaki bayrak bir korumayı fail-open yapardı, buradaki
-ise sipariş düşüren bir kuralı kaldırırdı — ters yön. ADR 0007 bir bayraktan
-değil, arızada DAVRANIŞTAN söz eder; ADR 0009'da konu hiç geçmez.
+**An environment variable that turns the policy off.** A precedent can be looked
+for in the repository, but what is found is not exactly this: why a switch
+turning the b2b module off was NOT ADDED is written in `CHANGELOG.md` ("a switch
+accidentally set to `false` would remove the spending limit without producing
+any error"), and that justification **cannot be carried here directly**: the
+flag there would make a protection fail open, whereas the one here would remove
+a rule that drops orders — the opposite direction. ADR 0007 speaks not of a flag
+but of BEHAVIOR under failure; in ADR 0009 the subject does not come up at all.
 
-Bayrak yine de eklenmedi ve sebebi kendi ölçütünden gelir: geri dönüş yolu
-zaten yönetim API'sindedir ve arıza kendi kodunu taşır.
-Bir bayrak, aynı işi yapan ikinci bir yol açar ve iki yolun hangisinin geçerli
-olduğu bir sonraki turda sorulur. **Bu reddin ön koşulu, "Karar 6"dır**: sebebi
-görünmeyen bir arıza için "yönetim ucundan geri alınır" demek boş bir söz
-olurdu.
+The flag was still not added, and the reason comes from its own criterion: the
+way back is already in the admin API and the fault carries its own code.
+A flag opens a second path doing the same job, and which of the two paths holds
+gets asked in the next round. **The precondition of this rejection is "Decision
+6"**: saying "it is undone from an admin endpoint" for a fault whose cause is
+invisible would be an empty phrase.
 
-**Yumuşak silme.** Modülün kuralı yumuşak silmedir. Reddedildi çünkü yumuşak
-silinmiş bir politika satırının etkisi, hiç var olmamış bir satırınkiyle birebir
-aynıdır (ikisi de "varsayılan" demektir) ve ayrımın taşıyacağı bir anlam yoktur;
-dahası birincil anahtar depo kimliği olduğu için ölü bir satır, aynı depo için
-yeni politika yazılmasını engellerdi.
+**Soft delete.** The module's rule is soft delete. Rejected because the effect of
+a soft-deleted policy row is exactly identical to that of a row that never
+existed (both mean "the default") and the distinction would carry no meaning;
+furthermore, because the primary key is the warehouse identifier, a dead row
+would block a new policy from being written for the same warehouse.
 
-## Kararın yeniden açılması
+## Reopening the decision
 
-Üç veri bu kararı yeniden açar:
+Three pieces of data reopen this decision:
 
-1. **Depolara koordinat gelirse** yakınlık gerçekten hesaplanabilir hâle gelir
-   ve "kapsam" ile "mesafe" ayrı iki kural olur. Bugünkü eleme o gün bir
-   sıralama girdisine dönüşebilir.
-2. **Lokasyon kırılımında satılabilir adet stok modülünün yüzeyine girerse**
-   stok dağılımı ifade edilebilir olur; o gün cevaplanacak soru determinizmin
-   ne anlama geleceğidir.
-3. **"Yanlış bağ mağazayı kapattı" olayı gerçekten yaşanırsa** — ölçüsü,
-   `fulfillment_no_serviceable_location` kodunun üretimde görülmesidir — yazma
-   yolunda bölge kimliğini doğrulatmak (region modülünün yüzeyine sormak)
-   yeniden değerlendirilir. Bugün yapılmadı çünkü modülün hiçbir yerde başka bir
-   modüle sormayan yapısını tek bir doğrulama için bozmak, bedelini kendisi
-   ödetmeyen bir karardır.
+1. **If warehouses get coordinates**, proximity really becomes computable and
+   "coverage" and "distance" become two separate rules. Today's elimination
+   could turn into a ranking input on that day.
+2. **If the sellable count in the location breakdown enters the stock module's
+   surface**, stock distribution becomes expressible; the question to be
+   answered that day is what determinism will mean.
+3. **If a "a wrong binding closed the shop" incident actually happens** — its
+   measure is `fulfillment_no_serviceable_location` being seen in production —
+   validating the region identifier on the write path (asking the region
+   module's surface) gets reconsidered. It was not done today because breaking
+   the module's structure of never asking another module anywhere, for a single
+   validation, is a decision that does not make itself pay its own price.
 
-## İlgili
+## Related
 
-- [ADR 0001](0001-modul-arasi-iletisim.md) — dar arayüz + adla çözüm; bu ADR'nin
-  imza değişikliğinin derleyicisiz kaldığı yer.
-- [ADR 0004](0004-query-veri-erisimi.md) — reddedilen ikinci seçeneğin dayanağı.
-- [ADR 0006](0006-workflow-modul-erisimi.md) — sepet akışının modüllere nasıl
-  eriştiği.
-- [ADR 0007](0007-sertlestirme-arizada-davranis.md) — arızada davranışın tek tip
-  olmadığı kararı. Ortam değişkeni reddi oradan TÜRETİLMEZ; ADR 0007 bayraklardan
-  söz etmez, yalnızca bileşen başına arıza davranışını karara bağlar.
-- [ADR 0009](0009-cok-kiracililik-kurulum-siniri.md) — kurulum sınırı kararı; bu
-  ADR'nin "her kurulum tek kiracılıdır" varsayımı depo politikasının da
-  kurulum düzeyinde yaşamasını mümkün kılar.
+- [ADR 0001](0001-modul-arasi-iletisim.md) — narrow interface + resolution by
+  name; where this ADR's signature change is left without a compiler.
+- [ADR 0004](0004-query-veri-erisimi.md) — the ground of the second rejected
+  alternative.
+- [ADR 0006](0006-workflow-modul-erisimi.md) — how the cart flow reaches the
+  modules.
+- [ADR 0007](0007-sertlestirme-arizada-davranis.md) — the decision that behavior
+  under failure is not uniform. The environment variable rejection IS NOT
+  DERIVED from there; ADR 0007 does not speak of flags, it only decides failure
+  behavior per component.
+- [ADR 0009](0009-cok-kiracililik-kurulum-siniri.md) — the installation boundary
+  decision; this ADR's assumption that "every installation is single-tenant" is
+  what makes it possible for warehouse policy too to live at installation level.

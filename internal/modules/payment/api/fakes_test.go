@@ -48,6 +48,15 @@ type fakePayments struct {
 	sonRefundReason string
 	// cancelCagrisi CancelPayment'ın çağrılıp çağrılmadığını bildirir.
 	cancelCagrisi bool
+
+	// Okuma uçlarına YOLDAN gelen kimlikler. Okuma handler'larının tek işi,
+	// URL'deki kaydı servise sormaktır; sahte servis her zaman senaryolanmış
+	// yanıtı döndüğü için yanıta bakarak "doğru kaydı sordu mu" ayırt
+	// EDİLEMEZ. Sorulan kimlik bu yüzden ayrıca kaydedilir.
+	sonOturumListesiKimligi   string
+	sonTahsilatListesiKimligi string
+	sonTahsilatKimligi        string
+	sonIadeListesiKimligi     string
 }
 
 // Sahtenin handler'ın beklediği yüzeyi karşıladığı derleme zamanında
@@ -111,7 +120,11 @@ func (f *fakePayments) GetPaymentSession(_ context.Context, _ string) (models.Pa
 }
 
 // ListPaymentSessions senaryolanmış oturumları döner.
-func (f *fakePayments) ListPaymentSessions(_ context.Context, _ string) ([]models.PaymentSession, error) {
+func (f *fakePayments) ListPaymentSessions(
+	_ context.Context,
+	collectionID string,
+) ([]models.PaymentSession, error) {
+	f.sonOturumListesiKimligi = collectionID
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -142,7 +155,8 @@ func (f *fakePayments) CancelPayment(_ context.Context, _ string) error {
 }
 
 // GetPayment senaryolanmış tahsilatı döner.
-func (f *fakePayments) GetPayment(_ context.Context, _ string) (models.Payment, error) {
+func (f *fakePayments) GetPayment(_ context.Context, paymentID string) (models.Payment, error) {
+	f.sonTahsilatKimligi = paymentID
 	if f.err != nil {
 		return models.Payment{}, f.err
 	}
@@ -150,7 +164,8 @@ func (f *fakePayments) GetPayment(_ context.Context, _ string) (models.Payment, 
 }
 
 // ListPayments senaryolanmış tahsilatları döner.
-func (f *fakePayments) ListPayments(_ context.Context, _ string) ([]models.Payment, error) {
+func (f *fakePayments) ListPayments(_ context.Context, collectionID string) ([]models.Payment, error) {
+	f.sonTahsilatListesiKimligi = collectionID
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -172,7 +187,8 @@ func (f *fakePayments) RefundPayment(
 }
 
 // ListRefunds senaryolanmış iadeleri döner.
-func (f *fakePayments) ListRefunds(_ context.Context, _ string) ([]models.Refund, error) {
+func (f *fakePayments) ListRefunds(_ context.Context, paymentID string) ([]models.Refund, error) {
+	f.sonIadeListesiKimligi = paymentID
 	if f.err != nil {
 		return nil, f.err
 	}

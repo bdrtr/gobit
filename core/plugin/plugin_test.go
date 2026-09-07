@@ -119,6 +119,53 @@ func (k *fakeFileRegistry) Register(p coreprovider.FileProvider) error {
 	return nil
 }
 
+// fakeFulfillmentProvider is the smallest shipping provider used in the tests.
+type fakeFulfillmentProvider struct{ id string }
+
+// ID returns the provider's identity.
+func (p fakeFulfillmentProvider) ID() string { return p.id }
+
+// Quote is never called in the tests; it exists to satisfy the interface.
+func (p fakeFulfillmentProvider) Quote(
+	_ context.Context, _ coreprovider.QuoteInput,
+) (coreprovider.ShippingQuote, error) {
+	return coreprovider.ShippingQuote{}, nil
+}
+
+// Create is never called in the tests.
+func (p fakeFulfillmentProvider) Create(
+	_ context.Context, _ coreprovider.CreateFulfillmentInput,
+) (coreprovider.Fulfillment, error) {
+	return coreprovider.Fulfillment{}, nil
+}
+
+// Cancel is never called in the tests.
+func (p fakeFulfillmentProvider) Cancel(_ context.Context, _ string) error { return nil }
+
+// fakeFulfillmentRegistry imitates the fulfillment module's provider registry.
+type fakeFulfillmentRegistry struct {
+	registered []string
+}
+
+// Register registers the provider.
+func (k *fakeFulfillmentRegistry) Register(p coreprovider.FulfillmentProvider) error {
+	k.registered = append(k.registered, p.ID())
+
+	return nil
+}
+
+// fakeErrorReporter is the smallest error reporter used in the tests.
+type fakeErrorReporter struct{ id string }
+
+// ID returns the reporter's identity.
+func (r fakeErrorReporter) ID() string { return r.id }
+
+// Report is never called in the tests; it exists to satisfy the interface.
+func (r fakeErrorReporter) Report(_ context.Context, _ coreprovider.ErrorEvent) {}
+
+// Close is never called in the tests.
+func (r fakeErrorReporter) Close(_ context.Context) error { return nil }
+
 // testPlugin is a plugin that runs the function given for Setup.
 type testPlugin struct {
 	name  string
@@ -322,6 +369,261 @@ func TestFileProviderRegistrationFailsWithoutTheModule(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "file")
 	assert.Contains(t, err.Error(), "s3")
+}
+
+// TestFulfillmentProviderRegistrationWaitsUntilStart proves the shipping
+// provider is registered at Start and NOT at Setup.
+//
+// This registration point had NEVER RUN, in production or in a test. Its four
+// siblings all have real consumers — a payment plugin, a mailer, a file store,
+// an error reporter — and each of those consumers exercises the queueing every
+// time the server boots. This one has none: no in-repo plugin registers a
+// carrier, so the first code ever to travel this path will be an EMBEDDER's, in
+// their installation, with their carrier, and the failure will look to them like
+// the framework losing their provider.
+//
+// A shipping-carrier plugin is also the most obvious thing an embedder writes
+// against a published extension point (ADR 0026), which is why it is worth
+// spending a test on a path the repository itself does not walk.
+//
+// The order is the claim. The fulfillment module is NOT in the container while
+// Install runs and is put there only afterwards: had the registration been
+// applied at Setup, every carrier plugin would blow up during installation with
+// "the fulfillment module is not registered", and the embedder would go looking
+// for the fault in their own plugin.
+func TestFulfillmentProviderRegistrationWaitsUntilStart(t *testing.T) {
+	t.Parallel()
+
+	c, reg, h := newHost(t, nil)
+
+	reg.Add(testPlugin{name: "carrier", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterFulfillmentProvider(fakeFulfillmentProvider{id: "ups"})
+		return nil
+	}})
+
+	// The fulfillment module is NOT there yet.
+	require.NoError(t, reg.Install(t.Context(), h), "the installation must pass without the module too")
+
+	registry := &fakeFulfillmentRegistry{}
+	require.NoError(t, c.Provide(coreplugin.FulfillmentProvidersName, registry))
+
+	require.NoError(t, reg.Start(t.Context(), h))
+	assert.Equal(t, []string{"ups"}, registry.registered,
+		"the provider has to REACH the fulfillment module's registry; queueing it and never draining it "+
+			"looks identical to an installation with no carrier plugin at all")
+}
+
+// TestFulfillmentProviderRegistrationFailsWithoutTheModule proves Start does NOT
+// STAY SILENT while the fulfillment module is not registered at all.
+//
+// Had it stayed silent, the shipping options would still be quoted — by whatever
+// provider was already registered, or by none — and an installation believed to
+// ship with the plugin's carrier would keep taking orders it cannot dispatch.
+// Unlike a payment failure, which the first customer attempt surfaces at once,
+// this one is found by the warehouse: the orders are already paid for.
+//
+// Both halves of the message are asserted. "fulfillment" tells the operator
+// WHICH module is missing from the installation, and the provider id tells them
+// which plugin is waiting for it; without the second half an installation with
+// several carrier plugins gives no clue which one to look at.
+func TestFulfillmentProviderRegistrationFailsWithoutTheModule(t *testing.T) {
+	t.Parallel()
+
+	_, reg, h := newHost(t, nil)
+
+	reg.Add(testPlugin{name: "carrier", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterFulfillmentProvider(fakeFulfillmentProvider{id: "ups"})
+		return nil
+	}})
+	require.NoError(t, reg.Install(t.Context(), h))
+
+	err := reg.Start(t.Context(), h)
+	require.Error(t, err, "an installation that believes it has a carrier and has none must not come up quietly")
+	assert.Contains(t, err.Error(), "fulfillment", "the message has to name the module that is missing")
+	assert.Contains(t, err.Error(), "ups", "the message has to name the provider that is waiting")
+}
+
+// TestAProviderRegistryOfTheWrongShapeIsRefusedByName covers the OTHER way
+// resolveSink fails, and it is the one no registration point has ever reached.
+//
+// The container is keyed by NAME, and the name is a string constant shared
+// between the core and a module that may not import it
+// ([coreplugin.FulfillmentProvidersName] against the fulfillment module's own
+// ProvidersName). If a module ever provides something else under that name — a
+// config struct, a service, a registry whose Register takes a different provider
+// type after a refactor — the lookup SUCCEEDS and the type assertion is what
+// fails. That is a different fault from "the module is absent" and needs a
+// different sentence, because the operator's fix is different: one is an
+// installation missing a module, the other is a version skew between the core
+// and the module.
+//
+// It is proven through the fulfillment registrar because that is the registrar
+// this file is closing, but the branch is shared by all five.
+func TestAProviderRegistryOfTheWrongShapeIsRefusedByName(t *testing.T) {
+	t.Parallel()
+
+	c, reg, h := newHost(t, nil)
+
+	// Something is under the name, and it is not a provider registry.
+	require.NoError(t, c.Provide(coreplugin.FulfillmentProvidersName, "not a registry"))
+
+	reg.Add(testPlugin{name: "carrier", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterFulfillmentProvider(fakeFulfillmentProvider{id: "ups"})
+		return nil
+	}})
+	require.NoError(t, reg.Install(t.Context(), h))
+
+	err := reg.Start(t.Context(), h)
+	require.Error(t, err, "a registry that cannot take the provider must stop the boot, not drop the provider")
+	assert.Contains(t, err.Error(), coreplugin.FulfillmentProvidersName,
+		"the message has to name the container entry whose shape is wrong; that name is the only thing "+
+			"the operator can grep for across the core and the module")
+}
+
+// TestANilProviderNeverReachesTheQueue proves a plugin handing over a nil
+// provider does not take the installation down with it.
+//
+// The queued task's description is built from p.ID(), so a nil provider reaching
+// the queue is a panic inside Setup — that is, one plugin's bug (a constructor
+// that returned nil alongside an error the plugin ignored) killing the whole
+// server's boot. A Register method has no error to give back, so the choice is
+// between a panic and a drop, and the drop is what the code takes.
+//
+// The residual is stated rather than hidden: the provider IS silently lost, and
+// the plugin that passed nil gets no word of it. What this test fixes is that
+// the loss stays confined to that plugin — Install and Start both complete, and
+// the OTHER plugin in the same installation still gets its provider registered.
+func TestANilProviderNeverReachesTheQueue(t *testing.T) {
+	t.Parallel()
+
+	c, reg, h := newHost(t, nil)
+	registry := &fakeFulfillmentRegistry{}
+	require.NoError(t, c.Provide(coreplugin.FulfillmentProvidersName, registry))
+
+	reg.Add(testPlugin{name: "broken-carrier", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterFulfillmentProvider(nil)
+		return nil
+	}})
+	reg.Add(testPlugin{name: "carrier", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterFulfillmentProvider(fakeFulfillmentProvider{id: "ups"})
+		return nil
+	}})
+
+	require.NoError(t, reg.Install(t.Context(), h),
+		"one plugin's nil must not take the installation down; the queue's description reads p.ID()")
+	require.NoError(t, reg.Start(t.Context(), h))
+
+	assert.Equal(t, []string{"ups"}, registry.registered,
+		"the nil is dropped and the working plugin still gets its provider registered")
+}
+
+// TestTheErrorReporterIsInstalledAtSetupAndNotAtStart proves the ONE
+// registration that deliberately does not wait, and proves it does not wait.
+//
+// The other five go into a queue because they need a module's registry to
+// exist. This one needs nothing — the container is already there — and waiting
+// would cost the reports worth the most: the modules come up between Install and
+// Start, running migrations and verifying providers, and a reporter bound at
+// Start would watch every one of those failures go by unreported, in the one
+// phase where a failure means the process is about to exit.
+//
+// So the assertion is made BEFORE Start is called. Turning this registration
+// into a queued one to match its five siblings is a tidy-looking change that
+// costs nothing visible — the server still boots, the reporter still works for
+// every request — and quietly gives up the startup window it exists for.
+func TestTheErrorReporterIsInstalledAtSetupAndNotAtStart(t *testing.T) {
+	t.Parallel()
+
+	c, reg, h := newHost(t, nil)
+
+	reg.Add(testPlugin{name: "sentry", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterErrorReporter(fakeErrorReporter{id: "sentry"})
+		return nil
+	}})
+	require.NoError(t, reg.Install(t.Context(), h))
+
+	reporter, err := container.Resolve[coreprovider.ErrorReporter](c, coreplugin.ErrorReporterName)
+	require.NoError(t, err,
+		"the reporter has to be in the container as soon as Install returns; the migrations and the "+
+			"provider checks run before Start, and their failures are the ones that end the process")
+	assert.Equal(t, "sentry", reporter.ID())
+
+	require.NoError(t, reg.Start(t.Context(), h))
+}
+
+// TestASecondErrorReporterIsAConflictAndNamesTheLoser proves two plugins each
+// believing they own the reporting is refused rather than resolved.
+//
+// Letting the last one win is the tempting alternative and it is the wrong one:
+// the operator who installed the FIRST plugin is watching the first collector,
+// and a silent replacement sends every failure somewhere they are not looking —
+// an installation that reports nothing looks exactly like one with nothing to
+// report. So the container refuses the duplicate name.
+//
+// The refusal has to travel, though, and that is the second half of this test. A
+// Register method has no error to give back, so the failure is parked on the
+// queue purely to reach a place that can return it — [coreplugin.Registry.Start]
+// — and it has to arrive there naming the plugin that LOST. Without that name an
+// operator with several plugins installed has to remove them one at a time to
+// find out which two are fighting.
+func TestASecondErrorReporterIsAConflictAndNamesTheLoser(t *testing.T) {
+	t.Parallel()
+
+	c, reg, h := newHost(t, nil)
+
+	reg.Add(testPlugin{name: "sentry", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterErrorReporter(fakeErrorReporter{id: "sentry"})
+		return nil
+	}})
+	reg.Add(testPlugin{name: "bugsnag", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterErrorReporter(fakeErrorReporter{id: "bugsnag"})
+		return nil
+	}})
+
+	require.NoError(t, reg.Install(t.Context(), h),
+		"the conflict is REPORTED at Start, not thrown at Setup; a Register method has no error to return")
+
+	err := reg.Start(t.Context(), h)
+	require.Error(t, err, "two plugins each owning the reporting is a misconfiguration, not a race to be won")
+	assert.Contains(t, err.Error(), "bugsnag",
+		"the message has to name the plugin that lost; otherwise the operator removes plugins one by one to find it")
+
+	reporter, rerr := container.Resolve[coreprovider.ErrorReporter](c, coreplugin.ErrorReporterName)
+	require.NoError(t, rerr)
+	assert.Equal(t, "sentry", reporter.ID(),
+		"the FIRST reporter keeps the slot; the operator watching it must not be silently redirected")
+}
+
+// TestANilErrorReporterIsDropped proves a plugin handing over a nil reporter
+// does not take the installation down.
+//
+// The registration reads r.ID() for the failure message it may have to build, so
+// a nil reaching that line is a panic during Install — one plugin's bug (a
+// constructor that returned nil beside an error the plugin ignored) killing the
+// whole boot. As with the provider registrars the loss is silent, and what is
+// pinned here is that it stays confined: the container slot is left FREE, so a
+// second plugin that does bring a reporter still gets it.
+func TestANilErrorReporterIsDropped(t *testing.T) {
+	t.Parallel()
+
+	c, reg, h := newHost(t, nil)
+
+	reg.Add(testPlugin{name: "broken", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterErrorReporter(nil)
+		return nil
+	}})
+	reg.Add(testPlugin{name: "sentry", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterErrorReporter(fakeErrorReporter{id: "sentry"})
+		return nil
+	}})
+
+	require.NoError(t, reg.Install(t.Context(), h),
+		"one plugin's nil must not take the installation down; the registration reads r.ID()")
+	require.NoError(t, reg.Start(t.Context(), h))
+
+	reporter, err := container.Resolve[coreprovider.ErrorReporter](c, coreplugin.ErrorReporterName)
+	require.NoError(t, err, "the dropped nil must not have claimed the slot the working plugin needs")
+	assert.Equal(t, "sentry", reporter.ID())
 }
 
 // TestASetupErrorStopsTheInstallation proves one plugin's Setup error stops the

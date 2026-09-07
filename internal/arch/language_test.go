@@ -259,6 +259,23 @@ var diacriticDataExemptions = map[string][]string{
 	"docs/adr/0015-postgresql-cluster-contract.md": {
 		"`çanta`", "`Çanta`", "q=çanta", "q=Çanta",
 	},
+	// ADR 0009 was translated on 2026-09-07 and every Turkish word left in it is
+	// a QUOTATION of a heading in a file that is still Turkish — the plan and the
+	// README. Translating a quotation would make it stop being one: the whole
+	// point of the sentences around these is that a reader can go and find the
+	// heading, and a paraphrase sends them looking for text that is not there.
+	"docs/adr/0009-cok-kiracililik-kurulum-siniri.md": {
+		// Each entry has to fit on ONE line: the subtraction is per line, and a
+		// quoted heading that markdown wrapped across two of them matches
+		// neither half. That is how the first attempt at this list failed.
+		"ilk sürümde yok", "Sonraki Sürüm", "şimdilik kapsam dışı",
+		"İlk commit", "Çoklu-tenant bu listede değildir",
+		"örnek mi, birden çok mu?", "Aynı ölçütün henüz uygulanmadığı yer",
+	},
+	// The architecture document's one remaining Turkish is a LINK ANCHOR derived
+	// from a README heading that is still Turkish. Changing it would not
+	// translate anything; it would break the link.
+	"docs/mimari.md": {"#api-güvenliği", "API güvenliği"},
 }
 
 // turkishHit is one lane firing on one line.
@@ -398,8 +415,26 @@ func scanSource(rel string, src []byte, exemptions map[string][]string) (hits []
 		// word lane reads the raw text. Markdown, SQL and templates are prose
 		// and queries; neither carries the `yok` idiom that made the
 		// restriction necessary in Go.
+		//
+		// The exemptions are subtracted HERE TOO, and they did not use to be.
+		// Corrected 2026-09-07, when ADR 0009 was translated: every Turkish word
+		// left in it is a QUOTATION of a heading in a file that is still
+		// Turkish, and one of those headings ends in the word `yok`. The
+		// diacritic lane accepted the quotation and the word lane rejected the
+		// same characters, so the file could not be made to pass without
+		// paraphrasing a quotation — which would have made it stop being one.
+		//
+		// The general form is the part worth keeping: an exemption says THIS
+		// TEXT IS DATA, NOT PROSE, and that is a fact about the text rather than
+		// about a lane. A subtraction that applies to one lane and not the other
+		// was a bug in the mechanism, not a property of the rule.
 		for i, line := range strings.Split(text, "\n") {
-			if w := wordHit(line); w != "" {
+			stripped := line
+			for _, e := range exempt {
+				stripped = strings.ReplaceAll(stripped, e, "")
+			}
+
+			if w := wordHit(stripped); w != "" {
 				hits = append(hits, turkishHit{lane: laneWord, line: i + 1, detail: w})
 				break
 			}

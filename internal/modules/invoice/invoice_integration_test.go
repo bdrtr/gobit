@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,6 +32,7 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/bdrtr/gobit/core/db"
+	"github.com/bdrtr/gobit/internal/core/page"
 	"github.com/bdrtr/gobit/internal/modules/invoice"
 	"github.com/bdrtr/gobit/internal/modules/invoice/models"
 	"github.com/bdrtr/gobit/internal/modules/invoice/repository"
@@ -367,4 +369,205 @@ func TestACanceledDocumentKeepsItsNumber(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), sequenceOf(t, next.Number),
 		"the canceled number is spent; the next document takes the one after it")
+}
+
+// TestTheListingWalksEveryDocumentOnceAndCountsThemAll is the listing query's
+// own guarantee, and it is one only a database can witness.
+//
+// # Why a fake cannot show this
+//
+// The page boundary is a ROW COMPARISON — (created_at, id) < (after_at,
+// after_id) — written with COALESCE sentinels rather than an "IS NULL OR"
+// branch, because the branch measures beautifully and then degrades into a full
+// index walk under a generic plan (see internal/core/page). A fake honouring a
+// cursor compares two struct fields in Go and would agree with any spelling of
+// that predicate, including one that repeats the boundary row on the next page
+// or skips it.
+//
+// # What a repeated or skipped row costs here
+//
+// A skipped invoice is a document missing from an accounting export that looked
+// complete: nobody counts the rows they were given against a number they do not
+// have. A repeated one is the same document declared twice. Both are invisible
+// at the boundary between two pages, which is why the walk below is asked to
+// produce EVERY identifier exactly once rather than merely the right number of
+// rows.
+//
+// The count is checked on every page, because it is what an operator's screen
+// turns into "5 documents" while it is showing two of them. It is also checked
+// against a wider unfiltered count, so a count that ignored the filter — and
+// simply reported the size of the table — could not pass.
+func TestTheListingWalksEveryDocumentOnceAndCountsThemAll(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+
+	// The documents of this test are the only REFUNDS in the database, which is
+	// what makes it independent of the tests that ran before it: every other
+	// test issues sales.
+	const (
+		documents = 5
+		pageSize  = 2
+	)
+
+	refund := issueFor("PAG")
+	refund.Kind = models.KindRefund
+
+	written := map[string]string{}
+
+	for range documents {
+		doc, err := svc.Issue(ctx, refund)
+		require.NoError(t, err)
+
+		written[doc.ID] = doc.Number
+	}
+
+	// Two sales in the SAME series, so the filter has something to exclude that
+	// is otherwise indistinguishable: same prefix, same year, neighbouring
+	// numbers, written between the refunds and the walk.
+	for range 2 {
+		_, err := svc.Issue(ctx, issueFor("PAG"))
+		require.NoError(t, err)
+	}
+
+	kind := models.KindRefund.String()
+
+	seen := map[string]bool{}
+	pages := 0
+
+	var cursor page.Cursor
+
+	for {
+		found, err := svc.ListInvoices(ctx, models.Filter{
+			Kind:  &kind,
+			Limit: pageSize,
+			After: cursor,
+		})
+		require.NoError(t, err)
+
+		pages++
+		require.LessOrEqual(t, pages, documents+1,
+			"the walk is not ending: a cursor that names the position it was given makes a "+
+				"client ask for the same page forever")
+
+		assert.Equal(t, int64(documents), found.Count,
+			"every page reports how many documents MATCH, not how many are on it")
+
+		for i := range found.Items {
+			row := found.Items[i]
+
+			assert.Equal(t, models.KindRefund, row.Kind,
+				"the filter is applied by the query, not by whoever reads the rows: %s", row.Number)
+			require.False(t, seen[row.ID],
+				"document %s came back on two different pages", row.Number)
+
+			seen[row.ID] = true
+		}
+
+		if found.NextCursor == "" {
+			break
+		}
+
+		cursor, err = page.Decode(service.InvoiceListing, found.NextCursor)
+		require.NoError(t, err, "a cursor this listing minted has to be one it can read back")
+	}
+
+	assert.Equal(t, 3, pages,
+		"five documents in pages of two are three pages; a fourth would mean the last page "+
+			"offered a position that had nothing below it")
+
+	for id, number := range written {
+		assert.True(t, seen[id],
+			"document %s was issued and the walk never returned it; a page boundary that "+
+				"swallows a row is invisible to anyone who cannot count the documents twice",
+			number)
+	}
+
+	assert.Len(t, seen, documents)
+
+	everything, err := svc.ListInvoices(ctx, models.Filter{Limit: 1})
+	require.NoError(t, err)
+	assert.Greater(t, everything.Count, int64(documents),
+		"without the filter the count has to include the sales as well; a count that ignored "+
+			"the filter would have matched the assertions above by accident")
+}
+
+// TestTheSeriesListingReadsWhatTheNumberingWrote is the operator's only window
+// onto the numbering, and until now the query behind it had never run.
+//
+// # What is at stake
+//
+// The prefix comes from the installation's configuration. A typo in it does not
+// fail: it opens a SECOND series that numbers from one, the documents keep
+// being issued, and the shop is quietly filing two number ranges under one
+// name. Nothing else in the system shows that. This listing does — and only if
+// it reports the rows the issue path actually wrote to, with the reach of each.
+//
+// # Why the order matters and why a fake cannot hold it
+//
+// The rows come back newest YEAR first and then by prefix, which is what puts
+// the series a shop is issuing into right now at the top of the screen. That
+// ordering is a clause in the SQL; an in-memory fake sorting a slice in Go
+// agrees with any ordering the query might have, including none. The assertion
+// below is made over the WHOLE result rather than over this test's own rows, so
+// a series opened by any other test has to sit in its right place too.
+func TestTheSeriesListingReadsWhatTheNumberingWrote(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+
+	// A service whose clock is a year ahead, because a series belongs to a year
+	// and the rollover is what the ordering exists for. It is the only way to
+	// produce a next-year row without waiting for the first of January.
+	nextYear := service.New(repository.New(testPool.Pool()), service.Options{
+		Now: func() time.Time { return time.Now().UTC().AddDate(1, 0, 0) },
+	})
+
+	for range 2 {
+		_, err := svc.Issue(ctx, issueFor("SLA"))
+		require.NoError(t, err)
+	}
+
+	_, err := svc.Issue(ctx, issueFor("SLB"))
+	require.NoError(t, err)
+
+	ahead, err := nextYear.Issue(ctx, issueFor("SLA"))
+	require.NoError(t, err)
+
+	listed, err := svc.ListSeries(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, listed)
+
+	reach := map[string]models.Series{}
+
+	for i := range listed {
+		row := listed[i]
+
+		require.NotEmpty(t, row.ID, "a series has to come back with its identifier")
+		assert.Positive(t, row.Year, "a series without a year cannot be the one a number came from")
+
+		reach[fmt.Sprintf("%s%d", row.Prefix, row.Year)] = row
+	}
+
+	thisYear := int32(time.Now().UTC().Year())
+
+	assert.Equal(t, int64(2), reach[fmt.Sprintf("SLA%d", thisYear)].LastNumber,
+		"two documents were issued in SLA this year, and the listing is where an operator "+
+			"reads that number back")
+	assert.Equal(t, int64(1), reach[fmt.Sprintf("SLB%d", thisYear)].LastNumber,
+		"the second prefix has a series of its own, numbering from one")
+	assert.Equal(t, int64(1), reach[fmt.Sprintf("SLA%d", thisYear+1)].LastNumber,
+		"next year's SLA is a DIFFERENT series and starts again at one")
+	assert.Equal(t, sequenceOf(t, ahead.Number),
+		reach[fmt.Sprintf("SLA%d", thisYear+1)].LastNumber,
+		"the last number the listing reports has to be the number the last document took")
+
+	for i := 1; i < len(listed); i++ {
+		previous, current := listed[i-1], listed[i]
+
+		ordered := previous.Year > current.Year ||
+			(previous.Year == current.Year && previous.Prefix < current.Prefix)
+		assert.True(t, ordered,
+			"the listing is ordered newest year first and then by prefix, so the series being "+
+				"issued into is at the top: %s%d came before %s%d",
+			previous.Prefix, previous.Year, current.Prefix, current.Year)
+	}
 }

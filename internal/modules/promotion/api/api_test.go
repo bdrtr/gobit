@@ -189,6 +189,81 @@ func TestAdminPromosyonYasamDongusu(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 }
 
+// TestAdminPromosyonGuncellemeGovdedeOlmayanAlanlariSifirlar PUT'un YERİNE
+// KOYMA olduğunu, kısmi güncelleme OLMADIĞINI doğrular.
+//
+// Ölçüldüğünde (2026-09-07) bu işleyici %0'daydı: oluşturma, okuma, listeleme
+// ve silme kapsanmışken düzenleme ucu hiç çağrılmamıştı — yani promosyon
+// düzenlemenin HTTP yüzeyi hiç koşmadan yayınlanmıştı.
+//
+// İddianın ağırlığı sıfırlamadadır. PUT sessizce kısmi davransaydı, gövdesinde
+// yalnızca kodu gönderen bir operatör promosyonun otomatikliğini ve kullanım
+// sınırını FARKINDA OLMADAN korurdu; tersine, burada beklendiği gibi
+// yerine koyma yapıldığında o alanların kalkması operatörün İSTEDİĞİ şeydir
+// ve gerekçesi [service.Service.UpdatePromotion] godoc'undadır: "alan
+// gönderilmedi" ile "alan boşaltılsın" ayrımını istemciye bırakmak, bir
+// promosyonun kampanyasını sökme isteğini sessizce yutardı.
+//
+// Durum alanının da düşmesi ayrıca sınanır: gövdede durum yoksa promosyon
+// TASLAĞA döner, yani yayında kalmaz. Bu, yanlışlıkla eksik gönderilmiş bir
+// düzenlemenin GÜVENLİ yönde bittiğini söyler.
+func TestAdminPromosyonGuncellemeGovdedeOlmayanAlanlariSifirlar(t *testing.T) {
+	r, _ := newTestRouter(t)
+
+	id := promosyonOlustur(t, r, `{
+	  "code": "yaz20",
+	  "status": "active",
+	  "is_automatic": true,
+	  "usage_limit": 5,
+	  "metadata": {"kanal": "eposta"}
+	}`)
+
+	rec := do(t, r, http.MethodPut, "/admin/v1/promotions/"+id, `{"code": "kis20"}`)
+	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+
+	guncel := decodeItem(t, rec)
+	assert.Equal(t, id, guncel["id"], "düzenleme kimliği değiştirmez")
+	assert.Equal(t, "KIS20", guncel["code"], "kod BÜYÜK harfe çevrilerek yazılmalı")
+	assert.Equal(t, false, guncel["is_automatic"], "gövdede olmayan bayrak eski değerini KORUMAMALI")
+	assert.Nil(t, guncel["usage_limit"], "gövdede olmayan kullanım sınırı kalkmalı")
+	// Üstveri BOŞ nesne olarak döner, null olarak değil: normalizeMetadata nil
+	// yerine daima bir harita üretir, böylece istemci alanı ayırt etmek için
+	// null denetimi yazmak zorunda kalmaz.
+	assert.Equal(t, map[string]any{}, guncel["metadata"], "gövdede olmayan üstveri kalkmalı")
+	assert.Equal(t, string(models.PromotionDraft), guncel["status"],
+		"durumu gönderilmeyen bir düzenleme promosyonu YAYINDA bırakmamalı")
+
+	// Cevap değil, KAYIT sınanır: işleyici doğru bir gövde yazıp yazmayı
+	// hiç yapmamış da olabilirdi.
+	rec = do(t, r, http.MethodGet, "/admin/v1/promotions/"+id, "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	okunan := decodeItem(t, rec)
+	assert.Equal(t, "KIS20", okunan["code"])
+	assert.Equal(t, string(models.PromotionDraft), okunan["status"])
+	assert.InDelta(t, 0, okunan["usage_count"], 0, "düzenleme kullanım sayacına dokunmaz")
+
+	// Eski kod artık kimseye ait değildir ve yeniden alınabilir.
+	rec = do(t, r, http.MethodPost, "/admin/v1/promotions", `{"code": "YAZ20"}`)
+	assert.Equal(t, http.StatusCreated, rec.Code,
+		"düzenlemeyle bırakılan kod rezerve kalmamalı; kalsaydı kod gerçekten yazılmamış olurdu")
+}
+
+// TestAdminOlmayanPromosyonuGuncellemek404Doner düzenleme ucunun hata dalını
+// doğrular.
+//
+// Ayrı bir testtir çünkü işleyicinin hata dalı ayrı bir yoldur: yazma yolu
+// çalışırken hata dalı hiç koşmamış olabilir ve o durumda yanlış kimlikle
+// gelen bir istemci 200 ya da 500 görürdü — ikisi de "böyle bir promosyon yok"
+// demez.
+func TestAdminOlmayanPromosyonuGuncellemek404Doner(t *testing.T) {
+	r, _ := newTestRouter(t)
+
+	rec := do(t, r, http.MethodPut,
+		"/admin/v1/promotions/promo_YOKYOKYOKYOKYOKYOKYOKYOKYO", `{"code": "YENI"}`)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code, "gövde: %s", rec.Body.String())
+}
+
 func TestAdminPromosyonListesiSuzulebilir(t *testing.T) {
 	r, _ := newTestRouter(t)
 	promosyonOlustur(t, r, `{"code": "AKTIF", "status": "active"}`)

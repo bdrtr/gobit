@@ -56,6 +56,16 @@ const (
 	testLocationWest  = "sloc_west"
 )
 
+// integrationShutdown releases whatever an integration test set up ONCE for the
+// whole package; it is nil in the default build.
+//
+// A test binary may hold only one TestMain and this file already owns it, so
+// the recovery tests (recovery_integration_test.go) cannot bring their Postgres
+// container up and down around m.Run themselves. They start it lazily and leave
+// the teardown here instead. It is only ever assigned before m.Run's tests
+// finish and only ever read afterwards, so no locking is needed.
+var integrationShutdown func()
+
 // TestMain silences the tests' default logger.
 //
 // [FromContainer] takes its setup logger from slog.Default (the application
@@ -63,7 +73,11 @@ const (
 // stays readable.
 func TestMain(m *testing.M) {
 	slog.SetDefault(slog.New(slog.DiscardHandler))
-	os.Exit(m.Run())
+	code := m.Run()
+	if integrationShutdown != nil {
+		integrationShutdown()
+	}
+	os.Exit(code)
 }
 
 // errUnexpected is the error of an unscripted fake call.

@@ -145,6 +145,7 @@ import (
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 	invoicingwf "github.com/bdrtr/gobit/internal/workflows/invoicing"
+	returnswf "github.com/bdrtr/gobit/internal/workflows/returns"
 )
 
 // postgresImage is the database image the tests share; the SAME version is used
@@ -741,6 +742,9 @@ func setUpHarness(ctx context.Context) error {
 	if setupErr = setUpInvoicingWorkflow(); setupErr != nil {
 		return fmt.Errorf("could not set up the invoicing workflow: %w", setupErr)
 	}
+	if setupErr = setUpReturnsWorkflow(); setupErr != nil {
+		return fmt.Errorf("could not set up the return workflow: %w", setupErr)
+	}
 
 	if err := setUpRegionFixtures(ctx); err != nil {
 		return err
@@ -934,6 +938,28 @@ func setUpInvoicingWorkflow() error {
 	}
 
 	return ctr.Provide(invoicingwf.InteropName, invoicingwf.NewInterop(flow))
+}
+
+// setUpReturnsWorkflow builds the after-sales flow and registers its surface.
+//
+// It is wired for the same reason [setUpInvoicingWorkflow] is, and the cost of
+// leaving it out is louder: the order module resolves this flow BY NAME at
+// request time and FAILS CLOSED when it is missing, so without the
+// registration every receive, refund and claim settlement answers 500 and a
+// scenario written against those endpoints would be proving that the
+// unavailable-flow branch works. The registration is the same one
+// internal/app/setup.go makes.
+//
+// The flow itself is not kept in a variable: nothing in these tests calls it
+// directly, and that is the point — the only way a return is received here is
+// the way an operator receives one, over HTTP.
+func setUpReturnsWorkflow() error {
+	flow, err := returnswf.FromContainer(ctr)
+	if err != nil {
+		return err
+	}
+
+	return ctr.Provide(returnswf.InteropName, returnswf.NewInterop(flow))
 }
 
 // setUpStockLocation prepares the single stock location the scenarios share.

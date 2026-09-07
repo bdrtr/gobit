@@ -15,6 +15,7 @@ import (
 	"github.com/bdrtr/gobit/core/container"
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	coreplugin "github.com/bdrtr/gobit/core/plugin"
+	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/job"
 )
 
@@ -382,4 +383,106 @@ func TestNoPluginsIsNotAnError(t *testing.T) {
 	require.NoError(t, addPluginJobs(registry, nil))
 	require.NoError(t, addPluginJobs(registry, installed(t)))
 	assert.Zero(t, registry.Len())
+}
+
+// bounded is a definition the registry accepts, with the two durations the
+// shutdown check compares.
+func bounded(name string, every, maxRun time.Duration) job.Definition {
+	return job.Definition{
+		Name:   name,
+		Every:  every,
+		MaxRun: maxRun,
+		Run:    func(context.Context) error { return nil },
+	}
+}
+
+// startupWarnings runs the startup check and returns what it wrote.
+func startupWarnings(t *testing.T, shutdown time.Duration, defs ...job.Definition) string {
+	t.Helper()
+
+	registry := job.NewRegistry()
+	for _, d := range defs {
+		require.NoError(t, registry.Add(d))
+	}
+
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	warnIfAJobOutlivesShutdown(t.Context(), registry,
+		config.Config{ShutdownTimeout: shutdown}, log)
+
+	return buf.String()
+}
+
+// TestAJobThatCanOutlastTheShutdownWindowIsNamedBeforeItHappens connects two
+// facts an operator would otherwise see separately and never join.
+//
+// The day it happens they get a shutdown that takes the whole timeout and, in
+// `gobit jobs`, a run with a start and no end. Nothing in either sentence points
+// at the other, and the natural reading of the second — "the process died
+// mid-pass, something is wrong" — is exactly wrong: the pass was cut off on
+// purpose because its own budget is longer than the window the process is given
+// to leave. The warning is the only place the two numbers appear together, and
+// it is printed at STARTUP, minutes or weeks before the shutdown it explains,
+// because during the shutdown nobody is reading.
+func TestAJobThatCanOutlastTheShutdownWindowIsNamedBeforeItHappens(t *testing.T) {
+	t.Parallel()
+
+	out := startupWarnings(t, 15*time.Second,
+		bounded("outbox-relay", time.Minute, 45*time.Second))
+
+	assert.Contains(t, out, "outbox-relay",
+		"the warning has to name WHICH job, or an installation with several is told "+
+			"only that one of them is a problem")
+	assert.Contains(t, out, "45s", "the job's own budget is half of the comparison")
+	assert.Contains(t, out, "15s", "and the window it does not fit into is the other half")
+}
+
+// TestAJobThatFitsInTheShutdownWindowIsNotWarnedAbout keeps the line worth
+// reading.
+//
+// This runs once per boot, in the first screen of a start-up log, next to the
+// lines an operator reads when a deploy misbehaves. A warning printed for every
+// job would be skimmed past within a week, and the one job that genuinely
+// cannot finish would be skimmed past with it.
+//
+// The boundary is the interesting half: a job whose budget is EXACTLY the
+// shutdown window ends as the window ends, so it cannot outlive it. Warning
+// there would put a line into the log of every installation that tuned the two
+// numbers to match — the most deliberate configuration there is.
+func TestAJobThatFitsInTheShutdownWindowIsNotWarnedAbout(t *testing.T) {
+	t.Parallel()
+
+	assert.Empty(t, startupWarnings(t, 15*time.Second,
+		bounded("saga-watch", time.Hour, 10*time.Second)),
+		"a job that finishes well inside the window is not news")
+
+	assert.Empty(t, startupWarnings(t, 15*time.Second,
+		bounded("saga-watch", time.Hour, 15*time.Second)),
+		"a job whose budget is exactly the shutdown window ends as the window ends; "+
+			"there is nothing to warn about, and the warning would land on precisely "+
+			"the installations that matched the two numbers on purpose")
+}
+
+// TestOnlyTheJobsThatDoNotFitAreNamed stops the warning from becoming a listing.
+//
+// A registry holds several jobs and typically ONE of them has a long pass. The
+// operator's next step is to shorten that job's budget or lengthen the window,
+// and both need the name; a warning that swept in the well-behaved jobs would
+// send them looking at the wrong three.
+func TestOnlyTheJobsThatDoNotFitAreNamed(t *testing.T) {
+	t.Parallel()
+
+	out := startupWarnings(t, 30*time.Second,
+		bounded("saga-watch", time.Hour, 10*time.Second),
+		bounded("outbox-relay", time.Minute, 45*time.Second),
+		bounded("payment-reconcile", time.Hour, 20*time.Second))
+
+	assert.Contains(t, out, "outbox-relay")
+	assert.NotContains(t, out, "saga-watch",
+		"a job that fits must not appear; the operator would go and shorten a budget "+
+			"that was never the problem")
+	assert.NotContains(t, out, "payment-reconcile")
+	require.Len(t, strings.Split(strings.TrimRight(out, "\n"), "\n"), 1,
+		"one line per job that does not fit, and nothing else:\n%s", out)
 }

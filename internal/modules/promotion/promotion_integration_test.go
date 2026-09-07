@@ -1170,3 +1170,303 @@ func TestYontemYazmaSilinenPromosyonaYazmaz(t *testing.T) {
 		promo.ID),
 		"silinmiş promosyonun altında canlı uygulama yöntemi kalmamalı")
 }
+
+// TestKuponKoduylaKullanimZinciriGercekVeritabanindaTamamlanir kupon kodunun
+// hesaptan kullanıma ve telafiye kadar GERÇEK Postgres üzerinde çözüldüğünü
+// doğrular.
+//
+// Zincirin her adımı ölçüldüğünde (2026-09-07) tek bir sorgu hiç
+// çalışmamıştı: GetPromotionByCode. Kilit, sayaç ve idempotency sorgularının
+// hepsi %100 kapsanmışken kodun kendisinden promosyona geçen adım yalnızca
+// bellek içi taklide karşı koşuyordu — yani kupon kodu YAZAN bir müşterinin
+// yolunda, hiç Postgres görmemiş bir SQL vardı. Taklit o boşluğu göremez:
+// taklidin arama döngüsü Go'dadır, gerçekteki WHERE ise SQL'dedir ve ikisi
+// sessizce ayrışabilir.
+//
+// Kullanım BİLEREK yalnızca kodla istenir (PromotionID boş bırakılır): kimlik
+// de verilseydi [service.Service.resolvePromotion] kimlik dalını seçer ve
+// kod sorgusu yine hiç çalışmazdı. Kod ayrıca KÜÇÜK harfle verilir; sütunda
+// BÜYÜK harf saklandığı için bu, normalleştirmenin gerçek sütuna karşı
+// tuttuğunu gösteren tek denemedir.
+func TestKuponKoduylaKullanimZinciriGercekVeritabanindaTamamlanir(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+
+	kupon := aktifPromosyon(ctx, t, svc, service.PromotionInput{})
+	require.False(t, kupon.IsAutomatic, "bu testin konusu KOD gerektiren promosyondur")
+
+	res, err := svc.ComputeDiscounts(ctx, service.ComputeInput{
+		CurrencyCode: "TRY",
+		Items:        []service.ComputeItem{{ID: "li_1", Amount: 10_000, Quantity: 1}},
+		Codes:        []string{kupon.Code},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, res.UnmatchedCodes, "geçerli kod eşleşmemiş sayılmamalı")
+
+	// İddia sepet TOPLAMINA değil, BU kuponun payına bağlanır. Sebep paylaşılan
+	// veritabanıdır: aynı konteyneri kullanan başka testler OTOMATİK promosyon
+	// bırakır ve onlar da her hesaba girer, yani toplam bu testin denetiminde
+	// değildir. Kupona göre anahtarlanan iddia hem daha dar hem de daha
+	// doğrudur — sınanan şey "sepet ne kadar indi" değil, "kodu yazılan kupon
+	// ne kadar indirdi"dir.
+	pay := uygulananPay(t, res, kupon.Code)
+	require.Equal(t, int64(2000), pay, "%20 × 10000 kuponun payı olmalı")
+
+	referans := "order_" + benzersizKod()
+	kullanim, err := svc.RedeemPromotion(ctx, service.RedeemInput{
+		Code:         lower(kupon.Code),
+		Reference:    referans,
+		Amount:       pay,
+		CurrencyCode: "TRY",
+	})
+	require.NoError(t, err, "kupon kodu tek başına kullanımı adlandırabilmeli")
+	assert.Equal(t, kupon.ID, kullanim.PromotionID,
+		"küçük harfli kod, BÜYÜK harf saklanan satırın promosyonuna çözülmeli")
+	assert.Equal(t, pay, kullanim.Amount, "deftere kuponun kendi payı yazılmalı")
+
+	// Kullanım defterde GERÇEKTEN vardır: satır sayılır, servis cevabı
+	// tekrarlanmaz. Servisin döndürdüğü kayıt yazılmamış olsaydı da aynı
+	// görünürdü.
+	assert.EqualValues(t, 1, sayim(ctx, t,
+		`SELECT count(*) FROM promotion_redemption
+         WHERE promotion_id = $1 AND reference = $2 AND released_at IS NULL`,
+		kupon.ID, referans), "kod yoluyla yapılan kullanım defterde tek satır olmalı")
+
+	okunan, err := svc.GetRedemption(ctx, kupon.ID, referans)
+	require.NoError(t, err)
+	assert.Equal(t, kullanim.ID, okunan.ID)
+
+	guncel, err := svc.GetPromotion(ctx, kupon.ID)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, guncel.UsageCount, "kod yoluyla kullanım sayacı artırmalı")
+
+	// Telafi de kodla adlandırılabilmelidir: sipariş iptal eden akış elinde
+	// yalnızca müşterinin yazdığı kodu tutuyor olabilir.
+	released, err := svc.ReleasePromotion(ctx, service.ReleaseInput{
+		Code: kupon.Code, Reference: referans,
+	})
+	require.NoError(t, err)
+	assert.True(t, released, "kodla adlandırılan telafi gerçekten iş yapmalı")
+
+	guncel, err = svc.GetPromotion(ctx, kupon.ID)
+	require.NoError(t, err)
+	assert.Zero(t, guncel.UsageCount, "telafi sayacı geri almalı")
+}
+
+// uygulananPay bir hesap sonucunda VERİLEN kupon koduna düşen indirimi döner.
+//
+// Toplam yerine payın okunması zorunludur: testler tek bir Postgres
+// konteynerini paylaşır ve daha önce koşan bir test tabloda OTOMATİK bir
+// promosyon bırakmış olabilir. Otomatik promosyon her hesaba kodsuz girer,
+// dolayısıyla sepet toplamı bu testin kurduğu duruma değil, suite'in o ana
+// kadarki geçmişine bağlıdır. Ölçüldü (2026-09-07): sepet toplamına bakan ilk
+// hâli tek başına yeşil, suite içinde kırmızıydı.
+func uygulananPay(t *testing.T, res service.ComputeResult, kod string) int64 {
+	t.Helper()
+
+	for i := range res.Applied {
+		if res.Applied[i].Code == kod {
+			return res.Applied[i].Amount
+		}
+	}
+	t.Fatalf("%s kuponu uygulananlar arasında yok: %+v", kod, res.Applied)
+	return 0
+}
+
+// TestSilinmisPromosyonunKuponKoduHicbirYuzeydeCozulmez yumuşak silinen bir
+// promosyonun kodunun okuma yüzeylerinde artık bulunamadığını doğrular.
+//
+// İddia YALNIZCA veritabanının tanıklık edebileceği türdendir: yumuşak silme
+// satırı yerinde bırakır, bu yüzden "kayıt yok" kararını veren şey haritadan
+// silinmiş bir anahtar değil, sorgunun `deleted_at IS NULL` koşuludur. Bellek
+// içi taklit promosyonu haritadan ÇIKARARAK siler ve bu koşulun kaldırıldığını
+// göremez; testin ilk iddiası (satır hâlâ tabloda) tam olarak bu ayrımı
+// kurar.
+//
+// Sonucu ağırdır: koşul düşerse süresi dolmuş bir kampanyanın kuponu mağaza
+// yüzeyinde yeniden geçerli görünür ve operatörün "sildim" dediği kod
+// müşteriye kullanılabilir olarak döner.
+//
+// Kullanım yolu burada SINANMAZ ve bu bilinçlidir: kullanım promosyonu
+// LockPromotion ile okur ve o sorgunun KENDİ `deleted_at IS NULL` koşulu
+// vardır, yani kod sorgusundaki koşul kaldırılsa bile kullanım yine
+// reddedilirdi. Buraya konsaydı ısırmayan bir iddia olurdu.
+func TestSilinmisPromosyonunKuponKoduHicbirYuzeydeCozulmez(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+
+	kupon := aktifPromosyon(ctx, t, svc, service.PromotionInput{})
+	require.NoError(t, svc.DeletePromotion(ctx, kupon.ID))
+
+	require.EqualValues(t, 1, sayim(ctx, t,
+		`SELECT count(*) FROM promotion WHERE id = $1 AND deleted_at IS NOT NULL`, kupon.ID),
+		"yumuşak silme satırı YERİNDE bırakır; testin anlamı buna dayanır")
+
+	_, err := svc.GetPromotionByCode(ctx, kupon.Code)
+	require.Error(t, err, "silinen kuponun kodu yönetim yüzeyinde de çözülmemeli")
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
+
+	_, err = svc.LookupStoreCoupon(ctx, kupon.Code)
+	require.Error(t, err, "silinen kupon müşteriye kullanılabilir görünmemeli")
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
+	assert.Equal(t, service.CodePromotionNotUsable, errors.CodeOf(err))
+
+	// Kod yeniden kullanılabildiği için aynı kodda YENİ bir promosyon
+	// açılabilir; silinen satırın kodu artık ONUN değildir.
+	yeni, err := svc.CreatePromotion(ctx, service.PromotionInput{
+		Code: kupon.Code, Status: models.PromotionActive,
+	})
+	require.NoError(t, err)
+	cozulen, err := svc.GetPromotionByCode(ctx, kupon.Code)
+	require.NoError(t, err)
+	assert.Equal(t, yeni.ID, cozulen.ID,
+		"kod iki satıra uyarken canlı olan seçilmeli, silinmiş olan değil")
+}
+
+// TestPromosyonGuncellemeTanimiDegistirirKullanimSayacinaDokunmaz promosyonun
+// düzenleme yolunun GERÇEK Postgres üzerinde ne yapıp ne yapmadığını
+// doğrular.
+//
+// Ölçüldüğünde (2026-09-07) hem HTTP işleyicisi hem altındaki UPDATE %0'daydı:
+// oluşturma ve silme kapsanmışken düzenleme hiç veritabanına gönderilmemişti.
+// Bir promosyonun tanımını değiştirmek operatörün en sık yaptığı iştir ve
+// "gönderilmemiş SQL" sınıfının tam örneğidir.
+//
+// Asıl iddia sayaçtadır: UPDATE'in SET listesinde usage_count BİLEREK yoktur
+// (bkz. queries/promotion.sql'deki gerekçe). O sütun listeye girseydi, kuponu
+// düzenleyen bir operatör kullanım geçmişini sıfırlar ve sınırı dolmuş bir
+// kupon yeniden dağıtılabilir hâle gelirdi — üstelik kullanım defteri
+// satırları yerinde kalacağı için defterle sayaç birbirini tutmazdı. Bu ancak
+// gerçek bir UPDATE çalıştırılarak görülebilir; taklit sayacı Go tarafında
+// elle korur ve SET listesi hakkında hiçbir şey söylemez.
+func TestPromosyonGuncellemeTanimiDegistirirKullanimSayacinaDokunmaz(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+
+	kampanya, err := svc.CreateCampaign(ctx, service.CampaignInput{
+		Name:               "Yaz",
+		CampaignIdentifier: "GUNCELLEME-" + benzersizKod(),
+		BudgetType:         models.BudgetSpend,
+		BudgetLimit:        ptr(int64(1_000_000)),
+		BudgetCurrencyCode: "TRY",
+	})
+	require.NoError(t, err)
+
+	kupon := aktifPromosyon(ctx, t, svc, service.PromotionInput{
+		CampaignID: &kampanya.ID,
+		UsageLimit: ptr(int64(5)),
+	})
+	for i := range 2 {
+		_, redeemErr := svc.RedeemPromotion(ctx, service.RedeemInput{
+			PromotionID: kupon.ID, Reference: fmt.Sprintf("order_%d_%s", i, benzersizKod()),
+			Amount: 2500, CurrencyCode: "TRY",
+		})
+		require.NoError(t, redeemErr)
+	}
+
+	yeniKod := benzersizKod()
+	guncellenen, err := svc.UpdatePromotion(ctx, kupon.ID, service.PromotionInput{
+		Code:       lower(yeniKod),
+		CampaignID: &kampanya.ID,
+		Status:     models.PromotionInactive,
+		UsageLimit: ptr(int64(9)),
+		Metadata:   map[string]string{"kanal": "eposta"},
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, yeniKod, guncellenen.Code, "kod BÜYÜK harfe çevrilerek yazılmalı")
+	assert.Equal(t, models.PromotionInactive, guncellenen.Status)
+	require.NotNil(t, guncellenen.UsageLimit)
+	assert.EqualValues(t, 9, *guncellenen.UsageLimit)
+	assert.Equal(t, map[string]string{"kanal": "eposta"}, guncellenen.Metadata)
+
+	assert.EqualValues(t, 2, guncellenen.UsageCount,
+		"düzenleme kullanım geçmişini SİLEMEZ; sıfırlansaydı dolmuş bir kupon yeniden dağıtılabilirdi")
+	assert.Equal(t, kupon.CreatedAt, guncellenen.CreatedAt, "oluşturma anı düzenlemeyle değişmez")
+	assert.False(t, guncellenen.UpdatedAt.Before(kupon.UpdatedAt),
+		"düzenleme anı geriye gitmemeli")
+
+	// Cevap değil, SATIR sınanır: dönen kayıt doğru olup yazma inmemiş olabilir.
+	okunan, err := svc.GetPromotion(ctx, kupon.ID)
+	require.NoError(t, err)
+	assert.Equal(t, yeniKod, okunan.Code)
+	assert.Equal(t, models.PromotionInactive, okunan.Status)
+	assert.EqualValues(t, 2, okunan.UsageCount)
+
+	// Defter ile sayaç birbirini tutmalıdır; sayaç sıfırlansaydı bu iki sayı
+	// ayrışırdı.
+	assert.EqualValues(t, 2, sayim(ctx, t,
+		`SELECT count(*) FROM promotion_redemption
+         WHERE promotion_id = $1 AND released_at IS NULL`, kupon.ID),
+		"kullanım defteri düzenlemeden etkilenmemeli")
+
+	guncelKampanya, err := svc.GetCampaign(ctx, kampanya.ID)
+	require.NoError(t, err)
+	assert.EqualValues(t, 5000, guncelKampanya.BudgetUsed,
+		"promosyon düzenlemek kampanya bütçesini geri vermez")
+}
+
+// TestPromosyonGuncellemeSilinmisSatiraInmez yumuşak silinmiş bir promosyonun
+// düzenlenemediğini doğrular.
+//
+// Koşul UPDATE'in WHERE'indedir ve yalnızca veritabanı tanıklık edebilir:
+// satır yerinde durduğu için "id = $1" tek başına onu bulur. Koşul düşerse
+// silinmiş bir promosyon sessizce yeniden yayına alınabilir — durumu `active`
+// yapan bir düzenleme, silinmiş satırı diriltmeden indirim üreten bir kayda
+// çevirirdi (aday sorgusu `deleted_at`e baktığı için hesaba girmezdi, ama
+// kupon defteri ve yönetim listesi ayrışırdı).
+func TestPromosyonGuncellemeSilinmisSatiraInmez(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+
+	kupon := aktifPromosyon(ctx, t, svc, service.PromotionInput{})
+	eskiKod := kupon.Code
+	require.NoError(t, svc.DeletePromotion(ctx, kupon.ID))
+
+	_, err := svc.UpdatePromotion(ctx, kupon.ID, service.PromotionInput{
+		Code: benzersizKod(), Status: models.PromotionActive,
+	})
+
+	require.Error(t, err, "silinmiş promosyon düzenlenememeli")
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
+
+	assert.EqualValues(t, 1, sayim(ctx, t,
+		`SELECT count(*) FROM promotion
+         WHERE id = $1 AND code = $2 AND status = 'active' AND deleted_at IS NOT NULL`,
+		kupon.ID, eskiKod),
+		"reddedilen düzenleme satıra HİÇBİR ŞEY yazmamalı")
+}
+
+// TestPromosyonGuncellemeBaskasininKuponKodunuAlamaz kupon kodu benzersizliğinin
+// DÜZENLEME yolunda da geçerli olduğunu doğrular.
+//
+// [TestKuponKoduBenzersizdir] yalnızca oluşturmayı sınar; benzersizliğin hakemi
+// kısmi bir indeks olduğu için iki yolun ayrı ayrı gösterilmesi gerekir. Servis
+// katmanında bir kod çakışması denetimi YOKTUR ve olmamalıdır — iki eşzamanlı
+// düzenleme arasında yalnızca veritabanı hakemlik edebilir. Kaçarsa sonucu
+// somuttur: aynı kod iki canlı promosyona bağlanır ve müşterinin yazdığı kodun
+// hangi indirimi vereceği belirsizleşir (kod sorgusu `:one`dır ve ikinci satırı
+// gördüğünde hata verir).
+func TestPromosyonGuncellemeBaskasininKuponKodunuAlamaz(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+
+	birinci := aktifPromosyon(ctx, t, svc, service.PromotionInput{})
+	ikinci := aktifPromosyon(ctx, t, svc, service.PromotionInput{})
+
+	_, err := svc.UpdatePromotion(ctx, ikinci.ID, service.PromotionInput{
+		Code: birinci.Code, Status: models.PromotionActive,
+	})
+
+	require.Error(t, err, "canlı bir kuponun kodu düzenlemeyle devralınamaz")
+	assert.Equal(t, errors.KindConflict, errors.KindOf(err),
+		"benzersizlik ihlali istemci çakışması olarak sınıflandırılmalı")
+
+	assert.EqualValues(t, 1, sayim(ctx, t,
+		`SELECT count(*) FROM promotion WHERE code = $1 AND deleted_at IS NULL`, birinci.Code),
+		"kod hâlâ TEK bir canlı promosyona ait olmalı")
+
+	okunan, err := svc.GetPromotion(ctx, ikinci.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ikinci.Code, okunan.Code, "reddedilen düzenleme kodu değiştirmemeli")
+}

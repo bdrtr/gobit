@@ -1,155 +1,168 @@
-# ADR 0007 — Sertleştirme bileşenleri arızalandığında ne olur
+# ADR 0007 — What happens when the hardening components fail
 
-- **Durum:** Kabul edildi
-- **Tarih:** 2026-08-24
-- **Faz:** 9
-- **Genişletildi:** 2026-09-03 — "Aynı soru bir kat yukarıda: hazırlık probu"
-  bölümü. Karar değişmedi; aynı gerekçe `/ready` ucuna uygulandı.
+- **Status:** Accepted
+- **Date:** 2026-08-24
+- **Phase:** 9
+- **Extended:** 2026-09-03 — the "The same question one layer up: the readiness
+  probe" section. The decision did not change; the same argument was applied to
+  the `/ready` endpoint.
 
-## Bağlam
+## Context
 
-Faz 9 üç koruma bileşeni getiriyor: hız sınırlama, idempotency ve (Faz 8'den)
-kimlik doğrulama. Üçü de "istek geçsin mi geçmesin mi" sorusuna cevap veren
-middleware'ler. Üçü de yapılandırılmamış ya da arızalı olabilir:
+Phase 9 brings three protective components: rate limiting, idempotency and (from
+Phase 8) authentication. All three are middlewares answering the question "does
+this request get through or not". All three can be unconfigured or faulty:
 
-- `RateLimit` bir `RateLimiter` alır; Redis tabanlı bir uygulama erişilemez
-  olabilir, ya da hiç yapılandırılmamış (nil) olabilir.
-- `Idempotency` bir `IdempotencyStore` alır; aynı şekilde.
-- `RequireAdmin` bir `Authenticator` alır; auth modülü kayıtlı olmayabilir.
+- `RateLimit` takes a `RateLimiter`; a Redis-backed implementation can be
+  unreachable, or it can be unconfigured altogether (nil).
+- `Idempotency` takes an `IdempotencyStore`; the same way.
+- `RequireAdmin` takes an `Authenticator`; the auth module may not be
+  registered.
 
-Kolay olan, üçü için de tek bir kural koymaktı: "bileşen yoksa geç" ya da
-"bileşen yoksa reddet". İkisi de yanlış.
+The easy thing was a single rule for all three: "no component, let it through"
+or "no component, reject". Both are wrong.
 
-## Karar
+## Decision
 
-**Her bileşen kendi başarısızlık modeline göre davranır. Tek tip kural yok.**
+**Each component behaves according to its own failure model. There is no uniform
+rule.**
 
-| Bileşen | Yapılandırılmamış (nil) | Çalışma anında arıza |
+| Component | Unconfigured (nil) | Runtime fault |
 |---|---|---|
-| `RequireAdmin` / `RequireStore` | **Her isteği reddet** (401) | Reddet |
-| `RateLimit` | **No-op** (geçir) | **Geçir** (fail-open) + uyarı logu |
-| `Idempotency` | **No-op** (geçir) | Ayırmada: reddet. Kayıtta: anahtarı serbest bırak |
+| `RequireAdmin` / `RequireStore` | **Reject every request** (401) | Reject |
+| `RateLimit` | **No-op** (let through) | **Let through** (fail-open) + warning log |
+| `Idempotency` | **No-op** (let through) | On reservation: reject. On recording: release the key |
 
-Gerekçe, "bu bileşen olmadan ne bozulur" sorusunun her satırda farklı
-cevaplanmasıdır:
+The reason is that the question "what breaks without this component" is answered
+differently on every row:
 
-**Kimlik doğrulama açık kalırsa sistem sessizce SAVUNMASIZ olur.** Kimsenin
-fark etmediği bir açık, ancak istismar edildiğinde görünür. Bu yüzden
-`auth == nil` bir yapılandırma hatasıdır ve gürültülü biçimde başarısız olmalı:
-korumasız bir admin yüzeyi asla sessizce açık kalmamalı.
+**If authentication stays open the system becomes silently VULNERABLE.** A hole
+nobody notices only becomes visible once it is exploited. That is why
+`auth == nil` is a configuration error and must fail loudly: an unprotected
+admin surface must never be left silently open.
 
-**Hız sınırlayıcı kapalı kalırsa sistem yalnızca KORUMASIZ olur, yanlış
-olmaz.** Hız sınırı ürünün doğruluğu için değil, kötüye kullanıma karşı vardır.
-Redis düştüğünde tüm trafiği reddetmek, hız sınırlayıcıyı tam bir kesinti
-kaynağına çevirirdi: koruduğu servisi kendisi çökertirdi. Arıza penceresinde
-sınırın uygulanmaması kabul edilen bedeldir ve `WARN` seviyesinde loglanır.
+**If the rate limiter stays off the system is merely UNPROTECTED, not wrong.**
+The rate limit exists against abuse, not for the correctness of the product.
+Rejecting all traffic when Redis goes down would turn the rate limiter into a
+full outage source: it would take down the very service it protects. Not
+enforcing the limit during the fault window is the accepted price, and it is
+logged at `WARN` level.
 
-**Idempotency deposu kapalıysa tekrar denemeler ÇİFT İŞLEM üretir — bu bir
-doğruluk sorunudur.** Yine de `store == nil` no-op'tur, çünkü depo yokken
-"idempotency zorunlu" demek, anahtar göndermeyen tüm mevcut istemcileri bir
-gecede kırardı.
+**If the idempotency store is off, retries produce DOUBLE PROCESSING — that is
+a correctness problem.** Even so, `store == nil` is a no-op, because saying
+"idempotency is mandatory" while there is no store would break, overnight, every
+existing client that does not send a key.
 
-Depo VARSA, çalışma anı hatasının sonucu isteğin hangi ANINDA oluştuğuna
-bağlıdır ve bu ayrım kaçınılmazdır:
+If the store IS there, the consequence of a runtime error depends on WHICH
+MOMENT of the request it happens in, and that distinction is unavoidable:
 
-- **Ayırma (`Begin`) sırasında hata**: handler henüz çalışmadı, hiçbir yan etki
-  yok. Hata istemciye iletilir ve istek reddedilir. "Kaydedemedim ama yine de
-  işledim" demek, sessizce ikinci bir tahsilat riskini kabul etmek olurdu.
-- **Kayıt (`Complete`) sırasında hata**: handler çalıştı, yanıt istemciye
-  ÇOKTAN yazıldı. Artık status kodu değiştirilemez. Yapılabilecek tek doğru
-  şey ayırmayı serbest bırakmaktır; aksi hâlde anahtar sonsuza dek "işlemde"
-  kalır ve istemci ne yanıt alabilir ne tekrar deneyebilir. Serbest bırakmanın
-  bedeli tekrarın yeniden işlenme ihtimalidir — kalıcı kilitten iyidir.
+- **An error during reservation (`Begin`)**: the handler has not run yet, there
+  are no side effects. The error is passed to the client and the request is
+  rejected. Saying "I could not record it but I processed it anyway" would mean
+  silently accepting the risk of a second charge.
+- **An error during recording (`Complete`)**: the handler ran, the response has
+  ALREADY been written to the client. The status code can no longer be changed.
+  The only correct thing left to do is release the reservation; otherwise the
+  key stays "in flight" forever and the client can neither get a response nor
+  retry. The price of releasing is that the retry may be processed again — which
+  is better than a permanent lock.
 
-Aynı gerekçeyle, tampon sınırını aşan bir yanıt da kaydedilmez: eksik bir
-gövdeyi kaydedip sonra çalmak, istemciye KESİK ve bozuk bir yanıt vermek
-olurdu. Bozuk yanıt, tekrarın yeniden işlenmesinden çok daha kötüdür.
+By the same argument, a response exceeding the buffer limit is not recorded
+either: recording a partial body and then replaying it would mean handing the
+client a TRUNCATED and corrupt response. A corrupt response is far worse than a
+retry being processed again.
 
-## Aynı soru bir kat yukarıda: hazırlık probu
+## The same question one layer up: the readiness probe
 
-Yukarıdaki tablo middleware'lerin davranışını anlatır. Aynı soru bir kat
-yukarıda, `/ready` ucunda da sorulur ve cevabı aynı aileden olmak zorundadır:
-`/ready` "bu örnek trafik alabilir mi" sorusunu yanıtlar, "her şey yolunda mı"
-sorusunu değil.
+The table above describes the behaviour of the middlewares. The same question is
+asked one layer up, at the `/ready` endpoint, and its answer has to be from the
+same family: `/ready` answers the question "can this instance take traffic", not
+"is everything fine".
 
-Redis'i orada bir KAPI yapmak, bu ADR'nin aşağıda reddettiği "her şey için
-fail-closed" seçeneğinin kendisidir — yalnızca bir kat yukarıda. Dahası daha
-kötüsüdür: Redis PAYLAŞILIR. Bütün örnekler probu aynı saniyede kaybeder,
-Kubernetes Service'i boşaltır ve trafiğin kaydırılabileceği sağlıklı bir kopya
-KALMAZ. Kapı, kısmi bir bozulmayı tam bir kesintiye çevirir.
+Making Redis a GATE there is exactly the "fail-closed for everything" option
+this ADR rejects below — only one layer up. And it is worse: Redis is SHARED.
+Every instance loses the probe in the same second, empties the Kubernetes
+Service, and there is NO healthy replica left to shift traffic to. The gate
+turns a partial degradation into a total outage.
 
-Karar ölçümle verildi, çıkarsamayla değil (`TestRedisOutageMeasurement`,
-`GUARD_BACKEND=redis`, Redis kapalı):
+The decision was made by measurement, not by inference
+(`TestRedisOutageMeasurement`, `GUARD_BACKEND=redis`, Redis down):
 
-| İstek | Sonuç |
+| Request | Result |
 |---|---|
-| vitrin katalog okuması | **200** — okuma yolu Redis'e hiç dokunmaz |
-| `Idempotency-Key` taşımayan yazma | **200** — hız sınırlayıcı fail-open, WARN loglar |
-| `Idempotency-Key` taşıyan yazma | **503** `idempotency_store_unavailable`, handler ÇALIŞMAZ |
-| muaf yazma (sepet oluşturma) | **200** |
+| storefront catalog read | **200** — the read path never touches Redis |
+| write without an `Idempotency-Key` | **200** — rate limiter fails open, logs WARN |
+| write with an `Idempotency-Key` | **503** `idempotency_store_unavailable`, the handler DOES NOT RUN |
+| exempt write (cart creation) | **200** |
 
-Hiçbir istek YANLIŞ işlenmez: korunamayan tek istek sınıfı reddedilen tek istek
-sınıfıdır, ve istek başına — istemcinin tekrar deneyebileceği bir kodla —
-reddedilir. Bu yüzden Redis probu trafiği kesmez; gövdede `"status":
-"degraded"` olarak ve her yoklamada bir WARN satırı olarak bildirilir, kod 200
-kalır. Postgres kapı olmayı sürdürür: onsuz doğru cevap veren tek bir uç yoktur.
+No request is processed WRONGLY: the only class of request that cannot be
+protected is the only class that is rejected, and it is rejected per request —
+with a code the client can retry on. That is why the Redis probe does not cut
+traffic; it is reported in the body as `"status": "degraded"` and as a WARN line
+on every poll, and the code stays 200. Postgres remains a gate: without it there
+is not a single endpoint that gives a correct answer.
 
-Probun BÜTÇESİ de bu kararın parçasıdır, süsü değil. Ulaşılamayan bir Redis'e
-atılan tek bir Ping 1,7 saniye sürer (istemci beş kez bağlanmayı dener);
-kubelet'in readinessProbe timeoutSeconds varsayılanı 1 saniyedir ve zaman
-aşımına uğrayan bir prob tam olarak bir 503 gibi puanlanır. Yani bütçesiz bir
-"bozulma" probu, aynı kesintiyi arka kapıdan geri getirirdi. Bozulan
-bağımlılıkların prob bütçesi bu yüzden 250 ms'tir ve sessiz değildir: WARN
-satırında `budget` alanı olarak, gövdede bütçeyi adıyla anan hata metni olarak
-ve operatörün elinde `READINESS_DEGRADED_TIMEOUT` olarak görünür. Ayarlanabilir
-olması şart: Redis ağın öte yanındaysa sağlıklı bir Ping de 250 ms'i aşabilir ve
-kurulum sürekli `degraded` okur — ayarlanamayan bir sınır, kurulumu kodu
-çatallamaya zorlar.
+The probe's BUDGET is part of this decision too, not decoration. A single Ping
+against an unreachable Redis takes 1.7 seconds (the client tries to connect five
+times); kubelet's readinessProbe timeoutSeconds default is 1 second, and a probe
+that times out is scored exactly like a 503. So a "degradation" probe without a
+budget would bring the same outage back through the back door. The probe budget
+for degraded dependencies is therefore 250 ms, and it is not silent: it shows up
+as the `budget` field on the WARN line, as an error message naming the budget in
+the body, and as `READINESS_DEGRADED_TIMEOUT` in the operator's hands. Being
+tunable is essential: if Redis is on the other side of the network a healthy
+Ping can exceed 250 ms too and the installation reads `degraded` continuously —
+a limit that cannot be tuned forces the installation to fork the code.
 
-Açıkta kalan tek yer AÇILIŞTIR ve orası bilerek fail-closed kaldı: Redis'e
-açılışta ulaşılamaması büyük olasılıkla yanlış bir `REDIS_URL`'dir, ve
-ulaşamadığı bir koruma arka ucuyla sessizce çalışan bir kurulum `guardStack`'in
-tam olarak reddettiği durumdur. Bedeli, kesinti SIRASINDA yeniden başlayan bir
-örneğin Redis dönene kadar crashloop'a girmesidir — bu gürültülüdür ve zaten
-hizmet veren kopyaları trafikten çıkarmaz. Açılışın bu davranışı savunmasız bir
-tercih değil, çivili bir sözleşmedir: `internal/smoke` içindeki yapılandırma
-testi, `GUARD_BACKEND=redis` ve kapalı bir porta bakan `REDIS_URL` ile sürecin
-`redis_unreachable` yazıp AÇILMADIĞINI gerçek süreç üzerinde doğrular.
+The one place left exposed is STARTUP, and it was deliberately left fail-closed:
+Redis being unreachable at startup is most likely a wrong `REDIS_URL`, and an
+installation running silently with a protection backend it cannot reach is
+exactly the situation `guardStack` rejects. The price is that an instance
+restarting DURING an outage crashloops until Redis returns — which is noisy, and
+does not take the already-serving replicas out of traffic. This startup
+behaviour is not a defenceless choice but a nailed-down contract: the
+configuration test in `internal/smoke` verifies, on a real process, that with
+`GUARD_BACKEND=redis` and a `REDIS_URL` pointing at a closed port the process
+writes `redis_unreachable` and DOES NOT COME UP.
 
-## Sonuçlar
+## Consequences
 
-**Olumlu.** Her bileşenin nil davranışı, o bileşenin ne için var olduğunun
-doğrudan yansıması. Kodda bu asimetri godoc'ta açıkça karşılıklı referansla
-belgeleniyor (`RateLimit`, `RequireAdmin`'e atıf yapıyor) ki okuyan kişi
-tutarsızlık sanmasın.
+**Positive.** Each component's nil behaviour is a direct reflection of what that
+component exists for. In the code this asymmetry is documented explicitly in the
+godoc with a mutual reference (`RateLimit` refers to `RequireAdmin`) so that the
+reader does not take it for an inconsistency.
 
-**Olumsuz.** Üç bileşen benzer imzalara sahip ama farklı davranıyor; bunu
-bilmeyen biri `RateLimit(nil, nil)` yazıp korunduğunu sanabilir. Karşı önlem:
-her davranış için ayrı bir test var ve testlerin adları davranışı söylüyor
-(`core/http` içinde `TestRateLimitWithANilLimiterIsANoOp` ve
-`TestIdempotencyANilStoreIsANoOp`).
+**Negative.** The three components have similar signatures but behave
+differently; somebody who does not know this can write `RateLimit(nil, nil)` and
+believe they are protected. The countermeasure: there is a separate test for
+each behaviour and the test names state the behaviour
+(`TestRateLimitWithANilLimiterIsANoOp` and `TestIdempotencyANilStoreIsANoOp` in
+`core/http`).
 
-**Bellek içi uygulamalar tek örnekliktir.** `MemoryLimiter` yatay ölçeklendiğinde
-gerçek sınır örnek sayısıyla çarpılır — bu bir *hız* sorunudur, tolere edilebilir.
-`MemoryIdempotencyStore` yatay ölçeklendiğinde aynı anahtarla farklı örneklere
-düşen iki istek İKİ KEZ işlenir — bu bir *doğruluk* sorunudur, tolere edilemez.
-Yani çok örnekli dağıtımda paylaşılan idempotency deposu ZORUNLUDUR, paylaşılan
-hız sınırlayıcı ise isteğe bağlıdır. İkisi de `core/http` içindeki
-arayüzler üzerinden değiştirilebilir.
+**The in-memory implementations are single-instance.** When `MemoryLimiter` is
+scaled horizontally the real limit is multiplied by the instance count — that is
+a *rate* problem, and tolerable. When `MemoryIdempotencyStore` is scaled
+horizontally, two requests with the same key landing on different instances are
+processed TWICE — that is a *correctness* problem, and not tolerable. So in a
+multi-instance deployment a shared idempotency store is MANDATORY, while a
+shared rate limiter is optional. Both are swappable through the interfaces in
+`core/http`.
 
-## Reddedilen seçenekler
+## Rejected alternatives
 
-**Her şey için fail-closed.** Redis'in kısa bir kesintisi tüm mağazayı
-kapatırdı. Koruma bileşeninin kendisi en büyük kesinti kaynağı olurdu.
-Middleware'lerde reddedildi, ama `/ready` bunu bir süre gerçekten yaptı: Redis
-probu kapıydı ve Redis düştüğünde ölçülen sonuç 1,7 saniyede 503'tü — yani her
-kopya aynı anda trafikten çıkardı. Bkz. yukarıdaki hazırlık probu bölümü.
+**Fail-closed for everything.** A short Redis outage would close the whole shop.
+The protective component itself would become the largest source of outage.
+Rejected in the middlewares — but `/ready` actually did this for a while: the
+Redis probe was a gate, and when Redis went down the measured result was a 503
+in 1.7 seconds — that is, every replica leaving traffic at the same moment. See
+the readiness probe section above.
 
-**Her şey için fail-open.** Auth arızasında istekleri geçirmek, kimlik
-doğrulamayı tamamen anlamsız kılardı: saldırgan yalnızca auth'u yormayı
-başarmakla admin olurdu.
+**Fail-open for everything.** Letting requests through on an auth fault would
+make authentication entirely meaningless: an attacker would become admin merely
+by managing to exhaust auth.
 
-**Idempotency deposu arızasında geçirmek.** Cazip, çünkü "en azından istek
-işlenir". Ama idempotency'nin tek varlık sebebi tekrarları yakalamak; depo
-yazamıyorken işlemi tamamlamak, tam da korumaya çalıştığı çift tahsilatı
-üretmenin en olası yolu.
+**Letting requests through on an idempotency store fault.** Tempting, because
+"at least the request gets processed". But the sole reason idempotency exists is
+to catch retries; completing the operation while the store cannot write is
+precisely the most likely way to produce the double charge it is trying to
+prevent.

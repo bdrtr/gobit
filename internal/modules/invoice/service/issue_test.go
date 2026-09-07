@@ -212,6 +212,68 @@ func TestFormatNumberIsTheOneFormatter(t *testing.T) {
 	assert.True(t, strings.HasPrefix(service.FormatNumber("ABC", 2030, 42), "ABC2030"))
 }
 
+// lastNumberOfAYear is the largest sequence a series can hand out.
+//
+// It is written out rather than read from the service, where the constant is
+// unexported, and the value is not arbitrary: the printed number reserves
+// exactly nine digits for the sequence, so the last one that fits is nine
+// nines. A change to the service's ceiling that this constant did not follow
+// would break [TestTheLastNumberOfTheYearIsStillIssued], which is the right
+// outcome — the two are the same legal fact written in two places.
+const lastNumberOfAYear = 999_999_999
+
+// TestASeriesAtItsCeilingRefusesRatherThanRollingOver is the far end of the
+// numbering guarantee.
+//
+// A series that ran past its last number would produce a sequence of ten digits
+// in a field that carries nine. Formatted, that is a number a REGIME reads as
+// one it has already seen — the same shape as a document issued earlier in the
+// year — and the shop is then holding two different documents that claim to be
+// the same one. Refusing is the only answer: the series is full, and the way
+// out is another prefix, not another number.
+//
+// What the refusal costs is a shop that cannot issue until someone acts, which
+// is why it is a CONFLICT rather than a fault. Nothing is broken; a container
+// is full.
+func TestASeriesAtItsCeilingRefusesRatherThanRollingOver(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeRepo()
+	repo.seedSeries("GBT", 2026, lastNumberOfAYear)
+
+	_, err := newService(repo).Issue(context.Background(), validIssue())
+	require.Error(t, err, "the billion-and-first document of a year cannot be numbered")
+	assert.Equal(t, errors.KindConflict, errors.KindOf(err),
+		"the series is full, which is a state of the world and not a fault of the request")
+	assert.Contains(t, err.Error(), "GBT2026",
+		"the message has to name the series that is full; a shop with several has to know which")
+	assert.Zero(t, repo.documentCount(),
+		"no document may be written once the ceiling is reached: a stored document is one that "+
+			"was issued, and this one has no number it is allowed to carry")
+}
+
+// TestTheLastNumberOfTheYearIsStillIssued is the other side of the ceiling, and
+// the reason it is here is that a guard is as wrong when it fires early.
+//
+// A ceiling written one too low would refuse the final document of a series
+// that still has room for it — a shop turned away at the very moment its
+// numbering is under the most pressure, for a rule that is not true. The last
+// number that fits in nine digits is a number the series may hand out, and this
+// test is what keeps the comparison from quietly becoming ">=".
+func TestTheLastNumberOfTheYearIsStillIssued(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeRepo()
+	repo.seedSeries("GBT", 2026, lastNumberOfAYear-1)
+
+	issued, err := newService(repo).Issue(context.Background(), validIssue())
+	require.NoError(t, err, "the last number of the year is still a number the series may hand out")
+
+	assert.Equal(t, "GBT2026999999999", issued.Number)
+	assert.Len(t, issued.Number, 16,
+		"the last document of a series is printed in the same 16 characters as the first")
+}
+
 // TestADigitInThePrefixIsAccepted holds a rule the framework does NOT own.
 //
 // The first version refused digits, on the reading that a series code is three

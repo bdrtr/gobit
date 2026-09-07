@@ -35,6 +35,12 @@ type fakeOrders struct {
 	exchange models.Exchange
 	claim    models.Claim
 	returns  []models.Return
+	// exchanges and claims are what the two after-sales LIST endpoints answer
+	// with. They are separate from the single-record fields above because a
+	// list that always answered with the single record could not show that the
+	// handler converts every row it was handed.
+	exchanges []models.Exchange
+	claims    []models.Claim
 
 	// err, when set, makes every method return this error; it is used to
 	// exercise the error mapping.
@@ -172,7 +178,7 @@ func (f *fakeOrders) ListExchanges(_ context.Context, orderID string, page servi
 	f.record("ListExchanges")
 	f.gotOrderID = orderID
 	f.page = page
-	return nil, f.count, f.err
+	return f.exchanges, f.count, f.err
 }
 
 // CancelExchange withdraws the exchange request.
@@ -201,7 +207,7 @@ func (f *fakeOrders) ListClaims(_ context.Context, orderID string, page service.
 	f.record("ListClaims")
 	f.gotOrderID = orderID
 	f.page = page
-	return nil, f.count, f.err
+	return f.claims, f.count, f.err
 }
 
 // CancelClaim withdraws the claim.

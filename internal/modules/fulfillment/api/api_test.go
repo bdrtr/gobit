@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
@@ -607,6 +608,13 @@ func TestNarrowScopeDoesNotOpenWriteEndpoints(t *testing.T) {
 		{"cancel fulfillment", http.MethodPost, "/admin/v1/fulfillments/ful_1/cancel", ``},
 		{"hand to carrier", http.MethodPost, "/admin/v1/fulfillments/ful_1/ship", `{"tracking_number":"TK-9"}`},
 		{"report delivery", http.MethodPost, "/admin/v1/fulfillments/ful_1/deliver", ``},
+		// The "iade" route was missing from this table until 2026-09-07 while
+		// every other write route was in it, and its handler had never been
+		// executed by any test at all. It is a TERMINAL transition: a read-only
+		// operator able to reach it could close a shipment that is still in
+		// transit as "came back", and nothing in the module can move it out of
+		// that status afterwards.
+		{"report the parcel came back", http.MethodPost, "/admin/v1/fulfillments/ful_1/returned", ``},
 		// Writing a location policy can, unlike the other writes in the module,
 		// stop the ORDER PATH: a wrong region binding eliminates the location
 		// on every cart. The endpoint is protected with the same scope and this
@@ -620,6 +628,8 @@ func TestNarrowScopeDoesNotOpenWriteEndpoints(t *testing.T) {
 	}
 
 	assert.Empty(t, svc.lastCanceledID, "the request must never reach the service")
+	assert.Empty(t, svc.lastReturnedID, "the request must never reach the service")
+	assert.Empty(t, svc.lastDeliveredID, "the request must never reach the service")
 	assert.Equal(t, [2]string{}, svc.lastShipTracking, "the request must never reach the service")
 	assert.Equal(t, service.SetShippingLocationInput{}, svc.lastLocationInput,
 		"the location policy request must never reach the service")
@@ -641,6 +651,7 @@ func TestNarrowScopePassesOnReadEndpoints(t *testing.T) {
 	for _, path := range []string{
 		"/admin/v1/fulfillment-providers",
 		"/admin/v1/shipping-profiles",
+		"/admin/v1/shipping-profiles?type=gift_card",
 		"/admin/v1/shipping-profiles/sprof_1",
 		"/admin/v1/shipping-options",
 		"/admin/v1/shipping-options/eligible?currency_code=TRY",
@@ -830,4 +841,220 @@ func TestLocationPolicyListCarriesAllRecordsAndThePage(t *testing.T) {
 
 	assert.Equal(t, service.Page{Limit: 1, Offset: 5}, svc.lastLocationPage,
 		"the paging parameters must REACH the service; had they been ignored the response would still be 200")
+}
+
+// TestADeliveryReportAnswersWithTheRecordItJustWrote proves that the deliver
+// endpoint addresses the fulfillment named in the PATH and hands the caller
+// back the record as it now stands.
+//
+// This endpoint is the one that CLOSES an order. The operator clicking it is
+// not merely writing a row: downstream the order is settled, the customer stops
+// being chased and the shipment leaves every "still out there" report. If the
+// path parameter never arrived — chi answers an empty string for a name it does
+// not know — the service would be asked about fulfillment "" while the handler
+// still wrote the canned record it already had, and the screen would show a
+// delivery that was recorded against nothing. Nothing else in the chain looks
+// at the identifier again, so there is no second place this can be caught.
+//
+// The delivered moment is asserted for the same reason as the status: the DTO
+// carries it with omitempty, so a handler that dropped the stamp would produce
+// a response that reads "delivered" with no answer to WHEN, and reconciliation
+// against the carrier's portal has nothing to match on.
+func TestADeliveryReportAnswersWithTheRecordItJustWrote(t *testing.T) {
+	t.Parallel()
+
+	deliveredAt := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	svc := &fakeFulfillments{fulfillment: models.Fulfillment{
+		ID: "ful_1", Reference: "order_1", ShippingOptionID: "sopt_1",
+		ProviderID: "manual", Status: models.StatusDelivered,
+		DeliveredAt: &deliveredAt,
+	}}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodPost, "/admin/v1/fulfillments/ful_1/deliver", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "ful_1", svc.lastDeliveredID,
+		"the fulfillment named in the path must be the one reported as delivered")
+
+	data, ok := bodyMap(t, rec)["data"].(map[string]any)
+	require.True(t, ok, rec.Body.String())
+	assert.Equal(t, "delivered", data["status"],
+		"the caller has to be able to SEE that the delivery was written")
+	assert.NotEmpty(t, data["delivered_at"],
+		"a delivery with no moment cannot be reconciled against the carrier's portal")
+}
+
+// TestAParcelThatCameBackIsReportedWithoutABody proves that the "iade" endpoint
+// works with an EMPTY request, addresses the fulfillment from the path, and
+// answers with the returned stamp.
+//
+// The absence of a body is the design (see returnFulfillment): the route
+// asserts one fact and takes no operator input to color it with. Were the
+// handler to grow a decode of a required body, every caller — the operator
+// screen and the carrier callback ring alike — would start getting 422 on a
+// request that is correct, and the parcel would sit in the warehouse reading
+// "shipped" forever, which is the exact state migration
+// 000004_a_parcel_can_come_back exists to make impossible.
+//
+// returned_at is asserted because it is the field that migration added and the
+// only one that distinguishes this outcome from a cancellation in the response:
+// a database CHECK ties the status and the stamp together in both directions,
+// so a response carrying one without the other describes a row that cannot
+// exist.
+func TestAParcelThatCameBackIsReportedWithoutABody(t *testing.T) {
+	t.Parallel()
+
+	returnedAt := time.Date(2026, 9, 6, 15, 30, 0, 0, time.UTC)
+	svc := &fakeFulfillments{fulfillment: models.Fulfillment{
+		ID: "ful_1", Reference: "order_1", ShippingOptionID: "sopt_1",
+		ProviderID: "manual", Status: models.StatusReturned,
+		ReturnedAt: &returnedAt,
+	}}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodPost, "/admin/v1/fulfillments/ful_1/returned", "")
+	require.Equal(t, http.StatusOK, rec.Code,
+		"the return report carries no body and must not be refused for that: %s", rec.Body.String())
+	assert.Equal(t, "ful_1", svc.lastReturnedID,
+		"the fulfillment named in the path must be the one reported as returned")
+
+	data, ok := bodyMap(t, rec)["data"].(map[string]any)
+	require.True(t, ok, rec.Body.String())
+	assert.Equal(t, "returned", data["status"],
+		"'returned' is its own status; a parcel that came back is neither canceled nor delivered")
+	assert.NotEmpty(t, data["returned_at"],
+		"the status and its moment travel together; the schema refuses one without the other")
+	assert.NotContains(t, rec.Body.String(), "delivered_at",
+		"a parcel that came back never reached the recipient")
+	assert.NotContains(t, rec.Body.String(), "canceled_at",
+		"a parcel that came back was not recalled by us")
+}
+
+// TestProfileCreationForwardsEveryFieldAndAnswers201 proves the write half of
+// the profile surface: the body is bound field by field and the created record
+// comes back with its identifier.
+//
+// Three separate things can break here silently. A field bound to the wrong
+// slot — name into type — produces a profile called "custom" and a 201 that
+// looks perfect. Metadata dropped on the floor loses the only place the store
+// keeps its own bookkeeping on a profile, and nothing later reports it missing.
+// And an answer without the identifier makes the endpoint unusable: creating an
+// option next door REQUIRES a shipping_profile_id, and this response is the
+// only place the caller can learn the one it just made.
+func TestProfileCreationForwardsEveryFieldAndAnswers201(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeFulfillments{profile: models.ShippingProfile{
+		ID:       "sprof_1",
+		Name:     "Heavy goods",
+		Type:     models.ProfileCustom,
+		Metadata: map[string]any{"desk": "warehouse B"},
+	}}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodPost, "/admin/v1/shipping-profiles",
+		`{"name":"Heavy goods","type":"custom","metadata":{"desk":"warehouse B"}}`)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	assert.Equal(t, "Heavy goods", svc.lastProfileInput.Name)
+	assert.Equal(t, "custom", svc.lastProfileInput.Type,
+		"the type must land in the type slot, not in the name")
+	assert.Equal(t, map[string]any{"desk": "warehouse B"}, svc.lastProfileInput.Metadata,
+		"the store's own bookkeeping must reach the service; dropping it is invisible afterwards")
+
+	data, ok := bodyMap(t, rec)["data"].(map[string]any)
+	require.True(t, ok, rec.Body.String())
+	assert.Equal(t, "sprof_1", data["id"],
+		"the identifier is the only thing the caller cannot obtain any other way")
+	assert.Equal(t, "custom", data["type"])
+}
+
+// TestAProfileUpdateCarriesEachFieldToItsOwnSlot proves that PATCH takes the
+// profile identifier FROM THE PATH and every changed field from the body,
+// without the two crossing.
+//
+// [TestUpdatePointersLeaveOmittedFieldsUnchanged] makes the pointer argument
+// for the OPTION handler; it cannot make it for this one. These are two
+// separate structs literal-copied into two separate service calls, and the
+// mistake this test exists for — name written into type, or the path
+// identifier never read — lives entirely inside the copy. A profile renamed to
+// "gift_card" is still a valid profile, so neither the service nor the schema
+// refuses it; the operator finds out when the wrong products stop being
+// shippable.
+func TestAProfileUpdateCarriesEachFieldToItsOwnSlot(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeFulfillments{profile: models.ShippingProfile{
+		ID: "sprof_1", Name: "Gift cards", Type: models.ProfileGiftCard,
+	}}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodPatch, "/admin/v1/shipping-profiles/sprof_1",
+		`{"name":"Gift cards","type":"gift_card","metadata":{"note":"no parcel"}}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	assert.Equal(t, "sprof_1", svc.lastUpdateProfileID,
+		"the profile being edited is the one named in the path; chi answers an "+
+			"empty string for a name it does not know and the response is still 200")
+
+	require.NotNil(t, svc.lastUpdateProfile.Name)
+	assert.Equal(t, "Gift cards", *svc.lastUpdateProfile.Name)
+	require.NotNil(t, svc.lastUpdateProfile.Type)
+	assert.Equal(t, "gift_card", *svc.lastUpdateProfile.Type,
+		"the type must land in the type slot; a profile renamed to its own type is still valid")
+	assert.Equal(t, map[string]any{"note": "no parcel"}, svc.lastUpdateProfile.Metadata)
+}
+
+// TestAProfileUpdateDoesNotInventTheFieldsTheCallerOmitted proves that the
+// PATCH body's pointers really do separate "not sent" from "sent empty".
+//
+// The update writes the profile's columns with ABSOLUTE values (see the
+// repository's UpdateShippingProfile), so a field the handler turns into a
+// non-nil zero is not ignored downstream — it is WRITTEN. An operator renaming
+// a profile would silently reset its type to the default and drop its metadata,
+// and the response would show exactly the rename they asked for.
+func TestAProfileUpdateDoesNotInventTheFieldsTheCallerOmitted(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeFulfillments{}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodPatch, "/admin/v1/shipping-profiles/sprof_1",
+		`{"name":"Renamed"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	require.NotNil(t, svc.lastUpdateProfile.Name)
+	assert.Equal(t, "Renamed", *svc.lastUpdateProfile.Name)
+	assert.Nil(t, svc.lastUpdateProfile.Type,
+		"a type that was not sent must stay nil; a zero here is WRITTEN over the real type")
+	assert.Nil(t, svc.lastUpdateProfile.Metadata,
+		"metadata that was not sent must stay nil; the update REPLACES it, it does not merge")
+}
+
+// TestTheProfileTypeFilterReachesTheService proves that ?type= is forwarded
+// rather than merely parsed.
+//
+// A filter that is read and dropped answers 200 with a FULL page, so the
+// operator asking for the gift-card profiles sees every profile in the store
+// and has no signal that the question was ignored. The absent case is asserted
+// alongside it, because a handler that forwarded a pointer to the empty string
+// would turn "no filter" into "type = ”" and return nothing at all — the same
+// endpoint failing in the opposite direction.
+func TestTheProfileTypeFilterReachesTheService(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeFulfillments{}
+	r := newRouter(svc)
+
+	rec := doRequestAs(t, r, readOnlyPrincipal, http.MethodGet,
+		"/admin/v1/shipping-profiles?type=gift_card", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NotNil(t, svc.lastProfileList.Type, "the type filter must REACH the service")
+	assert.Equal(t, "gift_card", *svc.lastProfileList.Type)
+
+	svc.lastProfileList = service.ListProfilesInput{}
+	rec = doRequestAs(t, r, readOnlyPrincipal, http.MethodGet, "/admin/v1/shipping-profiles", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Nil(t, svc.lastProfileList.Type,
+		"no filter must stay nil; a pointer to the empty string would match no profile at all")
 }

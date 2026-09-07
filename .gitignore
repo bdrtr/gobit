@@ -1,31 +1,98 @@
-# derleme çıktıları
+# Bu dosyanın kuralı: depoya yalnızca KAYNAK girer. Üretilebilen, indirilebilen,
+# makineye özgü ya da gizli olan hiçbir şey girmez. Bir satır eklerken sorulacak
+# soru "bu dosya rahatsız edici mi" değil, "bunu depodan silsem yeniden
+# üretilebilir mi" ve "bu bilgi bir başkasının makinesinde anlamlı mı"dır.
+
+# --- derleme çıktıları: hepsi `make build` ile yeniden üretilir ---
 /bin/
 /dist/
 /gobit
 /server
+*.exe
+*.dll
+*.so
+*.dylib
 
-# test / coverage
+# --- test, kapsam ve profil çıktıları ---
+#
+# coverage.out bu depoda 100 MB'ı aşabiliyor (-coverpkg=./... bütün ağacı
+# sayıyor); bir kez commit'lenirse geçmişten çıkarılamaz.
 coverage.out
 coverage-integration.out
 coverage.html
+*.cover
 *.test
+*.prof
+*.pprof
+cpu.out
+mem.out
+trace.out
 
-# yerel ortam
+# --- ortam ve sırlar ---
+#
+# .env.example TAKİPLİDİR ve öyle kalmalı: hangi ayarların var olduğunun tek
+# yazılı kaydı odur ve içinde hiçbir değer yoktur. Onun dışındaki her .env
+# makineye özgüdür.
 .env
-.env.local
+.env.*
+!.env.example
+.envrc
 
-# yerel dosya deposu (FILE_ROOT varsayılanı)
+# Anahtar ve sertifika: bir kez girerse geçmişten silinemez ve döndürülmesi
+# gerekir. Deponun bugün hiç ihtiyacı yok; kural buradaki yokluğu korumak için.
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+id_rsa*
+
+# --- yerel dosya deposu (FILE_ROOT varsayılanı) ---
 #
 # Yüklenen dosyalar depoya GİRMEZ: kullanıcı içeriğidir, sürüm kontrolüne ait
 # değildir ve tek bir görsel bile depoyu kalıcı olarak şişirir.
 /data/
 
-# editör
+# --- veritabanı dökümleri ve yedekler ---
+*.dump
+*.sql.gz
+*.bak
+*.orig
+*.rej
+
+# --- editör ve işletim sistemi ---
 .idea/
 .vscode/
+*.iml
 *.swp
+*.swo
+*~
 .DS_Store
+Thumbs.db
+desktop.ini
 
-# openapi istemci üretimi
+# --- araç zinciri ---
+#
+# go.work bir GELİŞTİRİCİNİN yerel çoklu-modül kurulumudur; depoya girerse
+# başkasının makinesinde var olmayan yolları işaret eder.
+go.work
+go.work.sum
+node_modules/
+
+# --- openapi istemci üretimi ---
 openapi.json
 clients/
+
+# --- çalışma notları: DEPODA DEĞİL, DİSKTE ---
+#
+# Bu dosyalar bir tasarım defteridir: biri fazları anlatan uygulama planı,
+# öteki elle tutulan mimari notlar. İkisi de kararların KAYNAĞI değildir —
+# kararlar docs/adr/'de, ölçümler docs/gaps.md'de, mimarinin anlatısı
+# docs/mimari.md'dedir ve üçü de depodadır. Bir defteri depoda tutmak onu
+# okuyan herkesin onu bağlayıcı sanmasına yol açar, ve çeliştiğinde hangisinin
+# kazandığını ayrıca kurala bağlamak gerekir.
+#
+# Diskten SİLİNMEZ; yalnızca sürüm kontrolüne girmez.
+/go-commerce-framework-plan.md
+/go-ecommerce-architecture.md
+/go-ecommerce-mimari.md

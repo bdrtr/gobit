@@ -1202,3 +1202,189 @@ func TestAParcelComesBackThroughTheRealSchema(t *testing.T) {
 // ptr returns a pointer to the given value; the listing filters take pointers so
 // that "not given" and "given empty" stay distinguishable.
 func ptr[T any](value T) *T { return &value }
+
+// TestTheProfileTotalIsTheCountOfTheFilterNotOfThePage proves the claim the
+// listing query's own godoc makes: the total in the pagination envelope comes
+// from a SEPARATE count and survives a page that returns no rows at all.
+//
+// The rejected alternative was a window function returned alongside the rows.
+// It is wrong for a reason no fake store can show: on an out-of-range page
+// Postgres evaluates the window ZERO times, so the total comes back as 0. The
+// admin screen paging through profiles would then be told, the moment it walked
+// one page too far, that the store has no shipping profiles — and the operator's
+// reasonable next move is to create the "missing" default profile, whose name
+// then collides with the one that was there all along.
+//
+// The second half of the claim is that the two queries agree. They repeat the
+// same WHERE clause in two separate SQL strings and nothing in the type system
+// ties them together; a filter added to one and forgotten in the other is
+// invisible on the first page (the rows are right) and only shows up as a count
+// that never matches what the operator can see.
+func TestTheProfileTotalIsTheCountOfTheFilterNotOfThePage(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	// A profile of ANOTHER type is opened FIRST, and the order matters: it is
+	// the row that makes a dropped filter visible. Without a profile the filter
+	// has to exclude, both queries could ignore the type entirely and every
+	// number below would still agree with itself.
+	other := newProfile(ctx, t, svc)
+	require.Equal(t, models.ProfileDefault, other.Type)
+
+	// Other tests in this file open profiles of the default type as well; the
+	// count of gift-card profiles is therefore read BEFORE the writes rather
+	// than assumed to be zero.
+	giftCard := "gift_card"
+	_, before, err := svc.ListShippingProfiles(ctx, service.ListProfilesInput{Type: &giftCard})
+	require.NoError(t, err)
+
+	const written = 3
+	for range written {
+		_, createErr := svc.CreateShippingProfile(ctx, service.CreateProfileInput{
+			Name: "gift-" + models.NewShippingProfileID(),
+			Type: giftCard,
+		})
+		require.NoError(t, createErr)
+	}
+
+	// A page that fits none of them: the rows are empty, the total is not.
+	rows, total, err := svc.ListShippingProfiles(ctx, service.ListProfilesInput{
+		Type: &giftCard,
+		Page: service.Page{Limit: 2, Offset: before + written + 10},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, rows, "the page is past the end; no row can be on it")
+	assert.Equal(t, before+written, total,
+		"the total is the count of the FILTER, not of the page; a window function "+
+			"returned with the rows would report 0 here and the store would look empty")
+
+	// And the filter really is applied by BOTH queries: every row that comes
+	// back is a gift-card profile, and the total counts only those.
+	rows, total, err = svc.ListShippingProfiles(ctx, service.ListProfilesInput{
+		Type: &giftCard,
+		Page: service.Page{Limit: service.MaxLimit},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, before+written, total)
+	assert.Len(t, rows, int(before+written),
+		"the count and the listing must agree; they repeat the same WHERE clause in two places")
+	for i := range rows {
+		assert.Equal(t, models.ProfileGiftCard, rows[i].Type,
+			"the listing must not return a profile of another type")
+	}
+
+	// And the same question asked WITHOUT the filter has to give a bigger
+	// answer, or "the two agree" would be satisfied by both of them ignoring
+	// the filter together.
+	_, all, err := svc.ListShippingProfiles(ctx, service.ListProfilesInput{})
+	require.NoError(t, err)
+	assert.Greater(t, all, total,
+		"the unfiltered count must exceed the filtered one; a default-type "+
+			"profile was opened above that the gift-card filter has to exclude")
+}
+
+// TestASoftDeletedProfileCannotBeUpdatedBackIntoTheCatalog proves that the
+// update statement carries its own deleted_at guard, independently of the
+// service's read-before-write.
+//
+// The service refuses this at a higher altitude: UpdateShippingProfile reads the
+// profile first and that read filters the soft-deleted rows out. The test
+// therefore drives the REPOSITORY directly, because that guard is the one that
+// disappears silently. A caller that already holds the row — a bulk importer, a
+// backfill, a future handler that skips the read because it "just fetched it" —
+// reaches the statement with nothing in front of it, and without the predicate
+// the UPDATE would succeed against a deleted row and RETURNING would hand back a
+// perfectly healthy-looking profile that no listing will ever show again.
+//
+// Only a database can witness this: the guard is a WHERE clause, and a fake
+// store's map has no notion of a row it is refusing to touch.
+func TestASoftDeletedProfileCannotBeUpdatedBackIntoTheCatalog(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	repo := repository.New(testPool.Pool())
+
+	profile := newProfile(ctx, t, svc)
+	require.NoError(t, svc.DeleteShippingProfile(ctx, profile.ID))
+
+	profile.Name = "resurrected-" + models.NewShippingProfileID()
+	_, err := repo.UpdateShippingProfile(ctx, profile)
+	require.Error(t, err,
+		"the UPDATE has to refuse a soft-deleted row on its own; the service's "+
+			"read-before-write is not the only thing standing here")
+	assert.True(t, errors.IsNotFound(err),
+		"a deleted profile is ABSENT, not merely un-writable: %v", err)
+
+	// The row is still deleted and still carries its original name — the
+	// statement did not half-apply before deciding it had matched nothing.
+	var name string
+	var deletedAt *time.Time
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT name, deleted_at FROM shipping_profiles WHERE id = $1`, profile.ID,
+	).Scan(&name, &deletedAt))
+	assert.NotNil(t, deletedAt, "the profile must have stayed deleted")
+	assert.NotEqual(t, profile.Name, name, "the refused update must not have written the new name")
+}
+
+// TestASoftDeletedRuleIsNotReadableByItsIdentifier proves that reading a rule by
+// id honours the soft delete.
+//
+// A shipping option rule is an ELIMINATION: "subtotal >= 50000" is what closes
+// free shipping to a small cart. Deleting one is how an operator OPENS an option
+// back up, and a read path that still finds the deleted row would report the
+// store's own catalog as more restricted than it is — an admin screen showing a
+// rule that no longer governs anything, on an option the customer can already
+// see.
+//
+// This claim can only be made against a database, for the same reason as the
+// profile update above: the guard is a WHERE clause on a column the deletion
+// merely stamps, and the row is still physically there.
+//
+// FINDING, recorded here rather than hidden: nothing in this repository calls
+// Repository.GetShippingOptionRule. It is declared on the service's Store
+// interface, implemented, and generated by sqlc, and no service method reaches
+// it — the rule surface reads through ListShippingOptionRules and deletes by id
+// without a read. The test is written because the method is part of the Store
+// CONTRACT and an implementation that leaked deleted rows would be a real defect
+// the moment anything wires it up; it is not written to suggest the method is
+// load-bearing today.
+func TestASoftDeletedRuleIsNotReadableByItsIdentifier(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	repo := repository.New(testPool.Pool())
+
+	profile := newProfile(ctx, t, svc)
+	option := newOption(ctx, t, svc, profile.ID, 1_000)
+
+	rule, err := svc.CreateShippingOptionRule(ctx, option.ID, service.CreateRuleInput{
+		Attribute: "subtotal",
+		Operator:  "gte",
+		Values:    []string{"50000"},
+	})
+	require.NoError(t, err)
+
+	// While it is alive the read finds it and carries every field, so the
+	// refusal below is about the deletion and not about the query being broken.
+	found, err := repo.GetShippingOptionRule(ctx, rule.ID)
+	require.NoError(t, err)
+	assert.Equal(t, option.ID, found.ShippingOptionID)
+	assert.Equal(t, "subtotal", found.Attribute)
+	assert.Equal(t, models.OpGte, found.Operator)
+	assert.Equal(t, []string{"50000"}, found.Values)
+
+	require.NoError(t, svc.DeleteShippingOptionRule(ctx, rule.ID))
+
+	_, err = repo.GetShippingOptionRule(ctx, rule.ID)
+	require.Error(t, err, "a deleted rule must not be readable by its identifier")
+	assert.True(t, errors.IsNotFound(err),
+		"a deleted rule is ABSENT; reporting it would show the operator an "+
+			"elimination that no longer governs anything: %v", err)
+
+	// The row really is still on disk — the refusal comes from the predicate,
+	// not from the row having been removed, which is what makes the predicate
+	// the only thing standing between a deleted rule and a reader.
+	var deletedAt *time.Time
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT deleted_at FROM shipping_option_rules WHERE id = $1`, rule.ID,
+	).Scan(&deletedAt))
+	assert.NotNil(t, deletedAt, "the deletion is a stamp; the row is still there")
+}

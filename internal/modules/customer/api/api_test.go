@@ -618,3 +618,167 @@ func TestMagazaUclariYetkiIstemez(t *testing.T) {
 
 	assert.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 }
+
+// TestVitrinProfiliniYoldakiKimlikBelirler vitrin profil okumasının müşteriyi
+// YOL PARAMETRESİNDEN tanıdığını kanıtlar.
+//
+// ADR 0008'in çizdiği sınır tam olarak burada durur: gobit müşteri kimliğini
+// doğrulamaz, gömen uygulama storeCustomerID'yi kendi oturumuna bağlar ve
+// yoldaki değerle karşılaştırır. Gömen uygulamanın bağladığı nokta ile
+// handler'ın GERÇEKTEN kullandığı değer ayrışsaydı — handler kimliği başka bir
+// yerden okusaydı — o karşılaştırma hiçbir şeyi korumayan bir süs olurdu:
+// istek yine yoldaki kişinin adını ve e-postasını dönerdi ve kimse farkı
+// göremezdi.
+//
+// İstek KİMLİKSİZ gönderilir; vitrin yüzeyinin bugünkü hâli budur (paket
+// belgesindeki UYARI) ve testin kimliksiz geçmesi o açıklığın kayda geçmiş
+// hâlidir.
+func TestVitrinProfiliniYoldakiKimlikBelirler(t *testing.T) {
+	svc := &stubCustomer{
+		getCustomerFn: func(_ context.Context, id string) (models.Customer, error) {
+			musteri := ornekMusteri(false)
+			musteri.ID = id
+			return musteri, nil
+		},
+	}
+	r := yeniRouter(svc)
+
+	rec := istekGonder(t, r, nil, http.MethodGet, "/store/v1/customers/cust_7", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	assert.Equal(t, "cust_7", svc.sonCustomerID,
+		"okunan müşteri YOLDAKİ kimlik olmalı; handler başka bir kaynaktan okusaydı "+
+			"gömen uygulamanın oturumla karşılaştırması hiçbir isteği durdurmazdı")
+
+	data, ok := govde(t, rec)["data"].(map[string]any)
+	require.True(t, ok, "tekil yanıt {\"data\":{...}} zarfında olmalı")
+	assert.Equal(t, "cust_7", data["id"])
+	assert.Equal(t, "ali@example.com", data["email"],
+		"vitrin profili kişinin e-postasını taşır; yüzeyin neyi açtığı budur")
+}
+
+// TestVitrinProfilGuncellemesiGonderilmeyenAlanaDokunmaz vitrin güncellemesinin
+// yalnızca GÖNDERİLEN alanları servise ilettiğini kanıtlar.
+//
+// Gövdedeki alanlar işaretçidir ve ayrım burada gerçek bir kayıp/kalım
+// sorusudur: telefonunu düzelten bir müşteri adını göndermez. Gönderilmeyen
+// alan servise boş dizge olarak gitseydi o istek müşterinin adını, soyadını ve
+// e-postasını SİLERDİ — üstelik istemci sildiğini bilmezdi, çünkü gönderdiği
+// gövdede o alanlar hiç yoktu.
+//
+// Aynı istek, güncellenen müşterinin de yoldaki kimlik olduğunu gösterir; bu
+// uç bir OKUMA değil YAZMADIR ve ADR 0008 sınırının yazma tarafıdır.
+func TestVitrinProfilGuncellemesiGonderilmeyenAlanaDokunmaz(t *testing.T) {
+	var sonInput service.UpdateCustomerInput
+	svc := &stubCustomer{
+		updateCustomerFn: func(_ context.Context, id string, in service.UpdateCustomerInput) (models.Customer, error) {
+			sonInput = in
+			musteri := ornekMusteri(false)
+			musteri.ID = id
+			if in.Phone != nil {
+				musteri.Phone = *in.Phone
+			}
+			return musteri, nil
+		},
+	}
+	r := yeniRouter(svc)
+
+	rec := istekGonder(t, r, nil, http.MethodPut, "/store/v1/customers/cust_7",
+		`{"phone":"+905550000000"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "cust_7", svc.sonCustomerID, "güncellenen müşteri yoldaki kimlik olmalı")
+
+	require.NotNil(t, sonInput.Phone, "gönderilen alan servise ULAŞMALI")
+	assert.Equal(t, "+905550000000", *sonInput.Phone)
+	assert.Nil(t, sonInput.FirstName,
+		"gönderilmeyen ad servise nil gitmeli; boş dizge gitseydi müşterinin adı silinirdi")
+	assert.Nil(t, sonInput.LastName, "gönderilmeyen soyad da nil gitmeli")
+	assert.Nil(t, sonInput.Email,
+		"gönderilmeyen e-posta nil gitmeli; boşaltılan e-posta hesabın kimliğini yok ederdi")
+
+	data, _ := govde(t, rec)["data"].(map[string]any)
+	assert.Equal(t, "+905550000000", data["phone"], "yanıt güncelleme SONRASI hâli göstermeli")
+}
+
+// TestVitrinAdresListesiYoldakiMusterinindir vitrin adres listesinin YOLDAKİ
+// müşterinin adreslerini istediğini kanıtlar.
+//
+// Adres defteri kişinin nerede oturduğudur. Liste gövdesi müşteri kimliğini
+// servise iletmeseydi ya da başka bir değeri iletseydi, iki müşterinin adres
+// defterleri birbirine karışırdı: bir alışverişçi başkasının açık adresini
+// kendi hesabında görürdü.
+func TestVitrinAdresListesiYoldakiMusterinindir(t *testing.T) {
+	svc := &stubCustomer{
+		listAddressesFn: func(_ context.Context, customerID string) ([]models.CustomerAddress, error) {
+			return []models.CustomerAddress{
+				{ID: "addr_1", CustomerID: customerID, Address1: "Cad. 1", City: "İstanbul", CountryCode: "TR"},
+			}, nil
+		},
+	}
+	r := yeniRouter(svc)
+
+	rec := istekGonder(t, r, nil, http.MethodGet, "/store/v1/customers/cust_7/addresses", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	assert.Equal(t, "cust_7", svc.sonCustomerID,
+		"adresleri istenen müşteri yoldaki kimlik olmalı")
+
+	items, ok := govde(t, rec)["data"].([]any)
+	require.True(t, ok, "liste yanıtı {\"data\":[...]} zarfında olmalı")
+	require.Len(t, items, 1)
+	adres, ok := items[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "cust_7", adres["customer_id"], "dönen adres istenen müşterinin olmalı")
+}
+
+// TestVitrinAdresSilmeSahipDenetiminiTasir silme isteğinin servise HEM müşteri
+// HEM adres kimliğini ilettiğini kanıtlar.
+//
+// Adres silme sorgusu adresi id'siyle DEĞİL, id'si ve SAHİBİYLE birlikte bulur
+// (bkz. repository.Repo.DeleteAddress). Handler müşteri kimliğini
+// iletmeseydi koşul boş bir dizgeyle kurulur ve sorgu hiçbir satır bulamazdı;
+// daha kötü ihtimalde — sahiplik koşulu sorgudan tamamen düşseydi — adres
+// kimliğini bilen herkes BAŞKASININ adresini silebilirdi. Bu uç kimlik
+// istemeyen bir yüzeydedir, yani o kimliği bilmek yalnızca bir tahmin
+// meselesidir.
+func TestVitrinAdresSilmeSahipDenetiminiTasir(t *testing.T) {
+	var silinen [2]string
+	svc := &stubCustomer{
+		deleteAddressFn: func(_ context.Context, customerID, addressID string) error {
+			silinen = [2]string{customerID, addressID}
+			return nil
+		},
+	}
+	r := yeniRouter(svc)
+
+	rec := istekGonder(t, r, nil, http.MethodDelete,
+		"/store/v1/customers/cust_7/addresses/addr_3", "")
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	assert.Empty(t, rec.Body.String(), "204 boş gövdeyle dönmeli")
+
+	assert.Equal(t, [2]string{"cust_7", "addr_3"}, silinen,
+		"silme isteği hem müşteriyi hem adresi taşımalı; müşteri düşerse sorgu sahiplik koşulunu kaybeder")
+}
+
+// TestVitrindeMusteriSilmeUcuYoktur vitrinde müşteri silme ucunun BULUNMADIĞINI
+// kanıtlar.
+//
+// Vitrin yüzeyi kimlik doğrulamaz (paket belgesindeki UYARI). Silme ucu burada
+// da açık olsaydı, bir müşteri kimliğini tahmin eden herkes o kişinin kaydını
+// yumuşak silebilir, yani hesabını kapatabilirdi — profil okumaktan farklı
+// olarak geri alınması operatör işi olan bir zarar. Silme bilinçli olarak
+// yalnızca yönetim tarafındadır ve orada [ScopeWrite] ister.
+func TestVitrindeMusteriSilmeUcuYoktur(t *testing.T) {
+	svc := &stubCustomer{
+		deleteCustomerFn: func(_ context.Context, _ string) error {
+			t.Fatal("vitrinde müşteri SİLME ucu olmamalı")
+			return nil
+		},
+	}
+	r := yeniRouter(svc)
+
+	rec := istekGonder(t, r, nil, http.MethodDelete, "/store/v1/customers/cust_7", "")
+
+	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code,
+		"vitrinde müşteri silme ucu olmamalı: %s", rec.Body.String())
+}

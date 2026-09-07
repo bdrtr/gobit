@@ -1,73 +1,79 @@
-# ADR 0005 — Link şeması migration dosyalarında değil, bildirim anında kurulur
+# ADR 0005 — The link schema is built at declaration time, not in migration files
 
-- **Durum:** Kabul edildi
-- **Tarih:** 2026-08-23
-- **Faz:** 2
+- **Status:** Accepted
+- **Date:** 2026-08-23
+- **Phase:** 2
 
-## Bağlam
+## Context
 
-Plan Bölüm 8, migration konvansiyonunu net koyuyor: *"Modül başına ayrı klasör;
-geri-alınabilir (up/down)."* Link tabloları ise bu kalıba girmiyor.
+Plan Section 8 states the migration convention plainly: *"A separate folder per
+module; reversible (up/down)."* Link tables do not fit that mould.
 
-Sebep, link'lerin **kim tarafından** bildirildiğidir. Plan Bölüm 5.1'e göre
-modüller link tanımlarını `Module.Register` sırasında bildirir, ve Faz 9'daki
-plugin sistemi bir eklentinin **çekirdeğe dokunmadan** kendi linkini eklemesini
-gerektirir. Yani hangi link tablolarının var olacağı derleme zamanında bilinmez;
-`migrations/` altında sabit bir dosya kümesi olarak yazılamaz.
+The reason is **who** declares the links. According to Plan Section 5.1 modules
+declare their link definitions during `Module.Register`, and the plugin system
+of Phase 9 requires a plugin to add its own link **without touching the core**.
+That is, which link tables will exist is not known at compile time; it cannot be
+written as a fixed set of files under `migrations/`.
 
-## Değerlendirilen seçenekler
+## Alternatives considered
 
-**A. Çekirdekte tek bir global `links` tablosu** — `(link_name, from_id, to_id)`
-şeklinde. Migration'la kurulabilirdi. Ama kardinalite kısıtları (bkz. ADR
-bağlamı: `OneToOne` her iki uçta benzersizlik ister) tek tabloda link adına göre
-**kısmi benzersiz indeks** gerektirir; her yeni link için yine çalışma zamanında
-DDL demektir. Ayrıca tek tablo tüm linklerin sıcak noktası olur.
+**A. A single global `links` table in the core** — of the form
+`(link_name, from_id, to_id)`. It could be built with a migration. But
+cardinality constraints (see the ADR context: `OneToOne` demands uniqueness at
+both ends) require a **partial unique index** per link name in a single table;
+that again means DDL at runtime for every new link. A single table also becomes
+the hot spot of every link.
 
-**B. Link başına migration dosyası üretmek** — bir kod üreticisiyle. Plugin'in
-çekirdeğe dokunmama şartını bozar ve derleme adımı ekler.
+**B. Generating a migration file per link** — with a code generator. It breaks
+the plugin's don't-touch-the-core requirement and adds a build step.
 
-**C. Bildirim anında idempotent DDL** — `Define` çağrısı tabloyu ve kısıtlarını
-`CREATE ... IF NOT EXISTS` ile kurar.
+**C. Idempotent DDL at declaration time** — the `Define` call builds the table
+and its constraints with `CREATE ... IF NOT EXISTS`.
 
-## Karar
+## Decision
 
-**Seçenek C.** `LinkService.Define` şemayı bildirim anında kurar.
+**Alternative C.** `LinkService.Define` builds the schema at declaration time.
 
-Güvenliği sağlayan dört önlem:
+Four measures make it safe:
 
-1. **Tek işlem + danışma kilidi.** Bildirim `pg_advisory_xact_lock` altında tek
-   bir işlemde yürür; aynı anda açılan iki süreç birbirinin DDL'iyle yarışmaz.
-2. **Kalıcı tanım defteri.** Tanım `link_definitions` tablosuna yazılır ve her
-   açılışta karşılaştırılır. Sürümler arasında sessizce değişen bir tanım
-   `errors.Conflict` ile yakalanır — migration'ın sürüm defterinin yerini tutan
-   şey budur.
-3. **Ad doğrulaması.** Link adı `^[a-z][a-z0-9_]{0,39}$` desenine uymalıdır ve
-   defter tablosuyla ya da indeks ad uzayıyla çakışan adlar reddedilir. Tablo
-   adları SQL'de parametrelenemediği için doğrulama tek savunmadır.
-4. **DDL sonrası doğrulama.** `CREATE ... IF NOT EXISTS`, o adda **başka türden**
-   bir ilişki varsa hata değil `NOTICE` üretip atlar. Bu yüzden DDL'den sonra
-   `pg_class` üzerinden ilişkinin gerçekten tablo olduğu ve gereken her indeksin
-   kurulduğu denetlenir; aksi hâlde işlem geri alınır.
+1. **One transaction + an advisory lock.** The declaration runs in a single
+   transaction under `pg_advisory_xact_lock`; two processes started at the same
+   time do not race each other's DDL.
+2. **A durable definition ledger.** The definition is written into the
+   `link_definitions` table and compared on every startup. A definition that
+   changes silently between versions is caught with `errors.Conflict` — that is
+   what takes the place of a migration's version ledger.
+3. **Name validation.** A link name must match the pattern
+   `^[a-z][a-z0-9_]{0,39}$`, and names colliding with the ledger table or with
+   the index namespace are rejected. Because table names cannot be
+   parameterised in SQL, validation is the only defence.
+4. **Post-DDL verification.** If a relation of **another kind** exists under
+   that name, `CREATE ... IF NOT EXISTS` does not error but emits a `NOTICE` and
+   skips. So after the DDL it is checked through `pg_class` that the relation
+   really is a table and that every required index was created; otherwise the
+   transaction is rolled back.
 
-## Sonuçlar
+## Consequences
 
-**Olumlu:** Plugin'ler çekirdeğe dokunmadan link ekleyebilir. Şema, tanımın
-kendisiyle tek yerde durur; ikisinin ayrışması mümkün değildir.
+**Positive:** Plugins can add a link without touching the core. The schema sits
+in one place together with the definition itself; the two cannot drift apart.
 
-**Olumsuz / bilinen sınırlar**
+**Negative / known limits**
 
-- **Geri alma (down) yolu yoktur.** Bir link tanımı kaldırıldığında tablosu
-  veritabanında kalır. Bu bilinçlidir: tabloyu otomatik düşürmek, bir dağıtım
-  hatası yüzünden geçici olarak kaybolan bir tanımın tüm bağları silmesi
-  demekti. Temizlik operasyonel bir karardır ve elle yapılır.
-- **`db.Version` link şemasını görmez.** Modül migration'larının sürüm defteri
-  `<owner>_schema_migrations`'tır; link şeması oraya yazılmaz. Bir ortamın link
-  şemasının güncelliği `link_definitions` tablosundan okunur.
-- **Şema değişikliği (örn. bir sütun eklemek) elle migration ister.** `Define`
-  yalnızca "yoksa oluştur" yapar; var olan bir tabloyu ALTER etmez. Link
-  tablosunun şekli değişirse çekirdek bir migration yazılmalıdır.
+- **There is no down path.** When a link definition is removed, its table stays
+  in the database. This is deliberate: dropping the table automatically would
+  mean that a definition temporarily lost to a deployment error deletes every
+  bond. Cleanup is an operational decision and is done by hand.
+- **`db.Version` does not see the link schema.** The version ledger of module
+  migrations is `<owner>_schema_migrations`; the link schema is not written
+  there. Whether an environment's link schema is up to date is read from the
+  `link_definitions` table.
+- **A schema change (e.g. adding a column) needs a migration by hand.** `Define`
+  only does "create if absent"; it does not ALTER an existing table. If the
+  shape of a link table changes, a core migration must be written.
 
-## İlgili
+## Related
 
-- Plan Bölüm 5.2, Bölüm 8 (bu ADR o konvansiyona bilinçli bir istisnadır), Faz 2, Faz 9
+- Plan Section 5.2, Section 8 (this ADR is a deliberate exception to that
+  convention), Phase 2, Phase 9
 - `core/link/service.go` — `declare`, `verifySchema`

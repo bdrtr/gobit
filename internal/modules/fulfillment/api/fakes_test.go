@@ -46,6 +46,23 @@ type fakeFulfillments struct {
 	lastCanceledID    string
 	lastReturnedID    string
 	lastLocationInput service.SetShippingLocationInput
+	// lastProfileInput is the body the profile CREATE endpoint hands over. The
+	// creation is the only place a profile's name and type are chosen, and the
+	// handler is the only place the JSON field names are bound to them; a
+	// mis-bound field here produces a profile named after its own type and the
+	// response looks entirely healthy.
+	lastProfileInput service.CreateProfileInput
+	// lastProfileList is the input the profile LISTING hands over. The type
+	// filter is the only part of it the handler assembles by hand, and a filter
+	// that is parsed but not forwarded still answers 200 with a full page.
+	lastProfileList service.ListProfilesInput
+	// lastUpdateProfileID and lastDeliveredID are the path parameters of the
+	// two write endpoints that carry no body worth recording. chi hands back an
+	// empty string for a misspelled parameter name, so without these the
+	// handler could be addressing profile "" and the test would still see the
+	// fake's canned record come back with a 200.
+	lastUpdateProfileID string
+	lastDeliveredID     string
 	// lastReadLocation and lastDeletedLocation prove that the path parameter
 	// gets from the handler to the service under the RIGHT name. Had they not
 	// been recorded, chi would return an empty string when the parameter name
@@ -68,8 +85,9 @@ func (f *fakeFulfillments) ProviderIDs(_ context.Context) []string { return f.pr
 
 func (f *fakeFulfillments) CreateShippingProfile(
 	_ context.Context,
-	_ service.CreateProfileInput,
+	in service.CreateProfileInput,
 ) (models.ShippingProfile, error) {
+	f.lastProfileInput = in
 	return f.profile, f.err
 }
 
@@ -82,16 +100,18 @@ func (f *fakeFulfillments) GetShippingProfile(
 
 func (f *fakeFulfillments) ListShippingProfiles(
 	_ context.Context,
-	_ service.ListProfilesInput,
+	in service.ListProfilesInput,
 ) ([]models.ShippingProfile, int64, error) {
+	f.lastProfileList = in
 	return f.profiles, f.count, f.err
 }
 
 func (f *fakeFulfillments) UpdateShippingProfile(
 	_ context.Context,
-	_ string,
+	id string,
 	in service.UpdateProfileInput,
 ) (models.ShippingProfile, error) {
+	f.lastUpdateProfileID = id
 	f.lastUpdateProfile = in
 	return f.profile, f.err
 }
@@ -195,7 +215,8 @@ func (f *fakeFulfillments) MarkShipped(
 	return f.fulfillment, f.err
 }
 
-func (f *fakeFulfillments) MarkDelivered(_ context.Context, _ string) (models.Fulfillment, error) {
+func (f *fakeFulfillments) MarkDelivered(_ context.Context, id string) (models.Fulfillment, error) {
+	f.lastDeliveredID = id
 	return f.fulfillment, f.err
 }
 

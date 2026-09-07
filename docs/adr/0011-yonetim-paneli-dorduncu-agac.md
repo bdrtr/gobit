@@ -1,260 +1,281 @@
-# ADR 0011 — Yönetim paneli: dördüncü ağaç, kendi kimliği, çekirdeğin yazıcısı
+# ADR 0011 — The admin panel: a fourth tree, its own identity, the core's writer
 
-- **Durum:** Kabul edildi
-- **Tarih:** 2026-09-03
-- **Faz:** 10 sonrası (yönetim paneli turu)
-- **Değiştirildi:** 2026-09-03 — Karar 6'nın ertelediği yazma sorusu
-  [ADR 0013](0013-panel-write-surface.md) ile kapatıldı. Dördüncü ağaç, kimlik
-  ve yazıcı kararları değişmedi.
-- **Değiştirildi:** 2026-09-06 — panelin çerçeveden SUNULMASI kararı
-  [ADR 0030](0030-the-panel-becomes-an-admin-api-client.md) ile değişti: panel
-  artık `/admin/v1`'in bir istemcisi. Dördüncü ağaç yerleşimi, kimlik kararı ve
-  localStorage reddi aynen duruyor; değişen tek şey çerezin yol kapsamı, ve o
-  ADR bunun bedelini (yol kapsamlı çerezin üçüncü CSRF katmanı) adıyla yazıyor.
+- **Status:** Accepted
+- **Date:** 2026-09-03
+- **Phase:** after Phase 10 (the admin panel round)
+- **Amended:** 2026-09-03 — the write question Decision 6 deferred was closed by
+  [ADR 0013](0013-panel-write-surface.md). The fourth tree, the identity and the
+  writer decisions did not change.
+- **Amended:** 2026-09-06 — the decision that the panel is SERVED from the
+  framework was changed by
+  [ADR 0030](0030-the-panel-becomes-an-admin-api-client.md): the panel is now a
+  client of `/admin/v1`. The fourth-tree placement, the identity decision and
+  the refusal of localStorage stand exactly as they are; the only thing that
+  changes is the cookie's path scope, and that ADR names what it costs (the
+  path-scoped cookie was CSRF's third layer).
 
-## Bağlam
+## Context
 
-Plan belgesi yönetim paneli UI'ını iki yerde kapsam dışı bırakıyor ve **neden**
-bıraktığını söylemiyor. Panel yazılmaya başlandığında ortaya çıkan şey, bir
-arayüz tasarımı sorunu değil: çerçevenin üç yazılı kararıyla doğrudan temas eden
-bir **yerleşim ve kimlik** sorunu.
+The plan document puts the admin panel UI out of scope in two places and does
+not say **why**. What surfaced once the panel was started is not an interface
+design problem: it is a **placement and identity** problem that touches three of
+the framework's written decisions directly.
 
-Karar öncesi depo şu hâldeydi ve hepsi ölçüldü:
+Before the decision the repository was in this state, and all of it was
+measured:
 
-- Yönetim kimliği **yalnızca** `Authorization: Bearer` başlığından çözülüyor.
-  Üretim kodunda çerez okuyan ya da yazan tek satır yok; CSRF, CORS ve güvenlik
-  başlığı middleware'i de yok.
-- Koruma yığını yol **önekiyle** kapsamlanıyor ve eşleşme segment sınırında.
-  `/admin/v1` dışındaki bir ağaç kimliğe, hız sınırına ve idempotency halkasına
-  **hiç** girmiyor.
-- Modül dışı paketlerde yanıt gövdesini doğrudan yazmak yapısal ihlal;
-  `w.Write`, `w.WriteHeader` ve `http.Redirect` yakalanıyor.
-- `html/template`, gömülü statik varlık ve şablon emsali depoda yok.
+- Admin identity is resolved **only** from the `Authorization: Bearer` header.
+  There is not one line of production code that reads or writes a cookie; there
+  is no CSRF, CORS or security-header middleware either.
+- The guard stack is scoped by path **prefix** and the match is at a segment
+  boundary. A tree outside `/admin/v1` does **not** enter identity, the rate
+  limit or the idempotency ring **at all**.
+- Writing a response body directly in a package outside a module is a structural
+  violation; `w.Write`, `w.WriteHeader` and `http.Redirect` are caught.
+- There is no `html/template`, no embedded static asset and no template
+  precedent in the repository.
 
-Bunun bir sonucu doğrudan şudur: **tarayıcı bir sayfaya giderken `Authorization`
-başlığı gönderemez.** Sunucu tarafında üretilen HTML tercih edildiği anda,
-kimliğin tarayıcıdan nasıl geleceği bir tasarım sorusu olmaktan çıkıp bir
-çerçeve sorusuna dönüşüyor.
+One consequence of this is direct: **a browser cannot send an `Authorization`
+header while navigating to a page.** The moment server-rendered HTML is
+preferred, how identity arrives from the browser stops being a design question
+and becomes a framework question.
 
-## Karar
+## Decision
 
-### 1. Panel dördüncü bir ağaçta yaşar: `internal/adminui`
+### 1. The panel lives in a fourth tree: `internal/adminui`
 
-Ne çekirdek ne modül; `internal/workflows`'un kardeşi.
+Neither core nor module; a sibling of `internal/workflows`.
 
-Modül içine konsaydı üç duvara birden çarpardı ve üçü de ölçüldü: başka hiçbir
-modülü import edemez (bu denetimde gerekçeli muafiyet kapısı **yok**), api
-paketinde şablonu yazıcıya veremez, ve şablonu alan üzerinden çalıştıran doğal
-Go yazımı muafiyet listesine **yazılamaz bile** — çağrının adı çözülemediği için.
+Put inside a module it would hit three walls at once, and all three were
+measured: it could not import any other module (this check has **no**
+justified-exemption gate), it could not hand a template to the writer in the api
+package, and the natural Go spelling that runs a template through a field could
+**not even be written** into the exemption list — because the call's name cannot
+be resolved.
 
-Çekirdek altına konamaz: çekirdek modülleri tanımaz. Bileşim kökü altına
-konamaz: orası yalnızca kablolamadır.
+It cannot go under core: core does not know the modules. It cannot go under the
+composition root: that place is wiring only.
 
-**Bu ağacın bedeli, ADR 0006'nın `internal/workflows` için yazdığı bedelin
-aynısıdır** ve aynı şekilde ödenir — bkz. Karar 5.
+**The price of this tree is the same price ADR 0006 wrote down for
+`internal/workflows`** and it is paid the same way — see Decision 5.
 
-### 2. Panel `/admin/ui` altında yaşar ve koruma yığınına AÇIKÇA eklenir
+### 2. The panel lives under `/admin/ui` and is added to the guard stack EXPLICITLY
 
-`/admin/v1/ui/...` üç yeri aynı anda kırardı: adres çubuğundan gelen her sayfa
-`401` alırdı; HTML uçları OpenAPI belgesine ve üretilen istemcilere sızardı;
-router ağacını gezen yetki testi her sayfadan `403` beklerdi.
+`/admin/v1/ui/...` would break three places at once: every page arriving from
+the address bar would get a `401`; the HTML endpoints would leak into the
+OpenAPI document and into the generated clients; and the authorization test that
+walks the router tree would expect a `403` from every page.
 
-`/admin/ui` bu üçünü de çözüyor ama **varsayılan olarak açık** geliyor — kimlik
-yok, kota yok. Bu, ADR 0007'nin kimlik satırının tam tersidir ve kabul edilmez.
-Bu yüzden panelin kendi koruma halkası bileşim kökünde, koruma yığınının
-döndürdüğü dilime **eklenir**; hız sınırı için önek `OpenPrefixes`'e girer —
-dosya sunumu ve OpenAPI ile aynı sınıf.
+`/admin/ui` solves all three, but it arrives **open by default** — no identity,
+no quota. That is the exact opposite of ADR 0007's identity line and is not
+acceptable. So the panel's own guard ring is **appended**, in the composition
+root, to the slice the guard stack returns; for the rate limit its prefix goes
+into `OpenPrefixes` — the same class as file serving and OpenAPI.
 
-Halka bileşim kökünde takılır, panelin `Routes` metodunda değil: router, route
-kaydından sonra halka eklenmesini panikle reddediyor.
+The ring is attached at the composition root and not in the panel's `Routes`
+method: the router refuses with a panic when a ring is added after a route has
+been registered.
 
-### 3. Kimlik: HttpOnly çerez, YALNIZCA panel ağacında
+### 3. Identity: an HttpOnly cookie, ONLY in the panel tree
 
-Giriş, jetonu `HttpOnly · Secure · SameSite=Strict` bir çereze yazar ve çerezin
-yolu panel ağacıyla sınırlanır. **`/admin/v1` bu çerezi kabul etmez ve
-etmeyecek.**
+Login writes the token into an `HttpOnly · Secure · SameSite=Strict` cookie and
+the cookie's path is confined to the panel tree. **`/admin/v1` does not accept
+this cookie and will not.**
 
-Bu, kararın omurgasıdır. Yönetim API'sinin bugünkü CSRF bağışıklığı bir
-savunmadan gelmiyor; jetonun, tarayıcının kendiliğinden eklemediği bir başlıkta
-durmasından geliyor. Çerezi `/admin/v1`'e açmak o bağışıklığı tek satırda yok
-eder ve yönetim uçlarının **tamamını** yeni bir saldırı yüzeyine sokardı.
+This is the backbone of the decision. The admin API's CSRF immunity today does
+not come from a defense; it comes from the token sitting in a header the browser
+does not attach on its own. Opening the cookie to `/admin/v1` destroys that
+immunity in a single line and would put **every** admin endpoint into a new
+attack surface.
 
-Ve bu, **çekirdeğe hiç dokunmadan** yapılabiliyor: kimliği context'e koyan
-yardımcı dışa açık ve yetki denetimi kimliği yalnızca context'ten okuyor. Panelin
-halkası çerezi okur, **aynı** kimlik doğrulayıcıya "Bearer" şemasıyla sorar ve
-sonucu context'e koyar. Başlık okuyan kod da yönetim koruması da değişmez.
+And this can be done **without touching core at all**: the helper that puts
+identity into the context is exported, and the authorization check reads
+identity only from the context. The panel's ring reads the cookie, asks the
+**same** authenticator with the "Bearer" scheme, and puts the result into the
+context. Neither the header-reading code nor the admin guard changes.
 
-CSRF savunması `SameSite=Strict` **artı** durum değiştiren metotlarda `Origin`
-başlığı denetimidir; ikincisi gerekli çünkü `SameSite` alt alan adı
-senaryolarını kapatmaz. İkisi de panelin kendi halkasında yaşar.
+The CSRF defense is `SameSite=Strict` **plus** an `Origin` header check on
+state-changing methods; the second is needed because `SameSite` does not close
+subdomain scenarios. Both live in the panel's own ring.
 
-### 4. HTML çekirdeğin yazıcısından geçer
+### 4. HTML goes through the core's writer
 
-`WriteHTML`, `WriteRedirect` ve `WriteAsset` çekirdeğin yanıt yazıcılarının
-yanına eklenir. O dosya "çekirdek yazıcı tanımı" olarak taramadan zaten muaf ve
-muafiyetin geçerliliği yalnızca mevcut iki yazıcının orada tanımlı olmasına
-bakıyor — üçüncü bir yazıcı hiçbir denetimi bozmaz.
+`WriteHTML`, `WriteRedirect` and `WriteAsset` are added beside the core's
+response writers. That file is already exempt from the scan as a "core writer
+definition", and the exemption's validity looks only at the two existing writers
+being defined there — a third writer breaks no check.
 
-Gövde **önce belleğe** üretilir, sonra başlık ve durum yazılır. Doğrudan
-yazıcıya akıtan bir tasarımda şablonun ortasında doğan bir hata, `200` durum
-kodlu **yarım** bir sayfa bırakır ve panik yakalayıcı başlık yazıldıktan sonra
-hiçbir şey yapamaz; arıza istemcide sessizleşir.
+The body is produced **into memory first**, and the headers and status are
+written after. In a design that streams straight into the writer, an error born
+in the middle of a template leaves a **half** page carrying a `200` status code,
+and the panic recoverer can do nothing once the header has been written; the
+fault goes silent at the client.
 
-Ölçülmüş bir yan sonuç: 2xx zorunluluğu yalnızca JSON yazıcısına ait. Yani HTML
-yazıcısı `401` ve `403` taşıyabilir — **kimliksiz istek giriş sayfasını doğru
-durum koduyla alır**, yönlendirmeye gerek kalmaz. Yönlendirme yine de gerektiği
-yerde (giriş sonrası) `Location` başlığı ve `303` ile yapılır; `http.Redirect`
-yasaktır.
+A measured side effect: the 2xx requirement belongs to the JSON writer alone. So
+the HTML writer can carry `401` and `403` — **a request without identity gets
+the login page with the correct status code** — and no redirect is needed. Where
+a redirect is required anyway (after login) it is done with a `Location` header
+and a `303`; `http.Redirect` is forbidden.
 
-### 5. Ağacın kablolama boşluğu AÇILDIĞI ANDA kapatılır
+### 5. The tree's wiring gap is closed THE MOMENT it is opened
 
-Kayıt denetimleri kapsamlarını modül ağacına indiriyor. Panel ağacında "kayıtlı
-ama hiçbir zeminde kurulmamış" bir yetenek arch testlerini **yeşil** bırakırdı —
-ölçüldü. Bu, bu deponun en pahalı hata sınıfı: kaydı olmayan yetenek.
+The registration checks scope themselves down to the module tree. In the panel
+tree a capability that is "registered but installed on no ground" would leave
+the arch tests **green** — measured. This is this repository's most expensive
+class of bug: the capability nothing keeps a record of.
 
-Uydurmaya gerek yok. Aynı boşluk `internal/workflows` için zaten kapatılmış ve
-kalıbı hazır: ağaç adı, kurulum işareti olarak konvansiyonel bir yapıcı adı ve
-denetimin körleşmesini engelleyen bir bayatlık kapısı. Panel ağacı aynı kalıbı
-alır.
+Nothing has to be invented. The same gap has already been closed for
+`internal/workflows` and the pattern is ready: the tree's name, a conventional
+constructor name as the installation marker, and a staleness gate that keeps the
+check from going blind. The panel tree takes the same pattern.
 
-Aynı şekilde, gövde yazma taramasının modül dışı kolu şablon yazımını
-**görmüyor** — çünkü çağrının alıcısı bir import adı değil. Bu bir izin değil,
-taramanın ölçme biçiminin negatifidir; panelin tamamı o kör noktada yaşayacağı
-için tarama şablon yazımını görecek biçimde genişletilir.
+Likewise, the non-module arm of the body-write scan does **not see** template
+writing — because the call's receiver is not an import name. This is not a
+permission, it is the negative of how the scan measures; since the whole panel
+will live in that blind spot, the scan is widened so that it does see template
+writing.
 
-### 6. Panel, çerçevenin OKUMA yollarını kullanır
+### 6. The panel uses the framework's READ paths
 
-Katalog ekranları veriyi Query katmanından alır (ADR 0004), container'dan adla
-çözülen dar bir arayüzle (ADR 0006). Hiçbir modül import edilmez; sepet akışı
-aynı kalıbın kanıtlanmış örneğidir.
+Catalog screens take their data from the Query layer (ADR 0004), through a
+narrow interface resolved from the container by name (ADR 0006). No module is
+imported; the cart flow is the proven example of the same pattern.
 
-**Yazma bu ADR'nin kapsamında DEĞİLDİR** ve bilinçli olarak ertelenmiştir:
-modüllerin yönetim tarafına açılmış hiçbir dar yüzeyi yok — fiyat modülünün
-böyle bir yüzeyi hiç yok — yani yazma, üç modüle yeni sözleşmeler açmayı
-gerektirir ve her sözleşme derleyicisiz bir taahhüttür. Karar, gerçek ekranlar
-elde varken verilecek.
+**Writing is NOT in the scope of this ADR** and is deliberately deferred: the
+modules have no narrow surface opened towards the admin side — the pricing
+module has no such surface at all — so writing would require opening new
+contracts to three modules, and every contract is a commitment without a
+compiler. The decision will be made with real screens in hand.
 
-**2026-09-03'te karar verildi:** Erteleme aynı gün kapandı.
-[ADR 0013](0013-panel-write-surface.md) yazmayı, her modülün kendi yayımladığı
-**ilkel tipli** dar bir yüzeye bağladı ve o yüzeyi interop'tan AYRI bir adla
-kaydetti — bugün üç tane: `product.admin`, `pricing.admin`, `inventory.admin`.
-Yazma deponun değil SERVİSİN üzerinden geçer, yani handle tekliği denetlenir ve
-`product.updated` yayımlanır. Panel bu adları **isteğe bağlı** çözer: ürün
-modülü olmayan bir kurulum yine panel alır, düzenleme formu sebebini söyleyen
-bir `503` döner. Karar 6'nın okuma yolu ana hatlarıyla durdu — katalog
-ekranları hâlâ Query katmanının `Graph` çağrısını container'dan adla çözülen
-dar arayüzden kullanıyor — ama DEĞİŞMEDEN kalmadı: ADR 0013 başlığında bu
-kararı değiştirdiğini yazar ve yönetim yüzeyine dar bir OKUMA hakkı da tanır,
-yalnızca modüller arası okuma katmanının izleyici kitlesi o veri için yanlış
-olduğunda (konum kırılımı rezerve miktarları ve iç depo adlarını taşır, o
-katmanın tüketicileri arasında ise vitrin vardır). Tur kazandırmak için
-yapılan bir okuma bu hakkın dışındadır.
+**Decided on 2026-09-03:** The deferral closed the same day.
+[ADR 0013](0013-panel-write-surface.md) tied writing to a narrow,
+**primitively typed** surface that each module publishes itself, and registered
+that surface under a name SEPARATE from interop — three of them today:
+`product.admin`, `pricing.admin`, `inventory.admin`. Writing goes through the
+SERVICE and not the repository, so handle uniqueness is checked and
+`product.updated` is published. The panel resolves these names **optionally**:
+an installation without the product module still gets the panel, and the edit
+form returns a `503` that says why. Decision 6's read path stood in outline —
+catalog screens still use the Query layer's `Graph` call through a narrow
+interface resolved from the container by name — but it did not stand UNCHANGED:
+ADR 0013 says in its title that it amends this decision, and it grants the admin
+surface a narrow READ right as well, but only where the cross-module read
+layer's audience is wrong for that data (the per-location breakdown carries
+reserved quantities and internal warehouse names, and the storefront is among
+that layer's consumers). A read done to save a round trip is outside this right.
 
-## Sonuçlar
+## Consequences
 
-**Olumlu**
+**Positive**
 
-- Çerçevenin kimlik yüzeyi **değişmiyor**; çerez panelin kendi ağacında kalıyor
-  ve yönetim API'sinin CSRF bağışıklığı korunuyor.
-- HTML yazmanın tek ve adlandırılabilir bir kapısı oluyor; kör noktadan
-  yararlanmak yerine denetim genişletiliyor.
-- Panel tek ikiliyle dağıtılıyor: ayrı bir araç zinciri, ayrı bir dağıtım ve
-  CORS yüzeyi yok.
-- Dördüncü ağacın kablolama boşluğu, açıldığı turda kapanıyor.
+- The framework's identity surface **does not change**; the cookie stays in the
+  panel's own tree and the admin API's CSRF immunity is preserved.
+- HTML writing gets a single, nameable gate; the check is widened instead of the
+  blind spot being exploited.
+- The panel ships in the single binary: no separate toolchain, no separate
+  deployment and no CORS surface.
+- The fourth tree's wiring gap closes in the round that opens it.
 
-**Olumsuz — kabul edilen bedeller**
+**Negative — accepted costs**
 
-- **Depo dördüncü bir ağaç kazanıyor.** ADR 0006'nın `internal/workflows` için
-  ödediği bedelin aynısı: kurallar ağaç adına göre yazıldığı için her yeni ağaç,
-  her kuralın kapsamını yeniden sorgulatıyor.
-- **Çerçeve HTML'den haberdar oluyor.** Çekirdek yanıt yazıcıları artık bir
-  tarayıcı kavramı taşıyor. Bedel küçük ve tek dosyada, ama "başsız çerçeve"
-  ifadesinin kenarını aşındırıyor.
-- **Yeni bir saldırı yüzeyi açılıyor.** Bir HTML paneli yayımlamak XSS ve
-  çerçeveleme yüzeylerini ilk kez açıyor; depoda bugüne kadar hiç güvenlik
-  başlığı yoktu. Savunma panel önekine takılıyor, API davranışı değişmiyor.
-- **Panel varsayılan olarak derleniyor ve yayımlanıyor.** Kapatma yolu bir ortam
-  değişkeni DEĞİL, bileşim kökünden bir satır silmektir — ADR 0007 ve ADR
-  0009'da reddedilen bayrak sınıfının aynısı burada da reddedildi: yanlışlıkla
-  `false` verilen bir anahtar, paneli hiçbir hata üretmeden açık bırakabilirdi.
-- **Oturum 12 saat sürüyor ve yenileme yok.** Panel süre bitimini önceden
-  gösterir; uzun bir düzenleme oturumunun ortasında jeton ölebilir.
-- **Çıkış TOPTANDIR.** Panelden çıkmak kullanıcının tüm oturumlarını düşürür;
-  arayüz bunu gizlemez, düğme bunu söyler.
+- **The repository gains a fourth tree.** The same price ADR 0006 paid for
+  `internal/workflows`: because the rules are written against tree names, every
+  new tree makes every rule's scope a question again.
+- **The framework learns about HTML.** The core response writers now carry a
+  browser concept. The price is small and in one file, but it wears away at the
+  edge of the phrase "headless framework".
+- **A new attack surface opens.** Publishing an HTML panel opens XSS and framing
+  surfaces for the first time; there has never been a security header in this
+  repository. The defense is attached to the panel prefix, API behavior does not
+  change.
+- **The panel is compiled and served by default.** The way to turn it off is NOT
+  an environment variable, it is deleting a line from the composition root — the
+  same class of flag ADR 0007 and ADR 0009 rejected is rejected here too: a
+  switch accidentally set to `false` could leave the panel open without
+  producing a single error.
+- **The session lasts 12 hours and there is no renewal.** The panel shows the
+  expiry in advance; a token can die in the middle of a long editing session.
+- **Logout is WHOLESALE.** Logging out of the panel drops all of the user's
+  sessions; the interface does not hide this, the button says so.
 
-## Reddedilen seçenekler
+## Rejected options
 
-**Paneli modül ağacına koymak.** Kazancı gerçekti: kayıt ve zemin denetimleri
-bedava gelirdi. Reddedildi çünkü bedeli ölçülmüş üç duvar — modül import yasağı,
-api paketinde yazma yasağı ve muafiyet listesine yazılamayan çağrı biçimi —
-paneli fiilen imkânsız kılıyor. Kazanç Karar 5 ile elle geri alınıyor; bedel
-geri alınamıyor.
+**Putting the panel in the module tree.** The gain was real: the registration
+and ground checks would come for free. Rejected because its price is three
+measured walls — the module import ban, the write ban in the api package, and a
+call form that cannot be written into the exemption list — which make the panel
+effectively impossible. The gain is taken back by hand with Decision 5; the
+price cannot be taken back.
 
-**Kimliği `localStorage`'da tutup her isteğe JavaScript ile takmak.** Çerçeveye
-hiç dokunmazdı. Reddedildi çünkü sunucu tarafında üretilen HTML kararıyla
-çelişir: adres çubuğuna yazılan bir gezinme ve F5 kimliksizdir, yani ilk boyama
-JavaScript'e bağımlı hâle gelir. Ayrıca yönetim jetonunu XSS'e açar ve depoda
-hiç içerik güvenlik politikası olmadığı için bu gerçek bir bedeldir.
+**Keeping identity in `localStorage` and attaching it to every request with
+JavaScript.** It would not touch the framework at all. Rejected because it
+contradicts the server-rendered HTML decision: a navigation typed into the
+address bar, and F5, carry no identity, so the first paint becomes dependent on
+JavaScript. It also exposes the admin token to XSS, and since there is no
+content security policy anywhere in the repository, that is a real price.
 
-**Başlık okuyan çekirdek koduna çerez geri düşüşü eklemek.** En az kod isteyen
-yoldu. Reddedildi çünkü mağaza korumasını da etkiler ve yönetim API'sinin
-tamamını CSRF'e açar; bugün onu koruyan tek şey jetonun otomatik gönderilmeyen
-bir başlıkta olmasıdır.
+**Adding a cookie fallback to the header-reading core code.** This was the path
+that asked for the least code. Rejected because it affects the store guard as
+well and opens the entire admin API to CSRF; the only thing protecting it today
+is that the token sits in a header that is not sent automatically.
 
-**Kör noktadan yararlanmak** — şablonu doğrudan yazıcıya vermek. Bugün denetimi
-geçiyor. Reddedildi çünkü bu bir izin değil, taramanın ölçme biçiminin
-negatifidir; sınır kapatıldığı gün panelin tamamı ihlale düşerdi. Depo bu hata
-sınıfını (denetleyicisi olmayan yüzey) daha önce kendi eliyle üretti ve kapattı.
+**Exploiting the blind spot** — handing the template straight to the writer. It
+passes the check today. Rejected because this is not a permission, it is the
+negative of how the scan measures; the day the boundary is closed, the whole
+panel would fall into violation. The repository has produced this class of bug
+(the surface with no checker) with its own hands before, and closed it.
 
-**Her sayfa için gerekçeli muafiyet yazmak.** Muafiyetler çağrı bazındadır ve
-kullanılmayan bir muafiyet testi düşürür; her yeni sayfa listeyi büyütürdü.
-Ölçeklenmez ve muafiyet listesi, kuralın kendisinden uzun olurdu.
+**Writing a justified exemption for every page.** Exemptions are per call, and
+an unused exemption fails a test; every new page would grow the list. It does
+not scale, and the exemption list would end up longer than the rule itself.
 
-**Paneli ayrı bir uygulama olarak yazıp çerçeveye CORS eklemek.** Panelin
-çerçeveden ayrı sürümlenmesini sağlardı. Reddedildi çünkü CORS bir güvenlik
-yüzeyidir (origin listesi, kimlik bilgisi taşıma, ön uçuş) ve çerçevenin
-sertleştirme kararlarına, karşılığında hiçbir şey almadan yeni bir madde
-eklerdi; jeton da tarayıcıda saklanmak zorunda kalırdı.
+**Writing the panel as a separate application and adding CORS to the
+framework.** It would let the panel be versioned separately from the framework.
+Rejected because CORS is a security surface (origin list, credential carrying,
+preflight) and it would add a new item to the framework's hardening decisions in
+return for nothing; the token would also have to be stored in the browser.
 
-**Panelin kendi HTTP API'sine çağrı yapması.** Panelin, bir API istemcisinin
-yapamayacağı hiçbir şeyi yapamayacağını garanti ederdi ve bu gerçek bir kazanç.
-Okuma dilimi için reddedildi: Query katmanı aynı ekranı tek turda kuruyor, oysa
-HTTP yolu her satır için ek çağrı ve ikinci bir serileştirme demek. ~~Karar
-**yazma dilimi için yeniden açıktır** ve orada kazancı daha ağır basabilir.~~
-**2026-09-03'te düzeltildi:** Yazma dilimi için de reddedildi.
-[ADR 0013](0013-panel-write-surface.md) aynı seçeneği üç bedelle kapattı: panel
-kendine bir yönetim jetonu üretip taşımak zorunda kalırdı — çerezin yol
-kapsamının tam olarak kaçındığı tehlike —, her düzenleme iki serileştirme
-öderdi, ve kendi bağlantı havuzu üzerinden kendini çağıran süreç doygunlukta
-yavaşlamak yerine kilitlenirdi.
+**The panel calling its own HTTP API.** It would guarantee that the panel can do
+nothing an API client could not do, and that is a real gain. Rejected for the
+read slice: the Query layer builds the same screen in a single round trip,
+whereas the HTTP path means an extra call per row and a second serialization.
+~~The decision **is open again for the write slice**, and there the gain may
+weigh heavier.~~ **Corrected on 2026-09-03:** Rejected for the write slice too.
+[ADR 0013](0013-panel-write-surface.md) closed the same option with three
+prices: the panel would have to mint and carry an admin token of its own —
+exactly the hazard the cookie's path scope avoids —, every edit would pay two
+serializations, and a process calling itself over its own connection pool would
+deadlock under saturation instead of slowing down.
 
-## Kararın yeniden açılması
+## Reopening the decision
 
-Üç veri bu kararı yeniden açar:
+Three pieces of data reopen this decision:
 
-1. **Panelin bir ekranı, çerçevenin API'sinin sunmadığı bir işi yapabildiği ilk
-   an.** O an panel bir referans tüketici olmaktan çıkıp ayrıcalıklı ikinci bir
-   yol olur ve Karar 6 yeniden düşünülmelidir.
-2. **Yazma diliminin gerçek maliyeti ölçüldüğünde.** Üç modüle yeni dar yüzey
-   açmak, panelin kendi API'sine HTTP çağrısı yapmasından pahalı çıkarsa
-   reddedilen o seçenek geri gelir. **2026-09-03:** bu tetik, istediği
-   ölçüm hiç yapılmadan düştü. [ADR 0013](0013-panel-write-surface.md)
-   loopback'i maliyet karşılaştırmasıyla değil YAPISAL üç bedelle kapattı —
-   panelin kendine bir yönetim jetonu üretmesi, her düzenlemenin iki
-   serileştirme ödemesi, ve sürecin kendi bağlantı havuzu üzerinden kendini
-   çağırırken doygunlukta yavaşlamak yerine kilitlenmesi. Bundan sonraki
-   tetikleri o ADR yazıyor.
-3. **Panelin ayrı sürümlenmesi istendiğinde.** O gün CORS kararı yeniden
-   tartılır; bugün reddedilme sebebi karşılığının olmamasıdır, imkânsızlığı
-   değil.
+1. **The first moment a screen of the panel can do a job the framework's API
+   does not offer.** At that moment the panel stops being a reference consumer
+   and becomes a privileged second path, and Decision 6 must be reconsidered.
+2. **When the write slice's real cost is measured.** If opening a new narrow
+   surface to three modules turns out to be more expensive than the panel making
+   HTTP calls to its own API, that rejected option comes back.
+   **2026-09-03:** this trigger fell without the measurement it asked for ever
+   being made. [ADR 0013](0013-panel-write-surface.md) closed loopback not with
+   a cost comparison but with three STRUCTURAL prices — the panel minting an
+   admin token for itself, every edit paying two serializations, and the process
+   deadlocking rather than slowing down under saturation while calling itself
+   over its own connection pool. The triggers that come after this one are
+   written in that ADR.
+3. **When separate versioning of the panel is wanted.** That day the CORS
+   decision is weighed again; the reason it is rejected today is that it buys
+   nothing, not that it is impossible.
 
-## İlgili
+## Related
 
-- [ADR 0001](0001-modul-arasi-iletisim.md) — dar arayüz + adla çözüm.
-- [ADR 0004](0004-query-veri-erisimi.md) — panelin okuma yolu.
-- [ADR 0006](0006-workflow-modul-erisimi.md) — dördüncü ağacın emsali; bu ADR
-  onun kurduğu kalıbı ikinci kez uyguluyor.
-- [ADR 0007](0007-sertlestirme-arizada-davranis.md) — arızada davranış; panelin
-  koruma halkası ve bayrak reddi oradan besleniyor.
-- [ADR 0013](0013-panel-write-surface.md) — Karar 6'nın ertelediği yazma
-  sorusunun cevabı; bu ADR'yi değiştirir.
+- [ADR 0001](0001-modul-arasi-iletisim.md) — narrow interface + resolution by
+  name.
+- [ADR 0004](0004-query-veri-erisimi.md) — the panel's read path.
+- [ADR 0006](0006-workflow-modul-erisimi.md) — the fourth tree's precedent; this
+  ADR applies the pattern it established a second time.
+- [ADR 0007](0007-sertlestirme-arizada-davranis.md) — behavior on failure; the
+  panel's guard ring and its refusal of a flag are fed from there.
+- [ADR 0013](0013-panel-write-surface.md) — the answer to the write question
+  Decision 6 deferred; it amends this ADR.

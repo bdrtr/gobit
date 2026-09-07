@@ -209,6 +209,33 @@ func (f *fakeRepo) seed(in models.Invoice) {
 	f.invoices[in.ID] = in
 }
 
+// seedSeries opens a series that has already handed out lastNumber numbers.
+//
+// It exists for the ceiling: a series reaches its last number after a billion
+// documents, and no test can get there by issuing them. Standing the series
+// where it would be is the only way to run the one line of code that stops a
+// year's numbering rolling over into a number it has already used.
+func (f *fakeRepo) seedSeries(prefix string, year int32, lastNumber int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	opened := models.Series{
+		ID:         models.NewSeriesID(),
+		Prefix:     prefix,
+		Year:       year,
+		LastNumber: lastNumber,
+	}
+	f.series[opened.ID] = opened
+}
+
+// documentCount is how many documents the fake holds.
+func (f *fakeRepo) documentCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return len(f.invoices)
+}
+
 // validIssue is a request that passes every rule; a test changes the one field
 // it is about.
 func validIssue() service.IssueInput {

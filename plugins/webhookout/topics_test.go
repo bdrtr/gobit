@@ -46,7 +46,20 @@ const repoRoot = "../.."
 // root itself: the published facade at the root declares no event. A tree
 // missing from here is a tree whose publishes are invisible to this test, which
 // is why [TestTheScannedTreesStillExist] checks every one of them is on disk.
-var scannedTrees = []string{"cmd", "core", "internal", "plugins", "server"}
+//
+// "server" was on this list until 2026-09-07 and was NOT a tree. There is no
+// server/ directory in this repository — the composition root's binary lives at
+// cmd/server, which "cmd" already covers. What the entry actually matched was
+// the COMPILED BINARY that a local `make build` leaves at the repository root,
+// and which .gitignore keeps out of the repository. So the census passed on
+// every developer's machine and failed on every CI run, for eight pushes,
+// with `stat ../../server: no such file or directory`.
+//
+// The godoc above is not decoration, then: the list is data, this entry was
+// wrong, and the test written to catch a wrong root caught one. What it could
+// not do was make anybody read it — a red that appears only in CI is a red
+// somebody has to go and look at.
+var scannedTrees = []string{"cmd", "core", "internal", "plugins"}
 
 // unresolvableNames are the publish sites whose event name is deliberately not
 // resolved, with the reason.

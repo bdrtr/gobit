@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -355,8 +356,9 @@ func (h *Handler) adminListExchanges(w http.ResponseWriter, r *http.Request) {
 	for i := range items {
 		data = append(data, toExchangeDTO(items[i]))
 	}
+	clientLimit, _ := strconv.ParseInt(r.URL.Query().Get("limit"), 10, 64)
 	corehttp.WriteJSON(ctx, w, http.StatusOK, listEnvelope{
-		Data: data, Count: count, Offset: page.Offset, Limit: page.Limit,
+		Data: data, Count: count, Offset: page.Offset, Limit: clientLimit,
 	})
 }
 
