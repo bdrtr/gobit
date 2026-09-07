@@ -553,7 +553,7 @@ func scanSource(rel string, src []byte, exemptions map[string][]string) (hits []
 // # Why the scan asks git rather than the filesystem
 //
 // ADR 0012's ratchet is about the language of the REPOSITORY, and a working
-// directory is not the repository: a developer's scratch file, a build artefact,
+// directory is not the repository: a developer's scratch file, a build artifact,
 // anything .gitignore keeps out — none of it ships, and none of it is debt
 // anybody can pay by translating it.
 //
@@ -564,7 +564,7 @@ func scanSource(rel string, src []byte, exemptions map[string][]string) (hits []
 // [TestLedgerIsNotStale] — "go-commerce-framework-plan.md is no longer a scanned
 // file" — while every developer's machine stayed green, because the file was
 // sitting right there. It is the same shape as the compiled binary that occupied
-// a directory name in plugins/webhookout's census: a gitignored artefact making
+// a directory name in plugins/webhookout's census: a gitignored artifact making
 // a local green FAKE, which is the failure mode this repository has now met
 // twice.
 //
