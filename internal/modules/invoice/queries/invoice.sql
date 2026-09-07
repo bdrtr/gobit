@@ -151,3 +151,32 @@ LIMIT sqlc.arg('row_limit')::bigint;
 UPDATE invoices
 SET buyer_email_folded = sqlc.arg('buyer_email_folded')::text
 WHERE id = sqlc.arg('id')::text;
+
+-- ListNonAsciiBuyerEmailsForRefold pages only the documents whose buyer address
+-- is not pure ASCII.
+--
+-- It exists for the STARTUP gate, where the full pass ListInvoiceBuyerEmailsForRefold
+-- performs would be wrong: that one reads every document carrying an address,
+-- which is the right scope for a maintenance command run once by a human and the
+-- wrong scope for something that runs on every boot.
+--
+-- The narrowing is sound because of WHERE the defect comes from. Migration 000003's
+-- backfill folded with lower(btrim()), and on a cluster whose ctype is C that
+-- differs from the Go fold ONLY where the address carries a letter outside ASCII.
+-- A pure-ASCII address folds identically under both, on every cluster, so a row
+-- the gate skips cannot be one of the rows the gate exists to find.
+--
+-- What this scope does NOT cover is the second, rarer disagreement the full pass
+-- was widened for: btrim() strips spaces where Go's TrimSpace also strips tabs and
+-- newlines, so a pure-ASCII address stored with a trailing tab folds differently
+-- and is invisible here. That is why `gobit refold-invoices` still exists and still
+-- reads everything — the gate is the floor, not the ceiling.
+--
+-- name: ListNonAsciiBuyerEmailsForRefold :many
+SELECT id, buyer_email, buyer_email_folded
+FROM invoices
+WHERE buyer_email <> ''
+  AND buyer_email !~ '^[[:ascii:]]*$'
+  AND id > sqlc.arg('after_id')::text
+ORDER BY id
+LIMIT sqlc.arg('row_limit')::bigint;

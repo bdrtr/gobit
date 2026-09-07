@@ -136,7 +136,7 @@ milder class than the list above, but not a harmless one: `WriteError` passes a
 client-safe error's `Details` through verbatim and `typeMismatch` builds its
 error with `errors.Invalid`, so `kayitli_tip` was a JSON object key on the wire
 whenever one was raised. What spared them was not an exemption from the rule but
-the rule itself: 4e1a180 took the container's two six and a half hours after
+the rule itself: 4e1a180 took the container's three six and a half hours after
 this ADR was written, and 2b987ab the query graph's three an hour and a half
 after that. Neither `internal/core` nor `core` holds a machine-readable Turkish
 name today. The rule loses no force: it is what keeps `product_not_found` and

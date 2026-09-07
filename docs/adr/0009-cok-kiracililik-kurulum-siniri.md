@@ -10,7 +10,7 @@ The plan document puts multi-tenancy out of scope in two places — in the
 "Non-goals (ilk sürümde yok)" sentence and in the "10. Sonraki Sürüm Fikirleri
 (şimdilik kapsam dışı)" section — but until this ADR was written it did not say
 **why** it did. The concept does not occur in the repository at all: not one of
-the 72 tables has a tenant column, no signature has a tenant parameter, no
+the ~~72~~ **67** tables has a tenant column, no signature has a tenant parameter, no
 namespace has a tenant segment.
 
 > ~~(two line-number references pointing at the thirty-fifth and the three
@@ -43,17 +43,24 @@ namespace has a tenant segment.
 > the modules' **72** plus the ten that `core/`, `internal/core/` and the plugins
 > create, and that count was re-measured on the day of this correction.
 >
-> That `docs/security.md`'s module figure is also **72** is a coincidence and
-> NOT a copy of the number here, but the mechanism is not the one an earlier
-> draft of this correction claimed. Reconstructed from the tree at this ADR's own
-> commit (9aa8b60): `internal/modules` held **64** tables — which is exactly the
-> **64** under study (A) below — and the whole repository held **67**. So the
-> **72** in this ADR matches neither set on the day it was written, and the
-> method behind it was not recorded. It is left standing as the decision-date
-> figure it is declared to be; what should not be done is to invent an
-> explanation for it, which is how this very sentence went wrong once already.
-> Which number holds still depends on the question asked: for "what did the
-> decision rest on", the one here; for "what is there today", `docs/security.md`.
+> **The decision-date count itself was wrong, and it has been re-measured rather
+> than preserved.** This ADR was written with **72**, and the method behind that
+> number was never recorded. Reconstructed from the tree at this ADR's own commit
+> (9aa8b60): `internal/modules` held **64** tables — which is exactly the **64**
+> under study (A) below — and the whole repository, counting `core/`,
+> `internal/core/` and the plugins, held **67**. The 72 matched neither set on the
+> day it was written.
+>
+> Every use of it below now reads **67**, with the original struck. The DECISION
+> does not move: the leak hunt found that **0** of those tables can say whose row
+> is theirs, and zero out of 67 is the same finding as zero out of 72. What
+> changes is that the number can now be reproduced by anybody who runs the count.
+>
+> That `docs/security.md`'s module figure is also **72** is therefore a
+> coincidence of digits and nothing more — it is today's `internal/modules` count,
+> measured today. Which number holds depends on the question asked: for "what did
+> the decision rest on", the one here; for "what is there today",
+> `docs/security.md`.
 
 An out-of-scope statement without a justification is not a decision; it gets
 re-argued every round, and meanwhile doors close quietly. This ADR closes that
@@ -62,7 +69,7 @@ gap.
 Three independent studies were done to give the decision its ground: a database
 per tenant (A), row-level separation in a shared schema (B), and a leak hunt
 over the existing mechanisms. The hunt's count gives the size of the work: of
-the 72 tables, **0** can answer the question "whose row is this"; 55 sqlc files
+the ~~72~~ **67** tables, **0** can answer the question "whose row is this"; 55 sqlc files
 hold **403** named queries; **13** `query.Provider`s are registered in the
 container; `db.Pool.Pool()` stands at **19** production call sites; the guard
 stack wraps **2** path prefixes.

@@ -37,9 +37,12 @@ import (
 // The ten order and payment entries are ONE finding stated ten times, and it is
 // a real one: the order and payment modules never soft-delete anything.
 // ~~Every read in both carries "deleted_at IS NULL" — a predicate that has
-// never once been false.~~ **Corrected 2026-09-07:** nothing writes deleted_at
-// in either module, so the predicate has never once been false where it is
-// written — but six reads deliberately leave it out. Order's
+// never once been false.~~ **Corrected 2026-09-07:** nothing in the SQL this
+// gate reads — the migrations and the queries — writes deleted_at in either
+// module, so the predicate has never once been false in the running shop. The
+// exception is by hand: six statements in the two modules' integration tests
+// stamp the column themselves, precisely so that a read can be PROVEN to hide
+// the row. And six reads deliberately leave the predicate out. Order's
 // ListOrdersForErasure and the five ForDisclosure reads answer what the
 // DATABASE STILL HOLDS about a person rather than what the shop can still see,
 // and both query files argue that under a heading of their own. Removing the
@@ -597,8 +600,12 @@ func databaseSupplies(definition []sqlToken) bool {
 // which is what the five upserts in this repository need (product's variant
 // option values, cart's addresses, promotion's application method,
 // fulfillment's shipping locations, invoice's series numbers). For the last two
-// the carry is what puts a column into the map AT ALL: their SET names
-// updated_at, which their INSERT column list does not.
+// the carry is what puts a column into the map AT ALL — and not because their
+// SET names updated_at while their INSERT column list does not, which is true
+// of cart's addresses too. It is that nothing ELSE writes it:
+// shipping_locations.updated_at and invoice_series.updated_at are named by the
+// carried SET and by no other statement, while cart_addresses.updated_at is
+// written by SoftDeleteCartAddressesByCart and AnonymizeCartAddresses as well.
 //
 // # Why FOR UPDATE does not become a target
 //

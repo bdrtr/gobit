@@ -218,13 +218,19 @@ const generatedMarker = "Code generated"
 // the letter class as data, so the file that DEFINES the rule would otherwise
 // be its first violation.
 //
-// The second and third are the database case-folding probe and the decision
-// record that explains it. Its whole subject is that a
-// C-locale cluster cannot fold non-ASCII case, and it cannot say so without
-// naming a pair of letters that differ only in case outside ASCII. Replacing
-// them with ASCII would make the file pass this rule and make the probe test
-// nothing — the ASCII pair folds on every cluster, which is exactly the false
-// all-clear the probe exists to prevent.
+// The second is the decision record that explains the database case-folding
+// probe. Its whole subject is that a C-locale cluster cannot fold non-ASCII
+// case, and it cannot say so without naming a pair of letters that differ only
+// in case outside ASCII. Replacing them with ASCII would make the file pass this
+// rule and make the argument say nothing — the ASCII pair folds on every
+// cluster, which is exactly the false all-clear the probe exists to prevent.
+//
+// ~~The probe itself, core/db/casefold.go, was the third.~~ **Corrected
+// 2026-09-07: it no longer needs an entry.** Its SQL now writes the pair as \u
+// escapes and names the code points in a comment beside each line, so the bytes
+// reaching the database are byte-for-byte what they were and the file is plain
+// ASCII. That is the escape-over-exemption preference below, applied to the file
+// that had been the standing argument for the other direction.
 //
 // The fourth and fifth arrived on 2026-09-07, each with the translation of the
 // file it covers, and neither widened the rule: the letters left behind are the
@@ -265,13 +271,6 @@ const generatedMarker = "Code generated"
 //     they reach the DATABASE, so escaping them is not available)
 var diacriticDataExemptions = map[string][]string{
 	"docs/adr/0012-repository-language-and-solid.md": {"`çğıöşüÇĞİÖŞÜ`"},
-	"core/db/casefold.go": {
-		"'Ç' ILIKE 'ç'", "'ÇANTA'", "'çanta'", `"çanta"`, `"Çanta"`,
-		// The third probe path, added 2026-09-07 with lower(). Same argument as
-		// the pair above: an ASCII pair would fold on every cluster and the
-		// probe would test nothing.
-		"lower('Ç') = 'ç'",
-	},
 	// ADR 0015 records the same defect and has to quote the same two words to
 	// show it: the whole finding is that one of them does not match the other.
 	"docs/adr/0015-postgresql-cluster-contract.md": {

@@ -307,3 +307,12 @@ func (f *fakeRepo) SetBuyerEmailFolded(_ context.Context, id, folded string) err
 
 	return nil
 }
+
+// ListNonAsciiBuyerEmailsForRefold serves the startup gate's scope from the same
+// scripted pages; the fake stores no addresses, so the narrowing is the caller's
+// concern rather than this fake's.
+func (f *fakeRepo) ListNonAsciiBuyerEmailsForRefold(
+	ctx context.Context, afterID string, limit int32,
+) ([]models.BuyerEmailHandle, error) {
+	return f.ListBuyerEmailsForRefold(ctx, afterID, limit)
+}

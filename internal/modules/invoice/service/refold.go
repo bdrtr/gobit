@@ -59,13 +59,39 @@ type RefoldReport struct {
 // invoice is a snapshot and ADR 0024 makes it immutable; this corrects the
 // handle beside it, not the document.
 func (s *Service) RefoldBuyerEmails(ctx context.Context) (RefoldReport, error) {
+	return s.refold(ctx, s.repo.ListBuyerEmailsForRefold)
+}
+
+// RefoldNonAsciiBuyerEmails is the same pass over the rows the STARTUP gate is
+// responsible for: the ones whose address is not pure ASCII.
+//
+// # Why the gate is narrower than the command
+//
+// Migration 000003's backfill folded with lower(btrim()), which differs from the
+// Go fold only where a letter falls outside ASCII — so a pure-ASCII address is
+// correct on every cluster and reading it on every boot would buy nothing. The
+// command stays wider because a second disagreement exists that this scope cannot
+// see: btrim() strips spaces where Go's TrimSpace also strips tabs and newlines.
+//
+// The gate is therefore the FLOOR — the part no operator has to remember — and
+// `gobit refold-invoices` remains the whole of it.
+func (s *Service) RefoldNonAsciiBuyerEmails(ctx context.Context) (RefoldReport, error) {
+	return s.refold(ctx, s.repo.ListNonAsciiBuyerEmailsForRefold)
+}
+
+// refold walks one page source and rewrites every handle Go would fold
+// differently.
+func (s *Service) refold(
+	ctx context.Context,
+	page func(ctx context.Context, afterID string, limit int32) ([]models.BuyerEmailHandle, error),
+) (RefoldReport, error) {
 	var (
 		report RefoldReport
 		after  string
 	)
 
 	for {
-		page, err := s.repo.ListBuyerEmailsForRefold(ctx, after, refoldPageSize)
+		page, err := page(ctx, after, refoldPageSize)
 		if err != nil {
 			// The report so far is returned WITH the error rather than
 			// discarded: the pass writes as it goes, so the rows it already

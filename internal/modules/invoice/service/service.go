@@ -87,6 +87,7 @@ type Repo interface {
 	// The two below are here for [Service.RefoldBuyerEmails], the one-time
 	// maintenance pass migration 000003 asks for, and for nothing else.
 	ListBuyerEmailsForRefold(ctx context.Context, afterID string, limit int32) ([]models.BuyerEmailHandle, error)
+	ListNonAsciiBuyerEmailsForRefold(ctx context.Context, afterID string, limit int32) ([]models.BuyerEmailHandle, error)
 	SetBuyerEmailFolded(ctx context.Context, id, folded string) error
 }
 

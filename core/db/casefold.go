@@ -23,7 +23,9 @@ import (
 //
 // None is a string comparison in Go. All three depend on the cluster's CTYPE,
 // and a cluster created with `--locale=C` folds ASCII only. On such a cluster a
-// shopper typing "çanta" gets ZERO results for a product titled "Çanta" — no
+// shopper searching for a word whose first letter is a small C with cedilla
+// (U+00E7) gets ZERO results for a product whose title carries the capital
+// (U+00C7) — no
 // error, no log line, no metric. The catalog looks empty and the search box
 // looks broken for reasons nobody can see.
 //
@@ -109,10 +111,28 @@ import (
 // The letters are Turkish because that is where this was found, but nothing
 // here is Turkish-specific: any cluster that folds these folds the accented
 // letters of every other language the same way.
-const caseFoldingProbe = `SELECT
-	('Ç' ILIKE 'ç') AS pattern,
-	(to_tsvector('simple', 'ÇANTA') @@ websearch_to_tsquery('simple', 'çanta')) AS fulltext,
-	(lower('Ç') = 'ç') AS case_lower`
+//
+// # Why the letters are \u escapes and not the letters
+//
+// The pair has to be a real non-ASCII case pair or the probe tests nothing — an
+// ASCII pair folds on every cluster, which is the false all-clear this exists to
+// prevent. But ADR 0012's ratchet reads this file's SOURCE, and a Turkish letter
+// written out here would need an entry in the diacritic exemption map. This file
+// carried one for months, for exactly these three lines.
+//
+// Escaping removes the debt without weakening the probe: the bytes sent to the
+// database are identical, and the file becomes plain ASCII. What the escapes cost
+// is legibility, so every line names its letters — U+00C7 and U+00E7 are the
+// capital and small C with cedilla, the pair whose fold a C-locale cluster cannot
+// perform.
+const caseFoldingProbe = "SELECT\n" +
+	// ILIKE: U+00C7 against U+00E7 — the storefront's own ?q= filter.
+	"\t('\u00c7' ILIKE '\u00e7') AS pattern,\n" +
+	// to_tsvector: U+00C7 + ANTA against U+00E7 + anta — the search plugin's index.
+	"\t(to_tsvector('simple', '\u00c7ANTA') @@ " +
+	"websearch_to_tsquery('simple', '\u00e7anta')) AS fulltext,\n" +
+	// lower(): U+00C7 folded to U+00E7 — the e-mail CHECK constraints.
+	"\t(lower('\u00c7') = '\u00e7') AS case_lower"
 
 // CaseFolding reports how the database handles case outside ASCII.
 type CaseFolding struct {
@@ -170,7 +190,10 @@ func checkCaseFolding(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger)
 		slog.Bool("pattern_matching", folding.Pattern),
 		slog.Bool("full_text", folding.FullText),
 		slog.Bool("case_lower", folding.Lower),
-		slog.String("effect", `a shopper searching "çanta" finds nothing for a product titled "Çanta"`),
+		// The operator READS this, so it names the words rather than the code
+		// points; the escapes keep the source ASCII (see [caseFoldingProbe]).
+		slog.String("effect",
+			"a shopper searching \"\u00e7anta\" finds nothing for a product titled \"\u00c7anta\""),
 		slog.String("effect_identity", "the e-mail CHECK constraints in auth, customer and b2b "+
 			"(email = lower(email)) stop refusing unfolded non-ASCII addresses, so they no longer "+
 			"guard against one person holding two accounts"),

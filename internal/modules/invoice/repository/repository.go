@@ -416,6 +416,33 @@ func (r *Repository) ListBuyerEmailsForRefold(
 	return out, nil
 }
 
+// ListNonAsciiBuyerEmailsForRefold pages the documents whose buyer address is not
+// pure ASCII.
+//
+// It is the STARTUP gate's scope. The query's own comment carries why the
+// narrowing is sound and what it deliberately does not cover.
+func (r *Repository) ListNonAsciiBuyerEmailsForRefold(
+	ctx context.Context, afterID string, limit int32,
+) ([]models.BuyerEmailHandle, error) {
+	rows, err := r.queries(ctx).ListNonAsciiBuyerEmailsForRefold(ctx,
+		invoicedb.ListNonAsciiBuyerEmailsForRefoldParams{AfterID: afterID, RowLimit: int64(limit)})
+	if err != nil {
+		return nil, wrapDB(err, codeQueryFailed,
+			"the invoices carrying a non-ASCII buyer address could not be read")
+	}
+
+	out := make([]models.BuyerEmailHandle, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, models.BuyerEmailHandle{
+			ID:         row.ID,
+			BuyerEmail: row.BuyerEmail,
+			Folded:     row.BuyerEmailFolded,
+		})
+	}
+
+	return out, nil
+}
+
 // SetBuyerEmailFolded rewrites one document's erasure handle.
 //
 // It writes buyer_email_folded alone. What the document prints is untouched,

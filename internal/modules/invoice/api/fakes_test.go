@@ -280,3 +280,10 @@ func (m *memRepo) ListBuyerEmailsForRefold(
 
 // SetBuyerEmailFolded is unused by the API tests, for the same reason.
 func (m *memRepo) SetBuyerEmailFolded(_ context.Context, _, _ string) error { return nil }
+
+// ListNonAsciiBuyerEmailsForRefold is unused by the API tests, as its sibling is.
+func (m *memRepo) ListNonAsciiBuyerEmailsForRefold(
+	_ context.Context, _ string, _ int32,
+) ([]models.BuyerEmailHandle, error) {
+	return nil, nil
+}
