@@ -139,7 +139,8 @@ A request rejected in the guard middleware never reaches route matching and its
 `http.route` value becomes `unknown`; which endpoint was addressed is read from
 that span's `url.path` attribute. (The guards are the stack the composition root
 installs in front of the API surfaces — rate limit, then identity, then
-idempotency, in `corehttp.APIGuards`; the README's API security section is where
+idempotency, in `corehttp.APIGuards`; [`security.md`](security.md) — "The order
+of the guard stack is deliberate" — and the `corehttp.APIGuards` godoc are where
 that order and its justification are written.)
 
 To try it locally:

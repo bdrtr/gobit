@@ -75,26 +75,42 @@ forgets.
 
 ## What the measurement found, and it is two different problems
 
-**Sixteen of the thirty-eight are one root cause, and the tree had already
-diagnosed it — twice, independently.** An OpenAPI component's name is derived
-from the Go type name, so `customer/api.addressDTO` and `cart/api.addressDTO`
-both want the component `Address`, and `payment/api.collectionDTO` and
-`product/api`'s both want `Collection`. Two types wanting one name does not
-degrade one endpoint: `Doc.Build` FAILS and `/openapi.json` returns 500 for
-EVERY module. Both modules therefore chose to leave their endpoints bodiless
-rather than take the whole document down, both wrote down why, and both
-concluded — in the same words — that the fix is a namespace decision belonging
-to the core.
+~~**Sixteen of the thirty-eight are one root cause, and the tree had already
+diagnosed it — twice, independently.**~~ **Corrected 2026-09-07: TWENTY-FIVE,
+and the tree had diagnosed it FOUR times.** The undercount was this ADR's own —
+the ledger written in the same commit files twenty-five routes under the clash
+and names four pairs, and
+[ADR 0036](0036-a-component-name-carries-its-module.md) counts the same four.
+An OpenAPI component's name is derived from the Go type name, so
+`customer/api.addressDTO` and `cart/api.addressDTO` both want the component
+`Address`, `payment/api.collectionDTO` and `product/api`'s both want
+`Collection`, `fulfillment/api.optionDTO` wants the `Option` that
+`product/models` also wants, and `order/api.lineItemDTO` — carried in through
+`orderDetailDTO` — wants the `LineItem` that `cart/api` describes already. Two
+types wanting one name does not degrade one endpoint: `Doc.Build` FAILS and
+`/openapi.json` returns 500 for EVERY module. All four modules therefore chose
+to leave their endpoints bodiless rather than take the whole document down, all
+four wrote down why, and all four concluded — in their own words, not the same
+ones — that a component name is published contract and the fix therefore cannot
+be taken from inside one module. `customer/api` goes furthest and names it: a
+namespace decision, to be made in the core.
 
 They were right, and this ADR does not make that decision; it makes it visible
-and counted instead of resting in two package comments nothing reads. What it
-does change is that the sixteen can no longer grow to seventeen quietly.
+and counted instead of resting in four package comments nothing reads. What it
+does change is that the twenty-five can no longer grow to twenty-six quietly.
 
-**The other twenty-two have no reason on file at all.** Webhook and search
+~~**The other twenty-two have no reason on file at all.** Webhook and search
 endpoints from the two plugins, the shipping-option surface, and ten order
-endpoints. Nothing anywhere explains them; they are simply endpoints whose
-`Describe` was never written, which is precisely the omission that had no way of
-being seen before today.
+endpoints.~~ **Corrected 2026-09-07: THIRTEEN** — the webhook plugin's six
+operator endpoints, the search plugin's two, and five order after-sales routes.
+The shipping-option surface and five of the order endpoints belong in the clash
+group above, and were filed here by the same undercount: `fulfillment/api`'s
+`Describe` godoc names all four shipping-option routes under the heading "The
+endpoints NOT described", and `order/api`'s names its five under "FIVE ENDPOINTS
+LEFT UNDESCRIBED", both written a commit BEFORE this ADR landed. Nothing
+anywhere explains the thirteen; they are simply endpoints whose `Describe` was
+never written, which is precisely the omission that had no way of being seen
+before today.
 
 ## Rejected alternatives
 
@@ -130,9 +146,9 @@ test that measured an empty set.
   module, which is the compile-time proof that the impossibility is gone.
 - **A forgotten description is now visible three ways**: at startup as a warning,
   in the e2e gate as new debt, and in a ledger with a number on it.
-- **The component-name collision has a number.** Sixteen routes, and a stale-line
-  check that will notice the day the namespace decision is made and they come
-  off the list.
+- **The component-name collision has a number.** Twenty-five routes, and a
+  stale-line check that will notice the day the namespace decision is made and
+  they come off the list.
 
 **Negative, and accepted**
 
@@ -142,10 +158,10 @@ test that measured an empty set.
   described them.
 - **`core/openapi` is now a compatibility promise**, including `Operation`,
   `Parameter` and the component-naming rule. Component names are what a client
-  generator turns into class names, so the namespace fix the sixteen are waiting
-  for is a RENAME in the published contract. That is the price of publishing
-  before making the decision, and it is accepted because the alternative was
-  keeping an unusable interface unusable for longer.
+  generator turns into class names, so the namespace fix the twenty-five are
+  waiting for is a RENAME in the published contract. That is the price of
+  publishing before making the decision, and it is accepted because the
+  alternative was keeping an unusable interface unusable for longer.
 - **The audit needs a database.** It runs under the `integration` tag with the
   rest of e2e, so a developer running `go test ./...` does not see it. That is
   the same trade every e2e gate here already makes, and the startup warning is
@@ -155,7 +171,7 @@ test that measured an empty set.
 
 Reopen the naming half — not the publish — the moment somebody needs two modules
 to describe types of the same name, which is already true and is what the
-sixteen are. The decision to make there is whether a component name gains a
+twenty-five are. The decision to make there is whether a component name gains a
 module prefix always, only on collision, or by the module's own declaration; the
 first is the only one that is deterministic and the only one that renames
 components that work today.
@@ -164,8 +180,8 @@ components that work today.
 
 - [ADR 0026](0026-the-published-surface-is-fourteen-packages.md) — the membership
   rule this decision applies, and the ADR whose own text named this defect.
-- [ADR 0027](0027-tek-satirlik-kurulum-facade.md) — the facade an out-of-tree
-  program boots through; the starter module that proves this decision is built
-  on top of it.
+- [ADR 0027](0027-the-composition-root-is-a-library-not-a-binary.md) — the
+  facade an out-of-tree program boots through; the starter module that proves
+  this decision is built on top of it.
 - [ADR 0007](0007-sertlestirme-arizada-davranis.md) — why a schema failure warns
   instead of stopping startup.

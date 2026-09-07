@@ -1221,6 +1221,80 @@ a repository that no longer exists.
   no row in the README's invariant table. Nothing is red, because that audit only
   checks README against the repository and not the reverse, but the row is
   missing.
+- **D29** **The documents were audited against the code for the first time, and
+  91 statements were false.** 2026-09-07. D27 and D28 were each found by checking
+  ONE sentence the previous round had written; this is what happened when the
+  same question was asked of the whole repository at once.
+
+  **Method, because the number means nothing without it.** 21 claim sources were
+  read in parallel — all 38 ADRs, the 9 documents under `docs/`, the 105 gates in
+  `internal/arch`, the package godocs of `core/`, the module and service godocs
+  of all 17 modules, and the ~40 SQL migration headers. Each reader extracted
+  FALSIFIABLE claims and checked them with commands. Every candidate then went to
+  a second, adversarial reader whose instructions were the opposite — prove the
+  claim TRUE, reject on a fair reading, default to rejection when unsure. **96
+  candidates, 91 confirmed, 5 rejected.** A sample was then re-verified by hand
+  before anything was changed.
+
+  **What was actually wrong.** The classes, in the order they hurt: universal
+  negatives generalized from the thing just fixed ("nothing in the tree...");
+  counts that were right once (`fourteen packages`, `fifteen places`, `both
+  jobs`, `nine places`); paths and identifiers that had moved (`cmd/server`'s
+  module list is `internal/app`'s, `internal/app/setup.go`'s plugin catalog is
+  `plugins.go`'s, `modul-izolasyonu-*` depguard blocks are `module-isolation-*`,
+  `x-migrations-table` is `postgres.Config.MigrationsTable` and ADR 0003 says so);
+  enforcement claims where the named enforcer did not cover the case; and
+  cross-references pointing at what the target does not say.
+
+  **The corrections were themselves audited, and that is the part worth keeping.**
+  A third pass checked the 91 fixes and found 66 defects in them — 3 where a false
+  claim had been replaced by a DIFFERENT false claim, and many where the same
+  false claim survived in a data literal, a failure message or a paired comment
+  the fix had not looked at. Left alone, the repair would have shipped three new
+  false statements. **A correction is a claim, and it needs the same check the
+  original failed.**
+
+  One of those three is a lesson on its own. A correction to ADR 0009 explained
+  why two documents both read **72** by asserting that one counts the whole
+  repository and the other counts `internal/modules`. Reconstructed from the tree
+  at that ADR's own commit, `internal/modules` held **64** — which is exactly the
+  figure the ADR gives elsewhere — and the whole repository held **67**. The 72
+  matches neither, and its method was never recorded. The correction now says
+  that, and says the explanation was invented; the number stands as the
+  decision-date figure it is declared to be.
+
+  **Two gates had holes that let this happen, and both are closed.**
+
+  - `TestTheADRReferencesResolve` matched only links carrying the full path from
+    the repository root. Records link to their siblings RELATIVELY, with no such
+    prefix, so **75 links were unchecked
+    and three were broken** — two of them written days earlier by the round that
+    added the e-mail audit. The gate now checks relative links inside `docs/adr/`
+    and refuses to run blind.
+  - `modulesWithAnEmailColumn` matched a column only where a `CREATE TABLE`
+    declares it, and walked `internal/modules` alone. An existing module can only
+    grow a column with `ALTER TABLE ... ADD COLUMN` — the shape ADR 0038's OWN
+    migration used, which left `buyer_email_folded` outside the audit written for
+    it — and a plugin's migrations were outside the walk entirely. Both are now
+    covered, and ADR 0038's "a seventh module cannot join quietly" is true again
+    rather than struck.
+
+  **What this does NOT establish.** The audit read what the documents SAY and
+  checked it against what the code DOES; it did not verify that the decisions are
+  good ones, and a claim it confirmed is only as good as the command that
+  confirmed it. Nothing here counts the claims it failed to extract — the 5
+  rejected candidates are evidence the adversarial pass works, not evidence the
+  finders were exhaustive.
+
+  **The standing lesson.** Three rounds in a row, the defect was a sentence
+  written with confidence about a scope nobody had measured. The repository now
+  has one mechanical check per class it has been burned by — `case_folding_test.go`
+  for locale-dependent SQL, `email_test.go` for who holds an address,
+  `doc_references_test.go` for where a reference points. What it still has no
+  check for is the prose claim in general, and this audit is not one: it was a
+  one-off sweep, and the day it stops being re-run is the day the count starts
+  climbing again.
+
 - **D28** **A guard that stops guarding at the ASCII boundary, and the ADR that
   had just declared the class closed.** Found 2026-09-07, one day after D27, by
   checking a sentence rather than trusting it.

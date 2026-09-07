@@ -4,7 +4,7 @@
 --
 -- It records the REQUEST — who, what they called, what came back — and not the
 -- change. A diff would mean every module producing a before-and-after for every
--- write, which is a contract in fifteen places and a cost on every request; a
+-- write, which is a contract in seventeen places and a cost on every request; a
 -- bare "a product was updated" would be cheaper and worth nothing.
 --
 -- What this answers is the question an incident actually starts with: who

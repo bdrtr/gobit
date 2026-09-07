@@ -22,11 +22,19 @@ const smokeDir = "internal/smoke"
 // logAssertionHelpers are the smoke harness functions that take a log message
 // as their first argument.
 //
-// The list is short because the harness is: everything that reads the process's
-// output goes through these two. If a third appears and is not added here, the
-// check below goes silent for it — which [TestSmokeLogAssertionsAreNotBlind]
-// catches by requiring the assertion count to stay positive, and which the
-// helper count pins from the other side.
+// ~~The list is short because the harness is: everything that reads the
+// process's output goes through these two.~~ **Corrected 2026-09-07:** the list
+// is short because these two are the only helpers that take the message as
+// their FIRST ARGUMENT, which is the only shape [collectLogAssertions] reads.
+// The harness also hands a test the raw stdout and stderr buffers, and an
+// assertion written that way is OUTSIDE this gate:
+// internal/smoke/startup_test.go matches "unknown command" from
+// internal/app/app.go, and internal/smoke/graphql_test.go matches "has to be at
+// least 1" from internal/core/config/validate.go — both of them exactly the
+// compiler-unlinked pair this file exists to protect. If a third helper appears
+// and is not added here, the check below goes silent for it — which
+// [TestSmokeLogAssertionsAreNotBlind] catches by requiring the assertion count
+// to stay positive, and which the helper count pins from the other side.
 var logAssertionHelpers = []string{"logContains", "waitForLog"}
 
 // TestSmokeLogAssertionsMatchProduction proves every log message a smoke test

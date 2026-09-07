@@ -39,7 +39,7 @@ a decision at all. Nothing in the surface needs them.
 | --- | --- |
 | core/plugin | the host contract every plugin implements |
 | core/module | the module contract, and the registry a project adds its own module to |
-| core/provider | the payment, tax, notification, fulfillment and file contracts |
+| core/provider | the payment, notification, fulfillment, file and error-reporter contracts |
 | core/errors | the typed kinds; a provider returns them and the transport maps them |
 | core/http | routes, principals, and the one place an error response is written |
 | core/http/redisguard | the shared rate-limit and idempotency store |

@@ -3,8 +3,8 @@
 // # What it records, and what it deliberately does not
 //
 // The REQUEST, not the change. A diff would mean every module producing a
-// before-and-after for every write — a contract in fifteen places and a cost on
-// every request — while a bare "a product was updated" would be cheaper and
+// before-and-after for every write — a contract in seventeen places and a cost
+// on every request — while a bare "a product was updated" would be cheaper and
 // worth nothing. What a row answers is the question an incident starts with:
 // who touched this surface, when, and did it succeed. The WHAT is then read
 // from the record itself, which already carries its own updated_at.
@@ -93,13 +93,15 @@ type Record struct {
 
 // Filter narrows and positions a listing.
 //
-// # The two filters are the two INDEXES, and that is not a coincidence
+// # The two filters are two of the three INDEXES, and that is not a coincidence
 //
-// The schema carries exactly two indexes and its own comment names why: "what
-// did this person do" and "what happened to this endpoint". Those are the two
-// fields here. A filter with no index behind it would look identical to a caller
-// and scan the whole table, which on an append-only log is the failure that
-// arrives quietly and late.
+// The schema carries three indexes and its own comments name the three questions
+// they answer: "what did this person do" (actor_id), "what happened to this
+// endpoint" (path) and "what happened most recently" (created_at). The first two
+// are the two fields here; the THIRD is what a listing with neither field set
+// reaches, and it arrived with the reader (migration 000002). A filter with no
+// index behind it would look identical to a caller and scan the whole table,
+// which on an append-only log is the failure that arrives quietly and late.
 //
 // # The position is a TIME and an ID, not an opaque string
 //
@@ -211,9 +213,9 @@ func (s *Store) Write(ctx context.Context, id string, e Entry) error {
 //
 // It did not have one. The table was built with two indexes for two named
 // operator questions and nothing in the repository ever read a row — while four
-// other places (the outbox, the webhook dead letters, the job runner and the
-// relay) cite this very table as "the write-only ledger this repository has
-// already built once". The lesson was learned everywhere except where it was
+// other places (the outbox, the webhook plugin's migration and its module, and
+// the relay job) cite this very table as "the write-only ledger this repository
+// has already built once". The lesson was learned everywhere except where it was
 // learned. See ADR 0037.
 //
 // # Paging is KEYSET, not offset

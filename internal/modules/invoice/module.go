@@ -253,7 +253,17 @@ func (m *Module) Erase(ctx context.Context, s personaldata.Subject) (personaldat
 	return m.svc.Erase(ctx, s)
 }
 
-// PersonalData declares every place this module keeps something about a person.
+// PersonalData declares where this module keeps something about a person.
+//
+// ~~It declares EVERY such place.~~ **Corrected 2026-09-07: it declares every
+// place migration 000001 created, and 000003 added one that never reached the
+// list.** invoices.buyer_email_folded — a buyer's e-mail address, written by Go
+// on every issue, and the one column [service.Service.Erase] resolves a person
+// BY — is not named in the Declaration below. The exhaustiveness test
+// (erasure_test.go) checks the Declaration against a list a human read off the
+// CREATE TABLE statements of 000001 alone, so the gap is invisible from there
+// too: closing it takes a sixteenth Holding here and a sixteenth entry in that
+// hand-written list.
 //
 // It lives on the module rather than on the service and takes no database,
 // because a declaration is a property of the CODE: it is the same sentence on
@@ -316,7 +326,7 @@ func (m *Module) PersonalData() personaldata.Declaration {
 			},
 			{
 				Table: tableInvoices, Column: "buyer_email", Kind: personaldata.Named,
-				Why: "the buyer's e-mail address; it is also the ONLY column by which this module can find a person at all",
+				Why: "the buyer's e-mail address; that address is also the ONLY handle by which this module can find a person at all, though the column a search matches is its folded copy in buyer_email_folded, which migration 000003 added and this declaration does not name (ADR 0038)",
 			},
 			{
 				Table: tableInvoices, Column: "buyer_address", Kind: personaldata.Named,

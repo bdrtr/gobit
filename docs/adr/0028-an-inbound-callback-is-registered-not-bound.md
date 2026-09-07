@@ -108,10 +108,20 @@ an unguarded endpoint costs.
 actor, and the schema would accept it. It is not done here, for two measured
 reasons: the audit contract says in four places that the table records
 ADMIN writes and that a row on an unauthenticated surface "would say somebody
-and mean nothing"; and nothing in the repository reads `audit_log` today — the
+and mean nothing"; and ~~nothing in the repository reads `audit_log` today — the
 only statement against it is the INSERT. Overturning a written contract to
-produce rows with no reader is not a trade worth making silently. It is a
+produce rows with no reader is not a trade worth making silently.~~ It is a
 decision, and it is left open below.
+
+**Corrected 2026-09-07:** the second reason has expired. `audit_log` gained a
+reader that day — `audit.Store.List`, behind the admin route
+`GET /admin/v1/audit-log` and its own `audit:read` scope (ADR 0037) — so there
+are two statements against the table now, and a row written here would be one
+somebody could actually go and look at. The refusal stands on the first reason
+alone: the contract says ADMIN writes, and a provider is not an admin. That
+makes the open decision below a narrower question than it was when it was
+written down — no longer "is it worth overturning a contract for rows nobody
+reads", but "is a verified provider an actor the contract should learn to name".
 
 ## What this deliberately does NOT do
 
@@ -123,9 +133,16 @@ decision, and it is left open below.
   timestamp, and PayTR does not — so a captured genuine PayTR callback stays
   valid as long as its row is pending. The per-route field to express one is not
   invented until a provider that signs a timestamp exists.
-- **No reconcile sweep** for a callback that never arrives. There is still no
+- **No reconcile sweep** for a callback that never arrives. ~~There is still no
   plugin-reachable job extension point (gaps.md B13); PayTR's manual
-  pending-payment listing remains the answer.
+  pending-payment listing remains the answer.~~ **Corrected 2026-09-07:** the
+  extension point was built on 2026-09-06 — `plugin.Host.RegisterJob`, gaps.md
+  B13, and it arrived with its first consumer rather than before one (ADR 0026's
+  amendment records its shape: four values, not the scheduler). PayTR uses it: an
+  hourly `pendingWatch` job now REPORTS the payments the provider never called
+  about, capped and saying when the cap was hit. The heading survives the
+  correction because reporting is not reconciling — the job reads and does not
+  act, so the repair is still a person reading the listing.
 - **No carrier.** A carrier plugin needs things this plumbing does not provide:
   a lookup from the carrier's own shipment id to a fulfillment row, a status
   vocabulary wider than four values, and tolerance for an out-of-order delivery

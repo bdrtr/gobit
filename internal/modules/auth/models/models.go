@@ -25,8 +25,20 @@ import (
 // The limits are not arbitrary: 320 characters for email is the upper bound of
 // RFC 5321's local part (64) + "@" + domain name (255). The others are
 // reasonable ceilings that keep a single request from writing unbounded text
-// into the database, and they are enforced a second time by the CHECK
-// constraints in the migration.
+// into the database, and ~~they are enforced a second time by the CHECK
+// constraints in the migration.~~ **Corrected 2026-09-07: TWO of them are.**
+// 000001_auth_init.up.sql caps a length in exactly three places —
+// auth_user.email (320), sales_channel.name (255) and api_key.title (255) — so
+// MaxEmailLen has its second line of defense and MaxNameLen has one only where
+// it happens to back a name or a title column. A fourth constraint fixes a
+// length rather than capping one: api_key.token_hash must match 64 hex
+// characters, and no constant in this block covers that column. MaxURLLen,
+// MaxDescriptionLen, MaxScopeLen, MaxScopeCount and MaxNameLen on
+// auth_user.first_name and last_name stand behind no CHECK, no varchar(n) and
+// no trigger; the scopes constraint on both tables rejects an EMPTY element and
+// bounds neither the length of one scope nor how many there are. For those the
+// SERVICE is the only gate, so a writer that reaches the repository around it
+// writes unbounded text.
 const (
 	// MaxEmailLen is the maximum length of an email address.
 	MaxEmailLen = 320

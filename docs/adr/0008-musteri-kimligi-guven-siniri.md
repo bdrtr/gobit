@@ -6,12 +6,12 @@
 
 ## Context
 
-The repository describes the B2B spending limit as an **enforced rule**: the
-README's "Kontrol nerede ve neden orada" section, the `order` module's godoc and
-`internal/e2e/b2b_test.go` all build the same sentence — a purchase exceeding
-the limit does not become an order, no money is captured, stock stays
-untouched. All of that is **true**. What was missing was the **condition** under
-which the rule is enforced.
+The repository describes the B2B spending limit as an **enforced rule**:
+`docs/commerce-flows.md`'s "Where the check lives and why there" section, the
+`order` module's godoc and `internal/e2e/b2b_test.go` all build the same
+sentence — a purchase exceeding the limit does not become an order, no money is
+captured, stock stays untouched. All of that is **true**. What was missing was
+the **condition** under which the rule is enforced.
 
 The rule runs inside `order.CreateOrder`, over `CreateOrderInput.CustomerID`.
 That identity enters the head of the chain from the body of the storefront cart:

@@ -25,9 +25,13 @@
 -- ON DELETE CASCADE on invoice_lines.invoice_id no longer means what it reads
 -- like — the cascade still happens, and the child trigger refuses it. The
 -- argument, the measurement that ruled out REVOKE DELETE, and the sanctioned
--- escape sit at the head of 000002. 000002 also adds the only index this table
--- has on a buyer column; the three indexes below are the whole story for
--- everything else.
+-- escape sit at the head of 000002. The only index this table carries on a
+-- buyer column today is added by 000003, not here:
+-- invoices_buyer_email_folded_idx, on the buyer_email_folded column 000003 also
+-- ADDS to the table below — so the CREATE TABLE that follows is no longer the
+-- current shape either. It replaces 000002's invoices_buyer_email_idx ON
+-- invoices (lower(buyer_email)), which 000003 drops in the same file and argues
+-- why. The three indexes below are the whole story for everything else.
 
 -- invoice_series is the source of invoice numbers.
 --

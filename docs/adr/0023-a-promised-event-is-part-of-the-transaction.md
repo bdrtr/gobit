@@ -86,11 +86,18 @@ without its promised event is exactly the state this decision exists to prevent,
 and accepting it silently would leave the guarantee looking present while it was
 not.
 
-**The relay runs every minute, and that is the one short interval in this
-repository.** `sagawatch` and `paymentrecon` report things that have already
+**The relay runs every minute. ~~That is the one short interval in this
+repository.~~** `sagawatch` and `paymentrecon` report things that have already
 been wrong for a while, so finding them sooner changes nothing. Here the delay
 IS the damage: what waits is a message somebody is expecting about an order they
-have already paid for.
+have already paid for. **Corrected 2026-09-07:** the minute stopped being alone
+a day after this decision. `plugins/webhookout`'s delivery job took the same
+cadence and quotes this reasoning back in its own godoc — "the same as the
+outbox relay's, and for the same reason: what waits here is a message somebody
+is expecting". Two short intervals now, and both for that reason;
+`paymentpaytr`'s pending watch joined the hourly side. What justifies the minute
+is what waits behind it, not being the only one to ask for it — the RULE
+survived being applied twice, and only the count did not.
 
 **More than one instance can relay at once.** The rows are taken with
 `FOR UPDATE SKIP LOCKED`, so a second relay steps over what the first is
@@ -104,9 +111,27 @@ delivers a message a person's request already decided to send; all that was
 missing was the delivery.
 
 **Only the order module writes through it today.** Every other publisher still
-has the window. That is deliberate rather than unfinished: `order.placed` is the
-event with a real subscriber (notification), and converting publishers with no
-subscriber would be the error class ADR 0009 names. The mechanism is there for
+has the window. ~~That is deliberate rather than unfinished: `order.placed` is
+the event with a real subscriber (notification), and converting publishers with
+no subscriber would be the error class ADR 0009 names.~~ **Corrected
+2026-09-07:** it is still deliberate, but the reason given here was never true.
+"Every other publisher" is one publisher — the product module — and its events
+already had real subscribers on the day this was written: `plugins/searchpg` has
+reindexed on `product.created`, `product.updated` and `product.deleted` since
+2026-08-31, five days before this decision, and `plugins/webhookout` now takes
+the same three. The distinction that actually holds is about COST, not about
+subscribers: a lost `order.placed` costs a customer the confirmation for an
+order already paid for and nothing puts it right afterwards, while a lost
+product event costs a stale index row that the next write of the same product —
+or an operator's `POST /admin/v1/search/reindex` — repairs. That is the search
+side of the cost and not the whole of it: `plugins/webhookout` takes the same
+three topics and has no backfill at all. Redrive and discard act on delivery
+rows that already exist, and an event lost before it was published never wrote
+one, so the receiver simply never hears about that product — `product.deleted`
+worst of all, where there is no next write and a reindex only removes a row
+nobody was told about. The ORDER survives that: a webhook a receiver never gets
+is a smaller debt than a confirmation a paying customer never gets, and it is
+the second window to close rather than the first. The mechanism is there for
 the next one.
 
 **A permanently failing event is visible rather than merely slow.** The row

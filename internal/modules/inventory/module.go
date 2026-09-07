@@ -2,13 +2,18 @@
 // rezervasyonlar (plan Bölüm 6, Faz 4).
 //
 // Modül kendi tablolarına sahiptir ve başka HİÇBİR modülü import etmez
-// (Prensip 2.1/2.4, ADR 0001). Dışarıya üç yüzey açar:
+// (Prensip 2.1/2.4, ADR 0001). Dışarıya beş yüzey açar:
 //
 //   - Servis: container'da [ServiceName] adıyla. Faz 6'daki complete_cart
 //     saga'sı stok adımını ve telafisini buradan çağırır.
+//   - Modüller arası İLKEL yüzey: container'da [InteropName] adıyla (ADR 0006).
+//     Servisten AYRI kaydedilir, çünkü yalnızca ilkel tiplerle konuşur;
+//     checkout ve returns akışları stoğa buradan dokunur.
 //   - Query sağlayıcısı: container'da "inventory_item.query" adıyla (ADR 0004).
 //     Kayıtlar toplam satılabilir adetle birlikte döner; product'ın mağaza
 //     listelemesi ürünü ve stoğunu tek çağrıda görür.
+//   - YÖNETİM YAZMA yüzeyi: container'da [AdminName] adıyla (ADR 0013).
+//     Yönetim panelinin (internal/adminui) çözdüğü ad budur.
 //   - Admin API: /admin/v1/stock-locations ve /admin/v1/inventory-items.
 //
 // Link tanımı BİLDİRMEZ: varyant ile stok kalemi arasındaki

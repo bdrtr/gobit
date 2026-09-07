@@ -140,8 +140,10 @@ service. Conversely, another module's service cannot be resolved **inside**
 lazy constructor is handed over and the resolution happens on first use.
 
 Every module owns its own migration folder and its own version table
-(`x-migrations-table`), so one module's schema history advances independently of
-the others.
+(`<owner>_schema_migrations`, built by `db.MigrationsTable` and handed to
+golang-migrate through `postgres.Config.MigrationsTable`, not written into the
+DSN — [ADR 0003](adr/0003-migration-iptali.md)), so one module's schema history
+advances independently of the others.
 
 ---
 
@@ -245,10 +247,10 @@ Three decisions are written down:
   from the request would be a number the operator believes but the schema does
   not carry. If the version did not move at all, the command returns an error.
 
-The subcommands read the module list from the registration in `cmd/server`,
-including the module a plugin brings in (`searchpg`). If a second list were
-kept, `migrate status` would one day silently skip an owner whose tables are
-sitting in the database.
+The subcommands read the module list from the registration in `internal/app`
+(`registerModules`, the composition root since ADR 0027), including the module a
+plugin brings in (`searchpg`). If a second list were kept, `migrate status`
+would one day silently skip an owner whose tables are sitting in the database.
 
 While reading the version, `migrate status` CREATES the missing
 `<owner>_schema_migrations` table (the driver's behavior) and says so at the
@@ -303,12 +305,15 @@ are in the core's tables and the core does not have an HTTP endpoint the way the
 modules do; the panel, for its part, cannot carry this screen without reopening
 ADR 0011's Decision 6. The command ONLY READS and stays that way: releasing the
 stock of a saga that is still running would allocate it a second time. The thing
-that does the releasing is RECOVERY, and it comes not from that list but from
-the engine: a caller returning with the same idempotency key finds the abandoned
-execution and the compensation chain is run from the records
-([ADR 0017](adr/0017-recovering-abandoned-sagas-from-the-record.md)). If nobody
-returns, or if the chain stopped at the capture step, the record stays in the
-list and the work is done by hand.
+that does the releasing is RECOVERY, and it is arrived at from the engine: a
+caller returning with the same idempotency key finds the abandoned execution and
+the compensation chain is run from the records
+([ADR 0017](adr/0017-recovering-abandoned-sagas-from-the-record.md)). That
+covers the customer who retries and NOBODY ELSE, which is why the same chain was
+given a second door: `gobit recover <execution-id> -confirm <execution-id>` runs
+it for one execution the operator NAMES, and that is how a line in the listing
+turns into an action. If the chain stopped at the capture step, the record stays
+in the list and the work is done by hand.
 
 The two classes the command covers are NOT the same condition, and the second
 was found by measurement: `compensation_failed` records have been closed by the
@@ -368,10 +373,10 @@ refused.
 
 1. Under `internal/modules/<name>/`: `module.go`, `models`, `repository`,
    `service`, `api`, `migrations`, `queries`, `sqlc.yaml`.
-2. Add a `modul-izolasyonu-<ad>` depguard block to `.golangci.yml` **and** add
+2. Add a `module-isolation-<name>` depguard block to `.golangci.yml` **and** add
    the new module to the other modules' blocks.
-3. Add it to the module list in `cmd/server` and in `internal/e2e` — the two
-   carry the same order.
+3. Add it to `registerModules` in `internal/app` and to the harness in
+   `internal/e2e` — the two carry the same order.
 
 ### A new domain event
 
@@ -389,8 +394,8 @@ would be telling the caller "it was not applied".
 
 A package under `plugins/<name>/` implementing `coreplugin.Plugin`; the contract
 comes from `core/provider` and the registration point from `coreplugin.Host`. A
-catalog line is added to the setup file (`internal/app/setup.go`) and selected
-with `PLUGINS`. The core and the modules **do not change**.
+catalog line is added to `pluginCatalog` (`internal/app/plugins.go`) and
+selected with `PLUGINS`. The core and the modules **do not change**.
 
 Installation has two phases: `Install` before the modules (so a module a plugin
 brings in also goes through the life cycle), `Start` after the modules (a
@@ -428,7 +433,7 @@ unexpected organization.
 |---|---|---|
 | Router | `chi` | Lightweight, `net/http`-compatible, middleware-friendly |
 | DB access | **`sqlc` + `pgx/v5`** | SQL-first and codegen per module; an ORM's FK/graph model conflicts with module isolation |
-| Migration | **`golang-migrate`** | An exact fit for `Module.Migrations() fs.FS`, with an `x-migrations-table` per module |
+| Migration | **`golang-migrate`** | An exact fit for `Module.Migrations() fs.FS`, with one version table per module (`<owner>_schema_migrations`, set through `postgres.Config.MigrationsTable`) |
 | DI | ~~**`samber/do` v2**~~ **hand-written** (`core/container`) | ~~It offers contract-named services plus a generic resolve; lazy instantiation and shutdown hooks come ready~~ **Corrected on 2026-09-06:** `samber/do` was never a dependency — its name appears in neither `go.mod` nor `go.sum`. The Section 5.1 contract wants a `Provide` that takes `any`, and because `do` is type-parameterized the diagnostics, the conflict detection and the shutdown order were all lost; the decision is in [ADR 0002](adr/0002-di-container-el-yazmasi.md) and the justification is written in `core/container`'s own godoc ("Why not samber/do") |
 | Config | `caarlos0/env` | Reads the environment only; viper's file/remote config weight is unnecessary |
 | Log | `log/slog` (stdlib) | Structural, dependency-free |
@@ -483,7 +488,7 @@ Which backend the event bus runs on, and what each one loses, is in
 | Load testing is in-process | Does not produce a capacity plan | An external load tool against a real deployment |
 | Rollback is for ONE owner and does not know the order | An operator who wants to roll back modules together repeats the command per owner; the command does not say in which order to roll back | Because there are no cross-module FKs, order is not a constraint today; a definition of order is added when it is genuinely needed |
 | There is no command that REPAIRS a half-finished migration | `migrate down` refuses a dirty ledger and sends you to a manual repair; there is no "force" surface | Deliberate: the only party that knows the version correctly is the human looking at the half schema |
-| Recovery cannot be TRIGGERED, it is stumbled into | The compensation of an abandoned execution only runs when a caller returns with the same key (ADR 0017); if nobody returns, the record stays `running` and `gobit stuck` keeps listing it | A scheduled sweeper is deliberately absent: recovery runs work that has side effects. If needed, a command the operator CAN TRIGGER comes before a sweeper |
+| Recovery has to be NAMED, nothing sweeps | The engine's own recovery is stumbled into: it runs when a caller returns with the same key (ADR 0017), which covers the customer who retries and nobody else. An abandoned execution stays `running` and `gobit stuck` keeps listing it until an operator names it to `gobit recover <execution-id> -confirm <execution-id>` | A scheduled sweeper stays deliberately absent: recovery runs work that has side effects. The command the operator CAN TRIGGER was built first, as this row said it should be; a sweeper would still be deciding that unwatched, and that decision stays with the human |
 | Recovery STOPS at the capture point | An unrecorded capture step cannot be counted as "did not run" (the engine writes the record after Invoke returns), so the card may have been charged; the chain stays in manual intervention | Writing the step record BEFORE Invoke would narrow the limit but not remove it; rejected in ADR 0017 |
 | The list of half-finished executions is not visible from a browser | An operator without a shell cannot run the command | A screen in the panel — but that requires knowingly reopening ADR 0011's Decision 6 |
 | The scope dictionary is two entries per module | No resource-level distinction (e.g. reading variants only) | The distinction is added when it is genuinely needed; adding it now would give a false sense of precision |

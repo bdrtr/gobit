@@ -712,8 +712,18 @@ var subscriberlessPublications = map[string]string{}
 // The publish side is WALKED: the Name field of the eventbus.Event value is
 // resolved, and if the name comes from a function parameter the callers are
 // descended into (product's three catalog events pass through a single publish
-// line). A publish that cannot be resolved gives an error; skipping it silently
-// would leave a topic unaudited.
+// line). ~~A publish that cannot be resolved gives an error; skipping it
+// silently would leave a topic unaudited.~~
+//
+// **Corrected 2026-09-07:** one kind is not resolved and says nothing. The
+// error covers only a publish whose Event literal is found but whose Name will
+// not resolve. A second argument that is neither a composite literal nor a
+// local variable holding one is dropped by [sourceTree.eventLiteral] before any
+// name is looked at, and it is dropped WITHOUT A WORD:
+// internal/jobs/outboxrelay/outboxrelay.go passes event.Event(), a call
+// expression. No topic escapes today, because the relay only republishes what a
+// declaring publish site already named — but a topic the relay alone produced
+// would go unaudited, which is the hole the struck sentence denied.
 //
 // A name that cannot be resolved on the subscription side, however, is skipped
 // SILENTLY and this asymmetry is deliberate: the core's plugin host is an
@@ -798,7 +808,9 @@ func TestTheEventTopicsHaveASubscriber(t *testing.T) {
 // be written inside the call (product) or first built into a local variable and
 // then passed (order). A Publish call whose Event is not this package's — the
 // method of another library with the same name — returns nil and does not enter
-// the audit.
+// the audit; so does ANY other argument shape, a call expression included, and
+// that silent nil is what leaves internal/jobs/outboxrelay/outboxrelay.go's
+// publish outside [TestTheEventTopicsHaveASubscriber].
 func (a *sourceTree) eventLiteral(site callSite, arg ast.Expr, eventbusPath string) *ast.CompositeLit {
 	if value, ok := arg.(*ast.CompositeLit); ok {
 		if qualifiedType(site.file, value.Type, eventbusPath, "Event") {

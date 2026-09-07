@@ -78,8 +78,9 @@ exercised in production paths:
   own, already the mechanism the composition root uses;
 - migration merging per owner, which already refuses two owners claiming one
   table;
-- a `metadata` jsonb on eleven modules' models, including product, variant and
-  taxonomy;
+- a `metadata` jsonb on ~~eleven~~ modules' models, including product, variant
+  and taxonomy — **Corrected 2026-09-07: ten**, and ten on the day this was
+  written too;
 - full-path route registration, which the admin panel already proves a fourth
   tree can do without touching core.
 
@@ -105,9 +106,20 @@ the public API small, use `internal/` generously.
 The test to apply: **what fraction of the codebase has to leave `internal/`?**
 The candidate set above is 1.9%. The module models are a further 7,058 lines
 (4.6%) and are the largest permanent decision in the whole move — a published
-struct field is forever, and eleven of the sixteen modules already carry a
+struct field is forever, and ~~eleven~~ of the sixteen modules already carry a
 `metadata` map that exists precisely so a project can extend a model WITHOUT the
 struct changing.
+
+**Corrected 2026-09-07: ten of the sixteen, not eleven.** The miscount was in
+this ADR from the day it was written. At its own commit `3259c3f` the modules
+declaring a `Metadata map[string]...` field on a model were auth, cart,
+customer, fulfillment, invoice, order, payment, product, promotion and tax —
+ten then, and the same ten today. The bullet above carried the same error and
+is struck the same way. "The sixteen" is left as it stands because it is the
+count on this ADR's date; there are seventeen module directories today, and the
+one that arrived after this decision is `review` — b2b was already among the
+sixteen. The argument does not turn on the digit: a clear majority of the
+modules carry the map, which is the whole of what the sentence needed.
 
 If the answer creeps past a few percent, the surface is too big and the
 generalisation is too early — which the same brief names, correctly, as being as

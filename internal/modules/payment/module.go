@@ -26,9 +26,17 @@
 //
 // Modül hiçbir modülü import etmez ve bir ödemenin HANGİ sepete ya da siparişe
 // ait olduğunu bilmez. reference serbest bir metindir, foreign key DEĞİLDİR
-// (Prensip 2.2) ve varlığı burada doğrulanmaz; bağ, siparişin bildireceği
-// link ile kurulur. Bu yüzden bu modül HİÇBİR link tanımı bildirmez: bağın
-// sahibi ödeme değil, ödemeye ihtiyaç duyan taraftır.
+// (Prensip 2.2) ve varlığı burada doğrulanmaz; bağ bir link ile kurulur.
+// ~~Bu yüzden bu modül HİÇBİR link tanımı bildirmez: bağın sahibi ödeme değil,
+// ödemeye ihtiyaç duyan taraftır.~~
+//
+// **2026-09-07: tanımı BU modül bildirir.** Bağ hâlâ foreign key ile değil
+// link ile kurulur, ama bir tanım YALNIZCA BİR KEZ bildirilebilir ve bildiren
+// taraf, bağın taşıdığı kaydı YAZAN taraftır — ödeme tahsilatı. Bu yüzden
+// "order_payment" burada bildirilir (bkz. [service.LinkOrderPayment]),
+// sipariş modülü ise hiçbir tanım bildirmez. Tanımı bildirmek siparişi bilmek
+// değildir: tanım yalnızca iki varlığın adını taşır, bu modül hâlâ hiçbir
+// siparişi çözmez ve hiçbir reference'ı doğrulamaz.
 //
 // # Dışarıya açtığı yüzeyler
 //

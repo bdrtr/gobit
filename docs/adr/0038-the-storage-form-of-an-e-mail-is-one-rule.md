@@ -142,9 +142,21 @@ a different answer, and it is still open.
   finds them by**, and the answer `whyNothingHere` now means what it says.
 - **The agreement is checked rather than hoped for.** Six implementations, one
   comparison, two blindness guards, all mutation-proved.
-- **A seventh module cannot join quietly.** A column named `*email*` in a
+- **~~A seventh module cannot join quietly. A column named `*email*` in a
   migration puts its module in the audit the day it lands, whether or not anybody
-  remembers this decision.
+  remembers this decision.~~ Corrected 2026-09-07: it could, in two shapes, and
+  the guard has since been widened to cover both.** As shipped, the schema guard
+  matched a column only where it was DECLARED inside a `CREATE TABLE`, and it
+  walked `internal/modules` alone. So a column arriving by
+  `ALTER TABLE ... ADD COLUMN` was invisible to it — the shape THIS decision's
+  own migration 000003 used, which left `buyer_email_folded` outside the audit it
+  was written for, with 000001's `CREATE TABLE` the only reason `invoice` was in
+  that audit at all — and a module brought by a PLUGIN was outside the walk
+  entirely, while four plugins ship migrations of their own.
+  `internal/arch/email_test.go` now matches `ADD COLUMN` as well and walks
+  `plugins` beside `internal/modules`. What it still rests on is the column's
+  NAME and its type: an address kept in a column without "email" in its name, or
+  in a type outside `text`, `varchar` and `citext`, is seen by neither pattern.
 - **The column audit got smarter for everyone.** Teaching the replay
   `ALTER COLUMN` — which this migration was the first to need — closed a shape it
   had been reporting as unreadable since D16.
@@ -164,17 +176,17 @@ a different answer, and it is still open.
   guarantee than this repository usually accepts.
 - **~~`lower()` is still unprobed. Nothing in the tree now depends on `lower()`
   folding non-ASCII, so the hole is not live.~~ THE SECOND SENTENCE WAS FALSE and
-  it was checked the next day (2026-09-07).** Three modules depend on exactly
-  that: `auth`, `customer` and `b2b` each guard their e-mail column with
-  `CHECK (email <> '' AND email = lower(email))`. Measured on a `--locale=C`
-  cluster, that constraint REFUSES the unfolded ASCII address `Ada@Example.com`
-  and ACCEPTS an unfolded Turkish one, because `lower()` leaves those capitals
-  alone and the value therefore equals its own `lower()` — so the guard that is
-  meant to be the last defense behind the Go fold stops guarding at the ASCII
-  boundary, and two rows for one person is what the unique index on that column
-  then cannot prevent. `promotion_code_check` has the same shape and is SOUND, for
-  a reason that had never been written down: its validator admits only `A-Z`,
-  `0-9`, `-` and `_`.
+  it was checked the same day, 81 minutes later (2026-09-07).** Three modules
+  depend on exactly that: `auth`, `customer` and `b2b` each guard their e-mail
+  column with `CHECK (email <> '' AND email = lower(email))`. Measured on a
+  `--locale=C` cluster, that constraint REFUSES the unfolded ASCII address
+  `Ada@Example.com` and ACCEPTS an unfolded Turkish one, because `lower()` leaves
+  those capitals alone and the value therefore equals its own `lower()` — so the
+  guard that is meant to be the last defense behind the Go fold stops guarding at
+  the ASCII boundary, and two rows for one person is what the unique index on
+  that column then cannot prevent. `promotion_code_check` has the same shape and
+  is SOUND, for a reason that had never been written down: its validator admits
+  only `A-Z`, `0-9`, `-` and `_`.
 
   `lower()` is now the probe's third path, the constraints carry written
   declarations of what they hold, and `internal/arch/case_folding_test.go`
@@ -211,9 +223,10 @@ a different answer, and it is still open.
   resolves one person across every holder, which is what a disagreement breaks.
 - [ADR 0032](0032-an-issued-invoice-refuses-erasure-in-the-schema.md) — why the
   invoice answers RETAINED, and the migration this one extends.
-- [ADR 0024](0024-invoice-numbering.md) — the immutability that keeps
-  `buyer_email` verbatim and forces the folded value into its own column.
+- [ADR 0024](0024-an-invoice-number-comes-from-a-row-not-a-sequence.md) — the
+  immutability that keeps `buyer_email` verbatim and forces the folded value into
+  its own column.
 - [ADR 0026](0026-the-published-surface-is-fourteen-packages.md) — the promise
   that makes hoisting into `core/` expensive.
-- [ADR 0015](0015-postgresql-arama.md) — the cluster's case folding, measured
-  there for search and found here on a third path.
+- [ADR 0015](0015-postgresql-cluster-contract.md) — the cluster's case folding,
+  measured there for search and found here on a third path.

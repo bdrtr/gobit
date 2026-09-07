@@ -3,7 +3,7 @@
 -- DROP in the opposite order would blow up with "there are still dependent
 -- objects" and would leave golang-migrate's version ledger dirty — from that
 -- point on the module CANNOT be migrated again (see internal/arch
--- TestMigrationlarGercektenGeriAlinabilir).
+-- TestMigrationsCanReallyBeRolledBack).
 --
 -- Indexes drop together with their tables; they are still written out
 -- explicitly, so that the reverse path stays complete when an index is later

@@ -323,11 +323,18 @@ func qualifiedSQLName(tokens []sqlToken, at int) (name string, next int) {
 // sqlFromHidingCalls are the functions whose argument list contains the word
 // FROM without a table anywhere near it.
 //
-// EXTRACT(EPOCH FROM created_at) is the one that actually bites in this
-// repository's date arithmetic; the other four take FROM in the same
-// positional-argument style and are listed with it so the next one added is
-// added in one place. The whole call is skipped, parenthesis-matched, rather
-// than the single FROM: SUBSTRING(x FROM 1 FOR 2) has two of them.
+// ~~EXTRACT(EPOCH FROM created_at) is the one that actually bites in this
+// repository's date arithmetic~~ **Corrected 2026-09-07: not one of the five is
+// written in any SQL this audit reads**, and none ever was — not in a
+// migration, not in a queries file, not in a production Go string literal — so
+// the map is entirely DEFENSIVE. The two EXTRACT strings a grep does turn up
+// are the audit's own fixtures rather than SQL the repository executes: the
+// "EXTRACT trap" case below and one in columns_test.go. EXTRACT heads the map
+// because it is the shape date arithmetic would introduce first; the other four
+// take FROM in the same positional-argument style and are listed with it so the
+// next one added is added in one place. The whole call is skipped,
+// parenthesis-matched, rather than the single FROM: SUBSTRING(x FROM 1 FOR 2)
+// has two of them.
 var sqlFromHidingCalls = map[string]bool{
 	"extract":   true,
 	"substring": true,

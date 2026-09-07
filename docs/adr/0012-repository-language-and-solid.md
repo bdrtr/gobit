@@ -125,8 +125,23 @@ change disguised as a language change, and it would break clients that this
 repository cannot see.
 
 The consequence is uncomfortable and is accepted: some machine-readable
-Turkish is permanent. `internal/core` carries event codes that read as Turkish
-and will keep reading as Turkish.
+Turkish is permanent. ~~`internal/core` carries event codes that read as Turkish
+and will keep reading as Turkish.~~ **Corrected 2026-09-07: the rule stands and
+the instance it named does not.** No event code in `internal/core` read as
+Turkish even when this was written. What did were error-detail keys and log
+fields: the container diagnostic's `kayitli_tip`, `beklenen_tip` and `servis`,
+the query graph's `ters_yon`, `kok_kayit` and `getirilen_kayit`, and others of
+the same class in `link`, `module`, `plugin` and the workflow store. That is a
+milder class than the list above, but not a harmless one: `WriteError` passes a
+client-safe error's `Details` through verbatim and `typeMismatch` builds its
+error with `errors.Invalid`, so `kayitli_tip` was a JSON object key on the wire
+whenever one was raised. What spared them was not an exemption from the rule but
+the rule itself: 4e1a180 took the container's two six and a half hours after
+this ADR was written, and 2b987ab the query graph's three an hour and a half
+after that. Neither `internal/core` nor `core` holds a machine-readable Turkish
+name today. The rule loses no force: it is what keeps `product_not_found` and
+every table, column and JSON field exactly where they are. The core simply
+turned out not to be a place where the price gets paid.
 
 ### 5. SOLID is enforced where a violation is mechanically detectable
 

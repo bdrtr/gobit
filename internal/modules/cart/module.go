@@ -51,17 +51,25 @@
 //
 // # The flows it uses
 //
-// All of the storefront's WRITING endpoints — opening a cart, adding a line,
-// updating a line's quantity and completing the cart — have been delegated to
+// The storefront's writing endpoints whose NUMBERS COME FROM OTHER MODULES —
+// opening a cart, adding a line, updating a line's quantity, attaching a
+// shipping method and completing the cart — have been delegated to
 // cross-module FLOWS; the module resolves them from the container under the
 // names [CartFlowsName] and [CartCompletionName], through narrow interfaces it
 // defines in ITS OWN package (ADR 0001/0006). The rationale: the cart's region
-// is region's data, the line's price pricing's, its title the catalog's, and
-// the order order + payment + inventory's, and this module knows none of them.
+// is region's data, the line's price pricing's, its title the catalog's, the
+// shipping price fulfillment's, and the order order + payment + inventory's,
+// and this module knows none of them.
 //
-// All three paths fail CLOSED: if the flow cannot be resolved, no cart is
-// opened, no line is added, no order is created (see [cartOpening],
-// [linePricing] and [cartCompletion]).
+// The writing endpoints that touch only the cart's OWN facts need no flow and
+// are served straight off the module's service: updating and deleting the cart,
+// removing a line, writing the shipping and billing addresses, and removing a
+// shipping method.
+//
+// All four flow paths fail CLOSED: if the flow cannot be resolved, no cart is
+// opened, no line is added, no shipping method is attached, and no order is
+// created (see [cartOpening], [linePricing], [shippingPricing] and
+// [cartCompletion]).
 //
 // # The module surface it uses
 //
@@ -124,12 +132,12 @@ const ProviderName = service.EntityName + query.ProviderSuffix
 
 // CartFlowsName is the cart flows' name in the container (ADR 0001/0006).
 //
-// ONE name feeds TWO narrow interfaces ([api.CartOpening] and
-// [api.LinePricing]): both are satisfied by the same registration, the cart
-// flows' cross-module surface. The constant's name is therefore the FLOW's
-// name, not that of one of the interfaces — calling it "LinePricingName" while
-// "opening a cart" is resolved from that same registration would separate what
-// the code says from what it does.
+// ONE name feeds THREE narrow interfaces ([api.CartOpening], [api.LinePricing]
+// and [api.ShippingPricing]): all three are satisfied by the same registration,
+// the cart flows' cross-module surface. The constant's name is therefore the
+// FLOW's name, not that of one of the interfaces — calling it "LinePricingName"
+// while "opening a cart" is resolved from that same registration would separate
+// what the code says from what it does.
 //
 // The name belongs to the internal/workflows/cart package and is repeated here
 // as a STRING; modules cannot import workflow packages (ADR 0006, in both
@@ -138,9 +146,10 @@ const ProviderName = service.EntityName + query.ProviderSuffix
 // constant.
 //
 // A typo does NOT STAY SILENT and, unlike b2b's, does not lead to a degradation
-// either: if the name cannot be resolved, the cart-opening and line-adding
-// endpoints fail closed (see [cartOpening] and [linePricing]). The single
-// source of truth for the name is the cart flows' InteropName constant.
+// either: if the name cannot be resolved, the cart-opening, line-adding,
+// line-quantity and shipping-method endpoints fail closed (see [cartOpening],
+// [linePricing] and [shippingPricing]). The single source of truth for the name
+// is the cart flows' InteropName constant.
 const CartFlowsName = "workflows.cart.interop"
 
 // CartCompletionName is the cart completion flow's name in the container
@@ -259,9 +268,9 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// is set up by resolving all modules' services from the container, that is,
 	// it is born after the WHOLE Register loop has finished. The handler, on the
 	// other hand, needs the flow. The dependency circle is broken by deferring
-	// the resolution to REQUEST TIME (see [cartOpening], [linePricing] and
-	// [cartCompletion]); the order module applies the same pattern for its
-	// spending limit rule.
+	// the resolution to REQUEST TIME (see [cartOpening], [linePricing],
+	// [shippingPricing] and [cartCompletion]); the order module applies the same
+	// pattern for its spending limit rule.
 	//
 	m.handler = api.New(svc, api.Flows{
 		Opening:  &cartOpening{c: c, log: log},

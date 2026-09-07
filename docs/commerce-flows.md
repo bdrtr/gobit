@@ -19,7 +19,10 @@ makes language a property of the file and every new file is English.
 
 ## What the reader is assumed to know
 
-Four facts from the README that everything below rests on:
+Four facts that everything below rests on — the first from
+[`docs/security.md`](security.md), the second and the last from
+[`docs/mimari.md`](mimari.md), the third from the README (the one-place rule)
+and [`docs/api-surfaces.md`](api-surfaces.md) (the masking):
 
 - The storefront surface `/store/v1/**` has exactly ONE identity: a publishable
   key (`pk_…`) sent in `x-publishable-api-key`. It is not a secret — it sits in

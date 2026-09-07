@@ -91,9 +91,11 @@ type resolveCall struct {
 //
 // # Measured today
 //
-// Every production call site resolves an interface except one family: 16 sites
+// Every production call site resolves an interface except one family: 26 sites
 // resolve *db.Pool under the name "core.db". That single exception is written
-// down in [concreteResolveExemptions] with its reason.
+// down in [concreteResolveExemptions] with its reason. The test logs the split
+// it measured on every run, so a number that rots here is one `go test -v` away
+// from being caught.
 func TestResolvedTypeIsAnInterface(t *testing.T) {
 	t.Parallel()
 
@@ -394,7 +396,7 @@ var layerRules = []layerRule{
 //
 // # Why it is not covered by depguard
 //
-// The 211 deny entries in .golangci.yml protect the boundary BETWEEN modules:
+// The 273 deny entries in .golangci.yml protect the boundary BETWEEN modules:
 // they say the cart module may not import the product module. They say nothing
 // about the cart module's own handler reaching into the cart module's own
 // repository — which is exactly the shortcut a hurried change takes, and which

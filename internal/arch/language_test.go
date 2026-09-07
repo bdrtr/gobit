@@ -213,7 +213,7 @@ const generatedMarker = "Code generated"
 //
 // # Who is in it, and who is not yet
 //
-// Two entries. The first is this rule's own decision record: ADR 0012 quotes
+// Five entries. The first is this rule's own decision record: ADR 0012 quotes
 // the letter class as data, so the file that DEFINES the rule would otherwise
 // be its first violation.
 //
@@ -224,6 +224,19 @@ const generatedMarker = "Code generated"
 // them with ASCII would make the file pass this rule and make the probe test
 // nothing — the ASCII pair folds on every cluster, which is exactly the false
 // all-clear the probe exists to prevent.
+//
+// The fourth and fifth arrived on 2026-09-07, each with the translation of the
+// file it covers, and neither widened the rule: the letters left behind are the
+// SUBJECT of the sentence they sit in, not its language. The search plugin's
+// package documentation has to name the two words its case-folding example is
+// about, and the letter outside ASCII in them is the point: spell that letter
+// the ASCII way and the paragraph would illustrate a non-ASCII folding problem
+// with a pair that holds no non-ASCII letter. ADR 0009's remaining Turkish is
+// entirely QUOTATION of text in files that are still Turkish — headings,
+// sentences and a task item — and a translated quotation stops being one: it
+// sends a reader looking for text that is not there. Both of these two entries
+// carry their own argument at the map literal below, because that is where a
+// reviewer weighing a sixth will be standing.
 //
 // ~~Three more files hold legitimate Turkish letters and are absent on purpose —
 // each still contains Turkish PROSE as well, so the ledger already covers
@@ -266,10 +279,11 @@ var diacriticDataExemptions = map[string][]string{
 	// The search plugin's package documentation, translated on 2026-09-07. Its
 	// two Turkish words are the SUBJECT of the paragraph they sit in, not prose:
 	// the point is that a C-locale cluster does not fold non-ASCII case, so the
-	// example has to be a pair of letters that differ only in case OUTSIDE ASCII.
-	// An ASCII pair would fold on every cluster and the paragraph would document
-	// a problem that does not exist — the same reasoning as core/db/casefold.go's
-	// entry above, which is where this behavior is actually probed.
+	// example words have to CARRY a letter outside ASCII. An all-ASCII pair
+	// would fold on every cluster and the paragraph would document a problem
+	// that does not exist — the same reasoning as core/db/casefold.go's entry
+	// above, which is where this behavior is actually probed, and where the
+	// pair really does differ only in a letter outside ASCII.
 	//
 	// The stemming example a few lines earlier ("kalem"/"kalemler") is Turkish
 	// too and is NOT here: it carries no diacritic, so this lane never sees it.
@@ -281,10 +295,11 @@ var diacriticDataExemptions = map[string][]string{
 		`a search for "Gömlek" does`, `a product that says "gömlek". That the cluster`,
 	},
 	// ADR 0009 was translated on 2026-09-07 and every Turkish word left in it is
-	// a QUOTATION of a heading in a file that is still Turkish — the plan and the
-	// README. Translating a quotation would make it stop being one: the whole
-	// point of the sentences around these is that a reader can go and find the
-	// heading, and a paraphrase sends them looking for text that is not there.
+	// a QUOTATION of text in a file that is still Turkish — headings, sentences
+	// and a task item, from the plan and the README. Translating a quotation
+	// would make it stop being one: the whole point of the sentences around
+	// these is that a reader can go and find the quoted text, and a paraphrase
+	// sends them looking for text that is not there.
 	"docs/adr/0009-cok-kiracililik-kurulum-siniri.md": {
 		// Each entry has to fit on ONE line: the subtraction is per line, and a
 		// quoted heading that markdown wrapped across two of them matches
@@ -443,8 +458,8 @@ func scanSource(rel string, src []byte, exemptions map[string][]string) (hits []
 		//
 		// The exemptions are subtracted HERE TOO, and they did not use to be.
 		// Corrected 2026-09-07, when ADR 0009 was translated: every Turkish word
-		// left in it is a QUOTATION of a heading in a file that is still
-		// Turkish, and one of those headings ends in the word `yok`. The
+		// left in it is a QUOTATION of text in a file that is still Turkish,
+		// and one of those quotations ends in the word `yok`. The
 		// diacritic lane accepted the quotation and the word lane rejected the
 		// same characters, so the file could not be made to pass without
 		// paraphrasing a quotation — which would have made it stop being one.

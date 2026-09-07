@@ -27,11 +27,12 @@
 //
 // # Sağlayıcı soyutlaması ÇEKİRDEKTE DEĞİL
 //
-// Plan "TaxProvider" der, ama core/provider yalnızca PaymentProvider
-// ve FulfillmentProvider tanımlar ve bu modül çekirdeğe dokunamaz. Sözleşme bu
-// yüzden modülün kendi paketindedir ([service.TaxProvider]) ve kutudan çıkan
-// uygulama yerel hesaplamadır ([service.LocalProvider]). Karar AÇIKÇA
-// geçicidir; taşıma koşulu ve yolu service paketinin godoc'unda yazılıdır.
+// Plan "TaxProvider" der, ama core/provider'da vergi sağlayıcısı YOKTUR (orada
+// ödeme, kargo, bildirim ve dosya sözleşmeleri ile ErrorReporter tanımlıdır)
+// ve bu modül çekirdeğe dokunamaz. Sözleşme bu yüzden modülün kendi
+// paketindedir ([service.TaxProvider]) ve kutudan çıkan uygulama yerel
+// hesaplamadır ([service.LocalProvider]). Karar AÇIKÇA geçicidir; taşıma koşulu
+// ve yolu service paketinin godoc'unda yazılıdır.
 //
 // # Neyi bilmez
 //

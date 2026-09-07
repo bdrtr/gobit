@@ -154,7 +154,7 @@ var httpSurfaceExemptions = []httpSurfaceExemption{
 		// GraphQL's response envelope is not HTTP's: the status code is always
 		// 200 and the error is returned in the "errors" array. This surface
 		// unavoidably builds the body itself. But it does NOT REPEAT the rule:
-		// servisHatasi has the error written into an in-memory writer with
+		// serviceError has the error written into an in-memory writer with
 		// corehttp.WriteError and READS BACK the envelope the core produced. Both
 		// the masking decision and the logging stay inside that call. The reason
 		// this line exists at all is that it has already drifted once: the

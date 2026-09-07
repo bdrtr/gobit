@@ -69,7 +69,11 @@ func (h *Handler) Routes(r chi.Router) {
 	read := r.With(corehttp.RequireScope(ScopeRead))
 	write := r.With(corehttp.RequireScope(ScopeWrite))
 
-	// --- Store API (customer, READ ONLY) ---
+	// --- Store API (customer) ---
+	//
+	// ~~READ ONLY.~~ **Corrected 2026-09-07:** it is not — the return request
+	// registered below is a POST, so the storefront surface CREATES a record
+	// as well as reading one.
 	//
 	// No scope IS ADDED to the storefront surface: the identity there is the
 	// publishable key and that key by definition carries no scope. Verifying

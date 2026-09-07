@@ -14,10 +14,22 @@ separate record because the answer is not a policy — it is a constraint.
 
 **What the invoice holds about a person, measured.** `invoices` carries six
 `buyer_*` columns: `buyer_name` (NOT NULL, no default) and five siblings that
-default to the empty string. On the SAME row sits a `metadata` jsonb the caller
-fills and nothing validates, and every `invoice_lines.description` is caller
-text too. So the person is in eight places, not six, and two of them are
-free-form.
+default to the empty string — migration `000003` has since added a seventh, the
+derived `buyer_email_folded`. On the SAME row sits a `metadata` jsonb the caller
+fills and nothing validates, and a `status_reason` an operator types when a
+document is canceled or re-sent, and every `invoice_lines.description` is caller
+text too. ~~So the person is in eight places, not six, and two of them are
+free-form.~~ **Corrected 2026-09-07: TEN places, and THREE of them are
+free-form.** The two the count of eight missed arrived by different routes.
+`status_reason` was overlooked: `000001_invoice_init` created it with the table
+and the admin API fills it from the caller's own `reason`, so it was there to be
+counted on the day this was written. `buyer_email_folded` is a genuine later
+arrival — migration `000003` added it on 2026-09-07 with
+[ADR 0038](0038-the-storage-form-of-an-e-mail-is-one-rule.md), and `module.go`'s
+own declaration has not caught up with it yet. The module's erasure code has put
+`status_reason` where it belongs, beside `metadata` and
+`invoice_lines.description`, in the list of columns whose content the EMBEDDER
+controls.
 
 **What stops a deletion today is the absence of code, not a constraint.** A
 case-insensitive search for "delete" over the module returns exactly one line,
@@ -72,16 +84,19 @@ should weigh rather than default:
 Neither is obviously right. The trigger buys a readable failure; the revoke buys
 no new kind of code. Whoever implements it says which, and why, in the migration.
 
-## The two free-text fields
+## The three free-text fields
 
+~~`metadata` and `invoice_lines.description` are caller-supplied and
+unvalidated, so gobit cannot know whether they hold personal data in a given
+deployment.~~ **Corrected 2026-09-07: there are three.** `status_reason`,
 `metadata` and `invoice_lines.description` are caller-supplied and unvalidated,
 so gobit cannot know whether they hold personal data in a given deployment.
 Under ADR 0029 it does not have to. The rule is one sentence and it is published
 rather than enforced:
 
-> An embedder that writes personal data into an invoice's `metadata` or into a
-> line's `description` retains it under the same refusal as the named columns,
-> and answers for it as controller.
+> An embedder that writes personal data into an invoice's `status_reason` or
+> `metadata`, or into a line's `description`, retains it under the same refusal
+> as the named columns, and answers for it as controller.
 
 Validating those fields was rejected: a framework that inspects free-form
 customer data to guess whether it is personal has taken on exactly the
@@ -95,7 +110,7 @@ Rejected for that reason alone.
 
 **Keep the number and the amounts, redact the person in place.** It would
 supersede ADR 0024's clause that an issued document has "no update path for its
-amounts, its parties or its lines", and it must answer what happens to the two
+amounts, its parties or its lines", and it must answer what happens to the three
 free-form fields, which is the part it cannot answer without inspecting them. It
 also gives up the property that makes an invoice evidence: a document whose
 buyer can be rewritten is a document a court reads differently.

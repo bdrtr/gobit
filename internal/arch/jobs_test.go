@@ -20,7 +20,7 @@ import (
 // neither core nor a module, so the depguard rules do not bind it and the
 // module registration audit — which walks below internal/modules — cannot see
 // it. The tree was opened by ADR 0019 and this closes the gap while it is still
-// two packages wide.
+// three packages wide.
 const jobsDirName = "internal/jobs"
 
 // jobDefinitionName is the conventional name of a job's constructor.
@@ -78,9 +78,12 @@ func TestEveryJobIsRegisteredInTheCompositionRoot(t *testing.T) {
 // The mechanism is the same one the panel uses — a job names the surface it
 // needs as a narrow interface in its OWN package — and the property that
 // matters falls out of it: an interface with one read method cannot be used to
-// write. Importing a module for its TYPES is fine and both jobs do it; taking a
-// module's whole service is what would quietly hand a scheduled process the
-// ability to change the world unwatched.
+// write. ~~Importing a module for its TYPES is fine and both jobs do it~~
+// **Corrected 2026-09-07: ONE of the three jobs does it.** Importing a module
+// for its TYPES is still fine, but only paymentrecon does — it takes
+// payment/service's ReconciliationReport — while outboxrelay and sagawatch
+// import no module at all. Taking a module's whole service is what would
+// quietly hand a scheduled process the ability to change the world unwatched.
 func TestNoJobWritesThroughAModuleService(t *testing.T) {
 	t.Parallel()
 

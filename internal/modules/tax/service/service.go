@@ -32,10 +32,11 @@
 // # The provider abstraction is NOT IN THE CORE, it is HERE
 //
 // Plan Section 6 says "TaxProvider", but there is NO tax provider in
-// core/provider (there are only Payment and Fulfillment) and this
-// module may not touch the core. That is why the contract is defined in this
-// package ([TaxProvider], see taxprovider.go) and the out-of-the-box
-// implementation is local calculation ([LocalProvider]).
+// core/provider (it defines payment, fulfillment, notification and file
+// contracts, plus the ErrorReporter — no tax) and this module may not touch the
+// core. That is why the contract is defined in this package ([TaxProvider], see
+// taxprovider.go) and the out-of-the-box implementation is local calculation
+// ([LocalProvider]).
 //
 // THE DECISION IS EXPLICITLY TEMPORARY: once the contract matures (once a
 // second real provider is written) it must be moved to

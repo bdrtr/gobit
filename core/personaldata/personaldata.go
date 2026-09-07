@@ -1,9 +1,19 @@
-// Package personaldata is the vocabulary a data controller uses to erase a person.
+// Package personaldata is the vocabulary a data controller uses to erase a
+// person, or to show her what is held about her.
 //
-// ADR 0029 makes the EMBEDDING application the data controller and gives
+// ~~ADR 0029 makes the EMBEDDING application the data controller and gives
 // gobit three obligations and no more: a contract with three outcomes, hooks so
 // a holder of personal data can be asked, and a declaration of what each holder
-// keeps. This package is those three things and nothing else. The sweep that
+// keeps. This package is those three things and nothing else.~~
+// **Corrected 2026-09-07: the list was closed and was then REOPENED, on the
+// record.** ADR 0029 makes the EMBEDDING application the data controller and
+// gives gobit three ERASURE obligations: a contract with three outcomes, hooks
+// so a holder of personal data can be asked, and a declaration of what each
+// holder keeps. ADR 0034 then found that a closed list which lets gobit delete
+// a person's rows but not show them to her is a fact about the code rather than
+// a policy anybody chose, and added a fourth — disclosure. So this package is
+// those three things plus the disclosure vocabulary ([Discloser], [Disclosure],
+// [Dossier], [Record], [Field], [State]), and nothing else. The sweep that
 // calls them, the transaction each holder opens, the HTTP surface and the
 // schema refusals all stay unpublished, because none of them is something an
 // outside program has to NAME in order to compile.
@@ -20,13 +30,21 @@
 // ADR 0029 promises would be unreachable by the only party that owes the
 // legal duty.
 //
-// The failure mode of the alternative is not predicted, it is already in the
+// ~~The failure mode of the alternative is not predicted, it is already in the
 // tree: core/openapi.Describer is the same design — an optional
 // capability found by type assertion — living under internal/. Every in-tree
 // module implements it and the out-of-tree example module cannot, so that
 // module's routes are simply missing from the document and no audit says a
-// word. For a schema that costs a missing path. For an erasure it would cost a
-// green build and a false answer to a person who asked to be forgotten.
+// word.~~ **Corrected 2026-09-07: it is no longer in the tree, because it was
+// FIXED — which leaves the argument stronger, not weaker.** The failure mode is
+// not predicted, it was MEASURED. openapi.Describer is the same design, an
+// optional capability found by type assertion, and it did live under internal/,
+// where the out-of-tree example module could not implement it: that module's
+// routes entered the document bodiless and no audit said a word. ADR 0035
+// published the package, examples/starter/loyalty now pins openapi.Describer at
+// compile time, and Doc.UndescribedRoutes with its internal/e2e ratchet removed
+// the silence. For a schema that cost a missing body. For an erasure it would
+// cost a green build and a false answer to a person who asked to be forgotten.
 //
 // # Three outcomes, because two cannot tell a refusal from a fault
 //

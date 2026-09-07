@@ -72,9 +72,11 @@
 --
 -- # Why soft-deleted orders are NOT filtered out
 --
--- This is the one read in the module that deliberately omits `deleted_at IS
--- NULL`. Every other query filters it because a soft-deleted order is not part
--- of the business any more; here the question is not what the business can see
+-- This read deliberately omits `deleted_at IS NULL`, and it is not the only one
+-- that does: the five ListFor...Disclosure reads in disclosure.sql omit it too,
+-- for the same reason one step further on — a person may SEE what a person may
+-- erase (ADR 0034). Every other query in the module filters it, because a
+-- soft-deleted order is not part of the business any more; here the question is not what the business can see
 -- but what the DATABASE STILL HOLDS about a person, and a hidden row holds an
 -- e-mail just as a visible one does. Reporting "anonymized" while a
 -- soft-deleted row kept the address is exactly the false report the erasure

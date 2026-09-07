@@ -158,10 +158,20 @@ outage.
 - `core/errorreport` is the second core package the log handler passes
   through. It is on the path of every failing request, so its cost is one map
   copy and one allow-list check per failure, and nothing at all below the level.
-- The reports carry no method or path. The access-log line has them and it is
-  the line that is skipped; the diagnostic line does not log them. An operator
-  goes from the report's `request_id` to the access log for the endpoint, which
-  is the same division as the point below.
+- ~~The reports carry no method or path. The access-log line has them and it is
+  the line that is skipped; the diagnostic line does not log them.~~
+  **Corrected 2026-09-07:** that holds for one of the three doors, not for all
+  three. An ORDINARY error's report carries neither — the access-log line has
+  them and it is the line the marker skips, and `WriteError`'s diagnostic line
+  logs the error, the code, the status and the request id and nothing else. A
+  PANIC's report carries both: `Recoverer` logs `method` and `path` on the
+  panic line, and `DefaultPolicy` allows them — which is why `KeyMethod` and
+  `KeyPath` are on the allow list at all. The third door is everything else
+  that reaches the log handler directly, and it is mixed: the audit
+  middleware's two failure lines — an unwrapped response, and an admin write
+  that could not be recorded — log both as well. For an ordinary error an
+  operator goes from the report's `request_id` to the access log for the
+  endpoint, which is the same division as the point below.
 - Anyone reading a report needs the log too: the report carries the fingerprint
   and the correlation handle, and the full text stays where the access controls
   already are. That is the intended division, not a gap.

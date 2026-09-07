@@ -32,8 +32,12 @@
 //   - The endpoint is READ ONLY; the write path is in a single place and it is
 //     protected.
 //
-// The accepted price has to be written down as well: /files is OUTSIDE the rate
-// limit (the stack covers only the two API prefixes). What is obtained in
+// The accepted price has to be written down as well: ~~/files is OUTSIDE the
+// rate limit (the stack covers only the two API prefixes).~~
+// **Corrected 2026-09-07: it is inside it.** Identity and quota are SEPARATE
+// decisions and this prefix gives up only the first: internal/app hands /files
+// to corehttp.GuardOptions.OpenPrefixes, and the guard stack wraps every open
+// prefix with the SAME rate limit as the two API prefixes. What is obtained in
 // return is that a static file can be served like a static file; the
 // alternative would have been to make every image request pay the cost of
 // authentication.

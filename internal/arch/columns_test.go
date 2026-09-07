@@ -35,11 +35,16 @@ import (
 // # The decisions
 //
 // The ten order and payment entries are ONE finding stated ten times, and it is
-// a real one: the order and payment modules never soft-delete anything. Every
-// read in both carries "deleted_at IS NULL" — a predicate that has never once
-// been false. Removing the column is a schema decision and taking the deletes
-// on is a product one; recording it here is what keeps it from being
-// rediscovered.
+// a real one: the order and payment modules never soft-delete anything.
+// ~~Every read in both carries "deleted_at IS NULL" — a predicate that has
+// never once been false.~~ **Corrected 2026-09-07:** nothing writes deleted_at
+// in either module, so the predicate has never once been false where it is
+// written — but six reads deliberately leave it out. Order's
+// ListOrdersForErasure and the five ForDisclosure reads answer what the
+// DATABASE STILL HOLDS about a person rather than what the shop can still see,
+// and both query files argue that under a heading of their own. Removing the
+// column is a schema decision and taking the deletes on is a product one;
+// recording it here is what keeps it from being rediscovered.
 //
 // # The one open question
 //
@@ -66,8 +71,11 @@ import (
 // The one that remains is not a placeholder. Its reason states the question,
 // what was measured, and what the answer would decide.
 var unwrittenColumns = map[string]string{
-	"order.orders.deleted_at": "the order module never soft-deletes; nothing sets this and " +
-		"every read filters on it",
+	"order.orders.deleted_at": "the order module never soft-deletes; nothing sets this. " +
+		"NOT every read filters on it, and the exception is deliberate: the five " +
+		"ListFor...Disclosure reads in disclosure.sql omit `deleted_at IS NULL`, because a " +
+		"person asking what is held about them must be shown a row that was soft-deleted " +
+		"rather than told it does not exist (ADR 0034). Every other read filters",
 	"order.order_line_items.deleted_at":   "as orders.deleted_at",
 	"order.order_returns.deleted_at":      "as orders.deleted_at",
 	"order.order_return_items.deleted_at": "as orders.deleted_at",
@@ -586,8 +594,11 @@ func databaseSupplies(definition []sqlToken) bool {
 // A statement has at most one table it writes, and it may name the columns in
 // two places: the INSERT's column list and the SET of an ON CONFLICT DO UPDATE.
 // Carrying the target forward binds the second to the same table as the first,
-// which is what the three upserts in this repository need (product's variant
-// option values, cart's addresses, promotion's application method).
+// which is what the five upserts in this repository need (product's variant
+// option values, cart's addresses, promotion's application method,
+// fulfillment's shipping locations, invoice's series numbers). For the last two
+// the carry is what puts a column into the map AT ALL: their SET names
+// updated_at, which their INSERT column list does not.
 //
 // # Why FOR UPDATE does not become a target
 //

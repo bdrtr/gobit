@@ -11,18 +11,32 @@ import (
 
 // pprofImportPath is the package whose IMPORT is the thing being audited.
 //
-// Importing it runs an init that registers six endpoints on
-// [net/http.DefaultServeMux]. The import is the whole event; no call is needed.
+// Importing it runs an init that registers five endpoints on
+// [net/http.DefaultServeMux] — /debug/pprof/, cmdline, profile, symbol and
+// trace, the same five [github.com/bdrtr/gobit/core/http.ProfilingHandler]
+// registers by hand. The import is the whole event; no call is needed.
 const pprofImportPath = "net/http/pprof"
 
 // profilingHandlerFile is the one file allowed to import it.
 const profilingHandlerFile = "core/http/profiling.go"
 
-// defaultMuxNames are the net/http identifiers that READ OR WRITE the default mux.
+// defaultMuxNames are the net/http identifiers this check forbids.
 //
 // Handle and HandleFunc write to it. ListenAndServe serves it whenever the
 // handler it is given is nil, which is the shape that turns an unrelated
 // listener into a profile endpoint without anybody typing "pprof".
+//
+// ~~They are the identifiers that READ OR WRITE the default mux.~~
+// **Corrected 2026-09-07: the list is not the SET.** net/http.Serve and
+// net/http.ServeTLS take a handler too and serve DefaultServeMux when it is
+// nil — the standard library says so in the same sentence it uses for
+// ListenAndServe — and neither name is here, so a file writing
+// `http.Serve(l, nil)` reaches the process-wide mux and passes clean. Nothing
+// catches the omission either: nothing compares this map against net/http, and
+// that is the difference between it and [productionTrees], whose completeness
+// has [TestTheProductionTreeListCoversTheRepository] behind it. No call site in
+// the tree writes that shape today, so the hole is LATENT; closing it is two
+// entries.
 var defaultMuxNames = map[string]struct{}{
 	"DefaultServeMux":   {},
 	"Handle":            {},
@@ -105,7 +119,7 @@ func assertPprofStaysInItsFile(t *testing.T, file string, parsed *ast.File) {
 	}
 
 	t.Errorf("%s imports %s, which is only allowed in %s.\n"+
-		"The import alone registers six endpoints on net/http's default mux. Keeping it "+
+		"The import alone registers five endpoints on net/http's default mux. Keeping it "+
 		"in one file is what makes the rule above auditable.", file, pprofImportPath, profilingHandlerFile)
 }
 

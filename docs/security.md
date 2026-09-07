@@ -53,7 +53,8 @@ The order of the guard stack is deliberate:
    through the status code).
 3. **Idempotency** — *after* identity; the record key is held together with the
    caller's identity. Individual paths can be exempted from this ring (and from
-   this ring only); the rationale for today's exemptions is in the "Hardening"
+   this ring only); today TWO paths are — `POST /store/v1/graphql` and
+   `POST /store/v1/carts` — and the rationale for both is in the "Hardening"
    section below.
 
 A publishable key is **not a secret**: it is visible in the browser and its only
@@ -316,7 +317,10 @@ repeat gets the same response with `Idempotency-Replayed: true`. Sending a
 **different** body with the same key returns `409` — silently replaying the first
 response would hide from the client that its second request was never processed.
 The record key is **namespaced by the caller's identity**: of two callers who pick
-the same key, neither sees the other's response.
+the same key, neither sees the other's response. That separates two callers only
+as far as the resolved identity names THE CALLER — on the storefront it names
+the STORE, so every shopper is one caller there; what holds that surface apart
+anyway, and the one place it did not, is in the "Hardening" section below.
 
 The decision to record looks **only at the status code** — deriving it from the
 body would mean teaching the core every surface's error shape. The price of that is
@@ -328,6 +332,30 @@ exemption is **only** to the idempotency ring — an exempt path keeps going thr
 the rate limit and through identity — and it applies to the **full path**, not to a
 whole prefix. The path is not written in the core (the core cannot import modules);
 it is passed in from the composition root, from the module's `graph.Path` constant.
+
+The other exempt path, `POST /store/v1/carts`, is out of the ring for a different
+reason: not a wasted record but a **leak**. The record is namespaced by the
+caller's identity, and on the storefront that identity is the PUBLISHABLE KEY —
+the store's, identical for every shopper and visible in every browser — so all
+shoppers share one namespace and the key that selects a record inside it is a
+header the client chooses. A storefront POST whose path carries an id of its own
+survives that, because the fingerprint includes the path: a second shopper
+reusing a key on their own cart, their own customer record or their own order
+gets `409 idempotency_key_reuse`, not somebody else's data. Where the path
+carries no id, only the BODY is left to tell two shoppers apart, and that is
+enough for `POST /store/v1/customers`: a guest registration must carry an e-mail
+address (an empty one is refused), so two shoppers do not send the same bytes.
+Cart creation demands nothing that has to differ — the server derives the region
+and the currency — so two guests in the same country send byte-identical bodies,
+and its response **creates** a capability: a second shopper sending the same key
+and the same body was handed the first shopper's cart id, and a cart id is a
+capability URL, since a cart has no ownership check (see
+[`known-limits.md`](known-limits.md)). Measured, not deduced: two independent
+callers, `Idempotency-Key: cart-9`, identical bodies, the same cart id in both
+responses and `Idempotency-Replayed: true` on the second. The exemption costs a
+duplicate cart when a client retries a creation that timed out — an abandoned
+row, against handing a stranger someone else's cart. This path too comes from the
+module's constant, `cartapi.StoreCartsPath`.
 
 `TRUSTED_PROXY_HOPS` is the number of **trusted** reverse proxies between us and
 the request, and it can be got wrong in both directions — but the two costs are
@@ -377,10 +405,11 @@ off, no connection is opened at all.
 
 Several **instances** do not mean several **tenants**: the instances share the same
 database and the same catalog, they are the horizontal copies of one installation.
-The framework **recognises** no boundary between tenants — in none of the 74 tables
-is there an answer to the question "whose row is this", and no query carries such a
-filter. If you want to serve two customers from one installation, the answer is two
-installations: one tenant = one installation = one database = one process. Why this
-is a decision rather than a gap, which options were rejected, and what would reopen
-the decision, is written in
+The framework **recognises** no boundary between tenants — in none of the 82
+tables the repository's migrations create (the modules' 72, plus the core's and
+the plugins' ten) is there an answer to the question "whose row is this", and no
+query carries such a filter. If you want to serve two customers from one
+installation, the answer is two installations: one tenant = one installation =
+one database = one process. Why this is a decision rather than a gap, which
+options were rejected, and what would reopen the decision, is written in
 [ADR 0009](adr/0009-cok-kiracililik-kurulum-siniri.md).

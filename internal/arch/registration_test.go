@@ -167,8 +167,11 @@ var modulesOutsideE2EHarness = map[string]string{}
 // module endpoints that resolve it BY NAME (see linePricing in the cart module).
 // Keeping the two debts in the same list would make the heavy one look light.
 //
-// Today it is empty: both packages of internal/workflows are set up in the
-// composition root.
+// Today it is empty: EVERY package of internal/workflows is set up in the
+// composition root. The assertion is "every" rather than a count on purpose:
+// the map was created when internal/workflows held two packages and it holds
+// six now, so an assertion pinned to a number would go stale on the next
+// workflow rather than on the next exemption.
 var workflowsNotSetUp = map[string]string{}
 
 // parsedFile carries the parsed form of a Go file and its import aliases.

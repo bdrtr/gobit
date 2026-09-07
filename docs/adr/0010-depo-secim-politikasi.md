@@ -265,7 +265,16 @@ accidentally set to `false` would remove the spending limit without producing
 any error"), and that justification **cannot be carried here directly**: the
 flag there would make a protection fail open, whereas the one here would remove
 a rule that drops orders — the opposite direction. ADR 0007 speaks not of a flag
-but of BEHAVIOR under failure; in ADR 0009 the subject does not come up at all.
+but of BEHAVIOR under failure; ~~in ADR 0009 the subject does not come up at
+all~~ **Corrected 2026-09-07: it comes up there in exactly this form.** ADR
+0009's rejected alternatives carry an env-var-toggled "multi-tenant mode",
+refused in the same words as the b2b switch and falling to the same SIDE as it —
+an installation left "off" would read a database full of tenant columns without
+a filter, a protection failing open. (ADR 0009 credits those words to ADR 0007
+rather than to the `CHANGELOG.md` entry they are in; the reading above is the
+one that checks out.) So the hunt finds a second precedent rather than a gap,
+and the second lands where the first did: neither of them covers a flag that
+would remove a rule which DROPS orders.
 
 The flag was still not added, and the reason comes from its own criterion: the
 way back is already in the admin API and the fault carries its own code.

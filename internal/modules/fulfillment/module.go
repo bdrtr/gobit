@@ -38,9 +38,17 @@
 // to. reference is free text, NOT a foreign key (Principle 2.2), and its
 // existence is not verified here; the same holds for a shipping option's
 // region_id, a fulfillment item's line_item_id, and a warehouse shipping
-// policy's location_id and region_id. The binding is made with the link the
+// policy's location_id and region_id. ~~The binding is made with the link the
 // order declares. This is why this module declares NO link definition: the
-// owner of the binding is not shipping, but the side that needs shipping.
+// owner of the binding is not shipping, but the side that needs shipping.~~
+// **Corrected 2026-09-07: the definition is declared HERE.** The binding is
+// still made with a link rather than with a foreign key, but a definition may
+// be declared only ONCE, and the side that declares it is the side that WRITES
+// the record the binding carries — the shipment. So "order_fulfillment" is
+// declared by this module (see [service.LinkOrderFulfillment]) and the order
+// module declares none. Declaring the definition is still not knowing the
+// order: the definition names two entities, and nothing here resolves an order
+// or verifies a reference.
 //
 // The warehouses THEMSELVES are not this module's data either: their names,
 // addresses and stock live in the inventory module. The policy row here carries

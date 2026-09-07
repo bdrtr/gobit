@@ -36,14 +36,44 @@ import (
 //
 // # Scope, and it is derived rather than listed
 //
-// A package is in scope when it CONSTRUCTS an openapi.Parameter, that is, when
-// it publishes a description at all. That rule selects exactly the module api
-// packages and it needs no list to maintain.
+// ~~A package is in scope when it CONSTRUCTS an openapi.Parameter, that is,
+// when it publishes a description at all. That rule selects exactly the module
+// api packages and it needs no list to maintain.~~ **Corrected 2026-09-07:
+// constructing one is not enough, and the selection is not the module api set
+// — it drops three of those and picks up a plugin; only "it needs no list to
+// maintain" survives.** What the scan can see is a LITERAL: stringLiteral
+// accepts only an *ast.BasicLit, so a constant identifier reads back as the
+// empty string, and a package enters scope only when the In AND the Name of
+// some parameter it builds are spelled out in the source — or when it calls
+// one of its own builders with a literal first argument, a builder here being
+// a function that returns an openapi.Parameter and itself writes In: "query"
+// as a literal, since buildsQueryParameter reads that field with the same
+// literal-only rule. That selects FOURTEEN of the seventeen module api
+// packages, and plugins/webhookout with them. The other three module packages
+// describe through constants, each in its own way: payment/api spells the
+// names out but writes `In: inQuery`, file/api passes queryLimit and
+// queryOffset into its local queryParameter builder, and notification/api
+// passes those two plus queryReference and queryStatus into its own copy of
+// that builder. Their described set comes back empty, scanQueryParams drops
+// the package for that reason, and since all three also READ query parameters
+// they are unaudited in BOTH directions. That is the price of deriving a scope
+// from a shape the source is free to stop having, and the derivation is still
+// worth it — a hand-written list would have gone stale the same day, but
+// silently in the other direction, by claiming coverage.
 //
-// The known limit is the other side of the same rule: internal/adminui and the
+// ~~The known limit is the other side of the same rule: internal/adminui and the
 // plugin HTTP surfaces read query parameters and describe nothing, so
 // "described" is undefined for them and they are out of scope. A plugin that
-// grows a document walks into scope by itself.
+// grows a document walks into scope by itself.~~ **Corrected 2026-09-07: the
+// last sentence came TRUE and the paragraph describing it stayed.**
+// internal/adminui is still out of scope for exactly the stated reason.
+// plugins/searchpg is out of scope too, but NOT for it: it describes three
+// query parameters and falls out because it NAMES them with constants —
+// paramQuery, paramLimit and paramOffset — the way file/api and
+// notification/api do it, not the way payment/api does, whose names are
+// literals and whose constant is the In. plugins/webhookout writes `Name:
+// "state", In: "query"` and has been in scope since it grew that document,
+// audited exactly like a module api package.
 
 // queryParamScan is what one package's walk produced.
 type queryParamScan struct {
@@ -416,8 +446,12 @@ func scanQueryParams(t *testing.T, tree *sourceTree) map[string]*queryParamScan 
 		}
 
 		if len(scan.described) == 0 {
-			// The package publishes no document, so "described" is undefined
-			// for it. See the scope note at the head of this file.
+			// Nothing DESCRIBED was recognized here, and that is two different
+			// packages wearing one shape: the one that publishes no document,
+			// for which "described" really is undefined, and the one that
+			// publishes a document whose parameter names are constants this
+			// scan reads back as empty. Both are dropped; only the first is
+			// dropped rightly. See the scope note at the head of this file.
 			continue
 		}
 		out[importPath] = scan

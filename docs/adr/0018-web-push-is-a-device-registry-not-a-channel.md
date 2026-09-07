@@ -101,11 +101,17 @@ recording, because both were invisible before.**
    provider and no producer. Extending the channel set was proposed twice in
    this round; the existing channel set already carries an unconsumed member.
 
-2. **Plugin migrations are covered by no arch gate.** Both rollback tests walk
+2. ~~**Plugin migrations are covered by no arch gate.** Both rollback tests walk
    `moduleNames(t)`, which reads `internal/modules/` only. A plugin that brings
    a table — searchpg today, webpush next — has its up/down pair certified by
-   nothing. The plugin therefore carries its own rollback test, and that is a
-   requirement of this decision rather than a nicety.
+   nothing.~~ **Corrected 2026-09-07:** the measurement was right and the gap was
+   closed two days later. Both rollback gates now walk `migrationDirs(t)`, which
+   collects every `migrations` directory under `productionTrees` — the four
+   plugins and the four core schemas included — so webpush's up/down pair is
+   certified by two arch gates rather than by nothing. The plugin still carries
+   its own rollback test, and it is still a requirement of this decision, but for
+   what the gates cannot give: they round-trip a FRESH EMPTY schema, and the
+   plugin's test rolls the migration back with rows in the table.
 
 **The VAPID private key is durable state on the order of the database.** Losing
 or rotating it invalidates every subscription ever issued, and every user has to
@@ -124,9 +130,17 @@ would deliver a stranger's order pushes to an attacker's device. That is not
 closed here, because closing it means building customer sessions, and ADR 0008
 already decided that a half identity layer is more dangerous than none. It is
 bounded and made visible instead: an operator can list and delete subscriptions,
-the shipped default template carries the display id and item count but **no
-money**, and the boundary is pinned with a test named to fail the day customer
-sessions arrive. `plugins/webpush`'s subscribe handler joins ADR 0008's list of
+and the shipped default template carries the display id and item count but **no
+money**. ~~The boundary is pinned with a test named to fail the day customer
+sessions arrive.~~ **Corrected 2026-09-07:** it is not, and it never was. The
+boundary is written down in PROSE only — the `customer_id` field's godoc in
+`plugins/webpush/api.go` says the claim is believed and why, and `handleList`'s
+says it is the remediation path for exactly this — while the plugin's twenty-two
+tests cover crypto, migrations, binding and delivery and none of them names the
+trust boundary. The tree's one test of that shape is order's
+`TestTrustBoundaryGuestOrderIsNeverAskedForTheSpendingRule`, which pins the
+spending rule rather than this binding; the webpush equivalent is still to be
+written. `plugins/webpush`'s subscribe handler joins ADR 0008's list of
 places that must change on that day.
 
 The exposure does not widen what a customer-id holder can already learn —

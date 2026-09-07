@@ -214,14 +214,22 @@
 -- That friction is the point, and ADR 0032 accepts it by name: "the escape is a
 -- DBA acting deliberately, which is the right shape for this class of act".
 --
--- "Two statements" describes the SANCTIONED route and nothing more. It is not a
--- lower bound on what it costs to delete a document: the unsanctioned route
+-- "Two statements" describes the SANCTIONED route and nothing more. ~~It is not
+-- a lower bound on what it costs to delete a document: the unsanctioned route
 -- measured above is ONE session-level SET that silences all four triggers and
 -- the CASCADE with them, and this file cannot stop it while the application
--- runs as the owner of these tables. A reader who takes the four ALTERs above
--- as the cost of a deletion is reading a description of good practice as if it
--- were a guarantee, which is the mistake the section "What the trigger does NOT
--- stop" exists to prevent.
+-- runs as the owner of these tables.~~ **Corrected 2026-09-07: the one-SET
+-- route is CLOSED**, by the four ALTER TABLE ... ENABLE ALWAYS TRIGGER
+-- statements at the foot of this file. In replica mode the DELETE comes back
+-- GB001 and the CASCADE is never reached, so the paragraph struck above records
+-- the hole as it was MEASURED and not as this migration ships. What is left to
+-- the owning role is deliberate DDL and nothing cheaper: DISABLE TRIGGER, or
+-- dropping the trigger outright. The warning survives the correction, because
+-- it was never really about the SET. A reader who takes the four ALTERs above
+-- as the cost of a deletion is still reading a description of good practice as
+-- if it were a guarantee: the role that lifts the guard is the same role that
+-- decides whether to put it back, and nothing in the schema makes it. That is
+-- the mistake the section "What the trigger does NOT stop" exists to prevent.
 --
 -- # Why an index arrives in a refusal migration
 --

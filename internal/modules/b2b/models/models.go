@@ -16,8 +16,17 @@ import (
 // The limits are not arbitrary: 320 characters for an e-mail is the upper bound
 // of RFC 5321's local part (64) + "@" + domain name (255). The others are
 // reasonable ceilings that keep a single request from writing unbounded text
-// into the database, and they are enforced a second time by the CHECK
-// constraints in the migration.
+// into the database, and ~~they are enforced a second time by the CHECK
+// constraints in the migration.~~ **Corrected 2026-09-07: ONE of them is.**
+// 000001_b2b_init.up.sql bounds a length in exactly two places —
+// b2b_company.email (320) and b2b_company.name (255) — so MaxEmailLen has its
+// second line of defense and MaxNameLen has one on the company's name.
+// MaxPhoneLen, MaxAddressLen and MaxPostalCodeLen stand behind no CHECK, no
+// varchar(n) and no trigger: phone, address, city and postal_code are plain
+// TEXT columns, and the company's remaining constraints shape the currency, the
+// country code and the reset period rather than any length. For those three the
+// SERVICE is the only gate, so a writer that reaches the repository around it
+// writes unbounded text.
 const (
 	// MaxEmailLen is the maximum length of an e-mail address.
 	MaxEmailLen = 320

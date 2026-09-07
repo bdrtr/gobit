@@ -465,7 +465,14 @@ func linkContextIsValid(before, after string) bool {
 // letter outside ASCII and is therefore not counted as a link. (The example this
 // paragraph would like to show cannot be written here: ADR 0012 forbids a Turkish
 // letter in a translated file, and a bracketed ASCII word would itself become a
-// candidate.) The non-ASCII identifiers Go allows are not used in this repository.
+// candidate.) ~~The non-ASCII identifiers Go allows are not used in this
+// repository.~~ **Corrected 2026-09-07: they are RARE, not absent.** A walk over every
+// Go file [scanDocReferences] parses finds 141 identifier occurrences carrying a rune
+// above U+007F: 138 are gqlgen's mangled names in the product module's generated.go,
+// and the other three are a single hand-written local variable in the tax module's
+// integration test, a Turkish word ending in the dotless i. A bracket-link to any of
+// those names would be dropped as "not in link shape" rather than audited, which is
+// an accepted gap and now a measured one rather than an empty set.
 func isLinkIdentifier(part string) bool {
 	if part == "" {
 		return false
@@ -971,6 +978,22 @@ var adrNumberReference = regexp.MustCompile(`\bADR ?(\d{4})\b`)
 // adrPathReference captures the references made to a decision record BY FILE PATH.
 var adrPathReference = regexp.MustCompile(`docs/adr/(\d{4})-[a-z0-9-]+\.md`)
 
+// adrRelativeLink captures a markdown link from one decision record to another.
+//
+// It exists because [adrPathReference] could not see these AT ALL, and that hole
+// covered the one place ADR links are densest. A record links to its siblings
+// RELATIVELY — "[ADR 0015](0015-postgresql-cluster-contract.md)" — with no
+// docs/adr/ prefix for that pattern to match, so every link in the Related list
+// at the foot of every record was unchecked. Measured on 2026-09-07 when the hole was
+// found: 75 such links existed, the pattern above matched 0 of them, and THREE
+// were already broken — two of them written the same week by the decision that
+// introduced this audit's sibling in email_test.go.
+//
+// A number reference and a path reference fail differently, which is why both are
+// kept. "ADR 0015" pointing at a renumbered record still renders; a link whose
+// file name is wrong is a 404 in anything that follows it.
+var adrRelativeLink = regexp.MustCompile(`\]\((\d{4})-[a-z0-9-]+\.md`)
+
 // TestTheADRReferencesResolve verifies that every ADR reference in the code and in
 // the documents goes to a REAL decision record.
 //
@@ -1029,11 +1052,36 @@ func TestTheADRReferencesResolve(t *testing.T) {
 			check(file.path, scan.fset.Position(group.Pos()).Line, group.Text())
 		}
 	}
+	relativeLinks := 0
 	for _, doc := range markdownDocs(t) {
+		inADRDir := strings.Contains(filepath.ToSlash(doc.path), "docs/adr/")
 		for i, line := range doc.lines {
 			check(doc.path, i+1, line)
+
+			// A relative link resolves against the file's OWN directory, so it
+			// is only an ADR link when the file is itself a decision record.
+			if !inADRDir {
+				continue
+			}
+			for _, match := range adrRelativeLink.FindAllStringSubmatch(line, -1) {
+				relativeLinks++
+				target := strings.TrimPrefix(match[0], "](")
+				if records[match[1]] != target {
+					t.Errorf("%s:%d: the link %q points at no file; record number %s carries "+
+						"the name %q today.\nA record links to its siblings relatively, and a "+
+						"relative link whose name is stale is a 404 rather than a wrong "+
+						"destination.",
+						doc.path, i+1, match[0]+")", match[1], records[match[1]])
+				}
+			}
 		}
 	}
+
+	require.Positive(t, relativeLinks,
+		"no relative link between decision records was found; the pattern must have gone "+
+			"BLIND.\nThe Related list at the foot of nearly every record links to its siblings "+
+			"that way, and this check was added because those links went unverified long "+
+			"enough for three of them to break.")
 
 	require.Positive(t, numberReferences,
 		"no reference in the form \"ADR NNNN\" was found anywhere; the pattern must have "+
@@ -1094,7 +1142,9 @@ func markdownDocs(t *testing.T) []markdownDoc {
 //
 // Only rooted paths are audited. Relative mentions ("see interop.go",
 // "service/provider.go") are OUT OF SCOPE and this is a measured decision: a file
-// with the same name exists in seventeen modules at once (one interop.go per module),
+// with the same name exists in seventeen modules at once (~~one interop.go per
+// module~~ **Corrected 2026-09-07: module.go and sqlc.yaml in every one of the
+// seventeen, interop.go in FIFTEEN — notification and review have none**),
 // the headings sqlc generates mention the query files from a sibling directory, and
 // third-party file names (transport/http_post.go) have the same shape as well. An
 // audit that tried to resolve relative names would either count all of them as
@@ -2036,9 +2086,12 @@ func (s *referenceScan) hasMemberPair(typeName, member string) bool {
 //
 // The "Type.Member" PAIR, on the other hand, IS in scope (see [mdMemberSymbol]) and
 // the ground of the distinction is measurement, not intuition: the pair carries a
-// context the single-element name does not (the receiver type) and all 18 of the 18
-// mentions in the repository are types of this repository — there is no third-party
-// pair. If one appears one day the way out is open and is a better spelling:
+// context the single-element name does not (the receiver type) and ~~all 18 of the 18
+// mentions in the repository are types of this repository~~ **Corrected 2026-09-07:
+// the tally was off by a factor of six.** The pair is the markdown audit's LARGEST
+// symbol class — 118 mentions over 67 distinct pairs today — and every one of them
+// names a type of this repository; there is no third-party pair. If one appears one
+// day the way out is open and is a better spelling:
 // qualify the pair with its package ("http.Server.ReadTimeout"), a form that
 // resolves through [lookUpInPackage].
 //

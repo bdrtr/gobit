@@ -7,8 +7,12 @@
 // filter the catalog. This is why auth's surface is split in THREE:
 //
 //   - The rich in-module surface — it uses [models] types
-//     ([Service.CreateUser], [Service.CreateAPIKey] …). Only auth's own API
-//     layer calls these methods.
+//     ([Service.CreateUser], [Service.CreateAPIKey] …). auth's own API layer
+//     calls these methods and so does internal/app: the composition root
+//     resolves the service BY NAME and calls them through narrow interfaces it
+//     declares itself (bootstrap.go's adminUsers seeds the first admin,
+//     seed.go's rigStorefront opens the demo channel and its key). No MODULE
+//     calls them.
 //   - The cross-module surface — it uses ONLY primitive and stdlib types
 //     (see interop.go).
 //   - The authentication surface — the [Interop] type that satisfies the

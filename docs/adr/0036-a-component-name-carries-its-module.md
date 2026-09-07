@@ -134,10 +134,15 @@ again.
   stay reserved and bare; they belong to gobit, they are referenced by every
   endpoint in the document, and a module that tried to take one of those names
   is already refused.
-- **It does not fix the last two undescribed endpoints.** The search plugin's
+- ~~**It does not fix the last two undescribed endpoints.** The search plugin's
   two are a translation question rather than a naming one — its package is still
   Turkish, and ADR 0012's ratchet says the file that would describe them has to
-  be English.
+  be English.~~ **Corrected 2026-09-07:** the translation was done thirty-five
+  minutes after this decision landed, in `d4657aa`. `plugins/searchpg` is
+  English, it describes both its search and its reindex endpoint, and
+  `internal/e2e/testdata/undescribed_routes.txt` reached ZERO — so the ledger
+  this decision cut from thirty-eight to two was closed the same day rather than
+  left at two.
 
 ## Related
 
@@ -145,5 +150,6 @@ again.
   and built the audit that counted the twenty-five.
 - [ADR 0026](0026-the-published-surface-is-fourteen-packages.md) — what
   publishing a package promises, which is what makes this a breaking change.
-- [ADR 0012](0012-repository-language-and-solid.md) — the language ratchet the
-  last two endpoints are waiting on.
+- [ADR 0012](0012-repository-language-and-solid.md) — the language ratchet that
+  stood between the last two endpoints and a body. Translating the search
+  plugin cleared those two the same day; the ratchet itself stands.

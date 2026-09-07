@@ -32,11 +32,28 @@ namespace has a tenant segment.
 > **The counts in this ADR belong to the DECISION DATE** (2026-09-01) and are
 > left as they were measured that day; they show the size the decision rested
 > on, not today's schema. The justification does NOT WEAKEN as the numbers grow,
-> it strengthens. The schema's table count today is under `README.md`'s "Tek
+> it strengthens. ~~The schema's table count today is under `README.md`'s "Tek
 > örnek mi, birden çok mu?" heading, and that is the place that describes today.
 > When the two numbers diverge, which one holds depends on the question asked:
 > for "what did the decision rest on", the one here; for "what is there today",
-> the one in the README.
+> the one in the README.~~ **Corrected on 2026-09-07:** the LOCATION rotted, not
+> the promise. That section left the README when the README was cut down to a
+> front page (8c3a3c2); it is `docs/security.md`'s "One instance or several?"
+> now, and it is still the place that describes today — it counts **82** tables,
+> the modules' **72** plus the ten that `core/`, `internal/core/` and the plugins
+> create, and that count was re-measured on the day of this correction.
+>
+> That `docs/security.md`'s module figure is also **72** is a coincidence and
+> NOT a copy of the number here, but the mechanism is not the one an earlier
+> draft of this correction claimed. Reconstructed from the tree at this ADR's own
+> commit (9aa8b60): `internal/modules` held **64** tables — which is exactly the
+> **64** under study (A) below — and the whole repository held **67**. So the
+> **72** in this ADR matches neither set on the day it was written, and the
+> method behind it was not recorded. It is left standing as the decision-date
+> figure it is declared to be; what should not be done is to invent an
+> explanation for it, which is how this very sentence went wrong once already.
+> Which number holds still depends on the question asked: for "what did the
+> decision rest on", the one here; for "what is there today", `docs/security.md`.
 
 An out-of-scope statement without a justification is not a decision; it gets
 re-argued every round, and meanwhile doors close quietly. This ADR closes that
@@ -143,8 +160,20 @@ The decision has three binding consequences:
 
    - **The write side of the channel rule.** Either the storefront cart path
      gets filtered by channel, or the hole gets written, as measured, into the
-     README's "Aynı ölçütün henüz uygulanmadığı yer" section. A hole that is not
-     recorded is a hole nobody closes.
+     ~~README's "Aynı ölçütün henüz uygulanmadığı yer" section~~. A hole that is
+     not recorded is a hole nobody closes.
+
+     > **Corrected on 2026-09-07:** the first branch is the one that was taken.
+     > The commit that added this ADR (9aa8b60) applied the channel rule on the
+     > write path in the same change, and `docs/security.md` describes it. The
+     > pointer is dead in any case: that section moved out of the README with
+     > the rest of the reference material (8c3a3c2) and is
+     > `docs/commerce-flows.md`'s "Where the same criterion is not applied yet"
+     > today. It is left STRUCK rather than replaced, and that is deliberate:
+     > `internal/arch/language_test.go` exempts this exact Turkish heading for
+     > this file, and `TestDiacriticDataExemptionsAreHonest` fails the moment
+     > the quotation stops occurring here. Deleting the words would take the
+     > exemption stale with them.
    - **The `eventbus.Handler` godoc gets reconciled with its behavior.** The
      godoc says "the given ctx derives from the ctx of the request that called
      Publish"; that is true only for the in-memory backend
@@ -326,9 +355,9 @@ decision cannot be made:
 
 When the decision is reopened, the things to review are: every item in the
 "Doors that are closing" list above (which of them had closed by then, and at
-what price), the README's "Aynı ölçütün henüz uygulanmadığı yer" section (was
-the write side of the channel rule closed) and ADR 0004 together with ADR 0005 —
-the `query.Provider.FetchByIDs` signature has no filter parameter and link
-tables are set up at run time; both are places a tenant boundary **cannot be
-threaded through**, and on that day either they have to change or the tenant
-boundary has to pass underneath them.
+what price), `docs/commerce-flows.md`'s "Where the same criterion is not applied
+yet" section (was the write side of the channel rule closed) and ADR 0004
+together with ADR 0005 — the `query.Provider.FetchByIDs` signature has no filter
+parameter and link tables are set up at run time; both are places a tenant
+boundary **cannot be threaded through**, and on that day either they have to
+change or the tenant boundary has to pass underneath them.

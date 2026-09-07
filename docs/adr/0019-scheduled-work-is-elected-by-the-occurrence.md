@@ -22,11 +22,11 @@ decision's foundation rather than a footnote.**
 - Campaign expiry is **already enforced at read time**
   (`promotion/service/compute.go`, `campaignUsable(candidate, in.At)`), so a job
   that flipped a status would change nothing observable.
-- Abandoned-cart recovery is not missing. It is **refused**, in writing, in four
-  places: ADR 0017, `internal/app/recover.go`, `internal/core/workflow/workflow.go`
-  and the README. The refusal is precise — recovery runs COMPENSATIONS, which
-  are side effects, and a scheduled job would decide on its own, unwatched, to
-  undo work.
+- Abandoned-cart recovery is not missing. It is **refused**, in writing, in ADR
+  0017, `internal/app/recover.go` and `internal/core/workflow/recover.go`, and
+  restated in `docs/mimari.md` and `docs/known-limits.md`. The refusal is
+  precise — recovery runs COMPENSATIONS, which are side effects, and a scheduled
+  job would decide on its own, unwatched, to undo work.
 
 So the honest position before writing any code was that the framework had no
 consumer for a scheduler at all, and building one for another codebase's jobs
@@ -97,10 +97,19 @@ lock, the next tick proceeds.
 
 **C. A calendar expression (cron syntax).** A cron expression carries a time
 zone, and a time zone carries daylight saving — which means an hour that happens
-twice and an hour that does not happen at all. `Every 24h` has neither. A job
-that genuinely must run at 02:00 local time belongs behind the operator's own
-cron calling `gobit job run`, where the calendar is owned by something that
-already understands calendars.
+twice and an hour that does not happen at all. `Every 24h` has neither.
+~~A job that genuinely must run at 02:00 local time belongs behind the
+operator's own cron calling `gobit job run`, where the calendar is owned by
+something that already understands calendars.~~ **Corrected 2026-09-07:** the
+place is right and the VERB does not exist. Such a job still belongs behind the
+operator's own cron, where the calendar is owned by something that already
+understands calendars — but there is no `gobit job run` for that cron to call,
+and there never was. `internal/app` dispatches `help`, `migrate`, `stuck`,
+`recover`, `jobs`, `deadletters`, `seed` and `refold-invoices`, and nothing
+else; `Runner.RunNow` is the function such a subcommand would call, and it has
+no caller outside its own tests, which `internal/core/job/runner.go` states
+rather than implies. The escape hatch this alternative was rejected in favour of
+is a named GAP, not a facility.
 
 **D. Making a scheduled job a workflow execution.** The engine's shape is a saga
 with compensation, and a schedule is not that. It would also have put periodic

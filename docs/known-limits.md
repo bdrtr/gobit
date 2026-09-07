@@ -28,9 +28,10 @@ past and is not corrected retroactively.
 - **The customer identity is not verified.** `customer_id` is not a fact but a
   claim that asks for no proof. Its three separate consequences for the spending
   limit were measured on a real binary with a single publishable key and are
-  recorded with the B2B spending rule in the [README](../README.md): sending no
-  `customer_id` at all (a guest cart, no limit applies), sending somebody else's
-  (the spend falls from THEIR window), and opening a fresh guest record with
+  recorded with the B2B spending rule in
+  [`docs/commerce-flows.md`](commerce-flows.md): sending no `customer_id` at all
+  (a guest cart, no limit applies), sending somebody else's (the spend falls
+  from THEIR window), and opening a fresh guest record with
   `POST /store/v1/customers` and sending that (the new record belongs to no
   company and is therefore ruleless). The correct sentence for the limit is not
   "the spending limit is not enforced" but "the limit is applied only to a
@@ -43,7 +44,7 @@ past and is not corrected retroactively.
   right of access. The storefront therefore has no list endpoint, because a list
   endpoint would turn knowing one identifier into reading every cart. The rules
   of the model, and what it does NOT cover, are written with the cart flows in
-  the [README](../README.md).
+  [`docs/commerce-flows.md`](commerce-flows.md).
 - **Session revocation is wholesale only.** `POST /admin/v1/auth/logout` and a
   password change drop ALL of the caller's sessions; there is no endpoint that
   drops a single device (see `internal/modules/auth/api`).
@@ -63,8 +64,8 @@ past and is not corrected retroactively.
   ask the scope again. The consequence: even after a product has been moved to
   another channel, a client that already has a line for it in its cart can buy
   MORE of that product. This is the price of the decision whose justification is
-  written with the cart flows in the [README](../README.md) — the alternative
-  was a catalog edit making a customer's full cart unpayable.
+  written with the sales channel rule in [`docs/security.md`](security.md) — the
+  alternative was a catalog edit making a customer's full cart unpayable.
 
 ## Installation and operation
 
@@ -272,18 +273,24 @@ past and is not corrected retroactively.
   itself, so it cannot leak it — but the consequence is this: whoever reads a
   report must have access to the log as well.
 
-  Three concrete limits: a report carries no METHOD and no PATH (the access log
-  carries those, and that line is skipped on purpose, because it would report
-  the same failure a second time); the "safe message" rests on a godoc promise
-  and no audit MECHANICALLY verifies that a caller did not write an email
-  address into it; and the default allow list holds no business identifier at
-  all, so fields such as `user_id` enter a report only if the installation adds
-  them to the list.
+  Three concrete limits: the report an API failure produces carries no METHOD
+  and no PATH (`corehttp.WriteError` logs the error, the code, the status and
+  the `request_id`; the access log line that does carry both is skipped on
+  purpose, because it would report the same failure a second time) — a failure
+  that reaches `slog.ErrorContext` on its own is not bound by that, and several
+  do not: the panic recoverer's line and the audit middleware's two failure
+  lines log method and path, while the panel's two failure writers
+  (`internal/adminui/failure.go`) and the callback guard's error lines log the
+  path, and the default allow list lets both keys through as the request's
+  SHAPE; the "safe message" rests on a godoc promise and no audit MECHANICALLY
+  verifies that a caller did not write an email address into it; and the
+  default allow list holds no business identifier at all, so fields such as
+  `user_id` enter a report only if the installation adds them to the list.
 - **There is no multi-tenancy.** One tenant = one installation = one database =
   one process; several INSTANCES are not several TENANTS, because instances
   share the same database and the same catalog. The detail is with the
-  single-instance discussion in the [README](../README.md), the decision in
-  [ADR 0009](adr/0009-cok-kiracililik-kurulum-siniri.md).
+  single-instance discussion in [`docs/security.md`](security.md), the decision
+  in [ADR 0009](adr/0009-cok-kiracililik-kurulum-siniri.md).
 - **Migration rollback is for ONE owner and does not KNOW the order.** The
   surface now exists (`gobit migrate status`,
   `gobit migrate down <owner> -confirm <owner>`) and the forward direction stays
@@ -305,14 +312,18 @@ past and is not corrected retroactively.
   [ADR 0010](adr/0010-depo-secim-politikasi.md). Priority is per **location**,
   so "A first for R1, B first for R2" cannot be written either — the only thing
   writable per region is exclusion.
-- **A wrong region binding CLOSES the store and consumes the cart permanently.**
+- **A wrong region binding CLOSES the store until an operator repairs it.**
   Binding a region identifier that does not exist (or deleting a region and
   reopening it under the same name — the new record gets a new identifier)
   eliminates that location for every cart; in a single-location installation the
   result is that every completion is refused although the catalog is full. The
-  fallen cart can never be completed again, because the completion flow's
-  idempotency key derives from the cart identifier. The failure is visible, but
-  the visibility has a limit: only the CODE reaches the storefront body
+  cart is NOT consumed: the refusal is raised in the flow's first step and
+  BEFORE any stock is reserved, so there is nothing to compensate — no earlier
+  step exists and the failing step took no reservation to release — and the
+  execution is written `failed`, a transition that RELEASES the idempotency key
+  (see `workflow.StatusFailed`), so the same cart can be paid for the moment the
+  binding is corrected. The failure is visible, but the visibility has a limit:
+  only the CODE reaches the storefront body
   (`fulfillment_no_serviceable_location`); the dump that names what the
   candidates are actually bound to is in the server log and in the
   `workflow_executions` record. The way back is a single admin write — but it

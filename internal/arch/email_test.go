@@ -39,10 +39,10 @@ var emailNormalizers = map[string]func(string) string{
 	"order":    ordermodels.NormalizeEmail,
 }
 
-// TestEveryModuleFoldsAnEmailToTheSameBytes is the property five copies of one
+// TestEveryModuleFoldsAnEmailToTheSameBytes is the property six copies of one
 // function have to hold and nothing else holds for them.
 //
-// # Why there are five copies
+// # Why there are six copies
 //
 // A module may not import another module's models (Principle 2.1), so an
 // address folded in auth and the same address folded in order pass through two
@@ -113,7 +113,7 @@ func TestEveryModuleFoldsAnEmailToTheSameBytes(t *testing.T) {
 
 				assert.Equal(t, first, got,
 					"%s and %s fold %q differently (%q vs %q).\n"+
-						"They are five copies of one function because a module may not import "+
+						"They are six copies of one function because a module may not import "+
 						"another module's models, and the agreement between them is what makes "+
 						"a guest order meet the account that person later opens, and what makes "+
 						"an erasure find every holder's rows. A disagreement raises no error: "+
@@ -129,7 +129,7 @@ func TestEveryModuleFoldsAnEmailToTheSameBytes(t *testing.T) {
 //
 // The map above is hand-written, and a hand-written list is right on the day it
 // is written. This walks the module tree for every exported NormalizeEmail and
-// fails when one of them is not in the comparison — which is the moment a sixth
+// fails when one of them is not in the comparison — which is the moment a seventh
 // module joins the repository with a folding rule nobody checked.
 //
 // It fails in the other direction too: a name in the map that no longer exists
@@ -296,57 +296,86 @@ func TestEveryModuleThatStoresAnEmailFoldsItInGoOrSaysWhyNot(t *testing.T) {
 	}
 }
 
-// modulesWithAnEmailColumn reads every module's up-migrations and returns the
-// modules that declare a column whose name contains "email".
+// emailColumnDeclaration matches a column whose name contains "email" as it is
+// declared inside a CREATE TABLE body: the name at the head of the line,
+// followed by a text-ish type. Anchoring on the name is what keeps a mention of
+// the word in a constraint or a comment from counting as a column.
+var emailColumnDeclaration = regexp.MustCompile(`(?i)^\s*"?(\w*email\w*)"?\s+(text|varchar|citext)\b`)
+
+// emailColumnAddition matches the OTHER way a column arrives: ALTER TABLE ...
+// ADD COLUMN.
+//
+// It was missing until 2026-09-07 and the omission was not academic. An existing
+// module cannot grow a column any other way — a CREATE TABLE is how a NEW table
+// arrives — so the ordinary path by which a module that already exists starts
+// holding an address was invisible to this audit. The migration that ADR 0038
+// itself shipped is the proof: invoice's 000003 adds buyer_email_folded with
+// ADD COLUMN, and this audit could not see the very column the decision was
+// about. The ADR's claim that "a seventh module cannot join quietly" was false
+// for that shape, and it is the shape most likely to occur.
+var emailColumnAddition = regexp.MustCompile(`(?i)\badd\s+column\s+(?:if\s+not\s+exists\s+)?"?(\w*email\w*)"?\s+(text|varchar|citext)\b`)
+
+// modulesWithAnEmailColumn reads every module's and plugin's up-migrations and
+// returns the modules that declare a column whose name contains "email".
 //
 // It reads the MIGRATIONS rather than the Go models because the migration is
 // what the database actually holds: a struct field can be dropped from a model
 // while the column keeps the data, and it is the data a data subject is asking
 // about.
+//
+// # Both trees, because a plugin's migration reaches the same database
+//
+// The walk used to cover internal/modules alone. A plugin is applied by the same
+// runner into the same database and can hold personal data exactly as a module
+// can, so a plugin that stored an address was outside the audit entirely. None
+// does today — which is what made the gap cost nothing so far, and is also what
+// would have kept it quiet until one did.
 func modulesWithAnEmailColumn(t *testing.T) []string {
 	t.Helper()
 
-	root := filepath.Join(repoRoot, modulesDir)
-	// A column definition inside CREATE TABLE: a name containing "email",
-	// followed by a text-ish type. Anchored on the name so a mention of the word
-	// in a constraint or a comment does not count as a column.
-	column := regexp.MustCompile(`(?i)^\s*"?(\w*email\w*)"?\s+(text|varchar|citext)\b`)
 	seen := map[string]bool{}
 
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+	for _, tree := range []string{modulesDir, "plugins"} {
+		root := filepath.Join(repoRoot, tree)
+		if _, statErr := os.Stat(root); statErr != nil {
+			continue
 		}
-		if entry.IsDir() || !strings.HasSuffix(path, ".up.sql") {
+
+		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() || !strings.HasSuffix(path, ".up.sql") {
+				return nil
+			}
+
+			body, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return readErr
+			}
+
+			for _, line := range strings.Split(string(body), "\n") {
+				// Strip a trailing line comment so a column named in prose after
+				// -- cannot be mistaken for a declaration.
+				if i := strings.Index(line, "--"); i >= 0 {
+					line = line[:i]
+				}
+				if !emailColumnDeclaration.MatchString(line) && !emailColumnAddition.MatchString(line) {
+					continue
+				}
+
+				rel, relErr := filepath.Rel(root, path)
+				if relErr != nil {
+					return relErr
+				}
+
+				seen[strings.Split(filepath.ToSlash(rel), "/")[0]] = true
+			}
+
 			return nil
-		}
-
-		body, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return readErr
-		}
-
-		for _, line := range strings.Split(string(body), "\n") {
-			// Strip a trailing line comment so a column named in prose after --
-			// cannot be mistaken for a declaration.
-			if i := strings.Index(line, "--"); i >= 0 {
-				line = line[:i]
-			}
-			if !column.MatchString(line) {
-				continue
-			}
-
-			rel, relErr := filepath.Rel(root, path)
-			if relErr != nil {
-				return relErr
-			}
-
-			seen[strings.Split(filepath.ToSlash(rel), "/")[0]] = true
-		}
-
-		return nil
-	})
-	require.NoError(t, err, "%s could not be walked for migrations", modulesDir)
+		})
+		require.NoError(t, err, "%s could not be walked for migrations", tree)
+	}
 
 	out := make([]string, 0, len(seen))
 	for module := range seen {

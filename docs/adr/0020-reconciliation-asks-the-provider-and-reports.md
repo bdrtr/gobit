@@ -100,8 +100,10 @@ still reported.
 **F. A boolean "clean" result.** A pass that asked forty providers and could not
 reach three of them is not clean, and one boolean would say it was. The report
 carries `Examined`, `Agreed`, `Divergences`, `Unaskable`, `Unreachable`,
-`Unknown` and `Truncated`; `Clean()` is false if ANY of the last four is
-non-zero.
+`Unknown` and `Truncated`; `Clean()` is false if ANY of the four FINDINGS —
+`Divergences`, `Unaskable`, `Unreachable`, `Unknown` — is non-zero. `Truncated`
+is not one of them: it says the suspect set filled its limit, which the job
+reports on a line of its own rather than folding into the verdict.
 
 ## Consequences
 

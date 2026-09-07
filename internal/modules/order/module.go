@@ -49,7 +49,9 @@
 //     quantity and the amount of a sale were reachable only one order at a
 //     time. Its date filter selects on the ORDER's placed_at.
 //   - /admin/v1/orders … — the admin API (reads + status transitions).
-//   - /store/v1/orders/{id} — the customer API (READ only).
+//   - /store/v1/orders/{id} and POST /store/v1/orders/{id}/returns — the
+//     customer API. It reads the order and it also CREATES a return request,
+//     so the storefront surface is not read-only.
 //
 // # The optional capabilities it implements
 //

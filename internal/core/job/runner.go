@@ -246,13 +246,13 @@ func (r *Runner) execute(ctx context.Context, d Definition, due time.Time) {
 //
 // This paragraph used to say "this is what `gobit job run` calls". There is no
 // such subcommand: internal/app dispatches help, migrate, stuck, recover, jobs,
-// deadletters and seed, and nothing reaches here. The sentence is corrected
-// instead of deleted because the gap it names is real and somebody will want to
-// close it — and because it explains one thing about this path: [Report] is a
-// no-op here. RunNow records no outcome at all, so a line reported inside a
-// hand-run would have nowhere to go, and installing a reporter that nothing
-// reads would be the capability-with-no-consumer this repository names most
-// often.
+// deadletters, seed and refold-invoices, and nothing reaches here. The sentence
+// is corrected instead of deleted because the gap it names is real and somebody
+// will want to close it — and because it explains one thing about this path:
+// [Report] is a no-op here. RunNow records no outcome at all, so a line
+// reported inside a hand-run would have nowhere to go, and installing a
+// reporter that nothing reads would be the capability-with-no-consumer this
+// repository names most often.
 //
 // It does NOT claim an occurrence: a hand-run is deliberately outside the
 // schedule, and consuming the occurrence would make the scheduled run silently

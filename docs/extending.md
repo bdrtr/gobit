@@ -126,14 +126,14 @@ full-text search gives a real feature without bringing in a new dependency and a
 new compose service; thanks to the plugin boundary, moving to
 Meilisearch/OpenSearch later changes nothing anywhere else.
 
-> **Search is not a bypass of the channel filter.** The README's catalog rule —
-> a product with no sales-channel assignment is visible in every channel, one
-> with an assignment only in the channels it is assigned to — is authorization,
-> not a display preference, and it lives in one place. The plugin indexes
-> product *identifiers* only; the records are fetched by `product.interop` and
-> the visibility rule stays in that one place. Repeating the rule inside the
-> plugin would mean the storefront and search silently diverging the day one of
-> them changed.
+> **Search is not a bypass of the channel filter.** The catalog rule in
+> [`docs/security.md`](security.md) — a product with no sales-channel assignment
+> is visible in every channel, one with an assignment only in the channels it is
+> assigned to — is authorization, not a display preference, and it lives in one
+> place. The plugin indexes product *identifiers* only; the records are fetched
+> by `product.interop` and the visibility rule stays in that one place. Repeating
+> the rule inside the plugin would mean the storefront and search silently
+> diverging the day one of them changed.
 
 ---
 
@@ -162,8 +162,8 @@ and the rules are structural:
 
 The serving endpoint has no identity (an `<img>` in a storefront cannot send a
 header) but it is **not without a quota**: identity and quota are separate
-decisions, and the README's API-security table is where that split is drawn for
-every surface.
+decisions, and the surface table in [`docs/security.md`](security.md) — the one
+this endpoint's own row sits in — is where that split is drawn for every surface.
 
 > The default `local` provider writes to disk and the root directory must be
 > **durable**. A relative root is right for local development; in a shared

@@ -3,7 +3,7 @@
 //
 // # The module's contract with the core
 //
-// [Module] satisfies the core's module.Module interface. Register does four
+// [Module] satisfies the core's module.Module interface. Register does six
 // things:
 //
 //  1. The service is registered in the container under the name
@@ -11,14 +11,18 @@
 //  2. The PRIMITIVE cross-module read surface is registered under the name
 //     "product.interop" (ADR 0006); plugins and workflows read the catalog
 //     record from there.
-//  3. The Query providers are registered under the names "product.query",
+//  3. The ADMIN WRITE surface is registered under the name "product.admin"
+//     (ADR 0013). It is a name SEPARATE from interop and its only audience is
+//     the admin panel; the rationale, and the fact that internal/arch checks
+//     that audience, are in [AdminName].
+//  4. The Query providers are registered under the names "product.query",
 //     "variant.query" and "category.query" (ADR 0004). The third one is the
 //     VOCABULARY of the first: the product provider's category_id filter takes
 //     an id, and this is where a consumer that only has the word finds it (see
 //     [service.NewCategoryProvider]).
-//  4. The price, stock, sales channel and image/upload link definitions are
+//  5. The price, stock, sales channel and image/upload link definitions are
 //     declared (ADR 0005).
-//  5. The file module's upload read-back is wired in LAZILY, under the name
+//  6. The file module's upload read-back is wired in LAZILY, under the name
 //     "file.interop"; it is what lets an image's upload id be verified before
 //     it is recorded (see [UploadReaderName]).
 //

@@ -10,8 +10,9 @@
 -- shipping_locations.location_id is the inventory module's location id and is
 -- NOT an FK (Principle 2.2 — the cross-module FK ban). Keeping a foreign id
 -- opaque and FK-less is not new: shipping_options.region_id does the same. What
--- is new is that this id is the PRIMARY KEY; the rationale sits at the head of
--- the table.
+-- is new INSIDE internal/modules is that this id is the PRIMARY KEY — a plugin
+-- got there first (plugins/searchpg); the rationale sits at the head of the
+-- table.
 --
 -- The module DOES NOT COPY the ADDRESS or the NAME. Where the warehouse is, is
 -- the inventory module's knowledge and stays there; what sits here is only the
@@ -32,11 +33,14 @@
 --
 -- # THE PRIMARY KEY IS A FOREIGN ID
 --
--- The row's id is the id the inventory module produced, and this HAS NO
--- PRECEDENT in the repository: shipping_options.region_id is foreign and FK-less
--- too, but there the row has an id of its own (id) and region_id is an
--- ATTRIBUTE. What the two share is the opacity and the FK-lessness, not being
--- the key.
+-- The row's id is the id the inventory module produced. ~~This HAS NO PRECEDENT
+-- in the repository.~~ **Corrected 2026-09-07: the repository already carried
+-- the pattern, in a PLUGIN** — plugins/searchpg's searchpg_product keys on the
+-- CATALOG's product_id with no foreign key, and its own header says both halves
+-- out loud. Inside internal/modules this is still a first:
+-- shipping_options.region_id is foreign and FK-less too, but there the row has
+-- an id of its own (id) and region_id is an ATTRIBUTE. What the two share is
+-- the opacity and the FK-lessness, not being the key.
 --
 -- The new pattern is deliberate, because the row here has no independent
 -- existence: a warehouse has AT MOST one policy, and a policy means nothing

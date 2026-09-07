@@ -66,9 +66,18 @@ customer record is bookkeeping, an erasure is a legal answer to a request, and
 ADR 0029 puts that judgement with the embedder. `docs/gaps.md`'s B8 row is
 rewritten rather than left looking satisfied.
 
-**4. The surface is bound at the composition root**, as `POST /admin/v1/erasure`
+**4. The surface is bound at the composition root**, ~~as `POST /admin/v1/erasure`
 and `GET /admin/v1/erasure/personal-data`, under the scopes `erasure:write` and
-`erasure:read`. It is not on the customer module. No module owns this sweep;
+`erasure:read`.~~ **Corrected 2026-09-07: all four of those names are gone.** The
+sweep is `POST /admin/v1/personal-data/erasure` under `personal-data:erase`, and
+the declaration sits at the ROOT of the space as `GET /admin/v1/personal-data`
+under `personal-data:read` — the other way round from what this decision wrote,
+because the declaration is the subject and the acts hang below it, not a map of
+the schema nested under a destructive verb it has nothing to do with. See
+[ADR 0034](0034-a-person-may-see-what-a-person-may-erase.md), which publishes the
+three-endpoint table and adds `POST /admin/v1/personal-data/disclosure` under
+`personal-data:disclose` as the third. What is decided here and unchanged is the
+PLACE: it is not on the customer module. No module owns this sweep;
 binding it there would make the customer module publish the invoice module's
 retention decision, and the path `/admin/v1/customers/{id}/erasure` would assert
 something measurably false — that the subject has a customer record.
@@ -233,7 +242,7 @@ controller's judgement, not gobit's. Naming what was left is the honest form.
 - **The controller gets something to answer with.** A report naming every holder,
   what it did, and — where something was kept — what and why.
 - **The declaration is reachable before there is any data.**
-  `GET /admin/v1/erasure/personal-data` answers from the code, so an embedder can
+  `GET /admin/v1/personal-data` answers from the code, so an embedder can
   write its privacy notice from it on an empty installation.
 - **An embedder's own module joins the sweep for free.** The capabilities are
   found by type assertion over the module registry, and `core/plugin`'s

@@ -130,8 +130,20 @@ at all.
   not know it.
 - **The endpoint returns personal-ish data.** `actor_id` names a person, and the
   paths can carry customer and order ids. That is what an audit log is; the
-  scope is what limits who sees it, and `personaldata`'s declaration audit does
-  not cover `core/audit` because the table records ACTORS rather than subjects.
+  scope is what limits who sees it, and ~~`personaldata`'s declaration audit does
+  not cover `core/audit` because the table records ACTORS rather than
+  subjects.~~ **Corrected 2026-09-07: the declaration DOES cover it, and the
+  reason given was wrong as well as the fact.** `core/audit` is a declared
+  holder — one of the three wired outside the module tree — naming
+  `audit_log.actor_id` and `audit_log.path` as `Named` and `audit_log.request_id`
+  as `Open`, and `TestTheDeclarationReachesHoldersThatAreNoModule` goes red the
+  day it falls out of the published declaration. The declaration's own words
+  contradict the actors-not-subjects reason too: an admin path carries the
+  identifier of the record it acted on, so a row reads as "this named person
+  opened that named shopper's record". The one audit that does NOT reach
+  `core/audit` is `TestEveryPersonColumnIsDeclared`, which walks the module
+  REGISTRY — and it misses it because `core/audit` is not a module, which is
+  precisely the hole the non-module holders were wired to fill.
   Whether an actor id is personal data in a given deployment is the embedder's
   call under ADR 0029, and this ADR does not decide it for them.
 
