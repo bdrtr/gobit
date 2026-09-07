@@ -1,14 +1,15 @@
--- inventory_levels sorguları.
+-- inventory_levels queries.
 --
--- Satılabilir adet (available) hiçbir sorguda SAKLANMIŞ bir sütundan okunmaz;
--- her yerde stocked_quantity - reserved_quantity olarak türetilir.
+-- The available quantity is read from a STORED column in no query here; it is
+-- derived everywhere as stocked_quantity - reserved_quantity.
 
--- LockInventoryLevel seviye satırını işlem boyunca kilitler.
+-- LockInventoryLevel locks the level row for the duration of the transaction.
 --
--- EŞZAMANLILIĞIN TEMELİ BUDUR. İki eşzamanlı rezervasyon aynı satırı kilitlemek
--- zorundadır; ikincisi birincinin işlemi bitene kadar bekler ve READ COMMITTED
--- altında satırın GÜNCEL sürümünü görür. "Önce oku sonra yaz" yarışı bu yüzden
--- oluşamaz: okuma zaten kilidin ardından yapılır.
+-- THIS IS THE BASIS OF THE CONCURRENCY. Two concurrent reservations are obliged
+-- to lock the same row; the second waits until the first one's transaction ends
+-- and, under READ COMMITTED, sees the CURRENT version of the row. That is why a
+-- "read first, then write" race cannot arise: the read is already made after
+-- the lock.
 -- name: LockInventoryLevel :one
 SELECT * FROM inventory_levels
 WHERE inventory_item_id = $1 AND location_id = $2 AND deleted_at IS NULL
@@ -31,9 +32,10 @@ SELECT * FROM inventory_levels
 WHERE inventory_item_id = $1 AND deleted_at IS NULL
 ORDER BY created_at, id;
 
--- AvailableQuantityByItemIDs kalem başına TÜM lokasyonların satılabilir
--- toplamını tek turda döner; Query sağlayıcısı bunu kullanır.
--- Hiç seviyesi olmayan kalem için satır DÖNMEZ; çağıran onu sıfır sayar.
+-- AvailableQuantityByItemIDs returns, per item, the available total over ALL
+-- locations in one round trip; the Query provider uses it.
+-- For an item that has no level at all NO ROW comes back; the caller counts it
+-- as zero.
 -- name: AvailableQuantityByItemIDs :many
 SELECT inventory_item_id,
        COALESCE(SUM(stocked_quantity - reserved_quantity), 0)::bigint AS available_quantity

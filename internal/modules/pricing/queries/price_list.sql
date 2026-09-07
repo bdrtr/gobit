@@ -1,4 +1,4 @@
--- price_list sorguları.
+-- price_list queries.
 
 -- name: InsertPriceList :one
 INSERT INTO price_list (

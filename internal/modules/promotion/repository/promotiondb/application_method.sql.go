@@ -41,8 +41,9 @@ WHERE promotion_id = ANY ($1::text[]) AND deleted_at IS NULL
 ORDER BY promotion_id
 `
 
-// GetApplicationMethodsByPromotions hesaplamaya giren TÜM promosyonların
-// yöntemlerini tek turda döner; promosyon başına sorgu (N+1) yapılmaz.
+// GetApplicationMethodsByPromotions returns the methods of ALL the promotions
+// entering the computation in one round trip; no query is issued per promotion
+// (N+1).
 func (q *Queries) GetApplicationMethodsByPromotions(ctx context.Context, promotionIds []string) ([]PromotionApplicationMethod, error) {
 	rows, err := q.db.Query(ctx, getApplicationMethodsByPromotions, promotionIds)
 	if err != nil {
@@ -125,15 +126,16 @@ type UpsertApplicationMethodParams struct {
 	CreatedAt    pgtype.Timestamptz
 }
 
-// promotion_application_method sorguları.
-// UpsertApplicationMethod yöntemi yazar; promosyonun zaten bir yöntemi varsa
-// ÜZERİNE YAZAR.
+// promotion_application_method queries.
+// UpsertApplicationMethod writes the method; if the promotion already has one
+// it OVERWRITES it.
 //
-// Yerine koyma (upsert) bilinçlidir: promosyon başına en fazla bir yöntem
-// vardır ve "önce sil sonra ekle" iki ifade arasında yöntemsiz bir promosyon
-// bırakırdı — o aralıkta koşan bir hesap indirim üretmezdi. Çakışma hedefi
-// kısmi benzersiz indekstir; silinmiş bir yöntem çakışmaya girmez, bu yüzden
-// WHERE koşulu indeksinkiyle birebir aynıdır.
+// The upsert is deliberate: there is at most one method per promotion, and a
+// "delete first, then insert" would leave the promotion without a method
+// between the two statements — a computation running in that gap would produce
+// no discount. The conflict target is the partial unique index; a deleted
+// method does not take part in the conflict, which is why the WHERE condition
+// here is character for character the index's own.
 func (q *Queries) UpsertApplicationMethod(ctx context.Context, arg UpsertApplicationMethodParams) (PromotionApplicationMethod, error) {
 	row := q.db.QueryRow(ctx, upsertApplicationMethod,
 		arg.ID,

@@ -1,4 +1,4 @@
--- price_rule sorguları.
+-- price_rule queries.
 
 -- name: InsertPriceRule :one
 INSERT INTO price_rule (id, price_id, attribute, operator, rule_values, created_at, updated_at)

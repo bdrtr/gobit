@@ -1,31 +1,32 @@
--- b2b modülünün şeması.
+-- The b2b module's schema.
 --
--- Tablolar YALNIZCA bu modüle aittir ve adları "b2b_" önekiyle başlar. Prensip
--- 2.2 gereği başka bir modülün tablosuna REFERENCES verilmez: çalışanın MÜŞTERİ
--- kaydına bağlanması core/link ile yapılır ve bu şemada customer_id diye bir
--- sütun BULUNMAZ (gerekçe: internal/modules/b2b/service, Definitions). Modülün
--- KENDİ tabloları arasındaki foreign key serbesttir ve b2b_company_employee ->
--- b2b_company bağında kullanılır.
+-- The tables belong to THIS MODULE ALONE and their names start with the "b2b_"
+-- prefix. Principle 2.2 forbids a REFERENCES to another module's table: the
+-- employee is tied to her CUSTOMER record through core/link, and this schema
+-- carries no customer_id column at all (the argument is in
+-- internal/modules/b2b/service, Definitions). A foreign key between the
+-- module's OWN tables is free, and one is used on the b2b_company_employee ->
+-- b2b_company edge.
 --
--- Zaman sütunları TIMESTAMPTZ'dir ve daima UTC yazılır; silme SOFT'tur
--- (deleted_at) ve tüm okuma sorguları deleted_at IS NULL süzer. Para TAM SAYI
--- minor unit'tir (plan Bölüm 8).
+-- Time columns are TIMESTAMPTZ and are always written in UTC; deletion is SOFT
+-- (deleted_at) and every read query filters deleted_at IS NULL. Money is an
+-- INTEGER count of minor units (plan Section 8).
 
--- b2b_company alışverişi bir birey adına değil bir TÜZEL KİŞİ adına yapan
--- şirkettir.
+-- b2b_company is the company that shops on behalf of a LEGAL ENTITY rather
+-- than on behalf of an individual.
 --
--- E-posta KÜÇÜK harfe normalize edilerek saklanır (CHECK ile zorlanır) ama
--- BENZERSİZ DEĞİLDİR. Benzersizlik bilinçli olarak konmadı: bu modülde
--- e-postayla bir kimlik kurulmaz (giriş customer/auth tarafındadır), buna
--- karşılık aynı holdingin iki tüzel kişisi pekâlâ aynı muhasebe adresini
--- paylaşır. Benzersiz bir indeks, var olmayan bir kimlik uğruna gerçek bir
--- kaydı reddederdi. Bunun bedeli, e-posta süzgecinin birden çok satır
--- döndürebilmesidir ve bu, süzgecin sözleşmesinde yazılıdır.
+-- The e-mail is stored normalized to LOWER case (enforced by a CHECK) but it is
+-- NOT UNIQUE. Uniqueness was deliberately left out: no identity is established
+-- by e-mail in this module (sign-in lives on the customer/auth side), while by
+-- contrast two legal entities of the same holding may perfectly well share one
+-- accounting address. A unique index would reject a real record for the sake of
+-- an identity that does not exist. The price of this is that the e-mail filter
+-- may return more than one row, and that is written into the filter's contract.
 --
--- Adres alanları BOŞ BIRAKILABİLİR: bir şirket kaydı çoğu zaman fatura adresi
--- kesinleşmeden önce açılır. Para birimi ise zorunludur — harcama limiti
--- (b2b_company_employee.spending_limit) bir tam sayıdır ve hangi para
--- biriminde olduğu bilinmeden karşılaştırılamaz.
+-- The address fields MAY BE LEFT EMPTY: a company record is most often opened
+-- before the invoicing address is settled. The currency, by contrast, is
+-- mandatory — a spending limit (b2b_company_employee.spending_limit) is an
+-- integer and cannot be compared without knowing which currency it is in.
 CREATE TABLE IF NOT EXISTS b2b_company (
     id                            TEXT PRIMARY KEY,
     name                          TEXT        NOT NULL,
@@ -43,34 +44,38 @@ CREATE TABLE IF NOT EXISTS b2b_company (
     CONSTRAINT b2b_company_name_check     CHECK (name <> '' AND length(name) <= 255),
     CONSTRAINT b2b_company_email_check    CHECK (email <> '' AND email = lower(email) AND length(email) <= 320),
     CONSTRAINT b2b_company_currency_check CHECK (currency_code ~ '^[A-Z]{3}$'),
-    -- Boş ülke kodu "adres henüz girilmedi" demektir; girildiyse ISO 3166-1
-    -- alpha-2 olmak ZORUNDADIR. İki durumu tek kısıtta ifade etmek, "adres
-    -- opsiyonel" kararının veritabanındaki karşılığıdır.
+    -- An empty country code means "the address has not been entered yet"; once
+    -- it is entered it MUST be ISO 3166-1 alpha-2. Expressing both cases in a
+    -- single constraint is what the "the address is optional" decision looks
+    -- like in the database.
     CONSTRAINT b2b_company_country_check  CHECK (country_code = '' OR country_code ~ '^[A-Z]{2}$'),
-    -- Sıfırlama periyodu bir ENUM'dur ve değer kümesi ŞEMADA durur. Uygulama
-    -- katmanı da doğrular; ama harcama limitini uygulayacak olan bir sonraki
-    -- adım bu sütunu okuyup dallanacak ve tanımadığı bir değer görmesi
-    -- "limit hiç uygulanmadı" demek olurdu.
+    -- The reset period is an ENUM and its set of values lives IN THE SCHEMA.
+    -- The application layer validates it as well; but the next step, the one
+    -- that will enforce the spending limit, reads this column and branches on
+    -- it, and for it to see a value it does not recognize would mean "the limit
+    -- was never enforced at all".
     CONSTRAINT b2b_company_reset_check    CHECK (spending_limit_reset_period IN ('monthly', 'yearly', 'never'))
 );
 
--- E-postaya göre süzme (yönetim listesi) bu indeksi kullanır. Benzersiz
--- DEĞİLDİR; gerekçesi tablonun belgesindedir.
+-- Filtering by e-mail (the administration listing) uses this index. It is NOT
+-- unique; the argument for that is in the table's documentation.
 CREATE INDEX IF NOT EXISTS b2b_company_email_idx
     ON b2b_company (email)
     WHERE deleted_at IS NULL;
 
--- b2b_company_employee şirket adına harcama yapabilen çalışandır.
+-- b2b_company_employee is the employee who may spend on the company's behalf.
 --
--- Çalışanın MÜŞTERİ kaydına bağı burada DEĞİL, "b2b_employee_customer"
--- linkindedir (core/link). Bir customer_id sütunu, aynı ilişkiyi iki yerde
--- tutmak demek olurdu: sütun ile link arasındaki her ayrışma, vitrinde
--- "kendi çalışan kaydım" sorusuna iki farklı cevap üretirdi. Tek kaynak
--- link tablosudur ve çalışan kaydını müşteriden bulan tek yol odur.
+-- The employee's tie to her CUSTOMER record is NOT here, it is in the
+-- "b2b_employee_customer" link (core/link). A customer_id column would mean
+-- holding the same relation in two places: every divergence between the column
+-- and the link would produce two different answers to the storefront's "which
+-- is my own employee record" question. The single source is the link table, and
+-- it is the only way from a customer to her employee record.
 --
--- spending_limit NULL ise çalışan SINIRSIZ harcayabilir; 0 ise hiç
--- harcayamaz. İkisini ayırmak şarttır — tek bir sıfır değeri kullanılsaydı
--- "limit koymadım" ile "limiti sıfırladım" aynı satıra düşerdi.
+-- If spending_limit is NULL the employee may spend WITHOUT LIMIT; if it is 0
+-- she may spend nothing. Separating the two is essential — had a single zero
+-- value been used, "I set no limit" and "I zeroed the limit" would land on the
+-- same row.
 CREATE TABLE IF NOT EXISTS b2b_company_employee (
     id               TEXT        PRIMARY KEY,
     company_id       TEXT        NOT NULL REFERENCES b2b_company(id) ON DELETE CASCADE,
@@ -79,13 +84,14 @@ CREATE TABLE IF NOT EXISTS b2b_company_employee (
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     deleted_at       TIMESTAMPTZ,
-    -- Negatif limit bir sınır değil, anlamsız bir sayıdır: her karşılaştırma
-    -- onu aşardı ve çalışan sessizce hiç alışveriş yapamaz hâle gelirdi.
+    -- A negative limit is not a bound but a meaningless number: every
+    -- comparison would exceed it and the employee would silently become unable
+    -- to shop at all.
     CONSTRAINT b2b_company_employee_limit_check CHECK (spending_limit IS NULL OR spending_limit >= 0)
 );
 
--- Bir şirketin çalışanlarını listelemek en sık yapılan okumadır; company_id
--- indekssiz kalırsa her liste tablo taramasına düşer.
+-- Listing a company's employees is the most frequent read there is; if
+-- company_id is left unindexed every listing falls back to a table scan.
 CREATE INDEX IF NOT EXISTS b2b_company_employee_company_idx
     ON b2b_company_employee (company_id)
     WHERE deleted_at IS NULL;

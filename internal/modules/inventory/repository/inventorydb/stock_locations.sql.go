@@ -14,11 +14,12 @@ SELECT COUNT(*) FROM stock_locations
 WHERE deleted_at IS NULL
 `
 
-// CountStockLocations sayfalama zarfının toplam sayısını verir; ListStockLocations
-// ile aynı filtreyi uygular.
+// CountStockLocations gives the total for the pagination envelope; it applies
+// the same filter as ListStockLocations.
 //
-// Sayım ayrı bir sorgudur: satırlarla birlikte dönen bir pencere fonksiyonu,
-// aralık dışı bir sayfada hiç satır dönmediği için toplamı 0 gösterirdi.
+// The count is a separate query: a window function returned alongside the rows
+// would show the total as 0 on an out-of-range page, because no row comes back
+// there.
 func (q *Queries) CountStockLocations(ctx context.Context) (int64, error) {
 	row := q.db.QueryRow(ctx, countStockLocations)
 	var count int64
@@ -45,8 +46,8 @@ type CreateStockLocationParams struct {
 	CountryCode *string
 }
 
-// stock_locations sorguları.
-// Tüm okumalar deleted_at IS NULL filtresi uygular (plan Bölüm 8).
+// stock_locations queries.
+// Every read applies the deleted_at IS NULL filter (plan Section 8).
 func (q *Queries) CreateStockLocation(ctx context.Context, arg CreateStockLocationParams) (StockLocation, error) {
 	row := q.db.QueryRow(ctx, createStockLocation,
 		arg.ID,

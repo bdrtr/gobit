@@ -28,10 +28,11 @@ type CountPaymentSessionStatesRow struct {
 	TotalCount    int64
 }
 
-// CountPaymentSessionStates koleksiyonun oturumlarını duruma göre TEK sorguda
-// sayar. Koleksiyonun türetilen durumu bu sayımlara bakar: hiç oturumu olmayan
-// koleksiyon "not_paid", canlı oturumu olan "awaiting", yalnızca iptal edilmiş
-// oturumu olan "canceled" olur (bkz. service.CollectionStatusFor).
+// CountPaymentSessionStates counts a collection's sessions by status in a
+// SINGLE query. The collection's derived status looks at these counts: a
+// collection with no session at all is "not_paid", one with a live session is
+// "awaiting", one whose only sessions are canceled is "canceled" (see
+// service.CollectionStatusFor).
 func (q *Queries) CountPaymentSessionStates(ctx context.Context, paymentCollectionID string) (CountPaymentSessionStatesRow, error) {
 	row := q.db.QueryRow(ctx, countPaymentSessionStates, paymentCollectionID)
 	var i CountPaymentSessionStatesRow
@@ -66,12 +67,13 @@ type CreatePaymentSessionParams struct {
 	IdempotencyKey      string
 }
 
-// payment_sessions sorguları.
+// payment_sessions queries.
 //
-// Oturum kaydı SİLİNMEZ, durumu değişir. Telafinin (CancelPayment) idempotent
-// olması buna dayanır: ikinci çağrı kaydı bulur, "canceled" görür ve
-// sağlayıcıya ikinci kez gitmeden başarıyla döner. Silinmiş bir oturum ile hiç
-// var olmamış bir oturum birbirinden ayırt edilemezdi.
+// A session record is NEVER DELETED, its status changes. The idempotence of the
+// compensation (CancelPayment) rests on that: the second call finds the record,
+// sees "canceled" and returns successfully without going to the provider a
+// second time. A deleted session and a session that never existed could not be
+// told apart.
 func (q *Queries) CreatePaymentSession(ctx context.Context, arg CreatePaymentSessionParams) (PaymentSession, error) {
 	row := q.db.QueryRow(ctx, createPaymentSession,
 		arg.ID,
@@ -142,9 +144,9 @@ type GetPaymentSessionByIdempotencyKeyParams struct {
 	IdempotencyKey string
 }
 
-// GetPaymentSessionByIdempotencyKey aynı anahtarla açılmış oturumu bulur.
-// CreateSession sağlayıcıya GİTMEDEN ÖNCE bunu sorar; ikinci çağrı yeni oturum
-// açmaz (plan Bölüm 2.6, core/provider idempotency şartı).
+// GetPaymentSessionByIdempotencyKey finds the session opened with the same key.
+// CreateSession asks this BEFORE IT GOES to the provider; a second call opens
+// no new session (plan Section 2.6, the core/provider idempotency requirement).
 func (q *Queries) GetPaymentSessionByIdempotencyKey(ctx context.Context, arg GetPaymentSessionByIdempotencyKeyParams) (PaymentSession, error) {
 	row := q.db.QueryRow(ctx, getPaymentSessionByIdempotencyKey, arg.ProviderID, arg.IdempotencyKey)
 	var i PaymentSession
@@ -222,25 +224,27 @@ type ListSessionsForReconciliationParams struct {
 	Limit     int32
 }
 
-// ListSessionsForReconciliation, sağlayıcıya SORULMASI gereken oturumları
-// döner: yetkilendirilmiş ama tahsil edilmemiş görünen, ve bir süredir öyle
-// duranlar.
+// ListSessionsForReconciliation returns the sessions the provider has to be
+// ASKED about: the ones that look authorized but not captured, and have looked
+// that way for a while.
 //
-// # Neden tam olarak bu küme
+// # Why exactly this set
 //
-// Modül sağlayıcı çağrısını KENDİ işleminin içinde yapar. Para alındıktan sonra
-// işlem geri alınırsa oturum yerelde 'authorized' kalır, sağlayıcıda ise
-// 'captured'tır — ve bu fark başka hiçbir yerden görülemez (bkz.
-// internal/workflows/checkout/doc.go, "kalan risk").
+// The module makes its provider call INSIDE ITS OWN transaction. If the
+// transaction is rolled back after the money was taken, the session stays
+// 'authorized' locally while at the provider it is 'captured' — and that
+// difference is visible from nowhere else (see
+// internal/workflows/checkout/doc.go, "REMAINING RISK").
 //
-// 'pending' DIŞARIDA BIRAKILIR ve bu bilinçlidir: bir oturum yetkilendirilmeden
-// önce para hareket etmemiştir, dolayısıyla ayrışacak bir tutar da yoktur.
-// Kapsamı oraya genişletmek, her açılıp terk edilmiş sepeti sağlayıcıya
-// sordurmak olurdu — yani gürültüyü, bakılması gereken satırın önüne koymak.
+// 'pending' is LEFT OUT, and that is deliberate: before a session is authorized
+// no money has moved, so there is no amount that could diverge either. Widening
+// the scope to there would mean asking the provider about every cart that was
+// ever opened and abandoned — that is, putting the noise in front of the row
+// that has to be looked at.
 //
-// $2 bir BEKLEME SÜRESİDİR, isteğe bağlı bir eşik değil: uçuştaki bir tahsilat
-// saniyeler boyunca tam olarak bu durumda durur ve onu ayrışma saymak, her
-// normal ödemeyi rapora düşürürdü.
+// $2 is a WAITING PERIOD, not an optional threshold: a capture in flight stands
+// in exactly this state for seconds at a time, and counting that as a
+// divergence would drop every normal payment into the report.
 func (q *Queries) ListSessionsForReconciliation(ctx context.Context, arg ListSessionsForReconciliationParams) ([]PaymentSession, error) {
 	rows, err := q.db.Query(ctx, listSessionsForReconciliation, arg.UpdatedAt, arg.Limit)
 	if err != nil {
@@ -282,10 +286,11 @@ WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE
 `
 
-// LockPaymentSession oturumu işlem boyunca kilitler; durum geçişleri
-// (authorize/capture/cancel) yalnızca bu kilit altında yapılır. Aynı oturumu
-// aynı anda yetkilendirmeye çalışan iki çağrıdan ikincisi, birincinin yazdığı
-// durumu görür ve sağlayıcıya İKİNCİ KEZ gitmez.
+// LockPaymentSession locks the session for the length of the transaction;
+// status transitions (authorize/capture/cancel) are made only under this lock.
+// Of two calls trying to authorize the same session at the same time, the
+// second sees the status the first wrote and does NOT go to the provider A
+// SECOND TIME.
 func (q *Queries) LockPaymentSession(ctx context.Context, id string) (PaymentSession, error) {
 	row := q.db.QueryRow(ctx, lockPaymentSession, id)
 	var i PaymentSession
@@ -318,16 +323,18 @@ WHERE payment_collection_id = $1
   AND deleted_at IS NULL
 `
 
-// SumLiveSessionAmounts koleksiyonun CANLI oturumlarının rezerve ettiği toplam
-// tutarı verir. Yeni bir oturumun kapabileceği kalan tutar bundan hesaplanır.
+// SumLiveSessionAmounts gives the total amount the collection's LIVE sessions
+// have reserved. The amount left for a new session to claim is computed from
+// it.
 //
-// Bekleyen oturum kendi TUTARINI rezerve eder: henüz yetkilendirilmemiştir ama
-// yetkilendirildiğinde tutarının tamamını bloke edebilir. Yetkilendirilmiş
-// oturum ise yalnızca BLOKE EDİLENİ tutar; ikinci kez yetkilendirilemeyeceği
-// için (bkz. models.SessionStatus.AuthorizeAction) fazlası bir daha kullanılmaz.
-// Yalnızca yetkilendirilmiş tutara bakan bir hesap, hiçbiri yetkilendirilmemiş
-// iki TAM tutarlı oturumun aynı koleksiyonda açılmasına ve ikisi de
-// yetkilendirilince ÇİFT TAHSİLATA izin verirdi.
+// A pending session reserves its own AMOUNT: it has not been authorized yet,
+// but when it is it can block that amount in full. An authorized session, on
+// the other hand, holds only WHAT IT BLOCKED; since it cannot be authorized a
+// second time (see models.SessionStatus.AuthorizeAction), the remainder will
+// never be used again. A computation that looked only at the authorized amount
+// would allow two FULL-amount sessions, neither of them authorized, to be
+// opened on the same collection — and, once both were authorized, permit a
+// DOUBLE CHARGE.
 func (q *Queries) SumLiveSessionAmounts(ctx context.Context, paymentCollectionID string) (int64, error) {
 	row := q.db.QueryRow(ctx, sumLiveSessionAmounts, paymentCollectionID)
 	var reserved_amount int64
@@ -354,8 +361,8 @@ type UpdatePaymentSessionStateParams struct {
 	DeclineReason    *string
 }
 
-// UpdatePaymentSessionState oturumun durumunu, yetkilendirilen tutarını, ham
-// sağlayıcı verisini ve ret sebebini MUTLAK değerlerle yazar.
+// UpdatePaymentSessionState writes the session's status, its authorized amount,
+// the raw provider data and the decline reason as ABSOLUTE values.
 func (q *Queries) UpdatePaymentSessionState(ctx context.Context, arg UpdatePaymentSessionStateParams) (PaymentSession, error) {
 	row := q.db.QueryRow(ctx, updatePaymentSessionState,
 		arg.ID,

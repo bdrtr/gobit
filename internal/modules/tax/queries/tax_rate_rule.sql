@@ -1,4 +1,4 @@
--- tax_rate_rule sorguları. Tüm okumalar deleted_at IS NULL süzer.
+-- tax_rate_rule queries. Every read filters on deleted_at IS NULL.
 
 -- name: InsertTaxRateRule :one
 INSERT INTO tax_rate_rule (id, tax_rate_id, reference, reference_id, created_at, updated_at)
@@ -14,8 +14,9 @@ SELECT * FROM tax_rate_rule
 WHERE tax_rate_id = $1 AND deleted_at IS NULL
 ORDER BY id;
 
--- ListTaxRateRulesByRates hesaba giren TÜM oranların kurallarını tek sorguda
--- getirir; kural sayısı ne olursa olsun gidiş dönüş sayısı sabittir (N+1 yok).
+-- ListTaxRateRulesByRates fetches the rules of ALL the rates entering the
+-- calculation in a single query; however many rules there are, the number of
+-- round trips stays constant (no N+1).
 -- name: ListTaxRateRulesByRates :many
 SELECT * FROM tax_rate_rule
 WHERE tax_rate_id = ANY(@rate_ids::text[]) AND deleted_at IS NULL

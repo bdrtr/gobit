@@ -1,23 +1,23 @@
--- inventory modülünün şeması (plan Faz 4).
+-- Schema of the inventory module (plan Phase 4).
 --
--- Sahiplik: bu dosyadaki dört tablo YALNIZCA inventory modülüne aittir.
--- Modül içi foreign key'ler serbesttir ve kullanılır; başka bir modülün
--- tablosuna REFERENCES verilmez (Prensip 2.2 — cross-module FK yasağı).
--- Bu yüzden inventory_reservations.line_item_id (cart modülünün satırı) ve
--- inventory_items ile ürün varyantı arasındaki bağ FK DEĞİLDİR: ikincisi
--- Module Links üzerinden kurulur.
+-- Ownership: the four tables in this file belong to the inventory module ONLY.
+-- Foreign keys inside the module are free and are used; no REFERENCES is given
+-- to another module's table (Principle 2.2 — the cross-module FK ban).
+-- That is why inventory_reservations.line_item_id (the cart module's row) and
+-- the tie between inventory_items and a product variant are NOT FKs: the second
+-- one is established through Module Links.
 --
--- Para birimi yoktur; bu modül yalnızca ADET taşır ve adetler BIGINT'tir.
--- Zaman: tüm damgalar timestamptz (UTC). Silme yumuşaktır (deleted_at) ve
--- tüm okuma sorguları deleted_at IS NULL filtresi uygular.
+-- There is no currency; this module carries QUANTITIES only, and quantities are
+-- BIGINT. Time: every stamp is timestamptz (UTC). Deletion is soft (deleted_at)
+-- and every read query applies the deleted_at IS NULL filter.
 --
--- BİR İSTİSNA VARDIR ve bu dosyadan sonra eklenmiştir: 000002,
--- inventory_reservations'ın deleted_at sütununu DÜŞÜRÜR. O sütunu hiçbir zaman
--- hiçbir şey yazmadı; bir rezervasyon silinmez, durumu değişir (aşağıdaki
--- tablo yorumunun kendisi bunu söyler). Gerekçe 000002'nin başındadır, yani
--- aşağıdaki CREATE TABLE o tablo için TARİHTİR, güncel şema değil.
+-- THERE IS ONE EXCEPTION and it was added after this file: 000002 DROPS the
+-- deleted_at column of inventory_reservations. Nothing ever wrote that column;
+-- a reservation is not deleted, its status changes (the table comment below
+-- says so itself). The reasoning is at the head of 000002, which means that for
+-- that table the CREATE TABLE below is HISTORY, not the current schema.
 
--- stock_locations stoğun fiziksel olarak durduğu yerdir (depo, mağaza).
+-- stock_locations is the place where stock physically sits (a warehouse, a shop).
 CREATE TABLE IF NOT EXISTS stock_locations (
     id           TEXT        PRIMARY KEY,
     name         TEXT        NOT NULL,
@@ -36,9 +36,9 @@ CREATE INDEX IF NOT EXISTS stock_locations_alive_idx
     ON stock_locations (created_at DESC)
     WHERE deleted_at IS NULL;
 
--- inventory_items stok takibi yapılan kalemdir. Ürün varyantı ile bağı
--- "product_variant_inventory" link'i üzerinden kurulur; bu modül product'ı
--- bilmez.
+-- inventory_items is the item whose stock is tracked. Its tie to a product
+-- variant is established through the "product_variant_inventory" link; this
+-- module does not know product.
 CREATE TABLE IF NOT EXISTS inventory_items (
     id                TEXT        PRIMARY KEY,
     sku               TEXT        NOT NULL,
@@ -50,18 +50,18 @@ CREATE TABLE IF NOT EXISTS inventory_items (
     deleted_at        TIMESTAMPTZ
 );
 
--- SKU yalnızca YAŞAYAN kalemler arasında benzersizdir; silinen bir kalemin
--- SKU'su yeniden kullanılabilir.
+-- A SKU is unique only among LIVING items; the SKU of a deleted item can be
+-- used again.
 CREATE UNIQUE INDEX IF NOT EXISTS inventory_items_sku_uniq
     ON inventory_items (sku)
     WHERE deleted_at IS NULL;
 
--- inventory_levels bir kalemin bir lokasyondaki stok durumudur.
+-- inventory_levels is an item's stock position at one location.
 --
--- available (satılabilir adet) SAKLANMAZ, stocked_quantity - reserved_quantity
--- olarak TÜRETİLİR. Türetilmiş değerin saklanması, iki sütunun birbirinden
--- ayrı düşebileceği bir tutarsızlık kaynağı olurdu; kısıt da bu yüzden
--- türetme üzerine kurulur.
+-- available (the sellable quantity) is NOT STORED, it is DERIVED as
+-- stocked_quantity - reserved_quantity. Storing the derived value would be a
+-- source of inconsistency in which the two columns could drift apart from each
+-- other; the constraint too is therefore built on the derivation.
 CREATE TABLE IF NOT EXISTS inventory_levels (
     id                TEXT        PRIMARY KEY,
     inventory_item_id TEXT        NOT NULL REFERENCES inventory_items (id) ON DELETE CASCADE,
@@ -74,13 +74,13 @@ CREATE TABLE IF NOT EXISTS inventory_levels (
 
     CONSTRAINT inventory_levels_stocked_nonneg  CHECK (stocked_quantity >= 0),
     CONSTRAINT inventory_levels_reserved_nonneg CHECK (reserved_quantity >= 0),
-    -- Satılabilir adet negatife DÜŞEMEZ. Servis katmanı bunu zaten reddeder;
-    -- buradaki kısıt son savunmadır: doğrudan SQL ile yapılan bir müdahale de
-    -- stoğu negatife düşüremez.
+    -- The sellable quantity CANNOT fall negative. The service layer already
+    -- rejects that; the constraint here is the last defence: an intervention
+    -- made directly in SQL cannot drive the stock negative either.
     CONSTRAINT inventory_levels_available_nonneg CHECK (reserved_quantity <= stocked_quantity)
 );
 
--- (kalem, lokasyon) çifti YAŞAYAN satırlar arasında tektir.
+-- The (item, location) pair is unique among LIVING rows.
 CREATE UNIQUE INDEX IF NOT EXISTS inventory_levels_item_location_uniq
     ON inventory_levels (inventory_item_id, location_id)
     WHERE deleted_at IS NULL;
@@ -89,18 +89,18 @@ CREATE INDEX IF NOT EXISTS inventory_levels_location_idx
     ON inventory_levels (location_id)
     WHERE deleted_at IS NULL;
 
--- inventory_reservations satılabilir stoktan ayrılmış adetlerdir.
+-- inventory_reservations are the quantities set aside from sellable stock.
 --
--- Durum makinesi: active -> released | confirmed. Kayıt SİLİNMEZ; telafinin
--- (ReleaseReservation) idempotent olabilmesi kaydın durumunun okunabilir
--- kalmasına bağlıdır — silinmiş bir rezervasyon ile hiç var olmamış bir
--- rezervasyon birbirinden ayırt edilemezdi.
+-- State machine: active -> released | confirmed. A record is NEVER DELETED; the
+-- compensation (ReleaseReservation) being able to be idempotent depends on the
+-- record's status staying readable — a deleted reservation and a reservation
+-- that never existed could not be told apart from each other.
 CREATE TABLE IF NOT EXISTS inventory_reservations (
     id                TEXT        PRIMARY KEY,
     inventory_item_id TEXT        NOT NULL REFERENCES inventory_items (id) ON DELETE CASCADE,
     location_id       TEXT        NOT NULL REFERENCES stock_locations (id) ON DELETE CASCADE,
     quantity          BIGINT      NOT NULL,
-    -- line_item_id cart modülünün satır kimliğidir. FK YOKTUR (Prensip 2.2).
+    -- line_item_id is the cart module's line id. THERE IS NO FK (Principle 2.2).
     line_item_id      TEXT,
     status            TEXT        NOT NULL DEFAULT 'active',
     description       TEXT,

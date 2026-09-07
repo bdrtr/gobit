@@ -1,7 +1,8 @@
--- currency sorguları.
+-- currency queries.
 --
--- Tabloda deleted_at YOKTUR ve okumalar öyle bir süzgeç TAŞIMAZ; gerekçe
--- country.sql'in başındaki ile aynıdır ve 000003'te yazılıdır.
+-- The table has NO deleted_at and these reads carry NO such filter; the
+-- argument is the same one at the top of country.sql and it is written out in
+-- 000003.
 
 -- name: GetCurrency :one
 SELECT * FROM currency
@@ -15,10 +16,10 @@ LIMIT $1 OFFSET $2;
 -- name: CountCurrencies :one
 SELECT count(*) FROM currency;
 
--- GetCurrenciesByCodes birden çok para birimini TEK turda okur.
+-- GetCurrenciesByCodes reads several currencies in ONE round trip.
 --
--- Query sağlayıcısı bölgeleri para birimleriyle birlikte döndürür; kod başına
--- ayrı sorgu N+1 demek olurdu (ADR 0004'ün toplu okuma şartı).
+-- The query provider returns regions together with their currencies; a separate
+-- query per code would be an N+1 (ADR 0004's batch-read requirement).
 -- name: GetCurrenciesByCodes :many
 SELECT * FROM currency
 WHERE code = ANY(@codes::text[])

@@ -53,7 +53,7 @@ type InsertPromotionRuleParams struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
-// promotion_rule sorguları.
+// promotion_rule queries.
 func (q *Queries) InsertPromotionRule(ctx context.Context, arg InsertPromotionRuleParams) (PromotionRule, error) {
 	row := q.db.QueryRow(ctx, insertPromotionRule,
 		arg.ID,
@@ -121,8 +121,9 @@ WHERE promotion_id = ANY ($1::text[]) AND deleted_at IS NULL
 ORDER BY promotion_id, id
 `
 
-// ListPromotionRulesByPromotions hesaplamaya giren TÜM promosyonların
-// kurallarını tek turda döner; promosyon başına sorgu (N+1) yapılmaz.
+// ListPromotionRulesByPromotions returns the rules of ALL the promotions
+// entering the computation in one round trip; no query is issued per promotion
+// (N+1).
 func (q *Queries) ListPromotionRulesByPromotions(ctx context.Context, promotionIds []string) ([]PromotionRule, error) {
 	rows, err := q.db.Query(ctx, listPromotionRulesByPromotions, promotionIds)
 	if err != nil {

@@ -1,12 +1,12 @@
--- b2b şemasının geri alınması. Sıra, foreign key bağımlılıklarının tersidir:
--- önce çalışan tablosu düşer, sonra şirket.
+-- Rolling the b2b schema back. The order is the reverse of the foreign key
+-- dependencies: the employee table falls first, then the company.
 --
--- Link tablosu ("link_b2b_employee_customer") BURADA DÜŞÜRÜLMEZ ve bu
--- bilinçlidir: link şeması migration'ın değil, açılıştaki bildirimin
--- ürünüdür (ADR 0005) ve sahibi core/link'tir. Bu dosyanın onu düşürmesi,
--- bir modülün migration'ının başka bir alt sistemin tablosunu silmesi
--- olurdu — ve b2b geri alındıktan sonra bile o tablodaki satırlar zararsızdır,
--- çünkü işaret ettikleri çalışan kimlikleri bir daha üretilmez.
+-- The link table ("link_b2b_employee_customer") is NOT DROPPED HERE, and that
+-- is deliberate: the link schema is the product of the declaration made at
+-- startup, not of a migration (ADR 0005), and core/link owns it. For this file
+-- to drop it would be one module's migration deleting another subsystem's
+-- table — and even after b2b has been rolled back the rows in that table are
+-- harmless, because the employee ids they point at are never minted again.
 DROP INDEX IF EXISTS b2b_company_employee_company_idx;
 DROP TABLE IF EXISTS b2b_company_employee;
 

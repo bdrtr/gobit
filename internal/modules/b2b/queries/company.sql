@@ -1,4 +1,4 @@
--- b2b_company sorguları. Tüm okumalar deleted_at IS NULL filtresi uygular.
+-- b2b_company queries. Every read applies the deleted_at IS NULL filter.
 
 -- name: InsertCompany :one
 INSERT INTO b2b_company (
@@ -12,10 +12,10 @@ RETURNING *;
 SELECT * FROM b2b_company
 WHERE id = $1 AND deleted_at IS NULL;
 
--- ListCompanies süzgeçlenmiş ve sayfalanmış şirket listesini döner.
+-- ListCompanies returns the filtered and paginated list of companies.
 --
--- E-posta süzgeci BİRDEN ÇOK satır döndürebilir: şirket e-postası benzersiz
--- değildir (gerekçe migration'daki tablo belgesindedir).
+-- The e-mail filter may return MORE THAN ONE row: a company e-mail is not
+-- unique (the argument is in the table's documentation in the migration).
 -- name: ListCompanies :many
 SELECT * FROM b2b_company
 WHERE deleted_at IS NULL
@@ -28,12 +28,13 @@ SELECT count(*) FROM b2b_company
 WHERE deleted_at IS NULL
   AND (sqlc.narg('email')::text IS NULL OR email = sqlc.narg('email')::text);
 
--- UpdateCompany verilmeyen alanları OLDUĞU GİBİ bırakır.
+-- UpdateCompany leaves the fields it was not given EXACTLY AS THEY WERE.
 --
--- COALESCE ile yazılan bu kısmi güncelleme "alan gönderilmedi" ile "alan boşa
--- çekildi" ayrımını korur: NULL parametre eski değeri saklar, boş dize gerçek
--- bir temizlemedir. Adres alanları için bu ayrım somuttur — taşınan bir
--- şirketin eski posta kodu silinebilmelidir.
+-- This partial update, written with COALESCE, preserves the distinction between
+-- "the field was not sent" and "the field was cleared": a NULL parameter keeps
+-- the old value, an empty string is a real clearing. For the address fields
+-- that distinction is concrete — a company that has moved must be able to have
+-- its old postal code deleted.
 -- name: UpdateCompany :one
 UPDATE b2b_company SET
     name                        = COALESCE(sqlc.narg('name')::text, name),
@@ -49,11 +50,12 @@ UPDATE b2b_company SET
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING *;
 
--- SoftDeleteCompany şirketi yumuşak siler.
+-- SoftDeleteCompany soft-deletes the company.
 --
--- ÇALIŞANLARI da aynı işlemde silinir (bkz. SoftDeleteEmployeesOfCompany);
--- ikisinin ayrı çağrılarda yapılması, arada kalan bir hatada şirketsiz çalışan
--- kayıtları bırakırdı ve o kayıtlar vitrinde silinmiş bir şirketi gösterirdi.
+-- Its EMPLOYEES are deleted in the same operation as well (see
+-- SoftDeleteEmployeesOfCompany); doing the two in separate calls would, on an
+-- error in between, leave employee records with no company behind, and those
+-- records would show a deleted company in the storefront.
 -- name: SoftDeleteCompany :one
 UPDATE b2b_company
 SET deleted_at = $2, updated_at = $2

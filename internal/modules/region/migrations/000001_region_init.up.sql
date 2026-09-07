@@ -1,30 +1,33 @@
--- region modülünün şeması (plan Faz 5, Bölüm 6).
+-- Schema of the region module (plan Phase 5, Section 6).
 --
--- Tablolar YALNIZCA bu modüle aittir. Prensip 2.2 gereği başka bir modülün
--- tablosuna REFERENCES verilmez; sepetin ya da siparişin bir bölgeye bağlanması
--- Module Links üzerinden yapılır ve region o bağı hiç görmez. Modülün KENDİ
--- tabloları arasındaki foreign key'ler serbesttir ve kullanılır.
+-- The tables belong to THIS MODULE ALONE. Principle 2.2 forbids a REFERENCES to
+-- another module's table; binding a cart or an order to a region is done through
+-- Module Links, and region never sees that link at all. Foreign keys between the
+-- module's OWN tables are free and are used.
 --
--- Zaman sütunları TIMESTAMPTZ'dir ve daima UTC yazılır; silme SOFT'tur
--- (deleted_at) ve tüm okuma sorguları deleted_at IS NULL filtresi uygular.
+-- The time columns are TIMESTAMPTZ and are always written in UTC; deletion is
+-- SOFT (deleted_at) and every read query applies a deleted_at IS NULL filter.
 --
--- BU KURAL YALNIZCA region TABLOSU İÇİN GEÇERLİDİR ve öyle olduğu bu dosyadan
--- sonra anlaşıldı: 000003, currency ve country'nin deleted_at sütunlarını
--- DÜŞÜRÜR. İkisi de REFERANS VERİDİR, satırlarını 000002'nin tohumu yazar ve
--- sütunları hiçbir zaman yazılmadı. Gerekçe 000003'ün başındadır; aşağıdaki iki
--- CREATE TABLE o sütunlar bakımından TARİHTİR, güncel şema değil.
+-- THAT RULE HOLDS FOR THE region TABLE ONLY, and that it does was understood
+-- only after this file: 000003 DROPS the deleted_at columns of currency and
+-- country. Both are REFERENCE DATA, their rows are written by the seed in
+-- 000002, and their columns were never once written. The argument is at the top
+-- of 000003; as far as those columns are concerned the two CREATE TABLEs below
+-- are HISTORY, not the current schema.
 
--- currency ISO 4217 para birimidir ve REFERANS VERİDİR.
+-- currency is an ISO 4217 currency and it is REFERENCE DATA.
 --
--- Birincil anahtar üretilmiş bir kimlik değil, kodun KENDİSİDİR: ISO 4217 kodu
--- küresel ve değişmez bir tanımlayıcıdır, ona ikinci bir kimlik uydurmak her
--- okumada fazladan bir çeviri adımı getirirdi. Kod daima BÜYÜK harf saklanır;
--- normalleştirmeyi servis yapar, CHECK ikinci kapıdır.
+-- The primary key is not a generated identity but the code ITSELF: an ISO 4217
+-- code is a global and immutable identifier, and inventing a second identity for
+-- it would add one more translation step to every read. The code is always
+-- stored in UPPER case; the service does the normalisation and the CHECK is the
+-- second gate.
 --
--- decimal_digits bu tablonun VAROLUŞ SEBEBİDİR: para minor unit (kuruş/cent)
--- tam sayı olarak saklandığı için (plan Bölüm 8), sunum katmanı bölme
--- çarpanını buradan öğrenir. TRY/USD 2, JPY 0, KWD 3 basamaklıdır; sabit bir
--- 100 çarpanı varsaymak yen tutarlarını yüz kat küçük gösterirdi.
+-- decimal_digits is this table's REASON FOR EXISTING: because money is stored as
+-- an integer in the minor unit (cents) (plan Section 8), the presentation layer
+-- learns its division factor here. TRY/USD have 2 digits, JPY 0, KWD 3;
+-- assuming a fixed factor of 100 would show yen amounts a hundred times too
+-- small.
 CREATE TABLE IF NOT EXISTS currency (
     code           TEXT PRIMARY KEY,
     symbol         TEXT        NOT NULL,
@@ -39,17 +42,18 @@ CREATE TABLE IF NOT EXISTS currency (
     CONSTRAINT currency_digits_check CHECK (decimal_digits >= 0 AND decimal_digits <= 4)
 );
 
--- region bir satış bölgesidir: para birimi ve (geçici olarak) vergi oranı.
+-- region is a sales region: a currency and (for the time being) a tax rate.
 --
--- currency_code foreign key'i modül İÇİNDEDİR ve bilinçlidir: tanımsız bir para
--- biriminde bölge açmak, o bölgeye düşen her sepetin para birimini çözümsüz
--- bırakırdı. Silme kısıtlıdır (varsayılan NO ACTION): kullanımdaki bir para
--- birimi satırı silinemez.
+-- The currency_code foreign key is INSIDE the module and it is deliberate:
+-- opening a region on an undefined currency would leave the currency of every
+-- cart that falls into that region unresolvable. Deletion is restricted (the
+-- default NO ACTION): a currency row that is in use cannot be deleted.
 --
--- tax_rate YEDEK orandır (tax modülü devraldı, bu geri düşüş yolu) ve BAZ PUAN olarak
--- saklanır: 2000 = %20. Oranın tam sayı olması bilinçlidir — plan Bölüm 8 para
--- ve türevlerinde float yasaklar, ve %20'lik bir oranın float karşılığı
--- (0.2) tutarla çarpıldığında kuruş düzeyinde sessiz yuvarlama üretirdi.
+-- tax_rate is the FALLBACK rate (the tax module took this over, this is the
+-- fallback path) and it is stored in BASIS POINTS: 2000 = 20%. The rate being an
+-- integer is deliberate — plan Section 8 forbids floats for money and anything
+-- derived from it, and the float form of a 20% rate (0.2) multiplied by an
+-- amount would produce silent rounding at the cent level.
 CREATE TABLE IF NOT EXISTS region (
     id              TEXT PRIMARY KEY,
     name            TEXT        NOT NULL,
@@ -66,17 +70,17 @@ CREATE TABLE IF NOT EXISTS region (
 
 CREATE INDEX IF NOT EXISTS region_currency_code_idx ON region (currency_code) WHERE deleted_at IS NULL;
 
--- country ISO 3166-1 alpha-2 ülkesidir ve REFERANS VERİDİR.
+-- country is an ISO 3166-1 alpha-2 country and it is REFERENCE DATA.
 --
--- Bir ülkenin EN FAZLA bir bölgeye ait olması kuralı YAPISALDIR: bağ, ülke
--- satırındaki tek bir region_id sütunudur. Ara tablo kullanılsaydı aynı kuralı
--- ayrıca bir benzersiz indeksle zorlamak gerekirdi; tek sütun onu şemanın
--- kendisiyle imkânsız kılar.
+-- The rule that a country belongs to AT MOST one region is STRUCTURAL: the link
+-- is a single region_id column on the country row. Had a join table been used,
+-- the same rule would have to be enforced separately by a unique index; one
+-- column makes breaking it impossible in the schema itself.
 --
--- region_id NULL olabilir: ISO 3166'nın tamamı tohumlanır ama bir kurulum
--- bunların yalnızca birkaçına satış yapar. Bölge silindiğinde sütun NULL'a
--- çekilir (bkz. repository.DeleteRegion); aksi hâlde ülke ölü bir bölgeye
--- bağlı kalır ve bir daha hiçbir bölgeye eklenemezdi.
+-- region_id may be NULL: the whole of ISO 3166 is seeded, but an installation
+-- sells to only a few of those. When a region is deleted the column is pulled
+-- back to NULL (see repository.DeleteRegion); otherwise the country would stay
+-- attached to a dead region and could never be added to any region again.
 CREATE TABLE IF NOT EXISTS country (
     iso_2      TEXT PRIMARY KEY,
     name       TEXT        NOT NULL,

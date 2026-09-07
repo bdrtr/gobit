@@ -68,11 +68,12 @@ type InsertEmployeeParams struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
-// b2b_company_employee sorguları. Tüm okumalar deleted_at IS NULL filtresi
-// uygular.
+// b2b_company_employee queries. Every read applies the deleted_at IS NULL
+// filter.
 //
-// Bu dosyada customer_id GEÇMEZ: çalışan ile müşteri arasındaki bağ şemada
-// değil core/link'tedir (bkz. migrations/000001_b2b_init.up.sql).
+// customer_id DOES NOT APPEAR in this file: the tie between an employee and a
+// customer is not in the schema but in core/link (see
+// migrations/000001_b2b_init.up.sql).
 func (q *Queries) InsertEmployee(ctx context.Context, arg InsertEmployeeParams) (B2bCompanyEmployee, error) {
 	row := q.db.QueryRow(ctx, insertEmployee,
 		arg.ID,
@@ -111,7 +112,7 @@ type ListEmployeesParams struct {
 	Lim            int32
 }
 
-// ListEmployees süzgeçlenmiş ve sayfalanmış çalışan listesini döner.
+// ListEmployees returns the filtered and paginated list of employees.
 func (q *Queries) ListEmployees(ctx context.Context, arg ListEmployeesParams) ([]B2bCompanyEmployee, error) {
 	rows, err := q.db.Query(ctx, listEmployees,
 		arg.CompanyID,
@@ -176,12 +177,13 @@ type SoftDeleteEmployeesOfCompanyParams struct {
 	DeletedAt pgtype.Timestamptz
 }
 
-// SoftDeleteEmployeesOfCompany şirketin tüm çalışanlarını yumuşak siler ve
-// SİLİNENLERİN KİMLİKLERİNİ döner.
+// SoftDeleteEmployeesOfCompany soft-deletes all of the company's employees and
+// returns THE IDS OF THE DELETED ONES.
 //
-// Kimlikler dönmek zorundadır: çalışanın müşteriyle bağı link tablosundadır ve
-// o bağ silinmezse müşteri, kardinalite kısıtı yüzünden bir daha HİÇBİR
-// şirkete çalışan olarak eklenemez (bkz. service.Definitions, OneToOne).
+// Returning the ids is mandatory: the employee's tie to a customer is in the
+// link table, and if that tie is not deleted the customer can never again be
+// added as an employee to ANY company, because of the cardinality constraint
+// (see service.Definitions, OneToOne).
 func (q *Queries) SoftDeleteEmployeesOfCompany(ctx context.Context, arg SoftDeleteEmployeesOfCompanyParams) ([]string, error) {
 	rows, err := q.db.Query(ctx, softDeleteEmployeesOfCompany, arg.CompanyID, arg.DeletedAt)
 	if err != nil {
@@ -222,12 +224,13 @@ type UpdateEmployeeParams struct {
 	ID             string
 }
 
-// UpdateEmployee verilmeyen alanları OLDUĞU GİBİ bırakır.
+// UpdateEmployee leaves the fields it was not given EXACTLY AS THEY WERE.
 //
-// spending_limit için COALESCE KULLANILAMAZ: alanın kendisi NULL olabilir
-// ("sınırsız") ve COALESCE, "sınırsız yap" isteğini "dokunma"dan ayıramazdı.
-// Ayrım ayrı bir bayrakla taşınır: clear_limit doğruysa sütun NULL'a çekilir,
-// değilse verilen değer yazılır ya da eski değer korunur.
+// COALESCE CANNOT BE USED for spending_limit: the field itself may be NULL
+// ("unlimited") and COALESCE could not tell a "make it unlimited" request apart
+// from "do not touch it". The distinction is carried by a separate flag: if
+// clear_limit is true the column is pulled to NULL, otherwise the given value
+// is written or the old value is kept.
 func (q *Queries) UpdateEmployee(ctx context.Context, arg UpdateEmployeeParams) (B2bCompanyEmployee, error) {
 	row := q.db.QueryRow(ctx, updateEmployee,
 		arg.ClearLimit,

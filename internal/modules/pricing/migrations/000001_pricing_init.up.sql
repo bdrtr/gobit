@@ -1,15 +1,15 @@
--- pricing modülünün şeması (plan Faz 4, Bölüm 6).
+-- The pricing module's schema (plan Phase 4, Section 6).
 --
--- Tablolar YALNIZCA bu modüle aittir. Prensip 2.2 gereği başka bir modülün
--- tablosuna REFERENCES verilmez: bir varyantın fiyat kabına bağlanması
--- Module Links üzerinden yapılır ve pricing o bağı hiç görmez. Modülün KENDİ
--- tabloları arasındaki foreign key'ler ise serbesttir ve kullanılır.
+-- The tables belong to THIS module alone. Per Principle 2.2 no REFERENCES is
+-- given to another module's table: binding a variant to its price set is done
+-- through Module Links, and pricing never sees that binding at all. Foreign
+-- keys between the module's OWN tables are free, and are used.
 --
--- Zaman sütunları TIMESTAMPTZ'dir ve daima UTC yazılır; silme SOFT'tur
--- (deleted_at) ve tüm okuma sorguları deleted_at IS NULL filtresi uygular.
+-- The time columns are TIMESTAMPTZ and are always written in UTC; deletion is
+-- SOFT (deleted_at) and every read query applies the deleted_at IS NULL filter.
 
--- price_list kampanya/segment fiyat listesidir.
--- Bir listeye bağlı fiyat, listenin durumu ve tarih penceresi uygunken geçerlidir.
+-- price_list is a campaign/segment price list.
+-- A price attached to a list is valid while the list's status and date window allow it.
 CREATE TABLE IF NOT EXISTS price_list (
     id          TEXT PRIMARY KEY,
     title       TEXT        NOT NULL,
@@ -27,8 +27,8 @@ CREATE TABLE IF NOT EXISTS price_list (
     CONSTRAINT price_list_window_check CHECK (starts_at IS NULL OR ends_at IS NULL OR starts_at < ends_at)
 );
 
--- price_set bir varyantın fiyatlarının kabıdır.
--- Kabın kendisi hangi varyanta ait olduğunu BİLMEZ; bağ link tablosundadır.
+-- price_set is the container holding a variant's prices.
+-- The container itself does NOT know which variant it belongs to; the binding lives in the link table.
 CREATE TABLE IF NOT EXISTS price_set (
     id         TEXT PRIMARY KEY,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -36,11 +36,12 @@ CREATE TABLE IF NOT EXISTS price_set (
     deleted_at TIMESTAMPTZ
 );
 
--- price tek bir para birimi/adet aralığı için tutardır.
+-- price is the amount for a single currency / quantity range.
 --
--- amount TAM SAYI minor unit'tir (kuruş/cent); float kullanılmaz ve para birimi
--- ayrı sütunda durur (plan Bölüm 8). Üst sınır bilinçlidir: amount * max_quantity
--- çarpımı int64'e sığmalıdır, aksi hâlde sepet toplamı sessizce taşardı.
+-- amount is an INTEGER in minor units (cents); no float is used, and the
+-- currency stands in its own column (plan Section 8). The upper bound is
+-- deliberate: the product amount * max_quantity has to fit in an int64, or the
+-- cart total would silently overflow.
 CREATE TABLE IF NOT EXISTS price (
     id            TEXT PRIMARY KEY,
     price_set_id  TEXT        NOT NULL REFERENCES price_set(id) ON DELETE CASCADE,
@@ -62,12 +63,12 @@ CREATE TABLE IF NOT EXISTS price (
 CREATE INDEX IF NOT EXISTS price_set_id_idx ON price (price_set_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS price_list_id_idx ON price (price_list_id) WHERE deleted_at IS NULL;
 
--- price_rule bir fiyatın hangi koşulda geçerli olduğunu belirler.
+-- price_rule states under which condition a price is valid.
 --
--- Koşul (attribute, operator, rule_values) üçlüsüdür; örn.
--- ("region_id", "eq", {"reg_1"}) ya da ("customer_group_id", "in", {"vip","b2b"}).
--- Sütun adı "values" DEĞİLDİR: VALUES PostgreSQL'de ayrılmış bir sözcüktür ve
--- tırnaklanmadan kullanılamazdı.
+-- The condition is the triple (attribute, operator, rule_values); e.g.
+-- ("region_id", "eq", {"reg_1"}) or ("customer_group_id", "in", {"vip","b2b"}).
+-- The column is NOT named "values": VALUES is a reserved word in PostgreSQL and
+-- could not have been used unquoted.
 CREATE TABLE IF NOT EXISTS price_rule (
     id          TEXT PRIMARY KEY,
     price_id    TEXT        NOT NULL REFERENCES price(id) ON DELETE CASCADE,

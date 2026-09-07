@@ -1,4 +1,4 @@
--- promotion_redemption sorguları.
+-- promotion_redemption queries.
 
 -- name: InsertRedemption :one
 INSERT INTO promotion_redemption (
@@ -8,20 +8,21 @@ INSERT INTO promotion_redemption (
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
 RETURNING *;
 
--- GetActiveRedemption bir referans için GEÇERLİ (serbest bırakılmamış)
--- kullanımı döner.
+-- GetActiveRedemption returns the VALID (not yet released) redemption for a
+-- reference.
 --
--- İdempotency'nin okuma tarafıdır: aynı referansla ikinci kez çağrılan
--- RedeemPromotion sayacı artırmak yerine bu kaydı döner.
+-- It is the read side of idempotency: a RedeemPromotion called a second time
+-- with the same reference returns this record instead of raising the counter.
 -- name: GetActiveRedemption :one
 SELECT * FROM promotion_redemption
 WHERE promotion_id = $1 AND reference = $2 AND released_at IS NULL;
 
--- LockActiveRedemption GEÇERLİ kullanımı işlem boyunca kilitler.
+-- LockActiveRedemption locks the VALID redemption for the duration of the
+-- transaction.
 --
--- Serbest bırakma bu kilidi alır; iki eşzamanlı Release'ten yalnızca biri
--- satırı "released" yazabilir ve diğeri güncellenmiş satırı görüp hiçbir şey
--- yapmaz. Sayacın iki kez düşmesini engelleyen şey budur.
+-- The release takes this lock; of two concurrent Releases only one can write
+-- the row as "released", and the other sees the updated row and does nothing.
+-- That is what stops the counter being lowered twice.
 -- name: LockActiveRedemption :one
 SELECT * FROM promotion_redemption
 WHERE promotion_id = $1 AND reference = $2 AND released_at IS NULL
@@ -37,11 +38,12 @@ LIMIT $2 OFFSET $3;
 SELECT count(*) FROM promotion_redemption
 WHERE promotion_id = $1;
 
--- MarkRedemptionReleased kullanımı serbest bırakılmış olarak işaretler.
+-- MarkRedemptionReleased marks the redemption as released.
 --
--- KOŞUL released_at IS NULL'dır: zaten bırakılmış bir kayıt hiç satır dönmez
--- ve çağıran ikinci düşümü yapmaz. Telafinin idempotent olmasını sağlayan
--- ikinci savunma budur (birincisi satır kilididir).
+-- The CONDITION is released_at IS NULL: an already released record returns no
+-- row at all and the caller does not perform the second decrement. That is the
+-- second defence keeping the compensation idempotent (the first is the row
+-- lock).
 -- name: MarkRedemptionReleased :one
 UPDATE promotion_redemption
 SET released_at = $2, updated_at = $2

@@ -1,8 +1,8 @@
--- payments sorguları.
+-- payments queries.
 --
--- Bir oturumdan EN FAZLA BİR tahsilat çıkar (payments_session_uniq). Capture'ı
--- idempotent yapan şey budur: ikinci çağrı yeni satır yazmaz,
--- GetPaymentBySession ile var olanı bulur ve onu döner.
+-- AT MOST ONE capture comes out of a session (payments_session_uniq). That is
+-- what makes Capture idempotent: the second call writes no new row, it finds
+-- the existing one with GetPaymentBySession and returns it.
 
 -- name: CreatePayment :one
 INSERT INTO payments (
@@ -14,9 +14,9 @@ RETURNING *;
 SELECT * FROM payments
 WHERE id = $1 AND deleted_at IS NULL;
 
--- LockPayment tahsilatı işlem boyunca kilitler; iade edilen tutar yalnızca bu
--- kilit altında güncellenir. Kilit sırasında koleksiyon ve oturumdan SONRA
--- gelir (bkz. service.Store "Kilit sırası").
+-- LockPayment locks the capture for the length of the transaction; the refunded
+-- amount is updated only under this lock. In the lock order it comes AFTER the
+-- collection and the session (see service.Store, "Transaction boundary").
 -- name: LockPayment :one
 SELECT * FROM payments
 WHERE id = $1 AND deleted_at IS NULL

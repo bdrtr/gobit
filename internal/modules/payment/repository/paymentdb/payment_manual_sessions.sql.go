@@ -80,19 +80,19 @@ type InsertManualSessionIfAbsentParams struct {
 	Data           []byte
 }
 
-// payment_manual_sessions sorguları — MANUEL sağlayıcının kendi defteri.
+// payment_manual_sessions queries — the MANUAL provider's own ledger.
 //
-// Bu tabloya YALNIZCA manual sağlayıcı dokunur; payment servisi onu hiç
-// görmez ve sağlayıcıya ancak PaymentProvider arayüzünden ulaşır. Ayrım
-// bilinçlidir: gerçek bir ödeme kuruluşunun durumu da modülün veritabanında
-// değildir.
-// InsertManualSessionIfAbsent oturumu yalnızca o idempotency anahtarı HENÜZ
-// KULLANILMAMIŞSA yazar.
+// ONLY the manual provider touches this table; the payment service never sees
+// it and reaches the provider only through the PaymentProvider interface. The
+// separation is deliberate: a real payment institution's state is not in the
+// module's database either.
+// InsertManualSessionIfAbsent writes the session only if that idempotency key
+// has NOT BEEN USED YET.
 //
-// Çakışma hâlinde satır DÖNMEZ (pgx.ErrNoRows); çağıran o zaman anahtarla
-// var olan oturumu okur. "Önce oku, yoksa yaz" iki adımı arasında araya giren
-// eşzamanlı bir çağrı benzersiz indekse çarpardı; ON CONFLICT DO NOTHING bu
-// yarışı tek deyime indirir.
+// On a conflict NO row comes back (pgx.ErrNoRows); the caller then reads the
+// session that already exists under the key. A concurrent call slipping between
+// the two steps of "read first, write if absent" would hit the unique index; ON
+// CONFLICT DO NOTHING reduces that race to a single statement.
 func (q *Queries) InsertManualSessionIfAbsent(ctx context.Context, arg InsertManualSessionIfAbsentParams) (PaymentManualSession, error) {
 	row := q.db.QueryRow(ctx, insertManualSessionIfAbsent,
 		arg.ID,
@@ -128,10 +128,11 @@ WHERE id = $1
 FOR UPDATE
 `
 
-// LockManualSession oturumu işlem boyunca kilitler; durum geçişleri yalnızca
-// bu kilit altında yapılır. Sağlayıcının idempotency şartı buna dayanır: aynı
-// oturumu aynı anda yetkilendiren iki çağrıdan ikincisi, birincinin yazdığı
-// durumu görür ve tutarı İKİNCİ KEZ bloke etmez.
+// LockManualSession locks the session for the length of the transaction; status
+// transitions are made only under this lock. The provider's idempotency
+// requirement rests on it: of two calls authorizing the same session at the
+// same time, the second sees the status the first wrote and does not block the
+// amount A SECOND TIME.
 func (q *Queries) LockManualSession(ctx context.Context, id string) (PaymentManualSession, error) {
 	row := q.db.QueryRow(ctx, lockManualSession, id)
 	var i PaymentManualSession

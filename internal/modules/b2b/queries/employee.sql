@@ -1,8 +1,9 @@
--- b2b_company_employee sorguları. Tüm okumalar deleted_at IS NULL filtresi
--- uygular.
+-- b2b_company_employee queries. Every read applies the deleted_at IS NULL
+-- filter.
 --
--- Bu dosyada customer_id GEÇMEZ: çalışan ile müşteri arasındaki bağ şemada
--- değil core/link'tedir (bkz. migrations/000001_b2b_init.up.sql).
+-- customer_id DOES NOT APPEAR in this file: the tie between an employee and a
+-- customer is not in the schema but in core/link (see
+-- migrations/000001_b2b_init.up.sql).
 
 -- name: InsertEmployee :one
 INSERT INTO b2b_company_employee (
@@ -15,7 +16,7 @@ RETURNING *;
 SELECT * FROM b2b_company_employee
 WHERE id = $1 AND deleted_at IS NULL;
 
--- ListEmployees süzgeçlenmiş ve sayfalanmış çalışan listesini döner.
+-- ListEmployees returns the filtered and paginated list of employees.
 -- name: ListEmployees :many
 SELECT * FROM b2b_company_employee
 WHERE deleted_at IS NULL
@@ -32,12 +33,13 @@ WHERE deleted_at IS NULL
   AND (sqlc.narg('is_company_admin')::boolean IS NULL
        OR is_company_admin = sqlc.narg('is_company_admin')::boolean);
 
--- UpdateEmployee verilmeyen alanları OLDUĞU GİBİ bırakır.
+-- UpdateEmployee leaves the fields it was not given EXACTLY AS THEY WERE.
 --
--- spending_limit için COALESCE KULLANILAMAZ: alanın kendisi NULL olabilir
--- ("sınırsız") ve COALESCE, "sınırsız yap" isteğini "dokunma"dan ayıramazdı.
--- Ayrım ayrı bir bayrakla taşınır: clear_limit doğruysa sütun NULL'a çekilir,
--- değilse verilen değer yazılır ya da eski değer korunur.
+-- COALESCE CANNOT BE USED for spending_limit: the field itself may be NULL
+-- ("unlimited") and COALESCE could not tell a "make it unlimited" request apart
+-- from "do not touch it". The distinction is carried by a separate flag: if
+-- clear_limit is true the column is pulled to NULL, otherwise the given value
+-- is written or the old value is kept.
 -- name: UpdateEmployee :one
 UPDATE b2b_company_employee SET
     spending_limit   = CASE
@@ -55,12 +57,13 @@ SET deleted_at = $2, updated_at = $2
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING id;
 
--- SoftDeleteEmployeesOfCompany şirketin tüm çalışanlarını yumuşak siler ve
--- SİLİNENLERİN KİMLİKLERİNİ döner.
+-- SoftDeleteEmployeesOfCompany soft-deletes all of the company's employees and
+-- returns THE IDS OF THE DELETED ONES.
 --
--- Kimlikler dönmek zorundadır: çalışanın müşteriyle bağı link tablosundadır ve
--- o bağ silinmezse müşteri, kardinalite kısıtı yüzünden bir daha HİÇBİR
--- şirkete çalışan olarak eklenemez (bkz. service.Definitions, OneToOne).
+-- Returning the ids is mandatory: the employee's tie to a customer is in the
+-- link table, and if that tie is not deleted the customer can never again be
+-- added as an employee to ANY company, because of the cardinality constraint
+-- (see service.Definitions, OneToOne).
 -- name: SoftDeleteEmployeesOfCompany :many
 UPDATE b2b_company_employee
 SET deleted_at = $2, updated_at = $2

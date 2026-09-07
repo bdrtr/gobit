@@ -33,11 +33,11 @@ type GetActiveRedemptionParams struct {
 	Reference   string
 }
 
-// GetActiveRedemption bir referans için GEÇERLİ (serbest bırakılmamış)
-// kullanımı döner.
+// GetActiveRedemption returns the VALID (not yet released) redemption for a
+// reference.
 //
-// İdempotency'nin okuma tarafıdır: aynı referansla ikinci kez çağrılan
-// RedeemPromotion sayacı artırmak yerine bu kaydı döner.
+// It is the read side of idempotency: a RedeemPromotion called a second time
+// with the same reference returns this record instead of raising the counter.
 func (q *Queries) GetActiveRedemption(ctx context.Context, arg GetActiveRedemptionParams) (PromotionRedemption, error) {
 	row := q.db.QueryRow(ctx, getActiveRedemption, arg.PromotionID, arg.Reference)
 	var i PromotionRedemption
@@ -77,7 +77,7 @@ type InsertRedemptionParams struct {
 	CreatedAt    pgtype.Timestamptz
 }
 
-// promotion_redemption sorguları.
+// promotion_redemption queries.
 func (q *Queries) InsertRedemption(ctx context.Context, arg InsertRedemptionParams) (PromotionRedemption, error) {
 	row := q.db.QueryRow(ctx, insertRedemption,
 		arg.ID,
@@ -160,11 +160,12 @@ type LockActiveRedemptionParams struct {
 	Reference   string
 }
 
-// LockActiveRedemption GEÇERLİ kullanımı işlem boyunca kilitler.
+// LockActiveRedemption locks the VALID redemption for the duration of the
+// transaction.
 //
-// Serbest bırakma bu kilidi alır; iki eşzamanlı Release'ten yalnızca biri
-// satırı "released" yazabilir ve diğeri güncellenmiş satırı görüp hiçbir şey
-// yapmaz. Sayacın iki kez düşmesini engelleyen şey budur.
+// The release takes this lock; of two concurrent Releases only one can write
+// the row as "released", and the other sees the updated row and does nothing.
+// That is what stops the counter being lowered twice.
 func (q *Queries) LockActiveRedemption(ctx context.Context, arg LockActiveRedemptionParams) (PromotionRedemption, error) {
 	row := q.db.QueryRow(ctx, lockActiveRedemption, arg.PromotionID, arg.Reference)
 	var i PromotionRedemption
@@ -195,11 +196,12 @@ type MarkRedemptionReleasedParams struct {
 	ReleasedAt pgtype.Timestamptz
 }
 
-// MarkRedemptionReleased kullanımı serbest bırakılmış olarak işaretler.
+// MarkRedemptionReleased marks the redemption as released.
 //
-// KOŞUL released_at IS NULL'dır: zaten bırakılmış bir kayıt hiç satır dönmez
-// ve çağıran ikinci düşümü yapmaz. Telafinin idempotent olmasını sağlayan
-// ikinci savunma budur (birincisi satır kilididir).
+// The CONDITION is released_at IS NULL: an already released record returns no
+// row at all and the caller does not perform the second decrement. That is the
+// second defence keeping the compensation idempotent (the first is the row
+// lock).
 func (q *Queries) MarkRedemptionReleased(ctx context.Context, arg MarkRedemptionReleasedParams) (PromotionRedemption, error) {
 	row := q.db.QueryRow(ctx, markRedemptionReleased, arg.ID, arg.ReleasedAt)
 	var i PromotionRedemption

@@ -1,8 +1,9 @@
--- region sorguları.
+-- region queries.
 --
--- region tablosunun okumaları deleted_at IS NULL filtresi uygular; bölge
--- SOFT silinir (DeleteRegion). Aynı şey country ve currency için GEÇERLİ
--- DEĞİLDİR: onların sütunları 000003'te düşürüldü, gerekçe o dosyadadır.
+-- Reads of the region table apply a deleted_at IS NULL filter; a region is
+-- SOFT deleted (DeleteRegion). The same does NOT HOLD for country and
+-- currency: their columns were dropped in 000003 and the argument is in that
+-- file.
 
 -- name: InsertRegion :one
 INSERT INTO region (id, name, currency_code, automatic_taxes, tax_rate, created_at, updated_at)
@@ -13,26 +14,29 @@ RETURNING *;
 SELECT * FROM region
 WHERE id = $1 AND deleted_at IS NULL;
 
--- GetRegionForUpdate bölgeyi okur ve satırını İŞLEM SONUNA KADAR kilitler.
+-- GetRegionForUpdate reads the region and locks its row UNTIL THE END OF THE
+-- TRANSACTION.
 --
--- Kısmi güncelleme (yama) ve silme bu kilit altında yapılır: yama, okunan
--- satırın üstüne yazıldığı için kilitsiz iki eşzamanlı güncelleme birbirinin
--- alanını geri alabilirdi (lost update). FOR UPDATE, kilit alındıktan sonra
--- WHERE koşulunu YENİDEN değerlendirir; araya giren bir silme bu yüzden
--- "kayıt yok" olarak görünür.
+-- The partial update (the patch) and the delete are done under this lock:
+-- because a patch is written on top of the row it read, two unlocked concurrent
+-- updates could each undo the other's field (a lost update). FOR UPDATE
+-- re-evaluates the WHERE condition AFTER the lock has been taken; a delete that
+-- slipped in between therefore shows up as "no such record".
 -- name: GetRegionForUpdate :one
 SELECT * FROM region
 WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE;
 
--- GetRegionForShare bölgeyi okur ve PAYLAŞIMLI kilitler.
+-- GetRegionForShare reads the region and takes a SHARED lock on it.
 --
--- Ülke atayan akışın KİLİT SIRASINDAKİ ilk adımıdır: önce bölge, sonra ülke.
--- Sıra her akışta aynıdır; ters dönmesi kilitlenme (deadlock) demektir.
+-- It is the first step IN THE LOCK ORDER of the country-assigning flow: region
+-- first, country second. The order is the same in every flow; reversing it
+-- means a deadlock.
 --
--- Kilit paylaşımlıdır: farklı ülkeleri aynı bölgeye ekleyen iki istek
--- birbirini beklemez. Yine de bölgeyi DEĞİŞTİREN akışlarla (silme, güncelleme)
--- çakışır, yani silinmekte olan bir bölgeye ülke eklenemez.
+-- The lock is shared: two requests adding different countries to the same
+-- region do not wait for each other. It still conflicts with the flows that
+-- CHANGE the region (delete, update), which is to say no country can be added
+-- to a region that is being deleted.
 -- name: GetRegionForShare :one
 SELECT * FROM region
 WHERE id = $1 AND deleted_at IS NULL
@@ -65,12 +69,13 @@ SET deleted_at = $2, updated_at = $2
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING id;
 
--- GetRegionByCountry ülkeden bölgeye TEK turda gider.
+-- GetRegionByCountry goes from country to region in ONE round trip.
 --
--- Sepet oluşturulurken kullanılan yoldur (ResolveRegionForCountry). Ülkenin
--- kendisi de bölgesi de bulunamadığında ayrım yapılmaz; hangi durumun
--- geçerli olduğunu servis, YALNIZCA hata yolunda ikinci bir sorguyla ayırır.
--- Böylece mutlu yol tek sorgu kalır.
+-- It is the path used while a cart is being created (ResolveRegionForCountry).
+-- No distinction is drawn between the country itself not being found and its
+-- region not being found; which of the two holds is separated out by the
+-- service with a second query ONLY on the error path. That is what keeps the
+-- happy path a single query.
 -- name: GetRegionByCountry :one
 SELECT r.* FROM country c
 JOIN region r ON r.id = c.region_id AND r.deleted_at IS NULL

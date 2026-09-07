@@ -1,17 +1,17 @@
--- payment_manual_sessions sorguları — MANUEL sağlayıcının kendi defteri.
+-- payment_manual_sessions queries — the MANUAL provider's own ledger.
 --
--- Bu tabloya YALNIZCA manual sağlayıcı dokunur; payment servisi onu hiç
--- görmez ve sağlayıcıya ancak PaymentProvider arayüzünden ulaşır. Ayrım
--- bilinçlidir: gerçek bir ödeme kuruluşunun durumu da modülün veritabanında
--- değildir.
+-- ONLY the manual provider touches this table; the payment service never sees
+-- it and reaches the provider only through the PaymentProvider interface. The
+-- separation is deliberate: a real payment institution's state is not in the
+-- module's database either.
 
--- InsertManualSessionIfAbsent oturumu yalnızca o idempotency anahtarı HENÜZ
--- KULLANILMAMIŞSA yazar.
+-- InsertManualSessionIfAbsent writes the session only if that idempotency key
+-- has NOT BEEN USED YET.
 --
--- Çakışma hâlinde satır DÖNMEZ (pgx.ErrNoRows); çağıran o zaman anahtarla
--- var olan oturumu okur. "Önce oku, yoksa yaz" iki adımı arasında araya giren
--- eşzamanlı bir çağrı benzersiz indekse çarpardı; ON CONFLICT DO NOTHING bu
--- yarışı tek deyime indirir.
+-- On a conflict NO row comes back (pgx.ErrNoRows); the caller then reads the
+-- session that already exists under the key. A concurrent call slipping between
+-- the two steps of "read first, write if absent" would hit the unique index; ON
+-- CONFLICT DO NOTHING reduces that race to a single statement.
 -- name: InsertManualSessionIfAbsent :one
 INSERT INTO payment_manual_sessions (
     id, idempotency_key, reference, amount, currency_code, status, data
@@ -27,10 +27,11 @@ WHERE id = $1;
 SELECT * FROM payment_manual_sessions
 WHERE idempotency_key = $1;
 
--- LockManualSession oturumu işlem boyunca kilitler; durum geçişleri yalnızca
--- bu kilit altında yapılır. Sağlayıcının idempotency şartı buna dayanır: aynı
--- oturumu aynı anda yetkilendiren iki çağrıdan ikincisi, birincinin yazdığı
--- durumu görür ve tutarı İKİNCİ KEZ bloke etmez.
+-- LockManualSession locks the session for the length of the transaction; status
+-- transitions are made only under this lock. The provider's idempotency
+-- requirement rests on it: of two calls authorizing the same session at the
+-- same time, the second sees the status the first wrote and does not block the
+-- amount A SECOND TIME.
 -- name: LockManualSession :one
 SELECT * FROM payment_manual_sessions
 WHERE id = $1

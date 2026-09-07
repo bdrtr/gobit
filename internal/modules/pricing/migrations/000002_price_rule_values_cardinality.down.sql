@@ -1,7 +1,9 @@
--- Kısıtı 000001'deki (boş diziyi geçiren) hâline geri alır.
+-- Restores the constraint to its 000001 form — the one that lets an empty array
+-- through.
 --
--- Geri alma AYNEN eski tanımı yazar; "daha iyi" bir sürüm bırakmak, down'ın
--- şemayı bir önceki sürüme döndürme sözünü bozardı.
+-- The rollback writes the old definition EXACTLY as it was; leaving a "better"
+-- version behind would break down's promise to return the schema to its
+-- previous version.
 ALTER TABLE price_rule DROP CONSTRAINT IF EXISTS price_rule_values_check;
 
 ALTER TABLE price_rule

@@ -46,17 +46,19 @@ WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE
 `
 
-// GetPriceSetForUpdate kabı okur ve satırını İŞLEM SONUNA KADAR kilitler.
+// GetPriceSetForUpdate reads the set and locks its row UNTIL THE END OF THE
+// TRANSACTION.
 //
-// Kilitsiz bir varlık denetimi yerine koyma (replace) semantiğini korumaz: iki
-// eşzamanlı yazımdan ikincisinin "eski fiyatları sil" adımı READ COMMITTED
-// altında kendi statement snapshot'ında birincinin YENİ satırlarını göremez ve
-// onları silmez; sonuçta iki yazımın fiyatları kapta BİRLİKTE canlı kalır. Satır
-// kilidi aynı kaba yapılan yazımları seri hâle getirir.
+// An existence check without the lock does not preserve replace semantics: of
+// two concurrent writes, the second one's "delete the old prices" step cannot
+// see the first one's NEW rows in its own statement snapshot under READ
+// COMMITTED, and so does not delete them; the result is that both writes'
+// prices stay live in the set TOGETHER. The row lock serializes the writes made
+// to one and the same set.
 //
-// FOR UPDATE kilit alındıktan sonra WHERE koşulunu YENİDEN değerlendirir; araya
-// giren bir silme bu yüzden "kayıt yok" olarak görünür ve fiyatlar silinmiş bir
-// kaba yapışmaz.
+// FOR UPDATE RE-EVALUATES the WHERE clause after the lock is taken; a delete
+// that slipped in between therefore surfaces as "no rows", and prices do not
+// stick to a set that has been deleted.
 func (q *Queries) GetPriceSetForUpdate(ctx context.Context, id string) (PriceSet, error) {
 	row := q.db.QueryRow(ctx, getPriceSetForUpdate, id)
 	var i PriceSet
@@ -112,7 +114,7 @@ type InsertPriceSetParams struct {
 	CreatedAt pgtype.Timestamptz
 }
 
-// price_set sorguları. Tüm okumalar deleted_at IS NULL filtresi uygular.
+// price_set queries. Every read applies the deleted_at IS NULL filter.
 func (q *Queries) InsertPriceSet(ctx context.Context, arg InsertPriceSetParams) (PriceSet, error) {
 	row := q.db.QueryRow(ctx, insertPriceSet, arg.ID, arg.CreatedAt)
 	var i PriceSet

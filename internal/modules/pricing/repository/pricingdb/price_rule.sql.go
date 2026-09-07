@@ -48,7 +48,7 @@ type InsertPriceRuleParams struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
-// price_rule sorguları.
+// price_rule queries.
 func (q *Queries) InsertPriceRule(ctx context.Context, arg InsertPriceRuleParams) (PriceRule, error) {
 	row := q.db.QueryRow(ctx, insertPriceRule,
 		arg.ID,

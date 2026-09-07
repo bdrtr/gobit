@@ -22,13 +22,14 @@ type CountInventoryItemsParams struct {
 	RequiresShipping *bool
 }
 
-// CountInventoryItems sayfalama zarfının toplam sayısını verir ve ListInventoryItems
-// ile AYNI filtreleri uygular; ikisi birlikte değiştirilmelidir.
+// CountInventoryItems gives the total for the pagination envelope and applies
+// the SAME filters as ListInventoryItems; the two have to be changed together.
 //
-// Toplam, satırlarla birlikte dönen bir pencere fonksiyonundan (COUNT(*) OVER ())
-// okunamaz: aralık dışı bir sayfada hiç satır dönmez, pencere de değerlendirilmez
-// ve toplam 0 görünürdü. Toplam, sayfanın değil FİLTRENİN sayısıdır; bu yüzden
-// sayfalamadan bağımsız, ayrı bir sorgudur.
+// The total cannot be read from a window function returned alongside the rows
+// (COUNT(*) OVER ()): on an out-of-range page no row comes back, the window is
+// never evaluated, and the total would read 0. The total is the count of the
+// FILTER, not of the page; that is why it is a separate query, independent of
+// the pagination.
 func (q *Queries) CountInventoryItems(ctx context.Context, arg CountInventoryItemsParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countInventoryItems, arg.Sku, arg.RequiresShipping)
 	var count int64
@@ -52,7 +53,7 @@ type CreateInventoryItemParams struct {
 	RequiresShipping bool
 }
 
-// inventory_items sorguları.
+// inventory_items queries.
 func (q *Queries) CreateInventoryItem(ctx context.Context, arg CreateInventoryItemParams) (InventoryItem, error) {
 	row := q.db.QueryRow(ctx, createInventoryItem,
 		arg.ID,
@@ -102,8 +103,8 @@ WHERE id = ANY ($1::text[]) AND deleted_at IS NULL
 ORDER BY id
 `
 
-// GetInventoryItemsByIDs Query katmanının FetchByIDs çağrısını TEK turda
-// karşılar; kimlik başına sorgu (N+1) yapılmaz.
+// GetInventoryItemsByIDs answers the Query layer's FetchByIDs call in a SINGLE
+// round trip; no query is made per id (N+1).
 func (q *Queries) GetInventoryItemsByIDs(ctx context.Context, ids []string) ([]InventoryItem, error) {
 	rows, err := q.db.Query(ctx, getInventoryItemsByIDs, ids)
 	if err != nil {
@@ -190,10 +191,11 @@ WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE
 `
 
-// LockInventoryItem kalemi bir işlem boyunca kilitler; (kalem, lokasyon)
-// seviyesini OLUŞTURAN akışlar bunu kullanır. Kilit, aynı kalem için eşzamanlı
-// iki oluşturmanın benzersiz indekse çarpmasını önler: satırı yaratacak olan
-// yarışı burada kazanır, diğeri bekler ve var olan satırı görür.
+// LockInventoryItem locks the item for the duration of a transaction; the flows
+// that CREATE an (item, location) level use it. The lock stops two concurrent
+// creations of the same item from colliding on the unique index: the one that
+// will create the row wins the race here, and the other waits and then sees the
+// row that already exists.
 func (q *Queries) LockInventoryItem(ctx context.Context, id string) (string, error) {
 	row := q.db.QueryRow(ctx, lockInventoryItem, id)
 	var id_2 string
@@ -207,20 +209,21 @@ WHERE id = $1 AND deleted_at IS NULL
 FOR KEY SHARE
 `
 
-// LockInventoryItemShared kalemi PAYLAŞIMLI kilitler; seviye ve rezervasyon
-// satırlarına dokunan akışlar (Reserve/Release/Confirm/Adjust) bunu KİLİT
-// SIRASININ ilk adımı olarak kullanır.
+// LockInventoryItemShared takes a SHARED lock on the item; the flows that touch
+// level and reservation rows (Reserve/Release/Confirm/Adjust) use it as the
+// first step of the LOCK ORDER.
 //
-// Kilit sırası tektir ve her akışta aynıdır: önce kalem, sonra seviye. Sıranın
-// ters dönmesi kilitlenme (deadlock) demektir; rezervasyon satırının kaleme
-// verdiği foreign key zaten örtük bir FOR KEY SHARE kilidi ister, yani sıra
-// burada açıkça alınmazsa INSERT anında ters sırada alınırdı.
+// There is one lock order and it is the same in every flow: the item first,
+// then the level. Reversing it means a deadlock; the foreign key the
+// reservation row gives the item already asks for an implicit FOR KEY SHARE
+// lock, which is to say that if the order were not taken explicitly here it
+// would be taken in the reverse order at the moment of the INSERT.
 //
-// Kilit PAYLAŞIMLIDIR (FOR KEY SHARE): eşzamanlı iki rezervasyon birbirini
-// beklemez — onları zaten seviye satırının FOR UPDATE kilidi seri hâle
-// getirir. Kalemi yapısal olarak değiştiren akışlar (SetInventoryLevel,
-// DeleteInventoryItem) FOR UPDATE aldığı için bu kilitle ÇAKIŞIR ve sıra
-// korunur.
+// The lock is SHARED (FOR KEY SHARE): two concurrent reservations do not wait
+// on each other — the FOR UPDATE lock on the level row already serialises them.
+// The flows that change the item structurally (SetInventoryLevel,
+// DeleteInventoryItem) take FOR UPDATE, so they do CONFLICT with this lock and
+// the order is preserved.
 func (q *Queries) LockInventoryItemShared(ctx context.Context, id string) (string, error) {
 	row := q.db.QueryRow(ctx, lockInventoryItemShared, id)
 	var id_2 string

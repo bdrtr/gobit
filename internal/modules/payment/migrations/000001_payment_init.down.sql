@@ -1,12 +1,12 @@
--- 000001_payment_init'in geri alınması.
+-- Undoing 000001_payment_init.
 --
--- Tablolar bağımlılık sırasının TERSİNDE düşürülür: önce referans verenler
--- (refunds -> payments -> payment_sessions), sonra referans verilen
--- (payment_collections). İndeksler tabloyla birlikte düşer, ayrıca DROP
--- edilmez.
+-- The tables are dropped in the REVERSE of the dependency order: the ones that
+-- reference first (refunds -> payments -> payment_sessions), then the one they
+-- reference (payment_collections). Indexes fall together with their table and
+-- are not DROPped separately.
 --
--- payment_manual_sessions hiçbir tabloya bağlı değildir; sağlayıcının kendi
--- defteridir ve sırası önemsizdir.
+-- payment_manual_sessions depends on no table; it is the provider's own ledger
+-- and its position here does not matter.
 
 DROP TABLE IF EXISTS payment_manual_sessions;
 DROP TABLE IF EXISTS refunds;

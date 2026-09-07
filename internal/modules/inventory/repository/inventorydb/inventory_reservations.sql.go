@@ -39,16 +39,18 @@ type CreateReservationParams struct {
 	Description     *string
 }
 
-// inventory_reservations sorguları.
+// inventory_reservations queries.
 //
-// Rezervasyon kaydı SİLİNMEZ, durumu değişir. Telafinin (release) idempotent
-// olması buna dayanır: ikinci çağrı kaydı bulur, "released" görür ve stoğa
-// ikinci kez dokunmadan başarıyla döner.
+// A reservation record is NEVER DELETED, its status changes. The compensation
+// (release) being idempotent rests on that: the second call finds the record,
+// sees "released", and returns successfully without touching the stock a second
+// time.
 //
-// Bu yüzden tabloda deleted_at YOKTUR ve okumalar öyle bir süzgeç TAŞIMAZ.
-// Sütun 000001'den beri duruyordu, hiçbir zaman yazılmadı ve her okuma bir kez
-// bile yanlış olmamış bir koşulu taşıyordu; 000002 onu düşürdü. Gerekçe o
-// migration'ın başındadır (docs/gaps.md D18).
+// That is why the table HAS NO deleted_at and the reads CARRY no such filter.
+// The column had been standing there since 000001, was never once written, and
+// every read carried a condition that had not been false a single time; 000002
+// dropped it. The reasoning is at the head of that migration (docs/gaps.md
+// D18).
 func (q *Queries) CreateReservation(ctx context.Context, arg CreateReservationParams) (InventoryReservation, error) {
 	row := q.db.QueryRow(ctx, createReservation,
 		arg.ID,
@@ -102,8 +104,8 @@ WHERE id = $1
 FOR UPDATE
 `
 
-// LockReservation rezervasyonu işlem boyunca kilitler; durum geçişleri
-// (release/confirm) yalnızca bu kilit altında yapılır.
+// LockReservation locks the reservation for the duration of the transaction;
+// the status transitions (release/confirm) are made only under this lock.
 func (q *Queries) LockReservation(ctx context.Context, id string) (InventoryReservation, error) {
 	row := q.db.QueryRow(ctx, lockReservation, id)
 	var i InventoryReservation

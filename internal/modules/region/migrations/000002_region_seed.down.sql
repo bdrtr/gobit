@@ -1,16 +1,17 @@
--- Tohum verisinin geri alınması.
+-- Rolling the seed data back.
 --
--- Yalnızca tohumun EKLEDİĞİ kodlar silinir; operatörün sonradan eklediği bir
--- para birimi ya da ülke satırı yerinde kalır.
+-- Only the codes the seed ITSELF inserted are deleted; a currency or country row
+-- the operator added later stays where it is.
 --
--- KULLANIMDAKİ tohum satırları da yerinde kalır: bir bölge hâlâ tohum para
--- birimine bağlıysa o para birimi SİLİNMEZ (aşağıdaki NOT EXISTS koşulu).
+-- Seed rows that are IN USE also stay where they are: if a region is still bound
+-- to a seeded currency, that currency is NOT DELETED (the NOT EXISTS condition
+-- below).
 --
--- Koşulsuz bir silme burada foreign key ile PATLAR ve golang-migrate'in sürüm
--- defterini "dirty" bırakır; cmd/server her açılışta modül başına Migrate
--- çağırdığı için modül o noktadan sonra bir daha AÇILAMAZ. Modülün tek silme
--- yolu SOFT delete olduğundan operatörün FK'yi serbest bırakmasının
--- DESTEKLENEN bir yolu da yoktur.
+-- An unconditional delete BLOWS UP here on the foreign key and leaves
+-- golang-migrate's version ledger "dirty"; because cmd/server calls Migrate per
+-- module on every start, from that point on the module can never be OPENED
+-- again. And since the module's only delete path is a SOFT delete, there is no
+-- SUPPORTED way for the operator to release the FK either.
 
 DELETE FROM country WHERE iso_2 IN (
     'AD', 'AE', 'AF', 'AG', 'AI', 'AL', 'AM', 'AO', 'AQ', 'AR', 'AS', 'AT',
@@ -36,17 +37,18 @@ DELETE FROM country WHERE iso_2 IN (
     'VN', 'VU', 'WF', 'WS', 'YE', 'YT', 'ZA', 'ZM', 'ZW'
 );
 
--- KULLANIMDAKİ para birimleri ATLANIR.
+-- Currencies IN USE are SKIPPED.
 --
--- region.currency_code bu tabloya FK ile bağlıdır ve modülün tek silme yolu
--- SOFT delete'tir: operatör API'den tüm bölgeleri silse bile satırlar tabloda
--- kalır, dolayısıyla koşulsuz bir DELETE 23503 ile PATLAR. Patlayan bir down,
--- golang-migrate'in sürüm defterini "dirty" bırakır; cmd/server her açılışta
--- modül başına Migrate çağırdığı için sunucu bir daha AÇILMAZ ve ancak elle
--- "force version" ile kurtarılır.
+-- region.currency_code is bound to this table by an FK and the module's only
+-- delete path is a SOFT delete: even if the operator deletes every region
+-- through the API the rows stay in the table, so an unconditional DELETE BLOWS
+-- UP with 23503. A down that blows up leaves golang-migrate's version ledger
+-- "dirty"; because cmd/server calls Migrate per module on every start, the
+-- server never OPENS again and can only be recovered by a manual "force
+-- version".
 --
--- Kullanılmayan tohum satırları temizlenir, kullanımdakiler yerinde kalır:
--- 000001'in down'ı zaten region tablosunu düşüreceği için kalıntı bırakmaz.
+-- The unused seed rows are cleaned up and the ones in use stay where they are:
+-- 000001's down will drop the region table anyway, so nothing is left behind.
 DELETE FROM currency WHERE NOT EXISTS (
     SELECT 1 FROM region r WHERE r.currency_code = currency.code
 ) AND code IN (

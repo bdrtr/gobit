@@ -1,73 +1,79 @@
--- tax modülünün şeması (plan Faz 7, Bölüm 6).
+-- Schema of the tax module (plan Phase 7, Section 6).
 --
--- Sahiplik: buradaki üç tablo YALNIZCA tax modülüne aittir. Modül İÇİ foreign
--- key'ler serbesttir ve kullanılır (oran bölgeye, kural orana bağlıdır); başka
--- bir modülün tablosuna REFERENCES VERİLMEZ (Prensip 2.2 — cross-module FK
--- yasağı). Bu yüzden tax_rate_rule.reference_id serbest METİNDİR: bir ürünün,
--- ürün tipinin ya da kargo seçeneğinin kimliğidir ve o kayıtların varlığı
--- BURADA doğrulanmaz.
+-- Ownership: the three tables here belong to the tax module ALONE. Foreign keys
+-- INSIDE the module are free and are used (a rate belongs to a region, a rule
+-- to a rate); NO REFERENCES IS GIVEN to another module's table (Principle 2.2 —
+-- the cross-module FK ban). That is why tax_rate_rule.reference_id is free
+-- TEXT: it is the id of a product, a product type or a shipping option, and the
+-- existence of those records is not verified HERE.
 --
--- Oran: rate_bps BAZ PUANDIR (2000 = %20) ve TAM SAYIDIR. Plan Bölüm 8 para ve
--- türevlerinde float yasaklar; %20'nin float karşılığı (0.2) bir tutarla
--- çarpıldığında kuruş düzeyinde sessiz yuvarlama üretirdi. Sütun adının
--- sonundaki birim bilinçlidir — "rate": 20 değerinin %20 mi 0,2 mi olduğu
--- belirsiz kalırdı.
+-- The rate: rate_bps is in BASIS POINTS (2000 = 20%) and is an INTEGER. Plan
+-- Section 8 bans floats for money and its derivatives; the float form of 20%
+-- (0.2), multiplied by an amount, would produce silent rounding at the cent
+-- level. The unit at the end of the column name is deliberate — with "rate" it
+-- would stay unclear whether the value 20 means 20% or 0.2.
 --
--- Zaman: tüm damgalar TIMESTAMPTZ (UTC). Silme YUMUŞAKTIR (deleted_at) ve tüm
--- okuma sorguları deleted_at IS NULL süzer.
+-- Time: every stamp is TIMESTAMPTZ (UTC). Deletion is SOFT (deleted_at) and
+-- every read query filters on deleted_at IS NULL.
 
--- tax_region bir vergi bölgesidir: ülke kökü ya da o kökün altındaki eyalet.
+-- tax_region is a tax region: a country root, or a province under that root.
 --
--- # Hiyerarşi neden iki seviye
+-- # Why the hierarchy is two levels
 --
--- Vergi coğrafyası pratikte iki seviyedir: ülke (KDV/VAT) ve ülke altı birim
--- (ABD eyaleti, Kanada eyaleti, TR ili). parent_id bu bağı KENDİ tablosuna
--- verir; daha derin bir ağaç modellenebilir ama hesap yolu bilinçli olarak iki
--- seviyeyi çözer (bkz. service/calculate.go). Derinliği sınırlamak,
--- hesaplamanın özyinelemeli ve maliyeti öngörülemez bir sorguya dönüşmesini
--- engeller.
+-- Tax geography is in practice two levels: the country (VAT) and the
+-- sub-country unit (a US state, a Canadian province, a TR province). parent_id
+-- gives that link to the table's OWN rows; a deeper tree could be modelled, but
+-- the calculation path deliberately resolves two levels (see
+-- service/calculate.go). Limiting the depth is what prevents the calculation
+-- from turning into a recursive query whose cost cannot be predicted.
 --
--- # "Bir ülkeye en fazla bir kök bölge" kuralı
+-- # The "at most one root region per country" rule
 --
--- Kural tax_region_country_root_uniq kısmi benzersiz indeksiyle VERİTABANINDA
--- zorlanır. Servis aynı denetimi daha okunabilir bir hatayla önce yapar, ama
--- son savunma burasıdır: iki eşzamanlı istek servisin "önce oku, sonra yaz"
--- denetimini birlikte geçebilir ve ülkeye iki kök bölge yazabilirdi. O andan
--- sonra hangi oranın uygulanacağı satır sırasına kalırdı.
+-- The rule is enforced IN THE DATABASE, by the tax_region_country_root_uniq
+-- partial unique index. The service makes the same check first, with a more
+-- readable error, but the last defense is here: two concurrent requests can
+-- pass the service's "read first, then write" check together and write two root
+-- regions for one country. From that moment on, which rate applies would be
+-- left to row order.
 --
--- # Eyalet ile kökün ülkesi neden ayrışamaz
+-- # Why a province and its root's country cannot diverge
 --
--- parent_id TEK BAŞINA değil, (parent_id, country_code) İKİLİSİYLE üst satıra
--- bağlanır; hedefi de (id, country_code) benzersizliğidir. Sonuç: bir eyalet
--- satırının ülkesi, ebeveyninin ülkesinden FARKLI OLAMAZ. Tek sütunluk bir FK
--- bunu serbest bırakır ve "TR kökünün altında bir DE eyaleti" gibi bir kayıt
--- sessizce oluşabilirdi; hesap o eyaleti Almanya'da arar, hiç bulamazdı.
+-- parent_id is bound to the parent row NOT ON ITS OWN, but as the PAIR
+-- (parent_id, country_code); and its target is the (id, country_code)
+-- uniqueness. The consequence: a province row's country CANNOT DIFFER from its
+-- parent's country. A single-column FK leaves this free, and a record such as
+-- "a DE province under the TR root" could come into being silently; the
+-- calculation would look for that province in Germany and never find it.
 --
--- # provider_id neden DEVRALINIR
+-- # Why provider_id is INHERITED
 --
--- Boş provider_id "yerel" değil "ebeveynimin sağlayıcısı" demektir: hesap
--- zincirde en özelden genele yürür ve ilk DOLU değeri kullanır, hiçbiri dolu
--- değilse yerel hesaplamaya düşer (bkz. service.Service.providerFor). Kural bir
--- para hatasını kapatır — ülkesi dış bir otoriteye bağlıyken tek bir istisna
--- için açılan eyalet satırı, alanı boş kaldığı için o eyaletteki HER sepeti
--- sessizce yerel tablodan vergilerdi. Dolu bir değer o kimlikli dış sağlayıcıyı
--- çağırır; sağlayıcı kayıtlı değilse hesap SESSİZCE yerele düşmez, hata döner.
+-- An empty provider_id does not mean "local", it means "my parent's provider":
+-- the calculation walks the chain from the most specific to the general and
+-- uses the first NON-EMPTY value, and if none of them is filled it falls back
+-- to local calculation (see service.Service.providerFor). The rule closes a
+-- money bug — while the country is bound to an external authority, a province
+-- row opened for a single exception would, because its field is left empty,
+-- silently tax EVERY cart in that province out of the local table. A filled
+-- value calls the external provider with that id; if the provider is not
+-- registered the calculation does NOT fall back to local SILENTLY, it returns
+-- an error.
 --
--- tax_region_provider_id_check alanı KIRPILMIŞ ve SINIRLI tutar. İki gerekçe:
--- kayıt araması kimliği kırparak yaptığı için kırpılmamış bir değer "saklanan"
--- ile "uygulanan" arasında ayrışma üretirdi; ve sınırsız bir metin alanı, tek
--- istekle tabloya megabaytlarca veri yazmanın en ucuz yoludur. Servis aynı
--- kuralı okunabilir bir hatayla önce uygular, bu kısıt doğrudan SQL'i de kapsar.
+-- tax_region_provider_id_check keeps the field TRIMMED and BOUNDED. Two
+-- reasons: because the registry lookup trims the id before searching, an
+-- untrimmed value would produce a divergence between what is STORED and what is
+-- APPLIED; and an unbounded text field is the cheapest way to write megabytes
+-- of data into a table with a single request. The service applies the same rule
+-- first with a readable error; this constraint covers direct SQL as well.
 CREATE TABLE IF NOT EXISTS tax_region (
     id            TEXT PRIMARY KEY,
-    -- country_code ISO 3166-1 alpha-2 kodudur; daima BÜYÜK harf saklanır.
+    -- country_code is the ISO 3166-1 alpha-2 code; always stored UPPERCASE.
     country_code  TEXT        NOT NULL,
-    -- province_code ülke altı birimin kodudur; kök bölgede NULL'dur.
+    -- province_code is the code of the sub-country unit; NULL on a root region.
     province_code TEXT,
-    -- parent_id kök bölgedir; kök satırda NULL'dur.
+    -- parent_id is the root region; NULL on a root row.
     parent_id     TEXT,
-    -- provider_id vergi sağlayıcısının kimliğidir; boş ise ebeveynin
-    -- sağlayıcısı devralınır, kök satırda yerel hesaplama uygulanır.
+    -- provider_id is the id of the tax provider; when empty the parent's
+    -- provider is inherited, and on a root row local calculation applies.
     provider_id   TEXT        NOT NULL DEFAULT '',
     metadata      JSONB       NOT NULL DEFAULT '{}'::jsonb,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -80,50 +86,52 @@ CREATE TABLE IF NOT EXISTS tax_region (
         CHECK (province_code IS NULL OR province_code ~ '^[A-Z0-9][A-Z0-9-]{0,9}$'),
     CONSTRAINT tax_region_provider_id_check
         CHECK (provider_id = btrim(provider_id, E' \t\n\r\v\f') AND length(provider_id) <= 255),
-    -- Kök bölgenin eyaleti, eyalet bölgesinin de kökü OLMAK ZORUNDADIR; ikisi
-    -- birlikte doğar ya da hiç doğmaz. Aksi hâlde "ebeveyni olmayan eyalet"
-    -- (hiç bulunamayan bir kayıt) ya da "eyalet kodu taşıyan kök" (ülkenin
-    -- tamamı yerine tek bir ile uygulanan oran) mümkün olurdu.
+    -- A province region MUST HAVE its root, and a root region MUST NOT carry a
+    -- province code; the two are born together or not at all. Otherwise a
+    -- "province with no parent" (a record that is never found) or a "root
+    -- carrying a province code" (a rate applied to a single province instead of
+    -- the whole country) would be possible.
     CONSTRAINT tax_region_hierarchy_check
         CHECK ((parent_id IS NULL AND province_code IS NULL)
             OR (parent_id IS NOT NULL AND province_code IS NOT NULL)),
     CONSTRAINT tax_region_self_parent_check
         CHECK (parent_id IS NULL OR parent_id <> id),
-    -- Bileşik FK'nin hedefi; id zaten birincil anahtardır, bu kısıt yalnızca
-    -- (parent_id, country_code) referansının bağlanabileceği bir birleşim
-    -- sağlar.
+    -- The target of the composite FK; id is already the primary key, and this
+    -- constraint only supplies a combination the (parent_id, country_code)
+    -- reference can bind to.
     CONSTRAINT tax_region_id_country_uniq UNIQUE (id, country_code),
     CONSTRAINT tax_region_parent_fk
         FOREIGN KEY (parent_id, country_code) REFERENCES tax_region (id, country_code)
 );
 
--- Bir ülkenin EN FAZLA bir kök vergi bölgesi olur.
+-- A country has AT MOST one root tax region.
 CREATE UNIQUE INDEX IF NOT EXISTS tax_region_country_root_uniq
     ON tax_region (country_code)
     WHERE parent_id IS NULL AND deleted_at IS NULL;
 
--- Bir kökün altında aynı eyalet kodu iki kez bulunamaz. İndeks aynı zamanda
--- (ülke, eyalet) çözümünün okuma yoludur.
+-- The same province code cannot appear twice under one root. The index is at
+-- the same time the read path of the (country, province) resolution.
 CREATE UNIQUE INDEX IF NOT EXISTS tax_region_province_uniq
     ON tax_region (parent_id, province_code)
     WHERE parent_id IS NOT NULL AND deleted_at IS NULL;
 
--- tax_rate bir vergi bölgesindeki orandır.
+-- tax_rate is a rate within a tax region.
 --
--- is_default bölgenin VARSAYILAN oranıdır: hiçbir kuralla eşleşmeyen her kalem
--- ona düşer. Bir bölgede en fazla bir varsayılan oran olabilir ve kural
--- tax_rate_default_uniq kısmi benzersiz indeksiyle zorlanır — ikinci bir
--- varsayılan, hangi oranın uygulanacağını satır sırasına bırakırdı.
+-- is_default is the region's DEFAULT rate: every line item that matches no rule
+-- falls to it. A region can have at most one default rate, and the rule is
+-- enforced by the tax_rate_default_uniq partial unique index — a second default
+-- would leave which rate applies to row order.
 --
--- code dış sistemlerle mutabakat içindir (örn. "KDV20") ve NULL olabilir. NULL
--- olabilmesi bilinçlidir: boş dize ile "kod yok" ayrımı, benzersizlik indeksinde
--- iki boş kodun çakışması demek olurdu. Kod verilmişse bölge içinde tekildir.
+-- code is for reconciliation with external systems (e.g. "VAT20") and may be
+-- NULL. Being nullable is deliberate: telling "no code" apart with an empty
+-- string would mean two empty codes collide in the uniqueness index. When a
+-- code is given, it is unique within the region.
 CREATE TABLE IF NOT EXISTS tax_rate (
     id            TEXT PRIMARY KEY,
     tax_region_id TEXT        NOT NULL,
     name          TEXT        NOT NULL,
     code          TEXT,
-    -- rate_bps BAZ PUAN cinsinden orandır: 2000 = %20, 10000 = %100.
+    -- rate_bps is the rate in BASIS POINTS: 2000 = 20%, 10000 = 100%.
     rate_bps      INTEGER     NOT NULL DEFAULT 0,
     is_default    BOOLEAN     NOT NULL DEFAULT FALSE,
     metadata      JSONB       NOT NULL DEFAULT '{}'::jsonb,
@@ -150,18 +158,19 @@ CREATE INDEX IF NOT EXISTS tax_rate_region_idx
     ON tax_rate (tax_region_id)
     WHERE deleted_at IS NULL;
 
--- tax_rate_rule bir oranın HANGİ kaleme uygulanacağını söyler.
+-- tax_rate_rule says WHICH line item a rate applies to.
 --
--- reference kalemin türünü, reference_id o türdeki kimliği taşır. Kimlik başka
--- modüllere (product, fulfillment) aittir ve FK DEĞİLDİR (Prensip 2.2): tax o
--- kayıtları tanımaz, yalnızca kimlik eşitliğine bakar. Silinmiş bir ürünün
--- kuralı bu yüzden geride kalabilir; zararsızdır, çünkü o kimlikle hesaba giren
--- bir kalem de artık gelmez.
+-- reference carries the type of the line item, reference_id the id within that
+-- type. The id belongs to other modules (product, fulfillment) and IS NOT A FK
+-- (Principle 2.2): tax does not know those records, it only looks at id
+-- equality. A deleted product's rule can therefore be left behind; that is
+-- harmless, because no line item with that id enters a calculation any more.
 --
--- Varsayılan oranın kuralı OLMAZ: "kuralsız oran her şeye uygulanır" ile
--- "kurallı oran yalnızca eşleşene uygulanır" aynı satırda birleşseydi, oranın
--- kapsamı okunamaz hâle gelirdi. Kural veritabanında değil serviste zorlanır
--- (iki tabloya birden bakan bir CHECK yazılamaz); bkz. service/rule.go.
+-- A default rate HAS NO rule: if "a rate without rules applies to everything"
+-- and "a rate with rules applies only to what matches" were joined in one row,
+-- the scope of the rate would become unreadable. The rule is enforced in the
+-- service, not in the database (a CHECK that looks at two tables at once cannot
+-- be written); see service/rule.go.
 CREATE TABLE IF NOT EXISTS tax_rate_rule (
     id           TEXT PRIMARY KEY,
     tax_rate_id  TEXT        NOT NULL,

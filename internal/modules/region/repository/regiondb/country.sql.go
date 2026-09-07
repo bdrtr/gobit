@@ -24,10 +24,10 @@ type ClearCountryRegionParams struct {
 	RegionID  string
 }
 
-// ClearCountryRegion ülkeyi bölgesinden ayırır.
+// ClearCountryRegion detaches the country from its region.
 //
-// Koşula bölge kimliği de girer: başka bir bölgenin ülkesini yanlışlıkla
-// serbest bırakan bir istek satır bulamaz ve hata alır.
+// The region id is part of the condition as well: a request that would
+// accidentally release another region's country finds no row and gets an error.
 func (q *Queries) ClearCountryRegion(ctx context.Context, arg ClearCountryRegionParams) (Country, error) {
 	row := q.db.QueryRow(ctx, clearCountryRegion, arg.UpdatedAt, arg.Iso2, arg.RegionID)
 	var i Country
@@ -52,11 +52,12 @@ type ClearRegionCountriesParams struct {
 	RegionID  string
 }
 
-// ClearRegionCountries bir bölgenin TÜM ülkelerini serbest bırakır.
+// ClearRegionCountries releases ALL of a region's countries.
 //
-// Bölge silinirken çağrılır. Çağrılmasaydı ülkeler ölü bir bölgeye bağlı
-// kalır, başka bir bölgeye eklenemez ve ResolveRegionForCountry o ülkeler için
-// kalıcı olarak "bulunamadı" dönerdi.
+// It is called while a region is being deleted. Were it not called, the
+// countries would stay attached to a dead region, could not be added to any
+// other region, and ResolveRegionForCountry would answer "not found" for them
+// for ever.
 func (q *Queries) ClearRegionCountries(ctx context.Context, arg ClearRegionCountriesParams) error {
 	_, err := q.db.Exec(ctx, clearRegionCountries, arg.UpdatedAt, arg.RegionID)
 	return err
@@ -80,13 +81,13 @@ SELECT iso_2, name, region_id, created_at, updated_at FROM country
 WHERE iso_2 = $1
 `
 
-// country sorguları.
+// country queries.
 //
-// Tabloda deleted_at YOKTUR ve okumalar öyle bir süzgeç TAŞIMAZ. country
-// REFERANS VERİDİR: satırları 000002'nin tohumu yazar, yaşam döngüsü
-// migration'ındır ve modülün sunduğu tek yazma yolu ülkeyi bölgeler ARASINDA
-// taşımaktır. Sütun 000001'den 000003'e kadar durdu, hiçbir zaman yazılmadı;
-// gerekçe 000003'ün başındadır (docs/gaps.md D18).
+// The table has NO deleted_at and these reads carry NO such filter. country is
+// REFERENCE DATA: its rows are written by the seed in 000002, its lifecycle is
+// that migration's, and the only write path the module offers moves a country
+// BETWEEN regions. The column stood from 000001 until 000003 and was never once
+// written; the argument is at the top of 000003 (docs/gaps.md D18).
 func (q *Queries) GetCountry(ctx context.Context, iso2 string) (Country, error) {
 	row := q.db.QueryRow(ctx, getCountry, iso2)
 	var i Country
@@ -106,15 +107,18 @@ WHERE iso_2 = $1
 FOR UPDATE
 `
 
-// GetCountryForUpdate ülkeyi okur ve satırını İŞLEM SONUNA KADAR kilitler.
+// GetCountryForUpdate reads the country and locks its row UNTIL THE END OF THE
+// TRANSACTION.
 //
-// "Bir ülke en fazla bir bölgeye ait olabilir" kuralının eşzamanlılık
-// ayağıdır. Kilitsiz bir "önce oku, sonra yaz" akışında aynı ülkeyi iki farklı
-// bölgeye ekleyen iki istek de region_id'yi boş görür ve ikincisi birincinin
-// yazdığını sessizce ezerdi. Kilit ikincisini bekletir; beklemesi bitince
-// satırın GÜNCEL sürümünü okur ve çakışmayı görür.
+// It is the concurrency leg of the rule "a country may belong to at most one
+// region". In an unlocked "read first, then write" flow two requests adding the
+// same country to two different regions would BOTH see region_id empty, and the
+// second would silently overwrite what the first had written. The lock makes
+// the second one wait; when its wait is over it reads the CURRENT version of
+// the row and sees the conflict.
 //
-// Kilit sırasının ikinci adımıdır: önce bölge (GetRegionForShare), sonra ülke.
+// It is the second step of the lock order: region first (GetRegionForShare),
+// country second.
 func (q *Queries) GetCountryForUpdate(ctx context.Context, iso2 string) (Country, error) {
 	row := q.db.QueryRow(ctx, getCountryForUpdate, iso2)
 	var i Country
@@ -141,11 +145,13 @@ type ListCountriesParams struct {
 	Lim      int32
 }
 
-// ListCountries ülkeleri sayfalayarak döner; bölge süzgeci isteğe bağlıdır.
+// ListCountries returns countries a page at a time; the region filter is
+// optional.
 //
-// NULL region_id "süzme" demektir, belirli bir bölge kimliği ise o bölgenin
-// ülkeleri demektir. "Hiçbir bölgeye bağlı olmayan ülkeler" ayrı bir istek
-// olurdu ve bilinçli olarak sunulmaz: yönetim yüzeyi için tüm liste yeterlidir.
+// A NULL region_id means "do not filter", a particular region id means that
+// region's countries. "Countries attached to no region at all" would be a
+// separate request and is deliberately not offered: for the administration
+// surface the full list is enough.
 func (q *Queries) ListCountries(ctx context.Context, arg ListCountriesParams) ([]Country, error) {
 	rows, err := q.db.Query(ctx, listCountries, arg.RegionID, arg.Off, arg.Lim)
 	if err != nil {
@@ -178,10 +184,11 @@ WHERE region_id = ANY($1::text[])
 ORDER BY region_id, iso_2
 `
 
-// ListCountriesByRegions birden çok bölgenin ülkelerini TEK turda okur.
+// ListCountriesByRegions reads the countries of several regions in ONE round
+// trip.
 //
-// Query sağlayıcısı bölgeleri ülkeleriyle döndürür; bölge başına ayrı sorgu
-// N+1 demek olurdu (ADR 0004'ün toplu okuma şartı).
+// The query provider returns regions together with their countries; a separate
+// query per region would be an N+1 (ADR 0004's batch-read requirement).
 func (q *Queries) ListCountriesByRegions(ctx context.Context, regionIds []string) ([]Country, error) {
 	rows, err := q.db.Query(ctx, listCountriesByRegions, regionIds)
 	if err != nil {

@@ -1,5 +1,5 @@
--- stock_locations sorguları.
--- Tüm okumalar deleted_at IS NULL filtresi uygular (plan Bölüm 8).
+-- stock_locations queries.
+-- Every read applies the deleted_at IS NULL filter (plan Section 8).
 
 -- name: CreateStockLocation :one
 INSERT INTO stock_locations (
@@ -17,11 +17,12 @@ WHERE deleted_at IS NULL
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
 
--- CountStockLocations sayfalama zarfının toplam sayısını verir; ListStockLocations
--- ile aynı filtreyi uygular.
+-- CountStockLocations gives the total for the pagination envelope; it applies
+-- the same filter as ListStockLocations.
 --
--- Sayım ayrı bir sorgudur: satırlarla birlikte dönen bir pencere fonksiyonu,
--- aralık dışı bir sayfada hiç satır dönmediği için toplamı 0 gösterirdi.
+-- The count is a separate query: a window function returned alongside the rows
+-- would show the total as 0 on an out-of-range page, because no row comes back
+-- there.
 -- name: CountStockLocations :one
 SELECT COUNT(*) FROM stock_locations
 WHERE deleted_at IS NULL;

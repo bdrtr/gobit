@@ -1,4 +1,4 @@
--- promotion_rule sorguları.
+-- promotion_rule queries.
 
 -- name: InsertPromotionRule :one
 INSERT INTO promotion_rule (
@@ -17,8 +17,9 @@ SELECT * FROM promotion_rule
 WHERE promotion_id = $1 AND deleted_at IS NULL
 ORDER BY id;
 
--- ListPromotionRulesByPromotions hesaplamaya giren TÜM promosyonların
--- kurallarını tek turda döner; promosyon başına sorgu (N+1) yapılmaz.
+-- ListPromotionRulesByPromotions returns the rules of ALL the promotions
+-- entering the computation in one round trip; no query is issued per promotion
+-- (N+1).
 -- name: ListPromotionRulesByPromotions :many
 SELECT * FROM promotion_rule
 WHERE promotion_id = ANY (@promotion_ids::text[]) AND deleted_at IS NULL

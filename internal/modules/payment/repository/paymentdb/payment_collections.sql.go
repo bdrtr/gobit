@@ -23,13 +23,14 @@ type CountPaymentCollectionsParams struct {
 	Status    *string
 }
 
-// CountPaymentCollections sayfalama zarfının toplam sayısını verir ve
-// ListPaymentCollections ile AYNI filtreleri uygular; ikisi birlikte
-// değiştirilmelidir.
+// CountPaymentCollections gives the total count for the pagination envelope and
+// applies the SAME filters as ListPaymentCollections; the two have to be
+// changed together.
 //
-// Toplam, satırlarla birlikte dönen bir pencere fonksiyonundan okunamaz:
-// aralık dışı bir sayfada hiç satır dönmez, pencere değerlendirilmez ve toplam
-// 0 görünürdü. Toplam sayfanın değil FİLTRENİN sayısıdır.
+// The total cannot be read from a window function returned alongside the rows:
+// on a page past the end no row comes back at all, the window is never
+// evaluated, and the total would look like 0. The total is the count of the
+// FILTER, not of the page.
 func (q *Queries) CountPaymentCollections(ctx context.Context, arg CountPaymentCollectionsParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countPaymentCollections, arg.Reference, arg.Status)
 	var count int64
@@ -54,13 +55,14 @@ type CreatePaymentCollectionParams struct {
 	Metadata     []byte
 }
 
-// payment_collections sorguları.
+// payment_collections queries.
 //
-// Koleksiyon satırı, bir ödemenin TÜM alt kayıtları için kilit sırasının İLK
-// adımıdır (bkz. service.Store "Kilit sırası"). Oturum, tahsilat ve iade
-// yazan her akış işlemine LockPaymentCollection ile başlar; bu sayede aynı
-// koleksiyona dokunan iki akış birbirini seri hâle getirir ve türetilen durum
-// alanı asla iki farklı hesaptan yazılmaz.
+// The collection row is the FIRST step of the lock order for ALL of a payment's
+// child records (see service.Store, "Transaction boundary"). Every flow that
+// writes a session, a capture or a refund begins its transaction with
+// LockPaymentCollection; that is how two flows touching the same collection
+// serialize against each other, and it is why the derived status field is never
+// written from two different computations.
 func (q *Queries) CreatePaymentCollection(ctx context.Context, arg CreatePaymentCollectionParams) (PaymentCollection, error) {
 	row := q.db.QueryRow(ctx, createPaymentCollection,
 		arg.ID,
@@ -119,8 +121,8 @@ WHERE id = ANY ($1::text[]) AND deleted_at IS NULL
 ORDER BY id
 `
 
-// GetPaymentCollectionsByIDs Query katmanının FetchByIDs çağrısını TEK turda
-// karşılar; kimlik başına sorgu (N+1) yapılmaz.
+// GetPaymentCollectionsByIDs answers the Query layer's FetchByIDs call in ONE
+// round trip; no query is made per identifier (N+1).
 func (q *Queries) GetPaymentCollectionsByIDs(ctx context.Context, ids []string) ([]PaymentCollection, error) {
 	rows, err := q.db.Query(ctx, getPaymentCollectionsByIDs, ids)
 	if err != nil {
@@ -214,10 +216,11 @@ WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE
 `
 
-// LockPaymentCollection koleksiyonu işlem boyunca kilitler ve güncel hâlini
-// döner. Tutarları değiştiren her akış okumasını BU metotla yapar: kilitsiz
-// okunan bir tutar yazma anında bayat olabilir ve iki eşzamanlı tahsilat aynı
-// yetkilendirmeyi iki kez harcayabilirdi.
+// LockPaymentCollection locks the collection for the length of the transaction
+// and returns its current form. Every flow that changes the amounts does its
+// reading with THIS method: an amount read without the lock can be stale by the
+// moment it is written, and two concurrent captures could spend the same
+// authorization twice.
 func (q *Queries) LockPaymentCollection(ctx context.Context, id string) (PaymentCollection, error) {
 	row := q.db.QueryRow(ctx, lockPaymentCollection, id)
 	var i PaymentCollection
@@ -261,22 +264,23 @@ type PaymentMomentsByCollectionIDsRow struct {
 	LastRefundedAt      pgtype.Timestamptz
 }
 
-// PaymentMomentsByCollectionIDs, koleksiyonların para ANLARINI tek sorguda
-// döner.
+// PaymentMomentsByCollectionIDs returns the collections' money MOMENTS in a
+// single query.
 //
-// Tutarlar koleksiyon satırında zaten var; eksik olan ZAMANlardı ve ikisi de
-// başka tablolarda: para ilk ne zaman hareket etti (payments.captured_at) ve
-// son iade ne zaman çıktı (refunds.created_at — refunds tablosunda ayrı bir
-// refunded_at kolonu yok).
+// The amounts are already on the collection row; what was missing were the
+// TIMES, and both of them live in other tables: when the money first moved
+// (payments.captured_at) and when the last refund went out (refunds.created_at
+// — the refunds table has no separate refunded_at column).
 //
-// İlki MIN, ikincisi MAX, ve asimetri kasıtlıdır: bir destek masası "ne zaman
-// ödendi" diye sorduğunda paranın hareket ETMEYE BAŞLADIĞI anı kastediyor,
-// "ne zaman iade edildi" diye sorduğunda ise en SON iadeyi. Kısmi tahsilat ve
-// kısmi iade ikisini de çoğullaştırır; tek bir an isteyen okuma bu ikisini
-// ister, her anı isteyen okuma ayrı bir çağrıdır.
+// The first is a MIN, the second a MAX, and the asymmetry is deliberate: when a
+// support desk asks "when was it paid" it means the moment the money BEGAN TO
+// MOVE, and when it asks "when was it refunded" it means the LATEST refund. A
+// partial capture and a partial refund make both of them plural; a read that
+// wants a single moment wants these two, and a read that wants every moment is
+// a separate call.
 //
-// İki alt sorgu da kısmi indeksleri kullanır (payments ve refunds koleksiyon/
-// ödeme başına indekslidir), ve silinmiş satırlar iki tarafta da elenir.
+// Both subqueries use the partial indexes (payments and refunds are indexed per
+// collection and per payment), and deleted rows are eliminated on both sides.
 func (q *Queries) PaymentMomentsByCollectionIDs(ctx context.Context, ids []string) ([]PaymentMomentsByCollectionIDsRow, error) {
 	rows, err := q.db.Query(ctx, paymentMomentsByCollectionIDs, ids)
 	if err != nil {
@@ -316,12 +320,12 @@ type UpdatePaymentCollectionTotalsParams struct {
 	RefundedAmount   int64
 }
 
-// UpdatePaymentCollectionTotals tutarları ve türetilen durumu MUTLAK
-// değerlerle yazar.
+// UpdatePaymentCollectionTotals writes the amounts and the derived status as
+// ABSOLUTE values.
 //
-// Artımlı (amount = amount + n) güncelleme kasten kullanılmaz: yeni değer,
-// kilit altında okunan değerden hesaplanır ve kararı veren kodun gördüğü sayı
-// ile yazılan sayı aynı olur.
+// An incremental update (amount = amount + n) is deliberately not used: the new
+// value is computed from the value read under the lock, so the number the code
+// that made the decision saw and the number that gets written are the same one.
 func (q *Queries) UpdatePaymentCollectionTotals(ctx context.Context, arg UpdatePaymentCollectionTotalsParams) (PaymentCollection, error) {
 	row := q.db.QueryRow(ctx, updatePaymentCollectionTotals,
 		arg.ID,

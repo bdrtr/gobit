@@ -1,34 +1,39 @@
--- country sorguları.
+-- country queries.
 --
--- Tabloda deleted_at YOKTUR ve okumalar öyle bir süzgeç TAŞIMAZ. country
--- REFERANS VERİDİR: satırları 000002'nin tohumu yazar, yaşam döngüsü
--- migration'ındır ve modülün sunduğu tek yazma yolu ülkeyi bölgeler ARASINDA
--- taşımaktır. Sütun 000001'den 000003'e kadar durdu, hiçbir zaman yazılmadı;
--- gerekçe 000003'ün başındadır (docs/gaps.md D18).
+-- The table has NO deleted_at and these reads carry NO such filter. country is
+-- REFERENCE DATA: its rows are written by the seed in 000002, its lifecycle is
+-- that migration's, and the only write path the module offers moves a country
+-- BETWEEN regions. The column stood from 000001 until 000003 and was never once
+-- written; the argument is at the top of 000003 (docs/gaps.md D18).
 
 -- name: GetCountry :one
 SELECT * FROM country
 WHERE iso_2 = $1;
 
--- GetCountryForUpdate ülkeyi okur ve satırını İŞLEM SONUNA KADAR kilitler.
+-- GetCountryForUpdate reads the country and locks its row UNTIL THE END OF THE
+-- TRANSACTION.
 --
--- "Bir ülke en fazla bir bölgeye ait olabilir" kuralının eşzamanlılık
--- ayağıdır. Kilitsiz bir "önce oku, sonra yaz" akışında aynı ülkeyi iki farklı
--- bölgeye ekleyen iki istek de region_id'yi boş görür ve ikincisi birincinin
--- yazdığını sessizce ezerdi. Kilit ikincisini bekletir; beklemesi bitince
--- satırın GÜNCEL sürümünü okur ve çakışmayı görür.
+-- It is the concurrency leg of the rule "a country may belong to at most one
+-- region". In an unlocked "read first, then write" flow two requests adding the
+-- same country to two different regions would BOTH see region_id empty, and the
+-- second would silently overwrite what the first had written. The lock makes
+-- the second one wait; when its wait is over it reads the CURRENT version of
+-- the row and sees the conflict.
 --
--- Kilit sırasının ikinci adımıdır: önce bölge (GetRegionForShare), sonra ülke.
+-- It is the second step of the lock order: region first (GetRegionForShare),
+-- country second.
 -- name: GetCountryForUpdate :one
 SELECT * FROM country
 WHERE iso_2 = $1
 FOR UPDATE;
 
--- ListCountries ülkeleri sayfalayarak döner; bölge süzgeci isteğe bağlıdır.
+-- ListCountries returns countries a page at a time; the region filter is
+-- optional.
 --
--- NULL region_id "süzme" demektir, belirli bir bölge kimliği ise o bölgenin
--- ülkeleri demektir. "Hiçbir bölgeye bağlı olmayan ülkeler" ayrı bir istek
--- olurdu ve bilinçli olarak sunulmaz: yönetim yüzeyi için tüm liste yeterlidir.
+-- A NULL region_id means "do not filter", a particular region id means that
+-- region's countries. "Countries attached to no region at all" would be a
+-- separate request and is deliberately not offered: for the administration
+-- surface the full list is enough.
 -- name: ListCountries :many
 SELECT * FROM country
 WHERE (sqlc.narg('region_id')::text IS NULL OR region_id = sqlc.narg('region_id')::text)
@@ -39,10 +44,11 @@ LIMIT @lim::integer OFFSET @off::integer;
 SELECT count(*) FROM country
 WHERE (sqlc.narg('region_id')::text IS NULL OR region_id = sqlc.narg('region_id')::text);
 
--- ListCountriesByRegions birden çok bölgenin ülkelerini TEK turda okur.
+-- ListCountriesByRegions reads the countries of several regions in ONE round
+-- trip.
 --
--- Query sağlayıcısı bölgeleri ülkeleriyle döndürür; bölge başına ayrı sorgu
--- N+1 demek olurdu (ADR 0004'ün toplu okuma şartı).
+-- The query provider returns regions together with their countries; a separate
+-- query per region would be an N+1 (ADR 0004's batch-read requirement).
 -- name: ListCountriesByRegions :many
 SELECT * FROM country
 WHERE region_id = ANY(@region_ids::text[])
@@ -54,21 +60,22 @@ SET region_id = @region_id::text, updated_at = @updated_at::timestamptz
 WHERE iso_2 = @iso_2::text
 RETURNING *;
 
--- ClearCountryRegion ülkeyi bölgesinden ayırır.
+-- ClearCountryRegion detaches the country from its region.
 --
--- Koşula bölge kimliği de girer: başka bir bölgenin ülkesini yanlışlıkla
--- serbest bırakan bir istek satır bulamaz ve hata alır.
+-- The region id is part of the condition as well: a request that would
+-- accidentally release another region's country finds no row and gets an error.
 -- name: ClearCountryRegion :one
 UPDATE country
 SET region_id = NULL, updated_at = @updated_at::timestamptz
 WHERE iso_2 = @iso_2::text AND region_id = @region_id::text
 RETURNING *;
 
--- ClearRegionCountries bir bölgenin TÜM ülkelerini serbest bırakır.
+-- ClearRegionCountries releases ALL of a region's countries.
 --
--- Bölge silinirken çağrılır. Çağrılmasaydı ülkeler ölü bir bölgeye bağlı
--- kalır, başka bir bölgeye eklenemez ve ResolveRegionForCountry o ülkeler için
--- kalıcı olarak "bulunamadı" dönerdi.
+-- It is called while a region is being deleted. Were it not called, the
+-- countries would stay attached to a dead region, could not be added to any
+-- other region, and ResolveRegionForCountry would answer "not found" for them
+-- for ever.
 -- name: ClearRegionCountries :exec
 UPDATE country
 SET region_id = NULL, updated_at = @updated_at::timestamptz

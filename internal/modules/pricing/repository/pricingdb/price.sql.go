@@ -114,14 +114,15 @@ type ListPriceCandidatesRow struct {
 	ListEndsAt   pgtype.Timestamptz
 }
 
-// ListPriceCandidates bir price set'in TÜM fiyatlarını, bağlı oldukları fiyat
-// listesinin üstverisiyle birlikte döner.
+// ListPriceCandidates returns ALL of a price set's prices together with the
+// metadata of the price list each one hangs from.
 //
-// Para birimi, adet aralığı ve liste geçerliliği burada ELENMEZ: seçim kuralının
-// her dalı servis katmanındaki saf fonksiyonda yaşar ve veritabanı olmadan
-// birim testiyle kanıtlanabilir. LEFT JOIN'in deleted_at koşulu tabloya değil
-// JOIN'e yazılır; silinmiş bir listeye bağlı fiyat böylece satırını korur ama
-// liste üstverisi NULL gelir ve servis onu eleyebilir.
+// Currency, quantity range and list validity are NOT filtered out here: every
+// branch of the selection rule lives in the pure function in the service layer,
+// where it can be proven by a unit test with no database. The LEFT JOIN's
+// deleted_at condition is written on the JOIN and not on the table; a price
+// attached to a deleted list therefore keeps its row, but its list metadata
+// comes back NULL and the service can discard it.
 func (q *Queries) ListPriceCandidates(ctx context.Context, priceSetID string) ([]ListPriceCandidatesRow, error) {
 	rows, err := q.db.Query(ctx, listPriceCandidates, priceSetID)
 	if err != nil {
@@ -191,12 +192,14 @@ type ListPriceCandidatesBySetsRow struct {
 	ListEndsAt   pgtype.Timestamptz
 }
 
-// ListPriceCandidatesBySets aynı satırları BİRDEN ÇOK kap için tek turda döner.
+// ListPriceCandidatesBySets returns the same rows for MORE THAN ONE set in a
+// single round trip.
 //
-// Toplu olması Query katmanının N+1 yasağı içindir (ADR 0004). Tekil sürümle
-// aynı sütunları döndürür ki okuma yüzeyi ile hesaplama AYNI girdiyi görsün:
-// liste üstverisi taşınmasaydı sağlayıcı yayınlanmamış bir kampanyanın fiyatını
-// taban fiyattan ayırt edemezdi.
+// It is batched for the Query layer's ban on N+1 (ADR 0004). It returns the
+// same columns as the singular version so that the read surface and the
+// calculation see the SAME input: if the list metadata were not carried, the
+// provider could not tell the price of an unpublished campaign apart from the
+// base price.
 func (q *Queries) ListPriceCandidatesBySets(ctx context.Context, priceSetIds []string) ([]ListPriceCandidatesBySetsRow, error) {
 	rows, err := q.db.Query(ctx, listPriceCandidatesBySets, priceSetIds)
 	if err != nil {

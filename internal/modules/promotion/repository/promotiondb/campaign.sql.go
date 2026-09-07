@@ -37,12 +37,12 @@ type DecrementCampaignBudgetParams struct {
 	ID    string
 }
 
-// DecrementCampaignBudget bütçe sayacını düşürür ve SIFIRIN ALTINA İNMEZ.
+// DecrementCampaignBudget lowers the budget counter and NEVER GOES BELOW ZERO.
 //
-// greatest(...) bir savunmadır: defterle sayacın ayrıştığı bir durumda (elle
-// çalıştırılmış bir SQL, kısmi geri yükleme) geri alma negatif bir bütçe
-// yazmamalıdır. Negatif bütçe CHECK kısıtına çarpar ve serbest bırakmayı —
-// yani bir SAGA TELAFİSİNİ — düşürürdü.
+// The greatest(...) is a defence: in a state where the ledger and the counter
+// have drifted apart (a hand-run SQL statement, a partial restore) the reversal
+// must not write a negative budget. A negative budget would hit the CHECK
+// constraint and bring down the release — that is, a SAGA COMPENSATION.
 func (q *Queries) DecrementCampaignBudget(ctx context.Context, arg DecrementCampaignBudgetParams) (Campaign, error) {
 	row := q.db.QueryRow(ctx, decrementCampaignBudget, arg.Delta, arg.Now, arg.ID)
 	var i Campaign
@@ -122,8 +122,8 @@ WHERE id = ANY ($1::text[]) AND deleted_at IS NULL
 ORDER BY id
 `
 
-// GetCampaignsByIDs promosyon listelerinin kampanya üstverisini TEK turda
-// getirir; kampanya başına sorgu (N+1) yapılmaz.
+// GetCampaignsByIDs fetches the campaign metadata of a promotion listing in ONE
+// round trip; no query is issued per campaign (N+1).
 func (q *Queries) GetCampaignsByIDs(ctx context.Context, ids []string) ([]Campaign, error) {
 	rows, err := q.db.Query(ctx, getCampaignsByIDs, ids)
 	if err != nil {
@@ -174,12 +174,13 @@ type IncrementCampaignBudgetParams struct {
 	ID    string
 }
 
-// IncrementCampaignBudget bütçe sayacını KOŞULLU artırır.
+// IncrementCampaignBudget raises the budget counter CONDITIONALLY.
 //
-// Sınır aşılacaksa satır GÜNCELLENMEZ ve sorgu hiç satır dönmez; çağıran bunu
-// "bütçe yetmedi" olarak yorumlar. Koşulun WHERE'de olması bilinçlidir: sınır
-// kontrolünü uygulamada yapıp ayrı bir UPDATE atmak, kilit alınmamış bir yolda
-// iki ifade arasına başka bir kullanımın girmesine izin verirdi.
+// If the limit would be exceeded the row is NOT UPDATED and the query returns
+// no row at all; the caller reads that as "the budget did not suffice". Keeping
+// the condition in the WHERE is deliberate: checking the limit in the
+// application and then issuing a separate UPDATE would, on a path that took no
+// lock, let another redemption slip in between the two statements.
 func (q *Queries) IncrementCampaignBudget(ctx context.Context, arg IncrementCampaignBudgetParams) (Campaign, error) {
 	row := q.db.QueryRow(ctx, incrementCampaignBudget, arg.Delta, arg.Now, arg.ID)
 	var i Campaign
@@ -225,7 +226,7 @@ type InsertCampaignParams struct {
 	CreatedAt          pgtype.Timestamptz
 }
 
-// campaign sorguları.
+// campaign queries.
 func (q *Queries) InsertCampaign(ctx context.Context, arg InsertCampaignParams) (Campaign, error) {
 	row := q.db.QueryRow(ctx, insertCampaign,
 		arg.ID,
@@ -310,15 +311,16 @@ WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE
 `
 
-// LockCampaign kampanyayı işlem boyunca kilitler.
+// LockCampaign locks the campaign for the duration of the transaction.
 //
-// EŞZAMANLI KULLANIMIN TEMELİ BUDUR. İki eşzamanlı Redeem aynı satırı
-// kilitlemek zorundadır; ikincisi birincinin işlemi bitene kadar bekler ve
-// READ COMMITTED altında satırın GÜNCEL bütçesini görür. "Önce oku sonra yaz"
-// yarışı bu yüzden oluşamaz: okuma zaten kilidin ardından yapılır.
+// THIS IS THE FOUNDATION OF CONCURRENT REDEMPTION. Two concurrent Redeems have
+// to lock the same row; the second waits until the first one's transaction is
+// over and then, under READ COMMITTED, sees the row's CURRENT budget. That is
+// why a "read first, then write" race cannot form here: the read already
+// happens behind the lock.
 //
-// Kilit sırası tektir ve her akışta aynıdır: ÖNCE promosyon, SONRA kampanya.
-// Sıranın ters dönmesi kilitlenme (deadlock) demektir.
+// There is a single lock order and every flow uses the same one: promotion
+// FIRST, campaign SECOND. Reversing that order means a deadlock.
 func (q *Queries) LockCampaign(ctx context.Context, id string) (Campaign, error) {
 	row := q.db.QueryRow(ctx, lockCampaign, id)
 	var i Campaign
@@ -392,25 +394,28 @@ type UpdateCampaignParams struct {
 	UpdatedAt          pgtype.Timestamptz
 }
 
-// UpdateCampaign kampanyanın TANIMINI günceller.
+// UpdateCampaign updates the campaign's DEFINITION.
 //
-// budget_used BİLEREK dışarıdadır: sayacı yalnızca kullanım akışı
-// (IncrementCampaignBudget / DecrementCampaignBudget) değiştirir. Yönetim
-// yüzeyinden yazılabilseydi, eşzamanlı bir kullanımla yarışıp sayacı geri
-// alabilirdi.
+// budget_used is DELIBERATELY left out: only the redemption flow
+// (IncrementCampaignBudget / DecrementCampaignBudget) moves that counter. If it
+// could be written from the administration surface it would race a concurrent
+// redemption and undo the counter.
 //
-// Sayaç sıfır DEĞİLKEN bütçenin BİRİMİ (türü ve para birimi) dondurulur;
-// WHERE'deki koşul budur. Sayaç bir birimde tutulur ve o birim değişse bile
-// SAYACIN KENDİSİ eski birimde kalırdı: "usage" (100 limit, 30 ADET
-// kullanılmış) bir kampanya "spend"e çevrildiğinde sayaçtaki 30 artık 30
-// KURUŞ sayılır; para birimi değişince de önceki TRY harcaması USD olarak
-// okunur ve devam eden TRY kullanımları campaign_budget_currency_mismatch ile
-// reddedilmeye başlar. İkisi de sessiz bir muhasebe bozulmasıdır.
+// While the counter is NOT zero the budget's UNIT (its type and its currency)
+// is frozen; that is what the condition in the WHERE says. The counter is held
+// in one unit, and if that unit changed THE COUNTER ITSELF would stay in the
+// old one: turn a "usage" campaign (limit 100, 30 REDEMPTIONS spent) into
+// "spend" and the 30 in the counter now counts as 30 MINOR UNITS of money; and
+// when the currency changes, spending previously made in TRY is read as USD
+// while ongoing TRY redemptions start being refused with
+// campaign_budget_currency_mismatch. Both are a silent corruption of the
+// accounting.
 //
-// Koşulun WHERE'de olması bilinçlidir: uygulamada "önce oku sonra yaz"
-// yapılsaydı, iki ifade arasına giren bir kullanım sayacı sıfırdan çıkarır ve
-// güncelleme yine de geçerdi. Sayaç sıfırlanmadan birim değiştirmek isteyen
-// operatör önce kullanımları serbest bırakmalıdır.
+// Keeping the condition in the WHERE is deliberate: with a "read first, then
+// write" in the application, a redemption slipping in between the two
+// statements would take the counter off zero and the update would still go
+// through. An operator who wants to change the unit without the counter being
+// zero has to release the redemptions first.
 func (q *Queries) UpdateCampaign(ctx context.Context, arg UpdateCampaignParams) (Campaign, error) {
 	row := q.db.QueryRow(ctx, updateCampaign,
 		arg.ID,

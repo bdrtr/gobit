@@ -1,10 +1,11 @@
--- promotion şemasının geri alınması (plan Bölüm 8: her up'ın down çifti olur).
+-- Rollback of the promotion schema (plan Section 8: every up has a down twin).
 --
--- Sıra bağımlılığın TERSİDİR: önce promotion/campaign'e referans veren
--- tablolar, sonra promotion, en son campaign. CASCADE kullanılmaz — bir bağın
--- gözden kaçtığını sessizce silmek yerine hata olarak görmek yeğdir.
+-- The order is the REVERSE of the dependency: first the tables that reference
+-- promotion/campaign, then promotion, and campaign last. CASCADE is not used —
+-- seeing a link that was overlooked as an ERROR is better than having it
+-- silently dropped.
 --
--- İndeksler tablolarla birlikte düşer; ayrıca DROP edilmelerine gerek yoktur.
+-- The indexes fall with their tables; there is no need to DROP them separately.
 DROP TABLE IF EXISTS promotion_redemption;
 DROP TABLE IF EXISTS promotion_rule;
 DROP TABLE IF EXISTS promotion_application_method;

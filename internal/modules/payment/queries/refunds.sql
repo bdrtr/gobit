@@ -1,8 +1,8 @@
--- refunds sorguları.
+-- refunds queries.
 --
--- Kısmi iade birden çok satır üretir; toplamı payments.refunded_amount
--- sütununda tutulur ve iki değer aynı işlemde, tahsilatın kilidi altında
--- yazılır.
+-- A partial refund produces several rows; their sum is kept in the
+-- payments.refunded_amount column, and the two values are written in the same
+-- transaction, under the capture's lock.
 
 -- name: CreateRefund :one
 INSERT INTO refunds (

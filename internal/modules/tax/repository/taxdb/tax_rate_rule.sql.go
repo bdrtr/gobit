@@ -58,7 +58,7 @@ type InsertTaxRateRuleParams struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
-// tax_rate_rule sorguları. Tüm okumalar deleted_at IS NULL süzer.
+// tax_rate_rule queries. Every read filters on deleted_at IS NULL.
 func (q *Queries) InsertTaxRateRule(ctx context.Context, arg InsertTaxRateRuleParams) (TaxRateRule, error) {
 	row := q.db.QueryRow(ctx, insertTaxRateRule,
 		arg.ID,
@@ -120,8 +120,9 @@ WHERE tax_rate_id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY tax_rate_id, id
 `
 
-// ListTaxRateRulesByRates hesaba giren TÜM oranların kurallarını tek sorguda
-// getirir; kural sayısı ne olursa olsun gidiş dönüş sayısı sabittir (N+1 yok).
+// ListTaxRateRulesByRates fetches the rules of ALL the rates entering the
+// calculation in a single query; however many rules there are, the number of
+// round trips stays constant (no N+1).
 func (q *Queries) ListTaxRateRulesByRates(ctx context.Context, rateIds []string) ([]TaxRateRule, error) {
 	rows, err := q.db.Query(ctx, listTaxRateRulesByRates, rateIds)
 	if err != nil {

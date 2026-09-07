@@ -1,11 +1,13 @@
--- tax şemasının geri alınması. Sıra, foreign key bağımlılıklarının tersidir:
--- önce kurallar, sonra oranlar, en sonda bölgeler düşer. Ters sırada bir DROP
--- "hâlâ bağımlı nesneler var" hatasıyla patlar ve golang-migrate'in sürüm
--- defterini dirty bırakırdı — o noktadan sonra modül bir daha migrate EDİLEMEZ
--- (bkz. internal/arch TestMigrationlarGercektenGeriAlinabilir).
+-- Reverting the tax schema. The order is the reverse of the foreign key
+-- dependencies: the rules drop first, then the rates, and the regions last. A
+-- DROP in the opposite order would blow up with "there are still dependent
+-- objects" and would leave golang-migrate's version ledger dirty — from that
+-- point on the module CANNOT be migrated again (see internal/arch
+-- TestMigrationlarGercektenGeriAlinabilir).
 --
--- İndeksler tablolarıyla birlikte düşer; yine de açıkça yazılırlar ki bir
--- indeks ileride ayrı bir migration'la eklendiğinde geri alma yolu tam kalsın.
+-- Indexes drop together with their tables; they are still written out
+-- explicitly, so that the reverse path stays complete when an index is later
+-- added by a separate migration.
 DROP INDEX IF EXISTS tax_rate_rule_rate_idx;
 DROP INDEX IF EXISTS tax_rate_rule_uniq;
 DROP TABLE IF EXISTS tax_rate_rule;

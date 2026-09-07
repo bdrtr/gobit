@@ -88,7 +88,7 @@ type InsertTaxRateParams struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
-// tax_rate sorguları. Tüm okumalar deleted_at IS NULL süzer.
+// tax_rate queries. Every read filters on deleted_at IS NULL.
 func (q *Queries) InsertTaxRate(ctx context.Context, arg InsertTaxRateParams) (TaxRate, error) {
 	row := q.db.QueryRow(ctx, insertTaxRate,
 		arg.ID,
@@ -159,12 +159,12 @@ WHERE tax_region_id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY tax_region_id, is_default DESC, id
 `
 
-// ListTaxRatesByRegions hesap zincirindeki TÜM bölgelerin oranlarını tek
-// sorguda getirir.
+// ListTaxRatesByRegions fetches the rates of ALL the regions in the calculation
+// chain in a single query.
 //
-// Toplu okuma, bölge sayısı (en fazla iki) değişse bile sorgu sayısını sabit
-// tutar; bölge başına ayrı sorgu, hesabın maliyetini hiyerarşinin derinliğine
-// bağlardı.
+// The batched read keeps the number of queries constant even if the number of
+// regions (at most two) changes; a separate query per region would tie the cost
+// of a calculation to the depth of the hierarchy.
 func (q *Queries) ListTaxRatesByRegions(ctx context.Context, regionIds []string) ([]TaxRate, error) {
 	rows, err := q.db.Query(ctx, listTaxRatesByRegions, regionIds)
 	if err != nil {

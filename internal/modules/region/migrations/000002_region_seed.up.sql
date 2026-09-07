@@ -1,23 +1,25 @@
--- region modülünün TOHUM (seed) verisi: para birimleri ve ISO 3166-1 ülkeleri.
+-- SEED data of the region module: the currencies and the ISO 3166-1 countries.
 --
--- Neden ayrı bir migration: şema ile referans verisi ayrı sürümlerdir. Tohum
--- 000001'in içine yazılsaydı, veriyi güncellemek şemayı da geri almayı
--- gerektirirdi; ayrı dosya, tohumun tek başına geri alınabilmesini korur
--- (plan Bölüm 8: her migration geri alınabilir olmalıdır).
+-- Why a separate migration: the schema and the reference data are separate
+-- versions. Had the seed been written inside 000001, updating the data would
+-- have required rolling the schema back as well; a separate file keeps the seed
+-- revertible on its own (plan Section 8: every migration must be revertible).
 --
--- Neden migration ile: currency ve country REFERANS VERİDİR. Her kurulumun
--- 249 ülkeyi elle girmesi beklenemez ve bir kurulumda eksik kalan ülke,
--- ResolveRegionForCountry'nin o ülkede sessizce çalışmaması demektir.
+-- Why by migration at all: currency and country are REFERENCE DATA. No
+-- installation can be expected to enter 249 countries by hand, and a country
+-- left missing in an installation means ResolveRegionForCountry silently not
+-- working in that country.
 --
--- ON CONFLICT DO NOTHING tohumu yeniden çalıştırılabilir kılar: operatörün
--- düzelttiği bir ad ya da sembol EZİLMEZ.
+-- ON CONFLICT DO NOTHING makes the seed re-runnable: a name or a symbol the
+-- operator has corrected is NOT OVERWRITTEN.
 
--- Para birimleri (ISO 4217).
+-- Currencies (ISO 4217).
 --
--- decimal_digits ISO 4217'nin minor unit tanımıdır ve listede bilinçli olarak
--- üç ayrı sınıf vardır: 0 basamaklı (JPY, KRW, CLP, ISK, VND), 2 basamaklı
--- (çoğunluk) ve 3 basamaklı (KWD, BHD, JOD, OMR, TND). Sabit bir 100 çarpanı
--- varsayan bir sunum katmanı bu üç sınıfın ikisinde yanlış tutar gösterir.
+-- decimal_digits is ISO 4217's minor unit definition, and the list deliberately
+-- carries three distinct classes: 0 digits (JPY, KRW, CLP, ISK, VND), 2 digits
+-- (the majority) and 3 digits (KWD, BHD, JOD, OMR, TND). A presentation layer
+-- that assumes a fixed factor of 100 shows the wrong amount for two of those
+-- three classes.
 INSERT INTO currency (code, symbol, name, decimal_digits) VALUES
     ('AED', 'د.إ', 'UAE Dirham', 2),
     ('AUD', '$', 'Australian Dollar', 2),
@@ -62,11 +64,12 @@ INSERT INTO currency (code, symbol, name, decimal_digits) VALUES
     ('ZAR', 'R', 'Rand', 2)
 ON CONFLICT (code) DO NOTHING;
 
--- Ülkeler (ISO 3166-1 alpha-2, resmî İngilizce kısa adlarıyla).
+-- Countries (ISO 3166-1 alpha-2, under their official English short names).
 --
--- Adlar ÇEVRİLMEZ: burası referans veridir ve yerelleştirme vitrinin işidir.
--- Ülkeler bölgesiz (region_id NULL) yüklenir; bölgeye atama bir yönetim
--- kararıdır ve servis üzerinden yapılır.
+-- The names are NOT TRANSLATED: this is reference data and localisation is the
+-- storefront's job. The countries are loaded without a region (region_id NULL);
+-- assigning one to a region is an administrative decision and is made through
+-- the service.
 INSERT INTO country (iso_2, name) VALUES
     ('AD', 'Andorra'),
     ('AE', 'United Arab Emirates'),

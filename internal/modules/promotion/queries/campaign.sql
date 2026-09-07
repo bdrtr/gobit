@@ -1,4 +1,4 @@
--- campaign sorguları.
+-- campaign queries.
 
 -- name: InsertCampaign :one
 INSERT INTO campaign (
@@ -27,32 +27,35 @@ LIMIT $1 OFFSET $2;
 SELECT count(*) FROM campaign
 WHERE deleted_at IS NULL;
 
--- GetCampaignsByIDs promosyon listelerinin kampanya üstverisini TEK turda
--- getirir; kampanya başına sorgu (N+1) yapılmaz.
+-- GetCampaignsByIDs fetches the campaign metadata of a promotion listing in ONE
+-- round trip; no query is issued per campaign (N+1).
 -- name: GetCampaignsByIDs :many
 SELECT * FROM campaign
 WHERE id = ANY (@ids::text[]) AND deleted_at IS NULL
 ORDER BY id;
 
--- UpdateCampaign kampanyanın TANIMINI günceller.
+-- UpdateCampaign updates the campaign's DEFINITION.
 --
--- budget_used BİLEREK dışarıdadır: sayacı yalnızca kullanım akışı
--- (IncrementCampaignBudget / DecrementCampaignBudget) değiştirir. Yönetim
--- yüzeyinden yazılabilseydi, eşzamanlı bir kullanımla yarışıp sayacı geri
--- alabilirdi.
+-- budget_used is DELIBERATELY left out: only the redemption flow
+-- (IncrementCampaignBudget / DecrementCampaignBudget) moves that counter. If it
+-- could be written from the administration surface it would race a concurrent
+-- redemption and undo the counter.
 --
--- Sayaç sıfır DEĞİLKEN bütçenin BİRİMİ (türü ve para birimi) dondurulur;
--- WHERE'deki koşul budur. Sayaç bir birimde tutulur ve o birim değişse bile
--- SAYACIN KENDİSİ eski birimde kalırdı: "usage" (100 limit, 30 ADET
--- kullanılmış) bir kampanya "spend"e çevrildiğinde sayaçtaki 30 artık 30
--- KURUŞ sayılır; para birimi değişince de önceki TRY harcaması USD olarak
--- okunur ve devam eden TRY kullanımları campaign_budget_currency_mismatch ile
--- reddedilmeye başlar. İkisi de sessiz bir muhasebe bozulmasıdır.
+-- While the counter is NOT zero the budget's UNIT (its type and its currency)
+-- is frozen; that is what the condition in the WHERE says. The counter is held
+-- in one unit, and if that unit changed THE COUNTER ITSELF would stay in the
+-- old one: turn a "usage" campaign (limit 100, 30 REDEMPTIONS spent) into
+-- "spend" and the 30 in the counter now counts as 30 MINOR UNITS of money; and
+-- when the currency changes, spending previously made in TRY is read as USD
+-- while ongoing TRY redemptions start being refused with
+-- campaign_budget_currency_mismatch. Both are a silent corruption of the
+-- accounting.
 --
--- Koşulun WHERE'de olması bilinçlidir: uygulamada "önce oku sonra yaz"
--- yapılsaydı, iki ifade arasına giren bir kullanım sayacı sıfırdan çıkarır ve
--- güncelleme yine de geçerdi. Sayaç sıfırlanmadan birim değiştirmek isteyen
--- operatör önce kullanımları serbest bırakmalıdır.
+-- Keeping the condition in the WHERE is deliberate: with a "read first, then
+-- write" in the application, a redemption slipping in between the two
+-- statements would take the counter off zero and the update would still go
+-- through. An operator who wants to change the unit without the counter being
+-- zero has to release the redemptions first.
 -- name: UpdateCampaign :one
 UPDATE campaign
 SET name                 = $2,
@@ -78,26 +81,28 @@ SET deleted_at = $2, updated_at = $2
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING id;
 
--- LockCampaign kampanyayı işlem boyunca kilitler.
+-- LockCampaign locks the campaign for the duration of the transaction.
 --
--- EŞZAMANLI KULLANIMIN TEMELİ BUDUR. İki eşzamanlı Redeem aynı satırı
--- kilitlemek zorundadır; ikincisi birincinin işlemi bitene kadar bekler ve
--- READ COMMITTED altında satırın GÜNCEL bütçesini görür. "Önce oku sonra yaz"
--- yarışı bu yüzden oluşamaz: okuma zaten kilidin ardından yapılır.
+-- THIS IS THE FOUNDATION OF CONCURRENT REDEMPTION. Two concurrent Redeems have
+-- to lock the same row; the second waits until the first one's transaction is
+-- over and then, under READ COMMITTED, sees the row's CURRENT budget. That is
+-- why a "read first, then write" race cannot form here: the read already
+-- happens behind the lock.
 --
--- Kilit sırası tektir ve her akışta aynıdır: ÖNCE promosyon, SONRA kampanya.
--- Sıranın ters dönmesi kilitlenme (deadlock) demektir.
+-- There is a single lock order and every flow uses the same one: promotion
+-- FIRST, campaign SECOND. Reversing that order means a deadlock.
 -- name: LockCampaign :one
 SELECT * FROM campaign
 WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE;
 
--- IncrementCampaignBudget bütçe sayacını KOŞULLU artırır.
+-- IncrementCampaignBudget raises the budget counter CONDITIONALLY.
 --
--- Sınır aşılacaksa satır GÜNCELLENMEZ ve sorgu hiç satır dönmez; çağıran bunu
--- "bütçe yetmedi" olarak yorumlar. Koşulun WHERE'de olması bilinçlidir: sınır
--- kontrolünü uygulamada yapıp ayrı bir UPDATE atmak, kilit alınmamış bir yolda
--- iki ifade arasına başka bir kullanımın girmesine izin verirdi.
+-- If the limit would be exceeded the row is NOT UPDATED and the query returns
+-- no row at all; the caller reads that as "the budget did not suffice". Keeping
+-- the condition in the WHERE is deliberate: checking the limit in the
+-- application and then issuing a separate UPDATE would, on a path that took no
+-- lock, let another redemption slip in between the two statements.
 -- name: IncrementCampaignBudget :one
 UPDATE campaign
 SET budget_used = budget_used + @delta::bigint,
@@ -107,12 +112,12 @@ WHERE id = @id::text
   AND (budget_limit IS NULL OR budget_used + @delta::bigint <= budget_limit)
 RETURNING *;
 
--- DecrementCampaignBudget bütçe sayacını düşürür ve SIFIRIN ALTINA İNMEZ.
+-- DecrementCampaignBudget lowers the budget counter and NEVER GOES BELOW ZERO.
 --
--- greatest(...) bir savunmadır: defterle sayacın ayrıştığı bir durumda (elle
--- çalıştırılmış bir SQL, kısmi geri yükleme) geri alma negatif bir bütçe
--- yazmamalıdır. Negatif bütçe CHECK kısıtına çarpar ve serbest bırakmayı —
--- yani bir SAGA TELAFİSİNİ — düşürürdü.
+-- The greatest(...) is a defence: in a state where the ledger and the counter
+-- have drifted apart (a hand-run SQL statement, a partial restore) the reversal
+-- must not write a negative budget. A negative budget would hit the CHECK
+-- constraint and bring down the release — that is, a SAGA COMPENSATION.
 -- name: DecrementCampaignBudget :one
 UPDATE campaign
 SET budget_used = greatest(budget_used - @delta::bigint, 0),

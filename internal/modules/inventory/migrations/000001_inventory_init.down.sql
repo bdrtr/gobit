@@ -1,8 +1,8 @@
--- 000001_inventory_init'in geri alınması.
+-- Rolling 000001_inventory_init back.
 --
--- Tablolar bağımlılık sırasının TERSİNDE düşürülür: önce inventory_items ve
--- stock_locations'a referans veren tablolar, sonra referans verilenler.
--- İndeksler tabloyla birlikte düşer, ayrıca DROP edilmez.
+-- The tables are dropped in the REVERSE of the dependency order: first the
+-- tables that reference inventory_items and stock_locations, then the ones
+-- referenced. The indexes fall with their table and are not DROPped separately.
 
 DROP TABLE IF EXISTS inventory_reservations;
 DROP TABLE IF EXISTS inventory_levels;

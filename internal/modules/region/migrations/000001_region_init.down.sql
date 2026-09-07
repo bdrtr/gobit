@@ -1,5 +1,5 @@
--- region şemasının geri alınması. Sıra, foreign key bağımlılıklarının
--- tersidir: önce bağımlı tablolar düşer.
+-- Rolling the region schema back. The order is the reverse of the foreign key
+-- dependencies: the dependent tables go first.
 DROP INDEX IF EXISTS country_region_id_idx;
 DROP TABLE IF EXISTS country;
 

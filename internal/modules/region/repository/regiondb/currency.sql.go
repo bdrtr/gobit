@@ -26,10 +26,10 @@ WHERE code = ANY($1::text[])
 ORDER BY code
 `
 
-// GetCurrenciesByCodes birden çok para birimini TEK turda okur.
+// GetCurrenciesByCodes reads several currencies in ONE round trip.
 //
-// Query sağlayıcısı bölgeleri para birimleriyle birlikte döndürür; kod başına
-// ayrı sorgu N+1 demek olurdu (ADR 0004'ün toplu okuma şartı).
+// The query provider returns regions together with their currencies; a separate
+// query per code would be an N+1 (ADR 0004's batch-read requirement).
 func (q *Queries) GetCurrenciesByCodes(ctx context.Context, codes []string) ([]Currency, error) {
 	rows, err := q.db.Query(ctx, getCurrenciesByCodes, codes)
 	if err != nil {
@@ -63,10 +63,11 @@ SELECT code, symbol, name, decimal_digits, created_at, updated_at FROM currency
 WHERE code = $1
 `
 
-// currency sorguları.
+// currency queries.
 //
-// Tabloda deleted_at YOKTUR ve okumalar öyle bir süzgeç TAŞIMAZ; gerekçe
-// country.sql'in başındaki ile aynıdır ve 000003'te yazılıdır.
+// The table has NO deleted_at and these reads carry NO such filter; the
+// argument is the same one at the top of country.sql and it is written out in
+// 000003.
 func (q *Queries) GetCurrency(ctx context.Context, code string) (Currency, error) {
 	row := q.db.QueryRow(ctx, getCurrency, code)
 	var i Currency

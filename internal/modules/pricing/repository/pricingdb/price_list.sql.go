@@ -66,7 +66,7 @@ type InsertPriceListParams struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
-// price_list sorguları.
+// price_list queries.
 func (q *Queries) InsertPriceList(ctx context.Context, arg InsertPriceListParams) (PriceList, error) {
 	row := q.db.QueryRow(ctx, insertPriceList,
 		arg.ID,

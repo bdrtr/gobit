@@ -74,7 +74,7 @@ type InsertCompanyParams struct {
 	CreatedAt                pgtype.Timestamptz
 }
 
-// b2b_company sorguları. Tüm okumalar deleted_at IS NULL filtresi uygular.
+// b2b_company queries. Every read applies the deleted_at IS NULL filter.
 func (q *Queries) InsertCompany(ctx context.Context, arg InsertCompanyParams) (B2bCompany, error) {
 	row := q.db.QueryRow(ctx, insertCompany,
 		arg.ID,
@@ -122,10 +122,10 @@ type ListCompaniesParams struct {
 	Lim   int32
 }
 
-// ListCompanies süzgeçlenmiş ve sayfalanmış şirket listesini döner.
+// ListCompanies returns the filtered and paginated list of companies.
 //
-// E-posta süzgeci BİRDEN ÇOK satır döndürebilir: şirket e-postası benzersiz
-// değildir (gerekçe migration'daki tablo belgesindedir).
+// The e-mail filter may return MORE THAN ONE row: a company e-mail is not
+// unique (the argument is in the table's documentation in the migration).
 func (q *Queries) ListCompanies(ctx context.Context, arg ListCompaniesParams) ([]B2bCompany, error) {
 	rows, err := q.db.Query(ctx, listCompanies, arg.Email, arg.Off, arg.Lim)
 	if err != nil {
@@ -172,11 +172,12 @@ type SoftDeleteCompanyParams struct {
 	DeletedAt pgtype.Timestamptz
 }
 
-// SoftDeleteCompany şirketi yumuşak siler.
+// SoftDeleteCompany soft-deletes the company.
 //
-// ÇALIŞANLARI da aynı işlemde silinir (bkz. SoftDeleteEmployeesOfCompany);
-// ikisinin ayrı çağrılarda yapılması, arada kalan bir hatada şirketsiz çalışan
-// kayıtları bırakırdı ve o kayıtlar vitrinde silinmiş bir şirketi gösterirdi.
+// Its EMPLOYEES are deleted in the same operation as well (see
+// SoftDeleteEmployeesOfCompany); doing the two in separate calls would, on an
+// error in between, leave employee records with no company behind, and those
+// records would show a deleted company in the storefront.
 func (q *Queries) SoftDeleteCompany(ctx context.Context, arg SoftDeleteCompanyParams) (string, error) {
 	row := q.db.QueryRow(ctx, softDeleteCompany, arg.ID, arg.DeletedAt)
 	var id string
@@ -214,12 +215,13 @@ type UpdateCompanyParams struct {
 	ID           string
 }
 
-// UpdateCompany verilmeyen alanları OLDUĞU GİBİ bırakır.
+// UpdateCompany leaves the fields it was not given EXACTLY AS THEY WERE.
 //
-// COALESCE ile yazılan bu kısmi güncelleme "alan gönderilmedi" ile "alan boşa
-// çekildi" ayrımını korur: NULL parametre eski değeri saklar, boş dize gerçek
-// bir temizlemedir. Adres alanları için bu ayrım somuttur — taşınan bir
-// şirketin eski posta kodu silinebilmelidir.
+// This partial update, written with COALESCE, preserves the distinction between
+// "the field was not sent" and "the field was cleared": a NULL parameter keeps
+// the old value, an empty string is a real clearing. For the address fields
+// that distinction is concrete — a company that has moved must be able to have
+// its old postal code deleted.
 func (q *Queries) UpdateCompany(ctx context.Context, arg UpdateCompanyParams) (B2bCompany, error) {
 	row := q.db.QueryRow(ctx, updateCompany,
 		arg.Name,

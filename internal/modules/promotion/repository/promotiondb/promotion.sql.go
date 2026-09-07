@@ -23,12 +23,12 @@ type CountPromotionsParams struct {
 	CampaignID *string
 }
 
-// CountPromotions sayfalama zarfının toplam sayısını verir ve ListPromotions
-// ile AYNI filtreleri uygular; ikisi birlikte değiştirilmelidir.
+// CountPromotions gives the total for the pagination envelope and applies the
+// SAME filters as ListPromotions; the two have to be changed together.
 //
-// Toplam, satırlarla birlikte dönen bir pencere fonksiyonundan okunamaz:
-// aralık dışı bir sayfada hiç satır dönmez, pencere de değerlendirilmez ve
-// toplam 0 görünürdü.
+// The total cannot be read from a window function returned alongside the rows:
+// an out-of-range page returns no rows at all, so the window is never evaluated
+// and the total would appear as 0.
 func (q *Queries) CountPromotions(ctx context.Context, arg CountPromotionsParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countPromotions, arg.Status, arg.CampaignID)
 	var count int64
@@ -49,8 +49,8 @@ type DecrementPromotionUsageParams struct {
 	ID  string
 }
 
-// DecrementPromotionUsage kullanım sayacını düşürür ve SIFIRIN ALTINA İNMEZ.
-// Gerekçe DecrementCampaignBudget'takiyle aynıdır.
+// DecrementPromotionUsage lowers the usage counter and NEVER GOES BELOW ZERO.
+// The argument is the same as the one at DecrementCampaignBudget.
 func (q *Queries) DecrementPromotionUsage(ctx context.Context, arg DecrementPromotionUsageParams) (Promotion, error) {
 	row := q.db.QueryRow(ctx, decrementPromotionUsage, arg.Now, arg.ID)
 	var i Promotion
@@ -127,7 +127,7 @@ WHERE id = ANY ($1::text[]) AND deleted_at IS NULL
 ORDER BY id
 `
 
-// GetPromotionsByIDs Query katmanının FetchByIDs çağrısını TEK turda karşılar.
+// GetPromotionsByIDs serves the Query layer's FetchByIDs call in ONE round trip.
 func (q *Queries) GetPromotionsByIDs(ctx context.Context, ids []string) ([]Promotion, error) {
 	rows, err := q.db.Query(ctx, getPromotionsByIDs, ids)
 	if err != nil {
@@ -176,11 +176,11 @@ type IncrementPromotionUsageParams struct {
 	ID  string
 }
 
-// IncrementPromotionUsage kullanım sayacını KOŞULLU artırır.
+// IncrementPromotionUsage raises the usage counter CONDITIONALLY.
 //
-// Sınır aşılacaksa satır GÜNCELLENMEZ ve sorgu hiç satır dönmez; çağıran bunu
-// "kullanım hakkı bitti" olarak yorumlar (bkz. IncrementCampaignBudget'taki
-// aynı gerekçe).
+// If the limit would be exceeded the row is NOT UPDATED and the query returns
+// no row at all; the caller reads that as "the redemptions are used up" (see
+// the same argument at IncrementCampaignBudget).
 func (q *Queries) IncrementPromotionUsage(ctx context.Context, arg IncrementPromotionUsageParams) (Promotion, error) {
 	row := q.db.QueryRow(ctx, incrementPromotionUsage, arg.Now, arg.ID)
 	var i Promotion
@@ -223,7 +223,7 @@ type InsertPromotionParams struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
-// promotion sorguları.
+// promotion queries.
 func (q *Queries) InsertPromotion(ctx context.Context, arg InsertPromotionParams) (Promotion, error) {
 	row := q.db.QueryRow(ctx, insertPromotion,
 		arg.ID,
@@ -262,16 +262,16 @@ WHERE deleted_at IS NULL
 ORDER BY id
 `
 
-// ListApplicablePromotions hesaplamaya girebilecek promosyonları TEK turda
-// döner: aktif olanlardan OTOMATİK olanlar ve verilen KODLARA sahip olanlar.
+// ListApplicablePromotions returns, in ONE round trip, the promotions that may
+// enter the computation: among the active ones, those that are AUTOMATIC and
+// those carrying one of the given CODES.
 //
-// Kod kümesi boş olabilir (yalnızca otomatikler); PostgreSQL'de boş bir dizi
-// ile ANY karşılaştırması hiçbir satır seçmez, bu yüzden ayrı bir dal
-// gerekmez.
+// The code set may be empty (automatics only); in PostgreSQL an ANY comparison
+// against an empty array selects no row, so no separate branch is needed.
 //
-// Süzgecin SQL'de olması bilinçlidir: tüm promosyonları çekip uygulamada
-// elemek, promosyon sayısı büyüdükçe her sepet hesabında tüm tabloyu okumak
-// demek olurdu.
+// Keeping the filter in SQL is deliberate: pulling every promotion and sieving
+// them in the application would mean reading the whole table on every cart
+// computation, and the cost would grow with the number of promotions.
 func (q *Queries) ListApplicablePromotions(ctx context.Context, codes []string) ([]Promotion, error) {
 	rows, err := q.db.Query(ctx, listApplicablePromotions, codes)
 	if err != nil {
@@ -365,13 +365,13 @@ WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE
 `
 
-// LockPromotion promosyonu işlem boyunca kilitler; kullanım akışının İLK
-// adımıdır.
+// LockPromotion locks the promotion for the duration of the transaction; it is
+// the FIRST step of the redemption flow.
 //
-// Kilit sırası tektir ve her akışta aynıdır: ÖNCE promosyon, SONRA kampanya.
-// Sıranın ters dönmesi kilitlenme (deadlock) demektir; aynı kampanyaya bağlı
-// iki promosyon eşzamanlı kullanıldığında ikisi de aynı kampanya satırını
-// ister ve sıra ancak burada garanti edilir.
+// There is a single lock order and every flow uses the same one: promotion
+// FIRST, campaign SECOND. Reversing that order means a deadlock; when two
+// promotions attached to the same campaign are redeemed concurrently both ask
+// for that same campaign row, and the order can only be guaranteed here.
 func (q *Queries) LockPromotion(ctx context.Context, id string) (Promotion, error) {
 	row := q.db.QueryRow(ctx, lockPromotion, id)
 	var i Promotion
@@ -398,21 +398,24 @@ WHERE id = $1 AND deleted_at IS NULL
 FOR SHARE
 `
 
-// LockPromotionShared promosyonu PAYLAŞIMLI kilitle okur; ALTINA satır yazan
-// yolların ilk adımıdır (kural ekleme, uygulama yöntemi yazma).
+// LockPromotionShared reads the promotion under a SHARED lock; it is the first
+// step of the paths that write rows UNDERNEATH it (adding a rule, writing an
+// application method).
 //
-// Kilit ŞARTTIR ve foreign key onun yerini TUTMAZ: promotion_rule ve
-// promotion_application_method promotion(id)'ye referans verir, ama silme
-// YUMUŞAKTIR ve satırı yerinde bırakır. FK denetimi satırın VARLIĞINA bakar,
-// deleted_at'ine değil; silinmiş bir promosyonun altına yazılan satırı bu
-// yüzden hiçbir kısıt durduramaz. Ölçüldü (2026-09-06): varlık denetimi ile
-// yazma arasına giren bir yumuşak silme, yazmayı beklet(me)den geçiriyordu.
+// The lock is MANDATORY and a foreign key does NOT take its place:
+// promotion_rule and promotion_application_method do reference promotion(id),
+// but deletion is SOFT and leaves the row in place. The FK check looks at the
+// EXISTENCE of the row, not at its deleted_at; that is why no constraint can
+// stop a row being written underneath a deleted promotion. Measured
+// (2026-09-06): a soft delete slipping in between the existence check and the
+// write let the write through without making it wait.
 //
-// FOR UPDATE değil FOR SHARE alınır: iki yönetici aynı promosyona aynı anda
-// kural ekleyebilmelidir ve iki FOR SHARE çakışmaz. Silme ise düz bir UPDATE'tir
-// ve satıra FOR NO KEY UPDATE kilidi koyar — FOR SHARE onunla ÇAKIŞIR, yani
-// yazma silmeyi bekler ve kilidi aldıktan sonra WHERE koşulunu YENİDEN
-// değerlendirip "kayıt yok" görür.
+// FOR SHARE is taken and not FOR UPDATE: two administrators must be able to add
+// a rule to the same promotion at the same time, and two FOR SHAREs do not
+// conflict. The deletion, on the other hand, is a plain UPDATE and puts a FOR
+// NO KEY UPDATE lock on the row — FOR SHARE DOES conflict with that, so the
+// write waits for the deletion and, once it has the lock, RE-EVALUATES the
+// WHERE condition and sees "no such record".
 func (q *Queries) LockPromotionShared(ctx context.Context, id string) (Promotion, error) {
 	row := q.db.QueryRow(ctx, lockPromotionShared, id)
 	var i Promotion
@@ -478,10 +481,10 @@ type UpdatePromotionParams struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
-// UpdatePromotion promosyonun TANIMINI günceller.
+// UpdatePromotion updates the promotion's DEFINITION.
 //
-// usage_count BİLEREK dışarıdadır: sayacı yalnızca kullanım akışı değiştirir
-// (bkz. IncrementPromotionUsage / DecrementPromotionUsage).
+// usage_count is DELIBERATELY left out: only the redemption flow moves that
+// counter (see IncrementPromotionUsage / DecrementPromotionUsage).
 func (q *Queries) UpdatePromotion(ctx context.Context, arg UpdatePromotionParams) (Promotion, error) {
 	row := q.db.QueryRow(ctx, updatePromotion,
 		arg.ID,
