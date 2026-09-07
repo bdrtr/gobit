@@ -173,7 +173,8 @@ type ListOrdersForErasureRow struct {
 // No statement touches a free-form column: orders.metadata,
 // orders.cancel_reason, orders.idempotency_key, order_line_items.metadata,
 // order_addresses.metadata and the reason/note/metadata columns of the three
-// after-sales records are left exactly as the caller wrote them. ADR 0029 puts the judgement of whether such a field holds personal data
+// after-sales records are left exactly as the caller wrote them. ADR 0029 puts
+// the judgement of whether such a field holds personal data
 // in a given deployment with the CONTROLLER, not with the framework, and a
 // framework that rewrote a shop's own notes would have taken that judgement
 // back. What the module owes instead is to SAY so, which the Erase result does

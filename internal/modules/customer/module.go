@@ -90,18 +90,6 @@ const (
 // codeSetupFailed modül kurulumunun başarısız olduğunu bildirir.
 const codeSetupFailed = "customer_module_setup_failed"
 
-// Bildirimde adı geçen tabloların adları ([Module.PersonalData] için).
-//
-// tableCustomer, [ModuleName] ile aynı harfleri taşır ama ondan TÜRETİLMEZ:
-// biri veritabanındaki bir tablonun adı, öteki modülün container'daki adıdır ve
-// birinin değişmesi ötekini değiştirmez. Aynı gerekçe [ProviderName]'in
-// dayandığı entity adı için de yazılıdır (bkz. paket belgesi).
-const (
-	tableCustomer = "customer"
-	tableAddress  = "customer_address"
-	tableGroup    = "customer_group"
-)
-
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
@@ -127,20 +115,26 @@ var _ module.Module = (*Module)(nil)
 // sessizliği kapatır.
 var _ openapi.Describer = (*Module)(nil)
 
-// Unutulma (erasure) yetenekleri de derleme zamanında sabitlenir.
+// Kişisel veri yetenekleri de derleme zamanında sabitlenir.
 //
 // Gerekçe [openapi.Describer] pininin aynısıdır ve burada bedeli daha ağırdır:
-// iki arayüz de TİP İDDİASIYLA aranır (ADR 0029), yani metot adı ya da imzası
-// kaydığında hiçbir şey kırılmaz — modül taramadan sessizce düşer. Belge
+// üç arayüz de TİP İDDİASIYLA aranır (ADR 0029, ADR 0034), yani metot adı ya da
+// imzası kaydığında hiçbir şey kırılmaz — modül taramadan sessizce düşer. Belge
 // örneğinde bunun bedeli eksik bir yol, burada ise bir kişiye "veriniz
 // silindi" denirken e-postasının, adının ve adresinin yerinde kalmasıdır.
 //
-// İki arayüz AYRI AYRI sabitlenir çünkü ayrı yeteneklerdir: bildirebilen ama
+// Üç arayüz AYRI AYRI sabitlenir çünkü ayrı yeteneklerdir: bildirebilen ama
 // silemeyen bir tutucu vardır (bkz. personaldata.Declarer belgesi) ve tek bir pin
-// ikisini birbirine bağlardı.
+// üçünü birbirine bağlardı. [personaldata.Discloser]'ın düşmesinin bedeli
+// ötekilerden farklıdır ve daha sinsidir: koordinatör, açıklayamayan ama
+// bildiren bir tutucuyu dosyaya UNRESOLVABLE olarak yazar (bkz.
+// internal/workflows/datasubject, undisclosedHolder). Yani imza kayarsa test
+// kırılmaz, derleme kırılmaz — kişiye giden belgede yalnızca "burada ne
+// olduğunu söyleyemiyoruz" yazar, oysa modül tam olarak söyleyebiliyordu.
 var (
-	_ personaldata.Eraser   = (*Module)(nil)
-	_ personaldata.Declarer = (*Module)(nil)
+	_ personaldata.Eraser    = (*Module)(nil)
+	_ personaldata.Declarer  = (*Module)(nil)
+	_ personaldata.Discloser = (*Module)(nil)
 )
 
 // New kurulmamış bir customer modülü üretir; servis [Module.Register] içinde
@@ -237,9 +231,21 @@ func (m *Module) Erase(ctx context.Context, s personaldata.Subject) (personaldat
 // # Neden modülde, neden statik
 //
 // Bildirim KODUN bir özelliğidir, verinin değil: boş veritabanında da dolusunda
-// da aynı cümledir ve bir denetim onu bağlantı açmadan okur (ADR 0029). Bu
-// yüzden servise değil modüle bağlıdır ve Register çağrılmamışken de doğru
-// yanıt verir.
+// da aynı cümledir ve bir denetim onu bağlantı açmadan okur (ADR 0029). BİLDİREN
+// hâlâ modüldür — denetimin çağırdığı metot budur, aşağıdaki gerekçelerin yeri
+// burasıdır ve Register çağrılmamışken de doğru yanıt verir.
+//
+// # Listenin kendisi neden serviste
+//
+// [service.PersonalDataHoldings] listeyi tutar, çünkü AÇIKLAMA (disclosure) onu
+// okumak zorundadır: [Module.PersonalDataOf]'un ürettiği her kayıt, alanlarını
+// bu listeden TÜRETİR ve ikinci bir sütun listesi taşımaz (ADR 0034, dördüncü
+// madde). Elde tutulan iki liste yazıldıkları gün birbirine uyar ve birine sütun
+// eklenen ilk gün ayrışır; ayrıştıklarında ortaya çıkan şey ya bildirilip hiç
+// gösterilmeyen ya da "orada yok" denildikten sonra teslim edilen bir sütundur.
+// İkisi de bir kişiye kendi verisi hakkında verilmiş yanlış yanıttır. Servis
+// modülü import EDEMEZ (döngü olurdu), dolayısıyla türetmenin var olabilmesi
+// için listenin o tarafta durması gerekiyordu.
 //
 // # Neden eksiksiz olmak zorunda
 //
@@ -273,70 +279,36 @@ func (m *Module) Erase(ctx context.Context, s personaldata.Subject) (personaldat
 // yalnızca gömen uygulama karar verebilir.
 func (m *Module) PersonalData() personaldata.Declaration {
 	return personaldata.Declaration{
-		Holder: ModuleName,
-		Holdings: []personaldata.Holding{
-			{
-				Table: tableCustomer, Column: "email", Kind: personaldata.Named,
-				Why: "the address the person gave; it is also how a guest checkout is recognized",
-			},
-			{
-				Table: tableCustomer, Column: "first_name", Kind: personaldata.Named,
-				Why: "the person's first name as they typed it",
-			},
-			{
-				Table: tableCustomer, Column: "last_name", Kind: personaldata.Named,
-				Why: "the person's last name as they typed it",
-			},
-			{
-				Table: tableCustomer, Column: "phone", Kind: personaldata.Named,
-				Why: "the person's phone number, used to reach them about an order",
-			},
-			{
-				Table: tableCustomer, Column: "metadata", Kind: personaldata.Open,
-				Why: "free-form context the shop writes about the customer; gobit puts nothing in it and never rewrites it, so whether it holds personal data is the controller's judgement",
-			},
-			{
-				Table: tableGroup, Column: "metadata", Kind: personaldata.Open,
-				Why: "free-form context the shop writes about a customer segment; the group is not a person, but the blob is the shop's to fill and gobit never looks inside it, so whether it names anybody is the controller's judgement",
-			},
-			{
-				Table: tableAddress, Column: "first_name", Kind: personaldata.Named,
-				Why: "the first name on a saved address, which may be the customer's or a recipient's",
-			},
-			{
-				Table: tableAddress, Column: "last_name", Kind: personaldata.Named,
-				Why: "the last name on a saved address, which may be the customer's or a recipient's",
-			},
-			{
-				Table: tableAddress, Column: "company", Kind: personaldata.Named,
-				Why: "the company the address is delivered to; for a sole trader it names the person",
-			},
-			{
-				Table: tableAddress, Column: "address_1", Kind: personaldata.Named,
-				Why: "the street line of a saved address — where the person lives or takes deliveries",
-			},
-			{
-				Table: tableAddress, Column: "address_2", Kind: personaldata.Named,
-				Why: "the second address line: flat, floor or door, which narrows the street line to a household",
-			},
-			{
-				Table: tableAddress, Column: "city", Kind: personaldata.Named,
-				Why: "the city of a saved address",
-			},
-			{
-				Table: tableAddress, Column: "postal_code", Kind: personaldata.Named,
-				Why: "the postal code of a saved address; in some countries it reaches a single building",
-			},
-			{
-				Table: tableAddress, Column: "phone", Kind: personaldata.Named,
-				Why: "the contact phone left on a saved address for the courier",
-			},
-			{
-				Table: tableAddress, Column: "country_code", Kind: personaldata.Named,
-				Why: "the country of a saved address; it is declared but deliberately NOT erased, because it names the jurisdiction whose tax and retention rules apply, a two-letter code points at tens of millions of people, and the column's CHECK constraint refuses an empty value",
-			},
-		},
+		Holder:   ModuleName,
+		Holdings: service.PersonalDataHoldings(),
 	}
+}
+
+// PersonalDataOf kişinin bu modüldeki verisini DOSYA hâlinde döner.
+//
+// # Neden modülün bunu borcu var
+//
+// Çünkü kişiyi zaten BULABİLİYOR. [Module.Erase] iki tutamağı da çözer, misafir
+// kayıtlarını bilerek kapsar ve bulduğunun üzerine yazar. Yok etmek için arayıp
+// göstermek için arayamayan bir modül, bu asimetriyi kimsenin politikasından
+// değil kendi kodundan üretmiş olurdu (ADR 0034). Bu metot, Erase'in yaptığı
+// aramanın öteki yönüdür ve özneyi tıpatıp aynı biçimde çözer.
+//
+// # Neden yalnızca delege ediyor
+//
+// [Module.Erase] ile aynı gerekçe: depo ve sorgular yalnızca servisten
+// görünür. Kararın kendisi ve neyin dosyaya girip neyin girmediğinin
+// gerekçesi servistedir (bkz. service.Service.PersonalDataOf) — özellikle
+// customer_group.metadata'nın ve üyelik satırının neden bir KİŞİNİN dosyasında
+// yer almadığı.
+//
+// Register çağrılmamışsa servis nil'dir ve panik yerine tipli bir Unavailable
+// hatası döner. Sessiz bir "bu kişi hakkında hiçbir şey yok" yanıtı ise kabul
+// edilemezdi ve burada bedeli unutulmadakinden ağırdır: koordinatör hatayı
+// dosyada eksik olarak ADLANDIRIR (bkz. internal/app, dossierDTO.Incomplete),
+// oysa boş bir yanıt kişiye "sizin hakkınızda bir şey tutmuyoruz" diye giderdi.
+func (m *Module) PersonalDataOf(ctx context.Context, s personaldata.Subject) (personaldata.Disclosure, error) {
+	return m.svc.PersonalDataOf(ctx, s)
 }
 
 // Service kurulmuş servisi döner; Register çağrılmadıysa nil.

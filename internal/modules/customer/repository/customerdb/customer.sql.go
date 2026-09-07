@@ -212,6 +212,50 @@ func (q *Queries) GetCustomer(ctx context.Context, id string) (Customer, error) 
 	return i, err
 }
 
+const getCustomerForDisclosure = `-- name: GetCustomerForDisclosure :one
+
+SELECT id, email, first_name, last_name, phone, has_account, metadata, created_at, updated_at, deleted_at FROM customer
+WHERE id = $1
+`
+
+// AÇIKLAMA (disclosure) sorguları buradan aşağıdadır ve deleted_at süzgeci
+// taşımayan İKİNCİ öbektir.
+//
+// Gerekçe unutulmanınkiyle AYNI olgudur, tersinden okunmuş hâlidir: yumuşak
+// silme tek bir kişisel sütuna dokunmaz, dolayısıyla silinmiş bir satır kişinin
+// e-postasını, adını ve telefonunu AYNEN taşımaya devam eder. Soru "kayıt
+// listelerde görünüyor mu" değil, "veritabanı hâlâ neyi TUTUYOR" olduğu için
+// süzgeç burada da yoktur. Süzgeç konsaydı kişiye "sizin hakkınızda tuttuğumuz
+// her şey budur" denirken silinmiş satırdaki adı gösterilmezdi.
+//
+// Sorgular unutulma sorgularının kilitsiz İKİZİDİR ve üç yola aynı yerden
+// ayrılır (bkz. repository/erasure.go, lockErasureTargets). FOR UPDATE YOKTUR
+// ve olmamalıdır: bu bir OKUMADIR, işlem açmaz, hiçbir şey yazmaz ve bir
+// raporun okunması vitrindeki bir müşteriyi bekletemez.
+// GetCustomerForDisclosure kimliğe göre TEK satırı okur.
+//
+// Yalnızca kimlik taşıyan özne için ayrı bir sorgu olması bilinçlidir: bu yol
+// BİRİNCİL ANAHTAR aramasıdır ve taramaz. Tek bir (id = $1 OR email = $2)
+// sorgusuna indirgenseydi, yalnızca kimlikle gelen — yönetim ucunun en sık
+// kullandığı — istek de sıralı taramaya düşerdi.
+func (q *Queries) GetCustomerForDisclosure(ctx context.Context, id string) (Customer, error) {
+	row := q.db.QueryRow(ctx, getCustomerForDisclosure, id)
+	var i Customer
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.FirstName,
+		&i.LastName,
+		&i.Phone,
+		&i.HasAccount,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const getCustomerForUpdate = `-- name: GetCustomerForUpdate :one
 SELECT id, email, first_name, last_name, phone, has_account, metadata, created_at, updated_at, deleted_at FROM customer
 WHERE id = $1 AND deleted_at IS NULL
@@ -267,7 +311,10 @@ type InsertCustomerParams struct {
 //
 // TEK istisna dosyanın sonundaki UNUTULMA (erasure) sorgularıdır ve istisna
 // bilinçlidir: yumuşak silinmiş bir satır kişisel verisini OLDUĞU GİBİ
-// taşımaya devam eder. Gerekçe [LockCustomerForErasure] başlığında yazılıdır.
+// taşımaya devam eder. Gerekçe LockCustomerForErasure başlığında yazılıdır.
+// (Köşeli parantezli godoc bağlantısı DEĞİL: sqlc bu başlığı ürettiği pakete
+// olduğu gibi kopyalar ve orada o ad bir metottur, paket düzeyinde bir
+// bildirim değil — bağlantı çözülmezdi.)
 func (q *Queries) InsertCustomer(ctx context.Context, arg InsertCustomerParams) (Customer, error) {
 	row := q.db.QueryRow(ctx, insertCustomer,
 		arg.ID,
@@ -338,6 +385,108 @@ func (q *Queries) ListCustomers(ctx context.Context, arg ListCustomersParams) ([
 		arg.Off,
 		arg.Lim,
 	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Customer{}
+	for rows.Next() {
+		var i Customer
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.FirstName,
+			&i.LastName,
+			&i.Phone,
+			&i.HasAccount,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCustomersByEmailForDisclosure = `-- name: ListCustomersByEmailForDisclosure :many
+SELECT id, email, first_name, last_name, phone, has_account, metadata, created_at, updated_at, deleted_at FROM customer
+WHERE email = $1
+ORDER BY id
+`
+
+// ListCustomersByEmailForDisclosure e-postaya göre ulaşılan TÜM satırları okur.
+//
+// Çoğul olması zorunludur ve sebebi LockCustomersByEmailForErasure'ınkiyle
+// aynıdır: aynı e-postayla istenildiği kadar MİSAFİR kaydı açılabilir ve hepsi
+// aynı kişidir. Yalnızca hesabı arayan bir sorgu (GetAccountByEmail) o kişinin
+// misafir kayıtlarını dosyanın dışında bırakırdı.
+//
+// Sıralama belirlilik içindir: aynı özne için iki kez üretilen dosya kayıtları
+// aynı sırada göstermelidir, yoksa iki belgeyi karşılaştıran kişi olmayan bir
+// fark görür.
+func (q *Queries) ListCustomersByEmailForDisclosure(ctx context.Context, email string) ([]Customer, error) {
+	rows, err := q.db.Query(ctx, listCustomersByEmailForDisclosure, email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Customer{}
+	for rows.Next() {
+		var i Customer
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.FirstName,
+			&i.LastName,
+			&i.Phone,
+			&i.HasAccount,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCustomersByIDOrEmailForDisclosure = `-- name: ListCustomersByIDOrEmailForDisclosure :many
+SELECT id, email, first_name, last_name, phone, has_account, metadata, created_at, updated_at, deleted_at FROM customer
+WHERE id = $1 OR email = $2
+ORDER BY id
+`
+
+type ListCustomersByIDOrEmailForDisclosureParams struct {
+	ID    string
+	Email string
+}
+
+// ListCustomersByIDOrEmailForDisclosure kimliği VE e-postayı BİRLİKTE taşıyan
+// özneyi tek sorguda çözer.
+//
+// Böyle bir özne yönetim ucunun normalidir (bkz. internal/app/erasure.go: istek
+// gövdesindeki iki alan da doğrudan personaldata.Subject'e geçer). Kaydı olan bir
+// müşteri aynı adresle misafir olarak da alışveriş yapmış olabilir; kimlik o
+// kaydı, e-posta ötekileri gösterir ve kişi hepsidir.
+//
+// Unutulmadaki ikizinin TEK sorgu olma gerekçesi kilit sırasıydı; burada kilit
+// yoktur ve tek sorgu olmasının sebebi başkadır: iki ayrı sorgunun sonucunu
+// birleştirmek, iki koşulu birden sağlayan satırı ayıklamayı (dedup) çağırana
+// yıkardı ve ayıklanmamış bir dosya aynı kişiyi iki kez gösterirdi. Tek sorguda
+// o satır zaten BİR kez döner.
+func (q *Queries) ListCustomersByIDOrEmailForDisclosure(ctx context.Context, arg ListCustomersByIDOrEmailForDisclosureParams) ([]Customer, error) {
+	rows, err := q.db.Query(ctx, listCustomersByIDOrEmailForDisclosure, arg.ID, arg.Email)
 	if err != nil {
 		return nil, err
 	}
@@ -493,7 +642,7 @@ type LockCustomersByIDOrEmailForErasureParams struct {
 //
 // Böyle bir özne kural dışı değil, YÖNETİM UCUNUN normalidir (bkz.
 // internal/app/erasure.go: istek gövdesindeki iki alan da doğrudan
-// personaldata.Subject'e geçer). Kaydı olan bir müşteri aynı adresle misafir olarak
+// erasure.Subject'e geçer). Kaydı olan bir müşteri aynı adresle misafir olarak
 // da alışveriş yapmış olabilir; kimliği o kaydı, e-posta ötekileri gösterir ve
 // kişi hepsidir. "Kimlik varsa e-postaya bakma" kuralı tam da bu kişide
 // misafir satırlarını olduğu gibi bırakırdı.

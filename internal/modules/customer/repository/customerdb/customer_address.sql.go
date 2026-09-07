@@ -155,6 +155,70 @@ func (q *Queries) InsertCustomerAddress(ctx context.Context, arg InsertCustomerA
 	return i, err
 }
 
+const listAddressesForDisclosure = `-- name: ListAddressesForDisclosure :many
+SELECT id, customer_id, first_name, last_name, company, address_1, address_2, city, country_code, postal_code, phone, is_default_shipping, is_default_billing, created_at, updated_at, deleted_at FROM customer_address
+WHERE customer_id = ANY($1::text[])
+ORDER BY customer_id, created_at DESC, id DESC
+`
+
+// ListAddressesForDisclosure verilen müşterilerin TÜM adreslerini okur.
+//
+// Bu dosyadaki tek deleted_at'siz sorgudur ve istisna, unutulma yolundakiyle
+// aynı olguya dayanır: yumuşak silme yalnızca deleted_at ile updated_at yazar,
+// silinmiş bir adres satırı kişinin sokağını, kapı numarasını ve telefonunu
+// AYNEN taşır. "Bize dair ne tutuyorsunuz" sorusunun yanıtı, listelerde
+// görünen satırlar değil, veritabanının GERÇEKTEN tuttuğu satırlardır.
+//
+// customer_address_customer_idx bu sorguya HİZMET EDEMEZ: indeks
+// WHERE deleted_at IS NULL ile kurulmuş kısmi bir indekstir ve sorgu onun
+// koşulunun dışına çıkar. Tarama, unutulma yolunda kabul edilen gerekçenin
+// aynısıyla kabul edilir (bkz. repository/erasure.go, lockErasureTargets):
+// açıklama isteği kişi başına ömür boyu birkaç kez çalışır ve hiçbir
+// müşterinin beklediği istek yolunda değildir.
+//
+// Tek çağrıda BÜTÜN müşterilerin adresleri istenir; e-postayla çözülen bir özne
+// onlarca misafir kaydına ulaşabilir ve her biri için ayrı sorgu, dosyanın
+// maliyetini kişinin geçmişteki sipariş sayısına bağlardı.
+//
+// Sıralama belirlilik içindir ve müşteri kırılımını korur: aynı özne için iki
+// kez üretilen dosya satırları aynı sırada göstermelidir.
+func (q *Queries) ListAddressesForDisclosure(ctx context.Context, customerIds []string) ([]CustomerAddress, error) {
+	rows, err := q.db.Query(ctx, listAddressesForDisclosure, customerIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CustomerAddress{}
+	for rows.Next() {
+		var i CustomerAddress
+		if err := rows.Scan(
+			&i.ID,
+			&i.CustomerID,
+			&i.FirstName,
+			&i.LastName,
+			&i.Company,
+			&i.Address1,
+			&i.Address2,
+			&i.City,
+			&i.CountryCode,
+			&i.PostalCode,
+			&i.Phone,
+			&i.IsDefaultShipping,
+			&i.IsDefaultBilling,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCustomerAddresses = `-- name: ListCustomerAddresses :many
 SELECT id, customer_id, first_name, last_name, company, address_1, address_2, city, country_code, postal_code, phone, is_default_shipping, is_default_billing, created_at, updated_at, deleted_at FROM customer_address
 WHERE customer_id = $1 AND deleted_at IS NULL

@@ -1376,7 +1376,7 @@ func (f *fakeStore) OrdersForErasure(
 	// hundred bytes and a range value would copy every one of them per turn.
 	for id := range f.orders {
 		order := f.orders[id]
-		if !erasureSubjectMatches(order, customerID, email) {
+		if !subjectMatches(order, customerID, email) {
 			continue
 		}
 
@@ -1432,8 +1432,13 @@ func (f *fakeStore) OrdersForErasure(
 	return out, nil
 }
 
-// erasureSubjectMatches imitates the OR-ed WHERE of the candidate query.
-func erasureSubjectMatches(order models.Order, customerID, email string) bool {
+// subjectMatches imitates the OR-ed WHERE both subject queries carry.
+//
+// It is one function because the erasure and the disclosure resolve the person
+// out of the same two columns in the same way; the two statements differ in what
+// they do next, not in whom they find, and a second copy here would let the
+// disclosure go on finding a person the erasure had stopped finding.
+func subjectMatches(order models.Order, customerID, email string) bool {
 	if customerID != "" && order.CustomerID == customerID {
 		return true
 	}
@@ -1509,4 +1514,140 @@ func (f *fakeStore) AnonymizeOrderAddresses(ctx context.Context, orderIDs []stri
 	}
 
 	return written, nil
+}
+
+// --- disclosure ----------------------------------------------------------------
+
+// OrdersForDisclosure returns the person's orders WITHOUT locking them.
+//
+// It imitates queries/disclosure.sql: the two handles are OR-ed by the same
+// [subjectMatches] the erasure candidate read uses, soft-deleted orders are
+// returned, and the rows come back whole and ordered by id.
+//
+// What it deliberately does NOT imitate is the transaction guard. The real
+// statement takes no lock and needs no transaction, so a fake that demanded one
+// would let a service call the read inside a write transaction and still pass —
+// which is the mistake this read exists to stay away from.
+func (f *fakeStore) OrdersForDisclosure(
+	ctx context.Context, customerID, email string,
+) ([]models.Order, error) {
+	// Through the view: inside a read transaction the six reads of one dossier
+	// have to see one instant, and a reader that went to the live map would be
+	// the one that broke it.
+	stored := f.view(ctx).orders
+
+	out := make([]models.Order, 0)
+	for id := range stored {
+		order := stored[id]
+		if subjectMatches(order, customerID, email) {
+			out = append(out, order)
+		}
+	}
+	slices.SortFunc(out, func(a, b models.Order) int { return strings.Compare(a.ID, b.ID) })
+
+	return out, nil
+}
+
+// LineItemsForDisclosure returns the lines of the given orders.
+//
+// The soft-delete filter [fakeStore.ListLineItems] applies is deliberately
+// absent, which is the one behavioral difference between the two reads and the
+// reason this method exists at all.
+func (f *fakeStore) LineItemsForDisclosure(
+	ctx context.Context, orderIDs []string,
+) ([]models.OrderLineItem, error) {
+	stored := f.view(ctx).items
+
+	out := make([]models.OrderLineItem, 0)
+	for id := range stored {
+		if slices.Contains(orderIDs, stored[id].OrderID) {
+			out = append(out, stored[id])
+		}
+	}
+	sortChildRows(out,
+		func(i models.OrderLineItem) string { return i.OrderID },
+		func(i models.OrderLineItem) string { return i.ID },
+		func(i models.OrderLineItem) time.Time { return i.CreatedAt })
+
+	return out, nil
+}
+
+// ReturnsForDisclosure returns the return records of the given orders.
+func (f *fakeStore) ReturnsForDisclosure(
+	ctx context.Context, orderIDs []string,
+) ([]models.Return, error) {
+	stored := f.view(ctx).returns
+
+	out := make([]models.Return, 0)
+	for id := range stored {
+		if slices.Contains(orderIDs, stored[id].OrderID) {
+			out = append(out, stored[id])
+		}
+	}
+	sortChildRows(out,
+		func(r models.Return) string { return r.OrderID },
+		func(r models.Return) string { return r.ID },
+		func(r models.Return) time.Time { return r.CreatedAt })
+
+	return out, nil
+}
+
+// ExchangesForDisclosure returns the exchange records of the given orders.
+func (f *fakeStore) ExchangesForDisclosure(
+	ctx context.Context, orderIDs []string,
+) ([]models.Exchange, error) {
+	stored := f.view(ctx).exchanges
+
+	out := make([]models.Exchange, 0)
+	for id := range stored {
+		if slices.Contains(orderIDs, stored[id].OrderID) {
+			out = append(out, stored[id])
+		}
+	}
+	sortChildRows(out,
+		func(e models.Exchange) string { return e.OrderID },
+		func(e models.Exchange) string { return e.ID },
+		func(e models.Exchange) time.Time { return e.CreatedAt })
+
+	return out, nil
+}
+
+// ClaimsForDisclosure returns the claim records of the given orders.
+func (f *fakeStore) ClaimsForDisclosure(
+	ctx context.Context, orderIDs []string,
+) ([]models.Claim, error) {
+	stored := f.view(ctx).claims
+
+	out := make([]models.Claim, 0)
+	for id := range stored {
+		if slices.Contains(orderIDs, stored[id].OrderID) {
+			out = append(out, stored[id])
+		}
+	}
+	sortChildRows(out,
+		func(c models.Claim) string { return c.OrderID },
+		func(c models.Claim) string { return c.ID },
+		func(c models.Claim) time.Time { return c.CreatedAt })
+
+	return out, nil
+}
+
+// sortChildRows puts a child table's rows in the order the disclosure queries
+// return them: by order, then by creation, then by identifier.
+//
+// The sequence is worth imitating rather than leaving to the map's iteration
+// order, because it is what the dossier shows a person — her returns in the
+// order they happened — and a test running against a randomly ordered fake would
+// pass while the real answer shuffled.
+func sortChildRows[T any](rows []T, orderID, id func(T) string, createdAt func(T) time.Time) {
+	slices.SortFunc(rows, func(a, b T) int {
+		if byOrder := strings.Compare(orderID(a), orderID(b)); byOrder != 0 {
+			return byOrder
+		}
+		if byTime := createdAt(a).Compare(createdAt(b)); byTime != 0 {
+			return byTime
+		}
+
+		return strings.Compare(id(a), id(b))
+	})
 }

@@ -127,6 +127,25 @@ const (
 	// erasing everybody is not an erasure request, and a subject with no
 	// identifier would otherwise select every order in the installation.
 	CodeErasureSubjectEmpty = "order_erasure_subject_empty"
+	// CodeDisclosureSubjectEmpty reports that a disclosure request named
+	// nobody.
+	//
+	// It is a SECOND code beside [CodeErasureSubjectEmpty] rather than a reuse
+	// of it, because the two refusals protect against opposite accidents and a
+	// controller reading a log has to be able to tell them apart: an erasure
+	// with no subject would have rewritten every order in the installation,
+	// while a disclosure with no subject would have HANDED SOMEBODY every order
+	// in the installation. The first destroys data, the second discloses it.
+	CodeDisclosureSubjectEmpty = "order_disclosure_subject_empty"
+	// CodeDisclosureColumnUnread reports that the module declares a column as
+	// personal data and the disclosure has no way to read it.
+	//
+	// It is an internal fault and not a bad request: the declaration and the
+	// disclosure are both this module's own code, and they have come apart. The
+	// answer is an error rather than a field left out, because a dossier short
+	// of a column its own declaration promises looks exactly like the dossier
+	// of a person who has nothing in that column.
+	CodeDisclosureColumnUnread = "order_disclosure_column_unread"
 )
 
 // Pagination limits (plan Section 8: limit/offset).

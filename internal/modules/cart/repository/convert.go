@@ -36,7 +36,13 @@ const (
 	codeMetadataInvalid     = "cart_metadata_invalid"
 	codeTxRequired          = "cart_tx_required"
 	codeQueryFailed         = "cart_query_failed"
-	codeConcurrentUpdate    = "cart_concurrent_update"
+	// codeDisclosureBound reports that a disclosure was asked for with a
+	// non-positive bound on how many carts it may carry. It is its own code
+	// because the failure it prevents does not look like a failure: the query
+	// would return no rows and the answer would tell a person the module holds
+	// nothing of theirs.
+	codeDisclosureBound  = "cart_disclosure_bound_invalid"
+	codeConcurrentUpdate = "cart_concurrent_update"
 )
 
 // Constraint names; they are used to turn a driver error into a meaningful typed

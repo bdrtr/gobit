@@ -269,3 +269,61 @@ WHERE customer_id = sqlc.arg('customer_id')
     OR city        <> sqlc.arg('placeholder')
     OR postal_code <> ''
     OR phone       <> '');
+
+-- AÇIKLAMA (disclosure) sorguları buradan aşağıdadır ve deleted_at süzgeci
+-- taşımayan İKİNCİ öbektir.
+--
+-- Gerekçe unutulmanınkiyle AYNI olgudur, tersinden okunmuş hâlidir: yumuşak
+-- silme tek bir kişisel sütuna dokunmaz, dolayısıyla silinmiş bir satır kişinin
+-- e-postasını, adını ve telefonunu AYNEN taşımaya devam eder. Soru "kayıt
+-- listelerde görünüyor mu" değil, "veritabanı hâlâ neyi TUTUYOR" olduğu için
+-- süzgeç burada da yoktur. Süzgeç konsaydı kişiye "sizin hakkınızda tuttuğumuz
+-- her şey budur" denirken silinmiş satırdaki adı gösterilmezdi.
+--
+-- Sorgular unutulma sorgularının kilitsiz İKİZİDİR ve üç yola aynı yerden
+-- ayrılır (bkz. repository/erasure.go, lockErasureTargets). FOR UPDATE YOKTUR
+-- ve olmamalıdır: bu bir OKUMADIR, işlem açmaz, hiçbir şey yazmaz ve bir
+-- raporun okunması vitrindeki bir müşteriyi bekletemez.
+
+-- GetCustomerForDisclosure kimliğe göre TEK satırı okur.
+--
+-- Yalnızca kimlik taşıyan özne için ayrı bir sorgu olması bilinçlidir: bu yol
+-- BİRİNCİL ANAHTAR aramasıdır ve taramaz. Tek bir (id = $1 OR email = $2)
+-- sorgusuna indirgenseydi, yalnızca kimlikle gelen — yönetim ucunun en sık
+-- kullandığı — istek de sıralı taramaya düşerdi.
+-- name: GetCustomerForDisclosure :one
+SELECT * FROM customer
+WHERE id = $1;
+
+-- ListCustomersByEmailForDisclosure e-postaya göre ulaşılan TÜM satırları okur.
+--
+-- Çoğul olması zorunludur ve sebebi LockCustomersByEmailForErasure'ınkiyle
+-- aynıdır: aynı e-postayla istenildiği kadar MİSAFİR kaydı açılabilir ve hepsi
+-- aynı kişidir. Yalnızca hesabı arayan bir sorgu (GetAccountByEmail) o kişinin
+-- misafir kayıtlarını dosyanın dışında bırakırdı.
+--
+-- Sıralama belirlilik içindir: aynı özne için iki kez üretilen dosya kayıtları
+-- aynı sırada göstermelidir, yoksa iki belgeyi karşılaştıran kişi olmayan bir
+-- fark görür.
+-- name: ListCustomersByEmailForDisclosure :many
+SELECT * FROM customer
+WHERE email = $1
+ORDER BY id;
+
+-- ListCustomersByIDOrEmailForDisclosure kimliği VE e-postayı BİRLİKTE taşıyan
+-- özneyi tek sorguda çözer.
+--
+-- Böyle bir özne yönetim ucunun normalidir (bkz. internal/app/erasure.go: istek
+-- gövdesindeki iki alan da doğrudan personaldata.Subject'e geçer). Kaydı olan bir
+-- müşteri aynı adresle misafir olarak da alışveriş yapmış olabilir; kimlik o
+-- kaydı, e-posta ötekileri gösterir ve kişi hepsidir.
+--
+-- Unutulmadaki ikizinin TEK sorgu olma gerekçesi kilit sırasıydı; burada kilit
+-- yoktur ve tek sorgu olmasının sebebi başkadır: iki ayrı sorgunun sonucunu
+-- birleştirmek, iki koşulu birden sağlayan satırı ayıklamayı (dedup) çağırana
+-- yıkardı ve ayıklanmamış bir dosya aynı kişiyi iki kez gösterirdi. Tek sorguda
+-- o satır zaten BİR kez döner.
+-- name: ListCustomersByIDOrEmailForDisclosure :many
+SELECT * FROM customer
+WHERE id = sqlc.arg('id') OR email = sqlc.arg('email')
+ORDER BY id;

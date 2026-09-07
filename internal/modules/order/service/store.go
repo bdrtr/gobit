@@ -113,6 +113,36 @@ type Store interface {
 	// queries/erasure.sql.
 	AnonymizeOrderAddresses(ctx context.Context, orderIDs []string) (int64, error)
 
+	// OrdersForDisclosure returns the orders of the person named by the
+	// customer id and/or the e-mail, WITHOUT locking anything.
+	//
+	// It resolves the same two handles as [Store.OrdersForErasure] and differs
+	// from it in the two ways a read has to: it takes no lock and needs no
+	// transaction. The rows come back whole because the disclosure picks the
+	// DECLARED columns out of them in Go, where the list is derived from the
+	// declaration itself (service/disclosure.go).
+	//
+	// Soft-deleted orders ARE returned, for the reason the erasure's read
+	// returns them: the question is what the database still holds about a
+	// person, not what the shop's own screens can see.
+	OrdersForDisclosure(ctx context.Context, customerID, email string) ([]models.Order, error)
+	// LineItemsForDisclosure reads the lines of the given orders, soft-deleted
+	// ones included.
+	//
+	// It exists beside [Store.ListLineItems] rather than reusing it because
+	// that read filters the soft-deleted rows and answers one order at a time,
+	// and a person with two hundred orders would be two hundred round trips.
+	LineItemsForDisclosure(ctx context.Context, orderIDs []string) ([]models.OrderLineItem, error)
+	// ReturnsForDisclosure reads the return records of the given orders,
+	// soft-deleted ones included.
+	ReturnsForDisclosure(ctx context.Context, orderIDs []string) ([]models.Return, error)
+	// ExchangesForDisclosure reads the exchange records of the given orders,
+	// soft-deleted ones included.
+	ExchangesForDisclosure(ctx context.Context, orderIDs []string) ([]models.Exchange, error)
+	// ClaimsForDisclosure reads the damage and shortage records of the given
+	// orders, soft-deleted ones included.
+	ClaimsForDisclosure(ctx context.Context, orderIDs []string) ([]models.Claim, error)
+
 	// LockCustomerSpending locks the SUM of the customer's spend until the end
 	// of the transaction and can only be called inside [Store.WithTx].
 	//

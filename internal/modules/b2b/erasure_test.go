@@ -161,7 +161,7 @@ func TestTheEmployeeFactsAreDeclaredEvenThoughTheTableNamesNobody(t *testing.T) 
 // TestTheHolderIsLeftForTheCoordinator pins that the module does NOT name itself.
 //
 // The coordinator overwrites Holder with the name the module is registered under
-// (internal/workflows/erasing, Coordinator.PersonalData). Filling it in here
+// (internal/workflows/datasubject, Coordinator.PersonalData). Filling it in here
 // would keep the same name in two places, and the day they disagree the report
 // tells a controller that a module it cannot find holds somebody's data.
 func TestTheHolderIsLeftForTheCoordinator(t *testing.T) {

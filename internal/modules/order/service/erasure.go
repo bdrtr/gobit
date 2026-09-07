@@ -51,7 +51,7 @@ import (
 // direction); the repetition is the price the module's other cross-package
 // name constants pay for the same isolation. It is defined in terms of [EntityName] so that the module's
 // name is written once in this package, and the sweep overwrites the field with
-// the registry's name anyway (internal/workflows/erasing) — this value is what
+// the registry's name anyway (internal/workflows/datasubject) — this value is what
 // a caller holding the service directly gets.
 const ErasureHolder = EntityName
 
@@ -449,7 +449,7 @@ const whyAnonymized = "the name, address, phone and e-mail on the order were set
 // it back into the installation through the one door the erasure does not
 // reach.
 func (s *Service) Erase(ctx context.Context, subject personaldata.Subject) (personaldata.Result, error) {
-	customerID, email, err := normalizeSubject(subject)
+	customerID, email, err := normalizeSubject(subject, erasureRequest)
 	if err != nil {
 		return personaldata.Result{}, err
 	}
@@ -639,10 +639,19 @@ func pastTenseOfBe(n int) string {
 // never looked anywhere.
 //
 // A subject with NO identifier is refused. Erasing everybody is not an erasure
-// request; the sweep refuses it first (internal/workflows/erasing) and this is
+// request; the sweep refuses it first (internal/workflows/datasubject) and this is
 // the last defense, because a holder reached directly would otherwise take a
 // zero-value subject and lock every order in the installation.
-func normalizeSubject(subject personaldata.Subject) (customerID, email string, err error) {
+//
+// The [subjectRequest] parameter is what lets the DISCLOSURE share this
+// function (service/disclosure.go) without sharing the erasure's sentence. Both
+// requests resolve the same person out of the same two columns, so one
+// normalizer is right; what they must not share is the refusal, because the two
+// accidents it prevents are opposites — one would have rewritten every order in
+// the installation and the other would have handed somebody a copy of it.
+func normalizeSubject(
+	subject personaldata.Subject, request subjectRequest,
+) (customerID, email string, err error) {
 	if err := optionalID("customer_id", subject.CustomerID); err != nil {
 		return "", "", err
 	}
@@ -651,9 +660,29 @@ func normalizeSubject(subject personaldata.Subject) (customerID, email string, e
 		return "", "", err
 	}
 	if subject.CustomerID == "" && email == "" {
-		return "", "", errors.Invalid(CodeErasureSubjectEmpty,
-			"an erasure request has to name somebody: give a customer id, an e-mail address, or both")
+		return "", "", errors.Invalid(request.code,
+			"%s has to name somebody: give a customer id, an e-mail address, or both", request.noun)
 	}
 
 	return subject.CustomerID, email, nil
 }
+
+// subjectRequest names the request a subject was handed in for.
+//
+// It is a pair rather than two loose string arguments because the two are always
+// written together and a call site that swapped them would compile: the noun
+// would be reported as the code a client branches on, and the code would be read
+// out to a person as a sentence.
+type subjectRequest struct {
+	// noun is how the refusal names the request, as a phrase that can start a
+	// sentence — "an erasure request", "a disclosure request".
+	noun string
+	// code is the error code the refusal carries.
+	code string
+}
+
+// The two requests this module answers about a person.
+var (
+	erasureRequest    = subjectRequest{noun: "an erasure request", code: CodeErasureSubjectEmpty}
+	disclosureRequest = subjectRequest{noun: "a disclosure request", code: CodeDisclosureSubjectEmpty}
+)

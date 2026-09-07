@@ -1,4 +1,4 @@
-package erasing
+package datasubject
 
 import (
 	"context"
@@ -143,18 +143,34 @@ func (s staticHolder) PersonalData() personaldata.Declaration {
 	return personaldata.Declaration{Holder: s.name, Holdings: s.holdings}
 }
 
-const workflowStoreWhy = "the saga store keeps each execution's input, and the checkout workflow's input is " +
-	"the cart — which carries the shopper's e-mail address and both postal addresses. A RUNNING execution " +
-	"needs its input to compensate (ADR 0017), so the input cannot simply be dropped; a TERMINAL execution's " +
-	"input is not needed and is not pruned today either. Nothing in this repository ever deletes from " +
-	"workflow_executions outside a test. Until that pruning exists, an erasure leaves this copy behind."
+// workflowStoreWhy is the fallback's answer, and it says what it is rather than
+// what the store would say.
+//
+// The store ITSELF erases and declares now (see [sagaStoreHolder]); this text is
+// only reached when the coordinator was built without one, which is a test. An
+// earlier version of it described the store's contents and went stale the moment
+// the real eraser landed — it was still claiming the input is never pruned after
+// the pruning shipped. The fix is not a better description: a stand-in should
+// not describe something it is standing in for.
+const workflowStoreWhy = "the saga store could not be reached from the container, so nothing here was " +
+	"searched or emptied. The store keeps each execution's input, which for the one workflow that runs " +
+	"is the checkout plan and carries the shopper's e-mail address and both postal addresses. What it " +
+	"holds and what an erasure does to it are the store's own answer to give; this entry exists so that " +
+	"a coordinator built without it cannot pass over the store in silence."
 
+// workflowStoreColumns names what the fallback reports as kept.
+//
+// The two `output` columns are deliberately absent and their removal is a
+// measurement rather than a tidy-up: the execution's output and every step's
+// output hold identifiers and amounts, so no shape written to them carries a
+// person. Declaring a column that holds nobody sends a controller looking in the
+// wrong place. The store's own declaration says the same three things, and the
+// two agreeing is not an accident to be relied on — see the note on
+// [workflowStoreWhy] about why this stand-in stays minimal.
 func workflowStoreColumns() []string {
 	return []string{
 		tableWorkflowExecutions + ".input",
-		tableWorkflowExecutions + ".output",
 		tableWorkflowExecutions + ".failure",
-		tableWorkflowSteps + ".output",
 		tableWorkflowSteps + ".failure",
 	}
 }
@@ -167,16 +183,8 @@ func workflowStoreHoldings() []personaldata.Holding {
 				"e-mail address and the shipping and billing addresses in full",
 		},
 		{
-			Table: tableWorkflowExecutions, Column: "output", Kind: personaldata.Open,
-			Why: "the workflow's result, whose shape each workflow chooses",
-		},
-		{
 			Table: tableWorkflowExecutions, Column: "failure", Kind: personaldata.Open,
 			Why: "the error text of a failed run, which commonly echoes the input that caused it",
-		},
-		{
-			Table: tableWorkflowSteps, Column: "output", Kind: personaldata.Open,
-			Why: "one step's result; a step that read the customer returns what it read",
 		},
 		{
 			Table: tableWorkflowSteps, Column: "failure", Kind: personaldata.Open,

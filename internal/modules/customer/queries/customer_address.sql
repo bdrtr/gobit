@@ -70,3 +70,29 @@ UPDATE customer_address
 SET is_default_billing = TRUE, updated_at = $3
 WHERE id = $1 AND customer_id = $2 AND deleted_at IS NULL
 RETURNING *;
+
+-- ListAddressesForDisclosure verilen müşterilerin TÜM adreslerini okur.
+--
+-- Bu dosyadaki tek deleted_at'siz sorgudur ve istisna, unutulma yolundakiyle
+-- aynı olguya dayanır: yumuşak silme yalnızca deleted_at ile updated_at yazar,
+-- silinmiş bir adres satırı kişinin sokağını, kapı numarasını ve telefonunu
+-- AYNEN taşır. "Bize dair ne tutuyorsunuz" sorusunun yanıtı, listelerde
+-- görünen satırlar değil, veritabanının GERÇEKTEN tuttuğu satırlardır.
+--
+-- customer_address_customer_idx bu sorguya HİZMET EDEMEZ: indeks
+-- WHERE deleted_at IS NULL ile kurulmuş kısmi bir indekstir ve sorgu onun
+-- koşulunun dışına çıkar. Tarama, unutulma yolunda kabul edilen gerekçenin
+-- aynısıyla kabul edilir (bkz. repository/erasure.go, lockErasureTargets):
+-- açıklama isteği kişi başına ömür boyu birkaç kez çalışır ve hiçbir
+-- müşterinin beklediği istek yolunda değildir.
+--
+-- Tek çağrıda BÜTÜN müşterilerin adresleri istenir; e-postayla çözülen bir özne
+-- onlarca misafir kaydına ulaşabilir ve her biri için ayrı sorgu, dosyanın
+-- maliyetini kişinin geçmişteki sipariş sayısına bağlardı.
+--
+-- Sıralama belirlilik içindir ve müşteri kırılımını korur: aynı özne için iki
+-- kez üretilen dosya satırları aynı sırada göstermelidir.
+-- name: ListAddressesForDisclosure :many
+SELECT * FROM customer_address
+WHERE customer_id = ANY(@customer_ids::text[])
+ORDER BY customer_id, created_at DESC, id DESC;

@@ -1,4 +1,4 @@
-package erasing_test
+package datasubject_test
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/module"
 	"github.com/bdrtr/gobit/core/personaldata"
-	"github.com/bdrtr/gobit/internal/workflows/erasing"
+	"github.com/bdrtr/gobit/internal/workflows/datasubject"
 )
 
 // fakeModule is a module that implements whichever erasure capabilities the
@@ -67,10 +67,10 @@ func answers(name string, outcome personaldata.Outcome, rows int) module.Module 
 }
 
 // coordinator builds a coordinator over the given modules.
-func coordinator(t *testing.T, mods ...module.Module) *erasing.Coordinator {
+func coordinator(t *testing.T, mods ...module.Module) *datasubject.Coordinator {
 	t.Helper()
 
-	co, err := erasing.FromContainer(container.New(slog.New(slog.DiscardHandler)), mods)
+	co, err := datasubject.FromContainer(container.New(slog.New(slog.DiscardHandler)), mods)
 	if err != nil {
 		t.Fatalf("the coordinator could not be built: %v", err)
 	}
@@ -405,5 +405,277 @@ func TestTheReportIsStamped(t *testing.T) {
 
 	if report.At.Location() != time.UTC {
 		t.Errorf("the report's instant is not UTC: %v", report.At.Location())
+	}
+}
+
+// discloserModule adds the Discloser capability to a fake module.
+type discloserModule struct {
+	*fakeModule
+	disclose func(context.Context, personaldata.Subject) (personaldata.Disclosure, error)
+}
+
+func (d discloserModule) PersonalDataOf(
+	ctx context.Context, s personaldata.Subject,
+) (personaldata.Disclosure, error) {
+	return d.disclose(ctx, s)
+}
+
+// declareAndDisclose adds both capabilities, which is the ordinary case.
+type declareAndDisclose struct {
+	*fakeModule
+	disclose func(context.Context, personaldata.Subject) (personaldata.Disclosure, error)
+}
+
+func (d declareAndDisclose) PersonalData() personaldata.Declaration { return d.declare() }
+func (d declareAndDisclose) PersonalDataOf(
+	ctx context.Context, s personaldata.Subject,
+) (personaldata.Disclosure, error) {
+	return d.disclose(ctx, s)
+}
+
+// partsOf indexes a dossier's parts by holder.
+func partsOf(dossier personaldata.Dossier) map[string]personaldata.Disclosure {
+	out := make(map[string]personaldata.Disclosure, len(dossier.Parts))
+	for _, p := range dossier.Parts {
+		out[p.Holder] = p
+	}
+
+	return out
+}
+
+// TestADisclosureRequestThatNamesNobodyIsRefused holds the same line the sweep
+// holds: there is no such thing as disclosing everybody.
+func TestADisclosureRequestThatNamesNobodyIsRefused(t *testing.T) {
+	t.Parallel()
+
+	co := coordinator(t, discloserModule{
+		fakeModule: &fakeModule{name: "customer"},
+		disclose: func(context.Context, personaldata.Subject) (personaldata.Disclosure, error) {
+			return personaldata.Disclosure{State: personaldata.Nothing, Why: "looked"}, nil
+		},
+	})
+
+	if _, err := co.Disclose(t.Context(), personaldata.Subject{}); err == nil {
+		t.Fatal("a subject with no customer id and no e-mail was accepted; it names everybody")
+	} else if !coreerrors.IsInvalid(err) {
+		t.Errorf("the refusal should be an Invalid error, got %v", err)
+	}
+}
+
+// TestAHolderThatCannotDiscloseIsStillInTheDossier is the property that makes
+// the answer complete without a second list.
+//
+// The review module is the real case: it keeps the byline an author typed and
+// deliberately nothing that says which person that is. Left out of the dossier
+// it would read as "you have written no reviews", which nobody checked — so it
+// goes in as Unresolvable, carrying what it declared.
+func TestAHolderThatCannotDiscloseIsStillInTheDossier(t *testing.T) {
+	t.Parallel()
+
+	co := coordinator(t, declarerModule{&fakeModule{
+		name: "review",
+		declare: func() personaldata.Declaration {
+			return personaldata.Declaration{Holdings: []personaldata.Holding{
+				{Table: "reviews", Column: "author_name", Kind: personaldata.Named, Why: "the byline"},
+			}}
+		},
+	}})
+
+	dossier, err := co.Disclose(t.Context(), personaldata.Subject{Email: "a@b.example"})
+	if err != nil {
+		t.Fatalf("the disclosure failed: %v", err)
+	}
+
+	part, ok := partsOf(dossier)["review"]
+	if !ok {
+		t.Fatal("a declare-only holder is missing from the dossier; the answer is silent about data it knows is there")
+	}
+
+	if part.State != personaldata.Unresolvable {
+		t.Errorf("a holder that cannot look answered %q, want unresolvable", part.State)
+	}
+
+	if part.Why == "" {
+		t.Error("an unresolvable part with no reason tells the reader nothing")
+	}
+
+	if len(part.Records) != 0 {
+		t.Errorf("a holder that cannot look produced records: %+v", part.Records)
+	}
+}
+
+// TestAHolderThatFoundNothingSaysSo keeps the two kinds of empty apart.
+//
+// "We searched and you are not here" and "we cannot tell whether you are here"
+// are different answers to the person, and a dossier that rendered both as an
+// empty list would let the second hide inside the first.
+func TestAHolderThatFoundNothingSaysSo(t *testing.T) {
+	t.Parallel()
+
+	co := coordinator(t, discloserModule{
+		fakeModule: &fakeModule{name: "order"},
+		disclose: func(context.Context, personaldata.Subject) (personaldata.Disclosure, error) {
+			return personaldata.Disclosure{
+				State: personaldata.Nothing,
+				Why:   "no order carries this customer id or this address",
+			}, nil
+		},
+	})
+
+	dossier, err := co.Disclose(t.Context(), personaldata.Subject{CustomerID: "cus_1"})
+	if err != nil {
+		t.Fatalf("the disclosure failed: %v", err)
+	}
+
+	part := partsOf(dossier)["order"]
+	if part.State != personaldata.Nothing {
+		t.Errorf("got state %q, want nothing", part.State)
+	}
+
+	if part.Why == "" {
+		t.Error("a nothing-found answer has to say where it looked, or the person cannot check it")
+	}
+}
+
+// TestTheRegistryNamesTheDisclosingHolder pins the same rule the sweep has: the
+// dossier attributes each part to the module the registry knows.
+func TestTheRegistryNamesTheDisclosingHolder(t *testing.T) {
+	t.Parallel()
+
+	co := coordinator(t, discloserModule{
+		fakeModule: &fakeModule{name: "customer"},
+		disclose: func(context.Context, personaldata.Subject) (personaldata.Disclosure, error) {
+			return personaldata.Disclosure{Holder: "somewhere else", State: personaldata.Nothing, Why: "looked"}, nil
+		},
+	})
+
+	dossier, err := co.Disclose(t.Context(), personaldata.Subject{CustomerID: "cus_1"})
+	if err != nil {
+		t.Fatalf("the disclosure failed: %v", err)
+	}
+
+	if _, ok := partsOf(dossier)["customer"]; !ok {
+		t.Errorf("the part is not attributed to the registered module name: %+v", dossier.Parts)
+	}
+}
+
+// TestAFailingHolderLeavesTheRestOfTheDossierStanding is the deliberate
+// opposite of the sweep's behavior, and the difference is the whole reason
+// both exist.
+//
+// A partial ERASURE reported as whole is a false statement made to a person, so
+// that answer is refused. A partial DISCLOSURE still contains the parts that
+// worked, and those are the person's own data: throwing them away helps nobody.
+// Both halves must reach the caller — the dossier AND an error naming the hole.
+func TestAFailingHolderLeavesTheRestOfTheDossierStanding(t *testing.T) {
+	t.Parallel()
+
+	co := coordinator(t,
+		discloserModule{
+			fakeModule: &fakeModule{name: "order"},
+			disclose: func(context.Context, personaldata.Subject) (personaldata.Disclosure, error) {
+				return personaldata.Disclosure{}, errors.New("the connection went away")
+			},
+		},
+		discloserModule{
+			fakeModule: &fakeModule{name: "customer"},
+			disclose: func(context.Context, personaldata.Subject) (personaldata.Disclosure, error) {
+				return personaldata.Disclosure{
+					State: personaldata.Disclosed,
+					Records: []personaldata.Record{{
+						Table: "customer", ID: "cus_1",
+						Fields: []personaldata.Field{
+							{Column: "email", Kind: personaldata.Named, Value: "a@b.example"},
+						},
+					}},
+				}, nil
+			},
+		},
+	)
+
+	dossier, err := co.Disclose(t.Context(), personaldata.Subject{CustomerID: "cus_1"})
+	if err == nil {
+		t.Fatal("a holder failed and the dossier reported itself whole")
+	}
+
+	if !strings.Contains(err.Error(), "order") {
+		t.Errorf("the error does not name the holder that failed: %v", err)
+	}
+
+	part, ok := partsOf(dossier)["customer"]
+	if !ok {
+		t.Fatal("the successful part was thrown away with the failing one")
+	}
+
+	if len(part.Records) != 1 || len(part.Records[0].Fields) != 1 {
+		t.Errorf("the successful part lost its records: %+v", part)
+	}
+}
+
+// TestADisclosedFieldCarriesItsKind pins the fact that decides how a reader
+// treats a value.
+//
+// An Open value is one gobit has never inspected. Whoever reviews a dossier has
+// to know which values the framework can vouch for, and the kind rides on the
+// field precisely so it cannot drift from the value it describes.
+func TestADisclosedFieldCarriesItsKind(t *testing.T) {
+	t.Parallel()
+
+	co := coordinator(t, declareAndDisclose{
+		fakeModule: &fakeModule{
+			name: "customer",
+			declare: func() personaldata.Declaration {
+				return personaldata.Declaration{Holdings: []personaldata.Holding{
+					{Table: "customer", Column: "metadata", Kind: personaldata.Open, Why: "free form"},
+				}}
+			},
+		},
+		disclose: func(context.Context, personaldata.Subject) (personaldata.Disclosure, error) {
+			return personaldata.Disclosure{
+				State: personaldata.Disclosed,
+				Records: []personaldata.Record{{
+					Table: "customer", ID: "cus_1",
+					Fields: []personaldata.Field{
+						{Column: "metadata", Kind: personaldata.Open, Value: map[string]any{"note": "x"}},
+					},
+				}},
+			}, nil
+		},
+	})
+
+	dossier, err := co.Disclose(t.Context(), personaldata.Subject{CustomerID: "cus_1"})
+	if err != nil {
+		t.Fatalf("the disclosure failed: %v", err)
+	}
+
+	field := partsOf(dossier)["customer"].Records[0].Fields[0]
+	if field.Kind != personaldata.Open {
+		t.Errorf("the field lost its kind: %+v", field)
+	}
+}
+
+// TestTheDossierIsStamped keeps the instant on the answer, for the reason the
+// report carries one: a controller files this and may be asked about it later.
+func TestTheDossierIsStamped(t *testing.T) {
+	t.Parallel()
+
+	co := coordinator(t, discloserModule{
+		fakeModule: &fakeModule{name: "customer"},
+		disclose: func(context.Context, personaldata.Subject) (personaldata.Disclosure, error) {
+			return personaldata.Disclosure{State: personaldata.Nothing, Why: "looked"}, nil
+		},
+	})
+
+	dossier, err := co.Disclose(t.Context(), personaldata.Subject{CustomerID: "cus_1"})
+	if err != nil {
+		t.Fatalf("the disclosure failed: %v", err)
+	}
+
+	if dossier.At.IsZero() {
+		t.Error("the dossier carries no instant")
+	}
+
+	if dossier.At.Location() != time.UTC {
+		t.Errorf("the dossier's instant is not UTC: %v", dossier.At.Location())
 	}
 }

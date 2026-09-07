@@ -1,4 +1,4 @@
-// Package erasing runs an erasure request across every holder of personal data.
+// Package datasubject runs an erasure request across every holder of personal data.
 //
 // It is the first consumer of core/personaldata, and it is a flow rather than a
 // module method for the reason ADR 0006 gives: erasing a person touches the
@@ -54,12 +54,13 @@
 // looking for an exported constructor that takes a container, so dropping the
 // parameter as a tidy-up would leave this package built by the composition root
 // and outside the audit that checks it still is.
-package erasing
+package datasubject
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/bdrtr/gobit/core/container"
@@ -72,6 +73,8 @@ import (
 const (
 	// CodeNoSubject reports that the request named nobody.
 	CodeNoSubject = "erasing_no_subject"
+	// CodeNoHolder reports that nothing at all was asked.
+	CodeNoHolder = "datasubject_no_holder"
 	// CodeHolderFailed reports that at least one holder could not finish.
 	//
 	// It is its own code because the consequence is specific and has to reach
@@ -95,9 +98,10 @@ type Coordinator struct {
 // deliberately stores nothing that says WHICH person that is — so it can
 // declare what it keeps and cannot resolve a subject to erase.
 type holder struct {
-	name     string
-	eraser   personaldata.Eraser
-	declarer personaldata.Declarer
+	name      string
+	eraser    personaldata.Eraser
+	declarer  personaldata.Declarer
+	discloser personaldata.Discloser
 }
 
 // FromContainer builds the coordinator from the registered modules.
@@ -120,8 +124,11 @@ func FromContainer(c *container.Container, mods []module.Module) (*Coordinator, 
 		if d, ok := mod.(personaldata.Declarer); ok {
 			h.declarer = d
 		}
+		if d, ok := mod.(personaldata.Discloser); ok {
+			h.discloser = d
+		}
 
-		if h.eraser == nil && h.declarer == nil {
+		if h.eraser == nil && h.declarer == nil && h.discloser == nil {
 			continue
 		}
 
@@ -251,4 +258,102 @@ func (co *Coordinator) PersonalData() []personaldata.Declaration {
 	}
 
 	return out
+}
+
+// Disclose asks every holder what it keeps about the subject and assembles one
+// dossier.
+//
+// # Why a failure does not throw the answer away
+//
+// [Coordinator.Erase] returns its error and lets the caller refuse the whole
+// report, because a partial ERASURE reported as a whole one is a false
+// statement made to a person. A partial DISCLOSURE is the opposite shape: the
+// parts that succeeded are the person's data and discarding them helps nobody,
+// while the part that failed is a hole the reader has to be told about. So both
+// come back — the dossier with what was found, and an error naming every holder
+// that could not answer — and it is the caller's job to put the second where a
+// reader cannot miss it.
+//
+// A holder that DECLARES personal data and cannot disclose it is not an error
+// and not an absence: it enters the dossier as [personaldata.Unresolvable] with
+// the columns it declared, so "we hold this and cannot tell whether it is
+// yours" is written down rather than left out.
+func (co *Coordinator) Disclose(ctx context.Context, s personaldata.Subject) (personaldata.Dossier, error) {
+	if s.CustomerID == "" && s.Email == "" {
+		return personaldata.Dossier{}, coreerrors.Invalid(CodeNoSubject,
+			"a disclosure request has to name somebody: give a customer id, an e-mail address, or both")
+	}
+
+	dossier := personaldata.Dossier{Subject: s, At: co.now()}
+
+	var failures []error
+
+	for _, h := range co.holders {
+		if h.discloser == nil {
+			if part, ok := undisclosedHolder(h); ok {
+				dossier.Parts = append(dossier.Parts, part)
+			}
+
+			continue
+		}
+
+		part, err := h.discloser.PersonalDataOf(ctx, s)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("%s: %w", h.name, err))
+
+			continue
+		}
+
+		// The registry's name wins over whatever the holder filled in, for the
+		// reason the sweep gives: a part attributed to the wrong holder is worse
+		// than one with a blank name.
+		part.Holder = h.name
+		dossier.Parts = append(dossier.Parts, part)
+	}
+
+	if len(dossier.Parts) == 0 && len(failures) == 0 {
+		return dossier, coreerrors.Internal(CodeNoHolder,
+			"no holder was asked, so this dossier says nothing; the coordinator was built over an empty registry")
+	}
+
+	if len(failures) > 0 {
+		return dossier, coreerrors.Wrap(errors.Join(failures...), coreerrors.KindInternal,
+			CodeHolderFailed,
+			"the dossier is INCOMPLETE: %d of %d holders could not answer, and what they hold is not in it",
+			len(failures), len(dossier.Parts)+len(failures))
+	}
+
+	return dossier, nil
+}
+
+// undisclosedHolder builds the entry for a holder that declares personal data
+// and offers no way to look it up.
+//
+// It repeats the shape [undeclaredEraser] uses on the erasure side, and for the
+// same reason: adding a declaration to a module makes it visible in every
+// answer from that moment, with no second list to maintain. The difference is
+// the word — a sweep says the data was RETAINED, a dossier says it is
+// UNRESOLVABLE, and those are different facts about the same row.
+func undisclosedHolder(h holder) (personaldata.Disclosure, bool) {
+	if h.declarer == nil {
+		return personaldata.Disclosure{}, false
+	}
+
+	declared := h.declarer.PersonalData()
+	if len(declared.Holdings) == 0 {
+		return personaldata.Disclosure{}, false
+	}
+
+	columns := make([]string, 0, len(declared.Holdings))
+	for _, hold := range declared.Holdings {
+		columns = append(columns, hold.Table+"."+hold.Column)
+	}
+
+	return personaldata.Disclosure{
+		Holder: h.name,
+		State:  personaldata.Unresolvable,
+		Why: "this holder keeps personal data and offers no way to look a person up in it: " +
+			strings.Join(columns, ", ") + ". Nothing here is known to be about this person, and " +
+			"nothing here is known not to be",
+	}, true
 }

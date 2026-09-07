@@ -154,7 +154,7 @@ func TestPersonalDataCoversEveryPersonalColumn(t *testing.T) {
 // PURPOSE.
 //
 // The coordinator overwrites [personaldata.Declaration.Holder] with the name the
-// registry knows this module by (internal/workflows/erasing), so a name written
+// registry knows this module by (internal/workflows/datasubject), so a name written
 // in here would be a second place to keep true with nothing comparing the two —
 // and the report a controller reads would be attributed by whichever of them
 // drifted. The name this module answers under is still pinned, one test below,

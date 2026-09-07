@@ -225,17 +225,30 @@ const generatedMarker = "Code generated"
 // nothing — the ASCII pair folds on every cluster, which is exactly the false
 // all-clear the probe exists to prevent.
 //
-// Three more files hold legitimate Turkish letters and are absent on purpose —
-// each still contains Turkish PROSE as well, so the ledger already covers them
-// and a second exemption would count the same hole twice. They join this map
-// when they are translated, with the substrings each will need:
+// ~~Three more files hold legitimate Turkish letters and are absent on purpose —
+// each still contains Turkish PROSE as well, so the ledger already covers
+// them.~~ **Corrected 2026-09-07: two of the three stopped needing an entry and
+// the paragraph did not notice.** The product module was translated in full, so
+// it has NO ledger line left to cover anything — and its two files did not join
+// this map either. They solved it a third way, which is the one worth copying:
+//
+//   - internal/modules/product/service/validate.go writes the turkishASCII map
+//     with \u escapes, so the file spells the letters it folds without
+//     CONTAINING them.
+//   - the product service's slug tests do the same with their fixtures.
+//
+// An escape is better than an exemption wherever the letters are DATA rather
+// than prose: an exemption is a hole somebody has to keep honest, while an
+// escaped literal is simply ASCII and no gate has to know about it. Two files
+// in the cart module were converted the same way on 2026-09-07 for the same
+// reason.
+//
+// One file is genuinely still waiting, and it needs an entry here the day the
+// region module is translated:
 //
 //   - internal/modules/region/migrations/000002_region_seed.up.sql —
-//     'Curaçao', 'Türkiye' (ISO 3166 reference names, not translatable)
-//   - internal/modules/product/service/validate.go — the turkishASCII map,
-//     which must spell the letters it folds
-//   - the product service's slug tests — Unicode fixtures that are Turkish on
-//     purpose
+//     'Curaçao', 'Türkiye' (ISO 3166 reference names, not translatable, and
+//     they reach the DATABASE, so escaping them is not available)
 var diacriticDataExemptions = map[string][]string{
 	"docs/adr/0012-repository-language-and-solid.md": {"`çğıöşüÇĞİÖŞÜ`"},
 	"core/db/casefold.go": {

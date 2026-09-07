@@ -30,7 +30,8 @@
 //
 // # The optional capabilities it implements
 //
-// [personaldata.Eraser] and [personaldata.Declarer] (ADR 0029, ADR 0033). The module
+// [personaldata.Eraser], [personaldata.Declarer] and [personaldata.Discloser]
+// (ADR 0029, ADR 0033). The module
 // holds a live person's e-mail and the postal address they were going to be
 // delivered at, and it CAN resolve the subject — by customer id and by e-mail —
 // so it answers an erasure request rather than staying silent: it ANONYMIZES
@@ -38,6 +39,15 @@
 // where they are. Why the answer is not DELETE, which columns are rewritten,
 // which deliberately are not, and what the report has to say about the ones it
 // left are all in service/erasure.go.
+//
+// The third one is the same resolution pointed the other way: because the
+// module can find a person in order to erase her, it owes the ability to SHOW
+// her what it found, and service/disclosure.go answers that with one record per
+// row — the cart, its addresses, and the lines and shipping methods carrying a
+// note. It reads exactly the columns the declaration names, reaches the
+// soft-deleted and completed carts the erasure reaches, writes nothing, and
+// bounds how many carts one answer carries while saying in the answer what the
+// bound left out.
 //
 // # The flows it uses
 //
@@ -177,14 +187,15 @@ var _ openapi.Describer = (*Module)(nil)
 // pinned down at compile time as well.
 //
 // The two [personaldata] interfaces are found by type assertion exactly as
-// [openapi.Describer] is (see internal/workflows/erasing), and the cost of a
+// [openapi.Describer] is (see internal/workflows/datasubject), and the cost of a
 // drift is worse here than a missing path in a document: the module would fall
 // out of the sweep in silence, the report would not mention it, and a person
 // who asked to be forgotten would be told the work was done while every cart
 // still carried their address.
 var (
-	_ personaldata.Eraser   = (*Module)(nil)
-	_ personaldata.Declarer = (*Module)(nil)
+	_ personaldata.Eraser    = (*Module)(nil)
+	_ personaldata.Declarer  = (*Module)(nil)
+	_ personaldata.Discloser = (*Module)(nil)
 )
 
 // New produces a cart module ready to be registered.
@@ -301,7 +312,7 @@ func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 // "nothing to erase" from a module whose service was never wired is a false
 // answer to a person who asked to be forgotten, and it would reach them as a
 // completed report rather than as a fault (the sweep marks a failing holder and
-// says the erasure is partial — see internal/workflows/erasing).
+// says the erasure is partial — see internal/workflows/datasubject).
 func (m *Module) Erase(ctx context.Context, subject personaldata.Subject) (personaldata.Result, error) {
 	if m.svc == nil {
 		return personaldata.Result{}, errors.Internal(codeSetupFailed,
@@ -310,6 +321,38 @@ func (m *Module) Erase(ctx context.Context, subject personaldata.Subject) (perso
 	}
 
 	return m.svc.Erase(ctx, subject)
+}
+
+// PersonalDataOf shows what this module holds about one person (ADR 0033).
+//
+// It is the READ half of the same capability [Module.Erase] is the write half
+// of, and it exists because the module could already resolve a person — by
+// customer id and by e-mail — while every one of those resolutions was wired to
+// a destructive verb. gobit would remove this shopper's address on request and
+// would not show it to her; that was a fact about the code rather than a policy
+// the embedder chose.
+//
+// The work is the service's and the whole argument — which columns may appear,
+// why the answer is bounded, and what the document says about what the bound
+// left out — is in service/disclosure.go. This method only delegates, for the
+// reason [Module.Erase] only delegates.
+//
+// An unregistered module returns an ERROR here for the same reason it does
+// there, and the shape of the lie is if anything plainer: an empty disclosure
+// from a module whose service was never wired reaches the person as "the cart
+// module holds nothing about you", which is a sentence a controller would
+// repeat and nobody could check.
+func (m *Module) PersonalDataOf(
+	ctx context.Context, subject personaldata.Subject,
+) (personaldata.Disclosure, error) {
+	if m.svc == nil {
+		return personaldata.Disclosure{}, errors.Internal(codeSetupFailed,
+			"the %s module was asked what it holds about a person before Register wired its "+
+				"service; nothing was searched and the dossier must not record this holder as "+
+				"having answered", ModuleName)
+	}
+
+	return m.svc.PersonalDataOf(ctx, subject)
 }
 
 // PersonalData says where this module keeps personal data (ADR 0029).
@@ -322,7 +365,7 @@ func (m *Module) Erase(ctx context.Context, subject personaldata.Subject) (perso
 //
 // [personaldata.Declaration.Holder] is left EMPTY on purpose. The sweep overwrites
 // it with the name the registry knows this module by
-// (internal/workflows/erasing), so filling it in here would create a second
+// (internal/workflows/datasubject), so filling it in here would create a second
 // place where the module's name has to be kept true and no place where the two
 // are compared — and the report a controller reads would be attributed by the
 // loser of that drift. What a caller holding the module directly gets is a

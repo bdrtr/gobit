@@ -234,3 +234,110 @@ type Eraser interface {
 type Declarer interface {
 	PersonalData() Declaration
 }
+
+// State is what a holder was able to say when asked what it holds about
+// somebody.
+//
+// There are three because two cannot tell the two kinds of empty apart, which
+// is the same argument [Outcome] rests on. A holder that searched and found
+// nothing has told the controller something true and useful; a holder that
+// cannot search at all has not, and reporting both as an empty list would let
+// the second hide inside the first.
+type State string
+
+const (
+	// Disclosed means the holder searched and is handing over what it found.
+	// A Disclosed state with no records is not possible — that is [Nothing].
+	Disclosed State = "disclosed"
+	// Nothing means the holder searched and this person is not in it.
+	Nothing State = "nothing"
+	// Unresolvable means the holder keeps personal data and cannot tell WHOSE.
+	//
+	// It is the state that keeps a dossier honest. The review module stores the
+	// byline an author typed and deliberately nothing that says which person
+	// that is, so it cannot answer for anybody — and a dossier that simply left
+	// it out would read as "you have written no reviews", which nobody checked.
+	// A holder that has not YET been given a search path says the same thing,
+	// so the gap is visible in the document rather than in a backlog.
+	Unresolvable State = "unresolvable"
+)
+
+// Field is one personal value on one record.
+type Field struct {
+	// Column is the column it came from, matching a declared [Holding].
+	Column string
+	// Kind repeats the declaration's judgement: Named where gobit wrote the
+	// person there itself, Open where the content is the embedder's.
+	//
+	// It travels WITH the value rather than being looked up, and that is the
+	// point: an Open value is one gobit never inspects, so whoever reads the
+	// dossier has to know which of these the framework can vouch for. A parallel
+	// map keyed by column would answer the same question and would be able to
+	// drift from the values it describes.
+	Kind Kind
+	// Value is what is stored. It is any because a column may hold a string, a
+	// number, a time or a whole jsonb document.
+	Value any
+}
+
+// Record is one row a holder found about the subject.
+type Record struct {
+	// Table is the table the row lives in.
+	Table string
+	// ID identifies the row when the holder can name it, and is empty when it
+	// cannot. It is not required: a dossier is read by a person, and a row
+	// without an identifier is still that person's data.
+	ID string
+	// Fields are the personal values on the row. A holder lists the columns it
+	// DECLARED and no others — a disclosure that reached past the declaration
+	// would be answering with data the declaration told the controller was not
+	// there.
+	Fields []Field
+}
+
+// Disclosure is one holder's answer to "what do you hold about this person".
+type Disclosure struct {
+	// Holder names who answered, matching [Result.Holder].
+	Holder string
+	// State says whether the holder could look, and what it found.
+	State State
+	// Records are what it found. Empty unless the state is [Disclosed].
+	Records []Record
+	// Why explains a state that is not [Disclosed], in the words somebody
+	// answering the person would use. It is REQUIRED for [Unresolvable] and for
+	// [Nothing]: "we found nothing" is an answer a person may query, and the
+	// sentence that says WHERE it was looked for is what makes it checkable.
+	Why string
+}
+
+// Dossier is the whole answer to one disclosure request.
+//
+// It is deliberately not called an export. What comes back is organized and
+// complete about the columns gobit declared, and it still contains free-form
+// values the framework never inspects — so it is material a controller reviews
+// before sending, not a document that can be forwarded unread. Naming it an
+// export would promise the second.
+type Dossier struct {
+	// Subject is the person the request was about.
+	Subject Subject
+	// Parts is one entry per holder that was asked, in the order they were
+	// asked. A holder that was asked and found nothing still appears.
+	Parts []Disclosure
+	// At is when the request ran, in UTC.
+	At time.Time
+}
+
+// Discloser is the optional capability of showing what is held about somebody.
+//
+// It is separate from [Eraser] for a reason this repository can point at: five
+// holders can already resolve a person, and every one of those resolutions is
+// wired to a destructive verb. gobit will remove this person's rows on request
+// and, without this interface, will not show them to her — which is a fact
+// about the code rather than a policy the embedder chose.
+//
+// A holder that implements [Declarer] and not this one is NOT silently absent
+// from a dossier: the coordinator enters it as [Unresolvable] with what it
+// declared, so the gap is written into the document a person receives.
+type Discloser interface {
+	PersonalDataOf(ctx context.Context, s Subject) (Disclosure, error)
+}

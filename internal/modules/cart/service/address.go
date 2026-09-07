@@ -67,7 +67,7 @@ func (s *Service) SetBillingAddress(ctx context.Context, cartID string, in Addre
 // used only on the first write.
 func (s *Service) setAddress(ctx context.Context, cartID string, kind models.AddressType, in AddressInput) (models.CartAddress, error) {
 	if in.SourceAddressID != "" {
-		if err := requireID("source_address_id", in.SourceAddressID); err != nil {
+		if err := requireID(columnSourceAddressID, in.SourceAddressID); err != nil {
 			return models.CartAddress{}, err
 		}
 	}
@@ -78,15 +78,15 @@ func (s *Service) setAddress(ctx context.Context, cartID string, kind models.Add
 	// The order is deliberately fixed: walking over a map would leave which
 	// error is returned to chance when more than one field is too long at once.
 	for _, field := range []struct{ label, value string }{
-		{"first_name", in.FirstName},
-		{"last_name", in.LastName},
-		{"company", in.Company},
-		{"address_1", in.Address1},
-		{"address_2", in.Address2},
-		{"city", in.City},
-		{"province", in.Province},
-		{"postal_code", in.PostalCode},
-		{"phone", in.Phone},
+		{columnFirstName, in.FirstName},
+		{columnLastName, in.LastName},
+		{columnCompany, in.Company},
+		{columnAddress1, in.Address1},
+		{columnAddress2, in.Address2},
+		{columnCity, in.City},
+		{columnProvince, in.Province},
+		{columnPostalCode, in.PostalCode},
+		{columnPhone, in.Phone},
 	} {
 		if err := checkTextLen(field.label, field.value); err != nil {
 			return models.CartAddress{}, err

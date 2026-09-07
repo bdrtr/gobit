@@ -793,3 +793,168 @@ func (f *fakeStore) AnonymizeCartAddresses(_ context.Context, cartIDs []string) 
 
 	return written, nil
 }
+
+// CartsForDisclosure returns the person's carts, newest first, at most limit of
+// them, and how many matched in total.
+//
+// It imitates three properties of the real statement and no more. The SOFT
+// DELETED carts are in, exactly as they are in the erasure's read and for the
+// same reason. The order is newest first and total, so a bound cuts at the same
+// place twice. And the count is of everything that MATCHED rather than of what
+// is returned — a fake that counted the returned rows would make the truncation
+// notice agree with itself for ever, which is precisely the property the test
+// about it exists to check.
+//
+// It takes NO transaction and records NO lock, and that is an assertion rather
+// than an omission: a disclosure that started taking one would show up in
+// [fakeStore.lockedCarts] and the test that reads it would fail.
+func (f *fakeStore) CartsForDisclosure(
+	ctx context.Context, customerID, email string, limit int64,
+) ([]models.PersonalCart, int64, error) {
+	view := f.view(ctx)
+	defer view.release()
+
+	matched := make([]models.PersonalCart, 0, len(view.carts))
+	for id := range view.carts {
+		cart := view.carts[id]
+		if (customerID == "" || cart.CustomerID != customerID) && (email == "" || cart.Email != email) {
+			continue
+		}
+		matched = append(matched, models.PersonalCart{
+			ID:         cart.ID,
+			CustomerID: cart.CustomerID,
+			Email:      cart.Email,
+			Metadata:   cart.Metadata,
+			CreatedAt:  cart.CreatedAt,
+		})
+	}
+	slices.SortFunc(matched, func(a, b models.PersonalCart) int {
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return b.CreatedAt.Compare(a.CreatedAt)
+		}
+		return cmpString(b.ID, a.ID)
+	})
+
+	total := int64(len(matched))
+	if total > limit {
+		matched = matched[:limit]
+	}
+
+	return matched, total, nil
+}
+
+// CartAddressesForDisclosure returns every address of the given carts.
+//
+// country_code and metadata come back like every other column: what the erasure
+// LEAVES is still held, and a fake that dropped them would let a test pass while
+// the dossier hid a column the erasure's own report names as kept.
+func (f *fakeStore) CartAddressesForDisclosure(
+	ctx context.Context, cartIDs []string,
+) ([]models.PersonalAddress, error) {
+	view := f.view(ctx)
+	defer view.release()
+
+	wanted := make(map[string]bool, len(cartIDs))
+	for _, id := range cartIDs {
+		wanted[id] = true
+	}
+
+	out := make([]models.PersonalAddress, 0, len(view.addresses))
+	for key := range view.addresses {
+		addr := view.addresses[key]
+		if !wanted[addr.CartID] {
+			continue
+		}
+		out = append(out, models.PersonalAddress{
+			ID:              addr.ID,
+			CartID:          addr.CartID,
+			SourceAddressID: addr.SourceAddressID,
+			FirstName:       addr.FirstName,
+			LastName:        addr.LastName,
+			Company:         addr.Company,
+			Address1:        addr.Address1,
+			Address2:        addr.Address2,
+			City:            addr.City,
+			Province:        addr.Province,
+			PostalCode:      addr.PostalCode,
+			CountryCode:     addr.CountryCode,
+			Phone:           addr.Phone,
+			Metadata:        addr.Metadata,
+		})
+	}
+	slices.SortFunc(out, func(a, b models.PersonalAddress) int {
+		if a.CartID != b.CartID {
+			return cmpString(a.CartID, b.CartID)
+		}
+		return cmpString(a.ID, b.ID)
+	})
+
+	return out, nil
+}
+
+// CartLineItemNotesForDisclosure returns the lines of the given carts that carry
+// a note.
+//
+// The empty ones are filtered out here because the statement filters them in
+// SQL; a fake that returned them all would hide a service that had stopped
+// caring which rows it turns into records.
+func (f *fakeStore) CartLineItemNotesForDisclosure(
+	ctx context.Context, cartIDs []string,
+) ([]models.PersonalNote, error) {
+	view := f.view(ctx)
+	defer view.release()
+
+	wanted := make(map[string]bool, len(cartIDs))
+	for _, id := range cartIDs {
+		wanted[id] = true
+	}
+
+	out := make([]models.PersonalNote, 0, len(view.items))
+	for id := range view.items {
+		item := view.items[id]
+		if !wanted[item.CartID] || len(item.Metadata) == 0 {
+			continue
+		}
+		out = append(out, models.PersonalNote{ID: item.ID, CartID: item.CartID, Data: item.Metadata})
+	}
+	sortNotes(out)
+
+	return out, nil
+}
+
+// CartShippingNotesForDisclosure returns the shipping methods of the given carts
+// that carry provider data.
+func (f *fakeStore) CartShippingNotesForDisclosure(
+	ctx context.Context, cartIDs []string,
+) ([]models.PersonalNote, error) {
+	view := f.view(ctx)
+	defer view.release()
+
+	wanted := make(map[string]bool, len(cartIDs))
+	for _, id := range cartIDs {
+		wanted[id] = true
+	}
+
+	out := make([]models.PersonalNote, 0, len(view.methods))
+	for id := range view.methods {
+		method := view.methods[id]
+		if !wanted[method.CartID] || len(method.Data) == 0 {
+			continue
+		}
+		out = append(out, models.PersonalNote{ID: method.ID, CartID: method.CartID, Data: method.Data})
+	}
+	sortNotes(out)
+
+	return out, nil
+}
+
+// sortNotes puts the note rows in the order the statements return them: by cart,
+// then by row.
+func sortNotes(notes []models.PersonalNote) {
+	slices.SortFunc(notes, func(a, b models.PersonalNote) int {
+		if a.CartID != b.CartID {
+			return cmpString(a.CartID, b.CartID)
+		}
+		return cmpString(a.ID, b.ID)
+	})
+}

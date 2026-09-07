@@ -102,6 +102,19 @@ type Repository interface {
 	// write different columns for different reasons, and a shared method would
 	// have made "forget this person" one boolean away from "hide this record".
 	AnonymizeCustomers(ctx context.Context, customerID, email string, now time.Time) (models.ErasureCount, error)
+	// CustomersForDisclosure and AddressesForDisclosure are the storage half of
+	// [Service.PersonalDataOf]. They resolve the subject on the same terms
+	// AnonymizeCustomers does — both handles, soft-deleted rows included — and
+	// are separate methods because they take no lock and open no transaction:
+	// this is a read, and folding it into the erasure's resolver would have made
+	// showing a person their data block them from editing it.
+	//
+	// They are two methods and not one for the same reason the caller is a
+	// service and not a query: the addresses can only be asked for once the
+	// customer rows are known, and a subject that resolves to nobody never asks
+	// for them at all.
+	CustomersForDisclosure(ctx context.Context, customerID, email string) ([]models.Customer, error)
+	AddressesForDisclosure(ctx context.Context, customerIDs []string) ([]models.CustomerAddress, error)
 
 	CreateGroup(ctx context.Context, g models.CustomerGroup) (models.CustomerGroup, error)
 	GetGroup(ctx context.Context, id string) (models.CustomerGroup, error)

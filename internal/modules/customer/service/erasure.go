@@ -11,7 +11,15 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/customer/models"
 )
 
-// ErasureHolder is the name customer answers an erasure request under.
+// ErasureHolder is the name customer answers under when it is asked about
+// somebody's personal data.
+//
+// It is named for the erasure because that is the answer it was written for,
+// and it is the module's holder name for BOTH answers: [Service.PersonalDataOf]
+// fills the same string into Disclosure.Holder. One name is not a saving but a
+// requirement — a controller who reads "customer" off an erasure report and
+// "customer" off a dossier has to be looking at the same holder, and two
+// constants would eventually disagree about which one that is.
 //
 // It must be the MODULE name, because that is what a controller reads off the
 // report when it has to say which store still holds something. The constant

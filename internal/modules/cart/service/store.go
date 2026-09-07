@@ -33,6 +33,14 @@ import (
 // identifiers it returned, so all three belong to a single [Store.WithTx] (see
 // erasure.go).
 //
+// The four *ForDisclosure methods are the opposite case and are deliberately
+// outside every one of these: no transaction, no lock, no write. They answer
+// what the module holds about a person, and that answer must not be able to
+// change the rows it describes or to queue behind a checkout holding a cart's
+// lock. The argument for accepting the reads not sharing one snapshot — and for
+// why the ONE figure that would have suffered from that is read inside the same
+// statement as the rows it describes — is in repository/disclosure.go.
+//
 // [Store.WithReadTx] is for reads that do not write but make MORE THAN ONE query
 // (see [Service.GetCart]). It takes no lock; the only guarantee it gives is that
 // all of the queries inside it see the SAME state of the cart. The reason it is
@@ -118,6 +126,28 @@ type Store interface {
 	// AnonymizeCartAddresses nulls the personal columns of the given carts'
 	// addresses and returns the number of rows written.
 	AnonymizeCartAddresses(ctx context.Context, cartIDs []string) (int64, error)
+
+	// CartsForDisclosure returns the person's carts, newest first, at most
+	// limit of them, and — as the second value — HOW MANY matched in total.
+	// The two numbers differ when the bound cut, and the disclosure has to be
+	// able to say so; a caller that ignores the count produces a document that
+	// is silently short (see disclosure.go).
+	//
+	// It takes no lock and belongs to no transaction: it is a read that must
+	// not change or block what it describes.
+	CartsForDisclosure(
+		ctx context.Context, customerID, email string, limit int64,
+	) ([]models.PersonalCart, int64, error)
+	// CartAddressesForDisclosure returns every address of the given carts,
+	// soft-deleted rows included.
+	CartAddressesForDisclosure(ctx context.Context, cartIDs []string) ([]models.PersonalAddress, error)
+	// CartLineItemNotesForDisclosure returns the lines of the given carts that
+	// carry a non-empty metadata document; the empty ones are left in the
+	// database rather than traveling as records with nothing in them.
+	CartLineItemNotesForDisclosure(ctx context.Context, cartIDs []string) ([]models.PersonalNote, error)
+	// CartShippingNotesForDisclosure returns the shipping methods of the given
+	// carts that carry non-empty provider data.
+	CartShippingNotesForDisclosure(ctx context.Context, cartIDs []string) ([]models.PersonalNote, error)
 
 	// CreateShippingMethod adds a shipping method to the cart.
 	CreateShippingMethod(ctx context.Context, method models.ShippingMethod) (models.ShippingMethod, error)

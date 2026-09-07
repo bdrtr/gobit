@@ -363,6 +363,12 @@ func serve(opts Options) error {
 	// modules brought in by plugins (see searchpg) appear only in the registry,
 	// and a hand-maintained list would silently leave them undescribed.
 	doc := describeAPI(cfg.ServiceName+" API", opts.version(), registry.Modules())
+	// The personal-data endpoints belong to no module, so the registry walk
+	// above never asks about them; without this line they enter the document as
+	// bare paths with no body and no response. An endpoint that hands back the
+	// most concentrated personal data in the system is the last one that should
+	// be undocumented.
+	describePersonalData(doc)
 	router.Get(openAPIPath, doc.Handler(router))
 	checkSchema(ctx, doc, router, log)
 

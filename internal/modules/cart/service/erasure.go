@@ -76,7 +76,7 @@ import (
 // direction); the repetition is the price this module's other cross-package
 // name constants pay for the same isolation. The sweep overwrites
 // [personaldata.Result.Holder] with the registry's name anyway
-// (internal/workflows/erasing) — this value is what a caller holding the
+// (internal/workflows/datasubject) — this value is what a caller holding the
 // service directly gets, and what the log line says.
 const ErasureHolder = EntityName
 
@@ -104,6 +104,43 @@ const (
 // fourth calls its own "data". Naming it once keeps the declaration's rows
 // short enough to read as a table.
 const columnMetadata = "metadata"
+
+// columnShippingData is that fourth column's name.
+//
+// It is a constant for the same reason [columnMetadata] is, and it earned one
+// when the disclosure arrived: that path has to ASK for a row's declared column
+// by name (see noteRecord in disclosure.go), and a second literal "data" spelled
+// there would be a place where the disclosure and the declaration could disagree
+// about what the column is called — a disagreement that produces a person's
+// dossier missing a column rather than a compile error.
+const columnShippingData = "data"
+
+// The names of the personal columns themselves.
+//
+// They are constants for the reason the table names above are, and they earned
+// it when a THIRD place in this package started spelling the same nine strings.
+// The declaration below names them, [Service.setAddress] names them in the error
+// it returns when a field is too long, and the disclosure asks a row for a
+// declared column BY NAME (disclosure.go). A literal repeated across three files
+// is three chances for a typo that is not a compile error, and each of the three
+// fails differently and quietly: an auditor sent to a column that does not
+// exist, an error naming a field that is not the one being validated, or a
+// declared column that no reader answers for.
+const (
+	columnCustomerID      = "customer_id"
+	columnEmail           = "email"
+	columnSourceAddressID = "source_address_id"
+	columnFirstName       = "first_name"
+	columnLastName        = "last_name"
+	columnCompany         = "company"
+	columnAddress1        = "address_1"
+	columnAddress2        = "address_2"
+	columnCity            = "city"
+	columnProvince        = "province"
+	columnPostalCode      = "postal_code"
+	columnCountryCode     = "country_code"
+	columnPhone           = "phone"
+)
 
 // personalColumn is one declared place this module keeps personal data, plus
 // whether the erasure rewrites it.
@@ -157,7 +194,7 @@ type personalColumn struct {
 var personalColumns = []personalColumn{
 	{
 		holding: personaldata.Holding{
-			Table: tableCarts, Column: "customer_id", Kind: personaldata.Named,
+			Table: tableCarts, Column: columnCustomerID, Kind: personaldata.Named,
 			Why: "the customer module's identifier for the shopper; a guest cart has none",
 		},
 		// It is the handle a repeated sweep finds these rows by
@@ -168,7 +205,7 @@ var personalColumns = []personalColumn{
 	},
 	{
 		holding: personaldata.Holding{
-			Table: tableCarts, Column: "email", Kind: personaldata.Named,
+			Table: tableCarts, Column: columnEmail, Kind: personaldata.Named,
 			Why: "the address the shopper gave; on a guest cart it is the only handle to them",
 		},
 		erased: true,
@@ -189,70 +226,70 @@ var personalColumns = []personalColumn{
 	},
 	{
 		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: "source_address_id", Kind: personaldata.Named,
+			Table: tableCartAddresses, Column: columnSourceAddressID, Kind: personaldata.Named,
 			Why: "which entry of the shopper's address book this copy was taken from",
 		},
 		erased: true,
 	},
 	{
 		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: "first_name", Kind: personaldata.Named,
+			Table: tableCartAddresses, Column: columnFirstName, Kind: personaldata.Named,
 			Why: "the shopper's given name as it was written on the cart",
 		},
 		erased: true,
 	},
 	{
 		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: "last_name", Kind: personaldata.Named,
+			Table: tableCartAddresses, Column: columnLastName, Kind: personaldata.Named,
 			Why: "the shopper's family name as it was written on the cart",
 		},
 		erased: true,
 	},
 	{
 		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: "company", Kind: personaldata.Named,
+			Table: tableCartAddresses, Column: columnCompany, Kind: personaldata.Named,
 			Why: "the company on the address; a one-person business is a person",
 		},
 		erased: true,
 	},
 	{
 		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: "address_1", Kind: personaldata.Named,
+			Table: tableCartAddresses, Column: columnAddress1, Kind: personaldata.Named,
 			Why: "the street the cart would have been shipped to or billed to",
 		},
 		erased: true,
 	},
 	{
 		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: "address_2", Kind: personaldata.Named,
+			Table: tableCartAddresses, Column: columnAddress2, Kind: personaldata.Named,
 			Why: "the rest of the street address — the building, the floor, the flat",
 		},
 		erased: true,
 	},
 	{
 		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: "city", Kind: personaldata.Named,
+			Table: tableCartAddresses, Column: columnCity, Kind: personaldata.Named,
 			Why: "the city of the address",
 		},
 		erased: true,
 	},
 	{
 		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: "province", Kind: personaldata.Named,
+			Table: tableCartAddresses, Column: columnProvince, Kind: personaldata.Named,
 			Why: "the province or district of the address",
 		},
 		erased: true,
 	},
 	{
 		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: "postal_code", Kind: personaldata.Named,
+			Table: tableCartAddresses, Column: columnPostalCode, Kind: personaldata.Named,
 			Why: "the postal code, which in a small district reaches a household on its own",
 		},
 		erased: true,
 	},
 	{
 		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: "country_code", Kind: personaldata.Named,
+			Table: tableCartAddresses, Column: columnCountryCode, Kind: personaldata.Named,
 			Why: "the country the cart was addressed to; it is the one address column the erasure keeps",
 		},
 		// The row itself has to survive — an absent address row already means
@@ -263,7 +300,7 @@ var personalColumns = []personalColumn{
 	},
 	{
 		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: "phone", Kind: personaldata.Named,
+			Table: tableCartAddresses, Column: columnPhone, Kind: personaldata.Named,
 			Why: "the number given for the delivery",
 		},
 		erased: true,
@@ -277,7 +314,7 @@ var personalColumns = []personalColumn{
 	},
 	{
 		holding: personaldata.Holding{
-			Table: tableCartShippingMethods, Column: "data", Kind: personaldata.Open,
+			Table: tableCartShippingMethods, Column: columnShippingData, Kind: personaldata.Open,
 			Why: "the delivery provider's own data on the chosen method — a pickup branch or a locker is typed here",
 		},
 		erased: false,
@@ -457,8 +494,28 @@ func erasureResult(rows int64, carts int) personaldata.Result {
 	return result
 }
 
-// normalizeErasureSubject validates the subject and puts its identifiers into
-// the form the columns hold.
+// normalizeErasureSubject validates an ERASURE's subject and puts its
+// identifiers into the form the columns hold.
+//
+// The work is [normalizeSubject]'s, shared with the disclosure. What is
+// specific to this caller is what the refusal at the end of it prevents: a
+// subject with no identifier is refused because erasing everybody is not an
+// erasure request. The sweep refuses it first
+// (internal/workflows/datasubject) and this is the last defense, because a
+// holder reached directly would otherwise take a zero-value subject and lock
+// every cart in the installation.
+func normalizeErasureSubject(subject personaldata.Subject) (customerID, email string, err error) {
+	return normalizeSubject(subject, CodeErasureSubjectEmpty, "an erasure request")
+}
+
+// normalizeSubject is the resolution both data-subject answers share.
+//
+// The erasure and the disclosure (disclosure.go) must resolve a person the SAME
+// way, and this function is where that is true rather than a coincidence: a
+// module able to find more rows to delete than to show would reopen, in a
+// smaller form, exactly the asymmetry the disclosure was added to close. It is
+// therefore one function with two callers rather than two functions that agree
+// today.
 //
 // The e-mail is folded to lower case with [normalizeEmail], the same function
 // that folded it on the way IN (see [Service.CreateCart] and
@@ -466,14 +523,16 @@ func erasureResult(rows int64, carts int) personaldata.Result {
 // matching with anything else would silently miss the rows. An address that
 // cannot pass it is rejected rather than run as a filter that can only match
 // nothing — a subject that reaches this module malformed is a caller's mistake,
-// and answering "anonymized, zero rows" to it would report an erasure that
-// never looked anywhere.
+// and answering "nothing found" to it would report a search that never looked
+// anywhere.
 //
-// A subject with NO identifier is refused. Erasing everybody is not an erasure
-// request; the sweep refuses it first (internal/workflows/erasing) and this is
-// the last defense, because a holder reached directly would otherwise take a
-// zero-value subject and lock every cart in the installation.
-func normalizeErasureSubject(subject personaldata.Subject) (customerID, email string, err error) {
+// What differs between the callers is only the refusal: the code and the noun
+// are parameters because an operator reading "your erasure request named
+// nobody" after asking to SEE somebody's data would go looking at the wrong
+// request. The validation, the folding and the rule itself are one copy.
+func normalizeSubject(
+	subject personaldata.Subject, emptyCode, request string,
+) (customerID, email string, err error) {
 	if subject.CustomerID != "" {
 		if err := requireID("customer_id", subject.CustomerID); err != nil {
 			return "", "", err
@@ -484,8 +543,8 @@ func normalizeErasureSubject(subject personaldata.Subject) (customerID, email st
 		return "", "", err
 	}
 	if subject.CustomerID == "" && email == "" {
-		return "", "", errors.Invalid(CodeErasureSubjectEmpty,
-			"an erasure request has to name somebody: give a customer id, an e-mail address, or both")
+		return "", "", errors.Invalid(emptyCode,
+			"%s has to name somebody: give a customer id, an e-mail address, or both", request)
 	}
 
 	return subject.CustomerID, email, nil

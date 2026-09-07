@@ -22,7 +22,7 @@
 -- in a given deployment with the CONTROLLER, not with the framework, and a
 -- framework that rewrote a shop's own notes would have taken that judgement
 -- back. What the module owes instead is to SAY so, which the Erase result does
--- through erasure.Result.Kept.
+-- through personaldata.Result.Kept.
 
 -- ListOrdersForErasure returns the person's orders together with the facts that
 -- decide whether each one can be forgotten yet.
@@ -124,7 +124,7 @@ FOR UPDATE OF o;
 -- the idempotence rule requires to answer the same thing — unable to find the
 -- rows it already erased. The id identifies the person only through the
 -- customer module's record, and that module answers the same request on its own
--- account; the order result names the column in erasure.Result.Kept so the
+-- account; the order result names the column in personaldata.Result.Kept so the
 -- controller is told, rather than left to assume.
 --
 -- The stamp is written with COALESCE and not with now(): the FIRST erasure

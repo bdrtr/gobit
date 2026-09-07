@@ -8,7 +8,7 @@ import (
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
-	"github.com/bdrtr/gobit/internal/workflows/erasing"
+	"github.com/bdrtr/gobit/internal/workflows/datasubject"
 )
 
 // TestTheSagaStoreServiceNameMatchesTheCompositionRoot keeps two spellings of
@@ -24,11 +24,11 @@ import (
 func TestTheSagaStoreServiceNameMatchesTheCompositionRoot(t *testing.T) {
 	t.Parallel()
 
-	if erasing.ServiceWorkflowStore != svcWorkflowStore {
+	if datasubject.ServiceWorkflowStore != svcWorkflowStore {
 		t.Errorf("the erasing flow asks for %q and the composition root provides %q.\n"+
 			"The lookup would miss, the coordinator would answer from its stub, and the "+
 			"erasure report would say the saga store was swept when it was not.",
-			erasing.ServiceWorkflowStore, svcWorkflowStore)
+			datasubject.ServiceWorkflowStore, svcWorkflowStore)
 	}
 }
 
@@ -60,7 +60,7 @@ func TestTheSagaStoreIsReachedFromTheRealCompositionRoot(t *testing.T) {
 		t.Fatalf("the saga store could not be provided: %v", err)
 	}
 
-	co, err := erasing.FromContainer(c, nil)
+	co, err := datasubject.FromContainer(c, nil)
 	if err != nil {
 		t.Fatalf("the coordinator could not be built: %v", err)
 	}

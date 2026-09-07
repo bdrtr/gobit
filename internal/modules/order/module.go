@@ -61,6 +61,14 @@
 // erased, what deliberately is not, and why the refusal is bounded by a
 // measurable fact rather than by a retention period are in service/erasure.go.
 //
+// [personaldata.Discloser] (ADR 0034), which is the same resolution pointed at
+// the other verb. The module could already find a person in order to null her
+// columns and could not show her what it had; it now hands back one record per
+// row — the order, its addresses, its lines and every return, exchange and claim
+// on it — carrying EXACTLY the columns the declaration names, with each value's
+// Kind beside it so the controller knows which of them gobit has ever looked at.
+// The read takes no lock and writes nothing; it is in service/disclosure.go.
+//
 // # The events it publishes
 //
 // "order.placed" — when an order is created (plan Phase 6 DoD). For its payload
@@ -200,15 +208,19 @@ var _ openapi.Describer = (*Module)(nil)
 // That the module can answer an erasure request, and can say what it holds, is
 // pinned down at compile time as well.
 //
-// The two [personaldata] interfaces are found by type assertion exactly as
-// [openapi.Describer] is (see internal/workflows/erasing), and the cost of a
+// The three [personaldata] interfaces are found by type assertion exactly as
+// [openapi.Describer] is (see internal/workflows/datasubject), and the cost of a
 // drift is worse here than a missing path in a document: the module would fall
 // out of the sweep in silence, the report would not mention it, and a person
 // who asked to be forgotten would be told the work was done while every order
-// still carried their address.
+// still carried their address. The disclosure half fails the other way round and
+// no more quietly — the module would drop out of the dossier, and a person
+// asking what is held about her would be handed a document with no orders in it
+// at all.
 var (
-	_ personaldata.Eraser   = (*Module)(nil)
-	_ personaldata.Declarer = (*Module)(nil)
+	_ personaldata.Eraser    = (*Module)(nil)
+	_ personaldata.Declarer  = (*Module)(nil)
+	_ personaldata.Discloser = (*Module)(nil)
 )
 
 // New produces an order module ready to be registered.
@@ -351,7 +363,7 @@ func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 // "nothing to erase" from a module whose service was never wired is a false
 // answer to a person who asked to be forgotten, and it would reach them as a
 // completed report rather than as a fault (the sweep marks a failing holder and
-// says the erasure is partial — see internal/workflows/erasing).
+// says the erasure is partial — see internal/workflows/datasubject).
 func (m *Module) Erase(ctx context.Context, subject personaldata.Subject) (personaldata.Result, error) {
 	if m.svc == nil {
 		return personaldata.Result{}, errors.Internal(codeSetupFailed,
@@ -360,6 +372,28 @@ func (m *Module) Erase(ctx context.Context, subject personaldata.Subject) (perso
 	}
 
 	return m.svc.Erase(ctx, subject)
+}
+
+// PersonalDataOf shows one person what this module holds about her (ADR 0034).
+//
+// It delegates for the reason [Module.Erase] does, and the Register check is
+// there for the same reason with the failure pointing the other way: an
+// unregistered module answering "nothing found" would put a confident and false
+// "you have no orders with us" into a document handed to the person, and the
+// sweep would have no way to tell that sentence from the true one. An error
+// becomes a named incompleteness in the dossier instead (ADR 0034), which is
+// the answer that can be checked.
+func (m *Module) PersonalDataOf(
+	ctx context.Context, subject personaldata.Subject,
+) (personaldata.Disclosure, error) {
+	if m.svc == nil {
+		return personaldata.Disclosure{}, errors.Internal(codeSetupFailed,
+			"the %s module was asked what it holds about a person before Register wired its "+
+				"service; nothing was read and the dossier must not report this holder as empty",
+			ModuleName)
+	}
+
+	return m.svc.PersonalDataOf(ctx, subject)
 }
 
 // PersonalData says where this module keeps personal data (ADR 0029).

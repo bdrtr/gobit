@@ -257,7 +257,7 @@ func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 // yanıt verir.
 //
 // Holder BOŞ bırakılır: koordinatör onu KAYIT DEFTERİNDEKİ adla doldurur (bkz.
-// internal/workflows/erasing, Coordinator.PersonalData). Buraya elle yazmak,
+// internal/workflows/datasubject, Coordinator.PersonalData). Buraya elle yazmak,
 // aynı adı iki yerde tutmak ve ikisinin ayrışmasını beklemek olurdu.
 //
 // # Neden şirket satırı kişisel veridir
@@ -281,7 +281,7 @@ func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 // Kimliği taşıyan bağ ("b2b_employee_customer") bu modülün servisinde bildirilir
 // ama tablosu core/link tarafından ÇALIŞMA ZAMANINDA yaratılır ve hiçbir
 // migration'da görünmez; o depoyu koordinatör AYRICA bildirir (bkz.
-// internal/workflows/erasing, linkHoldings). Burada onu da bildirmek, tek bir
+// internal/workflows/datasubject, linkHoldings). Burada onu da bildirmek, tek bir
 // veriyi iki tutucunun üstlenmesi olurdu.
 //
 // id ve company_id bildirilmez: bir anahtar satırı adlandırır, kişiyi değil ve

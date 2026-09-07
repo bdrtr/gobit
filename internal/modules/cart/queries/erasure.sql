@@ -20,7 +20,7 @@
 -- whether such a field holds personal data in a given deployment with the
 -- CONTROLLER, not with the framework, and a framework that rewrote a shop's own
 -- notes would have taken that judgement back. What the module owes instead is
--- to SAY so, which the Erase result does through erasure.Result.Kept.
+-- to SAY so, which the Erase result does through personaldata.Result.Kept.
 --
 -- No statement touches revision either, and that is not an omission. The
 -- counter is the cart's SHAPE, incremented by everything that changes what is
@@ -91,7 +91,7 @@ FOR UPDATE;
 -- idempotence rule requires to answer the same thing — searching for a cart it
 -- has already anonymized. The id reaches the person only through the customer
 -- module's record, and that module answers the same request on its own account;
--- the cart result names the column in erasure.Result.Kept so the controller is
+-- the cart result names the column in personaldata.Result.Kept so the controller is
 -- told rather than left to assume.
 --
 -- The statement takes an ARRAY rather than one id: a shopper who has opened a
