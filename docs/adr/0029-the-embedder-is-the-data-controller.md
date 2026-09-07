@@ -113,11 +113,25 @@ the embedder puts personal data in it.
 
 - **An embedder that does nothing is not compliant.** gobit will ship a
   mechanism that can be left unwired, and a shop that never calls it has a legal
-  problem the framework cannot see. The README has to say this in the words a
-  shop owner reads, not only in an ADR.
+  problem the framework cannot see. ~~The README has to say this in the words a
+  shop owner reads, not only in an ADR.~~ **It says it, since 2026-09-07**, in
+  both READMEs, under a heading that names the division out loud: the mechanism
+  is gobit's, the responsibility is the embedder's, and a gobit that is
+  installed and never called leaves a problem nobody can see from here.
 - **The declaration is only as true as the modules keep it.** A module that
-  grows a personal column and does not declare it makes the contract lie. That
-  is an audit this repository does not have yet, and it belongs with B17.
+  grows a personal column and does not declare it makes the contract lie.
+  ~~That is an audit this repository does not have yet, and it belongs with
+  B17.~~ **It was built with B17 on 2026-09-07, and the shape is worth naming
+  because a first attempt at it would have been weaker.** The audit
+  (`internal/app`, `TestEveryPersonColumnIsDeclared`) reads every module's own
+  migrations THROUGH the module interface and compares them with its
+  declaration in BOTH directions: a declared column that does not exist is
+  drift, and an existing column whose NAME unambiguously holds a person and
+  that nothing declares is the omission this consequence predicted. It runs
+  over the real registry rather than a hand-written module list, so the module
+  added tomorrow is audited without anybody remembering to add it. What it
+  cannot do is find a person inside a free-form column, and it does not try:
+  that judgement is the controller's by this ADR's own decision.
 
 ## Reopening the decision
 

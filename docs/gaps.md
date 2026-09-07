@@ -171,22 +171,39 @@ their own row did not name:
 
 - **Waiting on a decision in group A:** B2 (its option-value half on A18, its
   price and availability halves on A16 and A17). ~~and B17 (A2 and A4)~~ —
-  **B17's two decisions were both answered on 2026-09-06 (ADR 0029 and ADR
-  0032), so it moved out of this bullet and into the next one: what it waits on
-  now is B8, the event its contract cannot be built without.**
+  **B17 is BUILT (2026-09-07, ADR 0033 and ADR 0034); see the row.**
 - **Waiting on a published-contract decision:** B9 and B10. Both would widen a
   package under `core/`, which ADR 0026 made a compatibility promise, and
   neither widening is an edit this row can make on its own.
-- **Waiting on their own first consumer:** B7, B8, B15 and B16. This is not a
+- **Waiting on their own first consumer:** B7, ~~B8,~~ B15 and B16. This is not a
   scheduling accident, it is a rule this repository has already paid for twice
   (B7's own row and B13's): a capability and its first consumer are one package
   or neither, and the audits enforce it — a topic no production file subscribes
   to is refused, and the exemption map is empty by policy.
 
-That leaves NO foundation that can be built today without an answer from
+~~That leaves NO foundation that can be built today without an answer from
 somebody, which is a fact about the ORDER rather than about the size of the
 work: the cheapest thing on this whole list remains answering A2, and the four
-consumer-blocked rows unblock in pairs rather than one at a time.
+consumer-blocked rows unblock in pairs rather than one at a time.~~
+
+**Re-derived 2026-09-07, and the paragraph above was wrong in the way an
+inventory usually goes wrong: it kept its CONCLUSION after its premises were
+answered.** Five of the eight rows are no longer where it puts them. A2 and A4
+were answered (ADR 0029, ADR 0032), so the "cheapest thing on this list" it
+names has been done. B17 is BUILT, not blocked. B8 was reclassified from a gap
+into a DECISION — the obligation it stood for is met by an interface that
+returns an answer rather than by an event, and the reasoning is in ADR 0033.
+B13 was built earlier still.
+
+**What is actually open in this group today: B2, B7, B9, B10, B15, B16** — six
+rows, and the two kinds of blocker the paragraph identified still describe them
+correctly. That part held; only the arithmetic and the closing sentence rotted.
+
+The lesson is the one this file keeps teaching about itself: **a summary
+paragraph outlives the rows it summarises.** The rows above were each struck
+through as they closed, which is why the drift is visible at all — but nothing
+re-derives the paragraph beneath them, and a reader who trusts it plans against
+a repository that no longer exists.
 
 ### C. Features — after the above
 
@@ -195,7 +212,7 @@ consumer-blocked rows unblock in pairs rather than one at a time.
 | C1 | **Back-in-stock waitlist.** ~~The cheapest real feature; every part exists and only a table is missing~~ — **that claim was wrong, measured 2026-09-05.** Three parts are missing, not one: the table, an inventory EVENT (the module publishes nothing at all, so there is no "it is back" to react to), and a subscriber to turn it into a message. The notification side does exist — `Service.Notify` — but it is reached by SUBSCRIBING, so the event is the load-bearing half. **A SECOND blocker was measured on the same day and it is a DECISION, not a gap: A15.** The table would hold an address this repository cannot verify, cannot let anyone unsubscribe from, and does not throttle per address | A15 first, then B7 (inventory events) |
 | C2 | ~~**Order timeline**~~ **Built 2026-09-05.** `GET /admin/v1/orders/{id}/timeline` — composed, not a table; every entry names the CLOCK that stamped it, because the capture and a parcel's transitions are on the application clock while everything else is on the database's. ~~Undated facts (an exchange that finished) come back last rather than being dropped~~ **Corrected 2026-09-06 (D4): that sentence was false the day it was written.** The undated machinery stays — `sortTimeline` puts a nil `At` last and `TimelineEntry.At` is a pointer for that reason — but nothing produces an undated entry any more, and a finished exchange is not merely undated, it is unrepresentable: the order module's migration `000008_order_exchange_cancel` drops `order_exchanges.completed_at` and narrows the status CHECK to `('requested', 'canceled')`, the completed-exchange constant and the timeline's unreachable branch are deleted, and `TestExchangeStatusHasNoCompletedValue` keeps them gone. A withdrawn exchange is a DATED `exchange.canceled` entry | ~~B5, B6~~ done |
 | C3 | **Operator assistant in the panel** — sixty-four primitive interop methods are already a tool catalogue, and identity exists inside the panel | a return-creation surface |
-| C4 | **Consent records and data-subject endpoints** | A2, B17 |
+| C4 | **Consent records and data-subject endpoints** — ~~A2, B17~~ **BOTH ANSWERED, so this row became actionable on 2026-09-07 without anybody noticing, which is the class this table exists to prevent.** A2 is ADR 0029 (the embedder is the controller) and B17 is built: the three data-subject endpoints EXIST — `GET /admin/v1/personal-data`, `POST .../disclosure`, `POST .../erasure`. So the "data-subject endpoints" half of this row is DONE and what remains is CONSENT RECORDS, which is a different thing and needs its own sentence before its first table: under ADR 0029 gobit does not own the consent text, the lawful basis or the retention window, so what a consent record would store here is a FACT (this person agreed, at this instant, to this version of a text the embedder wrote) rather than the text itself. A15 sits upstream of it for the same reason it sits upstream of the waitlist: the storefront cannot identify who is consenting | the endpoints are built; consent records need A15 answered first |
 | C5 | **Outbound webhooks** (NATS after, if anyone asks) — **the sender was BUILT on 2026-09-06 as `plugins/webhookout`, and it is NOT INSTALLABLE. That was measured, not assumed.** What exists is whole and proved: a receiver is registered over `POST /admin/v1/webhooks`, which mints its signing secret server-side and returns it exactly ONCE; four topics are subscribed BY NAME, written out rather than ranged over, because the reverse topic gate resolves a subscription statically and a loop variable is a name it cannot resolve; an event on the bus writes one delivery row PER RECEIVER and does nothing else, since the bus logs a handler's error and counts the event processed, so anything the handler does not finish is lost for good; a minute-by-minute job claims what is due by moving `next_attempt_at` forward — a LEASE, not a held transaction, because an attempt is an HTTP request to a third party and a transaction spanning a pass of them would hold a pool connection for most of a minute exactly when the receiver has stopped answering; and every attempt is signed HMAC-SHA256 over a LENGTH-PREFIXED join of six values, the same rule ADR 0028's inbound ring uses, so a body cannot be moved onto another event's signature. The queue is deliberately NOT `event_outbox`, and the schema is the refusal: that table is keyed on the EVENT and carries one attempt counter, one next attempt and one dead-letter stamp, so an event owed to three receivers with one of them down has no expressible state in it — and putting webhook deliveries in the relay's pile would make a third party's decommissioned endpoint indistinguishable from gobit's own bus failing to accept an event, in the one listing an operator reads to tell those apart. A pile given up on FAILS the delivery run, and `GET /admin/v1/webhooks/deliveries?state=dead` plus redrive and discard are the two ways out. Plain http is refused unless the host is loopback; resolving the host to refuse a private address is NOT done and the refusal is argued — a resolve-then-connect check is not a check, and closing it properly means a dialer that refuses at connect time. Proved from a real cart through a real order to a receiver that holds nothing but the issued secret (`TestARealOrderReachesARealWebhookReceiver` in `internal/e2e`, observed passing 2026-09-06), which is the only place that can catch the order module and the plugin disagreeing about the event. **What is missing is ONE MAP ENTRY.** `webhook-out` is absent from the composition root's plugin catalog, so `PLUGINS=webhook-out` stops the boot with "unknown plugin". Measured with `go list -deps ./cmd/server`: the closure names eight plugins and not this one, so the package is not compiled into the binary at all and its migration is outside `gobit migrate` too. The plugin's own package doc says it is "named nowhere except one line in the composition root's catalog" — that line does not exist. Why no gate caught it is D22. **The catalog line landed 2026-09-06 and C5 is now WHOLE: `webhookout.Name` is in the installer's map, `go list -deps ./cmd/server` names the package, and its migration is inside the migrate surface.** | ~~B12~~ ~~B13~~ both done — retry, the dead letter and a plugin-registrable periodic pass are all built. The SENDER is built too; what is left is the catalog line, and nothing else |
 | C6 | **Carrier plugins** (Yurtici, Aras, MNG, PTT) | ~~B1~~ built (ADR 0028); B10's state machine is built and its quote input is not; **and a third blocker was measured 2026-09-06 that neither row named: a carrier has NOWHERE TO DELIVER what it receives.** The fulfillment module's cross-module write surface is five primitive methods and none of them can move a shipment to shipped, delivered or returned. The admin routes can, but a carrier's webhook holds no admin credential — that is the premise the callback ring is built on — and a plugin cannot call the service directly, because the plugin-import gate refuses the import and a structural interface cannot be written either while the method returns a module type the plugin's package cannot name. The method is deliberately NOT added ahead of the plugin (a cross-module surface with no consumer is a contract nothing can check), and the shape it should take is written down where it will be needed: ONE method carrying the carrier's OWN instant, because the tolerance is a property of the sequence rather than of any single transition, and because that instant is the one thing an admin route cannot supply and a carrier always can |
 | C7 | **Installment table** + iyzico/Param providers | A3 |
@@ -205,7 +222,7 @@ consumer-blocked rows unblock in pairs rather than one at a time.
 | C11 | **Review summaries and Q&A** | ~~B4~~ **built 2026-09-06, so the DATA exists** — and the two hooks a summariser needs are deliberately absent, named in the review module's own package doc as arriving WITH their first reader. It publishes no read-layer provider, so nothing outside the module can read a review without importing it, which ADR 0001 forbids; and it publishes no event, so a stored summary has nothing to invalidate it. Both were withheld rather than forgotten: an interop surface no production file resolves fails the consumer audit, and a topic no production file subscribes to fails the topic gate whose exemption map is empty by policy. C11 is the reader that makes both landable, in one package with them. The `product.metadata` measurement below still says where the summary may NOT live |
 | C12 | **Subscriptions** — a second axis on the order, not a fifth status | B9 |
 | C13 | **Feature flags, then A/B** | A9 for the assignment key |
-| C14 | **Panel: extension points, then the SPA if A7 says so** | A7 |
+| C14 | **Panel: extension points, then the SPA if A7 says so** | ~~A7~~ **answered — ADR 0030 says yes, the panel becomes an ordinary client of `/admin/v1`. What it waits on now is the three things that ADR names as owed by whoever implements it: an Origin guard mounted on the API prefix, a rule that does not refuse `sk_` key-authenticated callers, and a JSON refusal instead of the panel's HTML error page** |
 | C15 | **Multi-language** | A11 |
 | C16 | **Real-time stock** | B7, plus a fan-out the bus cannot do today |
 | C17 | **Edge caching** | A8 |
@@ -1344,6 +1361,31 @@ consumer-blocked rows unblock in pairs rather than one at a time.
 - **A/B assignment** likewise, if A9 stands: the framework has no visitor.
 
 ### G. Found while building, not yet decided
+
+- **The migration role and the runtime role are ONE superuser account, and a
+  schema-level refusal can therefore be lifted by the application itself.**
+  Found 2026-09-07 while building the invoice retention guard (ADR 0032) and
+  filed here rather than left inside that ADR's amendment, because it is not
+  the invoice module's question. Measured against the shipped container as the
+  shipped role: `select usesuper` returns `t`; `REVOKE DELETE ON invoices FROM
+  gobit` succeeds, visibly changes `pg_class.relacl`, and the very next `DELETE`
+  still reports `DELETE 1`. That is why the refusal is a TRIGGER and not a
+  grant. The triggers are declared `ENABLE ALWAYS`, so they survive
+  `session_replication_role = 'replica'` too (measured both ways: a plain
+  trigger lets the delete through, an ALWAYS trigger raises) — but nothing stops
+  the owning role from dropping or disabling them, and gobit's own account IS
+  the owning role.
+  **The DECISION is whether gobit should ship with two roles** — one that owns
+  the schema and runs migrations, one that serves requests and cannot alter it.
+  It is not free: `deploy/docker-compose.yml` sets one `POSTGRES_USER` and
+  `config.Config` carries exactly one `DATABASE_URL`, so a second role means a
+  second connection string, a migration path that uses it, and a decision about
+  what an embedder with a managed database is expected to have created. It also
+  runs into ADR 0015's privileges row, which REQUIRES the application role to
+  run DDL at runtime for `link.Define` — so "the runtime role cannot alter the
+  schema" is not true today by design, and that clause would have to move first.
+  Until it is decided, every schema-level refusal in this repository is a guard
+  against accident rather than against the application.
 
 - **The rig cannot reproduce the case that motivated the change it paid for.**
   Its taxonomy is uniform by construction — twenty categories of exactly 2,600

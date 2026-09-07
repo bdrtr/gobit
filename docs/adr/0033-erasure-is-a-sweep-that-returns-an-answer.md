@@ -243,10 +243,20 @@ controller's judgement, not gobit's. Naming what was left is the honest form.
 
 **Negative, and accepted**
 
-- **The declaration is only as true as the modules keep it.** ADR 0029 wrote this
-  down as an audit the repository did not have; it still does not have it in the
-  form that would close it — nothing yet proves that a module which grows a
-  personal column also declares it.
+- ~~**The declaration is only as true as the modules keep it.** ADR 0029 wrote
+  this down as an audit the repository did not have; it still does not have it
+  in the form that would close it.~~ **Written the same day, and it closes the
+  half that can be closed.** `TestEveryPersonColumnIsDeclared` holds every
+  module's declaration against its own migrations in both directions, over the
+  real registry, with an exemption ledger that is EMPTY. It was mutation-proved:
+  adding two letters to one declared column name turned both directions red at
+  once.
+
+  What survives of the original consequence is the narrower and honest half:
+  the audit finds a person by the NAME of a column, so it cannot see one hiding
+  in a `metadata` blob or a free-text note. It is a floor, not a definition, and
+  its own godoc says so — the columns it names are the ones a reader assumes
+  were checked.
 - **A partial sweep is possible and is reported as an error.** An operator who
   ignores the error will tell a data subject the work is done when it is not.
 - **`RETAINED` now has two flavours in practice** — a refusal somebody decided on

@@ -2,10 +2,13 @@
 
 This document explains **why** the system is built this way. For what it does,
 see the [README](../README.md); for the individual decisions,
-[`docs/adr/`](adr/); for scope and phases, the
-[implementation plan](../go-commerce-framework-plan.md).
+[`docs/adr/`](adr/); for what has been measured and what is missing,
+[`docs/gaps.md`](gaps.md).
 
-In case of conflict the order is: **ADR > plan > this document**.
+In case of conflict the order is: **ADR > this document**. The implementation
+plan that used to sit above this one is no longer in the repository — it was a
+design notebook, not a source of decisions, and keeping it here made readers
+treat it as binding. The decisions are in `docs/adr/`.
 
 ---
 

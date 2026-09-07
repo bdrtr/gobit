@@ -158,12 +158,37 @@ a justification is mandatory; and exemptions **fail the test when they go stale*
 once the exempted thing no longer breaks the rule, the line has to be deleted. An
 exemption is a debt, and a debt that has been paid does not stay in the book.
 
+## Personal data: the mechanism is ours, the responsibility is yours
+
+gobit can erase one person from the whole system, assemble that same person's
+file, and map what it keeps about people and where:
+
+| Endpoint | What it does |
+|---|---|
+| `GET /admin/v1/personal-data` | Lists which column of which table holds a person — about nobody in particular |
+| `POST /admin/v1/personal-data/disclosure` | Gathers one named person's file from every holder |
+| `POST /admin/v1/personal-data/erasure` | Erases that person and reports what each module did, with its reason |
+
+An erasure gets one of three answers from every module — **deleted**,
+**anonymized** or **retained** — and a module that retained says *what* it kept
+and *why*: an issued invoice is a legal document and is not deleted, and being
+able to say that in one sentence is exactly what answering a data subject
+requires.
+
+**None of this runs by itself, and that is deliberate.** gobit is not the data
+controller; the application embedding it is
+([ADR 0029](./docs/adr/0029-the-embedder-is-the-data-controller.md)). A library
+cannot choose your retention period, your lawful basis or the wording of your
+consent. gobit gives you the mechanism and the declaration of what it holds;
+calling those endpoints, accepting a request and deciding the window are yours.
+**A gobit that is installed and never called leaves a compliance problem the
+framework cannot see.**
+
 ## Where to read further
 
 | Document | What it answers |
 |---|---|
 | [`docs/adr/`](./docs/adr/) | The decisions. Thirty-four records; in case of conflict with the plan, **the ADR wins** |
-| [`go-commerce-framework-plan.md`](./go-commerce-framework-plan.md) | The implementation plan: scope, the principle numbers and the phases (Turkish) |
 | [`docs/mimari.md`](./docs/mimari.md) | The architecture narrative: layers, the life cycle of a request and of a module, data, sagas, technology choices, the core packages |
 | [`docs/gaps.md`](./docs/gaps.md) | The measured inventory: what exists, what does not, and for each absence whether it is a **gap or a decision** — together with an ordered list of what to do |
 | [`docs/security.md`](./docs/security.md) | Identity and authorization: the two surfaces, the catalog filtered by sales channel, the scope dictionary, an end-to-end curl walkthrough, the hardening rings and the one-instance / several-instances distinction |

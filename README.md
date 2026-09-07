@@ -153,12 +153,34 @@ zorunludur; ayrıca muafiyetler **bayatlarsa testi düşürür**: muaf tutulan �
 artık kuralı ihlal etmiyorsa satır silinmek zorundadır. Muafiyet borçtur, borç
 ödendiğinde defterde kalmaz.
 
+## Kişisel veri: mekanizma bizden, sorumluluk sizden
+
+gobit bir kişiyi sistemin tamamından silebilir, aynı kişinin dosyasını
+çıkarabilir ve nerede ne tuttuğunu haritalayabilir:
+
+| Uç | Ne yapar |
+|---|---|
+| `GET /admin/v1/personal-data` | Hangi tabloda hangi sütunun bir kişiyi tuttuğunu, kimse hakkında olmadan listeler |
+| `POST /admin/v1/personal-data/disclosure` | Tek bir kişinin dosyasını her tutucudan toplar |
+| `POST /admin/v1/personal-data/erasure` | O kişiyi siler ve her modülün ne yaptığını gerekçesiyle bildirir |
+
+Silme her modülden üç cevaptan birini alır — **silindi**, **anonimleştirildi**
+ya da **saklandı** — ve saklandıysa modül *neyi* ve *neden* sakladığını söyler:
+kesilmiş bir fatura yasal bir belgedir ve silinmez, ama bunu bir cümleyle
+söyleyebilmek veri sahibine cevap verebilmenin ta kendisidir.
+
+**Bunların hiçbiri kendiliğinden çalışmaz, ve bu bilerek böyledir.** Veri
+sorumlusu gobit değil, gobit'i gömen uygulamadır ([ADR 0029](./docs/adr/0029-the-embedder-is-the-data-controller.md)):
+saklama süresini, hukuki dayanağı ve rıza metnini bir kütüphane seçemez.
+gobit mekanizmayı ve neyi nerede tuttuğunun beyanını verir; o uçları çağırmak,
+bir talebi kabul etmek ve süreyi belirlemek sizin işinizdir. **Kurulup hiç
+çağrılmayan bir gobit, çerçevenin göremeyeceği bir uyum sorunu bırakır.**
+
 ## Daha ileri okuma
 
 | Belge | Neyi cevaplar |
 |---|---|
 | [`docs/adr/`](./docs/adr/) | Kararlar. Otuz dört kayıt; plan ile çelişirse **ADR geçerlidir** |
-| [`go-commerce-framework-plan.md`](./go-commerce-framework-plan.md) | Uygulama planı: kapsam, prensip numaraları ve fazlar |
 | [`docs/mimari.md`](./docs/mimari.md) | Mimarinin anlatısı: katmanlar, isteğin ve modülün yaşam döngüsü, veri, saga'lar, teknoloji seçimleri, çekirdek paketler |
 | [`docs/gaps.md`](./docs/gaps.md) | Ölçülmüş envanter: neyin olduğu, neyin olmadığı, ve her yokluğun **boşluk mu karar mı** olduğu — sıralanmış bir yapılacaklar listesiyle birlikte |
 | [`docs/security.md`](./docs/security.md) | Kimlik ve yetki: iki yüzey, katalogun satış kanalına göre süzülmesi, scope sözlüğü, curl ile uçtan uca yürüyüş, sertleştirme halkaları ve tek örnek/çok örnek ayrımı |

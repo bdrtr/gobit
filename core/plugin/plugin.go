@@ -88,12 +88,20 @@ const ErrorReporterName = "error.reporter"
 
 // FileProvidersName is the container name of the file provider registry.
 //
-// Unlike the other three there is NOT YET a module satisfying this name: the
-// contract ([github.com/bdrtr/gobit/core/provider.FileProvider]) and
-// the registration point were written before the module that will consume
-// them. The name is therefore ONE-SIDED for now and
-// [TestTheProviderRegistryNamesAgree] can carry no assertion for it; a line must
-// be added there when the file module arrives.
+// ~~Unlike the other three there is NOT YET a module satisfying this name … the
+// name is therefore ONE-SIDED for now and [TestTheProviderRegistryNamesAgree]
+// can carry no assertion for it; a line must be added there when the file
+// module arrives.~~ **Corrected 2026-09-07: all three of those claims stopped
+// being true and the comment did not notice.** The file module exists, provides
+// this registry under its own `file.ProvidersName`, and the agreement is
+// asserted in internal/arch alongside the other three — the line the paragraph
+// asked for was added, and then the paragraph asking for it stayed.
+//
+// The debt this comment recorded was real and it was PAID; what is worth
+// keeping is the shape of the mistake rather than the mistake. A comment that
+// describes a temporary state has to name what would end it, because otherwise
+// nothing connects the end of that state to the sentence describing it — and
+// this one did name it, which is exactly how the staleness was found.
 const FileProvidersName = "file.providers"
 
 // The error codes.
