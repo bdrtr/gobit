@@ -267,6 +267,11 @@ gen: $(SQLC) ## Üretilen kodu yenile: sqlc (repository) + gqlgen (GraphQL)
 
 tools: $(GOLANGCI) $(SQLC) ## Sabitlenmiş sürümlerle yerel araçları kur
 
+hooks: ## Push öncesi kapıyı bu klona kur (.githooks/pre-push)
+	git config core.hooksPath .githooks
+	@echo "core.hooksPath = .githooks — push öncesi build + lint çalışacak."
+	@echo "Bilerek atlamak için: git push --no-verify"
+
 $(GOLANGCI):
 	@mkdir -p $(BIN_DIR)
 	GOBIN=$(BIN_DIR) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)

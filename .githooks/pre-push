@@ -1,0 +1,42 @@
+#!/bin/sh
+# Refuse a push whose tree does not lint and build.
+#
+# # Why this exists
+#
+# On 2026-09-07 a commit was pushed with a lint failure in it. The cause was not
+# carelessness about lint — it was that the check and the push were chained with
+# ";" instead of "&&", so a failing gate did not stop the command that followed.
+# CI caught it a minute later and the fix went out as a second push.
+#
+# The obvious answer was branch protection with required status checks. That was
+# considered and refused: on GitHub required checks gate PR MERGES, so making the
+# push genuinely depend on CI means main stops accepting direct pushes and every
+# change goes through a pull request. This repository has forty-odd direct
+# commits on main and one author; that is ceremony bought with somebody else's
+# time to fix a mistake that belongs to the person making it.
+#
+# So the guard is put where the mistake happens instead. It runs on every push,
+# it cannot be forgotten, and it costs about a minute.
+#
+# # What it does NOT run
+#
+# Not the tests. `make test` is the race-and-coverage lane and takes minutes;
+# integration and smoke need Docker and take longer still. A guard that makes
+# every push expensive is a guard people learn to skip with --no-verify, and a
+# guard that is always skipped is worse than none because it reads as protection.
+# Lint and build are what catch the class of failure this was: a tree that does
+# not compile, or that trips a linter nobody ran.
+#
+# CI remains the authority. This only stops the push that was never going to pass.
+#
+# To bypass deliberately:  git push --no-verify
+# To turn it off:          git config --unset core.hooksPath
+set -e
+
+printf 'pre-push: building...\n'
+go build ./...
+
+printf 'pre-push: linting...\n'
+make lint
+
+printf 'pre-push: ok\n'
