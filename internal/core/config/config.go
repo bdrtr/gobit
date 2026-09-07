@@ -581,10 +581,18 @@ type Config struct {
 
 	// OTLPEndpoint is the gRPC address of the OpenTelemetry collector (host:port).
 	//
-	// It has NO default: left empty, tracing is turned off entirely and the
-	// application attempts no outbound connection. Putting a default address here
-	// would produce a constant stream of connection errors in every development
-	// environment without a collector.
+	// It has NO default: left empty, ALL telemetry is turned off — traces AND
+	// metrics — and the application attempts no outbound connection. Putting a
+	// default address here would produce a constant stream of connection errors
+	// in every development environment without a collector.
+	//
+	// ~~left empty, tracing is turned off entirely~~ **Corrected 2026-09-07:** the
+	// sentence named tracing alone and was read that way. observability.Setup
+	// returns before it builds EITHER provider, so the
+	// meter provider is not installed and the two instruments this repository
+	// records into resolve to no-ops. In the default install there are no metrics
+	// at all, which is the opposite of what a reader planning a Prometheus
+	// scrape would take from this comment.
 	OTLPEndpoint string `env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
 	// OTLPInsecure reports that the collector will be connected to without TLS.
 	//

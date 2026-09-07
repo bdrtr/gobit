@@ -2348,8 +2348,15 @@ the start.
 
 ### Present, but not the way the checklist names it
 
-1. **Metrics are OTLP, not Prometheus.** There is a meter provider and an
-   exporter (`otlpmetricgrpc`) and an export interval, but no `/metrics`
+1. **Metrics are OTLP, not Prometheus — and in the DEFAULT install there are no
+   metrics at all.** ~~There is a meter provider and an exporter
+   (`otlpmetricgrpc`) and an export interval~~ **Corrected 2026-09-07: only when
+   an OTLP endpoint is configured.** `observability.Setup` returns before it
+   builds either provider when `OTEL_EXPORTER_OTLP_ENDPOINT` is empty, and that
+   variable has no default — so a stock
+   installation has no meter provider, and the instruments record into no-ops.
+   The stated flat is what a reader planning a scrape would have believed. Either
+   way there is no `/metrics`
    endpoint for Prometheus to scrape. An installation that wants Prometheus
    points a collector at the OTLP endpoint and scrapes the collector; one that
    wants gobit to expose the endpoint itself does not have that today.
