@@ -1221,6 +1221,61 @@ a repository that no longer exists.
   no row in the README's invariant table. Nothing is red, because that audit only
   checks README against the repository and not the reverse, but the row is
   missing.
+- **D30** **A plugin held four columns of personal data, declared none of them,
+  and the audit that exists to catch exactly this cannot see a plugin at all.**
+  Found 2026-09-07 out of ADR 0051, which asked what a storefront may accept from
+  a party it cannot identify and noticed the holder on the way.
+
+  `plugins/webpush`'s `webpush_subscription` carries `endpoint` — the push URL of
+  one browser on one device, UNIQUE by construction, and enough for anyone
+  holding it to reach that device — plus `p256dh`, `auth` and `customer_id`. The
+  module declared NOTHING: measured, there was no occurrence of the personal-data
+  vocabulary anywhere under `plugins/`.
+
+  **Both data-subject answers were wrong, silently.** A DISCLOSURE listed every
+  holder except this one, so a person asking what is held about them heard about
+  their orders and not about the devices this framework can push a message to. An
+  ERASURE swept every holder except this one, so the row survived and the
+  subscription kept working. Neither raised anything, which is the same shape as
+  D27 and for the same reason: a holder nobody asks is indistinguishable from a
+  holder with nothing.
+
+  **Why the gate did not catch it.** `internal/app/personaldata_test.go` audits
+  this exact property in both directions across the module tree. Its population
+  comes from `registeredModules`, which calls `registerModules` with an empty
+  `config.Config` — so no plugin is installed, no plugin-brought module enters the
+  walk, and four plugins that DO bring modules (paymentpaytr, searchpg, webpush,
+  webhookout) are outside it. The audit is sound; its idea of who is being
+  audited was not, which is the third time this week that distinction has been
+  the defect.
+
+  **Fixed.** The module declares its four holdings, each with the sentence a
+  controller would repeat, and `Erase` DELETES a subject's devices rather than
+  anonymizing them — a subscription is a live capability to reach a device, not a
+  record of anything, so a row with the person removed is either useless or
+  dangerous. A subject carrying only an e-mail is answered with zero rows and a
+  Why naming the handle this holder can be asked by; an unwired module returns an
+  ERROR rather than reporting itself clean, because a sweep would otherwise count
+  it done.
+
+  **The gate lives in the plugin**, which is the shape ADR 0018 already chose for
+  this plugin's rollback test: what the arch gates cannot reach, the plugin
+  carries itself. It parses the module's own migrations and checks both
+  directions. Mutation-proved twice — declaring nothing, and dropping only the
+  `endpoint` holding, which is the least obvious of the four and the one a
+  half-hearted declaration would omit.
+
+  **It also caught its own author.** The first scanner matched column names with
+  `[a-z_]+` and silently skipped `p256dh`, then reported the declaration as
+  naming a column the schema does not have. The scanner was wrong and the
+  declaration was right; the other direction of the same test is what said so.
+
+  **What is NOT closed:** the app-level audit still cannot see a plugin, so the
+  other three plugin-brought modules are un-audited — they hold no person column
+  today, and nothing would say so if one arrived. Widening `registeredModules` to
+  install plugins needs a container and a bus in that test, and it is the
+  right next step rather than a second per-plugin copy of this file.
+
 - **D29** **The documents were audited against the code for the first time, and
   91 statements were false.** 2026-09-07. D27 and D28 were each found by checking
   ONE sentence the previous round had written; this is what happened when the

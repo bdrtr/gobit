@@ -269,3 +269,30 @@ func wrapDB(err error, message string) error {
 // devices must not be read into one slice, and the number is small enough that
 // a round's worth of rows is negligible next to the HTTP requests they produce.
 const pageSize = 500
+
+// deleteByCustomer removes every device bound to one customer and reports how
+// many rows went.
+//
+// It exists for the erasure contract (ADR 0029) and for nothing else. A push
+// subscription is a live capability to reach a device rather than a record of
+// anything, so the answer to "forget this person" is a DELETE and not a rewrite:
+// see the module's Erase for why anonymizing one would be either useless or
+// dangerous.
+//
+// An empty customer id deletes NOTHING. The column defaults to the empty string
+// for a device that subscribed before signing in, so treating "" as a handle
+// would erase every anonymous subscription in the table on behalf of one person.
+func (s *store) deleteByCustomer(ctx context.Context, customerID string) (int64, error) {
+	if strings.TrimSpace(customerID) == "" {
+		return 0, nil
+	}
+
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM webpush_subscription
+		WHERE customer_id = $1`, customerID)
+	if err != nil {
+		return 0, wrapDB(err, "the customer's devices could not be deleted")
+	}
+
+	return tag.RowsAffected(), nil
+}
