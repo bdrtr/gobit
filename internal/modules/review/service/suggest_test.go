@@ -268,3 +268,89 @@ func TestAskingForBothHalvesAtOnceIsRefused(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
+
+// TestTheAgreementCountsTheDecisionsAndNothingElse is the read that makes the
+// whole feature accountable.
+//
+// ADR 0072 claims no accuracy and names what measuring one would need; ADR 0073
+// lets that set accumulate. This is where a shop reads it back, and what it must
+// count is exactly the reviews a PERSON decided about that carry a proposal —
+// not the queue, which nobody has judged yet.
+func TestTheAgreementCountsTheDecisionsAndNothingElse(t *testing.T) {
+	t.Parallel()
+
+	svc, repo := newService()
+	for _, id := range []string{"rev_1", "rev_2", "rev_3", "rev_4"} {
+		seedReview(repo, id, "prod_1", models.StatusSubmitted)
+	}
+
+	// Two the model would reject, one it would approve, one it never saw.
+	reject := validSuggestion()
+	approve := service.SuggestInput{
+		Status: models.StatusApproved,
+		Note:   "it describes the product and names nobody",
+		Model:  "a-model-3",
+	}
+	for _, id := range []string{"rev_1", "rev_2"} {
+		_, err := svc.Suggest(context.Background(), id, reject)
+		require.NoError(t, err)
+	}
+	_, err := svc.Suggest(context.Background(), "rev_3", approve)
+	require.NoError(t, err)
+
+	// The operator agrees about rev_1, disagrees about rev_2, agrees about
+	// rev_3 — and rev_4 is decided with no proposal at all.
+	for id, to := range map[string]models.Status{
+		"rev_1": models.StatusRejected,
+		"rev_2": models.StatusApproved,
+		"rev_3": models.StatusApproved,
+		"rev_4": models.StatusApproved,
+	} {
+		_, err := svc.Moderate(context.Background(), id, service.ModerateInput{
+			To: to, Note: "decided by a person",
+		})
+		require.NoError(t, err)
+	}
+
+	rows, err := svc.SuggestionAgreement(context.Background())
+	require.NoError(t, err)
+	require.Len(t, rows, 1, "the models were not grouped into one row")
+
+	assert.Equal(t, "a-model-3", rows[0].Model)
+	assert.Equal(t, int64(3), rows[0].Decided,
+		"the review nobody proposed about was counted; the denominator must be the "+
+			"reviews the model actually had an opinion on")
+	assert.Equal(t, int64(2), rows[0].Agreed)
+}
+
+// TestAnInstallationThatRanNoModelGetsAnEmptyReport keeps "nothing to report"
+// apart from a failure.
+func TestAnInstallationThatRanNoModelGetsAnEmptyReport(t *testing.T) {
+	t.Parallel()
+
+	svc, repo := newService()
+	seedReview(repo, "rev_1", "prod_1", models.StatusSubmitted)
+
+	rows, err := svc.SuggestionAgreement(context.Background())
+	require.NoError(t, err, "an installation with no model got an ERROR, which a client "+
+		"cannot tell from a broken query")
+	assert.Empty(t, rows)
+}
+
+// TestAWaitingReviewIsNotInTheAgreement is the boundary the report rests on.
+//
+// A proposal about a review nobody has judged is not evidence about anything;
+// counting it would put the model's own opinion in the denominator of its score.
+func TestAWaitingReviewIsNotInTheAgreement(t *testing.T) {
+	t.Parallel()
+
+	svc, repo := newService()
+	seedReview(repo, "rev_1", "prod_1", models.StatusSubmitted)
+
+	_, err := svc.Suggest(context.Background(), "rev_1", validSuggestion())
+	require.NoError(t, err)
+
+	rows, err := svc.SuggestionAgreement(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, rows, "a review still waiting for a person was counted as evidence")
+}

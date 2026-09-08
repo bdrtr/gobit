@@ -746,3 +746,72 @@ ORDER BY created_at DESC, id DESC LIMIT 20`
 	assert.Contains(t, unfiltered, "reviews_moderation_idx")
 	assert.NotContains(t, unfiltered, "reviews_suggestion_idx")
 }
+
+// TestTheAgreementAggregateCountsWhatTheServiceSaysItDoes runs the real
+// GROUP BY, which is where the report's definition of "decided" actually lives.
+//
+// The service tests use a fake that decides with Status.Moderated() and this
+// query uses `moderated_at IS NOT NULL`. The two are the halves of
+// reviews_moderation_mirror and therefore cannot disagree — but "cannot" is a
+// claim about a CHECK constraint in another file, and this is where it is
+// checked rather than asserted.
+func TestTheAgreementAggregateCountsWhatTheServiceSaysItDoes(t *testing.T) {
+	ctx := context.Background()
+
+	repo := repository.New(testPool.Pool())
+	product := productID(t)
+
+	create := func() string {
+		created, err := repo.Create(ctx, models.Review{
+			ID: models.NewReviewID(), ProductID: product, Rating: 3,
+			Body: "it arrived quickly", AuthorName: "A customer",
+			Status: models.StatusSubmitted,
+		})
+		require.NoError(t, err)
+
+		return created.ID
+	}
+
+	model := "agreement-" + models.NewReviewID()
+
+	agreed, disagreed, unjudged, unproposed := create(), create(), create(), create()
+
+	for _, id := range []string{agreed, disagreed, unjudged} {
+		_, err := repo.Suggest(ctx, id, models.Suggestion{
+			Status: models.StatusRejected, Note: "it advertises another shop", Model: model,
+		})
+		require.NoError(t, err)
+	}
+
+	_, err := repo.Moderate(ctx, agreed, models.StatusSubmitted, models.StatusRejected, "agreed")
+	require.NoError(t, err)
+	_, err = repo.Moderate(ctx, disagreed, models.StatusSubmitted, models.StatusApproved, "")
+	require.NoError(t, err)
+	_, err = repo.Moderate(ctx, unproposed, models.StatusSubmitted, models.StatusApproved, "")
+	require.NoError(t, err)
+
+	rows, err := repo.SuggestionAgreement(ctx)
+	require.NoError(t, err)
+
+	var mine *models.Agreement
+	for i := range rows {
+		if rows[i].Model == model {
+			mine = &rows[i]
+		}
+	}
+	require.NotNil(t, mine, "the model that proposed three times is in no row of the report")
+
+	assert.Equal(t, int64(2), mine.Decided,
+		"the review still waiting for a person was counted; a proposal nobody has judged "+
+			"is not evidence about anything")
+	assert.Equal(t, int64(1), mine.Agreed)
+
+	// The review decided with NO proposal must be in nobody's row: the
+	// denominator is the reviews the model had an opinion on.
+	for _, row := range rows {
+		assert.NotEqual(t, "", row.Model,
+			"a row is attributed to the empty model name, which is what a review with no "+
+				"proposal carries — the WHERE has stopped excluding them")
+	}
+	_ = unjudged
+}

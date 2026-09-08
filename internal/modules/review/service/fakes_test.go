@@ -2,6 +2,8 @@ package service_test
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"sync"
 
 	"github.com/bdrtr/gobit/core/errors"
@@ -121,6 +123,36 @@ func (f *fakeRepo) AwaitingSuggestion(_ context.Context, limit int64) ([]models.
 		if int64(len(out)) == limit {
 			break
 		}
+	}
+
+	return out, nil
+}
+
+// SuggestionAgreement counts the seeded rows the real aggregate would count:
+// the ones a human decided about that carry a proposal.
+func (f *fakeRepo) SuggestionAgreement(_ context.Context) ([]models.Agreement, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	byModel := map[string]models.Agreement{}
+	for _, id := range f.order {
+		review := f.reviews[id]
+		if review.Suggestion == nil || !review.Status.Moderated() {
+			continue
+		}
+
+		row := byModel[review.Suggestion.Model]
+		row.Model = review.Suggestion.Model
+		row.Decided++
+		if review.Suggestion.Status == review.Status {
+			row.Agreed++
+		}
+		byModel[review.Suggestion.Model] = row
+	}
+
+	out := make([]models.Agreement, 0, len(byModel))
+	for _, model := range slices.Sorted(maps.Keys(byModel)) {
+		out = append(out, byModel[model])
 	}
 
 	return out, nil

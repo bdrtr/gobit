@@ -124,6 +124,22 @@ func Describe(d *openapi.Doc) {
 		},
 	})
 
+	d.Describe(http.MethodGet, pathAdminSuggestionAgreement, openapi.Operation{
+		Summary: "Reports how often each model's proposals matched the decisions.",
+		Description: "One row per model that has ever proposed about a review somebody " +
+			"then decided, with how many such reviews there are and how many of the " +
+			"proposals name the status the review ended in. It carries no percentage on " +
+			"purpose: a rate over three decided reviews reads exactly like one over " +
+			"three thousand, and the denominator is here so a client can compute one " +
+			"knowing what it rests on. A disagreement is not a mistake by the model — " +
+			"the operator decides, and this counts how often the machine would have said " +
+			"the same thing. An installation where no model has been asked anything gets " +
+			"an empty list.",
+		Responses: map[string]any{
+			"200": openapi.Response("The agreement per model", d.List(agreementDTO{})),
+		},
+	})
+
 	d.Describe(http.MethodGet, pathAdminReview, openapi.Operation{
 		Summary: "Returns one review whatever its status.",
 		Description: "It serves the case the queue cannot: a review already decided, reached " +

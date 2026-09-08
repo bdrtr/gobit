@@ -191,7 +191,7 @@ framework cannot see.**
 
 | Document | What it answers |
 |---|---|
-| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: seventy-two records, each with its decision in one sentence. In case of conflict with the plan, **the ADR wins** |
+| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: seventy-three records, each with its decision in one sentence. In case of conflict with the plan, **the ADR wins** |
 | [`docs/measurements/`](./docs/measurements/) | Measurements: numbers, probe output, reproductions. An ADR links to one in a single line; nobody has to read them end to end |
 | [`docs/mimari.md`](./docs/mimari.md) | The architecture narrative: layers, the life cycle of a request and of a module, data, sagas, technology choices, the core packages |
 | [`docs/gaps.md`](./docs/gaps.md) | The defect ledger: every fault this repository found in itself, one sentence and the ADR that closed it |

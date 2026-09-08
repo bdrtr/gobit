@@ -86,6 +86,15 @@ const (
 	pathStoreProductReviewSummary = "/store/v1/products/{product_id}/review-summary"
 	// pathAdminReviews is the moderation queue.
 	pathAdminReviews = "/admin/v1/reviews"
+	// pathAdminSuggestionAgreement is the report over the proposals a person
+	// has since decided about.
+	//
+	// It sits ABOVE pathAdminReview in this block and is mounted before it, so
+	// the static segment is matched before the wildcard. chi prefers a static
+	// route already, and the order is kept anyway: a reader should not have to
+	// know the router's preference to see that "suggestion-agreement" is not
+	// being read as a review id.
+	pathAdminSuggestionAgreement = "/admin/v1/reviews/suggestion-agreement"
 	// pathAdminReview is the single-review read.
 	pathAdminReview = "/admin/v1/reviews/{id}"
 	// pathAdminReviewStatus is the decision.
@@ -114,6 +123,7 @@ type Reviews interface {
 	GetReview(ctx context.Context, id string) (models.Review, error)
 	ListReviews(ctx context.Context, filter models.Filter) (service.Page, error)
 	Moderate(ctx context.Context, id string, in service.ModerateInput) (models.Review, error)
+	SuggestionAgreement(ctx context.Context) ([]models.Agreement, error)
 }
 
 // Handler serves the review endpoints.
@@ -133,6 +143,8 @@ func (h *Handler) Routes(r chi.Router) {
 
 	// --- Admin API (operator) ---
 	r.With(corehttp.RequireScope(ScopeRead)).Get(pathAdminReviews, h.adminList)
+	r.With(corehttp.RequireScope(ScopeRead)).Get(
+		pathAdminSuggestionAgreement, h.adminSuggestionAgreement)
 	r.With(corehttp.RequireScope(ScopeRead)).Get(pathAdminReview, h.adminGet)
 	r.With(corehttp.RequireScope(ScopeWrite)).Post(pathAdminReviewStatus, h.adminModerate)
 }
@@ -200,6 +212,18 @@ type adminReviewDTO struct {
 	Suggestion *adminSuggestionDTO `json:"suggestion,omitempty"`
 	CreatedAt  time.Time           `json:"created_at"`
 	UpdatedAt  time.Time           `json:"updated_at"`
+}
+
+// agreementDTO is one model's record against the operators' decisions.
+//
+// It carries two counts and NO rate, which is [models.Agreement]'s decision:
+// a percentage over three decided reviews reads exactly like one over three
+// thousand, and gobit is not the party that should be asserting how good
+// somebody else's model is.
+type agreementDTO struct {
+	Model   string `json:"model"`
+	Decided int64  `json:"decided"`
+	Agreed  int64  `json:"agreed"`
 }
 
 // adminSuggestionDTO is a model's proposal as an operator sees it.

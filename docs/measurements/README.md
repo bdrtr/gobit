@@ -14,6 +14,7 @@ truth: a report says what was true on the day it was taken.
 |---|---|
 | [What a count claim is, and what auditing one costs — measured 2026-09-08](0070-count-claims.md) | 210 |
 | [Narrowing the moderation queue by what a model proposed — measured 2026-09-09](0073-review-suggestion-filter.md) | 119 |
+| [What the agreement report costs — measured 2026-09-09](0074-suggestion-agreement.md) | 57 |
 | [The inventory movement ledger — measured 2026-09-08](0068-the-movement-ledger.md) | 179 |
 | [Two readings of "province" — measured 2026-09-08](0067-two-readings-of-province.md) | 62 |
 | [The carrier-capable quote input — measured 2026-09-08](0065-carrier-quote-input.md) | 146 |

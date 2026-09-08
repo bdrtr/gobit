@@ -505,3 +505,56 @@ func (q *Queries) SummarizeApprovedReviews(ctx context.Context, productID string
 	err := row.Scan(&i.ReviewCount, &i.AverageHundredths)
 	return i, err
 }
+
+const summarizeSuggestionAgreement = `-- name: SummarizeSuggestionAgreement :many
+SELECT suggestion_model AS model,
+       count(*) AS decided,
+       count(*) FILTER (WHERE suggested_status = status) AS agreed
+FROM reviews
+WHERE moderated_at IS NOT NULL
+  AND suggested_status IS NOT NULL
+GROUP BY suggestion_model
+ORDER BY suggestion_model
+`
+
+type SummarizeSuggestionAgreementRow struct {
+	Model   string
+	Decided int64
+	Agreed  int64
+}
+
+// SummarizeSuggestionAgreement counts how often a model's proposal matched the
+// decision a person then made.
+//
+// "Decided" is `moderated_at IS NOT NULL` and not a list of statuses. The
+// moment is the column that RECORDS the decision — reviews_moderation_mirror
+// ties the two together — so a status added tomorrow lands on the right side of
+// this query without anybody remembering to edit it.
+//
+// Grouped by MODEL because that is the cut a shop acts on: the question is not
+// "is the machine good" but "is the one I am paying for better than the one I
+// replaced", and a single number over every model that ever ran cannot answer
+// it. The total is the sum of the rows and is computed by the caller, so there
+// is one query and not two that can disagree.
+//
+// No rate is computed here or anywhere above. Two counts are the honest
+// primitive; a percentage over three decided reviews reads as a measurement.
+func (q *Queries) SummarizeSuggestionAgreement(ctx context.Context) ([]SummarizeSuggestionAgreementRow, error) {
+	rows, err := q.db.Query(ctx, summarizeSuggestionAgreement)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SummarizeSuggestionAgreementRow{}
+	for rows.Next() {
+		var i SummarizeSuggestionAgreementRow
+		if err := rows.Scan(&i.Model, &i.Decided, &i.Agreed); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

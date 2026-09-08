@@ -169,3 +169,24 @@ func checkSuggestionFilter(filter models.Filter) error {
 
 	return nil
 }
+
+// SuggestionAgreement reports how often each model's proposals matched the
+// decision an operator then made.
+//
+// # It is the corpus, read back
+//
+// ADR 0072 claims no accuracy for the model and says why: measuring one needs a
+// set of reviews an operator has already decided about, which gobit cannot
+// invent. ADR 0073 decided that a proposal is NOT cleared when the decision is
+// made, so that set accumulates in the table on its own. This is the read that
+// turns it into something a shop can act on.
+//
+// # It answers about the SHOP and not about the model
+//
+// A low number means this model is not helping these operators — which is the
+// conclusion worth having and the only one the data supports. Nothing here says
+// the model was wrong: the operator decided, and a disagreement is a record of
+// two opinions rather than of a mistake.
+func (s *Service) SuggestionAgreement(ctx context.Context) ([]models.Agreement, error) {
+	return s.repo.SuggestionAgreement(ctx)
+}

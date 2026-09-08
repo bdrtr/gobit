@@ -221,6 +221,34 @@ type Summary struct {
 	AverageHundredths int64
 }
 
+// Agreement is how often ONE model's proposals matched the decision a person
+// then made.
+//
+// # Why two counts and no rate
+//
+// A percentage is what a reader wants and it is the one thing this type refuses
+// to carry. "67%" over three decided reviews reads exactly like "67%" over three
+// thousand, and the number a shop would act on is the second one. The
+// denominator is right there, so a client that wants a rate can compute one
+// while knowing what it rests on — and gobit is not the party that should be
+// asserting how good somebody else's model is (ADR 0072).
+//
+// # It says nothing about who was RIGHT
+//
+// A disagreement is not a mistake by the model. The operator decides, and their
+// decision is the record; this counts how often the machine would have said the
+// same thing. A shop reading a low number learns that the model is not helping
+// them, which is the useful conclusion, and not that either party was wrong.
+type Agreement struct {
+	// Model is the model as the provider named it when it answered.
+	Model string
+	// Decided is how many moderated reviews carry a proposal from this model.
+	Decided int64
+	// Agreed is how many of those proposals name the status the review ended
+	// in.
+	Agreed int64
+}
+
 // Filter is the criterion set of the review listings.
 //
 // It lives in models rather than in either the service or the repository

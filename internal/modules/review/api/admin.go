@@ -123,6 +123,40 @@ func (h *Handler) adminGet(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toAdminReviewDTO(review))
 }
 
+// adminSuggestionAgreement reports how often each model agreed with the people
+// (GET /admin/v1/reviews/suggestion-agreement).
+//
+// # Why it is a report and not a number on the queue
+//
+// The queue answers "what should I look at next" and this answers "should I
+// keep paying for this model at all" — two questions asked at different
+// moments, by the same person, about different things. Putting the second on
+// every page of the first would price a whole-table aggregate into the listing
+// an operator opens all day.
+//
+// It answers with an EMPTY list on an installation where no model has ever been
+// asked anything, rather than with a 404: nothing is missing, the answer is that
+// there is nothing to report.
+func (h *Handler) adminSuggestionAgreement(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	rows, err := h.svc.SuggestionAgreement(ctx)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	data := make([]agreementDTO, 0, len(rows))
+	for _, row := range rows {
+		data = append(data, agreementDTO{
+			Model: row.Model, Decided: row.Decided, Agreed: row.Agreed,
+		})
+	}
+
+	corehttp.WriteJSON(ctx, w, http.StatusOK, listEnvelope{Data: data, Count: int64(len(data))})
+}
+
 // adminModerate decides about a review (POST /admin/v1/reviews/{id}/status).
 //
 // # Why one endpoint and not /approve and /reject

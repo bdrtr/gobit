@@ -175,3 +175,44 @@ WHERE status = 'submitted'
   AND suggested_status IS NULL
 ORDER BY created_at, id
 LIMIT sqlc.arg('row_limit')::bigint;
+
+-- SummarizeSuggestionAgreement counts how often a model's proposal matched the
+-- decision a person then made.
+--
+-- "Decided" is `moderated_at IS NOT NULL` and not a list of statuses. The
+-- moment is the column that RECORDS the decision — reviews_moderation_mirror
+-- ties the two together — so a status added tomorrow lands on the right side of
+-- this query without anybody remembering to edit it.
+--
+-- Grouped by MODEL because that is the cut a shop acts on: the question is not
+-- "is the machine good" but "is the one I am paying for better than the one I
+-- replaced", and a single number over every model that ever ran cannot answer
+-- it. The total is the sum of the rows and is computed by the caller, so there
+-- is one query and not two that can disagree.
+--
+-- No rate is computed here or anywhere above. Two counts are the honest
+-- primitive; a percentage over three decided reviews reads as a measurement.
+--
+-- IT COSTS A TABLE SCAN, and that is accepted rather than unnoticed. Measured on
+-- the rig at 505,000 reviews of which 151,500 carry both a decision and a
+-- proposal: 43 ms, a parallel sequential scan over the whole table. There is no
+-- index and none is proposed, for the reason the summary above it has none — the
+-- cost is LINEAR in the table and the query is a report an operator opens when
+-- they are deciding whether to keep paying for a model, not a page they hold
+-- open. The crossing point is stated rather than hidden: at ten times this
+-- table it is most of a second, and a shop that reads it on a dashboard refresh
+-- is the case that wants something stored. Nothing else is.
+--
+-- An index would also be an index over the ARCHIVE, which is the shape ADR 0073
+-- rejected for the queue's filter: it grows without bound while the thing it
+-- serves is read rarely.
+--
+-- name: SummarizeSuggestionAgreement :many
+SELECT suggestion_model AS model,
+       count(*) AS decided,
+       count(*) FILTER (WHERE suggested_status = status) AS agreed
+FROM reviews
+WHERE moderated_at IS NOT NULL
+  AND suggested_status IS NOT NULL
+GROUP BY suggestion_model
+ORDER BY suggestion_model;

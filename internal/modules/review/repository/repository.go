@@ -163,6 +163,29 @@ func (r *Repository) AwaitingSuggestion(
 	return toReviews(rows), nil
 }
 
+// SuggestionAgreement returns one row per model that has ever proposed about a
+// review somebody then decided.
+//
+// An installation that has never run a model gets an EMPTY slice and not an
+// error: "no model has been asked anything" is an answer, and the caller can
+// tell it from a failure because a failure says so.
+func (r *Repository) SuggestionAgreement(ctx context.Context) ([]models.Agreement, error) {
+	rows, err := r.queries().SummarizeSuggestionAgreement(ctx)
+	if err != nil {
+		return nil, wrapDB(err, codeQueryFailed,
+			"the agreement between the proposals and the decisions could not be counted")
+	}
+
+	out := make([]models.Agreement, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, models.Agreement{
+			Model: row.Model, Decided: row.Decided, Agreed: row.Agreed,
+		})
+	}
+
+	return out, nil
+}
+
 // List pages the reviews for the ADMIN surface and returns the matching count.
 func (r *Repository) List(
 	ctx context.Context, filter models.Filter,
