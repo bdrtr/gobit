@@ -34,7 +34,7 @@ truth: a report says what was true on the day it was taken.
 | [Performance and operations — measured 2026-09-04](performance-and-operations.md) | 160 |
 | [Observability and security — measured 2026-09-05](observability-and-security.md) | 143 |
 | [Common Go mistakes — measured 2026-09-05](common-go-mistakes.md) | 106 |
-| [An AI subsystem — measured against the brief, 2026-09-05](ai-subsystem.md) | 138 |
+| [An AI subsystem — measured against the brief, 2026-09-05](ai-subsystem.md) | 204 |
 | [Importable core, thin application — measured against the brief, 2026-09-05](importable-core.md) | 100 |
 | [Commerce models — measured against the brief, 2026-09-05](commerce-models.md) | 227 |
 | [B2's remainder is four different kinds of work — measured 2026-09-05](b2-remainder.md) | 348 |

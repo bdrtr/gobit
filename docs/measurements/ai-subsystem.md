@@ -4,6 +4,33 @@ Moved out of `docs/gaps.md` on 2026-09-08 unchanged. A measurement is
 evidence, not a decision: it is kept in full and read when a number is
 questioned, not on the way to understanding the repository.
 
+## Amendment 2026-09-09: the brief was ANSWERED, in two records
+
+What this report measured has since been decided and built, so a reader landing
+here should know they are reading the evidence rather than the plan.
+
+[ADR 0071](../adr/0071-a-machine-proposal-is-not-a-moderation.md) settled where
+a machine's opinion is stored: four columns of its own on `reviews`, three
+mirrored CHECK constraints, and neither the status nor the moderation moment
+touched — so a proposal is not a moderation and the storefront cannot see one.
+
+[ADR 0072](../adr/0072-a-model-answers-a-closed-question-and-a-job-asks-it.md)
+settled who asks. `core/provider` gained a CLASSIFICATION contract with a closed
+label set rather than a completion; the slot is singular (`ai.provider`), the
+client is a plugin (`ai-anthropic`), and one job — registered only when the slot
+is filled — turns answers into proposals.
+
+Three things this report asked for were deliberately NOT built, and each is
+recorded where it belongs rather than left as an implied next step:
+
+- **No eval harness and no accuracy threshold.** A threshold is the thing that
+  must never ship unmeasured, because a number nobody took reads as a guarantee.
+  Measuring one needs a corpus of reviews an operator has already decided about.
+- **No suggestion store of its own.** ADR 0066 refused a table and this build
+  kept that: one row per review at most, read only with the review.
+- **No panel page.** The proposal is a field on the admin DTO; a page is a
+  separate decision nobody has made.
+
 ## Amendment 2026-09-08: eight passages were overtaken, and the file is NOT rewritten
 
 A measurement says what was true on the day it was taken, so the text below
