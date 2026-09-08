@@ -141,6 +141,190 @@ func TestNoStorefrontReadOffersAnOperatorControlledParameter(t *testing.T) {
 	}
 }
 
+// proofFunction is the one comparison every storefront surface naming a
+// customer has to reach.
+//
+// It is a NAME rather than a package-qualified symbol; [calleeName] says why.
+// If it is ever renamed this gate fails everywhere at once, which is the loud
+// half of the failure — the silent half would be a gate that found nothing and
+// passed, and the blindness floor below is what refuses that.
+const proofFunction = "ProvenCustomer"
+
+// customerResourcePath is the storefront path whose OWN resource is a customer.
+//
+// The other two spellings of the claim are structural — a "{customer_id}" path
+// parameter, or a "customer_id" field in the decoded body — and this one is
+// not: the address book's routes read the customer out of a segment called
+// "id", because the customer IS the resource there. A scan that only looked for
+// the structural spellings would miss the eight routes ADR 0043 closed, and a
+// gate blind to the worked example is a gate that cannot notice it regressing.
+const customerResourcePath = "/store/v1/customers/{id}"
+
+// TestNoStorefrontSurfaceActsOnACustomerItCannotProve holds ADR 0057 tree-wide.
+//
+// # What the property is, exactly
+//
+// A storefront route that names a customer must REACH corehttp.ProvenCustomer.
+// Not "must refuse" and not even "must compare": the two surfaces ADR 0057
+// added consult the comparison only when there is something to consult it with
+// — a non-empty claim on the cart, a bound identity on both — and both of those
+// conditions are decisions argued in the record rather than properties held
+// here.
+//
+// What IS held here is the one thing a copy would break: that no storefront
+// handler naming a customer decides the claim with an answer of its own. Three
+// copies of an authorization rule are three chances for one to answer
+// differently while still answering, and that is the failure this record was
+// written for. [TestNoAPIPackageDefinesItsOwnProof] is the other half — reaching
+// a LOCAL function of the same name would satisfy the walk below, because
+// [calleeName] drops the package qualifier on purpose.
+//
+// # Where the population comes from
+//
+// From the routes and the request types, both of which are independent of the
+// property: a handler that stopped proving anything would still register its
+// route and still decode its body, so a violation makes this gate FAIL rather
+// than shrinking the set it looks at. That is the rule the plugin-ownership
+// audit next door learned the hard way — a population derived from the property
+// lets a subject leave the audit by becoming the thing it looks for.
+//
+// # What it does NOT cover
+//
+// Plugins. The scan walks internal/modules/*/api, and plugins/webpush mounts a
+// storefront POST whose body carries a customer_id — the same class, a
+// different tree, and a defect ADR 0051 records for reasons of its own (it is a
+// standing authority, which proving the claim would not fix). Widening the walk
+// to plugins/ would fail this gate on a defect it cannot close, so the row
+// stays where it is decided.
+func TestNoStorefrontSurfaceActsOnACustomerItCannotProve(t *testing.T) {
+	t.Parallel()
+
+	surface := storefrontSurface(t)
+	proving := functionsReachingTheProof(surface.calls)
+
+	require.NotEmpty(t, proving,
+		"no function in any module api package reaches %s. Either the comparison was "+
+			"renamed, or the call scan has gone BLIND — and blind, this gate passes "+
+			"whatever a handler believes about the customer a request names",
+		proofFunction)
+
+	var named []storefrontRoute
+	for _, route := range slices.Concat(surface.reads, surface.writes) {
+		if routeNamesACustomer(route, surface.decoded[route.key()]) {
+			named = append(named, route)
+		}
+	}
+
+	require.NotEmpty(t, named,
+		"no storefront route naming a customer was resolved, which cannot be true while "+
+			"the customer module alone registers eight and the cart's creation body "+
+			"carries a customer_id. The route scan has gone BLIND")
+
+	for _, route := range named {
+		if slices.Contains(proving, route.key()) {
+			continue
+		}
+
+		t.Errorf("%s %s names a customer and never reaches %s.\n"+
+			"ADR 0057: a storefront surface that names a customer has to put the claim "+
+			"to the installation's bound identity, through the ONE comparison. The "+
+			"identifier is not a secret — it travels in cart and order response bodies "+
+			"— so a route that decides the claim by itself answers for anybody who has "+
+			"seen one.\n"+
+			"Reach corehttp.ProvenCustomer from the handler (directly or through this "+
+			"package's own helper), or, if this route genuinely names nobody, stop it "+
+			"carrying a customer identifier.",
+			route.verb, route.path, proofFunction)
+	}
+}
+
+// TestNoAPIPackageDefinesItsOwnProof closes the loophole [calleeName] leaves.
+//
+// The walk above matches a BARE callee name, deliberately: an api package that
+// aliased the core import differently would otherwise fall out of it, and
+// falling out means passing. The cost is that a function named ProvenCustomer
+// defined inside an api package would satisfy it — which is precisely the
+// second, silently diverging copy of an authorization rule ADR 0057 exists to
+// prevent, wearing the name of the thing it replaced.
+//
+// So the two run together: one says every route reaches something with that
+// name, this one says nothing with that name is declared where a route could
+// reach it instead.
+func TestNoAPIPackageDefinesItsOwnProof(t *testing.T) {
+	t.Parallel()
+
+	surface := storefrontSurface(t)
+
+	require.NotEmpty(t, surface.declared,
+		"no function was found declared in any module api package, which cannot be true "+
+			"while every handler is one; the declaration scan has gone BLIND")
+
+	for _, declared := range surface.declared {
+		module, name, _ := strings.Cut(declared, ".")
+		if name != proofFunction {
+			continue
+		}
+
+		t.Errorf("the %s module's api package declares its own %s.\n"+
+			"ADR 0057: the comparison is corehttp.ProvenCustomer's and is shared, because "+
+			"a copy of an authorization rule keeps answering after it drifts. A local one "+
+			"under the same name also satisfies "+
+			"TestNoStorefrontSurfaceActsOnACustomerItCannotProve, so the copy would be "+
+			"invisible there.\n"+
+			"Call the core's function, or give this one a name that says what it does "+
+			"instead.", module, proofFunction)
+	}
+}
+
+// routeNamesACustomer reports whether a route identifies a customer whose claim
+// a caller could make about somebody else.
+func routeNamesACustomer(route storefrontRoute, body requestBody) bool {
+	return strings.Contains(route.path, "{customer_id}") ||
+		strings.HasPrefix(route.path, customerResourcePath) ||
+		slices.Contains(body.jsonFields, "customer_id")
+}
+
+// functionsReachingTheProof returns every function that reaches the comparison,
+// directly or through its own package's helpers.
+//
+// It is a fixpoint rather than one hop because both modules that took the
+// contract factored the call into a helper, and a gate that demanded the call
+// inline would have failed the correct arrangement and rewarded a copied one.
+func functionsReachingTheProof(calls map[string][]string) []string {
+	reaching := map[string]bool{}
+	for caller, callees := range calls {
+		if slices.Contains(callees, proofFunction) {
+			reaching[caller] = true
+		}
+	}
+
+	for grew := true; grew; {
+		grew = false
+		for caller, callees := range calls {
+			if reaching[caller] {
+				continue
+			}
+			module, _, _ := strings.Cut(caller, ".")
+			for _, callee := range callees {
+				if reaching[module+"."+callee] {
+					reaching[caller] = true
+					grew = true
+
+					break
+				}
+			}
+		}
+	}
+
+	out := make([]string, 0, len(reaching))
+	for caller := range reaching {
+		out = append(out, caller)
+	}
+	slices.Sort(out)
+
+	return out
+}
+
 // isOperatorControlled reports whether a field or parameter name is one the
 // storefront must not carry.
 func isOperatorControlled(name string) bool {
@@ -185,15 +369,28 @@ type requestBody struct {
 	jsonFields []string
 }
 
-// storefrontScan is everything the two gates need, read once.
+// storefrontScan is everything the gates here need, read once.
 //
-// decoded and queried are keyed by [storefrontRoute.key] — "<module>.<handler>"
-// — and never by the bare handler name; the method says why.
+// decoded, queried and calls are keyed by [storefrontRoute.key] —
+// "<module>.<handler>" — and never by the bare handler name; the method says
+// why.
 type storefrontScan struct {
 	writes  []storefrontRoute
 	reads   []storefrontRoute
 	decoded map[string]requestBody
 	queried map[string][]string
+	// calls is the name of every function each function in an api package
+	// calls, module-qualified on the CALLER. It is what lets the identity gate
+	// follow a handler through its own package's helper — the address book
+	// reaches the comparison through storeCustomerID, the cart through
+	// provenCustomer, and requiring the call to be inline in the handler would
+	// have failed the two modules that factored it correctly.
+	calls map[string][]string
+	// declared is every function and method DECLARED in an api package,
+	// module-qualified. It is what lets a LOCAL redefinition of the proof be
+	// seen: calls cannot tell one apart from the core's, because calleeName
+	// drops the package qualifier.
+	declared []string
 }
 
 // storefrontSurface parses the module api packages and resolves the storefront
@@ -235,7 +432,11 @@ func storefrontSurface(t *testing.T) storefrontScan {
 
 	paths := storefrontPathConstants(files)
 	structs := structJSONFields(files, owner)
-	scan := storefrontScan{decoded: map[string]requestBody{}, queried: map[string][]string{}}
+	scan := storefrontScan{
+		decoded: map[string]requestBody{},
+		queried: map[string][]string{},
+		calls:   map[string][]string{},
+	}
 
 	for _, file := range files {
 		module := owner[file]
@@ -420,6 +621,7 @@ func collectHandlerReads(
 	}
 
 	name := module + "." + fn.Name.Name
+	scan.declared = append(scan.declared, name)
 
 	ast.Inspect(fn.Body, func(node ast.Node) bool {
 		switch typed := node.(type) {
@@ -449,10 +651,32 @@ func collectHandlerReads(
 			if param, ok := queryParameterName(typed); ok {
 				scan.queried[name] = append(scan.queried[name], param)
 			}
+			if callee, ok := calleeName(typed); ok {
+				scan.calls[name] = append(scan.calls[name], callee)
+			}
 		}
 
 		return true
 	})
+}
+
+// calleeName returns the name of the function a call names.
+//
+// Selector and plain identifier are both reduced to the BARE name, which is
+// what the identity gate's fixpoint looks up: corehttp.ProvenCustomer,
+// h.storeCustomerID and pathParam all arrive as one word. The package qualifier
+// is dropped deliberately — an api package that aliased the core import
+// differently would otherwise fall out of the walk, and falling out means
+// passing.
+func calleeName(call *ast.CallExpr) (string, bool) {
+	switch fn := call.Fun.(type) {
+	case *ast.SelectorExpr:
+		return fn.Sel.Name, true
+	case *ast.Ident:
+		return fn.Name, true
+	}
+
+	return "", false
 }
 
 // queryParameterName returns the parameter a `Query().Get("x")` call reads.

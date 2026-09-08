@@ -37,6 +37,16 @@ import (
 // unguessability is no substitute for authorization. This is why there is no
 // LIST endpoint on the customer side — a list endpoint would turn knowing a
 // single id into reading every order.
+//
+// # Why the identity contract does not reach here
+//
+// ADR 0057 requires the embedder's proof wherever a storefront request NAMES a
+// customer. This route names an ORDER. The claim it would have to compare does
+// not exist in the request — the order's own customer is a fact of the record
+// rather than something the caller asserts — so the check would have to become
+// "the reader must be the order's customer", which is a different decision: it
+// would close guest order lookup, and a guest order has no customer to prove.
+// The route is outside the gate's population for that reason, not by omission.
 func (h *Handler) storeGetOrder(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

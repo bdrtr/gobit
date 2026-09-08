@@ -26,37 +26,47 @@ past and is not corrected retroactively.
 ## Identity and authorization
 
 - **gobit issues no customer identity, and since
-  [ADR 0043](adr/0043-gobit-requires-an-identity-it-still-does-not-issue.md) it
-  REQUIRES yours on eight storefront routes.** This is the one limit in this file
-  that an embedder has to act on rather than merely accept.
-  `GET`/`PUT /store/v1/customers/{id}` and the six routes of its address book ask
-  whether the caller is the customer the path names. The answer comes from
-  `corehttp.Identity`, a one-method interface the framework publishes and does not
-  implement; the embedding application registers its own from an ordinary module,
-  in the container, under the name `corehttp.IdentityName` (`"core.identity"`).
-  **Bind nothing and those eight routes refuse every request** with
+  [ADR 0043](adr/0043-gobit-requires-an-identity-it-still-does-not-issue.md) and
+  [ADR 0057](adr/0057-one-comparison-holds-the-storefront-customer-claim.md)
+  yours decides every storefront request that names a customer.** This is the
+  one limit in this file that an embedder has to act on rather than merely
+  accept. Twelve routes ask: the profile and the six of the address book, b2b's
+  company and employee reads, and the two cart bodies — cart creation and the
+  guest-to-registered handover, the last two only when the body carries a
+  `customer_id`. The answer comes from `corehttp.Identity`, a one-method
+  interface the framework publishes and does not implement; the embedding
+  application registers its own from an ordinary module, in the container, under
+  the name `corehttp.IdentityName` (`"core.identity"`). Bound, it decides all
+  twelve: a request naming somebody else gets `403 identity_mismatch`.
+- **With NO identity bound the twelve split, and the four ADR 0057 added are
+  still an oracle.** The eight the customer module owns refuse every request with
   `401 identity_not_bound` — closed rather than open, which is
   [ADR 0007](adr/0007-sertlestirme-arizada-davranis.md)'s row for an unconfigured
-  authenticator. An installation upgrading past `v0.8.0` without binding one loses
-  its address book, loudly. What gobit still does not do is VERIFY: an
-  implementation that hands the path parameter back satisfies the interface, and
-  the framework cannot tell. `POST /store/v1/customers` is outside the set because
-  it mints the record; so are the cart, the order and the b2b storefront routes —
-  the two bullets below are what that costs.
-- **The customer identity is not verified where it is DECLARED.** `customer_id`
-  in a cart body is not a fact but a claim that asks for no proof. Its three
-  separate consequences for the spending
-  limit were measured on a real binary with a single publishable key and are
-  recorded with the B2B spending rule in
-  [`docs/commerce-flows.md`](commerce-flows.md): sending no `customer_id` at all
-  (a guest cart, no limit applies), sending somebody else's (the spend falls
-  from THEIR window), and opening a fresh guest record with
-  `POST /store/v1/customers` and sending that (the new record belongs to no
-  company and is therefore ruleless). The correct sentence for the limit is not
-  "the spending limit is not enforced" but "the limit is applied only to a
-  shopping that **declares** its customer". The decision is in
-  [ADR 0008](adr/0008-musteri-kimligi-guven-siniri.md); the side that has to
-  build the verification is the embedding application.
+  authenticator, and an installation upgrading past `v0.8.0` without binding one
+  loses its address book, loudly. The four ADR 0057 added do NOT refuse: b2b's
+  two reads still return the named customer's employer and spending limit, and a
+  cart body still opens a cart for the customer it names. That is deliberate —
+  those four ship working, and withdrawing them from an installation that did
+  nothing wrong costs more than the leak — and it is not a defect only because
+  the way to close it is one line of wiring: **bind a verifier**. Until then a
+  caller who knows an identifier, which travels in every order response, reads
+  that person's company and allowance and can open a cart in their name; the two
+  modules log a WARN saying so at startup. Guest carts are untouched either way.
+  What gobit still does not do is VERIFY: an implementation that hands the
+  claimed identifier back satisfies the interface, and the framework cannot tell.
+  `POST /store/v1/customers` is outside the set because it mints the record; so
+  is the order module's storefront read, which names a cart rather than a person.
+- **A shopper can always decline to name a customer, and that is not closable.**
+  A cart without a `customer_id` belongs to a guest, and on a guest order the
+  b2b spending rule is not even asked. Requiring the field would not help:
+  `POST /store/v1/customers` mints a fresh guest record, bound to no company and
+  therefore ruleless, with nothing but the publishable key. The correct sentence
+  for the limit is not "the spending limit is not enforced" but "the limit is
+  applied only to a purchase that **declares** its customer" — and since
+  ADR 0057 a declaration is one the request can prove. The measurement is with
+  the B2B spending rule in [`docs/commerce-flows.md`](commerce-flows.md); the
+  boundary is [ADR 0008](adr/0008-musteri-kimligi-guven-siniri.md)'s, and the
+  side that verifies is still the embedding application.
 - **Storefront carts carry no ownership check** — the model is a capability URL:
   the cart identifier is minted from a 48-bit timestamp plus 80 bits of
   cryptographic randomness, it cannot be guessed, and knowing it carries the

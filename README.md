@@ -178,24 +178,37 @@ gobit mekanizmayı ve neyi nerede tuttuğunun beyanını verir; o uçları çağ
 bir talebi kabul etmek ve süreyi belirlemek sizin işinizdir. **Kurulup hiç
 çağrılmayan bir gobit, çerçevenin göremeyeceği bir uyum sorunu bırakır.**
 
-### Müşteri kimliği: doğrulama sizden, reddetme bizden
+### The customer identity: you verify it, we refuse without it
 
-Aynı ayrım vitrinde de geçerlidir ve **yükselten bir kurulum için ZORUNLU bir
-adım bırakır.** Vitrinin müşteri adı geçen sekiz ucu — `GET` ve
-`PUT /store/v1/customers/{id}` ile adres defterinin altı ucu — yolun iddia ettiği
-müşterinin kanıtlanmasını ister
-([ADR 0043](./docs/adr/0043-gobit-requires-an-identity-it-still-does-not-issue.md)).
-gobit o kanıtı üretmez ve üretmeyecektir
-([ADR 0008](./docs/adr/0008-musteri-kimligi-guven-siniri.md)); ürettiği şey
-sözleşmedir: `corehttp.Identity`, tek metotlu bir arayüz. Gömen uygulama kendi
-uygulamasını sıradan bir modülün `Register`'ından container'a
-`corehttp.IdentityName` (`"core.identity"`) adıyla kaydeder.
+The same division holds on the storefront. Twelve routes ask that the customer
+the request names be proven
+([ADR 0043](./docs/adr/0043-gobit-requires-an-identity-it-still-does-not-issue.md),
+[ADR 0057](./docs/adr/0057-one-comparison-holds-the-storefront-customer-claim.md)):
+`GET` and `PUT /store/v1/customers/{id}` with the six routes of the address
+book, b2b's company and employee reads, and the two cart bodies — cart creation
+and the guest-to-registered handover — the last two only when the body carries a
+`customer_id`.
 
-**Hiçbir kimlik bağlanmazsa o sekiz uç her isteği reddeder**
-(`401 identity_not_bound`) — açık değil, KAPALI. Bağlıysa, yolda başkasının
-kimliği geçen istek `403 identity_mismatch` alır. `POST /store/v1/customers`
-kümenin dışındadır (kaydı o AÇAR); sepet, sipariş ve b2b vitrin uçları da öyle.
-Sınırın tamamı [`docs/known-limits.md`](./docs/known-limits.md) içindedir.
+gobit does not produce that proof and will not
+([ADR 0008](./docs/adr/0008-musteri-kimligi-guven-siniri.md)); what it produces
+is the contract: `corehttp.Identity`, a one-method interface. The embedding
+application registers its own implementation into the container from an ordinary
+module's `Register`, under the name `corehttp.IdentityName` (`"core.identity"`).
+With one bound, a request naming somebody else gets `403 identity_mismatch` from
+any of the twelve.
+
+**With NO identity bound the twelve split, and the split is the decision.** The
+eight the customer module owns refuse every request with `401
+identity_not_bound` — closed rather than open, which is a **MANDATORY step for
+an installation upgrading past `v0.8.0`**. The four ADR 0057 added do not: b2b's
+two reads and a cart naming a customer answer exactly as they always have,
+because withdrawing a surface that ships working costs an embedder more than the
+leak it closes. That leaves those four believing the claim until a verifier is
+bound, and the module says so in its log. A cart that names nobody is a guest
+cart and is never asked either way, so a shop that sells to guests keeps
+selling; `POST /store/v1/customers` is outside the set as well, because it MINTS
+the record. The whole boundary is in
+[`docs/known-limits.md`](./docs/known-limits.md).
 
 ## Daha ileri okuma
 

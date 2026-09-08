@@ -25,10 +25,39 @@ import (
 var sabitSaat = time.Date(2026, time.March, 17, 12, 0, 0, 0, time.UTC)
 
 // yeniRouter verilen sahte servisle route'ları bağlanmış bir router üretir.
+//
+// The identity bound here AGREES with the path, because the tests in this file
+// are about routing, scopes and body handling. The identity check itself is
+// only observable when the two can DISAGREE, and that arrangement is in
+// identity_test.go beside it.
 func yeniRouter(svc api.B2B) chi.Router {
 	r := chi.NewRouter()
-	api.New(svc).Routes(r)
+	api.New(svc, boundTo(pathProvingIdentity{})).Routes(r)
 	return r
+}
+
+// boundTo is the lookup an installation that HAS bound a verifier hands the
+// handler.
+//
+// The lookup exists because "nothing is bound" is a third answer the
+// corehttp.Identity contract cannot express; a test that wants a bound one says
+// so here, and a test that wants none passes nil to api.New.
+func boundTo(identity corehttp.Identity) api.IdentityLookup {
+	return func(context.Context) (corehttp.Identity, error) { return identity, nil }
+}
+
+// pathProvingIdentity hands back the customer the path already claimed.
+//
+// It is the implementation ADR 0043 says gobit cannot detect: it satisfies the
+// interface and proves nothing. It is written down rather than left implicit
+// because the framework's guarantee stops at "somebody was asked", and a reader
+// should meet that sentence here rather than rediscover it.
+type pathProvingIdentity struct{}
+
+var _ corehttp.Identity = pathProvingIdentity{}
+
+func (pathProvingIdentity) CustomerID(r *http.Request) (string, error) {
+	return chi.URLParam(r, "customer_id"), nil
 }
 
 // adminKimlik testlerin varsayılan çağıranıdır: tam yetkili yönetim kimliği.

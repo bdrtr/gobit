@@ -504,11 +504,19 @@ func openStorefrontCart(t *testing.T, customerID, email string) string {
 // what makes that visible — the only way to change a cart's region (and
 // therefore its currency) is to pick ANOTHER country, because that is the only
 // thing the customer is able to express.
+// The request PROVES the customer it names (see customer_identity_test.go). This
+// harness binds a verifier that reads a header and refuses a request without
+// one, so the header is not decoration: without it these scenarios would be
+// asserting a refusal instead of a checkout. It is the harness that asks, not
+// gobit — an installation that binds nothing is served unchecked (ADR 0057). A
+// customerID left empty names nobody and opens a guest cart, which is never
+// asked either way.
 func openStorefrontCartInCountry(t *testing.T, countryCode, customerID, email string) string {
 	t.Helper()
 
-	rec := storefrontRequest(t, http.MethodPost, "/store/v1/carts", fmt.Sprintf(
-		`{"country_code":%q,"customer_id":%q,"email":%q}`, countryCode, customerID, email))
+	rec := identifiedStorefrontRequest(t, customerID, http.MethodPost, "/store/v1/carts",
+		fmt.Sprintf(`{"country_code":%q,"customer_id":%q,"email":%q}`,
+			countryCode, customerID, email))
 	require.Equal(t, http.StatusCreated, rec.Code,
 		"could not open the cart; body: %s", rec.Body.String())
 

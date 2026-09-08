@@ -158,7 +158,7 @@ The vocabulary derives from a single rule:
 | `GET /admin/v1/auth/me`, `POST /admin/v1/auth/logout` | identity only |
 | `/admin/v1/**` **read** (GET, HEAD) | `<module>:read` |
 | `/admin/v1/**` **write** (POST, PUT, PATCH, DELETE) | `<module>:write` |
-| `/store/v1/**` | — no **scope** (a publishable key carries no authority); eight routes carry a different authorization step, below |
+| `/store/v1/**` | — no **scope** (a publishable key carries no authority); twelve routes carry a different authorization step, below |
 
 `<module>` is the name of the module that owns the endpoint: `product:read`,
 `order:write`, `promotion:write` … `admin` is the **super-scope** and covers them
@@ -166,22 +166,38 @@ all.
 
 **A publishable key carries no scope, and since
 [ADR 0043](adr/0043-gobit-requires-an-identity-it-still-does-not-issue.md) that is
-no longer the same sentence as "the storefront is unauthorized".** Eight routes —
-`GET`/`PUT /store/v1/customers/{id}` and the six of its address book — ask a
-question the scope vocabulary cannot express: *is the caller the customer the path
-names?* The answer comes from `corehttp.Identity`, a one-method interface gobit
+no longer the same sentence as "the storefront is unauthorized".** Twelve routes
+ask a question the scope vocabulary cannot express: *is the caller the customer
+this request names?* They are `GET`/`PUT /store/v1/customers/{id}` and the six of
+its address book, b2b's company and employee reads, and — since
+[ADR 0057](adr/0057-one-comparison-holds-the-storefront-customer-claim.md) — the
+two cart bodies, **but only when the body carries a `customer_id`**.
+
+The answer comes from `corehttp.Identity`, a one-method interface gobit
 **publishes and does not implement**. The embedding application registers its own
 under the container name `corehttp.IdentityName` (`"core.identity"`) from an
-ordinary module; the customer module resolves it on the first storefront request
-and compares what it proves against what the path claims. With **nothing bound
-those eight routes refuse every request** with `401 identity_not_bound` — a
-mandatory obligation for anyone upgrading past `v0.8.0`, and the closed row
+ordinary module; each of the three modules resolves it on the first storefront
+request and hands the claim to `corehttp.ProvenCustomer`, the single comparison
+that produces every answer below. With one bound, a request naming somebody else
+is `403 identity_mismatch` on any of the twelve. gobit still verifies nothing
+itself: it requires the embedder's verifier and refuses to guess in its absence.
+
+**With nothing bound the twelve split.** The eight the customer module owns
+refuse every request with `401 identity_not_bound` — a mandatory obligation for
+anyone upgrading past `v0.8.0`, and the closed row
 [ADR 0007](adr/0007-sertlestirme-arizada-davranis.md) writes for an unconfigured
-authenticator. With one bound, a path naming somebody else is
-`403 identity_mismatch`. gobit still verifies nothing itself: it requires the
-embedder's verifier and refuses to guess in its absence. `POST /store/v1/customers`
-is outside the set because it MINTS the record, and the carts, orders and b2b
-storefront routes are outside it too — see
+authenticator. The four ADR 0057 added answer as they always have: they ship
+working, and taking them away from an installation that has bound nothing costs
+that installation more than the leak it would close. So in such an installation
+those four still believe the claim — b2b's two hand a stranger the named
+customer's employer and spending limit, and a cart body opens a cart in the
+customer's name — and each module logs a WARN naming the empty slot. Binding a
+verifier is what closes it.
+
+A cart that names NOBODY is a guest cart and is never asked, which is why a shop
+with no identity bound still sells; `POST /store/v1/customers` is outside the set
+because it MINTS the record, and the order module's storefront read names a cart
+rather than a person. What that leaves open is in
 [`docs/known-limits.md`](known-limits.md).
 
 Four scopes name a resource that is not a module, because the surface they guard

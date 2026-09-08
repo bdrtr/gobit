@@ -65,13 +65,15 @@ type createCartRequest struct {
 	CountryCode string `json:"country_code"`
 	// CustomerID left empty means the cart belongs to a guest.
 	//
-	// The field is an OWNERSHIP CLAIM and today it asks for no proof at all; its
-	// boundary is in the package documentation's section "What the model DOES NOT
-	// COVER: customer_id".
+	// The field is an OWNERSHIP CLAIM: a non-empty value is compared with what
+	// the installation's bound identity proves, and the cart is not opened when
+	// the two disagree (ADR 0057, [Handler.provenCustomer]). With no identity
+	// bound there is nothing to disagree with and the claim is believed, which
+	// is the residue that record states.
 	//
-	// LEAVING the field EMPTY is a decision as well and its cost is written
-	// there: the b2b spending limit is never applied to an order born of a cart
-	// without a customer.
+	// LEAVING the field EMPTY is a decision as well, it is the guest path, and
+	// its cost is written in the package documentation: the b2b spending limit
+	// is never applied to an order born of a cart without a customer.
 	CustomerID string `json:"customer_id"`
 	Email      string `json:"email"`
 	// Metadata is the cart's free-form extra data (campaign source, storefront
@@ -92,6 +94,19 @@ type createCartRequest struct {
 // verifies a registered customer and writes the cart. If the flow cannot be
 // resolved the cart is NOT opened at all (see [Handler.opening]).
 //
+// # The claim is settled before the flow is asked anything
+//
+// A body naming a customer goes through [Handler.provenCustomer] as soon as the
+// body is read, and a body naming none is untouched. The address book decides
+// BEFORE it decodes; this endpoint cannot, because the claim is a field in the
+// body — but it decides before anything acts, and that is what matters here: the
+// flow validates the customer id by READING that customer's record, so a claim
+// checked afterwards would already have answered two questions for a caller who
+// cannot prove it — whether the identifier belongs to anybody (404 against
+// 201), and what that person's registered e-mail address is, because a cart
+// opened without an e-mail carries the customer's own into the response this
+// endpoint returns.
+//
 // For the response the cart is READ BACK; the reasoning is in the [Handler.cart]
 // godoc.
 func (h *Handler) storeCreateCart(w http.ResponseWriter, r *http.Request) {
@@ -99,6 +114,11 @@ func (h *Handler) storeCreateCart(w http.ResponseWriter, r *http.Request) {
 
 	var body createCartRequest
 	if err := decodeBody(w, r, &body); err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	customerID, err := h.provenCustomer(r, body.CustomerID)
+	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
@@ -113,7 +133,7 @@ func (h *Handler) storeCreateCart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := flow.OpenCartForCountry(ctx, body.CountryCode, body.CustomerID, body.Email, metadata)
+	id, err := flow.OpenCartForCountry(ctx, body.CountryCode, customerID, body.Email, metadata)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
@@ -173,6 +193,10 @@ type updateCartRequest struct {
 	Email *string `json:"email"`
 	// CustomerID is the customer that takes over the guest cart; if it is left
 	// empty the cart's customer is not touched.
+	//
+	// A non-empty value is put to the installation's bound identity (ADR 0057):
+	// this is the moment a guest cart acquires an owner, and it was open to
+	// anybody who knew the cart's id.
 	CustomerID string `json:"customer_id"`
 }
 
@@ -182,6 +206,17 @@ type updateCartRequest struct {
 // cart over to a customer who signs in. The endpoint is POST rather than PATCH:
 // chi's routing does not branch on the body anyway and the other writes on the
 // customer side are POST as well.
+//
+// # The HANDOVER is where the claim is settled
+//
+// This is the moment a guest cart acquires an owner, and until ADR 0057 the
+// owner was whoever the body said. The claim now goes to the bound identity
+// ([Handler.provenCustomer]) and a contradicted one is refused; an e-mail-only
+// body names nobody and is untouched, so collecting a contact address at the
+// payment step still needs no identity.
+// The service's own rule stays where it is and guards a different thing: a cart
+// that ALREADY has an owner is not handed to a second one
+// (service.CodeCustomerMismatch).
 func (h *Handler) storeUpdateCart(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -190,10 +225,15 @@ func (h *Handler) storeUpdateCart(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
+	customerID, err := h.provenCustomer(r, body.CustomerID)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
 
 	cart, err := h.svc.UpdateCart(ctx, cartID(r), service.UpdateCartInput{
 		Email:      body.Email,
-		CustomerID: body.CustomerID,
+		CustomerID: customerID,
 	})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)

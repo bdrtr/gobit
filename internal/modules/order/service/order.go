@@ -148,11 +148,12 @@ type CreateOrderInput struct {
 //
 // WHO IT IS APPLIED TO: only to orders whose [CreateOrderInput.CustomerID] is
 // filled in. When the field is empty the rule is not even ASKED FOR and the
-// order is opened independently of the limit. On today's surface that field is
-// an unvalidated declaration, that is, the limit is applied not to "every
-// purchase" but to "a purchase that declares its customer"; the whole boundary
-// and why it could not be closed in this module are in the
-// [Service.spendingRuleFor] godoc and in ADR 0008.
+// order is opened independently of the limit. The limit is therefore applied not
+// to "every purchase" but to "a purchase that declares its customer" — and since
+// ADR 0057 a declaration is one the storefront checked, wherever the
+// installation bound an identity to check it with. The whole boundary, and why
+// the proof is not read in this module, are in the [Service.spendingRuleFor]
+// godoc and in ADR 0008.
 //
 // HOW THE SPEND IS COUNTED: it is the sum of the orders the customer placed
 // within the window the rule reports. CANCELED orders do not

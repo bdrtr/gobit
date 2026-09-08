@@ -242,15 +242,17 @@ func TestARealOrderReachesARealWebhookReceiver(t *testing.T) {
 	assert.NotEmpty(t, data["currency_code"])
 
 	// And the boundary holds on the real event, which really does carry a
-	// customer id: it is a LEVER on that customer — the address book asks for a
-	// bound identity since ADR 0043, but b2b's storefront routes still answer
-	// for an id alone and the cart still takes one from a body — so it must not
-	// reach a third party.
+	// customer id. Since ADR 0057 every storefront surface that names a customer
+	// puts the claim to the bound identity — but only where one IS bound, and
+	// ADR 0057 deliberately leaves an installation that bound none serving. So
+	// the identifier is still a lever there, and everywhere it is at least the
+	// person's IDENTIFIER; handing a third party a standing hold on it is the
+	// withholding this asserts.
 	assert.NotContains(t, data, "customer_id",
-		"the customer id reached the receiver. It is a lever on that customer: b2b's "+
-			"storefront routes return their company and spending limit for it with no "+
-			"identity check, and the cart still accepts it from a body, so the receiver "+
-			"now has standing hold of it (ADR 0008, ADR 0043).")
+		"the customer id reached the receiver. It names a person, the receiver keeps it "+
+			"for as long as it keeps the delivery, and what it is worth depends on a "+
+			"verifier gobit does not write and does not require here "+
+			"(ADR 0008, ADR 0029, ADR 0057).")
 	redacted, _ := got[0].body["redacted"].([]any)
 	assert.Contains(t, redacted, "customer_id",
 		"the withholding has to be visible; a receiver that simply sees no customer_id "+

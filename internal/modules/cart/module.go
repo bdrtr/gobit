@@ -277,7 +277,12 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		Pricing:  &linePricing{c: c, log: log},
 		Checkout: &cartCompletion{c: c, log: log},
 		Shipping: &shippingPricing{c: c, log: log},
-	})
+	},
+		// The customer identity is resolved the same way and for the same
+		// reason, one layer further out: it comes from the EMBEDDER's module,
+		// which the composition root adds after everything in the box. Unlike
+		// the flows, an absent one is not an error — see [identityBinding].
+		(&identityBinding{c: c, log: log}).identity)
 	slog.Default().DebugContext(ctx, "cart module registered",
 		"service", ServiceName, "provider", ProviderName)
 	return nil

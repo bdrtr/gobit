@@ -163,21 +163,80 @@ func describeVitrin(d *openapi.Doc) {
 		Summary: "Müşterinin KENDİ şirketini döner.",
 		Description: "Şirket, müşterinin kendi çalışan kaydından türetilir; " +
 			"şirket kimliğiyle çağrılabilen bir uç YOKTUR. Müşteri hiçbir " +
-			"şirketin çalışanı değilse 404 döner.",
-		Responses: map[string]any{
-			"200": openapi.Response("Müşterinin şirketi", d.Item(companyDTO{})),
-		},
+			"şirketin çalışanı değilse 404 döner. Where this installation has " +
+			"bound a customer identity, a path naming a customer that identity " +
+			"CONTRADICTS is refused.",
+		Responses: storefrontClaimResponses("200",
+			openapi.Response("Müşterinin şirketi", d.Item(companyDTO{}))),
 	})
 
 	d.Describe(http.MethodGet, "/store/v1/b2b/customers/{customer_id}/employee", openapi.Operation{
 		Summary: "Müşterinin KENDİ çalışan kaydını döner.",
 		Description: "Harcama limitini, sıfırlanma aralığını ve geçerli " +
 			"pencerenin başlangıcını taşır. KALAN hak hesaplanmaz: pencere " +
-			"içindeki sipariş toplamı order modülünün verisidir.",
-		Responses: map[string]any{
-			"200": openapi.Response("Müşterinin çalışan kaydı", d.Item(storeEmployeeDTO{})),
-		},
+			"içindeki sipariş toplamı order modülünün verisidir. Where this " +
+			"installation has bound a customer identity, a path naming a " +
+			"customer that identity CONTRADICTS is refused.",
+		Responses: storefrontClaimResponses("200",
+			openapi.Response("Müşterinin çalışan kaydı", d.Item(storeEmployeeDTO{}))),
 	})
+}
+
+// storefrontClaimResponses merges a storefront operation's success response
+// with the refusals ADR 0057 gave both of these routes.
+//
+// # Why the statuses are CONDITIONAL
+//
+// They exist only where the installation has bound a corehttp.Identity. One
+// that bound none cannot contradict the customer named in the path and answers
+// exactly as it did before ADR 0057, so a reader must not conclude that these
+// endpoints stopped working. What they stopped doing is believing a claim a
+// bound verifier denies.
+//
+// # Why FIVE statuses and not the two this module returns
+//
+// Because [Handler.storeCustomerID] passes the bound identity's error through
+// UNWRAPPED, which is the decision rather than an accident: the embedder picks
+// the status by picking its error's kind. An expired session is the embedder's
+// 401, a suspended account its 403, an unreachable identity provider its 503.
+// Describing only the codes this package itself returns would document half the
+// surface and leave the other half to be discovered in production.
+//
+// The wording is this module's own rather than a shared helper's, because the
+// sentence a reader needs names the surface: what these two routes hand back is
+// an employer and a spending allowance, and the customer module's copy speaks
+// about an address book.
+func storefrontClaimResponses(success string, response any) map[string]any {
+	return map[string]any{
+		success: response,
+		"401": openapi.ErrorResponse(
+			"The publishable key was accepted, and the customer identity this installation " +
+				"bound refused the request with an error of its own that asks the shopper " +
+				"to sign in; the code is the embedder's. An installation that has bound NO " +
+				"identity does not answer here — it cannot check the path claim, and " +
+				"ADR 0057 leaves these endpoints serving rather than withdrawing a surface " +
+				"that works."),
+		"403": openapi.ErrorResponse(
+			"Either the request proves a DIFFERENT customer than the one named in the " +
+				"path — code \"identity_mismatch\", which does not depend on whether that " +
+				"customer is anybody's employee, because the comparison is between the path " +
+				"and the proof and no record is read to make it — or the bound identity " +
+				"refused this request with a forbidding error of its own."),
+		"404": openapi.ErrorResponse(
+			"The customer is the employee of no company. Where an identity is bound it is " +
+				"a fact about the PROVEN customer, because a contradicted claim never " +
+				"reaches the lookup; where none is bound it is a fact about the customer " +
+				"the path named, whoever asked."),
+		"500": openapi.ErrorResponse(
+			"Either the bound customer identity returned neither an identifier nor an " +
+				"error — code \"identity_unproven\", a fault in the installation's " +
+				"implementation rather than in this request — or something else failed on " +
+				"the server."),
+		"503": openapi.ErrorResponse(
+			"The bound customer identity could not answer: its own dependency, such as the " +
+				"identity provider it calls, is unreachable. The code is the embedder's and " +
+				"the request is worth retrying."),
+	}
 }
 
 // sorguParametresi sorgu dizesinden okunan bir parametreyi tanımlar.

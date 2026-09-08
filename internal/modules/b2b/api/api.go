@@ -17,34 +17,34 @@
 // yüzden reddedilen bir istek değil, İFADE EDİLEMEYEN bir istektir: istemcinin
 // yazabileceği bir şirket kimliği parametresi hiçbir uçta bulunmaz.
 //
-// # UYARI: vitrin uçları müşteriyi YOL PARAMETRESİNDEN tanır
+// # Vitrin uçları müşteriyi YOL PARAMETRESİNDEN okur, ama artık İNANMAZ
 //
 // Bu depoda vitrin isteklerinin kimliği publishable API anahtarıdır ve o anahtar
 // bir SATIŞ KANALINI temsil eder, bir müşteriyi değil (bkz. corehttp.RequireStore).
-// Uçlar bu yüzden customer idni yoldan alır ve kimliğin doğruluğu DOĞRULANMAZ.
+// Uçlar customer idni yoldan alır; o değer bir İDDİADIR ve karşılığı aranır.
 //
-// Sonuç açıkça yazılmalıdır: başka bir müşterinin kimliğini BİLEN bir çağıran,
-// o müşterinin şirketini ve harcama limitini okuyabilir. Kapatılan şey,
-// şirketin adıyla istenebilmesidir; kapatılmayan şey, customer idnin taklit
-// edilmesidir.
+// Until 2026-09-08 nothing looked. What that cost is worth keeping, because it
+// is what the change bought: a caller holding somebody's customer id read that
+// person's employer — the company's name, contact address and billing address
+// — and their spending limit, its reset interval and the start of the current
+// window. Nothing about the identifier is a secret; it travels in cart and
+// order response bodies. Closing the company's own name as a parameter was
+// never the hole. The hole was believing the customer id.
 //
-// # The contract that would close it EXISTS now, and this module has not taken it
+// Since ADR 0057 both routes resolve a corehttp.Identity from the container
+// under corehttp.IdentityName, ask it what the request PROVES and refuse when
+// the two DISAGREE ([Handler.storeCustomerID]). With nothing bound they answer
+// as they always have: an installation that never bound a verifier keeps its
+// working B2B storefront, and the oracle above stays open there until it binds
+// one. That residue is stated rather than paid for by an upgrade — the address
+// book could be closed outright in ADR 0043 because no anonymous caller has a
+// correct use for somebody's street address, and these two routes are the same
+// class of leak reached through a surface that is in service.
 //
-// Until 2026-09-08 this paragraph said no customer session was expressible in
-// the core, and that sentence was the reason to wait. It is no longer true:
-// corehttp.Identity is published, the customer module resolves it under
-// corehttp.IdentityName and refuses its eight storefront routes when nothing is
-// bound (ADR 0043). These two routes were left as they are BY THAT SAME RECORD,
-// which names this copy in its consequences: one contract, two modules, two
-// functions, and the one it closed is the one ADR 0008's list left out.
-//
-// So the work is no longer "wait for a session to exist" but "bind the contract
-// that does": hold a corehttp.Identity, compare it with [storeCustomerID]'s
-// path parameter and return errors.Forbidden on a mismatch. It is deliberately
-// not done here, because doing it in passing would put a second, silently
-// diverging copy of that comparison in the tree — and a wrong copy of an
-// authorization rule keeps answering, which is the failure mode this repository
-// pays the most for.
+// gobit still verifies nothing itself: ADR 0008 stands and the embedder is the
+// one who satisfies the contract. The comparison is corehttp.ProvenCustomer's
+// and not this package's, which is what keeps this module's copy from becoming
+// a second, silently diverging answer to one authorization question.
 //
 // # Yetki
 //
@@ -143,14 +143,36 @@ type B2B interface {
 	MembershipOfCustomer(ctx context.Context, customerID string) (service.Membership, error)
 }
 
+// IdentityLookup hands back the customer identity the installation bound, a NIL
+// identity when it bound none, or an error when the binding itself is broken.
+//
+// It is a lookup rather than the corehttp.Identity itself because "this
+// installation bound no verifier" is an answer these two routes act on, and
+// that contract cannot carry it: CustomerID returns an identifier or an error,
+// and an absent binding is neither. A wrapper that answered with an error would
+// turn every b2b storefront read in an unprepared installation into a 401,
+// which is the breaking change ADR 0057 was rewritten to avoid.
+type IdentityLookup func(ctx context.Context) (corehttp.Identity, error)
+
 // Handler b2b modülünün HTTP handler kümesidir.
 type Handler struct {
 	svc B2B
+	// identity finds the verifier that proves which customer a storefront
+	// request belongs to. Only the DISAGREEMENT it can then see is refused;
+	// see [Handler.storeCustomerID].
+	identity IdentityLookup
 }
 
 // New verilen servis üzerinde çalışan handler kümesini üretir.
-func New(svc B2B) *Handler {
-	return &Handler{svc: svc}
+//
+// identity may be nil, and a nil one means what a lookup finding nothing means:
+// this handler holds no verifier, does not pretend to, and answers the path
+// claim as this module answered it before ADR 0057. The module hands in a
+// wrapper that resolves the embedder's implementation from the container ON
+// FIRST USE, so a nil arriving here means the caller built the handler by hand:
+// a test, or an embedder driving the package directly.
+func New(svc B2B, identity IdentityLookup) *Handler {
+	return &Handler{svc: svc, identity: identity}
 }
 
 // Routes b2b'nin admin ve store route'larını router'a bağlar.
@@ -272,16 +294,47 @@ func pathParam(r *http.Request, name string) string {
 	return chi.URLParam(r, name)
 }
 
-// storeCustomerID vitrin isteğinin hangi müşteriye ait olduğunu döner.
+// storeCustomerID returns the customer a storefront request may act on, or an
+// error that ends the request.
 //
-// MÜŞTERİ KİMLİĞİ BAĞLAMA NOKTASI: kimlik yol parametresinden okunur, yani
-// istemcinin kendi bildirdiği değerdir ve doğrulanmaz (gerekçe ve sınırlar için
-// bkz. paket belgesi). The contract to bind is corehttp.Identity and the
-// customer module's storeCustomerID is the worked example; this one has not
-// taken it yet and the package doc says why. Tek bir yerde durması, o
-// değişikliğin tek dosyada yapılabilmesi içindir.
-func storeCustomerID(r *http.Request) string {
-	return pathParam(r, paramCustomerID)
+// The path names a customer; that is the CLAIM. The bound identity says which
+// customer the request PROVES. corehttp.ProvenCustomer compares them and every
+// disagreement is a refusal — a mismatch is a 403, an implementation that
+// proves nothing is a 500, and the embedder's own error passes through with the
+// status its kind picks. All of them are written out on that function.
+//
+// # Why an installation with no verifier is still served
+//
+// Because nothing here can contradict the claim, and refusing an unchecked
+// claim would withdraw a working surface from an embedder who did nothing
+// wrong. The claim is handed back as it arrived, which is what this module did
+// before ADR 0057; the record names the residue instead of charging an upgrade
+// for it, and binding a verifier is what closes it.
+//
+// # Why the comparison is not written here
+//
+// It is corehttp.ProvenCustomer's, shared with the address book (ADR 0057).
+// This package doc used to say the work was "wait for a session to exist"; when
+// ADR 0043 published the contract it became "bind it", and it warned in the
+// same paragraph that doing it in passing would put a second, silently
+// diverging copy of an authorization rule in the tree. What stays here is the
+// CLAIM: this module spells it "customer_id" in the path and the address book
+// spells it "id", which is the one thing a shared comparison cannot know.
+func (h *Handler) storeCustomerID(r *http.Request) (string, error) {
+	claimed := pathParam(r, paramCustomerID)
+
+	var identity corehttp.Identity
+	if h.identity != nil {
+		var err error
+		if identity, err = h.identity(r.Context()); err != nil {
+			return "", err
+		}
+	}
+	if identity == nil {
+		return claimed, nil
+	}
+
+	return corehttp.ProvenCustomer(identity, r, claimed)
 }
 
 // pageParams sorgu dizesinden sayfalama parametrelerini okur.

@@ -72,9 +72,10 @@
 // no subject IN THIS PACKAGE to ask "is this cart yours". Since ADR 0043 that
 // is a choice rather than an absence: the core publishes the shape of the
 // embedder's proof (corehttp.Identity, bound in the container under
-// corehttp.IdentityName) and the customer module already refuses a storefront
-// claim it does not back. The cart has not taken that contract — see the
-// customer_id section below, which says why. The same declaration is written in
+// corehttp.IdentityName) and the customer module refuses a storefront claim it
+// does not back. This package takes that contract for the two bodies that NAME
+// a customer and NOT for the cart's own id (ADR 0057) — the section below says
+// why the two are different questions. The same declaration is written in
 // the order module too (order/api storeGetOrder), and real authorization is the
 // EMBEDDING APPLICATION's job rather than a later phase of this framework's
 // (ADR 0008).
@@ -91,55 +92,59 @@
 // # What the model DOES NOT COVER: customer_id
 //
 // The capability URL says "I can reach the id I hold"; it DOES NOT say "I am
-// this customer". Yet the bodies of POST /store/v1/carts and
-// POST /store/v1/carts/{id} take a customer_id and ask for no proof at all. The
-// service guards only ONE boundary: a cart that has a customer cannot be handed
-// over to another customer (service.CodeCustomerMismatch). The remaining two
-// doors are open — the caller can write somebody else's customer id into the new
-// cart it opens, and it can hand a GUEST cart whose id it knows over to any
-// customer it likes.
+// this customer". The bodies of POST /store/v1/carts and
+// POST /store/v1/carts/{id} carry a customer_id, and that field is a claim
+// about SOMEBODY ELSE rather than a capability in the caller's hand — which is
+// why unguessability never closed it and why it is a separate question from the
+// cart's own id.
 //
-// The consequence is not cosmetic: the cart's customer determines the order's
-// owner and the b2b spending limit is deducted from THAT customer's company
-// window (see the order module's spending rule). That is, the claim can consume
-// somebody else's limit window. It was measured on a real pair: the checkout a
-// stranger completed was deducted from the target's window and AFTERWARDS that
-// customer's own checkout got a 409 — that is, the claim is not merely an escape
-// but a way to BURN the spending right of an employee whose name is known.
+// Until ADR 0057 the field asked for no proof, and there were three doors. Two
+// are NARROWED — narrowed rather than shut, and the difference is the whole
+// shape of the decision:
 //
-// The third door goes underneath both of the others and is the cheapest one: NOT
-// SENDING the field AT ALL. A cart without a customer belongs to a guest, on a
-// guest order the spending rule is not even ASKED and the limit is never
-// applied. That is, the only thing an employee who has hit their limit has to do
-// is leave a field out of the body. Saying "declare your identity" does not
-// close it either: POST /store/v1/customers opens a fresh guest record bound to
-// no company with the publishable key.
+//   - Opening a cart in somebody else's name. It goes through
+//     [Handler.provenCustomer] before the flow is asked anything, and a claim
+//     the bound identity CONTRADICTS is refused.
+//   - Handing a GUEST cart whose id is known to any customer at all. The same
+//     check, at the handover. The service's older rule is still there and
+//     guards a different thing: a cart that already has an owner is never
+//     handed to a second one (service.CodeCustomerMismatch).
 //
-// Unguessability DOES NOT CLOSE this, because the thing being guarded is not a
-// capability in the caller's hand but a claim made ABOUT SOMEBODY ELSE. The only
-// correct closure is a verified customer identity: customer_id stops being
-// taken from the body and is read from a proof the caller cannot write. gobit
-// issues no such proof and is not going to — the auth module that arrived in
-// Phase 8 is ADMIN identity and says so in its own package doc, and this
-// package does not try to invent one either.
+// Both are narrowed only where there is something to narrow WITH. An
+// installation that has bound no corehttp.Identity is served exactly as it was
+// before ADR 0057 — the claim is taken at its word — because withdrawing a
+// working surface from an embedder who did nothing wrong is a cost this record
+// declined to impose, and gobit refusing to GUESS was never gobit refusing to
+// serve. That leaves the oracle below OPEN in such an installation, and the one
+// sentence an operator can act on is: bind a verifier.
 //
-// What changed on 2026-09-08 is the SHAPE of the proof, not the proof:
-// ADR 0043 published corehttp.Identity, the embedder binds an implementation
-// under corehttp.IdentityName, and the customer module's eight storefront
-// routes now refuse a claim that identity does not back. That record scoped
-// itself to a surface with no guest path and named this package as the half it
-// deliberately left open: the guest-to-registered handover is the one blocker
-// an interface does not clear, and taking the contract here without deciding
-// the handover would close the door on the guest carts it exists to serve. So
-// the three doors below are unchanged and measured exactly as before, and the
-// decision taken is still that the hole is WRITTEN DOWN — an unwritten security
-// model is a security model that does not exist.
+// What those two cost while they were open is worth keeping, because it is what
+// the check buys. The cart's customer becomes the ORDER's customer, and the
+// b2b spending limit is deducted from that customer's company window (see the
+// order module's spending rule), so a stranger's checkout was deducted from the
+// target's window and the target's own checkout then got a 409 — a way to BURN
+// the spending right of an employee whose identifier is known. The read side
+// was cheaper still: a cart opened with a customer id and no e-mail is written
+// with that customer's REGISTERED address, and this surface returns the cart,
+// so one request against a known identifier answered both "does this person
+// exist" and "what is their e-mail address".
 //
-// Where the responsibility sits is settled in ADR 0008: verifying the identity
-// is the job not of the framework but of the EMBEDDING APPLICATION, and under
-// which condition the spending limit is applied (only on a checkout that
-// DECLARES its customer) is written in the order module's spendingRuleFor godoc
-// and in the README's B2B section.
+// # The third door is not closable and is a DECISION
+//
+// NOT SENDING the field at all. A cart without a customer belongs to a guest,
+// on a guest order the spending rule is not even ASKED, and the limit is never
+// applied — so an employee who has hit their limit need only leave a field out.
+// Requiring the field would not close it either: POST /store/v1/customers mints
+// a fresh guest record, bound to no company, with nothing but the publishable
+// key. The limit binds the purchases that DECLARE a customer, and since
+// ADR 0057 a declaration is a proven one; what it cannot do is make a shopper
+// declare. That sentence lives in the order module's spendingRuleFor godoc and
+// in the README's B2B section.
+//
+// gobit still issues no proof and is not going to: the auth module that arrived
+// in Phase 8 is ADMIN identity and says so in its own package doc. What this
+// package holds is the embedder's proof, read through corehttp.Identity —
+// ADR 0008's boundary, unmoved.
 //
 // Handlers do NOT PICK the status code: the service returns its core/errors
 // typed error and corehttp.WriteError writes the code matching its kind
@@ -158,6 +163,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
+	corehttp "github.com/bdrtr/gobit/core/http"
 	corepage "github.com/bdrtr/gobit/internal/core/page"
 	"github.com/bdrtr/gobit/internal/modules/cart/models"
 	"github.com/bdrtr/gobit/internal/modules/cart/service"
@@ -403,19 +409,98 @@ type Flows struct {
 	Shipping ShippingPricing
 }
 
+// IdentityLookup hands back the customer identity the installation bound, a NIL
+// identity when it bound none, or an error when the binding itself is broken.
+//
+// # Why a lookup and not the corehttp.Identity itself
+//
+// Because "this installation bound no verifier" is an answer this surface acts
+// on, and the corehttp.Identity contract cannot carry it: CustomerID returns an
+// identifier or an error, and an absent binding is neither. A wrapper that
+// answered with an error would make every cart naming a customer refuse in an
+// installation that has been selling correctly for a year — which is the
+// breaking change ADR 0057 was rewritten to avoid.
+//
+// It takes a context rather than the request because that is all the resolution
+// needs: the lookup reads the CONTAINER, and only the logging inside it wants a
+// context. What reads the request is the identity it returns.
+type IdentityLookup func(ctx context.Context) (corehttp.Identity, error)
+
 // Handler is the cart module's set of HTTP handlers.
 type Handler struct {
 	svc   Carts
 	flows Flows
+	// identity finds the verifier that proves which customer a storefront
+	// request belongs to. It is consulted only by the two bodies that NAME a
+	// customer, and only the MISMATCH it can then see is refused; see
+	// [Handler.provenCustomer].
+	identity IdentityLookup
 }
 
 // New produces the set of handlers working on the given service and flows.
 //
-// There used to be a third parameter as well (the region surface) and the cart's
-// currency was read from it; today that derivation is done by the cart-opening
-// FLOW, that is, the only outside party the handler knows is [Flows].
-func New(svc Carts, flows Flows) *Handler {
-	return &Handler{svc: svc, flows: flows}
+// identity may be nil, and a nil one means the same thing as a lookup that
+// finds nothing: this handler has no verifier, does not pretend to have one,
+// and serves a claim it cannot check. That is the module's own decision rather
+// than a default papering over a missing argument — the address book made the
+// opposite one for routes that have no correct anonymous use (ADR 0043), and
+// the cart's default path is a shopper with no account at all.
+//
+// The region surface used to be a parameter here and the cart's currency was
+// read from it; that derivation is the cart-opening FLOW's today.
+func New(svc Carts, flows Flows, identity IdentityLookup) *Handler {
+	return &Handler{svc: svc, flows: flows, identity: identity}
+}
+
+// provenCustomer returns the customer the request may write into the cart.
+//
+// # Why the claim is what triggers the check
+//
+// The cart's default path is a GUEST, and that is the surface's whole purpose:
+// a shopper who has no account fills a cart and pays. An empty claim is
+// therefore not an unproven claim — it is no claim, it names nobody, and it
+// reaches this function only as the empty string it returns unchanged. Nothing
+// about a guest cart changes, in an installation that has bound an identity or
+// one that has not.
+//
+// A NON-EMPTY claim is the other case, and it is the one ADR 0043 called
+// "mandatory means backed, not declared" read for an optional field: making the
+// claim is what puts the burden of proof on it.
+//
+// # Why an installation with no verifier is still served
+//
+// Because the alternative takes a working surface away. With nothing bound
+// there is nothing to contradict the claim, and this function hands the claim
+// back UNCHECKED rather than refusing — the residue ADR 0057 states in the
+// open, not a check that quietly passes. Refusing here would stop an embedder
+// who never bound an identity from opening a cart for any customer at all, and
+// with it the b2b spending limit that only binds a cart naming one; ADR 0043's
+// reasoning is that gobit will not GUESS who a caller is, and guessing is not
+// what serving an unchecked claim does — believing it is, and the record says
+// so where an operator reads it.
+//
+// The comparison itself is corehttp.ProvenCustomer's, shared with the customer
+// and b2b storefronts (ADR 0057); the refusals and why each is the kind it is
+// are written there. What is this package's is the claim: it arrives in a BODY
+// here rather than in a path, which is why the shared function is handed a
+// string instead of a request to search.
+func (h *Handler) provenCustomer(r *http.Request, claimed string) (string, error) {
+	if claimed == "" {
+		return "", nil
+	}
+
+	var identity corehttp.Identity
+	if h.identity != nil {
+		var err error
+		if identity, err = h.identity(r.Context()); err != nil {
+			return "", err
+		}
+	}
+	if identity == nil {
+		return claimed, nil
+	}
+
+	return corehttp.ProvenCustomer(identity, r, claimed)
 }
 
 // opening returns the cart-opening flow; if it is not bound it returns an ERROR.

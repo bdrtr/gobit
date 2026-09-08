@@ -23,13 +23,13 @@ pass; two rows were found stale and are marked below.
 | A6 | `allow_backorder` and the three flags beside it: reader or deletion | ADR 0048 — all four get a reader; none stops being published |
 | A7 | Does the panel become an admin-API client | ADR 0030 — yes, an SPA on the same cookie |
 | A8 | Catalog cacheability | ADR 0044 — the sales channel moves into the path; all four routes moved |
-| A9 | Does ADR 0008 stand on customer identity | ADR 0043 — it stands; gobit requires an identity and still issues none |
+| A9 | Does ADR 0008 stand on customer identity | ADR 0043 — it stands; gobit requires an identity at the address book and still issues none. ADR 0057 carries the same comparison to the b2b storefront and the cart without the requirement: a bound identity is BELIEVED against the claim, an absent one leaves those two surfaces serving |
 | A10 | pgvector: reopen the cluster contract | ADR 0045 — no; pgvector is a separate opt-in extension module |
 | **A11** | **Where translated content lives** | **OPEN.** ADR 0050 fixes gobit's POSITION (one language is stored, the second is the embedder's) and says in its own words that it does not close this gap. What is missing first is not storage but a way for a request to ASK for a language |
 | A12 | JWT TTL policy | ADR 0031 — a fixed twelve hours, bounded in shared environments |
 | A13 | Metrics posture | ADR 0046 — metrics leave by scrape, OTLP keeps the traces |
 | A14 | Price history: promote the accidental retention or drop it | ADR 0047 — drop it; what survived a replace was never a history |
-| A15 | May the storefront accept content from a party it cannot identify | ADR 0051 — only when the write is confined or inert, held mechanically |
+| A15 | May the storefront accept content from a party it cannot identify | ADR 0051 — only when the write is confined or inert, held mechanically. Of the two open defects it recorded, the cart's is NARROWED and not closed (ADR 0057): a bound identity now decides it, and an installation that has bound none still believes the claim — the residue that closes by binding a verifier. `plugins/webpush` is still a standing authority |
 | A16 | What amount does a price filter compare | ADR 0041 — the base price, request's currency, quantity tier one, no group context |
 | A17 | What does "in stock" mean for a product | ADR 0040 — at least one variant unmanaged, backorderable, or with quantity above zero |
 | A18 | What counts as a match when a shopper filters by an option value | ADR 0039 — the folded form, stored beside the merchant's spelling |
@@ -91,7 +91,7 @@ row is for; the reproduction is in the commit that closed it.
 | **D18** | Nine columns nothing has ever written, invisible until D16's fix | **Eight closed. The ninth is `stock_locations.deleted_at`**, and the question its exemption states is not "delete or status": a location has no delete OR update path, availability sums `inventory_levels` without joining locations, and both level and reservation rows CASCADE. What a closed location OWES — do its levels move, zero out or stop counting, and what happens to live reservations — decides the mechanism |
 | D1 | `/paytr/callback` sat outside every guarded prefix | Fixed — ADR 0028, and the residue answered 2026-09-08: a callback is recorded in the ring's LOG and not in `audit_log` (ADR 0056) — a provider is not an actor and the table has no column for the outcome. Every outcome now leaves a line, refusals included; four were silent, all of them the class where the handler RAN. What remains is a decision, A19, and not a residue |
 | D2 | `allow_backorder` published and read by nothing | Fixed — ADR 0048 |
-| D3 | The address book's storefront endpoints were unauthenticated | Fixed — ADR 0043. Residue: the cart's `customer_id` and b2b's copy of the boundary |
+| D3 | The address book's storefront endpoints were unauthenticated | Fixed — ADR 0043. The residue was NARROWED 2026-09-08 by ADR 0057: b2b's copy and the cart's `customer_id` both go through one published comparison, and a tree-wide gate holds it. The cart's claim was measurably an oracle for a stranger's e-mail address as well as their spending window. **Still open where no identity is bound** — those two surfaces then serve the claim, because withdrawing them from a working installation costs more than the leak; binding a verifier closes it |
 | D4 | `order_exchanges.completed_at` / `canceled_at` never written | Fixed. The audit built to catch this never caught it — see D16 |
 | D5 | Archiving an order left no timestamp | Fixed — migration 000007 |
 | D6 | Two repository-internal transactions could not compose | Fixed, and the entry had named the wrong second module |
@@ -127,6 +127,9 @@ row is for; the reproduction is in the commit that closed it.
   contract. gobit owes the document, the numbering and the slot; the first two
   are built (ADR 0024).
 - **Customer identity** is the embedder's job (ADR 0008, upheld by ADR 0043).
+  ADR 0057 makes a bound one decide every storefront surface that names a
+  customer; where none is bound, the cart and the b2b storefront believe the
+  claim and say so.
 - **A/B assignment** likewise: the framework has no visitor.
 
 ## F. Standing work

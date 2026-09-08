@@ -52,6 +52,9 @@ type fakeCarts struct {
 	billing bool
 	// nextCursor is what the listing reports as the next page's position.
 	nextCursor string
+	// updateCalls counts the calls that reached UpdateCart. A refusal is only
+	// a refusal if the write never happened, and a status code cannot say so.
+	updateCalls int
 }
 
 // The fake satisfying the surface the handler expects is verified at compile time.
@@ -67,6 +70,7 @@ func (f *fakeCarts) GetCart(_ context.Context, cartID string) (models.CartDetail
 func (f *fakeCarts) UpdateCart(_ context.Context, cartID string, in service.UpdateCartInput) (models.Cart, error) {
 	f.gotCartID = cartID
 	f.updateInput = in
+	f.updateCalls++
 	return f.cart, f.err
 }
 
@@ -275,13 +279,47 @@ func newServer(t *testing.T, svc *fakeCarts) http.Handler {
 //
 // The fields of [api.Flows] may be left nil; the handler failing CLOSED without
 // a flow can only be exercised that way.
+//
+// The identity bound here AGREES with whatever a body claims, because the tests
+// in this file are about routing, bodies and flow delegation. The check itself
+// is only observable when the two can DISAGREE, and that arrangement is in
+// identity_test.go beside it.
 func newServerWithFlows(t *testing.T, svc *fakeCarts, flows api.Flows) http.Handler {
 	t.Helper()
 
 	r := chi.NewRouter()
-	api.New(svc, flows).Routes(r)
+	api.New(svc, flows, boundTo(signedInAs(testCustomerID))).Routes(r)
 	return r
 }
+
+// boundTo is the lookup an installation that HAS bound a verifier hands the
+// handler.
+//
+// The lookup exists because "nothing is bound" is a third answer the
+// corehttp.Identity contract cannot express; a test that wants a bound one says
+// so here, and a test that wants none passes nil to api.New.
+func boundTo(identity corehttp.Identity) api.IdentityLookup {
+	return func(context.Context) (corehttp.Identity, error) { return identity, nil }
+}
+
+// testCustomerID is the customer every body in this file claims, and the one
+// the bound identity proves.
+const testCustomerID = "cust_1"
+
+// signedInAs is an identity that proves ONE customer, whatever the request
+// says. It stands in for a shopper who really is signed in as the customer the
+// body names, which is the state every test in this file is written against.
+//
+// It reads no part of the request, and that is not laziness: an implementation
+// may not consume the body (the contract on corehttp.Identity says the request
+// must not be modified), and the cart's claim arrives in the body. A verifier
+// for this surface therefore reads a cookie, a header or the context — never
+// the field it is checking.
+type signedInAs string
+
+var _ corehttp.Identity = signedInAs("")
+
+func (s signedInAs) CustomerID(*http.Request) (string, error) { return string(s), nil }
 
 // adminPrincipal is the tests' default caller: a fully privileged admin identity.
 var adminPrincipal = corehttp.Principal{

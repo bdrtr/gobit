@@ -136,7 +136,11 @@ and THE STOREFRONT ENDPOINT WAS BYPASSING IT: two contracts for the same
 operation, and the one the merchant saw was the raw one.
 
 Today the body takes only `country_code` (mandatory), `customer_id`, `email` and
-`metadata`. The pattern is the same as the price's: `cart` does not import the
+`metadata`. A `customer_id` in it is compared with what the installation's bound
+identity proves, and a claim that identity contradicts is refused (ADR 0057);
+left out, the cart belongs to a guest and nothing is asked. Where no identity is
+bound there is nothing to compare against and the claim is believed.
+The pattern is the same as the price's: `cart` does not import the
 flow; it declares a narrow interface in its own package (`api.CartOpening`) and
 resolves the concrete type from the container under the name
 `workflows.cart.interop`, LAZILY. The path fails CLOSED in the same way too — if
@@ -219,29 +223,30 @@ code's godoc.
   every cart. What the model does NOT cover is the `customer_id` in the bodies:
   a capability says "I may reach the id I hold", not "I am that customer" — and
   the cart's customer determines which company's window a b2b spending limit is
-  drawn from. The only correct closure is a customer session and there is NONE
-  YET: phase 8 in the README's phase table is ADMIN identity (admin user, API
-  key, RBAC) and it is complete; a customer session is in no phase's scope.
+  drawn from. Since
+  [ADR 0057](adr/0057-one-comparison-holds-the-storefront-customer-claim.md)
+  that second question is put to the installation's bound identity: a body
+  naming a customer it contradicts is refused, and a body naming nobody opens a
+  guest cart and is never asked. An installation that has bound none has nothing
+  to contradict the claim with, and the field is believed there as it always
+  was. The framework still issues no session of its own —
+  phase 8 in the README's phase table is ADMIN identity and a customer session
+  is in no phase's scope.
 
-- **The customer's identity is not verified, and therefore the spending limit is
-  applied CONDITIONALLY.** This is a direct consequence of the item above, but it
-  deserves to be written separately, because the measured behavior can be
-  expressed in three distinct forms: not sending the `customer_id` field at all
-  (a guest cart, no limit applied), sending SOMEBODY ELSE'S id (the spend is
-  drawn from their window), and opening a fresh guest record with
-  `POST /store/v1/customers` and sending that (the new record belongs to no
-  company, so it is unruled). All three were measured on the real binary with a
-  single publishable key; the numbers are in the B2B section below, under "The
-  condition of the rule", and the decision is in
-  [ADR 0008](adr/0008-musteri-kimligi-guven-siniri.md). The framework verifies no
-  identity itself and
-  [ADR 0043](adr/0043-gobit-requires-an-identity-it-still-does-not-issue.md) does
-  not change that — but it does now OFFER the surface: `corehttp.Identity`, which
-  the embedding application implements and registers under
-  `corehttp.IdentityName`. The cart is not among the routes that ask for it. The
-  eight the customer module owns refuse a claim the bound identity does not back;
-  `customer_id` still arrives in a cart BODY, so all three forms above reproduce
-  exactly as measured.
+- **A shopper can decline to name a customer, and the spending limit is
+  therefore applied CONDITIONALLY.** Two of the three measured forms are closed
+  wherever a verifier is bound: sending SOMEBODY ELSE'S id then answers
+  `403 identity_mismatch` and opens no cart, and so does handing a guest cart to
+  a customer the request cannot prove. Bind none and both reproduce exactly as
+  measured — that residue is ADR 0057's, stated rather than paid for by an
+  upgrade. The third form is not closable at all and is a decision rather than a
+  defect: not sending the `customer_id` field opens a guest cart, and on a guest
+  order the rule is not even asked. Requiring the field would not close it — a fresh guest
+  record from `POST /store/v1/customers` belongs to no company and is unruled.
+  The numbers are in the B2B section below, under "The condition of the rule",
+  and the boundary is [ADR 0008](adr/0008-musteri-kimligi-guven-siniri.md)'s,
+  which stands: the framework verifies nothing itself, it requires the
+  embedder's `corehttp.Identity` and refuses to guess in its absence.
 
 ---
 
@@ -393,10 +398,9 @@ this repository has found over and over again.
 
 Every sentence above is true, but read on its own it says something false. The
 rule works through `CreateOrderInput.CustomerID`, and that identity enters the
-chain from the BODY of the storefront cart. The store surface's only identity is
+chain from the BODY of the storefront cart. The store surface's own principal is
 the publishable key, and that represents a sales channel, not a customer
-(`corehttp.Principal` carries no customer identity). So `customer_id` is not a
-fact but a CLAIM that demands no proof at all.
+(`corehttp.Principal` carries no customer identity).
 
 Measured on the real binary with a single publishable key — same cart, same
 client, the only difference being the field in the body (limit `50_000`, cart
@@ -407,37 +411,39 @@ total `76_800`):
 | `{"country_code":"TR","customer_id":"cus_…"}` | **`409`** `order_spending_limit_exceeded` |
 | `{"country_code":"TR"}` | **`200`**, the order is opened (`customer_id: ""`) |
 
-The second half of the same measurement: a purchase completed with somebody
-else's `customer_id` was written in THAT customer's name and the spend was drawn
-from THEIR window — after which the employee's own purchase got a `409`. So the
-claim is not only an escape route, it is a way of BURNING the spending
-entitlement of an employee whose id is known.
+The claim used to demand no proof, and what that cost was measured on the same
+binary: a purchase completed with somebody else's `customer_id` was written in
+THAT customer's name and the spend was drawn from THEIR window, after which the
+employee's own purchase got a `409` — a way of BURNING the spending entitlement
+of an employee whose id is known. The same held one step later: a cart opened as
+a guest could be handed to somebody else's `customer_id` with
+`POST /store/v1/carts/{id}`, so the attribution rested on an unproven
+declaration throughout the cart's life.
 
-Making the declaration mandatory does not close it either:
-`POST /store/v1/customers` opens a new guest record with the publishable key, and
-that record belongs to no company, so it is unruled.
+Both are closed **wherever a `corehttp.Identity` is bound**, since
+[ADR 0057](adr/0057-one-comparison-holds-the-storefront-customer-claim.md): a
+body naming a customer is compared with what that identity proves, and a
+mismatch is `403 identity_mismatch` with no cart written and no record read.
+Where none is bound the two reproduce as measured, and closing them is one line
+of wiring rather than an upgrade note. What remains in every installation is the
+FIRST row of the table above, and it is a decision rather than a defect — a
+shopper may decline to name a customer, and making the field mandatory would not
+help, because `POST /store/v1/customers` mints a fresh guest record that belongs
+to no company and is therefore unruled.
 
-The fourth door is that the attribution can be made LATER: a cart opened as a
-guest is handed over to somebody else's `customer_id` with
-`POST /store/v1/carts/{id}` and the order is written to that identity. So the
-attribution rests on a declaration not only when the cart is opened but
-throughout the cart's life (measured: the handover returns `200`, the order is in
-the victim's name).
-
-This is not a gap but a BOUNDARY THAT HAS BEEN DRAWN: gobit offers no surface
-that verifies a customer's identity; the party that should offer one is the
-embedding application. The whole decision, its rejected options and the list of
-work that falls to the embedding application are in
+The boundary itself has not moved: gobit verifies no identity of its own and the
+party that supplies one is the embedding application. The decision, its rejected
+options and that list of work are in
 [ADR 0008](adr/0008-musteri-kimligi-guven-siniri.md). The boundary's present
 position is pinned in `order` by two tests
 (`TestTrustBoundaryGuestOrderIsNeverAskedForTheSpendingRule`,
 `TestTheSpendingRuleIsAppliedToTheDeclaredCustomer`); both protect a decision
-rather than a capability, and they are EXPECTED TO FAIL when identity
-verification arrives.
+rather than a capability, and both still hold — the module below the cart is
+handed a customer id either way, and what changed is who may put one there.
 
-What the rule is good for has to be read together with this condition: in a
-storefront where identity is verified, the limit ENFORCES accounting discipline;
-in one where it is not, it only catches the honest client's mistake.
+What the rule is good for has to be read together with this condition: the limit
+binds the purchases that declare a customer, and a shopper who declares none is
+outside it by design.
 
 ### Limits
 

@@ -590,6 +590,15 @@ func setUpHarness(ctx context.Context) error {
 		return err
 	}
 
+	// The customer identity is the EMBEDDER's, and this harness is an embedder
+	// (ADR 0043, ADR 0057). Without one the storefront surfaces that name a
+	// customer are closed, which is the correct production default and would
+	// leave the flows below unable to open a cart for anybody — so the harness
+	// binds a verifier the way an installation does, under the core's name.
+	if err := ctr.Provide(corehttp.IdentityName, storefrontIdentity{}); err != nil {
+		return err
+	}
+
 	registry := module.NewRegistry(nil, func(ctx context.Context, src fs.FS, owner string) error {
 		return db.Migrate(ctx, testDSN, src, owner)
 	})

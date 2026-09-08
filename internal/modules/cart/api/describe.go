@@ -71,11 +71,12 @@ const (
 // the method, the caller fills it in and the server silently ignores it.
 func Describe(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/store/v1/carts", openapi.Operation{
-		Summary:     "Opens a new cart; the server derives the region and the currency from the country.",
+		Summary: "Opens a new cart; the server derives the region and the currency from the country.",
+		Description: "A body carrying customer_id has to PROVE that customer; a body " +
+			"without one opens a guest cart and is never asked for a proof.",
 		RequestBody: d.RequestBody(createCartRequest{}),
-		Responses: map[string]any{
-			"201": openapi.Response("The created cart", d.Item(cartDTO{})),
-		},
+		Responses: claimRefusals("201",
+			openapi.Response("The created cart", d.Item(cartDTO{}))),
 	})
 
 	d.Describe(http.MethodGet, "/store/v1/carts/{id}", openapi.Operation{
@@ -86,11 +87,13 @@ func Describe(d *openapi.Doc) {
 	})
 
 	d.Describe(http.MethodPost, "/store/v1/carts/{id}", openapi.Operation{
-		Summary:     "Updates the cart's email and customer.",
+		Summary: "Updates the cart's email and customer.",
+		Description: "A body carrying customer_id hands the cart over to that customer " +
+			"and has to PROVE them; an e-mail-only body names nobody and is never asked " +
+			"for a proof.",
 		RequestBody: d.RequestBody(updateCartRequest{}),
-		Responses: map[string]any{
-			"200": openapi.Response("The updated cart", d.Item(cartDTO{})),
-		},
+		Responses: claimRefusals("200",
+			openapi.Response("The updated cart", d.Item(cartDTO{}))),
 	})
 
 	d.Describe(http.MethodDelete, "/store/v1/carts/{id}", openapi.Operation{
@@ -248,6 +251,61 @@ func queryParameter(name, valueType, description string) openapi.Parameter {
 		In:          "query",
 		Schema:      map[string]any{schemaType: valueType},
 		Description: description,
+	}
+}
+
+// claimRefusals merges a success response with the refusals a body NAMING a
+// customer can produce (ADR 0057).
+//
+// # Why it is on two operations and not on the whole storefront
+//
+// These are the only two bodies that carry a customer_id. Every other cart
+// endpoint names nobody, and describing a 403 on a line-item write would tell a
+// client to handle a status that endpoint cannot return.
+//
+// # Why the statuses are CONDITIONAL and the description says so
+//
+// Two things have to be true before any of them can be returned: the body has
+// to NAME a customer, and the installation has to have bound an identity. A
+// guest body never reaches the check, and an installation that bound nothing
+// has nothing to refuse with. Writing the refusals without that sentence would
+// read as "this endpoint needs an identity", and an integrator would conclude
+// that gobit cannot sell to a shopper without an account — which is the
+// opposite of the decision.
+//
+// # Why FIVE statuses and not the one this package returns
+//
+// Because [Handler.provenCustomer] passes the bound identity's error through
+// UNWRAPPED: the embedder picks the status by picking its error's kind. An
+// expired session is its 401, a suspended account its 403, an unreachable
+// identity provider its 503. Describing only the mismatch this package itself
+// produces would document a fifth of the surface.
+func claimRefusals(success string, response any) map[string]any {
+	return map[string]any{
+		success: response,
+		"401": openapi.ErrorResponse(
+			"The body named a customer and the identity this installation bound refused " +
+				"the request with an error of its own that asks the shopper to sign in; " +
+				"the code is the embedder's. An installation that has bound NO identity " +
+				"does not answer here — it cannot check the claim, and ADR 0057 leaves it " +
+				"serving rather than withdrawing a working endpoint."),
+		"403": openapi.ErrorResponse(
+			"The request proves a DIFFERENT customer than the body named — code " +
+				"\"identity_mismatch\" — or the bound identity refused this request with a " +
+				"forbidding error of its own. Nothing is written: the claim is settled " +
+				"before the cart is opened, so no record is created and no e-mail address " +
+				"is read."),
+		"422": openapi.ErrorResponse(
+			"The body could not be read, or a field it carries is not valid."),
+		"500": openapi.ErrorResponse(
+			"Either the bound customer identity returned neither an identifier nor an " +
+				"error — code \"identity_unproven\", a fault in the installation's " +
+				"implementation rather than in this request — or something else failed on " +
+				"the server."),
+		"503": openapi.ErrorResponse(
+			"The bound customer identity could not answer: its own dependency, such as " +
+				"the identity provider it calls, is unreachable. The request is worth " +
+				"retrying."),
 	}
 }
 

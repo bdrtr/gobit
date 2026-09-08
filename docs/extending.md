@@ -242,8 +242,10 @@ a plugin's job (`Host.RegisterNotificationProvider`).
 ## The customer identity
 
 This is the one entry in this document that is **not optional**. Since
-[ADR 0043](adr/0043-gobit-requires-an-identity-it-still-does-not-issue.md) eight
-storefront routes ask whether the caller is the customer the path names:
+[ADR 0043](adr/0043-gobit-requires-an-identity-it-still-does-not-issue.md) and
+[ADR 0057](adr/0057-one-comparison-holds-the-storefront-customer-claim.md),
+twelve storefront routes ask whether the caller is the customer the request
+names:
 
 | Route | |
 |---|---|
@@ -252,6 +254,22 @@ storefront routes ask whether the caller is the customer the path names:
 | `PUT` / `DELETE /store/v1/customers/{id}/addresses/{address_id}` | |
 | `POST /store/v1/customers/{id}/addresses/{address_id}/default-shipping` | |
 | `POST /store/v1/customers/{id}/addresses/{address_id}/default-billing` | |
+| `GET /store/v1/b2b/customers/{customer_id}/company` | the employer |
+| `GET /store/v1/b2b/customers/{customer_id}/employee` | the spending limit |
+| `POST /store/v1/carts` | only when the body carries a `customer_id` |
+| `POST /store/v1/carts/{id}` | only when the body carries a `customer_id` |
+
+The last two are the difference between a surface and a claim. A cart body that
+names nobody opens a **guest** cart and is never asked for a proof, in an
+installation that has bound an identity or one that has not — the guest path is
+what the storefront is for. Naming a customer is what puts the burden of proof
+on the claim.
+
+The first eight and the last four differ in one other way, and it decides
+whether this step is urgent for you. The eight refuse when you have bound
+nothing; the four do not (ADR 0057). So an installation that binds no verifier
+loses its address book and keeps its b2b storefront and its carts — with the
+claim in them believed.
 
 **gobit does not answer that question and will not.** It holds no proof about
 the person behind a storefront request: no customer session, no cookie, no
@@ -286,18 +304,30 @@ What the routes answer:
 
 | Situation | Answer |
 |---|---|
-| nothing registered under `corehttp.IdentityName` | `401 identity_not_bound` — every one of the eight, until you bind one |
+| nothing registered under `corehttp.IdentityName` | `401 identity_not_bound` on the **eight customer routes**, until you bind one. The b2b and cart rows answer as they did before ADR 0057 — the claim is believed — and each module logs a WARN saying so. A guest cart still opens either way |
 | your implementation returns an error | **your** error, unwrapped: an expired session `401`, a suspended account `403`, an unreachable provider `503`, an untyped error `500`. You choose the status by choosing the error's kind |
 | your implementation returns `"", nil` | `500 identity_unproven` — that pair cannot be told apart from a proof of the empty customer, so it is refused rather than believed |
-| what it proves ≠ what the path names | `403 identity_mismatch`. Not a `404`: the caller supplied the identifier, so there is no existence to hide |
+| what it proves ≠ what the request names | `403 identity_mismatch`. Not a `404`: the caller supplied the identifier, so there is no existence to hide |
 | they agree | the request is served, for the PROVEN identifier |
 
-The check runs **before the body is decoded**, so a refused request whose JSON is
-also malformed still answers the refusal rather than `422`.
+One comparison produces all of them — `corehttp.ProvenCustomer` — and the three
+modules call it rather than each holding a copy. A copied authorization rule
+keeps answering after one copy drifts.
 
-**gobit still verifies nothing.** An implementation that hands the path parameter
-straight back satisfies the interface, proves nothing, and the framework cannot
-tell. What it refuses is to proceed when nobody has been asked. And the
-requirement stops at these eight routes: the cart still takes `customer_id` from
-its body, and b2b's two storefront routes still read it from their own path
-parameter — see [`docs/known-limits.md`](known-limits.md).
+On the customer and b2b routes the check runs **before the body is decoded**, so
+a refused request whose JSON is also malformed still answers the refusal rather
+than `422`. On the cart it runs immediately after, because the claim it is about
+is a field IN that body.
+
+**Your implementation may not read the body.** The request is handed over whole
+so you can read a cookie, a header or the context; consuming the body would take
+it away from the handler that is about to decode it — and on the cart it would
+take away the very field being checked.
+
+**gobit still verifies nothing.** An implementation that hands the claimed
+identifier straight back satisfies the interface, proves nothing, and the
+framework cannot tell. What it refuses everywhere is to proceed when your
+verifier CONTRADICTS the request. What is still open is written in
+[`docs/known-limits.md`](known-limits.md): a shopper can always decline to name
+a customer at all, and until you bind a verifier the b2b storefront and the
+cart believe whoever they are told.

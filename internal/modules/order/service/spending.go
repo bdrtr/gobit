@@ -46,11 +46,14 @@ import (
 // # WHO the rule is applied to
 //
 // Only to orders whose [CreateOrderInput.CustomerID] is filled in. That field is
-// today the storefront's DECLARATION and no layer validates it; under which
-// condition the rule is NOT applied is written in the trust boundary section of
-// the [Service.spendingRuleFor] godoc and in ADR 0008. This is what the
-// embedding application that builds the surface needs to know: wiring this
-// interface does not BY ITSELF guarantee that the limit is applied.
+// the storefront's DECLARATION, checked at the cart since ADR 0057 wherever the
+// installation bound an identity, and validated by no layer inside this module;
+// under which condition the rule is NOT applied is written in the trust boundary
+// section of the [Service.spendingRuleFor] godoc and in ADR 0008. This is what
+// the embedding application that builds the surface needs to know: wiring this
+// interface does not BY ITSELF guarantee that the limit is applied — a shopper
+// who declares no customer is outside it, and a declared one is only as good as
+// the identity THEY bind.
 type SpendingPolicy interface {
 	// SpendingLimitJSON returns the rule to be applied to the customer.
 	//
@@ -104,13 +107,13 @@ type spendingRule struct {
 //
 // # TRUST BOUNDARY: the rule is applied to the customer the caller DECLARES
 //
-// The customerID this function receives is not a FACT but a CLAIM and this
-// module cannot validate it. The source of the identifier is the "customer_id"
-// field in the body of the storefront cart; the only identity of the store
-// surface is the publishable API key and that represents a SALES CHANNEL, not a
-// customer (see corehttp.Principal — there is NO customer id among its fields).
-// That is, no layer produces any proof with which the server could say "this
-// customer really made the request".
+// The customerID this function receives is a CLAIM this module cannot validate.
+// The source of the identifier is the "customer_id" field in the body of the
+// storefront cart; the only identity of the store surface is the publishable API
+// key and that represents a SALES CHANNEL, not a customer (see
+// corehttp.Principal — there is NO customer id among its fields). This module
+// still produces no proof of its own and never will: it is handed an identifier
+// and it applies the rule to that identifier.
 //
 // The consequence in a single sentence: the spending limit is applied to the
 // purchases that DECLARE A CUSTOMER. It is not applied to a purchase that does
@@ -120,39 +123,31 @@ type spendingRule struct {
 //	{"country_code":"TR","customer_id":"cus_…"}  -> 409 order_spending_limit_exceeded
 //	{"country_code":"TR"}                        -> 200, the order is opened
 //
-// The escape can be expressed in three forms and all three pass UNDER this
-// line: not sending the field at all (a guest), sending somebody else's
-// identifier (the spend falls out of THEIR window — this is also the way to
-// burn the allowance of an employee who has a limit) and opening a brand new
-// guest record with POST /store/v1/customers and sending that (the new record is
-// ruleless because it is not tied to any company).
+// # Two of the three escapes were narrowed OUTSIDE this module
 //
-// # WHY the closing was not put here
+// ADR 0057 made the cart put a body that names a customer to the installation's
+// bound identity, so sending somebody else's identifier — the way to burn the
+// allowance of an employee whose id is known — and handing a guest cart over to
+// one answer errors.Forbidden before an order exists. That holds only where a
+// verifier IS bound; ADR 0057 declined to refuse in an installation that bound
+// none, so in one of those both escapes reproduce exactly as measured.
 //
-// There is nothing that could be closed: the escape is not "a wrong claim" but
-// "making no claim at all". Making the declaration MANDATORY does not help
-// either — the third form produces a new identifier by sending one more
-// request. Tying the claim to PROOF requires a customer session and that is the
-// decision of the framework, not of this module; where the responsibility sits
-// is written in ADR 0008.
+// The third escape is untouched everywhere and is a DECISION rather than a
+// defect: not sending the field at all. A guest order is never asked for a rule,
+// and making the declaration mandatory does not help, because
+// POST /store/v1/customers mints a fresh record belonging to no company. That is
+// why the "no customer" branch below is not a hole but the place where the
+// boundary IS VISIBLE, and it is pinned down by
+// TestTrustBoundaryGuestOrderIsNeverAskedForTheSpendingRule.
 //
-// This is why the branch here is not a defect but the place where the boundary
-// IS VISIBLE, and it is pinned down by
-// TestTrustBoundaryGuestOrderIsNeverAskedForTheSpendingRule: when a layer that
-// authenticates the identity is added, this is the first place that has to
-// change.
+// # Why the proof is not read HERE
 //
-// # A layer arrived on 2026-09-08 and this one did NOT change
-//
-// ADR 0043 published corehttp.Identity and made the customer module's address
-// book require it. Nothing above is weakened by that, and the paragraph is left
-// standing rather than softened: the identifier this function receives still
-// comes from the cart's body, the cart still accepts it on creation and on
-// handover, and all three forms of the escape reproduce exactly as measured.
-// What changed is only that the framework now HAS a contract an embedder can
-// satisfy — so the sentence "tying the claim to proof requires a customer
-// session" has become "the cart has to read the bound identity", which is work
-// the record deliberately did not do.
+// A rule is applied where the data is, and the proof is where the request is.
+// This module has no request: it is called from inside a saga step, and by then
+// the HTTP boundary is two layers away. Reading an identity here would mean
+// carrying the request down to the service that writes the order — the coupling
+// ADR 0043 rejected when it refused to put a customer in the request context for
+// the whole storefront. Where the responsibility sits is ADR 0008's.
 func (s *Service) spendingRuleFor(ctx context.Context, customerID string) (spendingRule, error) {
 	// On a guest order there is no rule to apply: the rule is tied to the
 	// employee and the identity of the employee is a customer record. The fact

@@ -215,7 +215,10 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	}
 
 	m.svc = svc
-	m.handler = api.New(svc)
+	// Kimlik EMBEDDER'ın modülünden gelir ve o modül bu noktada henüz kayıtlı
+	// olmayabilir; bu yüzden çözüm İLK İSTEĞE ertelenir (bkz. identityBinding).
+	// Aynı kalıp order'ın harcama kuralında ve cart'ın akışlarında kullanılıyor.
+	m.handler = api.New(svc, (&identityBinding{c: c, log: m.log}).identity)
 	m.log.InfoContext(ctx, "b2b modülü kaydedildi",
 		slog.String("servis", ServiceName),
 		slog.String("interop", InteropName),
