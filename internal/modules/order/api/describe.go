@@ -444,13 +444,13 @@ func describeTimeline(d *openapi.Doc) {
 		Summary: "Everything that happened to the order, newest first.",
 		Description: "It is COMPOSED from records that already exist — the order's own " +
 			"stamps, its returns, claims and exchanges, the payment collection's capture " +
-			"and refund moments, and every parcel's four moments — rather than read from a " +
+			"and refund moments, and every parcel's five moments — rather than read from a " +
 			"log. Nothing is duplicated, so nothing can drift from the record it mirrors. " +
 			"\n\n" +
 			"THE MOMENTS DO NOT SHARE ONE CLOCK, and each entry says which one stamped it. " +
 			"\"database\" means the moment came from the database's now(); \"application\" " +
 			"means it came from whichever process wrote the row. The capture and a parcel's " +
-			"shipped/delivered/canceled moments are on the application clock; everything " +
+			"shipped/delivered/canceled/returned moments are on the application clock; everything " +
 			"else is on the database's. On one machine they agree. Across machines they can " +
 			"disagree by more than the gap between two events, and then two lines look out " +
 			"of order — the \"clock\" field is what explains it. " +

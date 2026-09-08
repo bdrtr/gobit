@@ -147,19 +147,27 @@ row is for; the reproduction is in the commit that closed it.
 - **The rig cannot reproduce the case that motivated the change it paid for.**
   Its taxonomy is uniform by construction, and the OR/EXISTS collapse is
   invisible at that shape. The decision is what a skewed rig should look like.
-- **Two clocks on one axis.** SIX columns, not five: `payments.captured_at`,
-  `fulfillments.shipped_at/delivered_at/canceled_at`, `fulfillments.returned_at`
-  (added after this row was written, and not published through the Query layer
-  at all) and `invoices.issued_at` come from the process; every other moment
-  comes from the database. Across machines a capture can be printed before the
-  order it paid for.
-  **The cost this row named was measured on 2026-09-08 and is nearly nothing.**
-  "Lose the injectable clock the tests use" is false: overlaying `Clock: time.Now`
-  breaks exactly TWO tests, and the payment module has no injectable clock to
-  lose — its `Options` carries Store, Providers and Logger only, and
-  `captured_at` is stamped inline. The decision is what the fulfillment module's
-  four transition stamps become, since its CHECK constraints pair each stamp with
-  its status.
+- ~~**Two clocks on one axis.**~~ **DECIDED 2026-09-08: ADR 0053 — they stay,
+  and every moment names its clock.** Six columns, not five (`returned_at` was
+  added after this row was written), and "every other moment comes from the
+  database" was false — auth, promotion and six modules' `updated_at` are
+  process-stamped too.
+
+  **The cost this row named was measured, and then the measurement was found to
+  be pricing the wrong change.** "Lose the injectable clock" costs two tests;
+  the move it was offered as evidence for would also delete `stampFor`, seven
+  query parameters and the fake store's mirror of four schema CHECKs — the one
+  place they hold without a database — and would turn a stamp assertion into a
+  tautology. That correction came from an adversarial pass over this row's own
+  entry in this ledger, written the same day.
+
+  What settled it is that for two of the six the database clock is WORSE:
+  `now()` is transaction START and the capture's transaction wraps the provider
+  call, so the stamp would record when gobit began trying rather than when the
+  processor took the money; and the invoice's single `now` feeds both the series
+  year and the stamp, so splitting them lets a document be numbered 2027 and
+  dated 2026.
+
 - **`authorized_at` does not exist**, and this row's premise was wrong about the
   other half. `refunded_at` is already closed: `refunds` has no UPDATE statement
   anywhere, so a refund row is immutable and `created_at` IS the refund moment —

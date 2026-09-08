@@ -38,12 +38,21 @@ const (
 	// FieldTrackingNumber and FieldTrackingURL are what a shopper is given.
 	FieldTrackingNumber = "tracking_number"
 	FieldTrackingURL    = "tracking_url"
-	// FieldShippedAt, FieldDeliveredAt and FieldCanceledAt are the moments of
-	// the transitions; they are null until the transition happens. These three
-	// are the timeline.
+	// FieldShippedAt, FieldDeliveredAt, FieldCanceledAt and FieldReturnedAt are
+	// the moments of the transitions; they are null until the transition
+	// happens. These four are the timeline.
+	//
+	// FieldReturnedAt was missing until 2026-09-08, and the omission was
+	// invisible for the reason ADR 0004 gives about this map: a field that is
+	// not in it is REFUSED rather than answered with a zero, so nothing asked
+	// for the fourth moment and nothing reported that it could not have it. The
+	// column, the model field and the admin DTO all carried it; only the
+	// cross-module read did not, so the order timeline could show a parcel
+	// shipped and never show it coming back.
 	FieldShippedAt   = "shipped_at"
 	FieldDeliveredAt = "delivered_at"
 	FieldCanceledAt  = "canceled_at"
+	FieldReturnedAt  = "returned_at"
 	// FieldShipmentCreatedAt is when the shipment was opened.
 	FieldShipmentCreatedAt = "created_at"
 )
@@ -65,6 +74,7 @@ var shipmentFieldGetters = map[string]func(models.Fulfillment) any{
 	FieldShippedAt:          func(f models.Fulfillment) any { return f.ShippedAt },
 	FieldDeliveredAt:        func(f models.Fulfillment) any { return f.DeliveredAt },
 	FieldCanceledAt:         func(f models.Fulfillment) any { return f.CanceledAt },
+	FieldReturnedAt:         func(f models.Fulfillment) any { return f.ReturnedAt },
 	FieldShipmentCreatedAt:  func(f models.Fulfillment) any { return f.CreatedAt },
 }
 

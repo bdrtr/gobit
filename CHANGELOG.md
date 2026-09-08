@@ -12,6 +12,42 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **Iki saat KALIYOR, ve her an kendi saatini adlandiriyor** (ADR 0053).
+
+  Defterin G bolumundeki satir "veritabani saatine tasi" diyordu. Olcum once
+  bedeli dusurdu, sonra KARARIN KENDISINI ters cevirdi: alti kolonun ikisi icin
+  veritabani saati DAHA KOTU.
+
+  `now()` islem BASLANGICIDIR ve tahsilatin islemi saglayici cagrisini SARIYOR,
+  yani veritabani damgasi "islemcinin parayi aldigi an"i degil "denemeye
+  basladigimiz an"i yazardi -- ustelik o kolon `min(captured_at)` olarak
+  okunan bir mutabakat girdisi. Faturada ise tek bir `now` hem seri YILINI hem
+  damgayi besliyor; ayirmak bir mali belgeyi 2027 numarali ve 2026 tarihli
+  yapabilir.
+
+  **Kendi yazdigim "bedel ~sifir" cumlesi de duzeltildi.** Enjekte edilebilir
+  saati birakmak iki teste mal oluyor, ama o mutasyon YANLIS DEGISIKLIGI
+  fiyatliyordu: gercek hamle `stampFor`'u, yedi sorgu parametresini ve sahte
+  deponun dort sema CHECK'ini aynalayan kontrolunu -- veritabanisiz duran tek
+  yer -- silerdi, ve bir damga iddiasini totolojiye cevirirdi.
+
+  Alti kolon, bes degil (`returned_at` satir yazildiktan sonra eklenmisti), ve
+  "diger her an veritabanindan gelir" yanlisti.
+
+  **Karar zaten yarim yazilmisti, defterde degil:** siparis timeline'i
+  ClockDatabase/ClockApplication'i ilan ediyor, tahsilati ve koli gecislerini
+  isaretliyor, DTO'sunda ve OpenAPI metninde tasiyor. Eksik olan DORDUNCU
+  damgaydi.
+
+- **`returned_at` nihayet moduller arasi okuma katmanina ulasti.** Kolonda,
+  modelde ve yonetim govdesinde vardi; yalnizca baska bir modulun ne
+  okuyabilecegine karar veren haritada yoktu. Eksigi hicbir sey RAPOR
+  EDEMEZDI, cunku o harita bilinmeyen alani sifirla yanitlamaz, REDDEDER
+  (ADR 0004) -- yani kimse dordunca ani istemedi ve kimse isteyemedigini
+  ogrenmedi. Siparis timeline'i artik geri donen koliyi de gosteriyor
+  (`shipment.returned`).
+
+
 - **Migration iptali zarif katmanini birakti** (ADR 0052, ADR 0003'u tadil eder)
   — D31 teshis edildi ve KAPANDI.
 

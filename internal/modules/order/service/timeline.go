@@ -27,6 +27,7 @@ const (
 	fieldShipmentShipped   = "shipped_at"
 	fieldShipmentDelivered = "delivered_at"
 	fieldShipmentCanceled  = "canceled_at"
+	fieldShipmentReturned  = "returned_at"
 	fieldShipmentTracking  = "tracking_number"
 )
 
@@ -46,6 +47,7 @@ const (
 	KindShipmentShipped   = "shipment.shipped"
 	KindShipmentDelivered = "shipment.delivered"
 	KindShipmentCanceled  = "shipment.canceled"
+	KindShipmentReturned  = "shipment.returned"
 	KindReturnOpened      = "return.opened"
 	KindReturnReceived    = "return.received"
 	KindReturnCanceled    = "return.canceled"
@@ -254,6 +256,7 @@ func (s *Service) timelineGraph(
 					query.IDField, fieldShipmentStatus, fieldShipmentTracking,
 					fieldShipmentCreated, fieldShipmentShipped,
 					fieldShipmentDelivered, fieldShipmentCanceled,
+					fieldShipmentReturned,
 				},
 			},
 		},
@@ -321,6 +324,7 @@ func shipmentEntries(raw any) []TimelineEntry {
 			{fieldShipmentShipped, KindShipmentShipped},
 			{fieldShipmentDelivered, KindShipmentDelivered},
 			{fieldShipmentCanceled, KindShipmentCanceled},
+			{fieldShipmentReturned, KindShipmentReturned},
 		} {
 			at := recordTime(record, moment.field)
 			if at == nil {
@@ -328,7 +332,7 @@ func shipmentEntries(raw any) []TimelineEntry {
 			}
 			entries = append(entries, TimelineEntry{
 				At: at, Kind: moment.kind, RefID: id,
-				// created_at is the database's; the three transitions are
+				// created_at is the database's; the four transitions are
 				// stamped by the fulfillment service's own clock.
 				Clock:  shipmentClock(moment.field),
 				Detail: tracking,
