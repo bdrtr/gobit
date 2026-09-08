@@ -49,7 +49,8 @@
 //   - "tax.service" — modül içi zengin yüzey (domain tipleriyle).
 //   - "tax.interop" — modüller arası İLKEL yüzey (ADR 0001/0006); sepet akışı
 //     vergiyi buradan hesaplatır.
-//   - "tax.providers" — sağlayıcı kaydı; eklentiler buraya sağlayıcı ekler.
+//   - "tax.providers" — sağlayıcı kaydı; bir eklenti buraya sağlayıcı ekleyebilir,
+//     ama core/plugin bu ad için sabit yayımlamaz (aşağıdaki ProvidersName).
 //   - "tax_region.query" — Query katmanına açılan okuma sağlayıcısı (ADR 0004).
 //   - /admin/v1/tax-regions, /admin/v1/tax-rates (+ kurallar) — yönetim API'si.
 //
@@ -94,6 +95,21 @@ const (
 	// Bir eklenti kendi vergi sağlayıcısını bu kaydı çözüp ekler ve modülün
 	// kodunu değiştirmesi gerekmez. Mekanizma hazır ve ödeme yuvasında
 	// kanıtlı (plugins/paymentpaytr); bu yuvayı dolduran eklenti henüz yok.
+	//
+	// AMA diğer dört aileden BİR FARKI var ve 2026-09-09'da yazıldı:
+	// core/plugin bu ad için bir sabit YAYIMLAMIYOR. Ödeme, kargo, bildirim ve
+	// dosya kayıtlarının her birinin orada bir sabiti var ve internal/arch
+	// ikisinin eşitliğini iddia ediyor; burada öyle bir sabit olmadığı için bir
+	// eklenti bu kayda ancak "tax.providers" dizesini ELİYLE yazarak ulaşır
+	// (Host.Container üzerinden), yani sabitlerin önlediği sürüklenmeye açık
+	// kalır.
+	//
+	// Bu bir eksiklik değil, aynı gerekçenin sonucu: yayımlanmış bir ad
+	// 1.0.0'a kadar tutulan bir sözdür (ADR 0026) ve tüketicisi olmayan bir
+	// yetenek yayımlanmaz (ADR 0063). Bir vergi eklentisi yazıldığı gün sabit
+	// ve eklenti AYNI değişiklikle gelir. O güne kadar durum
+	// internal/arch'ta providerFamiliesWithoutAPublishedName içinde yazılıdır —
+	// sessizlik değil, yazılı bir karar.
 	ProvidersName = ModuleName + ".providers"
 	// ProviderName query sağlayıcısının container'daki adıdır (ADR 0004).
 	ProviderName = service.Entity + query.ProviderSuffix
