@@ -4,6 +4,41 @@ Moved out of `docs/gaps.md` on 2026-09-08 unchanged. A measurement is
 evidence, not a decision: it is kept in full and read when a number is
 questioned, not on the way to understanding the repository.
 
+## Amendment 2026-09-08: eight passages were overtaken, and the file is NOT rewritten
+
+A measurement says what was true on the day it was taken, so the text below
+stands and this block says which of its sentences a later decision has since
+answered. ADR 0045 named this debt when it was accepted — "whoever lands the
+module owes that edit" — and the 2026-09-08 move out of `docs/gaps.md` carried
+the passages forward unchanged, which relocated the disagreement instead of
+paying it.
+
+1. **"semantic search reopens ADR 0015 rather than sitting on top of it"** and
+   **"Embeddings, semantic search and recommendations all sit behind the ADR 0015
+   reopening and should be costed as that, not as features"** — ADR 0045 decided
+   the opposite. The cluster contract keeps `extensions: none` and pgvector
+   arrives as a separate OPT-IN extension module. Cost them as a plugin nobody
+   has written, not as a contract renegotiation.
+2. **"the selection in configuration and an unknown name stopping the startup"**
+   holds for notification and file alone. Payment and fulfillment select per
+   TRANSACTION, and tax from the region row's provider id.
+3. **"anything that reads a review AND calls the AI is a workflow (ADR 0001/0006)"**
+   is false. `internal/jobs` is bound by no such import rule and is this tree's
+   answer for scheduled cross-record work; the brief at the head of this file
+   says so itself.
+4. **"The review module, then …"** in "What would come first" — the review module
+   was built on 2026-09-06 and is no longer first.
+5. **"exactly the constraint B7 records for inventory"** dangles. The A–G gap
+   inventory left `docs/gaps.md` on 2026-09-08; B7's event half closed with
+   ADR 0063 and its ledger half with ADR 0068.
+6. **The event-gate sentence is no longer the whole gate.** ADR 0063 added a
+   second, which refuses a topic whose only subscriber is a generic forwarder —
+   so publishing a topic is now MORE expensive than this file priced it, not
+   less. The exemption map is the remaining remedy, and it is empty by policy.
+7. **"Masking a review … is errorreport's policy generalised"** does not hold.
+   That policy is an allow list over KEYED attributes; a review body is one
+   free-form value, where an allow list degenerates to allow-all or deny-all.
+
 The brief: put the LLM in the platform as a SUBSYSTEM rather than a tool called
 from outside. A core `ai` package with a `Provider` interface and a typed
 `Task[In, Out]` layer above it; review moderation as the first use case, driven

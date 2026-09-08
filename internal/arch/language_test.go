@@ -197,7 +197,16 @@ var scannedExtensions = []string{".go", ".sql", ".gohtml", ".md", ".graphqls"}
 var scannedRoots = append(append([]string{}, productionTrees...), "docs", "examples")
 
 // skippedDirs never hold hand-written source.
-var skippedDirs = []string{".git", "node_modules", "vendor", "bin", ".idea", ".vscode"}
+//
+// `.claude` is the agent tooling's own directory and it earns its place the
+// hard way: it holds git WORKTREES, which are full copies of this repository.
+// A gate walking one sees every file twice — its own population doubled, or, as
+// happened three times on 2026-09-08, a collector resolving nothing at all and
+// reporting a tree it never read. The copies are transient and belong to no
+// commit, so no gate should ever have been reading them.
+var skippedDirs = []string{
+	".git", ".claude", "node_modules", "vendor", "bin", ".idea", ".vscode",
+}
 
 // generatedMarker is the header every code generator in this repository
 // writes. Generated files are out of scope: their language is decided by the

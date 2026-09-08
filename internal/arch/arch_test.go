@@ -321,6 +321,21 @@ func goFiles(t *testing.T, root string) []string {
 		if err != nil {
 			return err
 		}
+		// The skip is HERE rather than in each caller, and it took three
+		// failures on 2026-09-08 to put it here. Every gate built on
+		// [productionFiles] walks through this function, and none of them
+		// skipped anything: an agent's git WORKTREE under .claude is a full
+		// copy of this repository, so the gates read every file twice — one
+		// reported a published package writing a response directly, naming a
+		// path inside the copy, and a route collector resolved nothing at all
+		// and said the tree bound no routes.
+		//
+		// A copy that belongs to no commit is not the repository. See
+		// [skippedDirs], which is shared so a second walker cannot drift from
+		// this one.
+		if d.IsDir() && slices.Contains(skippedDirs, d.Name()) {
+			return filepath.SkipDir
+		}
 		if !d.IsDir() && strings.HasSuffix(path, ".go") {
 			out = append(out, path)
 		}

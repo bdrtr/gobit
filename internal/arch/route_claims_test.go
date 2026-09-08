@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -280,7 +281,7 @@ func routeSourceFiles(t *testing.T) []*routeFile {
 			return err
 		}
 		if entry.IsDir() {
-			if entry.Name() == ".git" || entry.Name() == "node_modules" {
+			if slices.Contains(skippedDirs, entry.Name()) {
 				return filepath.SkipDir
 			}
 
@@ -849,7 +850,7 @@ func collectCommentRouteClaims(t *testing.T) []routeClaim {
 			return err
 		}
 		if entry.IsDir() {
-			if entry.Name() == ".git" || entry.Name() == "node_modules" {
+			if slices.Contains(skippedDirs, entry.Name()) {
 				return filepath.SkipDir
 			}
 

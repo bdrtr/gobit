@@ -96,3 +96,7 @@ clients/
 /go-commerce-framework-plan.md
 /go-ecommerce-architecture.md
 /go-ecommerce-mimari.md
+
+# The agent tooling keeps git WORKTREES here — full copies of this repository.
+# They belong to no commit and must not be added to one.
+.claude/worktrees/
