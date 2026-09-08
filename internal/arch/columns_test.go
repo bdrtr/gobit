@@ -179,6 +179,15 @@ type tableColumn struct {
 // exactly ZERO columns today: every INSERT and every UPDATE in the repository
 // has a caller.
 //
+// Re-checked 2026-09-08: the population is 493 queries now and the uncalled set
+// is the SAME 9, still all SELECTs, so the hole still masks zero columns. Two
+// of them (GetCollectionByHandle, GetCategoryByHandle) gained an integration
+// test caller in the meantime. That is what forces "hand-written caller" above
+// to be READ as a production one — a test caller cannot make an operator
+// produce the write. The reading is required by this hole rather than recorded
+// by the 2026-09-06 measurement, which never had to choose: neither of those
+// callers existed then, and both countings gave 9.
+//
 // It is not closed here, and the reason is that the cheap version of the fix
 // would be the same lie again. Requiring a write statement to have a
 // hand-written caller moves the boundary one hop and stops: the caller can
