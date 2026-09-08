@@ -113,6 +113,37 @@ func (r *Repository) Moderate(
 	return toReview(row), nil
 }
 
+// Suggest records a model's proposal about a review that is still waiting.
+//
+// A statement that matched no row is a CONFLICT rather than "not found", and
+// the message says which of the two it was, because the caller cannot tell them
+// apart and the two mean opposite things: a review that does not exist is a bad
+// id, and a review an operator has already decided is a proposal that arrived
+// too late — the second is the normal outcome of a job racing a moderator, and
+// reporting it as a missing record would send somebody looking for a deleted
+// row.
+func (r *Repository) Suggest(
+	ctx context.Context, id string, in models.Suggestion,
+) (models.Review, error) {
+	row, err := r.queries().SuggestReview(ctx, reviewdb.SuggestReviewParams{
+		ID:              id,
+		SuggestedStatus: in.Status.String(),
+		SuggestionNote:  in.Note,
+		SuggestionModel: in.Model,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.Review{}, coreerrors.Conflict(codeConflict,
+				"review %s is not waiting for a decision, so no proposal was recorded; "+
+					"either it does not exist or an operator has already moderated it", id)
+		}
+
+		return models.Review{}, wrapDB(err, codeQueryFailed, "the proposal could not be recorded")
+	}
+
+	return toReview(row), nil
+}
+
 // List pages the reviews for the ADMIN surface and returns the matching count.
 func (r *Repository) List(
 	ctx context.Context, filter models.Filter,

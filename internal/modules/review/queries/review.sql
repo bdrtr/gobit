@@ -106,3 +106,35 @@ SELECT count(*)::bigint AS review_count,
        COALESCE(round(avg(rating) * 100), 0)::bigint AS average_hundredths
 FROM reviews
 WHERE product_id = sqlc.arg('product_id')::text AND status = 'approved';
+
+-- SuggestReview records a model's PROPOSAL about a review that is still
+-- waiting.
+--
+-- The WHERE carries status = 'submitted' as a LITERAL for the same reason the
+-- storefront reads do: it is a narrowing no request and no later refactor may
+-- widen. A proposal about a review an operator has already decided is not a
+-- smaller version of a useful thing, it is a machine second-guessing a person
+-- in a column the person cannot answer.
+--
+-- It REPLACES any earlier proposal rather than refusing when one is there. A
+-- proposal is not a record of anything that happened — nothing was decided, and
+-- no operator acted on it — so the older sentence has no reader once a newer
+-- one exists, and keeping it would mean a history table for text nobody
+-- consulted. What is worth telling apart is a proposal made before a model
+-- changed, and suggested_at with suggestion_model answers that.
+--
+-- Nothing here touches status or moderated_at. That is the property the whole
+-- table rests on and it is enforced twice over: this statement does not name
+-- them, and reviews_moderation_mirror would refuse a row where one moved
+-- without the other.
+--
+-- name: SuggestReview :one
+UPDATE reviews
+SET suggested_status = sqlc.arg('suggested_status')::text,
+    suggestion_note  = sqlc.arg('suggestion_note')::text,
+    suggestion_model = sqlc.arg('suggestion_model')::text,
+    suggested_at     = now(),
+    updated_at       = now()
+WHERE id = sqlc.arg('id')::text
+  AND status = 'submitted'
+RETURNING *;

@@ -21,11 +21,21 @@ import (
 // [personaldata.Declarer] takes no context and returns no error, and why the audit
 // of it has to be runnable by anybody, anywhere, without Docker.
 
-// migrationFile is the module's only migration. The declaration is checked
-// against it because THAT file decides which columns exist; a test that checked
-// the declaration against a list typed in this package would prove the
-// declaration equals itself.
-const migrationFile = "000001_review_init.up.sql"
+// The declaration is checked against the MIGRATIONS because those files decide
+// which columns exist; a test that checked the declaration against a list typed
+// in this package would prove the declaration equals itself.
+//
+// Every up-migration is read, and it is worth saying why that is not the
+// obvious "read the file that creates the table". This audit was written when
+// the module had one migration and it named that file as a constant. A column
+// added by a SECOND migration would then have been invisible to it — present in
+// the database, absent from the population, and therefore never asked which
+// side of the personal-data line it falls on. The bug is not that the constant
+// was wrong; it is that the population was pinned to a LITERAL instead of
+// derived from the property being audited, and the property is "the columns
+// this module creates", which no single filename can name. ADR 0038 records the
+// same defect found in the repository-wide column audit, where a column arriving
+// by ALTER TABLE was equally invisible.
 
 // reviewsTable is the module's only table.
 const reviewsTable = "reviews"
@@ -55,9 +65,17 @@ const reviewsTable = "reviews"
 //     at anybody. The note they were written with is a different matter and IS
 //     declared: it is free text, and a person can be described in free text.
 //   - created_at and updated_at are row bookkeeping.
+//   - suggested_status, suggested_at and suggestion_model are a MACHINE's
+//     proposal, its moment and the name of the model that made it. None of the
+//     three describes anybody: the first is one of two words, the second is a
+//     clock reading, and the third names a model rather than a person. The
+//     reason the model gave is a different matter and IS declared, for the same
+//     reason the moderation note is — it is free text about the author's own
+//     free text, and a reason for rejecting a review quotes the review.
 var notPersonalColumns = []string{
 	"id", "product_id", "rating", "status", "moderated_at",
 	"created_at", "updated_at",
+	"suggested_status", "suggested_at", "suggestion_model",
 }
 
 // TestTheDeclarationCoversEveryPersonalColumn walks the declaration and the
@@ -202,16 +220,47 @@ func TestTheDeclarationDoesNotNeedRegister(t *testing.T) {
 func columnsOfReviews(t *testing.T) []string {
 	t.Helper()
 
-	raw, err := fs.ReadFile(review.New(review.Options{}).Migrations(), migrationFile)
+	migrations := review.New(review.Options{}).Migrations()
+
+	entries, err := fs.ReadDir(migrations, ".")
 	require.NoError(t, err)
 
-	schema := string(raw)
+	var (
+		columns []string
+		created bool
+		read    int
+	)
 
-	header := "CREATE TABLE " + reviewsTable + " ("
-	start := strings.Index(schema, header)
-	require.GreaterOrEqual(t, start, 0, "%s is not created in the migration", reviewsTable)
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".up.sql") {
+			continue
+		}
 
-	body := schema[start+len(header):]
+		read++
+
+		raw, err := fs.ReadFile(migrations, entry.Name())
+		require.NoError(t, err)
+
+		schema := string(raw)
+
+		if header := "CREATE TABLE " + reviewsTable + " ("; strings.Contains(schema, header) {
+			created = true
+			columns = append(columns, declaredColumns(schema, header)...)
+		}
+
+		columns = append(columns, addedColumns(schema)...)
+	}
+
+	require.Positive(t, read, "no up-migration was read at all; the scanner has gone blind")
+	require.True(t, created, "%s is created by no migration", reviewsTable)
+	require.NotEmpty(t, columns, "no column was read out of %s; the scanner has gone blind", reviewsTable)
+
+	return columns
+}
+
+// declaredColumns reads the columns out of a CREATE TABLE body.
+func declaredColumns(schema, header string) []string {
+	body := schema[strings.Index(schema, header)+len(header):]
 	if end := strings.Index(body, "\n);"); end >= 0 {
 		body = body[:end]
 	}
@@ -227,7 +276,31 @@ func columnsOfReviews(t *testing.T) []string {
 		columns = append(columns, strings.TrimSuffix(fields[0], ","))
 	}
 
-	require.NotEmpty(t, columns, "no column was read out of %s; the scanner has gone blind", reviewsTable)
+	return columns
+}
+
+// addedColumns reads the columns an ALTER TABLE adds.
+//
+// It matches on the two words rather than on the statement, so it does not care
+// whether the ALTER names one column or five, and ADD CONSTRAINT lines fall out
+// because they do not begin with those two words.
+//
+// A column DROPPED by a later migration is deliberately not subtracted. The
+// audit would then report a column that no longer exists, the declaration would
+// be asked to account for it, and the test would fail loudly — which is the
+// safe direction. Subtracting silently is the direction that loses a column.
+func addedColumns(schema string) []string {
+	var columns []string
+
+	for _, line := range strings.Split(schema, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || !strings.EqualFold(fields[0], "ADD") ||
+			!strings.EqualFold(fields[1], "COLUMN") {
+			continue
+		}
+
+		columns = append(columns, strings.TrimSuffix(fields[2], ","))
+	}
 
 	return columns
 }

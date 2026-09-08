@@ -285,13 +285,24 @@ ALTER TABLE planted ADD COLUMN phone TEXT;
 ALTER TABLE planted ADD COLUMN IF NOT EXISTS postal_code TEXT;
 ALTER TABLE planted DROP COLUMN first_name;
 
+-- One ALTER naming several columns, which is one statement and one lock. The
+-- reader once took only the first of these and the two below it were invisible.
+ALTER TABLE planted
+    ADD COLUMN grouped_one TEXT NOT NULL DEFAULT '',
+    ADD COLUMN grouped_two TEXT,
+    ADD COLUMN grouped_three TEXT NOT NULL DEFAULT '',
+    ADD CONSTRAINT planted_grouped_check CHECK (grouped_one <> 'x');
+
 CREATE TABLE removed (id TEXT PRIMARY KEY, last_name TEXT);
 DROP TABLE removed;
 `
 
 	schema := readSchema(sql)
 
-	for _, want := range []string{"id", "email", "phone", "postal_code"} {
+	for _, want := range []string{
+		"id", "email", "phone", "postal_code",
+		"grouped_one", "grouped_two", "grouped_three",
+	} {
 		if !schema["planted"][want] {
 			t.Errorf("the reader missed the %q column; every audit built on it is now blind to that shape", want)
 		}
@@ -301,7 +312,8 @@ DROP TABLE removed;
 		t.Error("the reader kept a column that was dropped; a declaration could name a column that is gone")
 	}
 
-	if schema["planted"]["CONSTRAINT"] || schema["planted"]["UNIQUE"] || schema["planted"]["planted_email_check"] {
+	if schema["planted"]["CONSTRAINT"] || schema["planted"]["UNIQUE"] ||
+		schema["planted"]["planted_email_check"] || schema["planted"]["planted_grouped_check"] {
 		t.Errorf("the reader took a table constraint for a column: %v", sortedColumns(schema["planted"]))
 	}
 
@@ -395,9 +407,19 @@ var (
 	blockComment = regexp.MustCompile(`(?s)/\*.*?\*/`)
 	stringLit    = regexp.MustCompile(`'[^']*'`)
 	createTable  = regexp.MustCompile(`(?is)^\s*create\s+table\s+(?:if\s+not\s+exists\s+)?([a-z0-9_."]+)\s*\((.*)\)\s*$`)
-	alterAdd     = regexp.MustCompile(`(?is)^\s*alter\s+table\s+(?:if\s+exists\s+)?([a-z0-9_."]+)\s+add\s+column\s+(?:if\s+not\s+exists\s+)?([a-z0-9_"]+)`)
-	alterDrop    = regexp.MustCompile(`(?is)^\s*alter\s+table\s+(?:if\s+exists\s+)?([a-z0-9_."]+)\s+drop\s+column\s+(?:if\s+exists\s+)?([a-z0-9_"]+)`)
-	dropTable    = regexp.MustCompile(`(?is)^\s*drop\s+table\s+(?:if\s+exists\s+)?([a-z0-9_."]+)`)
+	// alterTable names the table; addColumn and dropColumn are then applied to
+	// the WHOLE statement rather than to its first action.
+	//
+	// The three were once two regexes that matched "alter table X add column Y"
+	// in one go, and that shape read only the FIRST column of an ALTER naming
+	// several — which is one statement, one lock and the ordinary way to add a
+	// group of columns that belong together. The second and later columns
+	// entered no schema, so a declaration naming one was reported as drift and,
+	// worse, a personal column added that way would never have been asked for.
+	alterTable = regexp.MustCompile(`(?is)^\s*alter\s+table\s+(?:if\s+exists\s+)?([a-z0-9_."]+)\s`)
+	addColumn  = regexp.MustCompile(`(?is)\badd\s+column\s+(?:if\s+not\s+exists\s+)?([a-z0-9_"]+)`)
+	dropColumn = regexp.MustCompile(`(?is)\bdrop\s+column\s+(?:if\s+exists\s+)?([a-z0-9_"]+)`)
+	dropTable  = regexp.MustCompile(`(?is)^\s*drop\s+table\s+(?:if\s+exists\s+)?([a-z0-9_."]+)`)
 )
 
 // tableConstraintWords open a table constraint rather than a column.
@@ -415,8 +437,9 @@ var tableConstraintWords = map[string]bool{
 //
 // It understands four shapes and no more — CREATE TABLE, ALTER TABLE ADD
 // COLUMN, ALTER TABLE DROP COLUMN and DROP TABLE — because those are the four
-// this repository's migrations use. A fifth shape appearing is not a silent
-// problem: the columns it touches simply do not enter the schema, and
+// this repository's migrations use, and it reads EVERY add and drop in one
+// ALTER rather than the first. A fifth shape appearing is not a silent problem:
+// the columns it touches simply do not enter the schema, and
 // [TestTheSchemaReaderIsNotBlind] is what keeps the four honest.
 func readSchema(sql string) map[string]map[string]bool {
 	sql = lineComment.ReplaceAllString(sql, " ")
@@ -443,19 +466,24 @@ func readSchema(sql string) map[string]map[string]bool {
 				schema[table][bareName(column)] = true
 			}
 
-		case alterAdd.MatchString(statement):
-			m := alterAdd.FindStringSubmatch(statement)
-			table := bareName(m[1])
-			if schema[table] == nil {
+		case alterTable.MatchString(statement):
+			table := bareName(alterTable.FindStringSubmatch(statement)[1])
+			adds := addColumn.FindAllStringSubmatch(statement, -1)
+			drops := dropColumn.FindAllStringSubmatch(statement, -1)
+
+			if len(adds) > 0 && schema[table] == nil {
 				schema[table] = map[string]bool{}
 			}
 
-			schema[table][bareName(m[2])] = true
-
-		case alterDrop.MatchString(statement):
-			m := alterDrop.FindStringSubmatch(statement)
-			if cols := schema[bareName(m[1])]; cols != nil {
-				delete(cols, bareName(m[2]))
+			for _, m := range adds {
+				schema[table][bareName(m[1])] = true
+			}
+			// Drops run second so that one statement adding and dropping the
+			// same name ends with it gone, which is what the database does.
+			// Deleting from a nil map is a no-op, so an ALTER that only drops
+			// columns of a table nobody created needs no guard.
+			for _, m := range drops {
+				delete(schema[table], bareName(m[1]))
 			}
 
 		case dropTable.MatchString(statement):

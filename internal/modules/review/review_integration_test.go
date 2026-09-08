@@ -460,3 +460,145 @@ func TestTheAdminQueueSeesWhatTheStorefrontCannot(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, all.Items, 2, "an operator has to be able to see a decided review too")
 }
+
+// TestTheThreeSuggestionMirrorsHoldInEveryDirection is the schema's half of
+// "a proposal exists whole, or not at all".
+//
+// The Go side reads the proposal off ONE column and takes the other three with
+// it, on the strength of these constraints. If they did not bite, a row with a
+// status and no reason would come back as a proposal attributing an empty
+// sentence to an empty model, and nothing in Go would notice.
+func TestTheThreeSuggestionMirrorsHoldInEveryDirection(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name       string
+		columns    string
+		values     string
+		constraint string
+	}{
+		{
+			"a proposal with no moment",
+			"suggested_status, suggestion_note, suggestion_model",
+			"'approved', 'why', 'a-model'",
+			"reviews_suggestion_mirror",
+		},
+		{
+			"a moment with no proposal",
+			"suggested_at",
+			"now()",
+			"reviews_suggestion_mirror",
+		},
+		{
+			"a proposal with no reason",
+			"suggested_status, suggested_at, suggestion_model",
+			"'approved', now(), 'a-model'",
+			"reviews_suggestion_reasoned",
+		},
+		{
+			"a reason left behind by a cleared proposal",
+			"suggestion_note",
+			"'why'",
+			"reviews_suggestion_reasoned",
+		},
+		{
+			"a proposal attributed to nobody",
+			"suggested_status, suggested_at, suggestion_note",
+			"'approved', now(), 'why'",
+			"reviews_suggestion_attributed",
+		},
+		{
+			"a model name left behind by a cleared proposal",
+			"suggestion_model",
+			"'a-model'",
+			"reviews_suggestion_attributed",
+		},
+		{
+			// The status CHECK rather than a mirror: proposing that a review
+			// stay where it already is proposes nothing.
+			"a proposal that it stay submitted",
+			"suggested_status, suggested_at, suggestion_note, suggestion_model",
+			"'submitted', now(), 'why', 'a-model'",
+			"reviews_suggested_status_check",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := testPool.Pool().Exec(ctx, fmt.Sprintf(
+				`INSERT INTO reviews (id, product_id, rating, body, author_name, status, %s)
+				 VALUES ($1, $2, 5, 'b', 'n', 'submitted', %s)`, tc.columns, tc.values),
+				models.NewReviewID(), productID(t))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.constraint)
+		})
+	}
+}
+
+// TestAProposalLeavesTheHumanColumnsAloneInTheRealTable runs the statement
+// production runs, against the constraint that would catch it if it did not.
+//
+// The module's one guarantee is enforced in two places and this is the second:
+// the UPDATE names neither status nor moderated_at, and reviews_moderation_mirror
+// would refuse the row if it somehow moved one of them.
+func TestAProposalLeavesTheHumanColumnsAloneInTheRealTable(t *testing.T) {
+	ctx := context.Background()
+
+	repo := repository.New(testPool.Pool())
+
+	created, err := repo.Create(ctx, models.Review{
+		ID: models.NewReviewID(), ProductID: productID(t), Rating: 4,
+		Body: "it arrived quickly", AuthorName: "A customer",
+		Status: models.StatusSubmitted,
+	})
+	require.NoError(t, err)
+
+	suggested, err := repo.Suggest(ctx, created.ID, models.Suggestion{
+		Status: models.StatusRejected,
+		Note:   "the text is an advertisement for another shop",
+		Model:  "a-model-3",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, models.StatusSubmitted, suggested.Status)
+	assert.True(t, suggested.ModeratedAt.IsZero())
+	require.NotNil(t, suggested.Suggestion)
+	assert.Equal(t, models.StatusRejected, suggested.Suggestion.Status)
+	assert.Equal(t, "a-model-3", suggested.Suggestion.Model)
+	assert.False(t, suggested.Suggestion.At.IsZero(),
+		"the moment came back zero, so the row and the model disagree about a column the table requires")
+
+	// The storefront still cannot see it, which is the property a proposal must
+	// never move: the review is unapproved and the read is filtered in SQL.
+	items, count, err := repo.ListApproved(ctx, created.ProductID, models.Filter{Limit: 10})
+	require.NoError(t, err)
+	assert.Zero(t, count)
+	assert.Empty(t, items)
+}
+
+// TestAProposalIsRefusedByTheStatementOnceAnOperatorHasDecided is the race the
+// scheduled job runs into, decided by the DATABASE rather than by a read.
+//
+// The literal in the WHERE is what refuses it. A service-side check would read
+// the status, decide, and write — and the operator's decision lands in between.
+func TestAProposalIsRefusedByTheStatementOnceAnOperatorHasDecided(t *testing.T) {
+	ctx := context.Background()
+
+	repo := repository.New(testPool.Pool())
+
+	created, err := repo.Create(ctx, models.Review{
+		ID: models.NewReviewID(), ProductID: productID(t), Rating: 4,
+		Body: "it arrived quickly", AuthorName: "A customer",
+		Status: models.StatusSubmitted,
+	})
+	require.NoError(t, err)
+
+	_, err = repo.Moderate(ctx, created.ID, models.StatusSubmitted, models.StatusApproved, "")
+	require.NoError(t, err)
+
+	_, err = repo.Suggest(ctx, created.ID, models.Suggestion{
+		Status: models.StatusRejected, Note: "why", Model: "a-model-3",
+	})
+	require.Error(t, err)
+	assert.Equal(t, coreerrors.KindConflict, coreerrors.KindOf(err))
+}

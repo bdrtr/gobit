@@ -188,8 +188,36 @@ type adminReviewDTO struct {
 	// fault, and "not yet" is what the row actually says.
 	ModeratedAt    *time.Time `json:"moderated_at,omitempty"`
 	ModerationNote string     `json:"moderation_note"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	// Suggestion is a model's proposal about this review, ABSENT when no model
+	// has been asked about it — the same choice ModeratedAt makes above, and
+	// for the same reason: an object full of zero values reads as a proposal
+	// that says nothing, and "nobody has proposed anything" is what the row
+	// actually says.
+	//
+	// It is nested rather than flattened into four sibling fields because the
+	// four exist together or not at all, and a client that received them flat
+	// would have to rebuild that rule to know whether to show anything.
+	Suggestion *adminSuggestionDTO `json:"suggestion,omitempty"`
+	CreatedAt  time.Time           `json:"created_at"`
+	UpdatedAt  time.Time           `json:"updated_at"`
+}
+
+// adminSuggestionDTO is a model's proposal as an operator sees it.
+//
+// It carries the reason and the model's name beside the proposed status,
+// because those are what an operator weighs it with; a bare word would be a
+// machine's verdict with no way to check it.
+//
+// There is no storefront counterpart and there is no field for one on
+// storeReviewDTO. A proposal is a sentence a model wrote about a stranger's
+// words for an operator to read, which is the same reason the moderation note
+// stays out of the shopper's view — and this one is stronger, because the
+// sentence was never written by a person at all.
+type adminSuggestionDTO struct {
+	Status string    `json:"status"`
+	Note   string    `json:"note"`
+	Model  string    `json:"model"`
+	At     time.Time `json:"at"`
 }
 
 // summaryDTO is the aggregate a product page shows.
@@ -233,6 +261,14 @@ func toAdminReviewDTO(in models.Review) adminReviewDTO {
 	if !in.ModeratedAt.IsZero() {
 		moment := in.ModeratedAt
 		out.ModeratedAt = &moment
+	}
+	if in.Suggestion != nil {
+		out.Suggestion = &adminSuggestionDTO{
+			Status: in.Suggestion.Status.String(),
+			Note:   in.Suggestion.Note,
+			Model:  in.Suggestion.Model,
+			At:     in.Suggestion.At,
+		}
 	}
 
 	return out

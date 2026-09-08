@@ -101,6 +101,52 @@ func (s Status) CanMoveTo(next Status) bool {
 	return false
 }
 
+// Suggestion is a machine's PROPOSAL about a review. It is not a moderation.
+//
+// # The distinction is the whole point of this type
+//
+// A moderation is a human's decision, and this module exists to make sure one
+// stands between a stranger's words and the storefront. A suggestion is a
+// sentence a model wrote about a review that is still waiting: it moves the
+// review nowhere, it sets neither [Review.Status] nor [Review.ModeratedAt], and
+// the storefront cannot see it. What it changes is how long an operator spends
+// on the queue, and nothing else.
+//
+// It is a POINTER on [Review] rather than four fields beside the others because
+// a proposal exists whole or not at all — the schema says so with three
+// mirrored CHECK constraints — and four zero values would be a state the type
+// permits and the table refuses.
+type Suggestion struct {
+	// Status is what was proposed: [StatusApproved] or [StatusRejected].
+	//
+	// [StatusSubmitted] is not proposable. Proposing that a review stay where
+	// it already is proposes nothing.
+	Status Status
+	// At is when the proposal was made.
+	//
+	// It is the proposal's own moment rather than the row's, so a shop that
+	// changes model can tell which proposals predate the change.
+	At time.Time
+	// Note is the model's reason, in the model's words.
+	//
+	// It is REQUIRED — for an approval as well as a rejection, which is where
+	// this differs from [Review.ModerationNote]. A human approval explains
+	// itself, because a human took responsibility for it; a machine approval
+	// does not, because the operator is being asked to take that responsibility
+	// on the strength of the reason and has nothing else to weigh.
+	//
+	// It is free text about a stranger's free text and is declared personal
+	// data for that reason: a reason quotes the review, and the review is the
+	// author's own words.
+	Note string
+	// Model is which model said it, as the provider names it.
+	//
+	// An anonymous proposal cannot be retired: a shop that stops trusting a
+	// model would have no way to tell its proposals from the ones it still
+	// trusts.
+	Model string
+}
+
 // Review is one customer-written review of a product.
 type Review struct {
 	// ID is the record's identifier.
@@ -133,6 +179,9 @@ type Review struct {
 	ModeratedAt time.Time
 	// ModerationNote is why. It is required for a rejection.
 	ModerationNote string
+	// Suggestion is a model's proposal about this review, or nil when no model
+	// has been asked about it. It is not a moderation; see [Suggestion].
+	Suggestion *Suggestion
 	// CreatedAt and UpdatedAt are the record's own timestamps.
 	CreatedAt time.Time
 	UpdatedAt time.Time

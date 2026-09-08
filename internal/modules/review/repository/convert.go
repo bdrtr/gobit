@@ -62,6 +62,20 @@ func toReview(row reviewdb.Review) models.Review {
 		out.ModeratedAt = row.ModeratedAt.Time
 	}
 
+	// The proposal is read off ONE column and the other three are taken with
+	// it, which is the Go half of the table's three mirrored constraints: a row
+	// where they disagree cannot be stored, so a reader that consulted each
+	// column separately would be guarding against a state the schema refuses
+	// and would quietly invent a partial proposal if it ever got one.
+	if row.SuggestedStatus != nil {
+		out.Suggestion = &models.Suggestion{
+			Status: models.Status(*row.SuggestedStatus),
+			At:     row.SuggestedAt.Time,
+			Note:   row.SuggestionNote,
+			Model:  row.SuggestionModel,
+		}
+	}
+
 	return out
 }
 

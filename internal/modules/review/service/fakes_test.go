@@ -30,9 +30,10 @@ type fakeRepo struct {
 	// deterministic order without the fake having to imitate the keyset walk.
 	order []string
 
-	// createErr and moderateErr script a failure.
+	// createErr, moderateErr and suggestErr script a failure.
 	createErr   error
 	moderateErr error
+	suggestErr  error
 
 	// listFilter records what the admin listing was last asked for.
 	listFilter models.Filter
@@ -70,6 +71,34 @@ func (f *fakeRepo) Get(_ context.Context, id string) (models.Review, error) {
 	if !found {
 		return models.Review{}, errors.NotFound("review_not_found", "no such review: %s", id)
 	}
+
+	return review, nil
+}
+
+// Suggest refuses a review that is not waiting, the same way the real statement
+// does with its status = 'submitted' literal — and, like it, it cannot tell a
+// missing review from a decided one, because the UPDATE it stands for matches
+// no row in either case.
+func (f *fakeRepo) Suggest(
+	_ context.Context, id string, in models.Suggestion,
+) (models.Review, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.suggestErr != nil {
+		return models.Review{}, f.suggestErr
+	}
+
+	review, found := f.reviews[id]
+	if !found || review.Status != models.StatusSubmitted {
+		return models.Review{}, errors.Conflict("review_conflict",
+			"review %s is not waiting for a decision", id)
+	}
+
+	proposal := in
+	proposal.At = fixedNow
+	review.Suggestion = &proposal
+	f.reviews[id] = review
 
 	return review, nil
 }

@@ -236,8 +236,12 @@ func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 // product_id says what the review is ABOUT, and an id resolves to nobody once
 // the columns beside it are gone. The rating, the status, the moderation
 // timestamp and the row timestamps hold nothing about anyone — no column
-// records WHICH operator decided. The audit that keeps this paragraph honest is
-// in erasure_test.go, and it reads the migration rather than this list.
+// records WHICH operator decided. The proposal a model may leave beside a
+// waiting review is the same split: what it proposed, when, and which model
+// said it describe nobody, and the REASON it gave is declared, because a reason
+// for rejecting a review quotes the review. The audit that keeps this paragraph
+// honest is in erasure_test.go, and it reads the migrations rather than this
+// list.
 func (m *Module) PersonalData() personaldata.Declaration {
 	// Holder is left empty deliberately: the coordinator fills it in from the
 	// name the registry knows this module by, and a second copy here would be
@@ -259,6 +263,10 @@ func (m *Module) PersonalData() personaldata.Declaration {
 			{
 				Table: tableReviews, Column: "moderation_note", Kind: personaldata.Open,
 				Why: "free text an operator typed when approving or rejecting the review, which may quote or describe the author; gobit does not read it",
+			},
+			{
+				Table: tableReviews, Column: "suggestion_note", Kind: personaldata.Open,
+				Why: "free text a language model produced as its reason for proposing that the review be approved or rejected, which routinely quotes the review it is about and can therefore carry anything the author wrote; gobit does not read it",
 			},
 		},
 	}

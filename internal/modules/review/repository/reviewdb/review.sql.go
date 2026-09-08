@@ -46,7 +46,7 @@ const createReview = `-- name: CreateReview :one
 INSERT INTO reviews (
     id, product_id, rating, title, body, author_name, status
 ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at
+RETURNING id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model
 `
 
 type CreateReviewParams struct {
@@ -88,12 +88,16 @@ func (q *Queries) CreateReview(ctx context.Context, arg CreateReviewParams) (Rev
 		&i.ModerationNote,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SuggestedStatus,
+		&i.SuggestedAt,
+		&i.SuggestionNote,
+		&i.SuggestionModel,
 	)
 	return i, err
 }
 
 const getReview = `-- name: GetReview :one
-SELECT id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at FROM reviews WHERE id = $1
+SELECT id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model FROM reviews WHERE id = $1
 `
 
 func (q *Queries) GetReview(ctx context.Context, id string) (Review, error) {
@@ -111,12 +115,16 @@ func (q *Queries) GetReview(ctx context.Context, id string) (Review, error) {
 		&i.ModerationNote,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SuggestedStatus,
+		&i.SuggestedAt,
+		&i.SuggestionNote,
+		&i.SuggestionModel,
 	)
 	return i, err
 }
 
 const listApprovedReviews = `-- name: ListApprovedReviews :many
-SELECT id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at FROM reviews
+SELECT id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model FROM reviews
 WHERE product_id = $1::text
   AND status = 'approved'
   AND (created_at, id) < (
@@ -171,6 +179,10 @@ func (q *Queries) ListApprovedReviews(ctx context.Context, arg ListApprovedRevie
 			&i.ModerationNote,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SuggestedStatus,
+			&i.SuggestedAt,
+			&i.SuggestionNote,
+			&i.SuggestionModel,
 		); err != nil {
 			return nil, err
 		}
@@ -183,7 +195,7 @@ func (q *Queries) ListApprovedReviews(ctx context.Context, arg ListApprovedRevie
 }
 
 const listReviews = `-- name: ListReviews :many
-SELECT id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at FROM reviews
+SELECT id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model FROM reviews
 WHERE ($1::text IS NULL OR status = $1::text)
   AND ($2::text IS NULL OR product_id = $2::text)
   AND (created_at, id) < (
@@ -237,6 +249,10 @@ func (q *Queries) ListReviews(ctx context.Context, arg ListReviewsParams) ([]Rev
 			&i.ModerationNote,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SuggestedStatus,
+			&i.SuggestedAt,
+			&i.SuggestionNote,
+			&i.SuggestionModel,
 		); err != nil {
 			return nil, err
 		}
@@ -256,7 +272,7 @@ SET status          = $1::text,
     updated_at      = now()
 WHERE id = $3::text
   AND status = $4::text
-RETURNING id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at
+RETURNING id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model
 `
 
 type ModerateReviewParams struct {
@@ -296,6 +312,77 @@ func (q *Queries) ModerateReview(ctx context.Context, arg ModerateReviewParams) 
 		&i.ModerationNote,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SuggestedStatus,
+		&i.SuggestedAt,
+		&i.SuggestionNote,
+		&i.SuggestionModel,
+	)
+	return i, err
+}
+
+const suggestReview = `-- name: SuggestReview :one
+UPDATE reviews
+SET suggested_status = $1::text,
+    suggestion_note  = $2::text,
+    suggestion_model = $3::text,
+    suggested_at     = now(),
+    updated_at       = now()
+WHERE id = $4::text
+  AND status = 'submitted'
+RETURNING id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model
+`
+
+type SuggestReviewParams struct {
+	SuggestedStatus string
+	SuggestionNote  string
+	SuggestionModel string
+	ID              string
+}
+
+// SuggestReview records a model's PROPOSAL about a review that is still
+// waiting.
+//
+// The WHERE carries status = 'submitted' as a LITERAL for the same reason the
+// storefront reads do: it is a narrowing no request and no later refactor may
+// widen. A proposal about a review an operator has already decided is not a
+// smaller version of a useful thing, it is a machine second-guessing a person
+// in a column the person cannot answer.
+//
+// It REPLACES any earlier proposal rather than refusing when one is there. A
+// proposal is not a record of anything that happened — nothing was decided, and
+// no operator acted on it — so the older sentence has no reader once a newer
+// one exists, and keeping it would mean a history table for text nobody
+// consulted. What is worth telling apart is a proposal made before a model
+// changed, and suggested_at with suggestion_model answers that.
+//
+// Nothing here touches status or moderated_at. That is the property the whole
+// table rests on and it is enforced twice over: this statement does not name
+// them, and reviews_moderation_mirror would refuse a row where one moved
+// without the other.
+func (q *Queries) SuggestReview(ctx context.Context, arg SuggestReviewParams) (Review, error) {
+	row := q.db.QueryRow(ctx, suggestReview,
+		arg.SuggestedStatus,
+		arg.SuggestionNote,
+		arg.SuggestionModel,
+		arg.ID,
+	)
+	var i Review
+	err := row.Scan(
+		&i.ID,
+		&i.ProductID,
+		&i.Rating,
+		&i.Title,
+		&i.Body,
+		&i.AuthorName,
+		&i.Status,
+		&i.ModeratedAt,
+		&i.ModerationNote,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SuggestedStatus,
+		&i.SuggestedAt,
+		&i.SuggestionNote,
+		&i.SuggestionModel,
 	)
 	return i, err
 }
