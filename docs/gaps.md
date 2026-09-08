@@ -1295,11 +1295,39 @@ a repository that no longer exists.
   naming a column the schema does not have. The scanner was wrong and the
   declaration was right; the other direction of the same test is what said so.
 
-  **What is NOT closed:** the app-level audit still cannot see a plugin, so the
-  other three plugin-brought modules are un-audited — they hold no person column
-  today, and nothing would say so if one arrived. Widening `registeredModules` to
-  install plugins needs a container and a bus in that test, and it is the
-  right next step rather than a second per-plugin copy of this file.
+  **~~What is NOT closed: the app-level audit still cannot see a plugin.~~ CLOSED
+  2026-09-08** by `internal/arch/plugin_personaldata_test.go`, which audits the
+  plugin tree in both directions without installing anything.
+
+  **Widening `registeredModules` was tried first and refused on measurement.**
+  Installing the four module-bringing plugins in a test needs their
+  configuration: `web-push` alone refuses without a VAPID private key, a subject
+  AND a template directory, and `error-otlp` refuses without an endpoint. A gate
+  that must satisfy every plugin's settings is a gate that breaks the day a
+  plugin adds one — and a gate that breaks for reasons unrelated to what it
+  checks is a gate somebody deletes. So the declaration is read from the SOURCE
+  instead: a `personaldata.Holding` is a composite literal with a Table and a
+  Column, and the migrations say which columns exist.
+
+  The three plugins that hold nobody are now RECORDED as holding nobody, with
+  what each does hold, and that claim is re-checked: a plugin on that list which
+  grows a person column fails.
+
+  **Two holes were found in the new audit by mutation, and both were mine.**
+  Adding `contact_email` to a plugin with `ALTER TABLE ... ADD COLUMN` produced
+  nothing twice over — first because the scanner parsed only `CREATE TABLE`
+  bodies, which is the SAME blind spot D30's own fix had closed in
+  `email_test.go` hours earlier, and then because exact name matching has no
+  entry for `contact_email`. Both are fixed: the scanner reads `ADD COLUMN`, and
+  matching is the exact list plus `_email`/`_phone` suffixes — `_name` and `_id`
+  are deliberately excluded, because they would flag a topic name and a
+  receiver's foreign key, and an audit that cries wolf on a foreign key is one
+  somebody turns off.
+
+  **A third lesson, cheaper to learn here than later:** a mutation appeared to
+  pass because the run used Go's cached test result. Every mutation proof needs
+  `-count=1`, the way every full run needs its output kept rather than piped
+  through grep (D31).
 
 - **D29** **The documents were audited against the code for the first time, and
   91 statements were false.** 2026-09-07. D27 and D28 were each found by checking
