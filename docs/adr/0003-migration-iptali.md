@@ -5,7 +5,11 @@ can close it; the layers above cooperate rather than relying on `context`
 alone. A cancelled run leaves the version table honest about what did and did
 not apply.
 
-- **Status:** Accepted
+- **Status:** Accepted; the FIRST of its four layers — the `GracefulStop` send — was
+  removed on 2026-09-08 by [ADR 0052](0052-the-migration-cancellation-drops-its-graceful-layer.md),
+  which measured that it changed nothing observable and armed a data race upstream.
+  The layering argument below is left as written; it is the record of the decision
+  as it was taken.
 - **Date:** 2026-08-23
 - **Phase:** 1
 

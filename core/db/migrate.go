@@ -318,14 +318,26 @@ func (s *session) close() {
 //
 // After setup, golang-migrate's postgres driver uses context.Background() for
 // every query (and Lock waits indefinitely on pg_advisory_lock). Cancellation is
-// therefore applied from two sides:
-//
-//  1. GracefulStop stops the NEXT migration from STARTING,
-//  2. closing the connection cuts off the IN-FLIGHT statement.
+// therefore applied by CLOSING THE CONNECTION, which cuts off the in-flight
+// statement and makes the next one fail before it can start.
 //
 // The work is then waited on until it really ends; the goroutine is not
 // abandoned. When it does not end within cancelGracePeriod, that is stated
 // explicitly in the error message.
+//
+// # Why there is no GracefulStop send (ADR 0052)
+//
+// ADR 0003 opened with two layers and this was the first: a send on the
+// migrator's GracefulStop channel, meant to stop the NEXT migration from
+// starting. It was removed on 2026-09-08 because it bought nothing this
+// repository can observe and armed a data race in golang-migrate v4.19.1 —
+// the migrator's isGracefulStop field is written and read from the two
+// goroutines its Up entry point runs, with no mutex and no happens-before edge.
+// Measured both ways: same error code, same version, same dirty flag, same
+// regression test. The field is unexported, so the race cannot be synchronized
+// from outside; not arming it is the whole of the fix.
+//
+// internal/arch refuses a send that comes back.
 func (s *session) run(ctx context.Context, action string, fn func(*migrate.Migrate) error) error {
 	done := make(chan error, 1)
 	go func() { done <- fn(s.migrate) }()
@@ -346,12 +358,6 @@ func (s *session) run(ctx context.Context, action string, fn func(*migrate.Migra
 
 		// On the Version path no migrate instance is built; GracefulStop only
 		// means something while a real migration is running.
-		if s.migrate != nil {
-			select {
-			case s.migrate.GracefulStop <- true:
-			default: // a full channel means the signal was already sent
-			}
-		}
 		if s.conn != nil {
 			_ = s.conn.Close()
 		}

@@ -12,6 +12,42 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **Migration iptali zarif katmanini birakti** (ADR 0052, ADR 0003'u tadil eder)
+  — D31 teshis edildi ve KAPANDI.
+
+  golang-migrate v4.19.1 migrator'un `isLocked` alanini muteksle koruyor,
+  hemen bir sonraki satirdaki `isGracefulStop`'u hicbir seyle korumuyor. `stop`
+  yardimcisi onu hem okuyor hem yaziyor ve `Up` onu KOSTURDUGU IKI goroutine'den
+  de cagiriyor. Yazmayi silahlandiran tek sey bir kanal gonderimi ve butun
+  depoda bir tane vardi: ADR 0003'un birinci katmani.
+
+  **Katmanin ne satin aldigi olculdu, tahmin edilmedi.** Regresyon testi hata
+  kodunu, isaretci tabloyu ve surumu sabitliyor ama KIRLI bayragini sabitlemiyor
+  -- zarif durusun satin alacagi sey buysa oradadir. Sonda dogrudan onu sordu:
+
+  | | hata kodu | surum | dirty | regresyon |
+  |---|---|---|---|---|
+  | gonderimle (sevk edildigi hali) | `db_migration_canceled` | 2 | **true** | geciyor |
+  | gonderimsiz | `db_migration_canceled` | 2 | **true** | geciyor |
+
+  Birebir ayni. Katman gozlemlenebilir hicbir sey degistirmiyordu, ve iptal
+  edilen bir kosu surumu HER ZAMAN kirli birakmis -- ADR 0003 aksini iddia
+  etmemisti, kimse bakmamisti.
+
+  Gonderim kaldirildi; `internal/arch/migration_cancel_test.go` geri gelmesini
+  reddediyor ve godoc'unda SILINME KOSULU yazili: golang-migrate alani
+  korudugu gun gonderim yeniden bedava bir katman olur.
+
+  Belirlenimli yeniden uretim denemesi TUTMADI ve nedeni teshisi keskinlestirdi:
+  sinyalden sonra baglanti hemen kapandigi icin `runMigrations` kapali baglantida
+  oluyor ve dongusunun basina bir daha varmiyor, `readUp` de gonderimde bloke
+  kaliyor. Pencere "readUp canli" degil, "kosucu ifadesini sinyalden SONRA ve
+  kapanistan ONCE bitirip donguye donuyor". Bu, tam bir entegrasyon kosusunda
+  bir kez gorulup bir daha uretilemeyen bir arizanin sekli.
+
+  Olcumun tamami: `docs/measurements/0052-migration-cancellation-race.md`.
+
+
 - **D10'un artigi kapandi: sahiplik butun agacin, modullerin degil**
   (`internal/arch/module_sql_test.go`).
 

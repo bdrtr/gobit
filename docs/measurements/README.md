@@ -12,6 +12,7 @@ truth: a report says what was true on the day it was taken.
 
 | Report | Lines |
 |---|---|
+| [Migration cancellation: the GracefulStop race](0052-migration-cancellation-race.md) | 90 |
 | [The measured cost of catalog search](catalog-search-cost.md) | 829 |
 | [Data layer — measured 2026-09-04](data-layer.md) | 132 |
 | [Must-have commerce features — measured 2026-09-04](must-have-commerce-features.md) | 232 |
