@@ -12,6 +12,10 @@ truth: a report says what was true on the day it was taken.
 
 | Report | Lines |
 |---|---|
+| [The carrier-capable quote input — measured 2026-09-08](0065-carrier-quote-input.md) | 146 |
+| [The stored payment instrument — what B9 asked, and what half of it already is](0064-the-stored-payment-instrument.md) | 186 |
+| [What a callback's record already is — measured 2026-09-08](0062-callback-ledger.md) | 173 |
+| [A locale has no source — measured 2026-09-08](0061-a-locale-has-no-source.md) | 171 |
 | [A suggestion store: both ends re-measured, 2026-09-08](0066-suggestion-store.md) | 149 |
 | [Measurement 0063 — Can `plugins/webhookout` be a topic's first subscriber?](0063-a-forwarder-is-not-a-first-subscriber.md) | 133 |
 | [What a closed stock location owes](0055-a-location-closes-empty.md) | 274 |

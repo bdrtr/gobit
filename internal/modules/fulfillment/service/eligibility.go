@@ -86,12 +86,29 @@ var clientDeclarableFacts = []string{AttrSubtotal, AttrItemCount, AttrTotalWeigh
 //     address carry address_1/address_2, city, province and postal_code, and no
 //     district column exists in either. A field added here would be filled with
 //     an empty string by every caller in the repository.
-//   - Dimensions are a CATALOG fact (a variant's box), and the catalog is
-//     another module. A local copy here would be a second source of truth for a
-//     number the product module owns.
+//   - Dimensions are a CATALOG fact, and the catalog is another module. A local
+//     copy here would be a second source of truth for a number the product
+//     module owns.
 //
 // Until those three move, an option whose price depends on the district has to
 // be [models.PriceFlat] or carry the tariff in the option's own Data.
+//
+// # Measured again 2026-09-08, and the answer is ADR 0065
+//
+// The third bullet said the dimensions are "a variant's box" and that was FALSE
+// against the schema: `product` carries weight, length, width and height, and
+// `product_variant` carries a weight and nothing else. A cart line names a
+// VARIANT, so a volume computed today would be the parent's carton applied to
+// the size that exists to differ from it.
+//
+// Two more facts settled it. `customer_address` holds no sub-country column at
+// all, so a saved address cannot carry even a province into the cart; and
+// [ListOptionsInput.TotalWeight], the one field of this shape the published
+// input already has, is handed a LITERAL ZERO by the only trusted producer,
+// because the cart carries no weight. The blocker is therefore the producer and
+// not the struct, and the input is not widened until this tree can address and
+// measure a parcel. TestEveryQuoteInputFieldIsFilledByTheTree refuses a field
+// of that input nothing here fills.
 type ListOptionsInput struct {
 	// RegionID is the cart's region. Options whose region equals this AND
 	// options whose region is empty become candidates.

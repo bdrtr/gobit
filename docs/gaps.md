@@ -25,7 +25,7 @@ pass; two rows were found stale and are marked below.
 | A8 | Catalog cacheability | ADR 0044 — the sales channel moves into the path; all four routes moved |
 | A9 | Does ADR 0008 stand on customer identity | ADR 0043 — it stands; gobit requires an identity at the address book and still issues none. ADR 0057 carries the same comparison to the b2b storefront and the cart without the requirement: a bound identity is BELIEVED against the claim, an absent one leaves those two surfaces serving |
 | A10 | pgvector: reopen the cluster contract | ADR 0045 — no; pgvector is a separate opt-in extension module |
-| **A11** | **Where translated content lives** | **OPEN.** ADR 0050 fixes gobit's POSITION (one language is stored, the second is the embedder's) and says in its own words that it does not close this gap. What is missing first is not storage but a way for a request to ASK for a language |
+| A11 | Where translated content lives | ADR 0061 — neither half of the language axis is built, and two gates refuse a locale arriving without a record. ADR 0050 fixed the POSITION; what closes the row is that each half blocks the other — a locale key no request supplies is a key nothing can use, and a path segment whose two values return byte-identical bodies has no first consumer. The shape is settled by ADR 0044's precedent. Two triggers, either one: a SECOND component naming a locale, or one shop serving one catalog in two languages over one `inventory_levels`, one order `display_id` sequence or one `invoice_series` |
 | A12 | JWT TTL policy | ADR 0031 — a fixed twelve hours, bounded in shared environments |
 | A13 | Metrics posture | ADR 0046 — metrics leave by scrape, OTLP keeps the traces |
 | A14 | Price history: promote the accidental retention or drop it | ADR 0047 — drop it; what survived a replace was never a history |
@@ -33,7 +33,7 @@ pass; two rows were found stale and are marked below.
 | A16 | What amount does a price filter compare | ADR 0041 — the base price, request's currency, quantity tier one, no group context |
 | A17 | What does "in stock" mean for a product | ADR 0040 — at least one variant unmanaged, backorderable, or with quantity above zero |
 | A18 | What counts as a match when a shopper filters by an option value | ADR 0039 — the folded form, stored beside the merchant's spelling |
-| **A19** | **Does a callback get a durable ledger of its own** | **OPEN.** ADR 0056 answers the mechanical half — no `audit_log` row, and the ring's log records every outcome including the ones a guard refused. A `callback_log` table fits the facts and needs three things this repository cannot derive: a reader, a scope beside `audit:read`, and a retention answer for a population the caller chooses |
+| A19 | Does a callback get a durable ledger of its own | ADR 0062 — no; the durable record is the table the RECEIVING MODULE already owns, and the ring's log (ADR 0056) holds the refusals no module can see. The reader, the scope and the retention ADR 0056 asked for are answered there: a listing, a module scope, and rows ADR 0054 never deletes. A second callback PROVIDER reopens it, and a census of the bound sources fails the day one appears |
 
 ## B. Foundations — each unblocks several features
 
@@ -47,8 +47,8 @@ pass; two rows were found stale and are marked below.
 | B6 | A money-event read surface | Built — `first_captured_at` / `last_refunded_at`, loaded only when asked for |
 | **B7** | **Inventory movement ledger** | **OPEN, and it is the half of this row nothing was blocking.** The event half closed as ADR 0063; the ledger is a table with an internal reader and no event gate ever touched it. `audit_log` does not cover it — it records the REQUEST, holds no delta and no item, and never sees a reservation the checkout saga takes. What it needs before it is written is four answers, not an unblocking: whether a reservation is a movement, whether `stocked_quantity` becomes derived from it, who the actor is when no admin made the change, and how long a row is kept |
 | B8 | Customer module events | Not delivered, deliberately — ADR 0033 met the obligation with an interface that returns an answer |
-| **B9** | **Stored payment instrument** | **OPEN, blocked on a published-contract decision.** No table, no column, no symbol; both halves would widen `core/provider` |
-| **B10** | **Carrier-capable quote input** | **OPEN.** The state-machine half was built 2026-09-06; the quote input is larger than this row used to say |
+| B9 | Stored payment instrument | **DECIDED 2026-09-08 — ADR 0064: not now, and what it waits for is a PROVIDER.** The trigger is an integration under `plugins/` whose upstream mints a customer-scoped credential it will accept on a later charge with no shopper present; deliberately not "when subscriptions arrive", because C12 waits on B9 and that would be a deadlock. **This row's own claim was half wrong**: only ONE half would widen `core/provider`. Paying with a stored token is already wired storefront-to-provider — `payment_data` travels unread from the cart's completion route into the session input, whose godoc names a card token as what belongs there — so what is missing is MINTING (no provider here returns a reusable credential: PayTR's iframe token is spent when its payment closes and its own godoc says the plugin stores it nowhere; the Stripe skeleton errors on all five money methods) and OWNING (the payment module's 22 columns name no customer). The shape when it comes is fixed in the ADR, including that the surface refuses under ADR 0043's row rather than ADR 0057's |
+| B10 | Carrier-capable quote input | Closed as a DECISION — ADR 0065. The state-machine half was built 2026-09-06; the quote half is not widened, because the blocker is the PRODUCER and not the struct. `QuoteInput.TotalWeight` is the rehearsal: the one field of this shape the input has, handed a literal zero by the only trusted producer. **Trigger, two checkable facts:** `product_variant` carries the three dimension columns `product` already has, and the sub-country unit below the city means ONE thing across the customer address book, the cart and the order. A gate refuses a field of that input the tree does not fill |
 | B11 | Order addresses | Built — written in the same transaction as the order's header and lines |
 | B12 | Outbound delivery machinery | Built — `next_attempt_at`, `dead_lettered_at`, capped doubling backoff |
 | B13 | Plugin host: let a plugin register a job | Built — `plugin.Host.RegisterJob`, arrived with its first consumer |
@@ -67,17 +67,17 @@ pass; two rows were found stale and are marked below.
 | C3 | Operator assistant in the panel | A return-creation surface |
 | C4 | Consent records and data-subject endpoints | Nothing. Actionable since 2026-09-07; the endpoints exist |
 | C5 | Outbound webhooks | Nothing. `plugins/webhookout` is built and installable (see D22) |
-| C6 | Carrier plugins | B10's quote input, and a place for a carrier to deliver what it receives |
+| C6 | Carrier plugins | A place for a carrier to deliver what it receives — the module's cross-module write surface cannot move a shipment, and a plugin can reach neither the method nor a structural interface naming it. **No longer B10**: ADR 0065 measured that dependency pointing the wrong way, and a plugin can ship against the quote surface as it stands with a flat option or a tariff in the option's own data. Its tariff is what names the fields B10 would otherwise guess |
 | C7 | Installment table + providers | A3 |
 | C8 | Digital product delivery | — |
 | C9 | B2B quotes, terms, minimum order | Nothing — A5 is answered |
 | C10 | NL search layer | Nothing — B2 and B3 are built |
 | C11 | Review summaries and Q&A | A read-layer provider on the review module, absent until its first reader |
-| C12 | Subscriptions | B9 |
+| C12 | Subscriptions | ADR 0064's trigger — a provider that can mint a reusable credential. B9 is decided, not open, and the instrument is only the first of C12's parts |
 | C13 | Feature flags, then A/B | A9's assignment key |
 | C14 | Panel extension points, then the SPA | The three things ADR 0030 names as owed by whoever implements it |
-| C15 | Multi-language | A11 |
-| C16 | Real-time stock | The inventory event, now a DECISION rather than a gap (ADR 0063), plus a fan-out the bus cannot do — measured: the Redis backend distributes a stream ACROSS a consumer group rather than broadcasting |
+| C15 | Multi-language | A11 is answered — ADR 0061 defers it with two named triggers, and the gates fire when one arrives |
+| C16 | Real-time stock | B7, plus a fan-out the bus cannot do |
 | C17 | Edge caching | Nothing — A8 is answered and built |
 | C18 | Multi-vendor marketplace | A3 and most of the above; last, deliberately |
 
@@ -89,6 +89,7 @@ row is for; the reproduction is in the commit that closed it.
 | # | Finding | Status |
 |---|---|---|
 | **D18** | Nine columns nothing has ever written, invisible until D16's fix | **All nine closed** — the last by ADR 0055: `stock_locations.deleted_at` became `closed_at`, written by a close that is refused while the location still holds stock or a live promise. **Residue, two open questions for the owner: a location still cannot be RENAMED, and a close is FINAL — should a mis-close be undoable?** A reopen verb was drafted with the close and dropped: nothing in the invariant needs it, and clearing `closed_at` would make it the schema's one mutable stamp |
+| **D33** | `province` names two different things, and the address book names neither | **OPEN, found 2026-09-08 while measuring B10.** The tax schema defines a province region as the sub-country unit under a country root — for Turkey an il. The repository's own end-to-end shipping test files `City: "Istanbul", Province: "Kadikoy"` and says why in its own assertion: *a domestic carrier prices on the district* — and Kadikoy is an ilce, not an il. Both readings compile and both suites are green; the two have never met because the cart's tax request sends the province ALWAYS EMPTY, so nothing has ever compared them. The cart address field carries no godoc line at all. Underneath both, `customer_address` has no sub-country column of any kind, and the cart's copy is made by the CALLER — so a shopper picking a saved address cannot bring a province to the cart, because the book never held one. This is the second half of ADR 0065's trigger: a district in a published quote input would be a FOURTH reading of a word that already has two |
 | D1 | `/paytr/callback` sat outside every guarded prefix | Fixed — ADR 0028, and the residue answered 2026-09-08: a callback is recorded in the ring's LOG and not in `audit_log` (ADR 0056) — a provider is not an actor and the table has no column for the outcome. Every outcome now leaves a line, refusals included; four were silent, all of them the class where the handler RAN. What remains is a decision, A19, and not a residue |
 | D2 | `allow_backorder` published and read by nothing | Fixed — ADR 0048 |
 | D3 | The address book's storefront endpoints were unauthenticated | Fixed — ADR 0043. The residue was NARROWED 2026-09-08 by ADR 0057: b2b's copy and the cart's `customer_id` both go through one published comparison, and a tree-wide gate holds it. The cart's claim was measurably an oracle for a stranger's e-mail address as well as their spending window. **Still open where no identity is bound** — those two surfaces then serve the claim, because withdrawing them from a working installation costs more than the leak; binding a verifier closes it |

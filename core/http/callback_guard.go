@@ -8,7 +8,21 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+
+	coreerrors "github.com/bdrtr/gobit/core/errors"
 )
+
+// codeCallbackContradiction fingerprints the one callback outcome that asks for
+// a person.
+//
+// It is UNEXPORTED while every other code in this package is published, and the
+// difference is which way the value travels. The three registration codes are
+// RETURNED — a plugin author catches one at startup — so they are a Go
+// contract. This one is never returned to anybody: it exists inside a log
+// record, and what reads it is an error collector matching a string. Exporting
+// it would publish a symbol no caller can receive (ADR 0026 keeps the surface a
+// promise), and the string is held instead by the test that names it.
+const codeCallbackContradiction = "callback_contradiction"
 
 // guard runs one callback through every ring and then the handler.
 //
@@ -31,6 +45,14 @@ import (
 // The record of a callback is this log and not an audit row: a provider is not
 // an actor, and the audit table has no column for the thing worth recording
 // here, which is WHICH of the five answers went back (ADR 0056).
+//
+// It is not a ledger table either, and that is a decision rather than a
+// postponement (ADR 0062). What the callback ASSERTED is durable in the table
+// the receiving module already owns — a provider that reports back instead of
+// being asked cannot answer "is the money held?" without one — and this log
+// holds what no module can see, the requests a guard turned away before the
+// handler ran. Of those, the ERROR lines are the ones that leave the process
+// for a collector, so they carry an error value rather than only a sentence.
 //
 // What the log is evidence about is decided one step above, in
 // [CallbackRegistry.lookup]: the population is every request that MATCHED a
@@ -185,8 +207,17 @@ func (g *CallbackRegistry) deduplicate(
 		// The same event, asserting something DIFFERENT. This is a real signal,
 		// not a client error, and it is acknowledged on purpose: refusing it
 		// would make a provider that reads the body retry it forever.
+		//
+		// It is the one outcome on this surface whose own message says a person
+		// has to act, so it is logged AS AN ERROR VALUE rather than as a
+		// sentence: an error reporter fingerprints a record by the code of the
+		// error it carries, and a record carrying none is filed under
+		// "unclassified" — sharing one rate-limit bucket with every genuinely
+		// unclassified failure in the process (ADR 0062).
 		log.ErrorContext(r.Context(),
 			"a callback contradicted an event already recorded; a human has to look",
+			"error", coreerrors.Conflict(codeCallbackContradiction,
+				"a callback asserted something other than the event already recorded"),
 			"key", keys.key)
 		writeCallback(w, rt.Ack.Duplicate)
 

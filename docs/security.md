@@ -225,7 +225,17 @@ with a stolen admin token makes. An inbound provider CALLBACK is not recorded
 there either: a provider is not an actor and the table has no column for the
 outcome worth recording, so a callback's record is the callback ring's own
 log, where every outcome leaves a line — the refused ones included ([ADR
-0056](adr/0056-a-callback-is-recorded-in-the-log-and-not-in-the-audit-table.md)). There is no endpoint that deletes a row and no
+0056](adr/0056-a-callback-is-recorded-in-the-log-and-not-in-the-audit-table.md)).
+It gets no ledger table of its own either, and the split is worth knowing before
+an incident ([ADR
+0062](adr/0062-a-callbacks-ledger-is-the-receiving-modules-table.md)): what the
+provider TOLD you is durable in the table its own module keeps, queried through
+that module's listing under that module's scope, while the requests a guard
+turned away exist only in the log — no query, and whatever retention your log
+pipeline gives them. Of those, the ones logged at ERROR also reach an error
+collector when one is installed, and the contradicting retry — the outcome whose
+line says a human has to look — reports under the code
+`callback_contradiction`. There is no endpoint that deletes a row and no
 retention window; pruning is an operator's scheduled statement, because a log
 the API can prune is a log an intruder can prune.
 

@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	coreerrors "github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
 )
 
@@ -171,6 +172,58 @@ func TestAContradictingRetryIsAcknowledgedAndNotApplied(t *testing.T) {
 	require.Equal(t, http.StatusOK, second.Code, "a contradiction was refused; the provider will retry it forever")
 	require.Equal(t, "DUP", second.Body.String())
 	require.Equal(t, 1, *harness.calls, "the contradicting event was applied")
+}
+
+// TestTheContradictionCarriesACodeAnErrorCollectorCanGroupBy holds the half of
+// ADR 0062 that a decision alone would not have made true.
+//
+// A callback has no ledger table (ADR 0062) and no audit row (ADR 0056), so the
+// ring's log is the whole record of what it refused — and for an installation
+// with a reporter the ERROR lines are the part of that record which leaves the
+// process at all. A reporter fingerprints a record by the CODE of the error it
+// carries, so a line carrying no error is filed under "unclassified": the
+// contradiction would be invisible among every other unclassified failure and
+// would spend that bucket's rate limit, which is three reports a minute for all
+// of them together.
+//
+// The code is asserted as a LITERAL on purpose. The constant is unexported
+// because it is never returned to a caller, and what actually consumes the
+// string is an alert rule in somebody's collector — which is exactly a literal
+// too. This is the test that stops it changing under them silently.
+func TestTheContradictionCarriesACodeAnErrorCollectorCanGroupBy(t *testing.T) {
+	t.Parallel()
+
+	logger, captured := newCallbackLog()
+	harness := newCallbackHarness(t, corehttp.CallbackOptions{
+		Logger: logger, Store: newTestCallbackStore(),
+	})
+
+	harness.post("signed:evt-1,paid")
+	captured.reset()
+	harness.post("signed:evt-1,failed")
+
+	said := captured.said()
+	require.NotEmpty(t, said, "the contradiction left no line at all")
+
+	carried := slices.IndexFunc(said, func(line loggedLine) bool {
+		_, has := line.values["error"]
+
+		return has
+	})
+	require.GreaterOrEqual(t, carried, 0,
+		"the contradiction wrote %d line(s) and none of them carries an error value.\n"+
+			"An error reporter reads the code off the error; a line that carries only a "+
+			"SENTENCE is reported as unclassified, and the one outcome whose own message "+
+			"says a human has to look is then the hardest one in the collector to find.",
+		len(said))
+
+	failure, isError := said[carried].values["error"].(error)
+	require.True(t, isError, "the error attribute is not an error value")
+	require.Equal(t, "callback_contradiction", coreerrors.CodeOf(failure),
+		"the contradiction's code changed.\n"+
+			"It is the string an operator's alert rule matches on, and nothing else names "+
+			"it: the constant behind it is unexported because it is never returned to a "+
+			"caller. Changing it silently retires every alert built on it.")
 }
 
 // TestTwoSourcesDoNotShareAReplayNamespace is why the key carries the source.
@@ -517,6 +570,11 @@ func TestNoCallbackOutcomeIsSilent(t *testing.T) {
 type loggedLine struct {
 	message string
 	attrs   map[string]string
+	// values are the same attributes UNRENDERED. The census reads attrs
+	// because what it audits is a rendered field; a reader asking what an error
+	// collector would FINGERPRINT the line by needs the error itself, and its
+	// rendering carries no code.
+	values map[string]any
 }
 
 // callbackLog captures what the ring said.
@@ -570,12 +628,18 @@ func (h *callbackLogHandler) Enabled(context.Context, slog.Level) bool { return 
 
 // Handle flattens one record into the capture.
 func (h *callbackLogHandler) Handle(_ context.Context, record slog.Record) error {
-	line := loggedLine{message: record.Message, attrs: map[string]string{}}
+	line := loggedLine{
+		message: record.Message,
+		attrs:   map[string]string{},
+		values:  map[string]any{},
+	}
 	for _, attr := range h.attrs {
 		line.attrs[attr.Key] = attr.Value.String()
+		line.values[attr.Key] = attr.Value.Any()
 	}
 	record.Attrs(func(attr slog.Attr) bool {
 		line.attrs[attr.Key] = attr.Value.String()
+		line.values[attr.Key] = attr.Value.Any()
 
 		return true
 	})

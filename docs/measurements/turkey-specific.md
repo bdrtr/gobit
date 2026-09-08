@@ -28,7 +28,12 @@ Three things a Turkish carrier integration would hit immediately:
   and an untyped `Data`. There is no destination postal code, no il/ilce (province/district), no
   origin address and no dimensions — and domestic carriers price on **desi**
   (volumetric) and on district. All of it would have to travel through the
-  untyped bag.
+  untyped bag. **Still true, and DECIDED 2026-09-08: ADR 0065 — the input is
+  not widened, because the blocker is the producer rather than the struct.** Two
+  facts this bullet did not reach: `product_variant` carries a weight and no
+  box, and the one field of this shape the input already has is handed a literal
+  zero by the only trusted producer. See
+  [0065](0065-carrier-quote-input.md).
 - ~~**The status vocabulary is four values** — pending, shipped, delivered,
   canceled — pinned by a database CHECK. There is no "in transit", no "at
   branch", no "delivery attempt failed", and no **"returned to sender" (iade)**,
