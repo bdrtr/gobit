@@ -1,0 +1,46 @@
+# The Turkish number words a count claim can be written with.
+#
+# This file is DATA for TestTheCountsInTheProseAreTrue, not prose. Two documents
+# in this repository are Turkish by decision (ADR 0012's ledger), and both of
+# them state counts in words rather than digits, so the gate cannot read them
+# without this vocabulary. It lives here rather than in count_claims_test.go
+# because one of the words is on the language detector's own safe-word list:
+# spelling it in a Go file would put a new line in the language ledger for text
+# that is a lookup table, and the ledger may only shrink.
+#
+# Format: a value, a space, and the word, folded onto ASCII the way
+# countFold folds a token it reads. One entry per line; "#" opens a comment.
+# The units are 1 through 10 and the tens are 20 through 90; a compound is the
+# two written as separate words, which is the form the READMEs use.
+#
+# countNumeralWords reads this file and refuses a short read, so deleting a line
+# fails the gate instead of quietly narrowing what it can see.
+
+# units
+1 bir
+2 iki
+3 uc
+4 dort
+5 bes
+6 alti
+7 yedi
+8 sekiz
+9 dokuz
+
+# tens
+10 on
+20 yirmi
+30 otuz
+40 kirk
+50 elli
+60 altmis
+70 yetmis
+80 seksen
+90 doksan
+
+# The scale words, marked with a value of 0: they are a HARD STOP rather than a
+# multiplier, so a sentence above ninety-nine yields no claim instead of the
+# number standing in front of the scale. They are here rather than in the Go
+# source for the reason the units are.
+0 yuz
+0 bin

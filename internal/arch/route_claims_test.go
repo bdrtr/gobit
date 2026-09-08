@@ -49,7 +49,7 @@ import (
 //     [TestTheRouteCollectorIsNotBlind]). Two integration gates keep that set
 //     equal to the router of a running server, so a collector that goes blind on
 //     a directory or on a nesting form is caught by descriptions it can no longer
-//     find. It reaches 276 of the 328 routes and NOT the other 52, which carry no
+//     find. It reaches 278 of the 330 routes and NOT the other 52, which carry no
 //     description at all — the admin panel is the largest single block, 18 of
 //     them — so the same control
 //     puts a floor under each resolution mechanism as well;
@@ -223,8 +223,9 @@ type routeFile struct {
 //
 // A path is often a constant, and a constant is often built out of another one —
 // the panel's seventeen paths are all "URLPrefix + …" and the GraphQL endpoint is
-// another package's exported constant. Measured: resolving literals alone collects
-// 197 of the 328 routes, so the constant table is rebuilt until it stops growing.
+// another package's exported constant. Measured when this was written: resolving
+// literals alone collected 197 of the 328 routes bound that day, so the constant
+// table is rebuilt until it stops growing.
 //
 // # What the collector cannot see, said plainly
 //

@@ -84,10 +84,11 @@ Elle ayarlanması gereken avuç dolusu şunlardır:
 
 ```
 gobit.go              # YAYIMLANMIŞ cephe: New().Version().Add().Use().Main()
-core                  # YAYIMLANMIŞ sözleşmeler — on altı paket (ADR 0026):
-                      # errors, db, container, module, eventbus (+outbox), link,
-                      # query, provider, plugin, http (+redisguard), audit,
-                      # errorreport, personaldata, openapi
+core                  # YAYIMLANMIŞ sözleşmeler — on yedi paket (ADR 0026,
+                      # ADR 0069 ile genişledi): errors, db, container, module,
+                      # eventbus (+outbox), link, query, provider, plugin,
+                      # http (+redisguard), audit, errorreport, personaldata,
+                      # openapi, jobreport
 internal/app          # KOMPOZİSYON KÖKÜ (ADR 0027): config -> logger ->
                       # container -> router -> dinle; operatör alt komutları
                       # (migrate, stuck, recover, jobs, deadletters, seed)
@@ -214,7 +215,7 @@ the record. The whole boundary is in
 
 | Belge | Neyi cevaplar |
 |---|---|
-| [`docs/adr/README.md`](./docs/adr/README.md) | Kararların İNDEKSİ: elli bir kayıt, her biri tek cümlelik kararıyla. Plan ile çelişirse **ADR geçerlidir** |
+| [`docs/adr/README.md`](./docs/adr/README.md) | Kararların İNDEKSİ: altmış dokuz kayıt, her biri tek cümlelik kararıyla. Plan ile çelişirse **ADR geçerlidir** |
 | [`docs/measurements/`](./docs/measurements/) | Ölçümler: sayılar, sonda çıktıları, yeniden üretim adımları. Bir ADR'ye tek satırla bağlanır; kimse baştan sona okumak zorunda değil |
 | [`docs/mimari.md`](./docs/mimari.md) | Mimarinin anlatısı: katmanlar, isteğin ve modülün yaşam döngüsü, veri, saga'lar, teknoloji seçimleri, çekirdek paketler |
 | [`docs/gaps.md`](./docs/gaps.md) | Kusur defteri: deponun kendinde bulduğu her arıza, tek cümle ve onu kapatan ADR |
@@ -223,7 +224,7 @@ the record. The whole boundary is in
 | [`docs/api-surfaces.md`](./docs/api-surfaces.md) | Üretilen OpenAPI belgesi ve GraphQL vitrin okuma yüzeyi; maliyeti istemci belirlerken sunucunun koyduğu sınırlar ve hata politikası |
 | [`docs/extending.md`](./docs/extending.md) | Eklentiler, dosya yükleme sağlayıcısı, alan olayları ve **müşteri kimliği** — yeni bir yetenek nasıl eklenir, ve vitrinin ZORUNLU kıldığı tek bağlama |
 | [`docs/operating.md`](./docs/operating.md) | Çalıştırma ve geliştirme: `/health` ile `/ready`, yapılandırmanın tamamı, olay veri yolu arka uçları, izleme, make hedefleri, modül yolunu değiştirme ve sürüm geçmişi |
-| [`docs/known-limits.md`](./docs/known-limits.md) | Bilinen sınırlar: yirmi iki madde, dört küme — kimlik ve yetki, satış kanalı kapsamı, kurulum ve işletim, değişmezlerin sınırı |
+| [`docs/known-limits.md`](./docs/known-limits.md) | Bilinen sınırlar: yirmi üç madde, dört küme — kimlik ve yetki, satış kanalı kapsamı, kurulum ve işletim, değişmezlerin sınırı |
 | [`docs/measurements/catalog-search-cost.md`](./docs/measurements/catalog-search-cost.md) | Katalog aramasının ölçülmüş maliyeti |
 | [`CHANGELOG.md`](./CHANGELOG.md) | Sürüm sürüm ne değişti |
 

@@ -86,10 +86,11 @@ are in [`docs/operating.md`](./docs/operating.md).
 
 ```
 gobit.go              # the PUBLISHED facade: New().Version().Add().Use().Main()
-core                  # the PUBLISHED contracts — sixteen packages (ADR 0026):
-                      # errors, db, container, module, eventbus (+outbox), link,
-                      # query, provider, plugin, http (+redisguard), audit,
-                      # errorreport, personaldata, openapi
+core                  # the PUBLISHED contracts — seventeen packages (ADR 0026,
+                      # widened by ADR 0069): errors, db, container, module,
+                      # eventbus (+outbox), link, query, provider, plugin,
+                      # http (+redisguard), audit, errorreport, personaldata,
+                      # openapi, jobreport
 internal/app          # the COMPOSITION ROOT (ADR 0027): config -> logger ->
                       # container -> router -> listen; the operator subcommands
                       # (migrate, stuck, recover, jobs, deadletters, seed)
@@ -190,7 +191,7 @@ framework cannot see.**
 
 | Document | What it answers |
 |---|---|
-| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: fifty-one records, each with its decision in one sentence. In case of conflict with the plan, **the ADR wins** |
+| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: sixty-nine records, each with its decision in one sentence. In case of conflict with the plan, **the ADR wins** |
 | [`docs/measurements/`](./docs/measurements/) | Measurements: numbers, probe output, reproductions. An ADR links to one in a single line; nobody has to read them end to end |
 | [`docs/mimari.md`](./docs/mimari.md) | The architecture narrative: layers, the life cycle of a request and of a module, data, sagas, technology choices, the core packages |
 | [`docs/gaps.md`](./docs/gaps.md) | The defect ledger: every fault this repository found in itself, one sentence and the ADR that closed it |
@@ -199,7 +200,7 @@ framework cannot see.**
 | [`docs/api-surfaces.md`](./docs/api-surfaces.md) | The generated OpenAPI document and the GraphQL storefront read surface; the limits the server sets when the client decides the cost, and the error policy |
 | [`docs/extending.md`](./docs/extending.md) | Plugins, the file upload provider and the domain events — how a new capability is added |
 | [`docs/operating.md`](./docs/operating.md) | Running and developing: `/health` and `/ready`, the whole of the configuration, the event bus backends, observability, the make targets, changing the module path and the version history |
-| [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: twenty-one items in four groups — identity and authorization, sales channel scope, installation and operation, the limit of the invariants |
+| [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: twenty-three items in four groups — identity and authorization, sales channel scope, installation and operation, the limit of the invariants |
 | [`docs/measurements/catalog-search-cost.md`](./docs/measurements/catalog-search-cost.md) | The measured cost of catalog search |
 | [`CHANGELOG.md`](./CHANGELOG.md) | What changed, release by release |
 
