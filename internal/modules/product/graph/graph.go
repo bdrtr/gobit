@@ -126,15 +126,13 @@ type ProductList = service.ListResult[service.StoreProduct]
 //     channels means the EMPTY SET, it does not mean "no filtering". Treating
 //     those two cases as one would open the catalog of all channels to an
 //     identity that has no channel.
+//
+// It DELEGATES rather than deriving, and that is the whole of its body:
+// [corehttp.SalesChannelIDs] is the one implementation, published there because
+// the three callers that need it — this package, the cart workflow and the
+// search plugin — cannot import one another. The wrapper stays because this
+// package's readers reach for this name and because the paragraphs above are
+// about the CATALOG's use of the set, which core cannot say.
 func SalesChannelIDsFromContext(ctx context.Context) []string {
-	principal, ok := corehttp.PrincipalFromContext(ctx)
-	if !ok {
-		return nil
-	}
-
-	if principal.SalesChannelIDs == nil {
-		return []string{}
-	}
-
-	return principal.SalesChannelIDs
+	return corehttp.SalesChannelIDs(ctx)
 }

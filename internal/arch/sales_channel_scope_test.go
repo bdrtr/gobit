@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,13 +32,22 @@ import (
 // of the derivation, the contract NAME, and that the read goes THROUGH THE SCOPE
 // DECISION.
 
-// TestChannelDerivationMeansTheSameOnBothSurfaces verifies that the read and the
-// write surface derive the same three states from an identity.
+// TestChannelDerivationMeansTheSameOnBothSurfaces characterizes the three states
+// the derivation separates, and checks both surfaces still answer with them.
 //
-// The two surfaces live in two separate packages and CANNOT import each other: the
-// product module cannot see the workflows, and the workflows cannot see the modules
-// (ADR 0006). That is why the derivation is written twice, and this test forms the
-// link the compiler cannot.
+// # What it used to be, and why it is kept
+//
+// ~~The two surfaces live in two separate packages and CANNOT import each other,
+// so the derivation is written twice and this test forms the link the compiler
+// cannot.~~ Since 2026-09-08 the derivation lives ONCE, in
+// [corehttp.SalesChannelIDs], and both functions below delegate to it — so the
+// equality this asserts is now true by construction and cannot fail on its own.
+//
+// It is kept for the half that is not structural: the TABLE. The three states
+// and the boundaries between them are the rule, and a table naming all six
+// identity shapes is the only place they are written as behavior rather than as
+// prose. What guards the collapse is [TestTheChannelDerivationIsNotCopied],
+// which refuses a fourth copy anywhere in the tree.
 //
 // A drift would be SILENT and visible only under a particular identity shape: were
 // the write path to start returning nil in the "identity without channels" case,
@@ -332,6 +342,175 @@ func markExemption(file, function string, used []bool) bool {
 	for i, exemption := range variantReadExemptions {
 		if exemption.file == file && exemption.function == function {
 			used[i] = true
+			return true
+		}
+	}
+
+	return false
+}
+
+// channelDerivationExemption is a function that reads the principal's channels
+// WITHOUT deriving a scope from them.
+type channelDerivationExemption struct {
+	// file is the path relative to the repository root.
+	file string
+	// function is the name of the function (or method) doing the read.
+	function string
+	// why is the justification; an exemption without one is the rule quietly
+	// eroding.
+	why string
+}
+
+// channelDerivationExemptions are the functions allowed to touch
+// Principal.SalesChannelIDs outside core/http.
+//
+// The list is not a list of covered call sites but of GRANTED EXCEPTIONS: the
+// scan walks the whole tree, and any new function that reads the field after
+// asking for the principal has to be either a delegation or written here.
+var channelDerivationExemptions = []channelDerivationExemption{
+	{
+		file:     "internal/modules/auth/api/admin.go",
+		function: "adminWhoami",
+		why: "it ECHOES the principal to its owner rather than deriving a scope from it: " +
+			"the field is copied into the response verbatim, so the nil / empty-set " +
+			"distinction is passed through rather than collapsed, and no catalog is " +
+			"filtered by the result. A caller asking who it is should be told what its " +
+			"key actually holds, including that it holds nothing.",
+	},
+}
+
+// TestTheChannelDerivationIsNotCopied refuses a fourth copy of the derivation.
+//
+// # Why this replaces a comparison
+//
+// Until 2026-09-08 the derivation was written three times — product's GraphQL
+// layer, the cart workflow and the search plugin — because the three cannot
+// import one another, and [TestChannelDerivationMeansTheSameOnBothSurfaces]
+// held two of them together by comparing their ANSWERS. That is the weaker
+// guarantee, and it had the weakness such tests always have: it could only see
+// the copies somebody had told it about. The third copy, the plugin's, was
+// never in it.
+//
+// The derivation now lives once, in corehttp.SalesChannelIDs, and the two
+// in-tree functions delegate to it. A comparison of two delegations cannot
+// fail, so what guards the collapse has to be structural: nothing outside
+// core/http may ask for the principal and read its channels, because doing both
+// in one body IS the derivation.
+//
+// # What it cannot see
+//
+// A copy that reads the field from a Principal it was handed rather than one it
+// asked the context for. That shape does not exist in the tree and would be an
+// odd way to write it, but it is the hole, and it is written down rather than
+// left for somebody to find.
+func TestTheChannelDerivationIsNotCopied(t *testing.T) {
+	t.Parallel()
+
+	used := make([]bool, len(channelDerivationExemptions))
+	scanned := 0
+
+	for _, tree := range []string{modulesDir, "plugins", "internal/workflows", "internal/app", "internal/adminui"} {
+		for _, file := range productionFiles(t, filepath.Join(repoRoot, tree)) {
+			scanned += checkChannelDerivation(t, file, used)
+		}
+	}
+
+	require.Positive(t, scanned,
+		"no principal read was found at all; the scan may no longer be checking "+
+			"anything (PrincipalFromContext or the field name may have been renamed)")
+
+	for i, exemption := range channelDerivationExemptions {
+		assert.True(t, used[i],
+			"an unused exemption: %q in %s no longer reads the principal's channels.\n"+
+				"Its justification (%q) is not defending anything: either the read was "+
+				"removed and the exemption has to go with it, or it moved and the "+
+				"exemption no longer sees it.",
+			exemption.function, exemption.file, exemption.why)
+	}
+}
+
+// checkChannelDerivation checks one file and returns how many principal reads
+// it found.
+func checkChannelDerivation(t *testing.T, file string, used []bool) int {
+	t.Helper()
+
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, file, nil, 0)
+	require.NoError(t, err, "%s could not be parsed", file)
+
+	rel := strings.TrimPrefix(file, repoRoot+"/")
+	found := 0
+
+	for _, decl := range parsed.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		if !asksForThePrincipal(fn) || !readsTheChannelField(fn) {
+			continue
+		}
+
+		found++
+		if markChannelExemption(rel, fn.Name.Name, used) {
+			continue
+		}
+
+		assert.Fail(t, "the sales channel derivation is written a second time",
+			"%s.%s asks the context for the principal AND reads its SalesChannelIDs.\n"+
+				"That pair IS the derivation, and it lives once, in "+
+				"corehttp.SalesChannelIDs. A copy compiles and agrees with the original "+
+				"on the day it is written; what it does not do is stay agreeing, and the "+
+				"disagreement is only visible under an identity that holds no channel — "+
+				"the one case where the two answers differ and the wrong one hands over "+
+				"every channel's catalog.",
+			rel, fn.Name.Name)
+	}
+
+	return found
+}
+
+// asksForThePrincipal reports whether the function calls PrincipalFromContext.
+func asksForThePrincipal(fn *ast.FuncDecl) bool {
+	asks := false
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if selector, ok := call.Fun.(*ast.SelectorExpr); ok &&
+			selector.Sel.Name == "PrincipalFromContext" {
+			asks = true
+		}
+
+		return true
+	})
+
+	return asks
+}
+
+// readsTheChannelField reports whether the function reads a SalesChannelIDs
+// field off something.
+func readsTheChannelField(fn *ast.FuncDecl) bool {
+	reads := false
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		if selector, ok := node.(*ast.SelectorExpr); ok &&
+			selector.Sel.Name == "SalesChannelIDs" {
+			reads = true
+		}
+
+		return true
+	})
+
+	return reads
+}
+
+// markChannelExemption marks the exemption covering the function, if there is
+// one.
+func markChannelExemption(file, function string, used []bool) bool {
+	for i, exemption := range channelDerivationExemptions {
+		if exemption.file == file && exemption.function == function {
+			used[i] = true
+
 			return true
 		}
 	}

@@ -13,7 +13,33 @@ import (
 // The endpoints the plugin opens and the scopes they require.
 const (
 	// SearchPath is the storefront search endpoint.
-	SearchPath = "/store/v1/search"
+	//
+	// # Why the channel is IN THE PATH (ADR 0044)
+	//
+	// This body varies with the caller, and until this route moved it varied
+	// through the "x-publishable-api-key" HEADER: the same URL returned one
+	// storefront's results to one key and another storefront's to another.
+	// Nothing in this repository emits Vary for that header, so a shared cache
+	// in front of the origin had no cache key it could see. The three catalog
+	// reads in the product module moved for that reason on 2026-09-08 and this
+	// one did not, which left a storefront whose catalog was channel-addressed
+	// and whose SEARCH was not — the non-uniformity ADR 0044 warned about, with
+	// none of the justification the taxonomy endpoints have.
+	//
+	// The value is a chi PATTERN and not a URL. A caller builds the address by
+	// substituting the channel id it is authorized for; the tests spell that
+	// substitution out by hand, which is what keeps this constant honest about
+	// what it is serving.
+	//
+	// It is a WHOLE LITERAL and not a concatenation of the segment name, even
+	// though a concatenation would keep the two in step by construction: the
+	// route audits in internal/arch resolve a path from a string literal or from
+	// a constant whose value IS one, and a value built by concatenation reads
+	// back as unknown — this route would silently drop out of their population,
+	// which is the more expensive of the two failures. What keeps the segment in
+	// step with [corehttp.SalesChannelIDParam] is an assertion in
+	// internal/arch/sales_channel_scope_test.go.
+	SearchPath = "/store/v1/sales-channels/{sales_channel_id}/search"
 	// ReindexPath is the full reindex endpoint.
 	ReindexPath = "/admin/v1/search/reindex"
 	// ScopeWrite is the scope the reindex endpoint requires.
@@ -80,7 +106,7 @@ type singleEnvelope struct {
 	Data any `json:"data"`
 }
 
-// search is GET /store/v1/search.
+// search is GET /store/v1/sales-channels/{sales_channel_id}/search.
 //
 // The flow: RELEVANCE-ORDERED ids are found in the index, and the records are
 // read from the catalog's "product.interop" surface IN THE SAME ORDER. Every
@@ -91,8 +117,21 @@ type singleEnvelope struct {
 // (see the package documentation). That is why even a stale row left in the
 // index cannot LEAK a product from somebody else's channel: an id that does not
 // pass the filter never enters the response.
+//
+// The channel the catalog filters by is the PATH's, narrowed to what the key
+// holds; see [channelScope].
 func (m *searchModule) search(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	// The scope is resolved BEFORE the query is parsed and before the index is
+	// touched: a key asking for a channel it does not hold is refused without
+	// the request reaching either, so an unauthorized caller cannot use the
+	// shape of a 400 to learn anything about the index.
+	scope, err := channelScope(r)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
 
 	query, err := searchQuery(r)
 	if err != nil {
@@ -111,7 +150,7 @@ func (m *searchModule) search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	products, err := m.catalog.products(ctx, ids, channels(r))
+	products, err := m.catalog.products(ctx, ids, scope)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
@@ -223,31 +262,21 @@ func intParam(r *http.Request, name string, fallback int) (int, error) {
 	return value, nil
 }
 
-// channels reads the sales channels the request is bound to FROM THE VERIFIED
-// IDENTITY.
+// channelScope narrows the search to the ONE channel the path names, refusing a
+// channel the request's identity does not hold.
 //
-// The query string is NOT consulted at all, and that is a security decision:
-// had "?sales_channel_id=" been accepted, a client holding any publishable key
-// could search another channel's catalog. The identity is placed by the core's
-// corehttp.RequireStore middleware.
+// The query string is still NOT consulted, and that is unchanged as a security
+// decision: had "?sales_channel_id=" been accepted, a client holding any
+// publishable key could search another channel's catalog. The PATH is a new
+// input and it is safe for a different reason — it can only ever pick among the
+// channels the key already carries, so it narrows and never broadens.
 //
-// The difference between nil and an empty slice MEANS something and is defined
-// by the catalog; the mapping here is EXACTLY the one in the product module's
-// storefront endpoint (api/store.go salesChannelIDs):
-//
-//   - No identity gives nil: store authentication is not wired in this
-//     installation and no filter is applied. Otherwise search would silently
-//     return nothing on an installation without auth.
-//   - With an identity nil is NEVER returned: an identity with no channel means
-//     an EMPTY SET, not "no filtering".
-func channels(r *http.Request) []string {
-	principal, ok := corehttp.PrincipalFromContext(r.Context())
-	if !ok {
-		return nil
-	}
-	if principal.SalesChannelIDs == nil {
-		return []string{}
-	}
-
-	return principal.SalesChannelIDs
+// The derivation and the intersect are [corehttp.SalesChannelScope]'s and not
+// this plugin's. That is the point of publishing them: a plugin cannot import
+// the product module's copy (Principle 2.1), so before this the mapping between
+// nil, the empty set and a real set was hand-copied here with a godoc promising
+// it matched — a promise nothing checked. Now there is one implementation and
+// nothing to keep in step.
+func channelScope(r *http.Request) ([]string, error) {
+	return corehttp.SalesChannelScope(r)
 }

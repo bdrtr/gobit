@@ -12,6 +12,41 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **Magaza aramasi da satis kanalini YOLUNDA tasiyor** (ADR 0044'un dorduncu
+  rotasi) — ve kural artik bir iddia degil, bir MEKANIZMA.
+
+  `GET /store/v1/search` tasindi:
+  `GET /store/v1/sales-channels/{sales_channel_id}/search`. Kirici degisiklik,
+  ve eklentinin yayimlanmis `SearchPath` sabiti degisti. Uc katalog okumasi
+  2026-09-08'de tasinmisti; dorduncusunun geride kalmasi bir karar degil, o
+  turun sinirlariydi.
+
+  Rotanin iki yaniti DEGISTI, ve degismesi isin kendisi: hicbir kanal tutmayan
+  bir anahtar artik 200 + bos sayfa yerine **403** aliyor (yolda bir kanal var,
+  daraltacak bir sey yok), ve magaza kimligi hic kurulmamis bir kurulum artik
+  tum katalog yerine URL'in adlandirdigi kanalda ariyor — daha DAR, hic daha
+  genis degil. Ikisi de katalog listelemesinin zaten verdigi yanit.
+
+  **Daraltma tek bir yere tasindi ve YAYIMLANDI:** `corehttp.SalesChannelIDs`
+  ve `corehttp.SalesChannelScope`. Bunun nedeni sudur: eklenti modulu ithal
+  edemez (Prensip 2.1), dolayisiyla "tek yardimci" ancak core'da mumkundu.
+  Yayimlanmis yuzeye eklemek sonsuza dek tutulan bir soz (ADR 0026) ve bedeli
+  ADR'de aciklikla yazildi; karsiliginda TURETIMIN UC EL KOPYASI dustu
+  (product/graph, cart workflow, searchpg — her biri "otekiyle ayni" diyen bir
+  godoc tasiyordu, ve bunu kontrol eden bir sey yoktu).
+
+  Hata kodu `product_sales_channel_not_authorized` -> `sales_channel_not_authorized`
+  oldu: tek bir islev uc yuzeyi reddediyor, modul oneki artik reddedeni degil
+  sorulani adlandiriyordu.
+
+  `internal/arch/channel_path_test.go` uc iddiayi tutuyor, ucu de mutasyonla
+  kanitlandi: kapsam (kanal adlandiran her rota yardimciya ulasir),
+  varsayilan-red (core disinda hic kimse segmenti okumaz) ve yazim. **Ucuncusu
+  ilk denemede DUSMEDI ve kusur denetimin kendisindeydi:** nufusu denetledigi
+  ozellikten turetiyordu, bu yuzden segmenti yeniden adlandirmak testi kirmadi,
+  rotayi nufustan CIKARDI. Nufus artik iki bagimsiz yonden geliyor.
+
+
 - **Magaza katalogu UC filtre kazandi** (ADR 0039 + 0040 + 0041) — secenek
   degeri, stok durumu ve fiyat araligi; hepsi tek bir yuzey.
 

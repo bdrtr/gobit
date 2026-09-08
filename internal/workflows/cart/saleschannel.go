@@ -103,17 +103,12 @@ import (
 // That the two surfaces separate the same three cases is nailed down by an arch
 // test; a divergence would be silent, because it would only become visible under a
 // particular shape of principal.
+// It DELEGATES to [corehttp.SalesChannelIDs], which is where the derivation now
+// lives once. The arch test named above no longer holds two hand-written copies
+// together; it holds the DELEGATION, because a copy reintroduced here would
+// compile and pass every behavioral table that was written before it drifted.
 func SalesChannelIDsFromContext(ctx context.Context) []string {
-	principal, ok := corehttp.PrincipalFromContext(ctx)
-	if !ok {
-		return nil
-	}
-
-	if principal.SalesChannelIDs == nil {
-		return []string{}
-	}
-
-	return principal.SalesChannelIDs
+	return corehttp.SalesChannelIDs(ctx)
 }
 
 // salesChannelFilter produces the channel filter to be added to the catalog query.

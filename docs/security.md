@@ -74,7 +74,7 @@ is one sentence:
 
 The path **narrows and never broadens**: the client picks *which* of its own
 channels to read, never *whether* it may read one. A path naming a channel the
-key does not hold is refused with **403** (`product_sales_channel_not_authorized`)
+key does not hold is refused with **403** (`sales_channel_not_authorized`)
 before the catalog is queried at all, and the refusal is the same whether that
 channel exists, belongs to another merchant or was never created — the key's own
 set is the only thing consulted, so the code discloses nothing. A key holding no
@@ -92,9 +92,11 @@ storefront's catalog. The single-item endpoint
 (`/store/v1/sales-channels/{sales_channel_id}/products/{id}`) and the option
 vocabulary (`/store/v1/sales-channels/{sales_channel_id}/option-values`) carry
 the same segment and the same rule, and a hidden product returns the **same**
-error code as a product that never existed. The plugin's
-`GET /store/v1/search` has **not** moved: it still takes its channel from the
-identity alone.
+error code as a product that never existed. The search plugin's
+`GET /store/v1/sales-channels/{sales_channel_id}/search` carries the segment too,
+and its narrowing is not a second implementation: all four routes reach one
+published helper, `corehttp.SalesChannelScope`, and `internal/arch` refuses any
+other way of reading the segment.
 
 The binding is made from the admin side:
 

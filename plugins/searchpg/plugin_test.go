@@ -185,7 +185,10 @@ func TestTheNamesAreAContract(t *testing.T) {
 	assert.Equal(t, "searchpg", searchpg.ModuleName)
 	assert.Equal(t, "searchpg:write", searchpg.ScopeWrite,
 		"the scope vocabulary has to have the same shape as the modules': <module>:write")
-	assert.Equal(t, "/store/v1/search", searchpg.SearchPath)
+	assert.Equal(t, "/store/v1/sales-channels/{sales_channel_id}/search", searchpg.SearchPath,
+		"the search endpoint carries its sales channel in the PATH (ADR 0044): the body "+
+			"varies by channel, so the channel has to be in the cache key every shared "+
+			"cache already sees")
 	assert.Equal(t, "/admin/v1/search/reindex", searchpg.ReindexPath)
 	assert.NotEqual(t, searchpg.Name, searchpg.ModuleName,
 		"the module name turns into the migration version table and cannot carry a hyphen")

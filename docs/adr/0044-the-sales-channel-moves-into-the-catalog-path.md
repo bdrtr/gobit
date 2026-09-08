@@ -225,9 +225,13 @@ does not avoid the cost, it picks the worse moment to pay it.
   routes move, one of them a plugin's published `SearchPath` constant, and every
   document and client that names the old paths follows. This record is the
   argument for paying that at v0.8.0 rather than the claim it is free.
-  **As built 2026-09-08, THREE of the four moved.** The search plugin's route is
+  ~~**As built 2026-09-08, THREE of the four moved.** The search plugin's route is
   still `GET /store/v1/search` and still takes its channel from the identity
-  alone; see the Built record below for why, and for what that leaves open.
+  alone; see the Built record below for why, and for what that leaves open.~~
+  **All four have moved as of 2026-09-08 (second round).** The plugin's
+  published `SearchPath` is now
+  `/store/v1/sales-channels/{sales_channel_id}/search`, and the breaking change
+  this bullet argues for is therefore paid in full rather than in part.
 - **The channel id becomes public.** It goes into every catalog URL, and
   therefore into browser history, referrers, shared links and access logs. Its
   first characters are a millisecond timestamp by construction, so the URL also
@@ -256,18 +260,54 @@ does not avoid the cost, it picks the worse moment to pay it.
   identity is only half of the read surface's input, and the intersect is outside
   what that test can see. The audit has to grow or it goes quietly stale, which
   is precisely the class this repository keeps being bitten by.
-  **As built 2026-09-08 the audit did NOT grow, and this consequence is
-  therefore live rather than discharged.** `TestChannelDerivationMeansTheSameOnBothSurfaces`
-  still compares `graph.SalesChannelIDsFromContext` with the cart workflow's
-  copy, and both still derive the same three states from an identity, so it is
-  not WRONG — it is now PARTIAL, because the read surface's second input, the
-  path segment and the intersect over it, is invisible to it. What holds the
-  intersect today is behavior: the handler unit tests in
-  `internal/modules/product/api/saleschannel_test.go` and the end-to-end tests in
-  `internal/e2e/channel_catalog_test.go`. What is missing is the structural
-  claim — that every channel-scoped storefront read resolves its scope through
-  one narrowing helper rather than reading the segment itself — and that claim
-  belongs in `internal/arch`, which this round did not own.
+  ~~**As built 2026-09-08 the audit did NOT grow, and this consequence is
+  therefore live rather than discharged.**~~ **Discharged 2026-09-08 (second
+  round), and by making the claim TRUE rather than by checking it.**
+
+  The reason the audit was hard to write is that "one narrowing helper" was not
+  achievable: the three catalog reads are a module's and the fourth is a
+  plugin's, and a plugin may not import a module (Principle 2.1). So the
+  narrowing would have been written twice and the audit would have had to hold
+  two copies together — the weaker guarantee this repository accepts only when
+  the stronger one is out of reach.
+
+  It was not out of reach. `Principal.SalesChannelIDs` is already published from
+  `core/http`, and every one of the callers already imports that package, so the
+  derivation and the intersect now live there once, as
+  `corehttp.SalesChannelIDs` and `corehttp.SalesChannelScope`. That collapsed
+  THREE hand-written copies of the derivation — product's GraphQL layer, the
+  cart workflow and the search plugin, each carrying a godoc promising it
+  matched the others — into one implementation with two thin delegations.
+
+  `internal/arch/channel_path_test.go` then holds three claims, each
+  mutation-proved rather than assumed:
+
+  - **Coverage.** Every registered storefront route whose path names a channel
+    reaches `corehttp.SalesChannelScope`. Mutated by making the search handler
+    read the segment itself: the gate named the route.
+  - **Default-deny.** Nothing outside `core/http` reads the `sales_channel_id`
+    path parameter at all, so a handler cannot grow its own narrowing — nor a
+    correct-looking one that forgets the intersect. Mutated the same way; the
+    gate named the file and the line.
+  - **Spelling.** Every such path carries the segment in the published
+    spelling. Mutated by renaming it to `{channel_id}`.
+
+  **The third mutation is the one worth recording, because it FAILED on the
+  first attempt and the failure was the audit's own.** The scan selected its
+  population by looking for the exact `{sales_channel_id}` segment — that is,
+  it derived the population from the very property it was auditing. Renaming
+  the segment therefore did not fail the spelling gate; it removed the route
+  from the gate's population and left the suite green on three routes out of
+  four. A population derived from the property under audit cannot report a
+  violation of it, it can only shrink. The population now comes from two
+  independent directions a rename cannot satisfy at once — the
+  `/sales-channels/` collection segment, and any placeholder that calls itself
+  a channel.
+
+  `TestChannelDerivationMeansTheSameOnBothSurfaces` is kept and is now a
+  characterization of the published function's three states rather than a link
+  between two copies; the copies are gone, and what would break it is a
+  delegation being undone.
 - **The storefront's URLs stop being uniform.** Products, the single product,
   option values and search gain the segment; collections, categories and tags do
   not, because they are not channel-scoped today. A reader will ask why, and the
@@ -301,6 +341,11 @@ It resolves the segment, reads the key's set through the unchanged
 `graph.SalesChannelIDsFromContext`, and returns a ONE-element scope. The
 identity side of the rule was not reimplemented: it stays in the single place
 both read surfaces reach, because GraphQL still has only a context.
+**Amended in the second round of 2026-09-08:** `storeChannelScope` is now one
+call to `corehttp.SalesChannelScope`, and `graph.SalesChannelIDsFromContext` one
+call to `corehttp.SalesChannelIDs`. The narrowing is one function for the whole
+tree rather than one function for this module, which is what let the search
+plugin have it too.
 
 **The refusal is 403 and it is argued rather than assumed.** A hidden product is
 404 so the key's owner cannot enumerate another storefront's handles one at a
@@ -427,7 +472,7 @@ assertion says the scope is the PATH's single channel and explicitly not the
 key's set — a name describing the very mutation the test is cited above as
 catching. It is now `TestStoreOptionVocabularyIsScopedToThePathsChannel`.
 
-**What did NOT move, and why it is a gap rather than a decision.** The search
+~~**What did NOT move, and why it is a gap rather than a decision.** The search
 plugin's `GET /store/v1/search` still lives at its old address and still derives
 its channel from the identity alone, so the fourth route named in the Decision
 above is outstanding and the plugin's published `SearchPath` constant is
@@ -437,7 +482,48 @@ whose catalog is channel-addressed while its search is not is exactly the
 non-uniformity this record already warns a reader about, with none of the
 justification the taxonomy endpoints have. `internal/arch` was likewise not in
 this round, so the audit this record asks for is still owed — see the amended
-consequence above.
+consequence above.~~
+
+## Built — the fourth route and the audit, 2026-09-08 (second round)
+
+Both of the things the paragraph above left owed are done, and the second one
+changed the shape of the first.
+
+**The route moved.** `searchpg.SearchPath` is
+`/store/v1/sales-channels/{sales_channel_id}/search`. The plugin's `channels`
+helper — which derived the channel set from the identity and carried a godoc
+promising the mapping was "EXACTLY the one in the product module's storefront
+endpoint" — is now `channelScope`, and its body is one call to
+`corehttp.SalesChannelScope`.
+
+**Two of the route's answers changed, and they are the point rather than a side
+effect.** Both mirror what the catalog listing already did, so the two surfaces
+now agree where before they only looked alike:
+
+- A key holding NO channel used to get a 200 and an empty page; it now gets a
+  403, because there is a channel in the URL and the key holds nothing to narrow
+  to. The distinction being defended is unchanged and is the whole of the rule:
+  an identity with no channel is an EMPTY SET and not "no filtering".
+- A deployment with NO storefront identity used to search the whole catalog
+  unfiltered; it now searches the channel the URL names. That is narrower and
+  never wider, which is why the case is allowed to pass at all.
+
+**What the segment costs a caller.** The published constant is a chi PATTERN and
+not a URL, so every test and every client builds an address by substituting a
+channel id. The tests spell that substitution out by hand rather than reusing
+the constant they are checking — a test that built its URL from the same
+constant the router was registered with would pass through any typo in it.
+
+**One thing was written wrong and caught by this repository's own rule.** The
+first version of `SearchPath` was a CONCATENATION,
+`"/store/v1/sales-channels/{" + corehttp.SalesChannelIDParam + "}/search"`,
+which keeps the spelling in step by construction and looked like the better
+choice. It is not: the route audits resolve a path from a string literal or from
+a constant whose value IS one, and a concatenation reads back as unknown — the
+route would have silently dropped out of their population, which is the more
+expensive of the two failures and the one `internal/modules/product/api/store.go`
+had already written a warning about. The path is a whole literal and an
+assertion keeps the segment honest instead.
 
 ## What this deliberately does NOT do
 

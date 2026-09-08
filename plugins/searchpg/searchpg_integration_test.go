@@ -455,7 +455,7 @@ func TestTheSearchEndpointRunsAgainstARealIndex(t *testing.T) {
 	)
 
 	m := testModule(i, k)
-	rec := request(m, http.MethodGet, SearchPath+"?q=shirt", storePrincipal())
+	rec := request(m, http.MethodGet, searchURL(testChannel, "?q=shirt"), storePrincipal(testChannel))
 
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), `"id":"prod_1"`)

@@ -320,6 +320,21 @@ func storePrincipal(channels ...string) *corehttp.Principal {
 	return &corehttp.Principal{ID: "pk_test", Kind: "api_key", SalesChannelIDs: channels}
 }
 
+// testChannel is the sales channel the search tests address.
+const testChannel = "sc_web"
+
+// searchURL is the search endpoint's address for one channel.
+//
+// [SearchPath] is a chi PATTERN and not a URL: since ADR 0044 the channel is a
+// path SEGMENT, so an address is built by substituting one in. The substitution
+// is spelled out here rather than derived from the constant, which is what keeps
+// the constant honest about what it is serving — a test that built its URL out
+// of the same constant the router was registered with would pass through any
+// typo in it.
+func searchURL(channel, params string) string {
+	return "/store/v1/sales-channels/" + channel + "/search" + params
+}
+
 // event produces an event with the given name and product id.
 func event(ad, productID string) eventbus.Event {
 	return eventbus.Event{Name: ad, Data: map[string]any{eventFieldProductID: productID}}
@@ -525,7 +540,8 @@ func TestSearchTakesIDsFromTheIndexAndRecordsFromTheCatalog(t *testing.T) {
 	d.searchResult = []string{"prod_2", "prod_1"}
 	m := testModule(d, k)
 
-	rec := request(m, http.MethodGet, SearchPath+"?q=shirt&limit=5&offset=10", storePrincipal())
+	rec := request(m, http.MethodGet, searchURL(testChannel, "?q=shirt&limit=5&offset=10"),
+		storePrincipal(testChannel))
 
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	assert.Equal(t, "shirt", d.lastQuery)
@@ -566,11 +582,11 @@ func TestSearchReadsTheChannelsFromTheIdentity(t *testing.T) {
 	m := testModule(d, k)
 
 	rec := request(m, http.MethodGet,
-		SearchPath+"?q=shirt&sales_channel_ids=sc_pos", storePrincipal("sc_web"))
+		searchURL("sc_web", "?q=shirt&sales_channel_ids=sc_pos"), storePrincipal("sc_web", "sc_pos"))
 
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	assert.Equal(t, []string{"sc_web"}, k.lastRequest.SalesChannelIDs,
-		"the channels may be read only from the verified identity")
+		"the scope is the PATH's single channel, and never the key's whole set")
 
 	var response struct {
 		Data []map[string]any `json:"data"`
@@ -591,18 +607,28 @@ func TestARequestWithNoIdentityGetsNoChannelFilter(t *testing.T) {
 	d.searchResult = []string{"prod_1"}
 	m := testModule(d, k)
 
-	rec := request(m, http.MethodGet, SearchPath+"?q=shirt", nil)
+	rec := request(m, http.MethodGet, searchURL("sc_web", "?q=shirt"), nil)
 
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
-	assert.Nil(t, k.lastRequest.SalesChannelIDs, "with no identity no filter may be applied (nil)")
+	assert.Equal(t, []string{"sc_web"}, k.lastRequest.SalesChannelIDs,
+		"with no identity the path stands alone, which NARROWS to the channel the URL names")
 }
 
-// TestAnIdentityWithNoChannelIsAnEmptySet verifies that an identity with no
-// channel is NOT CONFUSED with "no filtering".
+// TestEveryChannelIsRefusedToAChannellessIdentity verifies that an identity
+// holding no channel is refused whatever channel it names.
 //
-// Had the two been treated as one, a key with no channel would be handed every
-// channel's catalog.
-func TestAnIdentityWithNoChannelIsAnEmptySet(t *testing.T) {
+// This is where the channel moving into the path CHANGED the answer, and the
+// change is the point rather than a side effect. The route used to hand such a
+// key the empty set and a 200 with no results; now there is a channel in the
+// URL and the key holds nothing to narrow to, so the request is refused
+// outright — the same answer the catalog's own listing gives (see product's
+// TestStoreListRefusesEveryChannelForAChannellessIdentity).
+//
+// The distinction being defended is unchanged and is the whole of the rule: an
+// identity with no channel is an EMPTY SET and not "no filtering". Had the two
+// been treated as one, a key with no channel would be handed every channel's
+// catalog.
+func TestEveryChannelIsRefusedToAChannellessIdentity(t *testing.T) {
 	t.Parallel()
 
 	d, k := newFakeStore(), newFakeCatalog()
@@ -610,11 +636,36 @@ func TestAnIdentityWithNoChannelIsAnEmptySet(t *testing.T) {
 	d.searchResult = []string{"prod_1"}
 	m := testModule(d, k)
 
-	rec := request(m, http.MethodGet, SearchPath+"?q=shirt", storePrincipal())
+	rec := request(m, http.MethodGet, searchURL(testChannel, "?q=shirt"), storePrincipal())
 
-	require.Equal(t, http.StatusOK, rec.Code)
-	assert.NotNil(t, k.lastRequest.SalesChannelIDs, "an identity with no channel has to send an EMPTY set, not nil")
-	assert.Empty(t, k.lastRequest.SalesChannelIDs)
+	require.Equal(t, http.StatusForbidden, rec.Code, "body: %s", rec.Body.String())
+	assert.Zero(t, d.searchCalls, "a refused request must never reach the index")
+	assert.Zero(t, k.calls, "a refused request must never reach the catalog")
+}
+
+// TestAChannelTheKeyDoesNotHoldIsRefused verifies that the path can only NARROW.
+//
+// The segment is a value the client types. Honored on its own it would let any
+// holder of a publishable key read any channel's catalog by editing a URL,
+// which is the query-string mistake with a different spelling; intersected with
+// the key's set it can only pick among channels the caller already had.
+//
+// The refusal does not depend on the named channel EXISTING: this handler never
+// consults the channel table, so a channel that belongs to another merchant and
+// one that was never created are answered identically. That is what keeps a 403
+// from being an existence oracle.
+func TestAChannelTheKeyDoesNotHoldIsRefused(t *testing.T) {
+	t.Parallel()
+
+	d, k := newFakeStore(), newFakeCatalog()
+	k.addProduct("prod_pos", "Shirt", "")
+	d.searchResult = []string{"prod_pos"}
+	m := testModule(d, k)
+
+	rec := request(m, http.MethodGet, searchURL("sc_pos", "?q=shirt"), storePrincipal("sc_web"))
+
+	require.Equal(t, http.StatusForbidden, rec.Code, "body: %s", rec.Body.String())
+	assert.Zero(t, d.searchCalls, "a refused request must never reach the index")
 }
 
 // TestAnEmptyResultNeverCallsTheCatalog verifies that no needless round is taken
@@ -625,7 +676,8 @@ func TestAnEmptyResultNeverCallsTheCatalog(t *testing.T) {
 	d, k := newFakeStore(), newFakeCatalog()
 	m := testModule(d, k)
 
-	rec := request(m, http.MethodGet, SearchPath+"?q=hicbirsey", storePrincipal())
+	rec := request(m, http.MethodGet, searchURL(testChannel, "?q=nothingatall"),
+		storePrincipal(testChannel))
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Zero(t, k.calls, "the catalog must not be called for an empty id list")
@@ -639,21 +691,22 @@ func TestInvalidSearchParametersAreRefused(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{
-		"no query":                SearchPath,
-		"an empty query":          SearchPath + "?q=",
-		"a whitespace query":      SearchPath + "?q=%20%20",
-		"a zero limit":            SearchPath + "?q=a&limit=0",
-		"a limit above the bound": SearchPath + "?q=a&limit=" + strconv.Itoa(maxLimit+1),
-		"a non-numeric limit":     SearchPath + "?q=a&limit=abc",
-		"offset negatif":          SearchPath + "?q=a&offset=-1",
+		"no query":                searchURL(testChannel, ""),
+		"an empty query":          searchURL(testChannel, "?q="),
+		"a whitespace query":      searchURL(testChannel, "?q=%20%20"),
+		"a zero limit":            searchURL(testChannel, "?q=a&limit=0"),
+		"a limit above the bound": searchURL(testChannel, "?q=a&limit="+strconv.Itoa(maxLimit+1)),
+		"a non-numeric limit":     searchURL(testChannel, "?q=a&limit=abc"),
+		"a negative offset":       searchURL(testChannel, "?q=a&offset=-1"),
 	}
 
-	for ad, hedef := range tests {
-		t.Run(ad, func(t *testing.T) {
+	for name, target := range tests {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			d := newFakeStore()
-			rec := request(testModule(d, newFakeCatalog()), http.MethodGet, hedef, storePrincipal())
+			rec := request(testModule(d, newFakeCatalog()), http.MethodGet, target,
+				storePrincipal(testChannel))
 
 			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body: %s", rec.Body.String())
 			assert.Zero(t, d.searchCalls, "an invalid request must never reach the index")
@@ -666,14 +719,14 @@ func TestInvalidSearchParametersAreRefused(t *testing.T) {
 func TestAnOverlongQueryIsRefused(t *testing.T) {
 	t.Parallel()
 
-	uzun := make([]byte, maxQueryBytes+1)
-	for i := range uzun {
-		uzun[i] = 'a'
+	overlong := make([]byte, maxQueryBytes+1)
+	for i := range overlong {
+		overlong[i] = 'a'
 	}
 
 	d := newFakeStore()
 	rec := request(testModule(d, newFakeCatalog()), http.MethodGet,
-		SearchPath+"?q="+string(uzun), storePrincipal())
+		searchURL(testChannel, "?q="+string(overlong)), storePrincipal(testChannel))
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	assert.Zero(t, d.searchCalls)

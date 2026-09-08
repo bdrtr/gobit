@@ -24,7 +24,8 @@
 //     routes. The module goes through the SAME lifecycle as the core modules.
 //  2. [coreplugin.Host.Subscribe] — it listens to "product.created",
 //     "product.updated" and "product.deleted" to keep the index fresh.
-//  3. The module's Routes — it opens GET /store/v1/search and
+//  3. The module's Routes — it opens
+//     GET /store/v1/sales-channels/{sales_channel_id}/search and
 //     POST /admin/v1/search/reindex.
 //
 // # It imports NO module

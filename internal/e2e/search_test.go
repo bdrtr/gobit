@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/core/eventbus"
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/module"
 	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	productmodels "github.com/bdrtr/gobit/internal/modules/product/models"
@@ -28,9 +30,9 @@ import (
 // This file proves end to end that the search PLUGIN works in the real system:
 //
 //	when a product is written the catalog publishes an event, the plugin picks
-//	the event up and indexes it into its OWN table, and GET /store/v1/search
-//	returns the product — and only to a key that carries the product's sales
-//	channel.
+//	the event up and indexes it into its OWN table, and
+//	GET /store/v1/sales-channels/{sales_channel_id}/search returns the product —
+//	and only to a key that carries the channel the URL names.
 //
 // All four links of the chain are real: the real product module, the real event
 // bus, the plugin's real PostgreSQL index and the real HTTP endpoint that passes
@@ -194,16 +196,42 @@ func newSearchProduct(ctx context.Context, t *testing.T, word string) (productID
 // weight; the fixed prefix lets the fixture be recognized in an error message.
 func searchTitle(word string) string { return "E2E Search " + word }
 
-// callSearch calls the search endpoint with the given publishable key.
+// storefront pairs a publishable key with the sales channel it is bound to.
 //
-// The address is built from the plugin's exported constant
-// ([searchpg.SearchPath]) rather than written out by hand: the endpoint address
-// is the contract the plugin PUBLISHES, and the test departing from it would
-// mean the test keeps verifying the old address once the address changes.
-func callSearch(t *testing.T, key string, query url.Values) *httptest.ResponseRecorder {
+// Since ADR 0044 a storefront read names its channel in the PATH and the key has
+// to hold that channel, so the two travel together: a key alone cannot build an
+// address and a channel alone cannot be read. Pairing them in one value is what
+// keeps a scenario from asking one storefront's question with another
+// storefront's key — a mismatch the server answers with 403, which reads like a
+// broken test rather than the mistake it is.
+type storefront struct {
+	// key is the publishable key the request carries.
+	key string
+	// channel is the sales channel the key is bound to, and the one its URLs
+	// name.
+	channel string
+}
+
+// firstStorefront is the shared key and its channel.
+func firstStorefront() storefront { return storefront{key: publishableKey, channel: testChannelID} }
+
+// callSearch calls the search endpoint for one sales channel with the given
+// publishable key.
+//
+// The address is built by SUBSTITUTING the channel into the plugin's exported
+// pattern ([searchpg.SearchPath]) rather than written out by hand: the endpoint
+// address is the contract the plugin PUBLISHES, and the test departing from it
+// would mean the test keeps verifying the old address once the address changes.
+//
+// The substitution is spelled out because the constant is a chi PATTERN and not
+// a URL — since ADR 0044 the sales channel is a path segment, and the channel a
+// caller names has to be one its key holds or the request is refused with 403.
+func callSearch(t *testing.T, key, channel string, query url.Values) *httptest.ResponseRecorder {
 	t.Helper()
 
-	return magazaIstegi(t, searchpg.SearchPath+"?"+query.Encode(), key)
+	path := strings.Replace(searchpg.SearchPath, "{"+corehttp.SalesChannelIDParam+"}", channel, 1)
+
+	return magazaIstegi(t, path+"?"+query.Encode(), key)
 }
 
 // searchEnvelope decodes the search response and verifies that the endpoint
@@ -213,10 +241,10 @@ func callSearch(t *testing.T, key string, query url.Values) *httptest.ResponseRe
 // store product list. This is not a convenience but a deliberate reading: the
 // plugin takes the records to be shown from the catalog's storefront surface and
 // does not reshape them, so the two endpoints' bodies have the same shape.
-func searchEnvelope(t *testing.T, key string, query url.Values) storefrontEnvelope {
+func searchEnvelope(t *testing.T, shop storefront, query url.Values) storefrontEnvelope {
 	t.Helper()
 
-	recorder := callSearch(t, key, query)
+	recorder := callSearch(t, shop.key, shop.channel, query)
 	require.Equal(t, http.StatusOK, recorder.Code,
 		"the search endpoint must return 200; body: %s", recorder.Body.String())
 
@@ -228,10 +256,10 @@ func searchEnvelope(t *testing.T, key string, query url.Values) storefrontEnvelo
 }
 
 // searchResults searches for a single word.
-func searchResults(t *testing.T, key, word string) storefrontEnvelope {
+func searchResults(t *testing.T, shop storefront, word string) storefrontEnvelope {
 	t.Helper()
 
-	return searchEnvelope(t, key, url.Values{"q": {word}})
+	return searchEnvelope(t, shop, url.Values{"q": {word}})
 }
 
 // pollUntil polls SYNCHRONOUSLY until the condition holds.
@@ -268,14 +296,14 @@ func pollUntil(condition func() bool) bool {
 // wait. This distinction matters: we cannot prove by waiting that something is
 // NOT there, so every scenario that asserts an empty set must first have waited
 // for a non-empty one.
-func waitForSearch(t *testing.T, key, word string, expected ...string) {
+func waitForSearch(t *testing.T, shop storefront, word string, expected ...string) {
 	t.Helper()
 
 	var last []string
 	// slices.Equal is ORDER sensitive; since the scenarios assert sets with a
 	// single ID this is enough, and it preserves the relevance order too.
 	pollUntil(func() bool {
-		last = searchResults(t, key, word).kimlikler()
+		last = searchResults(t, shop, word).kimlikler()
 
 		return slices.Equal(last, expected)
 	})
@@ -366,9 +394,9 @@ func TestAProductEventReachesTheIndexAndSearchFindsIt(t *testing.T) {
 
 	productID, handle := newSearchProduct(ctx, t, word)
 
-	waitForSearch(t, publishableKey, word, productID)
+	waitForSearch(t, firstStorefront(), word, productID)
 
-	envelope := searchResults(t, publishableKey, word)
+	envelope := searchResults(t, firstStorefront(), word)
 	require.Len(t, envelope.Data, 1, "search must return a single record; body: %+v", envelope)
 	assert.Equal(t, handle, envelope.Data[0].Handle,
 		"the record must come FROM THE CATALOG: nothing but the ID is kept in the index, "+
@@ -394,14 +422,14 @@ func TestUpdatingAProductRefreshesTheIndex(t *testing.T) {
 	oldWord, newWord := searchWord(), searchWord()
 
 	productID, _ := newSearchProduct(ctx, t, oldWord)
-	waitForSearch(t, publishableKey, oldWord, productID)
+	waitForSearch(t, firstStorefront(), oldWord, productID)
 
 	newTitle := searchTitle(newWord)
 	_, err := productSvc.UpdateProduct(ctx, productID, productsvc.UpdateProductInput{Title: &newTitle})
 	require.NoError(t, err, "could not update the product title")
 
-	waitForSearch(t, publishableKey, newWord, productID)
-	waitForSearch(t, publishableKey, oldWord)
+	waitForSearch(t, firstStorefront(), newWord, productID)
+	waitForSearch(t, firstStorefront(), oldWord)
 }
 
 // TestDeletingAProductDropsItFromTheIndex verifies that the delete event really
@@ -417,7 +445,7 @@ func TestDeletingAProductDropsItFromTheIndex(t *testing.T) {
 	word := searchWord()
 
 	productID, _ := newSearchProduct(ctx, t, word)
-	waitForSearch(t, publishableKey, word, productID)
+	waitForSearch(t, firstStorefront(), word, productID)
 	require.True(t, indexRowExists(ctx, t, productID),
 		"precondition: since the product is found in search it must have a row in the index")
 
@@ -426,7 +454,7 @@ func TestDeletingAProductDropsItFromTheIndex(t *testing.T) {
 	assert.True(t, pollUntil(func() bool { return !indexRowExists(ctx, t, productID) }),
 		"the deleted product's index row MUST BE DROPPED; if it stays, the index diverges from "+
 			"the catalog and the divergence is only noticed once the row becomes visible again some day")
-	waitForSearch(t, publishableKey, word)
+	waitForSearch(t, firstStorefront(), word)
 }
 
 // TestSearchDoesNotBypassChannelFiltering verifies that search is not a BYPASS
@@ -457,29 +485,41 @@ func TestSearchDoesNotBypassChannelFiltering(t *testing.T) {
 	// the proof that the index has been filled. The observation "it is not in
 	// the first storefront", made without waiting for this, could just as well
 	// be explained by the index not having been written yet.
-	waitForSearch(t, ground.ikinciAnahtar, word, productID)
+	waitForSearch(t, storefront{key: ground.ikinciAnahtar, channel: ground.secondChannelID},
+		word, productID)
 
 	assert.True(t, indexRowExists(ctx, t, productID),
 		"the product MUST BE in the index; that the filter is applied in the catalog can only be seen while the row is standing")
 
-	first := searchResults(t, publishableKey, word)
+	first := searchResults(t, firstStorefront(), word)
 	assert.Empty(t, first.kimlikler(),
 		"a product assigned to another channel must not show up in this storefront's SEARCH; if it does, "+
 			"search has become a bypass of the channel filtering")
 	assert.Zero(t, first.Count, "the counter must reflect the filtered set too")
 
-	// The channel cannot be chosen FROM THE QUERY STRING: if it could, a client
-	// arriving with any publishable key it happens to hold would be searching in
-	// another storefront's catalog. The same guard is exercised on the storefront
-	// list too (see [TestTheStorefrontDoesNotTakeTheChannelFromTheQueryString]);
-	// it cannot be assumed that search inherits it, because the code that reads
-	// the channels from the request's identity is SEPARATE.
-	bypass := searchEnvelope(t, publishableKey, url.Values{
+	// The channel cannot be chosen FROM THE QUERY STRING. It is dead on every
+	// surface, and it stays exercised here even though the channel now arrives
+	// in the path: a parameter that is ignored is only ignored while somebody
+	// checks, and the cost of it quietly coming alive is a client reading
+	// another storefront's catalog with any key it happens to hold.
+	bypass := searchEnvelope(t, firstStorefront(), url.Values{
 		"q":                {word},
 		"sales_channel_id": {ground.secondChannelID},
 	})
 	assert.Empty(t, bypass.kimlikler(),
 		"the channel ID in the query string MUST BE IGNORED")
+
+	// And the PATH cannot be used to widen either. This is the bypass the
+	// segment made possible and the intersect is what closes it: the first
+	// storefront's key, naming the second storefront's channel, is refused
+	// before the index is touched. Asserting the empty body would not be
+	// enough — an empty page is also what a working filter returns, so the
+	// observation that separates "refused" from "found nothing" is the STATUS.
+	crossChannel := callSearch(t, publishableKey, ground.secondChannelID,
+		url.Values{"q": {word}})
+	assert.Equal(t, http.StatusForbidden, crossChannel.Code,
+		"a key naming a channel it does not hold must be REFUSED, not served an "+
+			"empty page; body: %s", crossChannel.Body.String())
 }
 
 // TestTheSearchEndpointIsRejectedWithoutAPublishableKey verifies that the new
@@ -499,11 +539,11 @@ func TestSearchDoesNotBypassChannelFiltering(t *testing.T) {
 func TestTheSearchEndpointIsRejectedWithoutAPublishableKey(t *testing.T) {
 	query := url.Values{"q": {searchWord()}}
 
-	withoutKey := callSearch(t, "", query)
+	withoutKey := callSearch(t, "", testChannelID, query)
 	require.Equal(t, http.StatusUnauthorized, withoutKey.Code,
 		"search without a publishable key must be rejected; body: %s", withoutKey.Body.String())
 
-	valid := callSearch(t, publishableKey, query)
+	valid := callSearch(t, publishableKey, testChannelID, query)
 	assert.Equal(t, http.StatusOK, valid.Code,
 		"the same address must work with a valid key; if it does not, the 401 comes not from the "+
 			"endpoint's PRESENCE but from its ABSENCE; body: %s", valid.Body.String())

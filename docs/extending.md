@@ -49,7 +49,7 @@ The plugins show three different ways of extending:
 | Plugin | What it does | Which extension points |
 |---|---|---|
 | `payment-stripe` | **skeleton** — registration and lifecycle work in full, no Stripe API calls have been made, and every money-moving method returns an explicit "not implemented" error | a MODULE's provider registration |
-| `search-pg` | **real feature** — listens to the product events, keeps a PostgreSQL full-text index fresh, opens the `GET /store/v1/search` and `POST /admin/v1/search/reindex` endpoints | a module and a migration of its own, an event subscription, routes of its own |
+| `search-pg` | **real feature** — listens to the product events, keeps a PostgreSQL full-text index fresh, opens the `GET /store/v1/sales-channels/{sales_channel_id}/search` and `POST /admin/v1/search/reindex` endpoints | a module and a migration of its own, an event subscription, routes of its own |
 | `error-sentry` | **real feature** — reports server faults to Sentry (or to a Sentry-compatible collector) | a slot the CORE owns; it needs no module at all |
 | `error-otlp` | **real feature** — reports the same faults to an OpenTelemetry collector as a LOG RECORD | the same slot, a SECOND implementation |
 
@@ -116,7 +116,12 @@ PLUGINS=search-pg make run
 curl -s -X POST localhost:9000/admin/v1/search/reindex -H "Authorization: Bearer $TOKEN"
 # {"data":{"indexed":1,"removed":0,"pages":1}}
 
-curl -s 'localhost:9000/store/v1/search?q=t-shirt' -H "x-publishable-api-key: $PK"
+# The sales channel is a PATH SEGMENT (ADR 0044): search is scoped to the ONE
+# channel the URL names, and that channel has to be one the publishable key is
+# bound to -- a key naming a channel it does not hold gets a 403, not an empty
+# page. $SC is the channel id; the key's channels come back from
+# GET /admin/v1/api-keys.
+curl -s "localhost:9000/store/v1/sales-channels/$SC/search?q=t-shirt" -H "x-publishable-api-key: $PK"
 ```
 
 The index is refreshed **by events** (`product.created` / `product.updated` /

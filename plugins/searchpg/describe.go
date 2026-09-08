@@ -3,6 +3,7 @@ package searchpg
 import (
 	"net/http"
 
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/openapi"
 )
 
@@ -78,6 +79,22 @@ func (m *searchModule) Describe(d *openapi.Doc) {
 			"\"pens\". The dictionary is 'simple' because this framework does not know its " +
 			"installation's language, and stemming in the wrong one is worse than none.",
 		Parameters: []openapi.Parameter{
+			{
+				Name:     corehttp.SalesChannelIDParam,
+				In:       "path",
+				Required: true,
+				Schema:   map[string]any{schemaType: typeString},
+				Description: "The sales channel this search is scoped to (sc_...). " +
+					"It NARROWS and never broadens: the channel named here must be one " +
+					"the request's publishable key is bound to, and a channel the key " +
+					"does not hold is refused with a 403 rather than served. A key bound " +
+					"to several channels searches them ONE AT A TIME, one request each; " +
+					"there is no union response. " +
+					"The rule and the refusal are the catalog's, not this plugin's — the " +
+					"same narrowing serves " +
+					"GET /store/v1/sales-channels/{sales_channel_id}/products, so the " +
+					"parameter means exactly what it means there.",
+			},
 			{
 				Name: paramQuery, In: inQuery, Required: true,
 				Schema: map[string]any{schemaType: typeString, "maxLength": maxQueryBytes},

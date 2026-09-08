@@ -45,8 +45,8 @@ const codeUnknownPlugin = "plugin_unknown"
 // payment, notification and file modules' extension points); searchpg and
 // webpush bring THEIR OWN MODULE —
 // with its own table, its own migration and its own routes — and opens a new
-// endpoint (GET /store/v1/search) without being named anywhere except the line
-// below; errorsentry and errorotlp fill a slot the CORE owns, so they need no
+// endpoint (GET /store/v1/sales-channels/{sales_channel_id}/search) without
+// being named anywhere except the line below; errorsentry and errorotlp fill a slot the CORE owns, so they need no
 // module to exist at all.
 //
 // webpush and paymentpaytr are the second and third of that middle kind, and

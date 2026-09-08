@@ -2,22 +2,23 @@ package api
 
 import (
 	"net/http"
-	"slices"
 	"strings"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
-	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
 // paramSalesChannelID is the name of the sales channel path parameter.
 //
-// It is spelled exactly as the admin surface already spells the concept in
-// DELETE /admin/v1/products/{id}/sales-channels/{sales_channel_id}, so one
-// concept keeps one spelling on both surfaces and a reader who has seen it once
-// does not have to learn a second name for it (ADR 0044).
-const paramSalesChannelID = "sales_channel_id"
+// It is an alias of [corehttp.SalesChannelIDParam] rather than a second
+// spelling: the value has to match what [corehttp.SalesChannelScope] reads off
+// the router, and a literal here could drift from it silently — the handler
+// would go on compiling and the segment would come back empty. The name is kept
+// because the OpenAPI description below reads better naming a local constant,
+// and because a reader of this file should not have to leave it to learn what
+// the segment is called.
+const paramSalesChannelID = corehttp.SalesChannelIDParam
 
 // The three channel-scoped storefront catalog paths.
 //
@@ -67,10 +68,6 @@ const (
 	// pathStoreOptionValues is the storefront option vocabulary.
 	pathStoreOptionValues = "/store/v1/sales-channels/{sales_channel_id}/option-values"
 )
-
-// codeChannelNotAuthorized reports that the key does not hold the sales channel
-// the path names.
-const codeChannelNotAuthorized = "product_sales_channel_not_authorized"
 
 // codeCountUnavailable reports that the total counter was asked for beside a
 // filter whose matches cannot be counted without walking the whole catalog.
@@ -330,23 +327,13 @@ func (h *Handler) storeGetProduct(w http.ResponseWriter, r *http.Request) {
 // reach — the GraphQL resolvers have no *http.Request in hand, only a context,
 // and a second copy of the derivation is how one surface gets fixed and the
 // other forgotten.
+// It DELEGATES to [corehttp.SalesChannelScope], which is the one place in the
+// tree that reads the segment off the router. The paragraphs above are kept
+// because they are the CATALOG's account of the decision; the mechanism they
+// describe is now shared with the search plugin, which could not have imported
+// this package to get it.
 func storeChannelScope(r *http.Request) ([]string, error) {
-	channelID, err := pathParam(r, paramSalesChannelID)
-	if err != nil {
-		return nil, err
-	}
-
-	// nil is "no identity in this deployment"; an EMPTY BUT NON-nil slice is an
-	// identity that holds no channel, and that one holds nothing to narrow to.
-	// Collapsing the two would let a channelless key read whatever channel it
-	// names.
-	held := graph.SalesChannelIDsFromContext(r.Context())
-	if held != nil && !slices.Contains(held, channelID) {
-		return nil, coreerrors.Forbidden(codeChannelNotAuthorized,
-			"this key is not bound to the %q sales channel", channelID)
-	}
-
-	return []string{channelID}, nil
+	return corehttp.SalesChannelScope(r)
 }
 
 // The storefront's vocabulary endpoints.
