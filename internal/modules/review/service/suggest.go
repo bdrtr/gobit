@@ -134,3 +134,38 @@ func (s *Service) AwaitingSuggestion(ctx context.Context, limit int64) ([]models
 
 	return s.repo.AwaitingSuggestion(ctx, limit)
 }
+
+// checkSuggestionFilter refuses a listing narrowed by something no proposal can
+// say.
+//
+// It is the same rule the status filter follows and for the same reason: an
+// empty page for a value that could never match reads as "the model has flagged
+// nothing", and an operator acting on that would leave the flagged reviews
+// sitting where they are.
+func checkSuggestionFilter(filter models.Filter) error {
+	if filter.Suggested != nil && filter.Unsuggested {
+		// Contradictory rather than merely empty. A review either carries a
+		// proposal or does not; asking for both would always answer zero, and
+		// zero is the answer this module refuses to give by accident.
+		return errors.Invalid(CodeInvalidInput,
+			"a listing cannot ask for reviews proposed %q AND for reviews with no "+
+				"proposal at once; the two describe disjoint sets", *filter.Suggested)
+	}
+	if filter.Suggested == nil {
+		return nil
+	}
+
+	proposed := models.Status(*filter.Suggested)
+	if proposed != models.StatusApproved && proposed != models.StatusRejected {
+		// StatusSubmitted lands here with the unknown values, and that is not
+		// an oversight: the column's CHECK admits two words, so a listing
+		// narrowed to "submitted" could never return a row. Answering it with
+		// an empty page would say the model has proposed nothing when what
+		// happened is that nothing could ever have been proposed.
+		return errors.Invalid(CodeInvalidInput,
+			"a proposal is %q or %q, so a listing cannot be narrowed to %q",
+			models.StatusApproved, models.StatusRejected, proposed)
+	}
+
+	return nil
+}

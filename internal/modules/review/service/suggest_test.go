@@ -185,3 +185,86 @@ func TestALaterProposalReplacesTheEarlierOne(t *testing.T) {
 	assert.Equal(t, "a-model-4", got.Suggestion.Model)
 	assert.NotEqual(t, first.Note, got.Suggestion.Note)
 }
+
+// TestTheQueueCanBeNarrowedToWhatTheModelSaid is the operator's own question,
+// and it is why the proposal is stored rather than shown one review at a time.
+func TestTheQueueCanBeNarrowedToWhatTheModelSaid(t *testing.T) {
+	t.Parallel()
+
+	svc, repo := newService()
+	for _, id := range []string{"rev_1", "rev_2", "rev_3"} {
+		seedReview(repo, id, "prod_1", models.StatusSubmitted)
+	}
+
+	_, err := svc.Suggest(context.Background(), "rev_1", validSuggestion())
+	require.NoError(t, err)
+
+	approving := validSuggestion()
+	approving.Status = models.StatusApproved
+	approving.Note = "it describes the product and names nobody"
+	_, err = svc.Suggest(context.Background(), "rev_2", approving)
+	require.NoError(t, err)
+
+	rejected := models.StatusRejected.String()
+	page, err := svc.ListReviews(context.Background(), models.Filter{Suggested: &rejected})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), page.Count)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, "rev_1", page.Items[0].ID)
+
+	waiting, err := svc.ListReviews(context.Background(), models.Filter{Unsuggested: true})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), waiting.Count,
+		"the reviews with no proposal came back wrong; that is the listing an operator "+
+			"uses to see whether the job is keeping up")
+	require.Len(t, waiting.Items, 1)
+	assert.Equal(t, "rev_3", waiting.Items[0].ID)
+}
+
+// TestAListingNarrowedToSomethingNoProposalCanSayIsRefused holds the same rule
+// the status filter follows.
+//
+// An empty page for a value that could never match reads as "the model has
+// flagged nothing", and an operator acting on that leaves the flagged reviews
+// where they are.
+func TestAListingNarrowedToSomethingNoProposalCanSayIsRefused(t *testing.T) {
+	t.Parallel()
+
+	svc, repo := newService()
+	seedReview(repo, "rev_1", "prod_1", models.StatusSubmitted)
+
+	for name, value := range map[string]string{
+		"a status no proposal can carry": models.StatusSubmitted.String(),
+		"a misspelling":                  "rejcted",
+		"the API's reserved word":        "none",
+		"the empty string":               "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			narrowed := value
+			_, err := svc.ListReviews(context.Background(), models.Filter{Suggested: &narrowed})
+			require.Error(t, err)
+			assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
+		})
+	}
+}
+
+// TestAskingForBothHalvesAtOnceIsRefused covers the contradiction the API
+// cannot produce and a direct caller can.
+//
+// A review either carries a proposal or does not, so the pair would always
+// answer zero — and zero is the answer this module refuses to give by accident.
+func TestAskingForBothHalvesAtOnceIsRefused(t *testing.T) {
+	t.Parallel()
+
+	svc, repo := newService()
+	seedReview(repo, "rev_1", "prod_1", models.StatusSubmitted)
+
+	rejected := models.StatusRejected.String()
+	_, err := svc.ListReviews(context.Background(), models.Filter{
+		Suggested: &rejected, Unsuggested: true,
+	})
+	require.Error(t, err)
+	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
+}

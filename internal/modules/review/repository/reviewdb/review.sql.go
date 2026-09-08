@@ -27,15 +27,34 @@ const countReviews = `-- name: CountReviews :one
 SELECT count(*) FROM reviews
 WHERE ($1::text IS NULL OR status = $1::text)
   AND ($2::text IS NULL OR product_id = $2::text)
+  AND ($3::text IS NULL
+       OR suggested_status = $3::text)
+  AND (NOT $4::boolean OR suggested_status IS NULL)
 `
 
 type CountReviewsParams struct {
-	Status    *string
-	ProductID *string
+	Status      *string
+	ProductID   *string
+	Suggested   *string
+	Unsuggested bool
 }
 
+// The proposal filter is TWO clauses and not one expression with a sentinel.
+//
+// A single parameter carrying a reserved word for "no proposal" would put that
+// word in the SQL and in Go, two copies free to drift; and the word would have
+// to be one no status could ever be, which is a promise about a CHECK
+// constraint in a different file. Two independent clauses need neither: one is
+// an equality, the other a null test, and each is inert when its argument says
+// so. The API's single `suggested` parameter is translated into the pair one
+// layer up, which is the only place the word "none" appears.
 func (q *Queries) CountReviews(ctx context.Context, arg CountReviewsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countReviews, arg.Status, arg.ProductID)
+	row := q.db.QueryRow(ctx, countReviews,
+		arg.Status,
+		arg.ProductID,
+		arg.Suggested,
+		arg.Unsuggested,
+	)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -198,21 +217,26 @@ const listReviews = `-- name: ListReviews :many
 SELECT id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model FROM reviews
 WHERE ($1::text IS NULL OR status = $1::text)
   AND ($2::text IS NULL OR product_id = $2::text)
+  AND ($3::text IS NULL
+       OR suggested_status = $3::text)
+  AND (NOT $4::boolean OR suggested_status IS NULL)
   AND (created_at, id) < (
-    COALESCE($3::timestamptz, 'infinity'::timestamptz),
-    COALESCE($4::text, '')
+    COALESCE($5::timestamptz, 'infinity'::timestamptz),
+    COALESCE($6::text, '')
   )
 ORDER BY created_at DESC, id DESC
-LIMIT $6::bigint OFFSET $5::bigint
+LIMIT $8::bigint OFFSET $7::bigint
 `
 
 type ListReviewsParams struct {
-	Status    *string
-	ProductID *string
-	AfterAt   pgtype.Timestamptz
-	AfterID   *string
-	RowOffset int64
-	RowLimit  int64
+	Status      *string
+	ProductID   *string
+	Suggested   *string
+	Unsuggested bool
+	AfterAt     pgtype.Timestamptz
+	AfterID     *string
+	RowOffset   int64
+	RowLimit    int64
 }
 
 // ListReviews pages the reviews for the ADMIN surface.
@@ -225,6 +249,8 @@ func (q *Queries) ListReviews(ctx context.Context, arg ListReviewsParams) ([]Rev
 	rows, err := q.db.Query(ctx, listReviews,
 		arg.Status,
 		arg.ProductID,
+		arg.Suggested,
+		arg.Unsuggested,
 		arg.AfterAt,
 		arg.AfterID,
 		arg.RowOffset,

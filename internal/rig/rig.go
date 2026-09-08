@@ -187,6 +187,9 @@ type Spec struct {
 	// a rig that looks right and measures a different plan. The four hand-made
 	// products are the deliberate exception (see [Seed]).
 	SalesChannelID string
+	// Reviews is how many reviews to build over family B. Zero builds none,
+	// and that is the default; see [DefaultReviews].
+	Reviews int
 }
 
 // DefaultSpec returns the shape of the rig this repository's figures were
@@ -222,6 +225,7 @@ func (s Spec) validate() error {
 		{"Categories", s.Categories},
 		{"Tags", s.Tags},
 		{"SkewedCategorySize", s.SkewedCategorySize},
+		{"Reviews", s.Reviews},
 	} {
 		if field.value < 0 {
 			return errors.Invalid(codeInvalidSpec,
@@ -335,6 +339,7 @@ var countedTables = []string{
 	"product_category_map",
 	"product_tag",
 	"product_tag_map",
+	ReviewTable,
 }
 
 // ProductTable is the table a caller asserts a non-empty catalog against; it is

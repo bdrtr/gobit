@@ -233,6 +233,18 @@ type Filter struct {
 	Status *string
 	// ProductID, when given, returns only the reviews of that product.
 	ProductID *string
+	// Suggested, when given, returns only the reviews carrying a proposal that
+	// says so. It is [StatusApproved] or [StatusRejected] and nothing else,
+	// because no other value can be in the column.
+	Suggested *string
+	// Unsuggested, when true, returns only the reviews carrying NO proposal.
+	//
+	// It is a separate field rather than a reserved value of [Filter.Suggested]
+	// so that "no proposal" cannot be confused with a status, and so that the
+	// word standing for it lives in ONE place — the API, which translates a
+	// client's parameter into this pair. The two together are contradictory and
+	// the service refuses them; see the service package.
+	Unsuggested bool
 	// Limit is the maximum number of rows to return.
 	Limit int64
 	// Offset is the number of rows to skip.

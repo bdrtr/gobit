@@ -258,6 +258,19 @@ func seedLoadCatalog(t *testing.T) (key, channelID string) {
 	// than the catalog it is drawn from.
 	spec.SkewedCategorySize = max((spec.SingleVariantProducts+spec.MultiVariantProducts)/20, 1)
 
+	// The reviews are asked for here although the DEFAULT spec has none, and it
+	// is the taxonomy's argument once more: the review family is one statement,
+	// it is the only one that writes a table outside the catalog, and left at
+	// the default it would be run by no test at all — free to rot until the day
+	// somebody rebuilds the rig to measure something and finds it broken.
+	//
+	// The size is derived from the catalog so lowering GOBIT_LOAD_PRODUCTS
+	// lowers this too. It is deliberately larger than the product count: a
+	// review family smaller than the catalog would leave most products with no
+	// review and the status mix unexercised, and the mix is what the family
+	// exists to produce.
+	spec.Reviews = spec.SingleVariantProducts * 3
+
 	// AND IT CHANGED WHAT THE MEASURED PAGE IS, which has to be written down
 	// beside the figure rather than discovered later. At the default catalog the
 	// skew asks for 11 products while loadPageSize is 10, and the ADJACENT
@@ -275,6 +288,10 @@ func seedLoadCatalog(t *testing.T) (key, channelID string) {
 	counts, err := rig.Seed(ctx, testPool, spec)
 	require.NoError(t, err, "the load catalog could not be seeded")
 	require.Positive(t, counts.Of(rig.ProductTable), "the seeded catalog must not be empty")
+	require.Equal(t, int64(spec.Reviews), counts.Of(rig.ReviewTable),
+		"the review family built a different number of rows than it was asked for; the "+
+			"statement is the only one writing a table outside the catalog and nothing "+
+			"else in the suite runs it")
 
 	// The claim is checked THROUGH THE STOREFRONT and not against the table: a
 	// row that exists but is not visible in this channel would satisfy a count

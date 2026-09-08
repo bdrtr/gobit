@@ -171,6 +171,18 @@ func (f *fakeRepo) List(
 		if filter.ProductID != nil && review.ProductID != *filter.ProductID {
 			return false
 		}
+		// The proposal narrowings are applied HERE and not only pinned through
+		// listFilter, because a fake that recorded the filter and returned
+		// everything would let a service test assert on a page the real query
+		// would never produce.
+		if filter.Suggested != nil {
+			if review.Suggestion == nil || review.Suggestion.Status.String() != *filter.Suggested {
+				return false
+			}
+		}
+		if filter.Unsuggested && review.Suggestion != nil {
+			return false
+		}
 
 		return true
 	})

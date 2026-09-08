@@ -46,6 +46,9 @@ RETURNING *;
 SELECT * FROM reviews
 WHERE (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
   AND (sqlc.narg('product_id')::text IS NULL OR product_id = sqlc.narg('product_id')::text)
+  AND (sqlc.narg('suggested')::text IS NULL
+       OR suggested_status = sqlc.narg('suggested')::text)
+  AND (NOT sqlc.arg('unsuggested')::boolean OR suggested_status IS NULL)
   AND (created_at, id) < (
     COALESCE(sqlc.narg('after_at')::timestamptz, 'infinity'::timestamptz),
     COALESCE(sqlc.narg('after_id')::text, '')
@@ -53,10 +56,23 @@ WHERE (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
 
+-- The proposal filter is TWO clauses and not one expression with a sentinel.
+--
+-- A single parameter carrying a reserved word for "no proposal" would put that
+-- word in the SQL and in Go, two copies free to drift; and the word would have
+-- to be one no status could ever be, which is a promise about a CHECK
+-- constraint in a different file. Two independent clauses need neither: one is
+-- an equality, the other a null test, and each is inert when its argument says
+-- so. The API's single `suggested` parameter is translated into the pair one
+-- layer up, which is the only place the word "none" appears.
+--
 -- name: CountReviews :one
 SELECT count(*) FROM reviews
 WHERE (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
-  AND (sqlc.narg('product_id')::text IS NULL OR product_id = sqlc.narg('product_id')::text);
+  AND (sqlc.narg('product_id')::text IS NULL OR product_id = sqlc.narg('product_id')::text)
+  AND (sqlc.narg('suggested')::text IS NULL
+       OR suggested_status = sqlc.narg('suggested')::text)
+  AND (NOT sqlc.arg('unsuggested')::boolean OR suggested_status IS NULL);
 
 -- ListApprovedReviews pages the reviews a STOREFRONT may see.
 --

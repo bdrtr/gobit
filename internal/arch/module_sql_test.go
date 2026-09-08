@@ -1062,6 +1062,23 @@ var sqlCrossingExemptions = map[string]sqlCrossingExemption{
 			"inventory_items",
 			"inventory_levels",
 			"stock_locations",
+			// reviews joined on 2026-09-09, and it is the first table the rig
+			// fills that belongs to no part of the catalog. The argument above
+			// carries over unchanged — bulk INSERTs, no validation, no events,
+			// nothing in a running server calls it — and the reason it is here
+			// at all is the same hole the rig was written to close: the review
+			// module's migration prices its partial index against "505,000
+			// reviews over 20,001 products", and that database is gone. A
+			// performance sentence resting on rows nobody promised to keep is
+			// what this package exists to end.
+			//
+			// The crossing is also NARROWER than the catalog's. The rig writes
+			// no review through the module and reads none: it fills one table
+			// whose only foreign reference, product_id, is deliberately not a
+			// foreign key (Principle 2.2), so there is no graph to keep
+			// consistent and nothing the module would have validated on the way
+			// in beyond the CHECK constraints the rows satisfy.
+			"reviews",
 		},
 	},
 }

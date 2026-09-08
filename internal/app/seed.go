@@ -108,6 +108,7 @@ const (
 	flagCategories = "categories"
 	flagTags       = "tags"
 	flagSkew       = "skew"
+	flagReviews    = "reviews"
 	flagChannel    = "channel"
 	flagReset      = "reset"
 )
@@ -393,6 +394,9 @@ func parseSeedFlags(args []string) (seedFlags, error) {
 	skew := flags.Int(flagSkew, spec.SkewedCategorySize,
 		"how many products each of the two skewed categories holds; 0 builds neither, "+
 			"which is the shape the repository's figures were measured on")
+	reviews := flags.Int(flagReviews, spec.Reviews,
+		"how many reviews to build over the single-variant products; 0 builds none, "+
+			"which is the shape the catalog figures were measured on")
 	channel := flags.String(flagChannel, defaultSeedChannel,
 		"the sales channel the products are assigned to; it is created if it does not exist")
 	reset := flags.Bool(flagReset, false,
@@ -427,6 +431,7 @@ func parseSeedFlags(args []string) (seedFlags, error) {
 			Categories:            *categories,
 			Tags:                  *tags,
 			SkewedCategorySize:    *skew,
+			Reviews:               *reviews,
 		},
 		channel: *channel,
 		reset:   *reset,

@@ -135,6 +135,11 @@ ON CONFLICT (id) DO NOTHING`,
 	steps = append(steps, multiVariantSteps(spec)...)
 	steps = append(steps, handMadeStep())
 
+	// The reviews come after the products they are about, which is not a
+	// foreign key — there is none across a module boundary (Principle 2.2) —
+	// but an ordering a reader of the ledger would expect.
+	steps = append(steps, reviewSteps(spec)...)
+
 	// The skew comes LAST because it is the only part of the ledger that reads
 	// what the earlier steps wrote: its two categories are filled by position
 	// in the listing, and a position cannot be taken before the rows are there.
@@ -551,6 +556,7 @@ func resetSteps() []step {
 	}
 
 	return []step{
+		reviewResetStep(),
 		{
 			name: "sales channel assignments",
 			sql:  `DELETE FROM link_product_sales_channel WHERE from_id ~ $1`,

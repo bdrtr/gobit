@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -110,3 +112,51 @@ func TestNoProposalIsAnAbsentFieldRatherThanAnEmptyObject(t *testing.T) {
 		"a review nobody has proposed anything about carries a suggestion key; "+
 			"a client cannot tell that from a proposal that says nothing")
 }
+
+// TestTheReservedWordIsTranslatedHereAndNowhereElse pins the one place "none"
+// exists.
+//
+// Below this function the filter is a value and a flag, so the word never
+// reaches the service or the SQL — which is what keeps it from having to be a
+// word no status could ever be.
+func TestTheReservedWordIsTranslatedHereAndNowhereElse(t *testing.T) {
+	t.Parallel()
+
+	for name, testCase := range map[string]struct {
+		query       string
+		suggested   *string
+		unsuggested bool
+	}{
+		"no parameter at all":  {query: "", suggested: nil, unsuggested: false},
+		"a proposal to reject": {query: "?suggested=rejected", suggested: ptr("rejected")},
+		"a proposal to approve": {
+			query: "?suggested=approved", suggested: ptr("approved"),
+		},
+		"the reserved word": {query: "?suggested=none", suggested: nil, unsuggested: true},
+		// Passed THROUGH so the service can refuse it by name. Dropped here, a
+		// misspelled filter would answer with the unfiltered queue under a
+		// heading saying it shows what the model flagged.
+		"a misspelling": {query: "?suggested=rejcted", suggested: ptr("rejcted")},
+		"an empty value": {
+			query: "?suggested=", suggested: ptr(""), unsuggested: false,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			request := httptest.NewRequest(http.MethodGet, "/admin/v1/reviews"+testCase.query, http.NoBody)
+			suggested, unsuggested := suggestionFilter(request)
+
+			if testCase.suggested == nil {
+				assert.Nil(t, suggested)
+			} else {
+				require.NotNil(t, suggested)
+				assert.Equal(t, *testCase.suggested, *suggested)
+			}
+			assert.Equal(t, testCase.unsuggested, unsuggested)
+		})
+	}
+}
+
+// ptr is the address of a value, so the table above can hold one.
+func ptr(value string) *string { return &value }

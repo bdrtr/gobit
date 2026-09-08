@@ -173,20 +173,28 @@ func (r *Repository) List(
 	afterAt, afterID := cursorBounds(filter.After)
 
 	rows, err := r.queries().ListReviews(ctx, reviewdb.ListReviewsParams{
-		Status:    filter.Status,
-		ProductID: filter.ProductID,
-		AfterAt:   afterAt,
-		AfterID:   afterID,
-		RowLimit:  filter.Limit,
-		RowOffset: filter.Offset,
+		Status:      filter.Status,
+		ProductID:   filter.ProductID,
+		Suggested:   filter.Suggested,
+		Unsuggested: filter.Unsuggested,
+		AfterAt:     afterAt,
+		AfterID:     afterID,
+		RowLimit:    filter.Limit,
+		RowOffset:   filter.Offset,
 	})
 	if err != nil {
 		return nil, 0, wrapDB(err, codeQueryFailed, "the reviews could not be listed")
 	}
 
+	// The count carries the SAME narrowings as the page, and the two argument
+	// lists are written out rather than shared because the queries differ: one
+	// pages and the other does not. A field added to one and forgotten on the
+	// other would report a page of four rows out of a total of nine thousand.
 	total, err := r.queries().CountReviews(ctx, reviewdb.CountReviewsParams{
-		Status:    filter.Status,
-		ProductID: filter.ProductID,
+		Status:      filter.Status,
+		ProductID:   filter.ProductID,
+		Suggested:   filter.Suggested,
+		Unsuggested: filter.Unsuggested,
 	})
 	if err != nil {
 		return nil, 0, wrapDB(err, codeQueryFailed, "the reviews could not be counted")

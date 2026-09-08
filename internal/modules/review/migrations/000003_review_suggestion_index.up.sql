@@ -1,0 +1,40 @@
+-- The moderation queue narrowed by what a model PROPOSED.
+--
+-- # What it is for
+--
+-- ADR 0071 put a proposal beside a waiting review and ADR 0072 filled it. The
+-- operator's question is the one this index answers: of the reviews I have not
+-- decided about, which ones did the model flag? Without it that listing is an
+-- index scan over the whole queue with a heap filter — measured on a 505,000-row
+-- rig with a 50,500-row backlog, 9.9 ms for the first page of twenty and 15.3 ms
+-- for the count beside it, against 0.03 ms for the same page unfiltered.
+--
+-- Measurement: [measurements/0073](../../../../docs/measurements/0073-review-suggestion-filter.md)
+--
+-- # Why it is PARTIAL on the queue rather than on the proposal
+--
+-- Because a proposal SURVIVES the decision. Nothing clears these columns when
+-- an operator moderates — deliberately, since a proposal beside a decision is
+-- the only corpus from which anybody could later measure whether the model
+-- agrees with the people — so in a shop that has been running the job the rows
+-- carrying a proposal are mostly ARCHIVE, and the archive grows without bound
+-- while the queue does not.
+--
+-- Both shapes were built and measured. An index over every proposed row served
+-- the same query and, on a rig where only the queue carried proposals, looked
+-- identical: 1,480 kB against 1,480 kB. Modelling the archive — proposals left
+-- behind on decided reviews, which is what a real installation accumulates —
+-- moved it to 10,216 kB on the SAME row count and made the operator's count 15.0 ms
+-- where this one is 1.1 ms. The first measurement was taken on the shape an
+-- installation has in its first month, and it recommended the other index.
+--
+-- # What it deliberately does NOT serve
+--
+-- A listing narrowed by the proposal with NO status filter — "every review the
+-- model ever called spam", archive included. Measured at 39 ms and left there:
+-- that question is about the archive rather than the queue, nobody triages with
+-- it, and serving it is what the rejected index cost 10 MB and a slower queue to
+-- do.
+CREATE INDEX reviews_suggestion_idx
+    ON reviews (suggested_status, created_at DESC, id DESC)
+    WHERE status = 'submitted' AND suggested_status IS NOT NULL;

@@ -108,6 +108,11 @@ func Describe(d *openapi.Doc) {
 			queryParameter("status", typeString, "Status filter: "+statusesText()+"."),
 			queryParameter("product_id", typeString,
 				"Returns only the reviews of one product."),
+			queryParameter("suggested", typeString,
+				"Filters by what a model PROPOSED about the review: \"approved\", "+
+					"\"rejected\", or \"none\" for the reviews no model has been asked "+
+					"about. A proposal is not a moderation and this filter does not "+
+					"change what the review's status is."),
 			queryParameter("limit", typeInteger,
 				"Page size; when it is not given the service's default applies."),
 			queryParameter("offset", typeInteger, "Number of records to skip."),

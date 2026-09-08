@@ -114,6 +114,9 @@ func (s *Service) ListReviews(ctx context.Context, filter models.Filter) (Page, 
 		return Page{}, errors.Invalid(CodeInvalidInput,
 			"unknown review status: %q", *filter.Status)
 	}
+	if err := checkSuggestionFilter(filter); err != nil {
+		return Page{}, err
+	}
 
 	fetch, limit, err := boundedFilter(filter)
 	if err != nil {

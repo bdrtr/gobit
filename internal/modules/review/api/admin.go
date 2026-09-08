@@ -37,12 +37,16 @@ func (h *Handler) adminList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	suggested, unsuggested := suggestionFilter(r)
+
 	page, err := h.svc.ListReviews(ctx, models.Filter{
-		Status:    stringParam(r, "status"),
-		ProductID: stringParam(r, "product_id"),
-		Limit:     limit,
-		Offset:    offset,
-		After:     after,
+		Status:      stringParam(r, "status"),
+		ProductID:   stringParam(r, "product_id"),
+		Suggested:   suggested,
+		Unsuggested: unsuggested,
+		Limit:       limit,
+		Offset:      offset,
+		After:       after,
 	})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
@@ -62,6 +66,41 @@ func (h *Handler) adminList(w http.ResponseWriter, r *http.Request) {
 		Limit:      page.Limit,
 		NextCursor: page.NextCursor,
 	})
+}
+
+// suggestionNone is the value of ?suggested= that asks for the reviews NO model
+// has been asked about.
+//
+// It is a reserved word rather than a second parameter because a client asking
+// about the proposal asks ONE question — what does the model say about this
+// review — and "nothing yet" is one of its answers. Two parameters would let a
+// client send both and mean nothing.
+//
+// The word is safe because it is not a status and cannot become one: the
+// column's CHECK admits "approved" and "rejected", the module's own transition
+// table adds "submitted", and "none" is none of the three. It lives HERE and
+// nowhere else — the service and the SQL below it take a value and a flag, so
+// the word never reaches them.
+const suggestionNone = "none"
+
+// suggestionFilter reads ?suggested= and turns it into the pair the service
+// takes.
+//
+// An unrecognized value is passed THROUGH rather than dropped, so the service
+// refuses it with a message naming the two words a proposal can carry. Dropping
+// it here would answer a misspelled filter with the unfiltered queue — a page
+// full of reviews the model has said nothing about, under a heading that says
+// it is showing what the model flagged.
+func suggestionFilter(r *http.Request) (suggested *string, unsuggested bool) {
+	value := stringParam(r, "suggested")
+	if value == nil {
+		return nil, false
+	}
+	if *value == suggestionNone {
+		return nil, true
+	}
+
+	return value, false
 }
 
 // adminGet returns one review whatever its status

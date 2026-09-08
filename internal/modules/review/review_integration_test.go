@@ -602,3 +602,147 @@ func TestAProposalIsRefusedByTheStatementOnceAnOperatorHasDecided(t *testing.T) 
 	require.Error(t, err)
 	assert.Equal(t, coreerrors.KindConflict, coreerrors.KindOf(err))
 }
+
+// TestTheSuggestionFilterNarrowsBothThePageAndTheCount is where the two clauses
+// actually live.
+//
+// The count is asserted beside the page on purpose: they are two statements
+// with two argument lists, and a narrowing added to one and forgotten on the
+// other reports four rows out of a total of nine thousand — a page that looks
+// filtered under a number that is not.
+func TestTheSuggestionFilterNarrowsBothThePageAndTheCount(t *testing.T) {
+	ctx := context.Background()
+
+	repo := repository.New(testPool.Pool())
+	product := productID(t)
+
+	// Three waiting reviews: one proposed for rejection, one for approval, one
+	// nobody has been asked about.
+	var ids []string
+	for range 3 {
+		created, err := repo.Create(ctx, models.Review{
+			ID: models.NewReviewID(), ProductID: product, Rating: 3,
+			Body: "it arrived quickly", AuthorName: "A customer",
+			Status: models.StatusSubmitted,
+		})
+		require.NoError(t, err)
+		ids = append(ids, created.ID)
+	}
+
+	_, err := repo.Suggest(ctx, ids[0], models.Suggestion{
+		Status: models.StatusRejected, Note: "it advertises another shop", Model: "m",
+	})
+	require.NoError(t, err)
+	_, err = repo.Suggest(ctx, ids[1], models.Suggestion{
+		Status: models.StatusApproved, Note: "it describes the product", Model: "m",
+	})
+	require.NoError(t, err)
+
+	rejected := models.StatusRejected.String()
+	approved := models.StatusApproved.String()
+
+	for name, testCase := range map[string]struct {
+		filter models.Filter
+		want   string
+	}{
+		"proposed for rejection": {
+			filter: models.Filter{Suggested: &rejected}, want: ids[0],
+		},
+		"proposed for approval": {
+			filter: models.Filter{Suggested: &approved}, want: ids[1],
+		},
+		"no proposal at all": {
+			filter: models.Filter{Unsuggested: true}, want: ids[2],
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			filter := testCase.filter
+			filter.ProductID = &product
+			filter.Limit = 10
+
+			rows, count, err := repo.List(ctx, filter)
+			require.NoError(t, err)
+			assert.Equal(t, int64(1), count,
+				"the COUNT was not narrowed the way the page was")
+			require.Len(t, rows, 1)
+			assert.Equal(t, testCase.want, rows[0].ID)
+		})
+	}
+
+	// Unfiltered, the same product answers with all three — which is what makes
+	// the three assertions above mean something.
+	rows, count, err := repo.List(ctx, models.Filter{ProductID: &product, Limit: 10})
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), count)
+	assert.Len(t, rows, 3)
+}
+
+// TestTheSuggestionIndexIsTheOneTheQueueUses asks the PLANNER rather than the
+// migration.
+//
+// This repository has shipped a godoc saying an index is used and been wrong
+// about it, which is the reason this test exists rather than a sentence. An
+// index the planner never chooses is a write cost with no read benefit, and
+// nothing else in the tree would notice: the query returns the same rows either
+// way, only slower.
+//
+// It asserts the PLAN and not a duration. A timing on a shared machine with a
+// nine-row table measures the machine; the plan is the property the migration's
+// argument actually rests on, and the numbers live in the measurement report.
+func TestTheSuggestionIndexIsTheOneTheQueueUses(t *testing.T) {
+	ctx := context.Background()
+
+	// The planner will not choose an index over a sequential scan on a table
+	// with a handful of rows, and would make this test pass or fail on the size
+	// of whatever ran before it. Disabling the alternatives is how the question
+	// "CAN this index serve the query" is asked at all.
+	for _, off := range []string{"SET enable_seqscan = off", "SET enable_bitmapscan = off"} {
+		_, err := testPool.Pool().Exec(ctx, off)
+		require.NoError(t, err)
+	}
+	t.Cleanup(func() {
+		for _, on := range []string{"SET enable_seqscan = on", "SET enable_bitmapscan = on"} {
+			_, _ = testPool.Pool().Exec(ctx, on)
+		}
+	})
+
+	plan := func(t *testing.T, query string) string {
+		t.Helper()
+
+		rows, err := testPool.Pool().Query(ctx, "EXPLAIN "+query)
+		require.NoError(t, err)
+		defer rows.Close()
+
+		var out strings.Builder
+		for rows.Next() {
+			var line string
+			require.NoError(t, rows.Scan(&line))
+			out.WriteString(line)
+			out.WriteString("\n")
+		}
+
+		return out.String()
+	}
+
+	const queueNarrowedByTheProposal = `
+SELECT * FROM reviews
+WHERE status = 'submitted' AND suggested_status = 'rejected'
+ORDER BY created_at DESC, id DESC LIMIT 20`
+
+	assert.Contains(t, plan(t, queueNarrowedByTheProposal), "reviews_suggestion_idx",
+		"the queue narrowed by a proposal does not use reviews_suggestion_idx, so the "+
+			"index is a write cost with no read benefit and the migration's argument is false")
+
+	// The counterpart, and it is what makes the assertion above mean something:
+	// the UNFILTERED queue must keep using the index it already had. An index
+	// that stole the plain moderation listing would have made the common query
+	// pay for the rare one.
+	const queueUnfiltered = `
+SELECT * FROM reviews
+WHERE status = 'submitted'
+ORDER BY created_at DESC, id DESC LIMIT 20`
+
+	unfiltered := plan(t, queueUnfiltered)
+	assert.Contains(t, unfiltered, "reviews_moderation_idx")
+	assert.NotContains(t, unfiltered, "reviews_suggestion_idx")
+}
