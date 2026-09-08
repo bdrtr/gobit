@@ -32,6 +32,10 @@ type fakeStore struct {
 	locations    map[string]models.StockLocation
 	levels       map[string]models.InventoryLevel
 	reservations map[string]models.Reservation
+	// movements is the ledger, in append order. It is a SLICE and not a map
+	// because order is the thing being tested: the listing comes back newest
+	// first, and a map would hand the assertion whatever it liked.
+	movements []models.Movement
 
 	// updateLevelCalls stok seviyesine kaç kez yazıldığını sayar; idempotent
 	// akışların stoğa İKİNCİ KEZ dokunmadığı bununla kanıtlanır.
@@ -47,6 +51,11 @@ type fakeStore struct {
 	// failCreateReservation ayarlanırsa CreateReservation bu hatayı döner;
 	// işlem geri alma yolunu sınamak için kullanılır.
 	failCreateReservation error
+	// failSetReservationStatus makes the status write fail, which is the LAST
+	// step of a confirm — after the level and the movement have been written.
+	// It is what proves the ledger rolls back with the count rather than
+	// surviving a failed transaction (ADR 0068).
+	failSetReservationStatus error
 }
 
 // newFakeStore boş bir sahte depo üretir.
@@ -80,11 +89,16 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 		locations    map[string]models.StockLocation
 		levels       map[string]models.InventoryLevel
 		reservations map[string]models.Reservation
+		movements    []models.Movement
 	}{
 		items:        maps.Clone(f.items),
 		locations:    maps.Clone(f.locations),
 		levels:       maps.Clone(f.levels),
 		reservations: maps.Clone(f.reservations),
+		// The ledger is rolled back WITH the level, and that is the whole point
+		// of it being in the snapshot: a movement that survived a failed
+		// transaction would claim units moved that never did (ADR 0068).
+		movements: slices.Clone(f.movements),
 	}
 	f.mu.Unlock()
 
@@ -92,6 +106,7 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 		f.mu.Lock()
 		f.items, f.locations = snapshot.items, snapshot.locations
 		f.levels, f.reservations = snapshot.levels, snapshot.reservations
+		f.movements = snapshot.movements
 		f.mu.Unlock()
 		return err
 	}
@@ -465,6 +480,10 @@ func (f *fakeStore) SetReservationStatus(_ context.Context, id string, status mo
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	if f.failSetReservationStatus != nil {
+		return f.failSetReservationStatus
+	}
+
 	res, ok := f.reservations[id]
 	if !ok {
 		return errors.NotFound("inventory_reservation_not_found", "rezervasyon yok: %s", id)
@@ -544,6 +563,32 @@ func (f *fakeStore) ensureLocation(id string) models.StockLocation {
 	return loc
 }
 
+// seedMovement puts a ledger row in at a CHOSEN moment.
+//
+// The moment is a parameter because the listing's order is the thing under
+// test: rows written by the flows all land within the same instant, and a
+// fixture built that way would let an implementation that returned insertion
+// order pass.
+func (f *fakeStore) seedMovement(
+	id, itemID, locationID string,
+	reason models.MovementReason,
+	delta, after int64,
+	at time.Time,
+) models.Movement {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.ensureLocation(locationID)
+
+	mv := models.Movement{
+		ID: id, InventoryItemID: itemID, LocationID: locationID,
+		Reason: reason, Delta: delta, StockedAfter: after, CreatedAt: at,
+	}
+	f.movements = append(f.movements, mv)
+
+	return mv
+}
+
 // seedLevel sahte depoya bir stok seviyesi koyar.
 func (f *fakeStore) seedLevel(itemID, locationID string, stocked, reserved int64) models.InventoryLevel {
 	return f.seedLevelWithID("invlevel_"+itemID+"_"+locationID, itemID, locationID, stocked, reserved)
@@ -605,6 +650,92 @@ func (f *fakeStore) reservation(id string) models.Reservation {
 	defer f.mu.Unlock()
 
 	return f.reservations[id]
+}
+
+// AppendMovement records one movement, and refuses to run outside a
+// transaction exactly as the real repository does.
+//
+// The refusal is the half of ADR 0068 a unit test can prove: a movement written
+// on the pool would commit while the level update it explains rolled back.
+func (f *fakeStore) AppendMovement(ctx context.Context, mv models.Movement) (models.Movement, error) {
+	if err := requireTx(ctx, "AppendMovement"); err != nil {
+		return models.Movement{}, err
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if mv.Delta == 0 {
+		return models.Movement{}, errors.Invalid("fake_movement_zero_delta",
+			"a movement of zero units is refused by the schema's CHECK")
+	}
+	if !mv.Reason.Valid() {
+		return models.Movement{}, errors.Invalid("fake_movement_bad_reason",
+			"%q is not one of the four reasons the schema's CHECK allows", mv.Reason)
+	}
+	if (mv.ReservationID != "") != (mv.Reason == models.MovementSale) {
+		return models.Movement{}, errors.Invalid("fake_movement_reservation_mismatch",
+			"the schema's CHECK ties a reservation to a sale and to nothing else")
+	}
+
+	mv.CreatedAt = time.Now().UTC()
+	f.movements = append(f.movements, mv)
+
+	return mv, nil
+}
+
+// ListMovements pages the item's movements NEWEST FIRST, the way the real
+// listing's index does.
+func (f *fakeStore) ListMovements(_ context.Context, filter models.MovementFilter) ([]models.Movement, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	matching := make([]models.Movement, 0, len(f.movements))
+	for i := range f.movements {
+		mv := f.movements[i]
+		if mv.InventoryItemID != filter.InventoryItemID {
+			continue
+		}
+		if filter.LocationID != "" && mv.LocationID != filter.LocationID {
+			continue
+		}
+		if !filter.After.Time.IsZero() && !before(mv, filter.After.Time, filter.After.ID) {
+			continue
+		}
+		matching = append(matching, mv)
+	}
+
+	slices.SortFunc(matching, func(a, b models.Movement) int {
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return b.CreatedAt.Compare(a.CreatedAt)
+		}
+		return strings.Compare(b.ID, a.ID)
+	})
+
+	return paginate(matching, filter.Limit, 0), nil
+}
+
+// before reports whether the movement sits BELOW the given keyset position in
+// the listing's own order, which is the row comparison the SQL makes.
+func before(mv models.Movement, at time.Time, id string) bool {
+	if mv.CreatedAt.Equal(at) {
+		return mv.ID < id
+	}
+	return mv.CreatedAt.Before(at)
+}
+
+// movementsFor returns the ledger rows of one item, in append order.
+func (f *fakeStore) movementsFor(itemID string) []models.Movement {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := make([]models.Movement, 0, len(f.movements))
+	for i := range f.movements {
+		if f.movements[i].InventoryItemID == itemID {
+			out = append(out, f.movements[i])
+		}
+	}
+	return out
 }
 
 // sortedValues haritanın değerlerini anahtar işlevine göre sıralı döner.

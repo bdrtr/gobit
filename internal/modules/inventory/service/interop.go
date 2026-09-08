@@ -1,10 +1,6 @@
 package service
 
-import (
-	"context"
-
-	"github.com/bdrtr/gobit/core/errors"
-)
+import "context"
 
 // This file is the CROSS-MODULE surface of the inventory module (ADR 0001,
 // ADR 0006).
@@ -101,17 +97,20 @@ func (i *Interop) ReleaseReservation(ctx context.Context, reservationID string) 
 // Two calls add the stock twice, because two calls mean two physical arrivals.
 // The caller is responsible for calling it once per receipt; the return record
 // is what makes that possible, since a return can only be received once.
+//
+// # Why it is not AdjustInventory with a positive delta
+//
+// It was, until the movement ledger arrived (ADR 0068). The arithmetic is the
+// same and the FACT is not: a warehouse correction and goods a customer sent
+// back are two entries an operator reads differently, and a positive delta says
+// nothing about which one it was. The service therefore has an entry point per
+// reason, and this surface picks the one that matches what it knows.
 func (i *Interop) Restock(
 	ctx context.Context,
 	inventoryItemID, locationID string,
 	quantity int64,
 ) error {
-	if quantity <= 0 {
-		return errors.Invalid(CodeInvalidInput,
-			"the restocked quantity has to be positive: %d (item %s)", quantity, inventoryItemID)
-	}
-
-	_, err := i.svc.AdjustInventory(ctx, inventoryItemID, locationID, quantity)
+	_, err := i.svc.RestockInventory(ctx, inventoryItemID, locationID, quantity)
 
 	return err
 }

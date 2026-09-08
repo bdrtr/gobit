@@ -19,6 +19,8 @@ const (
 	InventoryLevelIDPrefix = "invlevel_"
 	// ReservationIDPrefix is the prefix of reservation ids.
 	ReservationIDPrefix = "invres_"
+	// MovementIDPrefix is the prefix of stock movement ids.
+	MovementIDPrefix = "invmov_"
 )
 
 // idEncoding is the padless encoding over the Crockford Base32 alphabet. A
@@ -39,6 +41,13 @@ func NewInventoryLevelID() string { return newID(InventoryLevelIDPrefix, time.No
 
 // NewReservationID produces a new reservation id.
 func NewReservationID() string { return newID(ReservationIDPrefix, time.Now()) }
+
+// NewMovementID produces a new stock movement id.
+//
+// The id is time-ordered like the others, which the movement listing leans on:
+// it is the tiebreaker between two movements committed in one transaction, and
+// those two share a created_at exactly.
+func NewMovementID() string { return newID(MovementIDPrefix, time.Now()) }
 
 // newID produces a prefixed, time-ordered and unique id.
 //

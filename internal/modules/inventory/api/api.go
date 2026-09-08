@@ -49,6 +49,11 @@ const (
 	pathItem               = "/admin/v1/inventory-items/{id}"
 	pathItemLevels         = "/admin/v1/inventory-items/{id}/levels"
 	pathItemLevelAdjust    = "/admin/v1/inventory-items/{id}/levels/{location_id}/adjust"
+	// The ledger hangs off the ITEM rather than being a top-level resource,
+	// because the question it answers is "what happened to this item" and there
+	// is no listing across items — the index leads on the item for the same
+	// reason (ADR 0068).
+	pathItemMovements = "/admin/v1/inventory-items/{id}/movements"
 )
 
 // maxBodyBytes istek gövdesi için üst sınırdır. Sınır olmadan tek bir istek
@@ -112,6 +117,8 @@ type Inventory interface {
 	SetInventoryLevel(ctx context.Context, itemID, locationID string, stockedQty int64) (models.InventoryLevel, error)
 	// AdjustInventory fiziksel adedi delta kadar değiştirir.
 	AdjustInventory(ctx context.Context, itemID, locationID string, delta int64) (models.InventoryLevel, error)
+	// ListMovements returns a page of the item's stock movements, newest first.
+	ListMovements(ctx context.Context, in service.ListMovementsInput) ([]models.Movement, error)
 }
 
 // Handler inventory modülünün HTTP handler kümesidir.
@@ -156,6 +163,13 @@ func (h *Handler) Routes(r chi.Router) {
 	okuma.Get(pathItemLevels, h.listLevels)
 	yazma.Post(pathItemLevels, h.setLevel)
 	yazma.Post(pathItemLevelAdjust, h.adjustLevel)
+
+	// The ledger is READ authority and not a third scope. The module's
+	// dictionary is deliberately two entries (see above), and this listing shows
+	// the history of the same numbers GET .../levels already shows to the same
+	// audience; a scope of its own would name a power nobody has to grant
+	// separately (ADR 0068).
+	okuma.Get(pathItemMovements, h.listMovements)
 }
 
 // --- stok lokasyonları -------------------------------------------------------

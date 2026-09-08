@@ -189,6 +189,14 @@ type ucBeklentisi struct {
 	// ayırmak şart: zarfın şekli farklıdır ve istemci üreteci ikisinden
 	// farklı dönüş tipleri üretir.
 	liste bool
+	// cursorPage reports that the response comes back in the KEYSET envelope —
+	// "data" and an optional "next_cursor" — rather than in the list envelope.
+	//
+	// It is a third shape and not a variant of liste, because the two say
+	// opposite things to a client: a list envelope promises a total and an
+	// offset, and a keyset page has neither and offers a position instead. A
+	// generator handed the wrong one produces a paging loop that cannot finish.
+	cursorPage bool
 	// sorgu handler'ın GERÇEKTEN okuduğu sorgu parametreleridir.
 	sorgu []string
 }
@@ -252,7 +260,24 @@ func uclar() []ucBeklentisi {
 			metod: http.MethodPost, yol: pathItemLevelAdjust, durum: "200",
 			istek: adjustLevelRequest{}, yanit: inventoryLevelDTO{},
 		},
+		{
+			// The ledger's listing is the module's only KEYSET page, so its
+			// envelope carries a cursor instead of a count and an offset
+			// (ADR 0068).
+			metod: http.MethodGet, yol: pathItemMovements, durum: "200",
+			yanit: doluHareket(), cursorPage: true,
+			sorgu: []string{"limit", "location_id", "after"},
+		},
 	}
+}
+
+// doluHareket omitempty alanları da yazılan bir hareket kaydı üretir.
+//
+// ReservationID is the omitempty field and it is FILLED here: the comparison is
+// "the schema's properties = the encoded key set", and a sale is the row shape
+// that carries every key.
+func doluHareket() movementDTO {
+	return movementDTO{ReservationID: "invres_1"}
 }
 
 // doluLokasyon omitempty alanları da yazılan bir lokasyon kaydı üretir.
@@ -336,14 +361,17 @@ func kayitSemasiniDogrula(t *testing.T, bilesenler, zarf map[string]any, uc ucBe
 	t.Helper()
 
 	beklenenZarf := []string{"data"}
-	if uc.liste {
+	switch {
+	case uc.liste:
 		beklenenZarf = []string{"data", "count", "offset", "limit"}
+	case uc.cursorPage:
+		beklenenZarf = []string{"data", "next_cursor"}
 	}
 
 	assert.ElementsMatch(t, beklenenZarf, alanlar(t, bilesenler, zarf),
 		"zarfın biçimi plan Bölüm 8'de sabittir")
 
-	kayit := zarfKaydi(t, bilesenler, zarf, uc.liste)
+	kayit := zarfKaydi(t, bilesenler, zarf, uc.liste || uc.cursorPage)
 	assert.ElementsMatch(t, jsonAnahtarlari(t, uc.yanit), alanlar(t, bilesenler, kayit),
 		"yanıt kaydının alanları DTO ile örtüşmeli")
 	assert.ElementsMatch(t, jsonAnahtarlari(t, sifirDegeri(uc.yanit)),

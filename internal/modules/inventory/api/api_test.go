@@ -25,13 +25,14 @@ import (
 // sınayabilmek için vardır.
 type fakeInventory struct {
 	// Dönüş değerleri.
-	location models.StockLocation
-	item     models.InventoryItem
-	level    models.InventoryLevel
-	items    []models.InventoryItem
-	levels   []models.InventoryLevel
-	count    int64
-	err      error
+	location  models.StockLocation
+	item      models.InventoryItem
+	level     models.InventoryLevel
+	items     []models.InventoryItem
+	levels    []models.InventoryLevel
+	movements []models.Movement
+	count     int64
+	err       error
 
 	// Kaydedilen çağrı bilgileri.
 	gorulenLocationInput service.ListStockLocationsInput
@@ -41,6 +42,7 @@ type fakeInventory struct {
 	gorulenLocationID    string
 	gorulenStocked       int64
 	gorulenDelta         int64
+	gorulenMovementInput service.ListMovementsInput
 }
 
 // Sahtenin handler'ın beklediği yüzeyi karşıladığı derleme zamanında
@@ -110,6 +112,12 @@ func (f *fakeInventory) SetInventoryLevel(_ context.Context, itemID, locationID 
 func (f *fakeInventory) AdjustInventory(_ context.Context, itemID, locationID string, delta int64) (models.InventoryLevel, error) {
 	f.gorulenID, f.gorulenLocationID, f.gorulenDelta = itemID, locationID, delta
 	return f.level, f.err
+}
+
+// ListMovements records the listing input the handler assembled.
+func (f *fakeInventory) ListMovements(_ context.Context, in service.ListMovementsInput) ([]models.Movement, error) {
+	f.gorulenMovementInput = in
+	return f.movements, f.err
 }
 
 // yeniSunucu handler'ları bağlı bir router ve sahte servis döner.

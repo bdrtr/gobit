@@ -52,7 +52,15 @@ import (
 //     text fields beside it, ARE declared.
 //   - requires_shipping, quantity and status are a boolean, a count and a
 //     CHECK-constrained enum: a sentence about somebody cannot land in any of
-//     them.
+//     them. inventory_movements.reason is the same shape as status — four
+//     values, held to them by a CHECK — and delta and stocked_after are counts.
+//   - inventory_movements is exempt WHOLE, and it is the table where that is
+//     worth arguing rather than asserting. It is the ledger that explains the
+//     physical count (ADR 0068), and it deliberately carries NO ACTOR: an
+//     operator's movement is recorded with its caller in audit_log, not here,
+//     and the other movements come from a flow with nobody behind them. Its
+//     only free field would have been an actor or a note, and it has neither —
+//     a row is two ids, a reservation id, an enum and two numbers.
 //   - The timestamps describe the record's state and are true of the row whether
 //     or not anybody is behind it.
 var notPersonalColumns = map[string][]string{
@@ -69,6 +77,10 @@ var notPersonalColumns = map[string][]string{
 	"inventory_reservations": {
 		"id", "inventory_item_id", "location_id", "quantity", "line_item_id",
 		"status", "created_at", "updated_at",
+	},
+	"inventory_movements": {
+		"id", "inventory_item_id", "location_id", "reservation_id", "reason",
+		"delta", "stocked_after", "created_at",
 	},
 }
 

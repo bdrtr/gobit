@@ -1,0 +1,16 @@
+-- Rolling 000004 back: the movement ledger and its index go.
+--
+-- The schema returns to 000003 exactly. The table was NEW in 000004 — no column
+-- of another table was altered, renamed or dropped for it — so dropping it
+-- restores the previous shape rather than approximating it, and the stock a
+-- shop holds is untouched: stocked_quantity was never derived from this table
+-- and every read of it goes on answering the same number.
+--
+-- WHAT IS LOST IS THE HISTORY, and there is nowhere to put it. Every recorded
+-- movement goes with the table, and re-running the up gives an EMPTY ledger
+-- that begins at the moment it is re-applied. That is the same sentence the up
+-- makes about the stock that existed before it: the ledger explains what
+-- happened while it was there, and a migration cannot invent the rest.
+--
+-- The index needs no statement of its own; DROP TABLE takes it.
+DROP TABLE IF EXISTS inventory_movements;

@@ -12,6 +12,7 @@ truth: a report says what was true on the day it was taken.
 
 | Report | Lines |
 |---|---|
+| [The inventory movement ledger — measured 2026-09-08](0068-the-movement-ledger.md) | 179 |
 | [Two readings of "province" — measured 2026-09-08](0067-two-readings-of-province.md) | 62 |
 | [The carrier-capable quote input — measured 2026-09-08](0065-carrier-quote-input.md) | 146 |
 | [The stored payment instrument — what B9 asked, and what half of it already is](0064-the-stored-payment-instrument.md) | 186 |

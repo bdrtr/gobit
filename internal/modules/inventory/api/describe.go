@@ -44,7 +44,7 @@ const (
 //
 // The module has NO storefront endpoint (see the package doc): a shopper sees
 // stock through the product listing, by way of the Query layer's provider. The
-// 11 endpoints here are therefore the WHOLE module, and must not be read as
+// 12 endpoints here are therefore the WHOLE module, and must not be read as
 // "the storefront is undescribed".
 //
 // # The path constants are SHARED with the routes
@@ -71,6 +71,7 @@ func Describe(d *openapi.Doc) {
 	describeLocations(d)
 	describeItems(d)
 	describeLevels(d)
+	describeMovements(d)
 }
 
 // describeLocations describes the stock location endpoints.

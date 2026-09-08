@@ -30,6 +30,17 @@ type InventoryLevel struct {
 	DeletedAt        pgtype.Timestamptz
 }
 
+type InventoryMovement struct {
+	ID              string
+	InventoryItemID string
+	LocationID      string
+	ReservationID   *string
+	Reason          string
+	Delta           int64
+	StockedAfter    int64
+	CreatedAt       pgtype.Timestamptz
+}
+
 type InventoryReservation struct {
 	ID              string
 	InventoryItemID string

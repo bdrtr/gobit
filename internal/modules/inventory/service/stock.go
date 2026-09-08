@@ -53,12 +53,8 @@ func (s *Service) SetInventoryLevel(ctx context.Context, itemID, locationID stri
 			if !errors.HasKind(err, errors.KindNotFound) {
 				return err
 			}
-			created, createErr := s.store.CreateInventoryLevel(ctx, models.InventoryLevel{
-				ID:              models.NewInventoryLevelID(),
-				InventoryItemID: itemID,
-				LocationID:      locationID,
-				StockedQuantity: stockedQty,
-			})
+			created, createErr := s.openLevel(ctx, itemID, locationID, stockedQty,
+				models.MovementStockCount)
 			if createErr != nil {
 				return createErr
 			}
@@ -72,7 +68,8 @@ func (s *Service) SetInventoryLevel(ctx context.Context, itemID, locationID stri
 				stockedQty, level.ReservedQuantity)
 		}
 
-		updated, err := s.store.UpdateInventoryLevelQuantities(ctx, level.ID, stockedQty, level.ReservedQuantity)
+		updated, err := s.writeQuantities(ctx, level, stockedQty, level.ReservedQuantity,
+			models.MovementStockCount, "")
 		if err != nil {
 			return err
 		}
@@ -85,7 +82,8 @@ func (s *Service) SetInventoryLevel(ctx context.Context, itemID, locationID stri
 	return out, nil
 }
 
-// AdjustInventory raises or lowers the physical quantity by delta.
+// AdjustInventory raises or lowers the physical quantity by delta, as an
+// OPERATOR'S correction: breakage, a recount, a transfer recorded by hand.
 //
 // The result CANNOT GO NEGATIVE and cannot fall below the reserved quantity; in
 // either case errors.Conflict comes back and nothing is written. The read is
@@ -95,12 +93,55 @@ func (s *Service) SetInventoryLevel(ctx context.Context, itemID, locationID stri
 // The locks are taken location -> item -> level (see the lock order section on
 // [Store]); a missing location or item is errors.NotFound, and a closed
 // location is errors.Conflict (ADR 0055).
+//
+// The movement it leaves in the ledger says "adjustment". Goods coming BACK
+// from a customer are the same arithmetic and a different fact, so they have
+// their own entry point ([Service.RestockInventory]) rather than a reason
+// parameter on this one: a reason a caller passes is a reason a caller can get
+// wrong, and the admin endpoint would have to invent one for every request.
 func (s *Service) AdjustInventory(ctx context.Context, itemID, locationID string, delta int64) (models.InventoryLevel, error) {
-	if err := requireIDs(itemID, locationID); err != nil {
-		return models.InventoryLevel{}, err
-	}
 	if delta == 0 {
 		return models.InventoryLevel{}, errors.Invalid(CodeInvalidInput, "delta sıfır olamaz")
+	}
+
+	return s.adjust(ctx, itemID, locationID, delta, models.MovementAdjustment)
+}
+
+// RestockInventory puts returned goods BACK at a location.
+//
+// It is [Service.AdjustInventory]'s arithmetic under a different name, and the
+// name is the point: the ledger has to be able to tell a warehouse correction
+// from goods a customer sent back, and nothing in a positive delta says which
+// one it was.
+//
+// It is NOT the undoing of a reservation. A confirmed reservation cannot be
+// released — the units left the count for good — so a return is an ARRIVAL, and
+// two calls add the stock twice because two calls mean two physical arrivals.
+// The caller is responsible for calling it once per receipt; the return record
+// is what makes that possible, since a return can only be received once.
+//
+// The quantity has to be POSITIVE. The check lives here rather than in the
+// cross-module surface that calls it, because that surface's own rule is that
+// it translates signatures and holds no rules of its own.
+func (s *Service) RestockInventory(ctx context.Context, itemID, locationID string, quantity int64) (models.InventoryLevel, error) {
+	if quantity <= 0 {
+		return models.InventoryLevel{}, errors.Invalid(CodeInvalidInput,
+			"the restocked quantity has to be positive: %d (item %s)", quantity, itemID)
+	}
+
+	return s.adjust(ctx, itemID, locationID, quantity, models.MovementReturnRestock)
+}
+
+// adjust is the shared body of [Service.AdjustInventory] and
+// [Service.RestockInventory]; the reason is what the two disagree about.
+func (s *Service) adjust(
+	ctx context.Context,
+	itemID, locationID string,
+	delta int64,
+	reason models.MovementReason,
+) (models.InventoryLevel, error) {
+	if err := requireIDs(itemID, locationID); err != nil {
+		return models.InventoryLevel{}, err
 	}
 
 	var out models.InventoryLevel
@@ -131,7 +172,7 @@ func (s *Service) AdjustInventory(ctx context.Context, itemID, locationID string
 				newStocked, level.StockedQuantity, level.ReservedQuantity)
 		}
 
-		updated, err := s.store.UpdateInventoryLevelQuantities(ctx, level.ID, newStocked, level.ReservedQuantity)
+		updated, err := s.writeQuantities(ctx, level, newStocked, level.ReservedQuantity, reason, "")
 		if err != nil {
 			return err
 		}
@@ -321,7 +362,10 @@ func (s *Service) Reserve(ctx context.Context, in ReserveInput) (models.Reservat
 		if err != nil {
 			return err
 		}
-		if _, err := s.store.UpdateInventoryLevelQuantities(ctx, level.ID, level.StockedQuantity, newReserved); err != nil {
+		// No movement: a reservation promises stock, it does not move it. The
+		// physical count is unchanged, and inventory_reservations is already
+		// this fact's record (ADR 0068).
+		if _, err := s.writeQuantities(ctx, level, level.StockedQuantity, newReserved, "", ""); err != nil {
 			return err
 		}
 
@@ -406,7 +450,9 @@ func (s *Service) ReleaseReservation(ctx context.Context, reservationID string) 
 				level.ReservedQuantity, reservation.Quantity, reservationID)
 		}
 
-		if _, err := s.store.UpdateInventoryLevelQuantities(ctx, level.ID, level.StockedQuantity, newReserved); err != nil {
+		// No movement, for the mirror of Reserve's reason: the promise is given
+		// back and the goods never left.
+		if _, err := s.writeQuantities(ctx, level, level.StockedQuantity, newReserved, "", ""); err != nil {
 			return err
 		}
 		return s.store.SetReservationStatus(ctx, reservationID, models.ReservationReleased)
@@ -464,7 +510,11 @@ func (s *Service) ConfirmReservation(ctx context.Context, reservationID string) 
 				level.StockedQuantity, level.ReservedQuantity, reservation.Quantity, reservationID)
 		}
 
-		if _, err := s.store.UpdateInventoryLevelQuantities(ctx, level.ID, newStocked, newReserved); err != nil {
+		// This is the ONE reservation transition that moves goods, so it is the
+		// one that leaves a movement: the units are gone from the warehouse and
+		// the row names the promise they went out against (ADR 0068).
+		if _, err := s.writeQuantities(ctx, level, newStocked, newReserved,
+			models.MovementSale, reservationID); err != nil {
 			return err
 		}
 		return s.store.SetReservationStatus(ctx, reservationID, models.ReservationConfirmed)

@@ -42,6 +42,7 @@ const postgresImage = "postgres:16-alpine"
 // listeyi kullanır.
 var modulTablolari = []string{
 	"stock_locations", "inventory_items", "inventory_levels", "inventory_reservations",
+	"inventory_movements",
 }
 
 var (
@@ -182,7 +183,7 @@ func TestMigrationGeriAlinabilir(t *testing.T) {
 	version, dirty, err := db.Version(ctx, testDSN, inventory.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "yarıda kalmış migration olmamalı")
-	assert.Equal(t, uint(3), version)
+	assert.Equal(t, uint(4), version)
 }
 
 // TestCrossModuleForeignKeyYok modülün tablolarındaki TÜM foreign key'lerin

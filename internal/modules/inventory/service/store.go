@@ -137,4 +137,18 @@ type Store interface {
 	SetReservationStatus(ctx context.Context, id string, status models.ReservationStatus) error
 	// CountActiveReservations returns how many active reservations the item has.
 	CountActiveReservations(ctx context.Context, itemID string) (int64, error)
+
+	// AppendMovement records one change to the physical count and returns the
+	// stored row.
+	//
+	// It may ONLY be called inside [Store.WithTx] and the implementation
+	// refuses it outside one, for the reason the Lock methods do. The ledger
+	// explains stocked_quantity while the column stays authoritative, so the
+	// two can only be kept together by committing them together: a movement
+	// written on the pool would survive a rolled-back level, and the ledger
+	// would claim units moved that never did (ADR 0068).
+	AppendMovement(ctx context.Context, mv models.Movement) (models.Movement, error)
+	// ListMovements pages one item's movements, newest first. A page shorter
+	// than the filter's limit is the last page.
+	ListMovements(ctx context.Context, filter models.MovementFilter) ([]models.Movement, error)
 }

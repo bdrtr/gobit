@@ -83,6 +83,7 @@ func servisDokunulmadi(t *testing.T, svc *fakeInventory) {
 	assert.Zero(t, svc.gorulenItemInput, "reddedilen istek servise HİÇ ulaşmamalı")
 	assert.Zero(t, svc.gorulenStocked, "reddedilen istek servise HİÇ ulaşmamalı")
 	assert.Zero(t, svc.gorulenDelta, "reddedilen istek servise HİÇ ulaşmamalı")
+	assert.Zero(t, svc.gorulenMovementInput, "reddedilen istek servise HİÇ ulaşmamalı")
 }
 
 // yazmaUclari [api.ScopeWrite] isteyen tüm yönetim uçlarıdır.
@@ -122,6 +123,12 @@ var okumaUclari = map[string]string{
 	"kalem listesi":    "/admin/v1/inventory-items",
 	"tekil kalem":      "/admin/v1/inventory-items/iitem_1",
 	"seviye listesi":   "/admin/v1/inventory-items/iitem_1/levels",
+	// The movement ledger is READ authority and not a scope of its own
+	// (ADR 0068): it shows the history of the numbers the level listing above
+	// already shows, to the same audience. Its row here is what keeps that
+	// decision from becoming an accident — a listing that quietly fell off the
+	// read router would go red nowhere else.
+	"hareket defteri": "/admin/v1/inventory-items/iitem_1/movements",
 }
 
 // TestYazmaUcuDarYetkiliCagiraniReddeder yazma uçlarının [api.ScopeWrite]
