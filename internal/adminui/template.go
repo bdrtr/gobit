@@ -61,6 +61,7 @@ var pages = []string{
 	"customer.gohtml",
 	"inventory.gohtml",
 	"sales.gohtml",
+	"reviews.gohtml",
 }
 
 // templateSet maps a page name to that page's parsed template set.
@@ -229,6 +230,11 @@ func sections() []navItem {
 		{Label: salesLabel, Path: SalesPath},
 		{Label: customersLabel, Path: CustomersPath},
 		{Label: inventoryLabel, Path: InventoryPath},
+		// The reviews sit LAST, and not because they matter least: they are
+		// the panel's first screen of the shape ADR 0030 decided on, so an
+		// operator meeting a section that behaves differently meets it at the
+		// end of a menu whose other five behave alike.
+		{Label: reviewsLabel, Path: ReviewsPath},
 	}
 }
 

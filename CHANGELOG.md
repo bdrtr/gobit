@@ -5637,7 +5637,10 @@ adımını YAZANLARI ilgilendiriyor.
   akıtmalarını da yakalıyor. Tarama alıcının import adına baktığı için şablon
   yazıcısına KÖRDÜ ve panel bu kör noktadan geçebilirdi.
 - **Panel çerezinin `/admin/v1`'de KABUL EDİLMEDİĞİ artık bir değişmez**
-  (`TestPanelCookieIsNotAcceptedByTheAdminAPI`). ADR 0011'in taşıyıcı iddiası
+  (bu testin adı 2026-09-09'da
+  `TestThePanelSessionReachesTheAdminAPIOnlyUnderTheOriginCheck` oldu: ADR 0030
+  uygulanınca çerez artık kabul EDİLİYOR ve bağışıklığın yerini bir savunma
+  aldı — test daha sıkı, çünkü bir yokluk tek iddia ister, bir savunma matris). ADR 0011'in taşıyıcı iddiası
   buydu ve bugüne kadar hiçbir test onu tutmuyordu: yönetim API'sinin CSRF
   bağışıklığı bir savunmadan değil, jetonun tarayıcının KENDİLİĞİNDEN
   eklemediği bir başlıkta yaşamasından geliyor. İddia GERÇEK koruma yığınında

@@ -1,0 +1,29 @@
+{{- /*
+reviews.gohtml is the panel's FIRST screen of ADR 0030's shape, and it is almost
+empty on purpose.
+
+Every other page in this package is rendered on the server from the Query layer.
+This one renders a shell and lets a script fill it from /admin/v1 — the same
+admin API an external client uses — because that is what ADR 0030 decided the
+panel becomes. The migration starts here rather than with an existing screen: a
+section nobody has yet is the one where a new shape costs no rewrite, and the
+review module's admin API was already complete (ADR 0071 to 0074).
+
+The noscript block is not a courtesy. A page whose whole content arrives by
+script shows an operator an empty box when the script fails to load, and an
+empty moderation queue is the one answer this feature must never give wrongly.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+<noscript>
+  <p class="notice">This screen is a client of the admin API and needs JavaScript.
+  The same data is at <code>/admin/v1/reviews</code>.</p>
+</noscript>
+
+<div id="reviews-app" data-api="{{ .APIPrefix }}">
+  <p id="reviews-status">Loading…</p>
+</div>
+
+<script src="{{ .ReviewsScript }}" defer></script>
+{{ end }}

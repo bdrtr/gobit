@@ -105,9 +105,13 @@ func TestLoginWritesCookieFlags(t *testing.T) {
 	cookie := sessionCookie(rec)
 	require.NotNil(t, cookie, "the session cookie must be written")
 	assert.Equal(t, "jwt-value", cookie.Value)
-	assert.Equal(t, URLPrefix, cookie.Path,
-		"the cookie must be valid ONLY inside the panel tree; reaching the admin API "+
-			"would destroy that surface's CSRF immunity")
+	assert.Equal(t, CookiePath, cookie.Path,
+		"the cookie is not written under the path the panel publishes.\n"+
+			"Narrower and the panel's own script gets 401 from /admin/v1 on every call "+
+			"(ADR 0030); wider and the session is sent to the storefront, which has no "+
+			"business seeing it.")
+	assert.True(t, strings.HasPrefix(URLPrefix, CookiePath),
+		"the cookie does not reach the panel's own pages")
 	assert.True(t, cookie.HttpOnly, "the token must not touch JavaScript")
 	assert.True(t, cookie.Secure, "in a shared environment the cookie must be Secure")
 	assert.Equal(t, http.SameSiteStrictMode, cookie.SameSite)

@@ -79,3 +79,25 @@ func (r *Ring) CheckOrigin(next http.Handler) http.Handler {
 		panel.CheckOrigin(next).ServeHTTP(w, req)
 	})
 }
+
+// APISession promotes the panel's session cookie for `/admin/v1`; see
+// [UI.APISession] for the rationale.
+//
+// When the panel is UNBOUND this ring passes the request through instead of
+// refusing it, which is the opposite of [Ring.Protect] and deliberate. An
+// unbound panel means the operator has installed no panel, and the admin API
+// belongs to every installation whether or not one exists: refusing here would
+// take the API down with the panel. A request that then carries no header is
+// refused by [corehttp.RequireAdmin], which is the correct answer and the same
+// one it would have given before this middleware existed.
+func (r *Ring) APISession(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		panel, err := r.panel()
+		if err != nil {
+			next.ServeHTTP(w, req)
+
+			return
+		}
+		panel.APISession(next).ServeHTTP(w, req)
+	})
+}

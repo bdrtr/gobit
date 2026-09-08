@@ -1280,28 +1280,37 @@ func (p panelSession) Logout(context.Context, string, string) (time.Time, error)
 	return time.Time{}, nil
 }
 
-// TestPanelCookieIsNotAcceptedByTheAdminAPI is the load-bearing claim of ADR
-// 0011 and the reason the panel has its own tree at all.
+// TestThePanelSessionReachesTheAdminAPIOnlyUnderTheOriginCheck is what ADR 0011
+// decision 3 became when ADR 0030 spent it.
 //
-// The admin API's CSRF immunity does not come from a defense. It comes from the
-// token living in a header the browser never attaches BY ITSELF: a form posted
-// from another site carries the victim's cookies but cannot set an
-// Authorization header. The moment the panel's session cookie were also
-// accepted at /admin/v1, that property would be gone and EVERY admin endpoint —
-// every write, every deletion — would enter a new attack surface, with nothing
-// failing to announce it.
+// # What changed and what did not
 //
-// The claim is exercised on the REAL stack, not on a hand-built middleware
-// chain, because what is being asserted is a property of the SCOPING: guard
-// scope matches on a segment boundary, /admin/ui is not under /admin/v1, and
-// the panel's identity ring is attached only to the panel prefix. A test that
-// rebuilt the chain would be asserting its own copy.
+// The admin API's CSRF immunity used to be an ABSENCE: the token lived in a
+// header a browser never attaches by itself, so a form posted from another site
+// carried the victim's cookies and could do nothing with them. This test used to
+// pin that absence, and it was right to — until the panel became a client of
+// /admin/v1 and the cookie had to reach it.
 //
-// The third case is what makes the first two mean anything. Without it a 401
-// from the API prefix would also be satisfied by a cookie that simply never
-// worked anywhere, and the test would keep passing after the panel had stopped
-// authenticating altogether.
-func TestPanelCookieIsNotAcceptedByTheAdminAPI(t *testing.T) {
+// The immunity is now a DEFENSE, and the test is stricter for it. An absence
+// needs one assertion; a defense needs the whole matrix, because it can be
+// wrong in two directions and only one of them is visible:
+//
+//   - too NARROW and every non-browser client breaks — curl, a server-to-server
+//     integration, a CI job. Those send no Origin header, and they were never
+//     CSRF-able, because nothing makes a browser attach a bearer token
+//     cross-site. That failure is loud.
+//   - too WIDE and the hole ADR 0030 opens stays open: a page on a compromised
+//     subdomain makes the browser POST to /admin/v1 with the session attached,
+//     which SameSite=Strict does not cover. That failure is silent, and it is
+//     the one this test exists for.
+//
+// # It runs on the REAL stack
+//
+// Not a hand-built chain, because what is asserted is a property of the
+// SCOPING and of the ORDER: the session ring must run before RequireAdmin, and
+// it must be scoped to the API prefix rather than to the panel's. A test that
+// rebuilt the chain would assert its own copy of both.
+func TestThePanelSessionReachesTheAdminAPIOnlyUnderTheOriginCheck(t *testing.T) {
 	t.Parallel()
 
 	const token = "a-valid-admin-token"
@@ -1339,15 +1348,83 @@ func TestPanelCookieIsNotAcceptedByTheAdminAPI(t *testing.T) {
 		return req
 	}
 
-	t.Run("the cookie does not open the admin API", func(t *testing.T) {
+	postWithCookie := func(origin string) *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/admin/v1/users", http.NoBody)
+		req.AddCookie(&http.Cookie{Name: adminui.CookieName, Value: token})
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+
+		return req
+	}
+
+	t.Run("the cookie opens a READ on the admin API", func(t *testing.T) {
 		t.Parallel()
 
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, withCookie("/admin/v1/users"))
 
+		assert.Equal(t, http.StatusOK, rec.Code,
+			"the panel's own script cannot reach the API it was made a client of; ADR 0030 "+
+				"is not implemented by a cookie that stops at the door")
+	})
+
+	t.Run("a cookie-authenticated WRITE needs a same-origin header", func(t *testing.T) {
+		t.Parallel()
+
+		for name, origin := range map[string]string{
+			"no Origin at all": "",
+			"another site":     "https://evil.example",
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				rec := httptest.NewRecorder()
+				r.ServeHTTP(rec, postWithCookie(origin))
+
+				assert.Equal(t, http.StatusForbidden, rec.Code,
+					"a state-changing request authenticated BY COOKIE was accepted with %s. "+
+						"That is the subdomain case SameSite=Strict does not cover, and it is "+
+						"the whole hole ADR 0030 opened and this ring closes", name)
+			})
+		}
+	})
+
+	t.Run("a cookie-authenticated write from the panel's own origin passes", func(t *testing.T) {
+		t.Parallel()
+
+		req := postWithCookie("http://example.com")
+		req.Host = "example.com"
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+
+		assert.NotEqual(t, http.StatusForbidden, rec.Code,
+			"the panel's own write was refused as cross-site, so the check is not a defense "+
+				"but a wall and the panel cannot moderate anything")
+	})
+
+	t.Run("a BEARER write is untouched, Origin or no Origin", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequest(http.MethodPost, "/admin/v1/users", http.NoBody)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+
+		assert.NotEqual(t, http.StatusForbidden, rec.Code,
+			"a client sending its own Authorization header was refused for having no Origin. "+
+				"curl, a server-to-server integration and a CI job all send none, and none of "+
+				"them was ever CSRF-able: a browser does not attach a bearer token by itself")
+	})
+
+	t.Run("no credential at all is still unauthenticated", func(t *testing.T) {
+		t.Parallel()
+
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/admin/v1/users", http.NoBody))
+
 		assert.Equal(t, http.StatusUnauthorized, rec.Code,
-			"the admin API must read ONLY the Authorization header; the moment it accepts the "+
-				"panel cookie, its CSRF immunity is gone")
+			"the API answered a request carrying neither a cookie nor a header")
 	})
 
 	t.Run("the header opens the admin API", func(t *testing.T) {
@@ -1390,9 +1467,15 @@ func TestPanelCookieIsNotAcceptedByTheAdminAPI(t *testing.T) {
 			}
 		}
 		require.NotNil(t, session, "sign-in must write the session cookie")
-		assert.Equal(t, adminui.URLPrefix, session.Path,
-			"the cookie's path must be pinned to the panel tree; that pin is what keeps the admin "+
-				"API's CSRF immunity intact")
+		assert.Equal(t, adminui.CookiePath, session.Path,
+			"the cookie's path is not the one the panel publishes; a cookie under a narrower "+
+				"path never reaches /admin/v1 and the panel's script gets 401 on every call, "+
+				"while a wider one is sent to the storefront too")
+		assert.True(t, strings.HasPrefix(adminui.URLPrefix, adminui.CookiePath),
+			"the cookie path does not cover the panel tree")
+		assert.True(t, strings.HasPrefix(corehttp.DefaultAdminPrefix, adminui.CookiePath),
+			"the cookie path does not cover the admin API, so ADR 0030's client cannot "+
+				"authenticate")
 	})
 
 	t.Run("the panel is closed without the cookie", func(t *testing.T) {

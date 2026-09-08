@@ -23,6 +23,8 @@ import (
 // written down in ADR 0011.
 func (u *UI) Routes(r chi.Router) {
 	r.Get(StylesheetPath, u.serveStylesheet)
+	r.Get(ReviewsScriptPath, u.serveReviewsScript)
+	r.Get(ReviewsPath, u.showReviews)
 	r.Get(LoginPath, u.showLogin)
 	r.Post(LoginPath, u.submitLogin)
 	r.Post(LogoutPath, u.submitLogout)

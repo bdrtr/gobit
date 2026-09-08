@@ -148,7 +148,12 @@ func TestTheMarkerOutlivesTheTokenAndCarriesNothing(t *testing.T) {
 	assert.Equal(t, markerValue, marker.Value)
 	assert.True(t, marker.Expires.After(expiresAt),
 		"a marker that died with the token would be gone in the case it explains")
-	assert.Equal(t, URLPrefix, marker.Path, "the marker must not reach the admin API either")
+	// The marker follows the session cookie's path exactly, and that is the
+	// whole requirement: browsers match cookies by name AND path, so a marker
+	// written under a different path is a marker the expiry page cannot find —
+	// and the operator is told nothing about why they were signed out.
+	assert.Equal(t, CookiePath, marker.Path,
+		"the marker is not on the session cookie's path, so nothing will read it")
 	assert.True(t, marker.HttpOnly)
 	assert.True(t, marker.Secure)
 }

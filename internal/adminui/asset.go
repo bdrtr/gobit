@@ -17,7 +17,7 @@ import (
 // only appears on the first page load, in front of an operator, when the
 // working directory is not what someone assumed.
 //
-//go:embed assets/panel.css
+//go:embed assets/panel.css assets/reviews.js
 var assetFiles embed.FS
 
 // stylesheetFile is the embedded path of the panel's stylesheet.
@@ -57,6 +57,29 @@ var stylesheetETag = assetETag(stylesheet)
 // this repository's named second error class (ADR 0009); this is the consumer.
 func (u *UI) serveStylesheet(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteAsset(r.Context(), w, stylesheetType, stylesheetETag, stylesheet)
+}
+
+// reviewsScriptFile is the embedded path of the review screen's client.
+const reviewsScriptFile = "assets/reviews.js"
+
+// reviewsScriptType is the content type the script is served with.
+//
+// Written out for [stylesheetType]'s reason and with a sharper edge: WriteAsset
+// sends X-Content-Type-Options: nosniff, so a wrong type here means the browser
+// REFUSES to execute the file — and a review screen whose script did not run is
+// an empty moderation queue, which is the one answer this feature must never
+// give wrongly.
+const reviewsScriptType = "text/javascript; charset=utf-8"
+
+// The review screen's client and its content stamp; see [stylesheet].
+var (
+	reviewsScript     = mustReadAsset(reviewsScriptFile)
+	reviewsScriptETag = assetETag(reviewsScript)
+)
+
+// serveReviewsScript writes the review screen's client.
+func (u *UI) serveReviewsScript(w http.ResponseWriter, r *http.Request) {
+	corehttp.WriteAsset(r.Context(), w, reviewsScriptType, reviewsScriptETag, reviewsScript)
 }
 
 // mustReadAsset reads an embedded asset or panics.

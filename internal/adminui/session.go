@@ -8,15 +8,30 @@ import (
 // CookieName is the panel session's cookie name.
 const CookieName = "gobit_admin_session"
 
+// CookiePath is the path the session cookie is valid under.
+//
+// # It covers the API prefix, and that is SPENT rather than free
+//
+// This constant used to be [URLPrefix], and the paragraph here used to call that
+// pinning "the backbone of the design": the admin API's CSRF immunity came not
+// from a defense but from the token living in a header the browser never
+// attaches by itself, and a cookie reaching the API prefix would end it.
+//
+// Every word of that is still true. ADR 0030 decided to spend it, and named
+// what it buys: the panel becomes a client of `/admin/v1`, so there is ONE admin
+// surface instead of a public API beside a private in-process path. The
+// immunity is replaced by a defense rather than dropped, and the defense is
+// [UI.APISession] — a state-changing request that authenticates BY COOKIE must
+// carry a same-origin Origin header, while a request carrying an Authorization
+// header is untouched, because a browser never attaches that by itself either.
+//
+// The value is "/admin" because it must cover both trees and nothing else:
+// [URLPrefix] is "/admin/ui" and the API is "/admin/v1".
+// [TestTheCookiePathCoversBothAdminTrees] holds it against the two constants
+// rather than against this comment.
+const CookiePath = "/admin"
+
 // writeCookie stores the session token in a cookie.
-//
-// # The cookie is valid ONLY inside the panel tree
-//
-// Path is pinned to the panel prefix, and this is the backbone of the design.
-// The admin API's present CSRF immunity comes not from a defense but from the
-// token living in a header the browser never attaches BY ITSELF. Were the
-// cookie also sent to the API prefix, that immunity would vanish and EVERY
-// admin endpoint would enter a new attack surface.
 //
 // # Flags
 //
@@ -41,7 +56,7 @@ func writeCookie(w http.ResponseWriter, token string, expiresAt time.Time, secur
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieName,
 		Value:    token,
-		Path:     URLPrefix,
+		Path:     CookiePath,
 		Expires:  expiresAt,
 		HttpOnly: true,
 		Secure:   secure,
@@ -60,7 +75,7 @@ func clearCookie(w http.ResponseWriter, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieName,
 		Value:    "",
-		Path:     URLPrefix,
+		Path:     CookiePath,
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   secure,
@@ -131,7 +146,7 @@ func writeMarker(w http.ResponseWriter, expiresAt time.Time, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     MarkerName,
 		Value:    markerValue,
-		Path:     URLPrefix,
+		Path:     CookiePath,
 		Expires:  expiresAt.Add(markerGrace),
 		HttpOnly: true,
 		Secure:   secure,
@@ -152,7 +167,7 @@ func clearMarker(w http.ResponseWriter, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     MarkerName,
 		Value:    "",
-		Path:     URLPrefix,
+		Path:     CookiePath,
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   secure,

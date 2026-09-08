@@ -301,16 +301,41 @@ func withPanelRing(
 	panel *adminui.Ring,
 	callbacks *corehttp.CallbackRegistry,
 ) []func(http.Handler) http.Handler {
-	return append(corehttp.APIGuards(opts),
-		corehttp.Scoped(adminui.URLPrefix, nil, panel.CheckOrigin),
-		corehttp.Scoped(adminui.URLPrefix, adminui.ExemptPaths(), panel.Protect),
-		// The callback ring carries no prefix of its own: it acts on the paths
-		// it was given and passes everything else through. A reserved prefix
-		// would force every provider's configured URL to move, and that URL
-		// lives on the PROVIDER's side, where changing it is an operational
-		// break rather than a deploy.
-		callbacks.Middleware(),
-	)
+	// The API session ring comes FIRST, before every guard in the API stack,
+	// and the order is the whole of its correctness: it turns the panel's
+	// session cookie into the Authorization header that corehttp.RequireAdmin
+	// reads, and RequireAdmin is inside APIGuards. Appended after, as the two
+	// panel rings below are, it would run once the request had already been
+	// refused.
+	//
+	// It is scoped to the ADMIN API prefix and not to the panel's, because the
+	// requests it serves are the ones the panel's script sends to /admin/v1.
+	return append([]func(http.Handler) http.Handler{
+		corehttp.Scoped(adminPrefixOf(opts), nil, panel.APISession),
+	},
+		append(corehttp.APIGuards(opts),
+			corehttp.Scoped(adminui.URLPrefix, nil, panel.CheckOrigin),
+			corehttp.Scoped(adminui.URLPrefix, adminui.ExemptPaths(), panel.Protect),
+			// The callback ring carries no prefix of its own: it acts on the
+			// paths it was given and passes everything else through. A
+			// reserved prefix would force every provider's configured URL to
+			// move, and that URL lives on the PROVIDER's side, where changing
+			// it is an operational break rather than a deploy.
+			callbacks.Middleware(),
+		)...)
+}
+
+// adminPrefixOf answers what prefix the admin surface is mounted under.
+//
+// The empty option means the core's default, and the fallback is written here
+// rather than assumed: a middleware scoped to "" would match every path in the
+// tree, so the panel's session cookie would be promoted on the storefront too.
+func adminPrefixOf(opts corehttp.GuardOptions) string {
+	if opts.AdminPrefix == "" {
+		return corehttp.DefaultAdminPrefix
+	}
+
+	return opts.AdminPrefix
 }
 
 // warnAboutRateLimit reports the two silent states of the rate limit.

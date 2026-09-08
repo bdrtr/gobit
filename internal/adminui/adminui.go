@@ -30,6 +30,15 @@ const (
 	LoginPath = URLPrefix + "/login"
 	// LogoutPath ends the session.
 	LogoutPath = URLPrefix + "/logout"
+	// ReviewsPath is the moderation queue, and the panel's FIRST screen served
+	// as a client of the admin API rather than rendered here (ADR 0030).
+	ReviewsPath = URLPrefix + "/reviews"
+	// ReviewsScriptPath serves that screen's client.
+	//
+	// It sits beside the stylesheet rather than under an /assets/ directory:
+	// the panel has two static files and a directory for two files is a
+	// convention with nothing to hold.
+	ReviewsScriptPath = URLPrefix + "/reviews.js"
 	// StylesheetPath serves the panel's stylesheet.
 	//
 	// It sits INSIDE the panel tree so the whole panel stays under one prefix,
