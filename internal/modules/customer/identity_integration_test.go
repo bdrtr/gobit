@@ -86,22 +86,22 @@ func storeGet(ctx context.Context, t *testing.T, r chi.Router, path string) *htt
 // dropped the identity would satisfy neither.
 func TestTheEmbeddersIdentityDecidesWhoseAddressBookIsServed(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	sahip := yeniHesap(ctx, t, svc)
-	yabanci := yeniHesap(ctx, t, svc)
+	svc := newService(t)
+	owner := newAccount(ctx, t, svc)
+	stranger := newAccount(ctx, t, svc)
 
-	_, err := svc.CreateAddress(ctx, sahip.ID, gecerliAdres())
+	_, err := svc.CreateAddress(ctx, owner.ID, validAddress())
 	require.NoError(t, err)
 
-	r := wiredStorefront(ctx, t, provingIdentity{id: sahip.ID})
+	r := wiredStorefront(ctx, t, provingIdentity{id: owner.ID})
 
 	t.Run("the proven customer is served", func(t *testing.T) {
-		rec := storeGet(ctx, t, r, "/store/v1/customers/"+sahip.ID+"/addresses")
+		rec := storeGet(ctx, t, r, "/store/v1/customers/"+owner.ID+"/addresses")
 
 		require.Equal(t, http.StatusOK, rec.Code,
 			"an identity registered under %q proved %q and the address book still "+
 				"refused it. The contract's whole point is that an embedder who binds "+
-				"one gets served.\nbody: %s", corehttp.IdentityName, sahip.ID, rec.Body.String())
+				"one gets served.\nbody: %s", corehttp.IdentityName, owner.ID, rec.Body.String())
 
 		var body struct {
 			Data []struct {
@@ -110,17 +110,17 @@ func TestTheEmbeddersIdentityDecidesWhoseAddressBookIsServed(t *testing.T) {
 		}
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body), rec.Body.String())
 		require.Len(t, body.Data, 1)
-		assert.Equal(t, sahip.ID, body.Data[0].CustomerID,
+		assert.Equal(t, owner.ID, body.Data[0].CustomerID,
 			"the row served has to belong to the customer the identity proved")
 	})
 
 	t.Run("a stranger's address book is refused", func(t *testing.T) {
-		rec := storeGet(ctx, t, r, "/store/v1/customers/"+yabanci.ID+"/addresses")
+		rec := storeGet(ctx, t, r, "/store/v1/customers/"+stranger.ID+"/addresses")
 
 		require.Equal(t, http.StatusForbidden, rec.Code,
 			"knowing %q was enough to read that person's address book, which is the "+
 				"measurement ADR 0008 made and this decision closed.\nbody: %s",
-			yabanci.ID, rec.Body.String())
+			stranger.ID, rec.Body.String())
 		assert.Equal(t, corehttp.CodeIdentityMismatch, refusalCodeOf(t, rec))
 	})
 }
@@ -134,12 +134,12 @@ func TestTheEmbeddersIdentityDecidesWhoseAddressBookIsServed(t *testing.T) {
 // operator upgrading from v0.8.0 without binding one reads this exact body.
 func TestAnInstallationThatBoundNoIdentityLosesTheAddressBook(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	sahip := yeniHesap(ctx, t, svc)
+	svc := newService(t)
+	owner := newAccount(ctx, t, svc)
 
 	r := wiredStorefront(ctx, t, nil)
 
-	rec := storeGet(ctx, t, r, "/store/v1/customers/"+sahip.ID+"/addresses")
+	rec := storeGet(ctx, t, r, "/store/v1/customers/"+owner.ID+"/addresses")
 
 	require.Equal(t, http.StatusUnauthorized, rec.Code,
 		"an installation that bound no identity answered %d. ADR 0043 chose the "+

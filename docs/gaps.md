@@ -1235,6 +1235,42 @@ a repository that no longer exists.
   no row in the README's invariant table. Nothing is red, because that audit only
   checks README against the repository and not the reverse, but the row is
   missing.
+- **D32** **The language ratchet could not see a file until it was too late to
+  matter, and so it reported CLEAN about a tree that was not.** Found 2026-09-08
+  by a red CI run on `c1b0f14`. `TestNoTurkishOutsideLedger` drew its population
+  from `git ls-files`, and `internal/modules/customer/identity_integration_test.go`
+  — written that morning, calling this package's Turkish test helpers
+  (`yeniServis`, `yeniHesap`, `gecerliAdres`) — was untracked at the moment every
+  local lane ran. Local `go test -count=1 ./...`: green. `make lint`, race,
+  integration, smoke, bench: green. Committed, pushed, and CI was red on the
+  first job that reached `internal/arch`. Nothing about the file changed in
+  between; the only thing that changed is that git had started tracking it.
+
+  **The mistake is a conflation, not an oversight.** The population was chosen
+  deliberately, and its reasoning — written out at length on the helper — is
+  still right: a gitignored artifact is not language debt, and a ledger that
+  names a file CI cannot see turns every push red while every developer stays
+  green. That argument is about IGNORED files. It was implemented as a question
+  about TRACKED files, and the two differ exactly over the minutes between
+  writing a file and committing it — which are the only minutes in which a
+  ratchet is any use.
+
+  **Fixed.** `repositoryFiles` (was `trackedFiles`) now unions `git ls-files`
+  with `git ls-files --others --exclude-standard`, which answers the question the
+  reasoning actually asked. The ledger stays tracked-only, and the asymmetry is
+  deliberate: a file may be SCANNED before it is committed but not LEDGERED
+  before it is committed, so the only way past the gate for a new Turkish file is
+  to translate it.
+
+  Both halves were mutation-proved rather than assumed: an untracked
+  non-ignored file carrying Turkish now FAILS the gate (it did not before), and a
+  Turkish file under the gitignored `/bin/` is still invisible to it.
+
+  **What it cost, and what it bought.** The debt itself was paid rather than
+  ledgered: `customer_integration_test.go` (1118 lines, 24 tests) was translated
+  so its helpers are English at the definition, which is why the new file's call
+  sites are English too. The ledger went 201 -> 200.
+
 - **D31** **A data race in the migration-cancellation test, seen ONCE and not
   reproduced.** Observed 2026-09-08 during a full `make test-integration` run:
   `TestCancellationActuallyStopsRemainingMigrations` in `core/db` failed with

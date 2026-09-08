@@ -35,7 +35,6 @@ internal/modules/customer/api/describe.go
 internal/modules/customer/api/describe_internal_test.go
 internal/modules/customer/api/fakes_test.go
 internal/modules/customer/api/store.go
-internal/modules/customer/customer_integration_test.go
 internal/modules/customer/migrations/000001_customer_init.down.sql
 internal/modules/customer/migrations/000001_customer_init.up.sql
 internal/modules/customer/module.go

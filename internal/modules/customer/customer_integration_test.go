@@ -1,21 +1,21 @@
 //go:build integration
 
-// Bu dosyadaki testler gerçek bir PostgreSQL örneği (dolayısıyla Docker)
-// gerektirir; `make test` hızlı kalsın diye `integration` etiketiyle
-// ayrılmıştır. Çalıştırmak için: make test-integration
+// The tests in this file need a real PostgreSQL instance (and therefore
+// Docker); they are held behind the `integration` build tag so that `make test`
+// stays fast. To run them: make test-integration
 //
-// Birim testleri sahte bir depo ile servisin KARARLARINI kanıtlar. Buradaki
-// testler kararların dayandığı ZEMİNİ kanıtlar: migration'ın geri alınabildiğini
-// ve modülün merkezî kurallarının gerçekten VERİTABANINDA durduğunu —
-// "kayıtlı e-posta tekildir ama misafirinki değildir", "varsayılan adresi
-// müşteri başına tektir", "bir adrese yalnızca SAHİBİ erişebilir" ve "yumuşak
-// silinen kayıt hiçbir okumada görünmez".
+// The unit tests prove the service's DECISIONS against a fake repository. The
+// tests here prove the GROUND those decisions stand on: that the migration can
+// be rolled back, and that the module's central rules really hold IN THE
+// DATABASE — "a registered e-mail is unique but a guest's is not", "a customer
+// has one default address at most", "only the OWNER reaches an address", and
+// "a soft-deleted row appears in no read".
 //
-// Bu iddiaların hiçbiri sahte depoyla sınanamaz. İlk ikisi kısmi benzersiz
-// indekslerin kendisinde, son ikisi ise sorguların WHERE koşulunda durur; sahte
-// depo dördünü de Go'da TAKLİT eder ve taklidin gerçeğe uyduğunu yalnızca bu
-// dosya gösterir. Sahte depoya bakan bir birim testi, koşul SQL'den düştüğünde
-// bile yeşil kalırdı.
+// None of those claims can be tested against the fake repository. The first two
+// live in the partial unique indexes themselves and the last two live in the
+// WHERE clause of the queries; the fake IMITATES all four in Go, and this file
+// is the only thing that shows the imitation matches. A unit test looking at
+// the fake would stay green even after the clause fell out of the SQL.
 package customer_test
 
 import (
@@ -43,27 +43,33 @@ import (
 
 const postgresImage = "postgres:16-alpine"
 
-// modulTablolari modülün sahip olduğu tablolardır; migration testleri bu
-// listeyi kullanır.
-var modulTablolari = []string{
+// nonASCIIName is a first name carrying a letter outside ASCII (U+015F). It is
+// used where a test needs to show that text survives the round trip through the
+// database unchanged, and it is spelled as an escape so that the file itself
+// stays inside ADR 0012's diacritic lane: the letter is DATA, not language debt.
+const nonASCIIName = "Ay\u015fe"
+
+// moduleTables are the tables the module owns; the migration tests use this
+// list.
+var moduleTables = []string{
 	"customer", "customer_group", "customer_group_customer", "customer_address",
 }
 
 var (
-	// testPool tüm testlerin paylaştığı havuzdur.
+	// testPool is the pool every test shares.
 	testPool *db.Pool
-	// testDSN migration çağrıları için bağlantı adresidir.
+	// testDSN is the connection address the migration calls use.
 	testDSN string
-	// epostaSayaci testler arasında benzersiz e-posta üretir.
-	epostaSayaci atomic.Int64
+	// emailCounter hands out an e-mail no other test is using.
+	emailCounter atomic.Int64
 )
 
 func TestMain(m *testing.M) {
 	os.Exit(runWithPostgres(m))
 }
 
-// runWithPostgres tek bir Postgres konteyneri kaldırıp tüm testleri onun
-// üzerinde çalıştırır. os.Exit defer'ları atladığı için ayrı fonksiyondadır.
+// runWithPostgres brings up a single Postgres container and runs every test on
+// it. It is a separate function because os.Exit skips defers.
 func runWithPostgres(m *testing.M) int {
 	ctx := context.Background()
 
@@ -75,79 +81,83 @@ func runWithPostgres(m *testing.M) int {
 	)
 	defer func() {
 		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-			fmt.Fprintf(os.Stderr, "postgres konteyneri durdurulamadı: %v\n", termErr)
+			fmt.Fprintf(os.Stderr, "the postgres container could not be stopped: %v\n", termErr)
 		}
 	}()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "postgres konteyneri başlatılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the postgres container could not be started: %v\n", err)
 		return 1
 	}
 
 	testDSN, err = ctr.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı adresi alınamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection address could not be read: %v\n", err)
 		return 1
 	}
 
 	cfg := db.DefaultConfig(testDSN)
-	// Eşzamanlılık testi onlarca goroutine'i aynı anda koşturur; her işlem bir
-	// bağlantı tuttuğu için havuz varsayılandan geniş açılır.
+	// The concurrency tests run dozens of goroutines at once and every
+	// transaction holds a connection, so the pool is opened wider than default.
 	cfg.MaxConns = 24
 	testPool, err = db.New(ctx, cfg, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı havuzu açılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection pool could not be opened: %v\n", err)
 		return 1
 	}
 	defer testPool.Close()
 
 	if err := db.Migrate(ctx, testDSN, customer.New(nil).Migrations(), customer.ModuleName); err != nil {
-		fmt.Fprintf(os.Stderr, "migration uygulanamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the migration could not be applied: %v\n", err)
 		return 1
 	}
 
 	return m.Run()
 }
 
-// yeniServis gerçek depo üzerinde çalışan bir servis kurar.
-func yeniServis(t *testing.T) *service.Service {
+// newService builds a service running on the real repository.
+func newService(t *testing.T) *service.Service {
 	t.Helper()
 
 	return service.New(repository.New(testPool.Pool()), service.Options{})
 }
 
-// yeniEposta testler arasında çakışmayan bir e-posta üretir.
-func yeniEposta(t *testing.T) string {
+// newEmail returns an e-mail address that collides with no other test.
+func newEmail(t *testing.T) string {
 	t.Helper()
 
-	return fmt.Sprintf("t%d@example.com", epostaSayaci.Add(1))
+	return fmt.Sprintf("t%d@example.com", emailCounter.Add(1))
 }
 
-// yeniHesap kayıtlı bir müşteri açar.
-func yeniHesap(ctx context.Context, t *testing.T, svc *service.Service) models.Customer {
+// newAccount opens a registered customer.
+func newAccount(ctx context.Context, t *testing.T, svc *service.Service) models.Customer {
 	t.Helper()
 
-	c, err := svc.CreateCustomer(ctx, service.CustomerInput{Email: yeniEposta(t)})
+	c, err := svc.CreateCustomer(ctx, service.CustomerInput{Email: newEmail(t)})
 	require.NoError(t, err)
 	return c
 }
 
-// gecerliAdres testlerde kullanılan geçerli bir adresin girdisidir.
-func gecerliAdres() service.AddressInput {
+// validAddress is the input of a valid address, used throughout these tests.
+//
+// The street and the city carry letters outside ASCII ON PURPOSE: they are what
+// shows the text columns round-trip UTF-8 rather than mangling it. They are
+// written as escapes for the reason given on [nonASCIIName].
+func validAddress() service.AddressInput {
 	return service.AddressInput{
 		FirstName:   "Ali",
 		LastName:    "Veli",
-		Address1:    "Atatürk Cad. 1",
-		City:        "İstanbul",
+		Address1:    "Atat\u00fcrk Cad. 1", // U+00FC in the street name
+		City:        "\u0130stanbul",       // U+0130, the dotted capital I
 		CountryCode: "tr",
 		PostalCode:  "34000",
 	}
 }
 
-// nowUTC kimlik üretiminde kullanılan geçerli anı döner.
+// nowUTC is the instant identifier generation is given.
 func nowUTC() time.Time { return time.Now().UTC() }
 
-// tabloVar tablonun veritabanında olup olmadığını bildirir.
-func tabloVar(ctx context.Context, t *testing.T, table string) bool {
+// tableExists reports whether the table is in the database.
+func tableExists(ctx context.Context, t *testing.T, table string) bool {
 	t.Helper()
 
 	var exists bool
@@ -161,35 +171,35 @@ func tabloVar(ctx context.Context, t *testing.T, table string) bool {
 	return exists
 }
 
-// TestMigrationGeriAlinabilir migration'ın uygulanıp geri alınabildiğini
-// doğrular (plan Bölüm 8: up/down çiftleri, geri alınabilir).
-func TestMigrationGeriAlinabilir(t *testing.T) {
+// TestTheMigrationCanBeRolledBack checks that the migration applies and rolls
+// back (plan Section 8: up/down pairs, reversible).
+func TestTheMigrationCanBeRolledBack(t *testing.T) {
 	ctx := context.Background()
 	src := customer.New(nil).Migrations()
 
-	for _, table := range modulTablolari {
-		require.True(t, tabloVar(ctx, t, table), "%s başlangıçta var olmalı", table)
+	for _, table := range moduleTables {
+		require.True(t, tableExists(ctx, t, table), "%s must exist to begin with", table)
 	}
 
 	require.NoError(t, db.MigrateDown(ctx, testDSN, src, customer.ModuleName, 0))
-	for _, table := range modulTablolari {
-		assert.False(t, tabloVar(ctx, t, table), "%s geri alma sonrası kalmamalı", table)
+	for _, table := range moduleTables {
+		assert.False(t, tableExists(ctx, t, table), "%s must not survive the rollback", table)
 	}
 
 	require.NoError(t, db.Migrate(ctx, testDSN, src, customer.ModuleName))
-	for _, table := range modulTablolari {
-		assert.True(t, tabloVar(ctx, t, table), "%s yeniden uygulanmalı", table)
+	for _, table := range moduleTables {
+		assert.True(t, tableExists(ctx, t, table), "%s must be applied again", table)
 	}
 
 	version, dirty, err := db.Version(ctx, testDSN, customer.ModuleName)
 	require.NoError(t, err)
-	assert.False(t, dirty, "yarıda kalmış migration olmamalı")
+	assert.False(t, dirty, "no migration may be left half-applied")
 	assert.Equal(t, uint(2), version)
 }
 
-// TestCrossModuleForeignKeyYok modülün tablolarındaki TÜM foreign key'lerin
-// yine modülün kendi tablolarına gittiğini doğrular (Prensip 2.2).
-func TestCrossModuleForeignKeyYok(t *testing.T) {
+// TestNoForeignKeyLeavesTheModule checks that EVERY foreign key on the module's
+// tables points back at the module's own tables (Principle 2.2).
+func TestNoForeignKeyLeavesTheModule(t *testing.T) {
 	ctx := context.Background()
 
 	rows, err := testPool.Pool().Query(ctx,
@@ -197,753 +207,761 @@ func TestCrossModuleForeignKeyYok(t *testing.T) {
          FROM pg_constraint c
          JOIN pg_class src ON src.oid = c.conrelid
          JOIN pg_class tgt ON tgt.oid = c.confrelid
-         WHERE c.contype = 'f' AND src.relname = ANY($1)`, modulTablolari)
+         WHERE c.contype = 'f' AND src.relname = ANY($1)`, moduleTables)
 	require.NoError(t, err)
 	defer rows.Close()
 
-	sahipli := make(map[string]struct{}, len(modulTablolari))
-	for _, table := range modulTablolari {
-		sahipli[table] = struct{}{}
+	owned := make(map[string]struct{}, len(moduleTables))
+	for _, table := range moduleTables {
+		owned[table] = struct{}{}
 	}
 
-	var sayi int
+	var count int
 	for rows.Next() {
 		var name, src, tgt string
 		require.NoError(t, rows.Scan(&name, &src, &tgt))
-		assert.Contains(t, sahipli, tgt,
-			"%s kısıtı modül dışına referans veriyor (%s -> %s)", name, src, tgt)
-		sayi++
+		assert.Contains(t, owned, tgt,
+			"the %s constraint references outside the module (%s -> %s)", name, src, tgt)
+		count++
 	}
 	require.NoError(t, rows.Err())
-	assert.Positive(t, sayi, "modül içi foreign key'ler kullanılmalı")
+	assert.Positive(t, count, "foreign keys inside the module must be used")
 }
 
-// TestKayitliEpostaVeritabaninda tekilliğin gerçekten kısmi benzersiz indekste
-// olduğunu doğrular.
+// TestAnAccountEmailIsUniqueInTheDatabase checks that the uniqueness really
+// lives in the partial unique index.
 //
-// Servis bu kuralı KENDİ kontrol etmez; eğer indeks yoksa ya da WHERE koşulu
-// yanlışsa test burada düşer.
-func TestKayitliEpostaVeritabaninda(t *testing.T) {
+// The service does not check this rule ITSELF; if the index is missing, or its
+// WHERE clause is wrong, the test falls over here.
+func TestAnAccountEmailIsUniqueInTheDatabase(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	eposta := yeniEposta(t)
-	_, err := svc.CreateCustomer(ctx, service.CustomerInput{Email: eposta})
+	email := newEmail(t)
+	_, err := svc.CreateCustomer(ctx, service.CustomerInput{Email: email})
 	require.NoError(t, err)
 
-	_, err = svc.CreateCustomer(ctx, service.CustomerInput{Email: eposta})
+	_, err = svc.CreateCustomer(ctx, service.CustomerInput{Email: email})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 	assert.Equal(t, repository.CodeEmailTaken, errors.CodeOf(err))
 }
 
-// TestAyniEpostaylaCokMisafirKabulEdilir Faz 5 DoD'sinin misafir senaryosunu
-// GERÇEK indeks üzerinde doğrular.
+// TestManyGuestsMayShareOneEmail checks the guest scenario of the Phase 5 DoD
+// against the REAL index.
 //
-// Kısmi indeksin WHERE has_account koşulu düşerse (yani indeks tüm satırları
-// kapsarsa) bu test düşer; kuralı koruyan kapı budur.
-func TestAyniEpostaylaCokMisafirKabulEdilir(t *testing.T) {
+// If the partial index's WHERE has_account clause falls away (that is, if the
+// index covers every row) this test fails; it is the gate that keeps the rule.
+func TestManyGuestsMayShareOneEmail(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	eposta := yeniEposta(t)
-	var kimlikler []string
+	email := newEmail(t)
+	var ids []string
 	for range 3 {
-		misafir, err := svc.RegisterGuest(ctx, service.CustomerInput{Email: eposta})
-		require.NoError(t, err, "aynı e-postayla misafir kaydı reddedilmemeli")
-		kimlikler = append(kimlikler, misafir.ID)
+		guest, err := svc.RegisterGuest(ctx, service.CustomerInput{Email: email})
+		require.NoError(t, err, "a guest registration on the same e-mail must not be refused")
+		ids = append(ids, guest.ID)
 	}
-	assert.Len(t, kimlikler, 3)
+	assert.Len(t, ids, 3)
 
-	// Aynı e-postayla BİR hesap da açılabilir; misafir kayıtları onu engellemez.
-	hesap, err := svc.CreateCustomer(ctx, service.CustomerInput{Email: eposta})
-	require.NoError(t, err, "misafir kayıtları hesap açılmasını engellememeli")
+	// ONE account may be opened on that e-mail too; the guest rows do not block it.
+	account, err := svc.CreateCustomer(ctx, service.CustomerInput{Email: email})
+	require.NoError(t, err, "guest rows must not stop an account from being opened")
 
-	bulunan, err := svc.GetCustomerByEmail(ctx, eposta)
+	found, err := svc.GetCustomerByEmail(ctx, email)
 	require.NoError(t, err)
-	assert.Equal(t, hesap.ID, bulunan.ID, "e-postaya göre arama HESABI bulmalı")
+	assert.Equal(t, account.ID, found.ID, "a lookup by e-mail must find the ACCOUNT")
 
-	// Listeleme misafirleri de görür; toplam dört kayıt vardır.
-	page, err := svc.ListCustomers(ctx, service.ListCustomersInput{Email: &eposta})
+	// The listing sees the guests as well; there are four rows in total.
+	page, err := svc.ListCustomers(ctx, service.ListCustomersInput{Email: &email})
 	require.NoError(t, err)
 	assert.Equal(t, int64(4), page.Count)
 }
 
-// TestMisafirdenHesabaGecis dönüşümü ve çakışmasını gerçek veritabanında
-// doğrular.
-func TestMisafirdenHesabaGecis(t *testing.T) {
+// TestAGuestBecomesAnAccount checks the conversion, and its conflict, on the
+// real database.
+func TestAGuestBecomesAnAccount(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	t.Run("basarili", func(t *testing.T) {
-		misafir, err := svc.RegisterGuest(ctx, service.CustomerInput{Email: yeniEposta(t)})
+	t.Run("success", func(t *testing.T) {
+		guest, err := svc.RegisterGuest(ctx, service.CustomerInput{Email: newEmail(t)})
 		require.NoError(t, err)
 
-		require.NoError(t, svc.ConvertGuestToAccount(ctx, misafir.ID))
+		require.NoError(t, svc.ConvertGuestToAccount(ctx, guest.ID))
 
-		okunan, err := svc.GetCustomer(ctx, misafir.ID)
+		stored, err := svc.GetCustomer(ctx, guest.ID)
 		require.NoError(t, err)
-		assert.True(t, okunan.HasAccount)
+		assert.True(t, stored.HasAccount)
 
-		// Artık e-postaya göre bulunabilir.
-		bulunan, err := svc.GetCustomerByEmail(ctx, okunan.Email)
+		// It can be found by e-mail from now on.
+		found, err := svc.GetCustomerByEmail(ctx, stored.Email)
 		require.NoError(t, err)
-		assert.Equal(t, misafir.ID, bulunan.ID)
+		assert.Equal(t, guest.ID, found.ID)
 	})
 
-	t.Run("cakisma", func(t *testing.T) {
-		eposta := yeniEposta(t)
-		_, err := svc.CreateCustomer(ctx, service.CustomerInput{Email: eposta})
+	t.Run("conflict", func(t *testing.T) {
+		email := newEmail(t)
+		_, err := svc.CreateCustomer(ctx, service.CustomerInput{Email: email})
 		require.NoError(t, err)
-		misafir, err := svc.RegisterGuest(ctx, service.CustomerInput{Email: eposta})
+		guest, err := svc.RegisterGuest(ctx, service.CustomerInput{Email: email})
 		require.NoError(t, err)
 
-		err = svc.ConvertGuestToAccount(ctx, misafir.ID)
+		err = svc.ConvertGuestToAccount(ctx, guest.ID)
 		require.Error(t, err)
 		assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 
-		okunan, getErr := svc.GetCustomer(ctx, misafir.ID)
+		stored, getErr := svc.GetCustomer(ctx, guest.ID)
 		require.NoError(t, getErr)
-		assert.False(t, okunan.HasAccount, "çakışan dönüşüm işlemi GERİ ALINMALI")
+		assert.False(t, stored.HasAccount, "a conflicting conversion must be ROLLED BACK")
 	})
 
-	t.Run("zaten hesap", func(t *testing.T) {
-		hesap := yeniHesap(ctx, t, svc)
+	t.Run("already an account", func(t *testing.T) {
+		account := newAccount(ctx, t, svc)
 
-		err := svc.ConvertGuestToAccount(ctx, hesap.ID)
+		err := svc.ConvertGuestToAccount(ctx, account.ID)
 		require.Error(t, err)
 		assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 		assert.Equal(t, repository.CodeAlreadyAccount, errors.CodeOf(err))
 	})
 }
 
-// TestEszamanliMisafirDonusumu aynı e-postalı iki misafirin aynı anda hesaba
-// çevrilmesinde tam olarak BİRİNİN kazandığını doğrular.
+// TestConcurrentGuestConversionsLeaveExactlyOneAccount checks that when two
+// guests on the same e-mail are converted at the same moment, exactly ONE wins.
 //
-// Ön denetim tek başına yetmezdi: iki işlem de "e-posta boş" görüp ikisi de
-// yazabilirdi. Sınırı koyan kısmi benzersiz indekstir ve bu test onu gerçek
-// eşzamanlılıkla yoklar.
-func TestEszamanliMisafirDonusumu(t *testing.T) {
+// The pre-check alone would not have been enough: both transactions could see
+// "the e-mail is free" and both could write. What draws the line is the partial
+// unique index, and this test probes it with real concurrency.
+func TestConcurrentGuestConversionsLeaveExactlyOneAccount(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	eposta := yeniEposta(t)
-	const yarisci = 8
+	email := newEmail(t)
+	const racers = 8
 
-	kimlikler := make([]string, 0, yarisci)
-	for range yarisci {
-		misafir, err := svc.RegisterGuest(ctx, service.CustomerInput{Email: eposta})
+	ids := make([]string, 0, racers)
+	for range racers {
+		guest, err := svc.RegisterGuest(ctx, service.CustomerInput{Email: email})
 		require.NoError(t, err)
-		kimlikler = append(kimlikler, misafir.ID)
+		ids = append(ids, guest.ID)
 	}
 
 	var (
-		wg       sync.WaitGroup
-		basarili atomic.Int64
-		cakisma  atomic.Int64
+		wg         sync.WaitGroup
+		succeeded  atomic.Int64
+		conflicted atomic.Int64
 	)
-	for _, id := range kimlikler {
+	for _, id := range ids {
 		wg.Add(1)
 		go func(customerID string) {
 			defer wg.Done()
 			switch err := svc.ConvertGuestToAccount(ctx, customerID); {
 			case err == nil:
-				basarili.Add(1)
+				succeeded.Add(1)
 			case errors.IsConflict(err):
-				cakisma.Add(1)
+				conflicted.Add(1)
 			default:
-				t.Errorf("beklenmeyen hata: %v", err)
+				t.Errorf("unexpected error: %v", err)
 			}
 		}(id)
 	}
 	wg.Wait()
 
-	assert.Equal(t, int64(1), basarili.Load(), "tam olarak bir dönüşüm kazanmalı")
-	assert.Equal(t, int64(yarisci-1), cakisma.Load(), "kalanlar çakışma almalı")
+	assert.Equal(t, int64(1), succeeded.Load(), "exactly one conversion must win")
+	assert.Equal(t, int64(racers-1), conflicted.Load(), "the rest must get a conflict")
 
-	page, err := svc.ListCustomers(ctx, service.ListCustomersInput{Email: &eposta})
+	page, err := svc.ListCustomers(ctx, service.ListCustomersInput{Email: &email})
 	require.NoError(t, err)
-	var hesapSayisi int
+	var accountCount int
 	for _, c := range page.Items {
 		if c.HasAccount {
-			hesapSayisi++
+			accountCount++
 		}
 	}
-	assert.Equal(t, 1, hesapSayisi, "aynı e-postayla tek hesap kalmalı")
+	assert.Equal(t, 1, accountCount, "one account at most may hold that e-mail")
 }
 
-// TestSilinenHesabinEpostasiYenidenKullanilabilir yumuşak silmenin indeks
-// kapsamından çıkardığını doğrular.
+// TestADeletedAccountsEmailBecomesFreeAgain checks that a soft delete takes the
+// row out of the index's reach.
 //
-// Kısmi indeksin deleted_at IS NULL koşulu düşerse silinmiş bir hesabın
-// e-postası sonsuza dek işgal edilmiş kalırdı.
-func TestSilinenHesabinEpostasiYenidenKullanilabilir(t *testing.T) {
+// If the partial index's deleted_at IS NULL clause falls away, a deleted
+// account's e-mail would stay occupied forever.
+func TestADeletedAccountsEmailBecomesFreeAgain(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	eposta := yeniEposta(t)
-	ilk, err := svc.CreateCustomer(ctx, service.CustomerInput{Email: eposta})
+	email := newEmail(t)
+	first, err := svc.CreateCustomer(ctx, service.CustomerInput{Email: email})
 	require.NoError(t, err)
 
-	require.NoError(t, svc.DeleteCustomer(ctx, ilk.ID))
+	require.NoError(t, svc.DeleteCustomer(ctx, first.ID))
 
-	ikinci, err := svc.CreateCustomer(ctx, service.CustomerInput{Email: eposta})
-	require.NoError(t, err, "silinmiş hesabın e-postası yeniden kullanılabilmeli")
-	assert.NotEqual(t, ilk.ID, ikinci.ID)
+	second, err := svc.CreateCustomer(ctx, service.CustomerInput{Email: email})
+	require.NoError(t, err, "a deleted account's e-mail must be usable again")
+	assert.NotEqual(t, first.ID, second.ID)
 }
 
-// TestSilinenMusteriHicbirOkumadaGorunmez yumuşak silmenin GERÇEK sorgularda
-// süzüldüğünü doğrular.
+// TestADeletedCustomerAppearsInNoRead checks that the soft delete is really
+// filtered out in the REAL queries.
 //
-// Kural (plan Bölüm 8) "silme SOFT'tur, okumalar deleted_at IS NULL süzer"
-// biçimindedir ve tek dayanağı SQL'in WHERE koşuludur: satır tabloda KALIR,
-// görünmezliği sağlayan yalnızca o süzgeçtir. Birim testi bunu kanıtlayamaz —
-// sahte depo süzgeci kendisi uygular ve yalnızca kendi kuralını doğrular.
-// Süzgeç düşerse silinmiş müşteriler yönetim listelemesinde, e-postayla
-// aramada ve Query sağlayıcısının çıktısında (yani cart/order
-// genişletmelerinde) geri gelirdi.
+// The rule (plan Section 8) reads "deletion is SOFT, reads filter on
+// deleted_at IS NULL", and the only thing holding it is the SQL's WHERE clause:
+// the row STAYS in the table and that filter is the whole of its invisibility.
+// A unit test cannot prove this — the fake repository applies the filter itself
+// and so only confirms its own rule. If the filter fell away, deleted customers
+// would come back in the admin listing, in the lookup by e-mail and in the
+// Query provider's output (that is, in cart/order expansions).
 //
-// Test müşteri tablosunu okuyan BEŞ sorgunun her birine ayrı ayrı dokunur:
-// GetCustomer, GetAccountByEmail, ListCustomers/CountCustomers,
-// ListCustomersByIDs ve GetCustomerForUpdate.
-func TestSilinenMusteriHicbirOkumadaGorunmez(t *testing.T) {
+// The test touches each of the FIVE queries that read the customer table
+// separately: GetCustomer, GetAccountByEmail, ListCustomers/CountCustomers,
+// ListCustomersByIDs and GetCustomerForUpdate.
+func TestADeletedCustomerAppearsInNoRead(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	saglayici := service.NewQueryProvider(svc)
+	svc := newService(t)
+	provider := service.NewQueryProvider(svc)
 
-	eposta := yeniEposta(t)
-	musteri, err := svc.CreateCustomer(ctx, service.CustomerInput{Email: eposta})
+	email := newEmail(t)
+	cust, err := svc.CreateCustomer(ctx, service.CustomerInput{Email: email})
 	require.NoError(t, err)
 
-	require.NoError(t, svc.DeleteCustomer(ctx, musteri.ID))
+	require.NoError(t, svc.DeleteCustomer(ctx, cust.ID))
 
-	// Yumuşak silme satırı SİLMEZ; testin geri kalanı ancak satır dururken
-	// anlamlıdır.
-	var kalanSatir int
+	// A soft delete does NOT remove the row; the rest of the test is only
+	// meaningful while the row is still standing.
+	var rowsLeft int
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
-		`SELECT count(*) FROM customer WHERE id = $1`, musteri.ID).Scan(&kalanSatir))
-	require.Equal(t, 1, kalanSatir, "yumuşak silme satırı tabloda bırakmalı")
+		`SELECT count(*) FROM customer WHERE id = $1`, cust.ID).Scan(&rowsLeft))
+	require.Equal(t, 1, rowsLeft, "a soft delete must leave the row in the table")
 
 	// GetCustomer.
-	_, err = svc.GetCustomer(ctx, musteri.ID)
+	_, err = svc.GetCustomer(ctx, cust.ID)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err),
-		"silinen customer idyle okunmamalı")
+		"a deleted customer must not be readable by id")
 
 	// GetAccountByEmail.
-	_, err = svc.GetCustomerByEmail(ctx, eposta)
+	_, err = svc.GetCustomerByEmail(ctx, email)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err),
-		"silinen hesap e-postayla bulunmamalı")
+		"a deleted account must not be found by e-mail")
 
 	// ListCustomers + CountCustomers.
-	page, err := svc.ListCustomers(ctx, service.ListCustomersInput{Email: &eposta})
+	page, err := svc.ListCustomers(ctx, service.ListCustomersInput{Email: &email})
 	require.NoError(t, err)
-	assert.Zero(t, page.Count, "silinen müşteri sayımda görünmemeli")
-	assert.Empty(t, page.Items, "silinen müşteri listede görünmemeli")
+	assert.Zero(t, page.Count, "a deleted customer must not appear in the count")
+	assert.Empty(t, page.Items, "a deleted customer must not appear in the list")
 
-	// ListCustomersByIDs (Query sağlayıcısının toplu okuma yolu).
-	kayitlar, err := saglayici.FetchByIDs(ctx, []string{musteri.ID}, nil)
+	// ListCustomersByIDs (the Query provider's batched read path).
+	records, err := provider.FetchByIDs(ctx, []string{cust.ID}, nil)
 	require.NoError(t, err)
-	assert.Empty(t, kayitlar, "silinen müşteri Query sağlayıcısında görünmemeli")
+	assert.Empty(t, records, "a deleted customer must not appear in the Query provider")
 
-	// GetCustomerForUpdate: adresi yazma yolu müşteriyi kilitleyerek okur.
-	_, err = svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
+	// GetCustomerForUpdate: the address write path reads the customer under a lock.
+	_, err = svc.CreateAddress(ctx, cust.ID, validAddress())
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err),
-		"silinen müşteriye adresi yazılamamalı")
+		"no address may be written under a deleted customer")
 
-	// Yazma yolları da aynı süzgeci taşır.
-	yeniAd := "Ayşe"
-	_, err = svc.UpdateCustomer(ctx, musteri.ID, service.UpdateCustomerInput{FirstName: &yeniAd})
+	// The write paths carry the same filter.
+	newFirstName := nonASCIIName
+	_, err = svc.UpdateCustomer(ctx, cust.ID, service.UpdateCustomerInput{FirstName: &newFirstName})
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err),
-		"silinen müşteri güncellenememeli")
+		"a deleted customer must not be updatable")
 
-	assert.Equal(t, errors.KindNotFound, errors.KindOf(svc.DeleteCustomer(ctx, musteri.ID)),
-		"silinen müşteri ikinci kez silinememeli")
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(svc.DeleteCustomer(ctx, cust.ID)),
+		"a deleted customer must not be deletable a second time")
 }
 
-// TestSilinenMisafirHesabaCevrilemez yumuşak silme süzgecinin misafir dönüşüm
-// yolunda da durduğunu doğrular.
+// TestADeletedGuestCannotBeConverted checks that the soft-delete filter also
+// stands on the guest conversion path.
 //
-// Dönüşüm müşteriyi kilitleyerek okur ve yükseltme sorgusu da aynı süzgeci
-// taşır; süzgeç düşerse silinmiş bir misafir hesaba çevrilebilir ve silinmiş
-// bir satır e-posta benzersizliğini işgal ederdi.
-func TestSilinenMisafirHesabaCevrilemez(t *testing.T) {
+// The conversion reads the customer under a lock and the upgrade query carries
+// the same filter; if the filter fell away a deleted guest could be turned into
+// an account, and a deleted row would then occupy the e-mail's uniqueness.
+func TestADeletedGuestCannotBeConverted(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	misafir, err := svc.RegisterGuest(ctx, service.CustomerInput{Email: yeniEposta(t)})
+	guest, err := svc.RegisterGuest(ctx, service.CustomerInput{Email: newEmail(t)})
 	require.NoError(t, err)
-	require.NoError(t, svc.DeleteCustomer(ctx, misafir.ID))
+	require.NoError(t, svc.DeleteCustomer(ctx, guest.ID))
 
-	err = svc.ConvertGuestToAccount(ctx, misafir.ID)
+	err = svc.ConvertGuestToAccount(ctx, guest.ID)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err),
-		"silinen misafir hesaba çevrilememeli")
+		"a deleted guest must not be convertible to an account")
 }
 
-// TestEpostaCheckKisitiBuyukHarfiEngeller normalizasyonun veritabanında da
-// zorlandığını doğrular.
+// TestTheEmailCheckConstraintRefusesUpperCase checks that the normalisation is
+// enforced in the database as well.
 //
-// Servis atlansa bile (örn. ileride yazılacak bir toplu içe aktarma) büyük
-// harfli bir e-posta tabloya giremez; girseydi kısmi benzersiz indeks aynı
-// hesabı iki kez kabul ederdi.
-func TestEpostaCheckKisitiBuyukHarfiEngeller(t *testing.T) {
+// Even if the service is bypassed (say by a bulk import written later), an
+// e-mail with a capital letter cannot enter the table; if it could, the partial
+// unique index would accept the same account twice.
+func TestTheEmailCheckConstraintRefusesUpperCase(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := testPool.Pool().Exec(ctx,
 		`INSERT INTO customer (id, email, has_account) VALUES ($1, $2, TRUE)`,
-		models.NewCustomerID(nowUTC()), "BUYUK@EXAMPLE.COM")
-	require.Error(t, err, "büyük harfli e-posta CHECK kısıtına takılmalı")
+		models.NewCustomerID(nowUTC()), "UPPER@EXAMPLE.COM")
+	require.Error(t, err, "an e-mail with capitals must hit the CHECK constraint")
 	assert.Contains(t, err.Error(), "customer_email_check")
 }
 
-// TestVarsayilanAdresKisitiVeritabaninda müşteri başına tek varsayılan kuralının
-// UYGULAMADA DEĞİL veritabanında olduğunu doğrular.
+// TestTheOneDefaultAddressRuleLivesInTheDatabase checks that "one default per
+// customer" is in the database and NOT in the application.
 //
-// Test servisi bilinçli olarak ATLAR ve iki satırı doğrudan SQL ile işaretler:
-// kural yalnızca uygulamada olsaydı bu geçerdi ve iki varsayılan kargo adresi
-// tabloda yan yana dururdu.
-func TestVarsayilanAdresKisitiVeritabaninda(t *testing.T) {
+// The test deliberately SKIPS the service and marks two rows with plain SQL: if
+// the rule lived in the application alone this would pass, and two default
+// shipping addresses would sit side by side in the table.
+func TestTheOneDefaultAddressRuleLivesInTheDatabase(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	musteri := yeniHesap(ctx, t, svc)
+	svc := newService(t)
+	cust := newAccount(ctx, t, svc)
 
-	ilk, err := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
+	first, err := svc.CreateAddress(ctx, cust.ID, validAddress())
 	require.NoError(t, err)
-	ikinci, err := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
-	require.NoError(t, err)
-
-	_, err = testPool.Pool().Exec(ctx,
-		`UPDATE customer_address SET is_default_shipping = TRUE WHERE id = $1`, ilk.ID)
+	second, err := svc.CreateAddress(ctx, cust.ID, validAddress())
 	require.NoError(t, err)
 
 	_, err = testPool.Pool().Exec(ctx,
-		`UPDATE customer_address SET is_default_shipping = TRUE WHERE id = $1`, ikinci.ID)
-	require.Error(t, err, "ikinci varsayılan kargo adresi veritabanınca reddedilmeli")
+		`UPDATE customer_address SET is_default_shipping = TRUE WHERE id = $1`, first.ID)
+	require.NoError(t, err)
+
+	_, err = testPool.Pool().Exec(ctx,
+		`UPDATE customer_address SET is_default_shipping = TRUE WHERE id = $1`, second.ID)
+	require.Error(t, err, "the database must refuse a second default shipping address")
 	assert.Contains(t, err.Error(), "customer_address_default_shipping_uniq")
 
-	// Fatura tarafı da aynı şekilde korunur.
+	// The billing side is guarded the same way.
 	_, err = testPool.Pool().Exec(ctx,
-		`UPDATE customer_address SET is_default_billing = TRUE WHERE id IN ($1, $2)`, ilk.ID, ikinci.ID)
-	require.Error(t, err, "ikinci varsayılan fatura adresi veritabanınca reddedilmeli")
+		`UPDATE customer_address SET is_default_billing = TRUE WHERE id IN ($1, $2)`, first.ID, second.ID)
+	require.Error(t, err, "the database must refuse a second default billing address")
 	assert.Contains(t, err.Error(), "customer_address_default_billing_uniq")
 }
 
-// TestVarsayilanAdresServisYoluyla servisin eski işareti temizleyerek kısıtı
-// sağladığını doğrular.
-func TestVarsayilanAdresServisYoluyla(t *testing.T) {
+// TestTheServiceClearsTheOldDefaultShippingAddress checks that the service
+// satisfies the constraint by clearing the previous mark.
+func TestTheServiceClearsTheOldDefaultShippingAddress(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	musteri := yeniHesap(ctx, t, svc)
+	svc := newService(t)
+	cust := newAccount(ctx, t, svc)
 
-	ilk, err := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
+	first, err := svc.CreateAddress(ctx, cust.ID, validAddress())
 	require.NoError(t, err)
-	ikinci, err := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
+	second, err := svc.CreateAddress(ctx, cust.ID, validAddress())
 	require.NoError(t, err)
 
-	_, err = svc.SetDefaultShippingAddress(ctx, musteri.ID, ilk.ID)
+	_, err = svc.SetDefaultShippingAddress(ctx, cust.ID, first.ID)
 	require.NoError(t, err)
-	_, err = svc.SetDefaultShippingAddress(ctx, musteri.ID, ikinci.ID)
-	require.NoError(t, err, "yeni varsayılan eskisini temizleyerek yazılmalı")
+	_, err = svc.SetDefaultShippingAddress(ctx, cust.ID, second.ID)
+	require.NoError(t, err, "the new default must be written after clearing the old one")
 
-	assert.Equal(t, 1, varsayilanSayisi(ctx, t, musteri.ID, "is_default_shipping"))
+	assert.Equal(t, 1, defaultCount(ctx, t, cust.ID, "is_default_shipping"))
 
-	eskisi, err := svc.GetAddress(ctx, musteri.ID, ilk.ID)
+	old, err := svc.GetAddress(ctx, cust.ID, first.ID)
 	require.NoError(t, err)
-	assert.False(t, eskisi.IsDefaultShipping)
+	assert.False(t, old.IsDefaultShipping)
 }
 
-// TestEszamanliVarsayilanAdres aynı müşteriye gelen eşzamanlı atamaların
-// kilitlenmeden ve tek varsayılan bırakarak tamamlandığını doğrular.
+// TestConcurrentDefaultAddressAssignmentsLeaveOneDefault checks that concurrent
+// assignments against the same customer finish without deadlocking and leave a
+// single default behind.
 //
-// Kilit sırası (önce müşteri satırı, sonra adresler) sabit olmasaydı işlemler
-// birbirini ters sırada bekler ve veritabanı bir kısmını deadlock ile
-// öldürürdü; iddia ancak gerçek goroutine'lerle sınanabilir.
-func TestEszamanliVarsayilanAdres(t *testing.T) {
+// If the lock order (the customer row first, then the addresses) were not
+// fixed, the transactions would wait on each other in opposite orders and the
+// database would kill some of them with a deadlock; the claim can only be
+// probed with real goroutines.
+func TestConcurrentDefaultAddressAssignmentsLeaveOneDefault(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	musteri := yeniHesap(ctx, t, svc)
+	svc := newService(t)
+	cust := newAccount(ctx, t, svc)
 
-	const yarisci = 8
-	adresler := make([]string, 0, yarisci)
-	for range yarisci {
-		a, err := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
+	const racers = 8
+	addresses := make([]string, 0, racers)
+	for range racers {
+		a, err := svc.CreateAddress(ctx, cust.ID, validAddress())
 		require.NoError(t, err)
-		adresler = append(adresler, a.ID)
+		addresses = append(addresses, a.ID)
 	}
 
 	var wg sync.WaitGroup
-	for _, id := range adresler {
+	for _, id := range addresses {
 		wg.Add(1)
 		go func(addressID string) {
 			defer wg.Done()
-			if _, err := svc.SetDefaultShippingAddress(ctx, musteri.ID, addressID); err != nil {
-				t.Errorf("eşzamanlı varsayılan atama hata verdi: %v", err)
+			if _, err := svc.SetDefaultShippingAddress(ctx, cust.ID, addressID); err != nil {
+				t.Errorf("a concurrent default assignment failed: %v", err)
 			}
 		}(id)
 	}
 	wg.Wait()
 
-	assert.Equal(t, 1, varsayilanSayisi(ctx, t, musteri.ID, "is_default_shipping"),
-		"eşzamanlı atamalardan sonra tek varsayılan kalmalı")
+	assert.Equal(t, 1, defaultCount(ctx, t, cust.ID, "is_default_shipping"),
+		"one default must remain after the concurrent assignments")
 }
 
-// TestAdresYasamDongusu adresin oluşturma, güncelleme, listeleme ve yumuşak
-// silmeyi uçtan uca doğrular.
-func TestAdresYasamDongusu(t *testing.T) {
+// TestTheAddressLifecycle checks creation, update, listing and soft deletion
+// end to end.
+func TestTheAddressLifecycle(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	musteri := yeniHesap(ctx, t, svc)
+	svc := newService(t)
+	cust := newAccount(ctx, t, svc)
 
-	adresi, err := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
+	addr, err := svc.CreateAddress(ctx, cust.ID, validAddress())
 	require.NoError(t, err)
-	assert.Equal(t, "TR", adresi.CountryCode)
-	assert.False(t, adresi.CreatedAt.IsZero(), "created_at veritabanından gelmeli")
-	assert.Equal(t, "UTC", adresi.CreatedAt.Location().String(), "zaman UTC olmalı")
+	assert.Equal(t, "TR", addr.CountryCode)
+	assert.Equal(t, validAddress().City, addr.City, "the city must round-trip unchanged")
+	assert.False(t, addr.CreatedAt.IsZero(), "created_at must come from the database")
+	assert.Equal(t, "UTC", addr.CreatedAt.Location().String(), "the time must be UTC")
 
-	yeniSehir := "Ankara"
-	guncel, err := svc.UpdateAddress(ctx, musteri.ID, adresi.ID,
-		service.UpdateAddressInput{City: &yeniSehir})
+	newCity := "Ankara"
+	updated, err := svc.UpdateAddress(ctx, cust.ID, addr.ID,
+		service.UpdateAddressInput{City: &newCity})
 	require.NoError(t, err)
-	assert.Equal(t, "Ankara", guncel.City)
-	assert.Equal(t, adresi.Address1, guncel.Address1, "verilmeyen alan korunmalı")
+	assert.Equal(t, "Ankara", updated.City)
+	assert.Equal(t, addr.Address1, updated.Address1, "a field that was not given must be kept")
 
-	require.NoError(t, svc.DeleteAddress(ctx, musteri.ID, adresi.ID))
+	require.NoError(t, svc.DeleteAddress(ctx, cust.ID, addr.ID))
 
-	_, err = svc.GetAddress(ctx, musteri.ID, adresi.ID)
+	_, err = svc.GetAddress(ctx, cust.ID, addr.ID)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 
-	kalanlar, err := svc.ListAddresses(ctx, musteri.ID)
+	remaining, err := svc.ListAddresses(ctx, cust.ID)
 	require.NoError(t, err)
-	assert.Empty(t, kalanlar, "yumuşak silinen adresi listede görünmemeli")
+	assert.Empty(t, remaining, "a soft-deleted address must not appear in the list")
 }
 
-// TestBaskaMusterininAdresineErisilemez adresin sahipliğinin GERÇEK sorguda
-// zorlandığını doğrular.
+// TestAnotherCustomersAddressIsUnreachable checks that an address's ownership
+// is enforced in the REAL query.
 //
-// Sahiplik denetimi, adrese dokunan her sorgunun WHERE koşulundaki
-// customer_id eşitliğidir (bkz. queries/customer_address.sql). Koşul düşerse
-// adresin kimliğini bilen HERKES başkasının adresini okuyabilir, güncelleyebilir,
-// silebilir ve varsayılan yapabilir.
+// The ownership check is the customer_id equality in the WHERE clause of every
+// query that touches an address (see queries/customer_address.sql). If the
+// clause falls away, ANYONE who knows an address's id can read, update, delete
+// and default someone else's address.
 //
-// ~~store uçları Faz 8'e kadar korumasız olduğu ve customer id yol
-// parametresinden geldiği için bu koşul şu an TEK bariyerdir~~ **2026-09-08:
-// artık tek değil, ama en içteki.** ADR 0043 vitrin uçlarına bir kimlik
-// denetimi koydu; o denetim "bu istek o müşteri mi" sorusunu yanıtlar ve
-// HTTP katmanındadır. Buradaki koşul başka bir soruyu yanıtlar: kimliği doğru
-// olan bir çağıran, BAŞKASININ adres id'sini taşıyan bir istek gönderdiğinde ne
-// olur. İki denetim iki ayrı katmandadır ve biri diğerinin yerine geçemez —
-// yönetim uçları zaten kimlik denetiminden geçmez ve yalnızca bu koşula
-// dayanır.
+// ~~Because the store endpoints are unguarded until Phase 8 and the customer id
+// comes from the path parameter, this clause is currently the ONLY barrier~~
+// **2026-09-08: no longer the only one, but the innermost.** ADR 0043 put an
+// identity check on the storefront endpoints; that check answers "is this
+// request that customer" and it lives in the HTTP layer. The clause here
+// answers a different question: what happens when a caller whose identity is
+// correct sends a request carrying SOMEONE ELSE'S address id. The two checks
+// live in two separate layers and neither stands in for the other — the admin
+// endpoints do not pass through the identity check at all and rest on this
+// clause alone.
 //
-// Birim testi bu iddiayı kanıtlayamaz: sahte depo sahipliği kendisi süzer ve
-// yalnızca kendi kuralını doğrular. Hata sınıfı da tek başına yetmez — yanlış
-// bir sorgu hata döndürmeden satırı DEĞİŞTİRMİŞ olabilirdi; bu yüzden adresin
-// ham hâli servisi atlayarak ayrıca okunur.
-func TestBaskaMusterininAdresineErisilemez(t *testing.T) {
+// A unit test cannot prove this claim: the fake repository filters ownership
+// itself and so only confirms its own rule. The error kind is not enough on its
+// own either — a wrong query could have CHANGED the row without returning an
+// error, so the address's raw state is read separately, bypassing the service.
+func TestAnotherCustomersAddressIsUnreachable(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	sahibi := yeniHesap(ctx, t, svc)
-	yabanci := yeniHesap(ctx, t, svc)
+	owner := newAccount(ctx, t, svc)
+	stranger := newAccount(ctx, t, svc)
 
-	adresi, err := svc.CreateAddress(ctx, sahibi.ID, gecerliAdres())
+	addr, err := svc.CreateAddress(ctx, owner.ID, validAddress())
 	require.NoError(t, err)
 
-	_, err = svc.GetAddress(ctx, yabanci.ID, adresi.ID)
+	_, err = svc.GetAddress(ctx, stranger.ID, addr.ID)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err),
-		"başkasının adresi okunamamalı")
+		"someone else's address must not be readable")
 
-	baskaSehir := "Ankara"
-	_, err = svc.UpdateAddress(ctx, yabanci.ID, adresi.ID,
-		service.UpdateAddressInput{City: &baskaSehir})
+	otherCity := "Ankara"
+	_, err = svc.UpdateAddress(ctx, stranger.ID, addr.ID,
+		service.UpdateAddressInput{City: &otherCity})
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err),
-		"başkasının adresi güncellenememeli")
+		"someone else's address must not be updatable")
 
-	_, err = svc.SetDefaultShippingAddress(ctx, yabanci.ID, adresi.ID)
+	_, err = svc.SetDefaultShippingAddress(ctx, stranger.ID, addr.ID)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err),
-		"başkasının adresi varsayılan kargo adresi yapılamamalı")
+		"someone else's address must not become a default shipping address")
 
-	_, err = svc.SetDefaultBillingAddress(ctx, yabanci.ID, adresi.ID)
+	_, err = svc.SetDefaultBillingAddress(ctx, stranger.ID, addr.ID)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err),
-		"başkasının adresi varsayılan fatura adresi yapılamamalı")
+		"someone else's address must not become a default billing address")
 
-	err = svc.DeleteAddress(ctx, yabanci.ID, adresi.ID)
+	err = svc.DeleteAddress(ctx, stranger.ID, addr.ID)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err),
-		"başkasının adresi silinememeli")
+		"someone else's address must not be deletable")
 
-	// Asıl kanıt: satır tabloda OLDUĞU GİBİ duruyor.
-	durum := adresDurumu(ctx, t, adresi.ID)
-	assert.Equal(t, gecerliAdres().City, durum.sehir, "yabancının güncellemesi yazılmamalı")
-	assert.False(t, durum.varsayilanKargo, "yabancı varsayılan kargo işareti koyamamalı")
-	assert.False(t, durum.varsayilanFatura, "yabancı varsayılan fatura işareti koyamamalı")
-	assert.False(t, durum.silinmis, "yabancı adresi silememeli")
+	// The real proof: the row is standing in the table EXACTLY as it was.
+	state := addressState(ctx, t, addr.ID)
+	assert.Equal(t, validAddress().City, state.city, "the stranger's update must not be written")
+	assert.False(t, state.defaultShipping, "a stranger must not set the default shipping mark")
+	assert.False(t, state.defaultBilling, "a stranger must not set the default billing mark")
+	assert.False(t, state.deleted, "a stranger must not delete the address")
 
-	// Sahibi kendi adresine ERİŞEBİLMELİ; aksi hâlde yukarıdaki NotFound'lar
-	// sahiplikten değil, tümden kırık bir sorgudan geliyor olurdu.
-	kendi, err := svc.GetAddress(ctx, sahibi.ID, adresi.ID)
-	require.NoError(t, err, "sahibi kendi adresini okuyabilmeli")
-	assert.Equal(t, adresi.ID, kendi.ID)
+	// The owner MUST reach their own address; otherwise the NotFounds above
+	// would be coming from a wholly broken query rather than from ownership.
+	own, err := svc.GetAddress(ctx, owner.ID, addr.ID)
+	require.NoError(t, err, "the owner must be able to read their own address")
+	assert.Equal(t, addr.ID, own.ID)
 }
 
-// TestMusteriSilinincaAdresleriDeSilinir yumuşak silmenin adresleri de
-// kapsadığını doğrular.
+// TestDeletingACustomerDeletesTheirAddresses checks that the soft delete covers
+// the addresses too.
 //
-// Foreign key'in ON DELETE CASCADE'i yalnızca GERÇEK silmede çalışır; yumuşak
-// silme bir UPDATE olduğu için adresleri kendiliğinden götürmez.
-func TestMusteriSilinincaAdresleriDeSilinir(t *testing.T) {
+// The foreign key's ON DELETE CASCADE only fires on a REAL delete; a soft
+// delete is an UPDATE and so does not carry the addresses away by itself.
+func TestDeletingACustomerDeletesTheirAddresses(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	musteri := yeniHesap(ctx, t, svc)
+	svc := newService(t)
+	cust := newAccount(ctx, t, svc)
 
-	_, err := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
+	_, err := svc.CreateAddress(ctx, cust.ID, validAddress())
 	require.NoError(t, err)
 
-	require.NoError(t, svc.DeleteCustomer(ctx, musteri.ID))
+	require.NoError(t, svc.DeleteCustomer(ctx, cust.ID))
 
-	var canli int
+	var live int
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
 		`SELECT count(*) FROM customer_address WHERE customer_id = $1 AND deleted_at IS NULL`,
-		musteri.ID).Scan(&canli))
-	assert.Zero(t, canli, "silinen müşterinin canlı adresi kalmamalı")
+		cust.ID).Scan(&live))
+	assert.Zero(t, live, "a deleted customer must have no live address left")
 }
 
-// TestGrupUyeligi grup yaşam döngüsünü ve üyeliğin idempotansını doğrular.
-func TestGrupUyeligi(t *testing.T) {
+// TestGroupMembership checks the group lifecycle and the idempotence of
+// membership.
+func TestGroupMembership(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	musteri := yeniHesap(ctx, t, svc)
-	grup, err := svc.CreateGroup(ctx, service.GroupInput{
+	cust := newAccount(ctx, t, svc)
+	group, err := svc.CreateGroup(ctx, service.GroupInput{
 		Name:     "VIP-" + models.NewCustomerGroupID(nowUTC()),
-		Metadata: map[string]any{"indirim": "10"},
+		Metadata: map[string]any{"discount": "10"},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "10", grup.Metadata["indirim"], "metadata jsonb'den geri gelmeli")
+	assert.Equal(t, "10", group.Metadata["discount"], "the metadata must come back out of jsonb")
 
-	require.NoError(t, svc.AddToGroup(ctx, musteri.ID, grup.ID))
-	require.NoError(t, svc.AddToGroup(ctx, musteri.ID, grup.ID), "ikinci ekleme hata vermemeli")
+	require.NoError(t, svc.AddToGroup(ctx, cust.ID, group.ID))
+	require.NoError(t, svc.AddToGroup(ctx, cust.ID, group.ID), "a second add must not error")
 
-	gruplar, err := svc.ListGroupsOf(ctx, musteri.ID)
+	groups, err := svc.ListGroupsOf(ctx, cust.ID)
 	require.NoError(t, err)
-	require.Len(t, gruplar, 1, "üyelik çoklanmamalı")
+	require.Len(t, groups, 1, "the membership must not be duplicated")
 
-	// Aynı adla ikinci grup açılamaz.
-	_, err = svc.CreateGroup(ctx, service.GroupInput{Name: grup.Name})
+	// A second group cannot take the same name.
+	_, err = svc.CreateGroup(ctx, service.GroupInput{Name: group.Name})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 
-	require.NoError(t, svc.RemoveFromGroup(ctx, musteri.ID, grup.ID))
-	err = svc.RemoveFromGroup(ctx, musteri.ID, grup.ID)
+	require.NoError(t, svc.RemoveFromGroup(ctx, cust.ID, group.ID))
+	err = svc.RemoveFromGroup(ctx, cust.ID, group.ID)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err),
-		"olmayan üyeliğin kaldırılması NotFound olmalı")
+		"removing a membership that is not there must be NotFound")
 }
 
-// TestGrupGuncellemeVeSilme grup adının düzeltilebildiğini ve yumuşak silmenin
-// GERÇEK veritabanında görünmezlik ürettiğini doğrular.
+// TestUpdatingAndDeletingAGroup checks that a group's name can be corrected and
+// that the soft delete produces real invisibility IN THE DATABASE.
 //
-// Üyelik satırları silmede BIRAKILIR; silinmiş grubu gizleyen tek şey grup
-// okuyan her sorgunun deleted_at IS NULL süzgecidir. Müşteri listesinin
-// group_id süzgeci de bu yüzden üyelik satırına değil, üyeliğin bağlandığı
-// CANLI gruba bakar — yalnızca üyeliğe baksaydı silinmiş bir grubun üyeleri
-// listelenmeye devam ederdi.
-func TestGrupGuncellemeVeSilme(t *testing.T) {
+// The membership rows are LEFT BEHIND on deletion; the only thing hiding a
+// deleted group is the deleted_at IS NULL filter on every query that reads a
+// group. That is also why the customer list's group_id filter looks at the LIVE
+// group the membership points at rather than at the membership row — had it
+// looked only at the membership, a deleted group's members would go on being
+// listed.
+func TestUpdatingAndDeletingAGroup(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	saglayici := service.NewQueryProvider(svc)
+	svc := newService(t)
+	provider := service.NewQueryProvider(svc)
 
-	uye := yeniHesap(ctx, t, svc)
-	ad := "Segment-" + models.NewCustomerGroupID(nowUTC())
-	grup, err := svc.CreateGroup(ctx, service.GroupInput{Name: ad})
+	member := newAccount(ctx, t, svc)
+	name := "Segment-" + models.NewCustomerGroupID(nowUTC())
+	group, err := svc.CreateGroup(ctx, service.GroupInput{Name: name})
 	require.NoError(t, err)
-	require.NoError(t, svc.AddToGroup(ctx, uye.ID, grup.ID))
+	require.NoError(t, svc.AddToGroup(ctx, member.ID, group.ID))
 
-	// Ad düzeltilebilir; kısmi benzersiz indeks yeni adı kabul eder.
-	duzeltilmis := ad + "-duzeltilmis"
-	guncel, err := svc.UpdateGroup(ctx, grup.ID, service.UpdateGroupInput{
-		Name:     &duzeltilmis,
-		Metadata: map[string]any{"indirim": "10"},
+	// The name can be corrected; the partial unique index accepts the new one.
+	corrected := name + "-corrected"
+	updated, err := svc.UpdateGroup(ctx, group.ID, service.UpdateGroupInput{
+		Name:     &corrected,
+		Metadata: map[string]any{"discount": "10"},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, duzeltilmis, guncel.Name)
-	assert.Equal(t, "10", guncel.Metadata["indirim"], "metadata jsonb'den geri gelmeli")
-	assert.False(t, guncel.UpdatedAt.Before(guncel.CreatedAt), "updated_at ilerlemeli")
+	assert.Equal(t, corrected, updated.Name)
+	assert.Equal(t, "10", updated.Metadata["discount"], "the metadata must come back out of jsonb")
+	assert.False(t, updated.UpdatedAt.Before(updated.CreatedAt), "updated_at must move forward")
 
-	// Başka bir canlı grubun adı alınamaz; kural indekstedir.
-	digeri, err := svc.CreateGroup(ctx, service.GroupInput{
+	// Another live group's name cannot be taken; the rule is in the index.
+	other, err := svc.CreateGroup(ctx, service.GroupInput{
 		Name: "Segment-" + models.NewCustomerGroupID(nowUTC()),
 	})
 	require.NoError(t, err)
-	_, err = svc.UpdateGroup(ctx, digeri.ID, service.UpdateGroupInput{Name: &duzeltilmis})
+	_, err = svc.UpdateGroup(ctx, other.ID, service.UpdateGroupInput{Name: &corrected})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 	assert.Equal(t, repository.CodeGroupNameTaken, errors.CodeOf(err))
 
-	require.NoError(t, svc.DeleteGroup(ctx, grup.ID))
+	require.NoError(t, svc.DeleteGroup(ctx, group.ID))
 
-	// Üyelik satırı yerinde DURUYOR; görünmezliği sağlayan tek şey süzgeç.
-	var uyelikSatiri int
+	// The membership row is STANDING where it was; the filter is the whole of
+	// its invisibility.
+	var membershipRows int
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
 		`SELECT count(*) FROM customer_group_customer WHERE customer_group_id = $1`,
-		grup.ID).Scan(&uyelikSatiri))
-	require.Equal(t, 1, uyelikSatiri, "grup silmesi üyelik satırını bırakmalı")
+		group.ID).Scan(&membershipRows))
+	require.Equal(t, 1, membershipRows, "deleting a group must leave the membership row")
 
-	_, err = svc.GetGroup(ctx, grup.ID)
-	assert.Equal(t, errors.KindNotFound, errors.KindOf(err), "silinen grup okunmamalı")
+	_, err = svc.GetGroup(ctx, group.ID)
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err), "a deleted group must not be readable")
 
-	gruplar, err := svc.ListGroupsOf(ctx, uye.ID)
+	groups, err := svc.ListGroupsOf(ctx, member.ID)
 	require.NoError(t, err)
-	assert.Empty(t, gruplar, "silinen grup müşterinin gruplarında görünmemeli")
+	assert.Empty(t, groups, "a deleted group must not appear among the customer's groups")
 
-	kayitlar, err := saglayici.FetchByIDs(ctx, []string{uye.ID}, nil)
+	records, err := provider.FetchByIDs(ctx, []string{member.ID}, nil)
 	require.NoError(t, err)
-	require.Len(t, kayitlar, 1)
-	assert.Empty(t, kayitlar[0]["group_ids"], "silinen grup fiyat bağlamına taşınmamalı")
+	require.Len(t, records, 1)
+	assert.Empty(t, records[0]["group_ids"], "a deleted group must not reach the pricing context")
 
-	page, err := svc.ListCustomers(ctx, service.ListCustomersInput{GroupID: &grup.ID})
+	page, err := svc.ListCustomers(ctx, service.ListCustomersInput{GroupID: &group.ID})
 	require.NoError(t, err)
-	assert.Zero(t, page.Count, "silinen grubun üyeleri süzgeçle listelenmemeli")
+	assert.Zero(t, page.Count, "the members of a deleted group must be filtered out of the listing")
 	assert.Empty(t, page.Items)
 
-	assert.Equal(t, errors.KindNotFound, errors.KindOf(svc.AddToGroup(ctx, uye.ID, grup.ID)),
-		"silinen gruba üye eklenememeli")
-	assert.Equal(t, errors.KindNotFound, errors.KindOf(svc.DeleteGroup(ctx, grup.ID)),
-		"silinen grup ikinci kez silinememeli")
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(svc.AddToGroup(ctx, member.ID, group.ID)),
+		"no member may be added to a deleted group")
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(svc.DeleteGroup(ctx, group.ID)),
+		"a deleted group must not be deletable a second time")
 
-	_, err = svc.UpdateGroup(ctx, grup.ID, service.UpdateGroupInput{Name: &ad})
-	assert.Equal(t, errors.KindNotFound, errors.KindOf(err), "silinen grup güncellenememeli")
+	_, err = svc.UpdateGroup(ctx, group.ID, service.UpdateGroupInput{Name: &name})
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err), "a deleted group must not be updatable")
 
-	// Ad indeksin kapsamından çıktığı için serbest kalır.
-	_, err = svc.CreateGroup(ctx, service.GroupInput{Name: duzeltilmis})
-	require.NoError(t, err, "silinen grubun adı yeniden kullanılabilmeli")
+	// The name is free again because it left the index's reach.
+	_, err = svc.CreateGroup(ctx, service.GroupInput{Name: corrected})
+	require.NoError(t, err, "a deleted group's name must be usable again")
 }
 
-// TestQuerySaglayicisiGruplarlaDoner sağlayıcının müşteriyi grup kimlikleriyle
-// ve TEK turda döndürdüğünü doğrular.
+// TestTheQueryProviderReturnsGroupsInOneRound checks that the provider returns
+// the customer together with their group ids, in a SINGLE round.
 //
-// pricing'in kural bağlamı bu alanı isteyecektir; grup kimlikleri ayrı bir
-// turda gelseydi her müşteri için ikinci bir sorgu gerekirdi (ADR 0004).
-func TestQuerySaglayicisiGruplarlaDoner(t *testing.T) {
+// pricing's rule context will ask for that field; had the group ids come in a
+// second round, every customer would have cost another query (ADR 0004).
+func TestTheQueryProviderReturnsGroupsInOneRound(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	saglayici := service.NewQueryProvider(svc)
+	svc := newService(t)
+	provider := service.NewQueryProvider(svc)
 
-	assert.Equal(t, "customer", saglayici.Entity())
-	assert.Equal(t, customer.ProviderName, saglayici.Entity()+query.ProviderSuffix)
+	assert.Equal(t, "customer", provider.Entity())
+	assert.Equal(t, customer.ProviderName, provider.Entity()+query.ProviderSuffix)
 
-	grup, err := svc.CreateGroup(ctx, service.GroupInput{
+	group, err := svc.CreateGroup(ctx, service.GroupInput{
 		Name: "Segment-" + models.NewCustomerGroupID(nowUTC()),
 	})
 	require.NoError(t, err)
 
-	uye := yeniHesap(ctx, t, svc)
-	require.NoError(t, svc.AddToGroup(ctx, uye.ID, grup.ID))
-	uyesiz := yeniHesap(ctx, t, svc)
+	member := newAccount(ctx, t, svc)
+	require.NoError(t, svc.AddToGroup(ctx, member.ID, group.ID))
+	ungrouped := newAccount(ctx, t, svc)
 
-	kayitlar, err := saglayici.FetchByIDs(ctx, []string{uye.ID, uyesiz.ID}, nil)
+	records, err := provider.FetchByIDs(ctx, []string{member.ID, ungrouped.ID}, nil)
 	require.NoError(t, err)
-	require.Len(t, kayitlar, 2)
+	require.Len(t, records, 2)
 
 	byID := map[string]query.Record{}
-	for _, kayit := range kayitlar {
-		id, ok := kayit[query.IDField].(string)
+	for _, record := range records {
+		id, ok := record[query.IDField].(string)
 		require.True(t, ok)
-		byID[id] = kayit
+		byID[id] = record
 	}
 
-	assert.Equal(t, []string{grup.ID}, byID[uye.ID]["group_ids"])
-	assert.Empty(t, byID[uyesiz.ID]["group_ids"])
-	assert.Equal(t, uye.Email, byID[uye.ID]["email"])
-	assert.Equal(t, true, byID[uye.ID]["has_account"])
+	assert.Equal(t, []string{group.ID}, byID[member.ID]["group_ids"])
+	assert.Empty(t, byID[ungrouped.ID]["group_ids"])
+	assert.Equal(t, member.Email, byID[member.ID]["email"])
+	assert.Equal(t, true, byID[member.ID]["has_account"])
 
-	// Bulunamayan kimlik hata değildir; kayıt dönmez.
-	kayitlar, err = saglayici.FetchByIDs(ctx, []string{models.NewCustomerID(nowUTC())}, nil)
+	// An id that is not found is not an error; no record comes back.
+	records, err = provider.FetchByIDs(ctx, []string{models.NewCustomerID(nowUTC())}, nil)
 	require.NoError(t, err)
-	assert.Empty(t, kayitlar)
+	assert.Empty(t, records)
 }
 
-// TestMetadataYuvarlanir metadata'nın jsonb'ye yazılıp geri okunduğunu
-// doğrular.
-func TestMetadataYuvarlanir(t *testing.T) {
+// TestMetadataRoundTrips checks that metadata is written to jsonb and read back.
+func TestMetadataRoundTrips(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	musteri, err := svc.CreateCustomer(ctx, service.CustomerInput{
-		Email:    yeniEposta(t),
-		Metadata: map[string]any{"kaynak": "web", "puan": float64(12)},
+	cust, err := svc.CreateCustomer(ctx, service.CustomerInput{
+		Email:    newEmail(t),
+		Metadata: map[string]any{"source": "web", "points": float64(12)},
 	})
 	require.NoError(t, err)
 
-	okunan, err := svc.GetCustomer(ctx, musteri.ID)
+	stored, err := svc.GetCustomer(ctx, cust.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "web", okunan.Metadata["kaynak"])
-	assert.InDelta(t, 12, okunan.Metadata["puan"], 0.0001)
+	assert.Equal(t, "web", stored.Metadata["source"])
+	assert.InDelta(t, 12, stored.Metadata["points"], 0.0001)
 
-	// Metadata verilmeyen güncelleme sütuna DOKUNMAZ.
-	yeniAd := "Ayşe"
-	guncel, err := svc.UpdateCustomer(ctx, musteri.ID, service.UpdateCustomerInput{FirstName: &yeniAd})
+	// An update that does not carry metadata does NOT touch the column.
+	newFirstName := nonASCIIName
+	updated, err := svc.UpdateCustomer(ctx, cust.ID, service.UpdateCustomerInput{FirstName: &newFirstName})
 	require.NoError(t, err)
-	assert.Equal(t, "Ayşe", guncel.FirstName)
-	assert.Equal(t, "web", guncel.Metadata["kaynak"], "verilmeyen metadata korunmalı")
+	assert.Equal(t, nonASCIIName, updated.FirstName, "the name must round-trip unchanged")
+	assert.Equal(t, "web", updated.Metadata["source"], "metadata that was not given must be kept")
 }
 
-// adresSatiri adresin tabloda duran ham hâlidir.
-type adresSatiri struct {
-	// sehir city sütunudur.
-	sehir string
-	// varsayilanKargo is_default_shipping sütunudur.
-	varsayilanKargo bool
-	// varsayilanFatura is_default_billing sütunudur.
-	varsayilanFatura bool
-	// silinmis deleted_at sütununun dolu olup olmadığıdır.
-	silinmis bool
+// addressRow is an address's raw state as it stands in the table.
+type addressRow struct {
+	// city is the city column.
+	city string
+	// defaultShipping is the is_default_shipping column.
+	defaultShipping bool
+	// defaultBilling is the is_default_billing column.
+	defaultBilling bool
+	// deleted says whether the deleted_at column is filled in.
+	deleted bool
 }
 
-// adresDurumu adresi SERVİSİ ATLAYARAK doğrudan tablodan okur.
+// addressState reads the address straight out of the table, BYPASSING THE
+// SERVICE.
 //
-// Servisin döndürdüğü hata sınıfı tek başına yetmez: sahipliği süzmeyen bir
-// sorgu hiç hata vermeden satırı değiştirmiş olabilir. Ham okuma o farkı
-// görünür kılar.
-func adresDurumu(ctx context.Context, t *testing.T, addressID string) adresSatiri {
+// The error kind the service returns is not enough on its own: a query that
+// does not filter on ownership could have changed the row without erroring at
+// all. The raw read is what makes that difference visible.
+func addressState(ctx context.Context, t *testing.T, addressID string) addressRow {
 	t.Helper()
 
-	var row adresSatiri
+	var row addressRow
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
 		`SELECT city, is_default_shipping, is_default_billing, deleted_at IS NOT NULL
          FROM customer_address WHERE id = $1`, addressID).
-		Scan(&row.sehir, &row.varsayilanKargo, &row.varsayilanFatura, &row.silinmis))
+		Scan(&row.city, &row.defaultShipping, &row.defaultBilling, &row.deleted))
 	return row
 }
 
-// varsayilanSayisi müşterinin verilen sütunda kaç işaretli canlı adresi
-// olduğunu döner.
-func varsayilanSayisi(ctx context.Context, t *testing.T, customerID, sutun string) int {
+// defaultCount returns how many live addresses of the customer are marked in
+// the given column.
+func defaultCount(ctx context.Context, t *testing.T, customerID, column string) int {
 	t.Helper()
 
-	// Sütun adı SQL'de parametrelenemez; bu yüzden yalnızca testin kendi
-	// sabitleri kabul edilir.
-	var sorgu string
-	switch sutun {
+	// A column name cannot be a SQL parameter, so only the test's own constants
+	// are accepted.
+	var stmt string
+	switch column {
 	case "is_default_shipping":
-		sorgu = `SELECT count(*) FROM customer_address
+		stmt = `SELECT count(*) FROM customer_address
                  WHERE customer_id = $1 AND deleted_at IS NULL AND is_default_shipping`
 	case "is_default_billing":
-		sorgu = `SELECT count(*) FROM customer_address
+		stmt = `SELECT count(*) FROM customer_address
                  WHERE customer_id = $1 AND deleted_at IS NULL AND is_default_billing`
 	default:
-		t.Fatalf("bilinmeyen sütun: %s", sutun)
+		t.Fatalf("unknown column: %s", column)
 	}
 
 	var n int
-	require.NoError(t, testPool.Pool().QueryRow(ctx, sorgu, customerID).Scan(&n))
+	require.NoError(t, testPool.Pool().QueryRow(ctx, stmt, customerID).Scan(&n))
 	return n
 }
 
-// engellenenIstekSayisi verilen oturumun BLOKE ETTİĞİ istek sayısını döner.
+// blockedRequestCount returns how many requests the given session is BLOCKING.
 //
-// pg_blocking_pids ile bilinen bir engelleyiciye daraltmak zorunludur:
-// "veritabanında biri kilitte bekliyor" koşulu başka bir testin oturumuyla da
-// sağlanır ve o durumda aşağıdaki bekleme iddiası, sınanan istek daha ilk
-// deyimini çalıştırmadan koşar. Test yeşil kalır ve hiçbir şey ölçmez.
-func engellenenIstekSayisi(ctx context.Context, t *testing.T, engelleyenPid int32) int64 {
+// Narrowing it to a known blocker with pg_blocking_pids is not optional: the
+// condition "somebody in the database is waiting on a lock" is also satisfied
+// by another test's session, and in that case the wait assertion below races
+// ahead before the request under test has run its first statement. The test
+// stays green and measures nothing.
+func blockedRequestCount(ctx context.Context, t *testing.T, blockerPID int32) int64 {
 	t.Helper()
 
 	var n int64
@@ -951,42 +969,43 @@ func engellenenIstekSayisi(ctx context.Context, t *testing.T, engelleyenPid int3
 		`SELECT count(*) FROM pg_stat_activity
          WHERE datname = current_database()
            AND wait_event_type = 'Lock'
-           AND $1 = ANY(pg_blocking_pids(pid))`, engelleyenPid).Scan(&n))
+           AND $1 = ANY(pg_blocking_pids(pid))`, blockerPID).Scan(&n))
 	return n
 }
 
-// requireEngellenenIstek verilen oturumun bir isteği gerçekten beklettiğini
-// doğrular.
+// requireBlockedRequest checks that the given session really is holding a
+// request up.
 //
-// Uyku yerine BEKLEME DURUMUNA bakılır: sabit bir uyku ya yavaş makinede erken
-// uyanıp testi kırılgan yapar, ya da her koşuya ölü bekleme ekler.
-func requireEngellenenIstek(ctx context.Context, t *testing.T, engelleyenPid int32) {
+// It looks at the WAIT STATE rather than sleeping: a fixed sleep either wakes
+// early on a slow machine and makes the test flaky, or adds dead waiting to
+// every run.
+func requireBlockedRequest(ctx context.Context, t *testing.T, blockerPID int32) {
 	t.Helper()
 
 	require.Eventually(t, func() bool {
-		return engellenenIstekSayisi(ctx, t, engelleyenPid) > 0
+		return blockedRequestCount(ctx, t, blockerPID) > 0
 	}, 10*time.Second, 10*time.Millisecond,
-		"sınanan yazma bu oturumun kilidinde beklemeliydi")
+		"the write under test should have been waiting on this session's lock")
 }
 
-// TestSilinmekteOlanMusteriyeAdresEklenemez GetCustomerForUpdate'in İDDİASINI
-// doğrular.
+// TestACustomerBeingDeletedCannotTakeANewAddress checks GetCustomerForUpdate's
+// CLAIM.
 //
-// queries/customer.sql şunu söyler: "FOR UPDATE kilit alındıktan sonra WHERE
-// koşulunu YENİDEN değerlendirir; araya giren bir silme bu yüzden 'kayıt yok'
-// olarak görünür." Bugüne kadar bunu tutan hiçbir test yoktu.
-// [TestSilinenMusteriHicbirOkumadaGorunmez] silmeyi ÖNCE yapar ve sonra okur;
-// o durumu düz bir okuma da reddeder. İlginç olan, silmenin yazma KARAR
-// VERİRKEN gelmesidir ve onu ancak rakip bir işlem üretebilir.
+// queries/customer.sql says this: "after the FOR UPDATE lock is taken it
+// re-evaluates the WHERE clause, so a delete that arrived in between shows up
+// as 'no such row'." Until now no test held that. [TestADeletedCustomerAppearsInNoRead]
+// deletes FIRST and then reads, and a plain read refuses that case too. What is
+// interesting is the delete arriving WHILE the write is deciding, and only a
+// rival transaction can produce it.
 //
-// Beklemenin kendisi kanıt DEĞİLDİR: adres INSERT'ünün foreign key'i de aynı
-// satırı KEY SHARE ile kilitler ve o da beklerdi. Kanıtı taşıyan, uyandıktan
-// SONRA reddedilmesidir — foreign key satırı fiziksel olarak yerinde bulur ve
-// yazmayı kabul ederdi, çünkü silme YUMUŞAKTIR.
-func TestSilinmekteOlanMusteriyeAdresEklenemez(t *testing.T) {
+// The waiting is NOT itself the proof: the address INSERT's foreign key locks
+// the same row with KEY SHARE and would have waited too. What carries the proof
+// is being refused AFTER waking — the foreign key would find the row physically
+// in place and accept the write, because the delete is SOFT.
+func TestACustomerBeingDeletedCannotTakeANewAddress(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	musteri := yeniHesap(ctx, t, svc)
+	svc := newService(t)
+	cust := newAccount(ctx, t, svc)
 
 	conn, err := testPool.Pool().Acquire(ctx)
 	require.NoError(t, err)
@@ -996,123 +1015,125 @@ func TestSilinmekteOlanMusteriyeAdresEklenemez(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var engelleyenPid int32
-	require.NoError(t, tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&engelleyenPid))
+	var blockerPID int32
+	require.NoError(t, tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID))
 
-	var kilitli string
+	var locked string
 	require.NoError(t, tx.QueryRow(ctx,
-		`SELECT id FROM customer WHERE id = $1 FOR UPDATE`, musteri.ID).Scan(&kilitli))
+		`SELECT id FROM customer WHERE id = $1 FOR UPDATE`, cust.ID).Scan(&locked))
 
-	sonuc := make(chan error, 1)
+	result := make(chan error, 1)
 	go func() {
-		_, adresErr := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
-		sonuc <- adresErr
+		_, addrErr := svc.CreateAddress(ctx, cust.ID, validAddress())
+		result <- addrErr
 	}()
 
-	requireEngellenenIstek(ctx, t, engelleyenPid)
+	requireBlockedRequest(ctx, t, blockerPID)
 
-	// Silmeyi engelleyen işlemin KENDİSİ yapar: adres yazma ancak müşterinin
-	// çoktan gittiği bir dünyaya uyanabilsin diye. Üçüncü bir oturumdan
-	// yapılsaydı o da aynı kilidin arkasına dizilir ve ikisinin sırası
-	// zamanlayıcıya kalırdı.
+	// The blocking transaction performs the delete ITSELF, so that the address
+	// write can only wake into a world where the customer is already gone. Done
+	// from a third session it would queue behind the same lock, and the order of
+	// the two would be left to the scheduler.
 	_, err = tx.Exec(ctx,
 		`UPDATE customer SET deleted_at = $2, updated_at = $2 WHERE id = $1`,
-		musteri.ID, time.Now().UTC())
+		cust.ID, time.Now().UTC())
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit(ctx))
 
-	var adresErr error
+	var addrErr error
 	select {
-	case adresErr = <-sonuc:
+	case addrErr = <-result:
 	case <-time.After(15 * time.Second):
-		t.Fatal("bekleyen adres yazması zamanında bitmedi")
+		t.Fatal("the waiting address write did not finish in time")
 	}
 
-	if assert.Error(t, adresErr, "silinmekte olan müşteriye adres eklenmemeli") {
-		assert.True(t, errors.IsNotFound(adresErr), "tür: %s", errors.KindOf(adresErr))
+	if assert.Error(t, addrErr, "no address may be added to a customer being deleted") {
+		assert.True(t, errors.IsNotFound(addrErr), "kind: %s", errors.KindOf(addrErr))
 	}
-	var adresSayisi int64
+	var addressCount int64
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
-		`SELECT count(*) FROM customer_address WHERE customer_id = $1`, musteri.ID).Scan(&adresSayisi))
-	assert.Equal(t, int64(0), adresSayisi,
-		"silinmiş müşterinin altında canlı adres kalmamalı")
+		`SELECT count(*) FROM customer_address WHERE customer_id = $1`, cust.ID).Scan(&addressCount))
+	assert.Equal(t, int64(0), addressCount,
+		"no live address may be left under a deleted customer")
 }
 
-// TestVarsayilanFaturaAdresiEskisiniTemizler fatura tarafındaki varsayılan
-// atamasının ESKİ işareti temizleyerek yazdığını doğrular.
+// TestSettingTheDefaultBillingAddressClearsTheOld checks that the assignment on
+// the billing side writes by clearing the OLD mark.
 //
-// Kargo tarafı TestVarsayilanAdresServisYoluyla ile sabitlenmişti; fatura
-// tarafı AYNI kuralı AYRI iki sorguyla uygular (ClearDefaultBilling ve
-// MarkDefaultBilling) ve o iki sorgu bugüne kadar hiçbir testte
-// ÇALIŞMAMIŞTI — yani kuralın fatura yarısı yalnızca kodun kargo yarısına
-// benzemesine dayanıyordu.
+// The shipping side was pinned by [TestTheServiceClearsTheOldDefaultShippingAddress];
+// the billing side applies the SAME rule through TWO SEPARATE queries
+// (ClearDefaultBilling and MarkDefaultBilling), and until now those two queries
+// had NEVER RUN in any test — which is to say the billing half of the rule
+// rested on the code merely resembling the shipping half.
 //
-// Temizleme adımı fatura tarafında atlanırsa kısmi benzersiz indeks ikinci
-// işaretlemeyi reddeder ve sonuç şudur: müşteri fatura adresini BİR KEZ
-// seçebilir, ikinci seçiminde "çakışma" alır ve adresini bir daha
-// değiştiremez. Kısıt veritabanında olduğu için iddia yalnızca gerçek bir
-// veritabanıyla sınanabilir; sahte depo iki işareti de yan yana kabul ederdi.
-func TestVarsayilanFaturaAdresiEskisiniTemizler(t *testing.T) {
+// If the clearing step is skipped on the billing side, the partial unique index
+// refuses the second mark, and the result is this: a customer may choose a
+// billing address ONCE, gets a "conflict" on their second choice, and can never
+// change it again. Because the constraint is in the database the claim can only
+// be probed against a real one; the fake repository would accept both marks
+// side by side.
+func TestSettingTheDefaultBillingAddressClearsTheOld(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	musteri := yeniHesap(ctx, t, svc)
+	svc := newService(t)
+	cust := newAccount(ctx, t, svc)
 
-	ilk, err := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
+	first, err := svc.CreateAddress(ctx, cust.ID, validAddress())
 	require.NoError(t, err)
-	ikinci, err := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
+	second, err := svc.CreateAddress(ctx, cust.ID, validAddress())
 	require.NoError(t, err)
 
-	isaretli, err := svc.SetDefaultBillingAddress(ctx, musteri.ID, ilk.ID)
+	marked, err := svc.SetDefaultBillingAddress(ctx, cust.ID, first.ID)
 	require.NoError(t, err)
-	assert.True(t, isaretli.IsDefaultBilling, "işaretlenen adres işaretli dönmeli")
+	assert.True(t, marked.IsDefaultBilling, "the address that was marked must come back marked")
 
-	_, err = svc.SetDefaultBillingAddress(ctx, musteri.ID, ikinci.ID)
-	require.NoError(t, err, "yeni fatura adresi eskisini temizleyerek yazılmalı")
+	_, err = svc.SetDefaultBillingAddress(ctx, cust.ID, second.ID)
+	require.NoError(t, err, "the new billing address must be written after clearing the old one")
 
-	assert.Equal(t, 1, varsayilanSayisi(ctx, t, musteri.ID, "is_default_billing"),
-		"müşterinin tek bir varsayılan fatura adresi kalmalı")
+	assert.Equal(t, 1, defaultCount(ctx, t, cust.ID, "is_default_billing"),
+		"the customer must be left with a single default billing address")
 
-	eskisi, err := svc.GetAddress(ctx, musteri.ID, ilk.ID)
+	old, err := svc.GetAddress(ctx, cust.ID, first.ID)
 	require.NoError(t, err)
-	assert.False(t, eskisi.IsDefaultBilling, "eski fatura adresinin işareti kaldırılmalı")
+	assert.False(t, old.IsDefaultBilling, "the old billing address's mark must be taken off")
 
-	yenisi, err := svc.GetAddress(ctx, musteri.ID, ikinci.ID)
+	fresh, err := svc.GetAddress(ctx, cust.ID, second.ID)
 	require.NoError(t, err)
-	assert.True(t, yenisi.IsDefaultBilling, "yeni adres varsayılan fatura adresi olmalı")
-	assert.False(t, yenisi.IsDefaultShipping,
-		"fatura işareti kargo işaretini TAŞIMAZ; iki alan ayrı ayrı seçilir")
+	assert.True(t, fresh.IsDefaultBilling, "the new address must be the default billing address")
+	assert.False(t, fresh.IsDefaultShipping,
+		"the billing mark does NOT CARRY the shipping mark; the two fields are chosen separately")
 }
 
-// TestVarsayilanFaturaliAdresEklemeEskisiniTemizler varsayılan fatura adresi
-// olarak EKLENEN yeni bir adresin eski işareti temizlediğini doğrular.
+// TestAddingAnAddressAsDefaultBillingClearsTheOld checks that a NEW address
+// added as the default billing address clears the old mark.
 //
-// Bu, işaretin ikinci yazma yoludur ve ayrı sınanır: müşteri fatura adresini
-// çoğu zaman ayrı bir uçla "seçmez", ödeme adımında yeni adresi doğrudan
-// varsayılan olarak EKLER. O yolda temizleme atlanırsa ekleme isteğinin
-// kendisi kısmi benzersiz indekse takılır — yani müşteri yeni fatura adresini
-// kaydedemez ve gördüğü şey, adresinde bir yanlışlık varmış gibi görünen bir
-// çakışma hatasıdır.
-func TestVarsayilanFaturaliAdresEklemeEskisiniTemizler(t *testing.T) {
+// This is the mark's second write path and it is probed separately: most of the
+// time a customer does not "choose" a billing address through a dedicated
+// endpoint but ADDS the new address as the default straight from the checkout
+// step. If the clearing is skipped on that path, the add request itself hits
+// the partial unique index — that is, the customer cannot save their new
+// billing address, and what they see is a conflict error that looks as though
+// something were wrong with the address.
+func TestAddingAnAddressAsDefaultBillingClearsTheOld(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	musteri := yeniHesap(ctx, t, svc)
+	svc := newService(t)
+	cust := newAccount(ctx, t, svc)
 
-	girdi := gecerliAdres()
-	girdi.IsDefaultBilling = true
+	input := validAddress()
+	input.IsDefaultBilling = true
 
-	ilk, err := svc.CreateAddress(ctx, musteri.ID, girdi)
+	first, err := svc.CreateAddress(ctx, cust.ID, input)
 	require.NoError(t, err)
-	assert.True(t, ilk.IsDefaultBilling, "işaretli eklenen adres işaretli dönmeli")
+	assert.True(t, first.IsDefaultBilling, "an address added marked must come back marked")
 
-	ikinci, err := svc.CreateAddress(ctx, musteri.ID, girdi)
+	second, err := svc.CreateAddress(ctx, cust.ID, input)
 	require.NoError(t, err,
-		"varsayılan fatura adresi olarak eklenen ikinci adres KABUL EDİLMELİ; eski işaret ekleme sırasında temizlenir")
-	assert.True(t, ikinci.IsDefaultBilling)
+		"a second address added as the default billing address must be ACCEPTED; the old mark is cleared during the add")
+	assert.True(t, second.IsDefaultBilling)
 
-	assert.Equal(t, 1, varsayilanSayisi(ctx, t, musteri.ID, "is_default_billing"),
-		"ekleme sonrasında da tek varsayılan fatura adresi kalmalı")
+	assert.Equal(t, 1, defaultCount(ctx, t, cust.ID, "is_default_billing"),
+		"a single default billing address must remain after the add as well")
 
-	eskisi, err := svc.GetAddress(ctx, musteri.ID, ilk.ID)
+	old, err := svc.GetAddress(ctx, cust.ID, first.ID)
 	require.NoError(t, err)
-	assert.False(t, eskisi.IsDefaultBilling, "eski fatura adresinin işareti kaldırılmalı")
+	assert.False(t, old.IsDefaultBilling, "the old billing address's mark must be taken off")
 }

@@ -546,15 +546,16 @@ func scanSource(rel string, src []byte, exemptions map[string][]string) (hits []
 	return hits, false
 }
 
-// trackedFiles returns every path git tracks, as a set of repo-relative slash
-// paths.
+// repositoryFiles returns every path that is part of the repository, as a set
+// of repo-relative slash paths: the files git TRACKS, plus the files it does
+// not track and .gitignore does not exclude.
 //
 // # Why the scan asks git rather than the filesystem
 //
 // ADR 0012's ratchet is about the language of the REPOSITORY, and a working
-// directory is not the repository: a developer's scratch file, a build artifact,
-// anything .gitignore keeps out — none of it ships, and none of it is debt
-// anybody can pay by translating it.
+// directory is not the repository: a build artifact, anything .gitignore keeps
+// out — none of it ships, and none of it is debt anybody can pay by translating
+// it.
 //
 // This was not a theoretical distinction. A planning document at the repository
 // root, Turkish and gitignored, was carried in the ledger for exactly this
@@ -567,27 +568,58 @@ func scanSource(rel string, src []byte, exemptions map[string][]string) (hits []
 // a local green FAKE, which is the failure mode this repository has now met
 // twice.
 //
+// # Why UNTRACKED is not the same as ignored, which cost a red CI run
+//
+// The first version of this asked only for tracked files, and that read
+// "untracked" as "scratch". It is not. A file a developer has just WRITTEN is
+// untracked for the minutes between typing it and committing it — and those are
+// exactly the minutes in which the ratchet is supposed to speak, because after
+// them the file is in the history and the debt is already taken on.
+//
+// Measured on 2026-09-08: internal/modules/customer/identity_integration_test.go
+// was written, ran green through every local lane including this test, was
+// committed, was pushed, and turned CI red on the first job that reached this
+// package. Nothing about the file changed in between. The gate simply could not
+// see it until it was too late to be useful, and so it reported the ONE state a
+// gate must never report — clean, about a tree that was not.
+//
+// The fix is to separate the two questions the original conflated. "Is this file
+// ignored?" is what decides whether it is debt, and git answers it directly with
+// --exclude-standard. "Is this file committed yet?" decides nothing here.
+//
+// The ledger stays TRACKED-only on purpose, and the asymmetry is the point: a
+// file may be SCANNED before it is committed, but it may not be LEDGERED before
+// it is committed, because a ledger entry for a file CI cannot see is the exact
+// stale-ledger failure the section above describes. So the only way to get a new
+// Turkish file past this gate is to translate it — which is what a ratchet is
+// for.
+//
 // A failure to run git is fatal rather than a fallback to "scan everything". A
 // gate that quietly widens its own scope when a tool is missing is a gate whose
 // result nobody can read.
-func trackedFiles(t *testing.T) map[string]bool {
+func repositoryFiles(t *testing.T) map[string]bool {
 	t.Helper()
 
-	out, err := exec.Command("git", "-C", repoRoot, "ls-files", "-z").Output()
-	require.NoError(t, err,
-		"git ls-files could not be run, so the scan cannot tell a tracked file from a "+
-			"developer's scratch file; refusing to guess")
+	files := map[string]bool{}
+	for _, args := range [][]string{
+		{"ls-files", "-z"},
+		{"ls-files", "--others", "--exclude-standard", "-z"},
+	} {
+		out, err := exec.Command("git", append([]string{"-C", repoRoot}, args...)...).Output()
+		require.NoError(t, err,
+			"git %s could not be run, so the scan cannot tell a file of the repository "+
+				"from an ignored artifact; refusing to guess", strings.Join(args, " "))
 
-	tracked := map[string]bool{}
-	for _, path := range strings.Split(string(out), "\x00") {
-		if path != "" {
-			tracked[path] = true
+		for _, path := range strings.Split(string(out), "\x00") {
+			if path != "" {
+				files[path] = true
+			}
 		}
 	}
 
-	require.NotEmpty(t, tracked, "git ls-files reported no files at all; the scan has gone BLIND")
+	require.NotEmpty(t, files, "git ls-files reported no files at all; the scan has gone BLIND")
 
-	return tracked
+	return files
 }
 
 // scannedFiles walks the repository and returns the repo-relative paths the
@@ -596,7 +628,7 @@ func scannedFiles(t *testing.T) []string {
 	t.Helper()
 
 	var found []string
-	tracked := trackedFiles(t)
+	inRepo := repositoryFiles(t)
 	roots := append(slices.Clone(scannedRoots), ".")
 
 	for _, root := range roots {
@@ -626,9 +658,9 @@ func scannedFiles(t *testing.T) []string {
 				return relErr
 			}
 			slash := filepath.ToSlash(rel)
-			// A file the repository does not TRACK is not the repository's
-			// language debt. See [trackedFiles].
-			if !tracked[slash] {
+			// A file the repository does not carry is not the repository's
+			// language debt. See [repositoryFiles].
+			if !inRepo[slash] {
 				return nil
 			}
 			found = append(found, slash)
