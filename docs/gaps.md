@@ -88,8 +88,8 @@ row is for; the reproduction is in the commit that closed it.
 | # | Finding | Status |
 |---|---|---|
 | **D9** | Neither order nor payment ever soft-deletes: ten `deleted_at` columns nothing writes, behind reads that all carry `deleted_at IS NULL` | **OPEN.** Dropping them is a schema decision; taking the deletes on is a product one |
-| **D18** | Nine columns nothing has ever written, invisible until D16's fix | **Eight closed, the NINTH open**, and its exemption states the question rather than hiding it |
-| **D31** | A data race in `TestCancellationActuallyStopsRemainingMigrations`, seen once | **OPEN, not reproduced.** The report was lost to a `grep` in the pipeline — keep the lane's output |
+| **D18** | Nine columns nothing has ever written, invisible until D16's fix | **Eight closed. The ninth is `stock_locations.deleted_at`**, and the question its exemption states is not "delete or status": a location has no delete OR update path, availability sums `inventory_levels` without joining locations, and both level and reservation rows CASCADE. What a closed location OWES — do its levels move, zero out or stop counting, and what happens to live reservations — decides the mechanism |
+| **D31** | A data race in `TestCancellationActuallyStopsRemainingMigrations`, seen once | **OPEN, and now DIAGNOSED.** In golang-migrate v4.19.1 the migrator's `isGracefulStop` field is a plain `bool` with no mutex, declared next to `isLocked`, which the neighbouring mutex does guard. The `stop` helper both reads and writes it, and the `Up` entry point calls `stop` from BOTH goroutines it runs — the reader on a new one, the runner on the caller's — with no happens-before edge between them, because a three-migration fixture never fills the prefetch buffer. Only a `GracefulStop` send arms the write, and the tree has exactly one, in `db.session.run` — ADR 0003's layer A. Verified by reading the upstream source on 2026-09-08. The fix is a DECISION: the field is unexported so gobit cannot synchronise it from outside, and dropping the send deletes a layer ADR 0003 argued for |
 | D1 | `/paytr/callback` sat outside every guarded prefix | Fixed — ADR 0028. Residue: callback writes are still not audited |
 | D2 | `allow_backorder` published and read by nothing | Fixed — ADR 0048 |
 | D3 | The address book's storefront endpoints were unauthenticated | Fixed — ADR 0043. Residue: the cart's `customer_id` and b2b's copy of the boundary |
@@ -147,10 +147,23 @@ row is for; the reproduction is in the commit that closed it.
 - **The rig cannot reproduce the case that motivated the change it paid for.**
   Its taxonomy is uniform by construction, and the OR/EXISTS collapse is
   invisible at that shape. The decision is what a skewed rig should look like.
-- **Two clocks on one axis.** `payments.captured_at`, the three `fulfillments`
-  stamps and `invoices.issued_at` come from the process; every other moment
+- **Two clocks on one axis.** SIX columns, not five: `payments.captured_at`,
+  `fulfillments.shipped_at/delivered_at/canceled_at`, `fulfillments.returned_at`
+  (added after this row was written, and not published through the Query layer
+  at all) and `invoices.issued_at` come from the process; every other moment
   comes from the database. Across machines a capture can be printed before the
-  order it paid for. The decision is whether to move those to the database
-  clock, and lose the injectable clock the tests use.
-- **`authorized_at` and `refunded_at` do not exist.** A session becomes
-  `authorized` and nothing records when. Adding either is a schema decision.
+  order it paid for.
+  **The cost this row named was measured on 2026-09-08 and is nearly nothing.**
+  "Lose the injectable clock the tests use" is false: overlaying `Clock: time.Now`
+  breaks exactly TWO tests, and the payment module has no injectable clock to
+  lose — its `Options` carries Store, Providers and Logger only, and
+  `captured_at` is stamped inline. The decision is what the fulfillment module's
+  four transition stamps become, since its CHECK constraints pair each stamp with
+  its status.
+- **`authorized_at` does not exist**, and this row's premise was wrong about the
+  other half. `refunded_at` is already closed: `refunds` has no UPDATE statement
+  anywhere, so a refund row is immutable and `created_at` IS the refund moment —
+  which the query and the model both say in prose. `authorized_at` is genuinely
+  absent (zero hits in the whole tree). The decision is not the column but
+  whether the published money-event surface gains a THIRD moment beside
+  `first_captured_at` and `last_refunded_at`.

@@ -140,6 +140,7 @@ sessizce dışarıda kalır.
 | Belgelerdeki eklenti adları kayıtlı adlar | `TestThePluginNamesInTheDocsAreReal` | Eklentiyi dizin adıyla çağıran bir örnek; kopyalayan kurulum açılışta "bilinmeyen eklenti" ile duruyordu |
 | Hata gövdesi yalnızca `corehttp.WriteError`'dan | `TestErrorResponsesAreWrittenInOnePlace` | GraphQL sunucusu kuralı tekrar etmeye çalışıp ayrıştı; DSN+parola istemciye ulaştı, loglanmadı |
 | Her GraphQL `Max*` sınırının çekirdekte karşılığı var | `TestTheGraphQLLimitDefaultsAgreeWithTheConfig` | Beş sertleştirme sınırının ortam değişkeni yoktu; operatör onları ayarlayamıyordu |
+| Panelin statü listesi modülün kabul ettiği söz dağarcığıdır | `TestThePanelStatusOptionsAgreeWithTheModules`, okuyucusunun altında `TestTheProductStatusReaderIsNotBlind` | Karşılaştırmanın iki tarafı da aynı yerden geliyordu — modül tarafı testin gövdesine yazılmış üç elemanlı bir dilimdi — modüle eklenen beşinci bir statü kapıyı yeşil bırakıyordu ve operatör onu asla seçemezdi |
 | `variant` okuyan her yol satış kanalı kararı verir | `TestVariantReadsGoThroughTheChannelDecision` | Kapsam okumada uygulanıyor, sepete eklemede uygulanmıyordu: B kanalının anahtarıyla A kanalının varyantı satın alınabiliyordu |
 | Belgelerdeki her yol ve simge çözülür | `TestTheReferencesInTheDocsResolve` | Bağımsız bir doğrulama bir ADR'de hem simgeyi hem yolu kırdı ve `internal/arch` yeşil kaldı |
 | Her ADR göndermesi gerçek bir kaydı adlandırır | `TestTheADRReferencesResolve` | Numarası değişen bir kayda yapılan gönderme sessizce başka bir kararı gösterir |
