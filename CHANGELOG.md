@@ -12,6 +12,40 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **D10'un artigi kapandi: sahiplik butun agacin, modullerin degil**
+  (`internal/arch/module_sql_test.go`).
+
+  Sahiplik haritasi `moduleNames`'i yuruyup yolu elle birlestiriyordu, yani
+  baska bir yerde yaratilan tablo HIC KIMSENIN'di -- ve bu kuralda sahibi
+  olmayan tablo HERKES icin serbesttir. On tablo o boslukta duruyordu: besini
+  eklentiler, besini cekirdek yaratiyor (audit_log, event_outbox, job_run,
+  workflow_executions, workflow_execution_steps). Defter yalnizca eklenti
+  yarisini yazmisti; cekirdek yarisi hic yazilmamisti.
+
+  Sahiplik artik `migrationDirs`'ten geliyor: 82 tablo, 25 sahip, ve anahtar
+  bir YOL -- "core/eventbus/outbox" bir modul adi degil, oyle anahtarlamak
+  genisletmenin kaldirdigi yalanin aynisi olurdu.
+
+  **Taranan nufus ise AGACTAN geliyor, sahiplikten DEGIL.** Bunu sahiplikten
+  turetmek olcutu "bu bilesen tablo YARATIYOR mu" yapardi, yani yalnizca baskasinin
+  tablosunu OKUYAN bir eklenti, denetimin aradigi sey oldugu icin nufustan
+  cikardi. On eklentinin altisi migration tasimiyor. Deponun diger bes
+  eklenti kapisi zaten agaci yuruyor; bu da oyle yapiyor.
+
+  Iki yon de mutasyonla kanitlandi: bir modulun eklenti tablosunu okumasi
+  (genisletme oncesi YESIL, sonrasi kirmizi) ve migration'i olmayan bir
+  eklentinin modul tablosunu okumasi.
+
+  Pozitif kontrol sessizce bayatlamisti ve duzeltildi: ektigi sahiplik haritasi
+  ciplak adlarla anahtarlanmisti, oysa kendi godoc'u "bir modul adinin bir yolla
+  karsilastirilmasi"ni yakalamak icin var oldugunu soyluyor -- fixture tam olarak
+  o kusurun ornegi olmustu. `event_outbox` iddiasi da TERSINE cevrildi: eskiden
+  "belgelenmis mekanizma, sinir asimi degil" diyordu ve ektigi haritada o
+  tablonun sahibi olmadigi icin bosuna geciyordu. ADR 0023 ile celiski yok --
+  event_outbox'i adlandiran her ifade core/eventbus/outbox icinde; modul ona
+  outbox.Write CAGIRARAK ulasiyor, tabloyu adlandirarak degil.
+
+
 - **Kayitlarin sekli kurala baglandi: ADR 80 satir, olcumler ayri agacta.**
 
   Elli bir ADR 11.934 satira ulasmisti; ortalama 234, en uzunu 569. Buyume bir
@@ -3095,8 +3129,12 @@ Sabitlenme `1.0.0` ile olur.
   Kapsam dışı bırakılan iki şey de ölçülerek bırakıldı: test dosyaları taranmıyor
   (modül ağaçlarındaki 183 SQL biçimli test sabitinin hiçbiri başka modülün
   tablosunu adlandırmıyor, ve birkaç modüle yayılan bir entegrasyon testinin
-  hepsinde durum hazırlaması meşru), eklenti tablolarının sahibi de yok — sonuncu
-  gerçek bir delik ve kapatılmadı, adıyla yazıldı.
+  hepsinde durum hazırlaması meşru), ~~eklenti tablolarının sahibi de yok — sonuncu
+  gerçek bir delik ve kapatılmadı, adıyla yazıldı.~~ **Bu delik 2026-09-08'de
+  kapandı ve yalnızca eklentileri değil çekirdeği de kapsıyordu: sahiplik artık
+  `migrationDirs`'ten geliyor (82 tablo, 25 sahip) ve taranan nüfus AĞAÇTAN
+  geliyor, sahiplikten değil — migration'ı olmayan altı eklenti aksi hâlde
+  denetimin aradığı şey oldukları için nüfusun dışında kalırdı.**
 
 - **Bir yapı dosyasındaki her `-run` deseni gerçek bir test adlandırmak zorunda**
   (`internal/arch/build_files_test.go`).

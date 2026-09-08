@@ -98,7 +98,7 @@ row is for; the reproduction is in the commit that closed it.
 | D6 | Two repository-internal transactions could not compose | Fixed, and the entry had named the wrong second module |
 | D7 | OpenAPI claimed `q` searched title and handle | Fixed |
 | D8 | The link's far side named an entity with no Query provider | Fixed |
-| D10 | Nothing stopped a module's SQL naming another module's table | Fixed. Residue: plugin-owned tables are owned by nobody |
+| D10 | Nothing stopped a module's SQL naming another module's table | Fixed, and the residue closed 2026-09-08. Ownership comes from every migration set in the tree (82 tables, 25 owners) instead of the modules alone, so the ten tables the plugins and the core create are no longer owned by nobody — which under this rule meant legal for everybody. The SCANNED set is walked from the tree rather than derived from ownership: six of the ten plugins ship no migrations, and deriving the population from ownership would let a plugin leave the audit by being the thing it looks for |
 | D11 | `make load-test` printed green and measured nothing | Fixed — the `-run` selector named no test |
 | D12 | The panel's product list did not make the storefront's Graph call | Corrected |
 | D13 | The measured catalog existed in one Docker volume and could not be rebuilt | Fixed. Residue: the seeder's bulk SQL is read by neither SQL gate |

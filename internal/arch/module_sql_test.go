@@ -17,7 +17,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// This file enforces ONE invariant: A MODULE'S SQL NAMES ONLY ITS OWN TABLES.
+// This file enforces ONE invariant: A COMPONENT'S SQL NAMES ONLY ITS OWN TABLES.
+//
+// It said "a MODULE's" until 2026-09-08, and the word was the hole. See the
+// section on ownership below.
 //
 // ADR 0001 rests on a single sentence — a module never reaches into another
 // module — and the whole architecture is built on it. Before this file existed
@@ -46,15 +49,48 @@ import (
 // table NO module owns. The second half is not a loophole, it is the whole of
 // the shared substrate:
 //
-//   - The core's own tables. event_outbox belongs to core/eventbus/outbox,
-//     the audit log to core/audit, the job record to the job store and the
-//     workflow record to the workflow store. None of them is a module's, and a
-//     module writing its own outbox row inside its own transaction is the
-//     documented mechanism, not a violation.
 //   - The LINK tables. core/link creates them at RUN TIME out of a Define call
 //     (ADR 0005: the link schema is not written in a migration file, because
 //     which links exist is not known at compile time — a plugin may declare
-//     one). They therefore appear in NO migration and no module owns them.
+//     one). They therefore appear in NO migration and nobody owns them.
+//
+// That list held ONE more entry until 2026-09-08 — "the core's own tables" —
+// and it was there because nothing owned them, not because anything decided
+// they were shared. See below.
+//
+// # Ownership is the whole repository's, not the modules' (D10, 2026-09-08)
+//
+// The ownership map used to be built by walking [moduleNames] and joining
+// internal/modules/<mod>/migrations by hand, so a table created anywhere else
+// belonged to NOBODY — and under the rule above, a table owned by nobody is
+// legal for everybody. Ten tables sat in that gap: five the plugins create and
+// five the core does (audit_log, event_outbox, job_run, workflow_executions,
+// workflow_execution_steps). D10 recorded the plugin half in writing and left
+// it open; the core half was not recorded at all.
+//
+// [tableOwners] now reads [migrationDirs], which answers "who creates tables"
+// for the whole repository and carries its own blindness floors. 82 tables over
+// 25 owners, keyed by PATH — because "core/eventbus/outbox" is not a module
+// name and keying it as one would be the same lie the widening removes.
+//
+// This does not contradict ADR 0023. That record says a module writes its
+// outbox row "through its OWN repository, which is the only side inside its
+// transaction", and every statement naming event_outbox in this repository
+// lives in core/eventbus/outbox: a module reaches it by CALLING outbox.Write
+// inside its transaction, never by naming the table. What the widened rule
+// refuses is raw SQL, which no module writes and which ADR 0023 never asked
+// for.
+//
+// # Why the SCANNED set is walked and the OWNED set is derived
+//
+// Two different questions, and collapsing them was the trap. Deriving the
+// scanned components from ownership would make the criterion "does this
+// component create tables" — so a plugin that only READS somebody else's table
+// leaves the population by being the very thing the audit looks for. Six of the
+// ten plugins ship no migrations. [sqlSubjects] therefore walks plugins/ from
+// the tree, the way every other plugin-scanning gate in this package does, and
+// the per-subject floor skips a subject that owns nothing rather than failing
+// it.
 //
 // The second case has an argued precedent that a future reader must not
 // "fix" by banning it. internal/modules/product/repository/saleschannel.go
@@ -726,16 +762,31 @@ func foldStringExpr(expr ast.Expr, constants map[string]ast.Expr, depth int) (te
 	}
 }
 
-// tableOwnersByModule maps every table to the module whose migrations create
-// it.
-func tableOwnersByModule(t *testing.T, modules []string) map[string]string {
+// tableOwners maps every table to the OWNER whose migrations create it, keyed
+// by the owner's repo-relative path.
+//
+// # Why the owner is a path and not a module name
+//
+// It used to walk [moduleNames] and join internal/modules/<mod>/migrations by
+// hand, so a table created anywhere else belonged to NOBODY — and a table owned
+// by nobody is legal for everybody. That was the hole D10 closed one half of
+// and left the other half open in writing: "plugin-owned tables are owned by
+// nobody, so a module reading one would pass". Measured 2026-09-08, ten tables
+// sat in it: five the plugins create and five the core does (audit_log,
+// event_outbox, job_run, workflow_executions, workflow_execution_steps).
+//
+// [migrationDirs] already answers "who creates tables" for the whole
+// repository, and it carries its own two blindness floors. Reusing it makes the
+// ownership map 82 tables over 25 owners instead of 72 over 17, and it makes
+// the KEY a path, because "core/eventbus/outbox" is not a module name and
+// pretending it is would be the same class of lie the widening is fixing.
+func tableOwners(t *testing.T) map[string]string {
 	t.Helper()
 
 	owners := map[string]string{}
-	for _, module := range modules {
-		dir := filepath.Join(repoRoot, modulesDir, module, migrationsDirName)
-		files, err := filepath.Glob(filepath.Join(dir, "*"+upMigrationSuffix))
-		require.NoError(t, err, "%s could not be scanned", dir)
+	for _, set := range migrationDirs(t) {
+		files, err := filepath.Glob(filepath.Join(set.dir, "*"+upMigrationSuffix))
+		require.NoError(t, err, "%s could not be scanned", set.dir)
 
 		for _, path := range files {
 			raw, readErr := os.ReadFile(path)
@@ -743,18 +794,91 @@ func tableOwnersByModule(t *testing.T, modules []string) map[string]string {
 
 			for _, table := range tablesCreatedIn(string(raw)) {
 				previous, taken := owners[table]
-				assert.False(t, taken && previous != module,
-					"%s: table %q is created by module %q as well as by module %q.\n"+
+				assert.False(t, taken && previous != set.owner,
+					"%s: table %q is created by %q as well as by %q.\n"+
 						"Two owners is not a smaller problem than none: the audit below asks "+
 						"ONE question — who owns this — and with two answers it will clear a "+
 						"read that reaches across, because the reader happens to match the "+
-						"owner that was recorded last.", path, table, previous, module)
-				owners[table] = module
+						"owner that was recorded last.", path, table, previous, set.owner)
+				owners[table] = set.owner
 			}
 		}
 	}
 
 	return owners
+}
+
+// sqlSubjects are the components whose SQL is read, as repo-relative paths.
+//
+// # Why the population is walked and NOT derived from ownership
+//
+// The obvious source is [tableOwners]'s key set, and it is wrong in the way
+// this repository keeps being wrong: the criterion would be "does this
+// component CREATE tables", so a plugin that only READS somebody else's table
+// removes itself from the audit by being exactly the thing the audit looks
+// for. Four of the ten plugins ship migrations; the other six — errorotlp,
+// errorsentry, files3, notificationsmtp, paymentstripe and payment-stripe —
+// would never be opened, and the gate would report that a plugin reading a
+// module's table is checked while 6/10 of its subjects were outside the walk.
+//
+// So the plugins come from the TREE, which is what every other plugin-scanning
+// gate in this package already does — the personal-data audit, the case-folding
+// audit, the channel-path audit and the e-mail audit all walk plugins/ rather
+// than asking who owns something.
+func sqlSubjects(t *testing.T) []string {
+	t.Helper()
+
+	seen := map[string]bool{}
+	var subjects []string
+	add := func(path string) {
+		if !seen[path] {
+			seen[path] = true
+			subjects = append(subjects, path)
+		}
+	}
+
+	for _, set := range migrationDirs(t) {
+		add(set.owner)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(repoRoot, pluginsPath))
+	require.NoError(t, err, "the plugin tree could not be read")
+	for _, entry := range entries {
+		if entry.IsDir() {
+			add(pluginsPath + "/" + entry.Name())
+		}
+	}
+
+	require.NotEmpty(t, subjects, "no SQL subject was found at all; the walk has gone BLIND")
+
+	return subjects
+}
+
+// ownerLabel names an owner in a failure message without calling it a module.
+//
+// "the core/eventbus/outbox module owns it" is wrong twice — the core is not a
+// module, and it would teach the next reader a rule this repository does not
+// have.
+func ownerLabel(owner string) string {
+	if strings.HasPrefix(owner, modulesDir+"/") {
+		return "the " + strings.TrimPrefix(owner, modulesDir+"/") + " module"
+	}
+
+	return owner
+}
+
+// crossOwnerRemedy is the way IN to another owner's table, which differs by
+// what the owner is.
+func crossOwnerRemedy(owner string) string {
+	if strings.HasPrefix(owner, modulesDir+"/") {
+		return "Read the data through the owning module's interop surface resolved from the " +
+			"container, or, when the read is a join across modules, through the cross-module " +
+			"read layer in core/query (ADR 0001)."
+	}
+
+	return "This owner is not a module and has no interop surface: reach it through its own " +
+		"Go API — outbox.Write for the event outbox, core/audit for the audit log, the job " +
+		"store for job runs — which is where its writing rule is stated."
 }
 
 // TestModuleSQLNamesOnlyItsOwnTables enforces ADR 0001 in the place it is most
@@ -765,8 +889,8 @@ func tableOwnersByModule(t *testing.T, modules []string) map[string]string {
 func TestModuleSQLNamesOnlyItsOwnTables(t *testing.T) {
 	t.Parallel()
 
-	modules := moduleNames(t)
-	owners := tableOwnersByModule(t, modules)
+	subjects := sqlSubjects(t)
+	owners := tableOwners(t)
 
 	// Five counters and one depth mark. Each of the five stands for a separate
 	// link of this walk that can break ON ITS OWN, and every one of them breaks
@@ -782,59 +906,57 @@ func TestModuleSQLNamesOnlyItsOwnTables(t *testing.T) {
 		ownReadsInGo   int
 		deepestFold    int
 	)
-	ownReadsByModule := map[string]int{}
+	ownReadsBySubject := map[string]int{}
 
-	report := func(module, path string, line int, read crossModuleRead) {
-		t.Errorf("%s:%d: the %s module's SQL names table %q in a %s clause, and the %s module owns it (ADR 0001).\n"+
-			"This query WORKS today — every module is handed the same connection pool — which is "+
+	report := func(subject, path string, line int, read crossModuleRead) {
+		t.Errorf("%s:%d: %s SQL names table %q in a %s clause, and %s owns it.\n"+
+			"This query WORKS today — everything is handed the same connection pool — which is "+
 			"why no other gate in this repository sees it and why it is worth failing over: the "+
 			"coupling stays invisible until %s is moved to its own database or its own service, "+
-			"and then this file breaks with a relation that does not exist.\n"+
-			"Read the data through the owning module's interop surface resolved from the container, "+
-			"or, when the read is a join across modules, through the cross-module read layer in "+
-			"core/query.",
-			path, line, module, read.table, strings.ToUpper(read.clause), read.owner, read.owner)
+			"and then this file breaks with a relation that does not exist.\n%s",
+			path, line, ownerLabel(subject)+"'s", read.table, strings.ToUpper(read.clause),
+			ownerLabel(read.owner), read.owner, crossOwnerRemedy(read.owner))
 	}
 
-	scanSQLFile := func(module, path string, counter *int) {
+	scanSQLFile := func(subject, path string, counter *int) {
 		raw, err := os.ReadFile(path)
 		require.NoError(t, err, "%s could not be read", path)
 
 		body := string(raw)
 		*counter++
 		for _, reference := range tablesNamedIn(body) {
-			if owners[reference.table] == module {
+			if owners[reference.table] == subject {
 				ownReadsInSQL++
-				ownReadsByModule[module]++
+				ownReadsBySubject[subject]++
 			}
 		}
-		for _, read := range crossModuleReads(module, body, owners) {
-			report(module, path, lineOfOffset(body, read.offset), read)
+		for _, read := range crossModuleReads(subject, body, owners) {
+			report(subject, path, lineOfOffset(body, read.offset), read)
 		}
 	}
 
-	for _, module := range modules {
-		moduleRoot := filepath.Join(repoRoot, modulesDir, module)
+	for _, subject := range subjects {
+		subjectRoot := filepath.Join(repoRoot, filepath.FromSlash(subject))
 
-		for _, path := range sqlFilesIn(t, filepath.Join(moduleRoot, queriesDirName)) {
-			scanSQLFile(module, path, &queryFiles)
+		for _, path := range sqlFilesIn(t, filepath.Join(subjectRoot, queriesDirName)) {
+			scanSQLFile(subject, path, &queryFiles)
 		}
-		for _, path := range sqlFilesIn(t, filepath.Join(moduleRoot, migrationsDirName)) {
-			scanSQLFile(module, path, &migrationFiles)
+		for _, path := range sqlFilesIn(t, filepath.Join(subjectRoot, migrationsDirName)) {
+			scanSQLFile(subject, path, &migrationFiles)
 		}
 
-		constants, moduleFoldDepth := moduleGoSQL(t, moduleRoot)
-		deepestFold = max(deepestFold, moduleFoldDepth)
+		constants, subjectFoldDepth := moduleGoSQL(t, subjectRoot)
+		deepestFold = max(deepestFold, subjectFoldDepth)
 		for _, constant := range constants {
 			goConstants++
 			for _, reference := range tablesNamedIn(constant.sql) {
-				if owners[reference.table] == module {
+				if owners[reference.table] == subject {
 					ownReadsInGo++
-					ownReadsByModule[module]++
+					ownReadsBySubject[subject]++
 				}
 			}
-			for _, read := range crossModuleReads(module, constant.sql, owners) {
-				report(module, constant.path, constant.line, read)
+			for _, read := range crossModuleReads(subject, constant.sql, owners) {
+				report(subject, constant.path, constant.line, read)
 			}
 		}
 	}
@@ -877,24 +999,25 @@ func TestModuleSQLNamesOnlyItsOwnTables(t *testing.T) {
 			"raise maxSQLFoldDepth past it — the limit is there to stop a malformed tree "+
 			"spinning, not to cap how a module writes its SQL.", maxSQLFoldDepth)
 
-	for _, module := range modules {
-		if !ownsAnyTable(module, owners) {
+	for _, subject := range subjects {
+		if !ownsAnyTable(subject, owners) {
 			continue
 		}
-		assert.Positive(t, ownReadsByModule[module],
-			"module %q owns tables but NONE of its own SQL was seen naming one of them.\n"+
+		assert.Positive(t, ownReadsBySubject[subject],
+			"%q owns tables but NONE of its own SQL was seen naming one of them.\n"+
 				"Either its SQL has moved somewhere this walk does not look — and the module is "+
 				"now exempt from the rule without anybody deciding that — or it really does not "+
-				"touch the tables its migrations create, which is a finding of its own.", module)
+				"touch the tables its migrations create, which is a finding of its own.", subject)
 	}
 }
 
-// ownsAnyTable reports whether any table is owned by the given module.
+// ownsAnyTable reports whether any table is owned by the given subject.
 //
-// A module that owns nothing is skipped by the per-module check rather than
-// failing it: a module whose whole storage is somebody else's is not a shape
-// this repository has today, but demanding that every module read a table of
-// its own would fail the day one legitimately does not.
+// A subject that owns nothing is skipped by the per-subject check rather than
+// failing it. That is what lets the six migration-less plugins be SCANNED
+// without being required to read a table of their own — the population and the
+// per-subject floor answer two different questions, and collapsing them is how
+// the scanned set would shrink back to the owners.
 func ownsAnyTable(module string, owners map[string]string) bool {
 	for _, owner := range owners {
 		if owner == module {
@@ -1127,33 +1250,71 @@ var goSQLClassificationCases = map[string]bool{
 func TestTheModuleSQLRuleCatchesAViolation(t *testing.T) {
 	t.Parallel()
 
+	// The planted map is keyed by PATH, exactly as [tableOwners] keys the real
+	// one. A bare-name map was what stood here until 2026-09-08, and it made
+	// this control silently stale the moment production re-keyed: the doc below
+	// names "a module name compared against a path" as one of the three bugs
+	// this test exists to catch, and the fixture had become an example of it.
+	const (
+		inventoryOwner = modulesDir + "/inventory"
+		productOwner   = modulesDir + "/product"
+		outboxOwner    = "core/eventbus/outbox"
+	)
 	owners := map[string]string{
-		"inventory_levels": "inventory",
-		"stock_locations":  "inventory",
-		"product":          "product",
+		"inventory_levels": inventoryOwner,
+		"stock_locations":  inventoryOwner,
+		"product":          productOwner,
+		"event_outbox":     outboxOwner,
 	}
 
-	reads := crossModuleReads("product", "SELECT quantity FROM inventory_levels WHERE item_id = $1;", owners)
+	reads := crossModuleReads(productOwner, "SELECT quantity FROM inventory_levels WHERE item_id = $1;", owners)
 	require.Len(t, reads, 1,
 		"the planted cross-module read was NOT reported. The rule is not biting, and "+
 			"TestModuleSQLNamesOnlyItsOwnTables is green because it cannot fail.")
 	assert.Equal(t, "inventory_levels", reads[0].table)
-	assert.Equal(t, "inventory", reads[0].owner,
+	assert.Equal(t, inventoryOwner, reads[0].owner,
 		"the finding does not name the owning module; without it the message cannot say "+
 			"whose interop surface to go through instead")
 	assert.Equal(t, "from", reads[0].clause)
 
-	assert.Empty(t, crossModuleReads("product", "SELECT id FROM product WHERE handle = $1;", owners),
+	assert.Empty(t, crossModuleReads(productOwner, "SELECT id FROM product WHERE handle = $1;", owners),
 		"a module reading its OWN table was reported; the rule has become 'no SQL at all' "+
 			"and every module in the repository is a violation")
-	assert.Empty(t, crossModuleReads("product", "SELECT to_id FROM link_product_sales_channel WHERE from_id = $1;", owners),
+	assert.Empty(t, crossModuleReads(productOwner, "SELECT to_id FROM link_product_sales_channel WHERE from_id = $1;", owners),
 		"reading a LINK table was reported as a violation. It is not one: core/link creates "+
 			"those tables at run time (ADR 0005) so no migration owns them, and the argued "+
 			"precedent is in internal/modules/product/repository/saleschannel.go. Banning it "+
 			"deletes the sales channel filter from the storefront's product listing.")
-	assert.Empty(t, crossModuleReads("product", "INSERT INTO event_outbox (topic) VALUES ($1);", owners),
-		"writing the core's outbox was reported as a violation; a module publishing an event "+
-			"inside its own transaction is the documented mechanism, not a boundary crossing")
+
+	// A module's raw SQL naming the core's outbox IS a finding now, and this
+	// assertion was INVERTED on 2026-09-08 rather than deleted.
+	//
+	// It used to say that writing event_outbox is "the documented mechanism, not
+	// a boundary crossing", and it passed vacuously because the planted map had
+	// no owner for that table — which is exactly what the widening gave it. The
+	// old sentence was reading ADR 0023 one clause too far: the ADR says the
+	// module writes the row "through its OWN repository, which is the only side
+	// inside its transaction", and every statement naming event_outbox in this
+	// repository lives in core/eventbus/outbox. A module reaches it by CALLING
+	// outbox.Write inside its transaction, not by naming the table, so the rule
+	// and the ADR agree.
+	outboxRead := crossModuleReads(productOwner, "INSERT INTO event_outbox (topic) VALUES ($1);", owners)
+	require.Len(t, outboxRead, 1,
+		"a module naming the core's outbox table in its own SQL was NOT reported. The core "+
+			"owners are in the map for the first time since 2026-09-08, and if they do not "+
+			"bite, ten tables are back to being owned by nobody — which is legal for everybody.")
+	assert.Equal(t, outboxOwner, outboxRead[0].owner)
+
+	// The message a non-module owner produces differs from a module's in both
+	// halves, and both halves are what a reader acts on.
+	assert.Equal(t, "the product module", ownerLabel(productOwner))
+	assert.Equal(t, outboxOwner, ownerLabel(outboxOwner),
+		"a non-module owner must NOT be called a module: the core is not one, and a gate "+
+			"that says otherwise teaches a rule this repository does not have")
+	assert.Contains(t, crossOwnerRemedy(productOwner), "interop surface")
+	assert.Contains(t, crossOwnerRemedy(outboxOwner), "outbox.Write",
+		"the remedy offered for a core-owned table still points at an interop surface, which "+
+			"does not exist for it; the reader would go looking for a thing that is not there")
 
 	for text, isSQL := range goSQLClassificationCases {
 		assert.Equal(t, isSQL, goStringHoldsSQL.MatchString(text),
