@@ -20,6 +20,34 @@ const (
 	stockLocationName = "Ana Depo"
 )
 
+// The two skewed categories, named so a measurement can quote an id rather than
+// repeat a string this package owns.
+//
+// They exist only when [Spec.SkewedCategorySize] is above zero, they hold the
+// same number of products, and they differ in ONE property: where their members
+// sit in the storefront's listing order. See [Spec.SkewedCategorySize] for what
+// the pair is for and [skewSteps] for how the two sets are picked.
+const (
+	// AdjacentSkewCategoryID is the category whose products are the HEAD of the
+	// listing, one after another.
+	AdjacentSkewCategoryID = "pcat_ADJACENT"
+	// SpreadSkewCategoryID is the category whose products are spread at an even
+	// stride across the whole listing.
+	SpreadSkewCategoryID = "pcat_SPREAD"
+)
+
+// generatedProductPattern matches the id of a product this package generates,
+// and matches no id the application mints.
+//
+// It is a named constant because two statements depend on the SAME separation
+// being exact: [resetSteps] deletes by it, and [skewSteps] picks the skewed
+// categories' members by it. Written twice, the day one of them was loosened
+// the reset would start deleting a customer's catalog or the skew would start
+// counting the installation's own products into a measurement. The argument for
+// the shape — the anchors, the family letter, the digits and the bound of
+// twelve on them — is on [Reset].
+const generatedProductPattern = `^prod_(B|L)[0-9]{1,12}$`
+
 // handMadeProduct is one of the four products that were placed in the rig by
 // hand rather than generated.
 type handMadeProduct struct {
@@ -105,8 +133,12 @@ ON CONFLICT (id) DO NOTHING`,
 	steps = append(steps, taxonomySteps(spec)...)
 	steps = append(steps, singleVariantSteps(spec)...)
 	steps = append(steps, multiVariantSteps(spec)...)
+	steps = append(steps, handMadeStep())
 
-	return append(steps, handMadeStep())
+	// The skew comes LAST because it is the only part of the ledger that reads
+	// what the earlier steps wrote: its two categories are filled by position
+	// in the listing, and a position cannot be taken before the rows are there.
+	return append(steps, skewSteps(spec)...)
 }
 
 // taxonomySteps creates the categories and the tags the generated products are
@@ -368,6 +400,107 @@ func mapSteps(family, productExpression string, spec Spec, count int, when time.
 	return steps
 }
 
+// skewSteps builds the two skewed categories and fills them.
+//
+// # The two sets are picked BY THE LISTING ORDER, not by the id
+//
+// The obvious spelling of "adjacent" is a contiguous run of numbers, and it is
+// wrong here: the storefront orders by (created_at DESC, id DESC) and the ids
+// are TEXT, so prod_B1 to prod_B26 are not neighbors in that order at all —
+// prod_B9 leads, and prod_B89 and prod_B899 sit between it and prod_B8. A
+// numeric run would therefore have produced a SPREAD category while calling
+// itself adjacent, and the pair would have been two samples of one shape.
+//
+// So both sets are taken from the order itself: the adjacent category is the
+// head of the listing, and the spread one takes every stride-th row of it, at
+// the stride that walks the whole catalog in exactly as many steps. That is the
+// same ORDER BY the listing uses, computed by the database rather than guessed
+// from the shape of an id.
+//
+// The four hand-made products are outside both, because [generatedProductPattern]
+// does not match them: they carry no variant and no channel assignment, and a
+// skewed category is a fixture for a filter measurement rather than a place to
+// put the catalog's odd rows.
+//
+// # The membership depends on the catalog's SIZE
+//
+// Every other step here writes rows derived from a row's own number, so
+// re-seeding a bigger catalog leaves the smaller one's rows correct. These two
+// do not: the sets are POSITIONAL, so a rerun at a different family size adds a
+// second set of memberships beside the first and the category then holds
+// neither the old shape nor the new one. Changing the size wants Reset first,
+// which is what the seed command's own confirmation is there for.
+func skewSteps(spec Spec) []step {
+	size := spec.SkewedCategorySize
+	if size <= 0 {
+		return nil
+	}
+
+	// Integer division, and a floor of one. The stride is how far apart the
+	// spread category's members stand; at the largest size the two categories
+	// converge on the same set, which is the honest answer to "spread every
+	// row" rather than an error.
+	stride := max((spec.SingleVariantProducts+spec.MultiVariantProducts)/size, 1)
+
+	return []step{
+		{
+			name: "skewed categories",
+			sql: `INSERT INTO product_category (id, name, handle, rank, created_at, updated_at)
+SELECT id, name, handle, 0, $4, $4
+FROM unnest($1::text[], $2::text[], $3::text[]) AS skewed(id, name, handle)
+ON CONFLICT (id) DO NOTHING`,
+			args: []any{
+				[]string{AdjacentSkewCategoryID, SpreadSkewCategoryID},
+				[]string{"Skew adjacent", "Skew spread"},
+				[]string{"skew-adjacent", "skew-spread"},
+				familyLCreatedAt,
+			},
+		},
+		{
+			name: "adjacent skew category map",
+			sql: `INSERT INTO product_category_map (product_id, category_id, created_at)
+SELECT id, $1, $2
+FROM (
+    SELECT id
+    FROM product
+    WHERE deleted_at IS NULL AND id ~ $3
+    ORDER BY created_at DESC, id DESC
+    LIMIT $4::int
+) AS head
+ON CONFLICT (product_id, category_id) DO NOTHING`,
+			args: []any{AdjacentSkewCategoryID, familyLCreatedAt, generatedProductPattern, size},
+		},
+		{
+			name: "spread skew category map",
+			sql: `INSERT INTO product_category_map (product_id, category_id, created_at)
+SELECT id, $1, $2
+FROM (
+    SELECT id
+    FROM (
+        SELECT id, row_number() OVER (ORDER BY created_at DESC, id DESC) AS listing_position
+        FROM product
+        WHERE deleted_at IS NULL AND id ~ $3
+    ) AS listed
+    WHERE (listing_position - 1) % $4::bigint = 0
+    LIMIT $5::int
+) AS picked
+ON CONFLICT (product_id, category_id) DO NOTHING`,
+			args: []any{
+				SpreadSkewCategoryID, familyLCreatedAt, generatedProductPattern, stride, size,
+			},
+		},
+	}
+}
+
+// skewCategoryIDs are the ids [Reset] deletes the skewed categories by.
+//
+// They are matched by their literal ids rather than by a pattern, for the
+// reason the four hand-made products are: a pattern is what the GENERATED rows
+// need, and a hand-named row is deleted by the name it was given.
+func skewCategoryIDs() []string {
+	return []string{AdjacentSkewCategoryID, SpreadSkewCategoryID}
+}
+
 // handMadeStep writes the four variant-less products in one statement.
 //
 // The four columns arrive as four parallel arrays through unnest rather than as
@@ -401,7 +534,9 @@ ON CONFLICT (id) DO NOTHING`,
 //
 // The patterns are anchored and end in digits, which is what separates a rig id
 // from a real one; the argument for that, and for what a bare prefix would have
-// deleted, is on [Reset].
+// deleted, is on [Reset]. The two skewed categories are the exception and are
+// deleted by their literal ids, because they were never numbered — a pattern
+// covering them would have to be looser than the one everything else relies on.
 //
 // Five tables are absent from this list and their absence is load bearing:
 // product_variant, price, inventory_levels, product_category_map and
@@ -418,7 +553,8 @@ func resetSteps() []step {
 	return []step{
 		{
 			name: "sales channel assignments",
-			sql:  `DELETE FROM link_product_sales_channel WHERE from_id ~ '^prod_(B|L)[0-9]{1,12}$'`,
+			sql:  `DELETE FROM link_product_sales_channel WHERE from_id ~ $1`,
+			args: []any{generatedProductPattern},
 		},
 		{
 			name: "variant to price set links",
@@ -432,8 +568,8 @@ WHERE from_id ~ '^var_(B[0-9]{1,12}|L[0-9]{1,12}_[0-9]{1,12})$'`,
 		},
 		{
 			name: "products",
-			sql:  `DELETE FROM product WHERE id ~ '^prod_(B|L)[0-9]{1,12}$' OR id = ANY($1::text[])`,
-			args: []any{ids},
+			sql:  `DELETE FROM product WHERE id ~ $2 OR id = ANY($1::text[])`,
+			args: []any{ids, generatedProductPattern},
 		},
 		{
 			name: "price sets",
@@ -450,7 +586,8 @@ WHERE from_id ~ '^var_(B[0-9]{1,12}|L[0-9]{1,12}_[0-9]{1,12})$'`,
 		},
 		{
 			name: "categories",
-			sql:  `DELETE FROM product_category WHERE id ~ '^pcat_[0-9]{1,12}$'`,
+			sql:  `DELETE FROM product_category WHERE id ~ '^pcat_[0-9]{1,12}$' OR id = ANY($1::text[])`,
+			args: []any{skewCategoryIDs()},
 		},
 		{
 			name: "tags",

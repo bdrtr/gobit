@@ -33,6 +33,15 @@ const (
 	smallMultiVariantProducts  = 2
 	smallCategories            = 2
 	smallTags                  = 2
+	// smallSkewedCategorySize is how many products each skewed category holds
+	// here.
+	//
+	// It is above zero although the rig's default is zero, because the reset is
+	// what this file proves and the two skewed categories are the only rows in
+	// the generator that a pattern cannot reach: they are deleted by their
+	// literal ids, and a spec that never built them would leave that branch
+	// asserted by nothing.
+	smallSkewedCategorySize = 2
 	// handMadeProductCount is what the generator adds on top of the two
 	// families: the free product and the three Turkish-diacritic rows.
 	handMadeProductCount = 4
@@ -63,6 +72,7 @@ func smallSpec() []string {
 		"-" + flagMulti, strconv.Itoa(smallMultiVariantProducts),
 		"-" + flagCategories, strconv.Itoa(smallCategories),
 		"-" + flagTags, strconv.Itoa(smallTags),
+		"-" + flagSkew, strconv.Itoa(smallSkewedCategorySize),
 		"-" + flagChannel, seedChannel,
 	}
 }
@@ -243,6 +253,88 @@ func TestAResetNamingThisDatabaseGoesAhead(t *testing.T) {
 		countRig(t, pool).Of("product"),
 		"the rebuild has to leave exactly the catalog that was asked for; anything "+
 			"more is the previous rig still standing underneath it")
+}
+
+// TestTheTwoSkewedCategoriesHoldTheSameCountAndNotTheSameProducts is the whole
+// claim the skew makes, and neither half of it survives without a database.
+//
+// The rig's taxonomy is uniform by construction, and the measurement that
+// decided how the product filter is written found its case at the other end:
+// a category holding a fraction of a percent of the catalog. It also found that
+// the SIZE is not what decides the cost — two categories of the same size gave
+// two different plans, and what separated them was where their members sat in
+// the listing order. So the pair is the fixture, not either one of them, and
+// the pair is only a pair while the two sets are the same size and different
+// sets.
+//
+// The failure this guards is a simplification that looks harmless: picking the
+// spread category with a plain LIMIT, or by a numeric run of ids. Both produce
+// two categories of the right size, both pass every count, and both make the
+// second category a copy of the first — after which the rig would carry two
+// samples of one shape and a reader would take one plan for the law.
+// It rebuilds from EMPTY rather than seeding on top, and that is not tidiness.
+// The skewed memberships are positional — the head of the listing, then every
+// stride-th row of it — so a seed over a catalog of a different size adds a
+// second set of rows beside the first and the category ends up holding neither
+// shape. That hazard is written on the generator; here it would simply make the
+// assertions read a mixture.
+func TestTheTwoSkewedCategoriesHoldTheSameCountAndNotTheSameProducts(t *testing.T) {
+	dsn := migrateDSN(t)
+	seedEnv(t, dsn)
+
+	var out bytes.Buffer
+	rebuild := append(smallSpec(), "-"+flagReset, "-"+flagConfirm, rigDatabase)
+	require.NoError(t, Main(rebuild, &out, Options{}),
+		"the rig could not be rebuilt, so the memberships below would describe whatever "+
+			"catalog the previous test left behind")
+
+	pool := rigPool(t, dsn)
+
+	adjacent := categoryMembers(t, pool, rig.AdjacentSkewCategoryID)
+	spread := categoryMembers(t, pool, rig.SpreadSkewCategoryID)
+
+	require.Len(t, adjacent, smallSkewedCategorySize,
+		"the adjacent skew category does not hold the size it was asked for")
+	require.Len(t, spread, smallSkewedCategorySize,
+		"the spread skew category does not hold the size it was asked for; two categories "+
+			"of different sizes cannot answer the question the pair exists for")
+
+	assert.NotEqual(t, adjacent, spread,
+		"the two skewed categories hold the SAME products, so the rig carries one shape "+
+			"twice. The stride that spreads the second one across the listing has stopped "+
+			"striding, and the case the measurement found — same size, two plans — is back "+
+			"to being unreproducible")
+
+	for _, id := range append(append([]string{}, adjacent...), spread...) {
+		assert.Regexp(t, `^prod_(B|L)[0-9]+$`, id,
+			"a skewed category holds %q, which is not a product this rig generated. The "+
+				"members are picked out of the listing, so a loosened pattern would draw the "+
+				"installation's own catalog into a measurement fixture", id)
+	}
+}
+
+// categoryMembers returns the products of one category, in the listing's order.
+func categoryMembers(t *testing.T, pool *db.Pool, categoryID string) []string {
+	t.Helper()
+
+	rows, err := pool.Pool().Query(context.Background(),
+		`SELECT m.product_id
+FROM product_category_map m
+JOIN product p ON p.id = m.product_id
+WHERE m.category_id = $1
+ORDER BY p.created_at DESC, p.id DESC`, categoryID)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		require.NoError(t, rows.Scan(&id))
+		ids = append(ids, id)
+	}
+	require.NoError(t, rows.Err())
+
+	return ids
 }
 
 // productExists reports whether the catalog holds a product with that id.

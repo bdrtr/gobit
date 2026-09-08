@@ -113,6 +113,15 @@ const (
 	// DefaultTags is how many tags the products are spread over; the reasoning
 	// is [DefaultCategories]'s, for the tag_id filter.
 	DefaultTags = 20
+	// DefaultSkewedCategorySize is how large the two skewed categories are when
+	// the caller asks for them, and it is ZERO — the default rig has none.
+	//
+	// The number is not a judgement about skew being unimportant; it is what
+	// [DefaultSpec] promises. That function returns the shape this repository's
+	// figures were measured on, and a default that added rows would make every
+	// one of those sentences describe a catalog nobody measured. The skew is an
+	// ADDITION a caller asks for by name; see [Spec.SkewedCategorySize].
+	DefaultSkewedCategorySize = 0
 )
 
 // Spec is the shape of the catalog to build.
@@ -133,6 +142,42 @@ type Spec struct {
 	// Tags is how many tags the generated products are spread over. Zero builds
 	// none.
 	Tags int
+	// SkewedCategorySize is how many products each of the two SKEWED categories
+	// holds. Zero builds neither, and that is the default.
+	//
+	// # What it is for
+	//
+	// The taxonomy above is uniform BY CONSTRUCTION: product n lands in
+	// category (n-1) mod C, so with 52,004 products over twenty categories the
+	// largest and the smallest both hold exactly 2,600. A uniform taxonomy
+	// cannot produce "a category holding few products" — a shop's newest
+	// collection, its one clearance category — and that case is the one that
+	// decided how the product filter is written: measured at 0.05%
+	// selectivity, the shipped statement of the time cost 147 ms where the same
+	// question asked without a disjunction cost 0.13 ms. It was measured on
+	// categories built by hand on a scratch database that no longer exists, so
+	// until this field the rig could not reproduce the case it paid for.
+	//
+	// # Why TWO categories and not one
+	//
+	// Because one would reproduce a number and not the finding. The same
+	// measurement found that two categories of nearly the same size — 26 and 27
+	// products — gave two different plans: 12.5 ms where the members were
+	// adjacent in the listing order and
+	// 163.5 ms where they were spread across it — so the cost is not a property
+	// of the size at all; it is which of two legal plans the statistics led the
+	// planner to. [AdjacentSkewCategoryID] and [SpreadSkewCategoryID] therefore
+	// differ in exactly one property, where their members sit in the listing
+	// order, and a rig carrying only one of them would let a reader take a
+	// figure for a law.
+	//
+	// # What it does NOT change
+	//
+	// The uniform categories keep every member they had: the skewed rows are
+	// additional memberships on products that already carry one. So the 5%
+	// figures stay measurable on the same rig, and a product in two categories
+	// — which the generator could not produce before — arrives with them.
+	SkewedCategorySize int
 	// SalesChannelID is the channel every GENERATED product is assigned to.
 	//
 	// It is REQUIRED, and that is not tidiness. The storefront's visibility rule
@@ -156,6 +201,7 @@ func DefaultSpec() Spec {
 		MultiVariantProducts:  DefaultMultiVariantProducts,
 		Categories:            DefaultCategories,
 		Tags:                  DefaultTags,
+		SkewedCategorySize:    DefaultSkewedCategorySize,
 	}
 }
 
@@ -175,6 +221,7 @@ func (s Spec) validate() error {
 		{"MultiVariantProducts", s.MultiVariantProducts},
 		{"Categories", s.Categories},
 		{"Tags", s.Tags},
+		{"SkewedCategorySize", s.SkewedCategorySize},
 	} {
 		if field.value < 0 {
 			return errors.Invalid(codeInvalidSpec,
@@ -185,6 +232,19 @@ func (s Spec) validate() error {
 	if s.SingleVariantProducts == 0 && s.MultiVariantProducts == 0 {
 		return errors.Invalid(codeInvalidSpec,
 			"both product families are zero, so there would be nothing to build")
+	}
+
+	// A skewed category cannot hold more products than there are, and the
+	// refusal is louder than the truncation a LIMIT would perform quietly: the
+	// two categories are supposed to hold the SAME number of products and to
+	// differ only in where those products sit, so a size the catalog cannot
+	// fill would make the spread one smaller than the adjacent one and turn the
+	// comparison the pair exists for into a comparison of two sizes.
+	if generated := s.SingleVariantProducts + s.MultiVariantProducts; s.SkewedCategorySize > generated {
+		return errors.Invalid(codeInvalidSpec,
+			"SkewedCategorySize is %d and the two families generate %d products between "+
+				"them; a skewed category cannot hold more products than the catalog has",
+			s.SkewedCategorySize, generated)
 	}
 
 	if strings.TrimSpace(s.SalesChannelID) == "" {
@@ -308,6 +368,11 @@ const ProductTable = "product"
 // L is prod_L<n> / urun-<n> with two variants, each carrying a TRY and a USD
 // price of n*100 + k*10 + c. Every generated product is assigned to
 // [Spec.SalesChannelID].
+//
+// [Spec.SkewedCategorySize] adds two more categories on top of that taxonomy —
+// one holding the head of the listing, one holding an even stride across it —
+// and it is zero unless the caller asks, because the shape [DefaultSpec]
+// returns is the shape this repository's figures were measured on.
 //
 // The four hand-made products carry NO variant and NO channel assignment, and
 // both absences are the point. No assignment exercises the "a product with no

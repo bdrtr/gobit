@@ -249,6 +249,29 @@ func seedLoadCatalog(t *testing.T) (key, channelID string) {
 	spec.MultiVariantProducts = max(spec.SingleVariantProducts/10, 1)
 	spec.SalesChannelID = channel.ID
 
+	// The skew is asked for here although the DEFAULT spec has none, and it is
+	// the same argument the sentence above makes about the taxonomy: three of
+	// the generator's statements build the two skewed categories, they are the
+	// only ones that READ what the earlier steps wrote, and left at the default
+	// they would be run by no test at all. The size is derived from the catalog
+	// so that lowering GOBIT_LOAD_PRODUCTS cannot ask for a category larger
+	// than the catalog it is drawn from.
+	spec.SkewedCategorySize = max((spec.SingleVariantProducts+spec.MultiVariantProducts)/20, 1)
+
+	// AND IT CHANGED WHAT THE MEASURED PAGE IS, which has to be written down
+	// beside the figure rather than discovered later. At the default catalog the
+	// skew asks for 11 products while loadPageSize is 10, and the ADJACENT
+	// skewed category is the head of the listing — so the page the p99 is taken
+	// over now sits wholly inside it, and every product on that page carries two
+	// categories instead of one. The listing's category enrichment therefore
+	// returns twice the rows it did before 2026-09-08.
+	//
+	// The figure stays comparable to itself and NOT to anything recorded before
+	// that date. The alternative was to size the skew under a page, and it was
+	// refused: a skewed category smaller than one page cannot show the plan
+	// difference it exists to show, which would trade a real capability for a
+	// number's continuity.
+
 	counts, err := rig.Seed(ctx, testPool, spec)
 	require.NoError(t, err, "the load catalog could not be seeded")
 	require.Positive(t, counts.Of(rig.ProductTable), "the seeded catalog must not be empty")

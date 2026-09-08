@@ -107,6 +107,7 @@ const (
 	flagMulti      = "multi"
 	flagCategories = "categories"
 	flagTags       = "tags"
+	flagSkew       = "skew"
 	flagChannel    = "channel"
 	flagReset      = "reset"
 )
@@ -371,6 +372,12 @@ func resetPlanText(database, confirm, prefix string) string {
 // with no arguments rebuilds the 52,004-product catalog, and `gobit seed
 // -products 200 -multi 20` gives a developer something to work against in under
 // a second.
+//
+// -skew is the one flag whose default is zero rather than a size, and it stays
+// zero for the same reason the others do not: [rig.DefaultSpec] is the shape
+// the repository's figures were measured on, and the two skewed categories were
+// not in it. Asking for them is how the small-category case becomes
+// reproducible by running a command instead of by hand on a scratch database.
 func parseSeedFlags(args []string) (seedFlags, error) {
 	flags := flag.NewFlagSet(binaryName+" "+seedCommand, flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
@@ -383,6 +390,9 @@ func parseSeedFlags(args []string) (seedFlags, error) {
 	categories := flags.Int(flagCategories, spec.Categories,
 		"how many categories to spread the products over")
 	tags := flags.Int(flagTags, spec.Tags, "how many tags to spread the products over")
+	skew := flags.Int(flagSkew, spec.SkewedCategorySize,
+		"how many products each of the two skewed categories holds; 0 builds neither, "+
+			"which is the shape the repository's figures were measured on")
 	channel := flags.String(flagChannel, defaultSeedChannel,
 		"the sales channel the products are assigned to; it is created if it does not exist")
 	reset := flags.Bool(flagReset, false,
@@ -416,6 +426,7 @@ func parseSeedFlags(args []string) (seedFlags, error) {
 			MultiVariantProducts:  *multi,
 			Categories:            *categories,
 			Tags:                  *tags,
+			SkewedCategorySize:    *skew,
 		},
 		channel: *channel,
 		reset:   *reset,

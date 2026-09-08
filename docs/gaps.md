@@ -97,10 +97,10 @@ row is for; the reproduction is in the commit that closed it.
 | D6 | Two repository-internal transactions could not compose | Fixed, and the entry had named the wrong second module |
 | D7 | OpenAPI claimed `q` searched title and handle | Fixed |
 | D8 | The link's far side named an entity with no Query provider | Fixed |
-| D10 | Nothing stopped a module's SQL naming another module's table | Fixed, and the residue closed 2026-09-08. Ownership comes from every migration set in the tree (82 tables, 25 owners) instead of the modules alone, so the ten tables the plugins and the core create are no longer owned by nobody — which under this rule meant legal for everybody. The SCANNED set is walked from the tree rather than derived from ownership: six of the ten plugins ship no migrations, and deriving the population from ownership would let a plugin leave the audit by being the thing it looks for |
+| D10 | Nothing stopped a module's SQL naming another module's table | Fixed, and the residue closed 2026-09-08. Ownership comes from every migration set in the tree (82 tables, 25 owners) instead of the modules alone, so the ten tables the plugins and the core create are no longer owned by nobody — which under this rule meant legal for everybody. The SCANNED set is walked from the tree rather than derived from ownership: six of the ten plugins ship no migrations, and deriving the population from ownership would let a plugin leave the audit by being the thing it looks for. **Widened once more the same day**: "owners plus plugins" was the same proxy one ring out, and the component sitting in it was the rig — see D13 |
 | D11 | `make load-test` printed green and measured nothing | Fixed — the `-run` selector named no test |
 | D12 | The panel's product list did not make the storefront's Graph call | Corrected |
-| D13 | The measured catalog existed in one Docker volume and could not be rebuilt | Fixed. Residue: the seeder's bulk SQL is read by neither SQL gate |
+| D13 | The measured catalog existed in one Docker volume and could not be rebuilt | Fixed, and the residue closed 2026-09-08. The SQL gate's population is every production PACKAGE now, not the migration owners plus the plugins: measured across 156 of them, `internal/rig` was the only component in the repository naming a table it does not own, and it was outside the walk for the same reason six plugins had been. Its crossing is exempt per TABLE rather than wholesale — the eleven it fills are listed, a twelfth is a finding, and a listed table nobody names is a finding too, which is what makes the list the exemption's own blindness floor |
 | D14 | `make load-test` measured a catalog of zero products | Fixed — D11 one layer down |
 | D15 | Performance figures nobody could re-check | Re-measured and corrected |
 | D16 | The column audit named D4 as what it catches and never caught it | Fixed. The fix produced nine live findings — D18 |
@@ -144,9 +144,32 @@ row is for; the reproduction is in the commit that closed it.
   next `DELETE` still succeeds — which is why ADR 0032's refusal is a trigger.
   The decision is whether to ship two roles; ADR 0015's privileges row requires
   the runtime role to run DDL for `link.Define`, so that clause moves first.
-- **The rig cannot reproduce the case that motivated the change it paid for.**
-  Its taxonomy is uniform by construction, and the OR/EXISTS collapse is
-  invisible at that shape. The decision is what a skewed rig should look like.
+- ~~**The rig cannot reproduce the case that motivated the change it paid
+  for.**~~ **DECIDED 2026-09-08: ADR 0058 — `Spec.SkewedCategorySize` builds TWO
+  small categories, and zero builds neither.** The uniform taxonomy keeps every
+  member it had, so the figures taken at 5% selectivity stay measurable on the
+  same rig; the skewed rows are additional memberships, which incidentally gives
+  the generator its first product belonging to two categories.
+
+  **What made it two rather than one is the measurement's own sharpening, and it
+  is exactly what a single small category would have hidden.** Two categories of
+  the same size gave two different plans — 12.5 ms where the members were
+  adjacent in the listing order, 163.5 ms where they were spread across it — so
+  the cost is not a property of the size but of which of two legal plans the
+  statistics led the planner to. A rig carrying one of them would reproduce a
+  number and invite the next reader to take it for a law. The two are therefore
+  picked by the storefront's own ordering, not by a run of ids: consecutive
+  numbers are not consecutive in it, so the obvious spelling would have built a
+  spread category and called it adjacent.
+
+  **The plan-shape acceptance test does NOT pin the difference, and that is a
+  decision rather than an omission.** The shipped statement no longer carries the
+  disjunction that collapsed, so there is nothing on the shipped path to pin; the
+  two plans were measured as a coin the planner flips, so an assertion on either
+  would go red on a legal plan; and the rebuild's acceptance check is four
+  numbers on the unfiltered count query, which the taxonomy does not touch.
+  Residue: the skew is opt-in, so `gobit seed` with no `-skew` still builds a rig
+  that cannot show the case.
 - ~~**Two clocks on one axis.**~~ **DECIDED 2026-09-08: ADR 0053 — they stay,
   and every moment names its clock.** Six columns, not five (`returned_at` was
   added after this row was written), and "every other moment comes from the

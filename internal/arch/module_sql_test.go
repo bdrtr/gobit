@@ -81,16 +81,60 @@ import (
 // refuses is raw SQL, which no module writes and which ADR 0023 never asked
 // for.
 //
-// # Why the SCANNED set is walked and the OWNED set is derived
+// # Why the SCANNED set is the whole production tree and the OWNED set is derived
 //
 // Two different questions, and collapsing them was the trap. Deriving the
 // scanned components from ownership would make the criterion "does this
 // component create tables" — so a plugin that only READS somebody else's table
 // leaves the population by being the very thing the audit looks for. Six of the
-// ten plugins ship no migrations. [sqlSubjects] therefore walks plugins/ from
-// the tree, the way every other plugin-scanning gate in this package does, and
-// the per-subject floor skips a subject that owns nothing rather than failing
-// it.
+// ten plugins ship no migrations. [sqlSubjects] therefore walks the tree, the
+// way every other component-scanning gate in this package does, and the
+// per-subject floor skips a subject that owns nothing rather than failing it.
+//
+// That walk was "the migration owners plus every directory under plugins/"
+// until later the same day, and it was STILL a proxy. A component that is
+// neither owner nor plugin sat outside the audit for exactly the reason the six
+// plugins had, one ring further out. Measured 2026-09-08 across the
+// repository's 156 production packages, precisely one names a table it does not
+// own: internal/rig, whose bulk INSERTs fill eleven tables belonging to
+// product, pricing and inventory. It is a development tool, it belongs to no
+// module, and nothing looked at it.
+//
+// So the population is every production package, each judged as the subject
+// whose rule it answers to: a package under a migration owner or a plugin is
+// judged as that owner, and every other package is judged as ITSELF — which
+// means it owns nothing and may therefore name nobody's tables. What a package
+// DOES no longer decides whether it is looked at; only being Go source in a
+// production tree does, and [TestTheProductionTreeListCoversTheRepository]
+// already guards that list.
+//
+// # The one exemption, and why the rule is worth its weight carrying it
+//
+// internal/rig produces 24 crossings and every one of them is argued where a
+// reader meets it. Its package godoc rejects building the catalog through the
+// module services on arithmetic — 13.6 s of generate_series against an
+// estimated hours of call-per-product — and states what the crossing costs: no
+// validation, no events, no audit rows, an empty search index. This rule does
+// not overturn that argument, so the package is exempt.
+//
+// The exemption is per TABLE and not per component, because a blanket one would
+// leave this gate saying nothing at all about its only subject.
+// [sqlCrossingExemptions] lists the eleven tables the rig fills and a twelfth is
+// a finding — which is not bookkeeping: the rig's own godoc lists what it does
+// NOT build (no orders, no payment sessions, no workflow executions) and says
+// the mechanism is shaped to grow them, so the next family is exactly the case
+// this catches, and all it asks of that family is a sentence.
+//
+// The list is read in BOTH directions, which is what makes it the exemption's
+// own blindness floor: a listed table the subject never names is reported too.
+// If the walk ever stops reaching internal/rig — a rename, a moved package, a
+// package walk that goes quiet — eleven stale entries fail, instead of eleven
+// crossings disappearing without a sound.
+//
+// And the case for the rule was never its first subject. Nothing else in the
+// tree writes raw SQL into another owner's tables today; the day something does
+// — a backfill command, an importer, a second rig — it is reported, rather than
+// quietly joining the one component that has an argument.
 //
 // The second case has an argued precedent that a future reader must not
 // "fix" by banning it. internal/modules/product/repository/saleschannel.go
@@ -615,15 +659,20 @@ type goSQLConstant struct {
 	sql  string
 }
 
-// moduleGoSQL returns the SQL-carrying string expressions of a module's
+// packageGoSQL returns the SQL-carrying string expressions of ONE package's
 // PRODUCTION Go source.
+//
+// The unit is a package rather than a subtree, and that is what lets the
+// population be the whole production tree without reading anything twice: a
+// package below a module root is scanned once, under the subject the walk
+// attributed it to, instead of once for itself and once for every ancestor.
 //
 // Generated sqlc files are read along with the hand-written ones. That is
 // deliberate duplication of the query directory's contents, and it is worth its
 // cost twice over: it proves the generated code still matches the source it
 // came from, and it means a violation is caught even if someone edits the
 // generated file directly.
-func moduleGoSQL(t *testing.T, moduleRoot string) (found []goSQLConstant, deepestFold int) {
+func packageGoSQL(t *testing.T, dir string) (found []goSQLConstant, deepestFold int) {
 	t.Helper()
 
 	fold := func(expr ast.Expr, constants map[string]ast.Expr) string {
@@ -633,35 +682,33 @@ func moduleGoSQL(t *testing.T, moduleRoot string) (found []goSQLConstant, deepes
 		return text
 	}
 
-	for _, dir := range slices.Sorted(maps.Keys(productionPackages(t, moduleRoot))) {
-		fset := token.NewFileSet()
-		files := parseDir(t, fset, dir, false)
+	fset := token.NewFileSet()
+	files := parseDir(t, fset, dir, false)
 
-		constants := map[string]ast.Expr{}
-		for _, file := range files {
-			collectStringConstants(file.tree, constants)
-		}
+	constants := map[string]ast.Expr{}
+	for _, file := range files {
+		collectStringConstants(file.tree, constants)
+	}
 
-		for _, file := range files {
-			ast.Inspect(file.tree, func(node ast.Node) bool {
-				expr, isConcatenation := node.(*ast.BinaryExpr)
-				switch {
-				case isConcatenation && expr.Op == token.ADD:
-					// The folded whole is the truth; descending would report
-					// the halves a second time.
-					found = appendGoSQL(found, file.path, fset.Position(expr.Pos()).Line, fold(expr, constants))
+	for _, file := range files {
+		ast.Inspect(file.tree, func(node ast.Node) bool {
+			expr, isConcatenation := node.(*ast.BinaryExpr)
+			switch {
+			case isConcatenation && expr.Op == token.ADD:
+				// The folded whole is the truth; descending would report the
+				// halves a second time.
+				found = appendGoSQL(found, file.path, fset.Position(expr.Pos()).Line, fold(expr, constants))
 
-					return false
-				case isConcatenation:
-					return true
-				}
-				if literal, isLiteral := node.(*ast.BasicLit); isLiteral && literal.Kind == token.STRING {
-					found = appendGoSQL(found, file.path, fset.Position(literal.Pos()).Line, fold(literal, constants))
-				}
-
+				return false
+			case isConcatenation:
 				return true
-			})
-		}
+			}
+			if literal, isLiteral := node.(*ast.BasicLit); isLiteral && literal.Kind == token.STRING {
+				found = appendGoSQL(found, file.path, fset.Position(literal.Pos()).Line, fold(literal, constants))
+			}
+
+			return true
+		})
 	}
 
 	return found, deepestFold
@@ -808,7 +855,26 @@ func tableOwners(t *testing.T) map[string]string {
 	return owners
 }
 
-// sqlSubjects are the components whose SQL is read, as repo-relative paths.
+// sqlScanUnit is one production package and the subject its SQL is judged as.
+type sqlScanUnit struct {
+	// subject is the repo-relative path whose tables this package's SQL may
+	// name: the migration owner or the plugin it belongs to, and otherwise the
+	// package itself.
+	subject string
+	// dir is the package directory.
+	dir string
+}
+
+// sqlAudited is this audit's population: the subjects whose SQL is judged, and
+// the package directories each of them is judged over.
+type sqlAudited struct {
+	// subjects are the repo-relative paths a finding can be reported against.
+	subjects []string
+	// packages are the directories that are actually read.
+	packages []sqlScanUnit
+}
+
+// sqlSubjects builds the population, and it does so from the TREE.
 //
 // # Why the population is walked and NOT derived from ownership
 //
@@ -821,11 +887,20 @@ func tableOwners(t *testing.T) map[string]string {
 // would never be opened, and the gate would report that a plugin reading a
 // module's table is checked while 6/10 of its subjects were outside the walk.
 //
-// So the plugins come from the TREE, which is what every other plugin-scanning
-// gate in this package already does — the personal-data audit, the case-folding
-// audit, the channel-path audit and the e-mail audit all walk plugins/ rather
-// than asking who owns something.
-func sqlSubjects(t *testing.T) []string {
+// "Owners plus plugins" was the same mistake one ring out, and internal/rig was
+// the component sitting in it; the file header carries the measurement. The
+// criterion is now "is it a production Go package", which nothing can leave by
+// what it does.
+//
+// # Why a package is attributed rather than scanned under its own name
+//
+// A module's rule is the MODULE's: internal/modules/product/repository may name
+// product's tables because product's migrations create them, and it would name
+// nothing at all if the subject were the repository package. So each package is
+// attributed to the LONGEST owner or plugin path that contains it, and a
+// package contained by neither stands for itself — owning nothing, and
+// therefore allowed nothing but the unowned tables every subject may name.
+func sqlSubjects(t *testing.T) sqlAudited {
 	t.Helper()
 
 	seen := map[string]bool{}
@@ -837,7 +912,12 @@ func sqlSubjects(t *testing.T) []string {
 		}
 	}
 
+	// The roots first: they are the paths a package can be attributed TO, and
+	// they stay subjects in their own right even when they hold no Go package,
+	// because their queries/ and migrations/ directories are read as well.
+	var roots []string
 	for _, set := range migrationDirs(t) {
+		roots = append(roots, set.owner)
 		add(set.owner)
 	}
 
@@ -845,13 +925,72 @@ func sqlSubjects(t *testing.T) []string {
 	require.NoError(t, err, "the plugin tree could not be read")
 	for _, entry := range entries {
 		if entry.IsDir() {
+			roots = append(roots, pluginsPath+"/"+entry.Name())
 			add(pluginsPath + "/" + entry.Name())
 		}
 	}
 
-	require.NotEmpty(t, subjects, "no SQL subject was found at all; the walk has gone BLIND")
+	var packages []sqlScanUnit
+	for _, dir := range slices.Sorted(maps.Keys(sqlProductionPackages(t))) {
+		rel, relErr := filepath.Rel(repoRoot, dir)
+		require.NoError(t, relErr, "%s could not be made relative to %s", dir, repoRoot)
+		subject := sqlSubjectOf(filepath.ToSlash(rel), roots)
+		add(subject)
+		packages = append(packages, sqlScanUnit{subject: subject, dir: dir})
+	}
 
-	return subjects
+	require.NotEmpty(t, subjects, "no SQL subject was found at all; the walk has gone BLIND")
+	require.NotEmpty(t, packages,
+		"no production package was found in any production tree, so the Go half of this "+
+			"audit reads nothing.\nThat is not a quiet failure of one subject: it is the "+
+			"whole hand-written surface going unchecked while the audit still reports a "+
+			"clean tree.")
+
+	return sqlAudited{subjects: subjects, packages: packages}
+}
+
+// sqlProductionPackages returns every directory of the production trees that
+// holds a non-test Go file.
+//
+// It reads the trees through [treeProductionFiles] rather than walking from the
+// repository root, for that helper's reason: the root is a tree like the others
+// except that every other tree is below it, so a recursive read would find each
+// package a second time and each finding would be reported twice.
+func sqlProductionPackages(t *testing.T) map[string]struct{} {
+	t.Helper()
+
+	dirs := map[string]struct{}{}
+	for _, tree := range productionTrees {
+		for _, file := range treeProductionFiles(t, tree) {
+			dirs[filepath.Dir(file)] = struct{}{}
+		}
+	}
+
+	return dirs
+}
+
+// sqlSubjectOf returns the longest root that contains the package, or the
+// package itself when no root does.
+//
+// LONGEST is defensive rather than load bearing: measured 2026-09-08, NO two of
+// the 25 roots nest, so today the longest match and the only match are the same
+// root. It is written this way because the day one root does sit inside
+// another, attributing the inner package to its parent would hand the inner
+// package's own table to a subject that does not own it, and the audit would
+// report a component reading itself.
+func sqlSubjectOf(pkg string, roots []string) string {
+	subject := pkg
+	longest := 0
+	for _, root := range roots {
+		if pkg != root && !strings.HasPrefix(pkg, root+"/") {
+			continue
+		}
+		if len(root) > longest {
+			subject, longest = root, len(root)
+		}
+	}
+
+	return subject
 }
 
 // ownerLabel names an owner in a failure message without calling it a module.
@@ -881,6 +1020,69 @@ func crossOwnerRemedy(owner string) string {
 		"store for job runs — which is where its writing rule is stated."
 }
 
+// rigPath is the catalog seeder, and the only component this rule exempts.
+const rigPath = "internal/rig"
+
+// sqlCrossingExemption is one component's permission to name tables it does not
+// own, together with the argument that permission rests on.
+type sqlCrossingExemption struct {
+	// why is the argument. It is kept HERE, next to the permission it grants,
+	// because an exemption whose reason lives somewhere else is an exemption
+	// nobody re-reads before widening it.
+	why string
+	// tables are the tables the subject may name, and every one of them must
+	// actually BE named by it — see [TestModuleSQLNamesOnlyItsOwnTables], which
+	// reports a listed table nobody names as loudly as an unlisted crossing.
+	tables []string
+}
+
+// sqlCrossingExemptions are the components allowed to cross, by subject.
+//
+// One entry, and adding a second is a decision rather than a maintenance step:
+// what makes the rig's crossing acceptable is an argument written where a
+// reader meets it, not the fact that it is inconvenient to remove.
+var sqlCrossingExemptions = map[string]sqlCrossingExemption{
+	rigPath: {
+		why: "internal/rig rebuilds the 52,004-product catalog every performance sentence " +
+			"in this repository rests on, and it fills the modules' tables with bulk " +
+			"INSERTs. Its package godoc rejects the service-layer shape on arithmetic — " +
+			"13.6 s of generate_series against an estimated hours of call-per-product — " +
+			"and writes down what the crossing costs: no validation, no events, no audit " +
+			"rows, an empty search index. It creates no table, belongs to no module, is " +
+			"reachable from no HTTP surface, and nothing in a running server calls it.",
+		tables: []string{
+			"product",
+			"product_variant",
+			"product_category",
+			"product_category_map",
+			"product_tag",
+			"product_tag_map",
+			"price_set",
+			"price",
+			"inventory_items",
+			"inventory_levels",
+			"stock_locations",
+		},
+	},
+}
+
+// sqlCrossingAllowed answers the exemption question, and it is ONE function for
+// [crossModuleReads]'s reason: a control that re-implements the decision proves
+// only that two copies agree.
+//
+// It reports both halves, because the two failure messages are different
+// documents. A subject with no exemption is told how to reach the owner; an
+// exempt subject naming an unlisted table is told the argument its permission
+// rests on and asked whether it covers this table too.
+func sqlCrossingAllowed(subject, table string) (allowed, exempt bool) {
+	exemption, exempt := sqlCrossingExemptions[subject]
+	if !exempt {
+		return false, false
+	}
+
+	return slices.Contains(exemption.tables, table), true
+}
+
 // TestModuleSQLNamesOnlyItsOwnTables enforces ADR 0001 in the place it is most
 // easily broken and was never checked.
 //
@@ -889,7 +1091,7 @@ func crossOwnerRemedy(owner string) string {
 func TestModuleSQLNamesOnlyItsOwnTables(t *testing.T) {
 	t.Parallel()
 
-	subjects := sqlSubjects(t)
+	population := sqlSubjects(t)
 	owners := tableOwners(t)
 
 	// Five counters and one depth mark. Each of the five stands for a separate
@@ -907,8 +1109,36 @@ func TestModuleSQLNamesOnlyItsOwnTables(t *testing.T) {
 		deepestFold    int
 	)
 	ownReadsBySubject := map[string]int{}
+	// exemptCrossings counts, per subject and table, the crossings an exemption
+	// cleared. It is what makes the exemption readable in both directions: an
+	// entry that never gets used is reported below.
+	exemptCrossings := map[string]map[string]int{}
 
 	report := func(subject, path string, line int, read crossModuleRead) {
+		allowed, exempt := sqlCrossingAllowed(subject, read.table)
+		switch {
+		case allowed:
+			if exemptCrossings[subject] == nil {
+				exemptCrossings[subject] = map[string]int{}
+			}
+			exemptCrossings[subject][read.table]++
+
+			return
+		case exempt:
+			t.Errorf("%s:%d: %s SQL names table %q in a %s clause, and %s owns it.\n"+
+				"%s is exempt from this rule, but the exemption is per TABLE and %q is not on "+
+				"its list — a blanket one would leave this gate saying nothing at all about its "+
+				"only subject.\nThe exemption stands on this: %s\n"+
+				"If the same argument covers this table, add it to sqlCrossingExemptions and "+
+				"say in the component's own godoc what it now fills. If it does not, the "+
+				"statement belongs somewhere else.",
+				path, line, subject+"'s", read.table, strings.ToUpper(read.clause),
+				ownerLabel(read.owner), subject, read.table,
+				sqlCrossingExemptions[subject].why)
+
+			return
+		}
+
 		t.Errorf("%s:%d: %s SQL names table %q in a %s clause, and %s owns it.\n"+
 			"This query WORKS today — everything is handed the same connection pool — which is "+
 			"why no other gate in this repository sees it and why it is worth failing over: the "+
@@ -935,7 +1165,7 @@ func TestModuleSQLNamesOnlyItsOwnTables(t *testing.T) {
 		}
 	}
 
-	for _, subject := range subjects {
+	for _, subject := range population.subjects {
 		subjectRoot := filepath.Join(repoRoot, filepath.FromSlash(subject))
 
 		for _, path := range sqlFilesIn(t, filepath.Join(subjectRoot, queriesDirName)) {
@@ -944,19 +1174,21 @@ func TestModuleSQLNamesOnlyItsOwnTables(t *testing.T) {
 		for _, path := range sqlFilesIn(t, filepath.Join(subjectRoot, migrationsDirName)) {
 			scanSQLFile(subject, path, &migrationFiles)
 		}
+	}
 
-		constants, subjectFoldDepth := moduleGoSQL(t, subjectRoot)
-		deepestFold = max(deepestFold, subjectFoldDepth)
+	for _, unit := range population.packages {
+		constants, packageFoldDepth := packageGoSQL(t, unit.dir)
+		deepestFold = max(deepestFold, packageFoldDepth)
 		for _, constant := range constants {
 			goConstants++
 			for _, reference := range tablesNamedIn(constant.sql) {
-				if owners[reference.table] == subject {
+				if owners[reference.table] == unit.subject {
 					ownReadsInGo++
-					ownReadsBySubject[subject]++
+					ownReadsBySubject[unit.subject]++
 				}
 			}
-			for _, read := range crossModuleReads(subject, constant.sql, owners) {
-				report(subject, constant.path, constant.line, read)
+			for _, read := range crossModuleReads(unit.subject, constant.sql, owners) {
+				report(unit.subject, constant.path, constant.line, read)
 			}
 		}
 	}
@@ -999,7 +1231,7 @@ func TestModuleSQLNamesOnlyItsOwnTables(t *testing.T) {
 			"raise maxSQLFoldDepth past it — the limit is there to stop a malformed tree "+
 			"spinning, not to cap how a module writes its SQL.", maxSQLFoldDepth)
 
-	for _, subject := range subjects {
+	for _, subject := range population.subjects {
 		if !ownsAnyTable(subject, owners) {
 			continue
 		}
@@ -1008,6 +1240,28 @@ func TestModuleSQLNamesOnlyItsOwnTables(t *testing.T) {
 				"Either its SQL has moved somewhere this walk does not look — and the module is "+
 				"now exempt from the rule without anybody deciding that — or it really does not "+
 				"touch the tables its migrations create, which is a finding of its own.", subject)
+	}
+
+	// The exemption read the other way round, which is where its blindness
+	// floor is. A permission nobody uses is either a table the component
+	// stopped filling — in which case the list is a stale promise — or the
+	// walk no longer reaching the component at all, and the second failure is
+	// silent in every other assertion here: an unread subject produces no
+	// finding, which reads exactly like a clean one.
+	for subject, exemption := range sqlCrossingExemptions {
+		assert.Contains(t, population.subjects, subject,
+			"%q is exempted from this rule and is not in the population at all, so the "+
+				"exemption grants nothing and hides nothing — and neither would a violation "+
+				"in it be reported.", subject)
+
+		for _, table := range exemption.tables {
+			assert.Positive(t, exemptCrossings[subject][table],
+				"%q is exempted from naming %q and its SQL never names it.\n"+
+					"Two things look like this and both want an edit rather than silence: the "+
+					"component no longer fills that table, so the line is a promise about code "+
+					"that is gone; or this walk stopped reading the component, in which case "+
+					"every OTHER assertion about it is passing on nothing.", subject, table)
+		}
 	}
 }
 
@@ -1315,6 +1569,29 @@ func TestTheModuleSQLRuleCatchesAViolation(t *testing.T) {
 	assert.Contains(t, crossOwnerRemedy(outboxOwner), "outbox.Write",
 		"the remedy offered for a core-owned table still points at an interop surface, which "+
 			"does not exist for it; the reader would go looking for a thing that is not there")
+
+	// The exemption is a second decision and it needs its own control, because
+	// it can fail in two opposite directions and BOTH of them are quiet. Too
+	// wide and the exempt component leaves the audit entirely; too narrow — a
+	// name compared against a path, a lookup that never matches — and the gate
+	// starts reporting an argued crossing on every run until somebody deletes
+	// it for crying wolf.
+	allowed, exempt := sqlCrossingAllowed(rigPath, "product")
+	assert.True(t, exempt, "%s is the rule's one exemption and the lookup does not find it", rigPath)
+	assert.True(t, allowed,
+		"%s may not name product, which is the first table its seeder fills. The exemption "+
+			"grants nothing and the gate now reports an argued crossing on every run.", rigPath)
+
+	allowed, exempt = sqlCrossingAllowed(rigPath, "orders")
+	assert.True(t, exempt)
+	assert.False(t, allowed,
+		"%s may name orders, a table it does not fill and its godoc says it does not build. "+
+			"The exemption has become a blanket one, and the day the rig grows an order "+
+			"family it grows it in silence.", rigPath)
+
+	allowed, exempt = sqlCrossingAllowed(productOwner, "inventory_levels")
+	assert.False(t, exempt, "a module is exempt from the rule; the rule now exempts its subjects")
+	assert.False(t, allowed)
 
 	for text, isSQL := range goSQLClassificationCases {
 		assert.Equal(t, isSQL, goStringHoldsSQL.MatchString(text),

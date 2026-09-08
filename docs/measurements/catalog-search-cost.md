@@ -652,6 +652,13 @@ rig does not contain such a category.** If the selective case is ever to become
 a permanent fixture it needs an option on `rig.Spec`, and that is a change to
 the generator rather than a note in a measurement.
 
+**Built 2026-09-08 (ADR 0058).** `Spec.SkewedCategorySize` builds two such
+categories rather than one, and the reason it is two is the sharpening below:
+they hold the same number of products and differ only in where those products
+sit in the listing order. Every figure above was still taken on the hand-built
+pair, so none of them is a claim about the shipped fixture; what the option
+changes is that the NEXT reader can rebuild the shape and measure it again.
+
 ---
 
 ## The category filter at the rig's own selectivity — the floor, replaced
@@ -989,16 +996,20 @@ all for any word carrying one.
 
 ## What round two still cannot say
 
-- Nothing about a SKEWED taxonomy that the repository can rebuild. The selective
-  categories were hand-built on a scratch database and are gone with it. Until
-  `rig.Spec` grows a skew option, the case that motivated the whole change
-  cannot be reproduced by running a command.
+- ~~Nothing about a SKEWED taxonomy that the repository can rebuild. The
+  selective categories were hand-built on a scratch database and are gone with
+  it. Until `rig.Spec` grows a skew option, the case that motivated the whole
+  change cannot be reproduced by running a command.~~ **The option exists since
+  2026-09-08 (ADR 0058) and nothing here has been re-measured on it.** The rig
+  can now build the shape; every number in this document still comes from the
+  scratch database.
 - Nothing about collections. No product in the rig carries a `collection_id`, so
   the third taxonomy-shaped criterion was never on the inner side of anything.
-- Nothing about a product in SEVERAL categories. The generator gives every
+- Nothing about a product in SEVERAL categories. The generator gave every
   product exactly one category and one tag, so the `EXISTS` never had to stop at
   the first of many matches, which is the reason it is an `EXISTS` and not a
-  join.
+  join. **A skewed member now carries two** — its uniform category and the
+  skewed one — so the shape exists; it has not been measured.
 - Nothing about cold caches, still. Every figure is warm and the plans say so.
 - Nothing about a multi-channel shop, still. One channel, 52,000 of 52,004
   products in it.
