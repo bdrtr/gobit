@@ -14,7 +14,7 @@ import (
 // lines only come with [Service.GetOrder], one order at a time. This one exists
 // because the question "which variants sold in this period" cannot be asked of
 // the order at all — the variant is on the line, and the line had no listing of
-// its own until now (gaps.md B14).
+// its own until this listing.
 //
 // The pointers mean "criterion not given"; the empty string and the zero time
 // are legitimate values elsewhere and are not used as sentinels.

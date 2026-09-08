@@ -49,8 +49,9 @@ import (
 // schema "MUST BE IDENTICAL to the schema on the consumer side, and conformance
 // can only be proven by an integration test", so a method with no consumer is a
 // contract nothing can check and nothing can correct. The same call was made for
-// the inventory event (docs/gaps.md B7) and for the plugin job surface (B13,
-// which arrived WITH its first consumer rather than before one).
+// the inventory event (ADR 0063, which refused a forwarder as a first
+// subscriber) and for the plugin job surface, which arrived WITH its first
+// consumer rather than before one.
 //
 // What it should look like when it lands is worth writing down, because the
 // shape is not obvious and it was measured rather than guessed. It is ONE

@@ -1,90 +1,20 @@
-# Gap inventory
+# Defect ledger
 
-What this repository has, what it does not, and — for each absence — whether it
-is a GAP or a DECISION. The two are never listed together: acting on a decision
-as though it were a gap overturns an architecture on autopilot.
+Every fault this repository has found in itself, with what closed it.
 
-One row per item: the question, and where the answer is. A closed row names its
-ADR and stops. The reasoning is in the ADR, the history is in `git log`, and the
-numbers are under [`measurements/`](measurements/).
+A row is here because the CLASS is worth keeping, not the incident: the
+reproduction lives in the commit that closed it and the reasoning in the ADR the
+row names. Thirty-nine files under `internal/` and `plugins/` cite these numbers
+as the argument for their own code, which is why the numbers never move and a
+closed row is never deleted.
 
-Compacted 2026-09-08 from 4,615 lines. Nothing was decided or reopened in that
-pass; two rows were found stale and are marked below.
+**The gap inventory this file used to carry is finished**, and it left on
+2026-09-08 rather than being archived: every row of groups A through G was
+either built or decided with a named trigger, and where those decisions live is
+[`adr/README.md`](adr/README.md). The measurements they rested on are under
+[`measurements/`](measurements/).
 
-## A. Decisions — no code until they are answered
-
-| # | Question | Answer |
-|---|---|---|
-| A1 | Which packages become public | ADR 0026 + 0027 — `core/`, fourteen packages plus a four-method facade; no commerce model among them |
-| A2 | Is gobit the data controller | ADR 0029 — no, the embedder is; gobit owes the mechanism, not the policy |
-| A3 | May the customer pay a different amount than the merchant receives | ADR 0042 — not now; when it comes it arrives as a settlement ROW, not by relaxing the equality |
-| A4 | Invoice retention against erasure | ADR 0032 — an issued invoice refuses erasure, and the refusal lives in the schema |
-| A5 | Group price for a customer in several groups | ADR 0049 — one group decides, and the merchant ranks the groups |
-| A6 | `allow_backorder` and the three flags beside it: reader or deletion | ADR 0048 — all four get a reader; none stops being published |
-| A7 | Does the panel become an admin-API client | ADR 0030 — yes, an SPA on the same cookie |
-| A8 | Catalog cacheability | ADR 0044 — the sales channel moves into the path; all four routes moved |
-| A9 | Does ADR 0008 stand on customer identity | ADR 0043 — it stands; gobit requires an identity at the address book and still issues none. ADR 0057 carries the same comparison to the b2b storefront and the cart without the requirement: a bound identity is BELIEVED against the claim, an absent one leaves those two surfaces serving |
-| A10 | pgvector: reopen the cluster contract | ADR 0045 — no; pgvector is a separate opt-in extension module |
-| A11 | Where translated content lives | ADR 0061 — neither half of the language axis is built, and two gates refuse a locale arriving without a record. ADR 0050 fixed the POSITION; what closes the row is that each half blocks the other — a locale key no request supplies is a key nothing can use, and a path segment whose two values return byte-identical bodies has no first consumer. The shape is settled by ADR 0044's precedent. Two triggers, either one: a SECOND component naming a locale, or one shop serving one catalog in two languages over one `inventory_levels`, one order `display_id` sequence or one `invoice_series` |
-| A12 | JWT TTL policy | ADR 0031 — a fixed twelve hours, bounded in shared environments |
-| A13 | Metrics posture | ADR 0046 — metrics leave by scrape, OTLP keeps the traces |
-| A14 | Price history: promote the accidental retention or drop it | ADR 0047 — drop it; what survived a replace was never a history |
-| A15 | May the storefront accept content from a party it cannot identify | ADR 0051 — only when the write is confined or inert, held mechanically. Of the two open defects it recorded, the cart's is NARROWED and not closed (ADR 0057): a bound identity now decides it, and an installation that has bound none still believes the claim — the residue that closes by binding a verifier. `plugins/webpush` is still a standing authority |
-| A16 | What amount does a price filter compare | ADR 0041 — the base price, request's currency, quantity tier one, no group context |
-| A17 | What does "in stock" mean for a product | ADR 0040 — at least one variant unmanaged, backorderable, or with quantity above zero |
-| A18 | What counts as a match when a shopper filters by an option value | ADR 0039 — the folded form, stored beside the merchant's spelling |
-| A19 | Does a callback get a durable ledger of its own | ADR 0062 — no; the durable record is the table the RECEIVING MODULE already owns, and the ring's log (ADR 0056) holds the refusals no module can see. The reader, the scope and the retention ADR 0056 asked for are answered there: a listing, a module scope, and rows ADR 0054 never deletes. A second callback PROVIDER reopens it, and a census of the bound sources fails the day one appears |
-
-## B. Foundations — each unblocks several features
-
-| # | Foundation | Status |
-|---|---|---|
-| B1 | A guarded inbound-callback class | Built — ADR 0028, `core/http.CallbackRegistry` |
-| B2 | Storefront filter surface | Built — category and tag 2026-09-05; sort, option value, price and in-stock 2026-09-08 (ADR 0039/0040/0041) |
-| B3 | Storefront vocabulary endpoints | Built — `GET /store/v1/{collections,categories,tags}` |
-| B4 | Review module | Built — ADR 0051 applied in the SQL rather than quoted |
-| B5 | Order ↔ fulfillment link | Built. A shipment cannot yet be created from the panel |
-| B6 | A money-event read surface | Built — `first_captured_at` / `last_refunded_at`, loaded only when asked for |
-| B7 | Inventory movement ledger | **Built 2026-09-08 — ADR 0068, and the four answers came first.** A reservation is NOT a movement (only the confirm moves goods, and it is the one row that names its reservation); `stocked_quantity` stays AUTHORITATIVE and the ledger explains it, held together by one transaction and by a `stocked_after` on every row; there is no actor but a REASON, four values, and the two that come from an admin request are the two `audit_log` already records with their caller; a row is KEPT and retention is the operator's, which is what `audit_log` and ADR 0062 already do. The reader shipped with it — `GET /admin/v1/inventory-items/{id}/movements`, keyset, under the existing `inventory:read`. **The row's own list was one item long where the tree is silent:** it named a seed as a source of movements and `gobit seed` writes no stock at all. Residue: the ledger begins where the table does, so an old item's deltas do not sum to its count |
-| B8 | Customer module events | Not delivered, deliberately — ADR 0033 met the obligation with an interface that returns an answer |
-| B9 | Stored payment instrument | **DECIDED 2026-09-08 — ADR 0064: not now, and what it waits for is a PROVIDER.** The trigger is an integration under `plugins/` whose upstream mints a customer-scoped credential it will accept on a later charge with no shopper present; deliberately not "when subscriptions arrive", because C12 waits on B9 and that would be a deadlock. **This row's own claim was half wrong**: only ONE half would widen `core/provider`. Paying with a stored token is already wired storefront-to-provider — `payment_data` travels unread from the cart's completion route into the session input, whose godoc names a card token as what belongs there — so what is missing is MINTING (no provider here returns a reusable credential: PayTR's iframe token is spent when its payment closes and its own godoc says the plugin stores it nowhere; the Stripe skeleton errors on all five money methods) and OWNING (the payment module's 22 columns name no customer). The shape when it comes is fixed in the ADR, including that the surface refuses under ADR 0043's row rather than ADR 0057's |
-| B10 | Carrier-capable quote input | Closed as a DECISION — ADR 0065. The state-machine half was built 2026-09-06; the quote half is not widened, because the blocker is the PRODUCER and not the struct. `QuoteInput.TotalWeight` is the rehearsal: the one field of this shape the input has, handed a literal zero by the only trusted producer. **Trigger, two checkable facts:** `product_variant` carries the three dimension columns `product` already has, and the sub-country unit below the city means ONE thing across the customer address book, the cart and the order. A gate refuses a field of that input the tree does not fill |
-| B11 | Order addresses | Built — written in the same transaction as the order's header and lines |
-| B12 | Outbound delivery machinery | Built — `next_attempt_at`, `dead_lettered_at`, capped doubling backoff |
-| B13 | Plugin host: let a plugin register a job | Built — `plugin.Host.RegisterJob`, arrived with its first consumer |
-| B14 | Order line-item read entity | Built — second read-layer entity, with a date filter and an index |
-| B15 | File events | Decided — ADR 0063, with B7's event half. No event is published; the file module's one cross-module relationship is read synchronously BOTH ways, so nothing waits to be told. Trigger: a second holder of an upload's bytes or address inside this repository — a cache in front of the object store is the concrete case |
-| B16 | A suggestion store | ADR 0066 — none is built; a suggestion belongs to the module that owns the row it proposes, and the trigger is the first proposal a query cannot reproduce |
-| B17 | KVKK erasure, export, retention | Erasure built — ADR 0033/0034, `core/personaldata`. Export and retention are not |
-| B18 | A per-column round-trip test | Built — `TestEveryColumnIsWrittenBySomething` |
-
-## C. Features — after the above
-
-| # | Feature | Waits on |
-|---|---|---|
-| C1 | Back-in-stock waitlist | A15, and not B7. **The row said B7 until 2026-09-08** and was measurably incomplete: three files in the tree already name C1 as the thing that FAILS A15, because the waitlist row is an unverified contact detail with no unsubscribe. ADR 0063 makes the trigger a bound identity, which turns that row into a customer gobit already holds |
-| C2 | Order timeline | Built — `GET /admin/v1/orders/{id}/timeline`, composed, each entry names its clock |
-| C3 | Operator assistant in the panel | A return-creation surface |
-| C4 | Consent records and data-subject endpoints | Nothing. Actionable since 2026-09-07; the endpoints exist |
-| C5 | Outbound webhooks | Nothing. `plugins/webhookout` is built and installable (see D22) |
-| C6 | Carrier plugins | A place for a carrier to deliver what it receives — the module's cross-module write surface cannot move a shipment, and a plugin can reach neither the method nor a structural interface naming it. **No longer B10**: ADR 0065 measured that dependency pointing the wrong way, and a plugin can ship against the quote surface as it stands with a flat option or a tariff in the option's own data. Its tariff is what names the fields B10 would otherwise guess |
-| C7 | Installment table + providers | A3 |
-| C8 | Digital product delivery | — |
-| C9 | B2B quotes, terms, minimum order | Nothing — A5 is answered |
-| C10 | NL search layer | Nothing — B2 and B3 are built |
-| C11 | Review summaries and Q&A | A read-layer provider on the review module, absent until its first reader |
-| C12 | Subscriptions | ADR 0064's trigger — a provider that can mint a reusable credential. B9 is decided, not open, and the instrument is only the first of C12's parts |
-| C13 | Feature flags, then A/B | A9's assignment key |
-| C14 | Panel extension points, then the SPA | The three things ADR 0030 names as owed by whoever implements it |
-| C15 | Multi-language | A11 is answered — ADR 0061 defers it with two named triggers, and the gates fire when one arrives |
-| C16 | Real-time stock | A fan-out the bus cannot do. **B7 is built (ADR 0068)** and the ledger is the change feed a push would read, but nothing here can hold a connection open per shopper |
-| C17 | Edge caching | Nothing — A8 is answered and built |
-| C18 | Multi-vendor marketplace | A3 and most of the above; last, deliberately |
-
-## D. Corrections
-
-Live rows first. A fixed row keeps its line because the defect CLASS is what the
-row is for; the reproduction is in the commit that closed it.
+Live rows first.
 
 | # | Finding | Status |
 |---|---|---|
@@ -121,88 +51,3 @@ row is for; the reproduction is in the commit that closed it.
 | D30 | A plugin held four columns of personal data and declared none | Fixed. Every mutation proof needs `-count=1` |
 | D31 | A data race in `TestCancellationActuallyStopsRemainingMigrations`, seen once | **Diagnosed and closed 2026-09-08 — ADR 0052.** golang-migrate v4.19.1 leaves the migrator's `isGracefulStop` unguarded next to an `isLocked` its mutex does guard, and the one line arming the write was gobit's `GracefulStop` send. Measured both ways: same error code, same version, same dirty flag, same regression test — the layer bought nothing. The send is gone and a gate refuses its return; the race is DORMANT rather than fixed, because the field is unexported |
 | D32 | The language ratchet could not see a file until it was too late to matter | Fixed — the population is now tracked ∪ untracked-not-ignored |
-
-## E. Out of framework scope — written, not forgotten
-
-- **e-Fatura transmission** needs the merchant's certificate and an integrator
-  contract. gobit owes the document, the numbering and the slot; the first two
-  are built (ADR 0024).
-- **Customer identity** is the embedder's job (ADR 0008, upheld by ADR 0043).
-  ADR 0057 makes a bound one decide every storefront surface that names a
-  customer; where none is bound, the cart and the b2b storefront believe the
-  claim and say so.
-- **A/B assignment** likewise: the framework has no visitor.
-
-## F. Standing work
-
-- **Translation ledger: 200 files.** ADR 0012 lets it only shrink.
-- **Panel: five sections over four of seventeen modules.** Thirteen modules have
-  no screen, nothing can be created or deleted from it, and a plugin has no way
-  to add one. Review is the first screenless module that is not configuration —
-  its moderation queue is daily operator work.
-
-## G. Found while building, not yet decided
-
-- ~~**The migration role and the runtime role are ONE superuser account.**~~
-  **DECIDED 2026-09-08: ADR 0060 — the split is the operator's to provision, and
-  the binary does not change.** The grant list it needs is in
-  [`security.md`](security.md).
-- ~~**The rig cannot reproduce the case that motivated the change it paid
-  for.**~~ **DECIDED 2026-09-08: ADR 0058 — `Spec.SkewedCategorySize` builds TWO
-  small categories, and zero builds neither.** The uniform taxonomy keeps every
-  member it had, so the figures taken at 5% selectivity stay measurable on the
-  same rig; the skewed rows are additional memberships, which incidentally gives
-  the generator its first product belonging to two categories.
-
-  **What made it two rather than one is the measurement's own sharpening, and it
-  is exactly what a single small category would have hidden.** Two categories of
-  the same size gave two different plans — 12.5 ms where the members were
-  adjacent in the listing order, 163.5 ms where they were spread across it — so
-  the cost is not a property of the size but of which of two legal plans the
-  statistics led the planner to. A rig carrying one of them would reproduce a
-  number and invite the next reader to take it for a law. The two are therefore
-  picked by the storefront's own ordering, not by a run of ids: consecutive
-  numbers are not consecutive in it, so the obvious spelling would have built a
-  spread category and called it adjacent.
-
-  **The plan-shape acceptance test does NOT pin the difference, and that is a
-  decision rather than an omission.** The shipped statement no longer carries the
-  disjunction that collapsed, so there is nothing on the shipped path to pin; the
-  two plans were measured as a coin the planner flips, so an assertion on either
-  would go red on a legal plan; and the rebuild's acceptance check is four
-  numbers on the unfiltered count query, which the taxonomy does not touch.
-  Residue: the skew is opt-in, so `gobit seed` with no `-skew` still builds a rig
-  that cannot show the case.
-- ~~**Two clocks on one axis.**~~ **DECIDED 2026-09-08: ADR 0053 — they stay,
-  and every moment names its clock.** Six columns, not five (`returned_at` was
-  added after this row was written), and "every other moment comes from the
-  database" was false — auth, promotion and six modules' `updated_at` are
-  process-stamped too.
-
-  **The cost this row named was measured, and then the measurement was found to
-  be pricing the wrong change.** "Lose the injectable clock" costs two tests;
-  the move it was offered as evidence for would also delete `stampFor`, seven
-  query parameters and the fake store's mirror of four schema CHECKs — the one
-  place they hold without a database — and would turn a stamp assertion into a
-  tautology. That correction came from an adversarial pass over this row's own
-  entry in this ledger, written the same day.
-
-  What settled it is that for two of the six the database clock is WORSE:
-  `now()` is transaction START and the capture's transaction wraps the provider
-  call, so the stamp would record when gobit began trying rather than when the
-  processor took the money; and the invoice's single `now` feeds both the series
-  year and the stamp, so splitting them lets a document be numbered 2027 and
-  dated 2026.
-
-- ~~**`authorized_at` does not exist.**~~ **DECIDED 2026-09-08: ADR 0054 — the
-  surface keeps two moments and the column is not added.** An authorization
-  moves no money, so it is not a money event; and while the hold is what a
-  reader is asking about, the moment is already readable —
-  `payment_sessions.updated_at` IS it, because every transition out of
-  `authorized` leaves the status and re-authorizing is a no-op that writes
-  nothing. `ListSessionsForReconciliation` and its index have always rested on
-  that reading. After capture the moment is gone and nothing asks for it: a
-  third field would have to cross the ADR 0004 read map, a DTO and the OpenAPI
-  text for a reader nobody has named. The `refunded_at` half was already closed
-  and stays closed — `refunds` carries no UPDATE anywhere, so `created_at` IS
-  the refund moment.

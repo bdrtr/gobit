@@ -132,7 +132,7 @@ func TestARestockOfNothingIsRefused(t *testing.T) {
 	assert.Empty(t, store.movementsFor(itemID))
 }
 
-// TestAPromiseIsNotAMovement is question one of docs/gaps.md B7, held as a
+// TestAPromiseIsNotAMovement is question one of ADR 0068, held as a
 // test rather than as a sentence.
 //
 // Reserving and releasing both write the level — the reserved half of it — and

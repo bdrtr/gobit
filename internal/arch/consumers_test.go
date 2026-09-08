@@ -841,7 +841,8 @@ func TestTheEventTopicsHaveASubscriber(t *testing.T) {
 // through a forwarder reaches that state with the reason never written. ADR
 // 0063.
 //
-// A forwarder is NOT a lesser subscriber: it is the whole of gaps.md C5 and it
+// A forwarder is NOT a lesser subscriber: it is the whole of the outbound
+// webhook feature and it
 // works. What it cannot do is answer the question this surface asks, which is
 // whether the capability has a consumer inside the framework.
 var genericForwarders = map[string]string{

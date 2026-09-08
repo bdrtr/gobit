@@ -3,7 +3,8 @@
 //
 // # What it is
 //
-// The SENDER half of gaps.md C5. Everything under it was already built: the
+// The SENDER half of the outbound webhook feature. Everything under it was
+// already built: the
 // outbox makes an event survive the transaction that promised it, the relay
 // retries a failed publish with a ceiling and a dead letter (B12), and a plugin
 // can own a periodic pass (B13). What was missing was the thing that turns a

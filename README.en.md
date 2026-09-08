@@ -193,7 +193,7 @@ framework cannot see.**
 | [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: fifty-one records, each with its decision in one sentence. In case of conflict with the plan, **the ADR wins** |
 | [`docs/measurements/`](./docs/measurements/) | Measurements: numbers, probe output, reproductions. An ADR links to one in a single line; nobody has to read them end to end |
 | [`docs/mimari.md`](./docs/mimari.md) | The architecture narrative: layers, the life cycle of a request and of a module, data, sagas, technology choices, the core packages |
-| [`docs/gaps.md`](./docs/gaps.md) | The gap table: what exists, what does not, and for each absence whether it is a **gap or a decision** — together with an ordered list of what to do |
+| [`docs/gaps.md`](./docs/gaps.md) | The defect ledger: every fault this repository found in itself, one sentence and the ADR that closed it |
 | [`docs/security.md`](./docs/security.md) | Identity and authorization: the two surfaces, the catalog filtered by sales channel, the scope dictionary, an end-to-end curl walkthrough, the hardening rings and the one-instance / several-instances distinction |
 | [`docs/commerce-flows.md`](./docs/commerce-flows.md) | From cart to order: who owns a flow's HTTP surface, who decides the price and the currency, which warehouse it ships from, and where the B2B spending limit is checked |
 | [`docs/api-surfaces.md`](./docs/api-surfaces.md) | The generated OpenAPI document and the GraphQL storefront read surface; the limits the server sets when the client decides the cost, and the error policy |

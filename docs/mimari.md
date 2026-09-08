@@ -2,7 +2,8 @@
 
 This document explains **why** the system is built this way. For what it does,
 see the [README](../README.md); for the individual decisions,
-[`docs/adr/`](adr/); for what has been measured and what is missing,
+[`docs/adr/README.md`](adr/README.md); for what has been measured,
+[`docs/measurements/`](measurements/); for the faults found and closed,
 [`docs/gaps.md`](gaps.md).
 
 In case of conflict the order is: **ADR > this document**. The implementation

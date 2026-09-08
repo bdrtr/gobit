@@ -50,11 +50,15 @@ They predate this agreement and are NOT rewritten. Each carries a two-line
 status. Read it first and descend into a file only when the one sentence is not
 enough.
 
-## docs/gaps.md is a table
+## docs/gaps.md is the defect ledger
 
-One row per gap: number, one sentence, and where the answer is. A closed row
-names its ADR and stops there — the reasoning is in the ADR, the history is in
-git. Measurement reports live under `docs/measurements/`.
+One row per fault this repository has found in itself: number, one sentence, and
+what closed it. The reproduction is in the commit, the reasoning in the ADR the
+row names. Numbers never move and a closed row is never deleted — code cites
+them as the argument for its own shape.
+
+The gap inventory it used to carry closed on 2026-09-08; new work is decided in
+an ADR, not queued here.
 
 ## Verification
 

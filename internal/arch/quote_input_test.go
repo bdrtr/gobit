@@ -60,7 +60,7 @@ const quoteInputTypeName = "QuoteInput"
 // TestEveryQuoteInputFieldIsFilledByTheTree refuses a quote-input field that no
 // production file writes.
 //
-// This is the capability-and-its-first-consumer rule (docs/gaps.md B7, B10)
+// This is the capability-and-its-first-consumer rule (ADR 0063, ADR 0065)
 // applied to a struct instead of to an event topic: a field nothing fills is a
 // promise made to every embedder and kept by nobody, and on a published surface
 // it cannot be taken back before 1.0.0.

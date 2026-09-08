@@ -1616,8 +1616,9 @@ func liveOptionValues(ctx context.Context, t *testing.T, optionID string) int {
 // pre-order line and later fixes a typo in its title would find the flag back
 // at its default, with no error and nothing to notice — the value is not read
 // today, so no behavior changes to give the loss away. It would surface only
-// when docs/gaps.md A6 is finally answered and a reader is written, by which
-// time the original intent is unrecoverable.
+// when a reader is written, by which time the original intent is
+// unrecoverable. The reader arrived on 2026-09-08 (ADR 0048), so what this
+// paragraph describes is a window that has closed rather than one still open.
 //
 // # Both flags are set AGAINST their defaults first
 //

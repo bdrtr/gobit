@@ -149,7 +149,7 @@ type Review struct {
 // 1.3-2.0 ms at 5,000 and 9.3 ms at 50,000, against 33-38 ms with no index at
 // all. A stored counter would buy those milliseconds and owe a correctness
 // obligation on every path that ever writes a review row — which is exactly the
-// trade docs/gaps.md A16 records against denormalizing a price into the catalog,
+// trade ADR 0041 records against denormalizing a price into the catalog,
 // where the missing piece was an invalidation signal.
 //
 // The crossing point is stated rather than hidden: the cost is linear in the

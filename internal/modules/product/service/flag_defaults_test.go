@@ -27,8 +27,9 @@ import (
 // A flag that is read has a second line of defense: change its default and some
 // downstream test that depends on the behavior goes red. A flag that is NOT
 // read has none. Meanwhile the column keeps accumulating a value per row, and
-// the day a reader arrives — allow_backorder's reader is docs/gaps.md A6, still
-// an open DECISION — that reader acts on every row written in the meantime. A
+// the day a reader arrives — allow_backorder's reader landed on 2026-09-08 in
+// the checkout saga (ADR 0048) — that reader acts on every row written in the
+// meantime. A
 // default silently flipped today is not a dormant bug; it is a catalog that
 // will mean the wrong thing the moment somebody finally implements the feature,
 // with no migration able to tell the intended values from the accidental ones.
