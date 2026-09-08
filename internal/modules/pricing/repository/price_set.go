@@ -110,8 +110,17 @@ func (r *Repo) GetPriceSetsByIDs(ctx context.Context, ids []string) ([]models.Pr
 
 // DeletePriceSet price set'i soft delete ile siler; yoksa errors.NotFound.
 //
-// Fiyatlar da aynı işlemde silinir: kabı silip fiyatlarını canlı bırakmak,
-// silinmiş bir kabın fiyatlarının listelerde görünmesi demekti.
+// Fiyatlar da aynı işlemde damgalanır: kabı silip fiyatlarını canlı bırakmak,
+// silinmiş bir kabın fiyatlarının listelerde görünmesi demekti. Bu damga
+// vazgeçilmezdir çünkü hesaplama yolunda kabın canlılığını denetleyen başka bir
+// şey YOKTUR — ListPriceCandidates price_set'e hiç JOIN yapmaz ve servis kabı
+// yalnızca sıfır aday döndüğünde okur.
+//
+// ADR 0047'den sonra burası price.deleted_at'in TEK yazanıdır: yerine koyma
+// artık damgalamıyor, siliyor (bkz. [Repo.ReplacePrices]). Sütunun tek bir
+// anlamı olması bundandır — damgalı bir fiyat satırı yalnızca silinmiş bir
+// kaptan gelmiş olabilir — ve bu, şemadan değil çağıranların sayısından
+// gelir.
 func (r *Repo) DeletePriceSet(ctx context.Context, id string, now time.Time) error {
 	return r.inTx(ctx, func(q *pricingdb.Queries) error {
 		if _, err := q.SoftDeletePriceSet(ctx, pricingdb.SoftDeletePriceSetParams{

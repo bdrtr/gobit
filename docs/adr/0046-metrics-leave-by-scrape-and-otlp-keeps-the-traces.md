@@ -39,9 +39,12 @@ What exists, verified rather than recalled:
   endpoint anyway, and at every export interval the line
   `failed to upload metrics: ... unknown service ...MetricsService` drops. With
   `METRIC_EXPORT_INTERVAL` defaulting to 60s, that is once a minute, forever.
-- **No Prometheus anywhere.** `grep -ci prometheus go.sum` returns 0 and
-  `go list -deps ./...` names no Prometheus package across its 652 entries. This
-  is a new dependency, not a latent one already paid for.
+- ~~**No Prometheus anywhere.**~~ **BUILT 2026-09-08.** It was true when it was
+  measured — `grep -ci prometheus go.sum` returned 0 and `go list -deps ./...`
+  named no Prometheus package across its 652 entries — and it is precisely the
+  sentence this record set out to stop being true. The exporter and the modules
+  behind it are in `go.mod` now; what that actually cost, counted rather than
+  estimated, is at the end of this record.
 
 So today a metric has exactly two states available to it: absent, or failing
 every sixty seconds. **Neither of those is a posture**, and that is what A13 is
@@ -253,6 +256,187 @@ nothing.
 - **It does not say where metrics are STORED, aggregated or alerted on.** gobit
   exposes; the embedder scrapes. That boundary is the same one ADR 0025 draws
   everywhere else.
+
+
+## What was built, 2026-09-08
+
+**Where each piece landed.**
+
+- `internal/core/observability` builds the meter provider from
+  `go.opentelemetry.io/otel/exporters/prometheus`, which IS the pull reader —
+  the exporter embeds a `ManualReader` — and `newMeterProvider` hands back the
+  provider and the handler together, because one is useless without the other.
+  `Setup` therefore returns a `Telemetry` value rather than a bare shutdown
+  function: the two things in it are answered by the same call and read at
+  opposite ends of the process's life, and a pair of loose returns would let a
+  caller keep one and drop the other with nothing to notice.
+- The early return widened exactly as decided: `Setup` returns before building
+  anything only when NEITHER signal was asked for, and each provider is built
+  for its own switch. One thing moved that the record did not mention — the W3C
+  propagator is now installed inside the trace branch. With no tracer provider
+  there is no trace to continue, so a propagator on its own would only carry a
+  header between two no-ops. Under the old condition the two were inseparable,
+  so there was nothing to decide.
+- `internal/app` gained `startMetrics`, which is `startProfiling` with the
+  address changed and one budget restored: the profiling server leaves
+  `WriteTimeout` at zero because a profile takes as long as it was asked to
+  take, while a scrape is a bounded response gathered from an in-memory store,
+  so the ordinary write budget applies and a scrape that outruns it is a fault
+  worth cutting off.
+- `internal/core/config` gained `METRICS_ADDR` and lost `METRIC_EXPORT_INTERVAL`
+  together with its validation rule, its line in `.env.example` and the entry in
+  the environment list the config tests clear. The godoc on `OTLPEndpoint`
+  already carried the correction that started this record; it now has a
+  neighbor that says which signal it does NOT decide.
+
+**The switch is a boolean, and the record did not say so.** `Options.Metrics` is
+a `bool`, not the address. The observability package builds a handler and binds
+no port, so a field holding an address it never listens on invites exactly the
+belief that it does; `internal/app` turns `METRICS_ADDR` into that answer, next
+to the listener the address belongs to. The same gate treats a nil handler as
+the same answer as an empty address, and the reason is worth stating: binding a
+port that answers 404 to every scrape reads to an operator like a broken
+deployment rather than like a switch left off.
+
+**One thing the record deliberately left open had to be decided by the code.**
+Whether the Go runtime collectors join the output was picked neither way, and a
+program cannot decline to pick. The private registry was built — the shape the
+record MEASURED, which yields exactly the two instruments — and a second reason
+turned up while building it that makes the choice more than a coin toss:
+`prometheus.DefaultRegisterer` is a package-level global and registering on it
+twice fails with `duplicate metrics collector registration attempted`. A second
+`Setup` in one process, which is what a test does, would make telemetry look
+broken for a reason that has nothing to do with the installation. Adding the
+runtime collectors remains a one-line change and still deserves its own record.
+
+**The dependency count, as it actually landed.** The eight are exactly the eight
+this record predicted: `go.opentelemetry.io/otel/exporters/prometheus`,
+`prometheus/client_golang`, `client_model`, `common`, `otlptranslator`,
+`procfs`, `beorn7/perks` and `munnerz/goautoneg`. Two things the count did not
+anticipate, both verified rather than assumed:
+
+- **One module LEAVES.**
+  `go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc` was the
+  push exporter and nothing imports it any more, so `go mod tidy` dropped it.
+  The net addition is eight in and one out, not eight in.
+- **One version moves.** `github.com/klauspost/compress` goes from v1.18.6 to
+  v1.19.1, because `prometheus/client_golang` v1.24.1 requires it and minimal
+  version selection takes the higher one; `go mod graph` names the requirer.
+  This is a transitive bump of a module already present, not a ninth module, and
+  it does not touch what the record checked: the otel modules all stayed at
+  v1.45.0 and the exporter resolved against them with no bump at all.
+
+**ADR 0025's claim arrived as a failing test rather than as a sentence.**
+`examples/starter` and `examples/plugin` are separate Go modules, built by
+`internal/arch` to prove the published facade is enough to run an installation
+from outside. Both stopped compiling the moment the exporter entered the tree,
+with `missing go.sum entry`, and both had to be tidied in the same change. That
+is what "each of those becomes the embedding project's dependency too" looks
+like when it is real — **but the two broke for DIFFERENT reasons, and this
+paragraph first attributed both to the exporter (corrected 2026-09-08):**
+
+- `examples/starter` is the module that actually pays the eight. Its `go.mod`
+  gains `exporters/prometheus` and six of the Prometheus modules as indirect
+  requires, and loses `otlpmetric/otlpmetricgrpc`.
+- `examples/plugin` gains NO Prometheus requirement at all — grepping its
+  `go.mod` for prometheus returns nothing. What broke it was the transitive bump
+  the exporter forced elsewhere: the `klauspost/compress` v1.18.6 to v1.19.1
+  `go.sum` entry. Its tidy also swept up drift that predates this change and
+  belongs to nothing in it — `caarlos0/env/v11` left its `go.mod`, and
+  `golang-migrate`, `lib/pq` and `testcontainers-go/modules/postgres` entered
+  its `go.sum`. That churn is carried rather than reverted, because it is what
+  `go mod tidy` produces and CI diffs the result of `go mod tidy`.
+
+**What the tests pin, and what mutation proved they can fail.** Five claims,
+each with a mutation run under `-count=1`:
+
+- `TestEachSignalIsBuiltOnlyForTheSwitchThatAskedForIt` walks the four
+  combinations of the two switches and checks the scrape handler against each.
+  Narrowing the early return back to the old one-address condition fails the
+  metrics-alone case, which is the exact defect this record was written on top
+  of. The metrics cases go through the GLOBAL meter, because that is the only
+  provider `core/http` can reach; deleting the `otel.SetMeterProvider` call
+  fails them too, with a scrape body carrying `target_info` and nothing else.
+- `TestTheScrapeOutputCarriesTheNamesADR0046Measured` pins the names, the two
+  types and the `_seconds` suffix that this record measured in a scratch
+  program. It is the one claim here a dashboard is written against, and the
+  suffix is the part somebody will get wrong.
+- `TestTheMetricsListenerNeedsBothAnAddressAndAHandler` proves no port is bound
+  without both halves of the gate; dropping the handler half leaves the wait
+  function blocked on a listener that should not exist, and the test says so
+  rather than hanging.
+- `TestTheScrapeIsCutOffByTheWriteBudget` pins the one budget this listener
+  restores that `startProfiling` deliberately leaves at zero. Added 2026-09-08,
+  because until then deleting `WriteTimeout: cfg.WriteTimeout` from
+  `startMetrics` left `go test -count=1 ./internal/app -run Metrics` green: the
+  decision existed in this record and in two code comments and nowhere a test
+  could reach it. It serves a handler that sleeps ten times the budget and
+  requires the request to FAIL; with the budget deleted the request answers 200
+  and the test fails, which is the mutation.
+- `TestTheOperatorListenersCloseWithoutWaitingForASignal` pins the hang
+  described below. Starting the two listeners on the process context instead of
+  their own leaves the close function waiting past its ten-second budget and the
+  two ports still bound, and the test reports both.
+
+**A hang the profiling listener already had, and this one would have doubled
+(fixed 2026-09-08).** `serve` returns on the FIRST error, and the commonest one
+— an API port that is already bound — comes back from `core/http.Server.Run`
+without canceling anything: `Run` hands the listen failure straight back, and
+the process context is canceled by SIGTERM alone. The deferred wait on an
+operator listener would then block forever, so the process would neither exit
+nor report the error it had already diagnosed. `startProfiling` had that shape
+from the start and a metrics listener is far likelier to be enabled, so the fix
+is taken for both: `startOperatorListeners`, in `internal/app/listeners.go`,
+opens the two together under a child context of their own and CANCELS it before
+it waits. Found by reading the defer order, not by a test, and now pinned by
+one.
+
+**One test-hygiene fix in the same pass.** The test that scrapes the endpoint,
+`TestTheMetricsListenerServesTheScrapeEndpoint`, calls `observability.Setup`
+with metrics on, which installs a real global meter provider; it shut that
+provider down without uninstalling it — leaving a CLOSED provider in `otel`'s
+process-wide global for every test that ran after it in the `internal/app`
+binary. The observability package keeps its own tests
+clean with a `restoreGlobals` helper; the app side now has the same thing, and
+the ordering is stated where it matters, since a cleanup that swaps the no-op in
+before the shutdown runs would shut down nothing.
+
+**What was left alone, on purpose.** The histogram's buckets are still wrong and
+still belong in their own record. No instrument was added. The endpoint is
+unauthenticated and no validation rule refuses an address, as decided. And no
+SCRAPE TARGET was added to `deploy/docker-compose.yml`: a Prometheus for the
+local stack is an operator surface this record does not cover.
+
+**What was NOT left alone, because it was never a surface — it was a false
+statement (2026-09-08).** ~~Nothing was added to `deploy/docker-compose.yml`:
+the compose file's Jaeger comment describes the push path that just retired.~~
+That sentence excused leaving a failure mode documented as current behavior
+after the build had made it impossible, which is this record's own Context
+reproduced one page later: prose outliving the code it describes. Three
+documents were in that position and all three are corrected where they stand.
+
+- `deploy/docker-compose.yml`'s Jaeger comment promised a
+  `failed to upload metrics: ... unknown service ...MetricsService` line at
+  every export interval and told a reader who wanted metrics to put a Collector
+  in between. Neither can happen now. It says so, and it names `METRICS_ADDR`
+  as where metrics come from instead. Corrected cleanly rather than struck: it
+  is a statement of behavior in a YAML comment, not an argued claim.
+- `docs/operating.md` opened its observability heading with "observability shuts
+  down **completely**" when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, and repeated
+  the compose file's promise in its Jaeger note. Both are struck and dated, and
+  the two switches, `METRICS_ADDR`, the `/metrics` path and the two instrument
+  names an operator would grep for are written where an operator reads them.
+- `docs/gaps.md` said flatly that there is no `/metrics` endpoint for Prometheus
+  to scrape and that an installation wanting gobit to expose one does not have
+  that today, and its LLM entry said the meter provider exports over OTLP rather
+  than Prometheus. Struck and dated. A13 carries a BUILT marker, and what the
+  build changed about the measurement recorded in that row is spelled out in it.
+
+The reason first given for skipping the two documents — that they are not this
+change's files and `PROFILING_ADDR` has no entry in them either — does not hold,
+and the distinction is worth keeping: an ABSENT entry is a gap somebody may
+choose not to fill, while a statement the build made false is a defect. These
+were the second kind.
 
 ## Related
 

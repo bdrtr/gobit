@@ -326,6 +326,13 @@ func TestStoreListingReturnsPriceAndStock(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// Since ADR 0044 a catalog read is addressed THROUGH a sales channel, so
+	// this test needs one even though it is about price and stock. The product
+	// it creates is assigned to no channel and is therefore visible in every
+	// channel, which keeps the enrichment claims independent of the scoping
+	// rule the channel tests own.
+	channel := "sc_" + uniqueHandle("storefront")
+
 	handle := uniqueHandle("storefront-product")
 	rec := sys.request(t, http.MethodPost, "/admin/v1/products", `{
 		"handle": "`+handle+`",
@@ -367,7 +374,8 @@ func TestStoreListingReturnsPriceAndStock(t *testing.T) {
 	inventoryCallsBefore := sys.inventory.calls()
 
 	// --- Storefront list ---
-	rec = sys.request(t, http.MethodGet, "/store/v1/products?collection_id="+collection.ID, "")
+	rec = sys.storeChannelRequest(t,
+		storeCatalogPath(channel, "?collection_id="+collection.ID), []string{channel})
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 
 	body := jsonBody(t, rec)
@@ -410,7 +418,7 @@ func TestStoreListingReturnsPriceAndStock(t *testing.T) {
 		"the stock provider must be called once per expansion, not once per variant")
 
 	// --- Storefront single endpoint ---
-	rec = sys.request(t, http.MethodGet, "/store/v1/products/"+handle, "")
+	rec = sys.storeChannelRequest(t, storeCatalogPath(channel, "/"+handle), []string{channel})
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	single := itemData(t, rec)
 	assert.Equal(t, productID, single["id"])
@@ -430,6 +438,7 @@ func TestStoreListingHidesDraftProducts(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	channel := "sc_" + uniqueHandle("draft")
 	handle := uniqueHandle("draft-product")
 	rec := sys.request(t, http.MethodPost, "/admin/v1/products", `{
 		"handle": "`+handle+`",
@@ -439,13 +448,14 @@ func TestStoreListingHidesDraftProducts(t *testing.T) {
 	}`)
 	require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
 
-	rec = sys.request(t, http.MethodGet, "/store/v1/products?collection_id="+collection.ID, "")
+	rec = sys.storeChannelRequest(t,
+		storeCatalogPath(channel, "?collection_id="+collection.ID), []string{channel})
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := jsonBody(t, rec)
 	assert.Zero(t, body["count"], "a draft product must not be counted in the storefront")
 	assert.Empty(t, jsonField[[]any](t, body, "data"), "a draft product must not be listed in the storefront")
 
-	rec = sys.request(t, http.MethodGet, "/store/v1/products/"+handle, "")
+	rec = sys.storeChannelRequest(t, storeCatalogPath(channel, "/"+handle), []string{channel})
 	assert.Equal(t, http.StatusNotFound, rec.Code, "a draft product must not be found in the storefront")
 }
 
@@ -487,16 +497,17 @@ func TestStoreListingWithCountFalseKeepsPageDropsCount(t *testing.T) {
 		require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
 	}
 
-	path := "/store/v1/products?limit=2&collection_id=" + collection.ID
+	channel := "sc_" + uniqueHandle("count")
+	path := storeCatalogPath(channel, "?limit=2&collection_id="+collection.ID)
 
-	rec := sys.request(t, http.MethodGet, path, "")
+	rec := sys.storeChannelRequest(t, path, []string{channel})
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 
 	counted := jsonBody(t, rec)
 	assert.InDelta(t, float64(3), counted["count"], 0,
 		"by default the count must count the WHOLE filtered set (the page holds 2 records)")
 
-	rec = sys.request(t, http.MethodGet, path+"&with_count=false", "")
+	rec = sys.storeChannelRequest(t, path+"&with_count=false", []string{channel})
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 
 	assert.NotContains(t, rec.Body.String(), `"count"`,
@@ -696,7 +707,12 @@ func TestStoreListingDegradesWithoutOtherModules(t *testing.T) {
 	_, err = svc.CreateVariant(ctx, prod.ID, service.CreateVariantInput{Title: "One size"})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/store/v1/products", http.NoBody)
+	// No principal is put in place, which is the whole point of the setup: the
+	// path names the channel and, with no identity to intersect against, that
+	// value stands alone (ADR 0044). The product is assigned to no channel and
+	// is therefore visible in the one the address names.
+	req := httptest.NewRequest(http.MethodGet,
+		storeCatalogPath("sc_"+uniqueHandle("standalone"), ""), http.NoBody)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 

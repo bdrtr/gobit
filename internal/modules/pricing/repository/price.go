@@ -128,9 +128,29 @@ func (r *Repo) ListPriceCandidates(ctx context.Context, priceSetID string) ([]mo
 
 // ReplacePrices bir price set'in fiyatlarını TOPLUCA ve ATOMİK olarak yazar.
 //
-// Eski fiyatlar soft delete edilir, verilen fiyatlar (ve kuralları) eklenir;
-// hepsi tek işlemdedir. Herhangi bir fiyat ya da kural reddedilirse HİÇBİRİ
-// yazılmaz ve kap eski fiyat kümesiyle kalır.
+// Eski fiyatlar SİLİNİR — damgalanmaz, satırdan kaldırılır — ve verilen
+// fiyatlar (ve kuralları) eklenir; hepsi tek işlemdedir. Herhangi bir fiyat ya
+// da kural reddedilirse HİÇBİRİ yazılmaz ve kap eski fiyat kümesiyle kalır.
+//
+// Silmenin sert olması ADR 0047'nin kararıdır. Damganın geride bıraktığı
+// satırlar bir fiyat geçmişi DEĞİLDİ: her yerine koyma yeni bir kimlik ürettiği
+// için ardışık kuşaklar arasında izlenecek bir iplik yoktu, satırda neden
+// emekliye ayrıldığı yazmıyordu (yerine konmuş bir fiyatla silinmiş bir kabın
+// fiyatı bire bir aynı görünür) ve tablonun iki indeksi de deleted_at IS NULL
+// üzerinde kısmi olduğu için hiçbir indeks o satırları içermiyordu. Müşterinin
+// ÖDEDİĞİ tutarı sepet ve sipariş satırı kendi kopyasında zaten kalıcı olarak
+// tutar; burada birikense kimsenin alışveriş yapmadığı bir günün fiyatıydı.
+//
+// Silme, damganın taşıdığı canlılık koşulunu KORUR. Kısmi bir indeks ancak
+// kendi koşulunu ima eden bir ifadeye hizmet edebilir ve price_set_id_idx tam
+// olarak bu koşul üzerinde kısmidir: ölçüldü, koşullu silme bu indeksi kullanan
+// bir index scan, koşulsuzu ise tablonun tamamını gezen bir sequential scan
+// planı üretir. Bedeli, kodun eski sürümünün çoktan damgaladığı satırlara
+// erişememesidir; onların temizliği operatörün bir defalık işidir.
+//
+// Fiyatın kuralları price_rule.price_id üzerindeki ON DELETE CASCADE ile
+// birlikte gider; damga bu cascade'i hiç tetiklemediği için her eski kuşağın
+// kuralları, artık okunamayan bir ebeveynin arkasında canlı kalıyordu.
 //
 // Verilen dilim boşsa çağrı kabın tüm fiyatlarını silmek anlamına gelir; bu
 // geçerli bir istektir (fiyatı kaldırılmış varyant).
@@ -154,10 +174,7 @@ func (r *Repo) ReplacePrices(
 			return notFoundOr(err, CodePriceSetNotFound, "price set bulunamadı: %s", priceSetID)
 		}
 
-		if err := q.SoftDeletePricesBySet(ctx, pricingdb.SoftDeletePricesBySetParams{
-			PriceSetID: priceSetID,
-			DeletedAt:  fromTime(now),
-		}); err != nil {
+		if err := q.DeletePricesBySet(ctx, priceSetID); err != nil {
 			return wrapDB(err, "eski fiyatlar silinemedi: %s", priceSetID)
 		}
 

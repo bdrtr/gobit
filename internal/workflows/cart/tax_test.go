@@ -383,24 +383,52 @@ func TestEveryTaxedLineCarriesItsProduct(t *testing.T) {
 // CalculateTotals runs on every cart update, so a per-line catalog read would
 // multiply with the size of the basket.
 func TestTheProductsAreReadInONEQuery(t *testing.T) {
-	h := newModuleHarness(t)
-	serveSnapshot(h.carts, snapshotOf(1,
-		[]SnapshotItem{
-			{ID: testLineA, VariantID: testVariantA, Quantity: 1},
-			{ID: testLineB, VariantID: testVariantB, Quantity: 1},
-		},
-		nil))
+	// The property is that the catalog work does not GROW with the cart, and the
+	// test now says that rather than pinning a number.
+	//
+	// It asserted exactly one batched read until 2026-09-08, when ADR 0048 gave
+	// the discount leg a reader for the product flags and the count became three.
+	// Three is still constant — the leg batches every variant of the cart into
+	// one call, the same as the tax leg — but a test that pins a literal cannot
+	// tell "one more batch" from "one call per line", so it went red for a change
+	// that did not break what it exists to protect.
+	//
+	// Comparing a one-line cart with a two-line cart tells them apart: constant
+	// work gives the SAME count for both, while a per-line read gives one and
+	// then two. That is stronger than the number it replaces, and it survives the
+	// next leg that legitimately needs a batch of its own.
+	batchedReadsFor := func(t *testing.T, items []SnapshotItem) int {
+		t.Helper()
 
-	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
-	require.NoError(t, err)
+		h := newModuleHarness(t)
+		serveSnapshot(h.carts, snapshotOf(1, items, nil))
 
-	batched := 0
-	for _, spec := range h.catalog.specs {
-		if _, isBatch := spec.Filters[FilterIDs]; isBatch {
-			batched++
+		_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+		require.NoError(t, err)
+
+		batched := 0
+		for _, spec := range h.catalog.specs {
+			if _, isBatch := spec.Filters[FilterIDs]; isBatch {
+				batched++
+			}
 		}
+
+		return batched
 	}
-	assert.Equal(t, 1, batched, "the products of a two-line cart must cost ONE query")
+
+	oneLine := batchedReadsFor(t, []SnapshotItem{
+		{ID: testLineA, VariantID: testVariantA, Quantity: 1},
+	})
+	twoLines := batchedReadsFor(t, []SnapshotItem{
+		{ID: testLineA, VariantID: testVariantA, Quantity: 1},
+		{ID: testLineB, VariantID: testVariantB, Quantity: 1},
+	})
+
+	assert.Positive(t, oneLine, "the catalog must be read at all; zero would mean the harness "+
+		"stopped serving and this test would pass on nothing")
+	assert.Equal(t, oneLine, twoLines,
+		"the products of a cart must cost the SAME number of batched queries however many lines "+
+			"it has; a count that grows with the cart is the N+1 this test exists to refuse")
 }
 
 // TestAnInvisibleVariantDoesNotFailTheCheckout holds the degradation.

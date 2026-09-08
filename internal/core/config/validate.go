@@ -76,9 +76,6 @@ func (c Config) Validate() error {
 	if c.TraceSampleRatio < 0 || c.TraceSampleRatio > 1 {
 		return fmt.Errorf("config: OTEL_TRACES_SAMPLER_ARG has to be in the 0.0-1.0 range, %v given", c.TraceSampleRatio)
 	}
-	if c.MetricInterval <= 0 {
-		return fmt.Errorf("config: METRIC_EXPORT_INTERVAL has to be positive, %s given", c.MetricInterval)
-	}
 	if c.ServiceName == "" {
 		return fmt.Errorf("config: OTEL_SERVICE_NAME cannot be empty")
 	}

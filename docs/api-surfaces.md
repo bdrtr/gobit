@@ -181,7 +181,8 @@ never asking about the very dimension it missed.
 
 The comparison point is the `limit=100` row: pulling the same hundred products
 with all their fields is **680 KiB**, and asking REST for it with
-`GET /store/v1/products?limit=100` is of the same order. What produces 204.9 MiB
+`GET /store/v1/sales-channels/{sales_channel_id}/products?limit=100` is of the
+same order. What produces 204.9 MiB
 is not more *records* but **the same record serialized 489 times** — and a REST
 client cannot ask for that.
 

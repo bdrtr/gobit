@@ -160,7 +160,7 @@ func (m *searchModule) reindexEndpoint(w http.ResponseWriter, r *http.Request) {
 // An empty query is REFUSED. Had it meant "return the whole catalog", search
 // would be a second copy of the listing endpoint and an empty search box would
 // pull the entire catalog by accident; the way to list the catalog is already
-// GET /store/v1/products.
+// GET /store/v1/sales-channels/{sales_channel_id}/products.
 func searchQuery(r *http.Request) (string, error) {
 	query := strings.TrimSpace(r.URL.Query().Get(paramQuery))
 	if query == "" {

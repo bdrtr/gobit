@@ -114,9 +114,10 @@ func requireID(field, value string) (string, error) {
 // The derived handle is subject to the LENGTH LIMIT as well. Because the title
 // can be up to maxTitleLen (255), the slug derived from it easily exceeds
 // maxHandleLen (128); a handle that exceeds it would make the product
-// UNREACHABLE in the storefront, because /store/v1/products/{handle} validates
-// the identifier with the same limit of 128 and returns 422 — the record is
-// created but its address never opens.
+// UNREACHABLE in the storefront, because
+// /store/v1/sales-channels/{sales_channel_id}/products/{handle} validates the
+// identifier with the same limit of 128 and returns 422 — the record is created
+// but its address never opens.
 //
 // The derived slug is therefore TRUNCATED; a handle the client gave EXPLICITLY
 // is not truncated, it is rejected. The distinction is deliberate: derivation

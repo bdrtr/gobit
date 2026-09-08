@@ -95,11 +95,17 @@ func newVocabularyCatalog() vocabularyCatalog {
 // They are listed once and walked by the tests that make the SAME claim about
 // all four: a claim that held for three of them and was forgotten on the
 // fourth is exactly the shape of fault a per-endpoint test lets through.
+//
+// Three of the four are unscoped addresses and the fourth carries a sales
+// channel segment (ADR 0044), because the option vocabulary is the only one
+// whose body differs per channel. The claims below — paging, no scope, and
+// answering with one's own vocabulary — are about the four handlers and hold
+// whatever the addresses look like, which is why the list stays one list.
 var vocabularyPaths = []string{
 	"/store/v1/collections",
 	"/store/v1/categories",
 	"/store/v1/tags",
-	"/store/v1/option-values",
+	storeOptionValuesPath,
 }
 
 // TestStoreCategoryListingAsksOnlyForPublicCategories verifies that the
@@ -153,9 +159,9 @@ func TestStoreCategoryListingWithoutParentAsksForTheWholeTree(t *testing.T) {
 		"a parent_id that was not given must not become a filter")
 }
 
-// TestStoreOptionVocabularyIsScopedToTheKeysChannels verifies that the option
-// vocabulary is narrowed to the sales channels of the REQUEST'S IDENTITY and to
-// the published catalog.
+// TestStoreOptionVocabularyIsScopedToThePathsChannel verifies that the option
+// vocabulary is narrowed to the ONE sales channel THE PATH names — not to the
+// key's whole set — and to the published catalog.
 //
 // This is the one vocabulary endpoint that can leak. A collection, a category
 // and a tag are one tree for the whole installation, but an option value exists
@@ -164,21 +170,26 @@ func TestStoreCategoryListingWithoutParentAsksForTheWholeTree(t *testing.T) {
 // caller holds no key for. That is, it would tell the caller exactly what the
 // product listing on the same key refuses to tell them.
 //
-// Where the channels come from (the identity, never the query string) is proven
-// for the surface as a whole in saleschannel_test.go; what is proven here is
-// that THIS handler carries them at all.
-func TestStoreOptionVocabularyIsScopedToTheKeysChannels(t *testing.T) {
+// Where the channel comes from (the path, narrowed by the identity, never the
+// query string) is proven for the surface as a whole in saleschannel_test.go;
+// what is proven here is that THIS handler carries it at all. The key below
+// holds two channels and the path names one of them, so a build that handed the
+// service the key's whole set — the mutation ADR 0044 warns is invisible to
+// every test written before it, because a single-channel key makes "scope to
+// the path" and "scope to the key" the same answer — fails here.
+func TestStoreOptionVocabularyIsScopedToThePathsChannel(t *testing.T) {
 	t.Parallel()
 
 	vocabulary := newVocabularyCatalog()
 
-	rec := storeRequest(t, newRouter(vocabulary.catalog), "/store/v1/option-values",
-		&corehttp.Principal{ID: "apk_1", Kind: "api_key", SalesChannelIDs: []string{"sc_a", "sc_b"}})
+	rec := storeRequest(t, newRouter(vocabulary.catalog), storeOptionValuesPath,
+		&corehttp.Principal{ID: "apk_1", Kind: "api_key", SalesChannelIDs: []string{scopedChannel, "sc_b"}})
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 
-	assert.Equal(t, []string{"sc_a", "sc_b"}, vocabulary.optionValues.SalesChannelIDs,
-		"the vocabulary has to be narrowed to the key's channels; unscoped, it names the values "+
-			"of products the same key cannot list")
+	assert.Equal(t, []string{scopedChannel}, vocabulary.optionValues.SalesChannelIDs,
+		"the vocabulary has to be narrowed to the channel the path names; unscoped, it names "+
+			"the values of products the same request cannot list, and widened to the key's "+
+			"whole set it names the values of a storefront the URL did not ask for")
 	assert.True(t, vocabulary.optionValues.PublicOnly,
 		"the vocabulary has to be narrowed to the published catalog; a draft product's colors "+
 			"are not the storefront's vocabulary")
@@ -283,7 +294,7 @@ func TestStoreVocabularyReturnsWhatTheServiceGave(t *testing.T) {
 		"collections":   {"/store/v1/collections", "handle", "summer"},
 		"categories":    {"/store/v1/categories", "handle", "shirts"},
 		"tags":          {"/store/v1/tags", "value", "sale"},
-		"option values": {"/store/v1/option-values", "option_title", "Color"},
+		"option values": {storeOptionValuesPath, "option_title", "Color"},
 	}
 
 	for name, tc := range cases {

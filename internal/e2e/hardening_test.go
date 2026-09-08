@@ -213,8 +213,13 @@ func TestOpenAPISchemaIsGeneratedFromTheRouterTree(t *testing.T) {
 	assert.NotEmpty(t, document.OpenAPI, "the schema version must be reported")
 
 	for _, path := range []string{
-		"/store/v1/products",
-		"/store/v1/products/{id}",
+		// The two storefront catalog patterns carry the sales channel as a path
+		// segment (ADR 0044), and the pattern's placeholder is what makes that
+		// segment a described parameter for free: openapi.pathParameters turns
+		// every "{name}" it finds into one, so the segment reached the document
+		// the same day the route did.
+		"/store/v1/sales-channels/{sales_channel_id}/products",
+		"/store/v1/sales-channels/{sales_channel_id}/products/{id}",
 		"/admin/v1/users",
 		"/admin/v1/auth/login",
 		"/admin/v1/sales-channels",
@@ -224,10 +229,16 @@ func TestOpenAPISchemaIsGeneratedFromTheRouterTree(t *testing.T) {
 
 	// The schema publishes only route PATTERNS; an endpoint that demands an
 	// identity cannot be called even though it shows up in the schema. A raw path
-	// carrying a record ID (/store/v1/products/prod_01…) must NEVER enter the
+	// carrying a record ID (/store/v1/.../products/prod_01…) must NEVER enter the
 	// schema.
+	//
+	// The channel id is a record id too, and it is now IN a storefront path — so
+	// the same claim is made for its prefix. A document that named a live channel
+	// would be publishing which storefronts this installation runs, and it would
+	// do so on the one endpoint that needs no credential at all.
 	for path := range document.Paths {
 		assert.NotContains(t, path, "prod_", "the schema must carry no raw record ID: %s", path)
+		assert.NotContains(t, path, "sc_", "the schema must carry no raw sales channel ID: %s", path)
 	}
 }
 

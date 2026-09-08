@@ -158,7 +158,8 @@ past and is not corrected retroactively.
   by relevance; but a query consisting ONLY of an exclusion (`-mavi`) leaves no
   positive signal to rank by, and the results come back in indexing order.
 - **The storefront listing's TOTAL COUNT gets more expensive as the catalog
-  grows.** The `count` field of the `GET /store/v1/products` response has to
+  grows.** The `count` field of the
+  `GET /store/v1/sales-channels/{sales_channel_id}/products` response has to
   count the whole of the set the sales channel filter is applied to; the page
   size does not change that. Measured (52,000 products, 52,000 channel
   assignments, local Postgres): the plain unfiltered count **2 ms**, the

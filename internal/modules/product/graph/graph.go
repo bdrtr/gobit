@@ -89,17 +89,31 @@ type ProductList = service.ListResult[service.StoreProduct]
 // SalesChannelIDsFromContext reads the sales channels the request is bound to
 // from the VERIFIED IDENTITY.
 //
-// The rule lives here, in the single place both read surfaces (the REST
-// handlers and the GraphQL resolvers) can reach. A second copy would produce
-// exactly the class of bug this module avoids: the rule being fixed in one
-// place and forgotten in the other means a catalog leak on one of the surfaces.
+// This is the IDENTITY half of the rule and, since ADR 0044, only half of what
+// scopes a REST catalog read. It lives here, in the single place both read
+// surfaces (the REST handlers and the GraphQL resolvers) can reach, because a
+// second copy would produce exactly the class of bug this module avoids: the
+// rule being fixed in one place and forgotten in the other means a catalog leak
+// on one of the surfaces.
 //
-// The channel CANNOT be a value the client states; that is why the only input
-// is the context. Had a query argument or a query string been accepted, the
-// filter would stop being an authorization and turn into a display preference,
-// and a client arriving with any publishable key it happened to hold could read
-// ANOTHER channel's catalog. corehttp.RequireStore puts the identity in place;
-// the channel list comes from the key's record.
+// What each surface does with the answer is no longer the same, and a reader who
+// lands here asking "where does the channel come from" needs both halves:
+//
+//   - GraphQL scopes to this whole set. The resolvers hold a context and nothing
+//     else, so the identity is the only input there is.
+//   - The three REST catalog reads scope to the ONE channel their PATH names,
+//     and use this set only to decide whether that name is honored. The
+//     narrowing is written once, in api.storeChannelScope, which refuses a path
+//     naming a channel this function does not return.
+//
+// The channel is therefore a value the client may STATE on the REST surface —
+// but stating it is a CLAIM and never evidence: the path can only pick among the
+// channels the key already carries, so it NARROWS and never broadens. Had the
+// claim been honored on its own, or read from a query argument or the query
+// string, the filter would stop being an authorization and turn into a display
+// preference, and a client arriving with any publishable key it happened to hold
+// could read ANOTHER channel's catalog. corehttp.RequireStore puts the identity
+// in place; the channel list comes from the key's record.
 //
 // Whether the return value is nil or not is MEANINGFUL
 // (see [service.StoreListOptions]):

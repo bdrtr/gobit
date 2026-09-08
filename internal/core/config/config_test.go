@@ -22,7 +22,7 @@ import (
 var envKeys = []string{
 	"APP_ENV", "APP_PORT", "DATABASE_URL", "REDIS_URL",
 	"OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_INSECURE", "OTEL_SERVICE_NAME",
-	"OTEL_TRACES_SAMPLER_ARG", "METRIC_EXPORT_INTERVAL",
+	"OTEL_TRACES_SAMPLER_ARG", "METRICS_ADDR",
 	"RATE_LIMIT_PER_MINUTE", "TRUSTED_PROXY_HOPS", "IDEMPOTENCY_TTL",
 	"IDEMPOTENCY_MAX_MEMORY_BYTES",
 	"LOG_LEVEL", "LOG_FORMAT", "SHUTDOWN_TIMEOUT", "READ_HEADER_TIMEOUT",
@@ -362,8 +362,6 @@ func TestValidateChecksTheNewSettings(t *testing.T) {
 	tests := map[string]func(c *config.Config){
 		"a negative sample ratio":    func(c *config.Config) { c.TraceSampleRatio = -0.1 },
 		"a sample ratio above one":   func(c *config.Config) { c.TraceSampleRatio = 1.1 },
-		"a zero metric interval":     func(c *config.Config) { c.MetricInterval = 0 },
-		"a negative metric interval": func(c *config.Config) { c.MetricInterval = -time.Second },
 		"an empty service name":      func(c *config.Config) { c.ServiceName = "" },
 		"a negative proxy hop count": func(c *config.Config) { c.TrustedProxyHops = -1 },
 		"a zero idempotency TTL":     func(c *config.Config) { c.IdempotencyTTL = 0 },

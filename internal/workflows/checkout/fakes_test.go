@@ -742,10 +742,60 @@ func defaultLinks(_ context.Context, name string, _ []string) (map[string][]stri
 	}
 }
 
-// defaultCatalog returns the titles of the variants.
+// variantScript is what the fake catalog answers about one variant.
+//
+// The flags are spelled the way the CATALOG spells them (manage_inventory, not
+// its inverse): the fake stands in for the product module's Query provider, and
+// a fake that carried the consumer's inverted field would hide the very
+// conversion [Workflows.variantTitles] performs.
+type variantScript struct {
+	title           string
+	manageInventory bool
+	allowBackorder  bool
+}
+
+// catalogRecords turns the scripted variants into the records the provider
+// would return.
+//
+// Every field of the record is filled in, including the two flags. The real
+// provider refuses a field it does not publish and fills every field it does,
+// so a fake that omitted a key would let a consumer defaulting a missing flag
+// pass a test it must not pass.
+func catalogRecords(scripts map[string]variantScript) []query.Record {
+	out := make([]query.Record, 0, len(scripts))
+	for id, script := range scripts {
+		out = append(out, query.Record{
+			query.IDField:        id,
+			FieldTitle:           script.title,
+			FieldManageInventory: script.manageInventory,
+			FieldAllowBackorder:  script.allowBackorder,
+		})
+	}
+	return out
+}
+
+// defaultVariants is the catalog the happy path runs on: both variants are
+// COUNTED and neither permits backorder.
+//
+// Those are the product module's own defaults for the two columns, pinned there
+// by TestCreateVariantDefaultsToManagedStockWithoutBackorder. The happy path
+// keeps the behavior every checkout had before ADR 0048 gave the pair a reader;
+// the tests that exercise the flags flip them one at a time.
+func defaultVariants() map[string]variantScript {
+	return map[string]variantScript{
+		testVariantA: {title: testTitleA, manageInventory: true},
+		testVariantB: {title: testTitleB, manageInventory: true},
+	}
+}
+
+// defaultCatalog returns the titles and the stock flags of the variants.
 func defaultCatalog(_ context.Context, _ query.GraphSpec) ([]query.Record, error) {
-	return []query.Record{
-		{query.IDField: testVariantA, FieldTitle: testTitleA},
-		{query.IDField: testVariantB, FieldTitle: testTitleB},
-	}, nil
+	return catalogRecords(defaultVariants()), nil
+}
+
+// scriptCatalog makes the fake catalog answer with the given variants.
+func scriptCatalog(h *harness, scripts map[string]variantScript) {
+	h.catalog.graphFn = func(_ context.Context, _ query.GraphSpec) ([]query.Record, error) {
+		return catalogRecords(scripts), nil
+	}
 }

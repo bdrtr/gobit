@@ -45,6 +45,21 @@ type reserveInventoryStep struct {
 type reserveOutput struct {
 	// Reservations are the reservations that were taken.
 	Reservations []reservationRef `json:"reservations"`
+	// Unreserved names the lines that finished the step with NO reservation,
+	// deliberately: an uncounted variant, or one permitting backorder that no
+	// warehouse could cover (ADR 0048).
+	//
+	// It is written so that the RECORD, and not the plan, says which of the two
+	// an empty reservation list is: a legitimate outcome or a lost trail. The
+	// plan cannot answer that — a backorder-permitting line may equally well
+	// have been covered and reserved — so a record that named no reservation for
+	// such a cart used to be indistinguishable from one whose identifiers went
+	// missing (see [reserveInventoryStep.Restore]).
+	//
+	// It is also the only place an operator can read WHICH line went out
+	// unreserved; a reservation that was never taken leaves no
+	// [reservationRef] to look for.
+	Unreserved []string `json:"unreserved,omitempty"`
 }
 
 // Name returns the step's name.
@@ -56,20 +71,43 @@ func (s *reserveInventoryStep) Name() string { return StepReserveInventory }
 // already durable in the step's output: [reserveOutput]. That is why the stock
 // of an abandoned execution can be released even after the process has died.
 //
-// An empty output returns an ERROR: the output of a step that took reservations
-// cannot be empty, and quietly putting an empty slice in its place would make
-// compensation claim "done" without having found the stock it is meant to
-// release.
+// # The record has to ACCOUNT FOR EVERY LINE
+//
+// The step leaves exactly one of two traces per line: a reservation, or the
+// line's id under [reserveOutput.Unreserved]. So a whole record satisfies
+// len(Reservations) + len(Unreserved) == len(plan.Lines), and anything else
+// means the record lost something. Quietly putting an empty slice in its place
+// would make compensation claim "done" without having found the stock it is
+// meant to release.
+//
+// A record written before ADR 0048 satisfies the same identity without carrying
+// the new key: that step reserved every line of the plan and skipped none, so
+// its reservation count IS the line count and the absent field decodes as an
+// empty list.
+//
+// Since ADR 0048 an EMPTY reservation list is a legitimate outcome on its own.
+// A line the merchant does not count takes no reservation, and neither does a
+// backorder-permitting line that no warehouse could cover; a cart made only of
+// those finishes the step having reserved nothing, and refusing that would make
+// an ordinary order unrecoverable.
+//
+// The PLAN cannot tell those apart from a lost trail, which is why the
+// accounting is read out of the record instead. A line that permits backorder
+// is reserved whenever stock exists, so a plan of such lines is consistent with
+// both "reserved nothing, correctly" and "reserved two and lost both"; a guard
+// that asked the plan alone let the second one through. What the plan is still
+// asked for is its LENGTH — the number of lines the step had to answer for.
 func (s *reserveInventoryStep) Restore(sc *workflow.StepContext, output json.RawMessage) error {
 	var out reserveOutput
 	if err := json.Unmarshal(output, &out); err != nil {
 		return errors.Wrap(err, errors.KindInternal, CodeSharedStateInvalid,
 			"the output of step %q could not be decoded", StepReserveInventory)
 	}
-	if len(out.Reservations) == 0 {
+	if len(out.Reservations)+len(out.Unreserved) != len(s.plan.Lines) {
 		return errors.Internal(CodeSharedStateInvalid,
-			"the record of step %q holds no reservation; compensation cannot know what to release",
-			StepReserveInventory)
+			"the record of step %q accounts for %d of the plan's %d lines (%d reserved, %d deliberately not); compensation cannot know what to release",
+			StepReserveInventory, len(out.Reservations)+len(out.Unreserved), len(s.plan.Lines),
+			len(out.Reservations), len(out.Unreserved))
 	}
 
 	sc.Shared[sharedReservations] = out.Reservations
@@ -122,14 +160,91 @@ func (s *reserveInventoryStep) Restore(sc *workflow.StepContext, output json.Raw
 // the previous lines are released. In a multi-warehouse cart this happens more
 // easily — the first line may have been reserved from one warehouse while the
 // second line is found in no warehouse at all.
+//
+// # Two lines are NOT reserved, and each answers one flag (ADR 0048)
+//
+// A line the merchant does not count ([planLine.Unmanaged]) is skipped before
+// any module is asked: there is no stock to set aside, so there is nothing to
+// reserve, nothing to release and no warehouse to choose. That is the flag ADR
+// 0040 already spends at the storefront badge, read here so the till and the
+// badge answer the same question.
+//
+// A line that permits backorder ([planLine.AllowBackorder]) is skipped only
+// AFTER the reservation was attempted and no warehouse could cover it. The
+// distinction matters: stock that EXISTS is still reserved, and only the
+// refusal is lifted. What it does NOT do is take a level negative or promise a
+// date — the inventory module has neither, and pre-order is a decision of its
+// own.
+//
+// The one backorder line that is skipped WITHOUT asking is the one carrying no
+// inventory item at all. Nothing counts its stock, so no warehouse can ever
+// cover it and there is no item to ask about; [Workflows.inventoryItems] left
+// it empty for exactly that reason and [checkoutPlan.validate] has already
+// refused the other reading of an empty item — a counted line that does NOT
+// permit backorder. Asking the inventory module about an empty identifier would
+// put a made-up question to another module to reach the same answer.
+//
+// # Every line leaves a trace in the OUTPUT, reservation or not
+//
+// A skipped line's id goes into [reserveOutput.Unreserved]. The record then
+// accounts for every line of the plan, which is what lets
+// [reserveInventoryStep.Restore] tell "reserved nothing, legitimately" from
+// "lost the identifiers", and what lets an operator see which line went out
+// with no stock behind it.
+//
+// Only errors.Conflict is forgiven, because that is the class that means "no
+// warehouse can cover this line" ([Inventory.Reserve] and
+// [reserveInventoryStep.locationFor] both use it). A database that cannot be
+// reached or a fulfillment module breaking its contract answers the same way at
+// every warehouse and still drops the order; forgiving those would turn an
+// outage into silently unreserved orders.
 func (s *reserveInventoryStep) Invoke(ctx context.Context, sc *workflow.StepContext) (any, error) {
 	refs := make([]reservationRef, 0, len(s.plan.Lines))
+	unreserved := make([]string, 0, len(s.plan.Lines))
 
 	for i := range s.plan.Lines {
 		line := s.plan.Lines[i]
 
+		if line.Unmanaged {
+			s.w.log.DebugContext(ctx, "the variant is not counted; the line takes no reservation",
+				"cart_id", s.plan.CartID, "line_item_id", line.LineItemID,
+				"variant_id", line.VariantID)
+			unreserved = append(unreserved, line.LineItemID)
+			continue
+		}
+		if line.AllowBackorder && line.InventoryItemID == "" {
+			// Nothing counts this variant's stock, so the answer is the one an
+			// exhausted warehouse gives, arrived at without a question.
+			//
+			// The condition names the FLAG as well as the empty item, although
+			// the plan already refuses the other reading of an empty item (see
+			// checkoutPlan.validate). A counted line that refuses backorder
+			// must keep blowing up loudly
+			// if it ever reaches here, rather than being skipped by a guard that
+			// no longer looks at why the item is missing.
+			s.w.log.InfoContext(ctx, "the variant is counted but linked to no inventory item; backorder is permitted so the order stands",
+				"cart_id", s.plan.CartID, "line_item_id", line.LineItemID,
+				"variant_id", line.VariantID, "quantity", line.Quantity)
+			unreserved = append(unreserved, line.LineItemID)
+			continue
+		}
+
 		locationID, reservationID, err := s.reserveLine(ctx, line)
 		if err != nil {
+			if line.AllowBackorder && errors.IsConflict(err) {
+				// The order is NOT refused and the line takes no reservation.
+				// It is logged at INFO rather than DEBUG because an operator
+				// answering "where does this line ship from" needs to see that
+				// the answer is "from stock the shop does not have yet"; the
+				// record names the line as unreserved but cannot say which
+				// warehouse it will one day come from.
+				s.w.log.InfoContext(ctx, "no warehouse can cover the line; backorder is permitted so the order stands",
+					"cart_id", s.plan.CartID, "line_item_id", line.LineItemID,
+					"variant_id", line.VariantID, "inventory_item_id", line.InventoryItemID,
+					"quantity", line.Quantity, "error", err)
+				unreserved = append(unreserved, line.LineItemID)
+				continue
+			}
 			return nil, s.unwind(ctx, sc, refs, line, locationID, err)
 		}
 		if reservationID == "" {
@@ -149,8 +264,8 @@ func (s *reserveInventoryStep) Invoke(ctx context.Context, sc *workflow.StepCont
 	}
 
 	s.w.log.DebugContext(ctx, "stock reserved",
-		"cart_id", s.plan.CartID, "lines", len(refs))
-	return reserveOutput{Reservations: refs}, nil
+		"cart_id", s.plan.CartID, "lines", len(refs), "unreserved", len(unreserved))
+	return reserveOutput{Reservations: refs, Unreserved: unreserved}, nil
 }
 
 // locationFor returns the CANDIDATE locations the line's stock can be reserved

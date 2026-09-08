@@ -62,21 +62,39 @@ job is to bind the request to a sales channel — it carries no authority.
 
 ## The catalog is filtered by the sales channel
 
-`GET /store/v1/products` reads the channels bound to the request's key from the
-`Principal` and filters the catalog by them. (`corehttp.Principal` is the identity
-the guard resolved for this request; on the storefront the only thing it carries
-is the set of sales channels the publishable key is bound to.) The rule is one
-sentence:
+`GET /store/v1/sales-channels/{sales_channel_id}/products` is scoped to the **one
+channel its path names**, and that name is honored only if the request's key is
+bound to that channel (ADR 0044, built 2026-09-08). (`corehttp.Principal` is the
+identity the guard resolved for this request; on the storefront the only thing it
+carries is the set of sales channels the publishable key is bound to.) The rule
+is one sentence:
 
 > A product with **no** channel assignment is visible in all channels; a product
 > **with** an assignment is visible only in the channels it is assigned to.
 
-The channel is **not taken from the query string**, it comes from the identity —
-had it been taken from there, the filter would stop being an authorization and
-turn into a display preference, and a client arriving with any publishable key
-would read another storefront's catalog. The single-item endpoint
-(`/store/v1/products/{id}`) is subject to the same filter, and a hidden product
-returns the **same** error code as a product that never existed.
+The path **narrows and never broadens**: the client picks *which* of its own
+channels to read, never *whether* it may read one. A path naming a channel the
+key does not hold is refused with **403** (`product_sales_channel_not_authorized`)
+before the catalog is queried at all, and the refusal is the same whether that
+channel exists, belongs to another merchant or was never created — the key's own
+set is the only thing consulted, so the code discloses nothing. A key holding no
+channel is refused everywhere; where there is no identity at all (a deployment
+that never wired store authentication up) the path value stands alone, which is
+narrower than the unfiltered catalog that case used to receive.
+
+The channel is still **not taken from the query string** — `?sales_channel_id=`
+remains ignored on every surface — and it is not taken from a request header any
+more either. A path segment is where a client may state a claim precisely because
+the key is what turns that claim into evidence; had the claim been honored on its
+own, the filter would stop being an authorization and turn into a display
+preference, and a client arriving with any publishable key would read another
+storefront's catalog. The single-item endpoint
+(`/store/v1/sales-channels/{sales_channel_id}/products/{id}`) and the option
+vocabulary (`/store/v1/sales-channels/{sales_channel_id}/option-values`) carry
+the same segment and the same rule, and a hidden product returns the **same**
+error code as a product that never existed. The plugin's
+`GET /store/v1/search` has **not** moved: it still takes its channel from the
+identity alone.
 
 The binding is made from the admin side:
 
@@ -206,8 +224,10 @@ PK=$(curl -s localhost:9000/admin/v1/api-keys \
   -d "{\"title\":\"storefront\",\"type\":\"publishable\",\"scopes\":[],\"sales_channel_ids\":[\"$SC\"]}" \
   | jq -r .data.key)
 
-# 4) The store surface
-curl -s localhost:9000/store/v1/products -H "x-publishable-api-key: $PK"
+# 4) The store surface: the catalog is addressed THROUGH the channel, and the
+#    key decides whether that address is honored
+curl -s "localhost:9000/store/v1/sales-channels/$SC/products" \
+  -H "x-publishable-api-key: $PK"
 
 # 5) Log out (drops ALL of the caller's sessions)
 curl -s -X POST localhost:9000/admin/v1/auth/logout -H "Authorization: Bearer $TOKEN"

@@ -54,17 +54,25 @@ const (
 // reads the body, and the "deleted" field that reports the deletion really
 // happened would never reach the client.
 func Describe(d *openapi.Doc) {
-	d.Describe(http.MethodGet, "/store/v1/products", openapi.Operation{
+	d.Describe(http.MethodGet, pathStoreProducts, openapi.Operation{
 		Summary: "Lists the published products with their price and stock information.",
-		// The parameters are the ones the handler READS, not the ones we might
-		// wish for: [Handler.storeListProducts] reads only these eight.
+		// The tag is written by hand because the core derives it from the FIRST
+		// path segment after the prefix, which is now "sales-channels". Left
+		// derived, the three catalog reads would be grouped under a tag named
+		// after their scoping segment and would land in the same generated
+		// client class as auth's /admin/v1/sales-channels endpoints, which are a
+		// different module's surface entirely.
+		Tags: []string{"products"},
+		// The QUERY parameters are the ones the handler READS, not the ones we
+		// might wish for: [Handler.storeListProducts] reads only these eight.
 		//
-		// "sales_channel_id" is DELIBERATELY ABSENT and must not be added: the
-		// channel comes from the request's publishable key, not from the query
-		// string (see [salesChannelIDs]). Writing it into the schema would both
-		// promise a parameter that is never read and hint to the client that
-		// the channel filter can be bypassed.
+		// "sales_channel_id" is DELIBERATELY ABSENT FROM THE QUERY STRING and
+		// must not be added there. It is a PATH parameter and nothing else (see
+		// [storeChannelScope]); the handler never looks at r.URL.Query() for it,
+		// so describing it as a query parameter would promise an input that is
+		// silently ignored and hint that the channel scope can be set twice.
 		Parameters: []openapi.Parameter{
+			salesChannelPathParameter(),
 			queryParameter("collection_id", typeString,
 				"Restricts the products to a single collection."),
 			queryParameter("category_id", typeString,
@@ -137,25 +145,31 @@ func Describe(d *openapi.Doc) {
 			// with_count=false response.
 			"200": openapi.Response("Storefront products",
 				d.ListOptionalCount(service.StoreProduct{}, openapi.WithCursor())),
+			"403": channelRefusedResponse(),
 		},
 	})
 
-	d.Describe(http.MethodGet, "/store/v1/products/{id}", openapi.Operation{
+	d.Describe(http.MethodGet, pathStoreProduct, openapi.Operation{
 		Summary: "Returns a single storefront product by id or by handle.",
-		// The path parameter is derived from the pattern by the core as well;
-		// the only reason it is written BY HAND here is its description. The
-		// name is "id" but the value may also be a handle
-		// ("/store/v1/products/tisort") and only the handler knows this; the
-		// deriver cannot tell it by looking at the pattern.
-		Parameters: []openapi.Parameter{{
-			Name:        "id",
-			In:          "path",
-			Required:    true,
-			Schema:      map[string]any{schemaType: typeString},
-			Description: "Product id (prod_…) or the handle in the storefront address.",
-		}},
+		Tags:    []string{"products"},
+		// Both path parameters are derived from the pattern by the core as well;
+		// the only reason they are written BY HAND here is their description.
+		// The second is named "id" but the value may also be a handle, and only
+		// the handler knows this; the deriver cannot tell it by looking at the
+		// pattern.
+		Parameters: []openapi.Parameter{
+			salesChannelPathParameter(),
+			{
+				Name:        "id",
+				In:          "path",
+				Required:    true,
+				Schema:      map[string]any{schemaType: typeString},
+				Description: "Product id (prod_…) or the handle in the storefront address.",
+			},
+		},
 		Responses: map[string]any{
 			"200": openapi.Response("Storefront product", d.Item(service.StoreProduct{})),
+			"403": channelRefusedResponse(),
 		},
 	})
 
@@ -217,8 +231,11 @@ func describeStorefrontVocabulary(d *openapi.Doc) {
 		},
 	})
 
-	d.Describe(http.MethodGet, "/store/v1/option-values", openapi.Operation{
+	d.Describe(http.MethodGet, pathStoreOptionValues, openapi.Operation{
 		Summary: "Lists the option vocabulary of the visible catalog.",
+		// Written by hand for the reason the product listing's is; left derived
+		// the tag would be "sales-channels".
+		Tags: []string{"option-values"},
 		Description: "The DISTINCT (option title, value) pairs the catalog offers — " +
 			"\"Color: red\", \"Size: M\". " +
 			"It is the one vocabulary endpoint that returns TEXT and no id, and the " +
@@ -228,12 +245,15 @@ func describeStorefrontVocabulary(d *openapi.Doc) {
 			"Two products that both offer \"Color: red\" are two rows in the database " +
 			"and ONE entry here. " +
 			"The vocabulary is scoped exactly as the product listing is — published " +
-			"products, and the sales channels of the request's publishable key — " +
-			"because every entry exists BECAUSE some product carries it, and an " +
-			"unscoped vocabulary would name what the listing hides.",
-		Parameters: paging,
+			"products, and the sales channel named in the path — because every entry " +
+			"exists BECAUSE some product carries it, and an unscoped vocabulary would " +
+			"name what the listing hides. That is also why this is the one vocabulary " +
+			"endpoint under the channel segment: collections, categories and tags do " +
+			"not vary by channel and keep their unscoped addresses.",
+		Parameters: append([]openapi.Parameter{salesChannelPathParameter()}, paging...),
 		Responses: map[string]any{
 			"200": openapi.Response("Option values", d.List(models.OptionValuePair{})),
+			"403": channelRefusedResponse(),
 		},
 	})
 }
@@ -708,6 +728,57 @@ func pagingParameters() []openapi.Parameter {
 			"Page size; if not given the service's default applies."),
 		queryParameter("offset", typeInteger, "Number of records to skip."),
 	}
+}
+
+// salesChannelPathParameter describes the channel segment of the three
+// channel-scoped catalog reads.
+//
+// The core derives a bare "sales_channel_id, in path, string" from the pattern
+// on its own; what it cannot derive is the RULE, and the rule is the one thing a
+// client reading this has to know: the segment picks WHICH of the key's channels
+// to read, it does not decide WHETHER the key may read one. A client that
+// mistook it for a free choice would write a storefront that walks other
+// merchants' channel ids and be surprised by a 403 with no explanation in the
+// document.
+//
+// The threat model of the id being in a URL at all is written here too, because
+// this is the parameter that puts it there.
+func salesChannelPathParameter() openapi.Parameter {
+	return openapi.Parameter{
+		Name:     paramSalesChannelID,
+		In:       "path",
+		Required: true,
+		Schema:   map[string]any{schemaType: typeString},
+		Description: "The sales channel this catalog read is scoped to (sc_...). " +
+			"It NARROWS and never broadens: the channel named here must be one the " +
+			"request's publishable key is bound to, and a channel the key does not " +
+			"hold is refused with a 403 rather than served. A key bound to several " +
+			"channels reads them ONE AT A TIME, one request each; there is no union " +
+			"response. " +
+			"The channel is in the URL rather than in a header so that a shared cache " +
+			"has a key it can see with nothing configured: two different keys " +
+			"authorized for the same channel receive byte-identical bodies. " +
+			"That also makes the id public — it reaches browser history, referrers " +
+			"and access logs — which is harmless while the ORIGIN authorizes, and is " +
+			"not harmless in a deployment that lets an edge answer without the origin.",
+	}
+}
+
+// channelRefusedResponse describes the 403 the channel-scoped catalog reads can
+// produce.
+//
+// The core adds a 403 to the admin surface and not to the storefront, and the
+// reason it gives is sound: a 403 is only meaningful where there is an
+// authorization step, and until ADR 0044 the storefront had none — the
+// publishable key carries no scope. These three routes now do have one, so the
+// code is described HERE, by the module that knows the rule, rather than by
+// widening the core's default to every store route that still cannot produce it.
+func channelRefusedResponse() map[string]any {
+	return openapi.ErrorResponse(
+		"The publishable key is not bound to the sales channel named in the path. " +
+			"The answer does not depend on whether that channel exists: the key's own " +
+			"channel set is the only thing consulted, so this code discloses nothing " +
+			"about another merchant's channels.")
 }
 
 // queryParameter defines a parameter that is read from the query string.

@@ -311,9 +311,10 @@ func (s *Service) ListTags(ctx context.Context, limit, offset int) (ListResult[m
 
 // ListOptionValuesOptions is the set of criteria of the option vocabulary.
 type ListOptionValuesOptions struct {
-	// SalesChannelIDs are the channels the request is bound to; the value comes
-	// from the request's IDENTITY and not from the query string, exactly as in
-	// [StoreListOptions].
+	// SalesChannelIDs are the channels the read is scoped to; the value comes
+	// from the channel the request's PATH names, narrowed by the channels its
+	// key holds, and never from the query string — exactly as in
+	// [StoreListOptions], whose documentation carries the whole rule.
 	SalesChannelIDs []string
 	// PublicOnly narrows the vocabulary to published products.
 	PublicOnly bool

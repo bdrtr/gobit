@@ -112,11 +112,22 @@ type StoreListOptions struct {
 	CategoryID *string
 	TagID      *string
 	Search     *string
-	// SalesChannelIDs are the sales channels the request is bound to.
+	// SalesChannelIDs are the sales channels the read is scoped to.
 	//
-	// The value comes from the request's IDENTITY (the channels of the
-	// publishable key), NOT from the query string; for the rationale see
-	// api/store.go.
+	// It is NEVER read from the query string, and the two read surfaces fill it
+	// from two different places:
+	//
+	//   - The REST catalog reads take the ONE channel their path names,
+	//     narrowed by the channels the request's publishable key holds, so this
+	//     slice arrives with exactly one element. A path naming a channel the
+	//     key does not hold never reaches the service at all — it is refused in
+	//     the handler (ADR 0044, see api.storeChannelScope).
+	//   - The GraphQL resolvers take the whole set from the identity, because
+	//     that transport did not move and has no path to take a channel from.
+	//
+	// The service does not need to know which of the two it was handed: the
+	// filter is a set either way, and putting the difference here would be a
+	// second definition of a rule that belongs at the edge.
 	//
 	// nil and an EMPTY BUT NON-nil slice say DIFFERENT things:
 	//
@@ -132,6 +143,11 @@ type StoreListOptions struct {
 	// ALL channels to that identity. Applying the empty set to the rule itself
 	// (no assignment matches, the unassigned ones remain) opens no separate code
 	// path and never errs in the direction of leaking.
+	//
+	// Neither case can arrive from the REST catalog reads any more: those always
+	// send one channel, and the channelless identity is refused before the call.
+	// Both stay in the contract because GraphQL still produces them and because a
+	// caller inside this module may hand over either.
 	SalesChannelIDs []string
 	Limit           int
 	Offset          int

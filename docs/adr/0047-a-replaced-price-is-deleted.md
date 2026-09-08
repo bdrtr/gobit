@@ -193,10 +193,19 @@ becomes of the ROWS, and under this option they are still there.
   only have come from `DeletePriceSet`. That follows from the callers rather
   than from the schema: `SoftDeletePricesBySet` in
   `internal/modules/pricing/queries/price.sql` is the ONLY statement that writes
-  the column, and it has exactly two callers — `ReplacePrices` and
-  `DeletePriceSet` — of which this decision removes one. The migration cannot be
+  the column, and ~~it has exactly two callers — `ReplacePrices` and
+  `DeletePriceSet` — of which this decision removes one.~~ **Built 2026-09-08:
+  it has exactly ONE, `DeletePriceSet`. `ReplacePrices` now calls
+  `DeletePricesBySet` instead, and `TestSilinenKabinFiyatlariDamgalanir` holds
+  the surviving caller in place.** ~~The migration cannot be
   cited for it, because its single line about the column says only that deletion
-  in this module is soft, module-wide, which endorsed both callers equally.
+  in this module is soft, module-wide, which endorsed both callers equally.~~
+  **Corrected 2026-09-08: the migration can be cited for it now, because that
+  single line was the thing to fix rather than a limit to work around. The
+  header of `internal/modules/pricing/migrations/000001_pricing_init.up.sql`
+  names the replace as the module's one exception and says which caller the
+  stamp is left to — the comment only, with no statement touched, the way commit
+  90194de amended seven modules' SQL prose.**
 - **A price's rules die with it.** Measured on the four-generation probe carrying
   one rule per generation: three orphaned live rules before, zero after.
   Honesty about what that is worth: those rules were unreachable —
@@ -260,6 +269,66 @@ becomes of the ROWS, and under this option they are still there.
   its first event is a decision with its own consumer problem.
 - **It does not touch what a cart or an order recorded.** Those copies are the
   record of what was CHARGED. Nothing here reaches them, and nothing here should.
+
+## Amendment, 2026-09-08 — what building the hard delete changed
+
+One statement was added and one call site changed hands. `DeletePricesBySet` in
+`internal/modules/pricing/queries/price.sql` is
+`DELETE FROM price WHERE price_set_id = $1 AND deleted_at IS NULL`, and
+`ReplacePrices` in `internal/modules/pricing/repository/price.go` calls it where
+it used to call `SoftDeletePricesBySet`. The stamp itself was not touched and
+keeps its other caller.
+
+**No migration, and that is the whole of the schema story.** Nothing in the
+tables moved: `price.deleted_at` stands, both partial indexes stand, and the
+`ON DELETE CASCADE` that now carries the rules away was already there and needed
+no help. So there is no up/down pair to review and no version pin to bump, and a
+reader who expected one should read that absence as the decision working rather
+than as a step skipped.
+
+**What did move in the schema file is a sentence.** `000001_pricing_init.up.sql`
+opened by saying, module-wide and without exception, that deletion here is soft
+and every read filters `deleted_at IS NULL`; the second half is still true and
+the first half stopped being true the moment `ReplacePrices` changed statements.
+Its header now names the replace as the module's one exception, says that a
+stamped price row can therefore only have come from `DeletePriceSet`, and
+carries the caution the three precedent removals each wrote into their own
+headers: both of `price`'s indexes name `deleted_at` in their predicate, so
+dropping the column takes them with it silently. The comment was rewritten and
+not one character of SQL — the same line commit 90194de drew when it amended
+seven modules' migration prose, which is why a shipped file's argument being
+wrong is a thing this repository fixes rather than a thing it lives with.
+
+**The measurements became tests, and the counting is where the value is.**
+`TestYerineKonanFiyatSatirdanSilinir` runs this record's own four-generation
+probe — 10000, 12000, 9000, 15000, one rule per generation — and then counts the
+table WITHOUT the liveness filter: one price row where four stood, and one
+`price_rule` row across all four generations' ids where four stood. The
+unfiltered count is the point rather than a detail of the test. Every read this
+module owns carries `deleted_at IS NULL`, so a test written the way the module
+reads was green under the stamp too, and that is precisely how a store nobody
+chose accumulated in a repository with an integration suite over these tables.
+
+**The other caller got a test of its own,** because the boundary this decision
+draws is invisible to the obvious assertion.
+`TestSilinenKabinFiyatlariDamgalanir` deletes a set and then reads the price
+row's `deleted_at` back. A test that counted LIVE prices after
+`DeletePriceSet` would pass whether the prices were stamped or removed, so it
+would not notice the day somebody carries the hard delete one call site further
+and a deleted set's prices stop being hidden from `ListPriceCandidates` at all.
+
+**A test that mirrored the old SQL was corrected rather than left green.**
+`TestConcurrentSetPricesDoesNotMerge` hand-runs the replace's statement sequence
+in a second transaction to prove the row lock serializes two writes; its middle
+step is now a `DELETE`. Leaving the stamp there would have kept the test passing
+while it quietly stopped mirroring the code it exists to describe.
+
+**What was left standing, deliberately.** The rows an earlier version of the
+code already stamped are still there, exactly as the consequence above says, and
+no cleanup command was written — the decision names the shape one should take
+and does not commission it. And `price.deleted_at` was not dropped: the record
+argues against dropping it, the measurement behind that argument is unchanged,
+and the build had no reason to reopen it.
 
 ## Related
 

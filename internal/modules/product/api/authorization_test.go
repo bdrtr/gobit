@@ -521,14 +521,20 @@ func TestScopelessUserCannotReachCatalog(t *testing.T) {
 // The identity of the store surface is the publishable key and that key by
 // definition CARRIES NO scope. Had a scope been added to the store endpoints, no
 // store client could list products — that is, the storefront would close.
+//
+// The channel segment ADR 0044 put into these two addresses does NOT make them
+// scoped endpoints, and this test says so by arriving with no identity at all:
+// a scope layer would answer 401 before the handler ran. What the segment adds
+// is an authorization the HANDLER makes, over the key's channel set rather than
+// over a privilege, and with no key there is no set and the path stands alone.
 func TestStoreEndpointsRequireNoScope(t *testing.T) {
 	r, svc := anonymousRouter(t)
 
-	list := scopeRequest(t, r, http.MethodGet, "/store/v1/products", "")
+	list := scopeRequest(t, r, http.MethodGet, storeProductsPath, "")
 	assert.Equal(t, http.StatusOK, list.Code,
 		"the storefront listing must not ask for a scope; body: %s", list.Body.String())
 
-	single := scopeRequest(t, r, http.MethodGet, "/store/v1/products/prod_1", "")
+	single := scopeRequest(t, r, http.MethodGet, storeProductPath+"prod_1", "")
 	assert.Equal(t, http.StatusOK, single.Code,
 		"the single storefront endpoint must not ask for a scope; body: %s", single.Body.String())
 

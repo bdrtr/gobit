@@ -160,10 +160,12 @@ const DefaultFileAllowedTypes = "image/jpeg,image/png,image/gif,image/webp"
 // OTHER than the one written both in this file and in the module's documentation.
 // The link is therefore pinned by a test (see internal/arch).
 //
-// The GRAPHQL_ prefix on the names is safe: unlike the situation
-// METRIC_EXPORT_INTERVAL avoids (see [Config.MetricInterval]), neither the GraphQL
-// specification nor gqlgen has RESERVED any of these names — that is, a borrowed
-// name is not owned without its meaning being borrowed too.
+// The GRAPHQL_ prefix on the names is safe: neither the GraphQL specification nor
+// gqlgen has RESERVED any of these names — that is, a borrowed name is not owned
+// without its meaning being borrowed too. The setting that had to dodge exactly
+// that trap was METRIC_EXPORT_INTERVAL, whose OTEL_ spelling the OpenTelemetry
+// specification reserves for a MILLISECOND INTEGER; it retired with ADR 0046 along
+// with the push exporter it configured.
 const (
 	// DefaultGraphQLMaxDepth is the default upper bound on the number of nested
 	// fields.
@@ -607,22 +609,48 @@ type Config struct {
 	// The default is 1.0 because a sampling decision cannot be undone: a trace that
 	// was not recorded cannot be recovered later. It should be lowered as load grows.
 	TraceSampleRatio float64 `env:"OTEL_TRACES_SAMPLER_ARG" envDefault:"1.0"`
-	// MetricInterval is how often metrics are sent to the collector.
+	// MetricsAddr is the address the metrics listener binds to (e.g.
+	// "0.0.0.0:9090"). EMPTY, which is the default, means no metrics listener is
+	// opened and no meter provider is built at all.
 	//
-	// Its name deliberately does NOT carry the OTEL_ prefix, while its neighbors do.
-	// The OpenTelemetry specification has RESERVED the name
-	// OTEL_METRIC_EXPORT_INTERVAL and defines its value as an INTEGER IN
-	// MILLISECONDS; this package, on the other hand, reads every duration as a Go
-	// duration. Two meanings do not fit in one name and the clash cuts both ways:
+	// # Why metrics get an address of their own
 	//
-	//   - A value following the specification (60000) gives a "missing unit" error
-	//     here and the application DOES NOT COME UP AT ALL.
-	//   - A value fitting here (60s) logs a parse error in the OTel SDK's own reader
-	//     at every startup.
+	// Because until ADR 0046 they had none, and the consequence was invisible.
+	// OTEL_EXPORTER_OTLP_ENDPOINT above names a TRANSPORT, not a signal, and an
+	// empty one returned from observability.Setup before EITHER provider was
+	// built — so a stock installation had no meter provider, the two instruments
+	// in core/http recorded into no-ops, and nothing failed or logged to say so.
+	// A signal whose switch does not mention it goes missing quietly. This one
+	// mentions it: an address that says metrics turns metrics on.
 	//
-	// The neighboring OTEL_* names are kept because their meaning AGREES with the
-	// specification; a borrowed name is right only when the meaning can be borrowed too.
-	MetricInterval time.Duration `env:"METRIC_EXPORT_INTERVAL" envDefault:"60s"`
+	// # Why it is a separate listener and not a route on the API
+	//
+	// Two reasons, both specific. The route would INSTRUMENT ITSELF: Telemetry
+	// sits second in the API router's middleware stack, so every scrape would
+	// open a span, move the in-flight counter and record a duration into a series
+	// named after the scrape endpoint. And it would sit on the listener the shop
+	// is served from, at whatever address the ingress publishes.
+	//
+	// # Why a routable address is ALLOWED here and refused for PROFILING_ADDR
+	//
+	// A scrape comes from ANOTHER HOST by definition, so a loopback-only metrics
+	// endpoint would be readable by a sidecar or a port forward and by nothing
+	// else — decorative in exactly the deployment it exists for. The difference
+	// is justified by CONTENT rather than by taste: a heap profile carries live
+	// memory, while these two instruments carry the service name, the HTTP
+	// method, the chi route PATTERN and the status code. No identifier, no body,
+	// no path segment a customer typed.
+	//
+	// What it does disclose is the route inventory and the traffic over it, which
+	// is close to a complete map of the API. It must NOT be published by the
+	// ingress, and no code here can enforce that: the address chosen is the whole
+	// guard.
+	//
+	// Setting it is not free even when nobody scrapes. The histogram's series are
+	// route pattern times method times status code, and the process holds them
+	// for its lifetime; that is the price of having metrics at all, and it is
+	// paid from the moment this address is set.
+	MetricsAddr string `env:"METRICS_ADDR"`
 
 	// RateLimitPerMinute is the number of requests a client may make per minute.
 	//

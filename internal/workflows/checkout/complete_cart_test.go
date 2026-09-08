@@ -765,9 +765,11 @@ func TestMultipleInventoryItemsAreRejected(t *testing.T) {
 // without a title is not written.
 func TestAVariantMissingFromTheCatalogIsRejected(t *testing.T) {
 	h := newHarness(t)
-	h.catalog.graphFn = func(context.Context, query.GraphSpec) ([]query.Record, error) {
-		return []query.Record{{query.IDField: testVariantA, FieldTitle: testTitleA}}, nil
-	}
+	// Variant A is answered COMPLETELY and variant B is not answered at all:
+	// what is under test is the missing variant, not a half-filled record.
+	scriptCatalog(h, map[string]variantScript{
+		testVariantA: {title: testTitleA, manageInventory: true},
+	})
 
 	_, err := h.wf.CompleteCart(context.Background(), h.input())
 	require.Error(t, err)

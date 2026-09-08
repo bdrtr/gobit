@@ -66,8 +66,9 @@ import (
 //
 // This asymmetry DOES NOT EXIST in REST and the argument "the limit is not
 // stricter than REST's" breaks exactly here: a REST client cannot ask for the
-// same field 489 times, and the response of GET /store/v1/products?limit=100 is
-// ~450 KiB with the same data. So what GraphQL adds is not more records but the
+// same field 489 times, and the response of
+// GET /store/v1/sales-channels/{sales_channel_id}/products?limit=100 is ~450 KiB
+// with the same data. So what GraphQL adds is not more records but the
 // repeated SERIALIZATION of the SAME record; that is closed only by
 // [fieldRepetitionLimit] (by estimate, before execution) and the response byte
 // limit (by what actually happens, while writing) working together.

@@ -243,11 +243,11 @@ func TestInvalidCredentialsAreRejected(t *testing.T) {
 // TestStoreRequestWithoutPublishableKeyIsRejected is the third leg of the
 // Phase 8 DoD.
 func TestStoreRequestWithoutPublishableKeyIsRejected(t *testing.T) {
-	withoutKey := magazaIstegi(t, "/store/v1/products", "")
+	withoutKey := magazaIstegi(t, catalogPath(testChannelID, "/products"), "")
 	assert.Equal(t, http.StatusUnauthorized, withoutKey.Code,
 		"a store request without a publishable key must be rejected; body: %s", withoutKey.Body.String())
 
-	withKey := magazaIstegi(t, "/store/v1/products", publishableKey)
+	withKey := magazaIstegi(t, catalogPath(testChannelID, "/products"), publishableKey)
 	assert.Equal(t, http.StatusOK, withKey.Code,
 		"a store request with the publishable key should pass; body: %s", withKey.Body.String())
 }
@@ -259,7 +259,7 @@ func TestStoreRequestWithoutPublishableKeyIsRejected(t *testing.T) {
 // header that is visible in the browser, admin authority would be embedded
 // inside the storefront code.
 func TestSecretKeyDoesNotPassInTheStoreHeader(t *testing.T) {
-	rec := magazaIstegi(t, "/store/v1/products", secretKey)
+	rec := magazaIstegi(t, catalogPath(testChannelID, "/products"), secretKey)
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code,
 		"the secret key must not be accepted in the store header; body: %s", rec.Body.String())

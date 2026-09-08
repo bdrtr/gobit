@@ -225,16 +225,15 @@ func TestEndpointHasSchemeTellsBothFormsApart(t *testing.T) {
 
 // TestEndpointOptionsAreNeverNil proves an option is produced for both forms; a
 // nil option would panic while the exporter is being built.
+//
+// There is only ONE exporter to check since ADR 0046: the metric side no longer
+// dials an address, so it has no option to spell.
 func TestEndpointOptionsAreNeverNil(t *testing.T) {
 	t.Parallel()
 
 	for _, endpoint := range []string{"localhost:4317", "http://localhost:4317"} {
 		if traceEndpoint(endpoint) == nil {
 			t.Errorf("traceEndpoint(%q) returned nil", endpoint)
-		}
-
-		if metricEndpoint(endpoint) == nil {
-			t.Errorf("metricEndpoint(%q) returned nil", endpoint)
 		}
 	}
 }

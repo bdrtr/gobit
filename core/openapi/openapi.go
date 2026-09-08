@@ -620,17 +620,17 @@ const (
 // "unprotected" with "produces no 401" would have a client generator produce a
 func defaultResponses(path string) map[string]any {
 	responses := map[string]any{
-		"401": errorResponse("Authentication is missing or invalid"),
-		"422": errorResponse("The input did not pass validation"),
-		"429": errorResponse("The request limit was exceeded"),
-		"500": errorResponse("An unexpected server error"),
+		"401": ErrorResponse("Authentication is missing or invalid"),
+		"422": ErrorResponse("The input did not pass validation"),
+		"429": ErrorResponse("The request limit was exceeded"),
+		"500": ErrorResponse("An unexpected server error"),
 	}
 
 	if path == loginPath {
 		// At the login endpoint a 401 is not "the token is missing" but "the
 		// credentials are wrong". Failed attempts are not told apart, so the
 		// description does not point at a single cause either (see auth adminLogin).
-		responses["401"] = errorResponse("The email or the password is wrong")
+		responses["401"] = ErrorResponse("The email or the password is wrong")
 
 		// A 403 is only meaningful at endpoints that HAVE an authorization step;
 		// at login there is no identity yet, so there can be no insufficient right.
@@ -638,14 +638,35 @@ func defaultResponses(path string) map[string]any {
 	}
 
 	if strings.HasPrefix(path, adminPrefix) {
-		responses["403"] = errorResponse("Authenticated but the rights are not enough")
+		responses["403"] = ErrorResponse("Authenticated but the rights are not enough")
 	}
 
 	return responses
 }
 
-// errorResponse produces a response definition referring to the shared error envelope.
-func errorResponse(description string) map[string]any {
+// ErrorResponse produces a response definition referring to the shared error
+// envelope.
+//
+// # Why a module needs it
+//
+// [defaultResponses] gives every endpoint the error codes the FRAMEWORK can
+// know about from the path alone — an unauthenticated request, a validation
+// failure, the rate limit, a panic — and a 403 for the admin surface, where
+// every route has a scope in front of it. A code that comes from a rule only
+// the module knows is outside that list by construction, and until this was
+// exported a module had no way to describe one: [Response] takes a schema, and
+// the error envelope's schema is a shared component whose reference is not
+// otherwise reachable from outside this package. A module would have had to
+// hand-write the "$ref" string, which is the kind of literal that stays behind
+// when the component is renamed.
+//
+// The first caller is the storefront catalog under ADR 0044: the sales channel
+// is a path segment there and a path naming a channel the request's key does
+// not hold is refused, so those endpoints produce a 403 that no other store
+// route can produce. A hand-given code WINS over the derived list (see
+// [Doc.operation]), so a module may also replace a default description with a
+// sharper one.
+func ErrorResponse(description string) map[string]any {
 	return Response(description, refSchema(schemaNameError))
 }
 

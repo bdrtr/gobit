@@ -517,7 +517,7 @@ func TestStoreListIncludesPriceAndInventory(t *testing.T) {
 		},
 	}
 
-	rec := do(t, newRouter(catalog), http.MethodGet, "/store/v1/products", "")
+	rec := storeRequest(t, newRouter(catalog), storeProductsPath, nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	body := decodeBody(t, rec)
@@ -556,7 +556,7 @@ func TestStoreGetProductAcceptsHandle(t *testing.T) {
 		},
 	}
 
-	rec := do(t, newRouter(catalog), http.MethodGet, "/store/v1/products/tisort", "")
+	rec := storeRequest(t, newRouter(catalog), storeProductPath+"tisort", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "tisort", got)
 }
@@ -584,7 +584,7 @@ func TestStoreProductHidesEmbeddedVariants(t *testing.T) {
 		},
 	}
 
-	rec := do(t, newRouter(catalog), http.MethodGet, "/store/v1/products/prod_1", "")
+	rec := storeRequest(t, newRouter(catalog), storeProductPath+"prod_1", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.NotContains(t, rec.Body.String(), "variant_hidden",
 		"the embedded variant list must not leak into the response: %s", rec.Body.String())
@@ -719,7 +719,7 @@ func TestStoreListCountsByDefault(t *testing.T) {
 
 	catalog, skipped := countAwareCatalog()
 
-	rec := do(t, newRouter(catalog), http.MethodGet, "/store/v1/products", "")
+	rec := storeRequest(t, newRouter(catalog), storeProductsPath, nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	assert.False(t, *skipped, "a request that gives no parameter HAS TO COUNT")
@@ -743,7 +743,7 @@ func TestStoreListWithCountFalseDropsTheField(t *testing.T) {
 
 	catalog, skipped := countAwareCatalog()
 
-	rec := do(t, newRouter(catalog), http.MethodGet, "/store/v1/products?with_count=false", "")
+	rec := storeRequest(t, newRouter(catalog), storeProductsPath+"?with_count=false", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	assert.True(t, *skipped, "the decision HAS TO REACH the service; it must not be swallowed in the handler")
@@ -784,7 +784,7 @@ func TestStoreListWritesAZeroCount(t *testing.T) {
 		},
 	}
 
-	rec := do(t, newRouter(catalog), http.MethodGet, "/store/v1/products", "")
+	rec := storeRequest(t, newRouter(catalog), storeProductsPath, nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	body := decodeBody(t, rec)
@@ -804,7 +804,7 @@ func TestStoreListWithCountTrueCountsExplicitly(t *testing.T) {
 
 	catalog, skipped := countAwareCatalog()
 
-	rec := do(t, newRouter(catalog), http.MethodGet, "/store/v1/products?with_count=true", "")
+	rec := storeRequest(t, newRouter(catalog), storeProductsPath+"?with_count=true", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	assert.False(t, *skipped)
@@ -821,7 +821,7 @@ func TestStoreListRejectsMalformedWithCount(t *testing.T) {
 
 	catalog, _ := countAwareCatalog()
 
-	rec := do(t, newRouter(catalog), http.MethodGet, "/store/v1/products?with_count=maybe", "")
+	rec := storeRequest(t, newRouter(catalog), storeProductsPath+"?with_count=maybe", nil)
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body: %s", rec.Body.String())
 }
 

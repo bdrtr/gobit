@@ -5,8 +5,28 @@
 -- through Module Links, and pricing never sees that binding at all. Foreign
 -- keys between the module's OWN tables are free, and are used.
 --
--- The time columns are TIMESTAMPTZ and are always written in UTC; deletion is
--- SOFT (deleted_at) and every read query applies the deleted_at IS NULL filter.
+-- The time columns are TIMESTAMPTZ and are always written in UTC. Every read
+-- query applies the deleted_at IS NULL filter, and deletion is SOFT
+-- (deleted_at) everywhere in this module EXCEPT the replace.
+--
+-- The exception is ADR 0047, accepted 2026-09-07 and built 2026-09-08: a
+-- replaced price is DELETED. ReplacePrices removes the set's live rows instead
+-- of stamping them, because what the stamp left behind was never a history and
+-- could not be read as one. Successive generations of a price share no id, no
+-- column says WHY a row was retired, and neither index on price contains a
+-- retired row, because both of them are partial on deleted_at IS NULL. The
+-- delete keeps that same predicate so it can use price_set_id_idx, which means
+-- rows an older version of the code already stamped are out of its reach and
+-- stay.
+--
+-- So a stamped price row can now only have come from DeletePriceSet, and that
+-- stamp is the ONLY thing hiding a deleted set's prices from a calculation:
+-- ListPriceCandidates does not join price_set, and the service reads the set
+-- only when no candidate came back. Whoever later wants price.deleted_at gone
+-- owes an answer to that, and to the second hazard the three precedent
+-- removals (fulfillment 000003, inventory 000002, region 000003) each wrote
+-- into their own headers: both indexes below name the column in their
+-- predicate, so PostgreSQL drops them WITH the column and says nothing.
 
 -- price_list is a campaign/segment price list.
 -- A price attached to a list is valid while the list's status and date window allow it.

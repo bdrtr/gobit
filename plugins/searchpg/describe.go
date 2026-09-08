@@ -52,7 +52,8 @@ func (m *searchModule) Describe(d *openapi.Doc) {
 		Description: "The flow is two steps and the split matters: the index gives the " +
 			"matching product ids IN RELEVANCE ORDER, and the records are read from the " +
 			"catalog in that same order. Each record is byte for byte the body " +
-			"GET /store/v1/products/{id} returns — this endpoint does not reshape it, " +
+			"GET /store/v1/sales-channels/{sales_channel_id}/products/{id} returns — this " +
+			"endpoint does not reshape it, " +
 			"which is why its schema below is an open object rather than a second copy " +
 			"of the product's." +
 			"\n\n" +
@@ -82,7 +83,7 @@ func (m *searchModule) Describe(d *openapi.Doc) {
 				Schema: map[string]any{schemaType: typeString, "maxLength": maxQueryBytes},
 				Description: "The search text. It is REQUIRED and may not be empty: an empty " +
 					"query does not mean \"return everything\" — the way to list the catalog " +
-					"is GET /store/v1/products.",
+					"is GET /store/v1/sales-channels/{sales_channel_id}/products.",
 			},
 			{
 				Name: paramLimit, In: inQuery,
@@ -147,7 +148,8 @@ func searchEnvelopeSchema() map[string]any {
 				"items": map[string]any{
 					schemaType: typeObject,
 					"description": "A storefront product record, identical to the body of " +
-						"GET /store/v1/products/{id}. Its fields are the product module's " +
+						"GET /store/v1/sales-channels/{sales_channel_id}/products/{id}. Its " +
+						"fields are the product module's " +
 						"contract and are documented there; this plugin passes them through " +
 						"untouched and does not restate them.",
 				},

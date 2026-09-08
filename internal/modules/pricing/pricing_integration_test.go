@@ -195,9 +195,13 @@ func TestPriceSetLifecycle(t *testing.T) {
 // kanıtlar.
 //
 // Senaryo: ikinci fiyat var olmayan bir fiyat listesine bağlıdır ve veritabanı
-// onu foreign key ile reddeder. İşlem olmasaydı, eski fiyatların soft delete'i
+// onu foreign key ile reddeder. İşlem olmasaydı, eski fiyatların silinmesi
 // ÇOKTAN yazılmış olurdu ve kap fiyatsız kalırdı. Test eski fiyatların yerinde
 // durduğunu doğrular.
+//
+// ADR 0047'den sonra bu testin taşıdığı yük arttı: silme artık damga değil,
+// satırın kendisinin kaldırılmasıdır, dolayısıyla geri alma başarısız olsaydı
+// eski fiyatlar gizlenmiş değil YOK olurdu.
 func TestSetPricesIsAtomic(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
@@ -617,6 +621,11 @@ func TestCreatePriceSetIsAtomic(t *testing.T) {
 // birincinin YENİ satırlarını göremez ve onları silmezdi; kapta iki yazımın
 // fiyatları birlikte canlı kalır ve iki çağıran da hatasız dönerdi. Yanlış
 // fiyat tam olarak böyle doğar.
+//
+// Elle yürütülen adım ADR 0047 ile birlikte DELETE'e çevrildi. Taklidin damga
+// olarak kalması testi yeşil bırakırdı ama iddiasını boşaltırdı: burada
+// kanıtlanan şey kilidin gerçek yazma yolunu seri hâle getirmesidir ve taklit
+// gerçek yoldan ayrılırsa artık onu kanıtlamaz.
 func TestConcurrentSetPricesDoesNotMerge(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
@@ -635,7 +644,7 @@ func TestConcurrentSetPricesDoesNotMerge(t *testing.T) {
 		set.ID).Scan(&lockedID))
 
 	_, err = first.Exec(ctx,
-		"UPDATE price SET deleted_at = now(), updated_at = now() WHERE price_set_id = $1 AND deleted_at IS NULL",
+		"DELETE FROM price WHERE price_set_id = $1 AND deleted_at IS NULL",
 		set.ID)
 	require.NoError(t, err)
 	_, err = first.Exec(ctx, `
@@ -1032,4 +1041,113 @@ func TestSilinmisFiyataKuralYazilabilirAmaUlasilamaz(t *testing.T) {
 	})
 	require.Error(t, err, "silinmiş kabın fiyatı hesaba girmemeli")
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
+}
+
+// TestYerineKonanFiyatSatirdanSilinir yerine koymanın geride SATIR
+// bırakmadığını kanıtlar (ADR 0047).
+//
+// Düzenek kararın ölçtüğü düzeneğin aynısıdır: tek bir kap dört kuşaktan
+// geçirilir — 10000, 12000, 9000, 15000 — ve her kuşak bir kural taşır. Damga
+// sürerken modülün kendi okuması BİR satır, aynı kap üzerindeki filtresiz
+// count(*) DÖRT satır dönüyordu.
+//
+// Sayımın filtresiz olması testin özüdür. Modülün her okuması deleted_at IS
+// NULL taşıdığı için, modülün okuduğu gibi sayan bir test damga altında da
+// yeşil kalırdı; birikimin bu tablolar üzerinde bir entegrasyon takımı varken
+// fark edilmemesinin sebebi tam olarak budur. Bu yüzden burada okuma yüzeyine
+// değil tablonun kendisine bakılır.
+func TestYerineKonanFiyatSatirdanSilinir(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+
+	kural := func(bolge string) []service.RuleInput {
+		return []service.RuleInput{
+			{Attribute: "region_id", Operator: models.OpEq, Values: []string{bolge}},
+		}
+	}
+
+	set, err := svc.CreatePriceSet(ctx, []service.PriceInput{
+		{CurrencyCode: "TRY", Amount: 10000, Rules: kural("reg_1")},
+	})
+	require.NoError(t, err)
+
+	ilk, err := svc.ListPrices(ctx, set.ID)
+	require.NoError(t, err)
+	require.Len(t, ilk, 1)
+	fiyatIDleri := []string{ilk[0].ID}
+
+	for _, kusak := range []struct {
+		tutar int64
+		bolge string
+	}{
+		{12000, "reg_2"},
+		{9000, "reg_3"},
+		{15000, "reg_4"},
+	} {
+		yazilan, err := svc.SetPrices(ctx, set.ID, []service.PriceInput{
+			{CurrencyCode: "TRY", Amount: kusak.tutar, Rules: kural(kusak.bolge)},
+		})
+		require.NoError(t, err)
+		require.Len(t, yazilan, 1)
+		fiyatIDleri = append(fiyatIDleri, yazilan[0].ID)
+	}
+
+	// Kuşakların kimlikleri ayrıdır; damgalı satırlar bir iplik oluşturmuyordu.
+	benzersiz := map[string]bool{}
+	for _, id := range fiyatIDleri {
+		benzersiz[id] = true
+	}
+	require.Len(t, benzersiz, 4, "her yerine koyma YENİ kimlik üretir")
+
+	var toplamSatir int
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		"SELECT count(*) FROM price WHERE price_set_id = $1", set.ID).Scan(&toplamSatir))
+	assert.Equal(t, 1, toplamSatir,
+		"yerine konan fiyat damgalanıp bırakılmamalı, tablodan SİLİNMELİ")
+
+	// Kurallar yeni bir ifadeyle değil, price_rule.price_id üzerindeki
+	// cascade ile düşer; damga bu cascade'i hiç tetiklemiyordu.
+	var kuralSatiri int
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		"SELECT count(*) FROM price_rule WHERE price_id = ANY($1)", fiyatIDleri).Scan(&kuralSatiri))
+	assert.Equal(t, 1, kuralSatiri,
+		"eski kuşakların kuralları ebeveyniyle birlikte düşmeli")
+
+	canli, err := svc.ListPrices(ctx, set.ID)
+	require.NoError(t, err)
+	require.Len(t, canli, 1)
+	assert.Equal(t, int64(15000), canli[0].Amount, "ayakta kalan satır SON kuşak olmalı")
+	require.Len(t, canli[0].Rules, 1)
+	assert.Equal(t, []string{"reg_4"}, canli[0].Rules[0].Values)
+}
+
+// TestSilinenKabinFiyatlariDamgalanir kap silmenin YUMUŞAK kaldığını kanıtlar.
+//
+// ADR 0047 tek bir çağrı yerini sertleştirdi; bu ikincisi yerinde durmak
+// zorundadır, çünkü silinmiş bir kabın fiyatını hesaptan gizleyen tek şey bu
+// damgadır: ListPriceCandidates price_set'e JOIN yapmaz ve servis kabı yalnızca
+// sıfır aday döndüğünde okur.
+//
+// CANLI fiyat sayısına bakan bir test bu ayrımı GÖREMEZ — kap silmesi de sert
+// silmeye çevrilse canlı sayı yine sıfır olurdu — bu yüzden satırın kendisi
+// aranır ve damgası okunur.
+func TestSilinenKabinFiyatlariDamgalanir(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+
+	set, err := svc.CreatePriceSet(ctx, []service.PriceInput{{CurrencyCode: "TRY", Amount: 100}})
+	require.NoError(t, err)
+
+	fiyatlar, err := svc.ListPrices(ctx, set.ID)
+	require.NoError(t, err)
+	require.Len(t, fiyatlar, 1)
+	fiyatID := fiyatlar[0].ID
+
+	require.NoError(t, svc.DeletePriceSet(ctx, set.ID))
+
+	var damga *time.Time
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		"SELECT deleted_at FROM price WHERE id = $1", fiyatID).Scan(&damga),
+		"kap silmesi fiyat satırını KALDIRMAMALI; satır bulunamadı")
+	assert.NotNil(t, damga, "kap silmesi fiyat satırını damgalamalı")
 }

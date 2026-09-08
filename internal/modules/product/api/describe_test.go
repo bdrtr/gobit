@@ -19,6 +19,24 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
+// The document PATTERNS of the two channel-scoped product operations.
+//
+// These are the route patterns rather than the concrete addresses used
+// elsewhere in this package's tests: what goes into an OpenAPI document is the
+// pattern with its placeholders, and a document carrying a live channel id would
+// be a document carrying a record (see the e2e test that refuses raw record ids
+// in the schema). They are spelled out here for the reason the concrete ones
+// are: the api package binds route and description to one constant, so this file
+// is the second, independent statement of what that constant has to be.
+const (
+	// describedProductsPath is the pattern of the storefront listing.
+	describedProductsPath = "/store/v1/sales-channels/{sales_channel_id}/products"
+	// describedProductPath is the pattern of the single storefront product.
+	describedProductPath = "/store/v1/sales-channels/{sales_channel_id}/products/{id}"
+	// describedOptionValuesPath is the pattern of the option vocabulary.
+	describedOptionValuesPath = "/store/v1/sales-channels/{sales_channel_id}/option-values"
+)
+
 // storefrontDoc produces Describe's output against the REAL route tree and
 // returns it as read back from JSON.
 //
@@ -243,7 +261,7 @@ func TestStoreListDescribesItsBody(t *testing.T) {
 	t.Parallel()
 
 	paths, components := storefrontDoc(t)
-	op := storefrontOperation(t, paths, http.MethodGet, "/store/v1/products")
+	op := storefrontOperation(t, paths, http.MethodGet, describedProductsPath)
 
 	assert.NotEmpty(t, op["summary"])
 	assert.NotContains(t, op, "requestBody", "a GET endpoint takes no body")
@@ -275,7 +293,7 @@ func TestStoreItemEndpointDescribesItsBody(t *testing.T) {
 	t.Parallel()
 
 	paths, components := storefrontDoc(t)
-	op := storefrontOperation(t, paths, http.MethodGet, "/store/v1/products/{id}")
+	op := storefrontOperation(t, paths, http.MethodGet, describedProductPath)
 
 	assert.NotEmpty(t, op["summary"])
 	assert.NotContains(t, op, "requestBody", "a GET endpoint takes no body")
@@ -321,7 +339,7 @@ func TestStoreVariantsDescribeEnrichedType(t *testing.T) {
 	t.Parallel()
 
 	paths, components := storefrontDoc(t)
-	op := storefrontOperation(t, paths, http.MethodGet, "/store/v1/products/{id}")
+	op := storefrontOperation(t, paths, http.MethodGet, describedProductPath)
 
 	responses, ok := op["responses"].(map[string]any)
 	require.True(t, ok)
@@ -363,7 +381,7 @@ func TestStoreListDescribesOnlyParametersItReads(t *testing.T) {
 	t.Parallel()
 
 	paths, _ := storefrontDoc(t)
-	op := storefrontOperation(t, paths, http.MethodGet, "/store/v1/products")
+	op := storefrontOperation(t, paths, http.MethodGet, describedProductsPath)
 
 	names := parameterNames(t, op, "query")
 	assert.ElementsMatch(t, []string{
@@ -391,7 +409,7 @@ func TestStoreListDocumentsCountParameterDefault(t *testing.T) {
 	t.Parallel()
 
 	paths, _ := storefrontDoc(t)
-	op := storefrontOperation(t, paths, http.MethodGet, "/store/v1/products")
+	op := storefrontOperation(t, paths, http.MethodGet, describedProductsPath)
 
 	// The case distinction is dropped: the text writes words in capitals for
 	// emphasis and the claim is not about the emphasis but about the
@@ -421,7 +439,7 @@ func TestStoreListCountIsNotRequired(t *testing.T) {
 
 	paths, components := storefrontDoc(t)
 
-	storefront := listEnvelopeSchema(t, components, storefrontOperation(t, paths, http.MethodGet, "/store/v1/products"))
+	storefront := listEnvelopeSchema(t, components, storefrontOperation(t, paths, http.MethodGet, describedProductsPath))
 	assert.NotContains(t, requiredFields(t, storefront), "count",
 		"the counter can drop in the storefront listing; it must not be declared required")
 	assert.Contains(t, objectKeys(storefront["properties"]), "count",
@@ -508,7 +526,7 @@ func parameterDescription(t *testing.T, op map[string]any, name string) string {
 }
 
 // TestStoreItemEndpointDescribesPathParameter verifies that it is written down
-// that the path parameter accepts a handle too.
+// that the trailing path parameter accepts a handle too.
 //
 // The deriver cannot say this by looking at the pattern: the name "{id}" only
 // implies an id, whereas storefront addresses carry a handle.
@@ -516,18 +534,88 @@ func TestStoreItemEndpointDescribesPathParameter(t *testing.T) {
 	t.Parallel()
 
 	paths, _ := storefrontDoc(t)
-	op := storefrontOperation(t, paths, http.MethodGet, "/store/v1/products/{id}")
+	op := storefrontOperation(t, paths, http.MethodGet, describedProductPath)
 
 	assert.Empty(t, parameterNames(t, op, "query"), "the single endpoint does not read the query string")
-	assert.Equal(t, []string{"id"}, parameterNames(t, op, "path"))
+	assert.Equal(t, []string{"sales_channel_id", "id"}, parameterNames(t, op, "path"),
+		"both segments have to be described, and in the order the address reads")
 
-	params, ok := op["parameters"].([]any)
-	require.True(t, ok)
-	require.Len(t, params, 1)
+	assert.Contains(t, parameterDescription(t, op, "id"), "handle")
+}
 
-	p, ok := params[0].(map[string]any)
-	require.True(t, ok)
-	assert.Contains(t, p["description"], "handle")
+// TestTheChannelScopedReadsDescribeTheirSegment verifies that all three
+// channel-scoped reads describe the channel parameter and its RULE.
+//
+// The core derives a bare "sales_channel_id, in path, string" from the pattern
+// on its own, so this test would pass on the derivation alone if it only asked
+// whether the parameter is present. What it asks instead is whether the
+// document says the thing the derivation cannot know: the segment NARROWS
+// within the key's channels and does not choose freely among all of them. A
+// client that read the segment as a free choice would build a storefront that
+// walks other merchants' channel ids, and would meet a 403 the document never
+// mentioned.
+func TestTheChannelScopedReadsDescribeTheirSegment(t *testing.T) {
+	t.Parallel()
+
+	paths, _ := storefrontDoc(t)
+
+	for _, path := range []string{describedProductsPath, describedProductPath, describedOptionValuesPath} {
+		t.Run(path, func(t *testing.T) {
+			op := storefrontOperation(t, paths, http.MethodGet, path)
+
+			assert.Contains(t, parameterNames(t, op, "path"), "sales_channel_id",
+				"the channel segment has to be described")
+
+			description := strings.ToLower(parameterDescription(t, op, "sales_channel_id"))
+			assert.Contains(t, description, "narrow",
+				"that the segment only NARROWS within the key's channels has to be written down; "+
+					"a client reading it as a free choice writes an authorization bug")
+			assert.Contains(t, description, "403",
+				"what happens on a channel the key does not hold has to be written down")
+
+			responses, ok := op["responses"].(map[string]any)
+			require.True(t, ok, "%s has to describe its responses", path)
+			assert.Contains(t, responses, "403",
+				"a read that can refuse has to describe the refusal; the core adds a 403 only "+
+					"to the admin surface, so an undescribed one here would be a code a "+
+					"generated client has no branch for")
+		})
+	}
+}
+
+// TestTheChannelScopedReadsKeepTheirOwnTag verifies that the three catalog reads
+// are tagged after WHAT THEY RETURN and not after the segment that scopes them.
+//
+// The core derives an untagged operation's tag from the first path segment after
+// the prefix (see openapi.Doc.operation), and since ADR 0044 that segment is
+// "sales-channels" for all three. Left derived, the storefront's catalog reads
+// would be grouped — and, in a generated client, land in the same class — with
+// auth's /admin/v1/sales-channels endpoints, which are another module's surface
+// and administer the channel RECORDS rather than reading a catalog through one.
+// The tags are therefore written by hand in api.Describe.
+//
+// Nothing else can catch their loss. Deleting all three Tags fields leaves the
+// document valid, every other description test green and the e2e schema tests
+// green; only the grouping silently changes, in a file a reader of this
+// repository never opens — the generated client's.
+func TestTheChannelScopedReadsKeepTheirOwnTag(t *testing.T) {
+	t.Parallel()
+
+	paths, _ := storefrontDoc(t)
+
+	for path, tag := range map[string]string{
+		describedProductsPath:     "products",
+		describedProductPath:      "products",
+		describedOptionValuesPath: "option-values",
+	} {
+		t.Run(path, func(t *testing.T) {
+			op := storefrontOperation(t, paths, http.MethodGet, path)
+
+			assert.Equal(t, []any{tag}, op["tags"],
+				"the operation has to carry its OWN tag; %q is what the core derives from "+
+					"the scoping segment and it names a different module's surface", "sales-channels")
+		})
+	}
 }
 
 // parameterNames returns the names of the operation's parameters in the given
@@ -587,21 +675,28 @@ func TestEveryStoreEndpointIsDescribed(t *testing.T) {
 	}
 
 	assert.ElementsMatch(t, []string{
-		"GET /store/v1/products",
-		"GET /store/v1/products/{id}",
+		// The three CHANNEL-SCOPED reads. Their addresses carry the sales
+		// channel because their bodies vary with it (ADR 0044), and the list
+		// being written out is what makes the split visible: a reader comparing
+		// these entries against the four below can see which storefront
+		// endpoints differ per channel and which do not.
+		"GET " + describedProductsPath,
+		"GET " + describedProductPath,
+		"GET " + describedOptionValuesPath,
 		// The GraphQL endpoint is part of the storefront too and it is
 		// described; OpenAPI cannot describe its SCHEMA but it does describe its
 		// path, its body and where the contract is (see
-		// api.describeStorefrontGraphQL).
+		// api.describeStorefrontGraphQL). It keeps its unscoped address: the
+		// channel still reaches it from the identity alone, because ADR 0044
+		// moved the REST reads and deliberately did not reopen this transport.
 		"POST /store/v1/graphql",
 		// The vocabulary a storefront needs to USE the catalog filters: the
 		// listing takes ids and a storefront has the word a shopper clicked.
+		// These three are one tree for the whole installation, so they do not
+		// vary by channel and carry no channel segment.
 		"GET /store/v1/collections",
 		"GET /store/v1/categories",
 		"GET /store/v1/tags",
-		// The fourth of them, and the only one returning TEXT: an option value
-		// belongs to exactly one product, so its id is useless as a filter.
-		"GET /store/v1/option-values",
 	}, found)
 }
 

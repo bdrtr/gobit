@@ -12,6 +12,84 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **Satis kanali katalog YOLUNA tasindi** (ADR 0044) — magaza katalogu artik
+  `/store/v1/sales-channels/{sales_channel_id}/products` altinda.
+
+  Kanal daha once yol disindan geliyordu, yani iki magazanin katalogu AYNI URL
+  idi ve farkli cevap veriyordu; paylasimli bir onbellegin saklayamayacagi sey
+  tam olarak budur. Kanal yola girince yayimlanabilir anahtar cevaba giren bir
+  girdi olmaktan cikip bir KAPI oluyor. **Kirici degisiklik**: eski
+  `/store/v1/products` ve `/store/v1/products/{id}` uclari kalkti.
+
+- **Metrikler SCRAPE ile cikiyor** (ADR 0046) — `METRICS_ADDR` verilirse bir
+  `/metrics` ucu acilir; OTLP izlerde kalir.
+
+  Bunun yanında olculup duzeltilen bir sey: bos bir `OTEL_EXPORTER_OTLP_ENDPOINT`
+  izleri degil TUM telemetriyi kapatiyordu ve iki belge bunun tersini soyluyordu.
+  Metrikler artik o degiskenden bagimsiz.
+
+- **Yerine konan fiyat SILINIYOR** (ADR 0047) — ve bir replace'ten sag kalan sey
+  zaten bir tarihce degildi.
+
+  Yumusak silme, kimsenin okumadigi ve kimsenin soz vermedigi satirlar
+  biriktiriyordu; bir tarihce olsaydi okunurdu.
+
+- **Tasinan dort bayrak nihayet OKUNUYOR** (ADR 0048) — ikisi kasada, ikisi
+  kampanya motorunda.
+
+  Depo 17 boolean kolon tasiyor ve dordu hicbir seyi degistirmiyordu:
+  `product_variant` uzerinde `manage_inventory` ve `allow_backorder`, `product`
+  uzerinde `is_giftcard` ve `discountable`. Dordu de her satirda yaziliyor,
+  dordu de istemciye yayimlaniyor, hicbiri bir `if`'e girmiyordu. ADR 0009 bu
+  hatanin adini koymustu — tuketicisi olmayan bir yetenek — ve bir KOLON ayni
+  seklin uzun fitillisidir, cunku beklerken satir basina bir deger biriktirir.
+
+  **Stok cifti kasa destanina baglandi ve BEDAVA geldi.** Checkout zaten sepetin
+  her varyantini baslik icin tek bir toplu Graph cagrisinda okuyor; iki ad daha
+  alan listesine eklendi, yeni gidis-donus YOK. `manage_inventory` satirin
+  rezerve edilip edilmeyecegine karar veriyor, `allow_backorder` hicbir deponun
+  karsilayamadigi satirin siparisi REDDEDIP etmeyecegine. Plan kaydina giren
+  alan bayragin TERSI (`unmanaged`), cunku dunden kalma bir kayit Go'nun sifir
+  degeriyle cozulur ve sifir degerin "sayiliyor" tarafina dusmesi gerekiyordu.
+
+  **Ve asil sebep buydu: rozet ile kasa birbirine ters cevap veriyordu.** ADR
+  0040 "stokta var" tanimini uc OR'lu sarta baglamis, ikisi tam olarak bu iki
+  kolon. Kasa ise hicbirini okumuyor, envanter baglantisi olmayan HER varyanti
+  reddediyordu: magaza "stokta var" diyor, kendi kasasi satmiyordu. Iki sart da
+  artik baglanti kontrolune ulasiyor. Ikincisi — geri siparise izin veren ama
+  hicbir envanter kalemine bagli olmayan varyant — ilk gecirmede yarim kalmisti
+  ve bu turda kapatildi: hicbir sey stogunu saymiyorsa hicbir depo onu ASLA
+  karsilayamaz, ki bu tam olarak o bayragin bagisladigi durum. Envanter
+  modulune bos bir kalem kimligiyle soru sorulmuyor; cevap zaten belli.
+
+  **Yurutme kaydi artik HER satirin hesabini veriyor.** Rezervasyon birakmayan
+  satirin kimligi adimin ciktisina yaziliyor (`unreserved`), cunku bos bir
+  rezervasyon listesi iki ayri sey olabilir: mesru bir sonuc, ya da izi
+  kaybolmus bir kayit. Plan bunu ayirt EDEMEZ — geri siparise izin veren bir
+  satir, stok varsa yine rezerve edilir — ve plana soran bir kapi, telafinin
+  hicbir seyi birakmadan "bitti" demesine izin veriyordu. Kayit artik planin her
+  satirini ya bir rezervasyonla ya da bir adla karsilamak zorunda; ADR 0048
+  oncesi yazilmis kayitlar bu esitligi zaten sagliyor, cunku o adim her satiri
+  rezerve ediyordu.
+
+  **Urun cifti promotion modulune tek satir dokunmadan bagli.** Kural nitelik ad
+  uzayi yapisi geregi acik: sepet iki anahtari satirin nitelik haritasina
+  koyuyor, `discountable eq true` ya da `is_giftcard ne true` kurallarini yazmak
+  tuccarin isi — ve kurali yazmayan magazada bayrak hicbir seyi degistirmiyor.
+  Bu, kararin ilk olumsuz maddesi olarak yazildi, susulmadi. Bedel de olculdu:
+  modul vergisi yolunda bir, bolge oraninda iki ek toplu katalog okumasi — sepet
+  hesabi basina, satir basina degil.
+
+  Sekiz mutasyonla kanitlandi (`-count=1`): sayilmayan satirin atlanmasi, geri
+  sipariste catisma korumasinin ters cevrilmesi, iki urun bayraginin yer
+  degistirmesi, hic gonderilmemesi, baglanti kontrolundeki geri siparis
+  istisnasinin dusurulmesi, rezerve adiminda bagsiz satirin atlanmasinin
+  dusurulmesi, kaydin hesabinin plana geri zayiflatilmasi ve rezerve edilmeyen
+  satirin ciktida adlandirilmamasi. Iki cumle de duzeltildi: kararin
+  `discountRequestFor` "ne baglam ne hata donusu alir" iddiasi yariyla yanlisti
+  (baglami alir ve kullanir; eksik olan hata donusu) ve defterdeki A6 satiri
+  artik INSA EDILDI diyor.
+
 - **Denetim gunlugu (`audit_log`) nihayet OKUNABILIYOR** (ADR 0037) — ve
   okunmasi da kaydediliyor.
 

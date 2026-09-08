@@ -227,14 +227,20 @@ func serve(opts Options) error {
 	// observability exists for the product's visibility, not its correctness,
 	// and an outage at the collector must not close the store. When no OTLP
 	// endpoint is given, no outbound connection is attempted at all.
-	shutdownObservability, err := observability.Setup(ctx, observability.Options{
+	//
+	// The two signals are switched SEPARATELY (ADR 0046): the OTLP address
+	// decides the traces, MetricsAddr decides the metrics, and this is the one
+	// place that turns an address into that answer. Passing the address itself
+	// would give the observability package a value it cannot honor — it builds
+	// a handler and binds no port.
+	telemetry, err := observability.Setup(ctx, observability.Options{
 		Endpoint:       cfg.OTLPEndpoint,
 		Insecure:       cfg.OTLPInsecure,
 		ServiceName:    cfg.ServiceName,
 		ServiceVersion: opts.version(),
 		Environment:    cfg.AppEnv,
 		SampleRatio:    cfg.TraceSampleRatio,
-		MetricInterval: cfg.MetricInterval,
+		Metrics:        cfg.MetricsAddr != "",
 		Logger:         log,
 	})
 	if err != nil {
@@ -244,7 +250,7 @@ func serve(opts Options) error {
 	// canceled ctx and the pending spans would be dropped before they could be
 	// sent.
 	defer func() {
-		if err := shutdownObservability(context.WithoutCancel(ctx)); err != nil {
+		if err := telemetry.Shutdown(context.WithoutCancel(ctx)); err != nil {
 			log.Error("observability could not be shut down", "error", err)
 		}
 	}()
@@ -399,10 +405,19 @@ func serve(opts Options) error {
 	defer stopJobs()
 	_ = jobs
 
-	// The profiling listener is separate and comes up before the API server so
-	// that a boot slow enough to be worth profiling can be profiled.
-	waitForProfiling := startProfiling(ctx, cfg, log)
-	defer waitForProfiling()
+	// The two operator listeners — pprof and the metrics scrape (ADR 0046) —
+	// come up before the API server, so that a boot slow enough to be worth
+	// profiling can be profiled. They are opened and closed together because
+	// closing them correctly is the same problem twice: the deferred call below
+	// must not wait on a context that only SIGTERM cancels, or a serve that
+	// returned an error of its own would hang instead of reporting it. The
+	// reason in full is on startOperatorListeners.
+	//
+	// It is deferred AFTER the telemetry shutdown on purpose: defers run
+	// last-registered first, so both listeners are gone before the providers
+	// behind them are closed.
+	closeOperatorListeners := startOperatorListeners(ctx, cfg, telemetry.MetricsHandler, log)
+	defer closeOperatorListeners()
 
 	srv := corehttp.NewServer(corehttp.ServerOptions{
 		Addr:              cfg.Addr(),

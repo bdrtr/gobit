@@ -122,8 +122,27 @@ func TestInteropMakesTheSameDecisionAsTheStoreEndpoint(t *testing.T) {
 	require.NoError(t, svc.AddProductSalesChannel(ctx, hidden.ID, "sc_interop_hidden"))
 
 	// The storefront single endpoint returns NotFound for another channel's ID.
-	rec := sys.storeChannelRequest(t, "/store/v1/products/"+hidden.ID, []string{"sc_interop_another"})
+	//
+	// The key HOLDS the channel the path names, and that is what makes the 404
+	// mean anything: since ADR 0044 an address naming a channel the key does not
+	// hold is refused with a 403 before the lookup, and a path that is not
+	// registered at all answers 404 as well — either would leave this assertion
+	// green while measuring nothing about the visibility rule.
+	rec := sys.storeChannelRequest(t,
+		"/store/v1/sales-channels/sc_interop_another/products/"+hidden.ID,
+		[]string{"sc_interop_another"})
 	require.Equal(t, http.StatusNotFound, rec.Code, "body: %s", rec.Body.String())
+
+	// The positive half of the pair, and the reason the refusal above is the
+	// visibility rule's: the SAME product at the SAME endpoint is served in the
+	// channel it is assigned to. Without it a 404 from any cause at all would
+	// satisfy the assertion above.
+	rec = sys.storeChannelRequest(t,
+		"/store/v1/sales-channels/sc_interop_hidden/products/"+hidden.ID,
+		[]string{"sc_interop_hidden"})
+	require.Equal(t, http.StatusOK, rec.Code,
+		"the product has to be served in its own channel; body: %s", rec.Body.String())
+	assert.Equal(t, hidden.ID, itemData(t, rec)["id"])
 
 	// The surface makes the same decision: the record is not in the response
 	// at all.

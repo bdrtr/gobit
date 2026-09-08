@@ -13,32 +13,26 @@ import (
 // spellings of the OTLP address are accepted, and a tracing fault does NOT
 // bring the application DOWN (ADR 0007).
 //
-// # The two faults it catches
+// # The fault it catches
 //
-// The first is THE FORMAT OF THE ADDRESS. The OpenTelemetry specification
-// defines OTEL_EXPORTER_OTLP_ENDPOINT as a URL ("http://collector:4317");
-// the Go SDK's WithEndpoint option, on the other hand, expects a SCHEMELESS
-// "host:port". When the two are mixed up no error surfaces at all: gRPC
-// connects lazily, the application logs "telemetry is set up", and not a
-// single span goes out. The silent loss is only noticed while a fault is
-// being investigated — that is, at the worst possible moment.
+// THE FORMAT OF THE ADDRESS. The OpenTelemetry specification defines
+// OTEL_EXPORTER_OTLP_ENDPOINT as a URL ("http://collector:4317"); the Go SDK's
+// WithEndpoint option, on the other hand, expects a SCHEMELESS "host:port".
+// When the two are mixed up no error surfaces at all: gRPC connects lazily,
+// the application logs "telemetry is set up", and not a single span goes out.
+// The silent loss is only noticed while a fault is being investigated — that
+// is, at the worst possible moment.
 //
-// The second is THE NAME OF THE METRIC INTERVAL. In the application the
-// interval is read under the name METRIC_EXPORT_INTERVAL and as a Go
-// duration; the specification, meanwhile, has RESERVED the name
-// OTEL_METRIC_EXPORT_INTERVAL and defines its value as an INTEGER NUMBER OF
-// MILLISECONDS. Once the name is borrowed, the clash cuts in both directions
-// at once: the value that follows the specification (60000) cannot be parsed
-// as a Go duration and the application DOES NOT BOOT AT ALL; the value that
-// follows the application (60s) makes the OTel SDK's own reader log a "parse
-// duration" error on every boot.
+// # The second fault this scenario used to catch, and why it cannot come back
 //
-// The scenario gives each variable the value that follows ITS OWN
-// specification. If the name clash comes back, one of the two is bound to
-// blow up: either the application cannot read 60000 as a duration and stops
-// at startup, or the SDK takes 60s for a millisecond count and logs an error.
-// Testing with a single variable would have seen only one direction of the
-// fault.
+// It also gave OTEL_METRIC_EXPORT_INTERVAL and METRIC_EXPORT_INTERVAL each the
+// value its own specification asks for, because the two names differed by a
+// prefix and meant different things — a millisecond integer against a Go
+// duration. There is no interval left to clash over: ADR 0046 retired the
+// periodic metric reader along with the setting that configured it, and
+// metrics now leave by a scrape endpoint that has no interval at all. The
+// paragraph is kept rather than deleted so that a reader who finds
+// METRIC_EXPORT_INTERVAL in the history knows what happened to it.
 //
 // # Why no collector is set up, and the limit of this test
 //
@@ -67,10 +61,6 @@ func TestBothSpellingsOfTheTracingEndpointAreAccepted(t *testing.T) {
 			cfg := baseSettings(scenarioDatabase(t), freePort(t))
 			cfg["OTEL_EXPORTER_OTLP_ENDPOINT"] = endpoint
 			cfg["OTEL_EXPORTER_OTLP_INSECURE"] = "true"
-			// Each variable is given the value that follows ITS OWN
-			// specification; the rationale is in the test's godoc.
-			cfg["METRIC_EXPORT_INTERVAL"] = "60s"
-			cfg["OTEL_METRIC_EXPORT_INTERVAL"] = "60000"
 
 			s := startServer(t, cfg)
 			s.waitForReady(startupTimeout)
@@ -86,13 +76,6 @@ func TestBothSpellingsOfTheTracingEndpointAreAccepted(t *testing.T) {
 				"this spelling of the address must be accepted\n%s", s.logBuf())
 			assert.True(t, s.logContains(endpoint),
 				"the setup log must say which address was used\n%s", s.logBuf())
-
-			// "parse duration" is the OTel SDK's own error text and it lands on
-			// stderr (see sdk/metric env.go). It is the only visible trace of
-			// the name clash: metrics are still sent, only the interval
-			// silently falls back to the default.
-			assert.NotContains(t, s.stderr.String(), "parse duration",
-				"the OTel SDK could not parse the metric interval: the name clash may be back")
 
 			assert.False(t, s.happened(),
 				"the application must NOT go DOWN while the tracing collector is unreachable (ADR 0007)\n%s", s.logBuf())

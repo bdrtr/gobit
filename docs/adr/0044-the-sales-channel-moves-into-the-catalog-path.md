@@ -225,6 +225,9 @@ does not avoid the cost, it picks the worse moment to pay it.
   routes move, one of them a plugin's published `SearchPath` constant, and every
   document and client that names the old paths follows. This record is the
   argument for paying that at v0.8.0 rather than the claim it is free.
+  **As built 2026-09-08, THREE of the four moved.** The search plugin's route is
+  still `GET /store/v1/search` and still takes its channel from the identity
+  alone; see the Built record below for why, and for what that leaves open.
 - **The channel id becomes public.** It goes into every catalog URL, and
   therefore into browser history, referrers, shared links and access logs. Its
   first characters are a millisecond timestamp by construction, so the URL also
@@ -253,6 +256,18 @@ does not avoid the cost, it picks the worse moment to pay it.
   identity is only half of the read surface's input, and the intersect is outside
   what that test can see. The audit has to grow or it goes quietly stale, which
   is precisely the class this repository keeps being bitten by.
+  **As built 2026-09-08 the audit did NOT grow, and this consequence is
+  therefore live rather than discharged.** `TestChannelDerivationMeansTheSameOnBothSurfaces`
+  still compares `graph.SalesChannelIDsFromContext` with the cart workflow's
+  copy, and both still derive the same three states from an identity, so it is
+  not WRONG — it is now PARTIAL, because the read surface's second input, the
+  path segment and the intersect over it, is invisible to it. What holds the
+  intersect today is behavior: the handler unit tests in
+  `internal/modules/product/api/saleschannel_test.go` and the end-to-end tests in
+  `internal/e2e/channel_catalog_test.go`. What is missing is the structural
+  claim — that every channel-scoped storefront read resolves its scope through
+  one narrowing helper rather than reading the segment itself — and that claim
+  belongs in `internal/arch`, which this round did not own.
 - **The storefront's URLs stop being uniform.** Products, the single product,
   option values and search gain the segment; collections, categories and tags do
   not, because they are not channel-scoped today. A reader will ask why, and the
@@ -263,6 +278,166 @@ does not avoid the cost, it picks the worse moment to pay it.
   quantity, so a record-derived ETag would be wrong and a long `max-age` would
   serve a closed campaign. This decision makes the catalog KEYABLE and leaves it
   no fresher than it was.
+
+## Built — 2026-09-08
+
+**Three of the four routes moved**, in `internal/modules/product/api`:
+
+```
+GET /store/v1/sales-channels/{sales_channel_id}/products
+GET /store/v1/sales-channels/{sales_channel_id}/products/{id}
+GET /store/v1/sales-channels/{sales_channel_id}/option-values
+```
+
+The old addresses are GONE, not aliased. An alias would have kept an uncacheable
+URL alive beside the cacheable one and left a shared cache two keys for one body,
+which is the state this record exists to end.
+
+**The narrowing is one function**, `storeChannelScope` in
+`internal/modules/product/api/store.go`, and all three handlers call it FIRST —
+before any query parameter is parsed, so a refusal cannot be told apart from a
+bad cursor and the service is never reached for a channel the key does not hold.
+It resolves the segment, reads the key's set through the unchanged
+`graph.SalesChannelIDsFromContext`, and returns a ONE-element scope. The
+identity side of the rule was not reimplemented: it stays in the single place
+both read surfaces reach, because GraphQL still has only a context.
+
+**The refusal is 403 and it is argued rather than assumed.** A hidden product is
+404 so the key's owner cannot enumerate another storefront's handles one at a
+time; no such oracle exists here, because the check never consults a channel
+record. A channel id that could plausibly exist and one that is nonsense produce
+the same code, and a test asserts exactly that
+(`TestTheRefusalDoesNotDependOnTheChannelExisting`).
+
+**The three states the identity can be in were kept apart, and the third one
+changed meaning.** No identity at all (nil) lets the path value stand alone,
+which is NARROWER than the old behavior of not filtering. An identity holding
+the named channel is served. An identity holding no channel — the empty but
+non-nil set — is REFUSED, where it used to see the unassigned products; it holds
+nothing for a path to narrow to, and collapsing it into the nil case would let a
+channelless key read whatever channel it typed.
+
+**The description followed the route on its own, and one thing had to be added
+by hand.** `pathParameters` turned `{sales_channel_id}` into a described
+parameter the day the route existed. What it cannot derive is the RULE, so the
+parameter carries a hand-written description saying the segment narrows and does
+not choose; and because the core adds a 403 only to the admin surface — on the
+sound reasoning that the storefront had no authorization step until now — these
+three describe their 403 themselves. That needed one new published name,
+`openapi.ErrorResponse`, since the shared error envelope's `$ref` was otherwise
+unreachable from a module. The operation tags are hand-written too: derived, all
+three would have been tagged `sales-channels` after their scoping segment and
+would have landed in the same generated client class as auth's
+`/admin/v1/sales-channels` endpoints.
+
+**What the tests prove, and the one that is the whole decision.**
+`TestTwoKeysOnOneChannelReceiveByteIdenticalBodies` compares the RAW BODIES two
+different keys on one channel receive from one URL. A set comparison would have
+passed on a body that differed in order, in its counter or in one enriched
+field, and those are the wrong bytes to hand a second caller from a cache. It
+needed a key nothing in the tree had: a SECOND publishable key on an existing
+channel, which the schema always permitted and which a key rotation produces for
+real. Beside it, `TestAMultiChannelKeyReadsOneChannelPerRequest` pins the
+capability this record REMOVED — a two-channel key now reads two catalogs in two
+requests and receives no union — and `TestTheCatalogPathNarrowsAndNeverBroadens`
+checks the refusal in both directions, since only the pair says the reason is
+the key: the same address refused to one key is served to the key that holds it.
+
+**Mutation-proved, twice, each with `-count=1`.** Disabling the narrowing guard
+in `storeChannelScope` — that is, honoring the path's claim on its own — turns
+FIVE tests red and nothing else: the refusal on each of the three reads, the
+channelless identity, and the claim that the refusal discloses nothing about
+whether the named channel exists. Returning the key's whole set instead of the
+one channel the path names — keeping the union view at a new URL — turns THREE
+red: the listing, the single product and the option vocabulary. That second one
+is the mutation a careless build of this record actually makes, and it is
+invisible to every test written before this round, because with a single-channel
+key "scope to the path" and "scope to the key" give the same answer everywhere.
+
+**The CALLERS moved with the routes — and until they did, two suites were red.**
+A route is not moved while something still calls it at the old address, and this
+round left that half undone; it was completed on 2026-09-08. In the tree the
+callers were the product module's integration suite — thirteen tests across
+`saleschannel_integration_test.go`, `store_integration_test.go` and
+`interop_integration_test.go` drove the old addresses against the REAL mounted
+router and got chi's 404, so `make test-integration` could not pass — and
+`internal/smoke`, whose publishable-key scenario asked for `GET /store/v1/products`
+after attaching a channel and required a 200, so `make smoke` could not pass
+either. Both now address the catalog through the channel segment. The smoke
+scenario gained something in the move: its two store steps ask at the SAME
+channel-scoped address, refused before the key is bound to that channel and
+served after, which is the sentence the README makes and which two different
+addresses could not have proven.
+
+**Two integration tests changed what they ASSERT, not merely where they point,**
+and both are the third identity state changing meaning. The one that pinned "a
+key with no channels sees the unassigned products" now pins the 403, and the one
+that pinned "no principal means no filter" now pins that the path value stands
+alone — served in the channel the address names and empty in another, with no
+key in the request. The SQL property the first one used to carry, that an empty
+set filters rather than opens, is still exercised where an empty set can still
+reach the database: the write path's variant provider, in
+`TestVariantVisibilityFollowsProductChannels`.
+
+**One test was left passing for the WRONG reason, which is worse than a red
+one.** `TestInteropMakesTheSameDecisionAsTheStoreEndpoint` exists to hold the
+interop surface and the storefront endpoint to ONE visibility rule, and its
+storefront half asserted a 404 from the old single-product address. After the
+move that 404 was chi's answer for a route that does not exist, so half the test
+measured nothing while staying green. It now asks at the channel-scoped address
+with a key that HOLDS the channel the path names — which is what makes the 404
+the filter's answer rather than the scope refusal's — and asks the same address
+in the product's own channel and requires a 200. Without that second half, a 404
+from any cause at all would satisfy the first.
+
+**The prose that named the old addresses followed too.** `docs/security.md`
+carried the worst of it: it described the catalog filter as reading the channel
+from the key, named the old single-item address, mentioned neither the segment
+nor the 403, and its copy-pasteable curl 404ed. Corrected there, and in
+`docs/api-surfaces.md`, `docs/known-limits.md` and `docs/operating.md`'s
+span-name example — where the channel id is now a second reason the raw path
+would explode metric cardinality. Two godocs inside the module named the old
+addresses in passing and were corrected with them: the REST comparison in
+`graph/limits.go` and the storefront address in `service.resolveHandle`. The
+search plugin's three PUBLISHED OpenAPI descriptions pointed clients at the old
+catalog paths and now point at the new ones — the plugin's own route did not
+move, but what it tells a client about the catalog it reads from has to be true.
+`docs/gaps.md` records the build on A8 and strikes the claim in A11 that this
+record was Accepted and UNBUILT, which was load-bearing for that gap's deferral
+argument.
+
+**`SalesChannelIDsFromContext`'s godoc says what it is half of.** It is the one
+place this record points both read surfaces at, and it still said the channel
+"CANNOT be a value the client states; that is why the only input is the
+context" — true of the function and misleading as the answer to "where does the
+channel come from", because on the REST reads the client now does state one and
+the rule is the intersect in `storeChannelScope`. The godoc now names both
+halves and which surface uses which.
+
+**The hand-written operation tags gained a test.** They were an argued claim with
+nothing behind it: deleting all three `Tags` fields left the api package and the
+end-to-end schema tests green, and only the grouping of the generated client
+would have changed. `TestTheChannelScopedReadsKeepTheirOwnTag` asserts the three
+reads carry `products`, `products` and `option-values`; with the fields deleted
+it reports `sales-channels` on all three.
+
+**And one test name had come to say the opposite of its body.** The option
+vocabulary's scope test was still named after the KEY's channels while its
+assertion says the scope is the PATH's single channel and explicitly not the
+key's set — a name describing the very mutation the test is cited above as
+catching. It is now `TestStoreOptionVocabularyIsScopedToThePathsChannel`.
+
+**What did NOT move, and why it is a gap rather than a decision.** The search
+plugin's `GET /store/v1/search` still lives at its old address and still derives
+its channel from the identity alone, so the fourth route named in the Decision
+above is outstanding and the plugin's published `SearchPath` constant is
+unchanged. The reason is ownership of this round and not a reversal: nothing in
+the reasoning above distinguishes search from the other three, and a storefront
+whose catalog is channel-addressed while its search is not is exactly the
+non-uniformity this record already warns a reader about, with none of the
+justification the taxonomy endpoints have. `internal/arch` was likewise not in
+this round, so the audit this record asks for is still owed — see the amended
+consequence above.
 
 ## What this deliberately does NOT do
 

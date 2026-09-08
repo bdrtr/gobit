@@ -75,18 +75,19 @@ services:
   # The all-in-one image uses an in-memory store: traces are lost on restart. It
   # is meant for development and verification, not for production.
   #
-  # IT ACCEPTS TRACES ONLY. The application tries to send metrics to the same
-  # endpoint too and Jaeger rejects them; at every export interval this line
-  # drops:
+  # IT ACCEPTS TRACES ONLY, and since ADR 0046 traces are all it is ever
+  # offered. The periodic OTLP metric exporter retired with that record, so
+  # nothing sends metrics to this endpoint any more and the line this comment
+  # used to warn about —
   #
   #   failed to upload metrics: ... unknown service ...MetricsService
   #
-  # It is harmless (a tracing failure does not bring the application down, see
-  # ADR 0007) but noisy. A setup that also wants to collect metrics should point
-  # the application at an OpenTelemetry Collector and forward the traces from
-  # there to Jaeger. Not putting a Collector here is deliberate: it would bring
-  # one more configuration file, and this profile's single job is to answer the
-  # question "are traces really being exported".
+  # — can no longer drop. A setup that also wants metrics needs no Collector for
+  # them either: it sets METRICS_ADDR (empty by default) and scrapes /metrics on
+  # that address, which is a listener of the application's own and has nothing
+  # to do with this one. Nothing is added here for that on purpose — a scrape
+  # target would bring one more configuration file, and this profile's single
+  # job is to answer the question "are traces really being exported".
   jaeger:
     image: jaegertracing/all-in-one:1.62.0
     container_name: gobit-jaeger

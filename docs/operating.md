@@ -125,14 +125,36 @@ put side by side.
 
 ## Observability
 
-If the address of the OTLP collector (`OTEL_EXPORTER_OTLP_ENDPOINT`) is not
+~~If the address of the OTLP collector (`OTEL_EXPORTER_OTLP_ENDPOINT`) is not
 given, observability shuts down **completely** and no outbound connection is
-attempted. The collector being unreachable does not bring the application down.
+attempted.~~ **Corrected on 2026-09-08 (ADR 0046):** the two signals now have
+two switches. `OTEL_EXPORTER_OTLP_ENDPOINT` decides the TRACES alone, and each
+provider is built only for the signal that asked for it. With NEITHER that
+address nor `METRICS_ADDR` given, observability is off completely and no
+outbound connection is attempted — which is still the stock installation,
+because both are empty in `.env.example`. The collector being unreachable does
+not bring the application down.
+
+**Metrics leave by SCRAPE, not by push.** `METRICS_ADDR` (empty by default;
+`METRICS_ADDR=127.0.0.1:9464` is a reasonable local value) opens a listener of
+its own, separate from the API server the way `PROFILING_ADDR` is, and it
+answers `/metrics` and nothing else, in the Prometheus text format. There is no
+export interval and no collector in the path: `curl 127.0.0.1:9464/metrics` is
+the whole distance between the running process and
+`http_server_active_requests` and `http_server_request_duration_seconds`. The
+`_seconds` suffix is the exporter reading the unit the instrument declares, and
+it is the part a dashboard written against the OTLP metric names gets wrong.
+
+Unlike the profiling listener this one MAY be bound off loopback, because a
+scrape comes from another host by definition. It is unauthenticated, and what it
+discloses is the route inventory and the traffic over it — so the address is the
+whole guard, and it must not be published by the ingress.
 
 A span is opened for every request; the span name is not the raw path but the
-**route pattern** (`GET /store/v1/products/{id}`) — had the raw path been used,
-every product id would produce a separate metric series and cardinality would
-explode. The raw path still sits on the span in the `url.path` attribute, so no
+**route pattern**
+(`GET /store/v1/sales-channels/{sales_channel_id}/products/{id}`) — had the raw
+path been used, every product id **and every sales channel id** would produce a
+separate metric series and cardinality would explode. The raw path still sits on the span in the `url.path` attribute, so no
 detail is lost; cardinality is limited only in the metrics.
 
 A request rejected in the guard middleware never reaches route matching and its
@@ -151,11 +173,16 @@ OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 OTEL_EXPORTER_OTLP_INSECURE=true make
 # UI: http://localhost:16686
 ```
 
-> Jaeger accepts **traces only**; the application tries to send metrics to the
+> ~~Jaeger accepts **traces only**; the application tries to send metrics to the
 > same endpoint as well and a `failed to upload metrics` line drops at every
 > interval. It is harmless (an observability failure does not bring the
 > application down) but an installation that wants to collect metrics too must
-> put an OpenTelemetry Collector in between.
+> put an OpenTelemetry Collector in between.~~ **Corrected on 2026-09-08 (ADR
+> 0046):** Jaeger still accepts traces only, but nothing offers it metrics any
+> more. The push exporter retired with that record, so that line can no longer
+> drop and no Collector has to stand in between to stop it. Metrics come from
+> `METRICS_ADDR` instead, on a listener that has nothing to do with this
+> address.
 
 ## Development
 

@@ -61,9 +61,10 @@ CREATE TABLE reviews (
     -- product_id is the SUBJECT: what the review is about.
     --
     -- It is a product and not a variant because the storefront can address a
-    -- product and cannot address a variant: /store/v1/products/{id} exists and
-    -- there is no store variant endpoint at all, so a variant-level review
-    -- would have no page to appear on.
+    -- product and cannot address a variant: a storefront product endpoint
+    -- exists (under the sales-channel prefix since ADR 0044) and there is no
+    -- store variant endpoint at all, so a variant-level review would have no
+    -- page to appear on.
     --
     -- It is another module's identifier and it is NOT validated here, and there
     -- is no foreign key: Principle 2.2 forbids one across a module boundary,

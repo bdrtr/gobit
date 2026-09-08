@@ -64,13 +64,14 @@
 // undone (writing totals is idempotent and staleness is a visible state
 // anyway), whereas being a saga step would load each of them with a pointless
 // compensation and execution-record cost. Besides, an error found during the
-// preparation (a variant without a price, a product without an inventory item)
-// returns without ANY side effect having been applied.
+// preparation (a variant without a price, a COUNTED product without an
+// inventory item) returns without ANY side effect having been applied.
 //
 // # Step-by-step decisions
 //
-// reserve_inventory — for every line of the cart the location is determined
-// first, then the stock is reserved; its compensation is ReleaseReservation and
+// reserve_inventory — for every RESERVED line of the cart the location is
+// determined first, then the stock is reserved (which lines are not reserved is
+// under "Two catalog flags"); its compensation is ReleaseReservation and
 // it is IDEMPOTENT. The step is composite in itself: if one line blows up it
 // releases the reservations taken up to that moment ITSELF, because the engine
 // does not compensate a step that blew up on its single attempt (see the
@@ -127,6 +128,41 @@
 // that moment are released by the step's OWN cleanup — in a multi-warehouse
 // cart this is a situation that arises more easily than in a single-warehouse
 // one.
+//
+// # Two catalog flags decide whether a line is reserved at all (ADR 0048)
+//
+// The variant read that copies the title also carries manage_inventory and
+// allow_backorder (see [Workflows.variantTitles]), and each of them answers one
+// question the saga used to answer by itself:
+//
+//   - manage_inventory false — the merchant does not count this variant. The
+//     line needs NO inventory link and takes NO reservation. Until the flag was
+//     read here the preparation refused such a variant outright
+//     ([CodeVariantNotStocked]) while ADR 0040's storefront answer badged it in
+//     stock: the shop advertised a thing its own checkout would not sell. The
+//     flag decides, not the link — a variant that stopped being counted keeps
+//     whatever inventory link it had, and reserving against that link would set
+//     aside stock the merchant asked nobody to count.
+//   - allow_backorder true — a line NO warehouse can cover does not refuse the
+//     order. Stock that exists is still reserved; only the refusal is lifted,
+//     and only for errors.Conflict, the class that means "not enough stock". It
+//     does not take a level negative and it promises no date: the inventory
+//     module has neither, and pre-order is a decision of its own. A counted
+//     variant with no inventory link at all is the same answer reached without
+//     asking: nothing counts its stock, so no warehouse can ever cover it, and
+//     the preparation lets it through with no item rather than refusing the
+//     order. That is ADR 0040's second in-stock clause, which the badge already
+//     spends and the till now reads too.
+//
+// The consequence for an operator is that a line with no reservation is now a
+// LEGITIMATE state rather than evidence of a fault. [reservationRef] exists so
+// that the "which warehouse" question can be answered by hand; for a line the
+// merchant asked not to count, or one that is being backordered, there is no
+// answer and there should not be. WHICH lines those were is in the record all
+// the same — the step names them under [reserveOutput.Unreserved], so that the
+// recovery path can tell a legitimately empty reservation list from one whose
+// identifiers went missing, and an operator can see which line went out with no
+// stock behind it. The backordered case is logged at INFO on top of that.
 //
 // # THE FULL PAYMENT RULE
 //

@@ -251,6 +251,15 @@ func (s *Service) DeletePriceSet(ctx context.Context, id string) error {
 // deleted. The write is atomic — if one of the inputs is rejected by the
 // database none of them is written and the container keeps its old prices.
 //
+// "Deleted" means gone, and the caller should read it that way (ADR 0047). A
+// replaced price used to be stamped and left in the table, which looked like a
+// price history and was not one: nothing read it, no index contained it, and
+// the row that was superseded shared no identity with the row that replaced it.
+// The consequence a caller has to accept is that a mistaken bulk call cannot be
+// undone from the table — what a customer was actually CHARGED is recorded on
+// the cart and the order line, and a price timeline, if a shop ever wants one,
+// is a record built on purpose rather than the residue of a replace.
+//
 // An empty slice is a valid request and removes all of the container's prices.
 func (s *Service) SetPrices(ctx context.Context, priceSetID string, prices []PriceInput) ([]models.Price, error) {
 	if err := s.ready(); err != nil {

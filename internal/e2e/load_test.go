@@ -121,7 +121,8 @@ func TestStaysCorrectUnderBaselineLoad(t *testing.T) {
 	concurrency := envInt(t, "GOBIT_LOAD_CONCURRENCY", defaultConcurrency)
 	require.Positive(t, concurrency, "concurrency must be positive")
 
-	loadKey := seedLoadCatalog(t)
+	loadKey, loadChannelID := seedLoadCatalog(t)
+	listPath := loadListPath(loadChannelID)
 
 	var (
 		mu          sync.Mutex
@@ -148,7 +149,7 @@ func TestStaysCorrectUnderBaselineLoad(t *testing.T) {
 			defer wg.Done()
 
 			for range jobs {
-				request := httptest.NewRequest(http.MethodGet, loadListPath, http.NoBody)
+				request := httptest.NewRequest(http.MethodGet, listPath, http.NoBody)
 				request.Header.Set(corehttp.PublishableKeyHeader, loadKey)
 
 				recorder := httptest.NewRecorder()
@@ -196,10 +197,20 @@ func TestStaysCorrectUnderBaselineLoad(t *testing.T) {
 }
 
 // loadListPath is the endpoint the load is aimed at.
-var loadListPath = "/store/v1/products?limit=" + strconv.Itoa(loadPageSize)
+//
+// It became a function when the sales channel moved into the path (ADR 0044):
+// the address now names the channel this test mints for itself, so it cannot be
+// a package-level constant computed before the fixture exists.
+func loadListPath(channelID string) string {
+	return "/store/v1/sales-channels/" + channelID + "/products?limit=" + strconv.Itoa(loadPageSize)
+}
 
 // seedLoadCatalog builds the catalog this test measures over and returns the
-// publishable key that can see it.
+// publishable key that can see it, together with the sales channel it is bound
+// to.
+//
+// The channel is returned as well because the storefront address names it
+// (ADR 0044): a key alone is no longer enough to build the URL under load.
 //
 // The generator is the same one `gobit seed` rebuilds the measurement rig with,
 // at a much smaller size. That sharing is worth more than the fixture: the
@@ -208,7 +219,7 @@ var loadListPath = "/store/v1/products?limit=" + strconv.Itoa(loadPageSize)
 // on every integration run. A column the seeder names that a migration renamed
 // fails HERE, on the commit that renamed it, instead of a year later in front
 // of whoever next tried to rebuild the rig.
-func seedLoadCatalog(t *testing.T) string {
+func seedLoadCatalog(t *testing.T) (key, channelID string) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -219,7 +230,9 @@ func seedLoadCatalog(t *testing.T) string {
 	})
 	require.NoError(t, err, "the load test's sales channel could not be created")
 
-	_, key, err := authSvc.CreateAPIKey(ctx, authsvc.CreateAPIKeyInput{
+	channelID = channel.ID
+
+	_, key, err = authSvc.CreateAPIKey(ctx, authsvc.CreateAPIKeyInput{
 		Type:            authmodels.APIKeyPublishable,
 		Title:           "e2e load key",
 		CreatedBy:       adminID,
@@ -243,14 +256,14 @@ func seedLoadCatalog(t *testing.T) string {
 	// The claim is checked THROUGH THE STOREFRONT and not against the table: a
 	// row that exists but is not visible in this channel would satisfy a count
 	// over product and still leave the load measuring an empty page.
-	catalog := storefrontCatalog(t, key, url.Values{"limit": {strconv.Itoa(loadPageSize)}})
+	catalog := storefrontCatalog(t, key, channelID, url.Values{"limit": {strconv.Itoa(loadPageSize)}})
 	require.Len(t, catalog.Data, loadPageSize,
 		"the first page must be FULL; a shorter page means the load would be measured "+
 			"over fewer products than were seeded")
 	require.GreaterOrEqual(t, catalog.Count, spec.SingleVariantProducts+spec.MultiVariantProducts,
 		"the storefront must count at least every product seeded into this channel")
 
-	return key
+	return key, channelID
 }
 
 // percentile returns the given percentile from a SORTED slice of durations.

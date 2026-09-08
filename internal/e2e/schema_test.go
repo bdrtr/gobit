@@ -819,7 +819,8 @@ func TestLoginEndpointIsExplicitlyUnsecuredInSchema(t *testing.T) {
 	assert.Equal(t, []any{map[string]any{"bearerAuth": []any{}}}, admin["security"],
 		"the admin endpoint must ask for a session token")
 
-	store := findOperation(t, doc, http.MethodGet, "/store/v1/products")
+	store := findOperation(t, doc, http.MethodGet,
+		"/store/v1/sales-channels/{sales_channel_id}/products")
 	assert.Equal(t, []any{map[string]any{"publishableKey": []any{}}}, store["security"],
 		"the storefront endpoint must ask for a publishable key")
 }

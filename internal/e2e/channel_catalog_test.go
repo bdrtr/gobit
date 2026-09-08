@@ -27,17 +27,28 @@ import (
 // This file proves, with the REAL stack, that the product ↔ sales channel bond
 // is reflected in the storefront:
 //
-//	The same store endpoint, called with two different publishable keys,
-//	returns two DIFFERENT catalogs.
+//	Two storefront ADDRESSES return two DIFFERENT catalogs, and a key may
+//	only read the addresses of the channels it holds.
+//
+// # What ADR 0044 changed about this file's subject
+//
+// The sentence used to be "the same store endpoint, called with two different
+// publishable keys, returns two different catalogs". That is now the OPPOSITE of
+// what the storefront promises: the channel is a path segment, so one URL has
+// one body and two keys on one channel get the same bytes
+// ([TestTwoKeysOnOneChannelReceiveByteIdenticalBodies]). The catalog still
+// differs per storefront and the key still decides what may be read — what moved
+// is which of the two the URL carries.
 //
 // # Why it goes through HTTP
 //
 // The claim itself is not a service claim. For the filter to work correctly
 // three separate layers have to line up: auth has to resolve the key's channel,
 // the core's protection stack has to put it into the context, and the product
-// handler has to read the channel from that identity and NOT from the QUERY
-// STRING. A test that called the service directly would stay green even if the
-// handler never read the channel at all — the filter would then NEVER run in
+// handler has to intersect the channel in the PATH with that identity — never
+// reading it from the QUERY STRING and never taking the path's word for it. A
+// test that called the service directly would stay green even if the handler
+// never made that decision at all — the filter would then NEVER run in
 // production, but the module tests could not see it.
 //
 // # Why a second key
@@ -88,6 +99,27 @@ type channelCatalog struct {
 	secondChannelID string
 	// ikinciAnahtar is the publishable key bound ONLY to the second channel.
 	ikinciAnahtar string
+	// siblingKey is a SECOND publishable key bound to the same channel as
+	// [channelCatalog.ikinciAnahtar].
+	//
+	// It exists for the claim ADR 0044 turns on: with the channel in the URL the
+	// body is a function of the channel ALONE, so two different keys authorized
+	// for one channel have to receive byte-identical bodies. Without a second key
+	// on one channel that sentence cannot be tested at all — every other key in
+	// this package is the only one on its channel, so "the bodies match" would be
+	// true of a single key compared with itself.
+	//
+	// The schema permits it: api_key_sales_channel is many-to-many and carries an
+	// index built for the reverse direction, whose comment anticipates listing
+	// the keys bound to one channel.
+	siblingKey string
+	// unionKey is a publishable key bound to BOTH channels.
+	//
+	// Every other fixture key in this package holds exactly one channel, which
+	// makes them unable to see the difference between "the scope is the path" and
+	// "the scope is whatever the key holds" — for a single-channel key those two
+	// produce the same answer. This one separates them.
+	unionKey string
 	// koleksiyonID is the collection all three products belong to.
 	koleksiyonID string
 	// firstChannelProduct is assigned to the shared fixture channel only.
@@ -180,6 +212,27 @@ func setUpChannelCatalog(ctx context.Context) (channelCatalog, error) {
 		SalesChannelIDs: []string{channel.ID},
 	}); err != nil {
 		return ground, fmt.Errorf("the second publishable key could not be set up: %w", err)
+	}
+
+	if _, ground.siblingKey, err = authSvc.CreateAPIKey(ctx, authsvc.CreateAPIKeyInput{
+		Type:      models.APIKeyPublishable,
+		Title:     "e2e sibling publishable key",
+		CreatedBy: adminID,
+		// The SAME single channel as the key above, and nothing else. Any
+		// difference in the two key records other than the key itself would
+		// weaken the byte-identity claim.
+		SalesChannelIDs: []string{channel.ID},
+	}); err != nil {
+		return ground, fmt.Errorf("the sibling publishable key could not be set up: %w", err)
+	}
+
+	if _, ground.unionKey, err = authSvc.CreateAPIKey(ctx, authsvc.CreateAPIKeyInput{
+		Type:            models.APIKeyPublishable,
+		Title:           "e2e two-channel publishable key",
+		CreatedBy:       adminID,
+		SalesChannelIDs: []string{testChannelID, channel.ID},
+	}); err != nil {
+		return ground, fmt.Errorf("the two-channel publishable key could not be set up: %w", err)
 	}
 
 	collection, err := productSvc.CreateCollection(ctx, productsvc.CreateCollectionInput{
@@ -333,13 +386,40 @@ func (e storefrontEnvelope) kimlikler() []string {
 	return out
 }
 
-// storefrontCatalog calls the store list with the given publishable key.
-func storefrontCatalog(t *testing.T, key string, query url.Values) storefrontEnvelope {
+// catalogPath builds a channel-scoped storefront address.
+//
+// The channel is a PATH SEGMENT on the three catalog reads (ADR 0044), so every
+// storefront call in this package names the channel it is reading. The pattern
+// is written out here once rather than imported from the product module: the
+// module binds its route and its OpenAPI description to one constant, and a test
+// that imported that constant could not report a typo in it.
+//
+// suffix is what follows the channel — "/products", "/products/tisort",
+// "/option-values" — and carries its own leading slash so the call sites read
+// like the addresses they produce.
+func catalogPath(channelID, suffix string) string {
+	return "/store/v1/sales-channels/" + channelID + suffix
+}
+
+// storefrontCatalog calls the store list of one channel with the given key.
+//
+// The key and the channel are two SEPARATE arguments and that is the shape of
+// the decision this file proves: the path says which storefront is being read
+// and the key says whether it may be. Passing one and deriving the other would
+// make it impossible to write the test where they disagree.
+func storefrontCatalog(t *testing.T, key, channelID string, query url.Values) storefrontEnvelope {
 	t.Helper()
 
-	recorder := magazaIstegi(t, "/store/v1/products?"+query.Encode(), key)
+	recorder := magazaIstegi(t, catalogPath(channelID, "/products")+"?"+query.Encode(), key)
 	require.Equal(t, http.StatusOK, recorder.Code,
 		"the store list must return 200; body: %s", recorder.Body.String())
+
+	return decodeStorefrontEnvelope(t, recorder)
+}
+
+// decodeStorefrontEnvelope reads a store list response.
+func decodeStorefrontEnvelope(t *testing.T, recorder *httptest.ResponseRecorder) storefrontEnvelope {
+	t.Helper()
 
 	var envelope storefrontEnvelope
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope),
@@ -364,7 +444,7 @@ func TestTheStorefrontCatalogIsFilteredByTheRequestsSalesChannel(t *testing.T) {
 	ground := channelCatalogFixture(t)
 	query := koleksiyonSorgusu(ground.koleksiyonID)
 
-	first := storefrontCatalog(t, publishableKey, query).kimlikler()
+	first := storefrontCatalog(t, publishableKey, testChannelID, query).kimlikler()
 	assert.ElementsMatch(t,
 		[]string{ground.firstChannelProduct.id, ground.unassignedProduct.id}, first,
 		"the first storefront must see its own product and the UNASSIGNED product")
@@ -372,7 +452,7 @@ func TestTheStorefrontCatalogIsFilteredByTheRequestsSalesChannel(t *testing.T) {
 		"a product assigned to another channel MUST NOT be visible in this storefront; "+
 			"if it is, the filter is not looking at the request's identity at all")
 
-	second := storefrontCatalog(t, ground.ikinciAnahtar, query).kimlikler()
+	second := storefrontCatalog(t, ground.ikinciAnahtar, ground.secondChannelID, query).kimlikler()
 	assert.ElementsMatch(t,
 		[]string{ground.secondChannelProduct.id, ground.unassignedProduct.id}, second,
 		"the second storefront must see its own product and the UNASSIGNED product")
@@ -399,13 +479,13 @@ func TestTheStorefrontCounterReflectsTheFilteredSet(t *testing.T) {
 	ground := channelCatalogFixture(t)
 	query := koleksiyonSorgusu(ground.koleksiyonID)
 
-	first := storefrontCatalog(t, publishableKey, query)
+	first := storefrontCatalog(t, publishableKey, testChannelID, query)
 	assert.Equal(t, 2, first.Count,
 		"the counter must count the filtered set; number of body rows: %d", len(first.Data))
 	assert.Len(t, first.Data, first.Count,
 		"in a result that fits on a single page the counter and the row count must not diverge")
 
-	second := storefrontCatalog(t, ground.ikinciAnahtar, query)
+	second := storefrontCatalog(t, ground.ikinciAnahtar, ground.secondChannelID, query)
 	assert.Equal(t, 2, second.Count)
 	assert.Len(t, second.Data, second.Count)
 
@@ -451,35 +531,36 @@ func TestTheSingleProductStorefrontEndpointIsFilteredToo(t *testing.T) {
 
 	cases := map[string]struct {
 		key      string
+		channel  string
 		address  string
 		expected int
 	}{
 		"a foreign channel's product by identity": {
-			publishableKey, ground.secondChannelProduct.id, http.StatusNotFound,
+			publishableKey, testChannelID, ground.secondChannelProduct.id, http.StatusNotFound,
 		},
 		"a foreign channel's product by handle": {
-			publishableKey, ground.secondChannelProduct.handle, http.StatusNotFound,
+			publishableKey, testChannelID, ground.secondChannelProduct.handle, http.StatusNotFound,
 		},
 		"its own channel's product": {
-			publishableKey, ground.firstChannelProduct.id, http.StatusOK,
+			publishableKey, testChannelID, ground.firstChannelProduct.id, http.StatusOK,
 		},
 		"the unassigned product in the first storefront": {
-			publishableKey, ground.unassignedProduct.handle, http.StatusOK,
+			publishableKey, testChannelID, ground.unassignedProduct.handle, http.StatusOK,
 		},
 		"the hidden product in its own storefront": {
-			ground.ikinciAnahtar, ground.secondChannelProduct.id, http.StatusOK,
+			ground.ikinciAnahtar, ground.secondChannelID, ground.secondChannelProduct.id, http.StatusOK,
 		},
 		"the first channel's product in the second storefront": {
-			ground.ikinciAnahtar, ground.firstChannelProduct.handle, http.StatusNotFound,
+			ground.ikinciAnahtar, ground.secondChannelID, ground.firstChannelProduct.handle, http.StatusNotFound,
 		},
 		"the unassigned product in the second storefront": {
-			ground.ikinciAnahtar, ground.unassignedProduct.id, http.StatusOK,
+			ground.ikinciAnahtar, ground.secondChannelID, ground.unassignedProduct.id, http.StatusOK,
 		},
 	}
 
 	for name, tt := range cases {
 		t.Run(name, func(t *testing.T) {
-			recorder := magazaIstegi(t, "/store/v1/products/"+tt.address, tt.key)
+			recorder := magazaIstegi(t, catalogPath(tt.channel, "/products/"+tt.address), tt.key)
 
 			assert.Equal(t, tt.expected, recorder.Code,
 				"the single-product storefront endpoint must return the expected code; body: %s", recorder.Body.String())
@@ -502,8 +583,10 @@ func TestTheSingleProductStorefrontEndpointIsFilteredToo(t *testing.T) {
 func TestAHiddenProductDoesNotRevealItselfViaTheErrorCode(t *testing.T) {
 	ground := channelCatalogFixture(t)
 
-	hidden := magazaIstegi(t, "/store/v1/products/"+ground.secondChannelProduct.handle, publishableKey)
-	missing := magazaIstegi(t, "/store/v1/products/e2e-no-such-product-exists", publishableKey)
+	hidden := magazaIstegi(t,
+		catalogPath(testChannelID, "/products/"+ground.secondChannelProduct.handle), publishableKey)
+	missing := magazaIstegi(t,
+		catalogPath(testChannelID, "/products/e2e-no-such-product-exists"), publishableKey)
 
 	require.Equal(t, http.StatusNotFound, hidden.Code, "body: %s", hidden.Body.String())
 	require.Equal(t, http.StatusNotFound, missing.Code, "body: %s", missing.Body.String())
@@ -521,13 +604,20 @@ func TestAHiddenProductDoesNotRevealItselfViaTheErrorCode(t *testing.T) {
 // catalog just by writing the channel identity. The claim exists in the
 // handler's unit test too, but there the identity is put in place by the test
 // itself; here it is put there by the protection stack that runs in production.
+//
+// ADR 0044 gave the channel a live input in the PATH and this claim survived the
+// move on purpose. The query parameter is the one input three godocs promise is
+// dead, and a second live spelling of the same scope would mean two answers to
+// "which channel is this" with no rule saying which wins. The request below
+// names the key's own channel in the path and a foreign one in the query, so the
+// two disagree and only one of them may be honored.
 func TestTheStorefrontDoesNotTakeTheChannelFromTheQueryString(t *testing.T) {
 	ground := channelCatalogFixture(t)
 
 	query := koleksiyonSorgusu(ground.koleksiyonID)
 	query.Set("sales_channel_id", ground.secondChannelID)
 
-	catalog := storefrontCatalog(t, publishableKey, query)
+	catalog := storefrontCatalog(t, publishableKey, testChannelID, query)
 
 	assert.NotContains(t, catalog.kimlikler(), ground.secondChannelProduct.id,
 		"the channel identity in the query string MUST BE IGNORED; if it is not, the key's "+
@@ -565,9 +655,10 @@ func TestRemovingTheLastChannelBondShowsTheProductInEveryStorefront(t *testing.T
 	require.NoError(t, bindChannel(product.id, ground.secondChannelID))
 
 	query := koleksiyonSorgusu(collection.ID)
-	require.Empty(t, storefrontCatalog(t, publishableKey, query).kimlikler(),
+	require.Empty(t, storefrontCatalog(t, publishableKey, testChannelID, query).kimlikler(),
 		"at first the product must be in the second storefront only")
-	require.Equal(t, []string{product.id}, storefrontCatalog(t, ground.ikinciAnahtar, query).kimlikler())
+	require.Equal(t, []string{product.id},
+		storefrontCatalog(t, ground.ikinciAnahtar, ground.secondChannelID, query).kimlikler())
 
 	recorder, err := adminRequestWithBody(http.MethodDelete,
 		"/admin/v1/products/"+product.id+"/sales-channels/"+ground.secondChannelID, nil)
@@ -579,8 +670,153 @@ func TestRemovingTheLastChannelBondShowsTheProductInEveryStorefront(t *testing.T
 	require.NoError(t, err)
 	require.Empty(t, remaining, "after the last bond is removed the channel list must become empty")
 
-	assert.Equal(t, []string{product.id}, storefrontCatalog(t, publishableKey, query).kimlikler(),
+	assert.Equal(t, []string{product.id},
+		storefrontCatalog(t, publishableKey, testChannelID, query).kimlikler(),
 		"a product left with no assignment must be visible in the FIRST storefront too")
-	assert.Equal(t, []string{product.id}, storefrontCatalog(t, ground.ikinciAnahtar, query).kimlikler(),
+	assert.Equal(t, []string{product.id},
+		storefrontCatalog(t, ground.ikinciAnahtar, ground.secondChannelID, query).kimlikler(),
 		"a product left with no assignment must keep being visible in its own old storefront too")
+}
+
+// TestTwoKeysOnOneChannelReceiveByteIdenticalBodies is the claim ADR 0044 was
+// written to make true, and it is the one a careless build of that record gets
+// wrong.
+//
+// # Why byte-identity and not "the same products"
+//
+// The decision's whole purpose is a cache key a shared cache can SEE. A CDN keys
+// on the URL with nothing configured, so if one URL can still produce two
+// different bodies, a cache in front of the origin serves whichever it stored
+// first to everyone who asks afterwards. "The same set of products" is not
+// enough for that: a body that differed in ORDER, in a counter, or in one
+// enriched field would pass a set comparison and would still be the wrong bytes
+// to hand a second key. The comparison is therefore over the raw response body.
+//
+// # Why it needs a key nothing else in this package has
+//
+// Every other publishable key here is the only one bound to its channel, so
+// comparing two of them compares two channels and proves nothing about the key
+// degrading to a gate. [channelCatalog.siblingKey] exists for exactly this: a
+// second key on the SAME channel, which the schema permits and which is what a
+// key rotation produces for real.
+func TestTwoKeysOnOneChannelReceiveByteIdenticalBodies(t *testing.T) {
+	ground := channelCatalogFixture(t)
+
+	address := catalogPath(ground.secondChannelID, "/products") +
+		"?" + koleksiyonSorgusu(ground.koleksiyonID).Encode()
+
+	first := magazaIstegi(t, address, ground.ikinciAnahtar)
+	second := magazaIstegi(t, address, ground.siblingKey)
+
+	require.Equal(t, http.StatusOK, first.Code, "body: %s", first.Body.String())
+	require.Equal(t, http.StatusOK, second.Code, "body: %s", second.Body.String())
+
+	assert.Equal(t, first.Body.String(), second.Body.String(),
+		"one URL has to produce ONE body: two keys authorized for the same channel must "+
+			"receive the same bytes, or the URL is not the cache key this decision claims "+
+			"it is and a shared cache serves one caller's response to another")
+
+	// The bodies being identical is only worth something if they carry the
+	// channel's actual catalog; two empty responses would match as well.
+	envelope := decodeStorefrontEnvelope(t, first)
+	assert.ElementsMatch(t,
+		[]string{ground.secondChannelProduct.id, ground.unassignedProduct.id},
+		envelope.kimlikler(),
+		"the identical bodies have to be the second storefront's real catalog")
+}
+
+// TestTheCatalogPathNarrowsAndNeverBroadens verifies the safety half of
+// ADR 0044 through the REAL guard stack.
+//
+// The path is where the client writes its CLAIM and the key is what turns that
+// claim into evidence (ADR 0008). This is the test that would go red if the
+// narrowing were ever dropped, and dropping it is easy to do while every other
+// test in this file stays green: with a single-channel key, "scope to the path"
+// and "scope to whatever the key holds" give the same answer everywhere except
+// here.
+//
+// It is checked in both directions, because only the pair says the reason is the
+// key: the SAME address that is refused to the first storefront's key is served
+// to the key that holds that channel.
+func TestTheCatalogPathNarrowsAndNeverBroadens(t *testing.T) {
+	ground := channelCatalogFixture(t)
+
+	query := koleksiyonSorgusu(ground.koleksiyonID)
+	foreign := catalogPath(ground.secondChannelID, "/products") + "?" + query.Encode()
+
+	refused := magazaIstegi(t, foreign, publishableKey)
+	assert.Equal(t, http.StatusForbidden, refused.Code,
+		"a key must not reach a channel it is not bound to by naming it in the path; "+
+			"if this is served, the segment is the query-string mistake with a different "+
+			"spelling. body: %s", refused.Body.String())
+	assert.NotContains(t, refused.Body.String(), ground.secondChannelProduct.id,
+		"the refusal must not carry the catalog it refused")
+
+	served := magazaIstegi(t, foreign, ground.ikinciAnahtar)
+	require.Equal(t, http.StatusOK, served.Code,
+		"the same address must be served to the key that holds the channel; body: %s",
+		served.Body.String())
+	assert.ElementsMatch(t,
+		[]string{ground.secondChannelProduct.id, ground.unassignedProduct.id},
+		decodeStorefrontEnvelope(t, served).kimlikler())
+}
+
+// TestAllThreeChannelScopedReadsRefuseAForeignChannel verifies that the rule is
+// on every read that carries the segment, not only on the listing.
+//
+// Two of the three are the ones an omission would be quietest on: the single
+// product is the easiest address to guess because storefront URLs carry handles,
+// and the option vocabulary names the colors and sizes of the very products the
+// listing refuses to show.
+func TestAllThreeChannelScopedReadsRefuseAForeignChannel(t *testing.T) {
+	ground := channelCatalogFixture(t)
+
+	addresses := map[string]string{
+		"the listing":           "/products",
+		"the single product":    "/products/" + ground.secondChannelProduct.handle,
+		"the option vocabulary": "/option-values",
+	}
+
+	for name, suffix := range addresses {
+		t.Run(name, func(t *testing.T) {
+			recorder := magazaIstegi(t, catalogPath(ground.secondChannelID, suffix), publishableKey)
+
+			assert.Equal(t, http.StatusForbidden, recorder.Code,
+				"%s has to refuse a channel the key does not hold; body: %s",
+				name, recorder.Body.String())
+		})
+	}
+}
+
+// TestAMultiChannelKeyReadsOneChannelPerRequest verifies the capability this
+// decision REMOVED, and verifies it as a behavior rather than as a regret.
+//
+// A key bound to two channels used to see both catalogs merged into one
+// response. It does not any more: the path names one channel and the answer is
+// that channel's. The union is now the client's job, two requests instead of
+// one, and the trade is what buys the cache key — a merged body would vary by
+// key again and one URL would stop determining one answer.
+//
+// The claim is made with a key that CAN reach both, so a refusal cannot be
+// mistaken for the narrowing under test: both requests succeed and it is their
+// CONTENTS that differ.
+func TestAMultiChannelKeyReadsOneChannelPerRequest(t *testing.T) {
+	ground := channelCatalogFixture(t)
+	query := koleksiyonSorgusu(ground.koleksiyonID)
+
+	first := storefrontCatalog(t, ground.unionKey, testChannelID, query)
+	second := storefrontCatalog(t, ground.unionKey, ground.secondChannelID, query)
+
+	assert.ElementsMatch(t,
+		[]string{ground.firstChannelProduct.id, ground.unassignedProduct.id}, first.kimlikler(),
+		"the first request has to answer with the FIRST channel's catalog only")
+	assert.ElementsMatch(t,
+		[]string{ground.secondChannelProduct.id, ground.unassignedProduct.id}, second.kimlikler(),
+		"the second request has to answer with the SECOND channel's catalog only")
+
+	assert.NotContains(t, first.kimlikler(), ground.secondChannelProduct.id,
+		"a two-channel key must NOT receive the union: a merged body varies with the key "+
+			"again, which is exactly what the channel segment exists to stop")
+	assert.Equal(t, 2, first.Count, "the counter has to count the path's channel, not the key's set")
+	assert.Equal(t, 2, second.Count)
 }

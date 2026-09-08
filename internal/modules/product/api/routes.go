@@ -66,19 +66,41 @@ const (
 // NO scope is ADDED to the store endpoints: the identity of /store/v1 is the
 // publishable key and that key by definition CARRIES NO scope. Putting a scope
 // there would be putting a condition no store client could ever satisfy.
+//
+// That does not mean the storefront makes no authorization decision. Since
+// ADR 0044 the three channel-scoped catalog reads take a sales channel from the
+// PATH and refuse a channel the request's key does not hold, so those three can
+// answer 403. The check is in the handler rather than in a middleware because
+// the answer depends on the key's channel set and not on the route, and because
+// a middleware would have to know which routes carry the segment — a second
+// list beside this one.
 func (h *Handler) Routes(r chi.Router) {
 	read := r.With(corehttp.RequireScope(ScopeRead))
 	write := r.With(corehttp.RequireScope(ScopeWrite))
 
 	// --- Store API (customer) ---
-	r.Get("/store/v1/products", h.storeListProducts)
-	r.Get("/store/v1/products/{id}", h.storeGetProduct)
+	//
+	// The three CHANNEL-SCOPED reads carry the sales channel as a path segment
+	// (ADR 0044). The channel used to arrive in a request header, which left a
+	// shared cache with no key it could see: one URL, one answer per key. Now
+	// the body is a function of the channel alone and the URL is the cache key.
+	// The paths are constants because each is written here and in [Describe]
+	// and the two must not drift; see [pathStoreProducts].
+	r.Get(pathStoreProducts, h.storeListProducts)
+	r.Get(pathStoreProduct, h.storeGetProduct)
+	r.Get(pathStoreOptionValues, h.storeListOptionValues)
+
 	// The vocabulary a storefront needs to use the catalog filters: it has the
 	// word a shopper clicked, and the listing takes an id.
+	//
+	// These three stay at their unscoped URLs, and the storefront's addresses
+	// are not uniform as a result. The reason is written where a reader meets
+	// it (see the vocabulary block in store.go): they are not channel-scoped
+	// today, so a channel segment on them would name a distinction their bodies
+	// do not have.
 	r.Get("/store/v1/collections", h.storeListCollections)
 	r.Get("/store/v1/categories", h.storeListCategories)
 	r.Get("/store/v1/tags", h.storeListTags)
-	r.Get("/store/v1/option-values", h.storeListOptionValues)
 
 	// The GraphQL storefront read surface. ONLY POST is registered; for why GET
 	// is not opened see [graph.NewHandler]. The path sitting under /store/v1

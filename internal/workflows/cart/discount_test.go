@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/query"
 )
 
 // twoLineCart produces a two-line snapshot (A: 2 units, B: 3 units).
@@ -98,6 +99,7 @@ func TestCalculateTotalsDiscountZeroWhenPromotionUnregistered(t *testing.T) {
 // left untested, shows up in production as a cart with no discount.
 func TestCalculateTotalsDiscountRequestShape(t *testing.T) {
 	h := newModuleHarness(t)
+	installProductCatalog(h, defaultProductFlags())
 	serveSnapshot(h.carts, twoLineCart(1))
 
 	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
@@ -109,10 +111,14 @@ func TestCalculateTotalsDiscountRequestShape(t *testing.T) {
 	assert.Equal(t, map[string]string{attrRegionID: testRegionID}, req.Context)
 	require.Len(t, req.Items, 2)
 	assert.Equal(t, discountRequestItem{
-		ID:         testLineA,
-		Amount:     2000,
-		Quantity:   2,
-		Attributes: map[string]string{attrVariantID: testVariantA},
+		ID:       testLineA,
+		Amount:   2000,
+		Quantity: 2,
+		Attributes: map[string]string{
+			attrVariantID:    testVariantA,
+			attrIsGiftcard:   "false",
+			attrDiscountable: "true",
+		},
 	}, req.Items[0], "the item amount is the PRE-DISCOUNT subtotal and the quantity is carried for tiering")
 	assert.Equal(t, testLineB, req.Items[1].ID, "the order is the cart's order")
 }
@@ -322,4 +328,257 @@ func TestCalculateTotalsDiscountCatchesOverflow(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, CodeAmountOverflow, errors.CodeOf(err))
 	assert.Zero(t, h.taxes.calls, "an overflowing cart must not be sent to the tax module")
+}
+
+// The tests below cover the PRODUCT PAIR: is_giftcard and discountable, the two
+// catalog flags ADR 0048 gave a reader by putting them into the discount
+// request as line attributes.
+//
+// What they prove is that the KEYS reach the engine with the right values on
+// the right lines. What decides a discount is a promotion_rule record a merchant
+// writes ("is_giftcard ne true"), and the matching itself belongs to the
+// promotion module and is tested there; re-implementing matchRule in a fake
+// here would exercise a second copy of a rule that can drift from the real one.
+
+// productCatalog answers the PRODUCT entity and delegates everything else to the
+// catalog fake the shared harness builds.
+//
+// It is a separate fake rather than a branch inside the shared one because the
+// product entity has exactly one reader in this package — the discount leg — and
+// the tests of the two entities want to script different failures.
+type productCatalog struct {
+	*stubCatalog
+
+	// flags is a product -> flags mapping; a product missing from it is a
+	// product the catalog does not answer about.
+	flags map[string]productFlags
+	// records, when given, produces the answer entirely; it is there for the
+	// out-of-contract record scenarios.
+	records func(ids []string) []query.Record
+	// err, when given, makes the PRODUCT read fail with this error while the
+	// variant and region reads keep working.
+	err error
+	// asked holds, in order, the product id lists the reads carried.
+	asked [][]string
+}
+
+// Graph answers a product read and delegates the rest.
+func (c *productCatalog) Graph(ctx context.Context, spec query.GraphSpec) ([]query.Record, error) {
+	if spec.Entity != EntityProduct {
+		return c.stubCatalog.Graph(ctx, spec)
+	}
+
+	ids, _ := spec.Filters[FilterIDs].([]string)
+	c.asked = append(c.asked, ids)
+	c.specs = append(c.specs, spec)
+
+	if c.err != nil {
+		return nil, c.err
+	}
+	if c.records != nil {
+		return c.records(ids), nil
+	}
+
+	out := make([]query.Record, 0, len(ids))
+	for _, id := range ids {
+		flag, known := c.flags[id]
+		if !known {
+			continue
+		}
+		out = append(out, query.Record{
+			query.IDField:    id,
+			attrIsGiftcard:   flag.IsGiftcard,
+			attrDiscountable: flag.Discountable,
+		})
+	}
+	return out, nil
+}
+
+// installProductCatalog puts a product-answering catalog in front of the
+// harness's own.
+func installProductCatalog(h *harness, flags map[string]productFlags) *productCatalog {
+	catalog := &productCatalog{stubCatalog: h.catalog, flags: flags}
+	h.wf.catalog = catalog
+	h.catalog = catalog.stubCatalog
+	return catalog
+}
+
+// defaultProductFlags is the state the product module's own defaults produce: an
+// ordinary product is DISCOUNTABLE and is NOT a gift card.
+//
+// Those defaults are pinned in the product module by
+// TestCreateProductDefaultsToDiscountableAndNotAGiftcard. Repeating them here
+// keeps the cart's tests speaking about the same catalog a real shop has.
+func defaultProductFlags() map[string]productFlags {
+	return map[string]productFlags{
+		testProductA: {Discountable: true},
+		testProductB: {Discountable: true},
+	}
+}
+
+// attributesByLine collects the attributes of a discount request by line id.
+func attributesByLine(req discountRequest) map[string]map[string]string {
+	out := make(map[string]map[string]string, len(req.Items))
+	for i := range req.Items {
+		out[req.Items[i].ID] = req.Items[i].Attributes
+	}
+	return out
+}
+
+// TestEachLineCarriesItsOwnProductFlags is the discriminating test of the
+// product pair.
+//
+// The two lines point at two products whose flags are OPPOSITE in both columns.
+// An implementation that read one product and copied its answer onto the cart,
+// or that sent a constant, passes every other test in this file and fails this
+// one.
+func TestEachLineCarriesItsOwnProductFlags(t *testing.T) {
+	h := newModuleHarness(t)
+	installProductCatalog(h, map[string]productFlags{
+		testProductA: {IsGiftcard: false, Discountable: true},
+		testProductB: {IsGiftcard: true, Discountable: false},
+	})
+	serveSnapshot(h.carts, twoLineCart(1))
+
+	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	require.Len(t, h.discounts.requests, 1)
+	attributes := attributesByLine(h.discounts.requests[0])
+	assert.Equal(t, map[string]string{
+		attrVariantID:    testVariantA,
+		attrIsGiftcard:   "false",
+		attrDiscountable: "true",
+	}, attributes[testLineA])
+	assert.Equal(t, map[string]string{
+		attrVariantID:    testVariantB,
+		attrIsGiftcard:   "true",
+		attrDiscountable: "false",
+	}, attributes[testLineB], "the gift card line must carry its OWN answer")
+}
+
+// TestAProductTheCatalogDoesNotAnswerLeavesTheLineWithoutFlags holds the
+// degradation of a single line.
+//
+// A variant that is invisible in the request's sales channels, or a product
+// deleted between two rounds, has no record to read. The line then carries no
+// flag keys at all, and the engine's own rule takes over: a promotion whose rule
+// names an attribute the line does not carry does not match it, so the line is
+// left OUT of that promotion. Sending "false" instead would be this package
+// answering a question it could not read.
+func TestAProductTheCatalogDoesNotAnswerLeavesTheLineWithoutFlags(t *testing.T) {
+	h := newModuleHarness(t)
+	installProductCatalog(h, map[string]productFlags{
+		testProductA: {Discountable: true},
+	})
+	serveSnapshot(h.carts, twoLineCart(1))
+
+	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err, "one unreadable product must not stop the cart from being priced")
+
+	attributes := attributesByLine(h.discounts.requests[0])
+	assert.Len(t, attributes[testLineA], 3, "the line that WAS answered keeps its flags")
+	assert.Equal(t, map[string]string{attrVariantID: testVariantB}, attributes[testLineB],
+		"an unanswered product means no flag keys, not made-up ones")
+	requireIdentity(t, totals)
+}
+
+// TestAFailedFlagReadDoesNotStopTheCart holds the degradation of the whole read.
+//
+// The direction is the one this package has already chosen twice: a cart that
+// cannot be priced stops the shop, whereas a cart priced without its flags
+// charges the ordinary price. The cost is real and ADR 0048 wrote it down — in a
+// shop whose promotions carry these rules NO line matches while the read is
+// broken, so the customer is overcharged rather than over-discounted, and the
+// customer says so.
+func TestAFailedFlagReadDoesNotStopTheCart(t *testing.T) {
+	h := newModuleHarness(t)
+	catalog := installProductCatalog(h, defaultProductFlags())
+	catalog.err = errors.Unavailable("query_unavailable", "the read layer is unreachable")
+	h.discounts.perLine = map[string]int64{testLineA: 100}
+	serveSnapshot(h.carts, twoLineCart(1))
+
+	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err, "a broken flag read must not stop the shop")
+
+	require.Len(t, h.discounts.requests, 1)
+	attributes := attributesByLine(h.discounts.requests[0])
+	assert.Equal(t, map[string]string{attrVariantID: testVariantA}, attributes[testLineA],
+		"no flags reach the engine, and none is invented")
+	assert.Equal(t, int64(100), totals.DiscountTotal, "the calculation carries on")
+	requireIdentity(t, totals)
+}
+
+// TestAFlagOfTheWrongTypeIsNotGuessed verifies that a record outside the
+// contract is skipped rather than read as false.
+//
+// The Query layer refuses a field its provider does not publish, so a renamed
+// column fails the read outright; a value of the WRONG TYPE is what can still
+// arrive. Reading it as false would make a gift card discountable on the
+// strength of a type error.
+func TestAFlagOfTheWrongTypeIsNotGuessed(t *testing.T) {
+	h := newModuleHarness(t)
+	catalog := installProductCatalog(h, defaultProductFlags())
+	catalog.records = func(ids []string) []query.Record {
+		out := make([]query.Record, 0, len(ids))
+		for _, id := range ids {
+			out = append(out, query.Record{
+				query.IDField:    id,
+				attrIsGiftcard:   "true",
+				attrDiscountable: true,
+			})
+		}
+		return out
+	}
+	serveSnapshot(h.carts, twoLineCart(1))
+
+	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	attributes := attributesByLine(h.discounts.requests[0])
+	assert.Equal(t, map[string]string{attrVariantID: testVariantA}, attributes[testLineA],
+		"a record that cannot be read carries NO flag, not a guessed one")
+}
+
+// TestTheFlagsAreNotReadWithoutAPromotionModule keeps the read off the carts
+// that would never look at it.
+//
+// An installation without the promotion module computes no discount at all, so
+// paying for a catalog read on every cart update would be a cost with no
+// consumer — the very shape ADR 0009 named as this repository's second class of
+// mistake.
+func TestTheFlagsAreNotReadWithoutAPromotionModule(t *testing.T) {
+	h := newHarnessWith(t, nil, newStubTaxes())
+	catalog := installProductCatalog(h, defaultProductFlags())
+	serveSnapshot(h.carts, twoLineCart(1))
+
+	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	assert.Empty(t, catalog.asked, "with no promotion module the products are not read for their flags")
+}
+
+// TestTwoLinesOfOneProductCostOneFlagRead keeps an N+1 off the totals path.
+//
+// The calculation runs on every cart update, so the flags are read for the WHOLE
+// cart in a single query and a product carrying two variants is asked for once.
+func TestTwoLinesOfOneProductCostOneFlagRead(t *testing.T) {
+	h := newModuleHarness(t)
+	h.catalog.products = map[string]string{
+		testVariantA: testProductA,
+		testVariantB: testProductA,
+	}
+	catalog := installProductCatalog(h, map[string]productFlags{testProductA: {IsGiftcard: true}})
+	serveSnapshot(h.carts, twoLineCart(1))
+
+	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	require.Len(t, catalog.asked, 1, "the flags of a two-line cart cost ONE query")
+	assert.Equal(t, []string{testProductA}, catalog.asked[0], "one product is asked for once")
+
+	attributes := attributesByLine(h.discounts.requests[0])
+	assert.Equal(t, "true", attributes[testLineA][attrIsGiftcard])
+	assert.Equal(t, "true", attributes[testLineB][attrIsGiftcard],
+		"both lines of one product carry the same answer")
 }

@@ -33,8 +33,13 @@ import (
 // publishable key in production. The only things product knows about auth are
 // the link name and the entity name.
 
-// storeChannelRequest makes a store request bound to the given sales
-// channels.
+// storeChannelRequest makes a store request whose KEY is bound to the given
+// sales channels.
+//
+// Since ADR 0044 the channel a catalog read is scoped to is in the TARGET, not
+// in the identity: the path names one channel and this set is only what decides
+// whether that name is honored. The two are separate arguments on purpose, so a
+// test can name a channel the key does not hold and see the refusal.
 //
 // In production corehttp.RequireStore puts the principal in place (with the
 // publishable key's channels); because this setup mounts the router directly,
@@ -158,11 +163,30 @@ func (f channelFixture) assign(t *testing.T, productID, channelID string) {
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 }
 
-// list reads the collection's storefront list with the given channels.
-func (f channelFixture) list(t *testing.T, channels []string) (handles []string, count int) {
+// storeCatalogPath is the address of a channel-scoped catalog read (ADR 0044).
+//
+// The path is written out rather than imported from the api package: the
+// constants there bind the route and the OpenAPI description to each other, and
+// a test that agreed with a typo by construction could not report it.
+func storeCatalogPath(channelID, suffix string) string {
+	return "/store/v1/sales-channels/" + channelID + "/products" + suffix
+}
+
+// listAs reads the collection's storefront listing AT the channel the path
+// names, with a key bound to keyChannels.
+func (f channelFixture) listAs(
+	t *testing.T, pathChannel string, keyChannels []string,
+) (handles []string, count int) {
 	t.Helper()
 	return storeListing(t, f.sys.storeChannelRequest(t,
-		"/store/v1/products?collection_id="+f.collectionID, channels))
+		storeCatalogPath(pathChannel, "?collection_id="+f.collectionID), keyChannels))
+}
+
+// list reads the collection's storefront listing in ONE channel with a key
+// bound to exactly that channel — the shape a single storefront really runs in.
+func (f channelFixture) list(t *testing.T, channel string) (handles []string, count int) {
+	t.Helper()
+	return f.listAs(t, channel, []string{channel})
 }
 
 // TestStoreListingShowsUnassignedProductInEveryChannel verifies the
@@ -173,10 +197,20 @@ func TestStoreListingShowsUnassignedProductInEveryChannel(t *testing.T) {
 	handle := uniqueHandle("unassigned")
 	fx.seedPublished(t, handle)
 
-	for _, channels := range [][]string{{fx.channelA}, {fx.channelB}, {fx.channelA, fx.channelB}} {
-		handles, count := fx.list(t, channels)
-		assert.Equal(t, []string{handle}, handles, "an unassigned product must show up in the %v channels", channels)
+	for _, channel := range []string{fx.channelA, fx.channelB} {
+		handles, count := fx.list(t, channel)
+		assert.Equal(t, []string{handle}, handles, "an unassigned product must show up in the %q channel", channel)
 		assert.Equal(t, 1, count, "the count must count the unassigned product too")
+
+		// The same address read with a key holding BOTH channels answers the
+		// same thing. Since ADR 0044 the body is a function of the channel in
+		// the URL alone: a key holding two channels reads them one request at a
+		// time and receives no union, which is what lets two keys share one
+		// cache entry.
+		handles, count = fx.listAs(t, channel, []string{fx.channelA, fx.channelB})
+		assert.Equal(t, []string{handle}, handles,
+			"the %q listing must not change with the key's other channels", channel)
+		assert.Equal(t, 1, count)
 	}
 }
 
@@ -192,11 +226,15 @@ func TestStoreListingHidesProductFromForeignChannel(t *testing.T) {
 	productID := fx.seedPublished(t, handle)
 	fx.assign(t, productID, fx.channelA)
 
-	handles, count := fx.list(t, []string{fx.channelA})
+	handles, count := fx.list(t, fx.channelA)
 	assert.Equal(t, []string{handle}, handles, "the product must show up in the channel it is assigned to")
 	assert.Equal(t, 1, count)
 
-	handles, count = fx.list(t, []string{fx.channelB})
+	// The key holds the channel the path names here too, so the empty answer is
+	// the CATALOG FILTER's and not the scope refusal's: a key that did not hold
+	// channelB would be turned away with a 403 before the query ran, and this
+	// test would prove nothing about the filter.
+	handles, count = fx.list(t, fx.channelB)
 	assert.Empty(t, handles, "the product MUST NOT SHOW UP in a channel it is not assigned to")
 	assert.Zero(t, count, "the count must not count the hidden product either")
 }
@@ -214,7 +252,7 @@ func TestStoreListingShowsProductInAllAssignedChannels(t *testing.T) {
 	fx.assign(t, productID, fx.channelB)
 
 	for _, channel := range []string{fx.channelA, fx.channelB} {
-		handles, count := fx.list(t, []string{channel})
+		handles, count := fx.list(t, channel)
 		assert.Equal(t, []string{handle}, handles, "it must show up in the %q channel", channel)
 		assert.Equal(t, 1, count)
 	}
@@ -260,8 +298,8 @@ func TestStoreListingFilterKeepsPagingConsistent(t *testing.T) {
 	const pageSize = 3
 	var collected []string
 	for offset := 0; offset < 6; offset += pageSize {
-		rec := fx.sys.storeChannelRequest(t, fmt.Sprintf(
-			"/store/v1/products?collection_id=%s&limit=%d&offset=%d", fx.collectionID, pageSize, offset),
+		rec := fx.sys.storeChannelRequest(t, storeCatalogPath(fx.channelA, fmt.Sprintf(
+			"?collection_id=%s&limit=%d&offset=%d", fx.collectionID, pageSize, offset)),
 			[]string{fx.channelA})
 		handles, count := storeListing(t, rec)
 
@@ -276,8 +314,8 @@ func TestStoreListingFilterKeepsPagingConsistent(t *testing.T) {
 		"the pages must carry all of the records the count promised, and only those")
 	// The first page must be FULL: had the elimination not been done in the
 	// database, the page would come back short by the number of filtered rows.
-	rec := fx.sys.storeChannelRequest(t, fmt.Sprintf(
-		"/store/v1/products?collection_id=%s&limit=%d&offset=0", fx.collectionID, pageSize),
+	rec := fx.sys.storeChannelRequest(t, storeCatalogPath(fx.channelA, fmt.Sprintf(
+		"?collection_id=%s&limit=%d&offset=0", fx.collectionID, pageSize)),
 		[]string{fx.channelA})
 	firstPage, _ := storeListing(t, rec)
 	assert.Len(t, firstPage, pageSize, "the first page must carry as many records as the requested page size")
@@ -290,29 +328,48 @@ func TestStoreListingFilterKeepsPagingConsistent(t *testing.T) {
 // hiding meaningless: storefront addresses carry the handle, so this is
 // precisely the endpoint that is guessable. In a foreign channel a product
 // returns the SAME error (404) as a product that is not published.
+//
+// The foreign-channel calls are made with a key that DOES hold the channel the
+// path names. That is what keeps the 404 the CATALOG's answer: since ADR 0044 a
+// key without that channel is refused with a 403 before the lookup runs, and
+// the test would then be measuring the scope check rather than the filter.
 func TestStoreSingleProductIsFilteredToo(t *testing.T) {
 	fx := newChannelFixture(t)
 	handle := uniqueHandle("single-channel")
 	productID := fx.seedPublished(t, handle)
 	fx.assign(t, productID, fx.channelA)
 
-	rec := fx.sys.storeChannelRequest(t, "/store/v1/products/"+handle, []string{fx.channelA})
+	rec := fx.sys.storeChannelRequest(t,
+		storeCatalogPath(fx.channelA, "/"+handle), []string{fx.channelA})
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	assert.Equal(t, productID, itemData(t, rec)["id"])
 
-	rec = fx.sys.storeChannelRequest(t, "/store/v1/products/"+handle, []string{fx.channelB})
+	rec = fx.sys.storeChannelRequest(t,
+		storeCatalogPath(fx.channelB, "/"+handle), []string{fx.channelB})
 	assert.Equal(t, http.StatusNotFound, rec.Code,
 		"the product must not be found in a foreign channel; body: %s", rec.Body.String())
 
-	rec = fx.sys.storeChannelRequest(t, "/store/v1/products/"+productID, []string{fx.channelB})
+	rec = fx.sys.storeChannelRequest(t,
+		storeCatalogPath(fx.channelB, "/"+productID), []string{fx.channelB})
 	assert.Equal(t, http.StatusNotFound, rec.Code,
 		"a call by ID must be filtered too; body: %s", rec.Body.String())
 }
 
-// TestStoreListingWithEmptyChannelSetShowsOnlyUnassigned pins the defensive
-// behavior of a principal without channels in real SQL: an empty set is not
-// "no filtering".
-func TestStoreListingWithEmptyChannelSetShowsOnlyUnassigned(t *testing.T) {
+// TestStoreListingWithAnEmptyChannelSetIsRefused pins the defensive behavior of
+// a principal without channels on the real router: an empty set is not "no
+// filtering", and since ADR 0044 it is not a narrow answer either — it is a
+// REFUSAL.
+//
+// The test used to assert that such a key saw the unassigned products, and the
+// property it protected moved with the build rather than being dropped. An
+// identity holding no channel holds nothing for a path to narrow to, so every
+// channel it could name is one it does not hold; serving it the unassigned
+// catalog would mean the path segment decided the answer on its own for exactly
+// the identity that carries no evidence. The SQL half of the old claim — that
+// the empty set filters rather than opens — is still exercised where the empty
+// set can still reach the database, on the write path's provider in
+// [TestVariantVisibilityFollowsProductChannels].
+func TestStoreListingWithAnEmptyChannelSetIsRefused(t *testing.T) {
 	fx := newChannelFixture(t)
 	assignedHandle := uniqueHandle("empty-assigned")
 	freeHandle := uniqueHandle("empty-unassigned")
@@ -320,30 +377,43 @@ func TestStoreListingWithEmptyChannelSetShowsOnlyUnassigned(t *testing.T) {
 	fx.seedPublished(t, freeHandle)
 	fx.assign(t, assignedID, fx.channelA)
 
-	handles, count := fx.list(t, []string{})
-	assert.Equal(t, []string{freeHandle}, handles,
-		"a principal without channels must see only the unassigned products")
-	assert.Equal(t, 1, count)
+	rec := fx.sys.storeChannelRequest(t,
+		storeCatalogPath(fx.channelA, "?collection_id="+fx.collectionID), []string{})
+	require.Equal(t, http.StatusForbidden, rec.Code,
+		"a key holding no channel must be refused, not served a narrowed catalog; body: %s",
+		rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), freeHandle,
+		"the refusal must carry no catalog at all: %s", rec.Body.String())
 }
 
-// TestStoreListingWithoutPrincipalIsNotFiltered verifies that a request
-// without a principal is not filtered.
+// TestStoreListingWithoutPrincipalIsFilteredByThePathAlone verifies what a
+// request without a principal is scoped to.
 //
-// This is the setup in which store authentication is not wired at all
-// (product can be deployed on its own). It is at the same time the proof that
-// the "parameter is NULL" branch in the SQL really works: had the nil slice
-// not gone to the database as NULL, this request would have missed the
-// assigned product.
-func TestStoreListingWithoutPrincipalIsNotFiltered(t *testing.T) {
+// This is the setup in which store authentication is not wired at all (product
+// can be deployed on its own). Until ADR 0044 there was nothing to scope to
+// here and the listing returned EVERY channel's catalog; now the path names a
+// channel and, with no identity to intersect against, that value stands alone.
+// The answer is therefore strictly NARROWER than it was and never wider, and
+// this test measures exactly that: the product assigned to channel A is served
+// at A's address and hidden at B's, with no key in the request at all.
+func TestStoreListingWithoutPrincipalIsFilteredByThePathAlone(t *testing.T) {
 	fx := newChannelFixture(t)
 	handle := uniqueHandle("no-principal")
 	productID := fx.seedPublished(t, handle)
 	fx.assign(t, productID, fx.channelA)
 
 	handles, count := storeListing(t, fx.sys.storeRequestWithoutPrincipal(t,
-		"/store/v1/products?collection_id="+fx.collectionID))
-	assert.Equal(t, []string{handle}, handles, "with no principal the filter must not be applied")
+		storeCatalogPath(fx.channelA, "?collection_id="+fx.collectionID)))
+	assert.Equal(t, []string{handle}, handles,
+		"with no principal the path value stands alone and the product is in the channel it names")
 	assert.Equal(t, 1, count)
+
+	handles, count = storeListing(t, fx.sys.storeRequestWithoutPrincipal(t,
+		storeCatalogPath(fx.channelB, "?collection_id="+fx.collectionID)))
+	assert.Empty(t, handles,
+		"the missing identity must not turn the filter off; a foreign channel's address "+
+			"must not serve the product")
+	assert.Zero(t, count)
 }
 
 // TestAdminListingIsNotFilteredBySalesChannel verifies that the admin listing
@@ -381,14 +451,14 @@ func TestRemoveSalesChannelMakesProductGloballyVisible(t *testing.T) {
 	productID := fx.seedPublished(t, handle)
 	fx.assign(t, productID, fx.channelA)
 
-	handles, _ := fx.list(t, []string{fx.channelB})
+	handles, _ := fx.list(t, fx.channelB)
 	require.Empty(t, handles, "the product must first be hidden in the foreign channel")
 
 	rec := fx.sys.request(t, http.MethodDelete,
 		"/admin/v1/products/"+productID+"/sales-channels/"+fx.channelA, "")
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 
-	handles, count := fx.list(t, []string{fx.channelB})
+	handles, count := fx.list(t, fx.channelB)
 	assert.Equal(t, []string{handle}, handles, "a product with no assignment left is again visible in all channels")
 	assert.Equal(t, 1, count)
 
@@ -520,7 +590,7 @@ func TestVariantVisibilityMatchesStoreListing(t *testing.T) {
 	hiddenID, hiddenVariant := fx.seedPublishedWithVariant(t, uniqueHandle("hidden"))
 	fx.assign(t, hiddenID, fx.channelA)
 
-	handles, _ := fx.list(t, []string{fx.channelB})
+	handles, _ := fx.list(t, fx.channelB)
 	require.Empty(t, handles, "the product MUST NOT SHOW UP in the foreign storefront (read surface)")
 
 	assert.Empty(t, fx.variantIDsInChannels(t, []string{hiddenVariant}, []string{fx.channelB}),

@@ -1,13 +1,32 @@
 // Package observability sets up the OpenTelemetry trace and metric
 // infrastructure.
 //
+// # The two signals leave by two different doors
+//
+// Traces are PUSHED to an OTLP collector; metrics are PULLED from a scrape
+// endpoint this package builds and internal/app serves (ADR 0046). Each door
+// has its own switch — [Options.Endpoint] for the traces, [Options.Metrics] for
+// the metrics — and neither switch touches the other signal.
+//
+// One address used to decide both, and that is how the metric half went
+// missing quietly enough for two documents to describe it wrongly: an empty
+// OTEL_EXPORTER_OTLP_ENDPOINT returned from [Setup] before EITHER provider was
+// built, so the HTTP instruments in core/http recorded into OTel's no-ops in
+// every stock installation while the configuration comment spoke only of
+// tracing. Two switches are what keep that from being sayable again.
+//
 // # When it is off, it is really off
 //
-// With no collector address given, no outbound connection is attempted and
-// every telemetry call falls through to OTel's own no-op implementations. That
-// is a deliberate choice so a development environment does not produce a
-// constant "connection refused" noise; giving a collector address is an
-// EXPLICIT decision.
+// With NEITHER an OTLP address nor a metrics endpoint asked for, nothing is
+// built and every telemetry call falls through to OTel's own no-op
+// implementations. That is a deliberate choice so a development environment
+// does not produce a constant "connection refused" noise; asking for either
+// signal is an EXPLICIT decision.
+//
+// The metric half keeps that promise for a reason worth stating: a PULL reader
+// opens no outbound connection at all. Turning metrics on in a development
+// environment therefore costs a listener and an aggregation store, and not one
+// failed export per interval.
 //
 // # A setup failure does not bring the application down
 //
@@ -28,14 +47,18 @@ package observability
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	promclient "github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -52,10 +75,21 @@ import (
 // [runShutdown].
 const shutdownTimeout = 5 * time.Second
 
+// MetricsPath is the only path [Telemetry.MetricsHandler] answers.
+//
+// It is a constant rather than a setting because a scrape configuration that
+// has to be told where to look is a second thing to keep in agreement with the
+// application, and the convention every scraper already assumes is this one.
+const MetricsPath = "/metrics"
+
 // Options are the inputs of the telemetry setup.
 type Options struct {
-	// Endpoint is the OTLP collector's gRPC address. When empty, telemetry is
+	// Endpoint is the OTLP collector's gRPC address. When empty, TRACES are
 	// OFF.
+	//
+	// It decides the TRACE signal ALONE (ADR 0046). Metrics used to ride on
+	// this same address and no longer do; an installation that wants metrics
+	// asks for them with [Options.Metrics].
 	Endpoint string
 	// Insecure says the connection is made without TLS.
 	Insecure bool
@@ -68,8 +102,16 @@ type Options struct {
 	Environment string
 	// SampleRatio is the ratio of traces to sample (0.0 - 1.0).
 	SampleRatio float64
-	// MetricInterval is how often metrics are sent; zero means 60s.
-	MetricInterval time.Duration
+	// Metrics says whether a meter provider is built and a scrape handler
+	// handed back.
+	//
+	// It is a BOOLEAN and not the listener's address ON PURPOSE. This package
+	// builds a handler and never binds a port, and a field holding an address
+	// it does not listen on invites exactly the belief that it does. The rule
+	// "no address, no metrics" therefore stays written in ONE place —
+	// internal/app, beside the listener the address belongs to — and arrives
+	// here already decided.
+	Metrics bool
 	// Logger writes the setup events; nil means slog.Default.
 	Logger *slog.Logger
 }
@@ -77,65 +119,124 @@ type Options struct {
 // ShutdownFunc closes the telemetry infrastructure.
 type ShutdownFunc func(ctx context.Context) error
 
+// Telemetry is what [Setup] leaves behind for the caller to hold.
+//
+// It is a struct rather than a second return value because the two things in
+// it are answered by the same call and read at opposite ends of the process's
+// life: the handler goes to a listener during boot, the shutdown runs at
+// SIGTERM. A pair of bare returns would let a caller keep one and drop the
+// other without the compiler noticing which.
+type Telemetry struct {
+	// Shutdown closes whichever providers were built.
+	//
+	// It is always callable (it is NEVER nil), so the caller never has to write
+	// a conditional shutdown path even while telemetry is off. A conditional
+	// shutdown would turn into a nil pointer panic in a caller who forgot the
+	// "it returns nil when off" detail.
+	Shutdown ShutdownFunc
+	// MetricsHandler serves the scrape output at [MetricsPath], and NIL means
+	// no metrics were asked for.
+	//
+	// The caller must treat nil as "open no listener". Serving a nil handler
+	// would publish a port that answers 404 to every scrape, which reads to an
+	// operator like a broken deployment rather than like a switch left off.
+	MetricsHandler http.Handler
+}
+
 // Setup builds the global tracer and meter providers.
 //
-// The ShutdownFunc returned is always callable (it is NEVER nil), so the caller
-// never has to write a conditional shutdown path even while telemetry is off. A
-// conditional shutdown would turn into a nil pointer panic in a caller who
-// forgot the "it returns nil when off" detail.
+// Each provider is built only for the signal that asked for it: an OTLP
+// endpoint builds the tracer, [Options.Metrics] builds the meter. With neither
+// asked for, nothing is built and nothing global is touched.
 //
 // An error is returned ONLY for a broken configuration; network
 // unreachability is not an error, because the gRPC exporter connects lazily.
-func Setup(ctx context.Context, opts Options) (ShutdownFunc, error) {
+func Setup(ctx context.Context, opts Options) (Telemetry, error) {
 	log := opts.Logger
 	if log == nil {
 		log = slog.Default()
 	}
 
-	if opts.Endpoint == "" {
-		log.InfoContext(ctx, "no OTLP address was given, telemetry is off")
+	// The early return's condition covers BOTH signals. When it covered only
+	// the OTLP address it silenced metrics as a side effect of a decision about
+	// traces, which is the defect ADR 0046 was written on top of.
+	if opts.Endpoint == "" && !opts.Metrics {
+		log.InfoContext(ctx, "no OTLP address and no metrics endpoint were asked for, telemetry is off")
 
-		return noopShutdown, nil
+		return Telemetry{Shutdown: noopShutdown}, nil
 	}
 
 	res, err := newResource(ctx, opts)
 	if err != nil {
-		return noopShutdown, err
+		return Telemetry{Shutdown: noopShutdown}, err
 	}
 
-	tracerProvider, err := newTracerProvider(ctx, opts, res)
-	if err != nil {
-		return noopShutdown, err
+	// The providers are collected as they are built so the shutdown closes
+	// exactly what exists. Handing runShutdown a nil provider for the signal
+	// that was never turned on would panic at SIGTERM — the one moment nobody
+	// is watching the logs.
+	var providers []closable
+
+	var tracerProvider *sdktrace.TracerProvider
+
+	if opts.Endpoint != "" {
+		tracerProvider, err = newTracerProvider(ctx, opts, res)
+		if err != nil {
+			return Telemetry{Shutdown: noopShutdown}, err
+		}
+
+		providers = append(providers, tracerProvider)
 	}
 
-	meterProvider, err := newMeterProvider(ctx, opts, res)
-	if err != nil {
-		// The trace provider was built but the metric one could not be:
-		// leaving a half setup behind means an orphaned goroutine still trying
-		// to send at shutdown.
-		_ = tracerProvider.Shutdown(ctx)
+	var metricsHandler http.Handler
 
-		return noopShutdown, err
+	if opts.Metrics {
+		meterProvider, handler, err := newMeterProvider(res, log)
+		if err != nil {
+			// The trace provider may already have been built: leaving a half
+			// setup behind means an orphaned goroutine still trying to send at
+			// shutdown.
+			if tracerProvider != nil {
+				_ = tracerProvider.Shutdown(ctx)
+			}
+
+			return Telemetry{Shutdown: noopShutdown}, err
+		}
+
+		otel.SetMeterProvider(meterProvider)
+
+		providers = append(providers, meterProvider)
+		metricsHandler = handler
 	}
 
-	otel.SetTracerProvider(tracerProvider)
-	otel.SetMeterProvider(meterProvider)
+	if tracerProvider != nil {
+		otel.SetTracerProvider(tracerProvider)
 
-	// W3C TraceContext + Baggage: needed so the trace header coming from the
-	// client can be continued. Without it every service produces its own
-	// disconnected trace and distributed tracing joins nothing.
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	))
+		// W3C TraceContext + Baggage: needed so the trace header coming from the
+		// client can be continued. Without it every service produces its own
+		// disconnected trace and distributed tracing joins nothing.
+		//
+		// It is installed with the TRACER and not unconditionally: with no
+		// tracer provider there is no trace to continue, and a propagator on
+		// its own would only move a header between two no-ops.
+		otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+			propagation.TraceContext{},
+			propagation.Baggage{},
+		))
+	}
 
 	log.InfoContext(ctx, "telemetry is set up",
 		"endpoint", opts.Endpoint,
 		"insecure", opts.Insecure,
-		"sample_ratio", opts.SampleRatio)
+		"sample_ratio", opts.SampleRatio,
+		"traces", tracerProvider != nil,
+		"metrics", metricsHandler != nil)
 
-	return func(ctx context.Context) error {
-		return runShutdown(ctx, shutdownTimeout, tracerProvider, meterProvider)
+	return Telemetry{
+		Shutdown: func(ctx context.Context) error {
+			return runShutdown(ctx, shutdownTimeout, providers...)
+		},
+		MetricsHandler: metricsHandler,
 	}, nil
 }
 
@@ -162,6 +263,10 @@ type closable interface {
 // separate gRPC connections there is nothing to gain from serializing the wait.
 // Hence parallel plus a full budget per provider: the total wait still stays
 // bounded by a single budget.
+//
+// The provider list is VARIADIC and may hold one entry or none: since ADR 0046
+// each signal is built only when it was asked for, so "close both" is no longer
+// the only shape a shutdown can take.
 func runShutdown(ctx context.Context, budget time.Duration, providers ...closable) error {
 	failures := make([]error, len(providers))
 
@@ -202,22 +307,16 @@ func endpointHasScheme(endpoint string) bool {
 
 // traceEndpoint hands the address to the trace exporter through the right
 // option.
+//
+// There is no metric counterpart any more: since ADR 0046 the metric side has
+// no exporter that dials anywhere, so nothing on that side has an address to
+// spell one way or the other.
 func traceEndpoint(endpoint string) otlptracegrpc.Option {
 	if endpointHasScheme(endpoint) {
 		return otlptracegrpc.WithEndpointURL(endpoint)
 	}
 
 	return otlptracegrpc.WithEndpoint(endpoint)
-}
-
-// metricEndpoint hands the address to the metric exporter through the right
-// option.
-func metricEndpoint(endpoint string) otlpmetricgrpc.Option {
-	if endpointHasScheme(endpoint) {
-		return otlpmetricgrpc.WithEndpointURL(endpoint)
-	}
-
-	return otlpmetricgrpc.WithEndpoint(endpoint)
 }
 
 // noopShutdown is the shutdown function used while telemetry is off.
@@ -288,28 +387,70 @@ func sampler(ratio float64) sdktrace.Sampler {
 	)
 }
 
-// newMeterProvider builds the meter provider with an OTLP exporter.
+// newMeterProvider builds the meter provider with a PULL reader, and the
+// handler that serves what it holds.
+//
+// # Why the reader pulls (ADR 0046)
+//
+// The reader used to be periodic and pushed to the same OTLP address the traces
+// use, and the only collector this repository ships REFUSES metrics — so what
+// an installation actually got was one "failed to upload metrics" line per
+// export interval, forever, and no number anywhere. A pull reader turns that
+// around: it opens no outbound connection, it needs no collector between a
+// running shop and the question "how many requests are in flight right now",
+// and an interval whose export would have failed is no longer a hole in the
+// record, because the current value simply waits until somebody asks.
+//
+// # Why a registry of its own
+//
+// Two reasons, and the second is the load-bearing one. First, a private
+// registry yields EXACTLY the instruments this process created — the two in
+// core/http — while the client library's default registry would add its process
+// and Go runtime collectors as well; ADR 0046 measured the private one and
+// picked neither on the merits, so the code reproduces what was measured.
+// Second, prometheus.DefaultRegisterer is a package-level global and registering
+// on it twice FAILS: a second [Setup] in one process — which is what a test
+// does — would return "duplicate metrics collector registration attempted" and
+// make telemetry look broken for a reason that has nothing to do with the
+// installation.
 func newMeterProvider(
-	ctx context.Context, opts Options, res *resource.Resource,
-) (*sdkmetric.MeterProvider, error) {
-	exporter := []otlpmetricgrpc.Option{metricEndpoint(opts.Endpoint)}
-	if opts.Insecure {
-		exporter = append(exporter, otlpmetricgrpc.WithInsecure())
-	}
+	res *resource.Resource, log *slog.Logger,
+) (*sdkmetric.MeterProvider, http.Handler, error) {
+	registry := promclient.NewRegistry()
 
-	exp, err := otlpmetricgrpc.New(ctx, exporter...)
+	exporter, err := prometheus.New(prometheus.WithRegisterer(registry))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	interval := opts.MetricInterval
-	if interval <= 0 {
-		interval = time.Minute
-	}
-
-	return sdkmetric.NewMeterProvider(
+	provider := sdkmetric.NewMeterProvider(
 		sdkmetric.WithResource(res),
-		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exp,
-			sdkmetric.WithInterval(interval))),
-	), nil
+		sdkmetric.WithReader(exporter),
+	)
+
+	// A mux rather than the bare handler, so the listener answers the scrape
+	// path and NOTHING else. It is the same rule core/http.ProfilingHandler
+	// follows: an unauthenticated listener has to serve exactly what it was
+	// opened for, and a handler that answers every path is one mistake away
+	// from serving something that wandered in from elsewhere in the process.
+	mux := http.NewServeMux()
+	mux.Handle(MetricsPath, promhttp.HandlerFor(registry, promhttp.HandlerOpts{
+		ErrorLog: scrapeErrorLog{log: log},
+	}))
+
+	return provider, mux, nil
+}
+
+// scrapeErrorLog carries a failed scrape into the application's own log.
+//
+// promhttp's default is to write NOTHING: a gather that fails answers the
+// scraper with a 500 and leaves no trace on the server, so the operator sees a
+// target go down and has nowhere to look. This repository has already paid for
+// that exact shape on the push side, where a failing export was visible only in
+// the collector's log and not in ours.
+type scrapeErrorLog struct{ log *slog.Logger }
+
+// Println satisfies promhttp.Logger.
+func (l scrapeErrorLog) Println(v ...any) {
+	l.log.Error("the metrics scrape could not be served", "error", fmt.Sprint(v...))
 }

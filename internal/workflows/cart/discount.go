@@ -3,9 +3,12 @@ package cart
 import (
 	"context"
 	"encoding/json"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/query"
 )
 
 // This file is the DISCOUNT leg of the cart calculation (plan Phase 7).
@@ -17,12 +20,67 @@ import (
 
 // attrVariantID is the line item attribute that discount rules may look at.
 //
-// The cart line's variant is the only catalog fact this workflow KNOWS about the
-// line item. Product and category IDs could be rule targets too, but the cart does
-// not carry them; reading them from the catalog would mean an extra round trip per
-// line, and no rule asks for them today. The day they are added the place is
-// known: the attribute map inside [Workflows.discountRequestFor].
+// The cart line's variant is the catalog fact this workflow holds without asking
+// anybody. A category id could be a rule target too and is deliberately NOT here:
+// ADR 0048 licensed exactly two more names into this map and said the day a rule
+// wants a category is a separate argument with a separate read.
 const attrVariantID = "variant_id"
+
+// The product's two merchandising flags, as a catalog field name AND as a line
+// attribute a promotion rule names (ADR 0048).
+//
+// # One string doing two jobs is the decision, not an accident
+//
+// The value is asked of product's Query provider as a FIELD and put into the
+// line's attribute map as a KEY. Translating between the two would mean the
+// merchant writing "is_giftcard ne true" against the name the catalog publishes
+// while the cart handed the engine some other spelling — the rule would then
+// match nothing, no line would be excluded, and a promotion would fall on gift
+// cards with no error anywhere.
+//
+// # Nothing compares these literals with the ones product declares
+//
+// This package cannot import the product module (ADR 0006), so the names are
+// repeated here, which is the accepted price of isolation (ADR 0001). Half of
+// the drift is loud: the Query layer refuses a field its provider does not
+// publish, so a RENAMED column fails the read. The other half is silent, and
+// ADR 0048 wrote it down as a cost rather than hiding it — a shop's gift-card
+// rule can stop matching without a single error being raised. The audit that
+// would close it is the one ADR 0040 asked for and did not build either.
+const (
+	// attrIsGiftcard says whether the line is a gift card, which a rule such as
+	// "is_giftcard ne true" may then exclude.
+	attrIsGiftcard = "is_giftcard"
+	// attrDiscountable says whether a promotion may fall on the line at all.
+	attrDiscountable = "discountable"
+)
+
+// EntityProduct is the entity name of products in the Query layer; the product
+// module declares its provider under this name.
+//
+// It lives beside its consumer rather than with the other cross-module names in
+// deps.go because the discount leg is the only reader of the product entity in
+// this package: the variant hop that precedes it is a VARIANT read
+// ([Workflows.productIDsFor]).
+const EntityProduct = "product"
+
+// productFlags are the two merchandising answers a discount rule may look at.
+//
+// The type carries no "known" flag: a variant with no entry in the map the
+// lookup returns is a variant whose product could not be resolved, and the
+// caller leaves the attributes OFF the line rather than sending a made-up
+// value. Sending false for an unknown gift card would be a lie the engine
+// cannot see through.
+type productFlags struct {
+	// IsGiftcard is the product's is_giftcard column: what the product IS.
+	IsGiftcard bool
+	// Discountable is the product's discountable column: what may be DONE to it.
+	//
+	// The two are separate columns because they are separate statements, and a
+	// shop running a promotion ON gift cards is a legitimate configuration
+	// rather than a contradiction.
+	Discountable bool
+}
 
 // discountRequest is the JSON schema of the discount request that goes to the
 // promotion module.
@@ -158,7 +216,17 @@ func (w *Workflows) applyDiscounts(ctx context.Context, snap Snapshot, lines []L
 			len(lines), len(snap.Items), snap.ID)
 	}
 
-	payload, err := json.Marshal(w.discountRequestFor(ctx, snap, lines))
+	// The flags are fetched HERE and handed in, because
+	// [Workflows.discountRequestFor] has no error return and this read has two
+	// ways to fail. A failure is not fatal; the rationale is in
+	// [Workflows.lineProductFlags].
+	flags, flagsErr := w.lineProductFlags(ctx, snap)
+	if flagsErr != nil {
+		w.log.WarnContext(ctx, "the products' flags could not be read; discounting without them",
+			"error", flagsErr, "cart_id", snap.ID, "lines", len(lines))
+	}
+
+	payload, err := json.Marshal(w.discountRequestFor(ctx, snap, lines, flags))
 	if err != nil {
 		return errors.Wrap(err, errors.KindInternal, CodeDiscountFailed,
 			"discount request could not be encoded to JSON: %s", snap.ID)
@@ -207,8 +275,17 @@ func (w *Workflows) applyDiscounts(ctx context.Context, snap Snapshot, lines []L
 // does not know the customer's groups, and silently picking one would tie the
 // discount to map iteration order. The group context is added here the day the
 // customer surface publishes the group list.
+//
+// # The line attributes carry the product's two flags
+//
+// flags comes from [Workflows.lineProductFlags] and may be nil, which is what a
+// failed read looks like from here. What each key does to the calculation is the
+// merchant's business: the promotion engine's rule attribute name space is open
+// by construction, so "discountable eq true" and "is_giftcard ne true" are rules
+// a shop writes, and a shop that writes neither has two keys the engine never
+// looks at (ADR 0048).
 func (w *Workflows) discountRequestFor(
-	ctx context.Context, snap Snapshot, lines []LineTotals,
+	ctx context.Context, snap Snapshot, lines []LineTotals, flags map[string]productFlags,
 ) discountRequest {
 	items := make([]discountRequestItem, 0, len(lines))
 	for i := range lines {
@@ -216,7 +293,7 @@ func (w *Workflows) discountRequestFor(
 			ID:         lines[i].LineItemID,
 			Amount:     lines[i].Subtotal,
 			Quantity:   snap.Items[i].Quantity,
-			Attributes: map[string]string{attrVariantID: snap.Items[i].VariantID},
+			Attributes: lineAttributes(snap.Items[i].VariantID, flags),
 		})
 	}
 
@@ -292,4 +369,170 @@ func applyDiscountResponse(snap Snapshot, lines []LineTotals, resp discountRespo
 		lines[i].DiscountTotal = resp.Items[i].Amount
 	}
 	return nil
+}
+
+// lineAttributes builds one line's attribute map for the discount request.
+//
+// A variant with no flags is given the variant id ALONE, and the two keys are
+// simply absent. That is the safe direction and it is the engine's own rule
+// rather than a convention invented here: a promotion rule naming an attribute
+// the line does not carry DOES NOT MATCH, even a negative one, so the line drops
+// out of that promotion's targets and receives no discount. Sending "false" for
+// a product nobody could read would instead hand the engine an answer this
+// package does not have.
+func lineAttributes(variantID string, flags map[string]productFlags) map[string]string {
+	attributes := map[string]string{attrVariantID: variantID}
+
+	flag, known := flags[variantID]
+	if !known {
+		return attributes
+	}
+
+	// strconv rather than a hand-written literal: "true"/"false" is what the
+	// merchant types into a rule value, and the two spellings have to be the
+	// same string for the comparison in matchRule to succeed.
+	attributes[attrIsGiftcard] = strconv.FormatBool(flag.IsGiftcard)
+	attributes[attrDiscountable] = strconv.FormatBool(flag.Discountable)
+
+	return attributes
+}
+
+// lineProductFlags resolves the two product flags of every line of the cart,
+// keyed by VARIANT so the caller can look them up line by line.
+//
+// # It costs two batch reads and neither of them is per line
+//
+// A cart line knows its variant and the flags live on the PRODUCT, so the hop
+// comes first ([Workflows.productIDsFor], one Graph for the whole cart) and the
+// flags follow (one Graph for the whole cart). Both are paid once per
+// CALCULATION, not once per line — which is the half the old comment on
+// [attrVariantID] got wrong when it called this an extra round trip per line.
+//
+// The tax leg makes the SAME hop on the path where the tax module answers
+// ([Workflows.applyModuleTax]). Hoisting the resolution so that both legs share
+// one — it would live in [Workflows.computeTotals] and be handed to both — is
+// the shape ADR 0048 costed, and it is NOT built: on that path a discounting
+// cart therefore resolves the products twice. On the two region-rate paths
+// there is no hop to hoist and the discount leg pays it alone, which is the
+// price the record already names.
+//
+// # It is not read at all when nothing would look at it
+//
+// The only caller is [Workflows.applyDiscounts], which returns before this on an
+// installation with no promotion module — so a shop that does not discount pays
+// nothing, and neither does a cart with no lines.
+//
+// # A failure is degradation, not a dropped cart
+//
+// The error is returned so the caller can log it, and the caller carries on with
+// no flags. The direction is the one this package has already chosen twice: a
+// missing discount OVERCHARGES the customer, who sees the price and says so,
+// whereas a cart that cannot be priced stops the shop (the same argument as the
+// customer-group read in [Workflows.ruleContext], and the mirror of why the tax
+// does not fall back to zero). What it costs is written down in ADR 0048: a shop
+// whose rules name these attributes gives NO discount at all until the read
+// recovers.
+//
+// # The product read carries no sales channel filter
+//
+// It could not: the product provider does not accept that filter and refuses a
+// filter it does not recognize, which would turn every discounting cart into an
+// errors.Invalid. It is not needed either — the scope was applied one call
+// earlier, on the VARIANT hop, so a variant outside the request's channels
+// resolves to no product and its line simply carries no flags.
+func (w *Workflows) lineProductFlags(ctx context.Context, snap Snapshot) (map[string]productFlags, error) {
+	variantIDs := snap.VariantIDs()
+	if len(variantIDs) == 0 {
+		return nil, nil
+	}
+
+	productIDs, err := w.productIDsFor(ctx, variantIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(productIDs) == 0 {
+		return nil, nil
+	}
+
+	flags, err := w.productFlagsFor(ctx, uniqueProductIDs(productIDs))
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[string]productFlags, len(productIDs))
+	for variantID, productID := range productIDs {
+		if flag, known := flags[productID]; known {
+			out[variantID] = flag
+		}
+	}
+	return out, nil
+}
+
+// uniqueProductIDs returns the distinct products of a variant-to-product map, in
+// a STABLE order.
+//
+// Two variants of the same product are one row in the catalog, and asking for it
+// twice would grow the query for nothing. The order is sorted rather than the
+// map's, because a query whose input order changes from call to call produces
+// error messages that cannot be compared between two runs.
+func uniqueProductIDs(productIDs map[string]string) []string {
+	seen := make(map[string]struct{}, len(productIDs))
+	out := make([]string, 0, len(productIDs))
+	for _, productID := range productIDs {
+		if _, dup := seen[productID]; dup {
+			continue
+		}
+		seen[productID] = struct{}{}
+		out = append(out, productID)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// productFlagsFor reads is_giftcard and discountable for the given products in a
+// SINGLE catalog query.
+//
+// # A product missing from the answer is NOT an error
+//
+// It simply has no entry, and its lines carry no flag attributes. The rationale
+// is [Workflows.productIDsFor]'s: refusing to price a whole cart because one
+// product is invisible in the current sales channel trades a rule that matches
+// nothing for a shopper who cannot check out at all. A read FAILURE is a
+// different matter and is returned — a fault is not the same fact as an
+// absence.
+//
+// # A flag that is not a bool is skipped rather than guessed
+//
+// The provider refuses a field it does not publish, so a renamed column fails
+// the read above. A value of the wrong type can still arrive from a provider
+// that is not the product module's, and reading it as false would make a gift
+// card discountable on a type error. The product is left out of the answer
+// instead, which puts its lines on the same footing as a product nobody could
+// read: no attributes, so a rule naming them does not match.
+func (w *Workflows) productFlagsFor(ctx context.Context, productIDs []string) (map[string]productFlags, error) {
+	records, err := w.catalog.Graph(ctx, query.GraphSpec{
+		Entity:  EntityProduct,
+		Fields:  []string{query.IDField, attrIsGiftcard, attrDiscountable},
+		Filters: map[string]any{FilterIDs: productIDs},
+		Limit:   len(productIDs),
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindOf(err), CodeCatalogReadFailed,
+			"could not read the flags of %d products from the catalog", len(productIDs))
+	}
+
+	out := make(map[string]productFlags, len(records))
+	for i := range records {
+		productID, ok := records[i][query.IDField].(string)
+		if !ok || productID == "" {
+			continue
+		}
+		giftcard, giftcardOK := records[i][attrIsGiftcard].(bool)
+		discountable, discountableOK := records[i][attrDiscountable].(bool)
+		if !giftcardOK || !discountableOK {
+			continue
+		}
+		out[productID] = productFlags{IsGiftcard: giftcard, Discountable: discountable}
+	}
+	return out, nil
 }

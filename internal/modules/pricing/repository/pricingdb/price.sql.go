@@ -11,6 +11,43 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deletePricesBySet = `-- name: DeletePricesBySet :exec
+DELETE FROM price
+WHERE price_set_id = $1 AND deleted_at IS NULL
+`
+
+// DeletePricesBySet removes a set's live prices for good, so that a replaced
+// price leaves nothing behind (ADR 0047).
+//
+// What the soft-delete stamp used to leave behind was not a history and could
+// not be made into one by reading it: successive generations of one price share
+// no id because a replace mints a new one, no column says WHY a row was retired
+// so a superseded price and a deleted set's price are byte-identical, and
+// neither of the table's indexes contains a retired row because both are
+// partial on deleted_at IS NULL. What a customer PAID is recorded by the cart
+// and the order line that charged them; what these rows held was the price on a
+// day nobody bought.
+//
+// The liveness predicate is NOT ceremony inherited from the stamp. A partial
+// index can only serve a statement whose own predicate implies the index's, and
+// price_set_id_idx is partial on exactly this one: measured, the predicated
+// delete plans as an index scan over that index and the same delete without the
+// predicate plans as a sequential scan of the whole table. A price edit is an
+// operator write on a table every storefront price calculation also reads, so
+// paying a full scan per edit to tidy rows nobody reads is the wrong trade.
+// What the predicate costs is that rows an earlier version of this code already
+// stamped are invisible here and stay; clearing those is an operator's one-off
+// cleanup, not a hidden step at boot.
+//
+// A price's rules go with it through the ON DELETE CASCADE on
+// price_rule.price_id rather than through a second statement. A stamp never
+// fired that cascade, so every superseded generation used to leave its rules
+// standing live behind a parent no read could reach.
+func (q *Queries) DeletePricesBySet(ctx context.Context, priceSetID string) error {
+	_, err := q.db.Exec(ctx, deletePricesBySet, priceSetID)
+	return err
+}
+
 const getPrice = `-- name: GetPrice :one
 SELECT id, price_set_id, price_list_id, currency_code, amount, min_quantity, max_quantity, created_at, updated_at, deleted_at FROM price
 WHERE id = $1 AND deleted_at IS NULL
@@ -284,6 +321,15 @@ type SoftDeletePricesBySetParams struct {
 	DeletedAt  pgtype.Timestamptz
 }
 
+// SoftDeletePricesBySet hides a set's prices behind deleted_at.
+//
+// Since ADR 0047 it has exactly ONE caller, DeletePriceSet, and that is what
+// gives price.deleted_at a single meaning: a stamped price row can only have
+// come from a deleted set. The stamp cannot be replaced by DeletePricesBySet
+// here, because it is the only thing that hides a deleted set's prices from a
+// calculation: ListPriceCandidates does not join price_set at all, and the
+// service reads the set only when zero candidates came back, which is what
+// keeps the happy path to one round trip.
 func (q *Queries) SoftDeletePricesBySet(ctx context.Context, arg SoftDeletePricesBySetParams) error {
 	_, err := q.db.Exec(ctx, softDeletePricesBySet, arg.PriceSetID, arg.DeletedAt)
 	return err

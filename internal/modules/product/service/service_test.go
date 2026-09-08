@@ -78,8 +78,8 @@ func TestCreateProductDerivesHandleFromTitle(t *testing.T) {
 //
 // A title can be up to 255 characters and a handle up to 128; had the derived
 // slug not been truncated, the product would be created but
-// /store/v1/products/{handle} would return 422 and the record could never be
-// opened at its own address.
+// /store/v1/sales-channels/{sales_channel_id}/products/{handle} would return 422
+// and the record could never be opened at its own address.
 func TestCreateProductDerivedHandleStaysAddressable(t *testing.T) {
 	t.Parallel()
 

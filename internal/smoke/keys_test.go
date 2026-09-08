@@ -69,6 +69,15 @@ func TestPublishableKeyWithoutChannelIsRejectedByStorefront(t *testing.T) {
 	token := fetchToken(t, s, seedEmail, seedPassword)
 	keyID, key := createKeyWithoutChannel(t, s, token)
 
+	// The channel is opened UP FRONT so that both store steps below can use the
+	// SAME address. Since ADR 0044 a catalog read is addressed through its sales
+	// channel, and the two steps mean nothing unless they ask the same question:
+	// one address, one key, refused before the binding exists and served after
+	// it. Creating the channel binds nothing on its own — the key is attached to
+	// it in the third step.
+	channelID := openSalesChannel(t, s, token, "Later Attached Channel")
+	catalogPath := "/store/v1/sales-channels/" + channelID + "/products"
+
 	t.Run("plaintext key is returned only in the creation response", func(t *testing.T) {
 		status, body := s.adminRequest(http.MethodGet, "/admin/v1/api-keys/"+keyID, token, nil)
 		require.Equal(t, http.StatusOK, status, "the key could not be read; body: %s", body)
@@ -85,7 +94,7 @@ func TestPublishableKeyWithoutChannelIsRejectedByStorefront(t *testing.T) {
 	})
 
 	t.Run("channel-less key gets a 401 on the store surface", func(t *testing.T) {
-		status, body := s.storefrontRequest(http.MethodGet, "/store/v1/products", key, nil)
+		status, body := s.storefrontRequest(http.MethodGet, catalogPath, key, nil)
 		require.Equal(t, http.StatusUnauthorized, status,
 			"a channel-less publishable key must not get into the store surface. A 200 "+
 				"shows that the empty channel list was read as 'no filter' and that the "+
@@ -100,8 +109,6 @@ func TestPublishableKeyWithoutChannelIsRejectedByStorefront(t *testing.T) {
 	})
 
 	t.Run("channel is attached later and the SAME key works", func(t *testing.T) {
-		channelID := openSalesChannel(t, s, token, "Later Attached Channel")
-
 		status, body := s.adminRequest(http.MethodPost,
 			"/admin/v1/api-keys/"+keyID+"/sales-channels", token,
 			map[string]any{"sales_channel_id": channelID})
@@ -113,10 +120,12 @@ func TestPublishableKeyWithoutChannelIsRejectedByStorefront(t *testing.T) {
 				"than 404), and 422 means the body field was renamed (singular "+
 				"sales_channel_id). body: %s", body)
 
-		// The key is NOT RECREATED: the claim is that the very same plaintext
-		// already in hand now passes. Fetching a new key would leave this step
-		// green even in a world where the attach endpoint does nothing at all.
-		status, body = s.storefrontRequest(http.MethodGet, "/store/v1/products", key, nil)
+		// The key is NOT RECREATED and the ADDRESS is not changed either: the
+		// claim is that the very same plaintext already in hand now passes at
+		// the very address that refused it a moment ago. Fetching a new key
+		// would leave this step green even in a world where the attach endpoint
+		// does nothing at all.
+		status, body = s.storefrontRequest(http.MethodGet, catalogPath, key, nil)
 		assert.Equal(t, http.StatusOK, status,
 			"after the channel is attached the same key must be able to get into the "+
 				"store surface; body: %s", body)

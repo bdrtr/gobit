@@ -190,6 +190,34 @@ type planLine struct {
 	TaxRateBps int32 `json:"tax_rate_bps"`
 	// Total is the total of the line: Subtotal - DiscountTotal + TaxTotal.
 	Total int64 `json:"total"`
+
+	// Unmanaged reports that the merchant does NOT count this variant's stock,
+	// so the line takes no reservation and needs no inventory item (ADR 0048).
+	//
+	// # Why the field is the INVERSE of the catalog's flag
+	//
+	// The catalog publishes manage_inventory, and this field is its negation on
+	// purpose. The plan is written into the execution record as JSON, so a
+	// record written before this field existed decodes it as Go's zero value.
+	// With "unmanaged" the zero value is false, which means COUNTED — the same
+	// behavior every record had before the field arrived, and the direction that
+	// reserves rather than the direction that quietly sells unreserved goods.
+	// Storing manage_inventory as it comes would put the zero value on the other
+	// side.
+	//
+	// Today an old record cannot reach the reserve decision at all: recovery
+	// never calls Invoke (see internal/core/workflow's Recoverer), it rebuilds
+	// the chain and compensates. That property lives in the ENGINE and nothing
+	// here restates it, which is exactly why the field is spelled so that the
+	// checkout stays safe if the engine ever learns to RESUME an execution.
+	Unmanaged bool `json:"unmanaged"`
+	// AllowBackorder reports that the line may be ordered even when no warehouse
+	// can cover it (ADR 0048).
+	//
+	// The zero value is false, which is a REFUSAL — the behavior of every plan
+	// written before the field existed, and the direction that does not promise
+	// goods the shop cannot show it has.
+	AllowBackorder bool `json:"allow_backorder"`
 }
 
 // prepare builds the input of the saga and leaves NO reversible side effect.
@@ -340,11 +368,11 @@ func (w *Workflows) planLines(ctx context.Context, snap Snapshot, totals cartwf.
 	}
 
 	variantIDs := snap.VariantIDs()
-	titles, err := w.variantTitles(ctx, variantIDs)
+	facts, err := w.variantTitles(ctx, variantIDs)
 	if err != nil {
 		return nil, err
 	}
-	items, err := w.inventoryItems(ctx, variantIDs)
+	items, err := w.inventoryItems(ctx, variantIDs, facts)
 	if err != nil {
 		return nil, err
 	}
@@ -362,7 +390,7 @@ func (w *Workflows) planLines(ctx context.Context, snap Snapshot, totals cartwf.
 			LineItemID:      item.ID,
 			VariantID:       item.VariantID,
 			InventoryItemID: items[item.VariantID],
-			Title:           titles[item.VariantID],
+			Title:           facts[item.VariantID].Title,
 			Quantity:        item.Quantity,
 			UnitPrice:       amounts.UnitPrice,
 			Subtotal:        amounts.Subtotal,
@@ -370,12 +398,32 @@ func (w *Workflows) planLines(ctx context.Context, snap Snapshot, totals cartwf.
 			TaxTotal:        amounts.TaxTotal,
 			TaxRateBps:      amounts.TaxRateBps,
 			Total:           amounts.Total,
+			Unmanaged:       facts[item.VariantID].Unmanaged,
+			AllowBackorder:  facts[item.VariantID].AllowBackorder,
 		})
 	}
 	return lines, nil
 }
 
-// variantTitles reads the catalog titles of the variants in a SINGLE query.
+// variantFacts is what one catalog read answers about a variant.
+//
+// The three fields arrive together because they come out of ONE record: the
+// title an order line copies, and the two flags that decide whether the line is
+// reserved (ADR 0048). Splitting them into two reads would double the catalog
+// round trips of every checkout for fields the same query already carries.
+type variantFacts struct {
+	// Title is the displayed name copied onto the order line.
+	Title string
+	// Unmanaged reports that the merchant does not count this variant's stock;
+	// it is the NEGATION of the catalog's manage_inventory (see
+	// [planLine.Unmanaged] for why the inverse is what gets carried).
+	Unmanaged bool
+	// AllowBackorder reports that a line no warehouse can cover does not refuse
+	// the order.
+	AllowBackorder bool
+}
+
+// variantTitles reads the catalog facts of the variants in a SINGLE query.
 //
 // # Why the title is read from the catalog
 //
@@ -388,14 +436,37 @@ func (w *Workflows) planLines(ctx context.Context, snap Snapshot, totals cartwf.
 // The read goes through Query because the read signatures of the product
 // service speak in its own model types and are closed to cross-module calls;
 // Query exists for exactly this gap (ADR 0004).
-func (w *Workflows) variantTitles(ctx context.Context, variantIDs []string) (map[string]string, error) {
+//
+// # The two stock flags cost NOTHING extra
+//
+// This call already fetches every variant of the cart in one batch,
+// unconditionally, and the variant record already publishes manage_inventory
+// and allow_backorder. Reading them is two more names in the field list and
+// ZERO extra round trips, which is why ADR 0048 puts the checkout's half of the
+// stock pair here rather than in a read of its own.
+//
+// The function keeps the name it had when it read only the title. The name is
+// DATA elsewhere: internal/arch's variantReadExemptions names this file and
+// this function as the one variant read that deliberately makes no sales
+// channel decision, and a rename would silently delete that exemption — the
+// scan would then demand a channel filter on a read whose whole justification
+// is that the scope was applied at the entrance.
+//
+// # A missing flag is a CONTRACT VIOLATION and not a default
+//
+// The provider refuses a field it does not recognize (ADR 0004), so a renamed
+// column cannot reach here as a missing key; what could is a provider that
+// publishes the name and fills it with something that is not a bool. Reading
+// that as false would decide "do not count this variant" out of a type error
+// and sell goods nobody reserved, so it is errors.Internal instead.
+func (w *Workflows) variantTitles(ctx context.Context, variantIDs []string) (map[string]variantFacts, error) {
 	if len(variantIDs) == 0 {
-		return map[string]string{}, nil
+		return map[string]variantFacts{}, nil
 	}
 
 	records, err := w.catalog.Graph(ctx, query.GraphSpec{
 		Entity:  EntityVariant,
-		Fields:  []string{query.IDField, FieldTitle},
+		Fields:  []string{query.IDField, FieldTitle, FieldManageInventory, FieldAllowBackorder},
 		Filters: map[string]any{FilterIDs: variantIDs},
 		Limit:   len(variantIDs),
 	})
@@ -408,36 +479,78 @@ func (w *Workflows) variantTitles(ctx context.Context, variantIDs []string) (map
 			"the variants could not be read from the catalog (%d variants)", len(variantIDs))
 	}
 
-	titles := make(map[string]string, len(records))
+	facts := make(map[string]variantFacts, len(records))
 	for i := range records {
 		id, idOK := records[i][query.IDField].(string)
 		title, titleOK := records[i][FieldTitle].(string)
-		if !idOK || !titleOK || title == "" {
+		managed, managedOK := records[i][FieldManageInventory].(bool)
+		backorder, backorderOK := records[i][FieldAllowBackorder].(bool)
+		if !idOK || !titleOK || title == "" || !managedOK || !backorderOK {
 			return nil, errors.Internal(CodeVariantUnknown,
 				"the catalog record could not be read: %v", records[i])
 		}
-		titles[id] = title
+		facts[id] = variantFacts{
+			Title:          title,
+			Unmanaged:      !managed,
+			AllowBackorder: backorder,
+		}
 	}
 
 	for _, variantID := range variantIDs {
-		if titles[variantID] == "" {
+		if facts[variantID].Title == "" {
 			return nil, errors.NotFound(CodeVariantUnknown,
 				"variant %s is not in the catalog; an order line cannot be written without a title", variantID)
 		}
 	}
-	return titles, nil
+	return facts, nil
 }
 
-// inventoryItems resolves the inventory items of the variants with a SINGLE
-// link query.
+// inventoryItems resolves the inventory items of the COUNTED variants with a
+// SINGLE link query.
 //
-// # A variant with no inventory item is REJECTED
+// # A variant the merchant does not count is not looked up at all
+//
+// facts carries the flags read alongside the titles, and a variant whose
+// manage_inventory is false gets NO entry in the answer — not even when a link
+// happens to exist. The merchant's decision is "do not count this", and the
+// checkout obeys it rather than reserving against a link left behind by an
+// earlier configuration; a stale link is not consent to set stock aside.
+// The line then reaches the reserve step with an empty inventory item and is
+// skipped (see [reserveInventoryStep.Invoke]).
+//
+// # A variant that permits BACKORDER is not looked up either
+//
+// An unlinked variant is the extreme case of "no warehouse can cover this
+// line": nothing counts its stock, so nothing can ever cover it. That is
+// exactly the question allow_backorder answers, and the flag says the order is
+// not refused for it (ADR 0048). The line reaches the reserve step with an
+// empty inventory item and is skipped there, the same way an uncounted one is.
+//
+// A backorder-permitting variant that IS linked keeps its item and is reserved
+// normally: the flag lifts a REFUSAL, it does not switch reservation off, so
+// stock that exists is still set aside.
+//
+// This is the second of ADR 0040's three in-stock clauses, and reading only the
+// first left the disagreement ADR 0048 was written to close half open — a
+// variant the storefront badges in stock under clause two was still refused
+// here. ADR 0040 also says a variant with manage_inventory true and NO linked
+// inventory item is not in stock; that sentence is read as belonging to the
+// third clause, the one that needs a quantity to evaluate, because a merchant
+// who ticks "allow backorder" has already said the missing quantity does not
+// stop the sale.
+//
+// # A COUNTED variant that refuses backorder and has no item is still REJECTED
 //
 // The decision is errors.Invalid. No reservation can be opened for a variant
 // that has no inventory item; SKIPPING it silently would mean selling goods
-// whose stock was never set aside. The error is not NotFound because the
-// variant DOES exist; what is missing is its being linked to inventory
-// tracking, and the caller can fix the request.
+// whose stock was never set aside, for a merchant who asked for neither. The
+// error is not NotFound because the variant DOES exist; what is missing is its
+// being linked to inventory tracking, and the caller can fix the request.
+//
+// Until ADR 0048 this refusal covered EVERY variant, which is the live
+// disagreement that record was written about: ADR 0040 badges an uncounted and
+// unlinked variant as in stock while this line refused the order for it. The
+// storefront and the till now read the same two flags.
 //
 // # More than one item
 //
@@ -446,7 +559,9 @@ func (w *Workflows) variantTitles(ctx context.Context, variantIDs []string) (map
 // picking the first would tie the goods sold to an ordering accident. That is
 // why the situation is reported with errors.Internal: the data has gone corrupt
 // behind the constraint.
-func (w *Workflows) inventoryItems(ctx context.Context, variantIDs []string) (map[string]string, error) {
+func (w *Workflows) inventoryItems(
+	ctx context.Context, variantIDs []string, facts map[string]variantFacts,
+) (map[string]string, error) {
 	if len(variantIDs) == 0 {
 		return map[string]string{}, nil
 	}
@@ -459,11 +574,18 @@ func (w *Workflows) inventoryItems(ctx context.Context, variantIDs []string) (ma
 
 	out := make(map[string]string, len(variantIDs))
 	for _, variantID := range variantIDs {
+		if facts[variantID].Unmanaged {
+			continue
+		}
+
 		items := linked[variantID]
 		switch len(items) {
 		case 0:
+			if facts[variantID].AllowBackorder {
+				continue
+			}
 			return nil, errors.Invalid(CodeVariantNotStocked,
-				"variant %s is not linked to any inventory item; a product whose stock cannot be reserved cannot be ordered",
+				"variant %s is counted, does not permit backorder and is not linked to any inventory item; a product whose stock cannot be reserved cannot be ordered",
 				variantID)
 		case 1:
 			out[variantID] = items[0]
@@ -511,6 +633,23 @@ func (p *checkoutPlan) validate() error {
 	var subtotal int64
 	for i := range p.Lines {
 		line := p.Lines[i]
+		if !line.Unmanaged && !line.AllowBackorder && line.InventoryItemID == "" {
+			// The pairing is what the reserve step branches on, and the two
+			// halves are decided in two different reads: the flags come from the
+			// catalog, the item from the link layer. If they ever disagree the
+			// step would silently skip a line that had to be reserved — goods
+			// leaving the shop with no stock set aside and no error anywhere.
+			// The plan is checked before any side effect is applied, so the
+			// failure costs nothing.
+			//
+			// Both flags are in the condition because both make an empty item
+			// legitimate: an uncounted line has nothing to reserve, and a
+			// backorder-permitting line with no link is the one no warehouse can
+			// ever cover, which is the case the flag forgives.
+			return errors.Internal(CodeVariantNotStocked,
+				"the line is counted, refuses backorder and carries no inventory item: %s (variant %s)",
+				line.LineItemID, line.VariantID)
+		}
 		if line.Quantity < MinQuantity || line.Quantity > MaxQuantity {
 			return errors.Internal(CodeAmountInvalid,
 				"the line quantity must be within [%d, %d]: %s -> %d",

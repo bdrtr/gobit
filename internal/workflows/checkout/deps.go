@@ -64,6 +64,27 @@ const (
 	// FieldTitle is the name of the field that holds the title in a variant
 	// record.
 	FieldTitle = "title"
+	// FieldManageInventory is the variant record's "the merchant counts this
+	// variant" flag.
+	//
+	// It is what decides whether the line is reserved AT ALL (ADR 0048): a
+	// variant the merchant does not count has no stock to set aside, so it is
+	// linked to no inventory item and no reservation is opened for it. Before
+	// this name reached the checkout the saga refused such a variant outright
+	// ([CodeVariantNotStocked]) while ADR 0040 had the storefront badge it in
+	// stock — the badge and the till disagreed, and the disagreement sold
+	// nothing.
+	FieldManageInventory = "manage_inventory"
+	// FieldAllowBackorder is the variant record's "may be sold beyond the
+	// shelf" flag.
+	//
+	// It decides ONE thing here and the bound is deliberate (ADR 0048): a line
+	// no warehouse can cover does not REFUSE the order — including the line
+	// whose variant is linked to no inventory item at all, which no warehouse
+	// can ever cover. It does not promise the unit — the inventory module has no
+	// negative level and no promised date — so a merchant who reads the checkbox
+	// as "pre-order" is expecting a feature this repository does not have yet.
+	FieldAllowBackorder = "allow_backorder"
 	// FilterIDs is the BATCH identifier filter of the variant provider; thanks to
 	// this filter a separate query per line (N+1) is not needed.
 	FilterIDs = "ids"

@@ -290,9 +290,15 @@ it a definition at all.
   so the discount leg has to make it. A repository that has not wired the tax
   module pays the higher of the two prices, which is the opposite of the usual
   direction and is worth knowing before the work starts.
-  `Workflows.discountRequestFor` today takes neither a context nor an error
+  ~~`Workflows.discountRequestFor` today takes neither a context nor an error
   return; the flags have to be fetched by `Workflows.applyDiscounts`, which has
-  both, and handed in.
+  both, and handed in.~~ **Corrected 2026-09-08:** half of that is wrong about
+  the code. `Workflows.discountRequestFor` DOES take a context and use it — it
+  calls `Workflows.ruleContext(ctx, snap)` and already degrades that read's
+  failure with a warning. What it lacks is the ERROR RETURN, and that alone is
+  the reason: the flag read has two ways to fail, and a function that cannot
+  report a failure would have to swallow one. The flags are fetched by
+  `Workflows.applyDiscounts`, which has the error return, and handed in.
 - **FOUR new cross-module name pairings with nothing comparing the two
   literals.** Counted over BOTH halves, because both halves create them and the
   cheap half is not the free one here. The cart names the "product" entity and
@@ -333,6 +339,66 @@ it a definition at all.
 
 ## What this deliberately does NOT do
 
+- ~~**It does not carry the change.**~~ **BUILT 2026-09-08, both halves.**
+  The stock pair: `Workflows.variantTitles` asks for `manage_inventory` and
+  `allow_backorder` beside the title — one more Fields entry, no new round trip,
+  measured as ONE catalog call for the whole
+  checkout; `planLine` gains `Unmanaged` and `AllowBackorder`, and the first is
+  the INVERSE the negatives asked for, so a plan written before today decodes as
+  COUNTED; `Workflows.inventoryItems` stops demanding a link for an uncounted
+  variant and still refuses a counted one that refuses backorder; the reserve
+  step skips an uncounted line before asking any module, and forgives an
+  uncoverable line only when it permits backorder and only on errors.Conflict.
+  Three consequences the record did not name were found while building and are
+  held by their own gates. **The first is that reading ONE clause at the link
+  check leaves the disagreement half open**, and it is the whole point of the
+  record, so it was closed rather than filed: `Workflows.inventoryItems` lets an
+  unlinked variant through when it permits BACKORDER as well, because nothing
+  counts its stock and therefore no warehouse can ever cover it, which is
+  exactly the case that flag forgives — the reserve step skips it without
+  putting a question with an empty item identifier to the inventory module. ADR
+  0040 also says "a variant with `manage_inventory` true and NO linked inventory
+  item is NOT in stock"; that sentence is read here as belonging to the THIRD
+  clause, the one that needs a quantity to evaluate, and the reading is written
+  down because the other one makes ADR 0040 contradict its own clause two. The
+  reading is also the safe one either way: under it the badge and the till
+  agree, and under the other the till accepts what the badge refused, which
+  never strands a shopper. **The second**: `reserveInventoryStep.Restore` used
+  to read an empty reservation list as a corrupt record, which is now a
+  LEGITIMATE outcome — so the step's output NAMES every line it deliberately
+  left unreserved (`reserveOutput.Unreserved`) and the record has to account for
+  every line of the plan. The plan cannot do that job: a backorder-permitting
+  line is reserved wherever stock exists, so a plan of such lines is equally
+  consistent with "reserved nothing, correctly" and "reserved two and lost
+  both", and a guard that asked the plan alone would let a lost trail through
+  with compensation reporting "done" having released nothing. **The third**:
+  `checkoutPlan.validate` now refuses a line that is counted, refuses backorder
+  and carries no inventory item, because the flags and the item come from two
+  different reads and a disagreement would make the step silently skip a line
+  that had to be reserved. The product pair: `Workflows.discountRequestFor` puts
+  `is_giftcard` and `discountable` into each line's attribute map,
+  `Workflows.applyDiscounts` fetches them (it has the error return that function
+  lacks), a product the catalog cannot answer for leaves the keys OFF the line,
+  and a failed read logs and prices the cart without them. Nothing inside the
+  promotion module changed, exactly as measured. Mutation-proved eight ways with
+  `-count=1`: removing the uncounted-line skip, inverting the conflict guard on
+  backorder, swapping the two product flags, never sending them, dropping the
+  backorder exemption at the link check, dropping the unlinked-line skip in the
+  reserve step, weakening the record's accounting back to the plan's answer, and
+  not naming an unreserved line in the output.
+  **One measured cost differs from the table above and it is stated rather than
+  smoothed over.** The hoist that makes the module-tax path net ONE lives in
+  `Workflows.computeTotals` and `Workflows.applyModuleTax`, which the build that
+  carried this record did not own, so the discount leg resolves the products
+  itself and a discounting cart on that path pays THREE batch catalog reads
+  rather than two — the hop, the flag read, and the tax leg's own hop. The
+  region-rate path pays the two the table names. The hoist is still the right
+  shape and is left open. The assertion that used to pin the module-tax path at
+  ONE batch read, `TestTheProductsAreReadInONEQuery` in the cart flow's tax
+  tests, MOVED rather than being loosened: it now compares a one-line cart with
+  a two-line cart and requires the counts to be EQUAL, which is the property it
+  was written for — catalog work that does not grow with the basket — and which
+  a literal count could not tell apart from an N+1.
 - **It does not build pre-order.** A promised date and a stock level that may go
   negative in a controlled way are a feature with its own decisions. This record
   ends the state in which the flag decides nothing.

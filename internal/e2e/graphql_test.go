@@ -781,14 +781,22 @@ func TestGraphQLAndRESTReturnTheSameSet(t *testing.T) {
 	stage := gqlFixture(t)
 	query := koleksiyonSorgusu(stage.collectionID)
 
-	keys := map[string]string{
-		"first storefront":  publishableKey,
-		"second storefront": stage.secondKey,
+	// The channel is carried beside the key because the REST catalog reads take
+	// it from the PATH (ADR 0044) while GraphQL still takes it from the identity.
+	// That difference is the point of the comparison now: two surfaces given the
+	// channel by two different mechanisms have to agree on what it means.
+	storefronts := map[string]struct {
+		key     string
+		channel string
+	}{
+		"first storefront":  {publishableKey, testChannelID},
+		"second storefront": {stage.secondKey, stage.secondChannelID},
 	}
 
-	for name, key := range keys {
+	for name, storefront := range storefronts {
 		t.Run(name, func(t *testing.T) {
-			rest := storefrontCatalog(t, key, query)
+			key := storefront.key
+			rest := storefrontCatalog(t, key, storefront.channel, query)
 			gql := gqlCatalog(t, key, stage.collectionID, nil)
 
 			assert.ElementsMatch(t, rest.kimlikler(), gql.kimlikler(),
@@ -804,7 +812,7 @@ func TestGraphQLAndRESTReturnTheSameSet(t *testing.T) {
 	// the SAME vocabulary — the core's error envelope is written from a single
 	// place on both surfaces (see graph.NewHandler).
 	restHidden := magazaIstegi(t,
-		"/store/v1/products/"+stage.secondChannelProduct.handle, publishableKey)
+		catalogPath(testChannelID, "/products/"+stage.secondChannelProduct.handle), publishableKey)
 	require.Equal(t, http.StatusNotFound, restHidden.Code,
 		"REST should return 404 for the hidden product; body: %s", restHidden.Body.String())
 
