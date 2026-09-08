@@ -17,6 +17,7 @@ import (
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/eventbus"
 	corehttp "github.com/bdrtr/gobit/core/http"
+	"github.com/bdrtr/gobit/core/jobreport"
 	"github.com/bdrtr/gobit/core/module"
 )
 
@@ -432,11 +433,17 @@ func redact(data map[string]any) (payload map[string]any, removed []string) {
 //
 // # A non-empty pile FAILS the run, and that is the alarm
 //
-// It is B12's rule applied unchanged: a run's detail reaches `gobit jobs` only
-// alongside an error, so a job reporting "ok" while deliveries sat permanently
-// undelivered would be the write-only ledger this repository has already built
-// once, in audit_log. The failure does not clear itself — it stands until a
-// human redrives the deliveries or discards them, which is the intended cost.
+// A job reporting "ok" while deliveries sat permanently undelivered would be
+// the write-only ledger this repository has already built once, in audit_log.
+// The failure does not clear itself — it stands until a human redrives the
+// deliveries or discards them, which is the intended cost.
+//
+// The REASON it used to give — that a run's detail reaches `gobit jobs` only
+// alongside an error — stopped being true for this plugin with ADR 0069, and
+// the choice is kept on its own merits rather than on that one. A pile is an
+// alarm, and a line in the DETAIL column is not: the listing's OUTCOME column
+// is what an operator's eye goes to first, and moving the pile out of it would
+// make the one condition that needs a human quieter than it is today.
 //
 // The difference from the outbox, worth naming because it changes who the alarm
 // is FOR: an outbox dead letter means gobit's own bus refused an event, while a
@@ -477,8 +484,16 @@ func (m *webhookModule) deliverPass(ctx context.Context) error {
 	return deadLetterError{report: dead, orphans: orphans}
 }
 
-// reportPass logs what the pass did.
+// reportPass says what the pass did, on both channels.
+//
+// The operator's LISTING gets one line on every pass, including the empty ones,
+// and it is written before the early return below on purpose. The LOG gets the
+// delivery ids and the severities, because a log is read forwards by somebody
+// reconstructing an incident while the listing is read by somebody deciding
+// whether there is one.
 func (m *webhookModule) reportPass(ctx context.Context, result passResult) {
+	jobreport.Report(ctx, summarize(result))
+
 	if result.Claimed == 0 {
 		// DEBUG, not INFO. A healthy installation runs this every minute
 		// forever, and a line that never changes is a line nobody reads.
@@ -510,6 +525,49 @@ func (m *webhookModule) reportPass(ctx context.Context, result passResult) {
 			"there is a backlog and the next pass is a minute away",
 			"limit", deliveryLimit)
 	}
+}
+
+// summarize renders one pass as the single line `gobit jobs` prints.
+//
+// It is deliberately NOT the log's content. The delivery ids stay in the log;
+// this is one cell of a tabwriter table. What it carries beyond the counts is
+// the one state the counts cannot express — a FILLED batch, which is the
+// difference between "the sender is working" and "the sender is working and
+// losing ground". [delayAfter]'s ladder needs no jitter because
+// [deliveryLimit] bounds the herd instead, and it calls that "a bound the
+// operator can see in the job's report" — which until ADR 0069 published the
+// reporting channel meant a log line, not the listing an operator opens first.
+func summarize(result passResult) string {
+	if result.Claimed == 0 {
+		// Said rather than left blank. A blank cell is what a job that has
+		// never run looks like, and "nothing was due" is a real answer to "is
+		// the sender running".
+		return "nothing due"
+	}
+
+	line := fmt.Sprintf("claimed %d, delivered %d, failed %d",
+		result.Claimed, result.Delivered, result.Failed)
+
+	if result.Skipped > 0 {
+		// Leased, not lost — they come back when the lease elapses. It is here
+		// because a pass that attempted half its batch and one that attempted
+		// all of it produce the same two counts above.
+		line += fmt.Sprintf(", %d left for the next pass", result.Skipped)
+	}
+
+	if given := len(result.DeadLettered); given > 0 {
+		// The ones given up on IN THIS PASS, which is not the pile: the pile is
+		// counted separately and printed by the failure. This number says the
+		// pile grew just now.
+		line += fmt.Sprintf(", %d newly given up on", given)
+	}
+
+	if result.Claimed == deliveryLimit {
+		line += fmt.Sprintf("; the limit of %d was filled, so there is a backlog",
+			deliveryLimit)
+	}
+
+	return line
 }
 
 // deadLetterError is the failure a pass returns when there is a pile.

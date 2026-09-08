@@ -14,6 +14,7 @@ import (
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	coreeventbus "github.com/bdrtr/gobit/core/eventbus"
 	corehttp "github.com/bdrtr/gobit/core/http"
+	"github.com/bdrtr/gobit/core/jobreport"
 	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	coreprovider "github.com/bdrtr/gobit/core/provider"
 )
@@ -70,6 +71,13 @@ func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 	// Every 24 hours with a one-minute bound: MaxRun MUST NOT exceed Every, and
 	// a definition that breaks that rule is refused when the process starts
 	// rather than run behind forever.
+	//
+	// The run also leaves the operator a LINE, and that call is the second
+	// thing this file exists to prove. Until ADR 0069 the reporting channel
+	// lived in the internal scheduler package, so a plugin outside the gobit
+	// module could not report anything from a run that SUCCEEDED — it could
+	// only fail. jobreport.Report compiling here is the proof that the wall is
+	// gone, in the one place where Go's own internal/ rule really applies.
 	h.RegisterJob(coreplugin.Job{
 		Name:   "havale-reminder",
 		Every:  24 * time.Hour,
@@ -77,6 +85,7 @@ func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 		Run: func(ctx context.Context) error {
 			h.Logger().InfoContext(ctx, "bank transfers are confirmed by hand; check the account",
 				"account", account)
+			jobreport.Report(ctx, "bank transfers are confirmed by hand")
 
 			return nil
 		},

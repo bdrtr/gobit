@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bdrtr/gobit/core/jobreport"
 	"github.com/bdrtr/gobit/internal/core/job"
 )
 
@@ -45,7 +46,8 @@ func runOnce(t *testing.T, work job.Func) job.Outcome {
 
 // TestASuccessfulRunCanLeaveADetail is the whole point of the channel.
 //
-// Before [job.Report] the runner filled Outcome.Detail only from an error, so a
+// Before [jobreport.Report] the runner filled Outcome.Detail only from an error,
+// so a
 // run that SUCCEEDED had nowhere to put a number — measured, not assumed: the
 // same fixture with the call removed records an empty string. Two pieces of
 // work hit that wall from opposite sides (the outbox relay had to FAIL to
@@ -53,7 +55,7 @@ func runOnce(t *testing.T, work job.Func) job.Outcome {
 // is the assertion that says the wall is gone.
 func TestASuccessfulRunCanLeaveADetail(t *testing.T) {
 	outcome := runOnce(t, func(ctx context.Context) error {
-		job.Report(ctx, "published 12, failed 0")
+		jobreport.Report(ctx, "published 12, failed 0")
 
 		return nil
 	})
@@ -73,7 +75,7 @@ func TestASuccessfulRunCanLeaveADetail(t *testing.T) {
 // reads during an incident.
 func TestAFailingRunReportsExactlyWhatItAlwaysDid(t *testing.T) {
 	outcome := runOnce(t, func(ctx context.Context) error {
-		job.Report(ctx, "published 12, failed 0")
+		jobreport.Report(ctx, "published 12, failed 0")
 
 		return detailedError{detail: "17 dead-lettered; oldest order.placed"}
 	})
@@ -87,7 +89,7 @@ func TestAFailingRunReportsExactlyWhatItAlwaysDid(t *testing.T) {
 // TestAFailingRunWithNoNoteStillReportsNothing covers the other half of "did
 // not change".
 //
-// A job that never calls Report and fails with a plain error recorded an empty
+// A job that never reports and fails with a plain error recorded an empty
 // detail before this change, and has to keep doing so — otherwise the listing
 // grows content nobody wrote.
 func TestAFailingRunWithNoNoteStillReportsNothing(t *testing.T) {
@@ -104,79 +106,15 @@ func TestAFailingRunWithNoNoteStillReportsNothing(t *testing.T) {
 //
 // A pass cut off by its deadline, or one whose second half broke, keeps
 // whatever it last said. "examined 30 of 50" beside the error beats the blank
-// cell it used to leave, and it is only reachable for a job that calls Report —
+// cell it used to leave, and it is only reachable for a job that reports —
 // so nothing that failed before this change reports differently.
 func TestAReportedLineSurvivesAFailureThatCarriesNone(t *testing.T) {
 	outcome := runOnce(t, func(ctx context.Context) error {
-		job.Report(ctx, "examined 30 of 50")
+		jobreport.Report(ctx, "examined 30 of 50")
 
 		return errors.New("the provider stopped answering")
 	})
 
 	require.Error(t, outcome.Err)
 	assert.Equal(t, "examined 30 of 50", outcome.Detail)
-}
-
-// TestTheLastReportedLineWins states the rule a job that reports as it goes
-// depends on.
-//
-// Appending instead would grow without bound and break the tabwriter row it
-// lands in; keeping the FIRST would freeze the line at "starting", which is the
-// least useful moment of any run.
-func TestTheLastReportedLineWins(t *testing.T) {
-	outcome := runOnce(t, func(ctx context.Context) error {
-		job.Report(ctx, "examined 10")
-		job.Report(ctx, "examined 20")
-		job.Report(ctx, "examined 30")
-
-		return nil
-	})
-
-	require.NoError(t, outcome.Err)
-	assert.Equal(t, "examined 30", outcome.Detail)
-}
-
-// TestReportingOutsideARunIsASilentNoOp is the price of the hidden channel,
-// paid rather than denied.
-//
-// A job's own unit test calls its run function directly, and [job.Runner.RunNow]
-// records no outcome at all. Neither has a reporter, and a panic in either
-// would turn "I forgot the channel is contextual" into a dead process.
-func TestReportingOutsideARunIsASilentNoOp(t *testing.T) {
-	assert.NotPanics(t, func() { job.Report(context.Background(), "nobody is listening") })
-	assert.NotPanics(t, func() { job.Report(t.Context(), "still nobody") })
-}
-
-// TestAReporterStartsEmptyAndIsNotShared keeps last night's number from
-// standing as tonight's.
-//
-// The runner takes a FRESH reporter per run. A shared one would leave a job
-// that reported nothing this pass showing whatever it said last pass, which is
-// worse than a blank cell: it is a wrong number that looks current.
-func TestAReporterStartsEmptyAndIsNotShared(t *testing.T) {
-	ctx, first := job.WithReporter(t.Context())
-	assert.Empty(t, first.Detail(), "a fresh reporter carries nothing")
-
-	job.Report(ctx, "examined 4")
-	assert.Equal(t, "examined 4", first.Detail())
-
-	_, second := job.WithReporter(ctx)
-	assert.Empty(t, second.Detail(),
-		"a reporter attached over an existing one must not inherit its line")
-}
-
-// TestTheInnermostReporterIsTheOneThatCollects proves the nesting is not
-// merely tidy.
-//
-// The runner attaches its reporter to the run's own context, which is derived
-// from one a test or a caller may already have decorated. If an outer reporter
-// won, the line would be collected by whoever is NOT recording the outcome.
-func TestTheInnermostReporterIsTheOneThatCollects(t *testing.T) {
-	outer, outerReporter := job.WithReporter(t.Context())
-	inner, innerReporter := job.WithReporter(outer)
-
-	job.Report(inner, "the run's own line")
-
-	assert.Equal(t, "the run's own line", innerReporter.Detail())
-	assert.Empty(t, outerReporter.Detail())
 }

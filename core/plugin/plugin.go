@@ -190,6 +190,12 @@ type routeRegistration struct {
 // a form. ADR 0026's own bias is "publish late, and publish what was measured";
 // four fields were measured, the scheduler was not.
 //
+// A fifth thing was measured later and it is not a field: the channel a run
+// reports its one line on. It is published as
+// [github.com/bdrtr/gobit/core/jobreport], separately and deliberately, because
+// it is the one part of the scheduler a plugin has to NAME (ADR 0069). The
+// scheduler itself still is not published.
+//
 // What the copy costs is drift, and the cost is PAID rather than hoped away:
 // internal/app/jobs_test.go reflects over the scheduler's own definition and
 // fails when it grows a field this struct does not carry.
@@ -228,6 +234,14 @@ type Job struct {
 	// unlikely, not impossible — a process can be partitioned from the database
 	// after taking the lock, and the row that elects an occurrence is written
 	// before the work rather than after.
+	//
+	// It may leave the operator ONE LINE by calling
+	// [github.com/bdrtr/gobit/core/jobreport.Report] with the context it was
+	// handed, and that line reaches the DETAIL column of `gobit jobs` whether
+	// the run succeeds or fails. Nothing in this signature says so, which is
+	// why it is said here: until ADR 0069 published that channel, a plugin's
+	// job that SUCCEEDED could not report a thing, and the only way to make a
+	// number visible was to fail the run.
 	//
 	// Whether it may WRITE is the one question no gate here answers for the
 	// author. ADR 0017 refuses running side effects unwatched, and every job the

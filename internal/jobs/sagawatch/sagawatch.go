@@ -37,7 +37,7 @@
 // paragraph above makes. A job that succeeds could not leave a line in
 // `gobit jobs` at all — the runner recorded a detail only alongside an error —
 // so the listing an operator opens FIRST showed "ok" and an empty cell for an
-// hour in which this job found abandoned sagas holding stock. [job.Report]
+// hour in which this job found abandoned sagas holding stock. [jobreport.Report]
 // closes that, and the count now appears in the listing beside the run.
 //
 // The pass still succeeds when it finds one. Failing would put the row in the
@@ -56,6 +56,7 @@ import (
 	"time"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/jobreport"
 	"github.com/bdrtr/gobit/internal/core/job"
 	"github.com/bdrtr/gobit/internal/core/workflow"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
@@ -140,7 +141,7 @@ func run(ctx context.Context, r reader, log *slog.Logger) error {
 	// The count reaches `gobit jobs`, which is the listing an operator opens
 	// before they open a log. It is reported on the quiet passes too: "0
 	// abandoned" is the sentence that makes the hour it becomes 1 legible.
-	job.Report(ctx, summarize(len(abandoned), page.Truncated))
+	jobreport.Report(ctx, summarize(len(abandoned), page.Truncated))
 
 	if len(abandoned) == 0 {
 		// Logged at DEBUG rather than INFO. A healthy installation runs this

@@ -2,9 +2,12 @@ package paymentpaytr
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"time"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/jobreport"
 	coreplugin "github.com/bdrtr/gobit/core/plugin"
 )
 
@@ -101,33 +104,67 @@ func pendingWatch(m *paytrModule) coreplugin.Job {
 // So the report is a log line at WARN, which is what
 // [paytrModule.reportStuck] already used, and the run succeeds. This is
 // internal/jobs/sagawatch's choice, for the same reason.
+//
+// # The count also goes where an operator looks FIRST
+//
+// A log line at WARN is read by somebody who already went to the logs. The
+// question this watch answers — "is anything stuck?" — is asked from
+// `gobit jobs`, and until ADR 0069 published
+// [github.com/bdrtr/gobit/core/jobreport] a plugin's job could not put anything
+// in that listing's DETAIL column without FAILING, which is precisely the
+// alarm this job refuses to raise. So the number the pass computes is reported
+// on every pass, the quiet ones included: "0 pending" every hour is the
+// sentence that makes the hour it becomes 3 legible.
 func (m *paytrModule) watchPending(ctx context.Context) error {
 	if m.store == nil {
 		// Register did not run, or did not get as far as the pool. Returning an
 		// error rather than nil is the point: a silent success here would put
 		// an "ok" in `gobit jobs` for a watch that looked at nothing.
+		//
+		// It is checked on the CONCRETE field, before the conversion below: a
+		// nil *store handed to an interface is a non-nil interface holding a
+		// nil pointer, and this check would stop firing without a word.
 		return coreerrors.Unavailable(codeWatchNotReady,
 			"the %s module has no store; the pending payment watch cannot read anything",
 			ModuleName)
 	}
 
-	stuck, err := m.store.pending(ctx, pendingGrace, pendingWatchLimit)
+	return runPendingWatch(ctx, m.store, m.log)
+}
+
+// pendingLister is the narrow surface one pass needs.
+//
+// It is declared HERE rather than the pass taking the whole store, so the work
+// depends on the one method it uses and a TEST CAN SUPPLY IT without a
+// database. internal/jobs/sagawatch's reader exists for the same reason, and
+// there is a second one now: the line this pass reports is only assertable if
+// the pass can be run at all, and a channel whose content nothing asserts is
+// the capability-with-no-consumer this repository names most often.
+type pendingLister interface {
+	pending(ctx context.Context, olderThan time.Duration, limit int) ([]payment, error)
+}
+
+// runPendingWatch is one pass over the pending payments.
+func runPendingWatch(ctx context.Context, rows pendingLister, log *slog.Logger) error {
+	stuck, err := rows.pending(ctx, pendingGrace, pendingWatchLimit)
 	if err != nil {
 		return coreerrors.Wrap(err, coreerrors.KindOf(err), codeWatchFailed,
 			"the pending PayTR payments could not be listed")
 	}
 
+	jobreport.Report(ctx, summarize(len(stuck)))
+
 	if len(stuck) == 0 {
 		// DEBUG rather than INFO. A healthy installation runs this every hour
 		// forever, and a line that never changes is a line nobody reads — which
 		// is how the one that differs gets missed.
-		m.log.DebugContext(ctx, "no PayTR payment is waiting on a callback",
+		log.DebugContext(ctx, "no PayTR payment is waiting on a callback",
 			"older_than", pendingGrace.String())
 
 		return nil
 	}
 
-	m.log.WarnContext(ctx, "PayTR payments are still pending; PayTR never reported on them "+
+	log.WarnContext(ctx, "PayTR payments are still pending; PayTR never reported on them "+
 		"and any money taken has no order behind it",
 		"pending", len(stuck),
 		// Hit means "this many OR MORE". It is a separate key rather than a
@@ -137,4 +174,29 @@ func (m *paytrModule) watchPending(ctx context.Context) error {
 		"list", PendingPath)
 
 	return nil
+}
+
+// summarize renders one pass as the single line `gobit jobs` prints.
+//
+// The payment ids stay in the LOG and in the listing behind [PendingPath]; they
+// do not come here. This is one cell of a table an operator scans, and a pass
+// that found a hundred stuck payments would push every other job's row off the
+// terminal — the ids are useless without the next step anyway, which is reading
+// that endpoint.
+//
+// A filled cap is said OUT LOUD, for the reason [pendingWatchLimit] exists: a
+// number that silently means "at least this many" is the one an operator would
+// use to decide the problem is small.
+func summarize(pending int) string {
+	if pending == 0 {
+		return "0 pending"
+	}
+
+	line := fmt.Sprintf("%d payment(s) pending for over %s", pending, pendingGrace)
+	if pending == pendingWatchLimit {
+		line += fmt.Sprintf("; the limit of %d was filled, so there may be more",
+			pendingWatchLimit)
+	}
+
+	return line
 }

@@ -294,6 +294,25 @@ repository has no way to compute that. What can be said is that the omission was
 found by a package comment written for a different decision, and that is not a
 mechanism.
 
+## Amendment: `core/jobreport` is the seventeenth package (2026-09-08)
+
+The amendment above says "No job package was added under `core/`". **One is now**
+— `core/jobreport`, three functions and no type, published by
+[ADR 0069](0069-the-job-reporting-channel-is-published-and-the-scheduler-is-not.md).
+The sentence that is still true is the one that mattered: the SCHEDULER stayed
+internal. The runner, the store contract, the advisory-lock class and the key
+algorithm are no more published today than they were then, and `plugin.Job` is
+still a four-field value type rather than a window onto the machine.
+
+What the earlier amendment did not anticipate is that a plugin needs one thing
+from the scheduler that is not a field of its definition: the channel a run
+reports its one line on. It could not be handed over as a VALUE, because the
+context key both sides need has to be a type both sides can name. So the general
+form stated there — a contract can be published as a value type without
+publishing the engine that consumes it — gains a second clause: where the
+contract is a CHANNEL rather than a value, what gets published is the key and
+the accessors, still not the engine.
+
 ## Reopening
 
 Reopen if a customer project cannot express something without a package that

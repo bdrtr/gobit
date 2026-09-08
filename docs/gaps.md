@@ -37,11 +37,11 @@ Live rows first.
 | D15 | Performance figures nobody could re-check | Re-measured and corrected |
 | D16 | The column audit named D4 as what it catches and never caught it | Fixed. The fix produced nine live findings — D18 |
 | D17 | `CancelReturn` / `CancelClaim` had no production caller | Fixed |
-| D19 | `SetPassword` read and wrote across a gap a delete could land in | Fixed. Residue: `LinkSalesChannel` locks the channel, not the key |
+| D19 | `SetPassword` read and wrote across a gap a delete could land in | Fixed. Recorded constraint rather than a residue: `LinkSalesChannel` locks the CHANNEL and then the link row, while the two delete flows each lock their own parent first. A deadlock would need a flow taking the link row BEFORE its parent, and none does — all six queries that touch `api_key_sales_channel` were enumerated on 2026-09-08 and the module's SQL is the whole population, since a second component naming that table is refused. The ordering is written down so the seventh query does not have to rediscover it |
 | D20 | Three godocs called an orphaned rule "structurally impossible" | Fixed — it was measurably possible |
-| D21 | A job that succeeds could not say anything | Fixed. Residue: a PLUGIN still cannot report a detail |
+| D21 | A job that succeeds could not say anything | **Closed 2026-09-08 — ADR 0069.** The residue was a wall rather than an omission: the reporting call sat in `internal/core/job` and `core/plugin`, where `Job` lives, may not import an internal package. The CHANNEL is published as `core/jobreport` — three functions and no type — and the scheduler is not; the core's own three jobs were moved onto it so the tree carries ONE mechanism and not two. Both plugins that register a job ship as its consumers: `paymentpaytr` was reporting a count only to a log line, and `webhookout` carried a godoc promising a bound "the operator can see in the job's report" that the listing had no way to show |
 | D22 | A plugin can be complete, tested, documented and impossible to install | Fixed — `webhookout` is in the composition root's catalog. **The row said otherwise until 2026-09-08** |
-| D23 | Three audits were green on the very defect they were written for | Fixed. Residue: the blindness control has no row in the README's invariant table |
+| D23 | Three audits were green on the very defect they were written for | Fixed — 89 gates read one by one, and the blindness control the round added now has its row in both READMEs' invariant tables (2026-09-08) |
 | D24 | A carrier's events arrive out of order and the state machine refused all of it | Fixed |
 | D25 | A handler could read a query parameter it never describes | Fixed — `TestEveryQueryParameterAHandlerReadsIsDescribed`. **The row said "not shipped" until 2026-09-08** |
 | D26 | Two module api packages had no test at all and nothing asked why | Fixed |

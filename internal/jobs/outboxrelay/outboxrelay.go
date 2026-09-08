@@ -49,7 +49,7 @@
 //
 // The failure used to be the ONLY channel out of here: a run's detail was
 // recorded only alongside an error, so a healthy pass could say nothing. That
-// is no longer true — [job.Report] gives a successful run a line — which turns
+// is no longer true — [jobreport.Report] gives a successful run a line — which turns
 // "the pile fails the run" from a consequence of the machinery into a choice,
 // and a choice has to be made rather than kept by accident.
 //
@@ -84,6 +84,7 @@ import (
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/eventbus"
 	"github.com/bdrtr/gobit/core/eventbus/outbox"
+	"github.com/bdrtr/gobit/core/jobreport"
 	"github.com/bdrtr/gobit/internal/core/job"
 )
 
@@ -203,7 +204,7 @@ func run(ctx context.Context, r relay, bus publisher, log *slog.Logger) error {
 	// rescues is the second case, where the relay worked and the READ broke,
 	// and the listing used to show a bare error with no sign that anything was
 	// delivered.
-	job.Report(ctx, summarize(result))
+	jobreport.Report(ctx, summarize(result))
 
 	// Asked for on EVERY pass, including the ones that published nothing. A
 	// pile that is only counted when something happens is one that goes
@@ -305,7 +306,7 @@ func reportPass(ctx context.Context, result outbox.RelayResult, log *slog.Logger
 // a choice at all: it was "failure, or the pile is invisible to the one listing
 // built to be looked at".
 //
-// It IS a choice now. A successful run can leave a line ([job.Report]), so
+// It IS a choice now. A successful run can leave a line ([jobreport.Report]), so
 // "failure or detail" is a live question, and the package documentation answers
 // it: still a failure, because OUTCOME is the column that gets scanned and
 // `gobit deadletters` is the off switch for an alarm that stands. The reasoning

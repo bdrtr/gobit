@@ -8,6 +8,7 @@ import (
 	"time"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/jobreport"
 )
 
 // tickInterval is how often the runner looks for due occurrences.
@@ -188,7 +189,11 @@ func (r *Runner) execute(ctx context.Context, d Definition, due time.Time) {
 	runCtx, cancel := context.WithTimeout(ctx, d.MaxRun)
 	defer cancel()
 
-	runCtx, reporter := WithReporter(runCtx)
+	// The reporter comes from the PUBLISHED channel, and the runner installing
+	// it is what makes that channel work for a plugin's job as well as for the
+	// core's: the plugin calls [jobreport.Report] on the context this line
+	// decorated, and never names anything internal to do it (ADR 0069).
+	runCtx = jobreport.WithReporter(runCtx)
 
 	started := r.now()
 	err := safely(runCtx, d.Run)
@@ -201,13 +206,14 @@ func (r *Runner) execute(ctx context.Context, d Definition, due time.Time) {
 	// the reason would hide it in the one column an operator reads during an
 	// incident. The precedence is also what makes this change invisible to
 	// everything that already worked: a run that fails with an error carrying a
-	// JobDetail reports exactly what it reported before [Report] existed.
+	// JobDetail reports exactly what it reported before the reporting channel
+	// existed.
 	//
 	// A run that fails WITHOUT such an error keeps whatever it reported before
 	// it failed, and that is deliberate rather than a leak — a pass cut off by
 	// its deadline having said "examined 30 of 50" is strictly better than the
 	// blank cell it used to leave.
-	outcome := Outcome{Err: err, Duration: elapsed, Detail: reporter.Detail()}
+	outcome := Outcome{Err: err, Duration: elapsed, Detail: jobreport.Detail(runCtx)}
 	if detail, ok := detailOf(err); ok {
 		outcome.Detail = detail
 	}
@@ -249,7 +255,7 @@ func (r *Runner) execute(ctx context.Context, d Definition, due time.Time) {
 // deadletters, seed and refold-invoices, and nothing reaches here. The sentence
 // is corrected instead of deleted because the gap it names is real and somebody
 // will want to close it — and because it explains one thing about this path:
-// [Report] is a no-op here. RunNow records no outcome at all, so a line
+// [jobreport.Report] is a no-op here. RunNow records no outcome at all, so a line
 // reported inside a hand-run would have nowhere to go, and installing a
 // reporter that nothing reads would be the capability-with-no-consumer this
 // repository names most often.

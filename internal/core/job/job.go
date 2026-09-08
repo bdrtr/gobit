@@ -95,11 +95,13 @@ const (
 // before the work rather than after. Anything that cannot tolerate that does
 // not belong in a job.
 //
-// It may leave the operator ONE LINE by calling [Report] with the context it
-// was handed, and that line reaches [Outcome.Detail] whether the run succeeds
-// or fails. The signature does not say so, which is the acknowledged cost of
-// carrying the channel in the context; [Report] argues why the alternatives
-// cost more.
+// It may leave the operator ONE LINE by calling
+// [github.com/bdrtr/gobit/core/jobreport.Report] with the context it was
+// handed, and that line reaches [Outcome.Detail] whether the run succeeds or
+// fails. The signature does not say so, which is the acknowledged cost of
+// carrying the channel in the context; that package argues why the alternatives
+// cost more. It is PUBLISHED while this package is not, because a plugin's job
+// runs under this runner and could otherwise say nothing at all (ADR 0069).
 type Func func(ctx context.Context) error
 
 // Definition is one scheduled job.
@@ -285,7 +287,8 @@ type Outcome struct {
 	// Detail is a short line the job left for the operator, such as a count.
 	//
 	// It arrives by one of two channels, and both are needed because they
-	// answer for different halves of a run. [Report], called from inside the
+	// answer for different halves of a run.
+	// [github.com/bdrtr/gobit/core/jobreport.Report], called from inside the
 	// work, is the only one a SUCCESSFUL run has — until it existed a run that
 	// went well could say nothing at all, which is why the outbox relay used to
 	// have to FAIL in order to mention its dead letters. A JobDetail method on

@@ -30,7 +30,7 @@
 //
 // # What reaches `gobit jobs`, and what deliberately does not fail it
 //
-// Every pass leaves one line in the listing's DETAIL column ([job.Report]) —
+// Every pass leaves one line in the listing's DETAIL column ([jobreport.Report]) —
 // examined, agreed, and each finding that is not zero. Until that channel
 // existed a pass could reach the listing only by FAILING, so this job's
 // findings reached nothing but the log: `gobit jobs` printed "ok" and an empty
@@ -66,6 +66,7 @@ import (
 	"time"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/jobreport"
 	"github.com/bdrtr/gobit/internal/core/job"
 	paymentsvc "github.com/bdrtr/gobit/internal/modules/payment/service"
 )
@@ -218,7 +219,7 @@ func run(ctx context.Context, r reconciler, log *slog.Logger) error {
 	// when something is wrong is a number nobody has learned to read. An
 	// operator who sees "examined 12, agreed 12" every hour is one who notices
 	// "DIVERGENT 1" the hour it appears.
-	job.Report(ctx, summarize(report))
+	jobreport.Report(ctx, summarize(report))
 
 	if report.Clean() {
 		// DEBUG, not INFO. A healthy installation runs this every hour forever,

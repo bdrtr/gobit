@@ -13,7 +13,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/eventbus"
 	"github.com/bdrtr/gobit/core/eventbus/outbox"
-	"github.com/bdrtr/gobit/internal/core/job"
+	"github.com/bdrtr/gobit/core/jobreport"
 	"github.com/bdrtr/gobit/internal/jobs/outboxrelay"
 )
 
@@ -324,10 +324,10 @@ func deadLetterReport(count int64) outbox.DeadLetterReport {
 func reportedBy(t *testing.T, r *fakeRelay, bus *fakeBus) (string, error) {
 	t.Helper()
 
-	ctx, reporter := job.WithReporter(context.Background())
+	ctx := jobreport.WithReporter(context.Background())
 	err := outboxrelay.Definition(r, bus, slog.New(slog.DiscardHandler)).Run(ctx)
 
-	return reporter.Detail(), err
+	return jobreport.Detail(ctx), err
 }
 
 // TestASuccessfulPassSaysWhatItRelayed is the capability this job was converted

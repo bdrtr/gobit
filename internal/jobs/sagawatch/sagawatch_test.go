@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/internal/core/job"
+	"github.com/bdrtr/gobit/core/jobreport"
 	"github.com/bdrtr/gobit/internal/core/workflow"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
 	"github.com/bdrtr/gobit/internal/jobs/sagawatch"
@@ -160,10 +160,10 @@ func TestDefinitionToleratesANilLogger(t *testing.T) {
 func reportedBy(t *testing.T, r *fakeReader) (string, error) {
 	t.Helper()
 
-	ctx, reporter := job.WithReporter(context.Background())
+	ctx := jobreport.WithReporter(context.Background())
 	err := sagawatch.Definition(r, slog.New(slog.DiscardHandler)).Run(ctx)
 
-	return reporter.Detail(), err
+	return jobreport.Detail(ctx), err
 }
 
 // TestAnAbandonedSagaReachesTheListingAndNotOnlyTheLog closes the gap the
