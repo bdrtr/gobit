@@ -921,6 +921,26 @@ var countClaimedToday = []string{
 	"the groups of docs/known-limits.md",
 }
 
+// countClaimedElsewhere pins the totals stated OUTSIDE the two READMEs.
+//
+// They are pinned for a sharper reason than the README's. A total in a godoc is
+// written inside a wrapped paragraph, and gofmt or an edit can move the number
+// onto a different line from the noun — at which point the claim leaves this
+// audit's population WITHOUT the sentence changing meaning to a reader. That is
+// not hypothetical: all three of these were found stale on 2026-09-09 and two
+// of them were invisible for exactly that reason, the count having wrapped away
+// from its noun.
+//
+// So the list is the counterweight to the anchor rule. The anchor is what keeps
+// subsets out; this is what stops a total from slipping out of scope on a
+// reflow. A sentence that legitimately stops stating a total leaves this list in
+// a diff somebody reads.
+var countClaimedElsewhere = []struct{ file, population string }{
+	{"internal/adminui/doc.go", "the commerce modules under internal/modules"},
+	{"internal/smoke/process_test.go", "the commerce modules under internal/modules"},
+	{"internal/smoke/race_test.go", "the commerce modules under internal/modules"},
+}
+
 // TestTheCountClaimScannerIsNotBlind pins down what [collectCountClaims] sees and,
 // just as importantly, what it drops.
 //
@@ -946,6 +966,17 @@ func TestTheCountClaimScannerIsNotBlind(t *testing.T) {
 					"stopped matching it, and the count it states is no longer checked "+
 					"by anything.", readme, population)
 		}
+	}
+
+	for _, claim := range countClaimedElsewhere {
+		assert.True(t, found[claim.file+" :: "+claim.population],
+			"%s no longer prices %q anywhere this audit can see it.\n"+
+				"In a godoc the usual cause is a REFLOW: the number and its noun ended "+
+				"up on different lines, and this audit reads a line — so the sentence "+
+				"still says the same thing to a reader and is no longer checked by "+
+				"anything. Put the number, the noun and the path back on one line, or "+
+				"remove the entry from countClaimedElsewhere.",
+			claim.file, claim.population)
 	}
 }
 

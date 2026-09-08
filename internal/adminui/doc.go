@@ -35,10 +35,17 @@
 // fails at STARTUP, because that is a wiring mistake rather than a missing
 // module.
 //
-// The panel's read and write surface together covers ONE of the fifteen
-// modules. Nothing here is a general admin surface, and no module gets an
-// admin-facing contract until a panel screen needs it: an unused
-// compiler-unchecked contract is the error class ADR 0009 names.
+// The panel's read and write surface together cover ONE module, out of the
+// seventeen modules of internal/modules. Nothing here is a general admin
+// surface, and no module gets an admin-facing contract until a panel screen
+// needs it: an unused compiler-unchecked contract is the error class ADR 0009
+// names.
+//
+// The count sits on ONE LINE with the noun and the path, and that is not
+// formatting. It used to read "covers ONE of the fifteen / modules", wrapped —
+// where it was both WRONG (there were seventeen) and invisible to
+// TestTheCountsInTheProseAreTrue, which reads a LINE and admits a sentence that
+// names its population by path. Written this way the gate holds it true.
 //
 // # Five sections, and what the fifth reports
 //
