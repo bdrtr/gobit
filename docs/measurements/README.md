@@ -26,23 +26,23 @@ truth: a report says what was true on the day it was taken.
 | [What a closed stock location owes](0055-a-location-closes-empty.md) | 274 |
 | [What an unproven `customer_id` bought](0057-the-storefront-customer-claim.md) | 183 |
 | [Soft delete in the order and payment modules](0054-soft-delete-in-order-and-payment.md) | 148 |
-| [Two roles: what the split closes and what it costs](0060-two-roles.md) | 152 |
+| [Two roles: what the split closes and what it costs](0060-two-roles.md) | 157 |
 | [Auditing a callback write](0056-callback-audit.md) | 144 |
-| [Two clocks on one axis](0053-two-clocks.md) | 88 |
-| [Migration cancellation: the GracefulStop race](0052-migration-cancellation-race.md) | 90 |
-| [The measured cost of catalog search](catalog-search-cost.md) | 829 |
-| [Data layer — measured 2026-09-04](data-layer.md) | 132 |
-| [Must-have commerce features — measured 2026-09-04](must-have-commerce-features.md) | 232 |
-| [Performance and operations — measured 2026-09-04](performance-and-operations.md) | 160 |
-| [Observability and security — measured 2026-09-05](observability-and-security.md) | 143 |
-| [Common Go mistakes — measured 2026-09-05](common-go-mistakes.md) | 106 |
+| [Two clocks on one axis](0053-two-clocks.md) | 74 |
+| [Migration cancellation: the GracefulStop race](0052-migration-cancellation-race.md) | 87 |
+| [The measured cost of catalog search](catalog-search-cost.md) | 1018 |
+| [Data layer — measured 2026-09-04](data-layer.md) | 136 |
+| [Must-have commerce features — measured 2026-09-04](must-have-commerce-features.md) | 236 |
+| [Performance and operations — measured 2026-09-04](performance-and-operations.md) | 164 |
+| [Observability and security — measured 2026-09-05](observability-and-security.md) | 147 |
+| [Common Go mistakes — measured 2026-09-05](common-go-mistakes.md) | 110 |
 | [An AI subsystem — measured against the brief, 2026-09-05](ai-subsystem.md) | 204 |
-| [Importable core, thin application — measured against the brief, 2026-09-05](importable-core.md) | 100 |
-| [Commerce models — measured against the brief, 2026-09-05](commerce-models.md) | 227 |
-| [B2's remainder is four different kinds of work — measured 2026-09-05](b2-remainder.md) | 348 |
-| [AI-powered commerce features — measured against the brief, 2026-09-05](ai-powered-commerce-features.md) | 260 |
-| [Storefront speed and checkout — measured against the brief, 2026-09-05](storefront-speed-and-checkout.md) | 163 |
-| [Turkey-specific — measured against the brief, 2026-09-05](turkey-specific.md) | 143 |
-| [Platform features — measured against the brief, 2026-09-05](platform-features.md) | 168 |
-| [The embedded admin panel — measured against the brief, 2026-09-05](embedded-admin-panel.md) | 67 |
-| [Capability inventory — measured 2026-09-04](capability-inventory.md) | 281 |
+| [Importable core, thin application — measured against the brief, 2026-09-05](importable-core.md) | 104 |
+| [Commerce models — measured against the brief, 2026-09-05](commerce-models.md) | 231 |
+| [B2's remainder is four different kinds of work — measured 2026-09-05](b2-remainder.md) | 354 |
+| [AI-powered commerce features — measured against the brief, 2026-09-05](ai-powered-commerce-features.md) | 264 |
+| [Storefront speed and checkout — measured against the brief, 2026-09-05](storefront-speed-and-checkout.md) | 167 |
+| [Turkey-specific — measured against the brief, 2026-09-05](turkey-specific.md) | 152 |
+| [Platform features — measured against the brief, 2026-09-05](platform-features.md) | 172 |
+| [The embedded admin panel — measured against the brief, 2026-09-05](embedded-admin-panel.md) | 71 |
+| [Capability inventory — measured 2026-09-04](capability-inventory.md) | 285 |
