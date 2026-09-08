@@ -26,6 +26,7 @@ func (r *Repo) CreateGroup(ctx context.Context, g models.CustomerGroup) (models.
 	row, err := r.q.InsertCustomerGroup(ctx, customerdb.InsertCustomerGroupParams{
 		ID:        g.ID,
 		Name:      g.Name,
+		Rank:      g.Rank,
 		Metadata:  meta,
 		CreatedAt: fromTime(g.CreatedAt),
 	})
@@ -99,8 +100,11 @@ func (r *Repo) UpdateGroup(
 	}
 
 	row, err := r.q.UpdateCustomerGroup(ctx, customerdb.UpdateCustomerGroupParams{
-		ID:        id,
-		Name:      patch.Name,
+		ID:   id,
+		Name: patch.Name,
+		// nil leaves the order the merchant set alone; the column is NOT NULL and
+		// only the ARGUMENT is nullable (ADR 0049).
+		Rank:      patch.Rank,
 		Metadata:  meta,
 		UpdatedAt: fromTime(now),
 	})
@@ -251,6 +255,7 @@ func toGroup(row customerdb.CustomerGroup) (models.CustomerGroup, error) {
 	return models.CustomerGroup{
 		ID:        row.ID,
 		Name:      row.Name,
+		Rank:      row.Rank,
 		Metadata:  meta,
 		CreatedAt: toTime(row.CreatedAt),
 		UpdatedAt: toTime(row.UpdatedAt),

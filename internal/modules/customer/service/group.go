@@ -13,6 +13,11 @@ type GroupInput struct {
 	// Name grubun görünen adıdır; zorunludur ve canlı gruplar arasında
 	// benzersizdir.
 	Name string
+	// Rank gruplar arasındaki sıradır; KÜÇÜK olan kazanır, varsayılan 0.
+	//
+	// Birden çok gruba üye bir müşteri için hangi grubun konuştuğuna bu karar
+	// verir: sepet en yüksek sıralı grubu fiyat kural bağlamına yazar (ADR 0049).
+	Rank int32
 	// Metadata serbest yapısal bağlamdır; boş bırakılabilir.
 	Metadata map[string]any
 }
@@ -35,8 +40,12 @@ func (s *Service) CreateGroup(ctx context.Context, in GroupInput) (models.Custom
 
 	now := s.clock()
 	return s.repo.CreateGroup(ctx, models.CustomerGroup{
-		ID:        models.NewCustomerGroupID(now),
-		Name:      name,
+		ID:   models.NewCustomerGroupID(now),
+		Name: name,
+		// Rank is NOT validated: every int32 is a legal order, negative included,
+		// so that a merchant who has ranked three groups 0, 1, 2 can put a fourth
+		// in front without renumbering the others (ADR 0049).
+		Rank:      in.Rank,
 		Metadata:  in.Metadata,
 		CreatedAt: now,
 	})
@@ -49,6 +58,12 @@ type UpdateGroupInput struct {
 	// Name grubun yeni adıdır; verilirse boş olamaz ve canlı gruplar arasında
 	// benzersizdir.
 	Name *string
+	// Rank yeni sıradır; nil verilirse DOKUNULMAZ.
+	//
+	// İşaretçi olması, saticinin belirlediği sıranın bir ad düzeltmesiyle
+	// sessizce sıfırlanmamasını sağlar: "verilmedi" ile "sıfır yapıldı" ayrı
+	// şeylerdir (ADR 0049).
+	Rank *int32
 	// Metadata yeni metadata haritasıdır; sütunun tamamını değiştirir.
 	Metadata map[string]any
 }
@@ -66,7 +81,7 @@ func (s *Service) UpdateGroup(ctx context.Context, id string, in UpdateGroupInpu
 		return models.CustomerGroup{}, err
 	}
 
-	patch := models.CustomerGroupPatch{Metadata: in.Metadata}
+	patch := models.CustomerGroupPatch{Rank: in.Rank, Metadata: in.Metadata}
 	if in.Name != nil {
 		if err := requireText("grup adı", *in.Name); err != nil {
 			return models.CustomerGroup{}, err

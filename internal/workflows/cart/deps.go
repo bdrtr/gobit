@@ -339,6 +339,14 @@ type Customers interface {
 	// CustomerEmail returns the customer's email address; if the customer does not
 	// exist, errors.NotFound.
 	CustomerEmail(ctx context.Context, customerID string) (string, error)
+	// CustomerGroupIDs returns the customer's groups, ORDERED — rank first, then
+	// id — so the HEAD is the group the merchant chose to speak for them.
+	//
+	// That order is the contract (ADR 0049) and it is the whole reason this
+	// method is here: a customer may belong to several groups, and a price ruled
+	// on each would otherwise be separated by the pricing ladder's amount rung,
+	// which picks the cheapest rather than the one the merchant meant.
+	CustomerGroupIDs(ctx context.Context, customerID string) ([]string, error)
 }
 
 // Discounts is the surface of the promotion module ("promotion.interop") that

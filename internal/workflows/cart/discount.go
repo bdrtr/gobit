@@ -158,7 +158,7 @@ func (w *Workflows) applyDiscounts(ctx context.Context, snap Snapshot, lines []L
 			len(lines), len(snap.Items), snap.ID)
 	}
 
-	payload, err := json.Marshal(w.discountRequestFor(snap, lines))
+	payload, err := json.Marshal(w.discountRequestFor(ctx, snap, lines))
 	if err != nil {
 		return errors.Wrap(err, errors.KindInternal, CodeDiscountFailed,
 			"discount request could not be encoded to JSON: %s", snap.ID)
@@ -207,7 +207,9 @@ func (w *Workflows) applyDiscounts(ctx context.Context, snap Snapshot, lines []L
 // does not know the customer's groups, and silently picking one would tie the
 // discount to map iteration order. The group context is added here the day the
 // customer surface publishes the group list.
-func (w *Workflows) discountRequestFor(snap Snapshot, lines []LineTotals) discountRequest {
+func (w *Workflows) discountRequestFor(
+	ctx context.Context, snap Snapshot, lines []LineTotals,
+) discountRequest {
 	items := make([]discountRequestItem, 0, len(lines))
 	for i := range lines {
 		items = append(items, discountRequestItem{
@@ -218,9 +220,15 @@ func (w *Workflows) discountRequestFor(snap Snapshot, lines []LineTotals) discou
 		})
 	}
 
+	attributes, groupErr := w.ruleContext(ctx, snap)
+	if groupErr != nil {
+		w.log.WarnContext(ctx, "the customer's groups could not be read; discounting without a segment",
+			"error", groupErr, "customer_id", snap.CustomerID)
+	}
+
 	return discountRequest{
 		CurrencyCode:    snap.CurrencyCode,
-		Context:         map[string]string{attrRegionID: snap.RegionID},
+		Context:         attributes,
 		Items:           items,
 		ShippingMethods: []discountRequestShipping{},
 		Codes:           []string{},

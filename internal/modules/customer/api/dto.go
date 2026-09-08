@@ -38,6 +38,8 @@ type customerGroupDTO struct {
 	ID string `json:"id"`
 	// Name is the group's name.
 	Name string `json:"name"`
+	// Rank is the group's order among the others; the SMALLER value wins.
+	Rank int32 `json:"rank"`
 	// Metadata is free structural context; if empty it does not appear in the
 	// body.
 	Metadata map[string]any `json:"metadata,omitempty"`
@@ -106,7 +108,11 @@ type updateCustomerRequest struct {
 
 // groupRequest is the customer group creation body.
 type groupRequest struct {
-	Name     string         `json:"name"`
+	Name string `json:"name"`
+	// Rank orders the group among the others; the SMALLER value wins and the
+	// default is 0. It decides which group speaks for a customer who belongs to
+	// several (ADR 0049).
+	Rank     int32          `json:"rank"`
 	Metadata map[string]any `json:"metadata"`
 }
 
@@ -117,7 +123,11 @@ type groupRequest struct {
 // that does not separate the two cases, a client sending only metadata would
 // have deleted the group's name.
 type updateGroupRequest struct {
-	Name     *string        `json:"name"`
+	Name *string `json:"name"`
+	// Rank is a POINTER for the same reason the name is: not given means "do not
+	// touch". A merchant correcting a group's name must not silently reset the
+	// order they set (ADR 0049).
+	Rank     *int32         `json:"rank"`
 	Metadata map[string]any `json:"metadata"`
 }
 
@@ -178,6 +188,7 @@ func toGroupDTO(g models.CustomerGroup) customerGroupDTO {
 	return customerGroupDTO{
 		ID:        g.ID,
 		Name:      g.Name,
+		Rank:      g.Rank,
 		Metadata:  g.Metadata,
 		CreatedAt: g.CreatedAt,
 		UpdatedAt: g.UpdatedAt,

@@ -83,6 +83,14 @@ type Customer struct {
 	Phone string
 	// HasAccount reports whether the record is an account or a guest record.
 	HasAccount bool
+	// Rank is the merchant's ORDER over groups, and the SMALLER value wins.
+	//
+	// It decides which group speaks for a customer who belongs to several: the
+	// cart writes the highest-ranked one into the pricing rule context, and
+	// nothing else in the computation looks at the rest (ADR 0049). Zero is the
+	// default and means "no preference expressed", which is where every group
+	// starts; ties fall to the id, which is stable.
+	Rank int32
 	// Metadata is structural context the caller writes freely; it can be empty.
 	Metadata map[string]any
 	// CreatedAt is the moment the record was created (UTC).
@@ -108,6 +116,14 @@ type CustomerGroup struct {
 	ID string
 	// Name is the group's display name; it is unique among live records.
 	Name string
+	// Rank is the merchant's ORDER over groups, and the SMALLER value wins.
+	//
+	// It decides which group speaks for a customer who belongs to several: the
+	// cart writes the highest-ranked one into the pricing rule context and
+	// nothing in the computation looks at the rest (ADR 0049). Zero is the
+	// default and means "no preference expressed", which is where every group
+	// starts; a tie falls to the id, which is stable.
+	Rank int32
 	// Metadata is structural context the caller writes freely; it can be empty.
 	Metadata map[string]any
 	// CreatedAt is the moment the record was created (UTC).

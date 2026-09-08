@@ -164,8 +164,16 @@ func (w *Workflows) AddLineItem(ctx context.Context, in AddLineItemInput) (AddLi
 		return AddLineItemResult{}, err
 	}
 
+	attributes, groupErr := w.ruleContext(ctx, snap)
+	if groupErr != nil {
+		// The base price is a worse answer than the segment price and a far
+		// better one than no cart; see ruleContext.
+		w.log.WarnContext(ctx, "the customer's groups could not be read; pricing without a segment",
+			"error", groupErr, "customer_id", snap.CustomerID)
+	}
+
 	unitPrice, err := w.prices.CalculateAmount(ctx, priceSets[in.VariantID], snap.CurrencyCode, quantity,
-		map[string]string{attrRegionID: snap.RegionID})
+		attributes)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return AddLineItemResult{}, errors.Wrap(err, errors.KindInvalid, CodePriceUnavailable,

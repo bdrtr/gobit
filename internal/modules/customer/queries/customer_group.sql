@@ -1,8 +1,8 @@
 -- customer_group ve üyelik sorguları.
 
 -- name: InsertCustomerGroup :one
-INSERT INTO customer_group (id, name, metadata, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $4)
+INSERT INTO customer_group (id, name, rank, metadata, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $5)
 RETURNING *;
 
 -- name: GetCustomerGroup :one
@@ -27,6 +27,10 @@ WHERE deleted_at IS NULL;
 -- name: UpdateCustomerGroup :one
 UPDATE customer_group SET
     name       = COALESCE(sqlc.narg('name')::text, name),
+    -- rank is nullable in the ARGUMENT and not in the column: a nil means "do
+    -- not touch", which is what lets a merchant rename a group without silently
+    -- resetting the order they set (ADR 0049).
+    rank       = COALESCE(sqlc.narg('rank')::int, rank),
     metadata   = COALESCE(sqlc.narg('metadata')::jsonb, metadata),
     updated_at = sqlc.arg('updated_at')
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL
@@ -62,11 +66,18 @@ ON CONFLICT (customer_id, customer_group_id) DO NOTHING;
 DELETE FROM customer_group_customer
 WHERE customer_id = $1 AND customer_group_id = $2;
 
+-- ListGroupsOfCustomer bir musterinin gruplarini SIRALI dondurur.
+--
+-- Siralama RANK, sonra id: bastaki grup, saticinin sectigi kazanandir. Bu
+-- siralama ADR 0049 ile SOZLESME haline geldi — Service.CustomerGroupIDs'in
+-- basi, sepetin kural baglamina yazdigi tek gruptur. Onceki siralama
+-- (created_at DESC, id DESC) keyfi degildi ama bir SOZ de degildi; simdi soz.
+--
 -- name: ListGroupsOfCustomer :many
 SELECT g.* FROM customer_group g
 JOIN customer_group_customer m ON m.customer_group_id = g.id
 WHERE m.customer_id = $1 AND g.deleted_at IS NULL
-ORDER BY g.created_at DESC, g.id DESC;
+ORDER BY g.rank, g.id;
 
 -- ListGroupIDsOfCustomers birden çok müşterinin grup kimliklerini TEK sorguda
 -- döner.

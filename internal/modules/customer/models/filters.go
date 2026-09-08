@@ -51,6 +51,13 @@ type CustomerGroupPatch struct {
 	// Name is the group's new name; it must have been trimmed by the caller and
 	// is unique among live groups.
 	Name *string
+	// Rank is the group's new order among groups; nil leaves it untouched.
+	//
+	// It is a POINTER while the column is NOT NULL, and the difference is the
+	// point: a merchant renaming a group must not silently reset the order they
+	// set, so "not given" and "set to zero" have to be different things
+	// (ADR 0049).
+	Rank *int32
 	// Metadata is the new metadata map; it replaces the whole column.
 	Metadata map[string]any
 }

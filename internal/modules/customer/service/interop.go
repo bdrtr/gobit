@@ -48,6 +48,18 @@ func (s *Service) CustomerEmail(ctx context.Context, customerID string) (string,
 // groups' names, their metadata or their creation time are not inputs to the
 // computation; only the ids are carried.
 //
+// # The ORDER is part of the contract (ADR 0049)
+//
+// The slice comes back by RANK, then by id, so its HEAD is the group the
+// merchant chose to speak for this customer. That matters because a customer may
+// belong to several groups and a price ruled on each would otherwise be
+// separated by the pricing ladder's last usable rung, which compares AMOUNT —
+// the cheapest, against the merchant's intent.
+//
+// The order was not arbitrary before this and this comment does not pretend it
+// was: the query ordered by created_at. What was missing is a PROMISE, and this
+// is it. A caller may rely on the head; nothing may rely on the rest.
+//
 // For a customer with no groups an empty (non-nil) slice is returned.
 func (s *Service) CustomerGroupIDs(ctx context.Context, customerID string) ([]string, error) {
 	groups, err := s.ListGroupsOf(ctx, customerID)

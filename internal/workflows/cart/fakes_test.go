@@ -291,7 +291,22 @@ func (s *stubRegions) RegionTax(_ context.Context, _ string) (rateBps int32, aut
 // stubCustomers is the fake implementation of the [Customers] interface.
 type stubCustomers struct {
 	emails map[string]string
-	calls  int
+	// groups is the ordered group list per customer, as the real surface
+	// promises it: rank first, then id, so the head is the winner (ADR 0049).
+	groups map[string][]string
+	// groupErr scripts a failure of the group read, which the cart must survive
+	// by pricing without a segment rather than by failing the cart.
+	groupErr error
+	calls    int
+}
+
+// CustomerGroupIDs returns the scripted groups in the order they were given.
+func (s *stubCustomers) CustomerGroupIDs(_ context.Context, customerID string) ([]string, error) {
+	if s.groupErr != nil {
+		return nil, s.groupErr
+	}
+
+	return s.groups[customerID], nil
 }
 
 // CustomerEmail returns the customer's e-mail; NotFound when there is no such

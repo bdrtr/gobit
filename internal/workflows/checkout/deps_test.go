@@ -108,6 +108,13 @@ func (stubCustomers) CustomerEmail(_ context.Context, _ string) (string, error) 
 	return "", errUnexpected("CustomerEmail")
 }
 
+// CustomerGroupIDs returns no groups: this harness prices a cart whose customer
+// belongs to no segment, which is the ordinary shape and the one where the rule
+// context omits the attribute entirely (ADR 0049).
+func (stubCustomers) CustomerGroupIDs(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
+
 // provideCheckout registers this workflow's own surfaces in the container.
 func provideCheckout(t *testing.T, c *container.Container, h *harness) {
 	t.Helper()

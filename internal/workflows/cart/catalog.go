@@ -16,6 +16,17 @@ import (
 // and the base price chosen instead (see pricing matchRule).
 const attrRegionID = "region_id"
 
+// attrCustomerGroupID is the name of the attribute that carries the customer's
+// segment in pricing's rule context.
+//
+// It is a SINGLE value, and that is the decision rather than a limitation of the
+// map it goes into. A rule context is one value per attribute — matchRule reads
+// the context's value for an attribute and asks whether the rule's value list
+// contains it — so "any of my groups" is not expressible, and the SET lives on
+// the rule while the single value lives here. ADR 0049 chose which single value:
+// the head of the customer's ordered groups.
+const attrCustomerGroupID = "customer_group_id"
+
 // priceSetsFor resolves the price sets of the given variants with a SINGLE link
 // query.
 //
@@ -198,4 +209,50 @@ func (w *Workflows) productIDsFor(ctx context.Context, variantIDs []string) (map
 	}
 
 	return out, nil
+}
+
+// ruleContext builds the attribute map the rule engines are given for a cart.
+//
+// # Why the group is resolved HERE and not at each call site
+//
+// Three places build this context — the line-item price, the discount request
+// and the totals computation — and ADR 0049's decision is that they all send the
+// SAME single group. Three copies of "take the head of the slice" is three places
+// for them to drift apart, and the drift would be invisible: each engine would
+// simply price a different segment, with no error anywhere.
+//
+// # Why a guest OMITS the attribute rather than sending an empty one
+//
+// A cart with no customer has no segment, and the elimination rule already knows
+// what to do with a missing attribute: a rule naming an attribute the context
+// does not carry does not match, so a segment price is ELIMINATED. Sending an
+// empty string would instead ask every rule whether it lists "", which is a
+// value a merchant could accidentally configure. The default direction is that a
+// segment price stays CLOSED rather than opening to everybody.
+//
+// # Why a failure to read the groups is NOT fatal
+//
+// A cart total that cannot be computed because the customer module is briefly
+// unavailable is worse than a cart total computed at the base price: the first
+// stops the shop, the second charges the ordinary price. The error is returned so
+// the caller can log it, and the context comes back with the region alone.
+func (w *Workflows) ruleContext(ctx context.Context, snap Snapshot) (map[string]string, error) {
+	attributes := map[string]string{attrRegionID: snap.RegionID}
+
+	if snap.CustomerID == "" || w.customers == nil {
+		return attributes, nil
+	}
+
+	groups, err := w.customers.CustomerGroupIDs(ctx, snap.CustomerID)
+	if err != nil {
+		return attributes, err
+	}
+	if len(groups) == 0 {
+		return attributes, nil
+	}
+
+	// The HEAD, because the surface promises rank order (ADR 0049).
+	attributes[attrCustomerGroupID] = groups[0]
+
+	return attributes, nil
 }

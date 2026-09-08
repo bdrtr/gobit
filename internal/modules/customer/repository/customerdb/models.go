@@ -47,6 +47,7 @@ type CustomerGroup struct {
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
 	DeletedAt pgtype.Timestamptz
+	Rank      int32
 }
 
 type CustomerGroupCustomer struct {

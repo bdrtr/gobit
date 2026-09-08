@@ -474,9 +474,15 @@ func (w *Workflows) unitPrices(ctx context.Context, snap Snapshot, priceSets map
 		return nil, nil
 	}
 
+	attributes, groupErr := w.ruleContext(ctx, snap)
+	if groupErr != nil {
+		w.log.WarnContext(ctx, "the customer's groups could not be read; pricing without a segment",
+			"error", groupErr, "customer_id", snap.CustomerID)
+	}
+
 	req := priceRequest{
 		CurrencyCode: snap.CurrencyCode,
-		Attributes:   map[string]string{attrRegionID: snap.RegionID},
+		Attributes:   attributes,
 		Items:        make([]priceRequestItem, 0, len(snap.Items)),
 	}
 	for i := range snap.Items {

@@ -153,7 +153,7 @@ func (h *Handler) adminCreateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	group, err := h.svc.CreateGroup(ctx, service.GroupInput{Name: req.Name, Metadata: req.Metadata})
+	group, err := h.svc.CreateGroup(ctx, service.GroupInput{Name: req.Name, Rank: req.Rank, Metadata: req.Metadata})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
@@ -207,7 +207,7 @@ func (h *Handler) adminUpdateGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	group, err := h.svc.UpdateGroup(ctx, pathParam(r, paramID),
-		service.UpdateGroupInput{Name: req.Name, Metadata: req.Metadata})
+		service.UpdateGroupInput{Name: req.Name, Rank: req.Rank, Metadata: req.Metadata})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return

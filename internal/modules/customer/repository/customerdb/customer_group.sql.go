@@ -46,7 +46,7 @@ func (q *Queries) CountCustomerGroups(ctx context.Context) (int64, error) {
 }
 
 const getCustomerGroup = `-- name: GetCustomerGroup :one
-SELECT id, name, metadata, created_at, updated_at, deleted_at FROM customer_group
+SELECT id, name, metadata, created_at, updated_at, deleted_at, rank FROM customer_group
 WHERE id = $1 AND deleted_at IS NULL
 `
 
@@ -60,20 +60,22 @@ func (q *Queries) GetCustomerGroup(ctx context.Context, id string) (CustomerGrou
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Rank,
 	)
 	return i, err
 }
 
 const insertCustomerGroup = `-- name: InsertCustomerGroup :one
 
-INSERT INTO customer_group (id, name, metadata, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $4)
-RETURNING id, name, metadata, created_at, updated_at, deleted_at
+INSERT INTO customer_group (id, name, rank, metadata, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $5)
+RETURNING id, name, metadata, created_at, updated_at, deleted_at, rank
 `
 
 type InsertCustomerGroupParams struct {
 	ID        string
 	Name      string
+	Rank      int32
 	Metadata  []byte
 	CreatedAt pgtype.Timestamptz
 }
@@ -83,6 +85,7 @@ func (q *Queries) InsertCustomerGroup(ctx context.Context, arg InsertCustomerGro
 	row := q.db.QueryRow(ctx, insertCustomerGroup,
 		arg.ID,
 		arg.Name,
+		arg.Rank,
 		arg.Metadata,
 		arg.CreatedAt,
 	)
@@ -94,12 +97,13 @@ func (q *Queries) InsertCustomerGroup(ctx context.Context, arg InsertCustomerGro
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Rank,
 	)
 	return i, err
 }
 
 const listCustomerGroups = `-- name: ListCustomerGroups :many
-SELECT id, name, metadata, created_at, updated_at, deleted_at FROM customer_group
+SELECT id, name, metadata, created_at, updated_at, deleted_at, rank FROM customer_group
 WHERE deleted_at IS NULL
 ORDER BY created_at DESC, id DESC
 LIMIT $2::int OFFSET $1::int
@@ -126,6 +130,7 @@ func (q *Queries) ListCustomerGroups(ctx context.Context, arg ListCustomerGroups
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Rank,
 		); err != nil {
 			return nil, err
 		}
@@ -176,12 +181,18 @@ func (q *Queries) ListGroupIDsOfCustomers(ctx context.Context, customerIds []str
 }
 
 const listGroupsOfCustomer = `-- name: ListGroupsOfCustomer :many
-SELECT g.id, g.name, g.metadata, g.created_at, g.updated_at, g.deleted_at FROM customer_group g
+SELECT g.id, g.name, g.metadata, g.created_at, g.updated_at, g.deleted_at, g.rank FROM customer_group g
 JOIN customer_group_customer m ON m.customer_group_id = g.id
 WHERE m.customer_id = $1 AND g.deleted_at IS NULL
-ORDER BY g.created_at DESC, g.id DESC
+ORDER BY g.rank, g.id
 `
 
+// ListGroupsOfCustomer bir musterinin gruplarini SIRALI dondurur.
+//
+// Siralama RANK, sonra id: bastaki grup, saticinin sectigi kazanandir. Bu
+// siralama ADR 0049 ile SOZLESME haline geldi — Service.CustomerGroupIDs'in
+// basi, sepetin kural baglamina yazdigi tek gruptur. Onceki siralama
+// (created_at DESC, id DESC) keyfi degildi ama bir SOZ de degildi; simdi soz.
 func (q *Queries) ListGroupsOfCustomer(ctx context.Context, customerID string) ([]CustomerGroup, error) {
 	rows, err := q.db.Query(ctx, listGroupsOfCustomer, customerID)
 	if err != nil {
@@ -198,6 +209,7 @@ func (q *Queries) ListGroupsOfCustomer(ctx context.Context, customerID string) (
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Rank,
 		); err != nil {
 			return nil, err
 		}
@@ -259,14 +271,19 @@ func (q *Queries) SoftDeleteCustomerGroup(ctx context.Context, arg SoftDeleteCus
 const updateCustomerGroup = `-- name: UpdateCustomerGroup :one
 UPDATE customer_group SET
     name       = COALESCE($1::text, name),
-    metadata   = COALESCE($2::jsonb, metadata),
-    updated_at = $3
-WHERE id = $4 AND deleted_at IS NULL
-RETURNING id, name, metadata, created_at, updated_at, deleted_at
+    -- rank is nullable in the ARGUMENT and not in the column: a nil means "do
+    -- not touch", which is what lets a merchant rename a group without silently
+    -- resetting the order they set (ADR 0049).
+    rank       = COALESCE($2::int, rank),
+    metadata   = COALESCE($3::jsonb, metadata),
+    updated_at = $4
+WHERE id = $5 AND deleted_at IS NULL
+RETURNING id, name, metadata, created_at, updated_at, deleted_at, rank
 `
 
 type UpdateCustomerGroupParams struct {
 	Name      *string
+	Rank      *int32
 	Metadata  []byte
 	UpdatedAt pgtype.Timestamptz
 	ID        string
@@ -280,6 +297,7 @@ type UpdateCustomerGroupParams struct {
 func (q *Queries) UpdateCustomerGroup(ctx context.Context, arg UpdateCustomerGroupParams) (CustomerGroup, error) {
 	row := q.db.QueryRow(ctx, updateCustomerGroup,
 		arg.Name,
+		arg.Rank,
 		arg.Metadata,
 		arg.UpdatedAt,
 		arg.ID,
@@ -292,6 +310,7 @@ func (q *Queries) UpdateCustomerGroup(ctx context.Context, arg UpdateCustomerGro
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Rank,
 	)
 	return i, err
 }

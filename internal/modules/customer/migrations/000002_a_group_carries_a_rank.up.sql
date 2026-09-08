@@ -1,0 +1,41 @@
+-- rank is the merchant's ORDER over customer groups, and the smaller value wins.
+--
+-- # What it is for
+--
+-- A customer may belong to several groups — customer_group_customer is keyed
+-- (customer_id, customer_group_id), so the schema has always allowed it — and a
+-- price ruled on one group and a price ruled on another then both apply. ADR 0049
+-- decides that ONE group decides and that the merchant chooses which, because the
+-- alternative the pricing ladder offers is not a choice the merchant can make:
+-- price_list.type admits only 'sale' and 'override', so two contract prices tie
+-- at every rung the ladder ranks by SOURCE and are separated by AMOUNT — that is,
+-- by the cheapest, against the merchant's intent.
+--
+-- # Why the smaller value wins
+--
+-- Because both precedents in this repository already read that way, and a rank
+-- whose direction has to be looked up is a rank people set backwards. The product
+-- module orders its variants, options, option values, categories and images by a
+-- rank ascending, and the fulfillment module's shipping_locations carries a
+-- priority under a heading that says the smaller one wins and negative is allowed.
+--
+-- # Why the default is 0 and NOT NULL
+--
+-- Every group that exists today gets 0, which is the same rank, which is exactly
+-- the state the shop is in now: no merchant has expressed a preference, so no
+-- preference is invented for them. Ties are then broken by id, which is stable
+-- and arbitrary rather than arbitrary and unstable — the alternative, leaving the
+-- order to what the database returns, is what ADR 0049 refuses by name because it
+-- would tie a price to map iteration order.
+--
+-- Negative is allowed on purpose: a merchant who has ranked three groups 0, 1, 2
+-- and needs a fourth to come first should not have to renumber the other three.
+--
+-- # No index
+--
+-- Nothing filters or sorts on rank ALONE. It is read as part of the group list of
+-- ONE customer, which arrives through customer_group_customer's primary key
+-- prefix and is a handful of rows; sorting them is free. An index here would cost
+-- a write on every group edit and serve no read.
+ALTER TABLE customer_group
+    ADD COLUMN IF NOT EXISTS rank INTEGER NOT NULL DEFAULT 0;

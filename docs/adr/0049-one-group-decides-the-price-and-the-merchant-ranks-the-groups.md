@@ -363,7 +363,23 @@ a group is who the customer is.
 
 ## What this deliberately does NOT do
 
-- **It does not carry the change.** No migration is written here, no DTO field
+- ~~**It does not carry the change.**~~ **BUILT 2026-09-08, all five parts.**
+  `000002_a_group_carries_a_rank` adds the column; `rank` is a field on the two
+  existing DTOs and the two existing routes; `ListGroupsOfCustomer` orders by
+  rank then id and `CustomerGroupIDs` now PROMISES that order; and the cart
+  resolves the head once, in `Workflows.ruleContext`, which all three attribute
+  sites call. Verified against a real database: three groups ranked 1, 1 and 5
+  come back as the two rank-1 groups in id order and then the rank-5 one.
+  Mutation-proved three ways — taking the last group instead of the head, sending
+  an empty attribute for a guest, and failing the cart when the group read fails.
+  The container caught the fourth: adding the method to the surface made
+  `checkout`'s own stub stop satisfying it, and the resolution error named the
+  missing method, which is ADR 0001's mechanism doing exactly what that record
+  says it does.
+
+  The pieces below are what the original bullet said would not be carried, and
+  they are listed so the record reads as history rather than as a plan:
+  no migration was written here, no DTO field
   added, no cart site edited. This record fixes the shape and the reasoning; the
   work is a separate commit that has to add the `notPersonalColumns` entry BY
   HAND — the exhaustiveness test will not ask for it, for the reason recorded
