@@ -797,7 +797,7 @@ func TestTheCartsAddressReachesTheOrder(t *testing.T) {
 	shipping := cartsvc.AddressInput{
 		FirstName: "Ayse", LastName: "Yilmaz", Company: "Gobit AS",
 		Address1: "Ataturk Cad. 12", Address2: "Daire 3",
-		City: "Istanbul", Province: "Kadikoy", PostalCode: "34710",
+		City: "Kadikoy", Province: "Istanbul", PostalCode: "34710",
 		CountryCode: taxedCountry, Phone: "+905551112233",
 	}
 	_, err := cartSvc.SetShippingAddress(ctx, cartID, shipping)
@@ -826,8 +826,14 @@ func TestTheCartsAddressReachesTheOrder(t *testing.T) {
 		"the order has no shipping address. The cart had one and the order is what "+
 			"survives checkout: without it nothing can say where the parcel goes")
 	assert.Equal(t, "Ataturk Cad. 12", order.ShippingAddress.Address1)
-	assert.Equal(t, "Kadikoy", order.ShippingAddress.Province,
-		"the province was lost on the way; a domestic carrier prices on the district")
+	assert.Equal(t, "Istanbul", order.ShippingAddress.Province,
+		"the province was lost on the way; it is what a tax rule matches on below the "+
+			"country (ADR 0067), and the order is where it has to survive checkout")
+	assert.Equal(t, "Kadikoy", order.ShippingAddress.City,
+		"the city was lost on the way. The DISTRICT a domestic carrier prices on has no "+
+			"field of its own — it is ADR 0065's open trigger — so this address files the "+
+			"ilce as the city, which is what a Turkish shopper writes, and NOT as the "+
+			"province, which is what this test did until 2026-09-08 (ADR 0067)")
 	assert.Equal(t, "34710", order.ShippingAddress.PostalCode)
 	assert.Equal(t, taxedCountry, order.ShippingAddress.CountryCode)
 	assert.Equal(t, ordermodels.AddressShipping, order.ShippingAddress.Type)

@@ -62,12 +62,15 @@ type PersonalAddress struct {
 	// The name, company and location columns, exactly as the declaration names
 	// them; every one of them is optional in the schema and an empty value
 	// means the column is NULL.
-	FirstName   string
-	LastName    string
-	Company     string
-	Address1    string
-	Address2    string
-	City        string
+	FirstName string
+	LastName  string
+	Company   string
+	Address1  string
+	Address2  string
+	City      string
+	// Province is the sub-country unit under the country — an il in Turkey, a
+	// state in the US. It is NOT the district a domestic carrier prices on; that
+	// has no field of its own (ADR 0067).
 	Province    string
 	PostalCode  string
 	CountryCode string

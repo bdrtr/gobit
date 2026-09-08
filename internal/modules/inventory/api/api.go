@@ -162,10 +162,13 @@ func (h *Handler) Routes(r chi.Router) {
 
 // createStockLocationRequest POST /admin/v1/stock-locations gövdesidir.
 type createStockLocationRequest struct {
-	Name        string `json:"name"`
-	Address1    string `json:"address_1"`
-	Address2    string `json:"address_2"`
-	City        string `json:"city"`
+	Name     string `json:"name"`
+	Address1 string `json:"address_1"`
+	Address2 string `json:"address_2"`
+	City     string `json:"city"`
+	// Province is the sub-country unit under the country — an il in Turkey, a
+	// state in the US. It is NOT the district a domestic carrier prices on; that
+	// has no field of its own (ADR 0067).
 	Province    string `json:"province"`
 	PostalCode  string `json:"postal_code"`
 	CountryCode string `json:"country_code"`
@@ -475,11 +478,14 @@ type listEnvelope struct {
 
 // stockLocationDTO stok lokasyonunun dış gösterimidir.
 type stockLocationDTO struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Address1    string    `json:"address_1,omitempty"`
-	Address2    string    `json:"address_2,omitempty"`
-	City        string    `json:"city,omitempty"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Address1 string `json:"address_1,omitempty"`
+	Address2 string `json:"address_2,omitempty"`
+	City     string `json:"city,omitempty"`
+	// Province is the sub-country unit under the country — an il in Turkey, a
+	// state in the US. It is NOT the district a domestic carrier prices on; that
+	// has no field of its own (ADR 0067).
 	Province    string    `json:"province,omitempty"`
 	PostalCode  string    `json:"postal_code,omitempty"`
 	CountryCode string    `json:"country_code,omitempty"`

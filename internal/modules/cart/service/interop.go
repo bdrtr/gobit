@@ -81,18 +81,21 @@ type interopSnapshot struct {
 // Every field is a primitive: the consumer declares this shape on its own side
 // and must not import this module for it (ADR 0001/0006).
 type interopAddress struct {
-	SourceAddressID string         `json:"source_address_id,omitempty"`
-	FirstName       string         `json:"first_name,omitempty"`
-	LastName        string         `json:"last_name,omitempty"`
-	Company         string         `json:"company,omitempty"`
-	Address1        string         `json:"address_1,omitempty"`
-	Address2        string         `json:"address_2,omitempty"`
-	City            string         `json:"city,omitempty"`
-	Province        string         `json:"province,omitempty"`
-	PostalCode      string         `json:"postal_code,omitempty"`
-	CountryCode     string         `json:"country_code,omitempty"`
-	Phone           string         `json:"phone,omitempty"`
-	Metadata        map[string]any `json:"metadata,omitempty"`
+	SourceAddressID string `json:"source_address_id,omitempty"`
+	FirstName       string `json:"first_name,omitempty"`
+	LastName        string `json:"last_name,omitempty"`
+	Company         string `json:"company,omitempty"`
+	Address1        string `json:"address_1,omitempty"`
+	Address2        string `json:"address_2,omitempty"`
+	City            string `json:"city,omitempty"`
+	// Province is the sub-country unit under the country — an il in Turkey, a
+	// state in the US. It is NOT the district a domestic carrier prices on; that
+	// has no field of its own (ADR 0067).
+	Province    string         `json:"province,omitempty"`
+	PostalCode  string         `json:"postal_code,omitempty"`
+	CountryCode string         `json:"country_code,omitempty"`
+	Phone       string         `json:"phone,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
 // toInteropAddress copies a cart address onto the surface.

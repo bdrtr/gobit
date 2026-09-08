@@ -654,23 +654,26 @@ type lineItemDTO struct {
 
 // addressDTO is the cart address's outward representation.
 type addressDTO struct {
-	ID              string         `json:"id"`
-	CartID          string         `json:"cart_id"`
-	Type            string         `json:"type"`
-	SourceAddressID string         `json:"source_address_id,omitempty"`
-	FirstName       string         `json:"first_name,omitempty"`
-	LastName        string         `json:"last_name,omitempty"`
-	Company         string         `json:"company,omitempty"`
-	Address1        string         `json:"address_1,omitempty"`
-	Address2        string         `json:"address_2,omitempty"`
-	City            string         `json:"city,omitempty"`
-	Province        string         `json:"province,omitempty"`
-	PostalCode      string         `json:"postal_code,omitempty"`
-	CountryCode     string         `json:"country_code,omitempty"`
-	Phone           string         `json:"phone,omitempty"`
-	Metadata        map[string]any `json:"metadata,omitempty"`
-	CreatedAt       time.Time      `json:"created_at"`
-	UpdatedAt       time.Time      `json:"updated_at"`
+	ID              string `json:"id"`
+	CartID          string `json:"cart_id"`
+	Type            string `json:"type"`
+	SourceAddressID string `json:"source_address_id,omitempty"`
+	FirstName       string `json:"first_name,omitempty"`
+	LastName        string `json:"last_name,omitempty"`
+	Company         string `json:"company,omitempty"`
+	Address1        string `json:"address_1,omitempty"`
+	Address2        string `json:"address_2,omitempty"`
+	City            string `json:"city,omitempty"`
+	// Province is the sub-country unit under the country — an il in Turkey, a
+	// state in the US. It is NOT the district a domestic carrier prices on; that
+	// has no field of its own (ADR 0067).
+	Province    string         `json:"province,omitempty"`
+	PostalCode  string         `json:"postal_code,omitempty"`
+	CountryCode string         `json:"country_code,omitempty"`
+	Phone       string         `json:"phone,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
 }
 
 // shippingMethodDTO is the shipping method's outward representation.
@@ -865,18 +868,21 @@ func parseInt64Param(r *http.Request, name string) (int64, error) {
 
 // addressRequest is the common body of the shipping and billing endpoints.
 type addressRequest struct {
-	SourceAddressID string         `json:"source_address_id"`
-	FirstName       string         `json:"first_name"`
-	LastName        string         `json:"last_name"`
-	Company         string         `json:"company"`
-	Address1        string         `json:"address_1"`
-	Address2        string         `json:"address_2"`
-	City            string         `json:"city"`
-	Province        string         `json:"province"`
-	PostalCode      string         `json:"postal_code"`
-	CountryCode     string         `json:"country_code"`
-	Phone           string         `json:"phone"`
-	Metadata        map[string]any `json:"metadata"`
+	SourceAddressID string `json:"source_address_id"`
+	FirstName       string `json:"first_name"`
+	LastName        string `json:"last_name"`
+	Company         string `json:"company"`
+	Address1        string `json:"address_1"`
+	Address2        string `json:"address_2"`
+	City            string `json:"city"`
+	// Province is the sub-country unit under the country — an il in Turkey, a
+	// state in the US. It is NOT the district a domestic carrier prices on; that
+	// has no field of its own (ADR 0067).
+	Province    string         `json:"province"`
+	PostalCode  string         `json:"postal_code"`
+	CountryCode string         `json:"country_code"`
+	Phone       string         `json:"phone"`
+	Metadata    map[string]any `json:"metadata"`
 }
 
 // toInput converts the body into the service input.

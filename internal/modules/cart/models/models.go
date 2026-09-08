@@ -340,12 +340,15 @@ type CartAddress struct {
 	// from; it may be empty.
 	SourceAddressID string
 	// The name, title and location fields; all of them are optional.
-	FirstName  string
-	LastName   string
-	Company    string
-	Address1   string
-	Address2   string
-	City       string
+	FirstName string
+	LastName  string
+	Company   string
+	Address1  string
+	Address2  string
+	City      string
+	// Province is the sub-country unit under the country — an il in Turkey, a
+	// state in the US. It is NOT the district a domestic carrier prices on; that
+	// has no field of its own (ADR 0067).
 	Province   string
 	PostalCode string
 	// CountryCode is the ISO 3166-1 alpha-2 country code (e.g. "TR");

@@ -24,7 +24,10 @@ type AddressInput struct {
 	Address1        string
 	Address2        string
 	City            string
-	Province        string
+	// Province is the sub-country unit under the country — an il in Turkey, a
+	// state in the US. It is NOT the district a domestic carrier prices on; that
+	// has no field of its own (ADR 0067).
+	Province string
 	// PostalCode is the postal code.
 	PostalCode string
 	// CountryCode is the ISO 3166-1 alpha-2 country code; if it is given it

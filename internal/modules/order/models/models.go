@@ -649,12 +649,15 @@ type OrderAddress struct {
 	// The name, company and location fields; all of them are optional, because
 	// a guest checkout may carry very little and refusing the order over a
 	// missing company would be the framework deciding what a shop may sell.
-	FirstName  string
-	LastName   string
-	Company    string
-	Address1   string
-	Address2   string
-	City       string
+	FirstName string
+	LastName  string
+	Company   string
+	Address1  string
+	Address2  string
+	City      string
+	// Province is the sub-country unit under the country — an il in Turkey, a
+	// state in the US. It is NOT the district a domestic carrier prices on; that
+	// has no field of its own (ADR 0067).
 	Province   string
 	PostalCode string
 	// CountryCode is the ISO 3166-1 alpha-2 code (e.g. "TR"), UPPERCASE.
