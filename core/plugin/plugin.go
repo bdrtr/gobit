@@ -86,6 +86,18 @@ const CallbacksName = "core.callbacks"
 // registration itself rather than by a rule somebody has to remember.
 const ErrorReporterName = "error.reporter"
 
+// AIProviderName is the container name of the model that answers closed
+// questions about text.
+//
+// SINGULAR, for the reason [ErrorReporterName] is and not for the reason the
+// four registries are plural. A payment provider is chosen per order out of a
+// registry because two of them can both be right for one shop; a model is
+// chosen once by the operator, and a shop running two of them would have to
+// decide which one's opinion goes in the column — a decision nobody asked for
+// and no caller could make sensibly. At most one is enforced by the
+// registration: the container refuses a duplicate name.
+const AIProviderName = "ai.provider"
+
 // FileProvidersName is the container name of the file provider registry.
 //
 // ~~Unlike the other three there is NOT YET a module satisfying this name … the
@@ -521,6 +533,40 @@ func (h *Host) RegisterErrorReporter(r coreprovider.ErrorReporter) {
 			return coreerrors.Wrap(err, coreerrors.KindConflict, codeSinkUnusable,
 				"the %s plugin could not register its error reporter under %q",
 				name, ErrorReporterName)
+		},
+	})
+}
+
+// RegisterAIProvider installs the plugin's classifier.
+//
+// It is not queued, for [Host.RegisterErrorReporter]'s reason: the name belongs
+// to the CORE and the core is already there, so nothing has to wait for a
+// module's registry to exist. It differs from that one in what a missing
+// registration costs — nothing at all. No module requires a classifier and the
+// only consumer registers itself only if this name is present, so an
+// installation with no AI plugin runs exactly as it did before.
+//
+// A second classifier is a CONFLICT rather than a replacement, and the reason
+// is the singular slot's: two plugins each believing they own the answer would
+// mean the column holds whichever one loaded last, and an operator reading a
+// proposal would have no way to know which model they are weighing.
+func (h *Host) RegisterAIProvider(p coreprovider.Classifier) {
+	if p == nil {
+		return
+	}
+
+	name := h.active
+	err := h.c.Provide(AIProviderName, p)
+	if err == nil {
+		return
+	}
+
+	h.queue = append(h.queue, queuedTask{
+		description: "the AI provider of the " + name + " plugin (" + p.ID() + ")",
+		apply: func(context.Context, *Host) error {
+			return coreerrors.Wrap(err, coreerrors.KindConflict, codeSinkUnusable,
+				"the %s plugin could not register its AI provider under %q",
+				name, AIProviderName)
 		},
 	})
 }

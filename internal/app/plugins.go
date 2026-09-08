@@ -19,6 +19,7 @@ import (
 	"github.com/bdrtr/gobit/core/module"
 	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	"github.com/bdrtr/gobit/internal/core/config"
+	"github.com/bdrtr/gobit/plugins/aianthropic"
 	"github.com/bdrtr/gobit/plugins/errorotlp"
 	"github.com/bdrtr/gobit/plugins/errorsentry"
 	"github.com/bdrtr/gobit/plugins/files3"
@@ -63,11 +64,19 @@ const codeUnknownPlugin = "plugin_unknown"
 // and the notification slot was the one where that showed most — the only
 // provider in the box writes a log line and sends nothing.
 //
+// aianthropic is the fourth kind, and it is the first of it: a plugin filling a
+// core-owned slot whose CONSUMER is optional too. The error reporter's slot is
+// asked for by the core on every request; the AI provider's is asked for by one
+// scheduled job, which registers itself only when the slot is filled. So naming
+// this plugin is what turns the whole feature on, and not naming it leaves a
+// tree in which no model is called — see registerJobs.
+//
 // The two reporters are the SAME slot filled twice, and that is deliberate:
 // ADR 0014 said its shape could only be tested by a second implementation with
 // a different model. Installing both is not supported — the core holds one
 // reporter — and choosing between them is what the PLUGINS variable is for.
 var pluginCatalog = map[string]func() coreplugin.Plugin{
+	aianthropic.Name:      func() coreplugin.Plugin { return aianthropic.New() },
 	errorotlp.Name:        func() coreplugin.Plugin { return errorotlp.New() },
 	errorsentry.Name:      func() coreplugin.Plugin { return errorsentry.New() },
 	files3.Name:           func() coreplugin.Plugin { return files3.New() },

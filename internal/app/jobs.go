@@ -18,15 +18,20 @@ import (
 	"github.com/bdrtr/gobit/core/eventbus"
 	"github.com/bdrtr/gobit/core/eventbus/outbox"
 	coreplugin "github.com/bdrtr/gobit/core/plugin"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/job"
 	"github.com/bdrtr/gobit/internal/core/job/jobpg"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
 	"github.com/bdrtr/gobit/internal/jobs/outboxrelay"
 	"github.com/bdrtr/gobit/internal/jobs/paymentrecon"
+	"github.com/bdrtr/gobit/internal/jobs/reviewsuggest"
 	"github.com/bdrtr/gobit/internal/jobs/sagawatch"
 	"github.com/bdrtr/gobit/internal/modules/payment"
 	paymentsvc "github.com/bdrtr/gobit/internal/modules/payment/service"
+	"github.com/bdrtr/gobit/internal/modules/review"
+	reviewmodels "github.com/bdrtr/gobit/internal/modules/review/models"
+	reviewservice "github.com/bdrtr/gobit/internal/modules/review/service"
 )
 
 // paymentReconciler is the payment service as the reconciliation job needs it.
@@ -44,6 +49,19 @@ type paymentReconciler interface {
 // jobsCommand is the subcommand that prints the job listing.
 const jobsCommand = "jobs"
 
+// reviewSuggester is the review service as the job runner needs to see it.
+//
+// It is declared HERE and not taken from the job package, because the job's own
+// interface is unexported: the composition root's job is to prove the container
+// holds something with these methods, and repeating the two lines is cheaper
+// than exporting a type whose only purpose is to be asserted against.
+type reviewSuggester interface {
+	AwaitingSuggestion(ctx context.Context, limit int64) ([]reviewmodels.Review, error)
+	Suggest(
+		ctx context.Context, id string, in reviewservice.SuggestInput,
+	) (reviewmodels.Review, error)
+}
+
 // registerJobs declares the jobs this binary runs.
 //
 // Jobs are declared at the COMPOSITION ROOT, exactly as modules are. A plugin
@@ -60,12 +78,18 @@ const jobsCommand = "jobs"
 // to close a known hole — that is internal/jobs/paymentrecon. The third is the
 // outbox relay, which is the delivery half of the transactional outbox.
 //
-// Two of the three only read and report. The relay is the exception and it is
+// Two of those three only read and report. The relay is the exception and it is
 // worth naming rather than glossing: it publishes and it marks rows, so the
 // scheduler DOES write. What ADR 0017 refuses is narrower than "writing" — it
 // refuses running COMPENSATIONS, side effects that undo work, on a schedule
 // nobody watched. Sending a message that a committed transaction already
 // promised to send is not that.
+//
+// A FOURTH is added when an AI provider is configured, and it writes too:
+// internal/jobs/reviewsuggest stores what a model said about a waiting review.
+// It falls on the same side of the line for a different reason — a proposal has
+// no effect at all. The review does not move, the storefront cannot see the
+// columns it fills, and an operator still decides (ADR 0072).
 func registerJobs(
 	c *container.Container, host *coreplugin.Host, log *slog.Logger,
 ) (*job.Registry, error) {
@@ -108,6 +132,25 @@ func registerJobs(
 
 	if err := registry.Add(outboxrelay.Definition(outbox.NewStore(pool.Pool()), bus, log)); err != nil {
 		return nil, err
+	}
+
+	// The review-suggestion job is CONDITIONAL, and it is the only one that is.
+	//
+	// The three above are registered unconditionally because a missing one
+	// looks exactly like a healthy quiet system — the point registerJobs makes
+	// about the reconciler. This one is different: it needs a model, most
+	// installations run none, and a job that appeared in `gobit jobs` reporting
+	// "no provider" every quarter of an hour would be noise an operator learns
+	// to skip past — including on the day it says something else.
+	//
+	// So the AI provider's presence is the switch. Has rather than Resolve,
+	// because "no model configured" is the ordinary case and not an error; the
+	// review service is then required, since a container holding a classifier
+	// and no review module is a misconfiguration nobody meant.
+	if c.Has(coreplugin.AIProviderName) {
+		if err := addReviewSuggestJob(c, registry, log); err != nil {
+			return nil, err
+		}
 	}
 
 	// The plugins go in LAST, and the order is the error message. The registry
@@ -346,4 +389,31 @@ func printJobs(
 	}
 
 	return w.Flush()
+}
+
+// addReviewSuggestJob wires the review-suggestion job.
+//
+// It is a function of its own because it resolves TWO names and either failure
+// has to be reported with the name that was missing; folding it into
+// registerJobs would have put two more error paths in a function that already
+// carries four.
+func addReviewSuggestJob(
+	c *container.Container, registry *job.Registry, log *slog.Logger,
+) error {
+	classifier, err := container.Resolve[coreprovider.Classifier](c, coreplugin.AIProviderName)
+	if err != nil {
+		return coreerrors.Wrap(err, coreerrors.KindOf(err), job.CodeInvalidDefinition,
+			"a plugin registered %q and the job runner could not resolve it as a "+
+				"classifier", coreplugin.AIProviderName)
+	}
+
+	reviews, err := container.Resolve[reviewSuggester](c, review.ServiceName)
+	if err != nil {
+		return coreerrors.Wrap(err, coreerrors.KindOf(err), job.CodeInvalidDefinition,
+			"an AI provider is configured and the review service (%q) could not be "+
+				"resolved; a model with nothing to be asked about is a misconfiguration "+
+				"rather than a quiet no-op", review.ServiceName)
+	}
+
+	return registry.Add(reviewsuggest.Definition(reviews, classifier, log))
 }

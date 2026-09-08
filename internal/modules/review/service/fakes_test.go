@@ -103,6 +103,29 @@ func (f *fakeRepo) Suggest(
 	return review, nil
 }
 
+// AwaitingSuggestion returns the seeded reviews the real query would return,
+// in the insertion order the fake keeps — which stands in for "oldest first"
+// because the tests seed in that order.
+func (f *fakeRepo) AwaitingSuggestion(_ context.Context, limit int64) ([]models.Review, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var out []models.Review
+	for _, id := range f.order {
+		review := f.reviews[id]
+		if review.Status != models.StatusSubmitted || review.Suggestion != nil {
+			continue
+		}
+
+		out = append(out, review)
+		if int64(len(out)) == limit {
+			break
+		}
+	}
+
+	return out, nil
+}
+
 // Moderate refuses a row that is not in the status the caller believed, the
 // same way the real conditional UPDATE does.
 func (f *fakeRepo) Moderate(

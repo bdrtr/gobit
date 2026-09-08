@@ -75,6 +75,20 @@ func TestEveryJobIsRegisteredInTheCompositionRoot(t *testing.T) {
 // TestNoJobWritesThroughAModuleService holds ADR 0019's line, which ADR 0020
 // restates for money: nothing scheduled acts.
 //
+// **Amended 2026-09-09 (ADR 0072): a scheduled job may STORE A PROPOSAL.**
+// `internal/jobs/reviewsuggest` writes — it fills four columns on a review —
+// and the sentence above still holds, because what it refuses is narrower than
+// "writing". A proposal moves nothing: the review stays where it was, the
+// storefront cannot see the columns it fills, and an operator's decision is
+// still required for anything to happen. The line ADR 0019 draws is between
+// having an EFFECT and recording an opinion, and it is the same distinction
+// registerJobs already makes for the outbox relay, which publishes messages a
+// person's committed transaction had already decided to send.
+//
+// What holds it is not this sentence but the interface: the job names two
+// methods, neither of which can move a review, and this test is what stops that
+// from being widened to the module's whole service in one line.
+//
 // The mechanism is the same one the panel uses — a job names the surface it
 // needs as a narrow interface in its OWN package — and the property that
 // matters falls out of it: an interface with one read method cannot be used to

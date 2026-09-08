@@ -1251,3 +1251,165 @@ const untypedThing = "untyped"
 		"the reader works on planted source but not on %s; the audit's field of view is "+
 			"the real package, not the fixture", productModelsDirName)
 }
+
+// providerFamiliesWithoutAPublishedName are the modules that open a provider
+// registry `core/plugin` deliberately does not publish a name for.
+//
+// One entry, and it is a decision rather than a backlog. The tax module
+// registers `tax.providers` and its own godoc says plugins add providers there,
+// but no plugin does and none is planned: the local calculator that ships in
+// the box is the only implementation. Publishing `TaxProvidersName` would put a
+// name in `core/plugin` — a promise kept until 1.0.0 (ADR 0026) — for a
+// capability with no consumer, which is the shape ADR 0063 refuses. The day a
+// tax plugin is written, the constant and the plugin ship in the same change
+// and this entry goes away.
+//
+// What the exemption is NOT is silence. Before this list existed the tax family
+// was outside both audits at once — outside the consumer audit, which exempts
+// the whole `.providers` family on the strength of
+// [TestTheProviderRegistryNamesAgree], and outside that test, whose population
+// was four assertions somebody had typed. Nothing said the fifth family was
+// there.
+var providerFamiliesWithoutAPublishedName = map[string]string{
+	"tax": "no tax plugin exists and none is planned; the boxed local calculator is the " +
+		"only provider, so a published name would be a promise with no consumer",
+}
+
+// TestEveryProviderRegistryIsNamedOrExempted derives the population instead of
+// listing it.
+//
+// [TestTheProviderRegistryNamesAgree] above ties four pairs of constants
+// together and is the stronger check for those four — it compares the real
+// values through the compiler rather than through a parser. What it cannot do
+// is notice a FIFTH family, and its own documentation records that the fourth
+// assertion was missing for a while and "makes no sound at all" when it is.
+//
+// So this test asks the other question: which modules open a provider registry,
+// and is each of them either named in `core/plugin` or written down here as a
+// decision? A module that starts one tomorrow lands in one of the two lists the
+// day it does.
+func TestEveryProviderRegistryIsNamedOrExempted(t *testing.T) {
+	t.Parallel()
+
+	published := publishedProviderFamilies(t)
+	opened := modulesOpeningAProviderRegistry(t)
+
+	require.NotEmpty(t, opened,
+		"NO module was found declaring a ProvidersName constant; the reader has gone "+
+			"blind and an empty population agrees with every published name at once")
+	require.NotEmpty(t, published,
+		"core/plugin publishes NO provider registry name; either the reader is blind or "+
+			"no plugin can reach any registry at all")
+
+	for _, module := range opened {
+		if _, exempt := providerFamiliesWithoutAPublishedName[module]; exempt {
+			assert.NotContains(t, published, module,
+				"%s.providers is BOTH published in core/plugin and listed as having no "+
+					"published name; one of the two is wrong", module)
+
+			continue
+		}
+
+		assert.Contains(t, published, module,
+			"the %s module opens %s.providers and core/plugin publishes no constant for "+
+				"it, so a plugin can only reach that registry by writing the string out by "+
+				"hand — which is the drift TestTheProviderRegistryNamesAgree exists to "+
+				"prevent for the families it happens to name.\n"+
+				"Either publish the constant together with the plugin that fills it, or "+
+				"record the decision in providerFamiliesWithoutAPublishedName with the "+
+				"reason.", module, module)
+	}
+
+	for module := range published {
+		assert.Contains(t, opened, module,
+			"core/plugin publishes %s.providers and no module under %s declares that "+
+				"registry; the name sends a plugin to a container entry nobody creates",
+			module, modulesDir)
+	}
+
+	for module := range providerFamiliesWithoutAPublishedName {
+		assert.Contains(t, opened, module,
+			"%s is recorded as a provider family with no published name and it opens no "+
+				"registry at all; the exemption outlived the thing it exempted", module)
+	}
+}
+
+// publishedProviderFamilies reads the module names out of core/plugin's
+// registry constants.
+//
+// The VALUE is read rather than the constant's name: "payment.providers" says
+// which module the name is for, and `PaymentProvidersName` only looks like it
+// does — a constant could be called anything.
+func publishedProviderFamilies(t *testing.T) map[string]bool {
+	t.Helper()
+
+	families := map[string]bool{}
+
+	fset := token.NewFileSet()
+	for _, file := range parseDir(t, fset, filepath.Join(repoRoot, "core", "plugin"), false) {
+		ast.Inspect(file.tree, func(n ast.Node) bool {
+			spec, ok := n.(*ast.ValueSpec)
+			if !ok || len(spec.Values) != len(spec.Names) {
+				return true
+			}
+			for i, name := range spec.Names {
+				if !name.IsExported() {
+					continue
+				}
+				literal, ok := spec.Values[i].(*ast.BasicLit)
+				if !ok || literal.Kind != token.STRING {
+					continue
+				}
+				value, err := strconv.Unquote(literal.Value)
+				if err != nil {
+					continue
+				}
+				if module, found := strings.CutSuffix(value, providerFamily); found {
+					families[module] = true
+				}
+			}
+
+			return true
+		})
+	}
+
+	return families
+}
+
+// modulesOpeningAProviderRegistry reads which modules declare a ProvidersName.
+//
+// The population is the module DIRECTORIES, walked for the constant, so a
+// module that adds one is in scope the day it does. It is not read from a list
+// of families, which would be the audited property standing in for its own
+// population.
+func modulesOpeningAProviderRegistry(t *testing.T) []string {
+	t.Helper()
+
+	var opened []string
+	for _, module := range moduleNames(t) {
+		fset := token.NewFileSet()
+		for _, file := range parseDir(t, fset, filepath.Join(repoRoot, modulesDir, module), false) {
+			declares := false
+			ast.Inspect(file.tree, func(n ast.Node) bool {
+				spec, ok := n.(*ast.ValueSpec)
+				if !ok {
+					return true
+				}
+				for _, name := range spec.Names {
+					if name.Name == "ProvidersName" {
+						declares = true
+					}
+				}
+
+				return true
+			})
+			if declares {
+				opened = append(opened, module)
+
+				break
+			}
+		}
+	}
+
+	return opened
+}

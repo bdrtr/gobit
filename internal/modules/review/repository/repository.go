@@ -144,6 +144,25 @@ func (r *Repository) Suggest(
 	return toReview(row), nil
 }
 
+// AwaitingSuggestion returns the oldest reviews no model has been asked about.
+//
+// There is no count beside the page and no cursor: the caller is a job with a
+// bounded appetite, and what it needs is "the next few", not a position it can
+// come back to. A cursor would be a position in a set that CHANGES underneath
+// it — every row it handles leaves the set — so the next pass starting at the
+// beginning is not a limitation, it is the correct behavior.
+func (r *Repository) AwaitingSuggestion(
+	ctx context.Context, limit int64,
+) ([]models.Review, error) {
+	rows, err := r.queries().ListReviewsAwaitingSuggestion(ctx, limit)
+	if err != nil {
+		return nil, wrapDB(err, codeQueryFailed,
+			"the reviews awaiting a proposal could not be read")
+	}
+
+	return toReviews(rows), nil
+}
+
 // List pages the reviews for the ADMIN surface and returns the matching count.
 func (r *Repository) List(
 	ctx context.Context, filter models.Filter,

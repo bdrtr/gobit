@@ -500,6 +500,18 @@ func fieldExpr(value *ast.CompositeLit, field string) ast.Expr {
 //     the installation has not defined a collector the name is never registered
 //     and cmd/server asks with Has first — which is why it is outside the scope
 //     of the "does it have a consumer" audit.
+//   - [aiFamily]: the model that answers closed questions about text. It is
+//     [reportingFamily]'s shape — a SINGLE slot the core owns, filled by a
+//     plugin, registered under the name itself rather than into a registry —
+//     and it is outside the audit for the same reason, one step further along:
+//     the reporter's consumer is conditional, and this one's consumer does not
+//     EXIST unless the slot is filled. `internal/jobs/reviewsuggest` is
+//     registered by the composition root only when the container holds this
+//     name, so on most installations both sides are absent together. That is
+//     the intended state and not a hole: what would be a hole is the slot being
+//     filled and nothing asking for it, which is a boot-time failure rather
+//     than a silent one — see addReviewSuggestJob, which refuses to come up
+//     when a classifier is configured and the review service is not.
 //   - [adminFamily]: the module's ADMIN WRITE surface (ADR 0013). Its only
 //     consumer is the admin panel and that consumer is CONDITIONAL: the panel
 //     resolves this name only if it is registered, because it has to be able to
@@ -517,6 +529,7 @@ const (
 	providerFamily  = ".providers"
 	adminFamily     = ".admin"
 	reportingFamily = "error.reporter"
+	aiFamily        = "ai.provider"
 	coreFamily      = "core."
 )
 
@@ -650,7 +663,7 @@ func knownFamily(name string) bool {
 	if strings.HasPrefix(name, coreFamily) {
 		return true
 	}
-	if name == reportingFamily {
+	if name == reportingFamily || name == aiFamily {
 		return true
 	}
 	for _, suffix := range []string{interopFamily, serviceFamily, queryFamily, providerFamily, adminFamily} {

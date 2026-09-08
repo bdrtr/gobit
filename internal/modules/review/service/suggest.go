@@ -104,3 +104,33 @@ func (s *Service) Suggest(
 
 	return suggested, nil
 }
+
+// MaxAwaitingSuggestion bounds one read of the reviews awaiting a proposal.
+//
+// It is a bound on the READ and not on the work: what the caller does with the
+// page is the caller's appetite. The bound exists because the caller is a
+// scheduled process, and a scheduled process that asks for "all of them" on a
+// shop with a year of unmoderated reviews asks for a query nobody sized.
+const MaxAwaitingSuggestion = 100
+
+// AwaitingSuggestion returns the oldest reviews waiting for a human that no
+// model has been asked about.
+//
+// It is a READ and it is the only one this module opens for a machine. The
+// pairing with [Service.Suggest] is deliberate and narrow: together they let a
+// caller find the reviews a proposal would help with and write one, and they do
+// not let it do anything else — there is no method here that moves a review.
+func (s *Service) AwaitingSuggestion(ctx context.Context, limit int64) ([]models.Review, error) {
+	if limit <= 0 {
+		limit = MaxAwaitingSuggestion
+	}
+	if limit > MaxAwaitingSuggestion {
+		// Clamped rather than refused. The caller asking for more than the
+		// bound is asking for a bigger batch, not for something forbidden, and
+		// an error here would stop a scheduled run over a number somebody
+		// raised without knowing there was a ceiling.
+		limit = MaxAwaitingSuggestion
+	}
+
+	return s.repo.AwaitingSuggestion(ctx, limit)
+}

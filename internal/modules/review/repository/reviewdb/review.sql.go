@@ -264,6 +264,63 @@ func (q *Queries) ListReviews(ctx context.Context, arg ListReviewsParams) ([]Rev
 	return items, nil
 }
 
+const listReviewsAwaitingSuggestion = `-- name: ListReviewsAwaitingSuggestion :many
+SELECT id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model FROM reviews
+WHERE status = 'submitted'
+  AND suggested_status IS NULL
+ORDER BY created_at, id
+LIMIT $1::bigint
+`
+
+// ListReviewsAwaitingSuggestion is the JOB's read: reviews waiting for a human,
+// about which no model has been asked.
+//
+// Both narrowings are LITERALS. The status one for the reason every other
+// literal in this file is a literal — it is a rule no request may widen — and
+// the null check because "awaiting a suggestion" is the whole of what this query
+// names; a parameter there would let a caller ask for reviews that already have
+// one and pay a model to answer a question already answered.
+//
+// OLDEST FIRST, which is the queue's own order and the opposite of every other
+// listing here. A job with a bounded appetite that took the newest would leave
+// the oldest reviews unsuggested forever on a shop that receives more reviews
+// per pass than the pass can read.
+func (q *Queries) ListReviewsAwaitingSuggestion(ctx context.Context, rowLimit int64) ([]Review, error) {
+	rows, err := q.db.Query(ctx, listReviewsAwaitingSuggestion, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Review{}
+	for rows.Next() {
+		var i Review
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProductID,
+			&i.Rating,
+			&i.Title,
+			&i.Body,
+			&i.AuthorName,
+			&i.Status,
+			&i.ModeratedAt,
+			&i.ModerationNote,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SuggestedStatus,
+			&i.SuggestedAt,
+			&i.SuggestionNote,
+			&i.SuggestionModel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const moderateReview = `-- name: ModerateReview :one
 UPDATE reviews
 SET status          = $1::text,

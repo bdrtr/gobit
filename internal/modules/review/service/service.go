@@ -98,6 +98,7 @@ type Repo interface {
 		ctx context.Context, id string, from, to models.Status, note string,
 	) (models.Review, error)
 	Suggest(ctx context.Context, id string, in models.Suggestion) (models.Review, error)
+	AwaitingSuggestion(ctx context.Context, limit int64) ([]models.Review, error)
 	List(ctx context.Context, filter models.Filter) ([]models.Review, int64, error)
 	ListApproved(
 		ctx context.Context, productID string, filter models.Filter,

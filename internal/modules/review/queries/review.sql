@@ -138,3 +138,24 @@ SET suggested_status = sqlc.arg('suggested_status')::text,
 WHERE id = sqlc.arg('id')::text
   AND status = 'submitted'
 RETURNING *;
+
+-- ListReviewsAwaitingSuggestion is the JOB's read: reviews waiting for a human,
+-- about which no model has been asked.
+--
+-- Both narrowings are LITERALS. The status one for the reason every other
+-- literal in this file is a literal — it is a rule no request may widen — and
+-- the null check because "awaiting a suggestion" is the whole of what this query
+-- names; a parameter there would let a caller ask for reviews that already have
+-- one and pay a model to answer a question already answered.
+--
+-- OLDEST FIRST, which is the queue's own order and the opposite of every other
+-- listing here. A job with a bounded appetite that took the newest would leave
+-- the oldest reviews unsuggested forever on a shop that receives more reviews
+-- per pass than the pass can read.
+--
+-- name: ListReviewsAwaitingSuggestion :many
+SELECT * FROM reviews
+WHERE status = 'submitted'
+  AND suggested_status IS NULL
+ORDER BY created_at, id
+LIMIT sqlc.arg('row_limit')::bigint;
