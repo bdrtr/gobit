@@ -15,17 +15,17 @@ RETURNING *;
 
 -- name: GetOrderExchange :one
 SELECT * FROM order_exchanges
-WHERE id = $1 AND deleted_at IS NULL;
+WHERE id = $1;
 
 -- name: ListOrderExchanges :many
 SELECT * FROM order_exchanges
-WHERE order_id = $1 AND deleted_at IS NULL
+WHERE order_id = $1
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
 
 -- name: CountOrderExchanges :one
 SELECT COUNT(*) FROM order_exchanges
-WHERE order_id = $1 AND deleted_at IS NULL;
+WHERE order_id = $1;
 
 -- LockOrderExchange locks the exchange row until the end of the transaction.
 --
@@ -35,7 +35,7 @@ WHERE order_id = $1 AND deleted_at IS NULL;
 -- both write a timestamp, leaving the record holding the later one.
 -- name: LockOrderExchange :one
 SELECT * FROM order_exchanges
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 FOR UPDATE;
 
 -- CancelOrderExchange withdraws the exchange request.
@@ -46,5 +46,5 @@ FOR UPDATE;
 -- name: CancelOrderExchange :one
 UPDATE order_exchanges
 SET status = 'canceled', canceled_at = now(), updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 RETURNING *;

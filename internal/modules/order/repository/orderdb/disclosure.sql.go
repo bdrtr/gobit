@@ -10,7 +10,7 @@ import (
 )
 
 const listOrderClaimsForDisclosure = `-- name: ListOrderClaimsForDisclosure :many
-SELECT id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at, deleted_at FROM order_claims
+SELECT id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at FROM order_claims
 WHERE order_id = ANY ($1::text[])
 ORDER BY order_id, created_at, id
 `
@@ -39,7 +39,6 @@ func (q *Queries) ListOrderClaimsForDisclosure(ctx context.Context, orderIds []s
 			&i.CanceledAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -52,7 +51,7 @@ func (q *Queries) ListOrderClaimsForDisclosure(ctx context.Context, orderIds []s
 }
 
 const listOrderExchangesForDisclosure = `-- name: ListOrderExchangesForDisclosure :many
-SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, deleted_at FROM order_exchanges
+SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at FROM order_exchanges
 WHERE order_id = ANY ($1::text[])
 ORDER BY order_id, created_at, id
 `
@@ -78,7 +77,6 @@ func (q *Queries) ListOrderExchangesForDisclosure(ctx context.Context, orderIds 
 			&i.CanceledAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -91,7 +89,7 @@ func (q *Queries) ListOrderExchangesForDisclosure(ctx context.Context, orderIds 
 }
 
 const listOrderLineItemsForDisclosure = `-- name: ListOrderLineItemsForDisclosure :many
-SELECT id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, deleted_at, tax_rate_bps FROM order_line_items
+SELECT id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps FROM order_line_items
 WHERE order_id = ANY ($1::text[])
 ORDER BY order_id, created_at, id
 `
@@ -130,7 +128,6 @@ func (q *Queries) ListOrderLineItemsForDisclosure(ctx context.Context, orderIds 
 			&i.Metadata,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 			&i.TaxRateBps,
 		); err != nil {
 			return nil, err
@@ -144,7 +141,7 @@ func (q *Queries) ListOrderLineItemsForDisclosure(ctx context.Context, orderIds 
 }
 
 const listOrderReturnsForDisclosure = `-- name: ListOrderReturnsForDisclosure :many
-SELECT id, order_id, status, refund_amount, reason, note, metadata, received_at, canceled_at, created_at, updated_at, deleted_at, received_location_id FROM order_returns
+SELECT id, order_id, status, refund_amount, reason, note, metadata, received_at, canceled_at, created_at, updated_at, received_location_id FROM order_returns
 WHERE order_id = ANY ($1::text[])
 ORDER BY order_id, created_at, id
 `
@@ -175,7 +172,6 @@ func (q *Queries) ListOrderReturnsForDisclosure(ctx context.Context, orderIds []
 			&i.CanceledAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 			&i.ReceivedLocationID,
 		); err != nil {
 			return nil, err
@@ -190,7 +186,7 @@ func (q *Queries) ListOrderReturnsForDisclosure(ctx context.Context, orderIds []
 
 const listOrdersForDisclosure = `-- name: ListOrdersForDisclosure :many
 
-SELECT id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, deleted_at, archived_at, personal_data_erased_at FROM orders
+SELECT id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at FROM orders
 WHERE ($1::text IS NOT NULL AND customer_id = $1::text)
    OR ($2::text IS NOT NULL AND email = $2::text)
 ORDER BY id
@@ -228,14 +224,16 @@ type ListOrdersForDisclosureParams struct {
 // as if the column did not exist. What the wide SELECT costs is a few unread
 // columns per row; what it saves is that list.
 //
-// # Why soft-deleted rows are NOT filtered out
+// # Why there is no liveness condition to leave out
 //
-// The same reason queries/erasure.sql gives, read in the other direction. The
-// question a data subject asks is what the database still HOLDS about her, not
-// what the shop's own screens can still see, and a soft-deleted order holds her
-// address exactly as a live one does. Answering "we hold nothing" while a hidden
-// row carried her name would be the same false report the erasure contract warns
-// about — with the difference that here she is the one being told.
+// These five reads, and ListOrdersForErasure beside them, were the only ones in
+// the module without `deleted_at IS NULL`, for the reason queries/erasure.sql
+// gives read in the other direction: the question a data subject asks is what
+// the database still HOLDS about her, not what the shop's own screens can see.
+// Since ADR 0054 no order can be hidden at all, so there is nothing left to
+// leave out — but the reason still governs, and anybody who invents a way to
+// hide an order has to answer it here before these statements inherit the
+// condition.
 //
 // # Why the after-sales rows are read at all
 //
@@ -246,7 +244,7 @@ type ListOrdersForDisclosureParams struct {
 // controller). The disclosure therefore carries it out with its Kind attached
 // rather than deciding what is in it.
 // ListOrdersForDisclosure returns every order that carries the person's
-// customer id or e-mail address, soft-deleted ones included.
+// customer id or e-mail address.
 //
 // # Why either identifier finds a row
 //
@@ -305,7 +303,6 @@ func (q *Queries) ListOrdersForDisclosure(ctx context.Context, arg ListOrdersFor
 			&i.CancelReason,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 			&i.ArchivedAt,
 			&i.PersonalDataErasedAt,
 		); err != nil {

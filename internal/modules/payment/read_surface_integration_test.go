@@ -208,9 +208,9 @@ func TestConcurrentProviderCallsOnOneKeyOpenOneSession(t *testing.T) {
 // opposite actions, because the second one gets refunded again.
 //
 // The claim is a SQL one and nothing else can hold it: the payment_id filter
-// and the soft-delete predicate live in the query text, and a listing that
-// silently returned the refunds of another capture, or none at all, would
-// still be a valid Go slice.
+// and the ordering live in the query text, and a listing that silently
+// returned the refunds of another capture, or none at all, would still be a
+// valid Go slice.
 func TestEveryPartialRefundStaysInTheCaptureListing(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newService(t)
@@ -294,46 +294,6 @@ func TestRefundsAreListedNewestFirst(t *testing.T) {
 		assert.False(t, listed[i].CreatedAt.After(listed[i-1].CreatedAt),
 			"refund %d is newer than the one listed before it", i)
 	}
-}
-
-// TestASoftDeletedRefundLeavesTheListingButNotTheTotal proves the soft-delete
-// predicate is really applied.
-//
-// Deletion in this schema is soft: the row stays and every read query carries
-// "deleted_at IS NULL" (see the migration's header). The predicate is repeated
-// by hand in each query, so it is exactly the kind of thing that gets left out
-// of one of them — and leaving it out is invisible until the day a row is
-// actually erased, at which point a record that was supposed to disappear
-// keeps being served.
-//
-// The capture's refunded_amount is deliberately NOT touched by the deletion:
-// the money did move, and a soft delete hides a record without rewriting
-// history. Asserting both halves pins the intent — a "fix" that made the
-// listing and the total agree by adjusting the total would be silently
-// falsifying the ledger.
-func TestASoftDeletedRefundLeavesTheListingButNotTheTotal(t *testing.T) {
-	ctx := context.Background()
-	svc, _ := newService(t)
-	pay := capturedPayment(ctx, t, svc, "refund-soft-delete")
-
-	kept, err := svc.RefundPayment(ctx, pay.ID, 10_000, "kept")
-	require.NoError(t, err)
-	erased, err := svc.RefundPayment(ctx, pay.ID, 7_000, "erased")
-	require.NoError(t, err)
-
-	_, err = testPool.Pool().Exec(ctx,
-		`UPDATE refunds SET deleted_at = now() WHERE id = $1`, erased.ID)
-	require.NoError(t, err)
-
-	listed, err := svc.ListRefunds(ctx, pay.ID)
-	require.NoError(t, err)
-	require.Len(t, listed, 1, "the soft-deleted refund must not be served any more")
-	assert.Equal(t, kept.ID, listed[0].ID)
-
-	stored, err := svc.GetPayment(ctx, pay.ID)
-	require.NoError(t, err)
-	assert.Equal(t, int64(17_000), stored.RefundedAmount,
-		"a soft delete hides a record; it does not un-refund the money")
 }
 
 // --- the paginated collection listing ----------------------------------------
@@ -486,39 +446,48 @@ func TestTheCollectionListingIsNewestFirst(t *testing.T) {
 		"the second page repeated or skipped a row")
 }
 
-// TestASoftDeletedCollectionLeavesBothTheRowsAndTheCount proves the
-// soft-delete predicate is applied to the count as well as to the listing.
+// TestTheCollectionFilterReachesTheCountAsWellAsTheRows proves that the two
+// statements behind one page apply the SAME filter.
 //
-// The predicate is written twice here too, and the count is the half that is
-// easy to forget: the deleted collection vanishes from the page, the total
-// keeps counting it, and the list view shows "3 records" above two rows for
-// good. An operator reading that concludes a record was lost.
-func TestASoftDeletedCollectionLeavesBothTheRowsAndTheCount(t *testing.T) {
+// The listing and the count are separate SQL, and the predicate is written
+// twice. The count is the half that is easy to forget: the filtered-out
+// collection vanishes from the page, the total keeps counting it, and the list
+// view shows "3 records" above two rows for good. An operator reading that
+// concludes a record was lost.
+//
+// The odd row is put out of the filter by its STATUS, written straight into the
+// table. Until ADR 0054 this test used deleted_at, which no longer exists —
+// a collection is not hidden, it reaches a terminal status. The status is
+// normally derived and rewritten by the service; setting it by hand is how the
+// read gets exercised without a flow that would also move the amounts.
+func TestTheCollectionFilterReachesTheCountAsWellAsTheRows(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newService(t)
-	reference := "cart_DELETED_" + models.NewPaymentCollectionID()
+	reference := "cart_FILTERED_" + models.NewPaymentCollectionID()
 
 	const created = 3
-	var erased string
+	var canceled string
 	for range created {
-		erased = newCollectionFor(ctx, t, svc, reference).ID
+		canceled = newCollectionFor(ctx, t, svc, reference).ID
 	}
 
 	_, err := testPool.Pool().Exec(ctx,
-		`UPDATE payment_collections SET deleted_at = now() WHERE id = $1`, erased)
+		`UPDATE payment_collections SET status = 'canceled' WHERE id = $1`, canceled)
 	require.NoError(t, err)
 
+	notPaid := models.CollectionNotPaid.String()
 	rows, total, err := svc.ListPaymentCollections(ctx, service.ListCollectionsInput{
 		Reference: &reference,
+		Status:    &notPaid,
 		Page:      service.Page{Limit: 10},
 	})
 	require.NoError(t, err)
-	assert.Len(t, rows, created-1, "the soft-deleted collection must not be served")
+	assert.Len(t, rows, created-1, "the canceled collection must not be served")
 	assert.Equal(t, int64(created-1), total,
 		"the count must not keep counting a collection the page no longer shows")
 
 	for i := range rows {
-		assert.NotEqual(t, erased, rows[i].ID)
+		assert.NotEqual(t, canceled, rows[i].ID)
 	}
 }
 

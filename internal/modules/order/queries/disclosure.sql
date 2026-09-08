@@ -25,14 +25,16 @@
 -- as if the column did not exist. What the wide SELECT costs is a few unread
 -- columns per row; what it saves is that list.
 --
--- # Why soft-deleted rows are NOT filtered out
+-- # Why there is no liveness condition to leave out
 --
--- The same reason queries/erasure.sql gives, read in the other direction. The
--- question a data subject asks is what the database still HOLDS about her, not
--- what the shop's own screens can still see, and a soft-deleted order holds her
--- address exactly as a live one does. Answering "we hold nothing" while a hidden
--- row carried her name would be the same false report the erasure contract warns
--- about — with the difference that here she is the one being told.
+-- These five reads, and ListOrdersForErasure beside them, were the only ones in
+-- the module without `deleted_at IS NULL`, for the reason queries/erasure.sql
+-- gives read in the other direction: the question a data subject asks is what
+-- the database still HOLDS about her, not what the shop's own screens can see.
+-- Since ADR 0054 no order can be hidden at all, so there is nothing left to
+-- leave out — but the reason still governs, and anybody who invents a way to
+-- hide an order has to answer it here before these statements inherit the
+-- condition.
 --
 -- # Why the after-sales rows are read at all
 --
@@ -44,7 +46,7 @@
 -- rather than deciding what is in it.
 
 -- ListOrdersForDisclosure returns every order that carries the person's
--- customer id or e-mail address, soft-deleted ones included.
+-- customer id or e-mail address.
 --
 -- # Why either identifier finds a row
 --

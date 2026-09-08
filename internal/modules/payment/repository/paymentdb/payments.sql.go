@@ -16,7 +16,7 @@ const createPayment = `-- name: CreatePayment :one
 INSERT INTO payments (
     id, payment_session_id, payment_collection_id, amount, currency_code, captured_at
 ) VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, payment_session_id, payment_collection_id, amount, currency_code, refunded_amount, captured_at, created_at, updated_at, deleted_at
+RETURNING id, payment_session_id, payment_collection_id, amount, currency_code, refunded_amount, captured_at, created_at, updated_at
 `
 
 type CreatePaymentParams struct {
@@ -53,14 +53,13 @@ func (q *Queries) CreatePayment(ctx context.Context, arg CreatePaymentParams) (P
 		&i.CapturedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getPayment = `-- name: GetPayment :one
-SELECT id, payment_session_id, payment_collection_id, amount, currency_code, refunded_amount, captured_at, created_at, updated_at, deleted_at FROM payments
-WHERE id = $1 AND deleted_at IS NULL
+SELECT id, payment_session_id, payment_collection_id, amount, currency_code, refunded_amount, captured_at, created_at, updated_at FROM payments
+WHERE id = $1
 `
 
 func (q *Queries) GetPayment(ctx context.Context, id string) (Payment, error) {
@@ -76,14 +75,13 @@ func (q *Queries) GetPayment(ctx context.Context, id string) (Payment, error) {
 		&i.CapturedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getPaymentBySession = `-- name: GetPaymentBySession :one
-SELECT id, payment_session_id, payment_collection_id, amount, currency_code, refunded_amount, captured_at, created_at, updated_at, deleted_at FROM payments
-WHERE payment_session_id = $1 AND deleted_at IS NULL
+SELECT id, payment_session_id, payment_collection_id, amount, currency_code, refunded_amount, captured_at, created_at, updated_at FROM payments
+WHERE payment_session_id = $1
 `
 
 func (q *Queries) GetPaymentBySession(ctx context.Context, paymentSessionID string) (Payment, error) {
@@ -99,14 +97,13 @@ func (q *Queries) GetPaymentBySession(ctx context.Context, paymentSessionID stri
 		&i.CapturedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const listPaymentsByCollection = `-- name: ListPaymentsByCollection :many
-SELECT id, payment_session_id, payment_collection_id, amount, currency_code, refunded_amount, captured_at, created_at, updated_at, deleted_at FROM payments
-WHERE payment_collection_id = $1 AND deleted_at IS NULL
+SELECT id, payment_session_id, payment_collection_id, amount, currency_code, refunded_amount, captured_at, created_at, updated_at FROM payments
+WHERE payment_collection_id = $1
 ORDER BY created_at DESC, id DESC
 `
 
@@ -129,7 +126,6 @@ func (q *Queries) ListPaymentsByCollection(ctx context.Context, paymentCollectio
 			&i.CapturedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -142,8 +138,8 @@ func (q *Queries) ListPaymentsByCollection(ctx context.Context, paymentCollectio
 }
 
 const lockPayment = `-- name: LockPayment :one
-SELECT id, payment_session_id, payment_collection_id, amount, currency_code, refunded_amount, captured_at, created_at, updated_at, deleted_at FROM payments
-WHERE id = $1 AND deleted_at IS NULL
+SELECT id, payment_session_id, payment_collection_id, amount, currency_code, refunded_amount, captured_at, created_at, updated_at FROM payments
+WHERE id = $1
 FOR UPDATE
 `
 
@@ -163,7 +159,6 @@ func (q *Queries) LockPayment(ctx context.Context, id string) (Payment, error) {
 		&i.CapturedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -172,8 +167,8 @@ const updatePaymentRefundedAmount = `-- name: UpdatePaymentRefundedAmount :one
 UPDATE payments
 SET refunded_amount = $2,
     updated_at      = now()
-WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, payment_session_id, payment_collection_id, amount, currency_code, refunded_amount, captured_at, created_at, updated_at, deleted_at
+WHERE id = $1
+RETURNING id, payment_session_id, payment_collection_id, amount, currency_code, refunded_amount, captured_at, created_at, updated_at
 `
 
 type UpdatePaymentRefundedAmountParams struct {
@@ -194,7 +189,6 @@ func (q *Queries) UpdatePaymentRefundedAmount(ctx context.Context, arg UpdatePay
 		&i.CapturedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }

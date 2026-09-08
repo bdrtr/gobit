@@ -34,7 +34,7 @@ import (
 // dossier costs the most to build.
 
 // OrdersForDisclosure returns every order that carries the person's customer id
-// or e-mail address, soft-deleted ones included.
+// or e-mail address.
 //
 // It takes NO lock and opens no transaction of its own, which is the difference
 // from [Repository.OrdersForErasure] that matters most: this read answers a
@@ -61,8 +61,7 @@ func (r *Repository) OrdersForDisclosure(
 	return toOrders(rows)
 }
 
-// LineItemsForDisclosure reads the lines of the given orders, soft-deleted ones
-// included.
+// LineItemsForDisclosure reads the lines of the given orders.
 //
 // The line's only declared holding is its metadata, which is where a shop
 // records the engraving or the gift message the customer typed; the title and
@@ -82,8 +81,7 @@ func (r *Repository) LineItemsForDisclosure(
 	return toLineItems(rows)
 }
 
-// ReturnsForDisclosure reads the return records of the given orders,
-// soft-deleted ones included.
+// ReturnsForDisclosure reads the return records of the given orders.
 func (r *Repository) ReturnsForDisclosure(
 	ctx context.Context, orderIDs []string,
 ) ([]models.Return, error) {
@@ -99,8 +97,7 @@ func (r *Repository) ReturnsForDisclosure(
 	return toReturns(rows)
 }
 
-// ExchangesForDisclosure reads the exchange records of the given orders,
-// soft-deleted ones included.
+// ExchangesForDisclosure reads the exchange records of the given orders.
 func (r *Repository) ExchangesForDisclosure(
 	ctx context.Context, orderIDs []string,
 ) ([]models.Exchange, error) {
@@ -117,7 +114,7 @@ func (r *Repository) ExchangesForDisclosure(
 }
 
 // ClaimsForDisclosure reads the damage and shortage records of the given
-// orders, soft-deleted ones included.
+// orders.
 func (r *Repository) ClaimsForDisclosure(
 	ctx context.Context, orderIDs []string,
 ) ([]models.Claim, error) {

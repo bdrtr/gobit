@@ -392,36 +392,6 @@ func TestLineItemQueryProviderSelectsLinesByID(t *testing.T) {
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestLineItemQueryProviderHidesTheLinesOfADeletedOrder validates that the
-// order's liveness reaches the lines.
-//
-// The listing joins orders and checks their deleted_at, and so does the batch
-// read; the two answering differently would make the same line exist or not
-// depending on which side of a query it was reached from. There is no surface
-// that deletes an order today, which is precisely why the condition needs a
-// test: nothing else would notice if it were dropped.
-func TestLineItemQueryProviderHidesTheLinesOfADeletedOrder(t *testing.T) {
-	ctx := context.Background()
-	e := newEnv(t)
-	p := service.NewLineItemQueryProvider(e.svc)
-
-	order, err := e.svc.CreateOrder(ctx, multiLineInput())
-	require.NoError(t, err)
-	detail, err := e.svc.GetOrder(ctx, order.ID)
-	require.NoError(t, err)
-	require.Len(t, detail.Items, 3)
-
-	e.store.softDeleteOrder(order.ID)
-
-	records, err := p.List(ctx, query.ListOptions{Fields: []string{service.FieldID}})
-	require.NoError(t, err)
-	assert.Empty(t, records, "the lines of a deleted order are not sales")
-
-	records, err = p.FetchByIDs(ctx, []string{detail.Items[0].ID}, []string{service.FieldID})
-	require.NoError(t, err)
-	assert.Empty(t, records, "the expansion has to hide what the listing hides")
-}
-
 // TestLineItemQueryProviderClampsAnUnlimitedRequest validates that the core's
 // "0 means unlimited" contract is brought down to the provider's ceiling.
 //

@@ -12,28 +12,28 @@ RETURNING *;
 
 -- name: GetPayment :one
 SELECT * FROM payments
-WHERE id = $1 AND deleted_at IS NULL;
+WHERE id = $1;
 
 -- LockPayment locks the capture for the length of the transaction; the refunded
 -- amount is updated only under this lock. In the lock order it comes AFTER the
 -- collection and the session (see service.Store, "Transaction boundary").
 -- name: LockPayment :one
 SELECT * FROM payments
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 FOR UPDATE;
 
 -- name: GetPaymentBySession :one
 SELECT * FROM payments
-WHERE payment_session_id = $1 AND deleted_at IS NULL;
+WHERE payment_session_id = $1;
 
 -- name: ListPaymentsByCollection :many
 SELECT * FROM payments
-WHERE payment_collection_id = $1 AND deleted_at IS NULL
+WHERE payment_collection_id = $1
 ORDER BY created_at DESC, id DESC;
 
 -- name: UpdatePaymentRefundedAmount :one
 UPDATE payments
 SET refunded_amount = $2,
     updated_at      = now()
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 RETURNING *;

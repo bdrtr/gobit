@@ -107,11 +107,11 @@ type PaymentCollection struct {
 	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
 	// CreatedAt and UpdatedAt are UTC.
+	//
+	// No record in this module carries a DeletedAt: a money record is kept, and
+	// the retreat from one is a status or a row (ADR 0054).
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	// DeletedAt is the moment of the soft delete; if nil, the collection is
-	// alive.
-	DeletedAt *time.Time
 }
 
 // RefundableAmount returns the amount that can be paid back out of the
@@ -153,10 +153,15 @@ type PaymentSession struct {
 	// diagnosis, IT IS NOT meant to be shown to the customer.
 	DeclineReason string
 	// CreatedAt and UpdatedAt are UTC.
+	//
+	// While Status is [SessionAuthorized], UpdatedAt IS the moment the hold was
+	// taken: every transition out of the status leaves the status, and
+	// authorizing an already-authorized session is a no-op that writes nothing
+	// (see [SessionStatus.AuthorizeAction]). That is why the module needs no
+	// separate authorized_at, and why the published money-event surface has two
+	// moments rather than three (ADR 0054).
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	// DeletedAt is the moment of the soft delete; if nil, the session is alive.
-	DeletedAt *time.Time
 }
 
 // Payment is a capture that has actually happened.
@@ -181,8 +186,6 @@ type Payment struct {
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	// DeletedAt is the moment of the soft delete; if nil, the capture is alive.
-	DeletedAt *time.Time
 }
 
 // RefundableAmount returns the remaining amount that can be paid back out of
@@ -206,10 +209,12 @@ type Refund struct {
 	// Reason is the free-text reason of the refund; it is optional.
 	Reason string
 	// CreatedAt and UpdatedAt are UTC.
+	//
+	// A refund row is never updated — this module holds no UPDATE against the
+	// table — so CreatedAt IS the moment the money went back, which is what
+	// PaymentMomentsByCollectionIDs reads as the refund moment.
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	// DeletedAt is the moment of the soft delete; if nil, the refund is alive.
-	DeletedAt *time.Time
 }
 
 // ManualSession is the session in the manual provider's OWN ledger.

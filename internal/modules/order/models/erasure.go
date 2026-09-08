@@ -102,14 +102,6 @@ type OrderErasureCandidate struct {
 	// CurrencyCode is the currency the outstanding amount is in; without it the
 	// number in the report means nothing.
 	CurrencyCode string
-	// Deleted reports that the order has been soft deleted.
-	//
-	// A soft-deleted order is still ERASED — the row holds the person's e-mail
-	// whether or not the read paths show it — but it is never RETAINED: nothing
-	// is being performed on a record no surface can reach, so holding a
-	// person's data against work that cannot happen would be a refusal with no
-	// fact behind it.
-	Deleted bool
 	// ErasedAt is when this order's personal columns were rewritten; nil while
 	// they never were.
 	//
@@ -220,10 +212,6 @@ func (c OrderErasureCandidate) Owed() int64 {
 // An archived order, by contrast, is a COMPLETED order that left the daily
 // lists, so money outstanding on it is money genuinely owed and is reported.
 func (c OrderErasureCandidate) Unsettled() UnsettledFact {
-	// A record no surface can reach is not being performed; see [Deleted].
-	if c.Deleted {
-		return Settled
-	}
 	if c.Status == OrderPending {
 		return UnsettledPending
 	}

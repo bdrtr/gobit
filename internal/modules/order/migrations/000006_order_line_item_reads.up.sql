@@ -28,11 +28,17 @@
 --
 -- # The query shape these indexes serve
 --
+-- Amended 2026-09-08: the sketch below carried "li.deleted_at IS NULL AND
+-- o.deleted_at IS NULL" until migration 000010 dropped both columns (ADR 0054).
+-- This header is edited rather than left alone -- the two precedent column-drop
+-- migrations left theirs untouched, but a header ILLUSTRATING a query is read as
+-- the query, and one showing a predicate the statement no longer carries is the
+-- document-code divergence this repository keeps producing out of its own work.
+--
 -- queries/order_line_items.sql, ListOrderLineItemsFiltered:
 --
 --   SELECT li.* FROM order_line_items li JOIN orders o ON o.id = li.order_id
---   WHERE li.deleted_at IS NULL AND o.deleted_at IS NULL
---     AND o.placed_at >= $from AND o.placed_at < $to
+--   WHERE o.placed_at >= $from AND o.placed_at < $to
 --     [AND li.order_id = $order] [AND li.variant_id = $variant]
 --   ORDER BY o.placed_at DESC, li.id DESC
 --   LIMIT $n OFFSET $m;
@@ -43,7 +49,7 @@
 -- month. The descending order matches the ORDER BY, so the LIMIT stops the scan
 -- early rather than sorting the entire period first.
 --
--- It is NOT a duplicate of orders_alive_idx (created_at DESC, id DESC). The two
+-- It is NOT a duplicate of orders_listing_idx (created_at DESC, id DESC). The two
 -- columns hold the same instant today -- CreateOrder writes placed_at = now()
 -- in the same statement that defaults created_at -- but they MEAN different
 -- things: created_at is when the row was written, placed_at is when the sale

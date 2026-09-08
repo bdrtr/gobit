@@ -185,10 +185,12 @@ type Order struct {
 	// was not canceled.
 	CancelReason string
 	// CreatedAt and UpdatedAt are UTC.
+	//
+	// There is no DeletedAt beside them, and its absence is a decision rather
+	// than an omission: an order retires by STATUS and each of the four states
+	// carries its own moment (ADR 0054).
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	// DeletedAt is the moment of the soft delete; when nil the order is live.
-	DeletedAt *time.Time
 }
 
 // Canceled reports whether the order has been canceled.

@@ -11,17 +11,17 @@ RETURNING *;
 
 -- name: GetOrderReturn :one
 SELECT * FROM order_returns
-WHERE id = $1 AND deleted_at IS NULL;
+WHERE id = $1;
 
 -- name: ListOrderReturns :many
 SELECT * FROM order_returns
-WHERE order_id = $1 AND deleted_at IS NULL
+WHERE order_id = $1
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
 
 -- name: CountOrderReturns :one
 SELECT COUNT(*) FROM order_returns
-WHERE order_id = $1 AND deleted_at IS NULL;
+WHERE order_id = $1;
 
 -- LockOrderReturn locks the return row until the end of the transaction.
 --
@@ -31,7 +31,7 @@ WHERE order_id = $1 AND deleted_at IS NULL;
 -- write a timestamp, and the record would keep the later one.
 -- name: LockOrderReturn :one
 SELECT * FROM order_returns
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 FOR UPDATE;
 
 -- ReceiveOrderReturn stamps the moment the goods came back.
@@ -45,12 +45,12 @@ SET status = 'received',
     received_at = now(),
     received_location_id = sqlc.arg('received_location_id')::text,
     updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 RETURNING *;
 
 -- CancelOrderReturn withdraws the request.
 -- name: CancelOrderReturn :one
 UPDATE order_returns
 SET status = 'canceled', canceled_at = now(), updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 RETURNING *;

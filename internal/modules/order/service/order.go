@@ -155,7 +155,7 @@ type CreateOrderInput struct {
 // [Service.spendingRuleFor] godoc and in ADR 0008.
 //
 // HOW THE SPEND IS COUNTED: it is the sum of the orders the customer placed
-// within the window the rule reports. CANCELED and soft-deleted orders do not
+// within the window the rule reports. CANCELED orders do not
 // enter the sum; the 'pending' ones DO (an order whose payment fails is
 // canceled by the saga and at that moment takes itself out of the sum). The
 // amount REFUNDED per order is SUBTRACTED from the sum — if the money came back
@@ -392,7 +392,7 @@ func (s *Service) replayedOrder(ctx context.Context, key string, cause error) (m
 //
 // The children are fetched with THREE fixed queries; whatever the number of
 // lines or addresses is, the number of queries does not change (there is no
-// N+1). If the order does not exist or is soft deleted, errors.NotFound is
+// N+1). If the order does not exist, errors.NotFound is
 // returned.
 //
 // The queries run on a SINGLE SNAPSHOT ([Store.WithReadTx]); no lock is taken.

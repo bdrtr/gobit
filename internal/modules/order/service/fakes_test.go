@@ -51,8 +51,9 @@ type fakeSnapshot struct {
 //  2. A method that takes a lock returns an error if it is called OUTSIDE a
 //     transaction.
 //  3. If the transaction ends with an error what was written is ROLLED BACK.
-//  4. The uniqueness of idempotency_key: the counterpart of the partial unique
-//     index in the migration; soft-deleted records are outside the constraint.
+//  4. The uniqueness of idempotency_key: the counterpart of the unique index in
+//     the migration, which covers EVERY order — there is no way to stop being
+//     one (ADR 0054).
 //  5. The WHERE condition of the status transition queries: on an order that is
 //     not in the expected status no row is affected and a Conflict is returned.
 //  6. The merging of the summary amounts with GREATEST: the query keeps the
@@ -290,7 +291,7 @@ func (f *fakeStore) CreateOrder(ctx context.Context, order models.Order) (models
 		// The loop is walked BY KEY: the order structure is large and copying it
 		// by value would carry a few hundred bytes for nothing on every turn.
 		for id := range f.orders {
-			if f.orders[id].DeletedAt == nil && f.orders[id].IdempotencyKey == order.IdempotencyKey {
+			if f.orders[id].IdempotencyKey == order.IdempotencyKey {
 				return models.Order{}, errors.Conflict("order_idempotency_key_taken",
 					"an order with this idempotency key already exists")
 			}
@@ -323,7 +324,7 @@ func (f *fakeStore) takeCreateHook() func() {
 // GetOrder returns the order by its identifier.
 func (f *fakeStore) GetOrder(ctx context.Context, id string) (models.Order, error) {
 	order, ok := f.view(ctx).orders[id]
-	if !ok || order.DeletedAt != nil {
+	if !ok {
 		return models.Order{}, notFound(id)
 	}
 	return order, nil
@@ -333,7 +334,7 @@ func (f *fakeStore) GetOrder(ctx context.Context, id string) (models.Order, erro
 func (f *fakeStore) GetOrderByDisplayID(ctx context.Context, displayID int64) (models.Order, error) {
 	snapshot := f.view(ctx)
 	for id := range snapshot.orders {
-		if snapshot.orders[id].DeletedAt == nil && snapshot.orders[id].DisplayID == displayID {
+		if snapshot.orders[id].DisplayID == displayID {
 			return snapshot.orders[id], nil
 		}
 	}
@@ -345,7 +346,7 @@ func (f *fakeStore) GetOrderByIdempotencyKey(ctx context.Context, key string) (m
 	snapshot := f.view(ctx)
 	for id := range snapshot.orders {
 		order := snapshot.orders[id]
-		if order.DeletedAt == nil && order.IdempotencyKey != "" && order.IdempotencyKey == key {
+		if order.IdempotencyKey != "" && order.IdempotencyKey == key {
 			return order, nil
 		}
 	}
@@ -364,7 +365,7 @@ func (f *fakeStore) LockOrder(ctx context.Context, id string) (models.Order, err
 	order, ok := f.orders[id]
 	f.mu.Unlock()
 
-	if !ok || order.DeletedAt != nil {
+	if !ok {
 		return models.Order{}, notFound(id)
 	}
 	return order, nil
@@ -375,9 +376,6 @@ func (f *fakeStore) ListOrders(ctx context.Context, filter models.OrderFilter) (
 	snapshot := f.view(ctx)
 	matched := make([]models.Order, 0, len(snapshot.orders))
 	for id := range snapshot.orders {
-		if snapshot.orders[id].DeletedAt != nil {
-			continue
-		}
 		if filter.CustomerID != nil && snapshot.orders[id].CustomerID != *filter.CustomerID {
 			continue
 		}
@@ -410,34 +408,11 @@ func (f *fakeStore) OrdersByIDs(ctx context.Context, ids []string) ([]models.Ord
 	snapshot := f.view(ctx)
 	out := make([]models.Order, 0, len(ids))
 	for _, id := range slices.Sorted(slices.Values(ids)) {
-		if order, ok := snapshot.orders[id]; ok && order.DeletedAt == nil {
+		if order, ok := snapshot.orders[id]; ok {
 			out = append(out, order)
 		}
 	}
 	return out, nil
-}
-
-// softDeleteOrder stamps the order as soft-deleted.
-//
-// The module has NO surface that deletes an order (migration 000001 says so),
-// so the state cannot be reached through the service — while every read query
-// filters on deleted_at, and the line listing joins orders to apply that filter
-// to the lines as well. Without this helper those conditions could not be
-// exercised at all, and a test cannot prove a filter it cannot reach.
-//
-// A missing identifier is left alone on purpose: the caller asserts that the
-// records disappeared, so a silent no-op fails the test rather than hiding.
-func (f *fakeStore) softDeleteOrder(id string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	order, ok := f.orders[id]
-	if !ok {
-		return
-	}
-	stamp := f.nextStamp()
-	order.DeletedAt = &stamp
-	f.orders[id] = order
 }
 
 // CancelOrder cancels the order; it only takes effect in the 'pending' status.
@@ -463,7 +438,7 @@ func (f *fakeStore) applyStatus(ctx context.Context, id string, required, next m
 	defer f.mu.Unlock()
 
 	order, ok := f.orders[id]
-	if !ok || order.DeletedAt != nil || order.Status != required {
+	if !ok || order.Status != required {
 		return models.Order{}, errors.Conflict("order_state_changed",
 			"the transition could not be applied: the status of the order differs from the expected one (%s)", id)
 	}
@@ -501,7 +476,7 @@ func (f *fakeStore) CreateLineItem(ctx context.Context, item models.OrderLineIte
 	if f.failCreateLineItem != nil {
 		return models.OrderLineItem{}, f.failCreateLineItem
 	}
-	if order, ok := f.orders[item.OrderID]; !ok || order.DeletedAt != nil {
+	if _, ok := f.orders[item.OrderID]; !ok {
 		return models.OrderLineItem{}, notFound(item.OrderID)
 	}
 	stamp := f.nextStamp()
@@ -530,17 +505,16 @@ func (f *fakeStore) ListLineItems(ctx context.Context, orderID string) ([]models
 // ListLineItemsFiltered lists lines across orders, applying the SAME conditions
 // as ListOrderLineItemsFiltered.
 //
-// The two that are easy to get wrong here, and that a lazier fake would let a
-// test pass over:
+// The one that is easy to get wrong here, and that a lazier fake would let a
+// test pass over: the date range is matched against the ORDER's PlacedAt, not
+// the line's CreatedAt. They are the same instant for a line written with its
+// order, so a fake filtering on the line's stamp would look correct in every
+// test that only opens orders — and would disagree with the database the moment
+// a line is added to an existing order.
 //
-//  1. The date range is matched against the ORDER's PlacedAt, not the line's
-//     CreatedAt. They are the same instant for a line written with its order,
-//     so a fake filtering on the line's stamp would look correct in every test
-//     that only opens orders — and would disagree with the database the moment
-//     a line is added to an existing order.
-//  2. A line whose ORDER is soft-deleted is not returned. The query joins
-//     orders and checks their deleted_at; a fake that only checked the line
-//     would report a deleted order's lines as sales.
+// The query's JOIN carried a second condition until ADR 0054 — the order's
+// deleted_at — and there is nothing left for it to hide: an order retires by
+// STATUS and cannot be made invisible.
 //
 // The ordering is the query's: the order's PlacedAt descending, ties broken by
 // the line id descending.
@@ -553,7 +527,7 @@ func (f *fakeStore) ListLineItemsFiltered(
 	for id := range snapshot.items {
 		line := snapshot.items[id]
 		order, alive := snapshot.orders[line.OrderID]
-		if !alive || order.DeletedAt != nil {
+		if !alive {
 			continue
 		}
 		if filter.OrderID != nil && line.OrderID != *filter.OrderID {
@@ -590,9 +564,11 @@ func (f *fakeStore) ListLineItemsFiltered(
 
 // LineItemsByIDs returns the set of line identifiers.
 //
-// The lines of a soft-deleted order are absent here as well: the query joins
-// orders for exactly that reason, and a fake that answered the batch read more
-// generously than the listing would hide the divergence the join prevents.
+// The real statement is a plain read of the line table: its JOIN on orders
+// existed only to check the order's deleted_at, and went with the column
+// (ADR 0054). A line's order always exists — order_id is NOT NULL and carries
+// the foreign key — so a fake that looked it up would be checking something the
+// schema already guarantees.
 func (f *fakeStore) LineItemsByIDs(ctx context.Context, ids []string) ([]models.OrderLineItem, error) {
 	f.mu.Lock()
 	f.lineItemBatchReads++
@@ -604,9 +580,6 @@ func (f *fakeStore) LineItemsByIDs(ctx context.Context, ids []string) ([]models.
 	for _, id := range slices.Sorted(slices.Values(ids)) {
 		line, ok := snapshot.items[id]
 		if !ok {
-			continue
-		}
-		if order, alive := snapshot.orders[line.OrderID]; !alive || order.DeletedAt != nil {
 			continue
 		}
 		out = append(out, line)
@@ -674,7 +647,7 @@ func (f *fakeStore) CreateSummary(ctx context.Context, summary models.OrderSumma
 	if f.failCreateSummary != nil {
 		return models.OrderSummary{}, f.failCreateSummary
 	}
-	if order, ok := f.orders[summary.OrderID]; !ok || order.DeletedAt != nil {
+	if _, ok := f.orders[summary.OrderID]; !ok {
 		return models.OrderSummary{}, notFound(summary.OrderID)
 	}
 	if _, exists := f.summaries[summary.OrderID]; exists {
@@ -746,7 +719,7 @@ func (f *fakeStore) CreateReturn(ctx context.Context, ret models.Return) (models
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if order, ok := f.orders[ret.OrderID]; !ok || order.DeletedAt != nil {
+	if _, ok := f.orders[ret.OrderID]; !ok {
 		return models.Return{}, notFound(ret.OrderID)
 	}
 	stamp := f.nextStamp()
@@ -1017,7 +990,7 @@ func (f *fakeStore) CreateExchange(ctx context.Context, exchange models.Exchange
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if order, ok := f.orders[exchange.OrderID]; !ok || order.DeletedAt != nil {
+	if _, ok := f.orders[exchange.OrderID]; !ok {
 		return models.Exchange{}, notFound(exchange.OrderID)
 	}
 	stamp := f.nextStamp()
@@ -1107,7 +1080,7 @@ func (f *fakeStore) CreateClaim(ctx context.Context, claim models.Claim) (models
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if order, ok := f.orders[claim.OrderID]; !ok || order.DeletedAt != nil {
+	if _, ok := f.orders[claim.OrderID]; !ok {
 		return models.Claim{}, notFound(claim.OrderID)
 	}
 	stamp := f.nextStamp()
@@ -1205,9 +1178,9 @@ func (f *fakeStore) LockCustomerSpending(ctx context.Context, customerID string)
 
 // SumCustomerSpend returns the customer's spend within the window.
 //
-// It imitates the rules of queries/spending.sql: canceled and soft-deleted
-// orders do not enter the sum, the refunded amount is subtracted, the currency
-// matches exactly and the lower end of the window IS INCLUDED.
+// It imitates the rules of queries/spending.sql: canceled orders do not enter
+// the sum, the refunded amount is subtracted, the currency matches exactly and
+// the lower end of the window IS INCLUDED.
 func (f *fakeStore) SumCustomerSpend(
 	ctx context.Context,
 	customerID, currencyCode string,
@@ -1223,8 +1196,7 @@ func (f *fakeStore) SumCustomerSpend(
 	for id := range snapshot.orders {
 		order := snapshot.orders[id]
 		switch {
-		case order.DeletedAt != nil,
-			order.Status == models.OrderCanceled,
+		case order.Status == models.OrderCanceled,
 			order.CustomerID != customerID,
 			order.CurrencyCode != currencyCode:
 			continue
@@ -1346,10 +1318,9 @@ func (p *fakeSpendingPolicy) calls() []string {
 // OrdersForErasure returns the person's orders with the settlement facts.
 //
 // It imitates what queries/erasure.sql does and nothing the SERVICE does: the
-// two identifiers are OR-ed, soft-deleted orders ARE returned (the erasure asks
-// what the store still holds, not what the business can see), the three money
-// totals are carried RAW rather than combined into an outstanding amount, and
-// an after-sales record counts only while it is in its requested state.
+// two identifiers are OR-ed, the three money totals are carried RAW rather than
+// combined into an outstanding amount, and an after-sales record counts only
+// while it is in its requested state.
 //
 // The raw totals are the correction of a real defect rather than a style
 // choice: paid_total never shrinks (the summary merges it with GREATEST), so
@@ -1388,7 +1359,6 @@ func (f *fakeStore) OrdersForErasure(
 			DisplayID:     order.DisplayID,
 			Status:        order.Status,
 			CurrencyCode:  order.CurrencyCode,
-			Deleted:       order.DeletedAt != nil,
 			Total:         order.Total,
 			PaidTotal:     f.summaries[id].PaidTotal,
 			RefundedTotal: f.summaries[id].RefundedTotal,
@@ -1397,9 +1367,6 @@ func (f *fakeStore) OrdersForErasure(
 			moment := stamp
 			candidate.ErasedAt = &moment
 		}
-		// The soft-delete filter the real query carries on the three child
-		// tables is not imitated: no model here has a DeletedAt field, because
-		// the module has no surface that deletes an after-sales record.
 		for key := range f.returns {
 			ret := f.returns[key]
 			if ret.OrderID == id && ret.Status == models.ReturnRequested {
@@ -1521,8 +1488,8 @@ func (f *fakeStore) AnonymizeOrderAddresses(ctx context.Context, orderIDs []stri
 // OrdersForDisclosure returns the person's orders WITHOUT locking them.
 //
 // It imitates queries/disclosure.sql: the two handles are OR-ed by the same
-// [subjectMatches] the erasure candidate read uses, soft-deleted orders are
-// returned, and the rows come back whole and ordered by id.
+// [subjectMatches] the erasure candidate read uses, and the rows come back
+// whole and ordered by id.
 //
 // What it deliberately does NOT imitate is the transaction guard. The real
 // statement takes no lock and needs no transaction, so a fake that demanded one
@@ -1550,9 +1517,9 @@ func (f *fakeStore) OrdersForDisclosure(
 
 // LineItemsForDisclosure returns the lines of the given orders.
 //
-// The soft-delete filter [fakeStore.ListLineItems] applies is deliberately
-// absent, which is the one behavioral difference between the two reads and the
-// reason this method exists at all.
+// It differs from [fakeStore.ListLineItems] in SHAPE and not in filtering: it
+// answers MANY orders in one call, which is why the dossier of a person with
+// two hundred orders is one read rather than two hundred.
 func (f *fakeStore) LineItemsForDisclosure(
 	ctx context.Context, orderIDs []string,
 ) ([]models.OrderLineItem, error) {

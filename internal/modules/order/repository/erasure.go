@@ -46,7 +46,7 @@ func (r *Repository) OrdersForErasure(
 	}
 
 	out := make([]models.OrderErasureCandidate, 0, len(rows))
-	// By index: the row struct carries twelve fields and copying it per turn
+	// By index: the row struct carries eleven fields and copying it per turn
 	// would move them for nothing.
 	for i := range rows {
 		out = append(out, models.OrderErasureCandidate{
@@ -54,7 +54,6 @@ func (r *Repository) OrdersForErasure(
 			DisplayID:         rows[i].DisplayID,
 			Status:            models.OrderStatus(rows[i].Status),
 			CurrencyCode:      rows[i].CurrencyCode,
-			Deleted:           rows[i].DeletedAt.Valid,
 			ErasedAt:          toTimePtr(rows[i].PersonalDataErasedAt),
 			Total:             rows[i].Total,
 			PaidTotal:         rows[i].PaidTotal,

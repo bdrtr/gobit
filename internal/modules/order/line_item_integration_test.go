@@ -20,8 +20,6 @@
 //   - the date range is matched against the ORDER's placed_at through a JOIN,
 //     not against the line's own created_at. A fake holds both stamps in the
 //     same struct and cannot tell the two apart at all;
-//   - the JOIN's `o.deleted_at IS NULL` hides the lines of a soft-deleted order
-//     even though the LINE rows themselves are alive;
 //   - a []string binds to `= ANY($1::text[])`.
 //
 // # Why the fixture is written straight into the table
@@ -98,16 +96,14 @@ func (o lineItemOrder) ids() []string {
 // lineItemWorld is the row shape every filtered read in this file is exercised
 // against.
 //
-// The four orders are not four arbitrary rows; each one exists to make ONE
+// The three orders are not three arbitrary rows; each one exists to make ONE
 // branch of the query observable, and they are built together because a test
 // that only ever saw the rows it expects could not tell a working filter from a
 // filter that returns everything:
 //
 //   - atFrom sits EXACTLY on the lower bound, which is inclusive;
 //   - atTo sits EXACTLY on the upper bound, which is exclusive;
-//   - inside sits between the two and is the row a broken bound would take away;
-//   - deleted also sits between the two but its ORDER is soft-deleted, so it is
-//     the row a missing `o.deleted_at IS NULL` would hand back.
+//   - inside sits between the two and is the row a broken bound would take away.
 //
 // Every line in the world carries the same variant id, which is unique to the
 // world. That is what makes an assertion about an exact identifier set possible
@@ -131,16 +127,15 @@ type lineItemWorld struct {
 	inside lineItemOrder
 	// atTo is placed exactly at dayTwo.
 	atTo lineItemOrder
-	// deleted is placed within the window and then soft-deleted.
-	deleted lineItemOrder
 }
 
-// liveIDs returns the identifiers of the lines whose orders are alive, sorted
+// allIDs returns the identifiers of every line the world wrote, sorted
 // ascending.
 //
-// The lines of [lineItemWorld.deleted] are deliberately absent: they are alive
-// as rows and must still be invisible to both statements of the provider.
-func (w lineItemWorld) liveIDs() []string {
+// It is the exact set both statements of the provider must report for this
+// world's variant: nothing here can be hidden, because an order carries no
+// liveness to hide it by (ADR 0054).
+func (w lineItemWorld) allIDs() []string {
 	out := slices.Concat(w.atFrom.ids(), w.inside.ids(), w.atTo.ids())
 	slices.Sort(out)
 	return out
@@ -166,8 +161,6 @@ func newLineItemWorld(ctx context.Context, t *testing.T, tag string, day time.Ti
 	world.atFrom = world.place(ctx, t, customer, "at the lower bound", day, 2)
 	world.inside = world.place(ctx, t, customer, "inside the window", day.Add(10*time.Hour), 1)
 	world.atTo = world.place(ctx, t, customer, "at the upper bound", world.dayTwo, 1)
-	world.deleted = world.place(ctx, t, customer, "on a deleted order", day.Add(5*time.Hour), 1)
-	softDeleteOrderRow(ctx, t, world.deleted.id)
 
 	return world
 }
@@ -219,24 +212,6 @@ func writeLineItem(
 	return created
 }
 
-// softDeleteOrderRow marks the order deleted with a direct UPDATE.
-//
-// The module publishes no delete operation for an order — deletion is not part
-// of the order's lifecycle, an order is canceled instead — but the schema and
-// every read still carry a soft-delete condition, and the JOIN in
-// internal/modules/order/queries/order_line_items.sql relies on it. Setting the
-// column by hand is the only way to reach that branch, and the assertion that
-// depends on it (the line row itself stays alive) is checked in the test rather
-// than assumed here.
-func softDeleteOrderRow(ctx context.Context, t *testing.T, orderID string) {
-	t.Helper()
-
-	tag, err := testPool.Pool().Exec(ctx,
-		`UPDATE orders SET deleted_at = now() WHERE id = $1`, orderID)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, tag.RowsAffected(), "the order to be deleted must exist")
-}
-
 // orderedLineIDs returns the identifiers of the lines IN THE ORDER the query
 // produced them.
 //
@@ -251,22 +226,6 @@ func orderedLineIDs(lines []models.OrderLineItem) []string {
 		out = append(out, lines[i].ID)
 	}
 	return out
-}
-
-// softDeleteLineRow marks a single LINE deleted with a direct UPDATE.
-//
-// It exists for the same reason [softDeleteOrderRow] does — the module offers
-// no delete operation for a line, because an order line is immutable once
-// written and a correction goes through a return or an exchange — while both
-// statements of this provider still carry `li.deleted_at IS NULL`. A condition
-// no test can reach is a condition that can be deleted without a sound.
-func softDeleteLineRow(ctx context.Context, t *testing.T, lineID string) {
-	t.Helper()
-
-	tag, err := testPool.Pool().Exec(ctx,
-		`UPDATE order_line_items SET deleted_at = now() WHERE id = $1`, lineID)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, tag.RowsAffected(), "the line to be deleted must exist")
 }
 
 // readLineIDs runs the filtered listing and returns the identifiers it produced,
@@ -304,9 +263,10 @@ func sortedLineIDs(lines []models.OrderLineItem) []string {
 // scan nobody sees in a test.
 //
 // The definitions are checked and not only the names. An index called
-// orders_placed_at_idx that was built on the wrong column, or without the
-// partial predicate, would carry the name that satisfies a `SELECT 1` and serve
-// neither the range nor the ordering it exists for.
+// orders_placed_at_idx that was built on the wrong column, or carrying a
+// predicate that leaves part of the table out, would carry the name that
+// satisfies a `SELECT 1` and serve neither the range nor the ordering it
+// exists for.
 func TestLineItemMigrationBringsItsIndexes(t *testing.T) {
 	ctx := context.Background()
 
@@ -330,8 +290,9 @@ func TestLineItemMigrationBringsItsIndexes(t *testing.T) {
 	require.True(t, ok, "migration 000006 was not applied: orders_placed_at_idx is missing")
 	assert.Contains(t, placed, "placed_at DESC",
 		"the index has to descend, otherwise the ORDER BY sorts the whole period first")
-	assert.Contains(t, placed, "deleted_at IS NULL",
-		"the index has to be partial, so a deleted order does not occupy it")
+	assert.NotContains(t, placed, "WHERE",
+		"the index must cover EVERY order: it was partial on deleted_at until ADR 0054, "+
+			"and a predicate here again means the column came back with it")
 
 	variant, ok := definitions["order_line_items_variant_idx"]
 	require.True(t, ok, "migration 000006 was not applied: order_line_items_variant_idx is missing")
@@ -385,15 +346,15 @@ func TestLineItemFilterTreatsANilCriterionAsNotGiven(t *testing.T) {
 	assert.Equal(t, slices.Sorted(slices.Values(world.atFrom.ids())), byOrder,
 		"a nil placed_from and a nil placed_to must mean the range was not given")
 
-	// Only the variant: neither an order nor a date. The deleted order's line
-	// carries this variant too and must still stay out.
+	// Only the variant: neither an order nor a date. Every line of the world
+	// carries it, so the answer is the whole world and nothing else.
 	byVariant := readLineIDs(ctx, t, world.repo, models.OrderLineItemFilter{
 		VariantID: ptr(world.variant),
 		Limit:     lineItemReadLimit,
 	})
 	slices.Sort(byVariant)
-	assert.Equal(t, world.liveIDs(), byVariant,
-		"the variant criterion alone must select every live line of the variant")
+	assert.Equal(t, world.allIDs(), byVariant,
+		"the variant criterion alone must select every line of the variant")
 
 	// Every criterion absent. The assertion is deliberately weak — the table
 	// holds the rows of every other test in the package and no exact set can be
@@ -498,64 +459,6 @@ func TestLineItemDateRangeMatchesTheOrdersMomentNotTheLinesRow(t *testing.T) {
 	assert.Empty(t, inTheRowsWindow,
 		"the window in which the ROWS were written must find nothing: the filter is "+
 			"bound to the order's placed_at, not to the line's created_at")
-}
-
-// TestLineItemSoftDeletedOrderHidesItsLinesFromBothReads verifies the JOIN's
-// liveness condition on BOTH statements of the provider.
-//
-// Both, and not one, because the failure this guards against is a DISAGREEMENT:
-// the listing is what a report walks, FetchByIDs is what an expansion calls,
-// and if only one of them carried `o.deleted_at IS NULL` the same line would
-// exist or not exist depending on which side of the query it was reached from.
-// That is the divergence migration 000001 warns about for order_summaries, and
-// it is invisible to any test that only ever exercises the listing.
-//
-// The line ROW of the deleted order is deliberately left alive. If the test
-// soft-deleted the line as well, it would pass on a query that only checks
-// li.deleted_at — which is the condition ListOrderLineItems already had and the
-// exact thing that is NOT enough here.
-//
-// The opposite case is covered too, with a second order that is alive and whose
-// LINE is deleted. Both conditions are in both statements and a test that
-// exercised only one of them would let the other be dropped.
-func TestLineItemSoftDeletedOrderHidesItsLinesFromBothReads(t *testing.T) {
-	ctx := context.Background()
-	world := newLineItemWorld(ctx, t, "DELETED", time.Date(2019, 4, 8, 0, 0, 0, 0, time.UTC))
-	hidden := world.deleted.ids()
-
-	// A live order carrying a deleted LINE. It is written after the world is
-	// built and is deliberately NOT part of [lineItemWorld.liveIDs], so both
-	// assertions below fail the moment it becomes visible.
-	withDeletedLine := world.place(ctx, t, "cus_LI_DELETED", "a deleted line",
-		world.dayOne.Add(7*time.Hour), 1)
-	softDeleteLineRow(ctx, t, withDeletedLine.ids()[0])
-	hidden = slices.Concat(hidden, withDeletedLine.ids())
-
-	// The line row of the deleted ORDER is untouched; only its order was
-	// deleted. Without this the assertions could be satisfied by the wrong
-	// condition.
-	var lineAlive bool
-	require.NoError(t, testPool.Pool().QueryRow(ctx,
-		`SELECT deleted_at IS NULL FROM order_line_items WHERE id = $1`,
-		world.deleted.ids()[0]).Scan(&lineAlive))
-	require.True(t, lineAlive, "the LINE must still be alive; only the order was deleted")
-
-	listed := readLineIDs(ctx, t, world.repo, models.OrderLineItemFilter{
-		VariantID: ptr(world.variant),
-		Limit:     lineItemReadLimit,
-	})
-	slices.Sort(listed)
-	assert.Equal(t, world.liveIDs(), listed,
-		"the filtered listing must report neither the line of a deleted order nor a "+
-			"deleted line as a sale")
-
-	// The same identifiers through the batch read, asked for TOGETHER with the
-	// live ones: a statement that answered by identity alone would hand the
-	// hidden lines back here.
-	fetched, err := world.repo.LineItemsByIDs(ctx, slices.Concat(world.liveIDs(), hidden))
-	require.NoError(t, err)
-	assert.Equal(t, world.liveIDs(), sortedLineIDs(fetched),
-		"the batch read must hide exactly what the listing hides")
 }
 
 // TestLineItemsByIDsReadTheWholeBatchInOneStatement covers

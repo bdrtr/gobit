@@ -88,7 +88,6 @@ row is for; the reproduction is in the commit that closed it.
 
 | # | Finding | Status |
 |---|---|---|
-| **D9** | Neither order nor payment ever soft-deletes: ten `deleted_at` columns nothing writes, behind reads that all carry `deleted_at IS NULL` | **OPEN.** Dropping them is a schema decision; taking the deletes on is a product one |
 | **D18** | Nine columns nothing has ever written, invisible until D16's fix | **Eight closed. The ninth is `stock_locations.deleted_at`**, and the question its exemption states is not "delete or status": a location has no delete OR update path, availability sums `inventory_levels` without joining locations, and both level and reservation rows CASCADE. What a closed location OWES — do its levels move, zero out or stop counting, and what happens to live reservations — decides the mechanism |
 | D1 | `/paytr/callback` sat outside every guarded prefix | Fixed — ADR 0028, and the residue answered 2026-09-08: a callback is recorded in the ring's LOG and not in `audit_log` (ADR 0056) — a provider is not an actor and the table has no column for the outcome. Every outcome now leaves a line, refusals included; four were silent, all of them the class where the handler RAN. What remains is a decision, A19, and not a residue |
 | D2 | `allow_backorder` published and read by nothing | Fixed — ADR 0048 |
@@ -98,6 +97,7 @@ row is for; the reproduction is in the commit that closed it.
 | D6 | Two repository-internal transactions could not compose | Fixed, and the entry had named the wrong second module |
 | D7 | OpenAPI claimed `q` searched title and handle | Fixed |
 | D8 | The link's far side named an entity with no Query provider | Fixed |
+| D9 | Neither order nor payment ever soft-deletes: ten `deleted_at` columns nothing writes, behind reads that all carry `deleted_at IS NULL` | Fixed — ADR 0054. Both halves answered at once: the columns are DROPPED and the deletes are not taken on. Four of the ten indexes were UNIQUE among LIVING rows, so one hand-written UPDATE reused an idempotency key — measured, and on `payments` that key is what stands between a retry and a second charge. `fulfillment` 000003's claim that "D9's ten carry no such rule" was false and is corrected. A gate refuses the columns' return |
 | D10 | Nothing stopped a module's SQL naming another module's table | Fixed, and the residue closed 2026-09-08. Ownership comes from every migration set in the tree (82 tables, 25 owners) instead of the modules alone, so the ten tables the plugins and the core create are no longer owned by nobody — which under this rule meant legal for everybody. The SCANNED set is walked from the tree rather than derived from ownership: six of the ten plugins ship no migrations, and deriving the population from ownership would let a plugin leave the audit by being the thing it looks for. **Widened once more the same day**: "owners plus plugins" was the same proxy one ring out, and the component sitting in it was the rig — see D13 |
 | D11 | `make load-test` printed green and measured nothing | Fixed — the `-run` selector named no test |
 | D12 | The panel's product list did not make the storefront's Graph call | Corrected |
@@ -190,10 +190,15 @@ row is for; the reproduction is in the commit that closed it.
   year and the stamp, so splitting them lets a document be numbered 2027 and
   dated 2026.
 
-- **`authorized_at` does not exist**, and this row's premise was wrong about the
-  other half. `refunded_at` is already closed: `refunds` has no UPDATE statement
-  anywhere, so a refund row is immutable and `created_at` IS the refund moment —
-  which the query and the model both say in prose. `authorized_at` is genuinely
-  absent (zero hits in the whole tree). The decision is not the column but
-  whether the published money-event surface gains a THIRD moment beside
-  `first_captured_at` and `last_refunded_at`.
+- ~~**`authorized_at` does not exist.**~~ **DECIDED 2026-09-08: ADR 0054 — the
+  surface keeps two moments and the column is not added.** An authorization
+  moves no money, so it is not a money event; and while the hold is what a
+  reader is asking about, the moment is already readable —
+  `payment_sessions.updated_at` IS it, because every transition out of
+  `authorized` leaves the status and re-authorizing is a no-op that writes
+  nothing. `ListSessionsForReconciliation` and its index have always rested on
+  that reading. After capture the moment is gone and nothing asks for it: a
+  third field would have to cross the ADR 0004 read map, a DTO and the OpenAPI
+  text for a reader nobody has named. The `refunded_at` half was already closed
+  and stays closed — `refunds` carries no UPDATE anywhere, so `created_at` IS
+  the refund moment.

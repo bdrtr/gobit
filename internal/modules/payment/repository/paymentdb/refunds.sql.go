@@ -14,7 +14,7 @@ const createRefund = `-- name: CreateRefund :one
 INSERT INTO refunds (
     id, payment_id, amount, reason
 ) VALUES ($1, $2, $3, $4)
-RETURNING id, payment_id, amount, reason, created_at, updated_at, deleted_at
+RETURNING id, payment_id, amount, reason, created_at, updated_at
 `
 
 type CreateRefundParams struct {
@@ -44,14 +44,13 @@ func (q *Queries) CreateRefund(ctx context.Context, arg CreateRefundParams) (Ref
 		&i.Reason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getRefund = `-- name: GetRefund :one
-SELECT id, payment_id, amount, reason, created_at, updated_at, deleted_at FROM refunds
-WHERE id = $1 AND deleted_at IS NULL
+SELECT id, payment_id, amount, reason, created_at, updated_at FROM refunds
+WHERE id = $1
 `
 
 func (q *Queries) GetRefund(ctx context.Context, id string) (Refund, error) {
@@ -64,14 +63,13 @@ func (q *Queries) GetRefund(ctx context.Context, id string) (Refund, error) {
 		&i.Reason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const listRefundsByPayment = `-- name: ListRefundsByPayment :many
-SELECT id, payment_id, amount, reason, created_at, updated_at, deleted_at FROM refunds
-WHERE payment_id = $1 AND deleted_at IS NULL
+SELECT id, payment_id, amount, reason, created_at, updated_at FROM refunds
+WHERE payment_id = $1
 ORDER BY created_at DESC, id DESC
 `
 
@@ -91,7 +89,6 @@ func (q *Queries) ListRefundsByPayment(ctx context.Context, paymentID string) ([
 			&i.Reason,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}

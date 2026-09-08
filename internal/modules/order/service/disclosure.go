@@ -154,9 +154,8 @@ var (
 // The contract REQUIRES it, and the requirement is not ceremony: "we found
 // nothing" is an answer a person may well dispute, and the only thing that makes
 // it checkable is a sentence saying where the search went. So it names the two
-// handles, says that they were matched independently rather than together —
-// which is what reaches a guest — and says that the hidden rows were searched
-// too.
+// handles and says that they were matched independently rather than together,
+// which is what reaches a guest.
 //
 // The last clause is the one that costs something to admit and is written down
 // anyway. An order anonymized by an earlier erasure has no e-mail left, and for
@@ -165,7 +164,7 @@ var (
 // would be the same over-claim the erasure's kept list exists to prevent, in the
 // other direction.
 const whyNothingFound = "no order carries this customer id or this e-mail address; the search " +
-	"covered every order the database still holds, soft-deleted ones included, and matched the " +
+	"covered every order the database still holds — no order can be hidden from it — and matched the " +
 	"customer id and the address independently rather than together, so a guest order that has no " +
 	"customer id is still reached by its address alone. One limit is worth stating rather than " +
 	"leaving to be assumed: an order whose personal columns were erased in an earlier request no " +

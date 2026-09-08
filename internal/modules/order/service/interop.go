@@ -389,7 +389,7 @@ type interopContact struct {
 // OrderContactJSON returns the fields of the order needed for the notification.
 //
 // The schema is defined in the [interopContact] documentation and ALL of its
-// values are strings. When the order does not exist (or has been soft deleted)
+// values are strings. When the order does not exist
 // errors.NotFound is returned; when the identifier is empty, errors.Invalid.
 //
 // # An order without an e-mail IS NOT AN ERROR
@@ -494,7 +494,7 @@ type interopInvoiceOrder struct {
 // OrderInvoiceJSON returns everything a document has to print about the order.
 //
 // The schema is defined in the [interopInvoiceOrder] documentation. When the
-// order does not exist (or has been soft deleted) errors.NotFound is returned;
+// order does not exist, errors.NotFound is returned;
 // when the identifier is empty, errors.Invalid.
 //
 // It does NOT decide whether the order may be invoiced. That is the caller's

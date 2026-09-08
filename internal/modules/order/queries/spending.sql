@@ -13,7 +13,7 @@
 --
 -- CANCELED orders DO NOT ENTER the sum: a cancellation means "this purchase did
 -- not happen", and letting a canceled order burn the budget would be counting a
--- good that was never sold as spending. Soft-deleted orders do not enter either.
+-- good that was never sold as spending.
 --
 -- 'pending' orders DO ENTER. An order is opened before its payment is taken, and
 -- if the payment falls through the saga cancels it (status = 'canceled'), so a
@@ -54,7 +54,6 @@ FROM orders o
 LEFT JOIN order_summaries s ON s.order_id = o.id
 WHERE o.customer_id = sqlc.arg('customer_id')::text
   AND o.currency_code = sqlc.arg('currency_code')::text
-  AND o.deleted_at IS NULL
   AND o.status <> 'canceled'
   AND (
       sqlc.narg('window_start')::timestamptz IS NULL

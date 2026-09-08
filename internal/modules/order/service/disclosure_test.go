@@ -16,10 +16,10 @@ import (
 
 // These tests are about the ANSWER: which rows become records, which columns
 // they carry, what the two empty states say, and that a read stays a read. What
-// a fake store cannot prove is that the statements really reach the rows —
-// including the soft-deleted ones — and that is disclosure_integration_test.go's
-// half, for the same reason the erasure is split that way: a fake that agreed
-// with a broken statement would agree with it silently.
+// a fake store cannot prove is that the statements really reach the rows, and
+// that is disclosure_integration_test.go's half, for the same reason the erasure
+// is split that way: a fake that agreed with a broken statement would agree with
+// it silently.
 
 // disclosableInput produces an order filled in everything the module declares,
 // so that a column the disclosure drops is visible as a missing field rather
@@ -268,8 +268,8 @@ func TestPersonalDataOfAnswersNothingWhenThePersonIsNotHere(t *testing.T) {
 	require.NotEmpty(t, disclosure.Why,
 		"'we found nothing' is an answer a person may dispute; the sentence that says where the "+
 			"search went is what makes it checkable")
-	assert.Contains(t, disclosure.Why, "soft-deleted",
-		"the hidden rows were searched too and the answer has to say so")
+	assert.Contains(t, disclosure.Why, "every order the database still holds",
+		"the sentence has to say how far the search went, not merely that it happened")
 	assert.Contains(t, disclosure.Why, "guest",
 		"the one thing this module cannot reach is an erased guest order; leaving it unsaid "+
 			"would make the answer sound more complete than it is")

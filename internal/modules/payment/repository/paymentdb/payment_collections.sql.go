@@ -13,8 +13,7 @@ import (
 
 const countPaymentCollections = `-- name: CountPaymentCollections :one
 SELECT COUNT(*) FROM payment_collections
-WHERE deleted_at IS NULL
-  AND ($1::text IS NULL OR reference = $1::text)
+WHERE ($1::text IS NULL OR reference = $1::text)
   AND ($2::text IS NULL OR status = $2::text)
 `
 
@@ -43,7 +42,7 @@ const createPaymentCollection = `-- name: CreatePaymentCollection :one
 INSERT INTO payment_collections (
     id, reference, amount, currency_code, status, metadata
 ) VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at, deleted_at
+RETURNING id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at
 `
 
 type CreatePaymentCollectionParams struct {
@@ -85,14 +84,13 @@ func (q *Queries) CreatePaymentCollection(ctx context.Context, arg CreatePayment
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getPaymentCollection = `-- name: GetPaymentCollection :one
-SELECT id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at, deleted_at FROM payment_collections
-WHERE id = $1 AND deleted_at IS NULL
+SELECT id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at FROM payment_collections
+WHERE id = $1
 `
 
 func (q *Queries) GetPaymentCollection(ctx context.Context, id string) (PaymentCollection, error) {
@@ -110,14 +108,13 @@ func (q *Queries) GetPaymentCollection(ctx context.Context, id string) (PaymentC
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getPaymentCollectionsByIDs = `-- name: GetPaymentCollectionsByIDs :many
-SELECT id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at, deleted_at FROM payment_collections
-WHERE id = ANY ($1::text[]) AND deleted_at IS NULL
+SELECT id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at FROM payment_collections
+WHERE id = ANY ($1::text[])
 ORDER BY id
 `
 
@@ -144,7 +141,6 @@ func (q *Queries) GetPaymentCollectionsByIDs(ctx context.Context, ids []string) 
 			&i.Metadata,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -157,9 +153,8 @@ func (q *Queries) GetPaymentCollectionsByIDs(ctx context.Context, ids []string) 
 }
 
 const listPaymentCollections = `-- name: ListPaymentCollections :many
-SELECT id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at, deleted_at FROM payment_collections
-WHERE deleted_at IS NULL
-  AND ($1::text IS NULL OR reference = $1::text)
+SELECT id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at FROM payment_collections
+WHERE ($1::text IS NULL OR reference = $1::text)
   AND ($2::text IS NULL OR status = $2::text)
 ORDER BY created_at DESC, id DESC
 LIMIT $4::bigint OFFSET $3::bigint
@@ -198,7 +193,6 @@ func (q *Queries) ListPaymentCollections(ctx context.Context, arg ListPaymentCol
 			&i.Metadata,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -211,8 +205,8 @@ func (q *Queries) ListPaymentCollections(ctx context.Context, arg ListPaymentCol
 }
 
 const lockPaymentCollection = `-- name: LockPaymentCollection :one
-SELECT id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at, deleted_at FROM payment_collections
-WHERE id = $1 AND deleted_at IS NULL
+SELECT id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at FROM payment_collections
+WHERE id = $1
 FOR UPDATE
 `
 
@@ -236,7 +230,6 @@ func (q *Queries) LockPaymentCollection(ctx context.Context, id string) (Payment
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -245,16 +238,13 @@ const paymentMomentsByCollectionIDs = `-- name: PaymentMomentsByCollectionIDs :m
 SELECT c.id AS payment_collection_id,
        (SELECT min(p.captured_at)
           FROM payments p
-         WHERE p.payment_collection_id = c.id
-           AND p.deleted_at IS NULL)::timestamptz AS first_captured_at,
+         WHERE p.payment_collection_id = c.id)::timestamptz AS first_captured_at,
        (SELECT max(r.created_at)
           FROM refunds r
           JOIN payments p2 ON p2.id = r.payment_id
-         WHERE p2.payment_collection_id = c.id
-           AND r.deleted_at IS NULL
-           AND p2.deleted_at IS NULL)::timestamptz AS last_refunded_at
+         WHERE p2.payment_collection_id = c.id)::timestamptz AS last_refunded_at
 FROM payment_collections c
-WHERE c.id = ANY ($1::text[]) AND c.deleted_at IS NULL
+WHERE c.id = ANY ($1::text[])
 ORDER BY c.id
 `
 
@@ -279,8 +269,14 @@ type PaymentMomentsByCollectionIDsRow struct {
 // wants a single moment wants these two, and a read that wants every moment is
 // a separate call.
 //
-// Both subqueries use the partial indexes (payments and refunds are indexed per
-// collection and per payment), and deleted rows are eliminated on both sides.
+// There is no THIRD moment beside these two, and its absence is a decision
+// rather than a gap (ADR 0054). Both of these are moments MONEY MOVED. An
+// authorization is a hold and moves none; while the hold is what a reader is
+// asking about, the session is still 'authorized' and its updated_at IS that
+// moment, because every transition out of the status leaves the status and
+// re-authorizing an authorized session is a no-op.
+//
+// Both subqueries use the per-collection and per-payment indexes.
 func (q *Queries) PaymentMomentsByCollectionIDs(ctx context.Context, ids []string) ([]PaymentMomentsByCollectionIDsRow, error) {
 	rows, err := q.db.Query(ctx, paymentMomentsByCollectionIDs, ids)
 	if err != nil {
@@ -308,8 +304,8 @@ SET status            = $2,
     captured_amount   = $4,
     refunded_amount   = $5,
     updated_at        = now()
-WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at, deleted_at
+WHERE id = $1
+RETURNING id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at
 `
 
 type UpdatePaymentCollectionTotalsParams struct {
@@ -347,7 +343,6 @@ func (q *Queries) UpdatePaymentCollectionTotals(ctx context.Context, arg UpdateP
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }

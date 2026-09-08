@@ -398,8 +398,9 @@ func TestTimeIsADateTimeString(t *testing.T) {
 //
 // The trap is real: time.Time's MarshalJSON has a VALUE receiver, so *time.Time
 // carries it too. A naive check saying "it has its own encoder, I do not know its
-// shape" drops fields like deleted_at — present in EVERY model — into a free
-// schema and the client never recognizes the date field.
+// shape" drops every optional moment — a deleted_at, a canceled_at, a
+// completed_at — into a free schema, and the client never recognizes the date
+// field.
 func TestATimePointerCarriesBothTheFormatAndNull(t *testing.T) {
 	t.Parallel()
 

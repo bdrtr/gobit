@@ -307,7 +307,6 @@ func toCollection(row paymentdb.PaymentCollection) (models.PaymentCollection, er
 		Metadata:         meta,
 		CreatedAt:        toTime(row.CreatedAt),
 		UpdatedAt:        toTime(row.UpdatedAt),
-		DeletedAt:        toTimePtr(row.DeletedAt),
 	}, nil
 }
 
@@ -327,7 +326,6 @@ func toSession(row paymentdb.PaymentSession) models.PaymentSession {
 		DeclineReason:       stringValue(row.DeclineReason),
 		CreatedAt:           toTime(row.CreatedAt),
 		UpdatedAt:           toTime(row.UpdatedAt),
-		DeletedAt:           toTimePtr(row.DeletedAt),
 	}
 }
 
@@ -343,7 +341,6 @@ func toPayment(row paymentdb.Payment) models.Payment {
 		CapturedAt:          toTime(row.CapturedAt),
 		CreatedAt:           toTime(row.CreatedAt),
 		UpdatedAt:           toTime(row.UpdatedAt),
-		DeletedAt:           toTimePtr(row.DeletedAt),
 	}
 }
 
@@ -356,7 +353,6 @@ func toRefund(row paymentdb.Refund) models.Refund {
 		Reason:    stringValue(row.Reason),
 		CreatedAt: toTime(row.CreatedAt),
 		UpdatedAt: toTime(row.UpdatedAt),
-		DeletedAt: toTimePtr(row.DeletedAt),
 	}
 }
 

@@ -12,8 +12,8 @@ import (
 const cancelOrderReturn = `-- name: CancelOrderReturn :one
 UPDATE order_returns
 SET status = 'canceled', canceled_at = now(), updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, order_id, status, refund_amount, reason, note, metadata, received_at, canceled_at, created_at, updated_at, deleted_at, received_location_id
+WHERE id = $1
+RETURNING id, order_id, status, refund_amount, reason, note, metadata, received_at, canceled_at, created_at, updated_at, received_location_id
 `
 
 // CancelOrderReturn withdraws the request.
@@ -32,7 +32,6 @@ func (q *Queries) CancelOrderReturn(ctx context.Context, id string) (OrderReturn
 		&i.CanceledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 		&i.ReceivedLocationID,
 	)
 	return i, err
@@ -40,7 +39,7 @@ func (q *Queries) CancelOrderReturn(ctx context.Context, id string) (OrderReturn
 
 const countOrderReturns = `-- name: CountOrderReturns :one
 SELECT COUNT(*) FROM order_returns
-WHERE order_id = $1 AND deleted_at IS NULL
+WHERE order_id = $1
 `
 
 func (q *Queries) CountOrderReturns(ctx context.Context, orderID string) (int64, error) {
@@ -54,7 +53,7 @@ const createOrderReturn = `-- name: CreateOrderReturn :one
 
 INSERT INTO order_returns (id, order_id, status, refund_amount, reason, note, metadata)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, order_id, status, refund_amount, reason, note, metadata, received_at, canceled_at, created_at, updated_at, deleted_at, received_location_id
+RETURNING id, order_id, status, refund_amount, reason, note, metadata, received_at, canceled_at, created_at, updated_at, received_location_id
 `
 
 type CreateOrderReturnParams struct {
@@ -95,15 +94,14 @@ func (q *Queries) CreateOrderReturn(ctx context.Context, arg CreateOrderReturnPa
 		&i.CanceledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 		&i.ReceivedLocationID,
 	)
 	return i, err
 }
 
 const getOrderReturn = `-- name: GetOrderReturn :one
-SELECT id, order_id, status, refund_amount, reason, note, metadata, received_at, canceled_at, created_at, updated_at, deleted_at, received_location_id FROM order_returns
-WHERE id = $1 AND deleted_at IS NULL
+SELECT id, order_id, status, refund_amount, reason, note, metadata, received_at, canceled_at, created_at, updated_at, received_location_id FROM order_returns
+WHERE id = $1
 `
 
 func (q *Queries) GetOrderReturn(ctx context.Context, id string) (OrderReturn, error) {
@@ -121,15 +119,14 @@ func (q *Queries) GetOrderReturn(ctx context.Context, id string) (OrderReturn, e
 		&i.CanceledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 		&i.ReceivedLocationID,
 	)
 	return i, err
 }
 
 const listOrderReturns = `-- name: ListOrderReturns :many
-SELECT id, order_id, status, refund_amount, reason, note, metadata, received_at, canceled_at, created_at, updated_at, deleted_at, received_location_id FROM order_returns
-WHERE order_id = $1 AND deleted_at IS NULL
+SELECT id, order_id, status, refund_amount, reason, note, metadata, received_at, canceled_at, created_at, updated_at, received_location_id FROM order_returns
+WHERE order_id = $1
 ORDER BY created_at DESC, id DESC
 LIMIT $3::bigint OFFSET $2::bigint
 `
@@ -161,7 +158,6 @@ func (q *Queries) ListOrderReturns(ctx context.Context, arg ListOrderReturnsPara
 			&i.CanceledAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 			&i.ReceivedLocationID,
 		); err != nil {
 			return nil, err
@@ -175,8 +171,8 @@ func (q *Queries) ListOrderReturns(ctx context.Context, arg ListOrderReturnsPara
 }
 
 const lockOrderReturn = `-- name: LockOrderReturn :one
-SELECT id, order_id, status, refund_amount, reason, note, metadata, received_at, canceled_at, created_at, updated_at, deleted_at, received_location_id FROM order_returns
-WHERE id = $1 AND deleted_at IS NULL
+SELECT id, order_id, status, refund_amount, reason, note, metadata, received_at, canceled_at, created_at, updated_at, received_location_id FROM order_returns
+WHERE id = $1
 FOR UPDATE
 `
 
@@ -201,7 +197,6 @@ func (q *Queries) LockOrderReturn(ctx context.Context, id string) (OrderReturn, 
 		&i.CanceledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 		&i.ReceivedLocationID,
 	)
 	return i, err
@@ -213,8 +208,8 @@ SET status = 'received',
     received_at = now(),
     received_location_id = $2::text,
     updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, order_id, status, refund_amount, reason, note, metadata, received_at, canceled_at, created_at, updated_at, deleted_at, received_location_id
+WHERE id = $1
+RETURNING id, order_id, status, refund_amount, reason, note, metadata, received_at, canceled_at, created_at, updated_at, received_location_id
 `
 
 type ReceiveOrderReturnParams struct {
@@ -242,7 +237,6 @@ func (q *Queries) ReceiveOrderReturn(ctx context.Context, arg ReceiveOrderReturn
 		&i.CanceledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 		&i.ReceivedLocationID,
 	)
 	return i, err

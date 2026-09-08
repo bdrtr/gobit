@@ -18,7 +18,7 @@ SELECT
     COUNT(*) FILTER (WHERE status = 'failed')                   AS failed_count,
     COUNT(*)                                                    AS total_count
 FROM payment_sessions
-WHERE payment_collection_id = $1 AND deleted_at IS NULL
+WHERE payment_collection_id = $1
 `
 
 type CountPaymentSessionStatesRow struct {
@@ -51,7 +51,7 @@ INSERT INTO payment_sessions (
     id, payment_collection_id, provider_id, external_id, status,
     amount, authorized_amount, currency_code, data, idempotency_key
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at, deleted_at
+RETURNING id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at
 `
 
 type CreatePaymentSessionParams struct {
@@ -74,6 +74,9 @@ type CreatePaymentSessionParams struct {
 // sees "canceled" and returns successfully without going to the provider a
 // second time. A deleted session and a session that never existed could not be
 // told apart.
+//
+// The schema now says the same thing: there is no deleted_at to write and no
+// read here filters on one (ADR 0054).
 func (q *Queries) CreatePaymentSession(ctx context.Context, arg CreatePaymentSessionParams) (PaymentSession, error) {
 	row := q.db.QueryRow(ctx, createPaymentSession,
 		arg.ID,
@@ -102,14 +105,13 @@ func (q *Queries) CreatePaymentSession(ctx context.Context, arg CreatePaymentSes
 		&i.DeclineReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getPaymentSession = `-- name: GetPaymentSession :one
-SELECT id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at, deleted_at FROM payment_sessions
-WHERE id = $1 AND deleted_at IS NULL
+SELECT id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at FROM payment_sessions
+WHERE id = $1
 `
 
 func (q *Queries) GetPaymentSession(ctx context.Context, id string) (PaymentSession, error) {
@@ -129,14 +131,13 @@ func (q *Queries) GetPaymentSession(ctx context.Context, id string) (PaymentSess
 		&i.DeclineReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getPaymentSessionByIdempotencyKey = `-- name: GetPaymentSessionByIdempotencyKey :one
-SELECT id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at, deleted_at FROM payment_sessions
-WHERE provider_id = $1 AND idempotency_key = $2 AND deleted_at IS NULL
+SELECT id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at FROM payment_sessions
+WHERE provider_id = $1 AND idempotency_key = $2
 `
 
 type GetPaymentSessionByIdempotencyKeyParams struct {
@@ -164,14 +165,13 @@ func (q *Queries) GetPaymentSessionByIdempotencyKey(ctx context.Context, arg Get
 		&i.DeclineReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const listPaymentSessionsByCollection = `-- name: ListPaymentSessionsByCollection :many
-SELECT id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at, deleted_at FROM payment_sessions
-WHERE payment_collection_id = $1 AND deleted_at IS NULL
+SELECT id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at FROM payment_sessions
+WHERE payment_collection_id = $1
 ORDER BY created_at DESC, id DESC
 `
 
@@ -198,7 +198,6 @@ func (q *Queries) ListPaymentSessionsByCollection(ctx context.Context, paymentCo
 			&i.DeclineReason,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -211,10 +210,9 @@ func (q *Queries) ListPaymentSessionsByCollection(ctx context.Context, paymentCo
 }
 
 const listSessionsForReconciliation = `-- name: ListSessionsForReconciliation :many
-SELECT id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at, deleted_at FROM payment_sessions
+SELECT id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at FROM payment_sessions
 WHERE status = 'authorized'
   AND updated_at < $1
-  AND deleted_at IS NULL
 ORDER BY updated_at
 LIMIT $2
 `
@@ -268,7 +266,6 @@ func (q *Queries) ListSessionsForReconciliation(ctx context.Context, arg ListSes
 			&i.DeclineReason,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -281,8 +278,8 @@ func (q *Queries) ListSessionsForReconciliation(ctx context.Context, arg ListSes
 }
 
 const lockPaymentSession = `-- name: LockPaymentSession :one
-SELECT id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at, deleted_at FROM payment_sessions
-WHERE id = $1 AND deleted_at IS NULL
+SELECT id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at FROM payment_sessions
+WHERE id = $1
 FOR UPDATE
 `
 
@@ -308,7 +305,6 @@ func (q *Queries) LockPaymentSession(ctx context.Context, id string) (PaymentSes
 		&i.DeclineReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -320,7 +316,6 @@ SELECT COALESCE(SUM(
 FROM payment_sessions
 WHERE payment_collection_id = $1
   AND status IN ('pending', 'authorized')
-  AND deleted_at IS NULL
 `
 
 // SumLiveSessionAmounts gives the total amount the collection's LIVE sessions
@@ -349,8 +344,8 @@ SET status            = $2,
     data              = $4,
     decline_reason    = $5,
     updated_at        = now()
-WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at, deleted_at
+WHERE id = $1
+RETURNING id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at
 `
 
 type UpdatePaymentSessionStateParams struct {
@@ -386,7 +381,6 @@ func (q *Queries) UpdatePaymentSessionState(ctx context.Context, arg UpdatePayme
 		&i.DeclineReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }

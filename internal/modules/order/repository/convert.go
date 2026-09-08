@@ -287,7 +287,6 @@ func toOrder(row orderdb.Order) (models.Order, error) {
 		CancelReason:   stringValue(row.CancelReason),
 		CreatedAt:      toTime(row.CreatedAt),
 		UpdatedAt:      toTime(row.UpdatedAt),
-		DeletedAt:      toTimePtr(row.DeletedAt),
 	}, nil
 }
 

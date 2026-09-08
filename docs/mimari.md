@@ -205,10 +205,14 @@ The name dictionary in the container:
 - **Money** is an integer minor unit (kurus/cent); there is no float, and the
   currency is a separate column.
 - **Time** is UTC; `created_at/updated_at/deleted_at`, with soft deletion via
-  `deleted_at`. The exceptions are counted and each one is justified at the top
-  of its own table: rows that do not live apart from their owner, the ledgers of
-  simulated external systems, and **configuration tables** (a soft-deleted
-  setting row has the same effect as a row that never existed).
+  `deleted_at` for what a merchant EDITS. The exceptions are counted and each
+  one is justified at the top of its own table: rows that do not live apart from
+  their owner, the ledgers of simulated external systems, **configuration
+  tables** (a soft-deleted setting row has the same effect as a row that never
+  existed), and — since
+  [ADR 0054](adr/0054-an-order-and-a-payment-are-never-deleted.md) — the whole
+  of the **order and payment** modules, whose rows are records of something that
+  happened and retire by STATUS rather than by being hidden.
 
 ### The schema surface: status and rollback
 

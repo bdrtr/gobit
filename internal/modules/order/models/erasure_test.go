@@ -14,10 +14,9 @@ import (
 // The rule is worth a table test rather than an integration one because it is
 // where the erasure REFUSES, and a refusal that fires on the wrong fact is
 // invisible from the outside: the report still says "retained", still carries a
-// sentence, and the sentence is simply about the wrong thing. The two rows that
-// carry the most weight are the canceled order — whose outstanding amount is
-// permanent and must NOT hold a person forever — and the soft-deleted one,
-// which is erased rather than retained.
+// sentence, and the sentence is simply about the wrong thing. The row that
+// carries the most weight is the canceled order, whose outstanding amount is
+// permanent and must NOT hold a person for ever.
 func TestUnsettledReadsTheFactsAsATable(t *testing.T) {
 	t.Parallel()
 
@@ -172,19 +171,6 @@ func TestUnsettledReadsTheFactsAsATable(t *testing.T) {
 				return c
 			},
 			want: models.UnsettledPending,
-		},
-		{
-			name: "a soft-deleted order is settled whatever else is true of it",
-			candidate: func() models.OrderErasureCandidate {
-				c := settled
-				c.Deleted = true
-				c.Status = models.OrderPending
-				c.PaidTotal = 0
-				c.ReturnRequested = true
-
-				return c
-			},
-			want: models.Settled,
 		},
 	}
 

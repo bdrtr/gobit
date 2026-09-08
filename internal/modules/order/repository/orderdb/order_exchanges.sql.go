@@ -12,8 +12,8 @@ import (
 const cancelOrderExchange = `-- name: CancelOrderExchange :one
 UPDATE order_exchanges
 SET status = 'canceled', canceled_at = now(), updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, deleted_at
+WHERE id = $1
+RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at
 `
 
 // CancelOrderExchange withdraws the exchange request.
@@ -34,14 +34,13 @@ func (q *Queries) CancelOrderExchange(ctx context.Context, id string) (OrderExch
 		&i.CanceledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const countOrderExchanges = `-- name: CountOrderExchanges :one
 SELECT COUNT(*) FROM order_exchanges
-WHERE order_id = $1 AND deleted_at IS NULL
+WHERE order_id = $1
 `
 
 func (q *Queries) CountOrderExchanges(ctx context.Context, orderID string) (int64, error) {
@@ -55,7 +54,7 @@ const createOrderExchange = `-- name: CreateOrderExchange :one
 
 INSERT INTO order_exchanges (id, order_id, status, difference_due, note, metadata)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, deleted_at
+RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at
 `
 
 type CreateOrderExchangeParams struct {
@@ -96,14 +95,13 @@ func (q *Queries) CreateOrderExchange(ctx context.Context, arg CreateOrderExchan
 		&i.CanceledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getOrderExchange = `-- name: GetOrderExchange :one
-SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, deleted_at FROM order_exchanges
-WHERE id = $1 AND deleted_at IS NULL
+SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at FROM order_exchanges
+WHERE id = $1
 `
 
 func (q *Queries) GetOrderExchange(ctx context.Context, id string) (OrderExchange, error) {
@@ -119,14 +117,13 @@ func (q *Queries) GetOrderExchange(ctx context.Context, id string) (OrderExchang
 		&i.CanceledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const listOrderExchanges = `-- name: ListOrderExchanges :many
-SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, deleted_at FROM order_exchanges
-WHERE order_id = $1 AND deleted_at IS NULL
+SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at FROM order_exchanges
+WHERE order_id = $1
 ORDER BY created_at DESC, id DESC
 LIMIT $3::bigint OFFSET $2::bigint
 `
@@ -156,7 +153,6 @@ func (q *Queries) ListOrderExchanges(ctx context.Context, arg ListOrderExchanges
 			&i.CanceledAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -169,8 +165,8 @@ func (q *Queries) ListOrderExchanges(ctx context.Context, arg ListOrderExchanges
 }
 
 const lockOrderExchange = `-- name: LockOrderExchange :one
-SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, deleted_at FROM order_exchanges
-WHERE id = $1 AND deleted_at IS NULL
+SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at FROM order_exchanges
+WHERE id = $1
 FOR UPDATE
 `
 
@@ -193,7 +189,6 @@ func (q *Queries) LockOrderExchange(ctx context.Context, id string) (OrderExchan
 		&i.CanceledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }

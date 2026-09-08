@@ -30,7 +30,6 @@ type Order struct {
 	CancelReason         *string
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
-	DeletedAt            pgtype.Timestamptz
 	ArchivedAt           pgtype.Timestamptz
 	PersonalDataErasedAt pgtype.Timestamptz
 }
@@ -68,7 +67,6 @@ type OrderClaim struct {
 	CanceledAt   pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
-	DeletedAt    pgtype.Timestamptz
 }
 
 type OrderExchange struct {
@@ -81,7 +79,6 @@ type OrderExchange struct {
 	CanceledAt    pgtype.Timestamptz
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
-	DeletedAt     pgtype.Timestamptz
 }
 
 type OrderLineItem struct {
@@ -98,7 +95,6 @@ type OrderLineItem struct {
 	Metadata      []byte
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
-	DeletedAt     pgtype.Timestamptz
 	TaxRateBps    int32
 }
 
@@ -114,7 +110,6 @@ type OrderReturn struct {
 	CanceledAt         pgtype.Timestamptz
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
-	DeletedAt          pgtype.Timestamptz
 	ReceivedLocationID *string
 }
 
@@ -126,7 +121,6 @@ type OrderReturnItem struct {
 	RefundAmount    int64
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
-	DeletedAt       pgtype.Timestamptz
 }
 
 type OrderSummary struct {

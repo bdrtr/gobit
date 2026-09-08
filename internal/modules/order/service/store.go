@@ -93,9 +93,9 @@ type Store interface {
 	// settled, and LOCKS them; it can only be called inside [Store.WithTx].
 	//
 	// Either identifier may be empty and one of them must not be: a guest order
-	// carries an e-mail and no customer id, so the two are OR-ed. Soft-deleted
-	// orders ARE returned — the question here is what the database still holds
-	// about a person, not what the business can still see.
+	// carries an e-mail and no customer id, so the two are OR-ed. No order is
+	// out of reach of it — the question here is what the database still holds
+	// about a person, and nothing can hide a row from that (ADR 0054).
 	OrdersForErasure(ctx context.Context, customerID, email string) ([]models.OrderErasureCandidate, error)
 	// AnonymizeOrderContacts sets the e-mail of the given orders to NULL and
 	// stamps them as erased, keeping the moment of the FIRST erasure.
@@ -121,26 +121,19 @@ type Store interface {
 	// transaction. The rows come back whole because the disclosure picks the
 	// DECLARED columns out of them in Go, where the list is derived from the
 	// declaration itself (service/disclosure.go).
-	//
-	// Soft-deleted orders ARE returned, for the reason the erasure's read
-	// returns them: the question is what the database still holds about a
-	// person, not what the shop's own screens can see.
 	OrdersForDisclosure(ctx context.Context, customerID, email string) ([]models.Order, error)
-	// LineItemsForDisclosure reads the lines of the given orders, soft-deleted
-	// ones included.
+	// LineItemsForDisclosure reads the lines of the given orders.
 	//
-	// It exists beside [Store.ListLineItems] rather than reusing it because
-	// that read filters the soft-deleted rows and answers one order at a time,
-	// and a person with two hundred orders would be two hundred round trips.
+	// It exists beside [Store.ListLineItems] rather than reusing it because that
+	// read answers one order at a time, and a person with two hundred orders
+	// would be two hundred round trips.
 	LineItemsForDisclosure(ctx context.Context, orderIDs []string) ([]models.OrderLineItem, error)
-	// ReturnsForDisclosure reads the return records of the given orders,
-	// soft-deleted ones included.
+	// ReturnsForDisclosure reads the return records of the given orders.
 	ReturnsForDisclosure(ctx context.Context, orderIDs []string) ([]models.Return, error)
-	// ExchangesForDisclosure reads the exchange records of the given orders,
-	// soft-deleted ones included.
+	// ExchangesForDisclosure reads the exchange records of the given orders.
 	ExchangesForDisclosure(ctx context.Context, orderIDs []string) ([]models.Exchange, error)
 	// ClaimsForDisclosure reads the damage and shortage records of the given
-	// orders, soft-deleted ones included.
+	// orders.
 	ClaimsForDisclosure(ctx context.Context, orderIDs []string) ([]models.Claim, error)
 
 	// LockCustomerSpending locks the SUM of the customer's spend until the end
@@ -154,8 +147,8 @@ type Store interface {
 	// SumCustomerSpend returns the customer's spend in the given currency; when
 	// windowStart is nil the WHOLE history is summed.
 	//
-	// Canceled and soft-deleted orders do not enter the sum, the refunded amount
-	// is subtracted (see queries/spending.sql).
+	// Canceled orders do not enter the sum and the refunded amount is subtracted
+	// (see queries/spending.sql).
 	SumCustomerSpend(ctx context.Context, customerID, currencyCode string, windowStart *time.Time) (int64, error)
 
 	// CreateLineItem records a new order line.

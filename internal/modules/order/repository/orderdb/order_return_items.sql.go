@@ -13,7 +13,7 @@ const createOrderReturnItem = `-- name: CreateOrderReturnItem :one
 
 INSERT INTO order_return_items (id, order_return_id, order_line_item_id, quantity, refund_amount)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, order_return_id, order_line_item_id, quantity, refund_amount, created_at, updated_at, deleted_at
+RETURNING id, order_return_id, order_line_item_id, quantity, refund_amount, created_at, updated_at
 `
 
 type CreateOrderReturnItemParams struct {
@@ -42,14 +42,13 @@ func (q *Queries) CreateOrderReturnItem(ctx context.Context, arg CreateOrderRetu
 		&i.RefundAmount,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const listOrderReturnItems = `-- name: ListOrderReturnItems :many
-SELECT id, order_return_id, order_line_item_id, quantity, refund_amount, created_at, updated_at, deleted_at FROM order_return_items
-WHERE order_return_id = $1 AND deleted_at IS NULL
+SELECT id, order_return_id, order_line_item_id, quantity, refund_amount, created_at, updated_at FROM order_return_items
+WHERE order_return_id = $1
 ORDER BY created_at, id
 `
 
@@ -71,7 +70,6 @@ func (q *Queries) ListOrderReturnItems(ctx context.Context, orderReturnID string
 			&i.RefundAmount,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -88,8 +86,6 @@ SELECT i.order_line_item_id, SUM(i.quantity)::bigint AS returned
 FROM order_return_items i
 JOIN order_returns r ON r.id = i.order_return_id
 WHERE i.order_line_item_id = ANY($1::text[])
-  AND i.deleted_at IS NULL
-  AND r.deleted_at IS NULL
   AND r.status <> 'canceled'
 GROUP BY i.order_line_item_id
 `

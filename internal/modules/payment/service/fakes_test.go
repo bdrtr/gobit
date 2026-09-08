@@ -205,12 +205,12 @@ func (f *fakeStore) PaymentCollectionsByIDs(_ context.Context, ids []string) ([]
 	return out, nil
 }
 
-// PaymentMomentsByCollectionIDs sahtenin kendi satırlarından AYNI iki anı
-// hesaplar: ilk tahsilat ve son iade.
+// PaymentMomentsByCollectionIDs computes the SAME two moments out of the fake's
+// own rows: the first capture and the last refund.
 //
-// Aynı yüklemi uygulamak zorunlu — farklı davranan bir sahte, veritabanında
-// olmayan bir davranışın üzerinden testin geçmesine izin verir. Silinmişler
-// elenir, hiç olmayan an nil kalır.
+// Applying the same rule is compulsory — a fake that behaves differently lets a
+// test pass over behavior the database does not have. A moment that never
+// happened stays nil.
 func (f *fakeStore) PaymentMomentsByCollectionIDs(
 	_ context.Context, ids []string,
 ) ([]models.PaymentMoments, error) {
@@ -226,7 +226,7 @@ func (f *fakeStore) PaymentMomentsByCollectionIDs(
 		moment := models.PaymentMoments{CollectionID: id}
 		for paymentID := range f.payments {
 			payment := f.payments[paymentID]
-			if payment.PaymentCollectionID != id || payment.DeletedAt != nil {
+			if payment.PaymentCollectionID != id {
 				continue
 			}
 			if moment.FirstCapturedAt == nil || payment.CapturedAt.Before(*moment.FirstCapturedAt) {
@@ -235,7 +235,7 @@ func (f *fakeStore) PaymentMomentsByCollectionIDs(
 			}
 			for refundID := range f.refunds {
 				refund := f.refunds[refundID]
-				if refund.PaymentID != paymentID || refund.DeletedAt != nil {
+				if refund.PaymentID != paymentID {
 					continue
 				}
 				if moment.LastRefundedAt == nil || refund.CreatedAt.After(*moment.LastRefundedAt) {
@@ -356,12 +356,15 @@ func (f *fakeStore) ListPaymentSessionsByCollection(
 	return out, nil
 }
 
-// ListSessionsForReconciliation mutabakat için şüpheli kümeyi döner.
+// ListSessionsForReconciliation returns the suspect set for reconciliation.
 //
-// Gerçek sorgunun ÜÇ koşulunu da uygular — yetkilendirilmiş, verilen andan
-// önce güncellenmiş, silinmemiş — ve sonucu updated_at'e göre sıralar. Sahte
-// depo bunları taklit etmeseydi, servisin kümeyi daraltma iddiası hiçbir
-// testte yanlışlanamazdı.
+// It applies BOTH of the real query's conditions — authorized, and last written
+// before the given instant — and orders the result by updated_at. Without the
+// fake imitating them, the service's claim to narrow the set could not be
+// falsified by any test.
+//
+// There used to be a third condition, "not deleted". The column is gone
+// (ADR 0054) and so is the branch that mirrored it.
 func (f *fakeStore) ListSessionsForReconciliation(
 	_ context.Context,
 	unchangedSince time.Time,
@@ -373,7 +376,7 @@ func (f *fakeStore) ListSessionsForReconciliation(
 	out := []models.PaymentSession{}
 	for _, id := range slices.Sorted(maps.Keys(f.sessions)) {
 		ses := f.sessions[id]
-		if ses.Status != models.SessionAuthorized || ses.DeletedAt != nil {
+		if ses.Status != models.SessionAuthorized {
 			continue
 		}
 		if !ses.UpdatedAt.Before(unchangedSince) {

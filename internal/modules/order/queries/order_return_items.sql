@@ -8,7 +8,7 @@ RETURNING *;
 -- ListOrderReturnItems returns a return's lines in the order they were written.
 -- name: ListOrderReturnItems :many
 SELECT * FROM order_return_items
-WHERE order_return_id = $1 AND deleted_at IS NULL
+WHERE order_return_id = $1
 ORDER BY created_at, id;
 
 -- SumReturnedQuantities reports how many units of each of the given order lines
@@ -29,7 +29,5 @@ SELECT i.order_line_item_id, SUM(i.quantity)::bigint AS returned
 FROM order_return_items i
 JOIN order_returns r ON r.id = i.order_return_id
 WHERE i.order_line_item_id = ANY(sqlc.arg('line_item_ids')::text[])
-  AND i.deleted_at IS NULL
-  AND r.deleted_at IS NULL
   AND r.status <> 'canceled'
 GROUP BY i.order_line_item_id;

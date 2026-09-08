@@ -7,34 +7,34 @@ RETURNING *;
 
 -- name: GetOrderClaim :one
 SELECT * FROM order_claims
-WHERE id = $1 AND deleted_at IS NULL;
+WHERE id = $1;
 
 -- name: ListOrderClaims :many
 SELECT * FROM order_claims
-WHERE order_id = $1 AND deleted_at IS NULL
+WHERE order_id = $1
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
 
 -- name: CountOrderClaims :one
 SELECT COUNT(*) FROM order_claims
-WHERE order_id = $1 AND deleted_at IS NULL;
+WHERE order_id = $1;
 
 -- LockOrderClaim locks the claim row until the end of the transaction.
 -- name: LockOrderClaim :one
 SELECT * FROM order_claims
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 FOR UPDATE;
 
 -- CompleteOrderClaim records that the claim was settled.
 -- name: CompleteOrderClaim :one
 UPDATE order_claims
 SET status = 'completed', completed_at = now(), updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 RETURNING *;
 
 -- CancelOrderClaim withdraws the claim.
 -- name: CancelOrderClaim :one
 UPDATE order_claims
 SET status = 'canceled', canceled_at = now(), updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 RETURNING *;

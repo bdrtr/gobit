@@ -124,11 +124,12 @@ func TestReconciliationListingSelectsOnlyTheSuspectSet(t *testing.T) {
 	// state, and reporting it would make every ordinary payment a finding.
 	fresh := authorizedSession(ctx, t, svc, "recon-fresh-"+t.Name(), time.Minute)
 
-	// Soft deleted.
-	deleted := authorizedSession(ctx, t, svc, "recon-deleted-"+t.Name(), 2*time.Hour)
-	_, err = testPool.Pool().Exec(ctx,
-		`UPDATE payment_sessions SET deleted_at = now() WHERE id = $1`, deleted.ID)
-	require.NoError(t, err)
+	// Canceled: the hold was released, so there is no amount left that could
+	// diverge. It is the third way out of the suspect set and the one a
+	// status-only predicate would keep if it tested for the wrong value.
+	released := authorizedSession(ctx, t, svc, "recon-canceled-"+t.Name(), 2*time.Hour)
+	require.NoError(t, svc.CancelPayment(ctx, released.ID))
+	backdateSession(ctx, t, released.ID, 2*time.Hour)
 
 	rows, err := repo.ListSessionsForReconciliation(ctx, time.Now().UTC().Add(-15*time.Minute), 100)
 	require.NoError(t, err)
@@ -141,7 +142,7 @@ func TestReconciliationListingSelectsOnlyTheSuspectSet(t *testing.T) {
 	assert.True(t, ids[wanted.ID], "an aged authorized session is the whole suspect set")
 	assert.False(t, ids[captured.ID], "a captured session cannot silently disagree")
 	assert.False(t, ids[fresh.ID], "a capture in flight is not a divergence")
-	assert.False(t, ids[deleted.ID], "a soft-deleted session is not live money")
+	assert.False(t, ids[released.ID], "a canceled session holds no money to diverge")
 
 	// The row round-trips with the fields the report is built from.
 	for i := range rows {
@@ -226,7 +227,7 @@ func TestReconciliationListingUsesItsIndex(t *testing.T) {
 
 	rows, err := testPool.Pool().Query(ctx,
 		`EXPLAIN SELECT * FROM payment_sessions
-		 WHERE status = 'authorized' AND updated_at < $1 AND deleted_at IS NULL
+		 WHERE status = 'authorized' AND updated_at < $1
 		 ORDER BY updated_at LIMIT $2`,
 		time.Now().UTC().Add(-15*time.Minute), int32(50))
 	require.NoError(t, err)

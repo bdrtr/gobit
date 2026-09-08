@@ -85,7 +85,7 @@ func (s *Service) ReturnDetailJSON(ctx context.Context, returnID string) (json.R
 	for i := range items {
 		variantID, known := variantOf[items[i].OrderLineItemID]
 		if !known {
-			// The line was soft deleted after the return was opened. Reporting
+			// The line is missing from the order it was opened against. Reporting
 			// it without a variant would let a caller restock nothing and
 			// believe it restocked something, so it is an error rather than a
 			// gap in the list.

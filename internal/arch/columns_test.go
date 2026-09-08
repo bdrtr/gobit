@@ -32,22 +32,25 @@ import (
 // Every unclosed finding below therefore opens with "UNCLOSED FINDING" and says
 // what is not yet known.
 //
-// # The decisions
+// # The ten that are gone
 //
-// The ten order and payment entries are ONE finding stated ten times, and it is
-// a real one: the order and payment modules never soft-delete anything.
-// ~~Every read in both carries "deleted_at IS NULL" — a predicate that has
-// never once been false.~~ **Corrected 2026-09-07:** nothing in the SQL this
-// gate reads — the migrations and the queries — writes deleted_at in either
-// module, so the predicate has never once been false in the running shop. The
-// exception is by hand: six statements in the two modules' integration tests
-// stamp the column themselves, precisely so that a read can be PROVEN to hide
-// the row. And six reads deliberately leave the predicate out. Order's
-// ListOrdersForErasure and the five ForDisclosure reads answer what the
-// DATABASE STILL HOLDS about a person rather than what the shop can still see,
-// and both query files argue that under a heading of their own. Removing the
-// column is a schema decision and taking the deletes on is a product one;
-// recording it here is what keeps it from being rediscovered.
+// This map used to open with ten entries — six order tables and four payment
+// ones — recorded as ONE finding stated ten times: neither module ever
+// soft-deleted anything, and every read in both paid for a predicate that had
+// never once been false. The reason ended "removing the column is a schema
+// decision and taking the deletes on is a product one".
+//
+// Both were answered on 2026-09-08 and the columns are gone (ADR 0054). An
+// order retires by STATUS and each of its four states carries its own moment; a
+// money record is kept, and the retreat from one is a status or a row. What
+// keeps the decision from being reopened silently is not this comment but
+// [TestTheOrderAndPaymentModulesDeclareNoSoftDelete], which refuses the columns
+// by name.
+//
+// The entries are deleted rather than kept struck, because an exemption for a
+// column that does not exist is exactly what the loop at the bottom of
+// [TestEveryColumnIsWrittenBySomething] fails on: a dead exemption covers up
+// the next real one.
 //
 // # The one open question
 //
@@ -74,22 +77,6 @@ import (
 // The one that remains is not a placeholder. Its reason states the question,
 // what was measured, and what the answer would decide.
 var unwrittenColumns = map[string]string{
-	"order.orders.deleted_at": "the order module never soft-deletes; nothing sets this. " +
-		"NOT every read filters on it, and the exception is deliberate: the five " +
-		"ListFor...Disclosure reads in disclosure.sql omit `deleted_at IS NULL`, because a " +
-		"person asking what is held about them must be shown a row that was soft-deleted " +
-		"rather than told it does not exist (ADR 0034). Every other read filters",
-	"order.order_line_items.deleted_at":   "as orders.deleted_at",
-	"order.order_returns.deleted_at":      "as orders.deleted_at",
-	"order.order_return_items.deleted_at": "as orders.deleted_at",
-	"order.order_claims.deleted_at":       "as orders.deleted_at",
-	"order.order_exchanges.deleted_at":    "as orders.deleted_at",
-	"payment.payment_collections.deleted_at": "the payment module never soft-deletes; money " +
-		"records are kept, and a refund is a row rather than a deletion",
-	"payment.payment_sessions.deleted_at": "as payment_collections.deleted_at",
-	"payment.payments.deleted_at":         "as payment_collections.deleted_at",
-	"payment.refunds.deleted_at":          "as payment_collections.deleted_at",
-
 	"inventory.stock_locations.deleted_at": "OPEN QUESTION, and what follows STATES it rather " +
 		"than merely admitted. A location has no delete path and no update path either: " +
 		"create, get and list are the whole surface, so a warehouse that closes cannot be " +

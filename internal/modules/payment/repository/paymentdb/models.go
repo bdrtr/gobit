@@ -18,7 +18,6 @@ type Payment struct {
 	CapturedAt          pgtype.Timestamptz
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
-	DeletedAt           pgtype.Timestamptz
 }
 
 type PaymentCollection struct {
@@ -33,7 +32,6 @@ type PaymentCollection struct {
 	Metadata         []byte
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
-	DeletedAt        pgtype.Timestamptz
 }
 
 type PaymentManualSession struct {
@@ -66,7 +64,6 @@ type PaymentSession struct {
 	DeclineReason       *string
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
-	DeletedAt           pgtype.Timestamptz
 }
 
 type Refund struct {
@@ -76,5 +73,4 @@ type Refund struct {
 	Reason    *string
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
-	DeletedAt pgtype.Timestamptz
 }

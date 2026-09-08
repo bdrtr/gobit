@@ -10,8 +10,13 @@
 // they carry, what the two empty states say — against a fake store, and a fake
 // that agreed with a broken statement would agree with it silently. What has to
 // be proven against a real database is the GROUND: that the six statements
-// behind one dossier really reach the rows, that they reach the SOFT-DELETED
-// ones, and that a read really is a read.
+// behind one dossier really reach the rows, and that a read really is a read.
+//
+// One claim left this file with ADR 0054. The disclosure used to be the only
+// read that reached a SOFT-DELETED row, and there are none: an order retires by
+// status and the module's six deleted_at columns are gone. What made the
+// statements special is now their SHAPE — no lock, no write, many orders at a
+// time — and that is what the tests below still hold them to.
 //
 // The last of those is the reason this file exists at all rather than trusting
 // the SQL by inspection. queries/disclosure.sql takes no lock and writes
@@ -21,7 +26,6 @@ package order_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -61,21 +65,6 @@ func disclosedField(record personaldata.Record, column string) (any, bool) {
 	}
 
 	return nil, false
-}
-
-// softDelete marks a row of the given table as deleted, the way a delete path
-// would.
-//
-// The module has no soft-delete surface for an order today, and the disclosure
-// still has to reach a hidden row: the question a data subject asks is what the
-// database HOLDS, not what the shop's own screens can see. Writing the stamp
-// directly is what lets the test ask that question at all.
-func softDelete(t *testing.T, table, id string) {
-	t.Helper()
-
-	_, err := testPool.Pool().Exec(context.Background(),
-		fmt.Sprintf(`UPDATE %s SET deleted_at = now() WHERE id = $1`, table), id)
-	require.NoError(t, err)
 }
 
 // orderUpdatedAt reads the row's stamp, which is what proves a read wrote
@@ -199,57 +188,6 @@ func TestDisclosureShowsEveryDeclaredColumnOfEveryRow(t *testing.T) {
 		assert.Equal(t, personaldata.Open, field.Kind,
 			"%s on a return is text somebody typed and gobit does not read it", field.Column)
 	}
-}
-
-// TestDisclosureReachesASoftDeletedRow is the one behavior that separates these
-// statements from every other read in the module.
-//
-// Every other query filters `deleted_at IS NULL`, because a soft-deleted row is
-// out of the business. Here the question is what the database still HOLDS about
-// a person, and a hidden row holds her address exactly as a visible one does.
-// Answering "we have nothing" while it sat there would be a false statement made
-// to the person it is about.
-func TestDisclosureReachesASoftDeletedRow(t *testing.T) {
-	ctx := context.Background()
-	svc, _ := newService(t)
-
-	const (
-		customerID = "cus_DISCLOSE_HIDDEN"
-		email      = "hidden.person@example.com"
-	)
-
-	ord := placeOrderFor(t, svc, customerID, email)
-	ret, err := svc.CreateReturn(ctx, service.CreateReturnInput{
-		OrderID:      ord.ID,
-		RefundAmount: 100,
-		Reason:       "the parcel arrived open",
-	})
-	require.NoError(t, err)
-
-	detail, err := svc.GetOrder(ctx, ord.ID)
-	require.NoError(t, err)
-	require.Len(t, detail.Items, 1)
-
-	softDelete(t, "orders", ord.ID)
-	softDelete(t, "order_returns", ret.ID)
-	softDelete(t, "order_line_items", detail.Items[0].ID)
-
-	disclosure, err := svc.PersonalDataOf(ctx, personaldata.Subject{CustomerID: customerID})
-	require.NoError(t, err)
-
-	require.Equal(t, personaldata.Disclosed, disclosure.State,
-		"the rows are hidden from the shop and are still in the database: %s", disclosure.Why)
-
-	orders := disclosureRecordsOf(disclosure, "orders")
-	require.Len(t, orders, 1)
-	contact, present := disclosedField(orders[0], "email")
-	require.True(t, present)
-	assert.Equal(t, email, contact, "a hidden row holds the address just as a visible one does")
-
-	require.Len(t, disclosureRecordsOf(disclosure, "order_returns"), 1,
-		"the deleted return still carries the reason somebody typed")
-	require.Len(t, disclosureRecordsOf(disclosure, "order_line_items"), 1,
-		"the deleted line still carries the engraving the customer asked for")
 }
 
 // TestDisclosureShowsAnAlreadyErasedOrderWithItsEmptiedFields is the decision

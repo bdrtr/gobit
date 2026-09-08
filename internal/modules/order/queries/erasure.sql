@@ -70,17 +70,21 @@
 -- has one buyer — would still take their locks in the same sequence, so no
 -- cycle can form.
 --
--- # Why soft-deleted orders are NOT filtered out
+-- # Why this read has no liveness condition to omit
 --
--- This read deliberately omits `deleted_at IS NULL`, and it is not the only one
--- that does: the five ListFor...Disclosure reads in disclosure.sql omit it too,
--- for the same reason one step further on — a person may SEE what a person may
--- erase (ADR 0034). Every other query in the module filters it, because a
--- soft-deleted order is not part of the business any more; here the question is not what the business can see
--- but what the DATABASE STILL HOLDS about a person, and a hidden row holds an
--- e-mail just as a visible one does. Reporting "anonymized" while a
--- soft-deleted row kept the address is exactly the false report the erasure
--- contract warns about.
+-- It used to say so out loud: this read deliberately omitted `deleted_at IS
+-- NULL` on the order while every other read in the module carried it, because
+-- the question here is not what the business can SEE but what the DATABASE
+-- STILL HOLDS about a person, and a hidden row holds an e-mail just as a
+-- visible one does. The five ListFor...Disclosure reads omitted it for the same
+-- reason one step further on (ADR 0034).
+--
+-- The distinction is gone with the column (ADR 0054): an order retires by
+-- STATUS, no row can be hidden, and this read now finds the person's orders for
+-- the same reason every other read does. The paragraph stays because the reason
+-- it gave still governs — what a subject may be told about is the DATABASE's
+-- holding, not the shop's view — and the next reader who invents a way to hide
+-- an order has to answer it again.
 --
 -- # Why either identifier finds a row
 --
@@ -94,22 +98,21 @@ SELECT o.id,
        o.display_id,
        o.status,
        o.currency_code,
-       o.deleted_at,
        o.personal_data_erased_at,
        o.total,
        COALESCE(s.paid_total, 0)::bigint     AS paid_total,
        COALESCE(s.refunded_total, 0)::bigint AS refunded_total,
        EXISTS (
            SELECT 1 FROM order_returns r
-           WHERE r.order_id = o.id AND r.deleted_at IS NULL AND r.status = 'requested'
+           WHERE r.order_id = o.id AND r.status = 'requested'
        ) AS return_requested,
        EXISTS (
            SELECT 1 FROM order_exchanges e
-           WHERE e.order_id = o.id AND e.deleted_at IS NULL AND e.status = 'requested'
+           WHERE e.order_id = o.id AND e.status = 'requested'
        ) AS exchange_requested,
        EXISTS (
            SELECT 1 FROM order_claims c
-           WHERE c.order_id = o.id AND c.deleted_at IS NULL AND c.status = 'requested'
+           WHERE c.order_id = o.id AND c.status = 'requested'
        ) AS claim_requested
 FROM orders o
 LEFT JOIN order_summaries s ON s.order_id = o.id

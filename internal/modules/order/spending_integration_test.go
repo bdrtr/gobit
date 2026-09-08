@@ -263,7 +263,7 @@ func TestConcurrentOrdersCannotExceedTheLimitTogether(t *testing.T) {
 	var total int64
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
 		`SELECT COALESCE(SUM(total), 0) FROM orders
-         WHERE customer_id = $1 AND deleted_at IS NULL AND status <> 'canceled'`,
+         WHERE customer_id = $1 AND status <> 'canceled'`,
 		customer).Scan(&total))
 	assert.LessOrEqual(t, total, int64(10_000))
 }

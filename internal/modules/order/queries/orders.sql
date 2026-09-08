@@ -1,9 +1,13 @@
 -- orders queries.
 --
--- Every read filters on deleted_at IS NULL (plan Section 8: deletion is soft).
--- State-changing queries additionally require the EXPECTED STATE; this is the
--- second gate next to the service's check under the lock, and it covers an
--- intervention made directly through SQL as well.
+-- NO READ HERE FILTERS ON LIVENESS, because an order has none to filter on: it
+-- retires by STATUS and the deleted_at column is gone (ADR 0054). A record of a
+-- sale is never hidden; it is completed, archived or canceled, and each of the
+-- four states carries its own moment.
+--
+-- State-changing queries require the EXPECTED STATE; this is the second gate
+-- next to the service's check under the lock, and it covers an intervention
+-- made directly through SQL as well.
 
 -- CreateOrder writes a new order.
 --
@@ -27,11 +31,11 @@ RETURNING *;
 
 -- name: GetOrder :one
 SELECT * FROM orders
-WHERE id = $1 AND deleted_at IS NULL;
+WHERE id = $1;
 
 -- name: GetOrderByDisplayID :one
 SELECT * FROM orders
-WHERE display_id = $1 AND deleted_at IS NULL;
+WHERE display_id = $1;
 
 -- GetOrderByIdempotencyKey returns the order opened with the same key.
 --
@@ -39,7 +43,7 @@ WHERE display_id = $1 AND deleted_at IS NULL;
 -- order (Principle 2.6).
 -- name: GetOrderByIdempotencyKey :one
 SELECT * FROM orders
-WHERE idempotency_key = $1 AND deleted_at IS NULL;
+WHERE idempotency_key = $1;
 
 -- LockOrder locks the order for the duration of the transaction and returns its
 -- current form.
@@ -50,13 +54,12 @@ WHERE idempotency_key = $1 AND deleted_at IS NULL;
 -- as 'pending' and both would set out to write.
 -- name: LockOrder :one
 SELECT * FROM orders
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 FOR UPDATE;
 
 -- name: ListOrders :many
 SELECT * FROM orders
-WHERE deleted_at IS NULL
-  AND (sqlc.narg('customer_id')::text IS NULL OR customer_id = sqlc.narg('customer_id')::text)
+WHERE (sqlc.narg('customer_id')::text IS NULL OR customer_id = sqlc.narg('customer_id')::text)
   AND (sqlc.narg('region_id')::text IS NULL OR region_id = sqlc.narg('region_id')::text)
   AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
   AND (created_at, id) < (
@@ -75,8 +78,7 @@ LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
 -- the page.
 -- name: CountOrders :one
 SELECT COUNT(*) FROM orders
-WHERE deleted_at IS NULL
-  AND (sqlc.narg('customer_id')::text IS NULL OR customer_id = sqlc.narg('customer_id')::text)
+WHERE (sqlc.narg('customer_id')::text IS NULL OR customer_id = sqlc.narg('customer_id')::text)
   AND (sqlc.narg('region_id')::text IS NULL OR region_id = sqlc.narg('region_id')::text)
   AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text);
 
@@ -84,7 +86,7 @@ WHERE deleted_at IS NULL
 -- trip; no per-ID query (N+1) is made.
 -- name: GetOrdersByIDs :many
 SELECT * FROM orders
-WHERE id = ANY (sqlc.arg('ids')::text[]) AND deleted_at IS NULL
+WHERE id = ANY (sqlc.arg('ids')::text[])
 ORDER BY id;
 
 -- CancelOrder cancels the order and stamps the moment of cancellation.
@@ -99,7 +101,7 @@ SET status        = 'canceled',
     canceled_at   = now(),
     cancel_reason = $2,
     updated_at    = now()
-WHERE id = $1 AND deleted_at IS NULL AND status = 'pending'
+WHERE id = $1 AND status = 'pending'
 RETURNING *;
 
 -- CompleteOrder stamps the order as completed.
@@ -108,7 +110,7 @@ UPDATE orders
 SET status       = 'completed',
     completed_at = now(),
     updated_at   = now()
-WHERE id = $1 AND deleted_at IS NULL AND status = 'pending'
+WHERE id = $1 AND status = 'pending'
 RETURNING *;
 
 -- ArchiveOrder takes a completed order into the archive and stamps the moment.
@@ -131,5 +133,5 @@ UPDATE orders
 SET status      = 'archived',
     archived_at = now(),
     updated_at  = now()
-WHERE id = $1 AND deleted_at IS NULL AND status = 'completed'
+WHERE id = $1 AND status = 'completed'
 RETURNING *;

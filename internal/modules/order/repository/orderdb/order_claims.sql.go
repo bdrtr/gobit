@@ -12,8 +12,8 @@ import (
 const cancelOrderClaim = `-- name: CancelOrderClaim :one
 UPDATE order_claims
 SET status = 'canceled', canceled_at = now(), updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at, deleted_at
+WHERE id = $1
+RETURNING id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at
 `
 
 // CancelOrderClaim withdraws the claim.
@@ -33,7 +33,6 @@ func (q *Queries) CancelOrderClaim(ctx context.Context, id string) (OrderClaim, 
 		&i.CanceledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -41,8 +40,8 @@ func (q *Queries) CancelOrderClaim(ctx context.Context, id string) (OrderClaim, 
 const completeOrderClaim = `-- name: CompleteOrderClaim :one
 UPDATE order_claims
 SET status = 'completed', completed_at = now(), updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at, deleted_at
+WHERE id = $1
+RETURNING id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at
 `
 
 // CompleteOrderClaim records that the claim was settled.
@@ -62,14 +61,13 @@ func (q *Queries) CompleteOrderClaim(ctx context.Context, id string) (OrderClaim
 		&i.CanceledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const countOrderClaims = `-- name: CountOrderClaims :one
 SELECT COUNT(*) FROM order_claims
-WHERE order_id = $1 AND deleted_at IS NULL
+WHERE order_id = $1
 `
 
 func (q *Queries) CountOrderClaims(ctx context.Context, orderID string) (int64, error) {
@@ -83,7 +81,7 @@ const createOrderClaim = `-- name: CreateOrderClaim :one
 
 INSERT INTO order_claims (id, order_id, claim_type, status, refund_amount, reason, note, metadata)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at, deleted_at
+RETURNING id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at
 `
 
 type CreateOrderClaimParams struct {
@@ -123,14 +121,13 @@ func (q *Queries) CreateOrderClaim(ctx context.Context, arg CreateOrderClaimPara
 		&i.CanceledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getOrderClaim = `-- name: GetOrderClaim :one
-SELECT id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at, deleted_at FROM order_claims
-WHERE id = $1 AND deleted_at IS NULL
+SELECT id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at FROM order_claims
+WHERE id = $1
 `
 
 func (q *Queries) GetOrderClaim(ctx context.Context, id string) (OrderClaim, error) {
@@ -149,14 +146,13 @@ func (q *Queries) GetOrderClaim(ctx context.Context, id string) (OrderClaim, err
 		&i.CanceledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const listOrderClaims = `-- name: ListOrderClaims :many
-SELECT id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at, deleted_at FROM order_claims
-WHERE order_id = $1 AND deleted_at IS NULL
+SELECT id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at FROM order_claims
+WHERE order_id = $1
 ORDER BY created_at DESC, id DESC
 LIMIT $3::bigint OFFSET $2::bigint
 `
@@ -189,7 +185,6 @@ func (q *Queries) ListOrderClaims(ctx context.Context, arg ListOrderClaimsParams
 			&i.CanceledAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -202,8 +197,8 @@ func (q *Queries) ListOrderClaims(ctx context.Context, arg ListOrderClaimsParams
 }
 
 const lockOrderClaim = `-- name: LockOrderClaim :one
-SELECT id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at, deleted_at FROM order_claims
-WHERE id = $1 AND deleted_at IS NULL
+SELECT id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at FROM order_claims
+WHERE id = $1
 FOR UPDATE
 `
 
@@ -224,7 +219,6 @@ func (q *Queries) LockOrderClaim(ctx context.Context, id string) (OrderClaim, er
 		&i.CanceledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
