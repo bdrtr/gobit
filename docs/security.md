@@ -429,6 +429,60 @@ zero means "off"). It is a legitimate choice, but it also leaves the login endpo
 without a quota, and an "off" nobody knows about is indistinguishable from a zero
 typed by accident; in shared environments this is warned about too.
 
+### The database account is one role, and the split is yours to provision
+
+The shipped installation connects with ONE PostgreSQL role, and the compose
+file's `POSTGRES_USER` is a superuser. That role both migrates the schema and
+serves requests, which is why the refusal that keeps an issued invoice — a
+`BEFORE DELETE` trigger,
+[ADR 0032](adr/0032-an-issued-invoice-refuses-erasure-in-the-schema.md) — is
+enforced against the role that OWNS the table. On the default installation the
+trigger is the whole of the refusal: it stops the application's `DELETE`, and it
+does not stop the same account from dropping the table or disabling the trigger
+on purpose.
+
+Splitting the account in two closes that, and gobit cannot do it for you: a
+process cannot create the role meant to outrank it. It is provisioning, and it
+is yours. What gobit owes you is the list — run as the role that owns the schema
+and runs `gobit migrate`, and run it after the first migration, since the
+`ALL TABLES` form reaches only the tables that exist when it runs and the
+statement after it is what covers the rest:
+
+    GRANT USAGE, CREATE ON SCHEMA public TO gobit_app;
+    GRANT SELECT, INSERT, UPDATE, DELETE
+        ON ALL TABLES IN SCHEMA public TO gobit_app;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public
+        GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO gobit_app;
+
+Tables are the whole grant surface: the tree creates no sequence and no view,
+and its trigger functions are checked when the trigger is created, against the
+role creating it. Measured, a role holding no more than the above was refused
+`DROP TABLE`, `DROP TRIGGER`, `ALTER TABLE ... DISABLE TRIGGER` and
+`SET session_replication_role`, and still ran every statement `link.Define`
+issues.
+
+Three things to know before you do it:
+
+- **CREATE on the schema is not optional.** A link's schema is declared in code
+  and written at every startup by `link.Define`
+  ([ADR 0005](adr/0005-link-semasi-migration-disinda.md), and the privileges row
+  of [ADR 0015](adr/0015-postgresql-cluster-contract.md)), so the runtime role
+  runs DDL — and it therefore OWNS the eight link tables and `link_definitions`
+  it creates, which the migrating role cannot then read.
+- **`serve` migrates at startup and has no knob that skips it.** With the schema
+  already applied by the owner that call is a read of the version tables
+  (`<owner>_schema_migrations`, one per migration owner), which the `SELECT`
+  above covers. A deploy that serves before the owner has migrated stops at
+  startup with `permission denied` and leaves the migration ledger CLEAN, so the
+  next `gobit migrate` is not blocked — but the ordering is yours to enforce.
+- **`ALTER DEFAULT PRIVILEGES` is per grantor role and per schema.** A table
+  created by any other role is reachable to nobody until it is granted, and that
+  failure lands on the first request touching the table rather than at startup.
+
+Why gobit ships one role rather than two, and what was rejected, is in
+[ADR 0060](adr/0060-the-two-roles-are-the-operators-to-provision.md); the runs
+are in [measurements/0060](measurements/0060-two-roles.md).
+
 ### One instance or several?
 
 `GUARD_BACKEND` selects both at once:

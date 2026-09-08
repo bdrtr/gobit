@@ -139,12 +139,10 @@ row is for; the reproduction is in the commit that closed it.
 
 ## G. Found while building, not yet decided
 
-- **The migration role and the runtime role are ONE superuser account**, so a
-  schema-level refusal can be lifted by the application itself. Measured: the
-  shipped role is superuser, a `REVOKE` succeeds and changes `relacl`, and the
-  next `DELETE` still succeeds — which is why ADR 0032's refusal is a trigger.
-  The decision is whether to ship two roles; ADR 0015's privileges row requires
-  the runtime role to run DDL for `link.Define`, so that clause moves first.
+- ~~**The migration role and the runtime role are ONE superuser account.**~~
+  **DECIDED 2026-09-08: ADR 0060 — the split is the operator's to provision, and
+  the binary does not change.** The grant list it needs is in
+  [`security.md`](security.md).
 - ~~**The rig cannot reproduce the case that motivated the change it paid
   for.**~~ **DECIDED 2026-09-08: ADR 0058 — `Spec.SkewedCategorySize` builds TWO
   small categories, and zero builds neither.** The uniform taxonomy keeps every

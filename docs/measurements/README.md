@@ -12,6 +12,7 @@ truth: a report says what was true on the day it was taken.
 
 | Report | Lines |
 |---|---|
+| [Two roles: what the split closes and what it costs](0060-two-roles.md) | 152 |
 | [Auditing a callback write](0056-callback-audit.md) | 144 |
 | [Two clocks on one axis](0053-two-clocks.md) | 88 |
 | [Migration cancellation: the GracefulStop race](0052-migration-cancellation-race.md) | 90 |
