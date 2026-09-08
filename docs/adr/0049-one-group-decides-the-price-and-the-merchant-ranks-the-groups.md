@@ -1,5 +1,9 @@
 # ADR 0049 — ONE group decides the price, and the MERCHANT ranks the groups
 
+**Summary:** ONE group decides the price, and the MERCHANT ranks the groups.
+The cart sends the highest-ranked group the customer belongs to as a single
+value, into contexts it already builds.
+
 - **Status:** Accepted
 - **Date:** 2026-09-07
 - **Phase:** after the roadmap

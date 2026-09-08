@@ -1,5 +1,9 @@
 # ADR 0024 — An invoice number comes from a ROW, not a sequence
 
+**Summary:** An invoice number is allocated by an UPDATE on a series ROW,
+inside the transaction that writes the document. A sequence would leave gaps,
+and a gap in a legal series is a question somebody has to answer.
+
 - **Status:** Accepted
 - **Date:** 2026-09-05
 - **Phase:** after the roadmap

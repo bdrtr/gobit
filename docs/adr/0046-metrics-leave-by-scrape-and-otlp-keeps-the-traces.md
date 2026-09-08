@@ -1,5 +1,8 @@
 # ADR 0046 — Metrics leave gobit by SCRAPE, and OTLP keeps the traces
 
+**Summary:** Metrics leave gobit by SCRAPE and OTLP is left carrying the
+traces. One transport per signal, each doing what it is good at.
+
 - **Status:** Accepted
 - **Date:** 2026-09-07
 - **Phase:** after the roadmap

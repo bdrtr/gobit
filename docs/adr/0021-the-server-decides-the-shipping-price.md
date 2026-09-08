@@ -1,5 +1,8 @@
 # ADR 0021 — The server decides the shipping price, as it already decided the line price
 
+**Summary:** The storefront names WHICH shipping option; the server decides
+what it costs. This is the line-price rule applied to shipping.
+
 - **Status:** Accepted
 - **Date:** 2026-09-05
 - **Phase:** after the roadmap

@@ -1,5 +1,10 @@
 # ADR 0044 — The sales channel moves into the catalog PATH, and the publishable key becomes a gate rather than a body input
 
+**Summary:** The sales channel is a PATH SEGMENT on the channel-scoped catalog
+reads, and the publishable key becomes a gate rather than an input to the body.
+Two keys authorized for one channel now receive byte-identical bodies, which is
+what a shared cache can store.
+
 - **Status:** Accepted
 - **Date:** 2026-09-07
 - **Phase:** after the roadmap

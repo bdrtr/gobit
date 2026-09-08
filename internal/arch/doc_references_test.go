@@ -1487,13 +1487,6 @@ var testNameReferenceExemptions = []pathReferenceExemption{
 			"Turkish letters to make the point. The name is an example of the naming " +
 			"habit, not a claim that this test exists.",
 	},
-	{
-		file: "docs/gaps.md",
-		path: "TestTemelYukAltindaDogruKalir",
-		reason: "D11 records the same finding as the CHANGELOG entry and quotes the " +
-			"same dead selector for the same reason: the row's whole content is that the " +
-			"name exists nowhere in the repository.",
-	},
 }
 
 // findTestNameExemption is [findPathExemption] for the backticked-test-name list.

@@ -1,5 +1,9 @@
 # ADR 0017 — An abandoned saga's compensation is replayed FROM THE RECORD
 
+**Summary:** An abandoned saga's compensation replays FROM THE RECORD, with
+state rebuilt from the steps' own persisted outputs. Nothing is re-derived from
+live data that may have moved.
+
 - **Status:** Accepted
 - **Date:** 2026-09-03
 - **Phase:** after the roadmap

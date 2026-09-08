@@ -383,7 +383,7 @@ type productRow struct {
 // They are not the same price, and neither price is visible on the screen.
 // Measured on a 52,004-product catalog through the same read layer this handler
 // calls, with no count query and no sales channel — that is, this screen's exact
-// shape (docs/catalog-search-cost.md):
+// shape (docs/measurements/catalog-search-cost.md):
 //
 //	unnarrowed page                             0.03 ms
 //	a term matching almost every product        0.03 ms
@@ -454,7 +454,7 @@ func (u *UI) listProducts(w http.ResponseWriter, r *http.Request) {
 	// 0.03 ms and the count it does not run is 3.3 ms, so the extra row buys
 	// back roughly a hundredfold. The count is the half that cannot stop early,
 	// which is why it grows with the catalog while the page does not
-	// (docs/catalog-search-cost.md).
+	// (docs/measurements/catalog-search-cost.md).
 	hasNext := len(records) > productsPerPage
 	if hasNext {
 		records = records[:productsPerPage]

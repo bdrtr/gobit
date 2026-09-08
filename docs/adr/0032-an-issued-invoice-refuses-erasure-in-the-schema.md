@@ -1,5 +1,9 @@
 # ADR 0032 — An issued invoice refuses erasure, and the refusal lives in the schema
 
+**Summary:** An issued invoice is outside erasure, and the refusal lives in the
+SCHEMA rather than in Go. A refusal in Go stops the caller; a refusal in the
+database stops the statement.
+
 - **Status:** Accepted
 - **Date:** 2026-09-06
 - **Phase:** after the roadmap

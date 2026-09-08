@@ -1,5 +1,9 @@
 # ADR 0038 — The storage form of an e-mail address is one rule, and it is folded in Go
 
+**Summary:** The storage form of an e-mail address is one rule: trimmed, then
+lower-cased BY GO and never by the database. The cluster's `lower()` folds only
+what its ctype knows, which is not the same on every installation.
+
 - **Status:** Accepted
 - **Date:** 2026-09-07
 - **Phase:** after the roadmap

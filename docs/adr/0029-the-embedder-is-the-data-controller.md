@@ -1,5 +1,9 @@
 # ADR 0029 — The embedder is the data controller; gobit publishes the mechanism
 
+**Summary:** The embedder is the data controller; gobit publishes the MECHANISM
+and not the policy. gobit owes the erasure contract and the declarations, not
+the retention period or the lawful basis.
+
 - **Status:** Accepted
 - **Date:** 2026-09-06
 - **Phase:** after the roadmap

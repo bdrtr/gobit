@@ -1,5 +1,9 @@
 # ADR 0012 — English is the working language, and SOLID is enforced only where it can be measured
 
+**Summary:** English is the working language, and the switch is incremental and
+ledgered so the debt can only shrink. SOLID is enforced only where a gate can
+measure it, and nowhere else.
+
 - **Status:** Accepted
 - **Date:** 2026-09-03
 - **Supersedes:** none

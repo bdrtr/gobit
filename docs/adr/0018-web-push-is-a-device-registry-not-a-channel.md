@@ -1,5 +1,9 @@
 # ADR 0018 — Web push is a plugin-owned DEVICE REGISTRY, not a notification channel
 
+**Summary:** Web push ships as a plugin that brings its own module, table,
+routes and transport, and registers NO notification provider. The core's
+channel set and the meaning of `Notification.To` are left untouched.
+
 - **Status:** Accepted
 - **Date:** 2026-09-04
 - **Phase:** after the roadmap

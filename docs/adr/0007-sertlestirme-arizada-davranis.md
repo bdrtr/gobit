@@ -1,5 +1,10 @@
 # ADR 0007 — What happens when the hardening components fail
 
+**Summary:** Each hardening component behaves according to its OWN failure
+model; there is no uniform rule. A rate limiter that loses Redis and an
+idempotency store that loses Redis must not fail the same way, and pretending
+otherwise hides the one that matters.
+
 - **Status:** Accepted
 - **Date:** 2026-08-24
 - **Phase:** 9

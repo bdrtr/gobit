@@ -12,6 +12,40 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **Kayitlarin sekli kurala baglandi: ADR 80 satir, olcumler ayri agacta.**
+
+  Elli bir ADR 11.934 satira ulasmisti; ortalama 234, en uzunu 569. Buyume bir
+  karar degildi -- her paragraf yazildigi anda haklıydi. Kural artik
+  `CLAUDE.md`'de ve `internal/arch/adr_shape_test.go`'da: dort bolum
+  (Context / Decision / Consequences / Rejected), en fazla 80 satir, ve karar
+  iki cumlede soylenir. Soylenemiyorsa karar henuz VERILMEMISTIR.
+
+  80 sayisi olculmus bir optimum degil; icine bir olcum SIGMAYACAK kadar kucuk
+  olmasi icin secildi. Asil kural bu: boyut siniri, "olcumler ayri dosyaya
+  gider" kuralini uygulanabilir yapan sey.
+
+  Kapi 0052'den itibaren gecerli. 0001-0051 tarihsel kayittir ve yeniden
+  YAZILMADI; her biri basligin altina iki satirlik `**Summary:**` aldi, aldiklari
+  tek duzenleme bu. Dort iddia da mutasyonla kanitlandi.
+
+- **`docs/measurements/` acildi.** gaps.md'nin icindeki 15 olcum raporu (2.757
+  satir) ve `catalog-search-cost.md` oraya tasindi, degistirilmeden. Bir ADR
+  olcume tek satirla baglanir. Olcum dosyasi istedigi kadar uzun olabilir --
+  kimse onu okumak zorunda degil; ADR'yi herkes okumak zorunda.
+
+- **`docs/adr/README.md` indeksi.** Numara, baslik, tek cumlelik karar, durum
+  (gecerli / hangi kayit degistirdi). Yeni gelen once bunu okur.
+  `TestTheADRIndexNamesEveryRecord` iki yonu de tutuyor.
+
+- **`docs/gaps.md` 4.615 -> 156 satir.** Her boslugun bir satiri var: soru, ve
+  cevabin nerede oldugu. Kapali satir ADR'sini soyler ve susar; gerekce ADR'de,
+  tarih git'te. Cizili metinler ve "orijinal adlandirma asagida" bloklari
+  silindi. Sadelestirme sirasinda hicbir sey KARARA baglanmadi ya da yeniden
+  acilmadi -- ama iki satirin BAYAT oldugu ortaya cikti: D22 (webhookout artik
+  kurulabilir) ve D25 (parametre kapisi yazilmis) defterde hala acik
+  gorunuyordu.
+
+
 - **Magaza aramasi da satis kanalini YOLUNDA tasiyor** (ADR 0044'un dorduncu
   rotasi) — ve kural artik bir iddia degil, bir MEKANIZMA.
 
@@ -1732,7 +1766,7 @@ Sabitlenme `1.0.0` ile olur.
   BİLEŞİMİ başına bir metin üretiyor (tavan 128, pgx'in önbelleği 512) ve
   `grep` artık deyimin tamamını hiçbir zaman basmayacak. Tam kayıt:
   `internal/modules/product/repository/saleschannel.go` ve
-  `docs/catalog-search-cost.md`.
+  `docs/measurements/catalog-search-cost.md`.
 
   **Bunu ödeyen şey ÇARPIKLIK, ve düzenekte çarpıklık yok.** Düzeneğin yirmi
   kategorisinin her biri tam olarak 2.600 ürün tutuyor (kataloğun %5,0'i,
@@ -2809,7 +2843,7 @@ Sabitlenme `1.0.0` ile olur.
   yerel ayar `initdb` anında sabitlendiği için o düzeltmeden önce yaratılmış her
   veri dizini hâlâ yalnızca ASCII katlıyor.
 
-  **Ölçüm: 52.004 ürün, 54.000 varyant, tamamı `docs/catalog-search-cost.md`.**
+  **Ölçüm: 52.004 ürün, 54.000 varyant, tamamı `docs/measurements/catalog-search-cost.md`.**
   Yapısal yarısı koşmadan biliniyordu — `title` üzerinde indeks yok, desen
   BAŞTAN joker, yani hiçbir B-tree yardım edemez. Ondan çıkan "öyleyse arama
   yavaştır" sonucu YARIM YANLIŞ, ve yanlış olan yarı ne yapılacağına karar veren

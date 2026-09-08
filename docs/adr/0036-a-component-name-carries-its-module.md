@@ -1,5 +1,9 @@
 # ADR 0036 — A schema component name carries the module that owns it
 
+**Summary:** A schema component's name is prefixed with the module that owns
+it, applied by the composition root. Two modules can now both have an `Address`
+without taking the document down.
+
 - **Status:** Accepted
 - **Date:** 2026-09-07
 - **Phase:** after the roadmap

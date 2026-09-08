@@ -200,16 +200,17 @@ Sınırın tamamı [`docs/known-limits.md`](./docs/known-limits.md) içindedir.
 
 | Belge | Neyi cevaplar |
 |---|---|
-| [`docs/adr/`](./docs/adr/) | Kararlar. Otuz dört kayıt; plan ile çelişirse **ADR geçerlidir** |
+| [`docs/adr/README.md`](./docs/adr/README.md) | Kararların İNDEKSİ: elli bir kayıt, her biri tek cümlelik kararıyla. Plan ile çelişirse **ADR geçerlidir** |
+| [`docs/measurements/`](./docs/measurements/) | Ölçümler: sayılar, sonda çıktıları, yeniden üretim adımları. Bir ADR'ye tek satırla bağlanır; kimse baştan sona okumak zorunda değil |
 | [`docs/mimari.md`](./docs/mimari.md) | Mimarinin anlatısı: katmanlar, isteğin ve modülün yaşam döngüsü, veri, saga'lar, teknoloji seçimleri, çekirdek paketler |
-| [`docs/gaps.md`](./docs/gaps.md) | Ölçülmüş envanter: neyin olduğu, neyin olmadığı, ve her yokluğun **boşluk mu karar mı** olduğu — sıralanmış bir yapılacaklar listesiyle birlikte |
+| [`docs/gaps.md`](./docs/gaps.md) | Boşluk tablosu: neyin olduğu, neyin olmadığı, ve her yokluğun **boşluk mu karar mı** olduğu — sıralanmış bir yapılacaklar listesiyle birlikte |
 | [`docs/security.md`](./docs/security.md) | Kimlik ve yetki: iki yüzey, katalogun satış kanalına göre süzülmesi, scope sözlüğü, curl ile uçtan uca yürüyüş, sertleştirme halkaları ve tek örnek/çok örnek ayrımı |
 | [`docs/commerce-flows.md`](./docs/commerce-flows.md) | Sepetten siparişe: akışların HTTP sahibi kim, fiyata ve para birimine kim karar verir, hangi depodan gönderilir, ve B2B'de harcama limiti nerede kontrol edilir |
 | [`docs/api-surfaces.md`](./docs/api-surfaces.md) | Üretilen OpenAPI belgesi ve GraphQL vitrin okuma yüzeyi; maliyeti istemci belirlerken sunucunun koyduğu sınırlar ve hata politikası |
 | [`docs/extending.md`](./docs/extending.md) | Eklentiler, dosya yükleme sağlayıcısı, alan olayları ve **müşteri kimliği** — yeni bir yetenek nasıl eklenir, ve vitrinin ZORUNLU kıldığı tek bağlama |
 | [`docs/operating.md`](./docs/operating.md) | Çalıştırma ve geliştirme: `/health` ile `/ready`, yapılandırmanın tamamı, olay veri yolu arka uçları, izleme, make hedefleri, modül yolunu değiştirme ve sürüm geçmişi |
 | [`docs/known-limits.md`](./docs/known-limits.md) | Bilinen sınırlar: yirmi iki madde, dört küme — kimlik ve yetki, satış kanalı kapsamı, kurulum ve işletim, değişmezlerin sınırı |
-| [`docs/catalog-search-cost.md`](./docs/catalog-search-cost.md) | Katalog aramasının ölçülmüş maliyeti |
+| [`docs/measurements/catalog-search-cost.md`](./docs/measurements/catalog-search-cost.md) | Katalog aramasının ölçülmüş maliyeti |
 | [`CHANGELOG.md`](./CHANGELOG.md) | Sürüm sürüm ne değişti |
 
 ## Faz durumu ve sürüm

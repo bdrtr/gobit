@@ -1,5 +1,10 @@
 # ADR 0001 — Cross-module communication: a consumer-side interface
 
+**Summary:** Every cross-module dependency goes through a narrow interface the
+CONSUMER declares in its own package, and the implementation is resolved from
+the container by name at runtime. The cost is that a wiring mistake surfaces at
+startup rather than at compile time.
+
 - **Status:** Accepted
 - **Date:** 2026-08-23
 - **Phase:** 0 (implementation begins in Phase 4)

@@ -1,5 +1,9 @@
 # ADR 0051 — The storefront accepts a write from a party it cannot identify only when that write is CONFINED or INERT, and a GATE holds the rule rather than a paragraph
 
+**Summary:** A storefront accepts a write from a party it cannot identify only
+when that write is CONFINED or INERT, and a GATE holds the rule rather than a
+paragraph. The discriminator is ratified from the order module's own schema.
+
 - **Status:** Accepted
 - **Date:** 2026-09-07
 - **Phase:** after the roadmap

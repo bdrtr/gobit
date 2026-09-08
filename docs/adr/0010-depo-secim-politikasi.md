@@ -1,5 +1,10 @@
 # ADR 0010 — Warehouse selection: coverage is a CONSTRAINT, preference is an ORDER
 
+**Summary:** Warehouse coverage is a CONSTRAINT and warehouse preference is an
+ORDER; the location model lives in fulfillment's own schema. A location that
+cannot cover the order is never ranked, so preference can never override
+availability.
+
 - **Status:** Accepted
 - **Date:** 2026-09-02
 - **Phase:** after 10 (the multi-warehouse round)

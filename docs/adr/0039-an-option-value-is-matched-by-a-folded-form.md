@@ -1,5 +1,9 @@
 # ADR 0039 — An option value is matched by a folded form, and the fold keeps what it cannot transliterate
 
+**Summary:** An option value is stored twice — as the merchant typed it, and as
+it is matched — and the fold is Go's, never the cluster's. The fold keeps runes
+it cannot transliterate rather than dropping them.
+
 - **Status:** Accepted
 - **Date:** 2026-09-07
 - **Phase:** after the roadmap

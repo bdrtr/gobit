@@ -1,5 +1,9 @@
 # ADR 0034 — A person may see what a person may erase
 
+**Summary:** A person may SEE what a person may erase: disclosure is published
+beside erasure and assembled by the same sweep. One mechanism serves both
+rights, so neither can drift from the other.
+
 - **Status:** Accepted
 - **Date:** 2026-09-07
 - **Phase:** after the roadmap

@@ -1,5 +1,9 @@
 # ADR 0040 — "In stock" is a CATALOG answer computed over an INVENTORY fact
 
+**Summary:** A VARIANT is in stock when inventory is unmanaged, backorder is
+allowed, or available quantity exceeds zero; a PRODUCT is in stock when at
+least one variant is. A counted but unlinked variant is NOT in stock.
+
 - **Status:** Accepted
 - **Date:** 2026-09-07
 - **Phase:** after the roadmap

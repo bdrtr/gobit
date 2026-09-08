@@ -1,5 +1,9 @@
 # ADR 0025 — gobit is a LIBRARY a project imports, not a template a project copies
 
+**Summary:** gobit becomes a LIBRARY a project imports, not a template it
+copies. The customer project is a small program that tracks the core in
+`go.mod`.
+
 - **Status:** Accepted (direction); the public surface was decided in ADR 0026
 - **Date:** 2026-09-05
 - **Phase:** after the roadmap

@@ -1,5 +1,9 @@
 # ADR 0027 — The composition root is part of the library, and the binary is fifteen lines
 
+**Summary:** The composition root moves into `internal/app` and a published
+facade at the module root calls it, so the binary is fifteen lines. The facade
+may import `internal/` and nothing else may.
+
 - **Status:** Accepted
 - **Date:** 2026-09-05
 - **Phase:** after the roadmap

@@ -1,5 +1,9 @@
 # ADR 0026 — The published surface is core/: fourteen packages, and no commerce model is among them
 
+**Summary:** The published surface is `core/`: fourteen packages, and no
+commerce model among them. Everything published is a promise kept until 1.0.0,
+which is what makes adding to it expensive.
+
 - **Status:** Accepted
 - **Date:** 2026-09-05
 - **Phase:** after the roadmap

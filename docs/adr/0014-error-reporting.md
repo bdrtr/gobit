@@ -1,5 +1,9 @@
 # ADR 0014 — Failures are reported to an outside collector through a core contract, and the core decides what may leave
 
+**Summary:** Failures are reported to an outside collector through a contract
+in the core, and the CORE decides what may leave. The reporter is a plugin; an
+installation holds exactly one.
+
 - **Status:** Accepted
 - **Date:** 2026-09-03
 - **Related:** ADR 0001 (resolution by name), ADR 0007 (observability does not

@@ -1,5 +1,9 @@
 # ADR 0008 — Customer identity: the framework's boundary, the embedder's responsibility
 
+**Summary:** Verifying customer identity is the embedding application's job.
+gobit draws the boundary, documents it and pins it with tests, and issues no
+customer session, cookie or signing key.
+
 - **Status:** Accepted
 - **Date:** 2026-09-01
 - **Phase:** after 10 (the v0.4.0 hardening round)

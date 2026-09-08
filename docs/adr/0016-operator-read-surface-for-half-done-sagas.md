@@ -1,5 +1,9 @@
 # ADR 0016 — The operator's read surface over half-done sagas lives in the binary
 
+**Summary:** The operator's read surface over half-done sagas is `gobit stuck`,
+a read-only subcommand of the binary. It reports and never touches what it
+finds.
+
 - **Status:** Accepted
 - **Date:** 2026-09-03
 - **Phase:** after the admin panel round

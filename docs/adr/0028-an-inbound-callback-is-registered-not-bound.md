@@ -1,5 +1,9 @@
 # ADR 0028 — An inbound provider callback is REGISTERED, never bound by the plugin
 
+**Summary:** A plugin REGISTERS an inbound provider callback and the core binds
+it, so quota, body limit, timeout, signature check and replay window apply to
+every one. A plugin can no longer bind an unguarded route.
+
 - **Status:** Accepted
 - **Date:** 2026-09-05
 - **Phase:** after the roadmap

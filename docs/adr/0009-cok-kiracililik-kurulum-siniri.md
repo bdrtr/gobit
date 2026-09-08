@@ -1,5 +1,9 @@
 # ADR 0009 — Multi-tenancy: the boundary is the installation, not the row
 
+**Summary:** Multi-tenancy is not built. The boundary is the INSTALLATION
+rather than the row: one deployment serves one merchant, and nothing in the
+schema carries a tenant.
+
 - **Status:** Accepted
 - **Date:** 2026-09-01
 - **Phase:** after 10 (the v0.4.0 hardening round)

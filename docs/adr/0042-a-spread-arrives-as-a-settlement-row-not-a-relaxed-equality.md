@@ -1,5 +1,9 @@
 # ADR 0042 — The customer pays what the merchant receives, and a spread will arrive as a SETTLEMENT ROW rather than by relaxing that equality
 
+**Summary:** The customer pays what the merchant receives, and the four layers
+holding that equality stay four layers. When a spread is needed it arrives as a
+SETTLEMENT ROW rather than by relaxing the equality.
+
 - **Status:** Accepted
 - **Date:** 2026-09-07
 - **Phase:** after the roadmap

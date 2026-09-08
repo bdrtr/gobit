@@ -1,5 +1,9 @@
 # ADR 0030 — The panel becomes an admin-API client, and pays for it in one named layer
 
+**Summary:** The panel becomes an ordinary client of `/admin/v1`, served as
+static assets from the binary and authenticating with the same cookie. The cost
+is named in one layer rather than spread through the panel.
+
 - **Status:** Accepted
 - **Date:** 2026-09-06
 - **Phase:** after the roadmap

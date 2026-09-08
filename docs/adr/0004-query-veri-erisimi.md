@@ -1,5 +1,9 @@
 # ADR 0004 — How the Query layer pulls data out of the modules
 
+**Summary:** The Query layer pulls data out of a module through a narrow
+provider interface the module registers, never by importing the module. That
+keeps cross-module reads batched and keeps module isolation intact.
+
 - **Status:** Accepted
 - **Date:** 2026-08-23
 - **Phase:** 2

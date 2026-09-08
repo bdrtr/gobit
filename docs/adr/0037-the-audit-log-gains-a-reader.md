@@ -1,5 +1,9 @@
 # ADR 0037 — The audit log gains a reader, and reading it is recorded
 
+**Summary:** `audit.Store` gains a reader and one admin endpoint behind a new
+scope, and reading the audit log is itself recorded. A log nobody can read is
+not an audit trail.
+
 - **Status:** Accepted
 - **Date:** 2026-09-07
 - **Phase:** after the roadmap

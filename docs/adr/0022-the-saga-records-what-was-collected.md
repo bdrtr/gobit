@@ -1,5 +1,9 @@
 # ADR 0022 — The saga records on the order what was actually collected
 
+**Summary:** The checkout saga reads the payment collection after the capture
+and records the actual amounts on the order. What was collected is a fact, not
+an assumption carried from the cart.
+
 - **Status:** Accepted
 - **Date:** 2026-09-05
 - **Phase:** after the roadmap

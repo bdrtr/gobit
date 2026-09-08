@@ -1,5 +1,9 @@
 # ADR 0048 — All four carried flags get a reader: the stock pair in the checkout saga, the product pair in the campaign engine
 
+**Summary:** All four carried flags get a reader and none stops being
+published: the stock pair in the checkout saga, the product pair in the
+campaign engine. A published flag that nothing reads is a promise nobody keeps.
+
 - **Status:** Accepted
 - **Date:** 2026-09-07
 - **Phase:** after the roadmap

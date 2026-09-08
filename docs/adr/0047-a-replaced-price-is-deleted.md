@@ -1,5 +1,9 @@
 # ADR 0047 — A replaced price is DELETED, and what survived a replace was never a history
 
+**Summary:** A replaced price is DELETED and nothing is kept, inside the
+transaction `ReplacePrices` already serializes. What survived a replace was
+never a history — it was rows nothing could read.
+
 - **Status:** Accepted
 - **Date:** 2026-09-07
 - **Phase:** after the roadmap

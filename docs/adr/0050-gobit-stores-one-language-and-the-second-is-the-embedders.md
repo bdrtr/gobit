@@ -1,5 +1,9 @@
 # ADR 0050 — gobit stores ONE language, and the second language is the embedder's — which gobit does not pretend it makes easy
 
+**Summary:** gobit stores ONE language, and the second language is the
+embedder's — and gobit does not pretend it makes that easy. It does not close
+gap A11: nothing in the storefront can yet ASK for a language.
+
 - **Status:** Accepted
 - **Date:** 2026-09-07
 - **Phase:** after the roadmap

@@ -1,5 +1,9 @@
 # ADR 0023 — A promised event is part of the transaction that promised it
 
+**Summary:** A promised event is written INSIDE the transaction that promised
+it, and a scheduled relay publishes it. An event can no longer be lost between
+a commit and a publish.
+
 - **Status:** Accepted
 - **Date:** 2026-09-05
 - **Phase:** after the roadmap

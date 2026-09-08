@@ -189,16 +189,17 @@ framework cannot see.**
 
 | Document | What it answers |
 |---|---|
-| [`docs/adr/`](./docs/adr/) | The decisions. Thirty-four records; in case of conflict with the plan, **the ADR wins** |
+| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: fifty-one records, each with its decision in one sentence. In case of conflict with the plan, **the ADR wins** |
+| [`docs/measurements/`](./docs/measurements/) | Measurements: numbers, probe output, reproductions. An ADR links to one in a single line; nobody has to read them end to end |
 | [`docs/mimari.md`](./docs/mimari.md) | The architecture narrative: layers, the life cycle of a request and of a module, data, sagas, technology choices, the core packages |
-| [`docs/gaps.md`](./docs/gaps.md) | The measured inventory: what exists, what does not, and for each absence whether it is a **gap or a decision** — together with an ordered list of what to do |
+| [`docs/gaps.md`](./docs/gaps.md) | The gap table: what exists, what does not, and for each absence whether it is a **gap or a decision** — together with an ordered list of what to do |
 | [`docs/security.md`](./docs/security.md) | Identity and authorization: the two surfaces, the catalog filtered by sales channel, the scope dictionary, an end-to-end curl walkthrough, the hardening rings and the one-instance / several-instances distinction |
 | [`docs/commerce-flows.md`](./docs/commerce-flows.md) | From cart to order: who owns a flow's HTTP surface, who decides the price and the currency, which warehouse it ships from, and where the B2B spending limit is checked |
 | [`docs/api-surfaces.md`](./docs/api-surfaces.md) | The generated OpenAPI document and the GraphQL storefront read surface; the limits the server sets when the client decides the cost, and the error policy |
 | [`docs/extending.md`](./docs/extending.md) | Plugins, the file upload provider and the domain events — how a new capability is added |
 | [`docs/operating.md`](./docs/operating.md) | Running and developing: `/health` and `/ready`, the whole of the configuration, the event bus backends, observability, the make targets, changing the module path and the version history |
 | [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: twenty-one items in four groups — identity and authorization, sales channel scope, installation and operation, the limit of the invariants |
-| [`docs/catalog-search-cost.md`](./docs/catalog-search-cost.md) | The measured cost of catalog search |
+| [`docs/measurements/catalog-search-cost.md`](./docs/measurements/catalog-search-cost.md) | The measured cost of catalog search |
 | [`CHANGELOG.md`](./CHANGELOG.md) | What changed, release by release |
 
 ## Phase status and version

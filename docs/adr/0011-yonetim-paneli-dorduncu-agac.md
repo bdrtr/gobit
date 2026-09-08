@@ -1,5 +1,9 @@
 # ADR 0011 — The admin panel: a fourth tree, its own identity, the core's writer
 
+**Summary:** The admin panel is a fourth tree at `internal/adminui`, with its
+own identity and the core's writer. It is not a module and may not be imported
+by one.
+
 - **Status:** Accepted
 - **Date:** 2026-09-03
 - **Phase:** after Phase 10 (the admin panel round)

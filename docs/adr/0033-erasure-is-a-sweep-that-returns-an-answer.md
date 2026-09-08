@@ -1,5 +1,9 @@
 # ADR 0033 — Erasure is a synchronous sweep that returns an answer
 
+**Summary:** An erasure is a synchronous sweep across every holder of personal
+data, and it returns ONE report. A holder that finds nothing says so, which is
+what makes a complete-looking answer trustworthy.
+
 - **Status:** Accepted
 - **Date:** 2026-09-06
 - **Phase:** after the roadmap

@@ -1,5 +1,10 @@
 # ADR 0041 — A price filter compares the BASE price, in the request's currency, at quantity one
 
+**Summary:** A price filter compares the BASE price, in the request's currency,
+at quantity tier one, with no customer-group context, evaluated at the moment
+of the query. Where a product has several variants the lowest such price is
+compared.
+
 - **Status:** Accepted
 - **Date:** 2026-09-07
 - **Phase:** after the roadmap

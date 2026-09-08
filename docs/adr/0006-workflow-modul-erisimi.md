@@ -1,5 +1,9 @@
 # ADR 0006 — How workflows reach the modules
 
+**Summary:** `internal/workflows` does not import the modules either; a
+workflow reaches them through the same Query layer and interop surfaces every
+other consumer uses. The rule costs a hand-copied contract name on each side.
+
 - **Status:** Accepted
 - **Date:** 2026-08-23
 - **Phase:** 5

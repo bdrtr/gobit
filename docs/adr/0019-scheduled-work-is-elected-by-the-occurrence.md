@@ -1,5 +1,9 @@
 # ADR 0019 — Scheduled work is elected by the OCCURRENCE, made live by the LOCK
 
+**Summary:** Scheduled work is elected by the OCCURRENCE and made live by the
+LOCK, so two processes cannot run one occurrence twice. The first and only job
+reports abandoned sagas and never touches them.
+
 - **Status:** Accepted
 - **Date:** 2026-09-04
 - **Phase:** after the roadmap

@@ -1,5 +1,9 @@
 # ADR 0013 — The panel writes through a per-module admin surface, not through interop
 
+**Summary:** The panel writes through a per-module admin surface typed in
+PRIMITIVES, not through interop. The surface is narrow on purpose: a panel
+screen may not reach a module's models.
+
 - **Status:** Accepted
 - **Date:** 2026-09-03
 - **Amends:** ADR 0011 (decision 6, "the panel uses the framework's read paths")

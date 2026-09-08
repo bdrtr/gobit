@@ -1,5 +1,10 @@
 # ADR 0003 — Migration cancellation: we own the connection
 
+**Summary:** Migration cancellation works because gobit owns the connection and
+can close it; the layers above cooperate rather than relying on `context`
+alone. A cancelled run leaves the version table honest about what did and did
+not apply.
+
 - **Status:** Accepted
 - **Date:** 2026-08-23
 - **Phase:** 1

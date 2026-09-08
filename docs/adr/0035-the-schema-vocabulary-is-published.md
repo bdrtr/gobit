@@ -1,5 +1,9 @@
 # ADR 0035 — The schema vocabulary is published, and the silence gets a voice
 
+**Summary:** The schema vocabulary moves out of `internal/` and becomes
+`core/openapi`, and `Doc.UndescribedRoutes` gives the silence a voice. An
+undescribed route is now countable and gated by a shrink-only ledger.
+
 - **Status:** Accepted
 - **Date:** 2026-09-07
 - **Phase:** after the roadmap

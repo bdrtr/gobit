@@ -243,7 +243,7 @@ func (p *productProvider) Entity() string { return EntityProduct }
 // The obvious conclusion from those two facts — "the search is a sequential
 // scan, therefore it is slow" — is HALF WRONG, and the wrong half is the half
 // that would decide what to do about it. Measured on 52,004 real products
-// (docs/catalog-search-cost.md): the listing's cost does not follow the term,
+// (docs/measurements/catalog-search-cost.md): the listing's cost does not follow the term,
 // it follows how far down the ordering the page's last match sits. A term
 // matching almost the whole catalog is answered from the (created_at DESC,
 // id DESC) index in 0.03 ms, because the scan stops once 25 rows have passed

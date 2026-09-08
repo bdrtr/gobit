@@ -1,5 +1,9 @@
 # ADR 0043 — gobit REQUIRES a customer identity at the address book, and still does not issue one
 
+**Summary:** ADR 0008 stands: gobit requires a customer identity at the address
+book and still does not issue one. The framework publishes the shape, resolves
+it by name and refuses to proceed when nobody has been asked.
+
 - **Status:** Accepted
 - **Date:** 2026-09-07
 - **Phase:** after the roadmap

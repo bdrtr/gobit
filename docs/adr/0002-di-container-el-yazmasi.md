@@ -1,5 +1,9 @@
 # ADR 0002 — DI container: hand-written instead of a library
 
+**Summary:** `core/container` is written by hand instead of taking the
+`samber/do` dependency. The contract is small enough that the library would
+cost more in surface than it saves in code.
+
 - **Status:** Accepted
 - **Date:** 2026-08-23
 - **Phase:** 1

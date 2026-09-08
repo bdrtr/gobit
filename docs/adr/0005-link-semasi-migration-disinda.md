@@ -1,5 +1,9 @@
 # ADR 0005 — The link schema is built at declaration time, not in migration files
 
+**Summary:** The link schema is built at declaration time by
+`LinkService.Define`, not written into migration files. The price is that the
+runtime role must be able to run DDL.
+
 - **Status:** Accepted
 - **Date:** 2026-08-23
 - **Phase:** 2

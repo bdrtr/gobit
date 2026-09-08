@@ -1,5 +1,9 @@
 # ADR 0031 — The admin session is a fixed twelve hours, and the trade is written down
 
+**Summary:** The admin session is a fixed twelve hours and never renews; the
+operator sets the number and gobit publishes what each end of the range costs.
+A shared environment is bounded at twenty-four hours.
+
 - **Status:** Accepted
 - **Date:** 2026-09-06
 - **Phase:** after the roadmap

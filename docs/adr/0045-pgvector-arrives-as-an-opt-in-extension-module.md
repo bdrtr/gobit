@@ -1,5 +1,9 @@
 # ADR 0045 — pgvector arrives as a separate OPT-IN extension module, and the cluster contract does not move
 
+**Summary:** ADR 0015 is not reopened and the extensions row keeps the value
+`none`. pgvector arrives as a separate OPT-IN extension module an installation
+chooses.
+
 - **Status:** Accepted
 - **Date:** 2026-09-07
 - **Phase:** after the roadmap

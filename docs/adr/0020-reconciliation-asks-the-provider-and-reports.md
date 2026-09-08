@@ -1,5 +1,8 @@
 # ADR 0020 — Reconciliation ASKS the provider, and only reports what it hears
 
+**Summary:** Reconciliation ASKS each provider about the sessions where two
+ledgers can silently disagree, and reports what it hears. It writes nothing.
+
 - **Status:** Accepted
 - **Date:** 2026-09-04
 - **Phase:** after the roadmap

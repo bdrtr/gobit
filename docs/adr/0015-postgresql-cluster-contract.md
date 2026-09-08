@@ -1,5 +1,9 @@
 # ADR 0015 — PostgreSQL is a foundation, not a supported option, and the cluster it needs is a written contract
 
+**Summary:** PostgreSQL is a foundation rather than a supported option, and the
+cluster gobit needs is written down as a contract. There will be no second
+database.
+
 - **Status:** Accepted
 - **Date:** 2026-09-03
 - **Related:** ADR 0004 (the read layer), ADR 0007 (observability does not gate
