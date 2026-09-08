@@ -12,6 +12,8 @@ truth: a report says what was true on the day it was taken.
 
 | Report | Lines |
 |---|---|
+| [A suggestion store: both ends re-measured, 2026-09-08](0066-suggestion-store.md) | 149 |
+| [Measurement 0063 — Can `plugins/webhookout` be a topic's first subscriber?](0063-a-forwarder-is-not-a-first-subscriber.md) | 133 |
 | [What a closed stock location owes](0055-a-location-closes-empty.md) | 274 |
 | [What an unproven `customer_id` bought](0057-the-storefront-customer-claim.md) | 183 |
 | [Soft delete in the order and payment modules](0054-soft-delete-in-order-and-payment.md) | 148 |

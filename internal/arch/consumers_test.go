@@ -776,11 +776,28 @@ func TestTheEventTopicsHaveASubscriber(t *testing.T) {
 
 	for _, name := range slices.Sorted(maps.Keys(published)) {
 		if reason, exempt := subscriberlessPublications[name]; exempt {
-			if len(subscribed[name]) > 0 {
+			// A FORWARDER does not count as the subscriber that retires an
+			// exemption: plugins/webhookout subscribes to every published topic
+			// by its own mandatory gate, so its subscription says nothing about
+			// whether anybody wanted the topic. The distinction is
+			// [genericForwarders]', the same one
+			// [TestEveryTopicHasASubscriberThatChoseIt] draws.
+			//
+			// This does NOT make the exemption route reachable, and the message
+			// below says so rather than promising it: the plugin HOST relays
+			// every topic as well, and that is not a forwarder by this list. The
+			// filter is here because it is right, not because it opens a door.
+			var chose []string
+			for _, path := range subscribed[name] {
+				if forwarderOf(path) == "" {
+					chose = append(chose, path)
+				}
+			}
+			if len(chose) > 0 {
 				t.Errorf("the %q topic was counted as subscriberless but it HAS a subscriber (%s).\n"+
 					"The reason for the exemption no longer holds (%q); delete it from subscriberlessPublications — "+
 					"a dead exemption covers up the next real violation.",
-					name, strings.Join(subscribed[name], ", "), reason)
+					name, strings.Join(chose, ", "), reason)
 			}
 			continue
 		}
@@ -788,8 +805,12 @@ func TestTheEventTopicsHaveASubscriber(t *testing.T) {
 			t.Errorf("%s: the %q event is published but NO PRODUCTION FILE subscribes to it.\n"+
 				"A topic without a subscriber is work that is believed to be done but is not: the publish returns "+
 				"successfully, nobody sees an error, the feature is absent (\"order.placed\" was like this for months).\n"+
-				"Either add the subscriber or, if you are keeping the publish DELIBERATELY for outside observers, "+
-				"write it with its reason into the subscriberlessPublications map.", published[name], name)
+				"The answer is a subscriber inside this repository. The exemption map below is "+
+				"NOT a way out today and that was measured on 2026-09-08: the plugin host relays "+
+				"every topic to the plugins it loaded, so a published topic always has at least "+
+				"that subscription and an entry written here would read as stale the moment it "+
+				"was made. The map is kept for the day a publish genuinely has no reader inside "+
+				"the tree and the relay no longer stands between.", published[name], name)
 		}
 	}
 
@@ -799,6 +820,206 @@ func TestTheEventTopicsHaveASubscriber(t *testing.T) {
 				"Exemptions go unmaintained too; delete the entry.", name)
 		}
 	}
+}
+
+// genericForwarders are the components whose subscription says NOTHING about
+// whether anybody wanted the topic, keyed by path prefix and carrying the
+// reason.
+//
+// A forwarder does not CHOOSE its topics: it carries every event gobit
+// publishes to somewhere outside, and its own gate makes that mandatory.
+// plugins/webhookout's TestTheForwardedTopicsAreEveryPublishedTopic fails the
+// build for a published topic the plugin does not forward, so the day a new
+// topic is added that plugin MUST subscribe to it — which means
+// [TestTheEventTopicsHaveASubscriber] can never fail for that topic again.
+// Measured 2026-09-08: a fifth topic, published and forwarded and touched by
+// nothing else, leaves the whole of internal/arch green.
+//
+// That is the state subscriberlessPublications exists to make somebody write
+// down. A topic whose only subscriber is a forwarder has its consumer OUTSIDE
+// this repository — the receiver an operator registered — and routing it
+// through a forwarder reaches that state with the reason never written. ADR
+// 0063.
+//
+// A forwarder is NOT a lesser subscriber: it is the whole of gaps.md C5 and it
+// works. What it cannot do is answer the question this surface asks, which is
+// whether the capability has a consumer inside the framework.
+var genericForwarders = map[string]string{
+	"plugins/webhookout/": "forwards every published topic to operator-registered receivers, and " +
+		"its own TestTheForwardedTopicsAreEveryPublishedTopic makes forwarding a new topic " +
+		"mandatory rather than chosen",
+}
+
+// TestEveryTopicHasASubscriberThatChoseIt verifies that no published topic
+// rests on a generic forwarder alone.
+//
+// [TestTheEventTopicsHaveASubscriber] asks whether a topic has A subscriber.
+// That question stopped being answerable the day plugins/webhookout landed: a
+// forwarder subscribes to everything by construction, so every future topic
+// arrives with its subscriber already attached and that gate is green before
+// anybody has decided anything. This test asks what the other one used to ask —
+// did somebody CHOOSE this topic — and it is a separate test rather than a
+// stricter clause of the first, because the two failures take different
+// answers: the first is satisfied by a subscriber OR an exemption, this one
+// only by the subscriber.
+//
+// # A relayed subscription declares nothing and is skipped
+//
+// core/plugin's Host.Subscribe hands its caller's topic to the bus, and the
+// constant resolver follows a parameter back to the callers — so that ONE call
+// site resolves to every topic every plugin subscribes to. Counted as an
+// ordinary subscription it makes this test blind in exactly the case it exists
+// for: webhookout's forwarding would arrive under core/plugin's path, which is
+// not a forwarder prefix, and every forwarder-only topic would pass. A site
+// whose topic argument is a PARAMETER is therefore skipped; the plugin's own
+// call, which names the constant, is scanned on its own.
+//
+// The skip has a floor rather than trust: what the relay makes visible must
+// still be visible without it.
+//
+// # What a failure means
+//
+// Not that the forwarder is wrong. It means the topic's only consumer is
+// outside this repository, which is a legitimate thing for a framework to
+// publish and an illegitimate thing to leave undeclared: write the subscriber,
+// or write the topic into subscriberlessPublications with its reason.
+func TestEveryTopicHasASubscriberThatChoseIt(t *testing.T) {
+	t.Parallel()
+
+	tree := scanProductionSource(t)
+	const eventbusPath = modulePath + "/core/eventbus"
+
+	published := map[string]string{}
+	for _, site := range tree.calls["Publish"] {
+		if len(site.call.Args) < 2 {
+			continue
+		}
+		value := tree.eventLiteral(site, site.call.Args[1], eventbusPath)
+		if value == nil {
+			continue
+		}
+		for _, name := range tree.stringValues(site.file, site.fn, fieldExpr(value, "Name"), 0) {
+			published[name] = tree.location(site.file, site.call.Pos())
+		}
+	}
+	require.NotEmpty(t, published,
+		"no event publish was resolved, so every topic would pass having been checked "+
+			"against nothing. The publish surface must have changed; this test has to "+
+			"change with it.")
+
+	chosen := map[string][]string{}
+	forwarded := map[string][]string{}
+	relayed := map[string]string{}
+	for _, site := range tree.calls["Subscribe"] {
+		if len(site.call.Args) == 0 {
+			continue
+		}
+		names := tree.stringValues(site.file, site.fn, site.call.Args[0], 0)
+		if relaysItsTopic(site) {
+			for _, name := range names {
+				relayed[name] = tree.location(site.file, site.call.Pos())
+			}
+			continue
+		}
+		for _, name := range names {
+			if forwarderOf(site.file.path) != "" {
+				forwarded[name] = append(forwarded[name], site.file.path)
+				continue
+			}
+			chosen[name] = append(chosen[name], site.file.path)
+		}
+	}
+
+	// Floor one. A relay resolves to its callers' topics, so skipping it may
+	// not make a topic disappear: every name the relay carried has to be
+	// visible at a declaring site too. When it is not, the skip has swallowed
+	// the only subscription there was and this test would pass a topic nothing
+	// subscribes to at all.
+	for _, name := range slices.Sorted(maps.Keys(relayed)) {
+		if len(chosen[name]) == 0 && len(forwarded[name]) == 0 {
+			t.Errorf("%s: the %q topic is visible ONLY through a relayed subscription.\n"+
+				"The relay was skipped because it declares no topic, which leaves this "+
+				"topic with no subscription site at all — so it would be judged here "+
+				"against nothing. Either a subscriber names the topic in a constant this "+
+				"scan can resolve, or the skip has grown past the case it was written for.",
+				relayed[name], name)
+		}
+	}
+
+	// Floor two. A forwarder that no longer subscribes to anything — renamed,
+	// removed, or turned into a loop whose names no longer resolve — makes
+	// every entry above a no-op, and a no-op passes exactly the topic this test
+	// was written to catch.
+	for _, prefix := range slices.Sorted(maps.Keys(genericForwarders)) {
+		if !slices.ContainsFunc(slices.Collect(maps.Values(forwarded)), func(files []string) bool {
+			return slices.ContainsFunc(files, func(path string) bool { return strings.HasPrefix(path, prefix) })
+		}) {
+			t.Errorf("%q is listed in genericForwarders and subscribes to NOTHING this scan can see.\n"+
+				"Either the component is gone — delete the entry, because a dead entry makes "+
+				"this test silently weaker — or its subscriptions stopped resolving statically, "+
+				"which is the same blindness one layer down: its topics are then counted as "+
+				"CHOSEN and every one of them passes.\nThe reason on file was: %s.",
+				prefix, genericForwarders[prefix])
+		}
+	}
+
+	for _, name := range slices.Sorted(maps.Keys(published)) {
+		if len(chosen[name]) > 0 || len(forwarded[name]) == 0 {
+			// Either somebody chose it, or no forwarder is involved and
+			// TestTheEventTopicsHaveASubscriber owns the finding.
+			continue
+		}
+		if _, exempt := subscriberlessPublications[name]; exempt {
+			continue
+		}
+
+		t.Errorf("%s: the %q event's ONLY subscribers are generic forwarders (%s).\n"+
+			"Nothing in gobit does anything with this event. A forwarder carries every "+
+			"published topic outward and its own gate makes that mandatory, so its "+
+			"subscription is not evidence that anybody wanted the topic: "+
+			"TestTheEventTopicsHaveASubscriber is green here and has checked nothing.\n"+
+			"The consumer is OUTSIDE this repository, which is allowed and has to be SAID — "+
+			"either write the subscriber that acts on the event, or write the topic into "+
+			"subscriberlessPublications with the installation that listens (ADR 0063).",
+			published[name], name, strings.Join(forwarded[name], ", "))
+	}
+}
+
+// relaysItsTopic reports whether the subscription's topic is a PARAMETER of the
+// function it sits in, which makes the site a relay rather than a declaration.
+//
+// core/plugin's Host.Subscribe is the one in this repository: it takes a topic
+// and hands it to the bus, so the resolver walks back to the callers and that
+// single site answers with every topic every plugin subscribes to.
+func relaysItsTopic(site callSite) bool {
+	if len(site.call.Args) == 0 || site.fn == nil || site.fn.Type.Params == nil {
+		return false
+	}
+
+	id, ok := site.call.Args[0].(*ast.Ident)
+	if !ok {
+		return false
+	}
+
+	for _, field := range site.fn.Type.Params.List {
+		if slices.ContainsFunc(field.Names, func(name *ast.Ident) bool { return name.Name == id.Name }) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// forwarderOf returns the genericForwarders prefix the file sits under, or
+// empty when the file is an ordinary subscriber.
+func forwarderOf(path string) string {
+	for prefix := range genericForwarders {
+		if strings.HasPrefix(path, prefix) {
+			return prefix
+		}
+	}
+
+	return ""
 }
 
 // eventLiteral finds the eventbus.Event composite literal given to the Publish

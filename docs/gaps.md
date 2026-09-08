@@ -45,7 +45,7 @@ pass; two rows were found stale and are marked below.
 | B4 | Review module | Built — ADR 0051 applied in the SQL rather than quoted |
 | B5 | Order ↔ fulfillment link | Built. A shipment cannot yet be created from the panel |
 | B6 | A money-event read surface | Built — `first_captured_at` / `last_refunded_at`, loaded only when asked for |
-| **B7** | **Inventory movement ledger + inventory events** | **OPEN, blocked by its own first consumer.** A topic no production file subscribes to is refused and the exemption map is empty by policy |
+| **B7** | **Inventory movement ledger** | **OPEN, and it is the half of this row nothing was blocking.** The event half closed as ADR 0063; the ledger is a table with an internal reader and no event gate ever touched it. `audit_log` does not cover it — it records the REQUEST, holds no delta and no item, and never sees a reservation the checkout saga takes. What it needs before it is written is four answers, not an unblocking: whether a reservation is a movement, whether `stocked_quantity` becomes derived from it, who the actor is when no admin made the change, and how long a row is kept |
 | B8 | Customer module events | Not delivered, deliberately — ADR 0033 met the obligation with an interface that returns an answer |
 | **B9** | **Stored payment instrument** | **OPEN, blocked on a published-contract decision.** No table, no column, no symbol; both halves would widen `core/provider` |
 | **B10** | **Carrier-capable quote input** | **OPEN.** The state-machine half was built 2026-09-06; the quote input is larger than this row used to say |
@@ -53,8 +53,8 @@ pass; two rows were found stale and are marked below.
 | B12 | Outbound delivery machinery | Built — `next_attempt_at`, `dead_lettered_at`, capped doubling backoff |
 | B13 | Plugin host: let a plugin register a job | Built — `plugin.Host.RegisterJob`, arrived with its first consumer |
 | B14 | Order line-item read entity | Built — second read-layer entity, with a date filter and an index |
-| **B15** | **File events** | **OPEN, same blocker as B7.** The file module has never published an event |
-| **B16** | **A suggestion store** | **OPEN at both ends.** Nothing would write one and nothing would read one |
+| B15 | File events | Decided — ADR 0063, with B7's event half. No event is published; the file module's one cross-module relationship is read synchronously BOTH ways, so nothing waits to be told. Trigger: a second holder of an upload's bytes or address inside this repository — a cache in front of the object store is the concrete case |
+| B16 | A suggestion store | ADR 0066 — none is built; a suggestion belongs to the module that owns the row it proposes, and the trigger is the first proposal a query cannot reproduce |
 | B17 | KVKK erasure, export, retention | Erasure built — ADR 0033/0034, `core/personaldata`. Export and retention are not |
 | B18 | A per-column round-trip test | Built — `TestEveryColumnIsWrittenBySomething` |
 
@@ -62,7 +62,7 @@ pass; two rows were found stale and are marked below.
 
 | # | Feature | Waits on |
 |---|---|---|
-| C1 | Back-in-stock waitlist | B7 — the table, the event and the subscriber are all missing |
+| C1 | Back-in-stock waitlist | A15, and not B7. **The row said B7 until 2026-09-08** and was measurably incomplete: three files in the tree already name C1 as the thing that FAILS A15, because the waitlist row is an unverified contact detail with no unsubscribe. ADR 0063 makes the trigger a bound identity, which turns that row into a customer gobit already holds |
 | C2 | Order timeline | Built — `GET /admin/v1/orders/{id}/timeline`, composed, each entry names its clock |
 | C3 | Operator assistant in the panel | A return-creation surface |
 | C4 | Consent records and data-subject endpoints | Nothing. Actionable since 2026-09-07; the endpoints exist |
@@ -77,7 +77,7 @@ pass; two rows were found stale and are marked below.
 | C13 | Feature flags, then A/B | A9's assignment key |
 | C14 | Panel extension points, then the SPA | The three things ADR 0030 names as owed by whoever implements it |
 | C15 | Multi-language | A11 |
-| C16 | Real-time stock | B7, plus a fan-out the bus cannot do |
+| C16 | Real-time stock | The inventory event, now a DECISION rather than a gap (ADR 0063), plus a fan-out the bus cannot do — measured: the Redis backend distributes a stream ACROSS a consumer group rather than broadcasting |
 | C17 | Edge caching | Nothing — A8 is answered and built |
 | C18 | Multi-vendor marketplace | A3 and most of the above; last, deliberately |
 
