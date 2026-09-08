@@ -205,7 +205,11 @@ module that needs it and never enters the request context or `Principal`) and
 neither are
 reads — with ONE exception, this endpoint itself. Who read the record of who did
 what is the question an incident starts with, and it is the one read somebody
-with a stolen admin token makes. There is no endpoint that deletes a row and no
+with a stolen admin token makes. An inbound provider CALLBACK is not recorded
+there either: a provider is not an actor and the table has no column for the
+outcome worth recording, so a callback's record is the callback ring's own
+log, where every outcome leaves a line — the refused ones included ([ADR
+0056](adr/0056-a-callback-is-recorded-in-the-log-and-not-in-the-audit-table.md)). There is no endpoint that deletes a row and no
 retention window; pruning is an operator's scheduled statement, because a log
 the API can prune is a log an intruder can prune.
 

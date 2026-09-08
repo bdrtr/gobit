@@ -33,6 +33,7 @@ pass; two rows were found stale and are marked below.
 | A16 | What amount does a price filter compare | ADR 0041 — the base price, request's currency, quantity tier one, no group context |
 | A17 | What does "in stock" mean for a product | ADR 0040 — at least one variant unmanaged, backorderable, or with quantity above zero |
 | A18 | What counts as a match when a shopper filters by an option value | ADR 0039 — the folded form, stored beside the merchant's spelling |
+| **A19** | **Does a callback get a durable ledger of its own** | **OPEN.** ADR 0056 answers the mechanical half — no `audit_log` row, and the ring's log records every outcome including the ones a guard refused. A `callback_log` table fits the facts and needs three things this repository cannot derive: a reader, a scope beside `audit:read`, and a retention answer for a population the caller chooses |
 
 ## B. Foundations — each unblocks several features
 
@@ -89,7 +90,7 @@ row is for; the reproduction is in the commit that closed it.
 |---|---|---|
 | **D9** | Neither order nor payment ever soft-deletes: ten `deleted_at` columns nothing writes, behind reads that all carry `deleted_at IS NULL` | **OPEN.** Dropping them is a schema decision; taking the deletes on is a product one |
 | **D18** | Nine columns nothing has ever written, invisible until D16's fix | **Eight closed. The ninth is `stock_locations.deleted_at`**, and the question its exemption states is not "delete or status": a location has no delete OR update path, availability sums `inventory_levels` without joining locations, and both level and reservation rows CASCADE. What a closed location OWES — do its levels move, zero out or stop counting, and what happens to live reservations — decides the mechanism |
-| D1 | `/paytr/callback` sat outside every guarded prefix | Fixed — ADR 0028. Residue: callback writes are still not audited |
+| D1 | `/paytr/callback` sat outside every guarded prefix | Fixed — ADR 0028, and the residue answered 2026-09-08: a callback is recorded in the ring's LOG and not in `audit_log` (ADR 0056) — a provider is not an actor and the table has no column for the outcome. Every outcome now leaves a line, refusals included; four were silent, all of them the class where the handler RAN. What remains is a decision, A19, and not a residue |
 | D2 | `allow_backorder` published and read by nothing | Fixed — ADR 0048 |
 | D3 | The address book's storefront endpoints were unauthenticated | Fixed — ADR 0043. Residue: the cart's `customer_id` and b2b's copy of the boundary |
 | D4 | `order_exchanges.completed_at` / `canceled_at` never written | Fixed. The audit built to catch this never caught it — see D16 |

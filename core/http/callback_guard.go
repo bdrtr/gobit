@@ -25,6 +25,31 @@ import (
 //
 // The replay ring comes last, after the payload is known to be genuine, and it
 // is the only ring that writes anything.
+//
+// # Every outcome leaves a line, refusals included
+//
+// The record of a callback is this log and not an audit row: a provider is not
+// an actor, and the audit table has no column for the thing worth recording
+// here, which is WHICH of the five answers went back (ADR 0056).
+//
+// What the log is evidence about is decided one step above, in
+// [CallbackRegistry.lookup]: the population is every request that MATCHED a
+// registered route, so a callback the quota threw away and one whose signature
+// failed are both in it. Recording only what got past the guards would make the
+// log evidence about the requests that passed — which is the one question a
+// reader of it never has.
+//
+// [TestNoCallbackOutcomeIsSilent] holds the KNOWN outcomes — twelve of them,
+// each driven to its end and required to leave a line naming the callback, and
+// the four where the handler ran required to carry the status too.
+//
+// What it does NOT hold is a branch nobody has written yet. Measured
+// 2026-09-08: a new terminal branch added at the top of this function, writing
+// a status and returning without logging, leaves the whole package green. A
+// census cannot enumerate an outcome that does not exist, so the twelve are a
+// FLOOR and not a fence. Closing that would take a count of the terminal sites
+// in this file, derived from the source rather than from the census, and it is
+// not built.
 func (g *CallbackRegistry) guard(
 	w http.ResponseWriter, r *http.Request, rt *CallbackRoute, next http.Handler,
 ) {
@@ -68,7 +93,15 @@ func (g *CallbackRegistry) guard(
 		// no replay window. Both are stated conditions rather than faults, and
 		// both mean the same thing: the handler runs without a record, which is
 		// what every callback in this repository did before this ring existed.
-		next.ServeHTTP(w, r)
+		//
+		// It is said out loud because it is the state in which the same event
+		// can be applied twice, and the two ways into it — an unkeyable payload
+		// and an installation with no store — are invisible from the outside:
+		// the provider gets the ordinary answer either way.
+		answered := &responseWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(answered, r)
+		log.InfoContext(ctx, "a callback was handled with no replay record",
+			"status", answered.status)
 
 		return
 	}
@@ -189,6 +222,16 @@ func (g *CallbackRegistry) record(
 	}()
 
 	next.ServeHTTP(recorder, r)
+
+	// The one outcome this ring does not produce itself, and the reason it is
+	// said at all: every OTHER outcome is a refusal, and a refusal writes a
+	// line. Without this one the ring's log is evidence about the callbacks
+	// that were turned away and about nothing else — a log with no line in it
+	// would mean either "nothing arrived" or "everything succeeded", and no
+	// reader could tell which. A failing handler is on this line too, at its
+	// own status: "the ring refused it" and "the handler broke" are the two
+	// answers a provider retry has to be told apart by.
+	log.InfoContext(r.Context(), "a callback was handled", "status", recorder.status)
 
 	if recorder.status >= http.StatusInternalServerError || recorder.overflowed {
 		// A failure is not recorded, so the provider's retry gets a real attempt

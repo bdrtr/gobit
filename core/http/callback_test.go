@@ -4,14 +4,18 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	corehttp "github.com/bdrtr/gobit/core/http"
@@ -291,6 +295,309 @@ func TestAnUnkeyableCallbackStillRuns(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code)
 	require.Equal(t, 1, *harness.calls)
 }
+
+// TestNoCallbackOutcomeIsSilent holds the record ADR 0056 leaves on this ring.
+//
+// # What the log is evidence ABOUT, and why the population is drawn here
+//
+// A record whose population is the callbacks that PASSED the guards is evidence
+// about the guards and about nothing else. The forged signature, the throttled
+// flood, the payload this route cannot key: every one of them is a request a
+// guard stopped, and every one of them is why somebody opens the log. So the
+// population is every outcome the ring can produce, refusals first — which is
+// also the shape any durable ledger would have to keep.
+//
+// # Why the cases are written out and not derived
+//
+// Deriving them from the ring's own branches would derive the population from
+// the property under audit: a branch that says nothing would drop OUT of the
+// list rather than fail it, and the gate would go quiet exactly when a new
+// outcome went silent. The list is a hand-written census, and the census is
+// wrong in the safe direction — it can miss a new outcome, and it cannot be
+// emptied by one.
+//
+// Each case asserts a line NAMING the callback. An unattributed line is not a
+// record: nobody reading a log full of other traffic can find it.
+func TestNoCallbackOutcomeIsSilent(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		outcome string
+		// wantStatus is the status the callback-naming line must CARRY, or ZERO
+		// for an outcome whose line does not carry one.
+		//
+		// Asserting the line's EXISTENCE alone leaves the attribute unheld, and
+		// that was measured rather than supposed: deleting `"status",
+		// recorder.status` from the guard left this whole test green. For the
+		// four outcomes where the handler ran, the status is the half of the
+		// record an operator reads first — the difference between "the provider
+		// was answered" and "the provider was answered 500 and will retry
+		// forever".
+		//
+		// The nine REFUSALS carry zero, and that is a boundary rather than an
+		// oversight: their lines predate ADR 0056, each already names its own
+		// reason ("a callback was throttled", "a callback failed verification"),
+		// and the status follows from the reason. Widening them is a change to
+		// nine established messages and belongs to whoever wants it, not to the
+		// record that added the four.
+		wantStatus int
+		// drive performs the act. Anything it does BEFORE calling reset is
+		// setup, so a case about a retry is judged on the retry alone.
+		drive func(t *testing.T, logger *slog.Logger, reset func())
+	}{
+		{
+			outcome:    "throttled",
+			wantStatus: 0, // a refusal; see the field comment
+			drive: func(t *testing.T, logger *slog.Logger, _ func()) {
+				newCallbackHarness(t, corehttp.CallbackOptions{
+					Logger: logger, Store: newTestCallbackStore(), Limiter: refusingLimiter{},
+				}).post("signed:evt-1,paid")
+			},
+		},
+		{
+			outcome:    "oversized body",
+			wantStatus: 0, // a refusal; see the field comment
+			drive: func(t *testing.T, logger *slog.Logger, _ func()) {
+				newCallbackHarness(t,
+					corehttp.CallbackOptions{Logger: logger, Store: newTestCallbackStore()},
+					func(rt *corehttp.CallbackRoute) { rt.MaxBodyBytes = 32 },
+				).post("signed:" + strings.Repeat("x", 64))
+			},
+		},
+		{
+			outcome:    "forged signature",
+			wantStatus: 0, // a refusal; see the field comment
+			drive: func(t *testing.T, logger *slog.Logger, _ func()) {
+				newCallbackHarness(t, corehttp.CallbackOptions{
+					Logger: logger, Store: newTestCallbackStore(),
+				}).post("forged:evt-1,paid")
+			},
+		},
+		{
+			outcome:    "key derivation failed",
+			wantStatus: 0, // a refusal; see the field comment
+			drive: func(t *testing.T, logger *slog.Logger, _ func()) {
+				newCallbackHarness(t,
+					corehttp.CallbackOptions{Logger: logger, Store: newTestCallbackStore()},
+					func(rt *corehttp.CallbackRoute) {
+						rt.Key = func(*http.Request, []byte) (identity, content []string, err error) {
+							return nil, nil, errors.New("the verified payload could not be keyed")
+						}
+					},
+				).post("signed:evt-1,paid")
+			},
+		},
+		{
+			outcome:    "unkeyable payload",
+			wantStatus: 0, // a refusal; see the field comment
+			drive: func(t *testing.T, logger *slog.Logger, _ func()) {
+				newCallbackHarness(t, corehttp.CallbackOptions{
+					Logger: logger, Store: newTestCallbackStore(),
+				}).post("signed:")
+			},
+		},
+		{
+			// The installation with no replay window. It answers the provider
+			// exactly as a guarded one does, so the log is the only place it is
+			// visible at all.
+			outcome:    "no replay window",
+			wantStatus: 200,
+			drive: func(t *testing.T, logger *slog.Logger, _ func()) {
+				newCallbackHarness(t, corehttp.CallbackOptions{Logger: logger}).
+					post("signed:evt-1,paid")
+			},
+		},
+		{
+			outcome:    "handled",
+			wantStatus: 200,
+			drive: func(t *testing.T, logger *slog.Logger, _ func()) {
+				newCallbackHarness(t, corehttp.CallbackOptions{
+					Logger: logger, Store: newTestCallbackStore(),
+				}).post("signed:evt-1,paid")
+			},
+		},
+		{
+			outcome:    "handler failed",
+			wantStatus: 500,
+			drive: func(t *testing.T, logger *slog.Logger, _ func()) {
+				newCallbackHarness(t,
+					corehttp.CallbackOptions{Logger: logger, Store: newTestCallbackStore()},
+					func(rt *corehttp.CallbackRoute) {
+						rt.Handler = func(w http.ResponseWriter, _ *http.Request) {
+							w.WriteHeader(http.StatusInternalServerError)
+						}
+					},
+				).post("signed:evt-1,paid")
+			},
+		},
+		{
+			outcome:    "replayed",
+			wantStatus: 0, // a refusal; see the field comment
+			drive: func(t *testing.T, logger *slog.Logger, reset func()) {
+				harness := newCallbackHarness(t, corehttp.CallbackOptions{
+					Logger: logger, Store: newTestCallbackStore(),
+				})
+				harness.post("signed:evt-1,paid")
+				reset()
+				harness.post("signed:evt-1,paid")
+			},
+		},
+		{
+			outcome:    "contradiction",
+			wantStatus: 0, // a refusal; see the field comment
+			drive: func(t *testing.T, logger *slog.Logger, reset func()) {
+				harness := newCallbackHarness(t, corehttp.CallbackOptions{
+					Logger: logger, Store: newTestCallbackStore(),
+				})
+				harness.post("signed:evt-1,paid")
+				reset()
+				harness.post("signed:evt-1,failed")
+			},
+		},
+		{
+			outcome:    "event in flight",
+			wantStatus: 0, // a refusal; see the field comment
+			drive: func(t *testing.T, logger *slog.Logger, _ func()) {
+				store := newTestCallbackStore()
+				store.beginErr = corehttp.ErrIdempotencyKeyInFlight
+				newCallbackHarness(t, corehttp.CallbackOptions{Logger: logger, Store: store}).
+					post("signed:evt-1,paid")
+			},
+		},
+		{
+			outcome:    "replay window unreachable",
+			wantStatus: 0, // a refusal; see the field comment
+			drive: func(t *testing.T, logger *slog.Logger, _ func()) {
+				store := newTestCallbackStore()
+				store.beginErr = errors.New("redis is unreachable")
+				newCallbackHarness(t, corehttp.CallbackOptions{Logger: logger, Store: store}).
+					post("signed:evt-1,paid")
+			},
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.outcome, func(t *testing.T) {
+			t.Parallel()
+
+			logger, captured := newCallbackLog()
+			testCase.drive(t, logger, captured.reset)
+
+			said := captured.said()
+			require.NotEmpty(t, said,
+				"the %q outcome left NO line at all.\n"+
+					"A callback has no audit row (ADR 0056), so this log is the whole "+
+					"record of it: an outcome that says nothing happened without a trace.",
+				testCase.outcome)
+
+			named := slices.IndexFunc(said, func(line loggedLine) bool {
+				return line.attrs["callback"] == "testpay"
+			})
+			require.GreaterOrEqual(t, named, 0,
+				"the %q outcome wrote %d line(s) and none of them names the callback.\n"+
+					"An unattributed line is not a record: in a log carrying every other "+
+					"request there is no way to find it, and no way to tell which provider "+
+					"it was about.", testCase.outcome, len(said))
+
+			if testCase.wantStatus == 0 {
+				return
+			}
+			assert.Equal(t, strconv.Itoa(testCase.wantStatus), said[named].attrs["status"],
+				"the %q outcome named the callback but did not say what the provider was "+
+					"ANSWERED.\n"+
+					"A callback has no audit row (ADR 0056), so this line is the whole "+
+					"record, and a record of a request without its outcome cannot answer "+
+					"the question it exists for: whether the provider will come back.",
+				testCase.outcome)
+		})
+	}
+}
+
+// loggedLine is one record the ring wrote, flattened to what a test can ask.
+type loggedLine struct {
+	message string
+	attrs   map[string]string
+}
+
+// callbackLog captures what the ring said.
+//
+// It is a slog.Handler rather than a text buffer because the property under
+// audit is an ATTRIBUTE — that the line names the callback it is about — and a
+// formatted line would make the test match on the ring's wording instead.
+type callbackLog struct {
+	mu    sync.Mutex
+	lines []loggedLine
+}
+
+// newCallbackLog builds a logger and the capture behind it.
+func newCallbackLog() (*slog.Logger, *callbackLog) {
+	captured := &callbackLog{}
+
+	return slog.New(&callbackLogHandler{log: captured}), captured
+}
+
+// reset drops what was captured so far, so a case can be judged on its act
+// rather than on its setup.
+func (l *callbackLog) reset() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.lines = nil
+}
+
+// said returns what has been captured.
+func (l *callbackLog) said() []loggedLine {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return slices.Clone(l.lines)
+}
+
+// callbackLogHandler is one view of a [callbackLog], carrying the attributes
+// bound to it by slog.Logger's With.
+//
+// The ring binds the source and the path exactly once, at the top of the guard,
+// and every line inherits them from there — so a handler that dropped what With
+// gave it would report every line as unattributed and the gate would fail on a
+// fault of its own making.
+type callbackLogHandler struct {
+	log   *callbackLog
+	attrs []slog.Attr
+}
+
+// Enabled admits every level: an outcome logged at DEBUG is still an outcome.
+func (h *callbackLogHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+// Handle flattens one record into the capture.
+func (h *callbackLogHandler) Handle(_ context.Context, record slog.Record) error {
+	line := loggedLine{message: record.Message, attrs: map[string]string{}}
+	for _, attr := range h.attrs {
+		line.attrs[attr.Key] = attr.Value.String()
+	}
+	record.Attrs(func(attr slog.Attr) bool {
+		line.attrs[attr.Key] = attr.Value.String()
+
+		return true
+	})
+
+	h.log.mu.Lock()
+	defer h.log.mu.Unlock()
+	h.log.lines = append(h.log.lines, line)
+
+	return nil
+}
+
+// WithAttrs returns a view carrying the given attributes as well.
+func (h *callbackLogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	bound := make([]slog.Attr, 0, len(h.attrs)+len(attrs))
+	bound = append(bound, h.attrs...)
+	bound = append(bound, attrs...)
+
+	return &callbackLogHandler{log: h.log, attrs: bound}
+}
+
+// WithGroup is not used by this ring and nests nothing.
+func (h *callbackLogHandler) WithGroup(string) slog.Handler { return h }
 
 // TestNothingIsGuardedBeforeMount states the direction the ring fails in while
 // it is still being built.
