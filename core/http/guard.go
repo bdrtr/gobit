@@ -103,8 +103,18 @@ type GuardOptions struct {
 	// Audit records who called which ADMIN WRITE; nil means no audit log.
 	//
 	// It is scoped to the admin surface because a row is worth writing when it
-	// names somebody, and the storefront is unauthenticated by decision
-	// (ADR 0008).
+	// names somebody, and a storefront request names a SALES CHANNEL: the
+	// publishable key that authenticates it (see [RequireStore]) says which shop
+	// the request belongs to and nothing about who sent it.
+	//
+	// ~~the storefront is unauthenticated by decision (ADR 0008)~~ **Corrected
+	// 2026-09-08.** That word was wrong on the day it was written and ADR 0043
+	// said so while re-checking it: a request with no publishable key takes a
+	// 401 from [RequireStore] and never reaches a handler. What the storefront
+	// lacked was AUTHORIZATION, which ADR 0043 then gave the routes that name a
+	// customer — and even those produce no name to write here, because the
+	// identity that proves the customer is the embedder's and stays inside the
+	// module that asked it.
 	Audit AuditWriter
 	// AuditID produces the identifier of an audit row; it is required when
 	// [GuardOptions.Audit] is set.

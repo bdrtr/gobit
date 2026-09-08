@@ -158,10 +158,10 @@ price and stock records):
 
 | document | request | complexity | response | outcome |
 |---|---:|---:|---:|---|
-| product page (PDP, everything included) | 643 B | 2,368 | 6.8 KiB | passes |
+| product page (PDP, everything included) | 659 B | 2,379 | 6.8 KiB | passes |
 | category list (24 products, card + price) | 118 B | 2,344 | 15.1 KiB | passes |
-| ALL fields on the default page (20 products x whole tree) | 655 B | 28,440 | 136 KiB | passes |
-| ALL fields with `limit=100` | 667 B | 138,200 | 680 KiB | complexity |
+| ALL fields on the default page (20 products x whole tree) | 671 B | 28,660 | 137 KiB | passes |
+| ALL fields with `limit=100` | 683 B | 139,300 | 686 KiB | complexity |
 | `products { count }` with 400 aliases | 9.7 KiB | 408,000 | 8.5 KiB | field repetition |
 | **`description` with 489 aliases, `limit=100`** | 8.5 KiB | **50,000** | **204.9 MiB** | field repetition |
 | **`description` with 1500 aliases, default page** | 26.8 KiB | 31,020 | **125.7 MiB** | field repetition |
@@ -180,7 +180,7 @@ complexity of the fragment bomb cannot be calculated at all. Counting fields was
 never asking about the very dimension it missed.
 
 The comparison point is the `limit=100` row: pulling the same hundred products
-with all their fields is **680 KiB**, and asking REST for it with
+with all their fields is **686 KiB**, and asking REST for it with
 `GET /store/v1/sales-channels/{sales_channel_id}/products?limit=100` is of the
 same order. What produces 204.9 MiB
 is not more *records* but **the same record serialized 489 times** — and a REST

@@ -67,11 +67,17 @@
 // The model is common in headless commerce and here it also arises out of
 // necessity: the store surface's only identity today is the publishable key and
 // that key is NOT A SECRET — it sits in the browser, its only job is to bind the
-// request to a sales channel (see corehttp.RequireStore). There is no customer
-// SESSION, that is, there is no subject to ask "is this cart yours" either. The
-// same declaration is written in the order module too (order/api storeGetOrder),
-// and real authorization is the EMBEDDING APPLICATION's job rather than a later
-// phase of this framework's (ADR 0008).
+// request to a sales channel (see corehttp.RequireStore). gobit issues no
+// customer SESSION of its own and ADR 0008 still says it will not, so there is
+// no subject IN THIS PACKAGE to ask "is this cart yours". Since ADR 0043 that
+// is a choice rather than an absence: the core publishes the shape of the
+// embedder's proof (corehttp.Identity, bound in the container under
+// corehttp.IdentityName) and the customer module already refuses a storefront
+// claim it does not back. The cart has not taken that contract — see the
+// customer_id section below, which says why. The same declaration is written in
+// the order module too (order/api storeGetOrder), and real authorization is the
+// EMBEDDING APPLICATION's job rather than a later phase of this framework's
+// (ADR 0008).
 //
 // The model has RULES that are not free, and this package obeys them:
 //
@@ -111,13 +117,23 @@
 //
 // Unguessability DOES NOT CLOSE this, because the thing being guarded is not a
 // capability in the caller's hand but a claim made ABOUT SOMEBODY ELSE. The only
-// correct closure is a customer session: customer_id stops being taken from the
-// body and is read from the verified identity. That mechanism does not exist in
-// gobit and is not going to — the auth module that arrived in Phase 8 is ADMIN
-// identity and says so in its own package doc. This package does not try to
-// invent one either; the decision taken is
-// that the hole is WRITTEN DOWN — an unwritten security model is a security
-// model that does not exist.
+// correct closure is a verified customer identity: customer_id stops being
+// taken from the body and is read from a proof the caller cannot write. gobit
+// issues no such proof and is not going to — the auth module that arrived in
+// Phase 8 is ADMIN identity and says so in its own package doc, and this
+// package does not try to invent one either.
+//
+// What changed on 2026-09-08 is the SHAPE of the proof, not the proof:
+// ADR 0043 published corehttp.Identity, the embedder binds an implementation
+// under corehttp.IdentityName, and the customer module's eight storefront
+// routes now refuse a claim that identity does not back. That record scoped
+// itself to a surface with no guest path and named this package as the half it
+// deliberately left open: the guest-to-registered handover is the one blocker
+// an interface does not clear, and taking the contract here without deciding
+// the handover would close the door on the guest carts it exists to serve. So
+// the three doors below are unchanged and measured exactly as before, and the
+// decision taken is still that the hole is WRITTEN DOWN — an unwritten security
+// model is a security model that does not exist.
 //
 // Where the responsibility sits is settled in ADR 0008: verifying the identity
 // is the job not of the framework but of the EMBEDDING APPLICATION, and under

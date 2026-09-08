@@ -304,24 +304,32 @@ has to remember.
 
 **Negative, and accepted**
 
-- **The gate this record requires does not exist, and this record does not fund
-  it.** "Is there an admin transition route?" is answerable from the router
-  alone; "does this write create a durable row a later event will act on?" needs
-  a route-to-table cross-reference that nothing in this tree performs. The two
-  halves that DO exist are worth naming, because they are what makes the third
-  plausible rather than speculative: `internal/arch/consumers_test.go` pairs
-  every published topic with a subscriber and every subscription with a
-  publisher, and both of its exemption maps — `subscriberlessPublications` and
-  `publisherlessSubscriptions` — are empty as a matter of policy, with both
-  tests green; `internal/arch/module_sql_test.go` already derives which tables a
-  module's SQL may name; and `adminRoutes` in
+- ~~**The gate this record requires does not exist, and this record does not fund
+  it.**~~ **Built 2026-09-08; the paragraph is kept struck because the estimate
+  in it is the interesting part.** "Is there an admin transition route?" is
+  answerable from the router alone; "does this write create a durable row a later
+  event will act on?" needs a route-to-table cross-reference that nothing in this
+  tree performs. The two halves that DO exist are worth naming, because they are
+  what makes the third plausible rather than speculative:
+  `internal/arch/consumers_test.go` pairs every published topic with a subscriber
+  and every subscription with a publisher, and both of its exemption maps —
+  `subscriberlessPublications` and `publisherlessSubscriptions` — are empty as a
+  matter of policy, with both tests green; `internal/arch/module_sql_test.go`
+  already derives which tables a module's SQL may name; and `adminRoutes` in
   `internal/e2e/authorization_test.go` walks the entire router tree and filters
   on a path prefix, which proves a whole-prefix walker is buildable here. The
-  JOIN between them is new work. **Until it exists, the discriminator is held by
-  review and argument — the weaker form this record's second half exists to
-  forbid.** That is the honest price of preferring an accurate rule to a
+  JOIN between them is new work. ~~**Until it exists, the discriminator is held
+  by review and argument — the weaker form this record's second half exists to
+  forbid.**~~ That is the honest price of preferring an accurate rule to a
   checkable one, and this record pays it deliberately rather than by choosing
-  the crude rule.
+  the crude rule. **What the join actually needed was one hop this paragraph did
+  not anticipate.** The schema replay and the route walk were both reusable as
+  written, but a handler does not reach its own table: the cart opens, prices and
+  completes through narrow interfaces its api package declares and the
+  composition root binds, so a walk that stopped at the module boundary resolved
+  four of the cart's eleven storefront writes to no table at all. Following the
+  call graph into `internal/workflows` as well is what closed it, and the guard
+  that a storefront write MUST resolve to a table is what says so out loud.
 - **Two shipped surfaces are non-compliant on the day this is accepted**, and
   the record fixes neither. The cart's `customer_id` stays an unverified claim
   on creation and on handover; webpush stays a standing authority holding a
@@ -372,9 +380,45 @@ has to remember.
   submission, a status parameter added to the review listing, and each of the two
   blindness guards.
 
-  What it still does NOT do is the route-to-table audit — nothing here reads the
-  SCHEMA, so the third part of this decision, that the discriminator constrains
-  the columns a table may carry, remains held by review rather than by a gate.
+  ~~What it still does NOT do is the route-to-table audit — nothing here reads
+  the SCHEMA, so the third part of this decision, that the discriminator
+  constrains the columns a table may carry, remains held by review rather than by
+  a gate.~~ **The third part was built on 2026-09-08 as well, in
+  `internal/arch/storefront_schema_test.go`, and the schema is now read.** Every
+  storefront write route **under `internal/modules`** — the twenty-two of the
+  twenty-five above; `plugins/webpush` registers its three under a chi route
+  PREFIX the scan does not follow, and they stay outside on the open-defect row
+  below — is resolved to the tables it can store into: the module it was
+  registered in, then the call graph from its handler through
+  `internal/workflows` to the SQL, then an intersection with the tables that
+  module's own migrations create. Every column of every reached table is then
+  read for the four claims this decision refuses in its worked example: a party,
+  a contact, a network origin and a prior record of the shop. **What the
+  intersection leaves outside is worth naming rather than discovering**, because
+  it is this record's own boundary showing up as a blind spot: a write another
+  MODULE performs on a route's behalf is not the route's, so the checkout saga's
+  own stored claims are unaudited — `orders.customer_id` and `orders.email` were
+  measured UNREACHED on 2026-09-08, and they are where the cart's declared
+  `customer_id` actually lands. A claim with no verdict fails the gate, a verdict
+  for a claim that has gone fails it the same way, and a party column the
+  storefront BODY carries may not be recorded under EITHER limb — not CONFINED,
+  because that limb says in as many words that no subject the client names may be
+  a party the writer does not already hold, and not INERT, because both limbs
+  judge the WRITE while the clause at issue judges the COLUMN, which this record
+  settles against a client-declared party by refusing an order id on the
+  `reviews` table whose write IS inert. Eight claim columns are reachable today
+  and each carries a verdict: seven pass a limb, and the cart's `customer_id` is
+  the one recorded as an OPEN DEFECT, with the closing rows this record already
+  named. The review module's three refusals are held where they live, which is in
+  their ABSENCE, so the gate is proved on a planted `reviews` table that has all
+  three back. Mutation-proved three times besides: an `ip_address` column added
+  to the reviews migration, which the gate reports as an unjudged NETWORK ORIGIN
+  naming the route that writes it; the workflows tree taken back out of the walk,
+  which the route-reaches-a-table guard reports as the four cart routes it
+  blinds; and the cart's row rewritten from OPEN DEFECT to INERT, which stayed
+  GREEN on 2026-09-08 until the refusal was widened from CONFINED alone to both
+  limbs — the record's own defect class landing inside the gate written to end
+  it.
 - **It does not forbid the waitlist forever.** What fails here is the waitlist as
   specified — an unverified address turned into a message by a subscriber. A
   design where the destination is verified, or where the actuation is something

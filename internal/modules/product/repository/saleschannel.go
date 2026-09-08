@@ -440,6 +440,48 @@ const (
     WHERE product_tag_map.product_id = product.id
       AND product_tag_map.tag_id = %s::text
   )`
+
+	// optionValueFilterSQL keeps the products that OFFER one option value.
+	//
+	// # Why it is an EXISTS like its two neighbors
+	//
+	// A product carries the same value on as many of its options as a merchant
+	// created, and every variant that takes the value adds another row below
+	// it. A join would return the product once per matching row, so the page
+	// would hold fewer products than its limit says and the count would be a
+	// number of VALUES rather than of products -- exactly the failure the
+	// taxonomy filters are EXISTS to avoid. The question is "does at least
+	// one", and EXISTS stops at the first match.
+	//
+	// # Why the join reaches the product through product_option
+	//
+	// The vocabulary endpoint builds its entries from the same two tables (see
+	// [optionValueBodySQL]), so a value it hands a client is a value this
+	// filter can find. Had this asked product_variant_option_value instead --
+	// "some VARIANT is tagged with the value" -- a product whose option offers
+	// a value no variant has been given yet would be listed by the vocabulary
+	// and refused by the filter, and the client would have no way to tell that
+	// from an empty catalog.
+	//
+	// # The soft-delete guard on both parents
+	//
+	// Deleting an option is not a cascade: the product deletion stamps the
+	// option row and leaves its values standing (see SoftDeleteOptionsByProduct
+	// in queries/product.sql). Without the guard on product_option, a value
+	// belonging to an option the merchant removed would keep the product in the
+	// filter's answer.
+	//
+	// The comparison is between two STORED strings and carries no function
+	// call, which is what lets migration 000004's index on value_folded drive
+	// the plan; the fold that produced both sides is Go's (ADR 0039).
+	optionValueFilterSQL = `
+  AND EXISTS (
+    SELECT 1 FROM product_option_value pov
+    JOIN product_option po ON po.id = pov.option_id AND po.deleted_at IS NULL
+    WHERE po.product_id = product.id
+      AND pov.deleted_at IS NULL
+      AND pov.value_folded = %s::text
+  )`
 )
 
 // productFilterSQL builds the SHARED filter body of the product listing and
@@ -471,7 +513,7 @@ const (
 // changed both, silently, in a commit whose subject line is about speed.
 func productFilterSQL(f ProductFilter) (body string, args []any) {
 	var clauses strings.Builder
-	args = make([]any, 0, 7)
+	args = make([]any, 0, 8)
 
 	// param records an argument and returns the placeholder that stands for
 	// it. The number is the position in args, so the two cannot drift.
@@ -499,6 +541,9 @@ func productFilterSQL(f ProductFilter) (body string, args []any) {
 	}
 	if f.TagID != nil {
 		fmt.Fprintf(&clauses, tagFilterSQL, param(f.TagID))
+	}
+	if f.OptionValueFolded != nil {
+		fmt.Fprintf(&clauses, optionValueFilterSQL, param(f.OptionValueFolded))
 	}
 	if f.SalesChannelIDs != nil {
 		clauses.WriteString("\n  AND " + salesChannelAssigned("product.id", param(f.SalesChannelIDs)))

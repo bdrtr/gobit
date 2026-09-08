@@ -108,17 +108,29 @@ const (
 //
 // # customer_id, and it is not a theoretical worry
 //
-// `GET /store/v1/customers/{id}` is UNPROTECTED and stays so — the customer
-// module says it in writing, and ADR 0008 explains why: gobit offers no surface
-// that verifies a customer's identity, and a half-built identity layer is more
-// dangerous than none. The consequence is that a customer id is not an
-// identifier, it is a BEARER TOKEN for that customer's name, email address and
-// every address they have saved.
+// A customer id is not an identifier, it is a LEVER on that customer.
+// ADR 0043 narrowed which levers it is; it removed none of them.
 //
-// Sending it to a registered receiver would hand a third party standing access
-// to the personal data of every customer who places an order, over an endpoint
-// that asks them for nothing. The event carries it because the bus stays inside
-// the installation; a webhook body does not.
+// ~~`GET /store/v1/customers/{id}` is UNPROTECTED and stays so — the customer
+// module says it in writing~~ **Corrected 2026-09-08.** The customer module now
+// says the opposite in writing: that endpoint and the seven beside it resolve a
+// corehttp.Identity and refuse a claim it does not back, so name, e-mail and
+// saved addresses are no longer readable from an identifier alone — in an
+// installation that bound an identity which really proves one. gobit cannot
+// tell whether it did, and says so: an implementation that hands the path
+// parameter back satisfies the interface and proves nothing.
+//
+// What did NOT move is enough on its own, and both halves are named as open in
+// ADR 0043's own consequences. b2b's two storefront routes still read the
+// customer out of their own path parameter with no identity at all, so an id
+// still returns that person's company and their spending limit. And the cart
+// still takes customer_id from its body, so an id is something to SPEND from as
+// well as to read: the checkout a stranger completes is deducted from the named
+// customer's window, which is ADR 0008's measurement and it reproduces exactly.
+//
+// Sending it to a registered receiver would hand a third party standing hold of
+// that lever, over endpoints that ask them for nothing. The event carries it
+// because the bus stays inside the installation; a webhook body does not.
 //
 // The removal is VISIBLE: the field name travels in the body's `redacted` list,
 // so a receiver sees that something was withheld rather than that the order had
@@ -128,8 +140,9 @@ const (
 // This map is deliberately not configurable. A setting that let an installation
 // switch it off would be the setting nobody reads before switching it on.
 var redactedFields = map[string]string{
-	"customer_id": "a customer id is a bearer token for /store/v1/customers/{id}, " +
-		"which is unauthenticated by decision (ADR 0008)",
+	"customer_id": "a customer id is a lever on that customer: b2b's storefront " +
+		"routes still return their company and spending limit for it with no identity " +
+		"check, and the cart still accepts it from a body (ADR 0008, ADR 0043)",
 }
 
 // The delivery job's shape.

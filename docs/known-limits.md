@@ -25,8 +25,27 @@ past and is not corrected retroactively.
 
 ## Identity and authorization
 
-- **The customer identity is not verified.** `customer_id` is not a fact but a
-  claim that asks for no proof. Its three separate consequences for the spending
+- **gobit issues no customer identity, and since
+  [ADR 0043](adr/0043-gobit-requires-an-identity-it-still-does-not-issue.md) it
+  REQUIRES yours on eight storefront routes.** This is the one limit in this file
+  that an embedder has to act on rather than merely accept.
+  `GET`/`PUT /store/v1/customers/{id}` and the six routes of its address book ask
+  whether the caller is the customer the path names. The answer comes from
+  `corehttp.Identity`, a one-method interface the framework publishes and does not
+  implement; the embedding application registers its own from an ordinary module,
+  in the container, under the name `corehttp.IdentityName` (`"core.identity"`).
+  **Bind nothing and those eight routes refuse every request** with
+  `401 identity_not_bound` — closed rather than open, which is
+  [ADR 0007](adr/0007-sertlestirme-arizada-davranis.md)'s row for an unconfigured
+  authenticator. An installation upgrading past `v0.8.0` without binding one loses
+  its address book, loudly. What gobit still does not do is VERIFY: an
+  implementation that hands the path parameter back satisfies the interface, and
+  the framework cannot tell. `POST /store/v1/customers` is outside the set because
+  it mints the record; so are the cart, the order and the b2b storefront routes —
+  the two bullets below are what that costs.
+- **The customer identity is not verified where it is DECLARED.** `customer_id`
+  in a cart body is not a fact but a claim that asks for no proof. Its three
+  separate consequences for the spending
   limit were measured on a real binary with a single publishable key and are
   recorded with the B2B spending rule in
   [`docs/commerce-flows.md`](commerce-flows.md): sending no `customer_id` at all
@@ -168,8 +187,13 @@ past and is not corrected retroactively.
   the counter.
 
   This is not a defect but the price of the pagination contract: if a total is
-  asked for, a total is counted. The list query itself does not carry this cost
-  (measured: 0.14 ms), so the only thing that gets slower is `count`.
+  asked for **and can be counted**, a total is counted. There is now one place
+  where it cannot be: beside `in_stock` or a price bound (ADR 0040, ADR 0041)
+  the matches are chosen after the rows are read, so an explicitly requested
+  total is REFUSED with 422 `product_count_unavailable` rather than counted or
+  quietly dropped. Every request that could be counted before still is. The list
+  query itself does not carry this cost (measured: 0.14 ms), so the only thing
+  that gets slower is `count`.
 
   The counter CANNOT BE MADE CHEAPER, but it can now be NOT ASKED FOR:
   `?with_count=false` (in GraphQL, not selecting the `count` field) does not run

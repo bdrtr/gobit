@@ -21,16 +21,30 @@
 //
 // Bu depoda vitrin isteklerinin kimliği publishable API anahtarıdır ve o anahtar
 // bir SATIŞ KANALINI temsil eder, bir müşteriyi değil (bkz. corehttp.RequireStore).
-// Yani "giriş yapmış müşteri" diye okunabilecek bir oturum kimliği çekirdekte
-// HENÜZ YOKTUR. Uçlar bu yüzden customer idni yoldan alır — tıpkı
-// /store/v1/customers/{id} gibi — ve kimliğin doğruluğu DOĞRULANMAZ.
+// Uçlar bu yüzden customer idni yoldan alır ve kimliğin doğruluğu DOĞRULANMAZ.
 //
 // Sonuç açıkça yazılmalıdır: başka bir müşterinin kimliğini BİLEN bir çağıran,
-// o müşterinin şirketini okuyabilir. Kapatılan şey, şirketin adıyla
-// istenebilmesidir; kapatılmayan şey, customer idnin taklit edilmesidir.
-// Müşteri oturumu geldiğinde yapılacak iş tek bir yerdedir: [storeCustomerID]
-// kimliği yol parametresi yerine oturumdan okumalı ve uyuşmazlıkta
-// errors.Forbidden dönmelidir.
+// o müşterinin şirketini ve harcama limitini okuyabilir. Kapatılan şey,
+// şirketin adıyla istenebilmesidir; kapatılmayan şey, customer idnin taklit
+// edilmesidir.
+//
+// # The contract that would close it EXISTS now, and this module has not taken it
+//
+// Until 2026-09-08 this paragraph said no customer session was expressible in
+// the core, and that sentence was the reason to wait. It is no longer true:
+// corehttp.Identity is published, the customer module resolves it under
+// corehttp.IdentityName and refuses its eight storefront routes when nothing is
+// bound (ADR 0043). These two routes were left as they are BY THAT SAME RECORD,
+// which names this copy in its consequences: one contract, two modules, two
+// functions, and the one it closed is the one ADR 0008's list left out.
+//
+// So the work is no longer "wait for a session to exist" but "bind the contract
+// that does": hold a corehttp.Identity, compare it with [storeCustomerID]'s
+// path parameter and return errors.Forbidden on a mismatch. It is deliberately
+// not done here, because doing it in passing would put a second, silently
+// diverging copy of that comparison in the tree — and a wrong copy of an
+// authorization rule keeps answering, which is the failure mode this repository
+// pays the most for.
 //
 // # Yetki
 //
@@ -260,12 +274,12 @@ func pathParam(r *http.Request, name string) string {
 
 // storeCustomerID vitrin isteğinin hangi müşteriye ait olduğunu döner.
 //
-// MÜŞTERİ OTURUMU BAĞLAMA NOKTASI: kimlik ŞİMDİLİK yol parametresinden okunur,
-// yani istemcinin kendi bildirdiği değerdir ve doğrulanmaz (gerekçe ve sınırlar
-// için bkz. paket belgesi). Oturum geldiğinde bu fonksiyon kimliği belirteçten
-// almalı, yol parametresiyle karşılaştırıp uyuşmazlıkta errors.Forbidden
-// dönmelidir. Tek bir yerde durması, o değişikliğin tek dosyada yapılabilmesi
-// içindir.
+// MÜŞTERİ KİMLİĞİ BAĞLAMA NOKTASI: kimlik yol parametresinden okunur, yani
+// istemcinin kendi bildirdiği değerdir ve doğrulanmaz (gerekçe ve sınırlar için
+// bkz. paket belgesi). The contract to bind is corehttp.Identity and the
+// customer module's storeCustomerID is the worked example; this one has not
+// taken it yet and the package doc says why. Tek bir yerde durması, o
+// değişikliğin tek dosyada yapılabilmesi içindir.
 func storeCustomerID(r *http.Request) string {
 	return pathParam(r, paramCustomerID)
 }

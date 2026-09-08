@@ -93,6 +93,64 @@ type Query {
     A product carrying several tags is still returned ONCE.
     """
     tagId: ID
+    """
+    Narrows the listing to the products offering one option VALUE ("red").
+
+    The value comes from the option vocabulary endpoint, which is the one
+    vocabulary that returns text rather than ids: an option belongs to exactly
+    one product, so an option-value id would name a single product's single
+    value and filtering a catalog by one would return at most one product.
+
+    The match is on the FOLDED form and the fold is Go's, never the cluster's
+    (ADR 0039): two spellings of one value meet, two DIFFERENT values do not,
+    and a script the fold has no ASCII base for is kept rather than dropped —
+    so a Cyrillic or CJK catalog gains case-insensitivity instead of losing its
+    text. A shopper typing an unaccented approximation of such a value still
+    misses, and that is a MISS rather than a merge.
+
+    The title of the axis is not part of it: this asks "offers the value red on
+    any axis". Whether two axes named differently are one axis is a merchant's
+    data question rather than a rule this framework can pick.
+    """
+    optionValue: String
+    """
+    Narrows the listing by availability (ADR 0040).
+
+    A VARIANT is in stock when it is not counted (manageInventory false), OR it
+    may be sold past zero (allowBackorder), OR its available quantity is above
+    zero; a PRODUCT is in stock when at least one of its variants is. A variant
+    that is counted and linked to NO inventory item is not in stock — answering
+    otherwise would sell what the shop may not have.
+
+    Both directions are answered: true keeps what can be bought, false keeps
+    what cannot, and leaving the argument out filters nothing.
+
+    It cannot be a database predicate — two of its three inputs are this
+    module's columns and the third is inventory's number — so the listing
+    SCANS the catalog for it. Selecting "count" beside it is refused: the total
+    would have to be computed over the whole catalog.
+    """
+    inStock: Boolean
+    """
+    Narrows the listing to the products with a BASE price inside a bracket
+    (ADR 0041).
+
+    "Base" is the price that belongs to NO price list. There is no default
+    price list in this schema and no column that could mark one, so the shop's
+    ordinary price is the ABSENCE of a list rather than a list one could name.
+
+    The bracket is compared in the currency it names and never converts: a rate
+    is a fact about a moment this repository does not store, and a filter that
+    quietly converted would answer differently on two consecutive requests.
+
+    A product on SALE shows the sale price and filters by its base price, so a
+    shopper asking for "under 100" may not see something currently selling for
+    90. That is the price of a filter that does not move on its own.
+
+    Like inStock, it is answered after the catalog is read, so selecting
+    "count" beside it is refused.
+    """
+    price: PriceFilter
   ): ProductList!
 
   """
@@ -107,6 +165,36 @@ type Query {
   different error would pierce the hiding itself.
   """
   product(id: ID, handle: String): Product
+}
+
+"""
+The price bracket of a catalog filter: a currency and an open or closed
+interval over the BASE price at quantity ONE.
+
+It is an INPUT OBJECT rather than three loose arguments because the three are
+one criterion: a bound without a currency is not comparable and a currency
+without a bound narrows nothing. Grouping them lets the schema say so in its
+own types, and it is bound to the service's own PriceBracket, so there is no
+converter between the schema's idea of a bracket and the service's.
+
+The REST listing spells the same three as flat query parameters
+(currency_code, min_price, max_price) because a query string has no nesting;
+the RULES they must satisfy are validated in the service, once, so both
+surfaces refuse the same requests.
+"""
+input PriceFilter {
+  "The ISO 4217 code of the currency the bounds are given in, uppercase."
+  currencyCode: String!
+  """
+  The inclusive lower bound in MINOR units; null is an open end.
+
+  Minor units because that is what pricing stores; a decimal here would mean
+  this module deciding how many digits a currency has, which is region's
+  answer and not the catalog's.
+  """
+  min: Int
+  "The inclusive upper bound in MINOR units; null is an open end."
+  max: Int
 }
 
 "A paginated product list; it carries the same envelope as the REST storefront list."
@@ -155,6 +243,21 @@ type Product {
   metadata: JSON
   createdAt: Time!
   updatedAt: Time!
+  """
+  Whether at least one variant of the product can be bought right now
+  (ADR 0040).
+
+  It is the BADGE, and it is on every product body rather than behind an
+  argument: the inputs are already fetched for the listing, so the answer is
+  arithmetic over records the request reads anyway. A product with NO variants
+  is not in stock — there is nothing under it to sell.
+
+  The answer is over the sellable total across ALL locations and is NOT
+  regional. Making it regional means deciding which locations serve which
+  region, a question nothing in this repository asks yet, and it would be a
+  different decision with its own record.
+  """
+  inStock: Boolean!
   "Sellable units. The price and the inventory are HERE, not at the product level."
   variants: [Variant!]!
   options: [Option!]!
@@ -179,6 +282,21 @@ type Variant {
   metadata: JSON
   createdAt: Time!
   updatedAt: Time!
+  """
+  Whether this variant can be bought right now (ADR 0040).
+
+  True when it is not counted (manageInventory false), OR it may be sold past
+  zero (allowBackorder), OR its available quantity is above zero. A variant
+  that is counted while nothing counts it — one with no inventoryItem — is
+  NOT in stock: the link is optional, and answering otherwise would be a guess
+  in the direction of selling something the shop may not have.
+
+  It is COMPUTED on every read rather than stored. A stored copy is stale the
+  moment stock moves, and keeping it fresh would mean this module subscribing
+  to inventory's events for a value it can work out from a record it already
+  holds.
+  """
+  inStock: Boolean!
   "The values that place the variant in the option space (e.g. Size: S)."
   optionValues: [OptionValue!]!
 

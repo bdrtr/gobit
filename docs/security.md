@@ -156,11 +156,31 @@ The vocabulary derives from a single rule:
 | `GET /admin/v1/auth/me`, `POST /admin/v1/auth/logout` | identity only |
 | `/admin/v1/**` **read** (GET, HEAD) | `<module>:read` |
 | `/admin/v1/**` **write** (POST, PUT, PATCH, DELETE) | `<module>:write` |
-| `/store/v1/**` | — (a publishable key carries no authority) |
+| `/store/v1/**` | — no **scope** (a publishable key carries no authority); eight routes carry a different authorization step, below |
 
 `<module>` is the name of the module that owns the endpoint: `product:read`,
 `order:write`, `promotion:write` … `admin` is the **super-scope** and covers them
 all.
+
+**A publishable key carries no scope, and since
+[ADR 0043](adr/0043-gobit-requires-an-identity-it-still-does-not-issue.md) that is
+no longer the same sentence as "the storefront is unauthorized".** Eight routes —
+`GET`/`PUT /store/v1/customers/{id}` and the six of its address book — ask a
+question the scope vocabulary cannot express: *is the caller the customer the path
+names?* The answer comes from `corehttp.Identity`, a one-method interface gobit
+**publishes and does not implement**. The embedding application registers its own
+under the container name `corehttp.IdentityName` (`"core.identity"`) from an
+ordinary module; the customer module resolves it on the first storefront request
+and compares what it proves against what the path claims. With **nothing bound
+those eight routes refuse every request** with `401 identity_not_bound` — a
+mandatory obligation for anyone upgrading past `v0.8.0`, and the closed row
+[ADR 0007](adr/0007-sertlestirme-arizada-davranis.md) writes for an unconfigured
+authenticator. With one bound, a path naming somebody else is
+`403 identity_mismatch`. gobit still verifies nothing itself: it requires the
+embedder's verifier and refuses to guess in its absence. `POST /store/v1/customers`
+is outside the set because it MINTS the record, and the carts, orders and b2b
+storefront routes are outside it too — see
+[`docs/known-limits.md`](known-limits.md).
 
 Four scopes name a resource that is not a module, because the surface they guard
 belongs to no module: `personal-data:read`, `personal-data:disclose`,
@@ -176,7 +196,11 @@ nothing else, and a scope naming a power nobody has is one somebody will try.
 called, what came back — and is read at `GET /admin/v1/audit-log`, newest first,
 with keyset paging. It records the REQUEST rather than the change; what changed
 is read from the record, which carries its own `updated_at`. Storefront requests
-are not recorded (that surface is unauthenticated by decision) and neither are
+are not recorded (its principal is a publishable key naming a sales channel
+rather than a person, so a row there would say "somebody" and mean nothing — and
+the customer identity of ADR 0043 does not change that: it is resolved by the one
+module that needs it and never enters the request context or `Principal`) and
+neither are
 reads — with ONE exception, this endpoint itself. Who read the record of who did
 what is the question an incident starts with, and it is the one read somebody
 with a stolen admin token makes. There is no endpoint that deletes a row and no

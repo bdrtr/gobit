@@ -242,12 +242,15 @@ func TestARealOrderReachesARealWebhookReceiver(t *testing.T) {
 	assert.NotEmpty(t, data["currency_code"])
 
 	// And the boundary holds on the real event, which really does carry a
-	// customer id: it is a bearer token for an unauthenticated storefront
-	// endpoint, so it must not reach a third party.
+	// customer id: it is a LEVER on that customer — the address book asks for a
+	// bound identity since ADR 0043, but b2b's storefront routes still answer
+	// for an id alone and the cart still takes one from a body — so it must not
+	// reach a third party.
 	assert.NotContains(t, data, "customer_id",
-		"the customer id reached the receiver. GET /store/v1/customers/{id} is "+
-			"unauthenticated by decision, so the receiver now has standing access to that "+
-			"customer's name, email address and every address they have saved.")
+		"the customer id reached the receiver. It is a lever on that customer: b2b's "+
+			"storefront routes return their company and spending limit for it with no "+
+			"identity check, and the cart still accepts it from a body, so the receiver "+
+			"now has standing hold of it (ADR 0008, ADR 0043).")
 	redacted, _ := got[0].body["redacted"].([]any)
 	assert.Contains(t, redacted, "customer_id",
 		"the withholding has to be visible; a receiver that simply sees no customer_id "+

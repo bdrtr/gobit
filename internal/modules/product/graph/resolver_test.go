@@ -44,11 +44,19 @@ type fakeStorefront struct {
 // result.
 //
 // On the count field the REAL service's contract is imitated: nil if SkipCount
-// is asked for, filled in if it is not. Returning a fixed result would not have
-// been enough — the "count: Int!" in the schema does not accept nil and every
-// test that SELECTS the count would fail with "null which the schema does not
-// allow" because of the fake. That is, a fake that does not carry the contract
-// would produce a failure unrelated to the behavior under test.
+// is asked for, nil beside one of the two ENRICHED filters, filled in
+// otherwise. Returning a fixed result would not have been enough — the
+// "count: Int!" in the schema does not accept nil and every test that SELECTS
+// the count would fail with "null which the schema does not allow" because of
+// the fake. That is, a fake that does not carry the contract would produce a
+// failure unrelated to the behavior under test.
+//
+// The enriched-filter half of that contract was added on 2026-09-08 and it is
+// not decoration. Without it a fake handed inStock or price still returned a
+// number, so a build that DROPPED the resolver's explicit refusal would have
+// answered those documents happily here while the real service returned nil and
+// the client got gqlgen's "must not be null"
+// (see TestSelectingTheCountBesideAnEnrichedFilterIsRefused).
 func (s *fakeStorefront) ListStoreProducts(
 	_ context.Context,
 	opts service.StoreListOptions,
@@ -65,7 +73,7 @@ func (s *fakeStorefront) ListStoreProducts(
 	list := s.list
 
 	switch {
-	case opts.SkipCount:
+	case opts.SkipCount, opts.InStock != nil, opts.Price != nil:
 		list.Count = nil
 	case list.Count == nil:
 		list.Count = ptr(len(list.Items))
@@ -572,4 +580,112 @@ func TestCountInsideAFragmentIsComputed(t *testing.T) {
 	list, ok := response.Data["products"].(map[string]any)
 	require.True(t, ok)
 	assert.InDelta(t, float64(3), list["count"], 0)
+}
+
+// TestTheThreeCatalogFiltersReachTheServiceFromGraphQL is the GraphQL half of
+// ADR 0039, 0040 and 0041.
+//
+// The schema test already proves that the arguments and the service's options
+// overlap one to one, which is a claim about the SHAPES. This is the claim about
+// the VALUES: an argument that is declared, generated and then dropped on the
+// floor by the resolver satisfies every shape assertion and silently returns the
+// unfiltered catalog.
+//
+// The price bracket is an input OBJECT here and three flat parameters in REST,
+// so this is also where the binding is checked: the schema's PriceFilter is
+// bound to the service's own [service.PriceBracket] (see gqlgen.yml), and a
+// generated model plus a converter would be a second definition of what a
+// bracket is.
+func TestTheThreeCatalogFiltersReachTheServiceFromGraphQL(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeStorefront{}
+	response, status := runQuery(t, identityWith([]string{"sc_1"}), svc,
+		`{ products(
+			optionValue: "  red  "
+			inStock: true
+			price: { currencyCode: "TRY", min: 1000, max: 5000 }
+		) { items { id } } }`)
+
+	require.Empty(t, response.Errors)
+	require.Equal(t, http.StatusOK, status)
+
+	opts := svc.lastList(t)
+
+	require.NotNil(t, opts.OptionValue)
+	assert.Equal(t, "red", *opts.OptionValue,
+		"the value is trimmed here and folded in the service, exactly as REST does it")
+
+	require.NotNil(t, opts.InStock)
+	assert.True(t, *opts.InStock)
+
+	require.NotNil(t, opts.Price)
+	assert.Equal(t, "TRY", opts.Price.CurrencyCode)
+	require.NotNil(t, opts.Price.Min)
+	require.NotNil(t, opts.Price.Max)
+	assert.Equal(t, int64(1000), *opts.Price.Min)
+	assert.Equal(t, int64(5000), *opts.Price.Max)
+}
+
+// TestSelectingTheCountBesideAnEnrichedFilterIsRefused covers the collision the
+// non-nullable count field creates.
+//
+// "count: Int!" cannot be null, and a listing filtered by inStock or price is
+// not counted at all — the total would have to be computed over the whole
+// catalog. Left to gqlgen the client would get "must not be null" against a
+// field it did select, which says nothing about what to do instead; the resolver
+// refuses the pair and says so. REST refuses the same pair through with_count.
+//
+// WHICH error arrives is therefore the whole point, and it is asserted rather
+// than merely counted: "an error came back" is also true of the generic null
+// failure this refusal exists to replace, so a test that stopped at NotEmpty
+// would be green on exactly the regression it is written against. The fake
+// storefront returns a nil count beside these filters, as the real service does,
+// so removing the guard produces that generic failure here and this test sees
+// the difference.
+func TestSelectingTheCountBesideAnEnrichedFilterIsRefused(t *testing.T) {
+	t.Parallel()
+
+	documents := map[string]string{
+		"the stock filter": `{ products(inStock: true) { count } }`,
+		"the price filter": `{ products(price: { currencyCode: "TRY", max: 5000 }) { count } }`,
+	}
+
+	for name, document := range documents {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			svc := &fakeStorefront{}
+			response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc, document)
+
+			require.NotEmpty(t, response.Errors,
+				"the pair has to be refused rather than answered with a null count")
+			assert.Equal(t, "product_graphql_bad_argument",
+				response.Errors[0].Extensions["code"],
+				"the refusal has to be the resolver's own, naming the argument pair; gqlgen's "+
+					"\"must not be null\" against count is the answer this guard replaces and "+
+					"says nothing about what to do instead")
+			assert.Contains(t, response.Errors[0].Message, "count",
+				"and it has to name the field the client selected")
+			assert.Empty(t, svc.listOptions, "the refusal comes before the service is asked")
+		})
+	}
+}
+
+// TestAnUnfilteredListingStillCountsFromGraphQL is the other half of the pair
+// above, and it is the one that keeps the refusal narrow.
+//
+// A guard written slightly too wide would refuse every counted listing, and the
+// test above would still pass. This one fails on that.
+func TestAnUnfilteredListingStillCountsFromGraphQL(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
+		`{ products(optionValue: "red") { count } }`)
+
+	require.Empty(t, response.Errors,
+		"the option value is a WHERE clause, so its matches are counted as before")
+	assert.False(t, svc.lastList(t).SkipCount,
+		"a selected count still asks the service for one")
 }

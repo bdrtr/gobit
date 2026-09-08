@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/bdrtr/gobit/core/errors"
+	corepage "github.com/bdrtr/gobit/internal/core/page"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/repository"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
@@ -243,9 +244,48 @@ func (m *memStore) matches(p *models.Product, f repository.ProductFilter) bool {
 		return false
 	case f.TagID != nil && !slices.Contains(m.productTags[p.ID], *f.TagID):
 		return false
+	case f.OptionValueFolded != nil && !m.offersOptionValue(p.ID, *f.OptionValueFolded):
+		return false
 	default:
 		return m.visibleIn(p.ID, f.SalesChannelIDs)
 	}
+}
+
+// offersOptionValue is the fake counterpart of the option-value filter.
+//
+// The real rule is an EXISTS in SQL (repository/saleschannel.go,
+// optionValueFilterSQL); this repeats it because the fake has no database, and
+// the same scenarios run against a real PostgreSQL in the integration package so
+// the two cannot drift apart unnoticed.
+//
+// It compares the STORED matching form (valuesFolded, this fake's stand-in for
+// the value_folded column) rather than folding the value again here. The
+// difference shows in exactly the case ADR 0039's convergence pass is about: on
+// a cluster whose SQL backfill left a stale form behind, the column and the Go
+// fold disagree, and the filter matches what the COLUMN says. Folding here would
+// hide that disagreement and report a filter working that the database answers
+// differently.
+//
+// The soft-delete guard is on the value AND on its option, which is the half of
+// the rule that is easy to leave out: deleting an option stamps the option and
+// leaves its values standing.
+func (m *memStore) offersOptionValue(productID, folded string) bool {
+	for id := range m.values {
+		value := m.values[id]
+		if value.DeletedAt != nil {
+			continue
+		}
+
+		option, ok := m.options[value.OptionID]
+		if !ok || option.DeletedAt != nil || option.ProductID != productID {
+			continue
+		}
+		if m.valuesFolded[value.ID] == folded {
+			return true
+		}
+	}
+
+	return false
 }
 
 // visibleIn is the fake counterpart of the sales channel visibility rule.
@@ -340,7 +380,39 @@ func (m *memStore) ListProducts(_ context.Context, f repository.ProductFilter) (
 			out = append(out, all[i])
 		}
 	}
-	return sliceWindow(out, f.Limit, f.Offset), nil
+
+	return sliceWindow(afterCursor(out, f.After), f.Limit, f.Offset), nil
+}
+
+// afterCursor is the fake counterpart of the keyset seek.
+//
+// The real one is a comparison on (created_at, id) that moves with the listing
+// order (see repository.keysetSeek); this one compares the id alone, because
+// [memStore.liveProducts] orders by id and a fake's seek has to agree with the
+// fake's ORDER rather than with the database's.
+//
+// It exists because the fake used to IGNORE the cursor entirely, and that is
+// invisible until something pages: a caller that walks the catalog one page at
+// a time was handed page one every time, so a filter that pages -- the in-stock
+// and price filters, which read a chunk, keep what matches and resume -- could
+// return the same products for ever and no unit test would see it.
+//
+// An id the fake does not hold does NOT restart the walk: the comparison is
+// "strictly after this id", so a cursor pointing at a deleted product resumes
+// where it stood instead of at the top.
+func afterCursor(items []models.Product, after corepage.Cursor) []models.Product {
+	if after.IsZero() {
+		return items
+	}
+
+	out := make([]models.Product, 0, len(items))
+	for i := range items {
+		if items[i].ID > after.ID {
+			out = append(out, items[i])
+		}
+	}
+
+	return out
 }
 
 func (m *memStore) CountProducts(_ context.Context, f repository.ProductFilter) (int, error) {
@@ -786,6 +858,17 @@ func (m *memStore) CreateOptionValue(_ context.Context, v models.OptionValue) (m
 	v.OptionTitle = ""
 	v.CreatedAt, v.UpdatedAt = creationTime, creationTime
 	m.values[v.ID] = v
+
+	// The matching form is written BY THE INSERT, not by a later pass: the real
+	// statement names value_folded and [repository.Repo.CreateOptionValue] fills
+	// it from models.FoldOptionValue. Leaving it out here would make every
+	// freshly created value invisible to the catalog's option-value filter in
+	// unit tests while the database matched it perfectly.
+	if m.valuesFolded == nil {
+		m.valuesFolded = map[string]string{}
+	}
+	m.valuesFolded[v.ID] = models.FoldOptionValue(v.Value)
+
 	return v, nil
 }
 

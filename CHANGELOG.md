@@ -12,6 +12,32 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **Magaza katalogu UC filtre kazandi** (ADR 0039 + 0040 + 0041) — secenek
+  degeri, stok durumu ve fiyat araligi; hepsi tek bir yuzey.
+
+  `option_value`, `in_stock` ve `currency_code`/`min_price`/`max_price` REST
+  listelemesinde, `optionValue`, `inStock` ve bir `price: PriceFilter` girdi
+  nesnesi GraphQL tarafinda. Secenek degeri GO'nun katladigi bicim uzerinden
+  eslesir (kumenin `lower()`'i degil, ADR 0038/0039), ve bunun icin 000004
+  gocu `product_option_value_folded_idx` ekler: 000003'un tekil indeksi
+  `option_id` ile baslar, bir katalog filtresinin ise secenek kimligi yoktur.
+
+  Stok yaniti ayrica her magaza govdesine `in_stock` ROZETI olarak yazilir:
+  urunde ve varyantta. Sayilan ama hicbir seye BAGLANMAMIS bir varyant stokta
+  DEGILDIR — alternatifi, dukkanda olmayabilecek bir seyi satmaktir.
+
+  Stok ve fiyat filtreleri veritabaninda yazilamaz (girdilerin biri envanterin,
+  digeri fiyatlandirmanin), bu yuzden listeleme SAYFAYI TARAR: yuzerlik
+  parcalar, parca basina tek toplu Graph cagrisi, bes yuz satirlik butce. Bunun
+  bedeli acikca odenir — sayfa kisa donebilir (imlec varsa devam edilir),
+  yaninda `offset` REDDEDILIR ve liste SAYILMAZ; acikca istenen bir
+  `with_count=true` sessizce dusurulmek yerine reddedilir.
+
+  Katalogun envanterden okudugu TEK alan adi artik `internal/arch`'ta
+  denetleniyor: bildirilmeyen bir ikincisi testi kirar. Fiyatlandirmanin alti
+  adi disa aktarilmadigi icin baglanamiyor ve bilinen bir bosluk olarak
+  kaydedildi.
+
 - **Satis kanali katalog YOLUNA tasindi** (ADR 0044) — magaza katalogu artik
   `/store/v1/sales-channels/{sales_channel_id}/products` altinda.
 
@@ -854,6 +880,88 @@ Sabitlenme `1.0.0` ile olur.
   ağacı `internal` dışında ama içindeki her eklenti `core/plugin`'i
   import ediyor, yani depoda üçüncü tarafın eklenti yazamayacağı bir eklenti
   sistemi var.
+
+- **Kimliği bilinmeyen bir yazma artık ŞEMA tarafından da tutuluyor** (ADR 0051)
+  — kararın üçüncü parçası, kaydın kendisinin "yapılmadı" diye taşıdığı parça.
+
+  Karar üç yerde tutuluyor: yazma sınırı, okuma sınırı ve ŞEMA. İlk ikisi
+  `internal/arch/storefront_boundary_test.go` ile duruyordu; üçüncüsü bir cümle
+  olarak kalmıştı — *okunacağı anlamı taşıyamayan bir kolon, yokluğundan daha
+  kötüdür*. Kaydın kendi ifadesiyle bunun için gereken şey "bu ağaçta hiçbir
+  şeyin yapmadığı bir rota-tablo çapraz referansı" idi.
+
+  **Artık yapılıyor.** Her vitrin yazma rotası, yazabildiği tablolara
+  çözülüyor: rotanın kaydedildiği modül, handler'ından başlayan çağrı
+  grafiği — `internal/workflows` ağacı dahil — ve o modülün KENDİ
+  migration'larının yarattığı tablolarla kesişim. Sonra ulaşılan her tablonun
+  her kolonu, review modülünün reddettiklerinin tanımladığı dört iddiaya karşı
+  okunuyor: bir TARAF, bir İLETİŞİM ADRESİ, bir AĞ KÖKENİ ve dükkânın ÖNCEKİ
+  bir kaydı. Review'ın reddettiği üç kolon — sipariş kimliği, e-posta, IP —
+  tam olarak bunlar, ve tuttuğu tek kolon (yazarın kendi bastırmak için yazdığı
+  ad) bilerek dördünün de dışında.
+
+  **Kayıt defteri iddiayı değil YARGIYI taşıyor, ve kendi kendini denetliyor.**
+  Yargısı olmayan bir iddia kapıyı düşürüyor; artık var olmayan bir iddianın
+  yargısı da aynı şekilde düşürüyor (ölü bir muafiyet, bir sonraki gerçek
+  bulguyu örten şeydir — D16 birebir bu). Ve bir yargı reddediliyor: vitrin
+  GÖVDESİNİN taşıdığı bir taraf kolonu CONFINED olarak kaydedilemiyor, çünkü o
+  limb'in kendi cümlesi "istemcinin adlandırdığı hiçbir özne, yazarın zaten
+  elinde tutmadığı bir taraf olamaz" diyor. Bugün ulaşılabilen sekiz iddia
+  kolonundan yedisi CONFINED/INERT, biri — sepetin `customer_id`'si — AÇIK
+  KUSUR olarak, ADR 0008 ve ADR 0043 kapatma satırlarıyla kayıtlı. Muafiyet
+  yok; ADR 0051 zaten hiç vermiyor.
+
+  **Ölçüm inşayı değiştirdi.** Modül sınırında duran ilk yürüyüş, sepetin on
+  bir vitrin yazmasından DÖRDÜNÜ hiçbir tabloya çözemedi: sepet açmayı,
+  fiyatlamayı ve tamamlamayı, api paketinin kendi bildirdiği dar arayüzler
+  üzerinden yapıyor ve onları composition root bağlıyor. Yürüyüş
+  `internal/workflows` ağacına da girince kapandı — ve artık hiçbir tabloya
+  ulaşmayan bir vitrin yazması KAPIYI DÜŞÜREN bir bulgu, çünkü öyle bir rota
+  temiz değil, sadece denetlenmemiş olur.
+
+  Körlük korumaları: rota taraması boşsa, herhangi bir rota tabloya
+  çözülmüyorsa, `reviews` tablosuna hiçbir vitrin yazmasından ulaşılmıyorsa
+  veya tek bir kolon bile okunmadıysa kapı düşüyor. Eşleştiricinin kendisi de
+  iki yönden çivilenmiş: reddedilen üç adı tanıması kadar, review'ın TUTTUĞU
+  `author_name` ile `product_id`'yi tanımıyor olması da bir iddia.
+
+  İki mutasyonla kanıtlandı. Birincisi: `reviews` migration'ına `ip_address`
+  kolonu eklendi ve kapı düştü — yargısı olmayan bir AĞ KÖKENİ iddiası olarak,
+  onu yazan rotayı adıyla göstererek. İkincisi: `internal/workflows` ağacı
+  yürüyüşten çıkarıldı ve rota-tabloya-ulaşır koruması, körleşen dört sepet
+  rotasını tek tek sayarak düştü.
+
+- **Adres defteri artık KANITLANMIŞ bir kimlik istiyor** (ADR 0043) — ve gobit
+  o kimliği hâlâ ÜRETMİYOR.
+
+  ADR 0008'in güven sınırı DURUYOR: müşteri kimliğini doğrulamak gömen
+  uygulamanın işidir. Değişen şey, o işin artık depo dışından yapılabilmesi.
+  Çekirdek `corehttp.Identity` sözleşmesini yayımlıyor — tek metot, imzasındaki
+  her tip standart kütüphaneden, ki dışarıdaki bir modül onu yazabilsin — ve
+  gömen uygulama kendi uygulamasını container'a `corehttp.IdentityName`
+  ("core.identity") adıyla kaydediyor. ADR 0008 kapatma işini gömen uygulamaya
+  vermiş ve değişecek yerleri saymıştı; dördü de `internal/` altında ve dışa
+  kapalıydı, yani kararı okuyup dediğini yapan biri fork etmek zorundaydı.
+
+  **Kırıcı değişiklik**: customer modülünün müşteri adlandıran SEKİZ vitrin ucu
+  (altı adres, iki profil) artık yoldaki iddiayı kanıtla karşılaştırıyor.
+  Uyuşmazlıkta `403 identity_mismatch`; hiçbir kimlik bağlanmamışsa
+  `401 identity_not_bound` — kapalı, açık değil (ADR 0007'nin doğrulayıcısız
+  kimlik satırı). Misafir kaydı açan `POST /store/v1/customers` denetim
+  DIŞINDA: kanıtlanacak müşteriyi o uç yaratıyor.
+
+  Kimlik container'dan İLK KULLANIMDA çözülüyor, order'ın harcama kuralında
+  kullandığı sarmalayıcı şekliyle: customer modülü Register sırasında hâlâ
+  yalnızca çekirdek havuzunu çözüyor, yani modül sırası sözleşmenin parçası
+  olmadı ve gömen uygulamanın modülü en sona eklenebiliyor.
+
+  **Sepet DEĞİŞMEDİ ve bu bilinçli.** ADR 0008'in ölçümü — yabancı bir
+  istemcinin başkasının adına alışverişi tamamlaması ve o çalışanın harcama
+  penceresini yakması — aynen tekrarlanıyor; ADR 0051'in sepet için açtığı KUSUR
+  satırı da açık kaldı. Aynı sınırın b2b'deki ikinci kopyası da kapanmadı ve
+  bunu kararın kendi olumsuz sonucu yazmıştı; b2b'nin paket belgesi artık
+  "çekirdekte oturum kimliği yok" demiyor, "sözleşme var, bu modül almadı"
+  diyor.
 
 ### Düzeltildi
 

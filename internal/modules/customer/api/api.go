@@ -2,26 +2,35 @@
 //
 // İki ad alanı vardır (plan Bölüm 8): /admin/v1 yönetim, /store/v1 müşteri.
 //
-// # UYARI: store uçlarını KORUMAK GÖMEN UYGULAMANIN İŞİDİR
+// # The storefront REQUIRES an identity this framework does not issue
 //
-// Store tarafındaki uçlar müşterinin KENDİ profilini ve adreslerini yönetir ve
-// müşteriyi YOL PARAMETRESİNDEKİ kimlikle tanır — yani istemcinin kendi
-// bildirdiği değerle. Bu uçlara ulaşan HERKES, kimliğini bildiği bir
-// müşterinin adını, e-postasını ve adreslerini okuyabilir ve değiştirebilir.
+// The store endpoints manage a customer's OWN profile and addresses, and the
+// customer is named in the path. That claim is not taken on trust: every one of
+// them resolves a corehttp.Identity from the container under
+// corehttp.IdentityName, asks it what the request PROVES, and refuses the
+// request unless the two agree ([Handler.storeCustomerID], ADR 0043).
 //
-// Bu bir ara durum DEĞİLDİR ve beklenecek bir faz yoktur. ADR 0008 kararı
-// verdi: müşteri kimliğinin doğrulanması çerçevenin değil, GÖMEN UYGULAMANIN
-// işidir; gobit sınırı çizer, belgeler ve testle sabitler. Faz 8'de gelen auth
-// modülü ADMIN kimliğidir ve kendi paket belgesinde bunu açıkça söyler:
-// "The 'user' here is NOT the person shopping in the store."
+// gobit still verifies nothing itself. It holds no proof about the person
+// behind a storefront request — ADR 0008 drew that boundary, it STANDS, and the
+// embedder is the one who satisfies the contract. What changed on 2026-09-08 is
+// the failure mode of an installation that never read ADR 0008: with nothing
+// bound these routes REJECT with corehttp.CodeIdentityNotBound instead of
+// handing a stranger somebody's street address. Closed rather than open is
+// ADR 0007's row for an unconfigured authenticator, and this is the same row.
 //
-// Daha önce burada "koruma Faz 8'de auth middleware ile eklenir" yazıyordu. O
-// cümle Faz 8 geldiği anda tehlikeli hâle geldi: sürüm notunda tamamlanmış bir
-// faz gören okur, uyarının süresinin DOLDUĞUNU sanır. Dolmadı.
+// POST /store/v1/customers is the one store route that asks nothing, and the
+// reason is that there is nobody to ask about yet: it MINTS a guest record, so
+// the customer the request would have to prove does not exist until it answers.
 //
-// Gömen uygulamaya düşen iş (ADR 0008, sonuç 3): customer id'yi yol
-// parametresinden DEĞİL kendi oturumundan almak, ikisi uyuşmazsa
-// errors.Forbidden dönmek. Bağlanacak tek yer [storeCustomerID]'dir.
+// # One word in the old warning was wrong, and it is worth not repeating
+//
+// This surface was called "unauthenticated" here and in the defect ledger. It
+// is not: the six address routes and the two profile routes sit under the store
+// prefix of the guard stack, and a request without a publishable key never
+// reaches a handler — corehttp.RequireStore answers it with a 401. What the
+// address book lacked was AUTHORIZATION: nothing asked whether the caller was
+// the customer the path named. Naming the gap wrongly cost a reader the search
+// for a missing 401 that was never missing.
 //
 // # Yetki
 //
@@ -127,11 +136,26 @@ type Customer interface {
 // Handler customer modülünün HTTP handler kümesidir.
 type Handler struct {
 	svc Customer
+	// identity proves which customer a storefront request belongs to. It is
+	// NIL when the installation bound none, and that state is CLOSED rather
+	// than open; see [Handler.storeCustomerID].
+	identity corehttp.Identity
 }
 
 // New verilen servis üzerinde çalışan handler kümesini üretir.
-func New(svc Customer) *Handler {
-	return &Handler{svc: svc}
+//
+// identity may be nil and the zero value is the SAFE one: with no identity the
+// store routes that name a customer refuse every request. A constructor that
+// defaulted a missing identity to "the path is the truth" would restore the
+// hole ADR 0043 closed, and it would do it silently — which is this
+// repository's most expensive class of fault.
+//
+// The module hands in a wrapper that resolves the embedder's implementation
+// from the container ON FIRST USE (see the customer module's Register), so a
+// nil arriving here means the caller built the handler by hand: a test, or an
+// embedder driving the package directly.
+func New(svc Customer, identity corehttp.Identity) *Handler {
+	return &Handler{svc: svc, identity: identity}
 }
 
 // Yetki sözlüğü: customer'ın yönetim uçlarının istediği yetkiler.
@@ -181,8 +205,12 @@ const (
 // silebilirdi.
 //
 // Store uçlarına yetki EKLENMEZ: mağaza yüzeyinin kimliği publishable
-// anahtardır ve o anahtar tanımı gereği yetki TAŞIMAZ. Bu, store uçlarının
-// korunduğu anlamına gelmez — korunmuyorlar, bkz. paket belgesindeki UYARI.
+// anahtardır ve o anahtar tanımı gereği yetki TAŞIMAZ. The authorization the
+// store routes DO carry is a different question with a different answer: the
+// customer named in the path has to be the customer the request proves, and
+// that check is inside the handler rather than in front of it — see
+// [Handler.storeCustomerID]. It cannot be middleware here for the same reason
+// the core's is not: the parameter it compares against belongs to the route.
 func (h *Handler) Routes(r chi.Router) {
 	okuma := r.With(corehttp.RequireScope(ScopeRead))
 	yazma := r.With(corehttp.RequireScope(ScopeWrite))
@@ -211,7 +239,11 @@ func (h *Handler) Routes(r chi.Router) {
 	yazma.Post("/admin/v1/customer-groups/{id}/customers", h.adminAddToGroup)
 	yazma.Delete("/admin/v1/customer-groups/{id}/customers/{customer_id}", h.adminRemoveFromGroup)
 
-	// --- vitrin (KORUMASI GÖMEN UYGULAMANIN İŞİ, bkz. paket belgesi) ---
+	// --- vitrin ---
+	//
+	// The eight routes carrying {id} require the claim to be BACKED; the guest
+	// registration below is the one that cannot, because it is what creates the
+	// customer (see the package doc).
 	r.Post("/store/v1/customers", h.storeRegisterGuest)
 	r.Get("/store/v1/customers/{id}", h.storeGetCustomer)
 	r.Put("/store/v1/customers/{id}", h.storeUpdateCustomer)
@@ -330,19 +362,73 @@ func pathParam(r *http.Request, name string) string {
 	return chi.URLParam(r, name)
 }
 
-// storeCustomerID vitrin isteğinin hangi müşteriye ait olduğunu döner.
+// storeCustomerID returns the customer a storefront request is allowed to act
+// on, or an error that ends the request.
 //
-// GÖMEN UYGULAMANIN BAĞLAMA NOKTASI: kimlik yol parametresinden okunur, yani
-// istemcinin kendi bildirdiği değerdir ve gobit onu DOĞRULAMAZ (ADR 0008).
-// Vitrini koruyan taraf bu fonksiyonu kendi oturumuna bağlamalı, yol
-// parametresiyle karşılaştırmalı ve uyuşmazlıkta errors.Forbidden dönmelidir.
-// Tek bir yerde durması, o değişikliğin tek dosyada yapılabilmesi içindir.
+// # What it checks
 //
-// Bu satır bir yapılacak iş değil, bir SINIRDIR: çerçevenin kendi kimlik
-// doğrulaması (Faz 8'in auth modülü) admin tarafına aittir ve buraya
-// bağlanmaz.
-func storeCustomerID(r *http.Request) string {
-	return pathParam(r, paramID)
+// The path names a customer; that is the CLAIM. The bound identity says which
+// customer the request PROVES. The two must be the same string, and every other
+// outcome is a refusal:
+//
+//   - no identity bound — corehttp.CodeIdentityNotBound, 401. Nobody could be
+//     asked, so nothing was checked, and the answer to "was this checked" must
+//     never be a silent yes. ADR 0043 chose the closed row deliberately over
+//     the SpendingPolicy precedent, where an absent provider legitimately means
+//     "this installation has no B2B": an absent identity does not mean every
+//     caller is who they say they are, it means nobody looked.
+//   - the identity returns an error — passed through UNWRAPPED, so the
+//     embedder picks the status by picking the error's kind. Wrapping it here
+//     would overwrite the embedder's answer with a guess made in a package that
+//     knows nothing about how the proof was obtained.
+//   - the identity proves nothing and reports no error —
+//     corehttp.CodeIdentityUnproven, 500. The pair cannot be told apart from a
+//     proof of the empty customer, so it is refused before the comparison
+//     rather than by it: letting it fall through would report a broken
+//     implementation as a MISMATCH and send an operator looking for a wrong
+//     session instead of a wrong verifier.
+//   - the two disagree — corehttp.CodeIdentityMismatch, 403. Not a 404: the
+//     caller supplied the identifier, so there is no existence to hide, and a
+//     404 would send an honest client debugging a record that is right there.
+//
+// # Why it returns the PROVEN identifier and not the claimed one
+//
+// They are equal by the time this returns, so it makes no difference today —
+// and that is exactly why the proven one is the safer habit. The day this
+// function grows a case where they may legitimately differ (an operator acting
+// for a customer, say), returning the claim would hand the service the
+// unverified string and the comparison above would become decoration.
+//
+// # Why the comparison is exact
+//
+// A customer identifier is an opaque token generated by this framework, not a
+// name a person types. Folding case here would be ADR 0038's and ADR 0039's
+// rule read backwards: two DIFFERENT identifiers would match, and the caller
+// holding the folded twin would read somebody else's address book.
+func (h *Handler) storeCustomerID(r *http.Request) (string, error) {
+	claimed := pathParam(r, paramID)
+
+	if h.identity == nil {
+		return "", coreerrors.Unauthorized(corehttp.CodeIdentityNotBound,
+			"this installation has bound no customer identity under %q, so a request "+
+				"naming a customer cannot be served", corehttp.IdentityName)
+	}
+
+	proven, err := h.identity.CustomerID(r)
+	if err != nil {
+		return "", err
+	}
+	if proven == "" {
+		return "", coreerrors.Internal(corehttp.CodeIdentityUnproven,
+			"the bound customer identity returned neither an identifier nor an error")
+	}
+	if proven != claimed {
+		return "", coreerrors.Forbidden(corehttp.CodeIdentityMismatch,
+			"the request names customer %q and the bound identity proves a different one",
+			claimed)
+	}
+
+	return proven, nil
 }
 
 // afterParam reads the cursor of the page being asked for.

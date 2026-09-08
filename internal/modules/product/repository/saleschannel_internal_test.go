@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -48,6 +49,11 @@ var allCriteria = []struct {
 	{"search", func(f *ProductFilter) { v := "shirt"; f.Search = &v }, "AND title ILIKE "},
 	{"category", func(f *ProductFilter) { v := "pcat_1"; f.CategoryID = &v }, "FROM product_category_map"},
 	{"tag", func(f *ProductFilter) { v := "ptag_1"; f.TagID = &v }, "FROM product_tag_map"},
+	{
+		"option value",
+		func(f *ProductFilter) { v := "kirmizi"; f.OptionValueFolded = &v },
+		"FROM product_option_value pov",
+	},
 	{"sales channel", func(f *ProductFilter) { f.SalesChannelIDs = []string{"sc_1"} }, "SELECT bool_or(scl.to_id"},
 }
 
@@ -67,8 +73,8 @@ func filterWith(mask int) ProductFilter {
 // of the claim.
 //
 // The assertion that matters is the NEGATIVE one: a filter carrying only a
-// category must not carry a status comparison, because the old shape wrote all
-// seven clauses always and the whole point of the change is that it no longer
+// category must not carry a status comparison, because the old shape wrote
+// EVERY clause always and the whole point of the change is that it no longer
 // does. Asserting only that the wanted clause is present would pass on the old
 // shape too.
 func TestEachCriterionAloneWritesOnlyItsOwnClause(t *testing.T) {
@@ -105,9 +111,11 @@ func TestNoCriterionLeavesOnlyTheSoftDeleteGuard(t *testing.T) {
 // TestSeveralCriteriaTogetherWriteAllOfTheirClauses is the "several together"
 // half.
 //
-// Every one of the 128 combinations is walked rather than a couple of hand
+// Every combination of the criteria is walked rather than a couple of hand
 // picked ones, because the failure this guards against is a single "if" losing
-// its clause, and which one it is cannot be guessed in advance.
+// its clause, and which one it is cannot be guessed in advance. The loop bound
+// is derived from the table rather than written down, so a criterion added to
+// [allCriteria] is inside the claim on the day it is added.
 func TestSeveralCriteriaTogetherWriteAllOfTheirClauses(t *testing.T) {
 	for mask := range 1 << len(allCriteria) {
 		body, args := productFilterSQL(filterWith(mask))
@@ -173,25 +181,69 @@ func TestTheListAndTheCountAgreeOnTheNumbering(t *testing.T) {
 // TestTheListNumbersItsOwnParametersAfterTheBody pins that limit, offset and
 // the two cursor halves come after whatever the filter used.
 //
-// They are numbered from len(args) and a literal would be wrong the moment a
-// criterion is added or dropped; four criteria here push them from $1-$4 to
-// $5-$8, which is the drift a fixed number would not survive.
+// # Why the expected numbers are DERIVED and not written down
+//
+// They were written down once, as $1-$4 for the empty filter and $8-$11 for the
+// full one, and adding a criterion to [allCriteria] turned that into four
+// failures about a shift the change did not break: the property this test
+// protects is "the listing numbers its own parameters after the body's", and
+// the body simply grew by one. A literal there reports a correct build as a
+// defect, and the next person is taught to edit the number rather than read the
+// assertion.
+//
+// So the offset is taken from [productFilterSQL] itself. The two filters are
+// still both walked, because the failure this guards against is a numbering
+// that IGNORES the body: it looks right when the body consumes nothing and
+// collides the moment it consumes something.
 func TestTheListNumbersItsOwnParametersAfterTheBody(t *testing.T) {
-	f := filterWith(0)
-	f.Limit = 20
-	listSQL, listArgs := listProductsSQL(f)
-	assert.Len(t, listArgs, 4)
-	assert.Contains(t, listSQL, "LIMIT $1::int OFFSET $2::int")
-	assert.Contains(t, listSQL, "COALESCE($3::timestamptz")
-	assert.Contains(t, listSQL, "COALESCE($4::text, '')")
+	filters := map[string]ProductFilter{
+		"no criterion":    filterWith(0),
+		"every criterion": filterWith(1<<len(allCriteria) - 1),
+	}
 
-	full := filterWith(1<<len(allCriteria) - 1)
-	full.Limit = 20
-	fullSQL, fullArgs := listProductsSQL(full)
-	assert.Len(t, fullArgs, 11)
-	assert.Contains(t, fullSQL, "LIMIT $8::int OFFSET $9::int")
-	assert.Contains(t, fullSQL, "COALESCE($10::timestamptz")
-	assert.Contains(t, fullSQL, "COALESCE($11::text, '')")
+	for name, f := range filters {
+		t.Run(name, func(t *testing.T) {
+			f.Limit = 20
+
+			_, bodyArgs := productFilterSQL(f)
+			listSQL, listArgs := listProductsSQL(f)
+
+			used := len(bodyArgs)
+			assert.Len(t, listArgs, used+4,
+				"the listing adds exactly limit, offset and the two cursor halves")
+			assert.Contains(t, listSQL,
+				fmt.Sprintf("LIMIT $%d::int OFFSET $%d::int", used+1, used+2))
+			assert.Contains(t, listSQL, fmt.Sprintf("COALESCE($%d::timestamptz", used+3))
+			assert.Contains(t, listSQL, fmt.Sprintf("COALESCE($%d::text, '')", used+4))
+		})
+	}
+}
+
+// TestTheOptionValueClauseGuardsBothOfItsParents is a tripwire on the half of
+// that clause a reader is most likely to drop.
+//
+// Deleting an option is NOT a cascade: SoftDeleteOptionsByProduct stamps the
+// option row and leaves its values standing, so a value under a removed option
+// is still a live row. Without the guard on product_option the filter would keep
+// returning a product for a color the merchant deleted, and nothing would look
+// wrong -- the product exists, the value row exists, the page fills.
+//
+// It also pins that the comparison is on value_folded and carries NO function
+// call: the fold is Go's (ADR 0039), and a lower() creeping in here would make
+// the filter answer differently on a --locale=C cluster with nothing reporting
+// the difference. That is also what lets migration 000004's index drive the
+// plan.
+func TestTheOptionValueClauseGuardsBothOfItsParents(t *testing.T) {
+	folded := "kirmizi"
+	body, args := productFilterSQL(ProductFilter{OptionValueFolded: &folded})
+
+	require.Len(t, args, 1)
+	assert.Contains(t, body, "pov.deleted_at IS NULL", "a deleted value must not match")
+	assert.Contains(t, body, "po.deleted_at IS NULL",
+		"a value under a DELETED OPTION must not match; removing an option is not a cascade")
+	assert.Contains(t, body, "pov.value_folded = $1::text")
+	assert.NotContains(t, body, "lower(",
+		"the fold is Go's, never the cluster's (ADR 0038, ADR 0039)")
 }
 
 // TestNilnessAndNotEmptinessDecides pins the one semantic the rewrite could

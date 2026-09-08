@@ -42,7 +42,11 @@ func belge(t *testing.T) (yollar, bilesenler map[string]any) {
 	doc.ForModule("customer", func() { Describe(doc) })
 
 	r := chi.NewRouter()
-	New(nil).Routes(r)
+	// Both arguments nil: the document is derived from TYPES and neither the
+	// service nor the identity is consulted to build it. A handler with a
+	// bound identity would describe the same paths (see storeCustomerID,
+	// which runs per request), and passing one here would suggest otherwise.
+	New(nil, nil).Routes(r)
 
 	ham, err := doc.Build(r)
 	require.NoError(t, err)

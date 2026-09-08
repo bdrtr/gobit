@@ -249,6 +249,59 @@ func boolParam(r *http.Request, name string, fallback bool) (bool, error) {
 	return value, nil
 }
 
+// optionalBoolParam reads a query parameter as a boolean and returns nil when
+// it was NOT GIVEN.
+//
+// It is [boolParam]'s sibling and the difference is the third state. boolParam
+// serves a parameter that always has an answer ("with_count" is on or off), so
+// an absent value collapses into the default. A FILTER has three answers: keep
+// what is true, keep what is false, and do not filter at all -- and collapsing
+// the third into either of the first two would turn an absent parameter into a
+// narrowing the client never asked for.
+//
+// An unparsable value is refused for the reason boolParam refuses one: a client
+// that wrote "in_stock=yes" and got the whole catalog cannot tell that from a
+// catalog in which everything is in stock.
+func optionalBoolParam(r *http.Request, name string) (*bool, error) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return nil, nil
+	}
+
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return nil, coreerrors.Wrap(err, coreerrors.KindInvalid, codeBadParam,
+			"the %s parameter has to be a boolean value (given: %q)", name, raw)
+	}
+
+	return &value, nil
+}
+
+// optionalAmountParam reads a query parameter as an amount in MINOR UNITS and
+// returns nil when it was not given.
+//
+// Minor units, because that is what pricing stores and what the storefront body
+// already carries; accepting a decimal here would mean this module deciding how
+// many digits a currency has, which is region's answer.
+//
+// It parses and does not judge: a NEGATIVE bound is a well-formed number and it
+// is refused one layer down, in [service.PriceBracket.Validate], so that the
+// GraphQL surface -- which never passes through here -- refuses it too.
+func optionalAmountParam(r *http.Request, name string) (*int64, error) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return nil, nil
+	}
+
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return nil, coreerrors.Wrap(err, coreerrors.KindInvalid, codeBadParam,
+			"the %s parameter has to be a whole number of minor units (given: %q)", name, raw)
+	}
+
+	return &value, nil
+}
+
 // sortParam reads the listing order.
 //
 // An absent value is the default and not an error: the parameter is additive

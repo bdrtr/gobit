@@ -675,11 +675,12 @@ func TestNoIdentityIsRefusedBeforeTheDocumentIsRead(t *testing.T) {
 // TestThereIsNoStorefrontSurface proves a DECISION rather than an absence.
 //
 // A document is a record between the shop and the tax authority; what a
-// customer receives is a copy the shop sends them. Opening a store endpoint
-// would also mean deciding how one customer is kept from reading another's
-// document, which the storefront has no identity to answer (ADR 0008). A route
-// added here by habit — every other module has a /store/v1 — is caught by this
-// test rather than by the person who finds their neighbour's invoice.
+// customer receives is a copy the shop sends them. That is the whole of the
+// decision — the second reason once given beside it, that the storefront had no
+// identity with which to keep one customer from another's document, stopped
+// being true with ADR 0043 and is recorded as corrected in the package doc. A
+// route added here by habit — every other module has a /store/v1 — is caught by
+// this test rather than by the person who finds their neighbour's invoice.
 func TestThereIsNoStorefrontSurface(t *testing.T) {
 	t.Parallel()
 

@@ -84,6 +84,7 @@ type ComplexityRoot struct {
 		Height        func(childComplexity int) int
 		ID            func(childComplexity int) int
 		Images        func(childComplexity int) int
+		InStock       func(childComplexity int) int
 		IsGiftcard    func(childComplexity int) int
 		Length        func(childComplexity int) int
 		Material      func(childComplexity int) int
@@ -110,7 +111,7 @@ type ComplexityRoot struct {
 
 	Query struct {
 		Product  func(childComplexity int, id *string, handle *string) int
-		Products func(childComplexity int, limit *int, offset *int, after *string, q *string, sort *models.ProductOrder, collectionID *string, categoryID *string, tagID *string) int
+		Products func(childComplexity int, limit *int, offset *int, after *string, q *string, sort *models.ProductOrder, collectionID *string, categoryID *string, tagID *string, optionValue *string, inStock *bool, price *service.PriceBracket) int
 	}
 
 	Tag struct {
@@ -124,6 +125,7 @@ type ComplexityRoot struct {
 		CreatedAt       func(childComplexity int) int
 		EAN             func(childComplexity int) int
 		ID              func(childComplexity int) int
+		InStock         func(childComplexity int) int
 		InventoryItem   func(childComplexity int) int
 		ManageInventory func(childComplexity int) int
 		Metadata        func(childComplexity int) int
@@ -144,7 +146,7 @@ type ComplexityRoot struct {
 // region    ************************** generated!.gotpl **************************
 
 type QueryResolver interface {
-	Products(ctx context.Context, limit *int, offset *int, after *string, q *string, sort *models.ProductOrder, collectionID *string, categoryID *string, tagID *string) (*service.ListResult[service.StoreProduct], error)
+	Products(ctx context.Context, limit *int, offset *int, after *string, q *string, sort *models.ProductOrder, collectionID *string, categoryID *string, tagID *string, optionValue *string, inStock *bool, price *service.PriceBracket) (*service.ListResult[service.StoreProduct], error)
 	Product(ctx context.Context, id *string, handle *string) (*service.StoreProduct, error)
 }
 type VariantResolver interface {
@@ -366,6 +368,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Product.Images(childComplexity), true
+	case "Product.inStock":
+		if e.ComplexityRoot.Product.InStock == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Product.InStock(childComplexity), true
 	case "Product.isGiftcard":
 		if e.ComplexityRoot.Product.IsGiftcard == nil {
 			break
@@ -503,7 +511,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.Products(childComplexity, args["limit"].(*int), args["offset"].(*int), args["after"].(*string), args["q"].(*string), args["sort"].(*models.ProductOrder), args["collectionId"].(*string), args["categoryId"].(*string), args["tagId"].(*string)), true
+		return e.ComplexityRoot.Query.Products(childComplexity, args["limit"].(*int), args["offset"].(*int), args["after"].(*string), args["q"].(*string), args["sort"].(*models.ProductOrder), args["collectionId"].(*string), args["categoryId"].(*string), args["tagId"].(*string), args["optionValue"].(*string), args["inStock"].(*bool), args["price"].(*service.PriceBracket)), true
 
 	case "Tag.id":
 		if e.ComplexityRoot.Tag.ID == nil {
@@ -548,6 +556,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Variant.ID(childComplexity), true
+	case "Variant.inStock":
+		if e.ComplexityRoot.Variant.InStock == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Variant.InStock(childComplexity), true
 	case "Variant.inventoryItem":
 		if e.ComplexityRoot.Variant.InventoryItem == nil {
 			break
@@ -628,7 +642,9 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 	opCtx := graphql.GetOperationContext(ctx)
 	ec := newExecutionContext(opCtx, e, make(chan graphql.DeferredResult))
-	inputUnmarshalMap := graphql.BuildUnmarshalerMap()
+	inputUnmarshalMap := graphql.BuildUnmarshalerMap(
+		ec.unmarshalInputPriceFilter,
+	)
 	first := true
 
 	switch opCtx.Operation.Operation {
@@ -815,6 +831,8 @@ func (ec *executionContext) childFields_Product(ctx context.Context, field graph
 		return ec.fieldContext_Product_createdAt(ctx, field)
 	case "updatedAt":
 		return ec.fieldContext_Product_updatedAt(ctx, field)
+	case "inStock":
+		return ec.fieldContext_Product_inStock(ctx, field)
 	case "variants":
 		return ec.fieldContext_Product_variants(ctx, field)
 	case "options":
@@ -885,6 +903,8 @@ func (ec *executionContext) childFields_Variant(ctx context.Context, field graph
 		return ec.fieldContext_Variant_createdAt(ctx, field)
 	case "updatedAt":
 		return ec.fieldContext_Variant_updatedAt(ctx, field)
+	case "inStock":
+		return ec.fieldContext_Variant_inStock(ctx, field)
 	case "optionValues":
 		return ec.fieldContext_Variant_optionValues(ctx, field)
 	case "priceSet":
@@ -1114,6 +1134,30 @@ func (ec *executionContext) field_Query_products_args(ctx context.Context, rawAr
 		return nil, err
 	}
 	args["tagId"] = arg7
+	arg8, err := graphql.ProcessArgField(ctx, rawArgs, "optionValue",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["optionValue"] = arg8
+	arg9, err := graphql.ProcessArgField(ctx, rawArgs, "inStock",
+		func(ctx context.Context, v any) (*bool, error) {
+			return ec.unmarshalOBoolean2ᚖbool(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["inStock"] = arg9
+	arg10, err := graphql.ProcessArgField(ctx, rawArgs, "price",
+		func(ctx context.Context, v any) (*service.PriceBracket, error) {
+			return ec.unmarshalOPriceFilter2ᚖgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐPriceBracket(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["price"] = arg10
 	return args, nil
 }
 
@@ -2129,6 +2173,29 @@ func (ec *executionContext) fieldContext_Product_updatedAt(_ context.Context, fi
 	return graphql.NewScalarFieldContext("Product", field, false, false, errors.New("field of type Time does not have child fields"))
 }
 
+func (ec *executionContext) _Product_inStock(ctx context.Context, field graphql.CollectedField, obj *service.StoreProduct) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Product_inStock(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.InStock, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Product_inStock(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Product", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
 func (ec *executionContext) _Product_variants(ctx context.Context, field graphql.CollectedField, obj *service.StoreProduct) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -2423,7 +2490,7 @@ func (ec *executionContext) _Query_products(ctx context.Context, field graphql.C
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().Products(ctx, fc.Args["limit"].(*int), fc.Args["offset"].(*int), fc.Args["after"].(*string), fc.Args["q"].(*string), fc.Args["sort"].(*models.ProductOrder), fc.Args["collectionId"].(*string), fc.Args["categoryId"].(*string), fc.Args["tagId"].(*string))
+			return ec.Resolvers.Query().Products(ctx, fc.Args["limit"].(*int), fc.Args["offset"].(*int), fc.Args["after"].(*string), fc.Args["q"].(*string), fc.Args["sort"].(*models.ProductOrder), fc.Args["collectionId"].(*string), fc.Args["categoryId"].(*string), fc.Args["tagId"].(*string), fc.Args["optionValue"].(*string), fc.Args["inStock"].(*bool), fc.Args["price"].(*service.PriceBracket))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *service.ListResult[service.StoreProduct]) graphql.Marshaler {
@@ -2943,6 +3010,29 @@ func (ec *executionContext) _Variant_updatedAt(ctx context.Context, field graphq
 }
 func (ec *executionContext) fieldContext_Variant_updatedAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("Variant", field, false, false, errors.New("field of type Time does not have child fields"))
+}
+
+func (ec *executionContext) _Variant_inStock(ctx context.Context, field graphql.CollectedField, obj *service.StoreVariant) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Variant_inStock(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.InStock, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Variant_inStock(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Variant", field, false, false, errors.New("field of type Boolean does not have child fields"))
 }
 
 func (ec *executionContext) _Variant_optionValues(ctx context.Context, field graphql.CollectedField, obj *service.StoreVariant) (ret graphql.Marshaler) {
@@ -4082,6 +4172,50 @@ func (ec *executionContext) fieldContext___Type_isOneOf(_ context.Context, field
 
 // region    **************************** input.gotpl *****************************
 
+func (ec *executionContext) unmarshalInputPriceFilter(ctx context.Context, obj any) (service.PriceBracket, error) {
+	var it service.PriceBracket
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"currencyCode", "min", "max"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "currencyCode":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("currencyCode"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.CurrencyCode = data
+		case "min":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("min"))
+			data, err := ec.unmarshalOInt2ᚖint64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Min = data
+		case "max":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("max"))
+			data, err := ec.unmarshalOInt2ᚖint64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Max = data
+		}
+	}
+	return it, nil
+}
+
 // endregion **************************** input.gotpl *****************************
 
 // region    ************************** interface.gotpl ***************************
@@ -4439,6 +4573,11 @@ func (ec *executionContext) _Product(ctx context.Context, sel ast.SelectionSet, 
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "inStock":
+			out.Values[i] = ec._Product_inStock(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "variants":
 			out.Values[i] = ec._Product_variants(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -4764,6 +4903,11 @@ func (ec *executionContext) _Variant(ctx context.Context, sel ast.SelectionSet, 
 			}
 		case "updatedAt":
 			out.Values[i] = ec._Variant_updatedAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "inStock":
+			out.Values[i] = ec._Variant_inStock(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}
@@ -5757,6 +5901,24 @@ func (ec *executionContext) marshalOInt2ᚖint32(ctx context.Context, sel ast.Se
 	return res
 }
 
+func (ec *executionContext) unmarshalOInt2ᚖint64(ctx context.Context, v any) (*int64, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := graphql.UnmarshalInt64(v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOInt2ᚖint64(ctx context.Context, sel ast.SelectionSet, v *int64) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	_ = sel
+	_ = ctx
+	res := graphql.MarshalInt64(*v)
+	return res
+}
+
 func (ec *executionContext) unmarshalOJSON2map(ctx context.Context, v any) (map[string]any, error) {
 	if v == nil {
 		return nil, nil
@@ -5773,6 +5935,14 @@ func (ec *executionContext) marshalOJSON2map(ctx context.Context, sel ast.Select
 	_ = ctx
 	res := graphql.MarshalMap(v)
 	return res
+}
+
+func (ec *executionContext) unmarshalOPriceFilter2ᚖgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐPriceBracket(ctx context.Context, v any) (*service.PriceBracket, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputPriceFilter(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) marshalOProduct2ᚖgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐStoreProduct(ctx context.Context, sel ast.SelectionSet, v *service.StoreProduct) graphql.Marshaler {

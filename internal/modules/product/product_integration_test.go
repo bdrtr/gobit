@@ -203,6 +203,27 @@ func tableExists(ctx context.Context, t *testing.T, dsn, table string) bool {
 	return exists
 }
 
+// indexExists reports whether an index of that name is in the database.
+//
+// It asks pg_class rather than to_regclass because to_regclass resolves any
+// relation, so a TABLE that happened to carry the index's name would answer
+// yes; the relkind narrows the question to the object the assertion is about.
+func indexExists(ctx context.Context, t *testing.T, dsn, name string) bool {
+	t.Helper()
+
+	conn, err := pgx.Connect(ctx, dsn)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close(ctx) }()
+
+	var exists bool
+	err = conn.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = $1 AND relkind = 'i')`,
+		name).Scan(&exists)
+	require.NoError(t, err)
+
+	return exists
+}
+
 // --- migration ----------------------------------------------------------
 
 // TestMigrationUpDownIsReversible verifies that the schema can be applied and
@@ -230,13 +251,23 @@ func TestMigrationUpDownIsReversible(t *testing.T) {
 	// written out rather than derived on purpose: a count taken from the
 	// embedded files would agree with itself whatever happened, and what this
 	// line is for is noticing that a migration was added.
-	assert.Equal(t, uint(3), version)
+	assert.Equal(t, uint(4), version)
+
+	// 000004 adds no table, so the table list above cannot notice it. What it
+	// adds is the index the catalog's option-value filter reads through, and an
+	// index that quietly failed to appear turns a filter this repository
+	// measured as an index probe into a scan of every option value in the shop
+	// -- slower, never wrong, and therefore invisible to every other test here.
+	assert.True(t, indexExists(ctx, t, dsn, "product_option_value_folded_idx"),
+		"migration 000004 must create the index the option-value filter leads with")
 
 	require.NoError(t, db.MigrateDown(ctx, dsn, mod.Migrations(), mod.Name(), 0),
 		"the schema must be reversible")
 	for _, table := range tables {
 		assert.False(t, tableExists(ctx, t, dsn, table), "the %s table must be dropped", table)
 	}
+	assert.False(t, indexExists(ctx, t, dsn, "product_option_value_folded_idx"),
+		"the down migration must take its index with it")
 
 	// A rolled back schema must be applicable again: a rollback must not block
 	// the next deployment.

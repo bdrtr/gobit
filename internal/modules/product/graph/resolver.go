@@ -93,12 +93,24 @@ type variantResolver struct{ *Resolver }
 // unselected field no longer causes work either. REST's "with_count" parameter
 // is exactly this behavior's counterpart in the query string (see
 // api.Handler.storeListProducts).
+// # The count and the two enriched filters cannot be asked for together
+//
+// inStock and price are answered AFTER the catalog rows have been read and
+// enriched, so counting their matches means enriching the whole catalog — the
+// one thing the scan's budget exists to prevent (see
+// service.Service.scanStoreProducts). Selecting "count" beside either of them is
+// therefore REFUSED rather than answered with a null: "count: Int!" is
+// non-nullable, so an unanswerable count would surface as gqlgen's generic
+// "must not be null" against a field the client did select, which says nothing
+// about what to do instead. REST refuses the same pair through "with_count".
 func (r *queryResolver) Products(
 	ctx context.Context,
 	limit, offset *int,
 	after, q *string,
 	sort *models.ProductOrder,
-	collectionID, categoryID, tagID *string,
+	collectionID, categoryID, tagID, optionValue *string,
+	inStock *bool,
+	price *service.PriceBracket,
 ) (*ProductList, error) {
 	// "after" and "offset" name two different positions; honoring both would
 	// serve the page N rows past the cursor, which is a position neither of
@@ -106,6 +118,13 @@ func (r *queryResolver) Products(
 	if after != nil && *after != "" && intValue(offset) != 0 {
 		return nil, coreerrors.Invalid(corepage.CodeInvalidCursor,
 			`"after" and "offset" name two different positions; send one of them`)
+	}
+
+	counting := isSelected(ctx, fieldCount)
+	if counting && (inStock != nil || price != nil) {
+		return nil, coreerrors.Invalid(codeBadArgument,
+			`"count" cannot be selected together with the inStock or price filters: the total `+
+				`would have to be computed over the whole catalog`)
 	}
 
 	order := models.ProductOrderNewest
@@ -126,12 +145,15 @@ func (r *queryResolver) Products(
 		CollectionID:    trimmedPointer(collectionID),
 		CategoryID:      trimmedPointer(categoryID),
 		TagID:           trimmedPointer(tagID),
+		OptionValue:     trimmedPointer(optionValue),
 		Search:          trimmedPointer(q),
+		InStock:         inStock,
+		Price:           price,
 		SalesChannelIDs: SalesChannelIDsFromContext(ctx),
 		Limit:           intValue(limit),
 		Offset:          intValue(offset),
 		After:           cursor,
-		SkipCount:       !isSelected(ctx, fieldCount),
+		SkipCount:       !counting,
 	})
 	if err != nil {
 		return nil, err

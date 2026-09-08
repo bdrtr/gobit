@@ -233,9 +233,15 @@ code's godoc.
   company, so it is unruled). All three were measured on the real binary with a
   single publishable key; the numbers are in the B2B section below, under "The
   condition of the rule", and the decision is in
-  [ADR 0008](adr/0008-musteri-kimligi-guven-siniri.md). The framework OFFERS no
-  surface that verifies the identity; the party that should offer one is the
-  embedding application.
+  [ADR 0008](adr/0008-musteri-kimligi-guven-siniri.md). The framework verifies no
+  identity itself and
+  [ADR 0043](adr/0043-gobit-requires-an-identity-it-still-does-not-issue.md) does
+  not change that — but it does now OFFER the surface: `corehttp.Identity`, which
+  the embedding application implements and registers under
+  `corehttp.IdentityName`. The cart is not among the routes that ask for it. The
+  eight the customer module owns refuse a claim the bound identity does not back;
+  `customer_id` still arrives in a cart BODY, so all three forms above reproduce
+  exactly as measured.
 
 ---
 

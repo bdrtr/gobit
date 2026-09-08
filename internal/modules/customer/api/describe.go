@@ -250,17 +250,19 @@ func describeVitrin(d *openapi.Doc) {
 
 	d.Describe(http.MethodGet, "/store/v1/customers/{id}", openapi.Operation{
 		Summary: "Müşterinin kendi profilini döner.",
-		Responses: map[string]any{
-			"200": openapi.Response("Müşteri profili", d.Item(customerDTO{})),
-		},
+		Description: "The customer named in the path has to be the customer the " +
+			"request proves; see the refusal codes below.",
+		Responses: answers(storefrontIdentityRefusals(), "200",
+			openapi.Response("Müşteri profili", d.Item(customerDTO{}))),
 	})
 
 	d.Describe(http.MethodPut, "/store/v1/customers/{id}", openapi.Operation{
-		Summary:     "Müşterinin kendi profilini günceller.",
+		Summary: "Müşterinin kendi profilini günceller.",
+		Description: "The customer named in the path has to be the customer the " +
+			"request proves; see the refusal codes below.",
 		RequestBody: d.RequestBody(updateCustomerRequest{}),
-		Responses: map[string]any{
-			"200": openapi.Response("Güncellenen profil", d.Item(customerDTO{})),
-		},
+		Responses: answers(storefrontIdentityRefusals(), "200",
+			openapi.Response("Güncellenen profil", d.Item(customerDTO{}))),
 	})
 }
 

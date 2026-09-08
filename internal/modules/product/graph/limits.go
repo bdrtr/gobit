@@ -133,10 +133,10 @@ const (
 	// description):
 	//
 	//	document                                       request   complexity   response
-	//	product page (PDP, everything included)          643 B        2,368    6.8 KiB
+	//	product page (PDP, everything included)          659 B        2,379    6.8 KiB
 	//	category list (24 products, card + price)        118 B        2,344   15.1 KiB
-	//	ALL fields on the default page (20 products)     655 B       28,440    136 KiB
-	//	ALL fields with limit=100                        667 B      138,200    680 KiB
+	//	ALL fields on the default page (20 products)     671 B       28,660    137 KiB
+	//	ALL fields with limit=100                        683 B      139,300    686 KiB
 	//	products { count } with 400 aliases            9.7 KiB      408,000    8.5 KiB
 	//	description with 489 aliases (limit=100)       8.5 KiB       50,000  204.9 MiB
 	//	description with 1500 aliases (20 products)   26.8 KiB       31,020  125.7 MiB
@@ -144,13 +144,16 @@ const (
 	// The response column of the last two rows was measured BEFORE the gates
 	// were added; today neither of them is executed. The row above them, "ALL
 	// fields with limit=100", is the comparison point: pulling the same page
-	// from REST also means a body of the same order (680 KiB). So what produced
+	// from REST also means a body of the same order (686 KiB). So what produced
 	// 204.9 MiB is not more RECORDS but the repeated serialization of the same
 	// record.
 	//
 	// 50,000 leaves comfortable room above the heaviest legitimate document
-	// (28,440): when a field is added to the schema that query does not press
-	// against the limit. A narrower ceiling would save today and force whoever
+	// (28,660): when a field is added to the schema that query does not press
+	// against the limit. That is not a hope either -- adding ADR 0040's
+	// "inStock" to the Product and Variant types on 2026-09-08 moved the row
+	// from 28,440 to 28,660, which is the size of the step this margin is meant
+	// to absorb. A narrower ceiling would save today and force whoever
 	// adds a field tomorrow into a configuration change.
 	//
 	// The last two rows of the table show what the ceiling DOES NOT MEASURE and
@@ -226,7 +229,7 @@ const (
 	//
 	// 4 MiB rests on measurement: the HEAVIEST legitimate response that gets
 	// through today's ceilings (the default page x all fields, with products
-	// whose description is 4 KiB) is 136 KiB, that is, the limit leaves roughly
+	// whose description is 4 KiB) is 137 KiB, that is, the limit leaves roughly
 	// 30 times the room — a catalog with long descriptions and rich metadata
 	// stays comfortably below it. The measured attack, on the other hand, was
 	// producing 204.9 MiB; the limit cuts it by more than 50 times.
@@ -996,7 +999,24 @@ func fieldKey(field *ast.Field) string {
 // query is the database round trip and it does not drop when fewer fields are
 // selected.
 func complexityCosts(costs *ComplexityRoot) {
-	costs.Query.Products = func(child int, limit, _ *int, _, _ *string, _ *models.ProductOrder, _, _, _ *string) int {
+	// The signature is the schema's argument list and it grows with it. The
+	// three filters ADR 0039, 0040 and 0041 added do not change the price of
+	// the call: complexity is charged for the RECORDS a query can return, and a
+	// filter narrows that set rather than widening it. inStock and price do
+	// make the SERVER walk more rows than it returns (see
+	// service.Service.scanStoreProducts), and that cost is bounded by the
+	// scan's own budget rather than by this estimate -- pricing it here would
+	// charge the client for rows it never receives and would put the ceiling in
+	// a place no page size explains.
+	costs.Query.Products = func(
+		child int,
+		limit, _ *int,
+		_, _ *string,
+		_ *models.ProductOrder,
+		_, _, _, _ *string,
+		_ *bool,
+		_ *service.PriceBracket,
+	) int {
 		return rootQueryCost + pageSize(limit)*child
 	}
 

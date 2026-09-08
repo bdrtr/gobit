@@ -177,6 +177,25 @@ gobit mekanizmayı ve neyi nerede tuttuğunun beyanını verir; o uçları çağ
 bir talebi kabul etmek ve süreyi belirlemek sizin işinizdir. **Kurulup hiç
 çağrılmayan bir gobit, çerçevenin göremeyeceği bir uyum sorunu bırakır.**
 
+### Müşteri kimliği: doğrulama sizden, reddetme bizden
+
+Aynı ayrım vitrinde de geçerlidir ve **yükselten bir kurulum için ZORUNLU bir
+adım bırakır.** Vitrinin müşteri adı geçen sekiz ucu — `GET` ve
+`PUT /store/v1/customers/{id}` ile adres defterinin altı ucu — yolun iddia ettiği
+müşterinin kanıtlanmasını ister
+([ADR 0043](./docs/adr/0043-gobit-requires-an-identity-it-still-does-not-issue.md)).
+gobit o kanıtı üretmez ve üretmeyecektir
+([ADR 0008](./docs/adr/0008-musteri-kimligi-guven-siniri.md)); ürettiği şey
+sözleşmedir: `corehttp.Identity`, tek metotlu bir arayüz. Gömen uygulama kendi
+uygulamasını sıradan bir modülün `Register`'ından container'a
+`corehttp.IdentityName` (`"core.identity"`) adıyla kaydeder.
+
+**Hiçbir kimlik bağlanmazsa o sekiz uç her isteği reddeder**
+(`401 identity_not_bound`) — açık değil, KAPALI. Bağlıysa, yolda başkasının
+kimliği geçen istek `403 identity_mismatch` alır. `POST /store/v1/customers`
+kümenin dışındadır (kaydı o AÇAR); sepet, sipariş ve b2b vitrin uçları da öyle.
+Sınırın tamamı [`docs/known-limits.md`](./docs/known-limits.md) içindedir.
+
 ## Daha ileri okuma
 
 | Belge | Neyi cevaplar |
@@ -187,9 +206,9 @@ bir talebi kabul etmek ve süreyi belirlemek sizin işinizdir. **Kurulup hiç
 | [`docs/security.md`](./docs/security.md) | Kimlik ve yetki: iki yüzey, katalogun satış kanalına göre süzülmesi, scope sözlüğü, curl ile uçtan uca yürüyüş, sertleştirme halkaları ve tek örnek/çok örnek ayrımı |
 | [`docs/commerce-flows.md`](./docs/commerce-flows.md) | Sepetten siparişe: akışların HTTP sahibi kim, fiyata ve para birimine kim karar verir, hangi depodan gönderilir, ve B2B'de harcama limiti nerede kontrol edilir |
 | [`docs/api-surfaces.md`](./docs/api-surfaces.md) | Üretilen OpenAPI belgesi ve GraphQL vitrin okuma yüzeyi; maliyeti istemci belirlerken sunucunun koyduğu sınırlar ve hata politikası |
-| [`docs/extending.md`](./docs/extending.md) | Eklentiler, dosya yükleme sağlayıcısı ve alan olayları — yeni bir yetenek nasıl eklenir |
+| [`docs/extending.md`](./docs/extending.md) | Eklentiler, dosya yükleme sağlayıcısı, alan olayları ve **müşteri kimliği** — yeni bir yetenek nasıl eklenir, ve vitrinin ZORUNLU kıldığı tek bağlama |
 | [`docs/operating.md`](./docs/operating.md) | Çalıştırma ve geliştirme: `/health` ile `/ready`, yapılandırmanın tamamı, olay veri yolu arka uçları, izleme, make hedefleri, modül yolunu değiştirme ve sürüm geçmişi |
-| [`docs/known-limits.md`](./docs/known-limits.md) | Bilinen sınırlar: yirmi bir madde, dört küme — kimlik ve yetki, satış kanalı kapsamı, kurulum ve işletim, değişmezlerin sınırı |
+| [`docs/known-limits.md`](./docs/known-limits.md) | Bilinen sınırlar: yirmi iki madde, dört küme — kimlik ve yetki, satış kanalı kapsamı, kurulum ve işletim, değişmezlerin sınırı |
 | [`docs/catalog-search-cost.md`](./docs/catalog-search-cost.md) | Katalog aramasının ölçülmüş maliyeti |
 | [`CHANGELOG.md`](./CHANGELOG.md) | Sürüm sürüm ne değişti |
 

@@ -9,8 +9,12 @@
 A shopper filtering by "Color: red" has to be told which products have it, and
 gap A18 asks what counts as a match: the value EXACTLY as the catalog stores it,
 the same value case-insensitively, or the value folded the way a handle already
-is. The filter itself is not built — this decision sits at its head, and it also
-decides the index, so the index was never a separate question.
+is. ~~The filter itself is not built — this decision sits at its head, and it
+also decides the index, so the index was never a separate question.~~ **The
+filter was built on 2026-09-08 and the second half of that sentence did not
+survive it: this record decides the index of IDENTITY and not the index of
+MATCHING.** See "What this deliberately does not do" for the correction and for
+migration 000004.
 
 The three candidates and their costs were measured on 2026-09-06:
 
@@ -129,8 +133,30 @@ same shape ADR 0038 gave the invoice buyer address.
 
 ## What this deliberately does NOT do
 
-- **It does not build the filter.** That is B2's, and it now has its rule and its
-  index.
+- ~~**It does not build the filter.**~~ **Built 2026-09-08.** The storefront
+  listing takes `option_value` (REST) / `optionValue` (GraphQL), the service
+  folds it ONCE on the way down, and the repository compares two stored strings
+  in an `EXISTS` over `product_option_value` joined to `product_option` — so the
+  page and the count are both over the filtered set. The filter is on the VALUE
+  alone and not on the (title, value) pair the vocabulary hands back: whether
+  two axes named differently are one axis is a merchant's data question, and
+  this record folds the value and nothing else.
+
+  **The build corrected one sentence above.** This record says it "also decides
+  the index, so the index was never a separate question", and that is true of
+  IDENTITY and false of MATCHING. `product_option_value_folded_uniq` leads with
+  `option_id`, and a shopper filtering by "Color: red" has no option id — an
+  option belongs to exactly ONE product, so an id there would name one product's
+  one value. Against that index the filter's predicate is either a full scan of
+  `product_option_value` or a skip scan PostgreSQL 16 does not have. Migration
+  000004 therefore adds `product_option_value_folded_idx`, partial on
+  `deleted_at IS NULL` and NOT unique, so the matching values become the driving
+  relation instead of the catalog. Uniqueness stays where it was.
+
+  The clause guards the soft delete on BOTH parents, which is the half that is
+  easy to lose: deleting an option is not a cascade, so a value under a removed
+  option is still a live row and would otherwise keep its product in the
+  answer.
 - ~~**It does not add the startup convergence pass.**~~ **Built 2026-09-07, in the
   same round.** `refoldOptionValues` runs beside `refoldInvoiceHandles` after
   `registry.Bootstrap`, reads only the non-ASCII values — the only shape the SQL

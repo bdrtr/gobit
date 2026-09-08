@@ -74,6 +74,14 @@ models:
     model: github.com/bdrtr/gobit/internal/modules/product/service.StoreVariant
   ProductList:
     model: github.com/bdrtr/gobit/internal/modules/product/graph.ProductList
+  # The price filter is bound to the SERVICE's own bracket rather than to a
+  # generated input model, for the same reason Product and Variant are: a
+  # generated model plus a converter would be a second definition of what a
+  # price bracket is, and the day a field is added to one of them the other
+  # would silently keep answering the old question. With the binding, a rename
+  # in the service does not compile.
+  PriceFilter:
+    model: github.com/bdrtr/gobit/internal/modules/product/service.PriceBracket
   Option:
     model: github.com/bdrtr/gobit/internal/modules/product/models.Option
   OptionValue:

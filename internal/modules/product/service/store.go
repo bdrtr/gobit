@@ -111,7 +111,39 @@ type StoreListOptions struct {
 	// the ids come from the vocabulary endpoints, which is what those exist for.
 	CategoryID *string
 	TagID      *string
-	Search     *string
+	// OptionValue narrows the catalog to the products offering one option
+	// value ("red"), matched on the FOLDED form (ADR 0039). The value comes
+	// from the option vocabulary endpoint, which is the third of the four
+	// vocabularies and the only one that returns text.
+	//
+	// It is a value without an option title beside it, and that is a narrower
+	// promise than it looks. The vocabulary hands back (title, value) PAIRS, so
+	// a client can show "Color: red" and "Size: red" apart; this filter answers
+	// "offers the value red on ANY axis". Adding the title would need a second
+	// decision -- whether two axes named differently are one axis is a
+	// merchant's data question rather than a rule this framework can pick --
+	// and ADR 0039 folds the VALUE and nothing else.
+	OptionValue *string
+	Search      *string
+	// InStock narrows the catalog by ADR 0040's definition: true keeps the
+	// products with at least one sellable variant, false keeps the ones with
+	// none.
+	//
+	// Both directions are offered because both are a shopper's question ("hide
+	// what I cannot buy" and, for a merchant's own tooling, "what is dark").
+	// nil is neither and applies no filter at all.
+	//
+	// It cannot be a SQL clause: two of its three inputs are this module's
+	// columns and the third is inventory's number, which arrives with the
+	// enrichment. What that costs the page is in [Service.ListStoreProducts].
+	InStock *bool
+	// Price narrows the catalog to the products with a BASE price inside a
+	// bracket, in the request's currency, at quantity one (ADR 0041).
+	//
+	// It rides exactly the same machinery as InStock and for the same reason:
+	// the amounts belong to pricing and its Query provider takes one filter,
+	// "id", so there is no predicate to push down.
+	Price *PriceBracket
 	// SalesChannelIDs are the sales channels the read is scoped to.
 	//
 	// It is NEVER read from the query string, and the two read surfaces fill it
@@ -174,6 +206,22 @@ type StoreProduct struct {
 	// field shows up in JSON and the variants are enriched with price/stock
 	// information.
 	Variants []StoreVariant `json:"variants"`
+	// InStock is ADR 0040's answer for the product: true when AT LEAST ONE of
+	// its variants is in stock, false when none is and false when it has no
+	// variants at all.
+	//
+	// It is the BADGE, and it is written on every storefront body rather than
+	// behind a parameter. A storefront that renders a product card needs it
+	// whether or not it also filters by it, and the inputs are already fetched
+	// -- the answer is arithmetic over records this endpoint reads anyway, so
+	// making it optional would buy nothing and would leave two callers to
+	// re-derive one definition.
+	//
+	// A product read through an endpoint that does NOT enrich (there is none
+	// today; every path into this type goes through [Service.toStoreProducts])
+	// would carry false here, which is the same direction the definition errs
+	// in everywhere else: never claiming stock it cannot see.
+	InStock bool `json:"in_stock"`
 }
 
 // StoreVariant is a variant enriched with price and stock information.
@@ -183,10 +231,21 @@ type StoreProduct struct {
 // from the Query layer (as loosely typed records). Not regaining type safety
 // here is deliberate; interpreting the fields would mean copying the
 // pricing/inventory schema into this module (the accepted price of ADR 0004).
+// The ONE exception to that sentence is [StoreVariant.InStock], and ADR 0040
+// makes it deliberately: computing it reads a single published field name out of
+// inventory's record. What that costs, and why nothing may quietly add a second,
+// is written where the field names are -- see catalogfilter.go.
 type StoreVariant struct {
 	models.Variant
 	PriceSet      query.Record `json:"price_set,omitempty"`
 	InventoryItem query.Record `json:"inventory_item,omitempty"`
+	// InStock is ADR 0040's answer for this variant: not counted, OR sellable
+	// past zero, OR carrying a positive available quantity.
+	//
+	// It is computed rather than stored. A stored copy is stale the moment
+	// stock moves, and keeping it fresh would mean the catalog subscribing to
+	// inventory's events for a value it can work out on read.
+	InStock bool `json:"in_stock"`
 }
 
 // enrichment holds the additions a single variant gets from other modules.
@@ -229,7 +288,48 @@ type enrichment struct {
 // storefront request (see [ListProductsOptions.SkipCount]). It can be turned off
 // with [StoreListOptions.SkipCount]; while it is off the Count field of the
 // result comes back nil and that means "not counted", NOT "zero records".
+//
+// # Two of the filters cannot be a WHERE clause, and the page is scanned for them
+//
+// [StoreListOptions.InStock] and [StoreListOptions.Price] are answered over data
+// that belongs to inventory and to pricing, and neither can enter this module's
+// SQL: Principle 2.2 forbids the join, and neither provider takes a predicate
+// this module could push down (inventory's takes "sku" and
+// "requires_shipping", pricing's takes "id"). So the answer exists only AFTER a
+// product has been enriched, and enrichment happens after LIMIT has cut the
+// page.
+//
+// Filtering the cut page is what this module refuses to do, and it refuses it in
+// writing twice already: repository/saleschannel.go put the sales channel filter
+// into the database because "a filtering done on the Go side fills the page
+// short, and the total count would show the unfiltered set", and
+// [variantProvider.List] rejects a combination rather than "opening a surface
+// that paginates wrongly". A short page is not merely ugly -- with offset paging
+// an EMPTY page in the middle of the catalog is indistinguishable from the end
+// of it, and a client that stops there loses every product beyond.
+//
+// So when either filter is given the listing SCANS instead: it walks the catalog
+// in the listing order in chunks, enriches each chunk with the one batch Graph
+// call it would have made anyway, keeps what matches, and stops at a full page.
+// See [Service.scanStoreProducts] for what that costs and what it refuses.
 func (s *Service) ListStoreProducts(ctx context.Context, opts StoreListOptions) (ListResult[StoreProduct], error) {
+	// The bracket is normalized and judged HERE rather than at either edge, so
+	// that the REST query string and the GraphQL input object compare the same
+	// amounts and refuse the same requests; see [PriceBracket.Validate] and
+	// [PriceBracket.normalized].
+	if opts.Price != nil {
+		bracket := opts.Price.normalized()
+		if err := bracket.Validate(); err != nil {
+			return ListResult[StoreProduct]{}, err
+		}
+
+		opts.Price = &bracket
+	}
+
+	if keep := opts.enrichedFilter(); keep != nil {
+		return s.scanStoreProducts(ctx, opts, keep)
+	}
+
 	published := models.StatusPublished
 	result, err := s.ListProducts(ctx, ListProductsOptions{
 		Order:           opts.Order,
@@ -237,6 +337,7 @@ func (s *Service) ListStoreProducts(ctx context.Context, opts StoreListOptions) 
 		CollectionID:    opts.CollectionID,
 		CategoryID:      opts.CategoryID,
 		TagID:           opts.TagID,
+		OptionValue:     opts.OptionValue,
 		Search:          opts.Search,
 		SalesChannelIDs: opts.SalesChannelIDs,
 		Limit:           opts.Limit,
@@ -260,6 +361,225 @@ func (s *Service) ListStoreProducts(ctx context.Context, opts StoreListOptions) 
 		Limit:      result.Limit,
 		NextCursor: result.NextCursor,
 	}, nil
+}
+
+// enrichedFilter is a criterion that can only be answered once a product has
+// been enriched with the other modules' records.
+type enrichedFilter func(StoreProduct) bool
+
+// enrichedFilter gathers the criteria of a request that the database cannot
+// answer, and returns nil when there are none.
+//
+// Returning nil rather than a function that always says yes is what keeps the
+// unfiltered listing on the path it has always taken: one list query, one count
+// and one Graph call, with the same bytes in the response as before this
+// existed.
+//
+// The criteria are ANDed, and the aggregation to the product is an OR over its
+// variants for both of them. That is the same any-variant rule ADR 0040 and ADR
+// 0041 each state, and stating it once here would still leave two decisions
+// saying it -- so a product with a cheap sold-out variant and an expensive
+// available one matches "in stock" and matches "under 100" and is therefore
+// returned by a request asking for both, even though no single variant satisfies
+// the pair. Narrowing that to one variant is a THIRD decision and neither record
+// takes it.
+func (o StoreListOptions) enrichedFilter() enrichedFilter {
+	var tests []enrichedFilter
+
+	if o.InStock != nil {
+		wanted := *o.InStock
+		tests = append(tests, func(p StoreProduct) bool { return p.InStock == wanted })
+	}
+
+	if o.Price != nil {
+		bracket := *o.Price
+		tests = append(tests, func(p StoreProduct) bool {
+			for i := range p.Variants {
+				if bracket.matchesVariant(p.Variants[i].PriceSet) {
+					return true
+				}
+			}
+
+			return false
+		})
+	}
+
+	if len(tests) == 0 {
+		return nil
+	}
+
+	return func(p StoreProduct) bool {
+		for _, test := range tests {
+			if !test(p) {
+				return false
+			}
+		}
+
+		return true
+	}
+}
+
+// The two numbers that bound the scan.
+const (
+	// storeScanChunk is how many products one round of the scan reads.
+	//
+	// It is deliberately far larger than a page. The cost of a round is almost
+	// entirely round trips -- the listing query plus its bulk relation reads,
+	// and ONE batch Graph call for the whole chunk regardless of its size --
+	// so a chunk of a hundred costs about what a chunk of twenty costs and
+	// buys five times the ground. It is [MaxLimit] because the listing will
+	// not fetch more than that in one call anyway.
+	storeScanChunk = MaxLimit
+	// storeScanMaxRows is the number of catalog rows one request will walk
+	// before it stops and hands back a SHORT page with a cursor.
+	//
+	// There has to be a bound: "in stock" can be false for every product in a
+	// catalog, and without one, a single request would enrich the whole of it
+	// looking for a twentieth match. Five chunks is the ceiling, so the worst
+	// request makes five list rounds and five Graph calls rather than one.
+	//
+	// Stopping is SAFE in a way that stopping in the middle of a WHERE clause
+	// would not be: the cursor handed back names the last row examined, so the
+	// client's next request resumes exactly there and no product is skipped or
+	// returned twice. A short page with a cursor is "keep going", and the
+	// listing's contract already says the catalog is exhausted when
+	// next_cursor is ABSENT -- not when a page comes back short.
+	storeScanMaxRows = 5 * storeScanChunk
+)
+
+// scanStoreProducts assembles a page for a request carrying a filter the
+// database cannot answer.
+//
+// # What it guarantees
+//
+// A full page whenever the catalog holds one within the scan budget; no product
+// skipped and none returned twice across pages; and a next_cursor that is empty
+// only when the SCAN REACHED THE END of the catalog. The client's stop condition
+// is unchanged.
+//
+// # What it refuses, and why an offset is not one of the things it can honor
+//
+// A non-zero offset. An offset counts rows of the set the DATABASE returns, and
+// the set the client sees here is a subset of that chosen after the fact -- so
+// "skip 40" would skip forty catalog rows rather than forty matches, and the
+// second page would silently begin somewhere the first page had already shown.
+// The refusal is a typed validation error naming the cursor, because the cursor
+// is the parameter that does work here: it is a POSITION rather than a count,
+// and a position survives a filter that removes rows.
+//
+// # What it costs
+//
+// Up to [storeScanMaxRows] products read and enriched for one page, against
+// exactly one page's worth on the unfiltered path. The count is NOT produced --
+// counting the matches means enriching the whole catalog, which is the one thing
+// the budget exists to prevent -- so the result's Count comes back nil and the
+// envelope carries no "count" field. That is the same "not counted" the
+// with_count parameter already produces, and the handler refuses an explicit
+// with_count=true beside these filters rather than letting the number go missing
+// without a word.
+func (s *Service) scanStoreProducts(
+	ctx context.Context,
+	opts StoreListOptions,
+	keep enrichedFilter,
+) (ListResult[StoreProduct], error) {
+	limit, offset, err := normalizePaging(opts.Limit, opts.Offset)
+	if err != nil {
+		return ListResult[StoreProduct]{}, err
+	}
+	if offset > 0 {
+		return ListResult[StoreProduct]{}, invalid(
+			"the offset cannot be combined with the in_stock or price filters; " +
+				"page with the cursor from next_cursor instead")
+	}
+
+	order, err := normalizeProductOrder(opts.Order)
+	if err != nil {
+		return ListResult[StoreProduct]{}, err
+	}
+	listing := ProductListingFor(order)
+
+	published := models.StatusPublished
+	chunk := max(limit, storeScanChunk)
+	after := opts.After
+	out := make([]StoreProduct, 0, limit)
+	scanned := 0
+
+	for {
+		page, err := s.ListProducts(ctx, ListProductsOptions{
+			Order:           order,
+			Status:          &published,
+			CollectionID:    opts.CollectionID,
+			CategoryID:      opts.CategoryID,
+			TagID:           opts.TagID,
+			OptionValue:     opts.OptionValue,
+			Search:          opts.Search,
+			SalesChannelIDs: opts.SalesChannelIDs,
+			Limit:           chunk,
+			After:           after,
+			WithRelations:   true,
+			// The count of the unfiltered set is not merely useless here, it
+			// is WRONG: it would report how many products the WHERE clause
+			// keeps, under a filter that removes more of them.
+			SkipCount: true,
+		})
+		if err != nil {
+			return ListResult[StoreProduct]{}, err
+		}
+
+		enriched, err := s.toStoreProducts(ctx, page.Items)
+		if err != nil {
+			return ListResult[StoreProduct]{}, err
+		}
+
+		for i := range enriched {
+			scanned++
+			if !keep(enriched[i]) {
+				continue
+			}
+
+			out = append(out, enriched[i])
+			if len(out) < limit {
+				continue
+			}
+
+			// The page is full. The next one resumes AFTER this row rather
+			// than after the chunk, so the matches this chunk still holds are
+			// not lost.
+			next := ""
+			if i < len(enriched)-1 || page.NextCursor != "" {
+				next = corepage.Encode(listing,
+					corepage.Cursor{Time: enriched[i].CreatedAt, ID: enriched[i].ID})
+			}
+
+			return storeScanResult(out, limit, next), nil
+		}
+
+		// An unfilled chunk means the listing itself is exhausted: there is no
+		// row left to resume from and the catalog has been walked to its end.
+		if page.NextCursor == "" {
+			return storeScanResult(out, limit, ""), nil
+		}
+
+		last := page.Items[len(page.Items)-1]
+		after = corepage.Cursor{Time: last.CreatedAt, ID: last.ID}
+
+		if scanned >= storeScanMaxRows {
+			return storeScanResult(out, limit, corepage.Encode(listing, after)), nil
+		}
+	}
+}
+
+// storeScanResult wraps what the scan gathered.
+//
+// Offset is written as zero rather than echoed, which is what the scan accepts
+// in the first place, and Count is left nil: see [Service.scanStoreProducts].
+func storeScanResult(items []StoreProduct, limit int, nextCursor string) ListResult[StoreProduct] {
+	return ListResult[StoreProduct]{
+		Items:      items,
+		Offset:     0,
+		Limit:      limit,
+		NextCursor: nextCursor,
+	}
 }
 
 // GetStoreProduct returns a single product for the storefront with price and
@@ -453,13 +773,22 @@ func (s *Service) toStoreProducts(ctx context.Context, products []models.Product
 				Variant:       variant,
 				PriceSet:      extra.priceSet,
 				InventoryItem: extra.inventory,
+				// The badge is computed HERE, on the one path every storefront
+				// body takes, rather than in the handler that happens to need
+				// it: a definition that lives in one endpoint is the state gap
+				// A17 was filed against.
+				InStock: variantInStock(variant, extra.inventory),
 			})
 		}
 		// The variant slice of the embedded product is emptied: carrying the
 		// same data in two places leaves the door open for one of them to be
 		// updated and the other forgotten.
 		p.Variants = nil
-		out = append(out, StoreProduct{Product: p, Variants: variants})
+		out = append(out, StoreProduct{
+			Product:  p,
+			Variants: variants,
+			InStock:  productInStock(variants),
+		})
 	}
 	return out, nil
 }

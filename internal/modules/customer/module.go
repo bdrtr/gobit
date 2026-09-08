@@ -27,8 +27,12 @@
 //     Kayıtlar GRUP KİMLİKLERİYLE döner ki fiyat hesabının kural bağlamı tek
 //     çağrıda kurulabilsin.
 //   - /admin/v1/customers, /admin/v1/customer-groups … — yönetim API'si.
-//   - /store/v1/customers … — vitrin API'si. KORUMASIZDIR ve öyle kalır:
-//     müşteri kimliğini doğrulamak gömen uygulamanın işidir (ADR 0008); bkz.
+//   - /store/v1/customers … — vitrin API'si. Verifying a customer identity is
+//     still the embedding application's job (ADR 0008) and gobit issues none;
+//     what changed with ADR 0043 is that the storefront routes naming a
+//     customer now REQUIRE the embedder's verifier and refuse when none is
+//     bound. The contract is corehttp.Identity, resolved from the container
+//     under corehttp.IdentityName by [identityBinding]; bkz.
 //     internal/modules/customer/api paket belgesi.
 //
 // # Link'i bildiren tarafa not
@@ -159,6 +163,12 @@ func (m *Module) Migrations() fs.FS { return migrationsRoot }
 // güvenlidir — modül sırasına bağımlılık yaratan tek şey başka bir MODÜLÜN
 // servisini çözmek olurdu ve bu yapılmaz.
 //
+// That sentence survives ADR 0043 unchanged, and [identityBinding] is why. The
+// customer identity comes from a module the embedder adds LAST, so resolving it
+// here would make registration order part of the contract; the wrapper handed
+// to the handler resolves it on the first storefront request instead. The
+// container is captured, not read.
+//
 // Link tanımı BİLDİRİLMEZ: customer, kendisine işaret eden bağların ucudur,
 // sahibi değil. Bugünkü tek sahip b2b modülüdür ("b2b_employee_customer").
 func (m *Module) Register(ctx context.Context, c *container.Container) error {
@@ -170,7 +180,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 
 	repo := repository.New(pool.Pool())
 	m.svc = service.New(repo, service.Options{Logger: m.log})
-	m.handler = api.New(m.svc)
+	m.handler = api.New(m.svc, &identityBinding{c: c, log: m.log})
 
 	if err := c.Provide(ServiceName, m.svc); err != nil {
 		return err

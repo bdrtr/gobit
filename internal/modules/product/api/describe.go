@@ -64,7 +64,9 @@ func Describe(d *openapi.Doc) {
 		// different module's surface entirely.
 		Tags: []string{"products"},
 		// The QUERY parameters are the ones the handler READS, not the ones we
-		// might wish for: [Handler.storeListProducts] reads only these eight.
+		// might wish for: the list below is exactly what
+		// [Handler.storeListProducts] takes off the query string, and nothing
+		// else is promised.
 		//
 		// "sales_channel_id" is DELIBERATELY ABSENT FROM THE QUERY STRING and
 		// must not be added there. It is a PATH parameter and nothing else (see
@@ -83,6 +85,62 @@ func Describe(d *openapi.Doc) {
 			queryParameter("tag_id", typeString,
 				"Restricts the products to a single tag. The id comes from "+
 					"GET /store/v1/tags. A product carrying SEVERAL tags is returned once."),
+			queryParameter("option_value", typeString,
+				"Restricts the products to the ones OFFERING this option value (\"red\"). "+
+					"The value comes from GET /store/v1/sales-channels/{sales_channel_id}"+
+					"/option-values, the one vocabulary that returns text rather than ids: an "+
+					"option belongs to exactly one product, so an option-value id would name a "+
+					"single product's single value. "+
+					"The match is on the FOLDED form and the fold is Go's, never the database's: "+
+					"it trims, lower-cases and replaces each Latin letter carrying a mark with "+
+					"its ASCII base, and KEEPS every rune it has no ASCII base for. So two "+
+					"spellings of one value meet, two different values never merge, and a "+
+					"Cyrillic or CJK catalog gains case-insensitive matching instead of losing "+
+					"its text -- at the price that an unaccented approximation of such a value "+
+					"finds nothing, which is a miss rather than a wrong answer. "+
+					"The option TITLE is not part of it: this asks \"offers the value red on any "+
+					"axis\"."),
+			queryParameter("in_stock", typeBoolean,
+				"Restricts the products by availability. A VARIANT is in stock when it is not "+
+					"counted (manage_inventory false), OR it may be sold past zero "+
+					"(allow_backorder), OR its available quantity is above zero; a PRODUCT is in "+
+					"stock when at least one of its variants is, and a product with no variants "+
+					"is not. A variant that is counted and linked to NO inventory item is NOT in "+
+					"stock. "+
+					"The same answer is written on every product body as \"in_stock\" whether or "+
+					"not this parameter is given. "+
+					"true keeps what can be bought and false keeps what cannot; leaving the "+
+					"parameter out filters nothing. "+
+					"The answer is over the sellable total across ALL locations and is not "+
+					"regional. "+
+					"It cannot be a database predicate, so the listing SCANS the catalog for it "+
+					"and the page can come back SHORT with a cursor -- keep paging until "+
+					"\"next_cursor\" is absent, which is the listing's end-of-catalog signal in "+
+					"every case. \"offset\" is refused beside it and so is with_count=true."),
+			queryParameter("currency_code", typeString,
+				"The ISO 4217 currency the price bounds are given in, e.g. \"TRY\". Required "+
+					"when min_price or max_price is given, and refused on its "+
+					"own: prices in different currencies are not comparable and this listing "+
+					"never converts them, because a rate is a fact about a moment this "+
+					"repository does not store."),
+			queryParameter("min_price", typeInteger,
+				"Inclusive lower bound of the BASE price, in MINOR units (cents). "+
+					"\"Base\" is the price that belongs to no price list: there is no default "+
+					"price list in this schema and no column that could mark one, so the shop's "+
+					"ordinary price is the ABSENCE of a list. The amount compared is the one for "+
+					"quantity ONE, with no customer-group context -- a wholesale tier starting "+
+					"at fifty units and a group price are both invisible to this filter. "+
+					"A product matches when ANY of its variants' base prices does; a variant "+
+					"priced ONLY on a list has no base price and never matches. "+
+					"A product on SALE shows the sale price and filters by its base price, so a "+
+					"shopper asking for \"under 100\" may not see something currently selling "+
+					"for 90 -- that is the cost of a filter that does not move on its own. "+
+					"Like in_stock it is answered after the rows are read, with the "+
+					"same short-page, no-offset and no-count consequences."),
+			queryParameter("max_price", typeInteger,
+				"Inclusive upper bound of the BASE price, in MINOR units. See min_price "+
+					"for what \"base price\" means; a lower bound greater than the upper one is "+
+					"REFUSED rather than answered with the empty set it describes."),
 			queryParameter("q", typeString,
 				"Free-text search over the TITLE only, case-insensitively and anywhere in it. "+
 					"The handle is a SEPARATE and EXACT filter, not part of this one — a "+
@@ -105,7 +163,13 @@ func Describe(d *openapi.Doc) {
 					"catalog at all."),
 			queryParameter("limit", typeInteger,
 				"Page size; if not given the service's default applies."),
-			queryParameter("offset", typeInteger, "Number of records to skip."),
+			queryParameter("offset", typeInteger,
+				"Number of records to skip. It is REFUSED together with in_stock or a "+
+					"price bound: an offset counts rows the DATABASE returns, while those two "+
+					"filters remove rows after the fact, so \"skip 40\" would skip forty catalog "+
+					"rows rather than forty matches and the second page would begin somewhere "+
+					"the first had already shown. Page those filters with \"after\" instead, "+
+					"which names a position rather than a count."),
 			queryParameter("after", typeString,
 				"Opaque cursor from a previous page's \"next_cursor\". Cheaper than \"offset\" "+
 					"for deep pages: offset makes the database walk and DISCARD every row it "+
@@ -134,7 +198,12 @@ func Describe(d *openapi.Doc) {
 					"counter takes 0.65 ms (the endpoint's remaining enrichment legs are "+
 					"independent of the counter and are not skipped by this parameter). "+
 					"The total number is generally needed once on the first page; on the "+
-					"following pages the same number is computed again.",
+					"following pages the same number is computed again. "+
+					"It is REFUSED, rather than silently dropped, when it is asked for "+
+					"explicitly beside in_stock or a price bound: those two are answered "+
+					"after the rows are read, so counting their matches would mean reading and "+
+					"enriching the WHOLE catalog. Send with_count=false, or leave the "+
+					"parameter out.",
 			),
 		},
 		Responses: map[string]any{

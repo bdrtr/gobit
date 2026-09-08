@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"slices"
+	"strings"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
@@ -71,6 +72,58 @@ const (
 // the path names.
 const codeChannelNotAuthorized = "product_sales_channel_not_authorized"
 
+// codeCountUnavailable reports that the total counter was asked for beside a
+// filter whose matches cannot be counted without walking the whole catalog.
+const codeCountUnavailable = "product_count_unavailable"
+
+// The three catalog filters this listing gained with ADR 0039, 0040 and 0041
+// are read as string LITERALS, exactly like the four filters beside them.
+//
+// A constant would read better in the two refusal messages below, and it is
+// deliberately not used: the query-parameter audit in internal/arch resolves a
+// parameter name from a string literal and reads a constant back as unknown, so
+// the name would silently drop out of the population that binds "what the
+// handler reads" to "what the document describes". That audit is what keeps a
+// described parameter from being one the server ignores, and a filter is exactly
+// the kind of promise it exists to check.
+
+// priceBracketParam reads ADR 0041's price filter off the query string, and
+// returns nil when the request did not ask for one.
+//
+// # It PARSES and does not judge
+//
+// Whether the bracket makes sense -- a bound without a currency, a currency
+// without a bound, a reversed pair, a negative amount -- is
+// [service.PriceBracket.Validate]'s question and not this function's. The
+// GraphQL surface takes the same bracket as an input object and would otherwise
+// need every one of those rules written a second time, which is how two
+// surfaces of one installation start refusing different requests.
+//
+// What is here is the part that only a query string has: three FLAT parameters
+// standing for one nested object, and the decision that all three being absent
+// is "no filter" rather than an empty bracket.
+func priceBracketParam(r *http.Request) (*service.PriceBracket, error) {
+	minPrice, err := optionalAmountParam(r, "min_price")
+	if err != nil {
+		return nil, err
+	}
+	maxPrice, err := optionalAmountParam(r, "max_price")
+	if err != nil {
+		return nil, err
+	}
+
+	// Trimmed but NOT upper-cased: the case is the service's, so that a GraphQL
+	// client sending "try" inside its input object is compared the same way
+	// (see service.PriceBracket.normalized). What the trim is for here is the
+	// decision below, which only a query string has to make.
+	currency := strings.TrimSpace(r.URL.Query().Get("currency_code"))
+	if minPrice == nil && maxPrice == nil && currency == "" {
+		return nil, nil
+	}
+
+	return &service.PriceBracket{CurrencyCode: currency, Min: minPrice, Max: maxPrice}, nil
+}
+
 // storeListProducts GET /store/v1/sales-channels/{sales_channel_id}/products
 //
 // This is the heart of Phase 4: the storefront listing returns products
@@ -125,11 +178,42 @@ func (h *Handler) storeListProducts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	inStock, err := optionalBoolParam(r, "in_stock")
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	bracket, err := priceBracketParam(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+
 	withCount, err := boolParam(r, "with_count", true)
 	if err != nil {
 		corehttp.WriteError(r.Context(), w, err)
 		return
 	}
+	// A count is not available beside the two filters that are answered after
+	// the enrichment, and the refusal is EXPLICIT rather than a missing field.
+	//
+	// The number cannot be produced: counting the matches means enriching the
+	// whole catalog, which is precisely what the scan's budget exists to
+	// prevent (see service.Service.scanStoreProducts). What is left is a
+	// choice between two ways of saying so, and only one of them reaches the
+	// client -- dropping the field silently would leave a storefront that
+	// always sends with_count=true computing zero pages the first time somebody
+	// adds an in-stock toggle. A request that never asked for the counter, or
+	// asked for it to be off, is served normally.
+	if withCount && r.URL.Query().Get("with_count") != "" && (inStock != nil || bracket != nil) {
+		corehttp.WriteError(r.Context(), w, coreerrors.Invalid(codeCountUnavailable,
+			"with_count cannot be asked for together with the in_stock or price filters: the "+
+				"total would have to be computed over the whole catalog. Send "+
+				"with_count=false, or leave the parameter out."))
+
+		return
+	}
+
 	order, err := sortParam(r)
 	if err != nil {
 		corehttp.WriteError(r.Context(), w, err)
@@ -149,12 +233,22 @@ func (h *Handler) storeListProducts(w http.ResponseWriter, r *http.Request) {
 		CollectionID:    stringParam(r, "collection_id"),
 		CategoryID:      stringParam(r, "category_id"),
 		TagID:           stringParam(r, "tag_id"),
+		OptionValue:     stringParam(r, "option_value"),
 		Search:          stringParam(r, "q"),
+		InStock:         inStock,
+		Price:           bracket,
 		SalesChannelIDs: channels,
 		Limit:           limit,
 		Offset:          offset,
 		After:           after,
-		SkipCount:       !withCount,
+		// A listing carrying one of the two enriched filters is never counted,
+		// whichever way the client left the switch: the refusal above has
+		// already turned an explicit with_count=true away, and what is left is
+		// a request that did not ask. Passing "count it" on to the service
+		// would be an option that says one thing while the answer says another
+		// -- the service would return no count, and the next reader would go
+		// looking for the counting bug that is not there.
+		SkipCount: !withCount || inStock != nil || bracket != nil,
 	})
 	if err != nil {
 		corehttp.WriteError(r.Context(), w, err)

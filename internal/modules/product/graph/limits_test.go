@@ -28,10 +28,10 @@ import (
 const allProductFields = `
   id handle title subtitle description thumbnail isGiftcard discountable
   weight length height width material originCountry collectionId metadata
-  createdAt updatedAt
+  createdAt updatedAt inStock
   variants {
     id productId title sku barcode ean upc manageInventory allowBackorder
-    weight rank metadata createdAt updatedAt priceSet inventoryItem
+    weight rank metadata createdAt updatedAt inStock priceSet inventoryItem
     optionValues { id optionId value rank optionTitle }
   }
   options { id productId title rank values { id optionId value rank optionTitle } }
@@ -747,13 +747,20 @@ func TestFieldRepetitionCountsDifferentTypesSeparately(t *testing.T) {
 // here, the numbers in the table turn after a while into folklore nobody can
 // verify — indeed the product page row of the old table was not counting the
 // root query cost at all (it said 1,400, and when measured it came out 2,368).
+//
+// The numbers move whenever a field is added to the schema AND to
+// [allProductFields]: ADR 0040's "inStock" did exactly that on 2026-09-08 and
+// carried the three all-fields rows from 2,368 / 28,440 / 138,200 to the values
+// below. That is the calibration working, not drifting -- the point of pinning
+// the documents here is that such a move fails a test instead of quietly
+// leaving the table measuring a document that is no longer all-fields.
 var calibrationDocuments = map[string]struct {
 	document   string
 	complexity int
 }{
 	"product page (PDP, everything included)": {
 		document:   `{ product(handle: "t-shirt") {` + allProductFields + `} }`,
-		complexity: 2368,
+		complexity: 2379,
 	},
 	"category list (24 products, card fields + price)": {
 		document: `{ products(limit: 24) { count items { id handle title thumbnail ` +
@@ -762,11 +769,11 @@ var calibrationDocuments = map[string]struct {
 	},
 	"ALL fields on the default page (20 products x whole tree)": {
 		document:   `{ products { count offset limit items {` + allProductFields + `} } }`,
-		complexity: 28440,
+		complexity: 28660,
 	},
 	"ALL fields with limit=100": {
 		document:   `{ products(limit: 100) { count offset limit items {` + allProductFields + `} } }`,
-		complexity: 138200,
+		complexity: 139300,
 	},
 	"products { count } with 400 aliases": {
 		document:   aliasedStacking(400),

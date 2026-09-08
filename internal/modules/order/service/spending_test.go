@@ -437,6 +437,21 @@ func TestAnEmployeeWithAZeroLimitCannotSpendAtAll(t *testing.T) {
 // day a customer session arrives, and that day this test falling will be the
 // sign that the decision was really made.
 //
+// # 2026-09-08: a layer arrived and this test did NOT fall, on purpose
+//
+// ADR 0008's Consequence 2 says both tripwires are expected to fail when a
+// layer that verifies identity is added. ADR 0043 added one — corehttp.Identity
+// is published and the customer module's address book refuses a claim the bound
+// identity does not back — and this test is still green, because that layer
+// landed at the ADDRESS BOOK and this test watches the ORDER SERVICE. A guest
+// order still declares no customer and the rule is still never asked for.
+//
+// The sign therefore did not fire, and a reader who trusts the sign alone would
+// conclude nothing happened. What WOULD fell this test is named so the next
+// reader does not have to derive it: the cart taking its customer from a proven
+// identity instead of from its body. Until then the assertion below is not a
+// historical note, it is current behavior.
+//
 // The setup is the state in which the order would DEFINITELY be rejected had the
 // rule been asked for: the limit is zero. The order still passes, because when
 // [service.CreateOrderInput.CustomerID] is empty the provider is never reached —
@@ -473,6 +488,16 @@ func TestTrustBoundaryGuestOrderIsNeverAskedForTheSpendingRule(t *testing.T) {
 // The claim looks at the ARGUMENT of the query, because that is exactly where
 // the boundary lives: when a layer that authenticates the identity is added, the
 // argument of this call has to come from the session and not from the body.
+//
+// # 2026-09-08: still the body, and still measurable
+//
+// ADR 0043 published corehttp.Identity and bound it at the customer module's
+// address book; it did not touch the cart, so the argument reaching this call
+// still comes from a body field any client may write. The stranger's identifier
+// below is therefore not a hypothetical — it is the same request ADR 0008
+// measured against the real binary, and it still burns the named employee's
+// spending window. This test goes red on the day the cart proves its customer,
+// and that day is the one ADR 0008's sign was actually describing.
 func TestTheSpendingRuleIsAppliedToTheDeclaredCustomer(t *testing.T) {
 	const strangerID = "cus_SOMEONE_ELSES_ID"
 

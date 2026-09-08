@@ -252,8 +252,11 @@ func describeAuditLog(d *openapi.Doc) {
 			"every write, and a bare \"a product was updated\" would be cheaper and worth " +
 			"nothing." +
 			"\n\n" +
-			"Storefront requests are NOT recorded: that surface is unauthenticated by " +
-			"decision, so a row there would say \"somebody\" and mean nothing. Reads are " +
+			"Storefront requests are NOT recorded: what authenticates one is a " +
+			"publishable key, which names a SALES CHANNEL and not a person, so a row " +
+			"there would say \"somebody\" and mean nothing. The customer identity of " +
+			"ADR 0043 does not change that: it is resolved by the one module that needs " +
+			"it, at the moment it needs it, and never reaches this stack. Reads are " +
 			"not recorded either, with ONE exception — this endpoint. Who read the record " +
 			"of who did what is the question an incident asks, so a call to this path " +
 			"appears in its own listing." +

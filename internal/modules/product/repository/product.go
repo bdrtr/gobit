@@ -23,6 +23,24 @@ type ProductFilter struct {
 	// EXISTS subqueries rather than joins (see productFilterSQL).
 	CategoryID *string
 	TagID      *string
+	// OptionValueFolded narrows the listing to the products that offer ONE
+	// option value, and it is the FOLDED form of that value rather than the
+	// text a shopper typed.
+	//
+	// The field name says where the fold happens, which is the whole of ADR
+	// 0039: the caller folds with [models.FoldOptionValue] before it gets here,
+	// and this layer compares two stored strings. A repository field called
+	// OptionValue would invite a lower() beside it one day, and lower() is the
+	// CLUSTER's fold -- on a --locale=C database it folds ASCII and nothing
+	// else, so the filter would match different things on two installations
+	// with nothing reporting the difference (ADR 0015, ADR 0038).
+	//
+	// It is a value and not an id for a reason that is a property of the
+	// schema rather than a preference: product_option.product_id and
+	// product_option_value.option_id are both NOT NULL, so an option-value id
+	// names exactly ONE product and filtering a catalog by one would return at
+	// most one product.
+	OptionValueFolded *string
 	// SalesChannelIDs are the sales channels the request is bound to.
 	//
 	// Here nil and an EMPTY BUT NON-nil slice say DIFFERENT things, and the

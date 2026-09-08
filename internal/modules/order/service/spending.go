@@ -141,6 +141,18 @@ type spendingRule struct {
 // TestTrustBoundaryGuestOrderIsNeverAskedForTheSpendingRule: when a layer that
 // authenticates the identity is added, this is the first place that has to
 // change.
+//
+// # A layer arrived on 2026-09-08 and this one did NOT change
+//
+// ADR 0043 published corehttp.Identity and made the customer module's address
+// book require it. Nothing above is weakened by that, and the paragraph is left
+// standing rather than softened: the identifier this function receives still
+// comes from the cart's body, the cart still accepts it on creation and on
+// handover, and all three forms of the escape reproduce exactly as measured.
+// What changed is only that the framework now HAS a contract an embedder can
+// satisfy — so the sentence "tying the claim to proof requires a customer
+// session" has become "the cart has to read the bound identity", which is work
+// the record deliberately did not do.
 func (s *Service) spendingRuleFor(ctx context.Context, customerID string) (spendingRule, error) {
 	// On a guest order there is no rule to apply: the rule is tied to the
 	// employee and the identity of the employee is a customer record. The fact

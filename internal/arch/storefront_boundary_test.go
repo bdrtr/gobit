@@ -79,7 +79,7 @@ func TestNoStorefrontWriteAcceptsAnOperatorControlledField(t *testing.T) {
 			"BLIND, so every assertion below is being made about nothing")
 
 	for _, route := range surface.writes {
-		body, decodes := surface.decoded[route.handler]
+		body, decodes := surface.decoded[route.key()]
 		if !decodes {
 			// A write that takes no body — a delete, or one whose whole input is
 			// in the path. Nothing to check, and not a finding.
@@ -123,7 +123,7 @@ func TestNoStorefrontReadOffersAnOperatorControlledParameter(t *testing.T) {
 			"true while the catalog listing pages; the parameter scan has gone BLIND")
 
 	for _, route := range surface.reads {
-		for _, param := range surface.queried[route.handler] {
+		for _, param := range surface.queried[route.key()] {
 			if !isOperatorControlled(param) {
 				continue
 			}
@@ -151,11 +151,33 @@ func isOperatorControlled(name string) bool {
 }
 
 // storefrontRoute is one registered /store/v1 route.
+//
+// The module is the directory under internal/modules the registration was read
+// out of, and it is carried because the SCHEMA half of ADR 0051 needs it: a
+// route says nothing about a table on its own, and the module is the first hop
+// of the join from one to the other (see storefront_schema_test.go). It is
+// read from the FILE rather than guessed from the path, because a storefront
+// path names a resource and not an owner — the review module's write is
+// registered under /store/v1/products.
 type storefrontRoute struct {
 	verb    string
 	path    string
 	handler string
+	module  string
 }
+
+// key is how a route is looked up in the per-handler maps of [storefrontScan]
+// and in the route-to-table map next door.
+//
+// It is MODULE-QUALIFIED, and the bare handler name is not enough for the reason
+// Go itself gives: a handler is a method of one api package, so two modules may
+// each register a storeCreate and neither is shadowing the other. Keyed by the
+// bare name, one route's decoded body or resolved table set would silently
+// overwrite the other's, and the gate would then pass on the wrong module's
+// evidence while the losing route went unaudited. All twenty-two storefront
+// write handler names happen to be distinct today, measured 2026-09-08; that is
+// a coincidence of the tree rather than a property of it.
+func (r storefrontRoute) key() string { return r.module + "." + r.handler }
 
 // requestBody is a struct a handler decodes, and the JSON names of its fields.
 type requestBody struct {
@@ -164,6 +186,9 @@ type requestBody struct {
 }
 
 // storefrontScan is everything the two gates need, read once.
+//
+// decoded and queried are keyed by [storefrontRoute.key] — "<module>.<handler>"
+// — and never by the bare handler name; the method says why.
 type storefrontScan struct {
 	writes  []storefrontRoute
 	reads   []storefrontRoute
@@ -182,6 +207,7 @@ func storefrontSurface(t *testing.T) storefrontScan {
 
 	fset := token.NewFileSet()
 	files := []*ast.File{}
+	owner := map[*ast.File]string{}
 
 	root := filepath.Join(repoRoot, modulesDir)
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
@@ -200,6 +226,7 @@ func storefrontSurface(t *testing.T) storefrontScan {
 			return parseErr
 		}
 		files = append(files, parsed)
+		owner[parsed] = filepath.Base(filepath.Dir(filepath.Dir(path)))
 
 		return nil
 	})
@@ -207,16 +234,17 @@ func storefrontSurface(t *testing.T) storefrontScan {
 	require.NotEmpty(t, files, "no api package was parsed; the scan has gone BLIND")
 
 	paths := storefrontPathConstants(files)
-	structs := structJSONFields(files)
+	structs := structJSONFields(files, owner)
 	scan := storefrontScan{decoded: map[string]requestBody{}, queried: map[string][]string{}}
 
 	for _, file := range files {
+		module := owner[file]
 		ast.Inspect(file, func(node ast.Node) bool {
 			switch typed := node.(type) {
 			case *ast.CallExpr:
-				collectRoute(typed, paths, &scan)
+				collectRoute(typed, module, paths, &scan)
 			case *ast.FuncDecl:
-				collectHandlerReads(typed, structs, &scan)
+				collectHandlerReads(typed, module, structs, &scan)
 			}
 
 			return true
@@ -227,7 +255,7 @@ func storefrontSurface(t *testing.T) storefrontScan {
 }
 
 // collectRoute records a router registration whose path is a storefront one.
-func collectRoute(call *ast.CallExpr, paths map[string]string, scan *storefrontScan) {
+func collectRoute(call *ast.CallExpr, module string, paths map[string]string, scan *storefrontScan) {
 	selector, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok || len(call.Args) < 2 {
 		return
@@ -248,7 +276,12 @@ func collectRoute(call *ast.CallExpr, paths map[string]string, scan *storefrontS
 		return
 	}
 
-	route := storefrontRoute{verb: strings.ToUpper(verb), path: path, handler: handler.Sel.Name}
+	route := storefrontRoute{
+		verb:    strings.ToUpper(verb),
+		path:    path,
+		handler: handler.Sel.Name,
+		module:  module,
+	}
 	if verb == "Get" {
 		scan.reads = append(scan.reads, route)
 
@@ -311,12 +344,25 @@ func storefrontPathConstants(files []*ast.File) map[string]string {
 	return out
 }
 
-// structJSONFields indexes every struct type by name, with the JSON names of its
-// fields.
-func structJSONFields(files []*ast.File) map[string][]string {
+// structJSONFields indexes every struct type by "<module>.<name>", with the JSON
+// names of its fields.
+//
+// The module qualifier is not decoration. A request type is unexported and lives
+// in ONE api package, so its name is unique where Go looks it up and reused
+// freely across the tree: measured on 2026-09-08, nine struct names occur in two
+// module api packages each, addressRequest among them — the cart's carries
+// source_address_id and the customer's carries is_default_shipping, and they are
+// different types. An index keyed by the bare name would resolve one handler's
+// body to the other module's struct on whichever file the walk parsed last, and
+// the consequence lands next door: storefront_schema_test.go reads this to
+// decide whether a party column arrived in a request BODY, so a shadowed struct
+// would empty that evidence and the CONFINED refusal would stop firing with
+// nothing noticing. [TestTheBodyScanIsKeyedByModule] holds the qualifier.
+func structJSONFields(files []*ast.File, owner map[*ast.File]string) map[string][]string {
 	out := map[string][]string{}
 
 	for _, file := range files {
+		module := owner[file]
 		ast.Inspect(file, func(node ast.Node) bool {
 			spec, ok := node.(*ast.TypeSpec)
 			if !ok {
@@ -335,7 +381,7 @@ func structJSONFields(files []*ast.File) map[string][]string {
 					names = append(names, name)
 				}
 			}
-			out[spec.Name.Name] = names
+			out[module+"."+spec.Name.Name] = names
 
 			return true
 		})
@@ -366,12 +412,14 @@ func jsonFieldName(field *ast.Field) string {
 
 // collectHandlerReads records, for one handler, the body it decodes and the
 // query parameters it reads.
-func collectHandlerReads(fn *ast.FuncDecl, structs map[string][]string, scan *storefrontScan) {
+func collectHandlerReads(
+	fn *ast.FuncDecl, module string, structs map[string][]string, scan *storefrontScan,
+) {
 	if fn.Body == nil {
 		return
 	}
 
-	name := fn.Name.Name
+	name := module + "." + fn.Name.Name
 
 	ast.Inspect(fn.Body, func(node ast.Node) bool {
 		switch typed := node.(type) {
@@ -393,7 +441,7 @@ func collectHandlerReads(fn *ast.FuncDecl, structs map[string][]string, scan *st
 					continue
 				}
 
-				if fields, known := structs[ident.Name]; known {
+				if fields, known := structs[module+"."+ident.Name]; known {
 					scan.decoded[name] = requestBody{name: ident.Name, jsonFields: fields}
 				}
 			}

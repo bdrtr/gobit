@@ -16,9 +16,14 @@ can predict.
 
 **The amount compared is the price that satisfies all of the following.**
 
-1. **The request's currency.** Not a shop default and not a conversion — the
-   storefront already carries a currency per request, and comparing across
-   currencies would be arithmetic on numbers that are not comparable.
+1. **The request's currency.** Not a shop default and not a conversion — ~~the
+   storefront already carries a currency per request~~, and comparing across
+   currencies would be arithmetic on numbers that are not comparable. **Measured
+   on 2026-09-08 while building it: the catalog reads carried NO currency at
+   all.** A cart has one and an order has one; the three storefront catalog
+   reads had none, so "the request's currency" had to become an input the
+   request states — `currency_code`, required beside a bound and refused on its
+   own. Nothing was defaulted: a shop default is the thing this point rejects.
 2. **The BASE price: `price_list_id IS NULL`.** See below — this is what "the
    default price list" turns out to mean in this schema.
 3. **Quantity tier one:** the price whose `min_quantity <= 1` and whose
@@ -81,6 +86,11 @@ consecutive requests for reasons no merchant configured.
   in the currency being shopped in, for one unit.
 - **It is indexable.** All five points reduce to a predicate over `price` columns
   the module already has, with no join to `price_list` and no time arithmetic.
+  **Measured while building it, 2026-09-08: indexable BY PRICING and not by the
+  caller.** The filter lives in the catalog, which may not join those columns and
+  cannot push a predicate down to a provider that accepts only `id`, so the
+  comparison happens in Go over records the request already fetched. See "What
+  this deliberately does not do".
 - **It agrees with the vocabulary a merchant edits.** The base price is the number
   on the variant's form, which is what a merchant expects a price filter to mean.
 
@@ -102,8 +112,53 @@ consecutive requests for reasons no merchant configured.
 
 ## What this deliberately does NOT do
 
-- **It does not build the filter**, its index, or its query parameter. It settles
-  what the number is.
+- ~~**It does not build the filter**, its index, or its query parameter. It
+  settles what the number is.~~ **The filter and its query parameters were built
+  2026-09-08. THE INDEX WAS NOT, and the reason is a measurement that overturns
+  one sentence of this record.**
+
+  What shipped: `currency_code`, `min_price` and `max_price` on the REST
+  storefront listing (minor units, inclusive bounds, an absent bound is an open
+  end) and one `price: PriceFilter` input object on the GraphQL one. The three
+  are one criterion, so a bound without a currency, a currency without a bound, a
+  negative amount and a reversed pair are all REFUSED — and refused in
+  `service.PriceBracket.Validate`, once, so the two surfaces cannot drift into
+  accepting different requests. THREE of the decision's five points — the
+  currency, the base price and quantity tier one — are tested by a case whose
+  amount is INSIDE the bracket and which must still not match, so a build that
+  compared amounts and ignored those three fails every one of them.
+
+  Points 4 and 5 have no such case and cannot have one from here: no
+  customer-group context is a property of what pricing HANDS OVER (its provider
+  has already dropped every conditional price, so there is no group price for a
+  test at this level to smuggle in), and "evaluated at the moment of the query"
+  is the absence of a cache. Neither is falsifiable by a table of prices, so
+  neither is claimed to be tested.
+
+  **Why there is no index.** "It is indexable. All five points reduce to a
+  predicate over `price` columns the module already has" is true — of PRICING.
+  The filter runs in the CATALOG, which may not join pricing's tables
+  (Principle 2.2) and has no predicate to push down: pricing's Query provider
+  accepts exactly one filter, `id`. So the catalog compares the prices it was
+  already receiving for the storefront body, in Go, after the rows are read —
+  and pays exactly what ADR 0040's filter pays, because it rides the same scan:
+  a page walks up to five hundred catalog rows, an offset is refused beside it,
+  and the listing is not counted. The indexable predicate this record describes
+  is still the right one; reaching it would take a base-amount surface on
+  pricing's side that does not exist, and that is a change to a module this
+  build did not own.
+
+  **The second cost, and it is the one a reader should carry away.** Evaluating
+  the predicate means reading SIX names out of pricing's loosely typed record —
+  `prices`, `price_list_id`, `currency_code`, `amount`, `min_quantity`,
+  `max_quantity` — the road ADR 0040 opened for ONE inventory field and
+  explicitly refused to widen. Pricing declares all six as UNEXPORTED constants,
+  so the audit ADR 0040 owes cannot bind them to anything: they are registered in
+  `catalogUnboundForeignFields` with a test that fails the day pricing exports
+  them. Until then a rename inside pricing silently empties a price-filtered
+  catalog. The end-to-end proof in `internal/e2e` is what stands in for the
+  missing audit: it prices its fixture through the real pricing module and would
+  fail on such a rename.
 - **It does not decide the DISPLAY price**, which already has an answer in the
   storefront's price set and is not what this is about.
 - **It does not touch group pricing.** Point 4 says the filter ignores it; whether

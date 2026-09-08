@@ -1,11 +1,16 @@
-# Extending gobit: plugins, the file provider and the domain events
+# Extending gobit: plugins, the file provider, the domain events and the customer identity
 
-This document covers the three places where an installation adds behaviour
+This document covers the four places where an installation adds behaviour
 without changing the core or a module: **plugins**, the **file upload** surface
-and its provider, and the **domain events** a subscriber can listen to. It is
+and its provider, the **domain events** a subscriber can listen to, and the
+**customer identity** eight storefront routes now require. It is
 for the person who is adding something to gobit rather than operating it — a
 payment provider, a search backend, an error reporter, an integration that
 reacts to an order.
+
+Three of the four are optional. The fourth is not: an installation that binds no
+customer identity loses its address book, so if you are upgrading, read that
+section first.
 
 For what the framework does and how it is configured, see the
 [README](../README.md); for why the architecture is shaped this way, see
@@ -226,3 +231,68 @@ a plugin's job (`Host.RegisterNotificationProvider`).
 > If a handler returns an error the event is considered **handled**; no backend
 > redelivers it (Redis ACKs regardless of the handler's result). Returning an
 > error is not a "retry" request, it provides **visibility**.
+
+---
+
+## The customer identity
+
+This is the one entry in this document that is **not optional**. Since
+[ADR 0043](adr/0043-gobit-requires-an-identity-it-still-does-not-issue.md) eight
+storefront routes ask whether the caller is the customer the path names:
+
+| Route | |
+|---|---|
+| `GET` / `PUT /store/v1/customers/{id}` | the profile |
+| `GET` / `POST /store/v1/customers/{id}/addresses` | the address book |
+| `PUT` / `DELETE /store/v1/customers/{id}/addresses/{address_id}` | |
+| `POST /store/v1/customers/{id}/addresses/{address_id}/default-shipping` | |
+| `POST /store/v1/customers/{id}/addresses/{address_id}/default-billing` | |
+
+**gobit does not answer that question and will not.** It holds no proof about
+the person behind a storefront request: no customer session, no cookie, no
+signing key, no rotation policy for a storefront it does not serve
+([ADR 0008](adr/0008-musteri-kimligi-guven-siniri.md), which stands). What it
+publishes is the shape of your answer — `corehttp.Identity`, one method, every
+type in the signature from the standard library so that a type declared in
+**your** module can implement it:
+
+```go
+// CustomerID returns the customer identifier the request PROVES.
+CustomerID(r *http.Request) (string, error)
+```
+
+You bind it from an ordinary module, in the container, under the core's own
+name. There is no ordering requirement: the customer module resolves the name on
+the FIRST storefront request, so your module may be added last.
+
+```go
+func (m *SessionModule) Register(ctx context.Context, c *container.Container) error {
+	return c.Provide(corehttp.IdentityName, mySessions{})
+}
+```
+
+Use the constant rather than the literal `"core.identity"`. It is published for
+the same reason `core/plugin`'s `CallbacksName` is: the two sides of the name are
+two string literals that no compiler compares, and a constant turns a rename into
+a build failure instead of a storefront that refuses everything for no stated
+reason.
+
+What the routes answer:
+
+| Situation | Answer |
+|---|---|
+| nothing registered under `corehttp.IdentityName` | `401 identity_not_bound` — every one of the eight, until you bind one |
+| your implementation returns an error | **your** error, unwrapped: an expired session `401`, a suspended account `403`, an unreachable provider `503`, an untyped error `500`. You choose the status by choosing the error's kind |
+| your implementation returns `"", nil` | `500 identity_unproven` — that pair cannot be told apart from a proof of the empty customer, so it is refused rather than believed |
+| what it proves ≠ what the path names | `403 identity_mismatch`. Not a `404`: the caller supplied the identifier, so there is no existence to hide |
+| they agree | the request is served, for the PROVEN identifier |
+
+The check runs **before the body is decoded**, so a refused request whose JSON is
+also malformed still answers the refusal rather than `422`.
+
+**gobit still verifies nothing.** An implementation that hands the path parameter
+straight back satisfies the interface, proves nothing, and the framework cannot
+tell. What it refuses is to proceed when nobody has been asked. And the
+requirement stops at these eight routes: the cart still takes `customer_id` from
+its body, and b2b's two storefront routes still read it from their own path
+parameter — see [`docs/known-limits.md`](known-limits.md).

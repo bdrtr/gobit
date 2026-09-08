@@ -134,6 +134,16 @@ type ListProductsOptions struct {
 	// may belong to several of either and is still returned ONCE.
 	CategoryID *string
 	TagID      *string
+	// OptionValue narrows the listing to the products offering one option
+	// value, and it is the value AS THE CALLER RECEIVED IT: the folding is done
+	// here, once, on the way to the repository.
+	//
+	// Two spellings of one value therefore meet whichever surface asked, and
+	// the fold cannot be forgotten by a caller: [repository.ProductFilter]
+	// takes the FOLDED form under a name that says so, so a caller that skipped
+	// the step would be writing an unfolded string into a field called
+	// OptionValueFolded (ADR 0039).
+	OptionValue *string
 	// SalesChannelIDs is the sales channel filter; for its meaning and the
 	// nil/empty distinction see [StoreListOptions.SalesChannelIDs].
 	//
@@ -419,6 +429,16 @@ func (s *Service) ListProducts(ctx context.Context, opts ListProductsOptions) (L
 		Offset:          offset,
 		After:           opts.After,
 		Order:           order,
+	}
+	// The fold happens HERE and nowhere else on the way down, which is what
+	// makes "the fold is Go's" (ADR 0039) a property of the code rather than a
+	// rule every caller has to remember. An empty result is passed through as a
+	// filter rather than dropped: a value that folds to nothing is a value the
+	// catalog cannot hold, so the honest answer is no products and not "every
+	// product".
+	if opts.OptionValue != nil {
+		folded := models.FoldOptionValue(*opts.OptionValue)
+		filter.OptionValueFolded = &folded
 	}
 	if opts.Status != nil {
 		status, err := normalizeStatus(*opts.Status)

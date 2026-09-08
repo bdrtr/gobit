@@ -212,11 +212,17 @@ func TestProductsArgumentsMatchWhatTheServiceReads(t *testing.T) {
 		"CollectionID": "collectionId",
 		"CategoryID":   "categoryId",
 		"TagID":        "tagId",
+		"OptionValue":  "optionValue",
 		"Search":       "q",
-		"Order":        "sort",
-		"Limit":        "limit",
-		"Offset":       "offset",
-		"After":        "after",
+		"InStock":      "inStock",
+		// The price bracket is ONE argument and one option field, which is
+		// what an input object buys: three flat arguments would map one field
+		// to three names and the pair below would stop being a mapping.
+		"Price":  "price",
+		"Order":  "sort",
+		"Limit":  "limit",
+		"Offset": "offset",
+		"After":  "after",
 	}
 
 	// The fields the client CANNOT GIVE: their values come from the request's
@@ -299,6 +305,7 @@ func TestEmptyTextArgumentBuildsNoFilter(t *testing.T) {
 		"collectionId": "CollectionID",
 		"categoryId":   "CategoryID",
 		"tagId":        "TagID",
+		"optionValue":  "OptionValue",
 		"q":            "Search",
 	}
 

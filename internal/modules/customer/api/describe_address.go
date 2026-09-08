@@ -31,6 +31,7 @@ func describeAddresses(d *openapi.Doc) {
 	for _, surface := range []struct {
 		prefix   string
 		audience string
+		refusals map[string]any
 	}{
 		{
 			prefix: "/admin/v1",
@@ -40,10 +41,11 @@ func describeAddresses(d *openapi.Doc) {
 		{
 			prefix: "/store/v1",
 			audience: "This is the STOREFRONT surface and it is reached with the publishable " +
-				"key, which identifies the shop rather than the shopper. The customer id in " +
-				"the path is therefore the only thing naming whose address book this is — " +
-				"treat it as a capability and keep it off shared screens and out of URLs " +
-				"that leave the browser. ",
+				"key, which identifies the shop rather than the shopper. The customer named " +
+				"in the path is therefore checked separately: the installation's own " +
+				"identity is asked what this request proves, and the address book answers " +
+				"only if the two agree. ",
+			refusals: storefrontIdentityRefusals(),
 		},
 	} {
 		var (
@@ -58,9 +60,8 @@ func describeAddresses(d *openapi.Doc) {
 				"person who filled it, and a page over it would be a page nobody turns. " +
 				"\"count\" is the whole of it and \"limit\" is the same number, which is " +
 				"what the envelope's fields mean when there is nothing to page through.",
-			Responses: map[string]any{
-				"200": openapi.Response("The customer's addresses", d.List(addressDTO{})),
-			},
+			Responses: answers(surface.refusals, "200",
+				openapi.Response("The customer's addresses", d.List(addressDTO{}))),
 		})
 
 		d.Describe(http.MethodPost, collection, openapi.Operation{
@@ -74,9 +75,8 @@ func describeAddresses(d *openapi.Doc) {
 				"\n\n" +
 				"\"country_code\" is ISO 3166-1 alpha-2 in UPPER case.",
 			RequestBody: d.RequestBody(addressRequest{}),
-			Responses: map[string]any{
-				"201": openapi.Response("The stored address", d.Item(addressDTO{})),
-			},
+			Responses: answers(surface.refusals, "201",
+				openapi.Response("The stored address", d.Item(addressDTO{}))),
 		})
 
 		d.Describe(http.MethodPut, single, openapi.Operation{
@@ -91,9 +91,8 @@ func describeAddresses(d *openapi.Doc) {
 				"concerns the customer's other addresses, and a flag buried in a general " +
 				"update is a side effect the caller did not ask for.",
 			RequestBody: d.RequestBody(updateAddressRequest{}),
-			Responses: map[string]any{
-				"200": openapi.Response("The updated address", d.Item(addressDTO{})),
-			},
+			Responses: answers(surface.refusals, "200",
+				openapi.Response("The updated address", d.Item(addressDTO{}))),
 		})
 
 		d.Describe(http.MethodDelete, single, openapi.Operation{
@@ -103,9 +102,8 @@ func describeAddresses(d *openapi.Doc) {
 				"address is printed on orders that have already shipped and a hard delete " +
 				"would leave those records pointing at nothing. The address stops appearing " +
 				"in the listing, which is what the caller asked for.",
-			Responses: map[string]any{
-				"204": emptyResponse("The address was removed"),
-			},
+			Responses: answers(surface.refusals, "204",
+				emptyResponse("The address was removed")),
 		})
 
 		for _, flag := range []struct {
@@ -133,10 +131,81 @@ func describeAddresses(d *openapi.Doc) {
 					"\n\n" +
 					"There is no body. The address is named by the path and there is nothing " +
 					"left to choose.",
-				Responses: map[string]any{
-					"200": openapi.Response("The address, now the default", d.Item(addressDTO{})),
-				},
+				Responses: answers(surface.refusals, "200",
+					openapi.Response("The address, now the default", d.Item(addressDTO{}))),
 			})
 		}
 	}
+}
+
+// storefrontIdentityRefusals describes the statuses the STOREFRONT copy of
+// these endpoints can produce and the admin copy cannot.
+//
+// The core gives every operation a 401 from the path alone and a 403 only to
+// the admin surface, on the sound reasoning that the storefront had no
+// authorization step: the publishable key carries no scope. Since ADR 0043 the
+// storefront routes naming a customer do have one, so the codes are described
+// HERE, by the package that knows the rule, rather than by widening a core
+// default onto every store route that still cannot produce them.
+//
+// Each of these REPLACES the core's generic sentence for that status (a
+// hand-given code wins), and the difference is worth the words: "authentication
+// is missing or invalid" sends the reader to check the publishable key, which
+// is the one credential that was accepted.
+//
+// # Why FOUR statuses and not the two this started with
+//
+// Because [Handler.storeCustomerID] passes the bound identity's error through
+// UNWRAPPED, and that is the decision rather than an accident: the embedder
+// picks the status by picking its error's kind. So the status set of these
+// endpoints is not this package's to enumerate — an expired session is the
+// embedder's 401, a suspended account its 403, an unreachable identity provider
+// its 503, and any untyped error a 500. Describing only the two codes this
+// package itself returns would have documented half the surface and left the
+// other half to be discovered in production. What is enumerable, and what a
+// client is entitled to branch on, is the three CODES the core publishes; the
+// rest is named as the embedder's and not guessed at.
+func storefrontIdentityRefusals() map[string]any {
+	return map[string]any{
+		"401": openapi.ErrorResponse(
+			"The publishable key was accepted, but the customer named in the path is not " +
+				"proven. Either this installation has bound no customer identity at all — " +
+				"code \"identity_not_bound\", and every one of these endpoints refuses " +
+				"until it binds one — or the identity it bound refused this request with " +
+				"an error of its own that asks the shopper to sign in, and the code is the " +
+				"embedder's."),
+		"403": openapi.ErrorResponse(
+			"Either the request proves a DIFFERENT customer than the one named in the " +
+				"path — code \"identity_mismatch\", which does not depend on whether the " +
+				"named customer exists, because the comparison is between the path and the " +
+				"proof and no record is read to make it — or the bound identity refused " +
+				"this request with a forbidding error of its own (a suspended account, " +
+				"say), and the code is the embedder's."),
+		"500": openapi.ErrorResponse(
+			"Either the bound customer identity returned neither an identifier nor an " +
+				"error — code \"identity_unproven\", which is a fault in the " +
+				"installation's implementation and not in this request, so no change the " +
+				"client makes will alter the answer — or something else failed on the " +
+				"server."),
+		"503": openapi.ErrorResponse(
+			"The bound customer identity could not answer: its own dependency, such as " +
+				"the identity provider it calls, is unreachable. The code is the " +
+				"embedder's and the request is worth retrying."),
+	}
+}
+
+// answers merges an operation's success response with the refusals its surface
+// can produce.
+//
+// The success code is passed separately because it differs per endpoint while
+// the refusals do not: an identity that cannot be proven refuses a listing and
+// a deletion the same way, and writing the pair out twelve times would be
+// twelve chances for one of them to fall behind.
+func answers(refusals map[string]any, code string, response any) map[string]any {
+	out := map[string]any{code: response}
+	for status, refusal := range refusals {
+		out[status] = refusal
+	}
+
+	return out
 }

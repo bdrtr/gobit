@@ -1,0 +1,39 @@
+-- The catalog filter reads value_folded, and no index led with that column.
+--
+-- # What changed above this line
+--
+-- Migration 000003 gave every option value a second, Go-folded form and made it
+-- UNIQUE per option (product_option_value_folded_uniq). That index settles
+-- IDENTITY: two spellings of one value cannot coexist under one option. It
+-- cannot serve the catalog filter ADR 0039 sits at the head of, because it leads
+-- with option_id and a shopper filtering by "Color: red" does not have an option
+-- id -- an option belongs to exactly ONE product, so an id there would name one
+-- product's one value.
+--
+-- The filter's predicate is therefore "value_folded = $1" with nothing said
+-- about the option, and against the unique index that is either a full scan of
+-- product_option_value or a skip scan PostgreSQL 16 does not have. This index
+-- leads with the column the predicate names, so the values become the DRIVING
+-- relation: the plan starts at the matching values and probes product_option and
+-- product by primary key, instead of starting at the catalog and testing every
+-- product for a value.
+--
+-- # Why it is partial and why it is not unique
+--
+-- Partial on "deleted_at IS NULL" for the reason the unique index beside it is:
+-- every read in this module carries that guard (plan Section 8), so a deleted
+-- row in the index is a row every scan has to fetch and discard.
+--
+-- NOT unique, and that is the difference from its neighbor: the same folded
+-- value appears once per product that offers it, which is the whole point of a
+-- catalog filter. Uniqueness lives on (option_id, value_folded) and stays there.
+--
+-- # Why the fold is not in the index expression
+--
+-- An expression index would have to spell the fold in SQL, and the fold is Go's
+-- (ADR 0038, ADR 0039): lower() is the CLUSTER's fold and folds ASCII only on a
+-- --locale=C database, and the Latin table in models.FoldOptionValue has no SQL
+-- counterpart at all. The database stores the fold's RESULT and indexes it as
+-- the plain text it is.
+CREATE INDEX IF NOT EXISTS product_option_value_folded_idx
+    ON product_option_value (value_folded) WHERE deleted_at IS NULL;

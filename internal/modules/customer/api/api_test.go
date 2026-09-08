@@ -24,10 +24,20 @@ import (
 var sabitSaat = time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
 
 // yeniRouter verilen sahte servisle route'ları bağlanmış bir router üretir.
+//
+// The bound identity is [pathProvingIdentity], which proves whatever the path
+// claims. That is the WEAKEST legal implementation of corehttp.Identity and it
+// is chosen on purpose: it keeps the tests in this file about what they were
+// always about — routing, body decoding, envelope shape and the status a typed
+// error turns into — instead of turning every one of them into a test of the
+// identity gate. The gate itself is exercised in identity_test.go, where the
+// identity proves a FIXED customer and can therefore disagree with the path.
+//
+// It is also, deliberately, the implementation ADR 0043 says the framework
+// cannot detect: an embedder that hands the path parameter back has changed
+// nothing, and gobit still refuses only when NOBODY has been asked.
 func yeniRouter(svc api.Customer) chi.Router {
-	r := chi.NewRouter()
-	api.New(svc).Routes(r)
-	return r
+	return routerWithIdentity(svc, pathProvingIdentity{})
 }
 
 // adminKimlik testlerin varsayılan çağıranıdır: tam yetkili yönetim kimliği.
@@ -383,8 +393,10 @@ func TestBosListeNullDegilDizidir(t *testing.T) {
 // TestVitrinAdresUclari vitrin uçlarının customer idni yoldan aldığını
 // kanıtlar.
 //
-// FAZ 8 NOTU: kimlik şimdilik istemcinin bildirdiği değerdir ve doğrulanmaz;
-// koruma auth middleware ile gelecektir (bkz. api paket belgesi).
+// The path is the CLAIM and it still decides which address book is opened; what
+// ADR 0043 added is that the claim has to be backed, and the router built here
+// binds an identity that backs it (see [yeniRouter]). The refusals themselves
+// are in identity_test.go, where the identity can disagree with the path.
 func TestVitrinAdresUclari(t *testing.T) {
 	svc := &stubCustomer{
 		createAddressFn: func(_ context.Context, _ string, in service.AddressInput) (models.CustomerAddress, error) {
@@ -623,16 +635,16 @@ func TestMagazaUclariYetkiIstemez(t *testing.T) {
 // YOL PARAMETRESİNDEN tanıdığını kanıtlar.
 //
 // ADR 0008'in çizdiği sınır tam olarak burada durur: gobit müşteri kimliğini
-// doğrulamaz, gömen uygulama storeCustomerID'yi kendi oturumuna bağlar ve
-// yoldaki değerle karşılaştırır. Gömen uygulamanın bağladığı nokta ile
-// handler'ın GERÇEKTEN kullandığı değer ayrışsaydı — handler kimliği başka bir
-// yerden okusaydı — o karşılaştırma hiçbir şeyi korumayan bir süs olurdu:
-// istek yine yoldaki kişinin adını ve e-postasını dönerdi ve kimse farkı
-// göremezdi.
+// doğrulamaz, gömen uygulama kendi doğrulayıcısını bağlar ve gobit onu yoldaki
+// değerle karşılaştırır. Bağlanan nokta ile handler'ın GERÇEKTEN kullandığı
+// değer ayrışsaydı — handler kimliği başka bir yerden okusaydı — o
+// karşılaştırma hiçbir şeyi korumayan bir süs olurdu: istek yine yoldaki
+// kişinin adını ve e-postasını dönerdi ve kimse farkı göremezdi.
 //
-// İstek KİMLİKSİZ gönderilir; vitrin yüzeyinin bugünkü hâli budur (paket
-// belgesindeki UYARI) ve testin kimliksiz geçmesi o açıklığın kayda geçmiş
-// hâlidir.
+// İstek PRINCIPAL'sız gönderilir ve bu hâlâ doğrudur: mağaza yüzeyi yetki
+// İSTEMEZ (bkz. TestMagazaUclariYetkiIstemez). İstenen şey başkadır — müşteri
+// kimliği — ve o bağlıdır; bağlı olmasaydı bu istek 401 alırdı
+// (identity_test.go).
 func TestVitrinProfiliniYoldakiKimlikBelirler(t *testing.T) {
 	svc := &stubCustomer{
 		getCustomerFn: func(_ context.Context, id string) (models.Customer, error) {
@@ -738,9 +750,10 @@ func TestVitrinAdresListesiYoldakiMusterinindir(t *testing.T) {
 // (bkz. repository.Repo.DeleteAddress). Handler müşteri kimliğini
 // iletmeseydi koşul boş bir dizgeyle kurulur ve sorgu hiçbir satır bulamazdı;
 // daha kötü ihtimalde — sahiplik koşulu sorgudan tamamen düşseydi — adres
-// kimliğini bilen herkes BAŞKASININ adresini silebilirdi. Bu uç kimlik
-// istemeyen bir yüzeydedir, yani o kimliği bilmek yalnızca bir tahmin
-// meselesidir.
+// kimliğini bilen herkes BAŞKASININ adresini silebilirdi. ADR 0043 o tahmini
+// tek başına yetersiz kıldı, ama sahiplik koşulunu GEREKSİZ kılmadı: iki
+// denetim iki ayrı katmandadır ve buradaki, kimlik doğru olsa bile başkasının
+// adres id'sini taşıyan isteği durduran katmandır.
 func TestVitrinAdresSilmeSahipDenetiminiTasir(t *testing.T) {
 	var silinen [2]string
 	svc := &stubCustomer{
@@ -763,11 +776,12 @@ func TestVitrinAdresSilmeSahipDenetiminiTasir(t *testing.T) {
 // TestVitrindeMusteriSilmeUcuYoktur vitrinde müşteri silme ucunun BULUNMADIĞINI
 // kanıtlar.
 //
-// Vitrin yüzeyi kimlik doğrulamaz (paket belgesindeki UYARI). Silme ucu burada
-// da açık olsaydı, bir müşteri kimliğini tahmin eden herkes o kişinin kaydını
-// yumuşak silebilir, yani hesabını kapatabilirdi — profil okumaktan farklı
-// olarak geri alınması operatör işi olan bir zarar. Silme bilinçli olarak
-// yalnızca yönetim tarafındadır ve orada [ScopeWrite] ister.
+// Silme ucu burada da açık olsaydı, kendi kimliğini kanıtlayabilen bir müşteri
+// tek istekle hesabını kapatabilirdi — profil okumaktan farklı olarak geri
+// alınması operatör işi olan bir zarar. ADR 0043 bu ucun yokluğunu gereksiz
+// kılmaz: kimlik denetimi "bu kişi o kişi mi" sorusunu yanıtlar, "bu kişi bunu
+// yapabilir mi" sorusunu değil. Silme bilinçli olarak yalnızca yönetim
+// tarafındadır ve orada [ScopeWrite] ister.
 func TestVitrindeMusteriSilmeUcuYoktur(t *testing.T) {
 	svc := &stubCustomer{
 		deleteCustomerFn: func(_ context.Context, _ string) error {

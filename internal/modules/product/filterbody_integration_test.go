@@ -33,8 +33,8 @@ import (
 //
 // The tests run against the REPOSITORY rather than the HTTP surface on purpose:
 // the store endpoint cannot set the handle and the admin one cannot set the
-// sales channels, so no single surface can drive all seven criteria, and the
-// claim is about the seven together.
+// sales channels, so no single surface can drive every criterion, and the claim
+// is about all of them together.
 
 // filterFixture is a small isolated catalog with a known answer for every
 // criterion.
@@ -54,10 +54,14 @@ type filterFixture struct {
 
 	// The four products, by the criteria they satisfy.
 	//
-	//	both:    the category, the tag and channel A
-	//	catOnly: the category, no tag, no channel assignment
-	//	tagOnly: the tag, no category, channel B
-	//	plain:   nothing at all, and therefore visible in EVERY channel
+	//	both:    the category, the tag, channel A, and one option value spelled
+	//	         with Turkish letters
+	//	catOnly: the category, no tag, no channel assignment, and the SAME value
+	//	         spelled in plain ASCII -- the pair the fold exists for
+	//	plain:   nothing at all, and therefore visible in EVERY channel; it
+	//	         carries a DIFFERENT option value
+	//	tagOnly: the tag, no category, channel B, and an option value whose
+	//	         option is DELETED
 	both, catOnly, tagOnly, plain string
 }
 
@@ -105,7 +109,54 @@ func newFilterFixture(t *testing.T) filterFixture {
 	fx.assign(t, fx.both, fx.channelA)
 	fx.assign(t, fx.tagOnly, fx.channelB)
 
+	// Two spellings of ONE color, on two products. They fold to the same form
+	// and the filter has to find both; each lives under its own option, so the
+	// per-option unique index on the folded form is not in the way (it is the
+	// rule for two spellings inside ONE option, which is a merchant error the
+	// index refuses at write time).
+	fx.addOptionValue(t, fx.both, "Renk", turkishRed)
+	fx.addOptionValue(t, fx.catOnly, "Renk", "KIRMIZI")
+	fx.addOptionValue(t, fx.plain, "Renk", "Mavi")
+
+	// The value under a DELETED option: removing an option is not a cascade, so
+	// this row stays alive and the filter must still refuse it.
+	deadOption := fx.addOptionValue(t, fx.tagOnly, "Renk", turkishRed)
+	require.NoError(t, repo.SoftDeleteOption(context.Background(), deadOption))
+
 	return fx
+}
+
+// turkishRed is one Turkish color name written without a Turkish letter in this
+// file (ADR 0012).
+//
+// Spelled out: "k", the DOTLESS i (U+0131), "rm", the dotless i again, "z" and
+// the dotless i once more. Written with the dotted i in all three places it is
+// the same word, and the two spellings meeting in the database is the whole of
+// ADR 0039.
+const turkishRed = "K\u0131rm\u0131z\u0131"
+
+// addOptionValue gives a product one option carrying one value, and returns the
+// OPTION's id.
+//
+// The value is written through the repository rather than with raw SQL, because
+// what is being proved is that the value_folded COLUMN receives the Go fold on
+// the way in: a fixture that wrote the column itself would be asserting its own
+// arithmetic instead of the module's.
+func (f filterFixture) addOptionValue(t *testing.T, productID, title, value string) string {
+	t.Helper()
+	ctx := context.Background()
+
+	option, err := f.repo.CreateOption(ctx, models.Option{
+		ID: "popt_" + uniqueHandle("filter"), ProductID: productID, Title: title,
+	})
+	require.NoError(t, err)
+
+	_, err = f.repo.CreateOptionValue(ctx, models.OptionValue{
+		ID: "poptval_" + uniqueHandle("filter"), OptionID: option.ID, Value: value,
+	})
+	require.NoError(t, err)
+
+	return option.ID
 }
 
 // seed writes one published product into the fixture's collection.
@@ -208,6 +259,15 @@ func TestEachCriterionAloneSelectsItsOwnSet(t *testing.T) {
 		assert.ElementsMatch(t, []string{fx.both, fx.catOnly, fx.plain}, fx.ids(t, f))
 	})
 
+	t.Run("option value", func(t *testing.T) {
+		f := fx.filter()
+		folded := models.FoldOptionValue("kirmizi")
+		f.OptionValueFolded = &folded
+		// Two spellings of one color meet; the third product offers another
+		// color, and the fourth's value hangs from a deleted option.
+		assert.ElementsMatch(t, []string{fx.both, fx.catOnly}, fx.ids(t, f))
+	})
+
 	t.Run("handle", func(t *testing.T) {
 		f := fx.filter()
 		handle := handleOf(t, fx, fx.plain)
@@ -265,15 +325,27 @@ func TestSeveralCriteriaTogetherIntersect(t *testing.T) {
 		assert.Equal(t, []string{fx.both}, fx.ids(t, f))
 	})
 
-	t.Run("all seven", func(t *testing.T) {
+	t.Run("category and option value", func(t *testing.T) {
+		f := fx.filter()
+		f.CategoryID = &fx.categoryID
+		folded := models.FoldOptionValue("mavi")
+		f.OptionValueFolded = &folded
+		// plain offers the color and is in no category; both and catOnly are
+		// in the category and offer the other color.
+		assert.Empty(t, fx.ids(t, f))
+	})
+
+	t.Run("every criterion at once", func(t *testing.T) {
 		f := fx.filter()
 		published := string(models.StatusPublished)
 		handle := handleOf(t, fx, fx.both)
+		folded := models.FoldOptionValue(turkishRed)
 		f.Status = &published
 		f.Handle = &handle
 		f.Search = &handle
 		f.CategoryID = &fx.categoryID
 		f.TagID = &fx.tagID
+		f.OptionValueFolded = &folded
 		f.SalesChannelIDs = []string{fx.channelA}
 		assert.Equal(t, []string{fx.both}, fx.ids(t, f))
 	})

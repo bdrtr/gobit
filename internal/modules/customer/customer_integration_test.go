@@ -622,9 +622,17 @@ func TestAdresYasamDongusu(t *testing.T) {
 // Sahiplik denetimi, adrese dokunan her sorgunun WHERE koşulundaki
 // customer_id eşitliğidir (bkz. queries/customer_address.sql). Koşul düşerse
 // adresin kimliğini bilen HERKES başkasının adresini okuyabilir, güncelleyebilir,
-// silebilir ve varsayılan yapabilir; store uçları Faz 8'e kadar korumasız
-// olduğu ve customer id yol parametresinden geldiği için bu koşul şu an
-// TEK bariyerdir (bkz. api paket belgesi).
+// silebilir ve varsayılan yapabilir.
+//
+// ~~store uçları Faz 8'e kadar korumasız olduğu ve customer id yol
+// parametresinden geldiği için bu koşul şu an TEK bariyerdir~~ **2026-09-08:
+// artık tek değil, ama en içteki.** ADR 0043 vitrin uçlarına bir kimlik
+// denetimi koydu; o denetim "bu istek o müşteri mi" sorusunu yanıtlar ve
+// HTTP katmanındadır. Buradaki koşul başka bir soruyu yanıtlar: kimliği doğru
+// olan bir çağıran, BAŞKASININ adres id'sini taşıyan bir istek gönderdiğinde ne
+// olur. İki denetim iki ayrı katmandadır ve biri diğerinin yerine geçemez —
+// yönetim uçları zaten kimlik denetiminden geçmez ve yalnızca bu koşula
+// dayanır.
 //
 // Birim testi bu iddiayı kanıtlayamaz: sahte depo sahipliği kendisi süzer ve
 // yalnızca kendi kuralını doğrular. Hata sınıfı da tek başına yetmez — yanlış

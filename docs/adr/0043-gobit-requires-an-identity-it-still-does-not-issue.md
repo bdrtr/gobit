@@ -284,10 +284,14 @@ ADR 0038 made when it refused to hoist a two-line function into `core/`.
 
 ## What this deliberately does NOT do
 
-- **It does not implement any of this.** No interface is added, no wrapper is
+- ~~**It does not implement any of this.** No interface is added, no wrapper is
   written, `storeCustomerID` still returns the path parameter. This record
   decides the contract; the code is a separate change and the audit the
-  container name needs does not exist yet either.
+  container name needs does not exist yet either.~~ **Built 2026-09-08; see the
+  Built entry below.** The interface, the wrapper and the comparison all exist.
+  The audit the container name needs still does not, and that is now the only
+  half of this bullet still standing — the constant published beside the
+  interface narrows it rather than closing it.
 - **It does not close the spending limit escape.** The cart accepts
   `customer_id` in the body on creation and on handover, and `order` applies the
   rule to whatever identifier it is handed. ADR 0008's condition — the limit
@@ -304,6 +308,182 @@ ADR 0038 made when it refused to hoist a two-line function into `core/`.
   `Identity` that returns the path parameter back has changed nothing, and the
   framework cannot tell. What the framework now refuses is to proceed when
   NOBODY has been asked.
+
+## Built — 2026-09-08
+
+**The contract is three names in `core/http`, and no more.** `Identity`, one
+method, `CustomerID(*http.Request) (string, error)`; `IdentityName`, the
+container name `"core.identity"`; and three codes a client branches on —
+`identity_not_bound`, `identity_mismatch`, `identity_unproven`. Every type in
+the signature is stdlib, which is the property that makes it implementable
+outside this repository, and `core/http/identity_test.go` implements it in a
+separate package and asserts it. **What that file uniquely holds is narrower
+than it first claimed, and the claim was corrected on 2026-09-08.** An internal
+type is refused outright by `internal/arch`'s
+`TestNoPublishedPackageImportsAnInternalOne`, which forbids `core/http` the
+import at all and gives this same reasoning in its own godoc — so the case that
+audit is blind to, and the one this file really catches, is a signature naming
+one of `core/http`'s OWN unexported types: it imports nothing forbidden, it
+compiles, and it still strands an embedder with no explanation on their side.
+
+**A fourth name was written and then deleted, and the deletion is the decision.**
+A `RequireCustomer(identity, r, claimed)` helper in `core/http` would have let
+the second and third modules share the comparison instead of copying it — which
+is the negative consequence recorded above. It was removed because no outside
+program needs it to compile: an embedder implements `Identity`, it never calls
+the comparison. ADR 0026's membership rule is about what an outside program must
+NAME, and publishing on any looser test is how a surface that cannot be
+withdrawn grows. When the second module takes the contract, the shared helper
+has a home under `internal/` that costs no promise.
+
+**The container name is a published CONSTANT, which narrows the second negative
+consequence without closing it.** The record predicted two string literals no
+compiler compares. An embedder that writes `corehttp.IdentityName` cannot
+misspell it and a rename does not compile — the reasoning `core/plugin`'s
+`CallbacksName` already carries. An embedder that types `"core.identity"`
+anyway still gets the old hazard, and nothing audits either side, so the pairing
+class ADR 0040 named is narrowed rather than retired.
+
+**The refusal is the ADR 0007 row, and the three ways to fail are told apart.**
+`Handler.storeCustomerID` in `internal/modules/customer/api` resolves nothing
+itself — it holds the interface — and returns: `401 identity_not_bound` with no
+identity, the embedder's own error UNWRAPPED when the identity refuses (so the
+kind picks the status: an expired session is a 401, a suspended account a 403,
+an unreachable provider a 503), `500 identity_unproven` when an implementation
+returns neither an identifier nor an error, and `403 identity_mismatch` when the
+proof and the path disagree. A mismatch is not a 404: the caller supplied the
+identifier, so there is no existence to hide.
+
+**It runs FIRST, before the body is decoded.** Otherwise a refused request whose
+body was also malformed would answer 422, and a caller probing another person's
+address book could not be told apart from a client with broken JSON — in the
+access log either. `TestTheIdentityIsAskedBeforeTheBodyIsRead` sends unparseable
+JSON at somebody else's address and requires the 403.
+
+**The wrapper is the shape `order` already uses, and the module's own note about
+itself stayed true.** `identityBinding` in `internal/modules/customer` captures
+the container in `Register` and resolves on FIRST USE, so customer still
+resolves no other module's service at registration and the embedder's module may
+be added last. Its three branches are three sentences: resolved, not registered
+(a refusal, not an empty answer — a spending policy may answer "no limit", an
+identity may not answer "sure"), and registered under the wrong type, which
+becomes KindInternal rather than inheriting the container's KindInvalid so that
+a wiring fault is not reported to a shopper as a bad request.
+
+**Eight routes, and the test refuses to be told how many.** The six address
+routes and the two profile routes go through the check, because the contract is
+written on the FUNCTION rather than on a route list — a second, weaker helper
+for the profile would have left e-mail and phone readable by id in order to keep
+the phrase "address book" tidy.
+`TestEveryStorefrontRouteNamingACustomerRefusesWhenTheHandlerHoldsNone` walks
+the REAL chi tree, takes every registered route under `/store/v1/customers/{id}`
+and drives each one; a ninth route is covered the day it is registered, and no
+assertion anywhere pins the number eight. `POST /store/v1/customers` is outside
+the set and a test says so with no identity bound at all: it MINTS the guest
+record, so the customer it would have to prove does not exist until it answers.
+
+The walk is run TWICE, and the second run is why the first one's name changed on
+2026-09-08. The handler-level walk builds the handler with a literal nil, and no
+installation does: production always passes a non-nil wrapper, so the refusal a
+real deployment makes comes from that wrapper finding nothing registered. Saying
+"an installation that binds nothing loses these routes" from a handler nobody
+constructs was a claim one step wider than the mechanism.
+`TestEveryStorefrontRouteNamingACustomerRefusesWhenTheContainerHoldsNothing`, in
+the module package, walks the same routes over the module its own `Register`
+built and a container holding nothing — which is the installation the sentence
+is about.
+
+**Mutation-proved four times, each with `-count=1`.** Letting a nil identity
+fall back to the path — the careless build of this record — turns all eight
+subtests red at once. Dropping the `proven != claimed` comparison turns two red,
+and they are the two that matter: the stranger's address book, and the refusal
+that must not be confused with a parse error. Making the wrapper hand back a
+path-reading stub when the name is not registered turns the module's own
+`TestAnUnboundIdentityRefusesInsteadOfAnsweringEmpty` red.
+
+**The fourth was missing until 2026-09-08, and it was the JOIN.** Replacing
+`api.New(m.svc, &identityBinding{c: c, log: m.log})` in the customer module's
+`Register` with `api.New(m.svc, nil)` left the ENTIRE suite green — the unit
+lane, `-race`, and the full integration lane. Each link of the seam was proved
+alone and the line that joins them was proved by nothing, because no test
+anywhere both registered an `Identity` in a container AND drove a storefront
+route: with nothing registered, the real wrapper and a nil field return the
+identical `401 identity_not_bound`. A published contract whose wiring nothing
+pins is a contract that can be unplugged silently.
+`TestRegisterHandsTheStorefrontTheIdentityTheEmbedderProvided` (unit, no
+database: the request is refused before the repository is reached) and
+`TestTheEmbeddersIdentityDecidesWhoseAddressBookIsServed` (integration, a real
+container, a real chi tree and a real row) both go red under that exact
+mutation, and it was reverted and re-verified byte-identical.
+
+**The OpenAPI document was corrected, because it described the old surface.**
+The store audience paragraph in `describe_address.go` said the path was "the
+only thing naming whose address book this is". The eight store operations now
+describe a 403 the core does not derive — the core adds one only to the admin
+surface, on the sound reasoning that the storefront had no authorization step
+until ADR 0044 and this record gave it a second one — and they replace the
+core's generic 401 sentence, which would have sent a reader to check the
+publishable key that was in fact accepted.
+
+**Four documents said something this build made untrue and all four were
+corrected**: the customer api package doc's WARNING, the line in the customer
+module's own doc promising that the storefront is unprotected and will stay so,
+the ownership comment in the module's integration test that called the SQL
+condition the only barrier (it is now the innermost of two, and still the only
+one on the admin path), and the godoc on
+`GuardOptions.Audit`, which repeated the word this record found wrong. The b2b
+package doc was rewritten for the opposite reason: it said no customer session
+was expressible in the core, which was the standing argument for waiting, and
+that argument is gone even though the module has not moved.
+
+**Nine more were found standing on 2026-09-08, and the search was widened
+because four of them were the same sentence in four places.** The cart's api
+package doc still carried the whole argument this record destroyed ("there is no
+customer SESSION"; "that mechanism does not exist in gobit and is not going to")
+— the identical standing argument the b2b doc was rewritten for, in the module
+this record names as the still-open half. `docs/security.md`'s authorization
+table said the storefront needs nothing, which is the sentence this record's
+central claim contradicts, and its audit-log paragraph plus the OpenAPI
+`Description` in `internal/app/auditlog.go` still shipped the "unauthenticated by
+decision" wording to every API consumer — correcting the unpublished godoc and
+leaving the published copy was the inversion of the usual priority. The webhook
+plugin's entire reason for redacting `customer_id` rested on
+`GET /store/v1/customers/{id}` being unprotected, in five places including three
+assertion messages that would have misled the next reader on the day one fired;
+the redaction is still right and its reason is now the reach that really did not
+move — b2b's two storefront routes and the cart's body. The invoice module's
+"the storefront has no identity to answer" and `docs/commerce-flows.md`'s "the
+framework OFFERS no surface that verifies the identity" were narrowed to what is
+still true: the framework offers the surface and still verifies nothing, which
+is a different sentence.
+
+**And the obligation now reaches an embedder-facing document.** It had been
+recorded only in the changelog and the gap ledger, so an embedder upgrading from
+`v0.8.0` would have found out by losing the address book. `docs/known-limits.md`
+opens its identity section with it, `docs/security.md` names the container slot
+beside the scope vocabulary, `docs/extending.md` gained a fourth section (and it
+is the only one of the four that is not optional), and the README says it in the
+section that already draws the line between the framework's mechanism and the
+embedder's responsibility.
+
+**What did NOT change, listed because a reader will assume otherwise.** The cart
+still takes `customer_id` from its body on creation and on handover, so
+ADR 0008's measurement reproduces exactly and ADR 0051's open defect for it
+stays open with this record still named as a closing row. `internal/modules/b2b/api`
+keeps its own copy over its own path parameter. `Principal` is untouched, no
+customer enters the request context, and gobit verifies nothing: an embedder who
+binds an identity that hands the path parameter back has changed nothing, and
+the framework cannot tell — what it now refuses is to proceed when NOBODY has
+been asked.
+
+**The two tripwires stayed GREEN, as this record predicted, and their godocs
+were amended rather than their assertions.** ADR 0008's Consequence 2 says both
+should fail the day a verifying layer arrives. One arrived and neither fell,
+because it landed at the address book while they watch the order service. Making
+them fail would have meant changing what they protect; leaving them silent would
+have left a reader trusting the sign to conclude nothing happened. Both now
+record the date, why they did not fire, and what would fell them — the cart
+proving its customer, which is the day ADR 0008's sign was really describing.
 
 ## Related
 

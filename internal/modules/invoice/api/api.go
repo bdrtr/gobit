@@ -4,9 +4,16 @@
 //
 // There is no storefront endpoint. A document is a record between the shop and
 // the tax authority; what a customer receives is a copy the shop sends them,
-// not a resource they browse. Opening a store endpoint would also mean deciding
-// how one customer is kept from reading another's document — a question the
-// storefront has no identity to answer (ADR 0008).
+// not a resource they browse. That reason stands alone and is the whole of the
+// decision.
+//
+// A second reason used to be given beside it — that the storefront had no
+// identity with which to keep one customer from reading another's document
+// (ADR 0008) — and since ADR 0043 it is no longer true: the core publishes
+// corehttp.Identity, the embedder binds one under corehttp.IdentityName, and
+// the customer module's storefront routes refuse a claim it does not back. This
+// module has simply not taken that contract, because the first reason means it
+// has no store endpoint to put it on.
 package api
 
 import (

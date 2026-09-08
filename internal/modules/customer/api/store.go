@@ -9,10 +9,12 @@ import (
 
 // Bu dosyadaki uçlar müşterinin KENDİ profilini ve adreslerini yönetir.
 //
-// KORUMA YOKTUR ve BEKLENECEK BİR FAZ DA YOK — bkz. paket belgesindeki
-// "UYARI: store uçlarını KORUMAK GÖMEN UYGULAMANIN İŞİDİR". Müşteri kimliği
-// [storeCustomerID] ile okunur; gömen uygulamanın kendi oturumuna bağlayacağı
-// tek nokta orasıdır (ADR 0008).
+// Every handler below that names a customer resolves it through
+// [Handler.storeCustomerID], which refuses the request unless the bound
+// identity proves the customer the path claims (ADR 0043). The call is the
+// FIRST thing each handler does — before the body is decoded — so a refusal
+// cannot be mistaken for a malformed body, and an unidentified caller never
+// reaches the service with a parsed address in hand.
 
 // storeRegisterGuest misafir müşteri kaydı açar (POST /store/v1/customers).
 //
@@ -43,7 +45,13 @@ func (h *Handler) storeRegisterGuest(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) storeGetCustomer(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	customer, err := h.svc.GetCustomer(ctx, storeCustomerID(r))
+	customerID, err := h.storeCustomerID(r)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	customer, err := h.svc.GetCustomer(ctx, customerID)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
@@ -56,13 +64,19 @@ func (h *Handler) storeGetCustomer(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) storeUpdateCustomer(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
+	customerID, err := h.storeCustomerID(r)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
 	var req updateCustomerRequest
 	if err := decodeBody(w, r, &req); err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
 
-	updated, err := h.svc.UpdateCustomer(ctx, storeCustomerID(r), toUpdateCustomerInput(req))
+	updated, err := h.svc.UpdateCustomer(ctx, customerID, toUpdateCustomerInput(req))
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
@@ -70,40 +84,86 @@ func (h *Handler) storeUpdateCustomer(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toCustomerDTO(updated))
 }
 
+// The six handlers below share a five-line preamble and it is written out six
+// times rather than factored into a helper that takes the body as a function
+// value. That is not an oversight: a writer handed to a function VALUE cannot
+// be followed by the audit that keeps every error response going through the
+// core's writer (see internal/arch, TestErrorResponsesAreWrittenInOnePlace),
+// and an unscannable error path is worth more than five saved lines. What
+// guards against one of the six drifting is not this comment but the route walk
+// in identity_test.go, which drives every registered storefront route naming a
+// customer and refuses to be told how many there are.
+
 // storeListAddresses müşterinin adreslerini döner
 // (GET /store/v1/customers/{id}/addresses).
 func (h *Handler) storeListAddresses(w http.ResponseWriter, r *http.Request) {
-	h.listAddresses(w, r, storeCustomerID(r))
+	customerID, err := h.storeCustomerID(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+
+	h.listAddresses(w, r, customerID)
 }
 
 // storeCreateAddress müşterinin yeni adresini ekler
 // (POST /store/v1/customers/{id}/addresses).
 func (h *Handler) storeCreateAddress(w http.ResponseWriter, r *http.Request) {
-	h.createAddress(w, r, storeCustomerID(r))
+	customerID, err := h.storeCustomerID(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+
+	h.createAddress(w, r, customerID)
 }
 
 // storeUpdateAddress müşterinin adresini günceller
 // (PUT /store/v1/customers/{id}/addresses/{address_id}).
 func (h *Handler) storeUpdateAddress(w http.ResponseWriter, r *http.Request) {
-	h.updateAddress(w, r, storeCustomerID(r))
+	customerID, err := h.storeCustomerID(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+
+	h.updateAddress(w, r, customerID)
 }
 
 // storeDeleteAddress müşterinin adresini yumuşak siler
 // (DELETE /store/v1/customers/{id}/addresses/{address_id}).
 func (h *Handler) storeDeleteAddress(w http.ResponseWriter, r *http.Request) {
-	h.deleteAddress(w, r, storeCustomerID(r))
+	customerID, err := h.storeCustomerID(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+
+	h.deleteAddress(w, r, customerID)
 }
 
 // storeSetDefaultShipping adresi varsayılan kargo adresi yapar
 // (POST /store/v1/customers/{id}/addresses/{address_id}/default-shipping).
 func (h *Handler) storeSetDefaultShipping(w http.ResponseWriter, r *http.Request) {
-	h.setDefaultShipping(w, r, storeCustomerID(r))
+	customerID, err := h.storeCustomerID(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+
+	h.setDefaultShipping(w, r, customerID)
 }
 
 // storeSetDefaultBilling adresi varsayılan fatura adresi yapar
 // (POST /store/v1/customers/{id}/addresses/{address_id}/default-billing).
 func (h *Handler) storeSetDefaultBilling(w http.ResponseWriter, r *http.Request) {
-	h.setDefaultBilling(w, r, storeCustomerID(r))
+	customerID, err := h.storeCustomerID(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+
+	h.setDefaultBilling(w, r, customerID)
 }
 
 // --- iki ad alanının paylaştığı adresle ilgili gövdeler --------------------------------
