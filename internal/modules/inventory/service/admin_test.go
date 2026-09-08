@@ -133,7 +133,7 @@ func TestStockLevelsKeepTheServicesOwnOrder(t *testing.T) {
 		addLocation(t, svc, name)
 	}
 
-	locations, _, err := svc.ListStockLocations(context.Background(), service.Page{Limit: 50})
+	locations, _, err := svc.ListStockLocations(context.Background(), service.ListStockLocationsInput{Page: service.Page{Limit: 50}})
 	require.NoError(t, err)
 	want := make([]string, 0, len(locations))
 	for i := range locations {

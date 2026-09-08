@@ -129,12 +129,85 @@ func (f *fakeStore) GetStockLocation(_ context.Context, id string) (models.Stock
 }
 
 // ListStockLocations lokasyonları sayfalar.
-func (f *fakeStore) ListStockLocations(_ context.Context, limit, offset int64) ([]models.StockLocation, int64, error) {
+func (f *fakeStore) ListStockLocations(_ context.Context, limit, offset int64, includeClosed bool) ([]models.StockLocation, int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	all := sortedValues(f.locations, func(loc models.StockLocation) string { return loc.ID })
-	return paginate(all, limit, offset), int64(len(all)), nil
+	matched := make([]models.StockLocation, 0, len(all))
+	for i := range all {
+		if all[i].Closed() && !includeClosed {
+			continue
+		}
+		matched = append(matched, all[i])
+	}
+	return paginate(matched, limit, offset), int64(len(matched)), nil
+}
+
+// LockStockLocation "exclusively locks" the location and returns it.
+func (f *fakeStore) LockStockLocation(ctx context.Context, id string) (models.StockLocation, error) {
+	if err := requireTx(ctx, "LockStockLocation"); err != nil {
+		return models.StockLocation{}, err
+	}
+	f.kilitKaydet("location")
+	return f.GetStockLocation(ctx, id)
+}
+
+// LockStockLocationShared "locks the location in shared mode" and returns it.
+func (f *fakeStore) LockStockLocationShared(ctx context.Context, id string) (models.StockLocation, error) {
+	if err := requireTx(ctx, "LockStockLocationShared"); err != nil {
+		return models.StockLocation{}, err
+	}
+	f.kilitKaydet("location")
+	return f.GetStockLocation(ctx, id)
+}
+
+// CloseStockLocation stamps the location closed.
+func (f *fakeStore) CloseStockLocation(_ context.Context, id string) (models.StockLocation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	loc, ok := f.locations[id]
+	if !ok {
+		return models.StockLocation{}, errors.NotFound("inventory_location_not_found",
+			"there is no such location: %s", id)
+	}
+	now := time.Now().UTC()
+	loc.ClosedAt, loc.UpdatedAt = &now, now
+	f.locations[id] = loc
+	return loc, nil
+}
+
+// StockHeldAtLocation returns the physical and the reserved totals at the
+// location.
+func (f *fakeStore) StockHeldAtLocation(_ context.Context, locationID string) (stocked, reserved int64, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	for _, level := range f.levels {
+		if level.LocationID != locationID {
+			continue
+		}
+		stocked += level.StockedQuantity
+		reserved += level.ReservedQuantity
+	}
+	return stocked, reserved, nil
+}
+
+// CountActiveReservationsAtLocation counts the active reservations at the
+// location.
+func (f *fakeStore) CountActiveReservationsAtLocation(_ context.Context, locationID string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var count int64
+	for id := range f.reservations {
+		res := f.reservations[id]
+		if res.LocationID == locationID && res.Status == models.ReservationActive {
+			count++
+		}
+	}
+	return count, nil
 }
 
 // CreateInventoryItem kalemi kaydeder.
@@ -432,6 +505,45 @@ func (f *fakeStore) seedItem(id, sku string) models.InventoryItem {
 	return item
 }
 
+// seedLocation puts an OPEN stock location into the fake store.
+func (f *fakeStore) seedLocation(id string) models.StockLocation {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.ensureLocation(id)
+}
+
+// seedClosedLocation puts a CLOSED stock location into the fake store.
+func (f *fakeStore) seedClosedLocation(id string) models.StockLocation {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	loc := f.ensureLocation(id)
+	closedAt := time.Now().UTC()
+	loc.ClosedAt = &closedAt
+	f.locations[id] = loc
+	return loc
+}
+
+// ensureLocation opens the location when there is none; the CALLER must hold
+// f.mu.
+//
+// The level and reservation fixtures call it too: in the real schema both rows
+// are tied to stock_locations by a FOREIGN KEY, so a level without a location
+// cannot exist at all. A fixture that skipped it would be testing a flow that
+// reads the location against a world the database does not allow.
+func (f *fakeStore) ensureLocation(id string) models.StockLocation {
+	if loc, ok := f.locations[id]; ok {
+		return loc
+	}
+	loc := models.StockLocation{
+		ID: id, Name: id,
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	f.locations[id] = loc
+	return loc
+}
+
 // seedLevel sahte depoya bir stok seviyesi koyar.
 func (f *fakeStore) seedLevel(itemID, locationID string, stocked, reserved int64) models.InventoryLevel {
 	return f.seedLevelWithID("invlevel_"+itemID+"_"+locationID, itemID, locationID, stocked, reserved)
@@ -447,6 +559,8 @@ func (f *fakeStore) seedLevel(itemID, locationID string, stocked, reserved int64
 func (f *fakeStore) seedLevelWithID(levelID, itemID, locationID string, stocked, reserved int64) models.InventoryLevel {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
+	f.ensureLocation(locationID)
 
 	level := models.InventoryLevel{
 		ID:               levelID,
@@ -465,6 +579,8 @@ func (f *fakeStore) seedLevelWithID(levelID, itemID, locationID string, stocked,
 func (f *fakeStore) seedReservation(id, itemID, locationID string, qty int64, status models.ReservationStatus) models.Reservation {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
+	f.ensureLocation(locationID)
 
 	res := models.Reservation{
 		ID: id, InventoryItemID: itemID, LocationID: locationID,

@@ -52,7 +52,7 @@ import (
 // [TestEveryColumnIsWrittenBySomething] fails on: a dead exemption covers up
 // the next real one.
 //
-// # The one open question
+// # The nine, and how they closed
 //
 // Nine entries appeared the day this audit started binding a column to its
 // TABLE instead of matching bare names module-wide (docs/gaps.md D18). Each was
@@ -60,7 +60,7 @@ import (
 // written deleted_at of a sibling covered it. They were placeholders: the audit
 // had found them and nobody had decided anything.
 //
-// Eight are answered and gone from this map, in two different directions:
+// All nine are answered and gone from this map, in three different directions:
 //
 //   - The WRITE WAS MISSING in product. Its migration declares soft delete as
 //     the module's model and builds a partial unique index on every handle so a
@@ -73,25 +73,24 @@ import (
 //     reservation are records of something that happened and are retired by a
 //     STATUS, while country and currency are seeded reference data whose
 //     lifecycle belongs to a migration rather than to the API.
+//   - THE COLUMN ANSWERED THE WRONG QUESTION for stock_locations, the last of
+//     the nine. Writing it would have hidden a warehouse from the operator
+//     while its stock went on selling, because availability sums
+//     inventory_levels with no join to the location; deleting the row would
+//     have destroyed the levels and the reservation history through two
+//     CASCADEs. It became closed_at, written by a close that is refused while
+//     the location still holds anything (ADR 0055).
 //
-// The one that remains is not a placeholder. Its reason states the question,
-// what was measured, and what the answer would decide.
-var unwrittenColumns = map[string]string{
-	"inventory.stock_locations.deleted_at": "OPEN QUESTION, and what follows STATES it rather " +
-		"than merely admitted. A location has no delete path and no update path either: " +
-		"create, get and list are the whole surface, so a warehouse that closes cannot be " +
-		"retired or even renamed. Writing the column is NOT enough and that was measured on " +
-		"2026-09-06: AvailableQuantityByItemIDs and ListInventoryLevels sum inventory_levels " +
-		"with no join to stock_locations, so a soft-deleted location keeps selling its stock " +
-		"while vanishing from the operator's screen, and Reserve would still hand it out. " +
-		"Hard delete is worse: inventory_levels.location_id and " +
-		"inventory_reservations.location_id both CASCADE, so it would destroy the stock rows " +
-		"and the reservation history the module says must never be deleted. THE QUESTION is " +
-		"therefore not \"delete or status\" but what a closed location owes: whether its " +
-		"levels move, are zeroed or are simply excluded from availability, and what happens " +
-		"to the reservations still active there. Answering it decides the mechanism; the " +
-		"column stays until then because it may yet be the right carrier.",
-}
+// The map is now EMPTY, and it is left in place rather than deleted. Two rounds
+// on 2026-09-08 emptied it from both ends: ADR 0054 dropped the order and
+// payment block — ten columns nothing wrote, behind a predicate that had never
+// once been false — and ADR 0055 answered the last of the nine above.
+//
+// An empty map is not a finished audit, it is a CLEAR ONE, and the two loops
+// below still run: an entry for a column that is written, or for one that no
+// longer exists, fails. What the emptiness buys is that the next entry added
+// here has nothing to hide behind.
+var unwrittenColumns = map[string]string{}
 
 // tableColumn is one column of one table.
 //

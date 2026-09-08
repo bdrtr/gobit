@@ -53,5 +53,5 @@ type StockLocation struct {
 	CountryCode *string
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
-	DeletedAt   pgtype.Timestamptz
+	ClosedAt    pgtype.Timestamptz
 }

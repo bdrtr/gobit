@@ -182,7 +182,7 @@ func TestMigrationGeriAlinabilir(t *testing.T) {
 	version, dirty, err := db.Version(ctx, testDSN, inventory.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "yarıda kalmış migration olmamalı")
-	assert.Equal(t, uint(2), version)
+	assert.Equal(t, uint(3), version)
 }
 
 // TestCrossModuleForeignKeyYok modülün tablolarındaki TÜM foreign key'lerin
@@ -306,11 +306,14 @@ func TestStokSeviyesiVeSatilabilirAdet(t *testing.T) {
 	assert.Equal(t, int64(9), available, "7 + 2 = 9")
 }
 
-// TestOlmayanLokasyonaSeviyeAcilamaz sürücünün foreign key hatasının anlamlı
-// bir tipli hataya çevrildiğini doğrular.
+// TestOlmayanLokasyonaSeviyeAcilamaz proves that a level cannot be opened at a
+// location that does not exist.
 //
-// Sınıflandırılmasaydı istemcinin düzeltebileceği bu durum 500 olarak görünür
-// ve gerçek sebep yalnızca logda kalırdı.
+// Until 2026-09-08 the error was CLASSIFIED out of the driver's foreign key
+// violation. It now comes from the shared location lock that is the first step
+// of the write path (ADR 0055), with the foreign key still in place as the last
+// defence. The error CODE is unchanged and so is what the caller sees of it:
+// something the client can fix stays a 404 rather than a 500.
 func TestOlmayanLokasyonaSeviyeAcilamaz(t *testing.T) {
 	ctx := context.Background()
 	svc := yeniServis(t)
@@ -995,7 +998,9 @@ func TestAralikDisiSayfadaToplamKorunur(t *testing.T) {
 	t.Run("lokasyon", func(t *testing.T) {
 		yeniLokasyon(ctx, t, svc)
 
-		locs, toplam, err := svc.ListStockLocations(ctx, service.Page{Limit: 10, Offset: 1_000_000})
+		locs, toplam, err := svc.ListStockLocations(ctx, service.ListStockLocationsInput{
+			Page: service.Page{Limit: 10, Offset: 1_000_000},
+		})
 
 		require.NoError(t, err)
 		assert.Empty(t, locs, "aralık dışı sayfada satır olmamalı")

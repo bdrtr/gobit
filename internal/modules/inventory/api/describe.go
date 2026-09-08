@@ -6,209 +6,227 @@ import (
 	"github.com/bdrtr/gobit/core/openapi"
 )
 
-// Parametre şemalarında geçen JSON Schema adları.
+// The JSON Schema names the parameter schemas use.
 //
-// Çekirdeğin karşılıkları dışa kapalıdır ve burada tekrarlanmalarının sebebi
-// maliyet değil SESSİZLİK: "strig" yazılmış bir tip adı derlenir, belge
-// üretilir ve yalnızca şemayı okuyan istemci parametreyi yanlış tiple
-// ürettiğinde ortaya çıkar.
+// The core's own are unexported, and they are repeated here for SILENCE rather
+// than cost: a type name written "strig" compiles, produces a document, and
+// surfaces only when the client reading the schema generates the parameter with
+// the wrong type.
 const (
-	semaTip      = "type"
-	tipDize      = "string"
-	tipTamSayi   = "integer"
-	tipMantiksal = "boolean"
+	schemaType  = "type"
+	typeString  = "string"
+	typeInteger = "integer"
+	typeBoolean = "boolean"
 )
 
-// Describe inventory'nin TÜM uçlarını OpenAPI belgesine işler.
+// Describe writes EVERY one of inventory's endpoints into the OpenAPI document.
 //
-// # Neden bu pakette
+// # Why it lives in this package
 //
-// Anlatılan gövdeler bu paketin DIŞA KAPALI tipleridir (createItemRequest,
-// inventoryLevelDTO …) ve şema onlardan yansımayla türetilir. Tipleri
-// anlatabilmek için dışa açmak, yalnızca belge üretmek uğruna modülün
-// yüzeyini genişletmek olurdu: dışa açık bir tip sözleşmedir ve dışarıdan
-// kurulabilir hâle gelirdi. Sorgu parametreleri de handler'ın GERÇEKTEN
-// okuduklarıdır ([parsePage], [Handler.listItems]); anlatım başka bir pakette
-// dursaydı okumadan uzaklaşır ve ikisi sessizce ayrışırdı. Modülün
-// [openapi.Describer] uygulaması bu yüzden buraya delege eder.
+// The bodies it describes are this package's UNEXPORTED types
+// (createItemRequest, inventoryLevelDTO …) and the schema is derived from them
+// by reflection. Exporting them so they could be described would widen the
+// module's surface for the sake of a document: an exported type is a contract
+// and would become constructible from outside. The query parameters are the
+// ones the handler ACTUALLY reads ([parsePage], [Handler.listItems]); had the
+// description lived in another package it would drift from the read and the two
+// would part silently. The module's [openapi.Describer] therefore delegates
+// here.
 //
-// # Neden paket düzeyinde bir fonksiyon
+// # Why a package-level function
 //
-// Anlatım hiçbir çalışma zamanı durumuna bakmaz — şema TİPLERDEN gelir.
-// Metodu [Handler]'a bağlamak, belgenin servis kurulmuş olmasına bağlı
-// OLDUĞUNU söylerdi; oysa Routes hiç çalışmamışken de belge üretilebilir ve
-// üretilmelidir.
+// The description looks at no runtime state — the schema comes from the TYPES.
+// Binding it to [Handler] would say the document DEPENDS on the service being
+// built, when the document can and should be produced without Routes ever
+// having run.
 //
-// # Yalnızca /admin/v1 vardır
+// # There is only /admin/v1
 //
-// Modülün vitrin ucu YOKTUR (bkz. paket belgesi): müşteri stoğu ürün
-// listelemesi üzerinden, Query katmanının sağlayıcısıyla görür. Yani buradaki
-// on uç modülün TAMAMIDIR; "vitrin anlatılmamış" diye okunmamalıdır.
+// The module has NO storefront endpoint (see the package doc): a shopper sees
+// stock through the product listing, by way of the Query layer's provider. The
+// 11 endpoints here are therefore the WHOLE module, and must not be read as
+// "the storefront is undescribed".
 //
-// # Yol sabitleri route'larla ORTAKTIR
+// # The path constants are SHARED with the routes
 //
-// Anlatım yolları [pathItems] gibi sabitlerle verilir, elle yazılmış dizelerle
-// değil. Elle yazılsaydı bir yolun değişmesi anlatımı sessizce boşa
-// düşürürdü; çekirdek bunu [openapi.Doc.UnmatchedDescriptions] ile raporlar
-// ama rapor okunmayabilir — sabit, arızayı hiç doğurmaz.
+// The described paths are given as constants such as [pathItems], never as
+// hand-written strings. Written by hand, a path change would silently strand
+// the description; the core reports that through
+// [openapi.Doc.UnmatchedDescriptions], but a report can go unread — a constant
+// never produces the fault at all.
 //
-// # Bilinen sınır: istek gövdelerinin "required" kümesi GENİŞTİR
+// # A known limit: the "required" set of a request body is TOO WIDE
 //
-// Çekirdek "required"ı encoding/json'un HER ZAMAN yazdığı alanlardan türetir
-// ([openapi.Doc.SchemaOf]) ve bu, YANIT gövdeleri için doğru cevaptır. İstek
-// gövdesinde ise "required" istemcinin GÖNDERMEK ZORUNDA olduğu alan demektir
-// ve bunu tip bilemez: bu paketin istek tipleri omitempty taşımadığı için
-// hepsi zorunlu görünür — örneğin POST /admin/v1/stock-locations, boş
-// bırakılabilen address_2 ve province alanlarını da ister. Alan ADLARI ve
-// TİPLERİ doğrudur, yani şema yanlış bir alan uydurmaz; yalnızca fazla şey
-// ister. Doğru çözüm ÇEKİRDEKTEDİR (istek gövdeleri için ayrı bir "required"
-// politikası); tag'lere omitempty serpiştirmek zorunluluğu servisin
-// doğrulamasından json etiketine taşır ve ikisi sessizce ayrışırdı.
+// The core derives "required" from the fields encoding/json ALWAYS writes
+// ([openapi.Doc.SchemaOf]), which is the right answer for a RESPONSE body. In a
+// request body "required" means the field a client MUST SEND, and the type
+// cannot know that: this package's request types carry no omitempty, so every
+// field looks required — POST /admin/v1/stock-locations asks for address_2 and
+// province, both of which may be left empty. The field NAMES and TYPES are
+// right, so the schema invents no field; it only asks for too much. The proper
+// fix is in the CORE (a separate "required" policy for request bodies);
+// sprinkling omitempty over the tags would move the requirement out of the
+// service's validation and into a json tag, and the two would part silently.
 func Describe(d *openapi.Doc) {
-	describeLokasyonlar(d)
-	describeKalemler(d)
-	describeSeviyeler(d)
+	describeLocations(d)
+	describeItems(d)
+	describeLevels(d)
 }
 
-// describeLokasyonlar stok lokasyonu uçlarını anlatır.
-func describeLokasyonlar(d *openapi.Doc) {
+// describeLocations describes the stock location endpoints.
+func describeLocations(d *openapi.Doc) {
 	d.Describe(http.MethodPost, pathStockLocations, openapi.Operation{
-		Summary:     "Yeni bir stok lokasyonu oluşturur.",
+		Summary:     "Creates a new stock location.",
 		RequestBody: d.RequestBody(createStockLocationRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan lokasyon", d.Item(stockLocationDTO{})),
+			"201": openapi.Response("The created location", d.Item(stockLocationDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathStockLocations, openapi.Operation{
-		Summary: "Stok lokasyonlarını sayfalayarak listeler.",
-		// [Handler.listStockLocations] sorgu dizesinden YALNIZCA bu ikisini
-		// okur ([parsePage]); başka bir parametre yazmak istemciye çalışmayan
-		// bir süzgeç vaat etmek olurdu.
-		Parameters: sayfalamaParametreleri(),
+		Summary: "Lists the stock locations, paged.",
+		// The parameters are the ones [Handler.listStockLocations] READS: the
+		// pagination pair ([parsePage]) and the closed-location switch.
+		// include_closed is a BOOLEAN and appears as one in the schema — the
+		// handler reads it with the standard library's boolean parser.
+		Parameters: append(pagingParameters(),
+			queryParameter("include_closed", typeBoolean,
+				"With true the closed locations come back too; the default is the open ones only."),
+		),
 		Responses: map[string]any{
-			"200": openapi.Response("Lokasyon sayfası", d.List(stockLocationDTO{})),
+			"200": openapi.Response("A page of locations", d.List(stockLocationDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathStockLocation, openapi.Operation{
-		Summary: "Tek bir stok lokasyonunu döner.",
+		Summary: "Returns a single stock location, a closed one included.",
 		Responses: map[string]any{
-			"200": openapi.Response("Stok lokasyonu", d.Item(stockLocationDTO{})),
+			"200": openapi.Response("The stock location", d.Item(stockLocationDTO{})),
+		},
+	})
+
+	// The close is a BODILESS POST and answers 200, not 204: it returns the NEW
+	// state of the record, which is exactly what the caller needs to see
+	// (closed_at). It is not described as a DELETE, because a close is not a
+	// deletion (ADR 0055).
+	d.Describe(http.MethodPost, pathStockLocationClose, openapi.Operation{
+		Summary: "Closes the stock location; refused while it holds stock or an active reservation.",
+		Responses: map[string]any{
+			"200": openapi.Response("The closed location", d.Item(stockLocationDTO{})),
 		},
 	})
 }
 
-// describeKalemler stok kalemi uçlarını anlatır.
-func describeKalemler(d *openapi.Doc) {
+// describeItems describes the inventory item endpoints.
+func describeItems(d *openapi.Doc) {
 	d.Describe(http.MethodPost, pathItems, openapi.Operation{
-		Summary:     "Yeni bir stok kalemi oluşturur.",
+		Summary:     "Creates a new inventory item.",
 		RequestBody: d.RequestBody(createItemRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan stok kalemi", d.Item(inventoryItemDTO{})),
+			"201": openapi.Response("The created inventory item", d.Item(inventoryItemDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathItems, openapi.Operation{
-		Summary: "Stok kalemlerini süzerek ve sayfalayarak listeler.",
-		// Parametreler [Handler.listItems]'ın OKUDUKLARIDIR: sayfalama ikilisi
-		// ve iki süzgeç. requires_shipping MANTIKSAL bir değerdir ve şemada da
-		// öyle görünür — dize olarak anlatılsaydı istemci üreteci "true"
-		// yerine serbest metin gönderilebilen bir argüman üretir, sunucu da
-		// çözemediği değeri hata sayardı.
-		Parameters: append(sayfalamaParametreleri(),
-			sorguParametresi("sku", tipDize,
-				"Kalemleri tek bir SKU ile sınırlar."),
-			sorguParametresi("requires_shipping", tipMantiksal,
-				"true yalnızca gönderim gerektiren, false yalnızca gerektirmeyen kalemleri döner."),
+		Summary: "Lists the inventory items, filtered and paged.",
+		// The parameters are the ones [Handler.listItems] READS: the pagination
+		// pair and two filters. requires_shipping is a BOOLEAN and appears as
+		// one in the schema — described as a string, the client generator would
+		// produce an argument taking free text instead of "true", and the
+		// server would count a value it could not parse as an error.
+		Parameters: append(pagingParameters(),
+			queryParameter("sku", typeString,
+				"Narrows the items to a single SKU."),
+			queryParameter("requires_shipping", typeBoolean,
+				"true returns only the items that need shipping, false only those that do not."),
 		),
 		Responses: map[string]any{
-			"200": openapi.Response("Stok kalemi sayfası", d.List(inventoryItemDTO{})),
+			"200": openapi.Response("A page of inventory items", d.List(inventoryItemDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathItem, openapi.Operation{
-		Summary: "Tek bir stok kalemini döner.",
+		Summary: "Returns a single inventory item.",
 		Responses: map[string]any{
-			"200": openapi.Response("Stok kalemi", d.Item(inventoryItemDTO{})),
+			"200": openapi.Response("The inventory item", d.Item(inventoryItemDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, pathItem, openapi.Operation{
-		Summary: "Stok kalemini siler.",
+		Summary: "Deletes the inventory item.",
 		Responses: map[string]any{
-			"204": bosYanit("Stok kalemi silindi"),
+			"204": emptyResponse("The inventory item was deleted"),
 		},
 	})
 }
 
-// describeSeviyeler stok seviyesi uçlarını anlatır.
+// describeLevels describes the stock level endpoints.
 //
-// İkisi de YAZMA ucudur ve ikisi de 200 döner, 201 DEĞİL: seviye satırı
-// kalem ile lokasyonun kesişiminde zaten vardır (ya da servis onu sessizce
-// açar) ve uçlar yeni bir kaynak YARATMAZ, var olan adedi değiştirir (bkz.
-// [Handler.setLevel], [Handler.adjustLevel]). 201 yazmak istemci üretecinde
-// "oluşturuldu" dalına düşen bir metot üretirdi.
-func describeSeviyeler(d *openapi.Doc) {
+// Both are WRITES and both answer 200, NOT 201: the level row already exists at
+// the intersection of the item and the location (or the service opens it
+// silently), so the endpoints do not CREATE a resource, they change a quantity
+// that is already there (see [Handler.setLevel], [Handler.adjustLevel]).
+// Writing 201 would produce a client method landing on the "created" branch.
+func describeLevels(d *openapi.Doc) {
 	d.Describe(http.MethodGet, pathItemLevels, openapi.Operation{
-		Summary: "Kalemin tüm lokasyonlardaki stok seviyelerini döner.",
-		// Uç SAYFALANMAZ ([Handler.listLevels] sorgu dizesini hiç okumaz) ama
-		// zarfı yine liste zarfıdır: istemcinin gördüğü şekil uç noktaya göre
-		// değişmez.
+		Summary: "Returns the item's stock levels across every location.",
+		// The endpoint is NOT paged ([Handler.listLevels] never reads the query
+		// string), and its envelope is still the list envelope: the shape a
+		// client sees does not change from endpoint to endpoint.
 		Responses: map[string]any{
-			"200": openapi.Response("Kalemin stok seviyeleri", d.List(inventoryLevelDTO{})),
+			"200": openapi.Response("The item's stock levels", d.List(inventoryLevelDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPost, pathItemLevels, openapi.Operation{
-		Summary:     "Bir lokasyondaki FİZİKSEL stok adedini mutlak olarak yazar.",
+		Summary:     "Writes the PHYSICAL quantity at a location, absolutely.",
 		RequestBody: d.RequestBody(setLevelRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Yazılan stok seviyesi", d.Item(inventoryLevelDTO{})),
+			"200": openapi.Response("The written stock level", d.Item(inventoryLevelDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPost, pathItemLevelAdjust, openapi.Operation{
-		Summary:     "Bir lokasyondaki fiziksel stok adedini delta kadar değiştirir.",
+		Summary:     "Changes the physical quantity at a location by a delta.",
 		RequestBody: d.RequestBody(adjustLevelRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Güncellenen stok seviyesi", d.Item(inventoryLevelDTO{})),
+			"200": openapi.Response("The updated stock level", d.Item(inventoryLevelDTO{})),
 		},
 	})
 }
 
-// sayfalamaParametreleri [parsePage]'in okuduğu sorgu parametrelerini döner.
+// pagingParameters returns the query parameters [parsePage] reads.
 //
-// İkisi de zorunlu DEĞİLDİR: verilmediklerinde varsayılan sayfa uygulanır
-// (bkz. [parsePage], service.DefaultLimit).
+// Neither is required: absent, the default page applies (see [parsePage],
+// service.DefaultLimit).
 //
-// Her çağrıda YENİ bir dilim üretir; paket düzeyinde tek bir değer paylaşmak,
-// çağıranlardan birinin append ile üzerine süzgeç eklediği yerde
-// ([describeKalemler]) ötekinin listesini de sessizce değiştirebilirdi.
-func sayfalamaParametreleri() []openapi.Parameter {
+// It builds a NEW slice on every call. Sharing one package-level value would
+// let a caller that appends a filter onto it ([describeItems]) silently change
+// the other caller's list too.
+func pagingParameters() []openapi.Parameter {
 	return []openapi.Parameter{
-		sorguParametresi("limit", tipTamSayi,
-			"Sayfa boyutu; verilmezse varsayılan sayfa boyu uygulanır."),
-		sorguParametresi("offset", tipTamSayi, "Atlanacak kayıt sayısı."),
+		queryParameter("limit", typeInteger,
+			"Page size; absent, the default page size applies."),
+		queryParameter("offset", typeInteger, "How many records to skip."),
 	}
 }
 
-// sorguParametresi sorgu dizesinden okunan bir parametreyi tanımlar.
-func sorguParametresi(ad, tip, aciklama string) openapi.Parameter {
+// queryParameter declares a parameter read from the query string.
+func queryParameter(name, kind, description string) openapi.Parameter {
 	return openapi.Parameter{
-		Name:        ad,
+		Name:        name,
 		In:          "query",
-		Schema:      map[string]any{semaTip: tip},
-		Description: aciklama,
+		Schema:      map[string]any{schemaType: kind},
+		Description: description,
 	}
 }
 
-// bosYanit GÖVDESİZ bir yanıt tanımı üretir.
+// emptyResponse declares a response with NO body.
 //
-// [openapi.Response] her zaman bir gövde şeması yazar; 204'ün gövdesi ise
-// YOKTUR (bkz. [Handler.deleteItem], corehttp.WriteJSON'a nil verilen çağrı).
-// Boş bir şema yazmak "bir şey dönüyor ama şekli bilinmiyor" demek olurdu ve
-// istemci üreteci okunacak bir gövde bekleyen bir metot üretirdi.
-func bosYanit(aciklama string) map[string]any {
-	return map[string]any{"description": aciklama}
+// [openapi.Response] always writes a body schema, and a 204 HAS no body (see
+// [Handler.deleteItem], the call handing corehttp.WriteJSON a nil). Writing an
+// empty schema would say "something comes back and its shape is unknown", and
+// the client generator would produce a method expecting a body to read.
+func emptyResponse(description string) map[string]any {
+	return map[string]any{"description": description}
 }

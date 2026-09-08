@@ -57,7 +57,7 @@ import (
 //     or not anybody is behind it.
 var notPersonalColumns = map[string][]string{
 	"stock_locations": {
-		"id", "created_at", "updated_at", "deleted_at",
+		"id", "created_at", "updated_at", "closed_at",
 	},
 	"inventory_items": {
 		"id", "sku", "requires_shipping", "created_at", "updated_at", "deleted_at",
@@ -190,17 +190,23 @@ func TestTheDeclarationDoesNotNeedRegister(t *testing.T) {
 	assert.NotEmpty(t, inventory.New().PersonalData().Holdings)
 }
 
-// TestTheSchemaScannerFollowedTheSecondMigration is the audit auditing itself.
+// TestTheSchemaScannerFollowedEveryMigration is the audit auditing itself.
 //
 // The scanner reads CREATE TABLE blocks, and a scanner that stopped there would
-// be describing the schema of 000001 while the module ships 000002 — which DROPS
-// inventory_reservations.deleted_at. This module has already paid for exactly
-// that mistake once: the audit that was supposed to catch the never-written
-// column matched writes by bare column name and could not see it for as long as
-// another table wrote a column of the same name (the reasoning is in the head of
-// 000002). So the two facts the scanner has to get right are asserted directly
-// rather than left to be implied by the tests above passing.
-func TestTheSchemaScannerFollowedTheSecondMigration(t *testing.T) {
+// be describing the schema of 000001 while the module ships two more: 000002
+// DROPS inventory_reservations.deleted_at, and 000003 replaces
+// stock_locations.deleted_at with closed_at (ADR 0055). This module has already
+// paid for exactly that mistake once: the audit that was supposed to catch the
+// never-written column matched writes by bare column name and could not see it
+// for as long as another table wrote a column of the same name (the reasoning
+// is in the head of 000002). So the facts the scanner has to get right are
+// asserted directly rather than left to be implied by the tests above passing.
+//
+// Each drop is paired with a column that SURVIVES it, because "the schema has
+// this column" and "the scanner reads this table at all" fail the same way
+// otherwise: a table it stopped reading contains nothing, and every NotContains
+// about it passes.
+func TestTheSchemaScannerFollowedEveryMigration(t *testing.T) {
 	t.Parallel()
 
 	schema := currentSchema(t)
@@ -208,8 +214,14 @@ func TestTheSchemaScannerFollowedTheSecondMigration(t *testing.T) {
 	assert.NotContains(t, schema["inventory_reservations"], "deleted_at",
 		"000002 drops this column; a scanner that still sees it is auditing a "+
 			"schema the module does not ship")
-	assert.Contains(t, schema["stock_locations"], "deleted_at",
-		"the drop applied to the wrong table, or to all of them")
+	assert.NotContains(t, schema["stock_locations"], "deleted_at",
+		"000003 drops this column; a scanner that still sees it is auditing a "+
+			"schema the module does not ship")
+	assert.Contains(t, schema["stock_locations"], "closed_at",
+		"000003 adds the column that replaces it; without it the drop above reads "+
+			"as a table the scanner stopped following")
+	assert.Contains(t, schema["inventory_items"], "deleted_at",
+		"the drops applied to the wrong table, or to all of them")
 	assert.Contains(t, schema["inventory_reservations"], "description",
 		"the reservation columns stopped being read at all, which would make every "+
 			"assertion about them vacuously true")

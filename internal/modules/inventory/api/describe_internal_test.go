@@ -210,10 +210,16 @@ func uclar() []ucBeklentisi {
 		{
 			metod: http.MethodGet, yol: pathStockLocations, durum: "200",
 			yanit: doluLokasyon(), liste: true,
-			sorgu: []string{"limit", "offset"},
+			sorgu: []string{"limit", "offset", "include_closed"},
 		},
 		{
 			metod: http.MethodGet, yol: pathStockLocation, durum: "200",
+			yanit: doluLokasyon(),
+		},
+		{
+			// It is 200 and NOT 204: the endpoint returns the NEW state of the
+			// record, which is exactly what the caller needs to see (closed_at).
+			metod: http.MethodPost, yol: pathStockLocationClose, durum: "200",
 			yanit: doluLokasyon(),
 		},
 		{
@@ -250,6 +256,10 @@ func uclar() []ucBeklentisi {
 }
 
 // doluLokasyon omitempty alanları da yazılan bir lokasyon kaydı üretir.
+//
+// ClosedAt is left unset, and has to be: the field carries NO omitempty, so it
+// is written even while nil. Filling it in would test a populated record rather
+// than the claim that the field appears in every response.
 func doluLokasyon() stockLocationDTO {
 	return stockLocationDTO{
 		Address1:    "A",
@@ -446,7 +456,7 @@ func TestKalemSuzgeciMantiksalTipiAnlatir(t *testing.T) {
 
 		sema, ok := p["schema"].(map[string]any)
 		require.True(t, ok)
-		assert.Equal(t, tipMantiksal, sema[semaTip])
+		assert.Equal(t, typeBoolean, sema[schemaType])
 	}
 
 	require.True(t, bulundu, "requires_shipping süzgeci anlatılmalı")

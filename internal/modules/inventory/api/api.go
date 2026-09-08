@@ -39,12 +39,16 @@ import (
 // ön ek MOUNT EDİLMEZ, çünkü mount eden ilk modül o alt ağacın tamamını sahiplenir
 // ve aynı ön eki kullanan diğer modüllerle çakışırdı.
 const (
-	pathStockLocations  = "/admin/v1/stock-locations"
-	pathStockLocation   = "/admin/v1/stock-locations/{id}"
-	pathItems           = "/admin/v1/inventory-items"
-	pathItem            = "/admin/v1/inventory-items/{id}"
-	pathItemLevels      = "/admin/v1/inventory-items/{id}/levels"
-	pathItemLevelAdjust = "/admin/v1/inventory-items/{id}/levels/{location_id}/adjust"
+	pathStockLocations = "/admin/v1/stock-locations"
+	pathStockLocation  = "/admin/v1/stock-locations/{id}"
+	// A location is retired by CLOSING it (ADR 0055) and the path says so.
+	// DELETE would be the lie the decision rejects: the row survives and it is
+	// still read.
+	pathStockLocationClose = "/admin/v1/stock-locations/{id}/close"
+	pathItems              = "/admin/v1/inventory-items"
+	pathItem               = "/admin/v1/inventory-items/{id}"
+	pathItemLevels         = "/admin/v1/inventory-items/{id}/levels"
+	pathItemLevelAdjust    = "/admin/v1/inventory-items/{id}/levels/{location_id}/adjust"
 )
 
 // maxBodyBytes istek gövdesi için üst sınırdır. Sınır olmadan tek bir istek
@@ -86,10 +90,12 @@ const (
 type Inventory interface {
 	// CreateStockLocation yeni bir stok lokasyonu oluşturur.
 	CreateStockLocation(ctx context.Context, in service.CreateStockLocationInput) (models.StockLocation, error)
-	// GetStockLocation lokasyonu kimliğiyle döner.
+	// GetStockLocation returns the location by its id, the closed ones too.
 	GetStockLocation(ctx context.Context, id string) (models.StockLocation, error)
-	// ListStockLocations lokasyonları sayfalar.
-	ListStockLocations(ctx context.Context, page service.Page) ([]models.StockLocation, int64, error)
+	// ListStockLocations pages the locations.
+	ListStockLocations(ctx context.Context, in service.ListStockLocationsInput) ([]models.StockLocation, int64, error)
+	// CloseStockLocation closes the location; Conflict when it is not empty.
+	CloseStockLocation(ctx context.Context, id string) (models.StockLocation, error)
 
 	// CreateInventoryItem yeni bir stok kalemi oluşturur.
 	CreateInventoryItem(ctx context.Context, in service.CreateInventoryItemInput) (models.InventoryItem, error)
@@ -140,6 +146,7 @@ func (h *Handler) Routes(r chi.Router) {
 	yazma.Post(pathStockLocations, h.createStockLocation)
 	okuma.Get(pathStockLocations, h.listStockLocations)
 	okuma.Get(pathStockLocation, h.getStockLocation)
+	yazma.Post(pathStockLocationClose, h.closeStockLocation)
 
 	yazma.Post(pathItems, h.createItem)
 	okuma.Get(pathItems, h.listItems)
@@ -202,7 +209,26 @@ func (h *Handler) getStockLocation(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toLocationDTO(loc)})
 }
 
-// listStockLocations stok lokasyonlarını sayfalayarak döner.
+// closeStockLocation closes the location.
+//
+// A close is not a DELETE (ADR 0055): the row stays and goes on being read. The
+// service answers Conflict while the location still holds stock or an active
+// reservation, and on success the body of the closed location carries
+// closed_at.
+func (h *Handler) closeStockLocation(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	loc, err := h.svc.CloseStockLocation(ctx, chi.URLParam(r, "id"))
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toLocationDTO(loc)})
+}
+
+// listStockLocations returns the stock locations page by page.
+//
+// Closed locations do NOT come BY DEFAULT; include_closed=true asks for them.
 func (h *Handler) listStockLocations(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -212,7 +238,18 @@ func (h *Handler) listStockLocations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	locations, count, err := h.svc.ListStockLocations(ctx, page)
+	in := service.ListStockLocationsInput{Page: page}
+	if raw := r.URL.Query().Get("include_closed"); raw != "" {
+		flag, parseErr := strconv.ParseBool(raw)
+		if parseErr != nil {
+			corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
+				"include_closed has to be a boolean: %q", raw))
+			return
+		}
+		in.IncludeClosed = flag
+	}
+
+	locations, count, err := h.svc.ListStockLocations(ctx, in)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
@@ -448,6 +485,13 @@ type stockLocationDTO struct {
 	CountryCode string    `json:"country_code,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	// ClosedAt is the moment the location was closed; it is null while the
+	// location is open.
+	//
+	// There is NO omitempty and that is deliberate: the field appears in every
+	// response, because "not closed" and "this build never writes this field"
+	// look the same on the client side, and the first one is a FACT.
+	ClosedAt *time.Time `json:"closed_at"`
 }
 
 // inventoryItemDTO stok kaleminin dış gösterimidir.
@@ -490,6 +534,7 @@ func toLocationDTO(loc models.StockLocation) stockLocationDTO {
 		CountryCode: loc.CountryCode,
 		CreatedAt:   loc.CreatedAt,
 		UpdatedAt:   loc.UpdatedAt,
+		ClosedAt:    loc.ClosedAt,
 	}
 }
 

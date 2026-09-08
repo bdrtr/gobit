@@ -11,11 +11,18 @@
 -- BIGINT. Time: every stamp is timestamptz (UTC). Deletion is soft (deleted_at)
 -- and every read query applies the deleted_at IS NULL filter.
 --
--- THERE IS ONE EXCEPTION and it was added after this file: 000002 DROPS the
--- deleted_at column of inventory_reservations. Nothing ever wrote that column;
--- a reservation is not deleted, its status changes (the table comment below
--- says so itself). The reasoning is at the head of 000002, which means that for
--- that table the CREATE TABLE below is HISTORY, not the current schema.
+-- THERE ARE TWO EXCEPTIONS and both were added after this file, so for those
+-- two tables the CREATE TABLE below is HISTORY rather than the current schema:
+--
+--   * 000002 DROPS the deleted_at column of inventory_reservations. Nothing
+--     ever wrote that column; a reservation is not deleted, its status changes
+--     (the table comment below says so itself).
+--   * 000003 REPLACES the deleted_at of stock_locations with closed_at. Nothing
+--     ever wrote that one either, and writing it would not have been enough: a
+--     hidden location goes on selling, because availability never joins this
+--     table. A location is retired by CLOSING it, empty (ADR 0055).
+--
+-- The reasoning is at the head of each of those two files.
 
 -- stock_locations is the place where stock physically sits (a warehouse, a shop).
 CREATE TABLE IF NOT EXISTS stock_locations (

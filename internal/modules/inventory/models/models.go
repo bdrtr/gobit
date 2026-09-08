@@ -29,6 +29,18 @@ type StockLocation struct {
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	// ClosedAt is the moment the location was retired, nil while it is open.
+	//
+	// A closed location holds no stock and takes none, and it is still read:
+	// the levels and reservations of the shop's past name it (ADR 0055). That
+	// is why this is not a deleted_at — a soft-deleted row is hidden from every
+	// read, and this one has to answer.
+	ClosedAt *time.Time
+}
+
+// Closed reports whether the location has been retired.
+func (l StockLocation) Closed() bool {
+	return l.ClosedAt != nil
 }
 
 // InventoryItem is the item whose stock is tracked.

@@ -310,6 +310,7 @@ func TestAdjustInventorySeviyeYoksaNotFound(t *testing.T) {
 func TestSetInventoryLevelOlusturur(t *testing.T) {
 	svc, store := yeniServis(t)
 	store.seedItem(itemID, "SKU-1")
+	store.seedLocation(locA)
 
 	level, err := svc.SetInventoryLevel(context.Background(), itemID, locA, 12)
 
@@ -732,20 +733,20 @@ func TestListSayfalamaSinirlari(t *testing.T) {
 		store.locations[id] = models.StockLocation{ID: id, Name: id}
 	}
 
-	sayfa, count, err := svc.ListStockLocations(ctx, service.Page{Limit: 2})
+	sayfa, count, err := svc.ListStockLocations(ctx, service.ListStockLocationsInput{Page: service.Page{Limit: 2}})
 	require.NoError(t, err)
 	assert.Len(t, sayfa, 2)
 	assert.Equal(t, int64(3), count, "count sayfayı değil toplamı bildirmeli")
 
-	sayfa, _, err = svc.ListStockLocations(ctx, service.Page{Limit: 2, Offset: 2})
+	sayfa, _, err = svc.ListStockLocations(ctx, service.ListStockLocationsInput{Page: service.Page{Limit: 2, Offset: 2}})
 	require.NoError(t, err)
 	assert.Len(t, sayfa, 1)
 
-	_, _, err = svc.ListStockLocations(ctx, service.Page{Limit: service.MaxLimit + 1})
+	_, _, err = svc.ListStockLocations(ctx, service.ListStockLocationsInput{Page: service.Page{Limit: service.MaxLimit + 1}})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 
-	_, _, err = svc.ListStockLocations(ctx, service.Page{Offset: -1})
+	_, _, err = svc.ListStockLocations(ctx, service.ListStockLocationsInput{Page: service.Page{Offset: -1}})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }

@@ -51,12 +51,16 @@ type adminStockLevel struct {
 	AvailableQuantity int64  `json:"available_quantity"`
 }
 
-// StockLevelsJSON returns one line per stock location for the given item.
+// StockLevelsJSON returns one line per OPEN stock location for the given item.
 //
-// EVERY location is returned, including the ones holding nothing. A form that
-// listed only the locations with a level could never be used to stock a new
-// warehouse: the location would not appear until it already had stock, which is
-// the state the operator is trying to reach.
+// Every open location is returned, including the ones holding nothing. A form
+// that listed only the locations with a level could never be used to stock a
+// new warehouse: the location would not appear until it already had stock,
+// which is the state the operator is trying to reach.
+//
+// The closed ones are left out for the mirror of that reason: a closed location
+// takes no stock (ADR 0055), so a row for it would be a form field whose every
+// submission is refused. It holds nothing, so nothing is hidden by its absence.
 //
 // The reserved quantity is included because it explains a refusal the operator
 // will otherwise not understand: stock cannot be set below what is already
@@ -78,7 +82,7 @@ func (a *AdminSurface) StockLevelsJSON(ctx context.Context, itemID string) (json
 		return nil, err
 	}
 
-	locations, _, err := a.svc.ListStockLocations(ctx, Page{Limit: MaxLimit})
+	locations, _, err := a.svc.ListStockLocations(ctx, ListStockLocationsInput{Page: Page{Limit: MaxLimit}})
 	if err != nil {
 		return nil, err
 	}

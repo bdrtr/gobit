@@ -10,17 +10,24 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/inventory/models"
 )
 
-// SetInventoryLevel bir kalemin bir lokasyondaki FİZİKSEL adedini yazar.
+// SetInventoryLevel writes the PHYSICAL quantity of an item at a location.
 //
-// Seviye yoksa oluşturulur, varsa stocked_quantity mutlak olarak güncellenir;
-// rezerve adet DEĞİŞMEZ. Yeni fiziksel adet rezerve adedin altına düşerse
-// errors.Conflict döner: söz verilmiş stok, sayım düzeltmesiyle sessizce
-// buharlaşamaz — önce rezervasyonlar serbest bırakılmalıdır.
+// The level is created when there is none, and otherwise stocked_quantity is
+// updated to the absolute value given; the reserved quantity DOES NOT CHANGE.
+// A new physical quantity below the reserved one is errors.Conflict: promised
+// stock cannot evaporate silently through a stock count — the reservations have
+// to be released first.
 //
-// Tüm iş kalem kilidi altında ve tek işlemde yapılır. Kilit, aynı (kalem,
-// lokasyon) için eşzamanlı iki oluşturmanın benzersiz indekse çarpmasını da
-// önler: satırı yaratacak olan yarışı kilitte kazanır, diğeri bekler ve var
-// olan satırı görüp günceller.
+// The whole of the work is done under the item lock, in one transaction. The
+// lock also keeps two concurrent creations for the same (item, location) from
+// colliding on the unique index: whichever is going to create the row wins the
+// race at the lock, and the other waits, then sees the existing row and updates
+// it.
+//
+// The first step of the lock order is the LOCATION
+// ([Service.requireOpenLocation]): a closed location takes no stock, and the
+// close locks that same row exclusively, so this write either finishes before
+// the close or waits and then finds the location closed (ADR 0055).
 func (s *Service) SetInventoryLevel(ctx context.Context, itemID, locationID string, stockedQty int64) (models.InventoryLevel, error) {
 	if err := requireIDs(itemID, locationID); err != nil {
 		return models.InventoryLevel{}, err
@@ -32,6 +39,9 @@ func (s *Service) SetInventoryLevel(ctx context.Context, itemID, locationID stri
 
 	var out models.InventoryLevel
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
+		if err := s.requireOpenLocation(ctx, locationID); err != nil {
+			return err
+		}
 		if err := s.store.LockInventoryItem(ctx, itemID); err != nil {
 			return err
 		}
@@ -75,14 +85,16 @@ func (s *Service) SetInventoryLevel(ctx context.Context, itemID, locationID stri
 	return out, nil
 }
 
-// AdjustInventory fiziksel adedi delta kadar artırır ya da azaltır.
+// AdjustInventory raises or lowers the physical quantity by delta.
 //
-// Sonuç NEGATİFE DÜŞEMEZ ve rezerve adedin altına inemez; her iki durumda da
-// errors.Conflict döner ve hiçbir şey yazılmaz. Okuma satır kilidi altında
-// yapıldığı için eşzamanlı iki düzeltme birbirinin yazdığını ezmez.
+// The result CANNOT GO NEGATIVE and cannot fall below the reserved quantity; in
+// either case errors.Conflict comes back and nothing is written. The read is
+// made under the row lock, so two concurrent corrections do not overwrite each
+// other.
 //
-// Kilitler kalem -> seviye sırasında alınır (bkz. [Store] "Kilit sırası");
-// kalem yoksa errors.NotFound döner.
+// The locks are taken location -> item -> level (see the lock order section on
+// [Store]); a missing location or item is errors.NotFound, and a closed
+// location is errors.Conflict (ADR 0055).
 func (s *Service) AdjustInventory(ctx context.Context, itemID, locationID string, delta int64) (models.InventoryLevel, error) {
 	if err := requireIDs(itemID, locationID); err != nil {
 		return models.InventoryLevel{}, err
@@ -93,6 +105,9 @@ func (s *Service) AdjustInventory(ctx context.Context, itemID, locationID string
 
 	var out models.InventoryLevel
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
+		if err := s.requireOpenLocation(ctx, locationID); err != nil {
+			return err
+		}
 		if err := s.store.LockInventoryItemShared(ctx, itemID); err != nil {
 			return err
 		}
@@ -462,6 +477,32 @@ func (s *Service) GetReservation(ctx context.Context, reservationID string) (mod
 		return models.Reservation{}, err
 	}
 	return s.store.GetReservation(ctx, reservationID)
+}
+
+// requireOpenLocation takes the SHARED lock on the location and refuses a
+// closed one. It is the first step of every flow that writes stock.
+//
+// Both halves carry weight. The LOCK is what a close meets: the close holds the
+// same row exclusively, so a stocking transaction either commits before the
+// close counts what the location holds or waits and then finds it closed. The
+// REFUSAL is what keeps a closed location empty after the close — without it,
+// "closed" would be true for one moment, and the availability sums, which read
+// inventory_levels with no join to stock_locations, would go on offering units
+// out of a warehouse the operator has retired (ADR 0055).
+//
+// It also gives the location's absence a NAME: before this step, stocking a
+// location that does not exist reached the database and came back as a foreign
+// key violation.
+func (s *Service) requireOpenLocation(ctx context.Context, locationID string) error {
+	location, err := s.store.LockStockLocationShared(ctx, locationID)
+	if err != nil {
+		return err
+	}
+	if location.Closed() {
+		return errors.Conflict(CodeLocationClosed,
+			"the location is closed and takes no stock (%s)", locationID)
+	}
+	return nil
 }
 
 // requireIDs kalem ve lokasyon kimliklerini birlikte doğrular.

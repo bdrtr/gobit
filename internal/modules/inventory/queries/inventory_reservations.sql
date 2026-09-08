@@ -36,3 +36,19 @@ WHERE id = $1;
 -- name: CountActiveReservationsByItem :one
 SELECT COUNT(*) FROM inventory_reservations
 WHERE inventory_item_id = $1 AND status = 'active';
+
+-- CountActiveReservationsByLocation counts the promises still standing at one
+-- location. The close reads it (ADR 0055).
+--
+-- It is not implied by the stock the location holds, even though an active
+-- reservation does raise a level's reserved quantity. The implication runs
+-- through a rule that lives in ANOTHER flow — the item deletion refuses while a
+-- reservation is active, which is what keeps a promise from outliving the level
+-- row that carries it — and a close that refused on stock alone would be
+-- trusting that rule to hold forever, in a statement that does not mention it.
+--
+-- No index leads on location_id, so this one cannot seek — see the measurement
+-- for what that costs and why a third index on a hot write path was not built.
+-- name: CountActiveReservationsByLocation :one
+SELECT COUNT(*) FROM inventory_reservations
+WHERE location_id = $1 AND status = 'active';

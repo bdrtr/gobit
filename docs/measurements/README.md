@@ -12,6 +12,7 @@ truth: a report says what was true on the day it was taken.
 
 | Report | Lines |
 |---|---|
+| [What a closed stock location owes](0055-a-location-closes-empty.md) | 274 |
 | [What an unproven `customer_id` bought](0057-the-storefront-customer-claim.md) | 183 |
 | [Soft delete in the order and payment modules](0054-soft-delete-in-order-and-payment.md) | 148 |
 | [Two roles: what the split closes and what it costs](0060-two-roles.md) | 152 |

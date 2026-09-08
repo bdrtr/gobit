@@ -97,6 +97,13 @@ var yazmaUclari = map[string]struct {
 	"lokasyon oluşturma": {
 		http.MethodPost, "/admin/v1/stock-locations", `{"name":"Merkez","country_code":"TR"}`,
 	},
+	// Closing a location is a write and belongs here for the reason the godoc
+	// above gives (ADR 0055): the route sits on the yazma router, but until it
+	// is in this table the three authorization tests never reach it, and a
+	// route that fell off that router would go red nowhere.
+	"closing a location": {
+		http.MethodPost, "/admin/v1/stock-locations/sloc_1/close", "",
+	},
 	"kalem oluşturma": {http.MethodPost, "/admin/v1/inventory-items", `{"sku":"SKU-1"}`},
 	"kalem silme":     {http.MethodDelete, "/admin/v1/inventory-items/iitem_1", ""},
 	"seviye yazma": {

@@ -16,12 +16,21 @@
 // wins, the other gets errors.Conflict. A check made in the application layer
 // could not provide this; the boundary is in the database.
 //
-// The locks are taken in the same order in EVERY flow — first the item, then the
-// level (see the lock order section on [Store]). Had the order changed from flow
-// to flow, two different flows would ask for the same two rows in the reverse
-// order, lock each other out and the database would kill one of the
+// The locks a flow takes, it takes in one order — the location, then the item,
+// then the level (see the lock order section on [Store]). Had the order changed
+// from flow to flow, two different flows would ask for the same two rows in the
+// reverse order, lock each other out and the database would kill one of the
 // transactions: when a reservation collided with a stock update, the request
 // would get an unexpected error instead of a conflict it can retry.
+//
+// The location is the first of the three because a closed location has to hold
+// nothing (ADR 0055): the close locks that row exclusively while it counts, and
+// the two flows that put stock in — [Service.SetInventoryLevel] and
+// [Service.AdjustInventory] — hold it shared, so a stock write cannot commit
+// between the count and the closing stamp. [Service.Reserve],
+// [Service.ReleaseReservation] and [Service.ConfirmReservation] do NOT take it
+// and do not need to; the Store's lock order section says why that omission
+// cannot deadlock.
 //
 // # Module isolation
 //
@@ -60,6 +69,11 @@ const (
 	// CodeItemHasReservations reports that an item with an active reservation was
 	// asked to be deleted.
 	CodeItemHasReservations = "inventory_item_has_reservations"
+	// CodeLocationNotEmpty reports that a location still holding stock or a live
+	// promise was asked to close (ADR 0055).
+	CodeLocationNotEmpty = "inventory_location_not_empty"
+	// CodeLocationClosed reports that stock was written at a closed location.
+	CodeLocationClosed = "inventory_location_closed"
 	// CodeInconsistentState reports that the reserved quantity and the
 	// reservation records do not match each other; it does not occur in normal
 	// operation.
@@ -172,22 +186,110 @@ func (s *Service) CreateStockLocation(ctx context.Context, in CreateStockLocatio
 	})
 }
 
+// ListStockLocationsInput is the input of the location listing.
+type ListStockLocationsInput struct {
+	// IncludeClosed also returns the retired locations. It defaults to false
+	// because the list is what a warehouse is PICKED from and a closed one
+	// cannot be picked; the flag is for finding a location, not for stocking
+	// one.
+	IncludeClosed bool
+	// Page holds the pagination parameters.
+	Page Page
+}
+
 // ListStockLocations returns the stock locations page by page.
 // The second return value belongs not to the page but to ALL the matching rows.
-func (s *Service) ListStockLocations(ctx context.Context, page Page) ([]models.StockLocation, int64, error) {
-	page, err := page.normalize()
+func (s *Service) ListStockLocations(ctx context.Context, in ListStockLocationsInput) ([]models.StockLocation, int64, error) {
+	page, err := in.Page.normalize()
 	if err != nil {
 		return nil, 0, err
 	}
-	return s.store.ListStockLocations(ctx, page.Limit, page.Offset)
+	return s.store.ListStockLocations(ctx, page.Limit, page.Offset, in.IncludeClosed)
 }
 
-// GetStockLocation returns the location by its id.
+// GetStockLocation returns the location by its id, open or CLOSED.
+//
+// A closed location is still answered for. Its levels and its reservations name
+// it, reservation rows are never deleted, and a read that refused would leave
+// that history pointing at a warehouse nobody can name (ADR 0055).
 func (s *Service) GetStockLocation(ctx context.Context, id string) (models.StockLocation, error) {
 	if err := requireText("id", id); err != nil {
 		return models.StockLocation{}, err
 	}
 	return s.store.GetStockLocation(ctx, id)
+}
+
+// CloseStockLocation retires a location that holds nothing.
+//
+// # What a closed location owes
+//
+// Its levels DO NOT move and are NOT zeroed. Moving stock between warehouses is
+// a transfer, which this module has no primitive for and cannot invent in a
+// close; zeroing it would destroy a physical count silently, which
+// [Service.SetInventoryLevel] already refuses to do for promised stock. So the
+// close does not empty the location — it REFUSES until the operator has, with
+// the same two calls they use every day. What it costs is that closing a
+// warehouse is a sequence rather than a button, and what it buys is that the
+// availability reads keep summing inventory_levels with no join to this table:
+// a closed location adds nothing to those sums because it holds nothing.
+//
+// An ACTIVE RESERVATION refuses the close in the same way, and for the reason
+// [Service.DeleteInventoryItem] gives: closing over a promise would strand a
+// quantity a sale is still waiting for. Release or confirm them first.
+//
+// Closing an already closed location is not an error and does not move the
+// first closing moment: a decommission retried after a network failure has to
+// be able to finish.
+//
+// A close is FINAL. There is no reopen verb, because nothing about keeping a
+// closed location empty needs one; whether a mis-close should be undoable is a
+// product question standing open as D18 in docs/gaps.md.
+func (s *Service) CloseStockLocation(ctx context.Context, id string) (models.StockLocation, error) {
+	if err := requireText("id", id); err != nil {
+		return models.StockLocation{}, err
+	}
+
+	var out models.StockLocation
+	err := s.store.WithTx(ctx, func(ctx context.Context) error {
+		// The EXCLUSIVE lock is what makes the two counts below mean anything:
+		// every flow that writes stock holds this row shared first, so none of
+		// them can commit between the counting and the stamp.
+		location, err := s.store.LockStockLocation(ctx, id)
+		if err != nil {
+			return err
+		}
+		if location.Closed() {
+			out = location
+			return nil
+		}
+
+		stocked, reserved, err := s.store.StockHeldAtLocation(ctx, id)
+		if err != nil {
+			return err
+		}
+		if stocked > 0 {
+			return errors.Conflict(CodeLocationNotEmpty,
+				"the location still holds %d units, %d of them promised to a sale; "+
+					"move them or write them down first (%s)", stocked, reserved, id)
+		}
+
+		active, err := s.store.CountActiveReservationsAtLocation(ctx, id)
+		if err != nil {
+			return err
+		}
+		if active > 0 {
+			return errors.Conflict(CodeLocationNotEmpty,
+				"the location cannot be closed: %d reservations are still active there; "+
+					"release or confirm them first (%s)", active, id)
+		}
+
+		out, err = s.store.CloseStockLocation(ctx, id)
+		return err
+	})
+	if err != nil {
+		return models.StockLocation{}, err
+	}
+	return out, nil
 }
 
 // CreateInventoryItemInput holds the fields of a new inventory item.

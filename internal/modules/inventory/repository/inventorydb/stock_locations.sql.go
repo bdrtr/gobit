@@ -9,9 +9,43 @@ import (
 	"context"
 )
 
+const closeStockLocation = `-- name: CloseStockLocation :one
+UPDATE stock_locations
+SET closed_at = now(), updated_at = now()
+WHERE id = $1
+RETURNING id, name, address_1, address_2, city, province, postal_code, country_code, created_at, updated_at, closed_at
+`
+
+// CloseStockLocation stamps the location closed.
+//
+// The statement carries NO "closed_at IS NULL" guard, and the reason is that
+// the decision is already made: the caller holds the exclusive lock, has read
+// the row and only reaches this statement for a location that is open, so a
+// second close never arrives here and the first closing moment cannot be
+// overwritten by it. A guard here would be a second place deciding the same
+// thing, and the two could disagree.
+func (q *Queries) CloseStockLocation(ctx context.Context, id string) (StockLocation, error) {
+	row := q.db.QueryRow(ctx, closeStockLocation, id)
+	var i StockLocation
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Address1,
+		&i.Address2,
+		&i.City,
+		&i.Province,
+		&i.PostalCode,
+		&i.CountryCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClosedAt,
+	)
+	return i, err
+}
+
 const countStockLocations = `-- name: CountStockLocations :one
 SELECT COUNT(*) FROM stock_locations
-WHERE deleted_at IS NULL
+WHERE (closed_at IS NULL OR $1::boolean)
 `
 
 // CountStockLocations gives the total for the pagination envelope; it applies
@@ -20,8 +54,8 @@ WHERE deleted_at IS NULL
 // The count is a separate query: a window function returned alongside the rows
 // would show the total as 0 on an out-of-range page, because no row comes back
 // there.
-func (q *Queries) CountStockLocations(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, countStockLocations)
+func (q *Queries) CountStockLocations(ctx context.Context, includeClosed bool) (int64, error) {
+	row := q.db.QueryRow(ctx, countStockLocations, includeClosed)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -32,7 +66,7 @@ const createStockLocation = `-- name: CreateStockLocation :one
 INSERT INTO stock_locations (
     id, name, address_1, address_2, city, province, postal_code, country_code
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, name, address_1, address_2, city, province, postal_code, country_code, created_at, updated_at, deleted_at
+RETURNING id, name, address_1, address_2, city, province, postal_code, country_code, created_at, updated_at, closed_at
 `
 
 type CreateStockLocationParams struct {
@@ -47,7 +81,13 @@ type CreateStockLocationParams struct {
 }
 
 // stock_locations queries.
-// Every read applies the deleted_at IS NULL filter (plan Section 8).
+//
+// A location is RETIRED BY CLOSING it, not by deleting it (ADR 0055), so the
+// reads here do not all carry one filter the way the other tables' do. The
+// single-row read deliberately answers for a closed location — every level and
+// every reservation names it — and the listing takes the choice as a parameter,
+// because the operator stocking goods and the operator reading last year's
+// reservation are asking different questions.
 func (q *Queries) CreateStockLocation(ctx context.Context, arg CreateStockLocationParams) (StockLocation, error) {
 	row := q.db.QueryRow(ctx, createStockLocation,
 		arg.ID,
@@ -71,16 +111,22 @@ func (q *Queries) CreateStockLocation(ctx context.Context, arg CreateStockLocati
 		&i.CountryCode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
+		&i.ClosedAt,
 	)
 	return i, err
 }
 
 const getStockLocation = `-- name: GetStockLocation :one
-SELECT id, name, address_1, address_2, city, province, postal_code, country_code, created_at, updated_at, deleted_at FROM stock_locations
-WHERE id = $1 AND deleted_at IS NULL
+SELECT id, name, address_1, address_2, city, province, postal_code, country_code, created_at, updated_at, closed_at FROM stock_locations
+WHERE id = $1
 `
 
+// GetStockLocation returns the location whether it is open or CLOSED.
+//
+// The missing filter is the decision, not an omission. inventory_levels and
+// inventory_reservations point here, reservation rows are never deleted, and a
+// location the single-row read refused to answer for would leave that history
+// naming a warehouse nobody can name back.
 func (q *Queries) GetStockLocation(ctx context.Context, id string) (StockLocation, error) {
 	row := q.db.QueryRow(ctx, getStockLocation, id)
 	var i StockLocation
@@ -95,25 +141,33 @@ func (q *Queries) GetStockLocation(ctx context.Context, id string) (StockLocatio
 		&i.CountryCode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
+		&i.ClosedAt,
 	)
 	return i, err
 }
 
 const listStockLocations = `-- name: ListStockLocations :many
-SELECT id, name, address_1, address_2, city, province, postal_code, country_code, created_at, updated_at, deleted_at FROM stock_locations
-WHERE deleted_at IS NULL
+SELECT id, name, address_1, address_2, city, province, postal_code, country_code, created_at, updated_at, closed_at FROM stock_locations
+WHERE (closed_at IS NULL OR $1::boolean)
 ORDER BY created_at DESC, id DESC
-LIMIT $2::bigint OFFSET $1::bigint
+LIMIT $3::bigint OFFSET $2::bigint
 `
 
 type ListStockLocationsParams struct {
-	RowOffset int64
-	RowLimit  int64
+	IncludeClosed bool
+	RowOffset     int64
+	RowLimit      int64
 }
 
+// ListStockLocations pages the locations, closed ones only when asked for.
+//
+// The default hides them because the list is what an operator picks a warehouse
+// FROM, and a closed location cannot be picked: it takes no stock. Asking for
+// them is still possible, so a decommissioned warehouse stays findable: the
+// levels and the reservations of the past name it, and a reader of that history
+// has to be able to look it up.
 func (q *Queries) ListStockLocations(ctx context.Context, arg ListStockLocationsParams) ([]StockLocation, error) {
-	rows, err := q.db.Query(ctx, listStockLocations, arg.RowOffset, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listStockLocations, arg.IncludeClosed, arg.RowOffset, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +186,7 @@ func (q *Queries) ListStockLocations(ctx context.Context, arg ListStockLocations
 			&i.CountryCode,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
+			&i.ClosedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -142,4 +196,69 @@ func (q *Queries) ListStockLocations(ctx context.Context, arg ListStockLocations
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockStockLocation = `-- name: LockStockLocation :one
+SELECT id, name, address_1, address_2, city, province, postal_code, country_code, created_at, updated_at, closed_at FROM stock_locations
+WHERE id = $1
+FOR UPDATE
+`
+
+// LockStockLocation locks the location row EXCLUSIVELY until the end of the
+// transaction and returns it.
+//
+// The close takes this lock, and it is the first lock of the whole module's
+// order (see the lock order section on the service's Store). Closing decides
+// against what the location holds, so the flows that put stock INTO a location
+// have to be held off while it decides; without this row as the rendezvous
+// point, a stock write committed after the close's count and before its stamp
+// would leave units standing in a location that no availability read ever
+// joins.
+func (q *Queries) LockStockLocation(ctx context.Context, id string) (StockLocation, error) {
+	row := q.db.QueryRow(ctx, lockStockLocation, id)
+	var i StockLocation
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Address1,
+		&i.Address2,
+		&i.City,
+		&i.Province,
+		&i.PostalCode,
+		&i.CountryCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClosedAt,
+	)
+	return i, err
+}
+
+const lockStockLocationShared = `-- name: LockStockLocationShared :one
+SELECT id, name, address_1, address_2, city, province, postal_code, country_code, created_at, updated_at, closed_at FROM stock_locations
+WHERE id = $1
+FOR SHARE
+`
+
+// LockStockLocationShared locks the location row in SHARED mode and returns it.
+//
+// Every flow that writes stock at a location takes this first. Shared, so two
+// warehouse operators stocking different items at the same location do not
+// queue behind each other; it collides only with the close's exclusive lock.
+func (q *Queries) LockStockLocationShared(ctx context.Context, id string) (StockLocation, error) {
+	row := q.db.QueryRow(ctx, lockStockLocationShared, id)
+	var i StockLocation
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Address1,
+		&i.Address2,
+		&i.City,
+		&i.Province,
+		&i.PostalCode,
+		&i.CountryCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClosedAt,
+	)
+	return i, err
 }

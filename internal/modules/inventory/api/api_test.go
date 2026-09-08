@@ -34,13 +34,13 @@ type fakeInventory struct {
 	err      error
 
 	// Kaydedilen çağrı bilgileri.
-	gorulenPage       service.Page
-	gorulenItemInput  service.CreateInventoryItemInput
-	gorulenListInput  service.ListInventoryItemsInput
-	gorulenID         string
-	gorulenLocationID string
-	gorulenStocked    int64
-	gorulenDelta      int64
+	gorulenLocationInput service.ListStockLocationsInput
+	gorulenItemInput     service.CreateInventoryItemInput
+	gorulenListInput     service.ListInventoryItemsInput
+	gorulenID            string
+	gorulenLocationID    string
+	gorulenStocked       int64
+	gorulenDelta         int64
 }
 
 // Sahtenin handler'ın beklediği yüzeyi karşıladığı derleme zamanında
@@ -58,10 +58,16 @@ func (f *fakeInventory) GetStockLocation(_ context.Context, id string) (models.S
 	return f.location, f.err
 }
 
-// ListStockLocations sayfalama parametrelerini kaydeder.
-func (f *fakeInventory) ListStockLocations(_ context.Context, page service.Page) ([]models.StockLocation, int64, error) {
-	f.gorulenPage = page
+// ListStockLocations records the listing input.
+func (f *fakeInventory) ListStockLocations(_ context.Context, in service.ListStockLocationsInput) ([]models.StockLocation, int64, error) {
+	f.gorulenLocationInput = in
 	return []models.StockLocation{f.location}, f.count, f.err
+}
+
+// CloseStockLocation records the id that was closed.
+func (f *fakeInventory) CloseStockLocation(_ context.Context, id string) (models.StockLocation, error) {
+	f.gorulenID = id
+	return f.location, f.err
 }
 
 // CreateInventoryItem kalem oluşturma girdisini kaydeder.
@@ -208,7 +214,9 @@ func TestListStockLocationsZarfi(t *testing.T) {
 	assert.InDelta(t, 42, body["count"], 0)
 	assert.InDelta(t, 20, body["offset"], 0)
 	assert.InDelta(t, 10, body["limit"], 0)
-	assert.Equal(t, service.Page{Limit: 10, Offset: 20}, svc.gorulenPage)
+	assert.Equal(t, service.Page{Limit: 10, Offset: 20}, svc.gorulenLocationInput.Page)
+	assert.False(t, svc.gorulenLocationInput.IncludeClosed,
+		"a closed location must not enter the listing UNLESS it is asked for")
 }
 
 // TestListVarsayilanLimit limit verilmediğinde varsayılanın uygulandığını ve
@@ -220,7 +228,7 @@ func TestListVarsayilanLimit(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.InDelta(t, float64(service.DefaultLimit), govde(t, rec)["limit"], 0)
-	assert.Equal(t, service.DefaultLimit, svc.gorulenPage.Limit)
+	assert.Equal(t, service.DefaultLimit, svc.gorulenLocationInput.Page.Limit)
 }
 
 // TestListGecersizLimit sayı olmayan limit parametresinin 422 ürettiğini

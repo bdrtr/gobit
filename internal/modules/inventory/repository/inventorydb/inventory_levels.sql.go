@@ -168,6 +168,38 @@ func (q *Queries) SoftDeleteInventoryLevelsByItem(ctx context.Context, inventory
 	return err
 }
 
+const stockHeldAtLocation = `-- name: StockHeldAtLocation :one
+SELECT COALESCE(SUM(stocked_quantity), 0)::bigint  AS stocked_quantity,
+       COALESCE(SUM(reserved_quantity), 0)::bigint AS reserved_quantity
+FROM inventory_levels
+WHERE location_id = $1 AND deleted_at IS NULL
+`
+
+type StockHeldAtLocationRow struct {
+	StockedQuantity  int64
+	ReservedQuantity int64
+}
+
+// StockHeldAtLocation returns what a location still holds: the physical total
+// and the promised part of it, over its LIVING levels.
+//
+// It is what the close reads (ADR 0055). Two numbers rather than one, because
+// they send the operator to two different places: units that are merely stocked
+// have to be moved or written down, and units that are reserved are promised to
+// a sale that has to finish or be released first.
+//
+// Soft-deleted levels are excluded, and that is not a copy of the other reads'
+// filter. A deleted level is not stock: no read sums it, availability does not
+// see it, and no path brings it back — it is the residue of a deleted item, and
+// counting it would make a location impossible to close for stock that cannot
+// be sold, moved or written down.
+func (q *Queries) StockHeldAtLocation(ctx context.Context, locationID string) (StockHeldAtLocationRow, error) {
+	row := q.db.QueryRow(ctx, stockHeldAtLocation, locationID)
+	var i StockHeldAtLocationRow
+	err := row.Scan(&i.StockedQuantity, &i.ReservedQuantity)
+	return i, err
+}
+
 const updateInventoryLevelQuantities = `-- name: UpdateInventoryLevelQuantities :one
 UPDATE inventory_levels
 SET stocked_quantity = $2, reserved_quantity = $3, updated_at = now()

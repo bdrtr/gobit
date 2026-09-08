@@ -160,7 +160,7 @@ func requireTx(ctx context.Context, op string) error {
 	return nil
 }
 
-// --- stok lokasyonları -------------------------------------------------------
+// --- stock locations ---------------------------------------------------------
 
 // CreateStockLocation yeni bir stok lokasyonu kaydeder.
 func (r *Repository) CreateStockLocation(ctx context.Context, loc models.StockLocation) (models.StockLocation, error) {
@@ -175,41 +175,120 @@ func (r *Repository) CreateStockLocation(ctx context.Context, loc models.StockLo
 		CountryCode: nullString(loc.CountryCode),
 	})
 	if err != nil {
-		return models.StockLocation{}, classify(err, codeQueryFailed, "stok lokasyonu oluşturulamadı")
+		return models.StockLocation{}, classify(err, codeQueryFailed, "the stock location could not be created")
 	}
 	return toStockLocation(row), nil
 }
 
-// GetStockLocation lokasyonu kimliğiyle döner; yoksa NotFound.
+// GetStockLocation returns the location by its id, or NotFound.
 func (r *Repository) GetStockLocation(ctx context.Context, id string) (models.StockLocation, error) {
 	row, err := r.queries(ctx).GetStockLocation(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.StockLocation{}, errors.NotFound(codeLocationNotFound,
-				"stok lokasyonu bulunamadı: %s", id)
+				"the stock location was not found: %s", id)
 		}
-		return models.StockLocation{}, classify(err, codeQueryFailed, "stok lokasyonu okunamadı")
+		return models.StockLocation{}, classify(err, codeQueryFailed, "the stock location could not be read")
 	}
 	return toStockLocation(row), nil
 }
 
-// ListStockLocations lokasyonları sayfalayarak döner. İkinci dönüş değeri
-// sayfaya değil, filtreye uyan TÜM satırlara ait toplam sayıdır.
+// LockStockLocation locks the location EXCLUSIVELY for the transaction and
+// returns it; NotFound when there is none.
 //
-// Toplam AYRI bir sorgudan gelir; sayfa aralık dışında olsa ve hiç satır
-// dönmese de doğrudur (bkz. queries/stock_locations.sql).
-func (r *Repository) ListStockLocations(ctx context.Context, limit, offset int64) ([]models.StockLocation, int64, error) {
+// It is the first lock of the module's order and the close is what takes it
+// (see the lock order section on the service's Store). Calling it outside a
+// transaction is an error: a FOR UPDATE taken without one is released before
+// anything can be decided under it.
+func (r *Repository) LockStockLocation(ctx context.Context, id string) (models.StockLocation, error) {
+	if err := requireTx(ctx, "LockStockLocation"); err != nil {
+		return models.StockLocation{}, err
+	}
+	row, err := r.queries(ctx).LockStockLocation(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.StockLocation{}, errors.NotFound(codeLocationNotFound,
+				"the stock location was not found: %s", id)
+		}
+		return models.StockLocation{}, classify(err, codeQueryFailed, "the location could not be locked")
+	}
+	return toStockLocation(row), nil
+}
+
+// LockStockLocationShared locks the location in SHARED mode and returns it;
+// NotFound when there is none.
+//
+// Every flow that writes stock takes it first. Shared, so those flows do not
+// serialize against each other; it collides only with the close.
+func (r *Repository) LockStockLocationShared(ctx context.Context, id string) (models.StockLocation, error) {
+	if err := requireTx(ctx, "LockStockLocationShared"); err != nil {
+		return models.StockLocation{}, err
+	}
+	row, err := r.queries(ctx).LockStockLocationShared(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.StockLocation{}, errors.NotFound(codeLocationNotFound,
+				"the stock location was not found: %s", id)
+		}
+		return models.StockLocation{}, classify(err, codeQueryFailed, "the location could not be locked")
+	}
+	return toStockLocation(row), nil
+}
+
+// CloseStockLocation stamps the location closed and returns it.
+func (r *Repository) CloseStockLocation(ctx context.Context, id string) (models.StockLocation, error) {
+	row, err := r.queries(ctx).CloseStockLocation(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.StockLocation{}, errors.NotFound(codeLocationNotFound,
+				"the stock location was not found: %s", id)
+		}
+		return models.StockLocation{}, classify(err, codeQueryFailed, "the location could not be closed")
+	}
+	return toStockLocation(row), nil
+}
+
+// StockHeldAtLocation returns what the location's living levels hold: the
+// physical total and the promised part of it.
+func (r *Repository) StockHeldAtLocation(ctx context.Context, locationID string) (stocked, reserved int64, err error) {
+	row, err := r.queries(ctx).StockHeldAtLocation(ctx, locationID)
+	if err != nil {
+		return 0, 0, classify(err, codeQueryFailed, "the stock held at the location could not be read")
+	}
+	return row.StockedQuantity, row.ReservedQuantity, nil
+}
+
+// CountActiveReservationsAtLocation returns how many promises still stand at
+// the location.
+func (r *Repository) CountActiveReservationsAtLocation(ctx context.Context, locationID string) (int64, error) {
+	count, err := r.queries(ctx).CountActiveReservationsByLocation(ctx, locationID)
+	if err != nil {
+		return 0, classify(err, codeQueryFailed, "the active reservations of the location could not be counted")
+	}
+	return count, nil
+}
+
+// ListStockLocations returns the locations page by page. The second return
+// value belongs not to the page but to ALL the rows matching the filter.
+//
+// With includeClosed false only the OPEN locations come back; the closed ones
+// enter the listing when they are asked for (ADR 0055).
+//
+// The total comes from a SEPARATE query, so it is right even on a page that is
+// out of range and returns no row at all (see queries/stock_locations.sql).
+func (r *Repository) ListStockLocations(ctx context.Context, limit, offset int64, includeClosed bool) ([]models.StockLocation, int64, error) {
 	rows, err := r.queries(ctx).ListStockLocations(ctx, inventorydb.ListStockLocationsParams{
-		RowLimit:  limit,
-		RowOffset: offset,
+		RowLimit:      limit,
+		RowOffset:     offset,
+		IncludeClosed: includeClosed,
 	})
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "stok lokasyonları listelenemedi")
+		return nil, 0, classify(err, codeQueryFailed, "the stock locations could not be listed")
 	}
 
-	total, err := r.queries(ctx).CountStockLocations(ctx)
+	total, err := r.queries(ctx).CountStockLocations(ctx, includeClosed)
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "stok lokasyonları sayılamadı")
+		return nil, 0, classify(err, codeQueryFailed, "the stock locations could not be counted")
 	}
 
 	out := make([]models.StockLocation, 0, len(rows))
@@ -560,7 +639,7 @@ func classify(err error, code, format string, a ...any) error {
 		// bağlanamaz. Hangisi olduğunu kısıt adı söyler.
 		if strings.Contains(pgErr.ConstraintName, "location_id") {
 			return errors.Wrap(err, errors.KindNotFound, codeLocationNotFound,
-				"stok lokasyonu bulunamadı")
+				"the stock location was not found")
 		}
 		return errors.Wrap(err, errors.KindNotFound, codeItemNotFound,
 			"stok kalemi bulunamadı")
@@ -604,6 +683,21 @@ func timeValue(ts pgtype.Timestamptz) time.Time {
 	return ts.Time.UTC()
 }
 
+// timePointer turns a nullable stamp into a pointer.
+//
+// It is separate from [timeValue] because the two answer different questions. A
+// zero time.Time is the right reading of a NULL created_at — there is no such
+// row — while a NULL closed_at MEANS something: the location is open. Folding
+// it into the zero value would make "open" and "closed at the zero instant"
+// the same value.
+func timePointer(ts pgtype.Timestamptz) *time.Time {
+	if !ts.Valid {
+		return nil
+	}
+	at := ts.Time.UTC()
+	return &at
+}
+
 // toStockLocation üretilmiş satırı alan modeline çevirir.
 func toStockLocation(row inventorydb.StockLocation) models.StockLocation {
 	return models.StockLocation{
@@ -617,6 +711,7 @@ func toStockLocation(row inventorydb.StockLocation) models.StockLocation {
 		CountryCode: stringValue(row.CountryCode),
 		CreatedAt:   timeValue(row.CreatedAt),
 		UpdatedAt:   timeValue(row.UpdatedAt),
+		ClosedAt:    timePointer(row.ClosedAt),
 	}
 }
 
