@@ -1103,6 +1103,17 @@ type markdownDoc struct {
 func markdownDocs(t *testing.T) []markdownDoc {
 	t.Helper()
 
+	// A document git does not carry is not the repository's, and the rule is
+	// the language ratchet's — see [repositoryFiles], which answers "is this
+	// file ignored?" rather than "is it committed yet?".
+	//
+	// Added 2026-09-08 after the route-address gate went RED on a developer's
+	// own gitignored planning note at the repository root, which CI would never
+	// have seen. That is the same local-versus-CI split D32 recorded, arriving
+	// from the other side: there a gate was blind to a file that WOULD ship,
+	// here a gate was reading one that never will.
+	inRepo := repositoryFiles(t)
+
 	var docs []markdownDoc
 	err := filepath.WalkDir(repoRoot, func(current string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -1125,8 +1136,12 @@ func markdownDocs(t *testing.T) []markdownDoc {
 		if err != nil {
 			return err
 		}
+		slash := filepath.ToSlash(rel)
+		if !inRepo[slash] {
+			return nil
+		}
 		docs = append(docs, markdownDoc{
-			path:  filepath.ToSlash(rel),
+			path:  slash,
 			lines: strings.Split(string(content), "\n"),
 		})
 		return nil

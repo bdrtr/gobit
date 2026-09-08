@@ -91,7 +91,11 @@ type deliveryResponse struct {
 	Age string `json:"age"`
 }
 
-// endpointListResponse is the answer of GET /admin/v1/webhooks.
+// endpointListResponse is the answer of GET /admin/v1/webhooks/.
+//
+// The trailing slash is the address chi reports, for the reason the path constants
+// in describe.go give: the collection is registered inside Route() with "/" as its
+// child pattern.
 //
 // The forwarded set travels INSIDE the listing rather than beside it, because it
 // is the answer to the question that brought the operator here — "why is my

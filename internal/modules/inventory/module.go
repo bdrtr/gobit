@@ -223,7 +223,7 @@ func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 // ("the operator's own premises rather than a shopper's"). Bugün elde olan tek
 // yer budur ve YETMEZ: süpürme raporu Why'ı taşımaz — bildirip silmeyen bir
 // tutucuyu RETAINED'a çeviren yol yalnızca "tablo.sütun" listeler ve cümleyi
-// kendisi yazar — yani ayrım yalnızca GET /admin/v1/erasure/personal-data
+// kendisi yazar — yani ayrım yalnızca GET /admin/v1/personal-data
 // belgesinde görünür. Bir alışverişçiye verilen raporda deponun yedi sütunu,
 // kimin olduğunu söylemeden durur.
 //

@@ -82,7 +82,9 @@ product), so ADR 0001 does not block this one at all. Three things do:
   `product_option_value (option_id, value)`; both lead with the PARENT id, which
   is exactly the column a catalog filter does not have.
 - ~~**There is no vocabulary endpoint, and a vocabulary of ids would be
-  useless.**~~ **Built 2026-09-06.** `GET /store/v1/option-values` is the fourth
+  useless.**~~ **Built 2026-09-06** as ~~`GET /store/v1/option-values`~~, and
+  **moved into the channel path by ADR 0044 on 2026-09-08:**
+  `GET /store/v1/sales-channels/{sales_channel_id}/option-values` is the fourth
   vocabulary endpoint and the only one that returns TEXT: it hands back the
   DISTINCT (option title, value) pairs, because an option belongs to exactly one
   product and an id would name one product's one value. It is SCOPED exactly as
