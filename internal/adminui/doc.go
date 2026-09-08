@@ -1,5 +1,18 @@
 // Package adminui is gobit's admin panel: server-rendered HTML.
 //
+// # A DECIDED FUTURE that is not this package
+//
+// Read this before adding a screen. ADR 0030 decided on 2026-09-06 that the
+// panel becomes a single-page application served as static assets, where "every
+// read and every write goes over the same admin API an external client would
+// use". That decision stands and it is NOT BUILT: what follows describes today's
+// package, twelve server-rendered templates reading the Query layer in process.
+//
+// So a new section built the way the existing ones are built is more of the
+// thing that was decided away — which is a reason to weigh it, not a refusal.
+// ADR 0031 already writes the same fact in the future tense; a gate's godoc had
+// written it in the present, and D34 records what that cost.
+//
 // # Neither core nor module — a FOURTH tree
 //
 // This package is a sibling of internal/workflows and lives here for the same

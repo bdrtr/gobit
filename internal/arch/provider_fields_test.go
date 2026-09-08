@@ -28,11 +28,29 @@ import (
 // beside the provider that fills it. Those names are a published vocabulary — the
 // thing ADR 0004 exists to let modules share without importing one another.
 //
-// The admin panel is an API CLIENT (ADR 0030): it imports nothing from
-// internal/modules and reads the admin API's JSON. So when it wants a provider's
-// field it spells the name again, in a struct tag, on the other side of an HTTP
-// boundary. Nothing compares the two spellings, and Go cannot: the panel may not
-// import the constant, which is the whole point of that decision.
+// The admin panel imports nothing from internal/modules, so when it wants a
+// provider's field it SPELLS THE NAME AGAIN. Nothing compares the two spellings
+// and Go cannot: the panel may not import the constant, which is the whole point
+// of ADR 0004.
+//
+// The re-spelling takes two shapes and this gate reads both, which is why the
+// pattern below matches a `json:` tag OR a map index. Today the panel is
+// server-rendered and reads the Query layer in process, so the names are Go
+// string constants indexing a record. ADR 0030 decided it becomes a single-page
+// client of `/admin/v1`, where the same names would sit in struct tags across an
+// HTTP boundary.
+//
+// **That decision is ACCEPTED AND NOT BUILT, and this paragraph used to say
+// otherwise** — it opened "The admin panel is an API CLIENT (ADR 0030) ... on the
+// other side of an HTTP boundary", in the present tense, about a boundary that
+// does not exist. ADR 0031 has it right, in the future tense: "once the panel is
+// a client of /admin/v1". The gate was never wrong; the sentence describing why
+// it was needed was. See D34.
+//
+// The correction matters beyond tidiness. A reader deciding how to add a screen
+// reads this before they read the panel, and a document that describes a decided
+// future as a present fact sends them to build on the shape that was decided
+// away.
 //
 // # Why it is worth a gate
 //
@@ -165,7 +183,7 @@ func TestEveryProviderFieldThePanelDecodesIsStillPublished(t *testing.T) {
 		if serves {
 			assert.Containsf(t, names, field,
 				"the panel decodes %q but the %s module no longer publishes a field by that "+
-					"name.\nThe panel is an API client (ADR 0030) and cannot import the "+
+					"name.\nThe panel cannot import the module's "+
 					"constant, so a rename on the module side leaves both trees compiling and "+
 					"both suites green — and shows a screen with a zero where the number was.\n"+
 					"Rename the panel's side too, or drop the entry if the panel stopped "+
