@@ -230,6 +230,16 @@ func New(pool DB) *Repo {
 
 // InTx runs fn in a single database transaction.
 func (r *Repo) InTx(ctx context.Context, fn func(ctx context.Context, s Store) error) error {
+	return r.inTx(ctx, func(ctx context.Context, repo *Repo) error { return fn(ctx, repo) })
+}
+
+// inTx is [Repo.InTx] with the CONCRETE store handed to the callback.
+//
+// The difference matters to exactly one caller: a statement that has to run
+// beside a concurrency primitive needs the transaction's own connection
+// (see [Repo.UpdateCategory]), and the Store interface deliberately does not
+// expose one.
+func (r *Repo) inTx(ctx context.Context, fn func(ctx context.Context, repo *Repo) error) error {
 	if r.pool == nil {
 		// We are already inside the transaction. Opening a nested transaction
 		// would grab a SECOND connection from the pool; that connection cannot

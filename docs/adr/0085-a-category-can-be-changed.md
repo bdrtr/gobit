@@ -4,6 +4,7 @@
 one, and the cycle rule lives in the UPDATE rather than beside it.
 
 - **Status:** Accepted
+- **Superseded by:** [0091](0091-a-reparent-takes-the-trees-lock.md) for the concurrency half; the PATCH and the guard stand.
 - **Date:** 2026-09-09
 
 ## Context
@@ -49,8 +50,7 @@ refused" stay two different answers.
   storefront's predicate rather than the column.
 - **Two concurrent reparents cannot close a ring between them.** This is why the
   guard is in the statement: read-then-write leaves a window where each caller
-  sees a clean tree and the pair closes the ring. Proved by racing two moves and
-  asserting the TREE, not the error.
+  sees a clean tree and the pair closes the ring. Raced, asserting the TREE.
 - **Five mutations, and two of them corrected the work.** Dropping the guard
   fails both cycle tests; dropping the depth half fails the depth test; a
   no-op `is_active` write fails the reactivation test; removing the service's

@@ -352,14 +352,28 @@ func TestACategoryCannotBeMovedUnderItsOwnDescendant(t *testing.T) {
 	assert.Equal(t, "product_category_cycle", coreerrors.CodeOf(err))
 }
 
-// TestTwoConcurrentReparentsCannotCloseARingBetweenThem is why the guard is in
-// the statement and not in the service.
+// ringRounds is how many times the race is run inside one test.
+//
+// One round is not enough and the number is not a guess: the statement's guard
+// ALONE loses this race about one round in three, so a single round called it
+// correct two times out of three — which is exactly what happened, until CI ran
+// the unlucky third (D46). At twenty rounds an unprotected tree closes a ring
+// with probability better than 99.9%, so the test now fails the way a test is
+// supposed to: every time the protection is gone.
+const ringRounds = 20
+
+// TestTwoConcurrentReparentsCannotCloseARingBetweenThem is why a reparent takes
+// the tree's lock before the statement runs.
 //
 // Two roots, A and B. One caller moves A under B while another moves B under A.
-// Read-then-write would let both through: each reads a tree with no ring, each
-// then writes, and the ring is closed by the pair rather than by either. The
-// guard is inside the UPDATE, so the second writer's ancestry walk sees what the
-// first one committed.
+// Read-then-write lets both through: each reads a tree with no ring, each then
+// writes, and the ring is closed by the pair rather than by either. Putting the
+// walk INSIDE the UPDATE does not close that on its own — the two statements
+// touch different rows, take no lock from one another, and under READ COMMITTED
+// each walks a snapshot from before the other committed.
+//
+// The lock is what makes the second mover wait; the statement's guard is what
+// then refuses it, because after the wait its walk sees the first one's commit.
 //
 // The assertion is not "one failed": it is that the TREE has no ring afterwards,
 // which is the property the guard exists for. Either outcome of the race is
@@ -368,9 +382,24 @@ func TestTwoConcurrentReparentsCannotCloseARingBetweenThem(t *testing.T) {
 	ctx := context.Background()
 	svc := newIsolatedService(ctx, t)
 
-	first, err := svc.CreateCategory(ctx, service.CreateCategoryInput{Name: "A", Handle: "ring-a"})
+	for round := range ringRounds {
+		twoRootsRaceIntoEachOther(ctx, t, svc, round)
+	}
+}
+
+// twoRootsRaceIntoEachOther runs one round of the race on a fresh pair.
+func twoRootsRaceIntoEachOther(
+	ctx context.Context, t *testing.T, svc *service.Service, round int,
+) {
+	t.Helper()
+
+	first, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "A", Handle: fmt.Sprintf("ring-a-%d", round),
+	})
 	require.NoError(t, err)
-	second, err := svc.CreateCategory(ctx, service.CreateCategoryInput{Name: "B", Handle: "ring-b"})
+	second, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "B", Handle: fmt.Sprintf("ring-b-%d", round),
+	})
 	require.NoError(t, err)
 
 	var start sync.WaitGroup

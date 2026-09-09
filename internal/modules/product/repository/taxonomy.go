@@ -127,10 +127,78 @@ func (r *Repo) CreateCategory(ctx context.Context, c models.Category) (models.Ca
 // resolves the id before calling, so what arrives here is the second, and it is
 // reported as an INVALID request rather than as a missing record.
 //
-// The guard lives in the statement rather than beside it because a read
-// followed by a write has a window: two reparents racing in that window each
-// see a clean tree and together close a ring.
+// # The statement's guard is not enough on its own, and this is what was
+// measured
+//
+// The guard lives IN the statement because a read followed by a write has a
+// window. That closes the window for two writes to the SAME row, and not for
+// two writes to different ones: under READ COMMITTED each UPDATE's recursive
+// walk reads a snapshot taken when that statement started, so "move A under B"
+// and "move B under A" running together each see a tree with no ring, each
+// touch a different row, take no lock from one another, and close the ring
+// between them. It was reproduced — one run in three on a laptop, and on CI
+// (D46).
+//
+// So a reparent takes an advisory lock first and the two halves are one
+// decision: the lock makes the second mover WAIT, and the statement's guard is
+// what then refuses it, because after the wait its walk sees what the first
+// one committed.
 func (r *Repo) UpdateCategory(ctx context.Context, id string, in UpdateCategory) (models.Category, error) {
+	if in.ParentID == nil {
+		// Nothing that can close a ring: a rename, a rank, a flag, or clearing
+		// the parent — which makes a root and can only ever REMOVE an edge.
+		// Serializing those would make every category edit queue behind every
+		// other one for a race they cannot take part in.
+		return r.updateCategoryRow(ctx, id, in)
+	}
+
+	var out models.Category
+	err := r.inTx(ctx, func(ctx context.Context, repo *Repo) error {
+		if _, err := repo.db.Exec(ctx, advisoryLockSQL, categoryReparentLockKey); err != nil {
+			return wrapDB(err, "could not take the category reparent lock")
+		}
+
+		var updateErr error
+		out, updateErr = repo.updateCategoryRow(ctx, id, in)
+
+		return updateErr
+	})
+	if err != nil {
+		return models.Category{}, err
+	}
+
+	return out, nil
+}
+
+// advisoryLockSQL takes the transaction-lifetime advisory lock.
+//
+// It is not generated through sqlc and runs on the transaction handle directly:
+// the query touches none of this module's tables and carries no schema
+// information — it is a concurrency primitive.
+const advisoryLockSQL = `SELECT pg_advisory_xact_lock($1)`
+
+// categoryReparentLockKey is the key every category reparent serializes on.
+//
+// # Why one key for the whole tree
+//
+// A cycle is a property of a PATH, not of a pair, so locking the two rows a
+// move names is not enough: a third move elsewhere on the path can close the
+// ring with them. The tree is what has to be serialized, and there is one tree.
+// The cost is that two reparents never run at the same time, which is the
+// right trade for an operator action that happens by hand.
+//
+// # The key space is shared by the whole database
+//
+// The upper 32 bits are a CLASS number, the convention the order module's
+// spending lock introduced (class 1); this is class 2. Without the class, two
+// unrelated locks that happened to pick the same number would hold each other
+// up, and neither side would have any way to notice.
+const categoryReparentLockKey int64 = 2 << 32
+
+// updateCategoryRow runs the update statement itself.
+func (r *Repo) updateCategoryRow(
+	ctx context.Context, id string, in UpdateCategory,
+) (models.Category, error) {
 	row, err := r.q.UpdateCategory(ctx, productdb.UpdateCategoryParams{
 		ID:          id,
 		Name:        in.Name,
