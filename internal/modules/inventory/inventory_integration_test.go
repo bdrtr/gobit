@@ -32,6 +32,7 @@ import (
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/db"
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/link"
 	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/modules/inventory"
 	"github.com/bdrtr/gobit/internal/modules/inventory/models"
@@ -512,6 +513,10 @@ func TestInteropLokasyonYuzeyiAdiylaCozulur(t *testing.T) {
 	ctx := context.Background()
 	c := container.New(nil)
 	require.NoError(t, c.Provide("core.db", testPool))
+	// Bağ servisi ZORUNLU: modül depo↔kanal bağını açılışta bildiriyor
+	// (service.Definitions), ve bildiremezse hiç kaydolmuyor. Ürün modülü de
+	// aynı şekilde davranıyor.
+	require.NoError(t, c.Provide("core.link", link.New(testPool, nil)))
 	require.NoError(t, inventory.New().Register(ctx, c))
 
 	// Tüketicinin kendi paketinde yazacağı dar arayüzün birebir kopyası.
@@ -1095,6 +1100,7 @@ func TestModulKaydiCozulebilir(t *testing.T) {
 	ctx := context.Background()
 	c := container.New(nil)
 	require.NoError(t, c.Provide("core.db", testPool))
+	require.NoError(t, c.Provide("core.link", link.New(testPool, nil)))
 
 	mod := inventory.New()
 	require.NoError(t, mod.Register(ctx, c))
