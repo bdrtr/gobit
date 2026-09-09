@@ -54,6 +54,23 @@ func (r *Registry) Modules() []Module {
 // The order is deliberate: none of them binds a route before ALL of them have
 // registered, so one module's handler can safely resolve another module's
 // service.
+//
+// # The guarantee is about ROUTES, and a subscriber is not a route
+//
+// It is worth saying what the sentence above does NOT cover, because two
+// modules depend on the difference and neither says so. A handler bound with
+// [github.com/bdrtr/gobit/core/eventbus.EventBus]'s Subscribe inside a module's
+// Register can run IMMEDIATELY, while registerAll is still iterating: on the
+// Redis backend Subscribe starts its consumer goroutine there and then, and the
+// group is created at the head of the stream, so an existing backlog is
+// delivered at once. Everything registered after that module — and every
+// migration, route and workflow — is not there yet.
+//
+// That is why the two lazy container wrappers reached from subscribers
+// (notification's order contacts, the searchpg plugin's catalog) refuse
+// sync.Once and retry a failed resolution, while the eight reached from routes
+// use sync.Once and keep the first answer forever. Both are correct, and the
+// reason they differ is this paragraph. Measured 2026-09-09 (ADR 0082).
 func (r *Registry) Bootstrap(ctx context.Context, c *container.Container, router chi.Router) error {
 	if err := r.validateNames(); err != nil {
 		return err
