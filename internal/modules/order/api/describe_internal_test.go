@@ -377,6 +377,17 @@ func describedEndpoints() []endpointExpectation {
 				Clock: "application", Detail: "captured", Amount: 1000, Currency: "TRY",
 			},
 		},
+		{
+			// The customer's timeline is the same shape with the money fields
+			// GONE from the type rather than left empty, so this row is what
+			// notices if they ever come back.
+			method: http.MethodGet, path: "/store/v1/orders/{id}/timeline", status: "200",
+			shape: unpagedList,
+			response: storeTimelineEntryDTO{
+				At: &describeSampleTime, Kind: "shipment.shipped", RefID: "ful_1",
+				Clock: "application", Detail: "TRK123",
+			},
+		},
 		// The five after-sales endpoints. They were bound long before they were
 		// described and this table did not notice, because a table is a list of
 		// what somebody remembered — the direction that FINDS a forgotten

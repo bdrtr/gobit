@@ -542,6 +542,33 @@ func describeTimeline(d *openapi.Doc) {
 		},
 	})
 
+	d.Describe(http.MethodGet, "/store/v1/orders/{id}/timeline", openapi.Operation{
+		Summary: "What happened to the order, as the customer may see it.",
+		Description: "It is the same composition the admin timeline returns, narrowed to the " +
+			"moments about the ORDER and the GOODS: placed, completed, canceled, every " +
+			"parcel's five moments, and the returns, claims and exchanges. " +
+			"\n\n" +
+			"THE MONEY MOMENTS ARE NOT HERE, and neither is \"order.archived\". A capture " +
+			"or a refund recorded on this side is the merchant's ledger view — a partial " +
+			"capture is a fact about a hold, and the figure a customer will reconcile " +
+			"against is the one their bank shows on the day it lands. Archiving is the " +
+			"merchant filing the order away; nothing happened to the goods or the money. " +
+			"The response has NO amount field at all, so a moment carrying one could not " +
+			"be published here even by mistake. " +
+			"\n\n" +
+			"Everything the admin timeline says about clocks holds here too: the moments do " +
+			"not share one axis and each entry says which clock stamped it. An entry whose " +
+			"\"at\" is NULL really happened and its moment was never recorded; those come " +
+			"LAST. " +
+			"\n\n" +
+			"KNOWING THE ORDER ID IS THE CAPABILITY. This route names an order rather than " +
+			"a customer, so the embedding application is what decides whether the caller may " +
+			"see it (ADR 0008), exactly as on the order read.",
+		Responses: map[string]any{
+			"200": openapi.Response("The order's timeline", d.Item([]storeTimelineEntryDTO{})),
+		},
+	})
+
 	describeAfterSales(d)
 	describeOrderDetail(d)
 }

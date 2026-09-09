@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"time"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
@@ -132,4 +133,74 @@ func (h *Handler) storeRequestReturn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toReturnDTO(created)})
+}
+
+// storeTimelineEntryDTO is one thing that happened, as a CUSTOMER may see it.
+//
+// # Why it is a second type and not the admin one with fields blanked
+//
+// It carries no Amount and no Currency. A type that cannot hold a figure cannot
+// leak one: a later edit that starts copying the money fields across would not
+// compile, where a blanking step would just stop being called. The money
+// entries do not reach here anyway ([service.Service.StorefrontTimeline] filters them),
+// and this makes the two halves of that decision fail together rather than
+// separately.
+type storeTimelineEntryDTO struct {
+	// At is when it happened. It is NULL when the fact is real and its moment
+	// was never recorded; those entries come LAST.
+	At *time.Time `json:"at"`
+	// Kind is what happened, as "<source>.<what>".
+	Kind string `json:"kind"`
+	// RefID is the record the moment belongs to: the order, the shipment, the
+	// return, the claim or the exchange.
+	RefID string `json:"ref_id"`
+	// Clock says which clock stamped At; it is empty when At is null.
+	//
+	// It is published to the customer for the same reason it is published to the
+	// support desk: the moments do NOT share one axis, and two entries a second
+	// apart may be ordered by different clocks. Hiding that does not make the
+	// order true, it makes it unexplainable.
+	Clock string `json:"clock"`
+	// Detail is a short extra: a status, a tracking number.
+	Detail string `json:"detail,omitempty"`
+}
+
+// storeGetOrderTimeline returns what happened to the order, as the customer may
+// see it.
+//
+// # Authorization
+//
+// The same boundary [Handler.storeGetOrder] declares, and for the same reason:
+// knowing the order id is the capability, and verifying that the order belongs
+// to the requesting customer is the EMBEDDING APPLICATION's job (ADR 0008).
+// This route names an ORDER rather than a customer, so it is outside ADR 0057's
+// population for the reason that endpoint's godoc sets out.
+//
+// What that boundary costs is smaller here than on the order read: the timeline
+// carries no address, no e-mail and no line prices, and since it carries no
+// money moments at all it says less about the order than the order does.
+func (h *Handler) storeGetOrderTimeline(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	entries, err := h.svc.StorefrontTimeline(ctx, orderID(r))
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	out := make([]storeTimelineEntryDTO, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, storeTimelineEntryDTO{
+			At:     entry.At,
+			Kind:   entry.Kind,
+			RefID:  entry.RefID,
+			Clock:  entry.Clock,
+			Detail: entry.Detail,
+		})
+	}
+
+	// The single envelope, for the reason the admin timeline gives: a timeline
+	// is bounded by its order and there is no page to ask for.
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: out})
 }

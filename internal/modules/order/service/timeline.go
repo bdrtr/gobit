@@ -423,3 +423,80 @@ func appendMoment(entries []TimelineEntry, at *time.Time, kind, refID string) []
 // timeline, and the alternative — an unbounded read — would let one order pull
 // an unbounded number of rows into memory.
 const timelinePageLimit = 100
+
+// customerVisibleKinds are the moments a SHOPPER may see on their own order.
+//
+// # Why the set is smaller than the support desk's
+//
+// Two kinds are left out and each for its own reason.
+//
+// The MONEY moments (payment.captured, payment.refunded) are the merchant's
+// ledger view of a payment, not the customer's. A partial capture is an
+// internal fact about a hold; a refund's recorded amount is what the shop moved
+// on its side, and the number the customer will reconcile against is the one
+// their bank shows on the day it lands. Publishing a figure that is true here
+// and different there invites a dispute about the wrong number.
+//
+// order.archived is the merchant FILING the order away. Nothing happened to the
+// goods or the money, and a customer told their order was "archived" would
+// reasonably read it as something being done to them.
+//
+// Everything else is about the order's own lifecycle or about the GOODS — where
+// they are, that they came back, that a claim was opened — which is exactly
+// what the person waiting for a parcel is asking.
+var customerVisibleKinds = map[string]bool{
+	KindOrderPlaced:       true,
+	KindOrderCompleted:    true,
+	KindOrderCanceled:     true,
+	KindShipmentOpened:    true,
+	KindShipmentShipped:   true,
+	KindShipmentDelivered: true,
+	KindShipmentCanceled:  true,
+	KindShipmentReturned:  true,
+	KindReturnOpened:      true,
+	KindReturnReceived:    true,
+	KindReturnCanceled:    true,
+	KindClaimOpened:       true,
+	KindClaimCompleted:    true,
+	KindClaimCanceled:     true,
+	KindExchangeOpened:    true,
+	KindExchangeCanceled:  true,
+}
+
+// StorefrontTimeline is the timeline a customer may see on their own order.
+//
+// It is the SAME composition [Service.Timeline] performs, filtered by
+// [customerVisibleKinds]. Composing it a second time would be a second place
+// for a moment to be forgotten; filtering the one answer means a kind added
+// tomorrow is INVISIBLE to the storefront until somebody decides it belongs
+// there, which is the safer direction for a default.
+//
+// The amounts are not stripped here. They are absent from the surface's own
+// shape instead — a type that cannot carry a figure cannot leak one — and this
+// function stays the single decision about WHICH moments cross.
+func (s *Service) StorefrontTimeline(
+	ctx context.Context, orderID string,
+) ([]TimelineEntry, error) {
+	entries, err := s.Timeline(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+
+	return customerVisible(entries), nil
+}
+
+// customerVisible keeps the entries a shopper may see.
+//
+// It is separated from [Service.StorefrontTimeline] so the RULE can be tried
+// without a wired query catalog: the composition needs one and the filter needs
+// nothing, and the filter is the half that decides what crosses.
+func customerVisible(entries []TimelineEntry) []TimelineEntry {
+	out := make([]TimelineEntry, 0, len(entries))
+	for i := range entries {
+		if customerVisibleKinds[entries[i].Kind] {
+			out = append(out, entries[i])
+		}
+	}
+
+	return out
+}

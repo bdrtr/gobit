@@ -755,6 +755,29 @@ func TestTheOrderTimelineComposesWhatTheModulesRecord(t *testing.T) {
 	assert.NotContains(t, byKind, ordersvc.KindShipmentShipped,
 		"a parcel that never shipped reported a shipping moment")
 
+	// The CUSTOMER's view of the same order, on the same real data. It is
+	// asserted here rather than against a fake because what has to hold is that
+	// the storefront answer is the composed one NARROWED — a filter that stopped
+	// being called would still pass every test of the filter itself.
+	visible, err := orderSvc.StorefrontTimeline(ctx, orderResult.OrderID)
+	require.NoError(t, err)
+
+	visibleKinds := map[string]bool{}
+	for i := range visible {
+		visibleKinds[visible[i].Kind] = true
+		assert.Zero(t, visible[i].Amount,
+			"no moment the customer sees may carry a figure (%s)", visible[i].Kind)
+	}
+
+	assert.True(t, visibleKinds[ordersvc.KindOrderPlaced],
+		"the customer has to see that their order was placed")
+	assert.True(t, visibleKinds[ordersvc.KindShipmentOpened],
+		"the customer has to see that a parcel was opened")
+	assert.False(t, visibleKinds[ordersvc.KindPaymentCaptured],
+		"the capture is the merchant's ledger view and must not cross")
+	assert.Less(t, len(visible), len(entries),
+		"the customer's timeline is a NARROWING of the support desk's")
+
 	// Newest first, and every dated entry before every undated one.
 	seenUndated := false
 	for i := range entries {

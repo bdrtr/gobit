@@ -108,6 +108,8 @@ type Orders interface {
 	CompleteOrder(ctx context.Context, orderID string) (models.Order, error)
 	// Timeline is everything that happened to the order, newest first.
 	Timeline(ctx context.Context, orderID string) ([]service.TimelineEntry, error)
+	// StorefrontTimeline returns the moments a CUSTOMER may see on their order.
+	StorefrontTimeline(ctx context.Context, orderID string) ([]service.TimelineEntry, error)
 	// PaymentOf returns the LIVE payment collection bound to the order; the
 	// second value reports whether one is bound at all.
 	PaymentOf(ctx context.Context, orderID string) (service.OrderPayment, bool, error)

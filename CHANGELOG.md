@@ -20,6 +20,12 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Musteri artik kendi siparisinin ZAMAN CIZELGESINI goruyor**
+  (`GET /store/v1/orders/{id}/timeline`) — ayni bilesim, siparisin ve MALIN
+  anlarina daraltilmis. Para anlari ve arsivleme gecmiyor, ve vitrin yanit tipi
+  tutar alanini HIC tasimiyor: kopyalayan bir duzenleme derlenmez. Yeni bir tur
+  eklendiginde vitrinde GORUNMEZ olur, ki guvenli yon budur (ADR 0100).
+
 - **Fiyat listesi de artik `metadata` tasiyor, ve HANGI kaydin tasidigi bir
   kurala baglandi.** Tacirin YAZDIGI kayit tasir (baslik, aciklama, pencere);
   merdivenin uzerinde hesap yaptigi `price`, `price_set` ve `price_rule`

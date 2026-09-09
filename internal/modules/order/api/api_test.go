@@ -115,6 +115,19 @@ func (f *fakeOrders) Timeline(_ context.Context, _ string) ([]service.TimelineEn
 	return f.timeline, f.timelineErr
 }
 
+// StorefrontTimeline returns the SAME scripted entries as Timeline, unfiltered.
+//
+// That is deliberate rather than lazy: WHICH moments cross is the service's
+// decision and is proved there, while what this package owns is the SHAPE that
+// crosses. Handing the handler a money entry it must not be able to publish is
+// the only way to prove the shape carries no figure — a fake that filtered
+// first would make that test unable to fail.
+func (f *fakeOrders) StorefrontTimeline(
+	_ context.Context, _ string,
+) ([]service.TimelineEntry, error) {
+	return f.timeline, f.timelineErr
+}
+
 // PaymentOf returns the scripted live payment view.
 func (f *fakeOrders) PaymentOf(
 	_ context.Context, _ string,
@@ -1498,4 +1511,40 @@ func TestAdminDispatchWithoutTheFlowFailsClosed(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	assert.Empty(t, svc.calls, "nothing may be recorded when nothing can be sent")
+}
+
+// TestTheCustomerTimelineCannotCarryAnAmount is the proof that the narrowing
+// has TWO halves and that this one holds on its own.
+//
+// The fake hands the handler a capture entry with a figure on it — something
+// the service filters out before it ever gets here. The point is that even when
+// it does get here, the published shape has nowhere to put it: the response
+// carries the moment's kind and nothing about money.
+func TestTheCustomerTimelineCannotCarryAnAmount(t *testing.T) {
+	at := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	svc := &fakeOrders{timeline: []service.TimelineEntry{
+		{At: &at, Kind: service.KindShipmentShipped, RefID: "ful_1", Clock: "application", Detail: "TRK123"},
+		{At: &at, Kind: service.KindPaymentCaptured, RefID: "paycol_1", Clock: "application", Amount: 1000, Currency: "TRY"},
+	}}
+
+	rec := doRequest(t, newRouter(svc), http.MethodGet, "/store/v1/orders/order_1/timeline", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	body := rec.Body.String()
+	assert.NotContains(t, body, "amount", "the customer's timeline has no money field")
+	assert.NotContains(t, body, "currency_code")
+	assert.NotContains(t, body, "1000")
+	assert.Contains(t, body, "TRK123", "what it does carry is where the parcel is")
+	assert.Contains(t, body, service.KindShipmentShipped)
+}
+
+// TestTheCustomerTimelineFailsLikeEveryOtherRead keeps the error path on the
+// module's one shape rather than inventing a second.
+func TestTheCustomerTimelineFailsLikeEveryOtherRead(t *testing.T) {
+	svc := &fakeOrders{timelineErr: errors.NotFound("order_not_found", "no such order")}
+
+	rec := doRequest(t, newRouter(svc), http.MethodGet, "/store/v1/orders/order_1/timeline", "")
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Contains(t, rec.Body.String(), "order_not_found")
 }

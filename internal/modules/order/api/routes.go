@@ -80,6 +80,7 @@ func (h *Handler) Routes(r chi.Router) {
 	// that the order BELONGS TO THE CUSTOMER is separate work and is still not
 	// done; this is a deliberate gap, not a hidden assumption.
 	r.Get("/store/v1/orders/{id}", h.storeGetOrder)
+	r.Get("/store/v1/orders/{id}/timeline", h.storeGetOrderTimeline)
 	r.Post("/store/v1/orders/{id}/returns", h.storeRequestReturn)
 
 	// --- Admin API (administration) ---
