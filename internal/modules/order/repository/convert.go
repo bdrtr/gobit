@@ -42,6 +42,8 @@ const (
 	codeTxRequired         = "order_tx_required"
 	codeQueryFailed        = "order_query_failed"
 	codeConcurrentUpdate   = "order_concurrent_update"
+	// codeReplacementNotFound reports that the replacement record does not exist.
+	codeReplacementNotFound = "order_replacement_not_found"
 )
 
 // Constraint names; used to convert a driver error into a meaningful typed

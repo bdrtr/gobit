@@ -408,6 +408,57 @@ func describeClaims(d *openapi.Doc) {
 				"200": openapi.Response("The withdrawn claim record", d.Item(claimDTO{})),
 			},
 		})
+
+	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/claims/{claimId}/replacements",
+		openapi.Operation{
+			Summary: "Records what a claim of type \"replace\" will send.",
+			// What it does NOT do is the part a client has to read, because the
+			// endpoint's name suggests otherwise: this writes a record and
+			// moves nothing.
+			Description: "It records the promise and SENDS NOTHING: no stock moves and no " +
+				"shipment is opened. Until this record exists nothing in the schema could " +
+				"say what a claim settled with goods was going to send, which is why " +
+				"settling such a claim is still refused. At least one line is required, " +
+				"and more of a line cannot be promised than was bought on it (409).",
+			RequestBody: d.RequestBody(createReplacementRequest{}),
+			Responses: map[string]any{
+				"201": openapi.Response("The recorded replacement", d.Item(replacementDTO{})),
+			},
+		})
+
+	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/claims/{claimId}/replacements",
+		openapi.Operation{
+			Summary: "Lists the claim's replacements, newest first.",
+			// The absence of paging is described rather than left to be
+			// discovered: a client that expected a cursor would look for one.
+			Description: "The list is not paged: a replacement belongs to one claim and the " +
+				"count is bounded by the lines of a single order.",
+			Responses: map[string]any{
+				"200": openapi.Response("The claim's replacements", d.Item([]replacementDTO{})),
+			},
+		})
+
+	d.Describe(http.MethodGet,
+		"/admin/v1/orders/{id}/claims/{claimId}/replacements/{replacementId}",
+		openapi.Operation{
+			Summary: "Returns one replacement with its lines.",
+			Responses: map[string]any{
+				"200": openapi.Response("The replacement", d.Item(replacementDTO{})),
+			},
+		})
+
+	d.Describe(http.MethodPost,
+		"/admin/v1/orders/{id}/claims/{claimId}/replacements/{replacementId}/cancel",
+		openapi.Operation{
+			Summary: "Withdraws a replacement that has not been acted on.",
+			Description: "A second call on an already withdrawn replacement succeeds and " +
+				"keeps the first moment. While a replacement is open the claim it belongs " +
+				"to cannot be withdrawn (409): the promise would otherwise outlive the " +
+				"record that made it.",
+			Responses: map[string]any{
+				"200": openapi.Response("The withdrawn replacement", d.Item(replacementDTO{})),
+			},
+		})
 }
 
 // pageParameters returns the two parameters [parsePage] reads.
@@ -461,7 +512,11 @@ func describeTimeline(d *openapi.Doc) {
 			"than dropped — a timeline shorter than the truth hides the gap instead of " +
 			"showing it.",
 		Responses: map[string]any{
-			"200": openapi.Response("The order's timeline", d.Item(timelineEntryDTO{})),
+			// The record is an ARRAY inside the plain envelope: the timeline is
+			// bounded by its order and has no page to ask for, so it carries no
+			// paging fields. Written as a single record it was a lie a client
+			// generator turns into a parse failure (D44).
+			"200": openapi.Response("The order's timeline", d.Item([]timelineEntryDTO{})),
 		},
 	})
 

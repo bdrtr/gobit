@@ -99,6 +99,18 @@ const (
 	// CodeReturnLineUnknown reports that a return line points at a line that is
 	// not on the order.
 	CodeReturnLineUnknown = "order_return_line_unknown"
+	// CodeReplacementLineUnknown reports a replacement line that is not on the
+	// order.
+	CodeReplacementLineUnknown = "order_replacement_line_unknown"
+	// CodeReplacementQuantityExceeded reports that more of a line was promised
+	// than was bought on it.
+	CodeReplacementQuantityExceeded = "order_replacement_quantity_exceeded"
+	// CodeClaimNotReplaceable reports a replacement asked for on a claim that
+	// is not settled with goods.
+	CodeClaimNotReplaceable = "order_claim_not_replaceable"
+	// CodeReplacementNotOpen reports a transition asked of a replacement that
+	// is no longer open.
+	CodeReplacementNotOpen = "order_replacement_not_open"
 	// CodeSpendingLimitExceeded reports that the order exceeds the customer's
 	// spending limit within the period.
 	CodeSpendingLimitExceeded = "order_spending_limit_exceeded"

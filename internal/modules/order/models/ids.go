@@ -31,6 +31,10 @@ const (
 	ExchangeIDPrefix = "exch_"
 	// ClaimIDPrefix is the prefix of claim record identifiers.
 	ClaimIDPrefix = "claim_"
+	// ReplacementIDPrefix is the prefix of replacement record identifiers.
+	ReplacementIDPrefix = "orepl_"
+	// ReplacementItemIDPrefix is the prefix of a replacement line identifier.
+	ReplacementItemIDPrefix = "oreplitem_"
 )
 
 // idEncoding is the unpadded encoding over the Crockford Base32 alphabet. A
@@ -70,6 +74,12 @@ func NewExchangeID() string { return newID(ExchangeIDPrefix, time.Now()) }
 
 // NewClaimID produces a new claim record identifier.
 func NewClaimID() string { return newID(ClaimIDPrefix, time.Now()) }
+
+// NewReplacementID produces a new replacement identifier.
+func NewReplacementID() string { return newID(ReplacementIDPrefix, time.Now()) }
+
+// NewReplacementItemID produces a new replacement line identifier.
+func NewReplacementItemID() string { return newID(ReplacementItemIDPrefix, time.Now()) }
 
 // newID produces a prefixed, time-ordered and unique identifier.
 //

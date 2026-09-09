@@ -68,6 +68,16 @@ type fakeOrders struct {
 	paymentErr error
 	// nextCursor is what the listing reports as the next page's position.
 	nextCursor string
+
+	// replacement is what the single-record replacement endpoints answer with,
+	// and replacements is what the listing answers with.
+	replacement      service.ReplacementRecord
+	replacements     []models.Replacement
+	replacementInput service.CreateReplacementInput
+	// gotReplacementID is kept apart from gotChildID because the replacement
+	// routes carry TWO record ids, and reading the claim's where the
+	// replacement's belongs is exactly the mistake one field could not see.
+	gotReplacementID string
 }
 
 // That the fake satisfies the surface the handler expects is verified at
@@ -1250,4 +1260,164 @@ func TestAReturnRequestWithNoLinesIsRefused(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	assert.Empty(t, svc.calls)
+}
+
+// CreateReplacement records what a claim will send.
+func (f *fakeOrders) CreateReplacement(
+	_ context.Context, in service.CreateReplacementInput,
+) (service.ReplacementRecord, error) {
+	f.record("CreateReplacement")
+	f.replacementInput = in
+
+	return f.replacement, f.err
+}
+
+// GetReplacement returns a replacement with its lines.
+func (f *fakeOrders) GetReplacement(
+	_ context.Context, id string,
+) (service.ReplacementRecord, error) {
+	f.record("GetReplacement")
+	f.gotReplacementID = id
+
+	return f.replacement, f.err
+}
+
+// ListReplacementsOfClaim returns a claim's replacements.
+func (f *fakeOrders) ListReplacementsOfClaim(
+	_ context.Context, claimID string,
+) ([]models.Replacement, error) {
+	f.record("ListReplacementsOfClaim")
+	f.gotChildID = claimID
+
+	return f.replacements, f.err
+}
+
+// CancelReplacement withdraws a request.
+func (f *fakeOrders) CancelReplacement(
+	_ context.Context, id string,
+) (models.Replacement, error) {
+	f.record("CancelReplacement")
+	f.gotReplacementID = id
+
+	return f.replacement.Replacement, f.err
+}
+
+// sampleReplacement is the replacement the endpoints answer with.
+func sampleReplacement() service.ReplacementRecord {
+	return service.ReplacementRecord{
+		Replacement: models.Replacement{
+			ID: "orepl_1", ClaimID: "clm_1", Status: models.ReplacementRequested,
+			ShippingOptionID: "so_1", LocationID: "sloc_1",
+		},
+		Items: []models.ReplacementItem{
+			{ID: "oreplitem_1", ReplacementID: "orepl_1", OrderLineItemID: "oli_1", Quantity: 2},
+		},
+	}
+}
+
+// TestAdminCreateReplacementCarriesItsBodyAndItsClaim verifies that the record
+// endpoint takes the claim from the PATH and everything else from the body.
+//
+// The claim id is not in the body on purpose: it is already in the URL, and a
+// body carrying a second one would let a caller record against a claim other
+// than the one it addressed.
+func TestAdminCreateReplacementCarriesItsBodyAndItsClaim(t *testing.T) {
+	svc := &fakeOrders{replacement: sampleReplacement()}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodPost,
+		"/admin/v1/orders/order_1/claims/clm_1/replacements",
+		`{"shipping_option_id":"so_1","location_id":"sloc_1","note":"broken on arrival",`+
+			`"lines":[{"order_line_item_id":"oli_1","quantity":2}]}`)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	assert.Equal(t, []string{"CreateReplacement"}, svc.calls)
+	assert.Equal(t, "clm_1", svc.replacementInput.ClaimID,
+		"the claim comes from the path")
+	assert.Equal(t, "so_1", svc.replacementInput.ShippingOptionID)
+	assert.Equal(t, "sloc_1", svc.replacementInput.LocationID)
+	assert.Equal(t, "broken on arrival", svc.replacementInput.Note)
+	require.Len(t, svc.replacementInput.Lines, 1)
+	assert.Equal(t, "oli_1", svc.replacementInput.Lines[0].OrderLineItemID)
+	assert.Equal(t, int64(2), svc.replacementInput.Lines[0].Quantity)
+
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "requested", data["status"])
+	items, ok := data["items"].([]any)
+	require.True(t, ok, "the recorded lines have to come back with the record")
+	assert.Len(t, items, 1)
+}
+
+// TestAdminReplacementRoutesReadTheReplacementIdentifier holds the two-id
+// routes to the RIGHT id.
+//
+// Both paths carry a claim id and a replacement id. A handler reading the
+// claim's would answer for a record it was not asked about, and both ids are
+// well-formed strings, so nothing but this assertion can tell them apart.
+func TestAdminReplacementRoutesReadTheReplacementIdentifier(t *testing.T) {
+	cases := map[string]struct {
+		method string
+		path   string
+		call   string
+	}{
+		"read": {
+			method: http.MethodGet,
+			path:   "/admin/v1/orders/order_1/claims/clm_1/replacements/orepl_1",
+			call:   "GetReplacement",
+		},
+		"withdraw": {
+			method: http.MethodPost,
+			path:   "/admin/v1/orders/order_1/claims/clm_1/replacements/orepl_1/cancel",
+			call:   "CancelReplacement",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			svc := &fakeOrders{replacement: sampleReplacement()}
+			r := newRouter(svc)
+
+			rec := doRequest(t, r, tc.method, tc.path, "")
+
+			require.Equal(t, http.StatusOK, rec.Code)
+			assert.Equal(t, []string{tc.call}, svc.calls)
+			assert.Equal(t, "orepl_1", svc.gotReplacementID)
+
+			data, ok := decodeResponse(t, rec)["data"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, "orepl_1", data["id"])
+		})
+	}
+}
+
+// TestAdminListReplacementsAnswersAnArray pins the shape of the listing.
+//
+// It is the plain envelope with an ARRAY in it: no paging fields, because a
+// claim's replacements are bounded by the lines of one order. A client
+// generator reads this shape from the document, so the two have to agree — see
+// [TestDescribedEndpointsDescribeTheirBodies].
+func TestAdminListReplacementsAnswersAnArray(t *testing.T) {
+	svc := &fakeOrders{replacements: []models.Replacement{
+		{ID: "orepl_2", ClaimID: "clm_1", Status: models.ReplacementCanceled},
+		{ID: "orepl_1", ClaimID: "clm_1", Status: models.ReplacementRequested},
+	}}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodGet,
+		"/admin/v1/orders/order_1/claims/clm_1/replacements", "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []string{"ListReplacementsOfClaim"}, svc.calls)
+	assert.Equal(t, "clm_1", svc.gotChildID, "the listing is asked of the CLAIM")
+
+	body := decodeResponse(t, rec)
+	assert.NotContains(t, body, "count", "an unpaged listing announces no count")
+	rows, ok := body["data"].([]any)
+	require.True(t, ok, "the data field of this listing is an array")
+	require.Len(t, rows, 2, "every row the service handed over has to be converted")
+
+	first, ok := rows[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "orepl_2", first["id"], "the order the service gave is kept")
 }

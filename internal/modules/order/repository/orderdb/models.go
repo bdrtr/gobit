@@ -98,6 +98,27 @@ type OrderLineItem struct {
 	TaxRateBps    int32
 }
 
+type OrderReplacement struct {
+	ID               string
+	OrderClaimID     string
+	Status           string
+	ShippingOptionID string
+	LocationID       string
+	Note             *string
+	CanceledAt       pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type OrderReplacementItem struct {
+	ID                 string
+	OrderReplacementID string
+	OrderLineItemID    string
+	Quantity           int64
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
 type OrderReturn struct {
 	ID                 string
 	OrderID            string

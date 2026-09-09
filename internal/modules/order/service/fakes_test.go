@@ -37,6 +37,8 @@ type fakeSnapshot struct {
 	retItems  map[string]models.ReturnItem
 	exchanges map[string]models.Exchange
 	claims    map[string]models.Claim
+	replaces  map[string]models.Replacement
+	replItems map[string]models.ReplacementItem
 }
 
 // fakeStore is the in-memory counterpart of service.Store.
@@ -80,6 +82,8 @@ type fakeStore struct {
 	retItems  map[string]models.ReturnItem
 	exchanges map[string]models.Exchange
 	claims    map[string]models.Claim
+	replaces  map[string]models.Replacement
+	replItems map[string]models.ReplacementItem
 
 	// seq gives the added records an increasing timestamp; the listing order
 	// being deterministic rests on this.
@@ -152,6 +156,8 @@ func newFakeStore() *fakeStore {
 		retItems:  map[string]models.ReturnItem{},
 		exchanges: map[string]models.Exchange{},
 		claims:    map[string]models.Claim{},
+		replaces:  map[string]models.Replacement{},
+		replItems: map[string]models.ReplacementItem{},
 		erased:    map[string]time.Time{},
 	}
 }
@@ -181,6 +187,8 @@ func (f *fakeStore) snapshot() fakeSnapshot {
 		retItems:  maps.Clone(f.retItems),
 		exchanges: maps.Clone(f.exchanges),
 		claims:    maps.Clone(f.claims),
+		replaces:  maps.Clone(f.replaces),
+		replItems: maps.Clone(f.replItems),
 	}
 }
 
@@ -1617,4 +1625,170 @@ func sortChildRows[T any](rows []T, orderID, id func(T) string, createdAt func(T
 
 		return strings.Compare(id(a), id(b))
 	})
+}
+
+// CreateReplacement writes what a claim promises to send.
+func (f *fakeStore) CreateReplacement(
+	ctx context.Context, in models.Replacement,
+) (models.Replacement, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if _, ok := f.claims[in.ClaimID]; !ok {
+		return models.Replacement{}, notFound(in.ClaimID)
+	}
+	stamp := f.nextStamp()
+	in.CreatedAt, in.UpdatedAt = stamp, stamp
+	f.recordUndo(ctx, undoEntry(f.replaces, in.ID))
+	f.replaces[in.ID] = in
+
+	return in, nil
+}
+
+// CreateReplacementItem writes one line of a replacement.
+func (f *fakeStore) CreateReplacementItem(
+	ctx context.Context, item models.ReplacementItem,
+) (models.ReplacementItem, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	stamp := f.nextStamp()
+	item.CreatedAt, item.UpdatedAt = stamp, stamp
+	f.recordUndo(ctx, undoEntry(f.replItems, item.ID))
+	f.replItems[item.ID] = item
+
+	return item, nil
+}
+
+// GetReplacement reads a replacement by id.
+func (f *fakeStore) GetReplacement(
+	_ context.Context, id string,
+) (models.Replacement, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	record, ok := f.replaces[id]
+	if !ok {
+		return models.Replacement{}, notFound(id)
+	}
+
+	return record, nil
+}
+
+// LockReplacement reads a replacement inside a transaction.
+//
+// It refuses OUTSIDE one for the same reason the other locking reads do: a
+// lock taken with no transaction to hold it is released immediately, and a
+// test that passed on that would be testing a guarantee the database does not
+// give.
+func (f *fakeStore) LockReplacement(
+	ctx context.Context, id string,
+) (models.Replacement, error) {
+	if err := requireTx(ctx, "LockReplacement"); err != nil {
+		return models.Replacement{}, err
+	}
+
+	return f.GetReplacement(ctx, id)
+}
+
+// CancelReplacement withdraws the request.
+func (f *fakeStore) CancelReplacement(
+	ctx context.Context, id string,
+) (models.Replacement, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	record, ok := f.replaces[id]
+	if !ok {
+		return models.Replacement{}, notFound(id)
+	}
+	stamp := f.nextStamp()
+	record.Status = models.ReplacementCanceled
+	record.CanceledAt = &stamp
+	record.UpdatedAt = stamp
+	f.recordUndo(ctx, undoEntry(f.replaces, id))
+	f.replaces[id] = record
+
+	return record, nil
+}
+
+// ListReplacementsByClaim returns a claim's replacements, newest first.
+func (f *fakeStore) ListReplacementsByClaim(
+	_ context.Context, claimID string,
+) ([]models.Replacement, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := make([]models.Replacement, 0)
+	for id := range f.replaces {
+		if f.replaces[id].ClaimID == claimID {
+			out = append(out, f.replaces[id])
+		}
+	}
+	slices.SortFunc(out, func(a, b models.Replacement) int {
+		if c := b.CreatedAt.Compare(a.CreatedAt); c != 0 {
+			return c
+		}
+
+		return strings.Compare(b.ID, a.ID)
+	})
+
+	return out, nil
+}
+
+// ListReplacementItems returns a replacement's lines in write order.
+func (f *fakeStore) ListReplacementItems(
+	_ context.Context, replacementID string,
+) ([]models.ReplacementItem, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := make([]models.ReplacementItem, 0)
+	for _, item := range f.replItems {
+		if item.ReplacementID == replacementID {
+			out = append(out, item)
+		}
+	}
+	slices.SortFunc(out, func(a, b models.ReplacementItem) int {
+		if c := a.CreatedAt.Compare(b.CreatedAt); c != 0 {
+			return c
+		}
+
+		return strings.Compare(a.ID, b.ID)
+	})
+
+	return out, nil
+}
+
+// ReplacedQuantities sums the promised units of the given lines across the
+// LIVE replacements.
+//
+// A withdrawn replacement is excluded and a line that was never promised is
+// ABSENT from the map — both the same way the real query answers, because a
+// fake that counted a canceled promise would let a service test go green on a
+// ceiling the database does not apply.
+func (f *fakeStore) ReplacedQuantities(
+	_ context.Context, lineItemIDs []string,
+) (map[string]int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	wanted := make(map[string]bool, len(lineItemIDs))
+	for _, id := range lineItemIDs {
+		wanted[id] = true
+	}
+
+	out := make(map[string]int64, len(lineItemIDs))
+	for _, item := range f.replItems {
+		if !wanted[item.OrderLineItemID] {
+			continue
+		}
+		record, ok := f.replaces[item.ReplacementID]
+		if !ok || record.Status == models.ReplacementCanceled {
+			continue
+		}
+		out[item.OrderLineItemID] += item.Quantity
+	}
+
+	return out, nil
 }

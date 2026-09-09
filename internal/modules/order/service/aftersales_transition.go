@@ -198,9 +198,53 @@ func (s *Service) CompleteClaim(ctx context.Context, claimID string) (models.Cla
 }
 
 // CancelClaim withdraws the claim.
+//
+// # A claim with an open replacement is refused
+//
+// Withdrawing a claim that has promised goods would leave the promise behind:
+// the replacement record would stay open, pointing at a claim that says the
+// matter is closed. The refusal names the replacement so the operator can
+// withdraw it first, which is the same shape the module uses for a return that
+// has already been received.
+//
+// The check is inside the transaction that holds the claim's lock, so a
+// replacement created while the withdrawal is deciding is either seen by this
+// read or blocked behind it.
 func (s *Service) CancelClaim(ctx context.Context, claimID string) (models.Claim, error) {
 	return s.transitionClaim(ctx, claimID, "canceling",
-		models.ClaimStatus.CancelAction, s.store.CancelClaim)
+		models.ClaimStatus.CancelAction, func(ctx context.Context, id string) (models.Claim, error) {
+			open, err := s.openReplacementsOf(ctx, id)
+			if err != nil {
+				return models.Claim{}, err
+			}
+			if len(open) > 0 {
+				return models.Claim{}, errors.Conflict(CodeReplacementNotOpen,
+					"claim %s has an open replacement (%s); withdraw the replacement before "+
+						"the claim, or the promise outlives the record that made it",
+					id, open[0].ID)
+			}
+
+			return s.store.CancelClaim(ctx, id)
+		})
+}
+
+// openReplacementsOf is the claim's replacements that have not been withdrawn.
+func (s *Service) openReplacementsOf(
+	ctx context.Context, claimID string,
+) ([]models.Replacement, error) {
+	all, err := s.store.ListReplacementsByClaim(ctx, claimID)
+	if err != nil {
+		return nil, err
+	}
+
+	open := make([]models.Replacement, 0, len(all))
+	for i := range all {
+		if all[i].Status != models.ReplacementCanceled {
+			open = append(open, all[i])
+		}
+	}
+
+	return open, nil
 }
 
 // transitionClaim applies one claim transition under the record's lock.

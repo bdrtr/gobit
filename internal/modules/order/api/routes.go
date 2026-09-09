@@ -136,6 +136,16 @@ func (h *Handler) Routes(r chi.Router) {
 	// no exit at all; see Handler.adminCancelClaim.
 	write.Post("/admin/v1/orders/{id}/claims/{claimId}/cancel", h.adminCancelClaim)
 
+	// What a claim of type "replace" will send. The record is on the CLAIM
+	// because that is what it settles: an order can carry several claims and a
+	// replacement answers exactly one of them.
+	read.Get("/admin/v1/orders/{id}/claims/{claimId}/replacements", h.adminListReplacements)
+	write.Post("/admin/v1/orders/{id}/claims/{claimId}/replacements", h.adminCreateReplacement)
+	read.Get("/admin/v1/orders/{id}/claims/{claimId}/replacements/{replacementId}",
+		h.adminGetReplacement)
+	write.Post("/admin/v1/orders/{id}/claims/{claimId}/replacements/{replacementId}/cancel",
+		h.adminCancelReplacement)
+
 	// Invoicing. The endpoints are on the ORDER because "invoice this order" is
 	// a question asked about an order and the client asking it holds an order
 	// id; the invoice module's own endpoint takes a finished document and knows

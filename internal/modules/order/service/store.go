@@ -208,6 +208,29 @@ type Store interface {
 	// never returned is absent from the map.
 	ReturnedQuantities(ctx context.Context, lineItemIDs []string) (map[string]int64, error)
 
+	// CreateReplacement writes what a claim promises to send.
+	CreateReplacement(ctx context.Context, in models.Replacement) (models.Replacement, error)
+	// CreateReplacementItem writes one line of a replacement.
+	CreateReplacementItem(
+		ctx context.Context, item models.ReplacementItem,
+	) (models.ReplacementItem, error)
+	// GetReplacement reads a replacement by id.
+	GetReplacement(ctx context.Context, id string) (models.Replacement, error)
+	// LockReplacement reads a replacement and holds its row until the
+	// transaction ends.
+	LockReplacement(ctx context.Context, id string) (models.Replacement, error)
+	// CancelReplacement withdraws the request.
+	CancelReplacement(ctx context.Context, id string) (models.Replacement, error)
+	// ListReplacementsByClaim returns a claim's replacements, newest first.
+	ListReplacementsByClaim(ctx context.Context, claimID string) ([]models.Replacement, error)
+	// ListReplacementItems returns a replacement's lines.
+	ListReplacementItems(
+		ctx context.Context, replacementID string,
+	) ([]models.ReplacementItem, error)
+	// ReplacedQuantities reports how many units of each line have already been
+	// promised across the order's live replacements.
+	ReplacedQuantities(ctx context.Context, lineItemIDs []string) (map[string]int64, error)
+
 	// CreateExchange opens a new exchange record.
 	CreateExchange(ctx context.Context, exchange models.Exchange) (models.Exchange, error)
 	// GetExchange returns the exchange record by its identifier; NotFound when

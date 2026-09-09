@@ -141,6 +141,17 @@ type Orders interface {
 
 	// CreateClaim opens a claim record on the order.
 	CreateClaim(ctx context.Context, in service.CreateClaimInput) (models.Claim, error)
+
+	// CreateReplacement records what a claim will send; it sends nothing.
+	CreateReplacement(
+		ctx context.Context, in service.CreateReplacementInput,
+	) (service.ReplacementRecord, error)
+	// GetReplacement returns a replacement with its lines.
+	GetReplacement(ctx context.Context, id string) (service.ReplacementRecord, error)
+	// ListReplacementsOfClaim returns a claim's replacements, newest first.
+	ListReplacementsOfClaim(ctx context.Context, claimID string) ([]models.Replacement, error)
+	// CancelReplacement withdraws a request that has not been acted on.
+	CancelReplacement(ctx context.Context, id string) (models.Replacement, error)
 	// GetClaim returns the claim record by its id.
 	GetClaim(ctx context.Context, claimID string) (models.Claim, error)
 	// ListClaims pages the order's claim records.

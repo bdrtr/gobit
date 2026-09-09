@@ -198,11 +198,30 @@ type endpointExpectation struct {
 	// response is a sample carrying all the fields of the RECORD in the
 	// successful response.
 	response any
-	// list states that the response comes back with the LIST envelope; its
-	// difference from the single envelope is the paging fields, and mixing the
-	// two up means a wrong return type in the client generator.
-	list bool
+	// shape states which response ENVELOPE the endpoint answers with; mixing
+	// two of them up means a wrong return type in the client generator.
+	shape envelopeShape
 }
+
+// envelopeShape names a response envelope.
+//
+// There are three of them and they are not interchangeable.
+type envelopeShape int
+
+const (
+	// singleRecord is the plain envelope: "data" carries one record.
+	singleRecord envelopeShape = iota
+	// pagedList is the list envelope: "data" carries an array and the paging
+	// fields stand beside it.
+	pagedList
+	// unpagedList is the plain envelope carrying an ARRAY. It has no paging
+	// fields because the collection is bounded by the record it hangs from,
+	// and it is a shape of its own rather than a variant of either other: for
+	// as long as this table could only say "single" or "paged", the one
+	// endpoint of this shape was described as a single record and nothing
+	// here could tell the difference (D44).
+	unpagedList
+)
 
 // key returns the "METHOD path" identity of the operation.
 func (e endpointExpectation) key() string { return e.method + " " + e.path }
@@ -221,11 +240,11 @@ func describedEndpoints() []endpointExpectation {
 	return []endpointExpectation{
 		{
 			method: http.MethodGet, path: "/admin/v1/orders", status: "200",
-			response: filledOrder(), list: true,
+			response: filledOrder(), shape: pagedList,
 		},
 		{
 			method: http.MethodGet, path: "/admin/v1/orders/{id}/returns", status: "200",
-			response: filledReturn(), list: true,
+			response: filledReturn(), shape: pagedList,
 		},
 		{
 			method: http.MethodPost, path: "/admin/v1/orders/{id}/returns", status: "201",
@@ -244,7 +263,7 @@ func describedEndpoints() []endpointExpectation {
 		},
 		{
 			method: http.MethodGet, path: "/admin/v1/orders/{id}/exchanges", status: "200",
-			response: filledExchange(), list: true,
+			response: filledExchange(), shape: pagedList,
 		},
 		{
 			method: http.MethodPost, path: "/admin/v1/orders/{id}/exchanges", status: "201",
@@ -264,7 +283,7 @@ func describedEndpoints() []endpointExpectation {
 		},
 		{
 			method: http.MethodGet, path: "/admin/v1/orders/{id}/claims", status: "200",
-			response: filledClaim(), list: true,
+			response: filledClaim(), shape: pagedList,
 		},
 		{
 			method: http.MethodPost, path: "/admin/v1/orders/{id}/claims", status: "201",
@@ -278,6 +297,31 @@ func describedEndpoints() []endpointExpectation {
 			method: http.MethodPost,
 			path:   "/admin/v1/orders/{id}/claims/{claimId}/cancel",
 			status: "200", response: filledClaim(),
+		},
+		{
+			method: http.MethodPost,
+			path:   "/admin/v1/orders/{id}/claims/{claimId}/replacements",
+			status: "201", request: createReplacementRequest{},
+			response: filledReplacement(),
+		},
+		{
+			// Unpaged, like the timeline: a replacement belongs to one claim
+			// and the count is bounded by the lines of a single order.
+			method: http.MethodGet,
+			path:   "/admin/v1/orders/{id}/claims/{claimId}/replacements",
+			status: "200", response: filledReplacement(), shape: unpagedList,
+		},
+		{
+			method: http.MethodGet,
+			path:   "/admin/v1/orders/{id}/claims/{claimId}/replacements/{replacementId}",
+			status: "200", response: filledReplacement(),
+		},
+		{
+			method: http.MethodPost,
+			path:   "/admin/v1/orders/{id}/claims/{claimId}/replacements/{replacementId}/cancel",
+			// No request, for the reason the claim's cancel gives: there is
+			// nothing to choose.
+			status: "200", response: filledReplacement(),
 		},
 		{
 			// The issue endpoint answers 201 when it created the document and
@@ -308,7 +352,11 @@ func describedEndpoints() []endpointExpectation {
 			response: orderShipmentDTO{FulfillmentID: "ful_1", Status: "pending"},
 		},
 		{
+			// The timeline is an unpaged list: the handler writes the plain
+			// envelope with an ARRAY in it, and it was described as a single
+			// record until this table gained a word for the shape.
 			method: http.MethodGet, path: "/admin/v1/orders/{id}/timeline", status: "200",
+			shape: unpagedList,
 			// Every field is filled in: the omitempty ones drop out of the
 			// marshaled sample when they are zero, and a sample missing a field
 			// the schema declares fails this comparison for a reason that has
@@ -475,6 +523,23 @@ func filledClaim() claimDTO {
 	}
 }
 
+// filledReplacement produces a replacement whose omitempty fields are written
+// too.
+func filledReplacement() replacementDTO {
+	now := time.Now().UTC()
+
+	return replacementDTO{
+		ID:               "orepl_1",
+		ClaimID:          "oclaim_1",
+		Status:           "requested",
+		ShippingOptionID: "so_1",
+		LocationID:       "sloc_1",
+		Note:             "the box arrived open",
+		Items:            []replacementItemDTO{{ID: "oreplitem_1"}},
+		CanceledAt:       &now,
+	}
+}
+
 // TestDescribedEndpointsDescribeTheirBodies verifies that every endpoint states
 // what it TAKES and what it RETURNS.
 //
@@ -521,7 +586,7 @@ func TestDescribedEndpointsDescribeTheirBodies(t *testing.T) {
 			// decision instead of two tables that can drift apart.
 			cursored := slices.Contains(parameterNames(t, op, "query"), "after")
 
-			record := envelopeRecord(t, components, bodySchema(t, definition), endpoint.list, cursored)
+			record := envelopeRecord(t, components, bodySchema(t, definition), endpoint.shape, cursored)
 			assert.ElementsMatch(t, jsonKeys(t, endpoint.response), fieldNames(t, components, record),
 				"the fields of the response record have to match the DTO")
 			assert.ElementsMatch(t, jsonKeys(t, zeroValue(endpoint.response)),
@@ -537,12 +602,12 @@ func TestDescribedEndpointsDescribeTheirBodies(t *testing.T) {
 // means a wrong return type in the client generator — a caller expecting the
 // paging fields gets a single record, or the other way around.
 func envelopeRecord(
-	t *testing.T, components, envelope map[string]any, list, cursored bool,
+	t *testing.T, components, envelope map[string]any, shape envelopeShape, cursored bool,
 ) map[string]any {
 	t.Helper()
 
 	expected := []string{envelopeDataField}
-	if list {
+	if shape == pagedList {
 		expected = []string{envelopeDataField, "count", "offset", "limit"}
 	}
 	if cursored {
@@ -557,11 +622,12 @@ func envelopeRecord(
 	record, ok := props[envelopeDataField].(map[string]any)
 	require.True(t, ok)
 
-	if !list {
+	if shape == singleRecord {
 		return record
 	}
 
-	assert.Equal(t, "array", record["type"], "the data field of the list envelope has to be an array")
+	assert.Equal(t, "array", record["type"],
+		"the data field of a list envelope has to be an array")
 
 	item, ok := record["items"].(map[string]any)
 	require.True(t, ok, "the array has to have an item schema")
