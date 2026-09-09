@@ -1,0 +1,31 @@
+-- price_list gains the free-form field every merchant-authored record carries.
+--
+-- # Why this table and not the other three
+--
+-- Measured across the tree: twenty-six tables carry a `metadata jsonb` column,
+-- and every one of them is a record a PERSON authors -- product, variant,
+-- collection, customer, order, cart, promotion, sales channel, tax region,
+-- shipping option. The tables without it are the computed and structural rows:
+-- inventory levels, movements, payments, sessions, order summaries, link rows.
+--
+-- The pricing module was the only module with none at all, and a price list is
+-- unmistakably on the authored side: a merchant gives it a title, a description
+-- and a validity window, exactly as they do a promotion. `price`, `price_set`
+-- and `price_rule` stay without one and stay there deliberately -- a price is a
+-- number in a currency at a quantity, a set is a container the link table binds
+-- to a variant, and a rule is a condition. Nobody writes prose about a row the
+-- ladder computes over, and a column nobody writes is a column that would have
+-- to be read anyway.
+--
+-- # NOT NULL DEFAULT '{}'
+--
+-- The same shape the other twenty-six take. There is no meaning to tell apart
+-- between "no metadata" and "empty metadata" here, so the reading side is not
+-- made to distinguish NULL from an empty object; the repository converts an
+-- empty object back to a nil map so the field does not appear in the response
+-- at all.
+--
+-- Every price list written before this column exists gets an empty object,
+-- which is what a list with nothing written on it means.
+ALTER TABLE price_list
+    ADD COLUMN metadata jsonb NOT NULL DEFAULT '{}'::jsonb;

@@ -236,20 +236,20 @@ func uclar() []ucBeklentisi {
 		},
 		{
 			metod: http.MethodPost, yol: "/admin/v1/price-lists", durum: "201",
-			istek: priceListRequest{}, yanit: priceListDTO{},
+			istek: priceListRequest{}, yanit: doluPriceList(),
 		},
 		{
 			metod: http.MethodGet, yol: "/admin/v1/price-lists", durum: "200",
-			yanit: priceListDTO{}, liste: true,
+			yanit: doluPriceList(), liste: true,
 			sorgu: []string{"limit", "offset"},
 		},
 		{
 			metod: http.MethodGet, yol: "/admin/v1/price-lists/{id}", durum: "200",
-			yanit: priceListDTO{},
+			yanit: doluPriceList(),
 		},
 		{
 			metod: http.MethodPut, yol: "/admin/v1/price-lists/{id}", durum: "200",
-			istek: priceListRequest{}, yanit: priceListDTO{},
+			istek: priceListRequest{}, yanit: doluPriceList(),
 		},
 		{
 			metod: http.MethodDelete, yol: "/admin/v1/price-lists/{id}", durum: "204",
@@ -270,6 +270,14 @@ func uclar() []ucBeklentisi {
 			yanit: doluPriceSet(),
 		},
 	}
+}
+
+// doluPriceList omitempty alanı da yazılan bir fiyat listesi üretir.
+//
+// "metadata" tek omitempty alandır; boş bırakılsaydı test onun şemadan
+// düştüğünü göremezdi.
+func doluPriceList() priceListDTO {
+	return priceListDTO{Metadata: map[string]any{"campaign": "spring"}}
 }
 
 // doluPriceSet omitempty alanı da yazılan bir fiyat kabı üretir.

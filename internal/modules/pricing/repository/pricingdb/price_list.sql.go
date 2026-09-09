@@ -24,7 +24,7 @@ func (q *Queries) CountPriceLists(ctx context.Context) (int64, error) {
 }
 
 const getPriceList = `-- name: GetPriceList :one
-SELECT id, title, description, type, status, starts_at, ends_at, created_at, updated_at, deleted_at FROM price_list
+SELECT id, title, description, type, status, starts_at, ends_at, created_at, updated_at, deleted_at, metadata FROM price_list
 WHERE id = $1 AND deleted_at IS NULL
 `
 
@@ -42,6 +42,7 @@ func (q *Queries) GetPriceList(ctx context.Context, id string) (PriceList, error
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Metadata,
 	)
 	return i, err
 }
@@ -49,10 +50,11 @@ func (q *Queries) GetPriceList(ctx context.Context, id string) (PriceList, error
 const insertPriceList = `-- name: InsertPriceList :one
 
 INSERT INTO price_list (
-    id, title, description, type, status, starts_at, ends_at, created_at, updated_at
+    id, title, description, type, status, starts_at, ends_at, metadata,
+    created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
-RETURNING id, title, description, type, status, starts_at, ends_at, created_at, updated_at, deleted_at
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+RETURNING id, title, description, type, status, starts_at, ends_at, created_at, updated_at, deleted_at, metadata
 `
 
 type InsertPriceListParams struct {
@@ -63,6 +65,7 @@ type InsertPriceListParams struct {
 	Status      string
 	StartsAt    pgtype.Timestamptz
 	EndsAt      pgtype.Timestamptz
+	Metadata    []byte
 	CreatedAt   pgtype.Timestamptz
 }
 
@@ -76,6 +79,7 @@ func (q *Queries) InsertPriceList(ctx context.Context, arg InsertPriceListParams
 		arg.Status,
 		arg.StartsAt,
 		arg.EndsAt,
+		arg.Metadata,
 		arg.CreatedAt,
 	)
 	var i PriceList
@@ -90,12 +94,13 @@ func (q *Queries) InsertPriceList(ctx context.Context, arg InsertPriceListParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Metadata,
 	)
 	return i, err
 }
 
 const listPriceLists = `-- name: ListPriceLists :many
-SELECT id, title, description, type, status, starts_at, ends_at, created_at, updated_at, deleted_at FROM price_list
+SELECT id, title, description, type, status, starts_at, ends_at, created_at, updated_at, deleted_at, metadata FROM price_list
 WHERE deleted_at IS NULL
 ORDER BY id
 LIMIT $1 OFFSET $2
@@ -126,6 +131,7 @@ func (q *Queries) ListPriceLists(ctx context.Context, arg ListPriceListsParams) 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Metadata,
 		); err != nil {
 			return nil, err
 		}
@@ -164,9 +170,10 @@ SET title       = $2,
     status      = $5,
     starts_at   = $6,
     ends_at     = $7,
-    updated_at  = $8
+    metadata    = $8,
+    updated_at  = $9
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, title, description, type, status, starts_at, ends_at, created_at, updated_at, deleted_at
+RETURNING id, title, description, type, status, starts_at, ends_at, created_at, updated_at, deleted_at, metadata
 `
 
 type UpdatePriceListParams struct {
@@ -177,6 +184,7 @@ type UpdatePriceListParams struct {
 	Status      string
 	StartsAt    pgtype.Timestamptz
 	EndsAt      pgtype.Timestamptz
+	Metadata    []byte
 	UpdatedAt   pgtype.Timestamptz
 }
 
@@ -189,6 +197,7 @@ func (q *Queries) UpdatePriceList(ctx context.Context, arg UpdatePriceListParams
 		arg.Status,
 		arg.StartsAt,
 		arg.EndsAt,
+		arg.Metadata,
 		arg.UpdatedAt,
 	)
 	var i PriceList
@@ -203,6 +212,7 @@ func (q *Queries) UpdatePriceList(ctx context.Context, arg UpdatePriceListParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Metadata,
 	)
 	return i, err
 }

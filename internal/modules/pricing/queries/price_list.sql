@@ -2,9 +2,10 @@
 
 -- name: InsertPriceList :one
 INSERT INTO price_list (
-    id, title, description, type, status, starts_at, ends_at, created_at, updated_at
+    id, title, description, type, status, starts_at, ends_at, metadata,
+    created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
 RETURNING *;
 
 -- name: GetPriceList :one
@@ -29,7 +30,8 @@ SET title       = $2,
     status      = $5,
     starts_at   = $6,
     ends_at     = $7,
-    updated_at  = $8
+    metadata    = $8,
+    updated_at  = $9
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 

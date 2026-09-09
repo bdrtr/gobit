@@ -14,6 +14,11 @@ func (r *Repo) CreatePriceList(ctx context.Context, list models.PriceList, now t
 		return models.PriceList{}, err
 	}
 
+	meta, err := fromJSONMap(list.Metadata)
+	if err != nil {
+		return models.PriceList{}, err
+	}
+
 	row, err := r.q.InsertPriceList(ctx, pricingdb.InsertPriceListParams{
 		ID:          list.ID,
 		Title:       list.Title,
@@ -22,12 +27,13 @@ func (r *Repo) CreatePriceList(ctx context.Context, list models.PriceList, now t
 		Status:      string(list.Status),
 		StartsAt:    fromTimePtr(list.StartsAt),
 		EndsAt:      fromTimePtr(list.EndsAt),
+		Metadata:    meta,
 		CreatedAt:   fromTime(now),
 	})
 	if err != nil {
 		return models.PriceList{}, wrapDB(err, "fiyat listesi oluşturulamadı")
 	}
-	return toPriceList(row), nil
+	return toPriceList(row)
 }
 
 // GetPriceList kimliğe göre listeyi döner; yoksa errors.NotFound.
@@ -40,7 +46,7 @@ func (r *Repo) GetPriceList(ctx context.Context, id string) (models.PriceList, e
 	if err != nil {
 		return models.PriceList{}, notFoundOr(err, CodePriceListNotFound, "fiyat listesi bulunamadı: %s", id)
 	}
-	return toPriceList(row), nil
+	return toPriceList(row)
 }
 
 // ListPriceLists sayfalanmış liste kümesini ve TOPLAM kayıt sayısını döner.
@@ -61,7 +67,11 @@ func (r *Repo) ListPriceLists(ctx context.Context, limit, offset int32) ([]model
 
 	lists := make([]models.PriceList, 0, len(rows))
 	for i := range rows {
-		lists = append(lists, toPriceList(rows[i]))
+		list, convErr := toPriceList(rows[i])
+		if convErr != nil {
+			return nil, 0, convErr
+		}
+		lists = append(lists, list)
 	}
 	return lists, total, nil
 }
@@ -73,6 +83,11 @@ func (r *Repo) UpdatePriceList(ctx context.Context, list models.PriceList, now t
 		return models.PriceList{}, err
 	}
 
+	meta, err := fromJSONMap(list.Metadata)
+	if err != nil {
+		return models.PriceList{}, err
+	}
+
 	row, err := r.q.UpdatePriceList(ctx, pricingdb.UpdatePriceListParams{
 		ID:          list.ID,
 		Title:       list.Title,
@@ -81,13 +96,14 @@ func (r *Repo) UpdatePriceList(ctx context.Context, list models.PriceList, now t
 		Status:      string(list.Status),
 		StartsAt:    fromTimePtr(list.StartsAt),
 		EndsAt:      fromTimePtr(list.EndsAt),
+		Metadata:    meta,
 		UpdatedAt:   fromTime(now),
 	})
 	if err != nil {
 		return models.PriceList{}, notFoundOr(err, CodePriceListNotFound,
 			"fiyat listesi bulunamadı: %s", list.ID)
 	}
-	return toPriceList(row), nil
+	return toPriceList(row)
 }
 
 // DeletePriceList listeyi soft delete ile siler; yoksa errors.NotFound.
@@ -111,7 +127,12 @@ func (r *Repo) DeletePriceList(ctx context.Context, id string, now time.Time) er
 }
 
 // toPriceList üretilen satırı domain modeline çevirir.
-func toPriceList(row pricingdb.PriceList) models.PriceList {
+func toPriceList(row pricingdb.PriceList) (models.PriceList, error) {
+	meta, err := toJSONMap(row.Metadata)
+	if err != nil {
+		return models.PriceList{}, err
+	}
+
 	return models.PriceList{
 		ID:          row.ID,
 		Title:       row.Title,
@@ -120,7 +141,8 @@ func toPriceList(row pricingdb.PriceList) models.PriceList {
 		Status:      models.PriceListStatus(row.Status),
 		StartsAt:    toTimePtr(row.StartsAt),
 		EndsAt:      toTimePtr(row.EndsAt),
+		Metadata:    meta,
 		CreatedAt:   toTime(row.CreatedAt),
 		UpdatedAt:   toTime(row.UpdatedAt),
-	}
+	}, nil
 }

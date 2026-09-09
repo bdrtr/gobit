@@ -80,6 +80,8 @@ type priceListDTO struct {
 	StartsAt *time.Time `json:"starts_at"`
 	// EndsAt is the end of the validity window; null when absent.
 	EndsAt *time.Time `json:"ends_at"`
+	// Metadata is the caller's free-form data; absent when nothing was written.
+	Metadata map[string]any `json:"metadata,omitempty"`
 	// CreatedAt is the moment of creation.
 	CreatedAt time.Time `json:"created_at"`
 	// UpdatedAt is the moment of the last update.
@@ -167,6 +169,10 @@ type priceListRequest struct {
 	StartsAt *time.Time `json:"starts_at"`
 	// EndsAt is the end of the validity window.
 	EndsAt *time.Time `json:"ends_at"`
+	// Metadata is the caller's free-form data. It is REPLACED, not merged: an
+	// update that omits it clears what was there, the same as every other field
+	// of this body.
+	Metadata map[string]any `json:"metadata"`
 }
 
 // The calculation request has NO body counterpart: the endpoint is a GET and
@@ -254,6 +260,7 @@ func toPriceListDTO(list models.PriceList) priceListDTO {
 		Status:      string(list.Status),
 		StartsAt:    list.StartsAt,
 		EndsAt:      list.EndsAt,
+		Metadata:    list.Metadata,
 		CreatedAt:   list.CreatedAt,
 		UpdatedAt:   list.UpdatedAt,
 	}
@@ -318,5 +325,6 @@ func toPriceListInput(req priceListRequest) service.PriceListInput {
 		Status:      models.PriceListStatus(req.Status),
 		StartsAt:    req.StartsAt,
 		EndsAt:      req.EndsAt,
+		Metadata:    req.Metadata,
 	}
 }

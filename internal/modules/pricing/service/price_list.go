@@ -26,6 +26,12 @@ type PriceListInput struct {
 	StartsAt *time.Time
 	// EndsAt geçerlilik penceresinin sonudur; nil ise üst sınır yoktur.
 	EndsAt *time.Time
+	// Metadata is the caller's free-form data; this module never reads it.
+	//
+	// It is REPLACED on an update rather than merged, like every other field of
+	// this input: the write is a whole record, and a merge would leave no way to
+	// remove a key.
+	Metadata map[string]any
 }
 
 // CreatePriceList yeni bir fiyat listesi oluşturur.
@@ -197,6 +203,7 @@ func buildPriceList(in PriceListInput) (models.PriceList, error) {
 		Description: strings.TrimSpace(in.Description),
 		Type:        in.Type,
 		Status:      status,
+		Metadata:    in.Metadata,
 		StartsAt:    starts,
 		EndsAt:      ends,
 	}, nil

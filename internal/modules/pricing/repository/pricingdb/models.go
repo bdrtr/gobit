@@ -32,6 +32,7 @@ type PriceList struct {
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
 	DeletedAt   pgtype.Timestamptz
+	Metadata    []byte
 }
 
 type PriceRule struct {

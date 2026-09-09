@@ -221,6 +221,13 @@ type PriceList struct {
 	StartsAt *time.Time
 	// EndsAt is the end of the validity window; if nil there is no upper bound.
 	EndsAt *time.Time
+	// Metadata is the caller's free-form data; this module never reads it.
+	//
+	// A price list is a record a MERCHANT authors — it has a title, a
+	// description and a window somebody chose — which is what every other table
+	// carrying this column has in common. The rows the ladder computes over
+	// (a price, a price set, a price rule) carry none.
+	Metadata map[string]any
 	// CreatedAt is the moment the record was created (UTC).
 	CreatedAt time.Time
 	// UpdatedAt is the moment the record was last updated (UTC).

@@ -20,6 +20,12 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Fiyat listesi de artik `metadata` tasiyor, ve HANGI kaydin tasidigi bir
+  kurala baglandi.** Tacirin YAZDIGI kayit tasir (baslik, aciklama, pencere);
+  merdivenin uzerinde hesap yaptigi `price`, `price_set` ve `price_rule`
+  tasimaz. Guncelleme alani BIRLESTIRMEZ, DEGISTIRIR — birlestirme bir anahtari
+  silmenin yolunu birakmazdi (ADR 0099).
+
 - **Degisiklik gunlugu artik SON SURUMDEN BERI alinan her karari anmak
   zorunda, ve bunu bir kapi tutuyor.** Nufus iki belgenin kendi
   tarihlerinden turetiliyor: git komutu yok, elle yazilmis bir taban yok.
