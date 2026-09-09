@@ -11,7 +11,7 @@ import (
 type CreateRateRuleInput struct {
 	// TaxRateID kuralın bağlanacağı orandır; zorunludur.
 	TaxRateID string
-	// Reference kalemin türüdür: "product", "product_type" ya da
+	// Reference kalemin türüdür: "product", "tax_class", "product_type" ya da
 	// "shipping_option".
 	Reference string
 	// ReferenceID o türdeki kimliktir; zorunludur.
@@ -43,8 +43,8 @@ func (s *Service) CreateRateRule(ctx context.Context, in CreateRateRuleInput) (m
 	reference := models.RuleReference(in.Reference)
 	if !reference.Valid() {
 		return models.TaxRateRule{}, errors.Invalid(CodeInvalidInput,
-			"kural referansı %q, %q ya da %q olmalı; %q verildi",
-			models.ReferenceProduct, models.ReferenceProductType,
+			"kural referansı %q, %q, %q ya da %q olmalı; %q verildi",
+			models.ReferenceProduct, models.ReferenceTaxClass, models.ReferenceProductType,
 			models.ReferenceShippingOption, in.Reference)
 	}
 	if err := requireReferenceID(in.ReferenceID); err != nil {

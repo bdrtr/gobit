@@ -128,6 +128,16 @@ func (a *API) Routes(r chi.Router) {
 	yazma.Post(pathAdminRateRules, a.createRule)
 	okuma.Get(pathAdminRateRules, a.listRules)
 	yazma.Delete(pathAdminRateRule, a.deleteRule)
+
+	// Vergi sınıfı: bir tacirin AYNI ŞEKİLDE vergilendirdiği ürün kümesi.
+	// Sınıflandırma bu modülün kendi verisi olduğu için uçları da burada.
+	yazma.Post(pathAdminClasses, a.createClass)
+	okuma.Get(pathAdminClasses, a.listClasses)
+	okuma.Get(pathAdminClass, a.getClass)
+	yazma.Delete(pathAdminClass, a.deleteClass)
+	okuma.Get(pathAdminClassProducts, a.listClassProducts)
+	yazma.Post(pathAdminClassProducts, a.addClassProduct)
+	yazma.Delete(pathAdminClassProduct, a.removeClassProduct)
 }
 
 // itemEnvelope tekil yanıtların zarfıdır (plan Bölüm 8).

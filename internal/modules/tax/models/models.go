@@ -60,6 +60,12 @@ type RuleReference string
 const (
 	// ReferenceProduct declares that the rule looks at a single product.
 	ReferenceProduct RuleReference = "product"
+	// ReferenceTaxClass declares that the rule looks at a TAX CLASS: the set of
+	// products a merchant taxes the same way (books, food, electronics).
+	//
+	// The membership lives in this module (tax_class_member) because the rate
+	// is chosen here and nothing else reads the classification.
+	ReferenceTaxClass RuleReference = "tax_class"
 	// ReferenceProductType declares that the rule looks at a product TYPE.
 	ReferenceProductType RuleReference = "product_type"
 	// ReferenceShippingOption declares that the rule looks at a shipping
@@ -73,7 +79,7 @@ func (r RuleReference) String() string { return string(r) }
 // Valid reports whether the reference is a defined kind.
 func (r RuleReference) Valid() bool {
 	switch r {
-	case ReferenceProduct, ReferenceProductType, ReferenceShippingOption:
+	case ReferenceProduct, ReferenceTaxClass, ReferenceProductType, ReferenceShippingOption:
 		return true
 	default:
 		return false
@@ -84,10 +90,15 @@ func (r RuleReference) Valid() bool {
 // the more specific.
 //
 // When more than one rule matches the same item, this order decides the winner:
-// a rule written for a single product beats a rule written for that product's
-// type. Without the order, which rate got applied would be left to map
-// iteration order and the same cart could produce two different taxes in two
-// calls.
+// a rule written for a single product beats one written for its CLASS, and a
+// class beats the product's type. Without the order, which rate got applied
+// would be left to map iteration order and the same cart could produce two
+// different taxes in two calls.
+//
+// The class sits between them because it is what the merchant said about a SET
+// of products, while the product rule is what they said about this one: the
+// narrower statement wins, and a class beats a type because gobit's type is the
+// catalog's word and the class is the tax module's own.
 //
 // Shipping option rules do not compete WITH ITEMS — the shipping line is
 // calculated separately — so their degree is taken to be the same as a product
@@ -95,6 +106,8 @@ func (r RuleReference) Valid() bool {
 func (r RuleReference) Specificity() int {
 	switch r {
 	case ReferenceProduct:
+		return 3
+	case ReferenceTaxClass:
 		return 2
 	case ReferenceProductType, ReferenceShippingOption:
 		return 1
@@ -296,6 +309,58 @@ type TaxRateRule struct {
 	// CreatedAt is the instant the record was created (UTC).
 	CreatedAt time.Time
 	// UpdatedAt is the instant the record was last updated (UTC).
+	UpdatedAt time.Time
+	// DeletedAt is the soft delete instant; when nil the record is live.
+	DeletedAt *time.Time
+}
+
+// TaxClass is a set of products a merchant taxes the same way.
+//
+// # Why the classification lives in the tax module
+//
+// The rate is chosen here and nothing else reads the classification. Putting it
+// on the product would put a tax word in the catalog's model — and in the
+// storefront body that model is embedded in — and would make the cart's tax leg
+// read the catalog a second time to answer a question this module can answer
+// from its own tables.
+//
+// A class is named, not coded: an operator picks it by name, and two live
+// classes may not share one (tax_class_name_uniq).
+type TaxClass struct {
+	// ID is the "taxcls_" prefixed, time-ordered id.
+	ID string
+	// Name is what the operator picks the class by; it cannot be empty.
+	Name string
+	// Metadata is the caller's free extra data.
+	Metadata map[string]any
+	// CreatedAt and UpdatedAt are UTC.
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	// DeletedAt is the soft delete instant; when nil the record is live.
+	DeletedAt *time.Time
+}
+
+// TaxClassMember binds one product to one class.
+//
+// The product id belongs to the catalog and IS NOT A FOREIGN KEY here
+// (Principle 2.2), exactly as [TaxRateRule.ReferenceID] is not: this module
+// looks at id equality and knows no catalog record. A membership left behind by
+// a deleted product is harmless, because no line carrying that id enters a
+// calculation any more.
+type TaxClassMember struct {
+	// ID is the "taxclsm_" prefixed, time-ordered id.
+	ID string
+	// TaxClassID is the class the product belongs to.
+	TaxClassID string
+	// ProductID is the catalog's product id.
+	//
+	// A product is in AT MOST ONE class (tax_class_member_product_uniq), and
+	// that is what keeps the selection decidable: two classes would give a line
+	// two match keys of equal specificity and which rate applied would fall to
+	// row order.
+	ProductID string
+	// CreatedAt and UpdatedAt are UTC.
+	CreatedAt time.Time
 	UpdatedAt time.Time
 	// DeletedAt is the soft delete instant; when nil the record is live.
 	DeletedAt *time.Time

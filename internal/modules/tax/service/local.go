@@ -146,9 +146,12 @@ type matchKey struct {
 // anahtarın eşleşme şansı yoktur — listeye konması yalnızca gereksiz
 // karşılaştırma üretirdi.
 func itemKeys(item TaxableItem) []matchKey {
-	keys := make([]matchKey, 0, 2)
+	keys := make([]matchKey, 0, 3)
 	if item.ProductID != "" {
 		keys = append(keys, matchKey{models.ReferenceProduct, item.ProductID})
+	}
+	if item.TaxClassID != "" {
+		keys = append(keys, matchKey{models.ReferenceTaxClass, item.TaxClassID})
 	}
 	if item.ProductTypeID != "" {
 		keys = append(keys, matchKey{models.ReferenceProductType, item.ProductTypeID})

@@ -25,6 +25,10 @@ const (
 	TaxRateIDPrefix = "taxrate_"
 	// TaxRateRuleIDPrefix is the prefix of tax rate rule ids.
 	TaxRateRuleIDPrefix = "taxrule_"
+	// TaxClassIDPrefix is the prefix of a tax class id.
+	TaxClassIDPrefix = "taxcls_"
+	// TaxClassMemberIDPrefix is the prefix of a class membership id.
+	TaxClassMemberIDPrefix = "taxclsm_"
 )
 
 // idBodyLen is the character count of the body outside the prefix: 16 bytes
@@ -81,6 +85,12 @@ func NewTaxRateID(t time.Time) string { return NewID(TaxRateIDPrefix, t) }
 
 // NewTaxRateRuleID produces a new tax rate rule id.
 func NewTaxRateRuleID(t time.Time) string { return NewID(TaxRateRuleIDPrefix, t) }
+
+// NewTaxClassID produces a new tax class id.
+func NewTaxClassID(t time.Time) string { return NewID(TaxClassIDPrefix, t) }
+
+// NewTaxClassMemberID produces a new class membership id.
+func NewTaxClassMemberID(t time.Time) string { return NewID(TaxClassMemberIDPrefix, t) }
 
 // IDBodyLength returns the length of the body outside the prefix; it is the
 // single source of truth for tests and validation.

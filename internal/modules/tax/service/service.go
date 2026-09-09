@@ -172,6 +172,19 @@ type Repository interface {
 	UpdateTaxRate(ctx context.Context, id string, patch models.TaxRatePatch, now time.Time) (models.TaxRate, error)
 	DeleteTaxRate(ctx context.Context, id string, now time.Time) error
 
+	CreateTaxClass(ctx context.Context, class models.TaxClass, now time.Time) (models.TaxClass, error)
+	GetTaxClass(ctx context.Context, id string) (models.TaxClass, error)
+	ListTaxClasses(ctx context.Context) ([]models.TaxClass, error)
+	DeleteTaxClass(ctx context.Context, id string, now time.Time) error
+	SetTaxClassMember(
+		ctx context.Context, member models.TaxClassMember, now time.Time,
+	) (models.TaxClassMember, error)
+	RemoveTaxClassMember(ctx context.Context, productID string, now time.Time) error
+	ListTaxClassMembers(ctx context.Context, classID string) ([]models.TaxClassMember, error)
+	// ClassesOfProducts resolves the class of every given product in ONE
+	// query; a product in no class is ABSENT from the map.
+	ClassesOfProducts(ctx context.Context, productIDs []string) (map[string]string, error)
+
 	CreateTaxRateRule(ctx context.Context, rule models.TaxRateRule, now time.Time) (models.TaxRateRule, error)
 	GetTaxRateRule(ctx context.Context, id string) (models.TaxRateRule, error)
 	ListTaxRateRules(ctx context.Context, rateID string) ([]models.TaxRateRule, error)

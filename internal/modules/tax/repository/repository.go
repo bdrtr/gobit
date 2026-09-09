@@ -52,6 +52,8 @@ const (
 	CodeTaxRateNotFound = "tax_rate_not_found"
 	// CodeTaxRateRuleNotFound istenen kuralın bulunamadığını bildirir.
 	CodeTaxRateRuleNotFound = "tax_rate_rule_not_found"
+	// CodeTaxClassNotFound istenen vergi sınıfının bulunamadığını bildirir.
+	CodeTaxClassNotFound = "tax_class_not_found"
 	// CodeConstraintViolation veritabanı kısıtının ihlal edildiğini bildirir.
 	CodeConstraintViolation = "tax_constraint_violation"
 	// CodeDuplicate SERVİSTE karşılığı olmayan benzersizlik ihlallerini

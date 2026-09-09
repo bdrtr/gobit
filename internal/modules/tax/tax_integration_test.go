@@ -46,7 +46,9 @@ const postgresImage = "postgres:16-alpine"
 
 // modulTablolari modülün sahip olduğu tablolardır; migration testleri bu
 // listeyi kullanır.
-var modulTablolari = []string{"tax_region", "tax_rate", "tax_rate_rule"}
+var modulTablolari = []string{
+	"tax_region", "tax_rate", "tax_rate_rule", "tax_class", "tax_class_member",
+}
 
 var (
 	// testPool tüm testlerin paylaştığı havuzdur.
@@ -235,7 +237,7 @@ func TestMigrationGeriAlinabilir(t *testing.T) {
 	// Baş sürüm, modüle bir migration eklendiğinde ELLE artırılır. Dosyalardan
 	// türetilmiyor: türetilseydi kendi kendisiyle uyuşur ve "baş uygulandı"
 	// cümlesi bir şey söylemez olurdu.
-	assert.Equal(t, uint(2), version)
+	assert.Equal(t, uint(3), version)
 	assert.Zero(t, sayim(ctx, t, `SELECT count(*) FROM tax_region`),
 		"şema düşüp yeniden kurulduğu için hiçbir bölge kalmamalı")
 }
@@ -271,8 +273,9 @@ func TestCrossModuleForeignKeyYok(t *testing.T) {
 		sayi++
 	}
 	require.NoError(t, rows.Err())
-	assert.Equal(t, 3, sayi,
-		"bölge->bölge (eyalet), oran->bölge ve kural->oran bağları kurulmuş olmalı")
+	assert.Equal(t, 4, sayi,
+		"bölge->bölge (eyalet), oran->bölge, kural->oran ve üyelik->sınıf bağları "+
+			"kurulmuş olmalı")
 }
 
 // TestIkinciKokBolgeReddedilir kısmi benzersiz indeksin çalıştığını doğrular.

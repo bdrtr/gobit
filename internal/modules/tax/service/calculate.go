@@ -38,6 +38,14 @@ type TaxableItem struct {
 	// ProductTypeID kural eşleşmesi için ürün tipi kimliğidir; boş
 	// bırakılabilir.
 	ProductTypeID string
+	// TaxClassID kural eşleşmesi için ürünün VERGİ SINIFIDIR ve ÇAĞIRAN
+	// DOLDURMAZ: [Service.CalculateTax] onu kendi tablosundan çözer.
+	//
+	// Sebep, PricesIncludeTax'ınkiyle aynı: sınıflandırma bu modülün kendi
+	// verisidir, çağıranın değil. Kabloya bir alan eklemek, sepetin her
+	// isteğinde tekrar edilmesi gereken ve yanlış doldurulabilecek bir cevap
+	// yaratırdı.
+	TaxClassID string
 	// Amount vergilendirilebilir tabandır (minor unit, İNDİRİM SONRASI).
 	Amount int64
 }
@@ -218,6 +226,14 @@ func (s *Service) CalculateTax(ctx context.Context, in CalculateTaxInput) (Calcu
 
 	included := pricesIncludeTax(chain)
 
+	// Kalemlerin vergi sınıfı BURADA çözülür: tek sorgu, kalem sayısından
+	// bağımsız. Sağlayıcı çağrısından önce, çünkü sınıf bir eşleşme
+	// anahtarıdır ve sağlayıcı onu kendi tablosundan okuyamaz — harici bir
+	// sağlayıcının bu modülün tabloları yoktur.
+	if err := s.attachTaxClasses(ctx, normalized.Items); err != nil {
+		return CalculateTaxResult{}, err
+	}
+
 	raw, err := provider.Calculate(ctx, ProviderInput{
 		RegionIDs:        regionIDs,
 		CountryCode:      normalized.CountryCode,
@@ -238,6 +254,42 @@ func (s *Service) CalculateTax(ctx context.Context, in CalculateTaxInput) (Calcu
 	result.RegionFound = true
 	result.PricesIncludeTax = included
 	return result, nil
+}
+
+// attachTaxClasses kalemlere ürünlerinin vergi sınıfını yazar.
+//
+// Tek sorgu, kalem sayısından bağımsız: sepette kaç satır olursa olsun tur
+// sayısı değişmez (N+1 yok). Hiçbir kalemin ürün kimliği yoksa sorgu HİÇ
+// yapılmaz.
+//
+// Sınıfı olmayan ürün haritada YOKTUR ve kalemin sınıfı boş kalır — o kalem
+// yalnızca ürün ve tip anahtarlarıyla eşleşir, yani sınıf var olmadan önceki
+// davranışın aynısı.
+func (s *Service) attachTaxClasses(ctx context.Context, items []TaxableItem) error {
+	productIDs := make([]string, 0, len(items))
+	seen := make(map[string]bool, len(items))
+	for i := range items {
+		id := items[i].ProductID
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		productIDs = append(productIDs, id)
+	}
+	if len(productIDs) == 0 {
+		return nil
+	}
+
+	classes, err := s.repo.ClassesOfProducts(ctx, productIDs)
+	if err != nil {
+		return err
+	}
+
+	for i := range items {
+		items[i].TaxClassID = classes[items[i].ProductID]
+	}
+
+	return nil
 }
 
 // pricesIncludeTax bölge ZİNCİRİNDEN fiyatların vergi dahil yazılıp

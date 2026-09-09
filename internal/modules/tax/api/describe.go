@@ -64,6 +64,7 @@ func Describe(d *openapi.Doc) {
 	describeBolgeler(d)
 	describeOranlar(d)
 	describeKurallar(d)
+	describeSiniflar(d)
 }
 
 // describeBolgeler vergi bölgesi uçlarını anlatır.
@@ -232,4 +233,73 @@ func sorguParametresi(ad, tip string, zorunlu bool, aciklama string) openapi.Par
 // üreteci okunacak bir gövde bekleyen bir metot üretirdi.
 func bosYanit(aciklama string) map[string]any {
 	return map[string]any{"description": aciklama}
+}
+
+// describeSiniflar vergi sınıfı uçlarını anlatır.
+func describeSiniflar(d *openapi.Doc) {
+	const anlam = "Vergi sınıfı, tacirin AYNI ŞEKİLDE vergilendirdiği ürün kümesidir " +
+		"(kitap, gıda, elektronik). Bir kural sınıfa yazılır ve sınıfa konan her ürüne " +
+		"uygulanır; ürüne yazılmış kural sınıfa yazılanı YENER, sınıf da ürün tipini."
+
+	d.Describe(http.MethodPost, pathAdminClasses, openapi.Operation{
+		Summary:     "Yeni bir vergi sınıfı açar.",
+		Description: anlam + " Ad zorunludur ve CANLI sınıflar arasında tekildir.",
+		RequestBody: d.RequestBody(createTaxClassRequest{}),
+		Responses: map[string]any{
+			"201": openapi.Response("Açılan sınıf", d.Item(taxClassDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodGet, pathAdminClasses, openapi.Operation{
+		Summary: "Vergi sınıflarını ada göre listeler.",
+		Description: "Sayfalanmaz: bir dükkânın vergi sınıfları onlarla sayılır — kataloğu " +
+			"değil, tacirin kendi sözlüğüdür.",
+		Responses: map[string]any{
+			"200": openapi.Response("Vergi sınıfları", d.List(taxClassDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodGet, pathAdminClass, openapi.Operation{
+		Summary: "Vergi sınıfını kimliğiyle döner.",
+		Responses: map[string]any{
+			"200": openapi.Response("Vergi sınıfı", d.Item(taxClassDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodDelete, pathAdminClass, openapi.Operation{
+		Summary: "Ürün taşımayan vergi sınıfını yumuşak siler.",
+		Description: "Ürün taşıyan sınıf 409 ile REDDEDİLİR: silinseydi o ürünler, sınıfını " +
+			"kimsenin adlandıramadığı bir kuralla eşleşmeye devam ederdi.",
+		Responses: map[string]any{
+			"204": bosYanit("Sınıf silindi"),
+		},
+	})
+
+	d.Describe(http.MethodGet, pathAdminClassProducts, openapi.Operation{
+		Summary: "Sınıftaki ürünleri listeler.",
+		Responses: map[string]any{
+			"200": openapi.Response("Sınıfın ürünleri", d.List(taxClassMemberDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodPost, pathAdminClassProducts, openapi.Operation{
+		Summary: "Ürünü sınıfa koyar.",
+		Description: "Ürün bir BAŞKA sınıftaysa TAŞINIR, reddedilmez: yeniden sınıflandırmak " +
+			"olağan bir işlemdir ve reddetmek, operatörü önce eski üyeliği silmeye zorlayıp " +
+			"ürünün hiçbir sınıfta olmadığı bir aralık bırakırdı. product_id BAŞKA bir " +
+			"modülün kimliğidir ve bu modül varlığını doğrulamaz.",
+		RequestBody: d.RequestBody(taxClassMemberRequest{}),
+		Responses: map[string]any{
+			"201": openapi.Response("Üyelik", d.Item(taxClassMemberDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodDelete, pathAdminClassProduct, openapi.Operation{
+		Summary: "Ürünü sınıfından çıkarır.",
+		Description: "Yoldaki sınıf ile ürünün sınıfı KARŞILAŞTIRILMAZ: bir ürün en fazla bir " +
+			"sınıfta olduğu için iki cümlenin sonucu ayrılamaz.",
+		Responses: map[string]any{
+			"204": bosYanit("Ürün sınıftan çıkarıldı"),
+		},
+	})
 }

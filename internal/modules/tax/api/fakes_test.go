@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
@@ -19,6 +20,10 @@ type memRepo struct {
 	regions map[string]models.TaxRegion
 	rates   map[string]models.TaxRate
 	rules   map[string]models.TaxRateRule
+	classes map[string]models.TaxClass
+	// members ürün kimliğinden sınıf kimliğine bağdır: bir ürün EN FAZLA bir
+	// sınıfta, şemadaki kısmi benzersiz indeksin aynısı.
+	members map[string]string
 }
 
 var _ service.Repository = (*memRepo)(nil)
@@ -27,6 +32,8 @@ var _ service.Repository = (*memRepo)(nil)
 func newMemRepo() *memRepo {
 	return &memRepo{
 		regions: map[string]models.TaxRegion{},
+		classes: map[string]models.TaxClass{},
+		members: map[string]string{},
 		rates:   map[string]models.TaxRate{},
 		rules:   map[string]models.TaxRateRule{},
 	}
@@ -319,4 +326,117 @@ func compare(a, b string) int {
 	default:
 		return 0
 	}
+}
+
+// --- vergi sınıfı ------------------------------------------------------------
+
+// CreateTaxClass sınıfı yazar.
+func (m *memRepo) CreateTaxClass(
+	_ context.Context, class models.TaxClass, now time.Time,
+) (models.TaxClass, error) {
+	class.CreatedAt, class.UpdatedAt = now, now
+	m.classes[class.ID] = class
+
+	return class, nil
+}
+
+// GetTaxClass sınıfı kimliğiyle okur.
+func (m *memRepo) GetTaxClass(_ context.Context, id string) (models.TaxClass, error) {
+	class, ok := m.classes[id]
+	if !ok {
+		return models.TaxClass{}, errors.NotFound("tax_class_not_found",
+			"vergi sınıfı bulunamadı: %s", id)
+	}
+
+	return class, nil
+}
+
+// ListTaxClasses canlı sınıfları ada göre döner.
+func (m *memRepo) ListTaxClasses(_ context.Context) ([]models.TaxClass, error) {
+	out := make([]models.TaxClass, 0, len(m.classes))
+	for id := range m.classes {
+		out = append(out, m.classes[id])
+	}
+	slices.SortFunc(out, func(a, b models.TaxClass) int {
+		if c := strings.Compare(a.Name, b.Name); c != 0 {
+			return c
+		}
+
+		return strings.Compare(a.ID, b.ID)
+	})
+
+	return out, nil
+}
+
+// DeleteTaxClass ürün taşımayan sınıfı siler.
+func (m *memRepo) DeleteTaxClass(_ context.Context, id string, _ time.Time) error {
+	if _, ok := m.classes[id]; !ok {
+		return errors.NotFound("tax_class_not_found", "vergi sınıfı bulunamadı: %s", id)
+	}
+	for _, classID := range m.members {
+		if classID == id {
+			return errors.Conflict("tax_constraint_violation",
+				"%s sınıfı hâlâ ürün taşıyor", id)
+		}
+	}
+	delete(m.classes, id)
+
+	return nil
+}
+
+// SetTaxClassMember ürünü sınıfa bağlar; başka sınıftaysa TAŞIR.
+func (m *memRepo) SetTaxClassMember(
+	_ context.Context, member models.TaxClassMember, now time.Time,
+) (models.TaxClassMember, error) {
+	if _, ok := m.classes[member.TaxClassID]; !ok {
+		return models.TaxClassMember{}, errors.NotFound("tax_class_not_found",
+			"vergi sınıfı bulunamadı: %s", member.TaxClassID)
+	}
+	m.members[member.ProductID] = member.TaxClassID
+	member.CreatedAt, member.UpdatedAt = now, now
+
+	return member, nil
+}
+
+// RemoveTaxClassMember ürünü sınıfından çıkarır.
+func (m *memRepo) RemoveTaxClassMember(_ context.Context, productID string, _ time.Time) error {
+	if _, ok := m.members[productID]; !ok {
+		return errors.NotFound("tax_class_not_found",
+			"ürün hiçbir vergi sınıfında değil: %s", productID)
+	}
+	delete(m.members, productID)
+
+	return nil
+}
+
+// ListTaxClassMembers sınıfın ürünlerini döner.
+func (m *memRepo) ListTaxClassMembers(
+	_ context.Context, classID string,
+) ([]models.TaxClassMember, error) {
+	out := make([]models.TaxClassMember, 0)
+	for productID, bound := range m.members {
+		if bound == classID {
+			out = append(out, models.TaxClassMember{TaxClassID: classID, ProductID: productID})
+		}
+	}
+	slices.SortFunc(out, func(a, b models.TaxClassMember) int {
+		return strings.Compare(a.ProductID, b.ProductID)
+	})
+
+	return out, nil
+}
+
+// ClassesOfProducts ürünlerin sınıflarını tek çağrıda döner; sınıfsız ürün
+// haritada yoktur.
+func (m *memRepo) ClassesOfProducts(
+	_ context.Context, productIDs []string,
+) (map[string]string, error) {
+	out := map[string]string{}
+	for _, id := range productIDs {
+		if classID, ok := m.members[id]; ok {
+			out[id] = classID
+		}
+	}
+
+	return out, nil
 }

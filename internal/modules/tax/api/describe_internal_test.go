@@ -218,6 +218,29 @@ func anlatilanUclar() []ucBeklentisi {
 		},
 
 		{
+			metod: http.MethodPost, yol: pathAdminClasses, durum: "201",
+			istek: createTaxClassRequest{}, yanit: doluSinif(),
+		},
+		{
+			metod: http.MethodGet, yol: pathAdminClasses, durum: "200",
+			yanit: doluSinif(), liste: true,
+		},
+		{
+			metod: http.MethodGet, yol: pathAdminClass, durum: "200",
+			yanit: doluSinif(),
+		},
+		{metod: http.MethodDelete, yol: pathAdminClass, durum: "204"},
+		{
+			metod: http.MethodGet, yol: pathAdminClassProducts, durum: "200",
+			yanit: doluUyelik(), liste: true,
+		},
+		{
+			metod: http.MethodPost, yol: pathAdminClassProducts, durum: "201",
+			istek: taxClassMemberRequest{}, yanit: doluUyelik(),
+		},
+		{metod: http.MethodDelete, yol: pathAdminClassProduct, durum: "204"},
+
+		{
 			metod: http.MethodPost, yol: pathAdminRates, durum: "201",
 			istek: createTaxRateRequest{}, yanit: doluOran(),
 		},
@@ -473,4 +496,18 @@ func TestAnlatilanUclarinTumuTabloda(t *testing.T) {
 
 	assert.ElementsMatch(t, beklenen, bulunan,
 		"tabloda olmayan bir uç sınanmamış demektir")
+}
+
+// doluSinif omitempty alanları da yazılmış bir vergi sınıfı üretir.
+func doluSinif() taxClassDTO {
+	return taxClassDTO{
+		ID:       "taxcls_1",
+		Name:     "Kitap",
+		Metadata: map[string]any{"k": "v"},
+	}
+}
+
+// doluUyelik bir sınıf üyeliği üretir.
+func doluUyelik() taxClassMemberDTO {
+	return taxClassMemberDTO{TaxClassID: "taxcls_1", ProductID: "prod_1"}
 }

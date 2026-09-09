@@ -68,7 +68,8 @@ func TestNewIDBefore1970IsClampedToTheFloor(t *testing.T) {
 // TestRuleReferenceValidity verifies the defined reference kinds.
 func TestRuleReferenceValidity(t *testing.T) {
 	for _, ref := range []models.RuleReference{
-		models.ReferenceProduct, models.ReferenceProductType, models.ReferenceShippingOption,
+		models.ReferenceProduct, models.ReferenceTaxClass,
+		models.ReferenceProductType, models.ReferenceShippingOption,
 	} {
 		assert.True(t, ref.Valid(), "reference: %s", ref)
 		assert.Positive(t, ref.Specificity())
@@ -87,6 +88,10 @@ func TestRuleReferenceSpecificityOrder(t *testing.T) {
 		"a rule written for a single product is MORE SPECIFIC than one written for the type")
 	assert.Equal(t, models.ReferenceProductType.Specificity(), models.ReferenceShippingOption.Specificity(),
 		"a shipping rule does not compete with items; its degree is taken to be the product type's")
+	assert.Greater(t, models.ReferenceProduct.Specificity(), models.ReferenceTaxClass.Specificity(),
+		"what the merchant said about THIS product beats what they said about its class")
+	assert.Greater(t, models.ReferenceTaxClass.Specificity(), models.ReferenceProductType.Specificity(),
+		"a class is the tax module's own word about a set of products; a type is the catalog's")
 }
 
 // TestTaxRegionHierarchyHelpers verifies the root and province distinction.
