@@ -55,6 +55,11 @@ type fakeCarts struct {
 	// updateCalls counts the calls that reached UpdateCart. A refusal is only
 	// a refusal if the write never happened, and a status code cannot say so.
 	updateCalls int
+	// gotMergeSource and gotMergeTarget are kept apart because the merge names
+	// TWO carts and they are not interchangeable: one survives and the other is
+	// deleted, so a handler that swapped them would empty the wrong basket.
+	gotMergeSource string
+	gotMergeTarget string
 }
 
 // The fake satisfying the surface the handler expects is verified at compile time.
@@ -84,6 +89,13 @@ func (f *fakeCarts) ListCarts(_ context.Context, in service.ListCartsInput) (ser
 func (f *fakeCarts) DeleteCart(_ context.Context, cartID string) error {
 	f.gotCartID = cartID
 	return f.err
+}
+
+// MergeCart records both cart identifiers and answers with the scripted cart.
+func (f *fakeCarts) MergeCart(_ context.Context, sourceID, targetID string) (models.Cart, error) {
+	f.gotMergeSource, f.gotMergeTarget = sourceID, targetID
+
+	return f.cart, f.err
 }
 
 // AddLineItem adds a line item.
@@ -1301,4 +1313,59 @@ func TestStoreEndpointsRequireNoScope(t *testing.T) {
 	rec := doRequestAs(t, h, nil, http.MethodPost, "/store/v1/carts", `{"country_code":"TR"}`)
 
 	assert.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+}
+
+// TestTheMergeEndpointNamesWhichCartSurvives is the pair of identifiers that
+// could be swapped.
+//
+// The cart in the PATH survives and the body names the one that is emptied.
+// Reading them the other way round would delete the basket the shopper is
+// looking at, and the response — a cart, with lines — would look right.
+func TestTheMergeEndpointNamesWhichCartSurvives(t *testing.T) {
+	svc := &fakeCarts{cart: models.Cart{ID: "cart_TARGET"}}
+	h := newServer(t, svc)
+
+	rec := doRequest(t, h, http.MethodPost, "/store/v1/carts/cart_TARGET/merge",
+		`{"source_cart_id":"cart_SOURCE"}`)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "cart_SOURCE", svc.gotMergeSource, "the body names the cart that is emptied")
+	assert.Equal(t, "cart_TARGET", svc.gotMergeTarget, "the path names the cart that survives")
+
+	data := object(t, bodyMap(t, rec)["data"])
+	assert.Equal(t, "cart_TARGET", data["id"])
+}
+
+// TestARefusedMergeKeepsTheServicesAnswer verifies that the refusals travel out
+// as they came.
+func TestARefusedMergeKeepsTheServicesAnswer(t *testing.T) {
+	cases := map[string]struct {
+		err    error
+		status int
+	}{
+		"another region": {
+			err:    errors.Conflict(service.CodeRegionMismatch, "different regions"),
+			status: http.StatusConflict,
+		},
+		"another customer": {
+			err:    errors.Conflict(service.CodeCustomerMismatch, "another customer"),
+			status: http.StatusConflict,
+		},
+		"itself": {
+			err:    errors.Invalid(service.CodeInvalidInput, "a cart cannot be merged into itself"),
+			status: http.StatusUnprocessableEntity,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			svc := &fakeCarts{err: tc.err}
+			h := newServer(t, svc)
+
+			rec := doRequest(t, h, http.MethodPost, "/store/v1/carts/cart_1/merge",
+				`{"source_cart_id":"cart_2"}`)
+
+			assert.Equal(t, tc.status, rec.Code, rec.Body.String())
+		})
+	}
 }

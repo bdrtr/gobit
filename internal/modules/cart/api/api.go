@@ -257,6 +257,8 @@ type Carts interface {
 	ListCarts(ctx context.Context, in service.ListCartsInput) (service.CartPage, error)
 	// DeleteCart soft deletes the cart.
 	DeleteCart(ctx context.Context, cartID string) error
+	// MergeCart folds the source cart's lines into the target.
+	MergeCart(ctx context.Context, sourceID, targetID string) (models.Cart, error)
 
 	// UpdateLineItemQuantity writes the line item's quantity.
 	UpdateLineItemQuantity(ctx context.Context, cartID, lineID string, quantity int64) (models.LineItem, error)

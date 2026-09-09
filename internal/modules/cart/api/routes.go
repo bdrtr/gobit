@@ -73,6 +73,10 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/store/v1/carts/{id}", h.storeGetCart)
 	r.Post("/store/v1/carts/{id}", h.storeUpdateCart)
 	r.Delete("/store/v1/carts/{id}", h.storeDeleteCart)
+	// The cart in the PATH is the one that survives; the body names the one that
+	// is emptied. That way round because the surviving cart is the one the
+	// caller goes on using, and every other write addresses it the same way.
+	r.Post("/store/v1/carts/{id}/merge", h.storeMergeCart)
 
 	r.Post("/store/v1/carts/{id}/line-items", h.storeAddLineItem)
 	r.Patch("/store/v1/carts/{id}/line-items/{line_item_id}", h.storeUpdateLineItem)

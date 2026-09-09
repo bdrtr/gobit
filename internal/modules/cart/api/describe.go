@@ -96,6 +96,27 @@ func Describe(d *openapi.Doc) {
 			openapi.Response("The updated cart", d.Item(cartDTO{}))),
 	})
 
+	d.Describe(http.MethodPost, "/store/v1/carts/{id}/merge", openapi.Operation{
+		Summary: "Folds another cart's lines into this one.",
+		// What happens on a collision is the part a client cannot guess, and
+		// guessing wrong means showing the shopper a quantity that is not what
+		// they will be charged for.
+		Description: "The cart in the PATH survives and the body names the one that is " +
+			"emptied and deleted. Use it when a shopper signs in holding a guest cart " +
+			"and already has one of their own; when they do NOT, POST /store/v1/carts/{id} " +
+			"hands the guest cart over instead and nothing has to move. \n\n" +
+			"A variant on both sides ends with the SUM of the two quantities — the same " +
+			"answer adding it twice in one session gives. The line already in this cart " +
+			"keeps its title and its price; only the quantity moves. \n\n" +
+			"It is refused with 409 when the two carts are in different regions or " +
+			"currencies (a price is quoted FOR one of each), when the source belongs to " +
+			"another customer, and when either cart is completed.",
+		RequestBody: d.RequestBody(mergeCartRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("The surviving cart", d.Item(cartDTO{})),
+		},
+	})
+
 	d.Describe(http.MethodDelete, "/store/v1/carts/{id}", openapi.Operation{
 		Summary: "Deletes the cart.",
 		Responses: map[string]any{

@@ -222,6 +222,10 @@ func storeEndpoints() []endpointExpectation {
 			request: updateCartRequest{}, response: filledCart(now),
 		},
 		{
+			method: http.MethodPost, path: "/store/v1/carts/{id}/merge", status: "200",
+			request: mergeCartRequest{SourceCartID: "cart_1"}, response: filledCart(now),
+		},
+		{
 			method: http.MethodDelete, path: "/store/v1/carts/{id}", status: "204",
 		},
 		{

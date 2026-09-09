@@ -20,6 +20,19 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Iki sepet artik BIRLESEBILIYOR, ve adet TOPLANIYOR** (ADR 0107). Giris
+  yapmak bir sepeti DEVREDEBILIYORDU ve KATLAYAMIYORDU: uyenin kendi sepeti
+  varsa devir reddediliyordu ve musteri iki sepetle kaliyordu, birini bir daha
+  gormemek uzere. Cakisan adetin toplanmasi YENI bir karar degil --
+  `AddLineItem`'in karari, bir yigina uygulanmis hali: ayni varyanti iki kez
+  eklemek tek satirin adedini yukseltir (fiyat kademesi toplam adetten
+  seciliyor, tek satir tek rezervasyon demek, ayni urun iki kez iki urun gibi
+  okunuyor), ve ayni iki ekleme IKI OTURUMDA yapildi diye baska cevap
+  vermemeli. Kilit ROLE gore degil KIMLIGE gore aliniyor: ters yonde kosan iki
+  birlestirme yoksa her biri otekinin bekledigi satiri tutar ve PostgreSQL
+  birini oldurerek cozer -- entegrasyon testi bu mutasyonu gerceklestirdiginde
+  tam olarak oyle oldu.
+
 - **Bir talep artik NE OLDUGUNU GOSTEREBILIYOR** (`order_claim_evidence`,
   ADR 0106). Talep bir gerekce ve bir not tasiyordu, yani "kutu ezilmis geldi"
   bir CUMLEYDI ve hicbir zaman bir fotograf degildi. Baglama yuklemenin

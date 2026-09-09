@@ -242,6 +242,42 @@ func (h *Handler) storeUpdateCart(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toCartDTO(cart)})
 }
 
+// mergeCartRequest is the body of POST /store/v1/carts/{id}/merge.
+type mergeCartRequest struct {
+	// SourceCartID is the cart whose lines are folded in; it is REQUIRED.
+	SourceCartID string `json:"source_cart_id"`
+}
+
+// storeMergeCart folds another cart's lines into this one.
+//
+// The cart in the PATH is the one that survives, and the body names the one that
+// is emptied. That way round because the surviving cart is the one the caller
+// goes on using, and every other write on it addresses it the same way.
+//
+// # What proves the caller may do this
+//
+// Holding both identifiers, which is what proves every other write on a cart.
+// A cart id is opaque and unguessable, and a caller who has one can already read
+// its lines, change them and delete it; folding it into another adds no reach.
+// What the SERVICE refuses is the case that would add some: a source cart owned
+// by a customer other than the target's (service.CodeCustomerMismatch).
+func (h *Handler) storeMergeCart(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var body mergeCartRequest
+	if err := decodeBody(w, r, &body); err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	cart, err := h.svc.MergeCart(ctx, body.SourceCartID, cartID(r))
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toCartDTO(cart)})
+}
+
 // storeDeleteCart soft deletes the cart.
 func (h *Handler) storeDeleteCart(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
