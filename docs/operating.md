@@ -191,6 +191,7 @@ make test              # unit tests (race + coverage)
 make test-integration  # integration + end-to-end tests against a real Postgres
 make smoke             # starts the real binary, exercises process behaviour
 make load-test         # baseline load test (tuned with REQUESTS=… CONCURRENCY=…)
+make fuzz              # fuzz targets, one at a time (tuned with FUZZTIME=…)
 make lint              # golangci-lint
 make vuln              # govulncheck over the root and both example modules
 make fmt               # gofmt -s + go mod tidy

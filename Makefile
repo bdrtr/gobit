@@ -37,7 +37,7 @@ SQLC             := $(BIN_DIR)/sqlc
 DOTENV = set -a; [ -f .env ] && { __cagiran_ortam=$$(export -p); . ./.env; eval "$$__cagiran_ortam"; }; set +a;
 
 .DEFAULT_GOAL := help
-.PHONY: help run build test test-integration smoke seed load-test openapi-schema openapi-client openapi-validate lint fmt tidy gen up up-tracing down logs psql redis-cli migrate-status migrate-up migrate-down tools clean rename-module
+.PHONY: help run build test test-integration smoke seed load-test fuzz openapi-schema openapi-client openapi-validate lint fmt tidy gen up up-tracing down logs psql redis-cli migrate-status migrate-up migrate-down tools clean rename-module
 
 help: ## Bu yardım metnini göster
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -87,6 +87,33 @@ smoke: ## Smoke testleri: gerçek ikiliyi açıp süreç davranışını sınar 
 # BENCH ile tek bir benchmark seçilebilir: make bench BENCH=StorefrontQuery
 bench: ## Go tarafı benchmark'ları çalıştır (tahsisat sayısıyla birlikte)
 	go test -run '^$$' -bench '$(or $(BENCH),.)' -benchmem ./...
+
+# Fuzz hedeflerinin TOHUMLARI olağan test şeridinde koşar; burası üretilen
+# girdilerin şerididir ve ELLE koşulur. CI'da bir iş değil: bir fuzz koşusunun
+# değeri süreyle artar ve her push'ta 30 saniye koşmak, tohumların zaten
+# yaptığı işi ikinci kez yapmaktır.
+#
+# `-fuzz` deseni ÇAPALIDIR ve gerekçesi ÖLÇÜLDÜ: `go test` onu çapasız bir
+# regexp gibi okur ve birden çok hedefe uyunca fuzz'lamayı REDDEDER — aynı
+# pakete `FuzzMulDivModAgain` eklenip `-fuzz FuzzMulDivMod` denendiğinde
+# "will not fuzz, -fuzz matches more than one fuzz test" deyip 1 ile çıkıyor.
+# Yani çapasız desende, önek paylaşan ikinci bir hedefin eklendiği gün bu
+# döngü orada durur ve KALAN hedeflerin hiçbiri koşmaz.
+#
+# FUZZTIME ile süre ayarlanır: make fuzz FUZZTIME=5m
+FUZZTIME ?= 30s
+fuzz: ## Fuzz hedeflerini sırayla çalıştır (FUZZTIME ile ayarlanır)
+	@found=0; \
+	for pkg in $$(go list ./...); do \
+		for target in $$(go test -list '^Fuzz' $$pkg 2>/dev/null | grep '^Fuzz'); do \
+			echo "  $$pkg: $$target ($(FUZZTIME))"; \
+			go test -run '^$$' -fuzz "^$$target\$$" -fuzztime=$(FUZZTIME) $$pkg || exit 1; \
+			found=$$((found+1)); \
+		done; \
+	done; \
+	if [ "$$found" -eq 0 ]; then \
+		echo "fuzz: hiçbir hedef bulunamadı, en az bir tane bekleniyordu" >&2; exit 1; \
+	fi
 
 # Ölçüm düzeneği artık DEPODAN kurulur.
 #

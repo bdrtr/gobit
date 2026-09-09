@@ -83,20 +83,22 @@ const (
 	// silently add an unaudited place to hide a dead selector.
 	scriptsDirName = "scripts"
 
-	// runFlag and benchFlag are the two flags this gate reads.
+	// runFlag, benchFlag and fuzzFlag are the three flags this gate reads.
 	//
-	// benchFlag is compared for EQUALITY or with a trailing "=", never as a
-	// prefix: -benchmem and -benchtime both start with "-bench" and neither
-	// selects a benchmark. Reading them as -bench would turn every bare
-	// "-run '^$' -benchmem" into an accepted command that runs nothing.
+	// benchFlag and fuzzFlag are compared for EQUALITY or with a trailing "=",
+	// never as a prefix: -benchmem, -benchtime and -fuzztime all start with one
+	// of them and none of them selects anything to run. Reading them as the
+	// selector would turn every bare "-run '^$' -benchmem" into an accepted
+	// command that runs nothing.
 	runFlag   = "-run"
 	benchFlag = "-bench"
+	fuzzFlag  = "-fuzz"
 
 	// emptyRunPattern is the idiomatic spelling of "select no tests".
 	//
 	// It is the ONE pattern allowed to match nothing, and only next to
-	// benchFlag — see [TestEveryRunPatternInABuildFileNamesARealTest] for the
-	// argument.
+	// benchFlag or fuzzFlag — see [TestEveryRunPatternInABuildFileNamesARealTest]
+	// for the argument.
 	emptyRunPattern = "^$"
 
 	// testEntryPointFloor is the smallest number of test entry points the
@@ -175,6 +177,8 @@ type runSelector struct {
 	pattern string
 	// hasBench reports whether the same command also selects benchmarks.
 	hasBench bool
+	// hasFuzz reports whether the same command also selects a fuzz target.
+	hasFuzz bool
 	// unresolved marks a pattern that still holds a make or shell expansion.
 	unresolved bool
 }
@@ -357,12 +361,13 @@ func runSelectorsIn(file buildFile) []runSelector {
 	for _, line := range commandLines(file.content) {
 		words := shellWords(line.text)
 
-		hasBench := false
+		hasBench, hasFuzz := false, false
 		for _, word := range words {
 			if word == benchFlag || strings.HasPrefix(word, benchFlag+"=") {
 				hasBench = true
-
-				break
+			}
+			if word == fuzzFlag || strings.HasPrefix(word, fuzzFlag+"=") {
+				hasFuzz = true
 			}
 		}
 
@@ -394,6 +399,7 @@ func runSelectorsIn(file buildFile) []runSelector {
 				raw:        raw,
 				pattern:    pattern,
 				hasBench:   hasBench,
+				hasFuzz:    hasFuzz,
 				unresolved: carriesShellVariable(pattern),
 			})
 		}
@@ -598,12 +604,12 @@ func TestEveryRunPatternInABuildFileNamesARealTest(t *testing.T) {
 		case selector.pattern == "":
 			violations = append(violations, selector.String()+
 				"\n      the flag carries no pattern at all")
-		case selector.pattern == emptyRunPattern && selector.hasBench:
+		case selector.pattern == emptyRunPattern && (selector.hasBench || selector.hasFuzz):
 			continue
 		case selector.pattern == emptyRunPattern:
 			violations = append(violations, selector.String()+
-				"\n      selects no tests and the command carries no "+benchFlag+
-				", so it runs nothing at all")
+				"\n      selects no tests and the command carries neither "+benchFlag+
+				" nor "+fuzzFlag+", so it runs nothing at all")
 		default:
 			matched, err := runPatternSelects(selector.pattern, names)
 			require.NoError(t, err,
@@ -659,6 +665,12 @@ equals:
 
 variable:
 	go test -run '$(SELECT)' ./...
+
+fuzz:
+	go test -run '^$$' -fuzz '^FuzzReal$$' -fuzztime=30s ./...
+
+fuzztime-only:
+	go test -run '^$$' -fuzztime=30s ./...
 `
 
 // TestTheRunPatternScannerIsNotBlind pins the floor under the gate.
@@ -681,21 +693,25 @@ func TestTheRunPatternScannerIsNotBlind(t *testing.T) {
 		content:     runScannerExample,
 		makeEscapes: true,
 	}) {
-		extracted = append(extracted, fmt.Sprintf("%d|%s|bench=%t|variable=%t",
-			selector.line, selector.pattern, selector.hasBench, selector.unresolved))
+		extracted = append(extracted, fmt.Sprintf("%d|%s|bench=%t|fuzz=%t|variable=%t",
+			selector.line, selector.pattern, selector.hasBench, selector.hasFuzz, selector.unresolved))
 	}
 	require.Equal(t, []string{
-		"3|^$|bench=true|variable=false",
-		"6|^$|bench=false|variable=false",
-		"9|TestRealName|bench=false|variable=false",
-		"13|TestRealName/a_subtest|bench=false|variable=false",
-		"16|$(SELECT)|bench=false|variable=true",
+		"3|^$|bench=true|fuzz=false|variable=false",
+		"6|^$|bench=false|fuzz=false|variable=false",
+		"9|TestRealName|bench=false|fuzz=false|variable=false",
+		"13|TestRealName/a_subtest|bench=false|fuzz=false|variable=false",
+		"16|$(SELECT)|bench=false|fuzz=false|variable=true",
+		"19|^$|bench=false|fuzz=true|variable=false",
+		"22|^$|bench=false|fuzz=false|variable=false",
 	}, extracted,
 		"the scanner read the example differently than expected.\nLine 3 is the make \"$$\" "+
 			"escape next to a real -bench; line 6 is the same escape with only -benchmem, "+
 			"which is NOT -bench; line 9 is the backslash continuation, whose command "+
 			"starts on the line the number points at; line 13 is the \"-run=\" spelling "+
-			"with a subtest element; line 16 is a pattern make would expand.")
+			"with a subtest element; line 16 is a pattern make would expand; line 19 is "+
+			"the same empty selector next to a real -fuzz; line 22 is -fuzztime alone, "+
+			"which is NOT -fuzz.")
 
 	// 2. Matching: the names are in-memory, so what is being tested is the
 	// matcher and not the repository.
