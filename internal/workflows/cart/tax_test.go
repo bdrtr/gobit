@@ -478,3 +478,51 @@ func TestACatalogFAILUREStopsTheComputation(t *testing.T) {
 	assert.Equal(t, CodeCatalogReadFailed, errors.CodeOf(err))
 	assert.Empty(t, h.taxes.requests, "no tax may be computed from a catalog that could not be read")
 }
+
+// TestTheLineCarriesItsProductTypeToTax is the hop a merchant's rule depends on.
+//
+// The tax module has matched a rate rule on the product TYPE since it was
+// written, and the field was empty on every request ever made because the
+// catalog could not name one. ADR 0101 gave the catalog types; this is the line
+// that carries one, and without it a rule saying "books are taxed at 1%" matches
+// nothing however well the merchant filled the catalog.
+func TestTheLineCarriesItsProductTypeToTax(t *testing.T) {
+	h := newModuleHarness(t)
+	installProductCatalog(h, map[string]productFacts{
+		testProductA: {Discountable: true, TypeID: "ptype_book"},
+	})
+	serveSnapshot(h.carts, snapshotOf(1,
+		[]SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 2}}, nil))
+
+	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	require.Len(t, h.taxes.requests, 1)
+	require.Len(t, h.taxes.requests[0].Items, 1)
+	assert.Equal(t, "ptype_book", h.taxes.requests[0].Items[0].ProductTypeID,
+		"the line has to carry its product's TYPE, or a rule written for the type "+
+			"matches nothing")
+}
+
+// TestALineWithoutATypeStillPrices keeps every shop that names no types priced
+// exactly as it was.
+//
+// An empty reference produces no match key on the tax side, so the line falls to
+// the rate it fell to before types existed.
+func TestALineWithoutATypeStillPrices(t *testing.T) {
+	h := newModuleHarness(t)
+	installProductCatalog(h, map[string]productFacts{
+		testProductA: {Discountable: true},
+	})
+	serveSnapshot(h.carts, snapshotOf(1,
+		[]SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 2}}, nil))
+
+	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	require.Len(t, h.taxes.requests, 1)
+	require.Len(t, h.taxes.requests[0].Items, 1)
+	assert.Empty(t, h.taxes.requests[0].Items[0].ProductTypeID,
+		"a product with no type sends an empty reference rather than a guess")
+	assert.Positive(t, totals.TaxTotal, "and the line is still taxed")
+}

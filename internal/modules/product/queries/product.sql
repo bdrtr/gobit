@@ -13,11 +13,11 @@
 INSERT INTO product (
     id, handle, title, subtitle, description, thumbnail, status,
     is_giftcard, discountable, weight, length, height, width,
-    material, origin_country, collection_id, metadata
+    material, origin_country, collection_id, type_id, metadata
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7,
     $8, $9, $10, $11, $12, $13,
-    $14, $15, $16, $17
+    $14, $15, $16, $17, $18
 )
 RETURNING *;
 
@@ -79,6 +79,7 @@ UPDATE product SET
     material       = COALESCE(sqlc.narg('material')::text, material),
     origin_country = COALESCE(sqlc.narg('origin_country')::text, origin_country),
     collection_id  = COALESCE(sqlc.narg('collection_id')::text, collection_id),
+    type_id        = COALESCE(sqlc.narg('type_id')::text, type_id),
     metadata       = COALESCE(sqlc.narg('metadata')::jsonb, metadata),
     updated_at     = now()
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL

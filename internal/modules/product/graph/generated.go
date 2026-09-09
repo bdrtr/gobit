@@ -95,6 +95,7 @@ type ComplexityRoot struct {
 		Tags          func(childComplexity int) int
 		Thumbnail     func(childComplexity int) int
 		Title         func(childComplexity int) int
+		TypeID        func(childComplexity int) int
 		UpdatedAt     func(childComplexity int) int
 		Variants      func(childComplexity int) int
 		Weight        func(childComplexity int) int
@@ -434,6 +435,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Product.Title(childComplexity), true
+	case "Product.typeId":
+		if e.ComplexityRoot.Product.TypeID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Product.TypeID(childComplexity), true
 	case "Product.updatedAt":
 		if e.ComplexityRoot.Product.UpdatedAt == nil {
 			break
@@ -825,6 +832,8 @@ func (ec *executionContext) childFields_Product(ctx context.Context, field graph
 		return ec.fieldContext_Product_originCountry(ctx, field)
 	case "collectionId":
 		return ec.fieldContext_Product_collectionId(ctx, field)
+	case "typeId":
+		return ec.fieldContext_Product_typeId(ctx, field)
 	case "metadata":
 		return ec.fieldContext_Product_metadata(ctx, field)
 	case "createdAt":
@@ -2101,6 +2110,29 @@ func (ec *executionContext) _Product_collectionId(ctx context.Context, field gra
 	)
 }
 func (ec *executionContext) fieldContext_Product_collectionId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Product", field, false, false, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _Product_typeId(ctx context.Context, field graphql.CollectedField, obj *service.StoreProduct) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Product_typeId(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TypeID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOID2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Product_typeId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("Product", field, false, false, errors.New("field of type ID does not have child fields"))
 }
 
@@ -4555,6 +4587,11 @@ func (ec *executionContext) _Product(ctx context.Context, sel ast.SelectionSet, 
 			}
 		case "collectionId":
 			out.Values[i] = ec._Product_collectionId(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "typeId":
+			out.Values[i] = ec._Product_typeId(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}

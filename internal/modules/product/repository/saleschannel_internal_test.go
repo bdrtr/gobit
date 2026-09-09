@@ -309,7 +309,7 @@ func TestTheBuiltStatementStillReadsAsSQL(t *testing.T) {
 	assert.Equal(t, `SELECT id, handle, title, subtitle, description, thumbnail,
 	status, is_giftcard, discountable, weight, length, height, width,
 	material, origin_country, collection_id, metadata,
-	created_at, updated_at, deleted_at FROM product
+	created_at, updated_at, deleted_at, type_id FROM product
 WHERE deleted_at IS NULL
   AND EXISTS (
     SELECT 1 FROM product_category_map

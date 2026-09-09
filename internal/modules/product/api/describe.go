@@ -728,6 +728,40 @@ func describeAdminTaxonomy(d *openapi.Doc) {
 		},
 	})
 
+	d.Describe(http.MethodPost, "/admin/v1/product-types", openapi.Operation{
+		Summary: "Creates a new product type.",
+		Description: "A type is the SHAPE of a product — \"book\", \"t-shirt\", \"download\" — " +
+			"and a product carries exactly one, which is why it is a field on the product " +
+			"rather than a list like categories and tags. " +
+			"\n\n" +
+			"IT IS WHAT A TAX RATE RULE MATCHES ON. A merchant who wants \"books are taxed " +
+			"at 1%\" writes one rule against the type instead of one rule per book; without " +
+			"a type the only way to say it was to name every product.",
+		RequestBody: d.RequestBody(createProductTypeRequest{}),
+		Responses: map[string]any{
+			"201": openapi.Response("The created type", d.Item(models.ProductType{})),
+		},
+	})
+
+	d.Describe(http.MethodGet, "/admin/v1/product-types", openapi.Operation{
+		Summary:    "Lists the product types with pagination.",
+		Parameters: pagingParameters(),
+		Responses: map[string]any{
+			"200": openapi.Response("A page of types", d.List(models.ProductType{})),
+		},
+	})
+
+	d.Describe(http.MethodDelete, "/admin/v1/product-types/{id}", openapi.Operation{
+		Summary: "Deletes the type and releases its products.",
+		Description: "The products carrying the type are released in the SAME transaction. " +
+			"That matters more than it does for a collection: a tax rate rule matches on " +
+			"the type, so a product left pointing at a deleted type would keep being taxed " +
+			"by a rule the merchant believes they removed.",
+		Responses: map[string]any{
+			"200": openapi.Response("Deletion record", d.Item(deleted{})),
+		},
+	})
+
 	d.Describe(http.MethodPost, "/admin/v1/product-categories", openapi.Operation{
 		Summary:     "Creates a new category.",
 		RequestBody: d.RequestBody(createCategoryRequest{}),

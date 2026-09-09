@@ -240,6 +240,15 @@ type Product {
   material: String
   originCountry: String
   collectionId: ID
+  """
+  The product's TYPE — "book", "t-shirt", "download".
+
+  It is published for the same reason collectionId is: it is a catalog fact a
+  storefront displays. There is no typeId FILTER on the listing yet; a filter
+  needs an index and a decision of its own, and reading a fact is not the same
+  request as narrowing by it.
+  """
+  typeId: ID
   metadata: JSON
   createdAt: Time!
   updatedAt: Time!

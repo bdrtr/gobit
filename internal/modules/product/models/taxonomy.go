@@ -33,6 +33,22 @@ type Collection struct {
 	DeletedAt *time.Time     `json:"deleted_at,omitempty"`
 }
 
+// ProductType is the SHAPE of a product — "book", "t-shirt", "download".
+//
+// It is a column on the product rather than a map table because a product has
+// exactly one, which is also why the tax module can match a rate rule on it:
+// a rule needs a single value to compare, and a product in three categories has
+// no single category.
+type ProductType struct {
+	ID        string         `json:"id"`
+	Value     string         `json:"value"`
+	Handle    string         `json:"handle"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt *time.Time     `json:"deleted_at,omitempty"`
+}
+
 // Tag is the free-form label attached to a product.
 type Tag struct {
 	ID        string     `json:"id"`

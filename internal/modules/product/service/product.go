@@ -45,12 +45,15 @@ type CreateProductInput struct {
 	Material      *string
 	OriginCountry *string
 	CollectionID  *string
-	Metadata      map[string]any
-	Options       []CreateOptionInput
-	Variants      []CreateVariantInput
-	Images        []CreateImageInput
-	TagIDs        []string
-	CategoryIDs   []string
+	// TypeID is the product's shape; a tax rate rule can be written against it,
+	// so it decides what the product is CHARGED as well as how it is filed.
+	TypeID      *string
+	Metadata    map[string]any
+	Options     []CreateOptionInput
+	Variants    []CreateVariantInput
+	Images      []CreateImageInput
+	TagIDs      []string
+	CategoryIDs []string
 }
 
 // CreateImageInput is the input of an image to be added to a product.
@@ -89,9 +92,11 @@ type UpdateProductInput struct {
 	Material      *string
 	OriginCountry *string
 	CollectionID  *string
-	Metadata      map[string]any
-	TagIDs        []string
-	CategoryIDs   []string
+	// TypeID is the product's shape; see [CreateProductInput.TypeID].
+	TypeID      *string
+	Metadata    map[string]any
+	TagIDs      []string
+	CategoryIDs []string
 }
 
 // ProductListing names this listing inside a cursor.
@@ -659,6 +664,7 @@ func (s *Service) buildProduct(in CreateProductInput) (models.Product, error) {
 		Material:      material,
 		OriginCountry: originCountry,
 		CollectionID:  in.CollectionID,
+		TypeID:        in.TypeID,
 		Metadata:      in.Metadata,
 	}, nil
 }
@@ -674,6 +680,7 @@ func buildProductPatch(in UpdateProductInput) (repository.ProductPatch, error) {
 		Material:      in.Material,
 		OriginCountry: in.OriginCountry,
 		CollectionID:  in.CollectionID,
+		TypeID:        in.TypeID,
 		Metadata:      in.Metadata,
 	}
 

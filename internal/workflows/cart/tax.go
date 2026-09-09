@@ -85,12 +85,18 @@ type taxRequestItem struct {
 	// invisible or deleted variant — and such a line falls through to the
 	// region's default rate rather than failing the checkout.
 	ProductID string `json:"product_id"`
-	// ProductTypeID is for rule matching and is ALWAYS EMPTY.
+	// ProductTypeID is the product's TYPE, and a tax rate rule matches on it: it
+	// is how a merchant says "books are taxed at 1%" without naming every book.
 	//
-	// Not an oversight and not deferred: gobit has no product type. The field
-	// stays in the schema because the tax module accepts it and a rule written
-	// against a type is a thing that module can express; the day the catalog
-	// grows types, this is where the value goes and nothing else changes.
+	// It was ALWAYS EMPTY until 2026-09-09, and this field's own godoc said so
+	// and said where the value would come from — "the day the catalog grows
+	// types, this is where the value goes and nothing else changes". That day is
+	// ADR 0101 and the sentence held: the catalog grew `product_type`, the type
+	// is read here, and nothing else about this request changed.
+	//
+	// It is empty for a product with no type, and an empty reference produces no
+	// match key on the tax side — so a shop that names no types is priced today
+	// exactly as it was before.
 	ProductTypeID string `json:"product_type_id"`
 	// Amount is the line's taxable base AFTER DISCOUNT.
 	Amount int64 `json:"amount"`
@@ -218,6 +224,7 @@ func (w *Workflows) applyTaxes(
 	snap Snapshot,
 	shippingTotal int64,
 	lines []LineTotals,
+	facts map[string]productFacts,
 ) (string, error) {
 	if w.taxes == nil {
 		return TaxSourceRegion, w.applyRegionTax(ctx, snap, lines)
@@ -236,7 +243,7 @@ func (w *Workflows) applyTaxes(
 		)
 		return TaxSourceRegion, w.applyRegionTax(ctx, snap, lines)
 	}
-	return w.applyModuleTax(ctx, snap, country, shippingTotal, lines)
+	return w.applyModuleTax(ctx, snap, country, shippingTotal, lines, facts)
 }
 
 // applyRegionTax computes the tax with the region's flat rate (the Phase 5 path).
@@ -285,6 +292,7 @@ func (w *Workflows) applyModuleTax(
 	countryCode string,
 	shippingTotal int64,
 	lines []LineTotals,
+	facts map[string]productFacts,
 ) (string, error) {
 	// The PRODUCT of each line is resolved before the request is built. A cart
 	// line knows its variant and every tax rule is written about a product, so
@@ -305,12 +313,18 @@ func (w *Workflows) applyModuleTax(
 		return "", err
 	}
 
+	// The TYPE comes from the facts the round already read, keyed by VARIANT.
+	// It is not read again here: the same product row carries the discount
+	// engine's two flags and this type, and the totals path reads it once
+	// ([Workflows.computeTotals]).
 	items := make([]taxRequestItem, 0, len(lines))
 	for i := range lines {
+		variantID := lineVariant[lines[i].LineItemID]
 		items = append(items, taxRequestItem{
-			ID:        lines[i].LineItemID,
-			ProductID: productIDs[lineVariant[lines[i].LineItemID]],
-			Amount:    lines[i].Subtotal - lines[i].DiscountTotal,
+			ID:            lines[i].LineItemID,
+			ProductID:     productIDs[variantID],
+			ProductTypeID: facts[variantID].TypeID,
+			Amount:        lines[i].Subtotal - lines[i].DiscountTotal,
 		})
 	}
 

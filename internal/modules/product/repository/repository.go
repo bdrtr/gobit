@@ -165,6 +165,17 @@ type Store interface {
 	// transaction as SoftDeleteCollection.
 	ClearCollectionProducts(ctx context.Context, collectionID string) (int, error)
 
+	CreateProductType(ctx context.Context, t models.ProductType) (models.ProductType, error)
+	GetProductType(ctx context.Context, id string) (models.ProductType, error)
+	ListProductTypes(ctx context.Context, limit, offset int) ([]models.ProductType, error)
+	CountProductTypes(ctx context.Context) (int, error)
+	SoftDeleteProductType(ctx context.Context, id string) error
+	// ClearProductTypeProducts nulls the type_id of the products bound to the
+	// type. It runs in the SAME transaction as SoftDeleteProductType, for the
+	// reason ClearCollectionProducts gives — and here a stale pointer would
+	// change what a shop CHARGES, because a tax rate rule matches on the type.
+	ClearProductTypeProducts(ctx context.Context, typeID string) (int, error)
+
 	CreateCategory(ctx context.Context, c models.Category) (models.Category, error)
 	UpdateCategory(ctx context.Context, id string, in UpdateCategory) (models.Category, error)
 	GetCategory(ctx context.Context, id string) (models.Category, error)

@@ -9,7 +9,7 @@ It costs one column and a rule about which records get one.
 
 ## Context
 
-Twenty-six tables carry a `metadata jsonb` column and pricing had none. The
+Twenty-seven tables carried a `metadata jsonb` column and pricing had none. The
 absence was never decided: the module was written without one and nothing since
 asked why, while product, customer, order, cart, promotion, sales channel, tax
 region and shipping option all took it.

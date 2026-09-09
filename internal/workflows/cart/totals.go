@@ -255,10 +255,35 @@ func (w *Workflows) computeTotals(ctx context.Context, snap Snapshot) (Totals, e
 	if err != nil {
 		return Totals{}, err
 	}
-	if err := w.applyDiscounts(ctx, snap, lines); err != nil {
+	// The products' facts are read ONCE for the round and given to both steps.
+	//
+	// Two consumers want the same product row: the discount engine wants
+	// is_giftcard and discountable, and the tax module wants the TYPE a rate
+	// rule matches on. Reading it twice on a path that runs on every cart update
+	// is the N+1 this package's tests were written to keep out, and it would not
+	// have failed anything — only cost.
+	//
+	// A read FAILURE is not fatal. The rationale is [Workflows.lineProductFacts]'s
+	// and it holds for both consumers: a rule naming an attribute nobody could
+	// read does not match, and a shopper who cannot check out is worse than a
+	// rule that misses.
+	// And it is not read at all when NOBODY wants it: an installation with
+	// neither module discounts nothing and asks no tax module for a rate, so the
+	// read would be a cost with no consumer (ADR 0009).
+	var facts map[string]productFacts
+	if w.discounts != nil || w.taxes != nil {
+		read, factsErr := w.lineProductFacts(ctx, snap)
+		if factsErr != nil {
+			w.log.WarnContext(ctx, "the products' facts could not be read; pricing without them",
+				"error", factsErr, "cart_id", snap.ID, "lines", len(lines))
+		}
+		facts = read
+	}
+
+	if err := w.applyDiscounts(ctx, snap, lines, facts); err != nil {
 		return Totals{}, err
 	}
-	taxSource, err := w.applyTaxes(ctx, snap, shippingTotal, lines)
+	taxSource, err := w.applyTaxes(ctx, snap, shippingTotal, lines, facts)
 	if err != nil {
 		return Totals{}, err
 	}

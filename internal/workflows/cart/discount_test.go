@@ -351,7 +351,7 @@ type productCatalog struct {
 
 	// flags is a product -> flags mapping; a product missing from it is a
 	// product the catalog does not answer about.
-	flags map[string]productFlags
+	flags map[string]productFacts
 	// records, when given, produces the answer entirely; it is there for the
 	// out-of-contract record scenarios.
 	records func(ids []string) []query.Record
@@ -389,6 +389,10 @@ func (c *productCatalog) Graph(ctx context.Context, spec query.GraphSpec) ([]que
 			query.IDField:    id,
 			attrIsGiftcard:   flag.IsGiftcard,
 			attrDiscountable: flag.Discountable,
+			// The TYPE is answered too, because the catalog publishes it on the
+			// same record: a stub that returned only the two flags would let the
+			// tax hop be deleted without a test noticing.
+			attrTypeID: flag.TypeID,
 		})
 	}
 	return out, nil
@@ -396,7 +400,7 @@ func (c *productCatalog) Graph(ctx context.Context, spec query.GraphSpec) ([]que
 
 // installProductCatalog puts a product-answering catalog in front of the
 // harness's own.
-func installProductCatalog(h *harness, flags map[string]productFlags) *productCatalog {
+func installProductCatalog(h *harness, flags map[string]productFacts) *productCatalog {
 	catalog := &productCatalog{stubCatalog: h.catalog, flags: flags}
 	h.wf.catalog = catalog
 	h.catalog = catalog.stubCatalog
@@ -409,8 +413,8 @@ func installProductCatalog(h *harness, flags map[string]productFlags) *productCa
 // Those defaults are pinned in the product module by
 // TestCreateProductDefaultsToDiscountableAndNotAGiftcard. Repeating them here
 // keeps the cart's tests speaking about the same catalog a real shop has.
-func defaultProductFlags() map[string]productFlags {
-	return map[string]productFlags{
+func defaultProductFlags() map[string]productFacts {
+	return map[string]productFacts{
 		testProductA: {Discountable: true},
 		testProductB: {Discountable: true},
 	}
@@ -434,7 +438,7 @@ func attributesByLine(req discountRequest) map[string]map[string]string {
 // one.
 func TestEachLineCarriesItsOwnProductFlags(t *testing.T) {
 	h := newModuleHarness(t)
-	installProductCatalog(h, map[string]productFlags{
+	installProductCatalog(h, map[string]productFacts{
 		testProductA: {IsGiftcard: false, Discountable: true},
 		testProductB: {IsGiftcard: true, Discountable: false},
 	})
@@ -468,7 +472,7 @@ func TestEachLineCarriesItsOwnProductFlags(t *testing.T) {
 // answering a question it could not read.
 func TestAProductTheCatalogDoesNotAnswerLeavesTheLineWithoutFlags(t *testing.T) {
 	h := newModuleHarness(t)
-	installProductCatalog(h, map[string]productFlags{
+	installProductCatalog(h, map[string]productFacts{
 		testProductA: {Discountable: true},
 	})
 	serveSnapshot(h.carts, twoLineCart(1))
@@ -540,14 +544,36 @@ func TestAFlagOfTheWrongTypeIsNotGuessed(t *testing.T) {
 		"a record that cannot be read carries NO flag, not a guessed one")
 }
 
-// TestTheFlagsAreNotReadWithoutAPromotionModule keeps the read off the carts
-// that would never look at it.
+// TestTheFactsAreNotReadWithoutAConsumer keeps the read off the carts that would
+// never look at it.
 //
-// An installation without the promotion module computes no discount at all, so
-// paying for a catalog read on every cart update would be a cost with no
-// consumer — the very shape ADR 0009 named as this repository's second class of
-// mistake.
-func TestTheFlagsAreNotReadWithoutAPromotionModule(t *testing.T) {
+// An installation with NEITHER module computes no discount and asks no tax
+// module for a rate, so paying for a catalog read on every cart update would be
+// a cost with no consumer — the very shape ADR 0009 named as this repository's
+// second class of mistake.
+//
+// The read gained a SECOND consumer in ADR 0101: the product's TYPE, which a tax
+// rate rule matches on. The question this test asks changed with it — no longer
+// "is the promotion module installed" but "does anybody want the product row" —
+// and [TestTheFactsAreReadForTheTaxTypeAlone] is the other half.
+func TestTheFactsAreNotReadWithoutAConsumer(t *testing.T) {
+	h := newHarnessWith(t, nil, nil)
+	catalog := installProductCatalog(h, defaultProductFlags())
+	serveSnapshot(h.carts, twoLineCart(1))
+
+	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	assert.Empty(t, catalog.asked,
+		"with neither module installed the products are not read at all")
+}
+
+// TestTheFactsAreReadForTheTaxTypeAlone is the second consumer, on its own.
+//
+// A shop with a tax module and no promotion module still needs the product's
+// TYPE: a merchant who wrote "books are taxed at 1%" gets that rate only if the
+// type reaches the tax request.
+func TestTheFactsAreReadForTheTaxTypeAlone(t *testing.T) {
 	h := newHarnessWith(t, nil, newStubTaxes())
 	catalog := installProductCatalog(h, defaultProductFlags())
 	serveSnapshot(h.carts, twoLineCart(1))
@@ -555,7 +581,8 @@ func TestTheFlagsAreNotReadWithoutAPromotionModule(t *testing.T) {
 	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.NoError(t, err)
 
-	assert.Empty(t, catalog.asked, "with no promotion module the products are not read for their flags")
+	assert.Len(t, catalog.asked, 1,
+		"the tax module's rate rules match on the type, so the row is read once")
 }
 
 // TestTwoLinesOfOneProductCostOneFlagRead keeps an N+1 off the totals path.
@@ -568,7 +595,7 @@ func TestTwoLinesOfOneProductCostOneFlagRead(t *testing.T) {
 		testVariantA: testProductA,
 		testVariantB: testProductA,
 	}
-	catalog := installProductCatalog(h, map[string]productFlags{testProductA: {IsGiftcard: true}})
+	catalog := installProductCatalog(h, map[string]productFacts{testProductA: {IsGiftcard: true}})
 	serveSnapshot(h.carts, twoLineCart(1))
 
 	_, err := h.wf.CalculateTotals(context.Background(), testCartID)

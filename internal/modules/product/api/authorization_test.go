@@ -565,3 +565,35 @@ func TestAdminRequestWithoutPrincipalReturns401(t *testing.T) {
 		"RFC 9110: a 401 has to report which scheme is expected")
 	assert.Zero(t, svc.callCount)
 }
+
+// CreateProductType counts the call.
+func (f *scopeCatalog) CreateProductType(
+	context.Context, service.CreateProductTypeInput,
+) (models.ProductType, error) {
+	f.count()
+
+	return models.ProductType{}, nil
+}
+
+// GetProductType counts the call.
+func (f *scopeCatalog) GetProductType(context.Context, string) (models.ProductType, error) {
+	f.count()
+
+	return models.ProductType{}, nil
+}
+
+// ListProductTypes counts the call.
+func (f *scopeCatalog) ListProductTypes(
+	context.Context, int, int,
+) (service.ListResult[models.ProductType], error) {
+	f.count()
+
+	return service.ListResult[models.ProductType]{}, nil
+}
+
+// DeleteProductType counts the call.
+func (f *scopeCatalog) DeleteProductType(context.Context, string) error {
+	f.count()
+
+	return nil
+}

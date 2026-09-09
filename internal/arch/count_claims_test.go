@@ -386,13 +386,19 @@ type countNumerals struct {
 	// scales are the words that multiply the number in front of them —
 	// "hundred", "thousand" and their Turkish counterparts.
 	//
-	// They are a HARD STOP rather than a multiplier. The reader is built for
-	// counts of a population this repository holds tens of, so composing them
-	// would be machinery for a sentence nobody writes; what they are here for
-	// is the sentence somebody writes anyway. Without them "one hundred
-	// records" reads as 1 and "one hundred and five records" reads as 5, which
-	// is the reader INVENTING a claim — the failure this vocabulary pays for in
-	// silence everywhere else.
+	// They are a HARD STOP rather than a multiplier, and a claim that reaches
+	// one is read as no claim at all. Without them "one hundred records" reads
+	// as 1 and "one hundred and five records" reads as 5, which is the reader
+	// INVENTING a claim — the failure this vocabulary pays for in silence
+	// everywhere else.
+	//
+	// The premise this used to give — "the reader is built for counts of a
+	// population this repository holds tens of" — EXPIRED on 2026-09-09, when
+	// the decision records passed a hundred. What follows from that is a rule
+	// about the PROSE rather than machinery here: a count below a hundred is
+	// spelled out, and one at or above it is written as a DIGIT, which this
+	// reader has always read. The scale words stay a hard stop so a sentence
+	// that spells one out is reported as unpriced instead of being misread.
 	scales map[string]bool
 	// turkishScales are the scale words read out of [countNumeralsFile], kept in
 	// order so a test can name one WITHOUT spelling it: a Turkish word written

@@ -251,3 +251,43 @@ FROM product_category_map m
 JOIN product_category c ON c.id = m.category_id AND c.deleted_at IS NULL
 WHERE m.product_id = ANY($1::text[])
 ORDER BY m.product_id, c.rank, c.id;
+
+-- product_type queries.
+--
+-- They are the collection's, one word changed. That is deliberate: a product
+-- belongs to ONE type and one collection, both are named by a merchant, and a
+-- reader who has understood one has understood the other.
+
+-- name: CreateProductType :one
+INSERT INTO product_type (id, value, handle, metadata)
+VALUES ($1, $2, $3, $4)
+RETURNING *;
+
+-- name: GetProductType :one
+SELECT * FROM product_type
+WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: ListProductTypes :many
+SELECT * FROM product_type
+WHERE deleted_at IS NULL
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg('lim')::int OFFSET sqlc.arg('off')::int;
+
+-- name: CountProductTypes :one
+SELECT count(*) FROM product_type WHERE deleted_at IS NULL;
+
+-- name: SoftDeleteProductType :execrows
+UPDATE product_type SET deleted_at = now(), updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL;
+
+-- ClearProductTypeProducts releases the products of a type being deleted.
+--
+-- The same statement ClearCollectionProducts is, for the same reason: product
+-- .type_id carries ON DELETE SET NULL and that clause CANNOT FIRE against a
+-- soft delete, because the row stays physically in place. Without this the
+-- products would keep naming a type that resolves to nothing -- and a tax rule
+-- written against it would keep matching a type the merchant deleted, which is
+-- money rather than a display defect.
+-- name: ClearProductTypeProducts :execrows
+UPDATE product SET type_id = NULL, updated_at = now()
+WHERE type_id = $1 AND deleted_at IS NULL;

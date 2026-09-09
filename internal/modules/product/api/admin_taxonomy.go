@@ -34,6 +34,13 @@ type createCategoryRequest struct {
 	Rank        int32   `json:"rank"`
 }
 
+// createProductTypeRequest is the body of a product type request.
+type createProductTypeRequest struct {
+	Value    string         `json:"value"`
+	Handle   string         `json:"handle"`
+	Metadata map[string]any `json:"metadata"`
+}
+
 // createTagRequest is the body of a tag request.
 type createTagRequest struct {
 	Value string `json:"value"`
@@ -247,4 +254,65 @@ func (h *Handler) adminDeleteTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeItem(w, r, http.StatusOK, deleted{ID: id, Object: "product_tag", Deleted: true})
+}
+
+// adminCreateProductType POST /admin/v1/product-types
+func (h *Handler) adminCreateProductType(w http.ResponseWriter, r *http.Request) {
+	req, err := decode[createProductTypeRequest](w, r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+
+		return
+	}
+
+	productType, err := h.svc.CreateProductType(r.Context(), service.CreateProductTypeInput{
+		Value:    req.Value,
+		Handle:   req.Handle,
+		Metadata: req.Metadata,
+	})
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+
+		return
+	}
+	writeItem(w, r, http.StatusCreated, productType)
+}
+
+// adminListProductTypes GET /admin/v1/product-types
+func (h *Handler) adminListProductTypes(w http.ResponseWriter, r *http.Request) {
+	limit, offset, err := paging(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+
+		return
+	}
+
+	result, err := h.svc.ListProductTypes(r.Context(), limit, offset)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+
+		return
+	}
+	writeList(w, r, result)
+}
+
+// adminDeleteProductType DELETE /admin/v1/product-types/{id}
+//
+// The products bound to the type are RELEASED in the same transaction; the
+// answer is still the id, because the API's answer to a DELETE is what it
+// deleted rather than a report about a side effect (see
+// [service.Service.DeleteProductType]).
+func (h *Handler) adminDeleteProductType(w http.ResponseWriter, r *http.Request) {
+	id, err := pathParam(r, "id")
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+
+		return
+	}
+	if err := h.svc.DeleteProductType(r.Context(), id); err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+
+		return
+	}
+	writeItem(w, r, http.StatusOK, deleted{ID: id, Object: "product_type", Deleted: true})
 }

@@ -53,6 +53,12 @@ const (
 	attrIsGiftcard = "is_giftcard"
 	// attrDiscountable says whether a promotion may fall on the line at all.
 	attrDiscountable = "discountable"
+	// attrTypeID is the product's TYPE, which a tax rate rule may match on.
+	//
+	// It sits with the other two because it is read the same way — a field of
+	// the product record the catalog publishes — even though its consumer is the
+	// tax module rather than the promotion engine.
+	attrTypeID = "type_id"
 )
 
 // EntityProduct is the entity name of products in the Query layer; the product
@@ -64,14 +70,14 @@ const (
 // ([Workflows.productIDsFor]).
 const EntityProduct = "product"
 
-// productFlags are the two merchandising answers a discount rule may look at.
+// productFacts are the two merchandising answers a discount rule may look at.
 //
 // The type carries no "known" flag: a variant with no entry in the map the
 // lookup returns is a variant whose product could not be resolved, and the
 // caller leaves the attributes OFF the line rather than sending a made-up
 // value. Sending false for an unknown gift card would be a lie the engine
 // cannot see through.
-type productFlags struct {
+type productFacts struct {
 	// IsGiftcard is the product's is_giftcard column: what the product IS.
 	IsGiftcard bool
 	// Discountable is the product's discountable column: what may be DONE to it.
@@ -80,6 +86,14 @@ type productFlags struct {
 	// shop running a promotion ON gift cards is a legitimate configuration
 	// rather than a contradiction.
 	Discountable bool
+	// TypeID is the product's TYPE, and its consumer is the TAX module rather
+	// than the promotion engine: a rate rule matches on it (ADR 0101).
+	//
+	// It rides with the flags because it is read from the same record in the
+	// same query, and the totals path reads that record ONCE — two reads of one
+	// product row on the path that runs on every cart update is exactly the N+1
+	// this file's own tests were written to keep out.
+	TypeID string
 }
 
 // discountRequest is the JSON schema of the discount request that goes to the
@@ -206,7 +220,9 @@ type discountLine struct {
 // module's totals check or, worse, does not trip it and shows the customer a wrong
 // amount. A contract violation is an errors.Internal: there is nothing the caller
 // can fix.
-func (w *Workflows) applyDiscounts(ctx context.Context, snap Snapshot, lines []LineTotals) error {
+func (w *Workflows) applyDiscounts(
+	ctx context.Context, snap Snapshot, lines []LineTotals, facts map[string]productFacts,
+) error {
 	if w.discounts == nil {
 		return nil
 	}
@@ -216,17 +232,11 @@ func (w *Workflows) applyDiscounts(ctx context.Context, snap Snapshot, lines []L
 			len(lines), len(snap.Items), snap.ID)
 	}
 
-	// The flags are fetched HERE and handed in, because
-	// [Workflows.discountRequestFor] has no error return and this read has two
-	// ways to fail. A failure is not fatal; the rationale is in
-	// [Workflows.lineProductFlags].
-	flags, flagsErr := w.lineProductFlags(ctx, snap)
-	if flagsErr != nil {
-		w.log.WarnContext(ctx, "the products' flags could not be read; discounting without them",
-			"error", flagsErr, "cart_id", snap.ID, "lines", len(lines))
-	}
-
-	payload, err := json.Marshal(w.discountRequestFor(ctx, snap, lines, flags))
+	// The facts are read ONCE per round by [Workflows.computeTotals] and handed
+	// in, because [Workflows.discountRequestFor] has no error return and the
+	// read has two ways to fail. A failure is not fatal; the rationale is in
+	// [Workflows.lineProductFacts].
+	payload, err := json.Marshal(w.discountRequestFor(ctx, snap, lines, facts))
 	if err != nil {
 		return errors.Wrap(err, errors.KindInternal, CodeDiscountFailed,
 			"discount request could not be encoded to JSON: %s", snap.ID)
@@ -278,14 +288,14 @@ func (w *Workflows) applyDiscounts(ctx context.Context, snap Snapshot, lines []L
 //
 // # The line attributes carry the product's two flags
 //
-// flags comes from [Workflows.lineProductFlags] and may be nil, which is what a
+// flags comes from [Workflows.lineProductFacts] and may be nil, which is what a
 // failed read looks like from here. What each key does to the calculation is the
 // merchant's business: the promotion engine's rule attribute name space is open
 // by construction, so "discountable eq true" and "is_giftcard ne true" are rules
 // a shop writes, and a shop that writes neither has two keys the engine never
 // looks at (ADR 0048).
 func (w *Workflows) discountRequestFor(
-	ctx context.Context, snap Snapshot, lines []LineTotals, flags map[string]productFlags,
+	ctx context.Context, snap Snapshot, lines []LineTotals, flags map[string]productFacts,
 ) discountRequest {
 	items := make([]discountRequestItem, 0, len(lines))
 	for i := range lines {
@@ -380,7 +390,7 @@ func applyDiscountResponse(snap Snapshot, lines []LineTotals, resp discountRespo
 // out of that promotion's targets and receives no discount. Sending "false" for
 // a product nobody could read would instead hand the engine an answer this
 // package does not have.
-func lineAttributes(variantID string, flags map[string]productFlags) map[string]string {
+func lineAttributes(variantID string, flags map[string]productFacts) map[string]string {
 	attributes := map[string]string{attrVariantID: variantID}
 
 	flag, known := flags[variantID]
@@ -397,7 +407,7 @@ func lineAttributes(variantID string, flags map[string]productFlags) map[string]
 	return attributes
 }
 
-// lineProductFlags resolves the two product flags of every line of the cart,
+// lineProductFacts resolves the two product flags of every line of the cart,
 // keyed by VARIANT so the caller can look them up line by line.
 //
 // # It costs two batch reads and neither of them is per line
@@ -440,7 +450,7 @@ func lineAttributes(variantID string, flags map[string]productFlags) map[string]
 // errors.Invalid. It is not needed either — the scope was applied one call
 // earlier, on the VARIANT hop, so a variant outside the request's channels
 // resolves to no product and its line simply carries no flags.
-func (w *Workflows) lineProductFlags(ctx context.Context, snap Snapshot) (map[string]productFlags, error) {
+func (w *Workflows) lineProductFacts(ctx context.Context, snap Snapshot) (map[string]productFacts, error) {
 	variantIDs := snap.VariantIDs()
 	if len(variantIDs) == 0 {
 		return nil, nil
@@ -454,12 +464,12 @@ func (w *Workflows) lineProductFlags(ctx context.Context, snap Snapshot) (map[st
 		return nil, nil
 	}
 
-	flags, err := w.productFlagsFor(ctx, uniqueProductIDs(productIDs))
+	flags, err := w.productFactsFor(ctx, uniqueProductIDs(productIDs))
 	if err != nil {
 		return nil, err
 	}
 
-	out := make(map[string]productFlags, len(productIDs))
+	out := make(map[string]productFacts, len(productIDs))
 	for variantID, productID := range productIDs {
 		if flag, known := flags[productID]; known {
 			out[variantID] = flag
@@ -489,7 +499,7 @@ func uniqueProductIDs(productIDs map[string]string) []string {
 	return out
 }
 
-// productFlagsFor reads is_giftcard and discountable for the given products in a
+// productFactsFor reads is_giftcard and discountable for the given products in a
 // SINGLE catalog query.
 //
 // # A product missing from the answer is NOT an error
@@ -509,10 +519,10 @@ func uniqueProductIDs(productIDs map[string]string) []string {
 // card discountable on a type error. The product is left out of the answer
 // instead, which puts its lines on the same footing as a product nobody could
 // read: no attributes, so a rule naming them does not match.
-func (w *Workflows) productFlagsFor(ctx context.Context, productIDs []string) (map[string]productFlags, error) {
+func (w *Workflows) productFactsFor(ctx context.Context, productIDs []string) (map[string]productFacts, error) {
 	records, err := w.catalog.Graph(ctx, query.GraphSpec{
 		Entity:  EntityProduct,
-		Fields:  []string{query.IDField, attrIsGiftcard, attrDiscountable},
+		Fields:  []string{query.IDField, attrIsGiftcard, attrDiscountable, attrTypeID},
 		Filters: map[string]any{FilterIDs: productIDs},
 		Limit:   len(productIDs),
 	})
@@ -521,7 +531,7 @@ func (w *Workflows) productFlagsFor(ctx context.Context, productIDs []string) (m
 			"could not read the flags of %d products from the catalog", len(productIDs))
 	}
 
-	out := make(map[string]productFlags, len(records))
+	out := make(map[string]productFacts, len(records))
 	for i := range records {
 		productID, ok := records[i][query.IDField].(string)
 		if !ok || productID == "" {
@@ -532,7 +542,14 @@ func (w *Workflows) productFlagsFor(ctx context.Context, productIDs []string) (m
 		if !giftcardOK || !discountableOK {
 			continue
 		}
-		out[productID] = productFlags{IsGiftcard: giftcard, Discountable: discountable}
+		// The type is OPTIONAL where the two flags are required: a product with
+		// no type is the ordinary case, so a missing or non-string value leaves
+		// the field empty instead of dropping the product from the answer.
+		typeID, _ := records[i][attrTypeID].(string)
+
+		out[productID] = productFacts{
+			IsGiftcard: giftcard, Discountable: discountable, TypeID: typeID,
+		}
 	}
 	return out, nil
 }

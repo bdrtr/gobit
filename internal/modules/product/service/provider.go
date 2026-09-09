@@ -635,6 +635,7 @@ func productRecord(p models.Product) query.Record {
 		"discountable":   p.Discountable,
 		"weight":         derefInt32(p.Weight),
 		"collection_id":  deref(p.CollectionID),
+		"type_id":        deref(p.TypeID),
 		"material":       deref(p.Material),
 		"origin_country": deref(p.OriginCountry),
 		"metadata":       p.Metadata,

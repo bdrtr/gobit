@@ -70,6 +70,27 @@ func (q *Queries) ClearCollectionProducts(ctx context.Context, collectionID *str
 	return result.RowsAffected(), nil
 }
 
+const clearProductTypeProducts = `-- name: ClearProductTypeProducts :execrows
+UPDATE product SET type_id = NULL, updated_at = now()
+WHERE type_id = $1 AND deleted_at IS NULL
+`
+
+// ClearProductTypeProducts releases the products of a type being deleted.
+//
+// The same statement ClearCollectionProducts is, for the same reason: product
+// .type_id carries ON DELETE SET NULL and that clause CANNOT FIRE against a
+// soft delete, because the row stays physically in place. Without this the
+// products would keep naming a type that resolves to nothing -- and a tax rule
+// written against it would keep matching a type the merchant deleted, which is
+// money rather than a display defect.
+func (q *Queries) ClearProductTypeProducts(ctx context.Context, typeID *string) (int64, error) {
+	result, err := q.db.Exec(ctx, clearProductTypeProducts, typeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countCategories = `-- name: CountCategories :one
 SELECT count(*) FROM product_category
 WHERE deleted_at IS NULL
@@ -113,6 +134,17 @@ SELECT count(*) FROM product_collection WHERE deleted_at IS NULL
 
 func (q *Queries) CountCollections(ctx context.Context) (int64, error) {
 	row := q.db.QueryRow(ctx, countCollections)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countProductTypes = `-- name: CountProductTypes :one
+SELECT count(*) FROM product_type WHERE deleted_at IS NULL
+`
+
+func (q *Queries) CountProductTypes(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countProductTypes)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -204,6 +236,45 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 	err := row.Scan(
 		&i.ID,
 		&i.Title,
+		&i.Handle,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const createProductType = `-- name: CreateProductType :one
+
+INSERT INTO product_type (id, value, handle, metadata)
+VALUES ($1, $2, $3, $4)
+RETURNING id, value, handle, metadata, created_at, updated_at, deleted_at
+`
+
+type CreateProductTypeParams struct {
+	ID       string
+	Value    string
+	Handle   string
+	Metadata []byte
+}
+
+// product_type queries.
+//
+// They are the collection's, one word changed. That is deliberate: a product
+// belongs to ONE type and one collection, both are named by a merchant, and a
+// reader who has understood one has understood the other.
+func (q *Queries) CreateProductType(ctx context.Context, arg CreateProductTypeParams) (ProductType, error) {
+	row := q.db.QueryRow(ctx, createProductType,
+		arg.ID,
+		arg.Value,
+		arg.Handle,
+		arg.Metadata,
+	)
+	var i ProductType
+	err := row.Scan(
+		&i.ID,
+		&i.Value,
 		&i.Handle,
 		&i.Metadata,
 		&i.CreatedAt,
@@ -334,6 +405,26 @@ func (q *Queries) GetCollectionByHandle(ctx context.Context, handle string) (Pro
 	err := row.Scan(
 		&i.ID,
 		&i.Title,
+		&i.Handle,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getProductType = `-- name: GetProductType :one
+SELECT id, value, handle, metadata, created_at, updated_at, deleted_at FROM product_type
+WHERE id = $1 AND deleted_at IS NULL
+`
+
+func (q *Queries) GetProductType(ctx context.Context, id string) (ProductType, error) {
+	row := q.db.QueryRow(ctx, getProductType, id)
+	var i ProductType
+	err := row.Scan(
+		&i.ID,
+		&i.Value,
 		&i.Handle,
 		&i.Metadata,
 		&i.CreatedAt,
@@ -544,6 +635,46 @@ func (q *Queries) ListCollections(ctx context.Context, arg ListCollectionsParams
 	return items, nil
 }
 
+const listProductTypes = `-- name: ListProductTypes :many
+SELECT id, value, handle, metadata, created_at, updated_at, deleted_at FROM product_type
+WHERE deleted_at IS NULL
+ORDER BY created_at DESC, id DESC
+LIMIT $2::int OFFSET $1::int
+`
+
+type ListProductTypesParams struct {
+	Off int32
+	Lim int32
+}
+
+func (q *Queries) ListProductTypes(ctx context.Context, arg ListProductTypesParams) ([]ProductType, error) {
+	rows, err := q.db.Query(ctx, listProductTypes, arg.Off, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProductType{}
+	for rows.Next() {
+		var i ProductType
+		if err := rows.Scan(
+			&i.ID,
+			&i.Value,
+			&i.Handle,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTags = `-- name: ListTags :many
 SELECT id, value, created_at, updated_at, deleted_at FROM product_tag
 WHERE deleted_at IS NULL
@@ -682,6 +813,19 @@ WHERE id = $1 AND deleted_at IS NULL
 // mistake stayed in the merchant's list and on the storefront forever.
 func (q *Queries) SoftDeleteCollection(ctx context.Context, id string) (int64, error) {
 	result, err := q.db.Exec(ctx, softDeleteCollection, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const softDeleteProductType = `-- name: SoftDeleteProductType :execrows
+UPDATE product_type SET deleted_at = now(), updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL
+`
+
+func (q *Queries) SoftDeleteProductType(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, softDeleteProductType, id)
 	if err != nil {
 		return 0, err
 	}

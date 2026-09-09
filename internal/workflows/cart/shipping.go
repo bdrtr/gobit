@@ -203,7 +203,17 @@ func (w *Workflows) quoteRequestFor(ctx context.Context, snap Snapshot) (quoteRe
 	// pre-discount number would spend the same discount twice: once off the
 	// goods, and again off the delivery of a basket the shopper is not actually
 	// paying that much for.
-	if err := w.applyDiscounts(ctx, snap, lines); err != nil {
+	// The facts are read here rather than threaded from a totals round, because
+	// this path does not run inside one: a shipping quote is asked for on its
+	// own. A read failure is not fatal, for the reason
+	// [Workflows.lineProductFacts] gives.
+	facts, factsErr := w.lineProductFacts(ctx, snap)
+	if factsErr != nil {
+		w.log.WarnContext(ctx, "the products' facts could not be read; quoting without them",
+			"error", factsErr, "cart_id", snap.ID, "lines", len(lines))
+	}
+
+	if err := w.applyDiscounts(ctx, snap, lines, facts); err != nil {
 		return quoteRequest{}, err
 	}
 

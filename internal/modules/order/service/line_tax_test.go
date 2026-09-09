@@ -276,3 +276,67 @@ func TestASnapshotWithoutABreakdownStillPlaces(t *testing.T) {
 	require.Len(t, lines, 1)
 	assert.Empty(t, lines[0].TaxComponents)
 }
+
+// TestTheInvoiceSurfaceCarriesTheBreakdown is the PRODUCER side of the hop the
+// document reads, and its absence is what let ADR 0097 ship a false claim.
+//
+// That record said the breakdown reached the document. The invoicing flow had
+// been taught to read `tax_components` and the invoice module to store it, and
+// the flow's test passed — because the flow's FAKE order surface sent the key.
+// This function, the real producer, never wrote it, and nothing asked. A
+// document therefore kept printing the stack's base rate while a record said
+// the limit had closed (ADR 0102, D50).
+//
+// The test asserts the WIRE, not the Go value: the reader is in another module
+// and cannot import this one, so the key is the whole of the contract.
+func TestTheInvoiceSurfaceCarriesTheBreakdown(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+
+	order, err := e.svc.CreateOrder(ctx, stackedInput())
+	require.NoError(t, err)
+
+	raw, err := service.NewInterop(e.svc).OrderInvoiceJSON(ctx, order.ID)
+	require.NoError(t, err)
+
+	var body struct {
+		Items []struct {
+			TaxRateBps    int32 `json:"tax_rate_bps"`
+			TaxComponents []struct {
+				RateID        string `json:"rate_id"`
+				RateBps       int32  `json:"rate_bps"`
+				Compound      bool   `json:"compound"`
+				TaxableAmount int64  `json:"taxable_amount"`
+				TaxAmount     int64  `json:"tax_amount"`
+			} `json:"tax_components"`
+		} `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &body))
+	require.Len(t, body.Items, 1)
+
+	assert.Equal(t, int32(500), body.Items[0].TaxRateBps, "the line still carries the base")
+	require.Len(t, body.Items[0].TaxComponents, 2,
+		"a document cannot print a rate the order never sent it")
+
+	assert.Equal(t, "txr_top", body.Items[0].TaxComponents[1].RateID)
+	assert.Equal(t, int32(800), body.Items[0].TaxComponents[1].RateBps)
+	assert.True(t, body.Items[0].TaxComponents[1].Compound)
+	assert.Equal(t, int64(3150), body.Items[0].TaxComponents[1].TaxableAmount)
+	assert.Equal(t, int64(252), body.Items[0].TaxComponents[1].TaxAmount)
+}
+
+// TestASingleRateOrderSendsNoBreakdownToTheDocument keeps the absence meaningful
+// on this surface too.
+func TestASingleRateOrderSendsNoBreakdownToTheDocument(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+
+	order, err := e.svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+
+	raw, err := service.NewInterop(e.svc).OrderInvoiceJSON(ctx, order.ID)
+	require.NoError(t, err)
+
+	assert.NotContains(t, string(raw), "tax_components",
+		"a single-rate order must not carry the key at all")
+}

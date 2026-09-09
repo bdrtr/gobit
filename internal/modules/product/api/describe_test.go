@@ -217,6 +217,7 @@ func filledStoreProduct() service.StoreProduct {
 			Material:      &text,
 			OriginCountry: &text,
 			CollectionID:  &text,
+			TypeID:        &text,
 			Metadata:      map[string]any{"k": "v"},
 			DeletedAt:     &now,
 			Options:       []models.Option{{}},

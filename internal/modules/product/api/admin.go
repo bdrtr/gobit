@@ -29,6 +29,7 @@ type createProductRequest struct {
 	Material      *string                `json:"material"`
 	OriginCountry *string                `json:"origin_country"`
 	CollectionID  *string                `json:"collection_id"`
+	TypeID        *string                `json:"type_id"`
 	Metadata      map[string]any         `json:"metadata"`
 	Options       []createOptionRequest  `json:"options"`
 	Variants      []createVariantRequest `json:"variants"`
@@ -55,6 +56,7 @@ func (r createProductRequest) toInput() service.CreateProductInput {
 		Material:      r.Material,
 		OriginCountry: r.OriginCountry,
 		CollectionID:  r.CollectionID,
+		TypeID:        r.TypeID,
 		Metadata:      r.Metadata,
 		TagIDs:        r.TagIDs,
 		CategoryIDs:   r.CategoryIDs,
@@ -93,6 +95,7 @@ type updateProductRequest struct {
 	Material      *string        `json:"material"`
 	OriginCountry *string        `json:"origin_country"`
 	CollectionID  *string        `json:"collection_id"`
+	TypeID        *string        `json:"type_id"`
 	Metadata      map[string]any `json:"metadata"`
 	TagIDs        []string       `json:"tag_ids"`
 	CategoryIDs   []string       `json:"category_ids"`
@@ -114,6 +117,7 @@ func (r updateProductRequest) toInput() service.UpdateProductInput {
 		Material:      r.Material,
 		OriginCountry: r.OriginCountry,
 		CollectionID:  r.CollectionID,
+		TypeID:        r.TypeID,
 		Metadata:      r.Metadata,
 		TagIDs:        r.TagIDs,
 		CategoryIDs:   r.CategoryIDs,

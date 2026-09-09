@@ -51,6 +51,11 @@ type Catalog interface {
 	ListCollections(ctx context.Context, limit, offset int) (service.ListResult[models.Collection], error)
 	DeleteCollection(ctx context.Context, id string) error
 
+	CreateProductType(ctx context.Context, in service.CreateProductTypeInput) (models.ProductType, error)
+	GetProductType(ctx context.Context, id string) (models.ProductType, error)
+	ListProductTypes(ctx context.Context, limit, offset int) (service.ListResult[models.ProductType], error)
+	DeleteProductType(ctx context.Context, id string) error
+
 	CreateCategory(ctx context.Context, in service.CreateCategoryInput) (models.Category, error)
 	UpdateCategory(ctx context.Context, id string, in service.UpdateCategoryInput) (models.Category, error)
 	GetCategory(ctx context.Context, id string) (models.Category, error)

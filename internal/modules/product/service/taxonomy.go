@@ -495,3 +495,112 @@ func (s *Service) DeleteTag(ctx context.Context, id string) error {
 	}
 	return s.repo.SoftDeleteTag(ctx, id)
 }
+
+// CreateProductTypeInput is the input of a new product type.
+type CreateProductTypeInput struct {
+	Value    string
+	Handle   string
+	Metadata map[string]any
+}
+
+// CreateProductType creates a product type.
+//
+// If the handle is left empty it is derived from the value, and it is unique;
+// if it is already in use, errors.Conflict is returned. That is the collection's
+// rule, and a type follows it because a merchant names both.
+func (s *Service) CreateProductType(
+	ctx context.Context, in CreateProductTypeInput,
+) (models.ProductType, error) {
+	value, err := requireText("value", in.Value, maxTitleLen)
+	if err != nil {
+		return models.ProductType{}, err
+	}
+	handle, err := resolveHandle(in.Handle, value)
+	if err != nil {
+		return models.ProductType{}, err
+	}
+
+	return s.repo.CreateProductType(ctx, models.ProductType{
+		ID:       newID(prefixProductType),
+		Value:    value,
+		Handle:   handle,
+		Metadata: in.Metadata,
+	})
+}
+
+// GetProductType returns the product type by id.
+func (s *Service) GetProductType(ctx context.Context, id string) (models.ProductType, error) {
+	if _, err := requireID("id", id); err != nil {
+		return models.ProductType{}, err
+	}
+
+	return s.repo.GetProductType(ctx, id)
+}
+
+// ListProductTypes returns the product types paginated.
+func (s *Service) ListProductTypes(
+	ctx context.Context, limit, offset int,
+) (ListResult[models.ProductType], error) {
+	limit, offset, err := normalizePaging(limit, offset)
+	if err != nil {
+		return ListResult[models.ProductType]{}, err
+	}
+
+	items, err := s.repo.ListProductTypes(ctx, limit, offset)
+	if err != nil {
+		return ListResult[models.ProductType]{}, err
+	}
+	count, err := s.repo.CountProductTypes(ctx)
+	if err != nil {
+		return ListResult[models.ProductType]{}, err
+	}
+
+	return ListResult[models.ProductType]{
+		Items: items, Count: &count, Offset: offset, Limit: limit,
+	}, nil
+}
+
+// DeleteProductType SOFT deletes the type and releases its products.
+//
+// It is [Service.DeleteCollection] with one word changed, and the reason is the
+// same: `type_id` carries ON DELETE SET NULL, that clause cannot fire against a
+// soft delete, and a product left pointing at a deleted type would keep naming
+// something that resolves to nothing.
+//
+// What differs is the COST of getting it wrong. A stale collection pointer is a
+// listing defect; a stale type pointer is MONEY, because a tax rate rule matches
+// on the type and the products would keep being taxed by a rule the merchant
+// believes they removed. That is also why the two writes are in ONE transaction:
+// split, a failure between them leaves either a deleted type still charging, or
+// products released from a type that is still on the shelf.
+func (s *Service) DeleteProductType(ctx context.Context, id string) error {
+	if _, err := requireID("id", id); err != nil {
+		return err
+	}
+
+	released := 0
+	err := s.repo.InTx(ctx, func(ctx context.Context, tx repository.Store) error {
+		// The delete goes first, for the reason DeleteCollection gives: an
+		// unknown id stops here, before a single product has been touched.
+		if err := tx.SoftDeleteProductType(ctx, id); err != nil {
+			return err
+		}
+		n, clearErr := tx.ClearProductTypeProducts(ctx, id)
+		if clearErr != nil {
+			return clearErr
+		}
+		released = n
+
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	if released > 0 {
+		s.log.InfoContext(ctx, "the deleted type's products were released",
+			"product_type", id, "products", released)
+	}
+
+	return nil
+}

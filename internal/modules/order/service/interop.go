@@ -510,6 +510,22 @@ type interopInvoiceItem struct {
 	TaxRateBps int32 `json:"tax_rate_bps"`
 	// TaxTotal is the tax on the line.
 	TaxTotal int64 `json:"tax_total"`
+	// TaxComponents is the per-rate breakdown when a STACK taxed the line, base
+	// first; it is absent when a single rate applied.
+	//
+	// It is here for the reason TaxRateBps is here, one step further: a document
+	// prints the rate of every line, and a line charged under 5% + 8% has two.
+	// The rate this surface carries beside it is the stack's BASE, so a document
+	// with the breakdown and one without do not disagree — one of them just says
+	// less.
+	//
+	// THIS FIELD WAS MISSING FOR ONE COMMIT and nothing said so. ADR 0097 taught
+	// the invoicing flow and the invoice module to carry a breakdown, and the
+	// flow's test fake sent one; the real producer — this function — never did,
+	// so the document kept printing the base rate while a record said the limit
+	// had closed. The gate that would have caught it did not exist and now does
+	// (ADR 0102).
+	TaxComponents []interopLineTax `json:"tax_components,omitempty"`
 	// Total is Subtotal - DiscountTotal + TaxTotal.
 	Total int64 `json:"total"`
 }
@@ -576,6 +592,7 @@ func (i *Interop) OrderInvoiceJSON(ctx context.Context, orderID string) (json.Ra
 			DiscountTotal: detail.Items[k].DiscountTotal,
 			TaxRateBps:    detail.Items[k].TaxRateBps,
 			TaxTotal:      detail.Items[k].TaxTotal,
+			TaxComponents: interopLineTaxesOf(detail.Items[k].TaxComponents),
 			Total:         detail.Items[k].Total,
 		})
 	}
@@ -633,5 +650,30 @@ func lineTaxInputsOf(components []interopLineTax) []CreateOrderLineTaxInput {
 			TaxAmount:     components[i].TaxAmount,
 		})
 	}
+	return out
+}
+
+// interopLineTaxesOf converts a stored breakdown into the wire shape.
+//
+// It is the SENDING direction of the same five fields [lineTaxInputsOf] reads,
+// and the two are written out separately because they are two contracts: one is
+// what a snapshot may say to this module, the other is what this module says to
+// a document.
+func interopLineTaxesOf(components []models.OrderLineTax) []interopLineTax {
+	if len(components) == 0 {
+		return nil
+	}
+
+	out := make([]interopLineTax, 0, len(components))
+	for i := range components {
+		out = append(out, interopLineTax{
+			RateID:        components[i].RateID,
+			RateBps:       components[i].RateBps,
+			Compound:      components[i].Compound,
+			TaxableAmount: components[i].TaxableAmount,
+			TaxAmount:     components[i].TaxAmount,
+		})
+	}
+
 	return out
 }

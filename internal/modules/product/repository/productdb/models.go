@@ -29,6 +29,7 @@ type Product struct {
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
 	DeletedAt     pgtype.Timestamptz
+	TypeID        *string
 }
 
 type ProductCategory struct {
@@ -106,6 +107,16 @@ type ProductTagMap struct {
 	ProductID string
 	TagID     string
 	CreatedAt pgtype.Timestamptz
+}
+
+type ProductType struct {
+	ID        string
+	Value     string
+	Handle    string
+	Metadata  []byte
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+	DeletedAt pgtype.Timestamptz
 }
 
 type ProductVariant struct {

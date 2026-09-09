@@ -331,6 +331,18 @@ func adminEndpoints() []adminEndpoint {
 			record: deleted{},
 		},
 		{
+			method: http.MethodPost, path: "/admin/v1/product-types", status: "201",
+			request: createProductTypeRequest{}, record: filledProductType(),
+		},
+		{
+			method: http.MethodGet, path: "/admin/v1/product-types", status: "200",
+			record: filledProductType(), list: true,
+		},
+		{
+			method: http.MethodDelete, path: "/admin/v1/product-types/{id}", status: "200",
+			record: deleted{},
+		},
+		{
 			method: http.MethodPost, path: "/admin/v1/product-categories", status: "201",
 			request: createCategoryRequest{}, record: filledCategory(),
 		},
@@ -383,6 +395,7 @@ func filledAdminProduct() models.Product {
 		Material:      &text,
 		OriginCountry: &text,
 		CollectionID:  &text,
+		TypeID:        &text,
 		Metadata:      map[string]any{"k": "v"},
 		DeletedAt:     &now,
 		Variants:      []models.Variant{{}},
@@ -443,6 +456,13 @@ func filledCollection() models.Collection {
 	now := time.Now().UTC()
 
 	return models.Collection{Metadata: map[string]any{"k": "v"}, DeletedAt: &now}
+}
+
+// filledProductType produces a type whose omitempty fields are written too.
+func filledProductType() models.ProductType {
+	now := time.Now().UTC()
+
+	return models.ProductType{Metadata: map[string]any{"k": "v"}, DeletedAt: &now}
 }
 
 // filledCategory produces a category whose omitempty and omitzero fields are
@@ -628,6 +648,7 @@ func TestAdminEndpointsDescribeOnlyParametersTheyRead(t *testing.T) {
 		},
 		"GET /admin/v1/products/{id}/variants": {"limit", "offset"},
 		"GET /admin/v1/product-collections":    {"limit", "offset"},
+		"GET /admin/v1/product-types":          {"limit", "offset"},
 		"GET /admin/v1/product-categories":     {"parent_id", "limit", "offset"},
 		"GET /admin/v1/product-tags":           {"limit", "offset"},
 	}

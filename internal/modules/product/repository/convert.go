@@ -127,6 +127,7 @@ func toProduct(row productdb.Product) (models.Product, error) {
 		Material:      row.Material,
 		OriginCountry: row.OriginCountry,
 		CollectionID:  row.CollectionID,
+		TypeID:        row.TypeID,
 		Metadata:      meta,
 		CreatedAt:     toTime(row.CreatedAt),
 		UpdatedAt:     toTime(row.UpdatedAt),
@@ -211,6 +212,24 @@ func toOptionValue(row productdb.ProductOptionValue) models.OptionValue {
 		UpdatedAt: toTime(row.UpdatedAt),
 		DeletedAt: toTimePtr(row.DeletedAt),
 	}
+}
+
+// toProductType converts a product type row into the domain model.
+func toProductType(row productdb.ProductType) (models.ProductType, error) {
+	meta, err := toMetadata(row.Metadata)
+	if err != nil {
+		return models.ProductType{}, err
+	}
+
+	return models.ProductType{
+		ID:        row.ID,
+		Value:     row.Value,
+		Handle:    row.Handle,
+		Metadata:  meta,
+		CreatedAt: toTime(row.CreatedAt),
+		UpdatedAt: toTime(row.UpdatedAt),
+		DeletedAt: toTimePtr(row.DeletedAt),
+	}, nil
 }
 
 // toCollection converts a collection row into the domain model.

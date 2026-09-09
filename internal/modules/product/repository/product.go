@@ -93,6 +93,7 @@ type ProductPatch struct {
 	Material      *string
 	OriginCountry *string
 	CollectionID  *string
+	TypeID        *string
 	Metadata      map[string]any
 }
 
@@ -123,6 +124,7 @@ func (r *Repo) CreateProduct(ctx context.Context, p models.Product) (models.Prod
 		Material:      p.Material,
 		OriginCountry: p.OriginCountry,
 		CollectionID:  p.CollectionID,
+		TypeID:        p.TypeID,
 		Metadata:      meta,
 	})
 	if err != nil {
@@ -206,6 +208,7 @@ func (r *Repo) UpdateProduct(ctx context.Context, id string, patch ProductPatch)
 		Material:      patch.Material,
 		OriginCountry: patch.OriginCountry,
 		CollectionID:  patch.CollectionID,
+		TypeID:        patch.TypeID,
 		Metadata:      meta,
 	})
 	if err != nil {

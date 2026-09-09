@@ -20,6 +20,7 @@ const (
 	prefixOptionValue = "poptval_"
 	prefixCategory    = "pcat_"
 	prefixCollection  = "pcol_"
+	prefixProductType = "ptype_"
 	prefixTag         = "ptag_"
 	prefixImage       = "pimg_"
 )

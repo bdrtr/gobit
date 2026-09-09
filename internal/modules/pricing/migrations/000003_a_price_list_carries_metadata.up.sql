@@ -2,7 +2,7 @@
 --
 -- # Why this table and not the other three
 --
--- Measured across the tree: twenty-six tables carry a `metadata jsonb` column,
+-- Measured across the tree: twenty-seven tables carry a `metadata jsonb` column,
 -- and every one of them is a record a PERSON authors -- product, variant,
 -- collection, customer, order, cart, promotion, sales channel, tax region,
 -- shipping option. The tables without it are the computed and structural rows:

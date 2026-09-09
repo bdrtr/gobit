@@ -499,3 +499,100 @@ func (r *Repo) ListCategoriesByProductIDs(ctx context.Context, productIDs []stri
 	}
 	return out, nil
 }
+
+// CreateProductType writes a new product type.
+func (r *Repo) CreateProductType(
+	ctx context.Context, t models.ProductType,
+) (models.ProductType, error) {
+	meta, err := fromMetadata(t.Metadata)
+	if err != nil {
+		return models.ProductType{}, err
+	}
+
+	row, err := r.q.CreateProductType(ctx, productdb.CreateProductTypeParams{
+		ID:       t.ID,
+		Value:    t.Value,
+		Handle:   t.Handle,
+		Metadata: meta,
+	})
+	if err != nil {
+		return models.ProductType{}, wrapDB(err, "could not create product type (%s)", t.Handle)
+	}
+
+	return toProductType(row)
+}
+
+// GetProductType returns the product type by id.
+func (r *Repo) GetProductType(ctx context.Context, id string) (models.ProductType, error) {
+	row, err := r.q.GetProductType(ctx, id)
+	if err != nil {
+		return models.ProductType{}, wrapDB(err, "product type not found: %s", id)
+	}
+
+	return toProductType(row)
+}
+
+// ListProductTypes returns the product types paginated.
+func (r *Repo) ListProductTypes(
+	ctx context.Context, limit, offset int,
+) ([]models.ProductType, error) {
+	rows, err := r.q.ListProductTypes(ctx, productdb.ListProductTypesParams{
+		Lim: toInt32(limit),
+		Off: toInt32(offset),
+	})
+	if err != nil {
+		return nil, wrapDB(err, "could not list product types")
+	}
+
+	out := make([]models.ProductType, 0, len(rows))
+	for i := range rows {
+		t, convErr := toProductType(rows[i])
+		if convErr != nil {
+			return nil, convErr
+		}
+		out = append(out, t)
+	}
+
+	return out, nil
+}
+
+// CountProductTypes returns the total number of product types.
+func (r *Repo) CountProductTypes(ctx context.Context) (int, error) {
+	n, err := r.q.CountProductTypes(ctx)
+	if err != nil {
+		return 0, wrapDB(err, "could not read product type count")
+	}
+
+	return int(n), nil
+}
+
+// SoftDeleteProductType deletes the type (stamps deleted_at).
+//
+// A record that is already deleted or that never existed returns
+// errors.NotFound, for the reason [Repo.SoftDeleteProduct] gives.
+func (r *Repo) SoftDeleteProductType(ctx context.Context, id string) error {
+	n, err := r.q.SoftDeleteProductType(ctx, id)
+	if err != nil {
+		return wrapDB(err, "could not delete product type: %s", id)
+	}
+	if n == 0 {
+		return notFound("product type", id)
+	}
+
+	return nil
+}
+
+// ClearProductTypeProducts releases the products bound to the type and returns
+// how many were released.
+//
+// The count is returned for the reason [Repo.ClearCollectionProducts] gives,
+// and it matters more here: a product's type decides which tax rate rule
+// matches it, so releasing one silently changes what a shop charges.
+func (r *Repo) ClearProductTypeProducts(ctx context.Context, typeID string) (int, error) {
+	n, err := r.q.ClearProductTypeProducts(ctx, &typeID)
+	if err != nil {
+		return 0, wrapDB(err, "could not release the type's products: %s", typeID)
+	}
+
+	return int(n), nil
+}

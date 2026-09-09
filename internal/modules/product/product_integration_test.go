@@ -239,6 +239,7 @@ func TestMigrationUpDownIsReversible(t *testing.T) {
 		"product", "product_variant", "product_option", "product_option_value",
 		"product_variant_option_value", "product_category", "product_collection",
 		"product_tag", "product_image", "product_tag_map", "product_category_map",
+		"product_type",
 	}
 	for _, table := range tables {
 		assert.True(t, tableExists(ctx, t, dsn, table), "the %s table must be created", table)
@@ -251,7 +252,7 @@ func TestMigrationUpDownIsReversible(t *testing.T) {
 	// written out rather than derived on purpose: a count taken from the
 	// embedded files would agree with itself whatever happened, and what this
 	// line is for is noticing that a migration was added.
-	assert.Equal(t, uint(4), version)
+	assert.Equal(t, uint(5), version)
 
 	// 000004 adds no table, so the table list above cannot notice it. What it
 	// adds is the index the catalog's option-value filter reads through, and an
@@ -833,6 +834,25 @@ func TestProductColumnMappingHasNotDrifted(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// The two nullable ids are written SEPARATELY and with different values,
+	// because they are the same Go type and a swap between them would otherwise
+	// be invisible. They cannot go in the input above: both are foreign keys, so
+	// the rows they point at have to exist first.
+	collection, err := svc.CreateCollection(ctx, service.CreateCollectionInput{
+		Title: "COLLECTION-" + handle,
+	})
+	require.NoError(t, err)
+	productType, err := svc.CreateProductType(ctx, service.CreateProductTypeInput{
+		Value: "TYPE-" + handle,
+	})
+	require.NoError(t, err)
+
+	created, err = svc.UpdateProduct(ctx, created.ID, service.UpdateProductInput{
+		CollectionID: &collection.ID,
+		TypeID:       &productType.ID,
+	})
+	require.NoError(t, err)
+
 	// The storefront list uses the HAND-WRITTEN query; that is the path which
 	// exercises the mapping.
 	page, err := svc.ListStoreProducts(ctx, service.StoreListOptions{
@@ -866,6 +886,10 @@ func TestProductColumnMappingHasNotDrifted(t *testing.T) {
 	assert.False(t, found.Discountable, "discountable may have swapped places with is_giftcard")
 	assert.False(t, found.IsGiftcard)
 	assert.Equal(t, "distinctive", found.Metadata["marker"])
+	assert.Equal(t, collection.ID, derefString(found.CollectionID),
+		"collection_id and type_id are both nullable text and may have swapped")
+	assert.Equal(t, productType.ID, derefString(found.TypeID),
+		"type_id arrived LAST in the table and is the position a new column takes")
 	assert.False(t, found.CreatedAt.IsZero())
 	assert.False(t, found.UpdatedAt.IsZero())
 }

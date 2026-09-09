@@ -85,26 +85,30 @@ func (o ProductOrder) String() string { return string(o) }
 // separate modules (Principle 2.3) and are attached with links over the
 // variant. The product carries catalog information only.
 type Product struct {
-	ID            string         `json:"id"`
-	Handle        string         `json:"handle"`
-	Title         string         `json:"title"`
-	Subtitle      *string        `json:"subtitle,omitempty"`
-	Description   *string        `json:"description,omitempty"`
-	Thumbnail     *string        `json:"thumbnail,omitempty"`
-	Status        Status         `json:"status"`
-	IsGiftcard    bool           `json:"is_giftcard"`
-	Discountable  bool           `json:"discountable"`
-	Weight        *int32         `json:"weight,omitempty"`
-	Length        *int32         `json:"length,omitempty"`
-	Height        *int32         `json:"height,omitempty"`
-	Width         *int32         `json:"width,omitempty"`
-	Material      *string        `json:"material,omitempty"`
-	OriginCountry *string        `json:"origin_country,omitempty"`
-	CollectionID  *string        `json:"collection_id,omitempty"`
-	Metadata      map[string]any `json:"metadata,omitempty"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
-	DeletedAt     *time.Time     `json:"deleted_at,omitempty"`
+	ID            string  `json:"id"`
+	Handle        string  `json:"handle"`
+	Title         string  `json:"title"`
+	Subtitle      *string `json:"subtitle,omitempty"`
+	Description   *string `json:"description,omitempty"`
+	Thumbnail     *string `json:"thumbnail,omitempty"`
+	Status        Status  `json:"status"`
+	IsGiftcard    bool    `json:"is_giftcard"`
+	Discountable  bool    `json:"discountable"`
+	Weight        *int32  `json:"weight,omitempty"`
+	Length        *int32  `json:"length,omitempty"`
+	Height        *int32  `json:"height,omitempty"`
+	Width         *int32  `json:"width,omitempty"`
+	Material      *string `json:"material,omitempty"`
+	OriginCountry *string `json:"origin_country,omitempty"`
+	CollectionID  *string `json:"collection_id,omitempty"`
+	// TypeID is the product's shape, and it is what a tax rate rule matches on
+	// when the rule is written for a KIND of product rather than for one
+	// product (see the tax module's ReferenceProductType).
+	TypeID    *string        `json:"type_id,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt *time.Time     `json:"deleted_at,omitempty"`
 
 	// The fields below are related records; they are filled only when the caller
 	// asks for them and are never written to JSON while empty. They are filled

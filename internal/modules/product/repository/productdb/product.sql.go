@@ -56,13 +56,13 @@ const createProduct = `-- name: CreateProduct :one
 INSERT INTO product (
     id, handle, title, subtitle, description, thumbnail, status,
     is_giftcard, discountable, weight, length, height, width,
-    material, origin_country, collection_id, metadata
+    material, origin_country, collection_id, type_id, metadata
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7,
     $8, $9, $10, $11, $12, $13,
-    $14, $15, $16, $17
+    $14, $15, $16, $17, $18
 )
-RETURNING id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at
+RETURNING id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id
 `
 
 type CreateProductParams struct {
@@ -82,6 +82,7 @@ type CreateProductParams struct {
 	Material      *string
 	OriginCountry *string
 	CollectionID  *string
+	TypeID        *string
 	Metadata      []byte
 }
 
@@ -113,6 +114,7 @@ func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (P
 		arg.Material,
 		arg.OriginCountry,
 		arg.CollectionID,
+		arg.TypeID,
 		arg.Metadata,
 	)
 	var i Product
@@ -137,6 +139,7 @@ func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (P
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.TypeID,
 	)
 	return i, err
 }
@@ -152,7 +155,7 @@ func (q *Queries) DeleteImagesByProduct(ctx context.Context, productID string) e
 }
 
 const getProduct = `-- name: GetProduct :one
-SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at FROM product
+SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id FROM product
 WHERE id = $1 AND deleted_at IS NULL
 `
 
@@ -180,12 +183,13 @@ func (q *Queries) GetProduct(ctx context.Context, id string) (Product, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.TypeID,
 	)
 	return i, err
 }
 
 const getProductByHandle = `-- name: GetProductByHandle :one
-SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at FROM product
+SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id FROM product
 WHERE handle = $1 AND deleted_at IS NULL
 `
 
@@ -213,12 +217,13 @@ func (q *Queries) GetProductByHandle(ctx context.Context, handle string) (Produc
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.TypeID,
 	)
 	return i, err
 }
 
 const getProductForUpdate = `-- name: GetProductForUpdate :one
-SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at FROM product
+SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id FROM product
 WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE
 `
@@ -256,6 +261,7 @@ func (q *Queries) GetProductForUpdate(ctx context.Context, id string) (Product, 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.TypeID,
 	)
 	return i, err
 }
@@ -342,7 +348,7 @@ func (q *Queries) ListImagesByProductIDs(ctx context.Context, dollar_1 []string)
 
 const listProductsByIDs = `-- name: ListProductsByIDs :many
 
-SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at FROM product
+SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id FROM product
 WHERE id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY created_at DESC, id DESC
 `
@@ -387,6 +393,7 @@ func (q *Queries) ListProductsByIDs(ctx context.Context, dollar_1 []string) ([]P
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.TypeID,
 		); err != nil {
 			return nil, err
 		}
@@ -481,10 +488,11 @@ UPDATE product SET
     material       = COALESCE($12::text, material),
     origin_country = COALESCE($13::text, origin_country),
     collection_id  = COALESCE($14::text, collection_id),
-    metadata       = COALESCE($15::jsonb, metadata),
+    type_id        = COALESCE($15::text, type_id),
+    metadata       = COALESCE($16::jsonb, metadata),
     updated_at     = now()
-WHERE id = $16 AND deleted_at IS NULL
-RETURNING id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at
+WHERE id = $17 AND deleted_at IS NULL
+RETURNING id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id
 `
 
 type UpdateProductParams struct {
@@ -502,6 +510,7 @@ type UpdateProductParams struct {
 	Material      *string
 	OriginCountry *string
 	CollectionID  *string
+	TypeID        *string
 	Metadata      []byte
 	ID            string
 }
@@ -526,6 +535,7 @@ func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) (P
 		arg.Material,
 		arg.OriginCountry,
 		arg.CollectionID,
+		arg.TypeID,
 		arg.Metadata,
 		arg.ID,
 	)
@@ -551,6 +561,7 @@ func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) (P
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.TypeID,
 	)
 	return i, err
 }

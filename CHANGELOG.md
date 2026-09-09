@@ -20,6 +20,22 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Siparis belgeye tahsil ettigi HER orani veriyor** — ADR 0097'nin zaten
+  yaptigini soyledigi sey. Yapmiyordu: siparisin fatura yuzeyinde
+  `tax_components` alani hic yoktu, okuyucu ureticinin hic yazmadigi bir anahtari
+  okuyordu, ve butun toplamlar yine tutuyordu. Sakli tutan sey akisin kendi
+  SAHTESIYDI: tuketicinin paketinde ELLE yazilmis bir siparis sekli, gercek
+  ureticinin soyleyemedigini soyluyordu. Iki test artik hopu bagliyor (ADR 0102,
+  D50).
+
+- **Bir urun artik bir TIP giyiyor, ve bir vergi kurali onu adlandirabiliyor.**
+  Vergi modulunun tuketicisi yazildigi gunden beri BAGLIYDI ve hep BOS geliyordu:
+  tacir "kitaplar %1" diyemiyor, her kitabi tek tek adlandiriyordu. Tip, toplam
+  yolunun ZATEN yaptigi katalog okumasindan geliyor -- ayni satir hem indirim
+  bayraklarini hem tipi tasiyor ve BIR KEZ okunuyor. Tip silinince urunler ayni
+  islemde serbest birakiliyor, cunku bayat bir tip isaretcisi para demek
+  (ADR 0101).
+
 - **Musteri artik kendi siparisinin ZAMAN CIZELGESINI goruyor**
   (`GET /store/v1/orders/{id}/timeline`) — ayni bilesim, siparisin ve MALIN
   anlarina daraltilmis. Para anlari ve arsivleme gecmiyor, ve vitrin yanit tipi

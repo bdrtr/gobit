@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
 	paymentmanual "github.com/bdrtr/gobit/internal/modules/payment/manual"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 )
@@ -215,4 +216,111 @@ func TestAnOrderWithoutAnInvoiceAnswersNotFound(t *testing.T) {
 		"/admin/v1/orders/"+order.OrderID+"/invoice", nil)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusNotFound, recorder.Code, recorder.Body.String())
+}
+
+// invoiceLineTax is one rate inside a document row's tax, as the invoice
+// module's own endpoint returns it.
+type invoiceLineTax struct {
+	Position      int32  `json:"position"`
+	RateID        string `json:"rate_id"`
+	RateBps       int32  `json:"rate_bps"`
+	Compound      bool   `json:"compound"`
+	TaxableAmount int64  `json:"taxable_amount"`
+	TaxAmount     int64  `json:"tax_amount"`
+}
+
+// TestAStackedLineReachesTheDocumentWithNoFakeInBetween binds the three hops the
+// breakdown crosses, on real modules.
+//
+// # Why this test exists
+//
+// ADR 0097 said the breakdown reached the document and it did not. The invoicing
+// flow had been taught to read `tax_components` and the invoice module to store
+// it, and the flow's test passed — because the flow's FAKE order surface sent
+// the key. The real producer never wrote it, and no test asked the producer.
+// A document kept printing the stack's base rate while a record said the limit
+// had closed.
+//
+// Every piece here is real: the order module writes the components, its invoice
+// surface encodes them, the invoicing flow reads them over the container, the
+// invoice module stores them, and the assertion reads them back over HTTP. A
+// break in ANY of the four turns this red.
+func TestAStackedLineReachesTheDocumentWithNoFakeInBetween(t *testing.T) {
+	ctx := t.Context()
+
+	// 5% + 8% compound on 2000: 100 and 168, adding to the 268 the row carries.
+	placed, err := orderSvc.CreateOrder(ctx, ordersvc.CreateOrderInput{
+		RegionID:     taxedRegionID,
+		Email:        "stacked@example.test",
+		CurrencyCode: taxedCurrency,
+		Subtotal:     2000,
+		TaxTotal:     268,
+		Total:        2268,
+		Items: []ordersvc.CreateOrderItemInput{{
+			VariantID:  "variant_stacked_e2e",
+			Title:      "A Book",
+			Quantity:   2,
+			UnitPrice:  1000,
+			Subtotal:   2000,
+			TaxRateBps: 500,
+			TaxTotal:   268,
+			Total:      2268,
+			TaxComponents: []ordersvc.CreateOrderLineTaxInput{
+				{RateID: "txr_base", RateBps: 500, TaxableAmount: 2000, TaxAmount: 100},
+				{RateID: "txr_top", RateBps: 800, Compound: true, TaxableAmount: 2100, TaxAmount: 168},
+			},
+		}},
+	})
+	require.NoError(t, err)
+
+	completed, err := adminRequestWithBody(http.MethodPost,
+		"/admin/v1/orders/"+placed.ID+"/complete", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, completed.Code,
+		"the order could not be completed; body: %s", completed.Body.String())
+
+	issued, err := adminRequestWithBody(http.MethodPost,
+		"/admin/v1/orders/"+placed.ID+"/invoice", issueInvoiceBody())
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, issued.Code,
+		"the invoice could not be issued; body: %s", issued.Body.String())
+
+	invoiceID := decodeIssuedInvoice(t, issued.Body.Bytes())
+
+	read, err := adminRequestWithBody(http.MethodGet, "/admin/v1/invoices/"+invoiceID, nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, read.Code,
+		"the document could not be read back; body: %s", read.Body.String())
+
+	var document struct {
+		Data struct {
+			Lines []struct {
+				Description   string           `json:"description"`
+				TaxRateBps    int32            `json:"tax_rate_bps"`
+				TaxTotal      int64            `json:"tax_total"`
+				TaxComponents []invoiceLineTax `json:"tax_components"`
+			} `json:"lines"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(read.Body.Bytes(), &document))
+	require.NotEmpty(t, document.Data.Lines)
+
+	goods := document.Data.Lines[0]
+	assert.Equal(t, int32(500), goods.TaxRateBps, "the row still carries the stack's base")
+	require.Len(t, goods.TaxComponents, 2,
+		"the document has to print BOTH rates; a fake in the middle is what hid this")
+
+	assert.Equal(t, int32(1), goods.TaxComponents[0].Position, "a document counts from one")
+	assert.Equal(t, "txr_base", goods.TaxComponents[0].RateID)
+	assert.Equal(t, int64(100), goods.TaxComponents[0].TaxAmount)
+
+	assert.Equal(t, int32(2), goods.TaxComponents[1].Position)
+	assert.Equal(t, int32(800), goods.TaxComponents[1].RateBps)
+	assert.True(t, goods.TaxComponents[1].Compound)
+	assert.Equal(t, int64(2100), goods.TaxComponents[1].TaxableAmount)
+	assert.Equal(t, int64(168), goods.TaxComponents[1].TaxAmount)
+
+	assert.Equal(t, goods.TaxTotal,
+		goods.TaxComponents[0].TaxAmount+goods.TaxComponents[1].TaxAmount,
+		"and the printed components have to add up to the row")
 }

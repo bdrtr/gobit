@@ -37,6 +37,7 @@ type memStore struct {
 	valuesFolded map[string]string
 	images       map[string]models.Image
 	collections  map[string]models.Collection
+	productTypes map[string]models.ProductType
 	categories   map[string]models.Category
 	tags         map[string]models.Tag
 
@@ -77,6 +78,7 @@ func newMemStore() *memStore {
 		values:        map[string]models.OptionValue{},
 		images:        map[string]models.Image{},
 		collections:   map[string]models.Collection{},
+		productTypes:  map[string]models.ProductType{},
 		categories:    map[string]models.Category{},
 		tags:          map[string]models.Tag{},
 		variantValues: map[string]map[string]string{},
@@ -1653,4 +1655,116 @@ func (m *memStore) foldedOf(id string) string {
 	defer m.mu.Unlock()
 
 	return m.valuesFolded[id]
+}
+
+// The product type's half of the store. It is the collection's, one word
+// changed, because the service treats the two the same way.
+
+func (m *memStore) CreateProductType(
+	_ context.Context, t models.ProductType,
+) (models.ProductType, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("CreateProductType"); err != nil {
+		return models.ProductType{}, err
+	}
+	t.CreatedAt, t.UpdatedAt = creationTime, creationTime
+	m.productTypes[t.ID] = t
+
+	return t, nil
+}
+
+func (m *memStore) GetProductType(_ context.Context, id string) (models.ProductType, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("GetProductType"); err != nil {
+		return models.ProductType{}, err
+	}
+	t, ok := m.productTypes[id]
+	if !ok || t.DeletedAt != nil {
+		return models.ProductType{}, errors.NotFound("product_not_found",
+			"the product type was not found: %s", id)
+	}
+
+	return t, nil
+}
+
+func (m *memStore) ListProductTypes(
+	_ context.Context, limit, offset int,
+) ([]models.ProductType, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ListProductTypes"); err != nil {
+		return nil, err
+	}
+
+	out := make([]models.ProductType, 0, len(m.productTypes))
+	for _, t := range m.productTypes {
+		if t.DeletedAt == nil {
+			out = append(out, t)
+		}
+	}
+	slices.SortFunc(out, func(a, b models.ProductType) int { return strings.Compare(a.ID, b.ID) })
+
+	return sliceWindow(out, limit, offset), nil
+}
+
+// CountProductTypes counts the LIVE types, for the reason
+// [memStore.CountCollections] gives.
+func (m *memStore) CountProductTypes(_ context.Context) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("CountProductTypes"); err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, t := range m.productTypes {
+		if t.DeletedAt == nil {
+			n++
+		}
+	}
+
+	return n, nil
+}
+
+func (m *memStore) SoftDeleteProductType(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("SoftDeleteProductType"); err != nil {
+		return err
+	}
+	t, ok := m.productTypes[id]
+	if !ok || t.DeletedAt != nil {
+		return errors.NotFound("product_not_found", "the product type was not found: %s", id)
+	}
+	t.DeletedAt = &deletionTime
+	m.productTypes[id] = t
+
+	return nil
+}
+
+// ClearProductTypeProducts really RELEASES the products, like its collection
+// counterpart.
+//
+// A fake that accepted the call and changed nothing would let the release be
+// deleted from the service without a test noticing — and here that would leave
+// products being taxed by a rule the merchant deleted.
+func (m *memStore) ClearProductTypeProducts(_ context.Context, typeID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ClearProductTypeProducts"); err != nil {
+		return 0, err
+	}
+	released := 0
+	for id := range m.products {
+		p := m.products[id]
+		if p.DeletedAt != nil || p.TypeID == nil || *p.TypeID != typeID {
+			continue
+		}
+		p.TypeID = nil
+		m.products[id] = p
+		released++
+	}
+
+	return released, nil
 }
