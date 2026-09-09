@@ -177,8 +177,49 @@ type Line struct {
 	TaxRateBps int32
 	// TaxTotal is the tax falling on the line.
 	TaxTotal int64
+	// TaxComponents is the per-rate breakdown when a STACK taxed the row, base
+	// first; it is empty when a single rate applied and [Line.TaxRateBps] says
+	// it all.
+	//
+	// A document that prints one rate for a row charged under two states
+	// something the buyer's arithmetic contradicts, and in Turkey the KDV rate
+	// is a required field on an e-fatura rather than a derived one. Σ
+	// TaxComponents[i].TaxAmount = TaxTotal whenever the list is filled; the
+	// identity spans rows, so the service holds it and no CHECK can.
+	TaxComponents []LineTax
 	// Total is Subtotal - DiscountTotal + TaxTotal.
 	Total int64
+}
+
+// LineTax is one rate applied inside a document row's tax.
+//
+// It is COPIED from the order rather than recomputed here, like every other
+// figure on a document: each component was floored on its own base, so a
+// recomputation from the row's total would print a different split from the one
+// the buyer was charged.
+type LineTax struct {
+	// ID is the record's identifier.
+	ID string
+	// InvoiceLineID is the row the component belongs to.
+	InvoiceLineID string
+	// Position is the printed order within the row, base first, FROM ONE.
+	//
+	// It counts from one because a document's rows do; the order module's
+	// counterpart counts from zero, and the conversion happens where the two
+	// meet (migration 000004 argues both).
+	Position int32
+	// RateID is the tax module's rate id; it is empty when an external provider
+	// carries no ids of its own. It is NOT a foreign key (Principle 2.2).
+	RateID string
+	// RateBps is the applied rate (basis points; 2000 = 20%).
+	RateBps int32
+	// Compound says the component was computed on the row's amount PLUS the
+	// taxes below it.
+	Compound bool
+	// TaxableAmount is the base THIS component was computed on (minor unit).
+	TaxableAmount int64
+	// TaxAmount is the tax this component produced (minor unit).
+	TaxAmount int64
 }
 
 // Invoice is the document.

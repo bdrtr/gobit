@@ -253,7 +253,34 @@ func (r *Repository) CreateInvoice(ctx context.Context, in models.Invoice) (mode
 				"the invoice line could not be written")
 		}
 
-		out.Lines = append(out.Lines, toLine(lineRow))
+		written := toLine(lineRow)
+
+		// The breakdown goes in with its row: a row whose components are
+		// missing is a row that claims it was taxed at the stack's base rate,
+		// and a document is not corrected afterwards.
+		for at := range line.TaxComponents {
+			component := line.TaxComponents[at]
+
+			taxRow, taxErr := r.queries(ctx).CreateInvoiceLineTax(ctx,
+				invoicedb.CreateInvoiceLineTaxParams{
+					ID:            component.ID,
+					InvoiceLineID: written.ID,
+					Position:      component.Position,
+					RateID:        component.RateID,
+					RateBps:       component.RateBps,
+					Compound:      component.Compound,
+					TaxableAmount: component.TaxableAmount,
+					TaxAmount:     component.TaxAmount,
+				})
+			if taxErr != nil {
+				return models.Invoice{}, wrapDB(taxErr, codeQueryFailed,
+					"the invoice line's tax component could not be written")
+			}
+
+			written.TaxComponents = append(written.TaxComponents, toLineTax(taxRow))
+		}
+
+		out.Lines = append(out.Lines, written)
 	}
 
 	return out, nil
@@ -279,6 +306,13 @@ func (r *Repository) GetInvoice(ctx context.Context, id string) (models.Invoice,
 	for i := range lines {
 		out.Lines = append(out.Lines, toLine(lines[i]))
 	}
+
+	taxes, err := r.queries(ctx).ListInvoiceLineTaxes(ctx, id)
+	if err != nil {
+		return models.Invoice{}, wrapDB(err, codeQueryFailed,
+			"the invoice lines' tax components could not be read")
+	}
+	attachLineTaxes(out.Lines, taxes)
 
 	return out, nil
 }

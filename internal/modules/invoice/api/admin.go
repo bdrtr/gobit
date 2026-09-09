@@ -18,6 +18,18 @@ type issueLineRequest struct {
 	TaxRateBps    int32  `json:"tax_rate_bps"`
 	TaxTotal      int64  `json:"tax_total"`
 	Total         int64  `json:"total"`
+	// TaxComponents is the per-rate breakdown when a STACK taxed the row, base
+	// FIRST; it is left out when a single rate applied.
+	TaxComponents []issueLineTaxRequest `json:"tax_components"`
+}
+
+// issueLineTaxRequest is one rate inside a stacked row's tax.
+type issueLineTaxRequest struct {
+	RateID        string `json:"rate_id"`
+	RateBps       int32  `json:"rate_bps"`
+	Compound      bool   `json:"compound"`
+	TaxableAmount int64  `json:"taxable_amount"`
+	TaxAmount     int64  `json:"tax_amount"`
 }
 
 // partyRequest is one side of a document being issued.
@@ -98,6 +110,7 @@ func (h *Handler) adminIssue(w http.ResponseWriter, r *http.Request) {
 			TaxRateBps:    body.Lines[i].TaxRateBps,
 			TaxTotal:      body.Lines[i].TaxTotal,
 			Total:         body.Lines[i].Total,
+			TaxComponents: lineTaxInputsOf(body.Lines[i].TaxComponents),
 		})
 	}
 
@@ -245,4 +258,23 @@ func (h *Handler) adminListSeries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeItem(w, r, http.StatusOK, data)
+}
+
+// lineTaxInputsOf converts a request's breakdown into the service's input.
+func lineTaxInputsOf(components []issueLineTaxRequest) []service.LineTaxInput {
+	if len(components) == 0 {
+		return nil
+	}
+
+	out := make([]service.LineTaxInput, 0, len(components))
+	for i := range components {
+		out = append(out, service.LineTaxInput{
+			RateID:        components[i].RateID,
+			RateBps:       components[i].RateBps,
+			Compound:      components[i].Compound,
+			TaxableAmount: components[i].TaxableAmount,
+			TaxAmount:     components[i].TaxAmount,
+		})
+	}
+	return out
 }

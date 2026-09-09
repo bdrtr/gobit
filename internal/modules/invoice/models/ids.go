@@ -14,6 +14,8 @@ const (
 	InvoiceIDPrefix = "inv_"
 	// LineIDPrefix is the prefix of invoice line identifiers.
 	LineIDPrefix = "invline_"
+	// LineTaxIDPrefix is the prefix of a row's tax component identifier.
+	LineTaxIDPrefix = "invlinetax_"
 	// SeriesIDPrefix is the prefix of invoice series identifiers.
 	SeriesIDPrefix = "invser_"
 )
@@ -30,6 +32,9 @@ func NewInvoiceID() string { return newID(InvoiceIDPrefix, time.Now()) }
 
 // NewLineID produces a new invoice line identifier.
 func NewLineID() string { return newID(LineIDPrefix, time.Now()) }
+
+// NewLineTaxID produces a new identifier for a row's tax component.
+func NewLineTaxID() string { return newID(LineTaxIDPrefix, time.Now()) }
 
 // NewSeriesID produces a new series identifier.
 func NewSeriesID() string { return newID(SeriesIDPrefix, time.Now()) }

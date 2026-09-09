@@ -166,6 +166,48 @@ func toInvoice(row invoicedb.Invoice) (models.Invoice, error) {
 	}, nil
 }
 
+// toLineTax turns a component row into the domain model.
+func toLineTax(row invoicedb.InvoiceLineTax) models.LineTax {
+	return models.LineTax{
+		ID:            row.ID,
+		InvoiceLineID: row.InvoiceLineID,
+		Position:      row.Position,
+		RateID:        row.RateID,
+		RateBps:       row.RateBps,
+		Compound:      row.Compound,
+		TaxableAmount: row.TaxableAmount,
+		TaxAmount:     row.TaxAmount,
+	}
+}
+
+// attachLineTaxes hangs each component on the row it belongs to.
+//
+// The rows arrive ordered by line and then by position, so the breakdown keeps
+// the order it is printed in; the map is over INDEXES rather than values,
+// because a line is a struct and appending to a copy would write the breakdown
+// nowhere.
+func attachLineTaxes(lines []models.Line, rows []invoicedb.InvoiceLineTax) {
+	if len(rows) == 0 {
+		return
+	}
+
+	byLine := make(map[string]int, len(lines))
+	for i := range lines {
+		byLine[lines[i].ID] = i
+	}
+	for i := range rows {
+		at, ok := byLine[rows[i].InvoiceLineID]
+		if !ok {
+			// The read is keyed by the document and the rows hang from its
+			// lines, so a component without a line cannot come back from a
+			// consistent database. Skipping keeps a reader of a document from
+			// being blocked by a row it cannot print.
+			continue
+		}
+		lines[at].TaxComponents = append(lines[at].TaxComponents, toLineTax(rows[i]))
+	}
+}
+
 // toLine turns a line row into the domain model.
 func toLine(row invoicedb.InvoiceLine) models.Line {
 	return models.Line{

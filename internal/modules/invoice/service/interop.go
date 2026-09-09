@@ -70,6 +70,18 @@ type interopIssueLine struct {
 	TaxRateBps    int32  `json:"tax_rate_bps"`
 	TaxTotal      int64  `json:"tax_total"`
 	Total         int64  `json:"total"`
+	// TaxComponents is the per-rate breakdown when a STACK taxed the row, base
+	// FIRST; it is absent when a single rate applied.
+	TaxComponents []interopIssueLineTax `json:"tax_components"`
+}
+
+// interopIssueLineTax is one rate inside a stacked row's tax, on the way in.
+type interopIssueLineTax struct {
+	RateID        string `json:"rate_id"`
+	RateBps       int32  `json:"rate_bps"`
+	Compound      bool   `json:"compound"`
+	TaxableAmount int64  `json:"taxable_amount"`
+	TaxAmount     int64  `json:"tax_amount"`
 }
 
 // toParty converts an incoming party.
@@ -109,6 +121,7 @@ func (i *Interop) IssueJSON(
 			TaxRateBps:    body.Lines[i].TaxRateBps,
 			TaxTotal:      body.Lines[i].TaxTotal,
 			Total:         body.Lines[i].Total,
+			TaxComponents: interopLineTaxInputs(body.Lines[i].TaxComponents),
 		})
 	}
 
@@ -163,4 +176,23 @@ func (i *Interop) InvoiceIdentityJSON(ctx context.Context, id string) (json.RawM
 		Number: invoice.Number,
 		Status: invoice.Status.String(),
 	})
+}
+
+// interopLineTaxInputs converts the wire breakdown into the service's input.
+func interopLineTaxInputs(components []interopIssueLineTax) []LineTaxInput {
+	if len(components) == 0 {
+		return nil
+	}
+
+	out := make([]LineTaxInput, 0, len(components))
+	for i := range components {
+		out = append(out, LineTaxInput{
+			RateID:        components[i].RateID,
+			RateBps:       components[i].RateBps,
+			Compound:      components[i].Compound,
+			TaxableAmount: components[i].TaxableAmount,
+			TaxAmount:     components[i].TaxAmount,
+		})
+	}
+	return out
 }

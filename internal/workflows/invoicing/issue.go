@@ -100,6 +100,19 @@ type documentLine struct {
 	TaxRateBps    int32  `json:"tax_rate_bps"`
 	TaxTotal      int64  `json:"tax_total"`
 	Total         int64  `json:"total"`
+	// TaxComponents is the per-rate breakdown when a STACK taxed the row, base
+	// first; it is absent when a single rate applied.
+	TaxComponents []documentLineTax `json:"tax_components,omitempty"`
+}
+
+// documentLineTax is one rate inside a stacked row's tax, on the way to the
+// invoice.
+type documentLineTax struct {
+	RateID        string `json:"rate_id"`
+	RateBps       int32  `json:"rate_bps"`
+	Compound      bool   `json:"compound"`
+	TaxableAmount int64  `json:"taxable_amount"`
+	TaxAmount     int64  `json:"tax_amount"`
 }
 
 // document is the body the invoice module's surface accepts.
@@ -312,6 +325,24 @@ type invoiceOrderItem struct {
 	TaxRateBps    int32  `json:"tax_rate_bps"`
 	TaxTotal      int64  `json:"tax_total"`
 	Total         int64  `json:"total"`
+	// TaxComponents is the per-rate breakdown the order recorded when a STACK
+	// taxed the line (ADR 0096); it is absent when a single rate applied.
+	//
+	// This decode IGNORES unknown fields, so before this field existed the
+	// order's breakdown was dropped here IN SILENCE and the document printed
+	// the stack's base rate as though it were the whole story. That is the hole
+	// this field closes, and it is why the order's schema and this one had to
+	// learn the field together.
+	TaxComponents []invoiceOrderItemTax `json:"tax_components"`
+}
+
+// invoiceOrderItemTax is one rate inside a stacked order line's tax.
+type invoiceOrderItemTax struct {
+	RateID        string `json:"rate_id"`
+	RateBps       int32  `json:"rate_bps"`
+	Compound      bool   `json:"compound"`
+	TaxableAmount int64  `json:"taxable_amount"`
+	TaxAmount     int64  `json:"tax_amount"`
 }
 
 // lines turns the order's lines into the document's, adding carriage as a LINE.
@@ -339,6 +370,7 @@ func (o invoiceOrder) lines() []documentLine {
 			TaxRateBps:    o.Items[i].TaxRateBps,
 			TaxTotal:      o.Items[i].TaxTotal,
 			Total:         o.Items[i].Total,
+			TaxComponents: documentLineTaxesOf(o.Items[i].TaxComponents),
 		})
 	}
 
@@ -375,4 +407,27 @@ func (w *Workflows) readOrder(ctx context.Context, orderID string) (invoiceOrder
 	}
 
 	return order, nil
+}
+
+// documentLineTaxesOf converts an order line's breakdown into the document's.
+//
+// The two shapes are written out separately because the second is a CONTRACT
+// with a module that cannot import this package; a rename on the order's side
+// must not silently change what the invoice is sent.
+func documentLineTaxesOf(components []invoiceOrderItemTax) []documentLineTax {
+	if len(components) == 0 {
+		return nil
+	}
+
+	out := make([]documentLineTax, 0, len(components))
+	for i := range components {
+		out = append(out, documentLineTax{
+			RateID:        components[i].RateID,
+			RateBps:       components[i].RateBps,
+			Compound:      components[i].Compound,
+			TaxableAmount: components[i].TaxableAmount,
+			TaxAmount:     components[i].TaxAmount,
+		})
+	}
+	return out
 }

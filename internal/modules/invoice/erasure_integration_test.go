@@ -51,6 +51,23 @@ func issueForBuyer(t *testing.T, prefix, email string) models.Invoice {
 	return issued
 }
 
+// issueStackedForBuyer issues a document whose only row was taxed by a STACK.
+//
+// It exists so a test can reach the third guarded table: a single-rate row
+// writes no breakdown at all, and a guard nothing writes to is a guard nothing
+// can try.
+func issueStackedForBuyer(t *testing.T, prefix, email string) models.Invoice {
+	t.Helper()
+
+	in := stackedIssueFor(prefix)
+	in.Buyer = models.Party{Name: "A Customer", Email: email, CountryCode: "TR"}
+
+	issued, err := newService(t).Issue(context.Background(), in)
+	require.NoError(t, err)
+
+	return issued
+}
+
 // requireRetentionRefusal asserts that err is the database refusing, by CODE.
 //
 // The code and not the message: a message is prose somebody will improve, and a
@@ -118,34 +135,155 @@ func TestARawDeleteOfTheLinesIsRefused(t *testing.T) {
 //
 // TRUNCATE removes rows without visiting them, so the BEFORE DELETE row
 // triggers are silent on it; the BEFORE TRUNCATE statement triggers are what
-// answer. Both spellings that reach them are exercised, and the third is
-// asserted for what it really is: "TRUNCATE invoices" ALONE never reaches the
-// trigger at all, because PostgreSQL refuses it first with 0A000 for the
-// foreign key on invoice_lines. That refusal is a side effect of the child
-// table's existence rather than a decision anybody made, which is exactly why
-// the companion triggers are not redundant — remove them and CASCADE works.
+// answer. The spellings that REACH them are exercised, and the ones stopped
+// earlier are asserted for what they really are, so the next reader does not
+// mistake a foreign key for evidence that a companion trigger works.
+//
+// # The line moved when the third table arrived
+//
+// PostgreSQL refuses a TRUNCATE of a table another table references, with
+// 0A000, before any trigger runs. Until ADR 0097 that took "TRUNCATE invoices"
+// alone; with invoice_line_taxes referencing invoice_lines it now takes
+// "TRUNCATE invoice_lines" and "TRUNCATE invoices, invoice_lines" as well. The
+// forms that still reach a trigger are the ones naming EVERY table of the
+// document and the CASCADE — and the CASCADE is the one the companions exist
+// for, because it is what an operator reaches for.
 func TestATruncateIsRefused(t *testing.T) {
 	ctx := context.Background()
 	issueForBuyer(t, "TRC", "truncate@example.com")
 
-	_, err := testPool.Pool().Exec(ctx, `TRUNCATE invoices, invoice_lines`)
+	for name, statement := range map[string]string{
+		"every table of the document": `TRUNCATE invoices, invoice_lines, invoice_line_taxes`,
+		"the cascade":                 `TRUNCATE invoices CASCADE`,
+		"the breakdown alone":         `TRUNCATE invoice_line_taxes`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := testPool.Pool().Exec(ctx, statement)
+			requireRetentionRefusal(t, err)
+		})
+	}
+
+	// The spellings that are stopped by something else. They are asserted
+	// rather than left out: a test that only exercised these would look like
+	// proof of a guard that had been deleted.
+	for name, statement := range map[string]string{
+		"the parent alone":        `TRUNCATE invoices`,
+		"the lines alone":         `TRUNCATE invoice_lines`,
+		"the parent and its rows": `TRUNCATE invoices, invoice_lines`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := testPool.Pool().Exec(ctx, statement)
+			require.Error(t, err)
+
+			var pgErr *pgconn.PgError
+			require.ErrorAs(t, err, &pgErr)
+			assert.Equal(t, "0A000", pgErr.Code,
+				"this spelling is stopped by a foreign key, before any trigger runs")
+		})
+	}
+}
+
+// TestEveryTableOfTheDocumentIsGuarded derives the population from the SCHEMA
+// so the next table cannot arrive unguarded.
+//
+// This gate is written because the guard on invoice_line_taxes was nearly
+// missed: the table was added, and what noticed was a foreign key changing
+// which spelling of TRUNCATE the database refuses first — a side effect, not a
+// rule. Nothing asked "does every table of the document refuse a delete". Now
+// something does, and it asks the DATABASE rather than a list somebody
+// maintains, so a table added tomorrow is in the population the moment it
+// exists.
+//
+// # The population is the document and everything hanging FROM it
+//
+// It is walked with a recursive join over the foreign keys, starting at
+// invoices and following them in the referencing direction. That is the same
+// sentence migration 000002 uses to say what has to be guarded — "the lines are
+// part of the retained document" — expressed as something the database can
+// answer.
+//
+// invoice_series is therefore OUT, and deliberately: the document points AT a
+// series rather than the series being part of a document. What protects it is
+// different and already there — invoices.series_id keeps a series with
+// documents from being deleted at all, and invoices_number_uniq keeps a reset
+// counter from minting a number twice.
+func TestEveryTableOfTheDocumentIsGuarded(t *testing.T) {
+	ctx := context.Background()
+
+	rows, err := testPool.Pool().Query(ctx,
+		`WITH RECURSIVE document AS (
+             SELECT c.oid, c.relname
+             FROM pg_class c
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE c.relkind = 'r' AND n.nspname = current_schema()
+               AND c.relname = 'invoices'
+           UNION
+             SELECT child.oid, child.relname
+             FROM pg_constraint fk
+             JOIN pg_class child ON child.oid = fk.conrelid
+             JOIN document d ON d.oid = fk.confrelid
+             WHERE fk.contype = 'f'
+         )
+         SELECT d.relname,
+                count(*) FILTER (WHERE t.tgtype & 8 <> 0)  AS delete_guards,
+                count(*) FILTER (WHERE t.tgtype & 32 <> 0) AS truncate_guards,
+                count(*) FILTER (WHERE t.tgenabled <> 'A') AS not_always
+         FROM document d
+         LEFT JOIN pg_trigger t ON t.tgrelid = d.oid AND NOT t.tgisinternal
+         GROUP BY d.relname
+         ORDER BY d.relname`)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	var visited []string
+	for rows.Next() {
+		var table string
+		var deletes, truncates, notAlways int64
+		require.NoError(t, rows.Scan(&table, &deletes, &truncates, &notAlways))
+
+		assert.Positive(t, deletes,
+			"%s holds part of a retained document and has no BEFORE DELETE guard", table)
+		assert.Positive(t, truncates,
+			"%s has no BEFORE TRUNCATE guard; a row trigger never sees a TRUNCATE", table)
+		assert.Zero(t, notAlways,
+			"%s has a guard that is not ENABLE ALWAYS, so one session-level "+
+				"session_replication_role turns it off", table)
+		visited = append(visited, table)
+	}
+	require.NoError(t, rows.Err())
+
+	// A walk that returns nothing, or only its own starting point, would pass
+	// every assertion above and prove nothing. The tables are named so that a
+	// walk which quietly stops following the keys fails here rather than going
+	// green on an empty population.
+	assert.Equal(t,
+		[]string{"invoice_line_taxes", "invoice_lines", "invoices"}, visited,
+		"the walk has to reach the document and everything hanging from it")
+}
+
+// TestARawDeleteOfTheBreakdownIsRefused closes the hole that guarding two of
+// the three tables leaves open.
+//
+// Migration 000002 measured the same shape one level up and wrote that "a guard
+// on the parent alone protects the number and loses the document". A breakdown
+// deleted out from under a row leaves that row printing one rate for a tax
+// charged under several — with its stored tax_total unchanged, so nothing about
+// the document looks wrong.
+func TestARawDeleteOfTheBreakdownIsRefused(t *testing.T) {
+	ctx := context.Background()
+	issued := issueStackedForBuyer(t, "RDB", "breakdown@example.com")
+	require.Len(t, issued.Lines, 1)
+	require.Len(t, issued.Lines[0].TaxComponents, 2)
+
+	_, err := testPool.Pool().Exec(ctx,
+		`DELETE FROM invoice_line_taxes WHERE invoice_line_id = $1`, issued.Lines[0].ID)
 	requireRetentionRefusal(t, err)
 
-	_, err = testPool.Pool().Exec(ctx, `TRUNCATE invoices CASCADE`)
-	requireRetentionRefusal(t, err)
-
-	_, err = testPool.Pool().Exec(ctx, `TRUNCATE invoice_lines`)
-	requireRetentionRefusal(t, err)
-
-	// The spelling that is stopped by something else, recorded so the next
-	// reader does not mistake it for evidence that the companion works.
-	_, err = testPool.Pool().Exec(ctx, `TRUNCATE invoices`)
-	require.Error(t, err)
-
-	var pgErr *pgconn.PgError
-	require.ErrorAs(t, err, &pgErr)
-	assert.Equal(t, "0A000", pgErr.Code,
-		"TRUNCATE invoices alone is stopped by the foreign key, before any trigger runs")
+	still, err := newService(t).GetInvoice(ctx, issued.ID)
+	require.NoError(t, err)
+	require.Len(t, still.Lines, 1)
+	assert.Len(t, still.Lines[0].TaxComponents, 2,
+		"the breakdown has to still be there")
 }
 
 // TestDeletingNothingIsStillNothing is why the trigger is FOR EACH ROW.

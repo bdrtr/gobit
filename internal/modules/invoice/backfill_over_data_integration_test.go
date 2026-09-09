@@ -92,12 +92,28 @@ func TestTheBackfillOfMigration000003IsWhatTheGoPassMustCorrect(t *testing.T) {
 	// Head first, then back to 2. Migrating straight to 2 would never run
 	// 000003's down leg, and this test is about the pair.
 	require.NoError(t, coredb.Migrate(ctx, dsn, source, invoice.ModuleName))
-	require.NoError(t, coredb.MigrateDown(ctx, dsn, source, invoice.ModuleName, 1))
+
+	// The step count is DERIVED from where head is, not written out. It used to
+	// be the literal 1, which was true only while 000003 was the last
+	// migration: adding 000004 silently turned "back to 2" into "back to 3" and
+	// the test failed on an expectation of its own rather than on a fault. What
+	// this test needs is the version the legacy rows belong to, so that is what
+	// it names.
+	const legacyVersion uint = 2
+
+	head, dirty, err := coredb.Version(ctx, dsn, invoice.ModuleName)
+	require.NoError(t, err)
+	require.False(t, dirty)
+	require.Greater(t, head, legacyVersion,
+		"there has to be something above the legacy version to roll back")
+
+	require.NoError(t, coredb.MigrateDown(ctx, dsn, source, invoice.ModuleName,
+		int(head-legacyVersion)))
 
 	version, dirty, err := coredb.Version(ctx, dsn, invoice.ModuleName)
 	require.NoError(t, err)
 	require.False(t, dirty)
-	require.Equal(t, uint(2), version,
+	require.Equal(t, legacyVersion, version,
 		"the database is not at the version the legacy rows belong to")
 
 	pool, err := coredb.New(ctx, coredb.DefaultConfig(dsn), nil)

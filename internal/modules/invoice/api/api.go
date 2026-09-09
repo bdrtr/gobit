@@ -141,6 +141,22 @@ type lineDTO struct {
 	TaxRateBps    int32  `json:"tax_rate_bps"`
 	TaxTotal      int64  `json:"tax_total"`
 	Total         int64  `json:"total"`
+	// TaxComponents is the per-rate breakdown when a STACK taxed the row, base
+	// first; it is absent when a single rate applied and TaxRateBps says it all.
+	//
+	// It is published because a renderer that prints one rate for a row charged
+	// under two prints a figure the buyer's own arithmetic contradicts.
+	TaxComponents []lineTaxDTO `json:"tax_components,omitempty"`
+}
+
+// lineTaxDTO is one rate inside a document row's tax.
+type lineTaxDTO struct {
+	Position      int32  `json:"position"`
+	RateID        string `json:"rate_id"`
+	RateBps       int32  `json:"rate_bps"`
+	Compound      bool   `json:"compound"`
+	TaxableAmount int64  `json:"taxable_amount"`
+	TaxAmount     int64  `json:"tax_amount"`
 }
 
 // invoiceDTO is the external representation of the document.
@@ -204,6 +220,7 @@ func toInvoiceDTO(in models.Invoice) invoiceDTO {
 			TaxRateBps:    in.Lines[i].TaxRateBps,
 			TaxTotal:      in.Lines[i].TaxTotal,
 			Total:         in.Lines[i].Total,
+			TaxComponents: toLineTaxDTOs(in.Lines[i].TaxComponents),
 		})
 	}
 
@@ -318,3 +335,23 @@ func afterParam(r *http.Request, offset int64) (corepage.Cursor, error) {
 
 // invoiceID reads the document identifier from the path.
 func invoiceID(r *http.Request) string { return chi.URLParam(r, "id") }
+
+// toLineTaxDTOs converts a row's tax breakdown to the external representation.
+func toLineTaxDTOs(components []models.LineTax) []lineTaxDTO {
+	if len(components) == 0 {
+		return nil
+	}
+
+	out := make([]lineTaxDTO, 0, len(components))
+	for i := range components {
+		out = append(out, lineTaxDTO{
+			Position:      components[i].Position,
+			RateID:        components[i].RateID,
+			RateBps:       components[i].RateBps,
+			Compound:      components[i].Compound,
+			TaxableAmount: components[i].TaxableAmount,
+			TaxAmount:     components[i].TaxAmount,
+		})
+	}
+	return out
+}

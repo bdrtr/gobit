@@ -25,8 +25,38 @@ type LineInput struct {
 	TaxRateBps int32
 	// TaxTotal is the tax on the row.
 	TaxTotal int64
+	// TaxComponents is the per-rate breakdown when a STACK taxed the row, base
+	// FIRST; it is left empty when a single rate applied and TaxRateBps says it
+	// all.
+	//
+	// A breakdown of one is refused: it would repeat what the row already says
+	// while making "this row has components" stop meaning "print the
+	// breakdown".
+	TaxComponents []LineTaxInput
 	// Total is Subtotal - DiscountTotal + TaxTotal.
 	Total int64
+}
+
+// LineTaxInput is one rate applied inside a document row's tax.
+//
+// The amounts are COPIED, not recomputed: each component was floored on its own
+// base where the tax was calculated, and a split derived here from the row's
+// total would print figures the buyer was never charged.
+type LineTaxInput struct {
+	// RateID is the tax module's rate id; it may be empty when an external
+	// provider carries no ids of its own. It is not validated here — it belongs
+	// to another module (Principle 2.2).
+	RateID string
+	// RateBps is the applied rate (basis points; 2000 = 20%).
+	RateBps int32
+	// Compound says the component was computed on the row's amount PLUS the
+	// taxes below it. The FIRST component stands on nothing and can never be
+	// compound.
+	Compound bool
+	// TaxableAmount is the base THIS component was computed on (minor unit).
+	TaxableAmount int64
+	// TaxAmount is the tax this component produced (minor unit).
+	TaxAmount int64
 }
 
 // IssueInput is the request to bring a document into being.
@@ -161,7 +191,7 @@ func (in IssueInput) document(series models.Series, sequence int64, now time.Tim
 
 	doc.Lines = make([]models.Line, 0, len(in.Lines))
 	for i := range in.Lines {
-		doc.Lines = append(doc.Lines, models.Line{
+		line := models.Line{
 			ID:        models.NewLineID(),
 			InvoiceID: doc.ID,
 			// The printed order starts at 1, so a document's first row is
@@ -175,7 +205,31 @@ func (in IssueInput) document(series models.Series, sequence int64, now time.Tim
 			TaxRateBps:    in.Lines[i].TaxRateBps,
 			TaxTotal:      in.Lines[i].TaxTotal,
 			Total:         in.Lines[i].Total,
-		})
+		}
+
+		line.TaxComponents = make([]models.LineTax, 0, len(in.Lines[i].TaxComponents))
+		for at := range in.Lines[i].TaxComponents {
+			component := in.Lines[i].TaxComponents[at]
+			line.TaxComponents = append(line.TaxComponents, models.LineTax{
+				ID:            models.NewLineTaxID(),
+				InvoiceLineID: line.ID,
+				// Counted from 1 like the rows, and unlike the order's
+				// breakdown; migration 000004 argues both.
+				Position:      int32(at) + 1,
+				RateID:        component.RateID,
+				RateBps:       component.RateBps,
+				Compound:      component.Compound,
+				TaxableAmount: component.TaxableAmount,
+				TaxAmount:     component.TaxAmount,
+			})
+		}
+		if len(line.TaxComponents) == 0 {
+			// An empty slice and a nil one print the same, but only nil says
+			// "no breakdown" to a reader comparing against the zero value.
+			line.TaxComponents = nil
+		}
+
+		doc.Lines = append(doc.Lines, line)
 	}
 
 	return doc
@@ -230,6 +284,10 @@ func (in IssueInput) validateAmounts() error {
 			return errors.Invalid(CodeInvalidInput,
 				"line %d does not add up: %d - %d + %d is not %d",
 				i+1, line.Subtotal, line.DiscountTotal, line.TaxTotal, line.Total)
+		}
+
+		if err := validateLineTaxComponents(i, line); err != nil {
+			return err
 		}
 
 		subtotal += line.Subtotal
@@ -314,4 +372,75 @@ func yearOf(t time.Time) int32 {
 	}
 
 	return int32(year)
+}
+
+// maxLineTaxComponents is the most components one row's tax may be split into.
+//
+// Four is the depth the tax module allows a stack, and the number is REPEATED
+// here rather than imported: this module knows nothing of that one
+// (Principle 2.1) and what it is protecting is its own table (migration 000004).
+const maxLineTaxComponents = 4
+
+// maxLineTaxRateBps is the largest rate a component may carry (100%).
+const maxLineTaxRateBps int32 = 10_000
+
+// validateLineTaxComponents validates one row's per-rate tax breakdown.
+//
+// # Why the sum is checked here and not left to the database
+//
+// It spans rows. A CHECK sees one, and the identity that matters — the
+// components add up to the row's tax — is over all of them. This is the LAST
+// gate on that identity: three boundaries before it check the same thing, and
+// what gets past this one is printed and handed to a buyer.
+func validateLineTaxComponents(index int, line LineInput) error {
+	if len(line.TaxComponents) == 0 {
+		return nil
+	}
+	if len(line.TaxComponents) < 2 {
+		return errors.Invalid(CodeInvalidInput,
+			"line %d carries a tax breakdown of one; it says nothing the row does "+
+				"not, so send it empty when a single rate applied", index+1)
+	}
+	if len(line.TaxComponents) > maxLineTaxComponents {
+		return errors.Invalid(CodeInvalidInput,
+			"line %d splits its tax into %d components; at most %d can be printed",
+			index+1, len(line.TaxComponents), maxLineTaxComponents)
+	}
+
+	var sum int64
+	for at := range line.TaxComponents {
+		component := line.TaxComponents[at]
+		switch {
+		case component.RateBps < 0 || component.RateBps > maxLineTaxRateBps:
+			return errors.Invalid(CodeInvalidInput,
+				"line %d, tax component %d has a rate outside [0, %d] basis points: %d",
+				index+1, at+1, maxLineTaxRateBps, component.RateBps)
+		case at == 0 && component.Compound:
+			return errors.Invalid(CodeInvalidInput,
+				"line %d's first tax component stands on nothing and cannot be compound",
+				index+1)
+		case component.TaxableAmount < 0:
+			return errors.Invalid(CodeInvalidInput,
+				"line %d, tax component %d has a negative base: %d",
+				index+1, at+1, component.TaxableAmount)
+		// The same bound the row carries, one component at a time: a rate is at
+		// most 100%, so a component cannot take more than its own base. A row
+		// whose tax stays inside its subtotal can still hide a component that
+		// does not.
+		case component.TaxAmount < 0 || component.TaxAmount > component.TaxableAmount:
+			return errors.Invalid(CodeInvalidInput,
+				"line %d, tax component %d takes more than its own base: %d on %d",
+				index+1, at+1, component.TaxAmount, component.TaxableAmount)
+		}
+
+		sum += component.TaxAmount
+	}
+
+	if sum != line.TaxTotal {
+		return errors.Invalid(CodeInvalidInput,
+			"line %d's tax components do not add up to its tax: they total %d, "+
+				"the row says %d", index+1, sum, line.TaxTotal)
+	}
+
+	return nil
 }

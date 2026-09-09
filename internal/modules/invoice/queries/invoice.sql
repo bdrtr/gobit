@@ -180,3 +180,24 @@ WHERE buyer_email <> ''
   AND id > sqlc.arg('after_id')::text
 ORDER BY id
 LIMIT sqlc.arg('row_limit')::bigint;
+
+-- invoice_line_taxes is the per-rate breakdown of a row taxed by a stack; it is
+-- written with the row and never afterwards, because a document is immutable.
+
+-- name: CreateInvoiceLineTax :one
+INSERT INTO invoice_line_taxes (
+    id, invoice_line_id, position, rate_id, rate_bps,
+    compound, taxable_amount, tax_amount
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING *;
+
+-- ListInvoiceLineTaxes reads every component of every row of ONE document.
+--
+-- It is keyed by the DOCUMENT rather than by the row so that reading a document
+-- stays a fixed number of queries whatever its row count.
+
+-- name: ListInvoiceLineTaxes :many
+SELECT t.* FROM invoice_line_taxes t
+JOIN invoice_lines l ON l.id = t.invoice_line_id
+WHERE l.invoice_id = $1
+ORDER BY t.invoice_line_id, t.position;

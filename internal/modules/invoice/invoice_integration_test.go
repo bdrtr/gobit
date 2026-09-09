@@ -43,7 +43,9 @@ import (
 const postgresImage = "postgres:16-alpine"
 
 // moduleTables are the tables the module owns.
-var moduleTables = []string{"invoices", "invoice_lines", "invoice_series"}
+var moduleTables = []string{
+	"invoices", "invoice_lines", "invoice_line_taxes", "invoice_series",
+}
 
 // testPool is the pool every test shares.
 var testPool *db.Pool

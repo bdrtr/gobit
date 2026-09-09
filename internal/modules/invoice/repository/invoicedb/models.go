@@ -55,6 +55,17 @@ type InvoiceLine struct {
 	Total         int64
 }
 
+type InvoiceLineTax struct {
+	ID            string
+	InvoiceLineID string
+	Position      int32
+	RateID        string
+	RateBps       int32
+	Compound      bool
+	TaxableAmount int64
+	TaxAmount     int64
+}
+
 type InvoiceSeries struct {
 	ID         string
 	Prefix     string

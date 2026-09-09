@@ -42,6 +42,19 @@ type fakeItem struct {
 	TaxRateBps    int32  `json:"tax_rate_bps"`
 	TaxTotal      int64  `json:"tax_total"`
 	Total         int64  `json:"total"`
+	// TaxComponents is the breakdown the order records for a stacked line; the
+	// fake carries it because the flow's job is to pass it on, and a fake that
+	// could not send one would let the pass-through be removed unnoticed.
+	TaxComponents []fakeItemTax `json:"tax_components,omitempty"`
+}
+
+// fakeItemTax is one rate inside a stacked order line's tax.
+type fakeItemTax struct {
+	RateID        string `json:"rate_id"`
+	RateBps       int32  `json:"rate_bps"`
+	Compound      bool   `json:"compound"`
+	TaxableAmount int64  `json:"taxable_amount"`
+	TaxAmount     int64  `json:"tax_amount"`
 }
 
 // OrderInvoiceJSON returns the prepared order.

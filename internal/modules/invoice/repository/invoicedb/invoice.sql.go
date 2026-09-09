@@ -233,6 +233,53 @@ func (q *Queries) CreateInvoiceLine(ctx context.Context, arg CreateInvoiceLinePa
 	return i, err
 }
 
+const createInvoiceLineTax = `-- name: CreateInvoiceLineTax :one
+
+INSERT INTO invoice_line_taxes (
+    id, invoice_line_id, position, rate_id, rate_bps,
+    compound, taxable_amount, tax_amount
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, invoice_line_id, position, rate_id, rate_bps, compound, taxable_amount, tax_amount
+`
+
+type CreateInvoiceLineTaxParams struct {
+	ID            string
+	InvoiceLineID string
+	Position      int32
+	RateID        string
+	RateBps       int32
+	Compound      bool
+	TaxableAmount int64
+	TaxAmount     int64
+}
+
+// invoice_line_taxes is the per-rate breakdown of a row taxed by a stack; it is
+// written with the row and never afterwards, because a document is immutable.
+func (q *Queries) CreateInvoiceLineTax(ctx context.Context, arg CreateInvoiceLineTaxParams) (InvoiceLineTax, error) {
+	row := q.db.QueryRow(ctx, createInvoiceLineTax,
+		arg.ID,
+		arg.InvoiceLineID,
+		arg.Position,
+		arg.RateID,
+		arg.RateBps,
+		arg.Compound,
+		arg.TaxableAmount,
+		arg.TaxAmount,
+	)
+	var i InvoiceLineTax
+	err := row.Scan(
+		&i.ID,
+		&i.InvoiceLineID,
+		&i.Position,
+		&i.RateID,
+		&i.RateBps,
+		&i.Compound,
+		&i.TaxableAmount,
+		&i.TaxAmount,
+	)
+	return i, err
+}
+
 const getInvoice = `-- name: GetInvoice :one
 SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded FROM invoices WHERE id = $1
 `
@@ -360,6 +407,47 @@ func (q *Queries) ListInvoiceBuyerEmailsForRefold(ctx context.Context, arg ListI
 	for rows.Next() {
 		var i ListInvoiceBuyerEmailsForRefoldRow
 		if err := rows.Scan(&i.ID, &i.BuyerEmail, &i.BuyerEmailFolded); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listInvoiceLineTaxes = `-- name: ListInvoiceLineTaxes :many
+
+SELECT t.id, t.invoice_line_id, t.position, t.rate_id, t.rate_bps, t.compound, t.taxable_amount, t.tax_amount FROM invoice_line_taxes t
+JOIN invoice_lines l ON l.id = t.invoice_line_id
+WHERE l.invoice_id = $1
+ORDER BY t.invoice_line_id, t.position
+`
+
+// ListInvoiceLineTaxes reads every component of every row of ONE document.
+//
+// It is keyed by the DOCUMENT rather than by the row so that reading a document
+// stays a fixed number of queries whatever its row count.
+func (q *Queries) ListInvoiceLineTaxes(ctx context.Context, invoiceID string) ([]InvoiceLineTax, error) {
+	rows, err := q.db.Query(ctx, listInvoiceLineTaxes, invoiceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []InvoiceLineTax{}
+	for rows.Next() {
+		var i InvoiceLineTax
+		if err := rows.Scan(
+			&i.ID,
+			&i.InvoiceLineID,
+			&i.Position,
+			&i.RateID,
+			&i.RateBps,
+			&i.Compound,
+			&i.TaxableAmount,
+			&i.TaxAmount,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

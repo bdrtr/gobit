@@ -37,7 +37,12 @@ func Describe(d *openapi.Doc) {
 			"them: a caller that lost a line would otherwise send a document that adds up " +
 			"perfectly and is missing a row. " +
 			"An issued document is IMMUTABLE; a mistake is corrected with a cancellation and a " +
-			"new document.",
+			"new document. " +
+			"A row taxed by a STACK of rates carries \"tax_components\", one entry per rate in " +
+			"printed order with the base first, and their \"tax_amount\" values must add up to " +
+			"the row's \"tax_total\". The field is LEFT OUT when a single rate applied, and " +
+			"\"tax_rate_bps\" then says it all; a breakdown of one is refused, because it " +
+			"repeats what the row already says.",
 		RequestBody: d.RequestBody(issueRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The issued document", d.Item(invoiceDTO{})),

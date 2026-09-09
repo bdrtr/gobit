@@ -235,12 +235,22 @@ type party struct {
 
 // line is one row of that body.
 type line struct {
-	Description string `json:"description"`
-	Quantity    int64  `json:"quantity"`
-	Subtotal    int64  `json:"subtotal"`
-	TaxRateBps  int32  `json:"tax_rate_bps"`
-	TaxTotal    int64  `json:"tax_total"`
-	Total       int64  `json:"total"`
+	Description   string    `json:"description"`
+	Quantity      int64     `json:"quantity"`
+	Subtotal      int64     `json:"subtotal"`
+	TaxRateBps    int32     `json:"tax_rate_bps"`
+	TaxTotal      int64     `json:"tax_total"`
+	Total         int64     `json:"total"`
+	TaxComponents []lineTax `json:"tax_components"`
+}
+
+// lineTax is one rate inside a stacked row's tax on that body.
+type lineTax struct {
+	RateID        string `json:"rate_id"`
+	RateBps       int32  `json:"rate_bps"`
+	Compound      bool   `json:"compound"`
+	TaxableAmount int64  `json:"taxable_amount"`
+	TaxAmount     int64  `json:"tax_amount"`
 }
 
 // decodeDocument reads the body the flow sent.

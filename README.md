@@ -230,10 +230,10 @@ on a list; it is that.
 
 | Document | What it answers |
 |---|---|
-| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: ninety-five records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
+| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: ninety-six records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
 | [`docs/mimari.md`](./docs/mimari.md) | The architecture narrative: layers, the life cycle of a request and of a module, data, sagas, the core packages |
 | [`docs/gaps.md`](./docs/gaps.md) | The defect ledger: every fault this repository found in itself, one sentence and the ADR that closed it |
-| [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: twenty-eight items in six groups — identity and authorization, sales channel scope, the category tree, tax, installation and operation, the limit of the invariants |
+| [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: twenty-seven items in six groups — identity and authorization, sales channel scope, the category tree, tax, installation and operation, the limit of the invariants |
 | [`docs/security.md`](./docs/security.md) | Identity and authorization: the two surfaces, the scope dictionary, the hardening rings, an end-to-end curl walkthrough |
 | [`docs/commerce-flows.md`](./docs/commerce-flows.md) | From cart to order: who owns a flow, who decides the price, which warehouse it ships from |
 | [`docs/api-surfaces.md`](./docs/api-surfaces.md) | The OpenAPI document and the GraphQL storefront surface, with the limits the server sets |
