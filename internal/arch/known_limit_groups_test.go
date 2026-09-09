@@ -19,7 +19,7 @@ const knownLimitGroupFloor = 2
 //
 // # What was already held, and what was not
 //
-// [TestTheCountsInTheProseAreTrue] prices both READMEs' sentence about
+// [TestTheCountsInTheProseAreTrue] prices the README's sentence about
 // docs/known-limits.md: so many ITEMS in so many GROUPS, counted from the file.
 // Both numbers are real and both are checked.
 //
@@ -28,16 +28,16 @@ const knownLimitGroupFloor = 2
 // gate turned green, and the sentence still listed four names. It was caught by
 // a person reading the diff.
 //
-// # What this checks, and in which language
+// # What this checks
 //
-// The English README's names must be the file's headings, lower-cased and IN
-// ORDER. Order is part of it: a group inserted in the middle and appended to
-// the sentence would read as a different document than the one it prices.
+// The README's names must be the file's headings, lower-cased and IN ORDER.
+// Order is part of it: a group inserted in the middle and appended to the
+// sentence would read as a different document than the one it prices.
 //
-// The Turkish README is a TRANSLATION, so its names cannot be compared against
-// English headings. What is compared is how many it lists — which is the shape
-// the defect took, since the count and the list are updated by different edits.
-// A mistranslated group name is outside this gate and is written down as such.
+// It used to be two comparisons, because there were two READMEs and the Turkish
+// one was a TRANSLATION whose names could not be compared against English
+// headings — only its LENGTH was. The repository now keeps one README, in
+// English, so the weaker half of this gate is gone rather than unenforced.
 //
 // # What no gate here can hold
 //
@@ -56,9 +56,9 @@ func TestTheKnownLimitGroupsAreNamedCorrectly(t *testing.T) {
 		wanted = append(wanted, strings.ToLower(heading))
 	}
 
-	named := knownLimitGroupsNamedIn(t, "README.en.md")
+	named := knownLimitGroupsNamedIn(t, "README.md")
 	assert.Equalf(t, wanted, named,
-		"README.en.md names the groups of %s differently than the file has them.\n"+
+		"README.md names the groups of %s differently than the file has them.\n"+
 			"The sentence prices a document, so it has to say what that document holds: the "+
 			"same groups, in the same order. Adding a group means editing the count AND the "+
 			"list, and the count alone going green is what let this drift once already.",

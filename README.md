@@ -1,303 +1,252 @@
 <p align="center">
-  <img src="./logo.png" alt="gobit logosu" width="220">
+  <img src="./logo.png" alt="the gobit logo" width="220">
 </p>
 
 # gobit
 
-**Türkçe** · [English](./README.en.md)
+A modular, headless commerce **library** written in Go. It is not a template you
+copy and edit: the embedding project tracks gobit as a dependency in `go.mod`,
+adds its own module and its own plugin, and assembles the installation through
+the published facade (ADR 0025). At run time it is **one process** carrying a
+**modular monolith** — the modules do not know each other at compile time, the
+decision about who talks to whom is made in a single package (`internal/app`),
+and because the isolation holds, any one module can later be extracted into a
+separate service.
 
-Go ile yazılmış, modüler, headless commerce **kütüphanesi**. Kopyalanıp
-değiştirilen bir şablon değildir: gömen proje gobit'i `go.mod`'da bir bağımlılık
-olarak izler, kendi modülünü ve eklentisini ekler, kurulumu yayımlanmış cepheden
-kurar (ADR 0025). Çalışırken **tek süreçtir** ve içinde bir **modüler
-monolit** taşır — modüller derleme zamanında birbirini tanımaz, kimin kiminle
-konuştuğu kararı tek bir pakette (`internal/app`) verilir, ve izolasyon
-korunduğu için herhangi bir modül ileride ayrı bir servise çıkarılabilir.
-
-Gömen programın gördüğü yüzeyin tamamı budur:
+This is the whole of the surface an embedding program sees:
 
 ```go
 gobit.New().Version(version).Add(myModule).Use(myPlugin).Main(os.Args[1:], os.Stdout)
 ```
 
-Mimarinin **neden** böyle kurulduğu: [`docs/mimari.md`](./docs/mimari.md).
+**Why** the architecture is built this way: [`docs/mimari.md`](./docs/mimari.md).
 
-## Hızlı başlangıç
+## Quick start
 
 ```bash
-make up      # Postgres 16 + Redis 7 (sağlıklı olana kadar bekler)
-make run     # sunucuyu :9000'de başlatır
+make up      # Postgres 16 + Redis 7 (waits until they are healthy)
+make run     # starts the server on :9000
 curl -s localhost:9000/health
 # {"status":"ok","version":"v0.8.0"}
 curl -s localhost:9000/ready
 # {"status":"ok","version":"v0.8.0","checks":{"postgres":{"status":"ok"}}}
 ```
 
-`/health` yalnızca sürecin canlı olduğunu bildirir; `/ready` bağımlılıkları
-sınar ama hepsine aynı oyu vermez — Postgres trafiği keser, Redis
-derecelendirir. İkisinin farkı, `degraded`/`unavailable` tablosu ve
-`READINESS_DEGRADED_TIMEOUT` bütçesinin neden kısa olmak zorunda olduğu
-[`docs/operating.md`](./docs/operating.md) içindedir.
+`/health` reports only that the process is alive; `/ready` tests the
+dependencies but does not give them all the same vote — Postgres cuts traffic,
+Redis degrades it. The difference between the two, the `degraded`/`unavailable`
+table and why the `READINESS_DEGRADED_TIMEOUT` budget has to be short are in
+[`docs/operating.md`](./docs/operating.md).
 
-Tüm hedefler için `make help`.
+For every target, `make help`.
 
-## Gereksinimler
+## Requirements
 
-| Araç | Sürüm | Ne için |
+| Tool | Version | What for |
 |---|---|---|
-| Go | 1.26+ | derleme ve testler |
-| Docker + Compose | v2+ | Postgres, Redis, izleme toplayıcısı, istemci üreteci |
-| make | GNU Make | tüm hedefler |
-| curl + jq | — | belgelerdeki örnekler |
+| Go | 1.26+ | building and the tests |
+| Docker + Compose | v2+ | Postgres, Redis, the tracing collector, the client generator |
+| make | GNU Make | every target |
+| curl + jq | — | the shell examples in the documents |
 
-`curl` ve `jq` uygulamanın değil **belgelerin** bağımlılığıdır: belgelerdeki
-kabuk örnekleri ikisini de kullanır (`jq` olmadan
-`TOKEN=$(… | jq -r .data.token)` satırı boş bir jeton üretir ve sıradaki istek
-`401` alır).
+`make tools` installs `golangci-lint` and `sqlc` under `./bin` at pinned
+versions.
 
-`make tools`, sabitlenmiş sürümlerle `golangci-lint` ve `sqlc`'yi `./bin` altına
-kurar.
+## Configuration
 
-## Yapılandırma
+Every setting is read from an environment variable (12-factor) and the defaults
+agree with `deploy/docker-compose.yml`, so no `.env` file is needed locally.
+Customise with `cp .env.example .env`.
 
-Tüm ayarlar ortam değişkeninden okunur (12-factor) ve varsayılanlar
-`deploy/docker-compose.yml` ile uyumludur, bu yüzden yerelde `.env` gerekmez.
-`cp .env.example .env` ile özelleştirilir.
+**The written record of the settings is `.env.example`**, and it cannot drift
+from `internal/core/config/config.go`: a test walks `Config` by reflection and
+checks every `env` tag against the document in both directions.
 
-**Ayarların yazılı kaydı `.env.example`'dır.** O dosya ile
-`internal/core/config/config.go` ayrışamaz: bir test `Config`'i yansımayla gezer
-ve her `env` etiketinin belgede yazdığını, oradaki değerin de `envDefault` ile
-aynı olduğunu doğrular; ters yönde de karşılığı olmayan bir değişken bırakılamaz.
+The handful that has to be set by hand:
 
-Elle ayarlanması gereken avuç dolusu şunlardır:
-
-| Değişken | Ne zaman |
+| Variable | When |
 |---|---|
-| `DATABASE_URL` | `APP_ENV=production` iken **zorunlu** — ezilmemişse uygulama açılışta durur |
-| `REDIS_URL` | aynı kural |
-| `JWT_SECRET` | verilmezse kimlik katmanı **her isteği reddeder** (ADR 0007) |
-| `JWT_TTL` | yönetici oturumunun ömrü; varsayılan 12 saat, **yenilenmez** (ADR 0031). Paylaşılan ortamda üst sınır 24 saattir |
-| `APP_ENV` | `development` dışındaki her değer paylaşılan ortam sayılır ve uyarıları açar |
-| `EVENT_BUS` · `GUARD_BACKEND` | birden çok örnek çalıştırıyorsanız ikisi de `redis` olmalıdır |
-| `PLUGINS` | kurulacak eklentilerin adları, örneğin `PLUGINS=search-pg` |
+| `DATABASE_URL` | **mandatory** when `APP_ENV=production` — if it has not been overridden the application stops at startup |
+| `REDIS_URL` | the same rule |
+| `JWT_SECRET` | without it the identity layer **rejects every request** (ADR 0007) |
+| `JWT_TTL` | how long an admin session lasts; twelve hours by default and it **never renews** (ADR 0031). Capped at twenty-four hours in a shared environment |
+| `APP_ENV` | any value other than `development` counts as a shared environment and turns the warnings on |
+| `EVENT_BUS` · `GUARD_BACKEND` | both must be `redis` if you run more than one instance |
+| `PLUGINS` | the names of the plugins to install, for example `PLUGINS=search-pg` |
 
-Öncelik, üretim koruması, `.env`'in kabuk semantiği ve kalanların tamamı
-[`docs/operating.md`](./docs/operating.md) içindedir.
+Precedence, the production guard, the shell semantics of `.env` and all the rest
+are in [`docs/operating.md`](./docs/operating.md).
 
-## Dizin yapısı
+## Directory layout
 
 ```
-gobit.go              # YAYIMLANMIŞ cephe: New().Version().Add().Use().Main()
-core                  # YAYIMLANMIŞ sözleşmeler — on sekiz paket (ADR 0026,
-                      # ADR 0069 ile genişledi): errors, db, container, module,
+gobit.go              # the PUBLISHED facade: New().Version().Add().Use().Main()
+core                  # the PUBLISHED contracts — eighteen packages (ADR 0026,
+                      # widened by ADR 0069): errors, db, container, module,
                       # eventbus (+outbox), link, query, provider, plugin,
                       # http (+redisguard), audit, errorreport, personaldata,
                       # openapi, jobreport
-internal/app          # KOMPOZİSYON KÖKÜ (ADR 0027): config -> logger ->
-                      # container -> router -> dinle; operatör alt komutları
+internal/app          # the COMPOSITION ROOT (ADR 0027): config -> logger ->
+                      # container -> router -> listen; the operator subcommands
                       # (migrate, stuck, recover, jobs, deadletters, seed)
-cmd/server            # ikili: gobit'i çalıştırabilen en küçük program — ve
-                      # kopyalanacak örnek
-internal/core         # yayımlanmayan çekirdek: config, logger, job, workflow,
+cmd/server            # the binary: the smallest program that can run gobit —
+                      # and the example to copy
+internal/core         # the unpublished core: config, logger, job, workflow,
                       # observability, page
-internal/modules      # on yedi izole commerce modülü (product, pricing,
+internal/modules      # seventeen isolated commerce modules (product, pricing,
                       # inventory, cart, order, payment, …)
-internal/workflows    # modüller arası saga'lar (cart, checkout, invoicing,
+internal/workflows    # cross-module sagas (cart, checkout, invoicing,
                       # fulfilling, returns, datasubject)
-internal/adminui      # yönetim paneli: dördüncü ağaç (ADR 0011)
-plugins               # ağaç içi eklentiler (search-pg, error-sentry, file-s3, …)
-examples/plugin       # AYRI modül: yayımlanmış yüzeyin dışarıdan derlenen kanıtı
-examples/starter      # AYRI modül: gobit'i import eden, DERLENİP ÇALIŞTIRILAN
-                      # örnek uygulama
-migrations            # global (çekirdek) migration'lar
+internal/adminui      # the admin panel: a fourth tree (ADR 0011)
+plugins               # in-tree plugins (search-pg, error-sentry, file-s3, …)
+examples/plugin       # a SEPARATE module: proof that the published surface
+                      # compiles from outside
+examples/starter      # a SEPARATE module: an example application that imports
+                      # gobit and is COMPILED AND RUN
+migrations            # the global (core) migrations
 deploy                # docker-compose, Dockerfile
 ```
 
-## Zorlanan mimari kurallar
+## The enforced architecture rules
 
-İzolasyon derleme öncesinde `.golangci.yml` içindeki `depguard` ile denetlenir:
-`core/**` ve `internal/core/**` modülleri import edemez (planın Prensip 2.4'ü),
-hiçbir modül başka bir modülü import edemez (Prensip 2.1 / 2.4 — on yedi modül ×
-on altı yasak = tam izolasyon), ve modüller arası erişim container'dan çözülen
-dar bir interface üzerinden yapılır. Yeni
-modül eklerken `depguard.rules` listesi de güncellenir; liste **elle** tutulur
-ama unutulursa kural denetimsiz kalmaz — `TestModulesDoNotImportEachOther`
-modül ağacını gezip gerçek import grafiğine bakar ve o listeden haberi yoktur.
+Isolation is checked before the build by `depguard` in `.golangci.yml`: `core/**`
+and `internal/core/**` cannot import the modules (the plan's Principle 2.4), no
+module can import another module (Principles 2.1 / 2.4 — seventeen modules x
+sixteen prohibitions = complete isolation), and cross-module access goes through
+a narrow interface resolved from the container.
+When a module is added, the `depguard.rules` list is updated with it; the list is
+kept **by hand**, but forgetting it does not leave the rule unenforced —
+`TestModulesDoNotImportEachOther` walks the module tree, looks at the real import
+graph, and knows nothing about that list.
 
-`internal/arch` altındaki testler ise **davranışsal** değişmezleri zorlar.
-Hepsinin ortak kuralı şudur: **yapıyı gezerler, ad listesi tutmazlar.** Liste
-tutan bir test kuralı yalnızca *bugün* için uygular — yarın eklenen vaka
-sessizce dışarıda kalır.
+The tests under `internal/arch` enforce the **behavioural** invariants. Their
+common rule is this: **they walk the structure, they keep no list of names.** A
+test that keeps a list applies the rule only for *today* — the case added
+tomorrow silently stays outside it.
 
-| Değişmez | Nerede zorlanır | Yaşanmış arıza |
+| Invariant | Where it is enforced | The fault that happened |
 |---|---|---|
-| Modüller birbirini import etmez | `TestModulesDoNotImportEachOther` | — (depguard ile birlikte ikinci savunma hattı) |
-| Yayımlanan yüzey bilerek seçilir | `TestThePublishedPackagesAreTheDeclaredOnes` | Dizin açmak kalıcı bir kamu taahhüdüne dönüşürdü |
-| Yayımlanan hiçbir paket `internal/` import etmez | `TestNoPublishedPackageImportsAnInternalOne` | Dışarıdan derlenemeyen bir "yayımlanmış" paket |
-| Yüzey ağaç dışından gerçekten çalışır | `TestTheOutOfTreeStarterRuns` | Derlenen ama koşmayan bir örnek, çalıştığını kanıtlamaz |
-| Her modül kompozisyon kökünde kayıtlı | `TestEveryModuleIsRegisteredInTheCompositionRoot` | Faz 8/9'un tamamı yazılmıştı, testleri yeşildi, ve `/admin/v1/**` uçlarının **hiçbiri mount edilmemişti** |
-| Kayıtlı her modül e2e zemininde de kurulu | `TestEveryRegisteredModuleIsSetUpInTheE2EHarness` | Kayıt satırının derlenmesi ile modülün gerçekten çalışması aynı şey değil |
-| Kaydedilen her `*.interop` çözülüyor | `TestTheInteropSurfacesHaveAConsumer` | Ölü sözleşme; `Host.AddModule` hiç çağrılmıyordu |
-| Yayımlanan her olay konusunun abonesi var | `TestTheEventTopicsHaveASubscriber` | `order.placed` uzun süre abonesizdi ve olay hiçbir şey yapmıyordu |
-| Bildirilen her bağ **okunuyor** | `TestTheLinkDefinitionsAreTraversed` | Satış kanalı bağı yazılıyor, hiç okunmuyordu; test ilk koşuşunda **dört ölü bağ** buldu |
-| Her `env` etiketi `.env.example`'da ve varsayılanı aynı | `TestTheEnvExampleAgreesWithTheConfigDefaults` | `.env.example` "aşağıdaki **iki** sınır" diyordu, yedi taneydi |
-| Belgede karşılığı olmayan değişken yok | `TestNoVariableInTheEnvExampleIsOrphaned` | Silinen ayarın belgede kalması, operatöre çalışmayan bir kol vaat eder |
-| Belgelerdeki eklenti adları kayıtlı adlar | `TestThePluginNamesInTheDocsAreReal` | Eklentiyi dizin adıyla çağıran bir örnek; kopyalayan kurulum açılışta "bilinmeyen eklenti" ile duruyordu |
-| Hata gövdesi yalnızca `corehttp.WriteError`'dan | `TestErrorResponsesAreWrittenInOnePlace` | GraphQL sunucusu kuralı tekrar etmeye çalışıp ayrıştı; DSN+parola istemciye ulaştı, loglanmadı |
-| Her GraphQL `Max*` sınırının çekirdekte karşılığı var | `TestTheGraphQLLimitDefaultsAgreeWithTheConfig` | Beş sertleştirme sınırının ortam değişkeni yoktu; operatör onları ayarlayamıyordu |
-| Panelin statü listesi modülün kabul ettiği söz dağarcığıdır | `TestThePanelStatusOptionsAgreeWithTheModules`, okuyucusunun altında `TestTheProductStatusReaderIsNotBlind` | Karşılaştırmanın iki tarafı da aynı yerden geliyordu — modül tarafı testin gövdesine yazılmış üç elemanlı bir dilimdi — modüle eklenen beşinci bir statü kapıyı yeşil bırakıyordu ve operatör onu asla seçemezdi |
-| `variant` okuyan her yol satış kanalı kararı verir | `TestVariantReadsGoThroughTheChannelDecision` | Kapsam okumada uygulanıyor, sepete eklemede uygulanmıyordu: B kanalının anahtarıyla A kanalının varyantı satın alınabiliyordu |
-| Belgelerdeki her yol ve simge çözülür | `TestTheReferencesInTheDocsResolve` | Bağımsız bir doğrulama bir ADR'de hem simgeyi hem yolu kırdı ve `internal/arch` yeşil kaldı |
-| Her ADR göndermesi gerçek bir kaydı adlandırır | `TestTheADRReferencesResolve` | Numarası değişen bir kayda yapılan gönderme sessizce başka bir kararı gösterir |
-| Ledger dışında Türkçe yok | `TestNoTurkishOutsideLedger` | Yalnız diyakritiğe bakan bir kural tek bir harf çevirisiyle yalan söyler (ADR 0012) |
+| Modules do not import each other | `TestModulesDoNotImportEachOther` | — (a second line of defense alongside depguard) |
+| Every module is registered in the composition root | `TestEveryModuleIsRegisteredInTheCompositionRoot` | The whole of phases 8 and 9 was written, its tests were green, and **not one** of the `/admin/v1/**` endpoints had been mounted |
+| Every declared link is **read** | `TestTheLinkDefinitionsAreTraversed` | The sales-channel link was being written and never read; on its first run the test found **four dead links** |
+| Every published event topic has a subscriber | `TestTheEventTopicsHaveASubscriber` | `order.placed` went a long time with no subscriber and the event did nothing |
+| Every `env` tag is in `.env.example` with the same default | `TestTheEnvExampleAgreesWithTheConfigDefaults` | `.env.example` said "the **two** limits below"; there were seven |
+| Every path reading a `variant` makes a sales-channel decision | `TestVariantReadsGoThroughTheChannelDecision` | The scope was enforced on the read surface and not on add-to-cart: channel A's variant could be bought with channel B's key |
+| Every path and symbol in the documents resolves | `TestTheReferencesInTheDocsResolve` | An independent verification broke both a symbol and a path in an ADR and `internal/arch` stayed green |
+| No Turkish outside the ledger | `TestNoTurkishOutsideLedger` | A rule that looked only at diacritics would lie after a single transliteration pass (ADR 0012) |
 
-Bu testlerin hepsi **mutasyonla doğrulanmıştır**: değişmez kasten bozulduğunda
-düştükleri gösterilmiştir. Düşürülemeyen bir mimari testi, olmayan bir mimari
-testinden daha kötüdür — güvence hissi verir, güvence vermez.
+That is eight of them. The rest — the published surface, the interop consumers,
+the panel's vocabulary, the GraphQL limits, the error body, the ADR references —
+are in `internal/arch`, one test per invariant, each with the fault that made it
+exist written in its godoc.
 
-Bir değişmezden **muaf tutma** gerekiyorsa mekanizma koddadır ve gerekçe
-zorunludur; ayrıca muafiyetler **bayatlarsa testi düşürür**: muaf tutulan şey
-artık kuralı ihlal etmiyorsa satır silinmek zorundadır. Muafiyet borçtur, borç
-ödendiğinde defterde kalmaz.
+All of these tests are **verified by mutation**: they have been shown to fail
+when the invariant is deliberately broken. An architecture test that cannot be
+made to fail is worse than one that does not exist — it gives the feeling of a
+guarantee without giving the guarantee.
 
-## Kişisel veri: mekanizma bizden, sorumluluk sizden
+If an **exemption** from an invariant is needed, the mechanism is in the code and
+a justification is mandatory; and exemptions **fail the test when they go stale**:
+once the exempted thing no longer breaks the rule, the line has to be deleted. An
+exemption is a debt, and a debt that has been paid does not stay in the book.
 
-gobit bir kişiyi sistemin tamamından silebilir, aynı kişinin dosyasını
-çıkarabilir ve nerede ne tuttuğunu haritalayabilir:
+## Personal data: the mechanism is ours, the responsibility is yours
 
-| Uç | Ne yapar |
+Three endpoints — `GET /admin/v1/personal-data` maps which column of which table
+holds a person, `POST /admin/v1/personal-data/disclosure` assembles one person's
+file from every holder, and `POST /admin/v1/personal-data/erasure` erases them
+and reports what each module did. Every module answers an erasure with
+**deleted**, **anonymized** or **retained**, and one that retained says what it
+kept and why: an issued invoice is a legal document.
+
+**None of it runs by itself, and that is deliberate.** gobit is not the data
+controller; the application embedding it is
+([ADR 0029](./docs/adr/0029-the-embedder-is-the-data-controller.md)). A library
+cannot choose your retention period or your lawful basis. **A gobit that is
+installed and never called leaves a compliance problem the framework cannot
+see.**
+
+## Why it is built this way
+
+This repository started from a brief: an architecture note dated 6 September
+2026. It was a BRIEF and not a description — what follows is what became of it,
+and where the tree decided otherwise. In case of conflict the ADR wins.
+
+**A library, not a fork.** The embedding project tracks gobit in `go.mod` and
+assembles the installation through the published facade (ADR 0025). The fork
+model makes projects diverge and turns upgrading into a nightmare; that was the
+brief's first sentence and it held.
+
+**The panel becomes a client of the API — half built.** ADR 0030 decided the
+panel becomes a single-page client of `/admin/v1`, ADR 0076 moved the first
+screen there, and five screens are still rendered on the server. It stands open
+in the defect ledger (D34), and that is why this line exists: a decided future
+is not written as a present fact.
+
+**Measure, do not guess.** The brief's list of common mistakes had *offset
+pagination* on it. The measurement took it off: over 52,000 rows the first page
+costs 0.31 ms, about 50,000 rows deep it costs 34.71 ms, and a keyset seek stays
+flat at 0.06–0.08 ms (`internal/core/page`). So offset is not a mistake, it is a
+mistake at DEPTH — and the cursor went to the listings whose rows grow with the
+shop's trade. The brief carried that correction itself; so does the way this
+repository works.
+
+**The technology choices held.** PostgreSQL + `pgx` + `sqlc` (no ORM, type-safe
+SQL), golang-migrate for migrations, and tests against a real Postgres through
+`testcontainers` — the repository does not mock its own repository. Logging is
+`slog`; OpenTelemetry and error reporting sit in the plugin slots
+(`plugins/errorotlp`, `plugins/errorsentry`).
+
+**Three places the brief did not hold, by name.** Redis is here but NOT as a
+cache: it carries the event bus and the request guard, the product/category
+cache was never built, and to this day no ADR mentions one. Search did not go to
+Meilisearch; it stayed on PostgreSQL full-text (`plugins/searchpg`). NATS
+appears nowhere — the outbound event became `plugins/webhookout` and the outbox
+relay, the relay with a backoff and a dead letter behind it.
+
+**Money, stock, idempotency — the brief's three tightest lines.** Money is never
+a float, it is integer minor units. Stock moves under a lock, and overselling is
+something the schema refuses. An idempotency key is mandatory on payment and on
+order creation; a repeated request does not produce a second order.
+
+**AI is not a tool called from outside, it is a subsystem.** The first task was
+review moderation and that is how it arrived: the model produces a SUGGESTION,
+the suggestion is stored (ADR 0066), a filter shows it to the operator (ADR
+0073), and a human has the last word — whether the human agreed with the
+suggestion is recorded too (ADR 0074).
+
+**Half of the Turkey-specific list stands.** The PayTR plugin is here
+(`plugins/paymentpaytr`), so are VAT and tax regions, and so are the disclosure
+and erasure endpoints on the KVKK side (ADR 0033). The e-invoice integration and
+the domestic carrier APIs are NOT — the invoice module produces documents, it
+does not connect to e-fatura.
+
+**What the brief did not foresee, and what really grew.** The decision ledger
+(`docs/adr/`), the defect ledger (`docs/gaps.md`), and the gates that read the
+prose itself: a route address, a count or a cross-reference written in a
+document is verified by a test. What sets this repository apart is not a feature
+on a list; it is that.
+
+## Where to read further
+
+| Document | What it answers |
 |---|---|
-| `GET /admin/v1/personal-data` | Hangi tabloda hangi sütunun bir kişiyi tuttuğunu, kimse hakkında olmadan listeler |
-| `POST /admin/v1/personal-data/disclosure` | Tek bir kişinin dosyasını her tutucudan toplar |
-| `POST /admin/v1/personal-data/erasure` | O kişiyi siler ve her modülün ne yaptığını gerekçesiyle bildirir |
+| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: ninety-one records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
+| [`docs/mimari.md`](./docs/mimari.md) | The architecture narrative: layers, the life cycle of a request and of a module, data, sagas, the core packages |
+| [`docs/gaps.md`](./docs/gaps.md) | The defect ledger: every fault this repository found in itself, one sentence and the ADR that closed it |
+| [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: twenty-eight items in six groups — identity and authorization, sales channel scope, the category tree, tax, installation and operation, the limit of the invariants |
+| [`docs/security.md`](./docs/security.md) | Identity and authorization: the two surfaces, the scope dictionary, the hardening rings, an end-to-end curl walkthrough |
+| [`docs/commerce-flows.md`](./docs/commerce-flows.md) | From cart to order: who owns a flow, who decides the price, which warehouse it ships from |
+| [`docs/api-surfaces.md`](./docs/api-surfaces.md) | The OpenAPI document and the GraphQL storefront surface, with the limits the server sets |
+| [`docs/extending.md`](./docs/extending.md) | Plugins, providers and domain events — how a capability is added |
+| [`docs/operating.md`](./docs/operating.md) | Running it: `/health` and `/ready`, the configuration, the bus backends, observability, the make targets |
+| [`docs/measurements/`](./docs/measurements/) | The numbers behind the decisions: probe output and reproductions |
+| [`CHANGELOG.md`](./CHANGELOG.md) | What changed, release by release |
 
-Silme her modülden üç cevaptan birini alır — **silindi**, **anonimleştirildi**
-ya da **saklandı** — ve saklandıysa modül *neyi* ve *neden* sakladığını söyler:
-kesilmiş bir fatura yasal bir belgedir ve silinmez, ama bunu bir cümleyle
-söyleyebilmek veri sahibine cevap verebilmenin ta kendisidir.
+## Phase status and version
 
-**Bunların hiçbiri kendiliğinden çalışmaz, ve bu bilerek böyledir.** Veri
-sorumlusu gobit değil, gobit'i gömen uygulamadır ([ADR 0029](./docs/adr/0029-the-embedder-is-the-data-controller.md)):
-saklama süresini, hukuki dayanağı ve rıza metnini bir kütüphane seçemez.
-gobit mekanizmayı ve neyi nerede tuttuğunun beyanını verir; o uçları çağırmak,
-bir talebi kabul etmek ve süreyi belirlemek sizin işinizdir. **Kurulup hiç
-çağrılmayan bir gobit, çerçevenin göremeyeceği bir uyum sorunu bırakır.**
-
-### The customer identity: you verify it, we refuse without it
-
-The same division holds on the storefront. Twelve routes ask that the customer
-the request names be proven
-([ADR 0043](./docs/adr/0043-gobit-requires-an-identity-it-still-does-not-issue.md),
-[ADR 0057](./docs/adr/0057-one-comparison-holds-the-storefront-customer-claim.md)):
-`GET` and `PUT /store/v1/customers/{id}` with the six routes of the address
-book, b2b's company and employee reads, and the two cart bodies — cart creation
-and the guest-to-registered handover — the last two only when the body carries a
-`customer_id`.
-
-gobit does not produce that proof and will not
-([ADR 0008](./docs/adr/0008-musteri-kimligi-guven-siniri.md)); what it produces
-is the contract: `corehttp.Identity`, a one-method interface. The embedding
-application registers its own implementation into the container from an ordinary
-module's `Register`, under the name `corehttp.IdentityName` (`"core.identity"`).
-With one bound, a request naming somebody else gets `403 identity_mismatch` from
-any of the twelve.
-
-**With NO identity bound the twelve split, and the split is the decision.** The
-eight the customer module owns refuse every request with `401
-identity_not_bound` — closed rather than open, which is a **MANDATORY step for
-an installation upgrading past `v0.8.0`**. The four ADR 0057 added do not: b2b's
-two reads and a cart naming a customer answer exactly as they always have,
-because withdrawing a surface that ships working costs an embedder more than the
-leak it closes. That leaves those four believing the claim until a verifier is
-bound, and the module says so in its log. A cart that names nobody is a guest
-cart and is never asked either way, so a shop that sells to guests keeps
-selling; `POST /store/v1/customers` is outside the set as well, because it MINTS
-the record. The whole boundary is in
-[`docs/known-limits.md`](./docs/known-limits.md).
-
-## Neden böyle kuruldu
-
-Bu depo bir tarifeden başladı: 6 Eylül 2026 tarihli bir mimari brifingi. Tarife
-bir TARİFTİ, tasvir değildi — aşağısı ondan ne olduğu, ve ağacın başka karar
-verdiği yerler. Çelişki hâlinde ADR geçerlidir.
-
-**Kütüphane, çatal değil.** Gömen proje gobit'i `go.mod`'da izler ve kurulumu
-yayımlanmış cepheden kurar (ADR 0025). Çatal modeli projeleri ayrıştırır ve
-yükseltmeyi kâbusa çevirir; tarifenin ilk cümlesi buydu ve tuttu.
-
-**Panel, API'nin istemcisi olacak — yarısı kuruldu.** ADR 0030 paneli
-`/admin/v1`'in tek sayfalık istemcisi yapmaya karar verdi, ADR 0076 ilk ekranı
-oraya taşıdı, beş ekran hâlâ sunucuda işleniyor. Kusur defterinde açık duruyor
-(D34) ve bu satır o yüzden var: karara bağlanmış bir gelecek, bugünün olgusu
-gibi anlatılmaz.
-
-**Ölç, tahmin etme.** Tarifenin "sık yapılan hatalar" listesinde *offset
-sayfalama* vardı. Ölçüm onu listeden çıkardı: 52.000 satırda ilk sayfa 0,31 ms,
-~50.000 satır derinlikte 34,71 ms, keyset ise 0,06–0,08 ms'de sabit
-(`internal/core/page`). Yani offset bir hata değil, DERİNLİKTE bir hata — ve
-cursor, satırları ticaretle büyüyen listelere gitti. Tarifenin kendisi bu
-düzeltmeyi taşıyordu; deponun çalışma biçimi de bu.
-
-**Teknoloji seçimleri tuttu.** PostgreSQL + `pgx` + `sqlc` (ORM yok, SQL tip
-güvenli), migration için golang-migrate, testler gerçek bir Postgres'e karşı
-`testcontainers` ile — depo kendi deposunu taklit etmiyor. Günlük `slog`;
-OpenTelemetry ve hata raporlama eklenti yuvasında (`plugins/errorotlp`,
-`plugins/errorsentry`).
-
-**Tarifenin tutmayan üç yeri, adıyla.** Redis var ama ÖNBELLEK olarak yok:
-olay yolunda ve istek korumasında kullanılıyor, ürün/kategori önbelleği hiç
-kurulmadı ve bugüne kadar hiçbir ADR ondan söz etmiyor. Arama Meilisearch'e
-gitmedi, PostgreSQL tam metin aramasında kaldı (`plugins/searchpg`). NATS
-hiçbir yerde yok; dışa akan olay `plugins/webhookout` ve outbox rölesi oldu —
-röle geri çekilme ve ölü mektupla birlikte.
-
-**Para, stok, idempotency — tarifenin en sıkı üç satırı.** Para asla float
-değil, tam sayı kuruş. Stok kilit altında hareket eder ve fazla satış şemanın
-reddettiği bir şeydir. Ödeme ve sipariş oluşturmada idempotency anahtarı
-zorunludur; tekrarlanan istek ikinci siparişi doğurmaz.
-
-**Yapay zekâ dışarıdan çağrılan bir araç değil, bir alt sistem.** İlk görev
-yorum moderasyonuydu ve öyle de geldi: model bir ÖNERİ üretir, öneri saklanır
-(ADR 0066), süzgeç onu operatöre gösterir (ADR 0073) ve son sözü insan söyler —
-insan kararıyla önerinin uyuşup uyuşmadığı da kaydedilir (ADR 0074).
-
-**Türkiye'ye özgü olanın yarısı duruyor.** PayTR eklentisi var
-(`plugins/paymentpaytr`), KDV ve vergi bölgeleri var, KVKK tarafında açıklama
-ve silme uçları var (ADR 0033). E-fatura entegrasyonu ve yerli kargo API'leri
-YOK — fatura modülü belge üretir, e-faturaya bağlanmaz.
-
-**Tarifede olmayan ve asıl büyüyen şey.** Karar defteri (`docs/adr/`), kusur
-defteri (`docs/gaps.md`) ve düzyazının kendisini okuyan kapılar: bir belgede
-yazan rota adresi, sayı ve çapraz referans testlerle doğrulanır. Bu depoyu
-diğerlerinden ayıran şey listedeki bir özellik değil, bu.
-
-## Daha ileri okuma
-
-| Belge | Neyi cevaplar |
-|---|---|
-| [`docs/adr/README.md`](./docs/adr/README.md) | Kararların İNDEKSİ: doksan bir kayıt, her biri tek cümlelik kararıyla. Plan ile çelişirse **ADR geçerlidir** |
-| [`docs/measurements/`](./docs/measurements/) | Ölçümler: sayılar, sonda çıktıları, yeniden üretim adımları. Bir ADR'ye tek satırla bağlanır; kimse baştan sona okumak zorunda değil |
-| [`docs/mimari.md`](./docs/mimari.md) | Mimarinin anlatısı: katmanlar, isteğin ve modülün yaşam döngüsü, veri, saga'lar, teknoloji seçimleri, çekirdek paketler |
-| [`docs/gaps.md`](./docs/gaps.md) | Kusur defteri: deponun kendinde bulduğu her arıza, tek cümle ve onu kapatan ADR |
-| [`docs/security.md`](./docs/security.md) | Kimlik ve yetki: iki yüzey, katalogun satış kanalına göre süzülmesi, scope sözlüğü, curl ile uçtan uca yürüyüş, sertleştirme halkaları ve tek örnek/çok örnek ayrımı |
-| [`docs/commerce-flows.md`](./docs/commerce-flows.md) | Sepetten siparişe: akışların HTTP sahibi kim, fiyata ve para birimine kim karar verir, hangi depodan gönderilir, ve B2B'de harcama limiti nerede kontrol edilir |
-| [`docs/api-surfaces.md`](./docs/api-surfaces.md) | Üretilen OpenAPI belgesi ve GraphQL vitrin okuma yüzeyi; maliyeti istemci belirlerken sunucunun koyduğu sınırlar ve hata politikası |
-| [`docs/extending.md`](./docs/extending.md) | Eklentiler, dosya yükleme sağlayıcısı, alan olayları ve **müşteri kimliği** — yeni bir yetenek nasıl eklenir, ve vitrinin ZORUNLU kıldığı tek bağlama |
-| [`docs/operating.md`](./docs/operating.md) | Çalıştırma ve geliştirme: `/health` ile `/ready`, yapılandırmanın tamamı, olay veri yolu arka uçları, izleme, make hedefleri, modül yolunu değiştirme ve sürüm geçmişi |
-| [`docs/known-limits.md`](./docs/known-limits.md) | Bilinen sınırlar: yirmi sekiz madde, altı küme — kimlik ve yetki, satış kanalı kapsamı, kategori ağacı, vergi, kurulum ve işletim, değişmezlerin sınırı |
-| [`docs/measurements/catalog-search-cost.md`](./docs/measurements/catalog-search-cost.md) | Katalog aramasının ölçülmüş maliyeti |
-| [`CHANGELOG.md`](./CHANGELOG.md) | Sürüm sürüm ne değişti |
-
-## Faz durumu ve sürüm
-
-Yol haritasının **on fazının hepsi tamamlandı**: proje iskeleti (0), çekirdek
-altyapı (1), Module Links ve Query (2), saga motoru (3), katalog (4), sepet (5),
-ödeme ve sipariş tamamlama (6), fulfillment · promotion · tax (7), auth · admin
-user · API key · RBAC (8), eklenti sistemi · observability · sertleştirme (9),
-GraphQL vitrin yüzeyi ve B2B (10). Yol haritası bittikten sonra bulunanlar
-sürümlerde izlenir.
-
-Güncel sürüm **v0.8.0**. `0.x` boyunca **kırıcı değişiklikler minor sürümlerde
-gelebilir**; yüzey `1.0.0` ile donar. Sürüm sürüm ne değiştiği
-[`CHANGELOG.md`](./CHANGELOG.md) içinde, her sürümün neyi neden getirdiği
-[`docs/operating.md`](./docs/operating.md) içindedir.
+**All ten phases** of the roadmap are complete, from the project skeleton to the
+GraphQL storefront surface and B2B; what was found after the roadmap ended is
+tracked in the releases. The current version is **v0.8.0**, and throughout `0.x`
+**breaking changes may arrive in minor versions** — the surface freezes with
+`1.0.0`.

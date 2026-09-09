@@ -1017,7 +1017,7 @@ func TestTheCountClaimScannerIsNotBlind(t *testing.T) {
 		found[claim.file+" :: "+claim.population] = true
 	}
 
-	for _, readme := range []string{"README.md", "README.en.md"} {
+	for _, readme := range []string{"README.md"} {
 		for _, population := range countClaimedToday {
 			assert.True(t, found[readme+" :: "+population],
 				"%s no longer prices %q anywhere this audit can see it.\n"+
@@ -1060,7 +1060,7 @@ func TestTheCountClaimExclusionsHold(t *testing.T) {
 	assert.False(t, countDatedRecord("docs/adr/README.md"),
 		"the ADR INDEX is not a record: it is rewritten whenever a record is added, and "+
 			"an index miscounting its own rows is the defect this class was built for")
-	assert.False(t, countDatedRecord("README.en.md"), "a README describes today")
+	assert.False(t, countDatedRecord("README.md"), "a README describes today")
 	assert.False(t, countDatedRecord(knownLimitsDoc), "the limits document describes today")
 	assert.False(t, countDatedRecord("docs/measurements/b2-remainder.md"),
 		"a measurement is kept current — b2-remainder.md carries its own corrections — "+
@@ -1074,7 +1074,7 @@ func TestTheCountClaimExclusionsHold(t *testing.T) {
 		"a line of the index that links NO record is the index speaking for itself and "+
 			"stays in scope — an index miscounting its own rows is what this rule must "+
 			"not forgive")
-	assert.False(t, countQuotedRow("README.en.md", row),
+	assert.False(t, countQuotedRow("README.md", row),
 		"the quoted-row rule belongs to the ADR index alone")
 
 	for _, claim := range collectCountClaims(t) {

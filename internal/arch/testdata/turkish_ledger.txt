@@ -8,7 +8,6 @@
 # translated; the test refuses a line whose file is already clean.
 #
 CHANGELOG.md
-README.md
 internal/modules/b2b/api/admin.go
 internal/modules/b2b/api/api.go
 internal/modules/b2b/api/api_test.go
