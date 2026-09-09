@@ -3,6 +3,8 @@ package cart
 import (
 	"strconv"
 	"testing"
+
+	"github.com/bdrtr/gobit/internal/benchbudget"
 )
 
 // benchCartSize is the number of lines the benchmark cart carries.
@@ -107,4 +109,30 @@ func BenchmarkApplyTaxResponse(b *testing.B) {
 		copy(lines, source)
 		_ = applyTaxResponse(snap, lines, resp)
 	}
+}
+
+// TestTheTotalsBudgetsHold is the half of a benchmark that can fail.
+//
+// The two functions below carry a ceiling of ZERO, and that is a statement about
+// them rather than a round number: summing a slice and applying a rate to each
+// of its lines are both arithmetic over memory the caller already owns, and the
+// day either of them allocates, something has started copying per request on the
+// path every cart read takes.
+func TestTheTotalsBudgetsHold(t *testing.T) {
+	benchbudget.Check(t, []benchbudget.Budget{
+		{
+			Name:   "BenchmarkAssembleTotals",
+			Run:    BenchmarkAssembleTotals,
+			Allocs: 0,
+			Why: "assembleTotals sums a slice it was handed and writes into a value it returns; " +
+				"an allocation here is a copy taken per cart read.",
+		},
+		{
+			Name:   "BenchmarkApplyTaxResponse",
+			Run:    BenchmarkApplyTaxResponse,
+			Allocs: 0,
+			Why: "applyTaxResponse rewrites the lines in place; an allocation here is a second " +
+				"slice built on every priced cart.",
+		},
+	})
 }

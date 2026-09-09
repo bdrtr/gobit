@@ -4,6 +4,8 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/bdrtr/gobit/internal/benchbudget"
+
 	"github.com/bdrtr/gobit/internal/modules/promotion/models"
 )
 
@@ -113,4 +115,31 @@ func BenchmarkAllocateAcross(b *testing.B) {
 	for b.Loop() {
 		_ = allocateAcross(9_999, lines)
 	}
+}
+
+// TestThePromotionBudgetsHold is the half of a benchmark that can fail.
+//
+// Neither ceiling is zero, and neither is round. Both are the figure measured on
+// 2026-09-09, unchanged over five runs and unchanged under the race detector,
+// and they are exact because the numbers are small enough for one more
+// allocation to mean something: eighteen is per CART and not per line, which is
+// the property worth defending — a computation that started allocating per line
+// would read as thirty-eight here on a basket of twenty.
+func TestThePromotionBudgetsHold(t *testing.T) {
+	benchbudget.Check(t, []benchbudget.Budget{
+		{
+			Name:   "BenchmarkComputeDiscounts",
+			Run:    BenchmarkComputeDiscounts,
+			Allocs: 18,
+			Why: "eighteen allocations price a whole cart against four promotions, which is per " +
+				"CART; a per-line cost would grow this figure with benchCartSize.",
+		},
+		{
+			Name:   "BenchmarkAllocateAcross",
+			Run:    BenchmarkAllocateAcross,
+			Allocs: 2,
+			Why: "the remainder distribution builds one result slice and one working slice; a " +
+				"third allocation is a copy nobody asked for.",
+		},
+	})
 }
