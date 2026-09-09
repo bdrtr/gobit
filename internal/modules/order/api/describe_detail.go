@@ -43,7 +43,13 @@ func describeOrderDetail(d *openapi.Doc) {
 			"BASIS POINTS (2000 is 20%). It is published because it CANNOT be recomputed: " +
 			"the tax is rounded down per line, so the amount alone maps back to a range of " +
 			"rates, and anything printing an invoice needs the rate the customer was " +
-			"actually charged under.",
+			"actually charged under.\n\n" +
+			"A line taxed by a STACK of rates also carries \"tax_components\", one entry " +
+			"per rate in stack order with the base first, and their \"tax_amount\" values " +
+			"add up to the line's \"tax_total\". The field is ABSENT when a single rate " +
+			"applied, and \"tax_rate_bps\" then says it all; on a stacked line that field " +
+			"carries the stack's BASE rate, which is a rate really applied on an amount " +
+			"really recorded, not the whole story.",
 		Responses: map[string]any{
 			"200": openapi.Response("The order with its lines", d.Item(orderDetailDTO{})),
 		},

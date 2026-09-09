@@ -422,13 +422,53 @@ func (r *Repository) CreateLineItem(ctx context.Context, item models.OrderLineIt
 	return toLineItem(row)
 }
 
-// ListLineItems returns the order's lines in the order they were created.
+// CreateLineTax records one component of a line's tax stack.
+//
+// It is written with the line and never afterwards: the breakdown is part of
+// the same permanent answer the line is.
+func (r *Repository) CreateLineTax(
+	ctx context.Context, component models.OrderLineTax,
+) (models.OrderLineTax, error) {
+	row, err := r.queries(ctx).CreateOrderLineTax(ctx, orderdb.CreateOrderLineTaxParams{
+		ID:              component.ID,
+		OrderLineItemID: component.OrderLineItemID,
+		Position:        component.Position,
+		RateID:          component.RateID,
+		RateBps:         component.RateBps,
+		Compound:        component.Compound,
+		TaxableAmount:   component.TaxableAmount,
+		TaxAmount:       component.TaxAmount,
+	})
+	if err != nil {
+		return models.OrderLineTax{}, classify(err, codeQueryFailed,
+			"could not create the line's tax component")
+	}
+	return toLineTax(row), nil
+}
+
+// ListLineItems returns the order's lines in the order they were created, each
+// carrying its tax breakdown.
+//
+// It is TWO queries whatever the line count: the components are read for the
+// whole order at once and hung on the lines here. Reading them per line would
+// put an N+1 on the module's most-read path.
 func (r *Repository) ListLineItems(ctx context.Context, orderID string) ([]models.OrderLineItem, error) {
 	rows, err := r.queries(ctx).ListOrderLineItems(ctx, orderID)
 	if err != nil {
 		return nil, classify(err, codeQueryFailed, "could not read the order lines")
 	}
-	return toLineItems(rows)
+	items, err := toLineItems(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	taxes, err := r.queries(ctx).ListOrderLineTaxesByOrder(ctx, orderID)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "could not read the lines' tax components")
+	}
+	attachLineTaxes(items, taxes)
+
+	return items, nil
 }
 
 // ListLineItemsFiltered lists lines ACROSS orders, filtered and paged.

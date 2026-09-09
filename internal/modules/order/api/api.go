@@ -359,11 +359,32 @@ type lineItemDTO struct {
 	// It is published because it cannot be recomputed: the tax is rounded down
 	// per line, so the amount alone maps back to a range of rates. Anything
 	// that prints an invoice needs the rate the customer was charged under.
-	TaxRateBps int32          `json:"tax_rate_bps"`
-	Total      int64          `json:"total"`
-	Metadata   map[string]any `json:"metadata,omitempty"`
-	CreatedAt  time.Time      `json:"created_at"`
-	UpdatedAt  time.Time      `json:"updated_at"`
+	TaxRateBps int32 `json:"tax_rate_bps"`
+	// TaxComponents is the per-rate breakdown when a STACK taxed the line, base
+	// first; it is absent when a single rate applied and TaxRateBps says it all.
+	//
+	// It is published for the same reason the rate is: a line taxed at 5% + 8%
+	// carries "5%" — a rate really applied, on an amount really recorded — and
+	// anything that prints a document has to state the other one too.
+	TaxComponents []lineTaxDTO   `json:"tax_components,omitempty"`
+	Total         int64          `json:"total"`
+	Metadata      map[string]any `json:"metadata,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+}
+
+// lineTaxDTO is the external representation of one rate inside a line's tax
+// stack.
+//
+// The position is not published: the list is already in stack order, base
+// first, and a second way to say the same thing is a second thing that can
+// disagree.
+type lineTaxDTO struct {
+	RateID        string `json:"rate_id"`
+	RateBps       int32  `json:"rate_bps"`
+	Compound      bool   `json:"compound"`
+	TaxableAmount int64  `json:"taxable_amount"`
+	TaxAmount     int64  `json:"tax_amount"`
 }
 
 // summaryDTO is the external representation of the order's payment/refund
@@ -483,11 +504,31 @@ func toLineItemDTO(item models.OrderLineItem) lineItemDTO {
 		DiscountTotal: item.DiscountTotal,
 		TaxTotal:      item.TaxTotal,
 		TaxRateBps:    item.TaxRateBps,
+		TaxComponents: toLineTaxDTOs(item.TaxComponents),
 		Total:         item.Total,
 		Metadata:      item.Metadata,
 		CreatedAt:     item.CreatedAt,
 		UpdatedAt:     item.UpdatedAt,
 	}
+}
+
+// toLineTaxDTOs converts a line's tax breakdown to the external representation.
+func toLineTaxDTOs(components []models.OrderLineTax) []lineTaxDTO {
+	if len(components) == 0 {
+		return nil
+	}
+
+	out := make([]lineTaxDTO, 0, len(components))
+	for i := range components {
+		out = append(out, lineTaxDTO{
+			RateID:        components[i].RateID,
+			RateBps:       components[i].RateBps,
+			Compound:      components[i].Compound,
+			TaxableAmount: components[i].TaxableAmount,
+			TaxAmount:     components[i].TaxAmount,
+		})
+	}
+	return out
 }
 
 // toSummaryDTO converts the summary to the external representation; the

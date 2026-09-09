@@ -40,10 +40,40 @@ type CreateOrderItemInput struct {
 	// amount is a different claim.
 	TaxRateBps int32
 	TaxTotal   int64
+	// TaxComponents is the per-rate breakdown when a STACK taxed the line, base
+	// FIRST; it is left empty when a single rate applied and TaxRateBps says it
+	// all.
+	//
+	// The order in the slice is stored as it arrives, because a compound
+	// component's base is everything below it and a breakdown read in another
+	// order cannot be reproduced.
+	TaxComponents []CreateOrderLineTaxInput
 	// Total is the total of the line: Subtotal - DiscountTotal + TaxTotal.
 	Total int64
 	// Metadata is the caller's free extra data.
 	Metadata map[string]any
+}
+
+// CreateOrderLineTaxInput is one rate applied inside a line's tax stack.
+//
+// A breakdown reaches the order only when a stack taxed the line; a list of one
+// is refused, because it would repeat what the line's own rate says while making
+// "this line has components" stop meaning "a stack taxed it".
+type CreateOrderLineTaxInput struct {
+	// RateID is the tax module's rate id; it may be empty when an external
+	// provider carries no ids of its own. It is not validated here — it belongs
+	// to another module (Principle 2.2).
+	RateID string
+	// RateBps is the applied rate (basis points; 2000 = 20%).
+	RateBps int32
+	// Compound says the component was computed on the line's amount PLUS the
+	// taxes below it. The FIRST component stands on nothing and can never be
+	// compound.
+	Compound bool
+	// TaxableAmount is the base THIS component was computed on (minor unit).
+	TaxableAmount int64
+	// TaxAmount is the tax this component produced (minor unit).
+	TaxAmount int64
 }
 
 // CreateOrderInput is the input of a new order; it is the SNAPSHOT of the cart.
@@ -297,7 +327,7 @@ func (s *Service) writeOrder(ctx context.Context, in CreateOrderInput, rule spen
 		// The loop is walked by index: the line input is large and copying it by
 		// value would carry a few hundred bytes for nothing on every turn.
 		for i := range in.Items {
-			if _, err := s.store.CreateLineItem(ctx, models.OrderLineItem{
+			line, err := s.store.CreateLineItem(ctx, models.OrderLineItem{
 				ID:            models.NewLineItemID(),
 				OrderID:       order.ID,
 				VariantID:     in.Items[i].VariantID,
@@ -310,8 +340,30 @@ func (s *Service) writeOrder(ctx context.Context, in CreateOrderInput, rule spen
 				TaxRateBps:    in.Items[i].TaxRateBps,
 				Total:         in.Items[i].Total,
 				Metadata:      in.Items[i].Metadata,
-			}); err != nil {
+			})
+			if err != nil {
 				return err
+			}
+
+			// The breakdown goes in the SAME transaction as its line, for the
+			// reason the lines go in the same one as the order: a line whose
+			// components are missing is a line that says it was taxed at the
+			// stack's base rate, and nothing afterwards could tell that from a
+			// line that really was.
+			for at := range in.Items[i].TaxComponents {
+				component := in.Items[i].TaxComponents[at]
+				if _, err := s.store.CreateLineTax(ctx, models.OrderLineTax{
+					ID:              models.NewLineTaxID(),
+					OrderLineItemID: line.ID,
+					Position:        int32(at),
+					RateID:          component.RateID,
+					RateBps:         component.RateBps,
+					Compound:        component.Compound,
+					TaxableAmount:   component.TaxableAmount,
+					TaxAmount:       component.TaxAmount,
+				}); err != nil {
+					return err
+				}
 			}
 		}
 

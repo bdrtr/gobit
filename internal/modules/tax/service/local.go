@@ -356,6 +356,14 @@ func (t rateTable) applyTo(
 	// yazılan sayılar toplamlarına eşit olmazdı — ve bir fatura her bileşeni
 	// ayrı basar.
 	var total int64
+	// Bileşenler YALNIZCA yığınlı satırda taşınır: tek oranlı satırda liste,
+	// satırın kendi RateID/RateBps'inin söylediğinden fazlasını söylemez ve
+	// "liste var" ibaresi "bu satırı bir yığın vergiledi" anlamını yitirirdi
+	// (sözleşme [validateComponents]'te).
+	var components []TaxComponent
+	if len(stack) > 1 {
+		components = make([]TaxComponent, 0, len(stack))
+	}
 	for i := range stack {
 		base := amount
 		if stack[i].Compound {
@@ -375,6 +383,16 @@ func (t rateTable) applyTo(
 		if err != nil {
 			return ProviderItemTax{}, err
 		}
+
+		if components != nil {
+			components = append(components, TaxComponent{
+				RateID:        stack[i].ID,
+				RateBps:       stack[i].RateBps,
+				Compound:      stack[i].Compound,
+				TaxableAmount: base,
+				TaxAmount:     tax,
+			})
+		}
 	}
 
 	return ProviderItemTax{
@@ -387,6 +405,11 @@ func (t rateTable) applyTo(
 		// taşımak ayrı bir dilim — ama YANLIŞ değildir.
 		TaxAmount:     total,
 		TaxableAmount: amount,
+		// Bileşenler satırın oranını TAMAMLAR, değiştirmez: satır yığının
+		// tabanını taşımaya devam eder, bileşenler de her oranın kendi
+		// tabanında ne aldığını yazar. Faturanın basacağı rakamlar bunlardır
+		// (ADR 0096).
+		Components: components,
 	}, nil
 }
 

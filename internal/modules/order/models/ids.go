@@ -35,6 +35,8 @@ const (
 	ReplacementIDPrefix = "orepl_"
 	// ReplacementItemIDPrefix is the prefix of a replacement line identifier.
 	ReplacementItemIDPrefix = "oreplitem_"
+	// LineTaxIDPrefix is the prefix of a line's tax component identifier.
+	LineTaxIDPrefix = "olt_"
 )
 
 // idEncoding is the unpadded encoding over the Crockford Base32 alphabet. A
@@ -56,6 +58,9 @@ func NewOrderID() string { return newID(OrderIDPrefix, time.Now()) }
 
 // NewLineItemID produces a new order line identifier.
 func NewLineItemID() string { return newID(LineItemIDPrefix, time.Now()) }
+
+// NewLineTaxID produces a new identifier for a line's tax component.
+func NewLineTaxID() string { return newID(LineTaxIDPrefix, time.Now()) }
 
 // NewSummaryID produces a new order summary identifier.
 func NewSummaryID() string { return newID(SummaryIDPrefix, time.Now()) }

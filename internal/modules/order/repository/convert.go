@@ -331,6 +331,50 @@ func toLineItem(row orderdb.OrderLineItem) (models.OrderLineItem, error) {
 	}, nil
 }
 
+// toLineTax converts a database row into the domain model.
+func toLineTax(row orderdb.OrderLineTax) models.OrderLineTax {
+	return models.OrderLineTax{
+		ID:              row.ID,
+		OrderLineItemID: row.OrderLineItemID,
+		Position:        row.Position,
+		RateID:          row.RateID,
+		RateBps:         row.RateBps,
+		Compound:        row.Compound,
+		TaxableAmount:   row.TaxableAmount,
+		TaxAmount:       row.TaxAmount,
+		CreatedAt:       toTime(row.CreatedAt),
+		UpdatedAt:       toTime(row.UpdatedAt),
+	}
+}
+
+// attachLineTaxes hangs each component on the line it belongs to.
+//
+// The rows arrive ordered by line and then by position, so the breakdown keeps
+// the order that makes a compound component's base readable; the map is over
+// INDEXES rather than values, because a line is a struct and appending to a
+// copy would write the breakdown nowhere.
+func attachLineTaxes(items []models.OrderLineItem, rows []orderdb.OrderLineTax) {
+	if len(rows) == 0 {
+		return
+	}
+
+	byLine := make(map[string]int, len(items))
+	for i := range items {
+		byLine[items[i].ID] = i
+	}
+	for i := range rows {
+		at, ok := byLine[rows[i].OrderLineItemID]
+		if !ok {
+			// The read is keyed by the order and the rows hang from its lines,
+			// so a component without a line cannot come back from a consistent
+			// database. Skipping rather than failing keeps a reader of an order
+			// from being blocked by a row it cannot show.
+			continue
+		}
+		items[at].TaxComponents = append(items[at].TaxComponents, toLineTax(rows[i]))
+	}
+}
+
 // toLineItems converts a row slice into a domain model slice.
 func toLineItems(rows []orderdb.OrderLineItem) ([]models.OrderLineItem, error) {
 	out := make([]models.OrderLineItem, 0, len(rows))

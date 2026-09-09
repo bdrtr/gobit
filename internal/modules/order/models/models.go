@@ -292,11 +292,62 @@ type OrderLineItem struct {
 	// than papered over with a pointer that no new order would ever set.
 	TaxRateBps int32
 	TaxTotal   int64
+	// TaxComponents is the per-rate breakdown when a STACK taxed this line,
+	// base first; it is empty when a single rate applied and [TaxRateBps] says
+	// it all.
+	//
+	// # Why it does not replace TaxRateBps
+	//
+	// The rate on the line is the stack's BASE: a rate that was really applied,
+	// on an amount that was really recorded. Every reader written before
+	// stacking keeps giving a true answer with it, and the readers that print a
+	// document use the list. Replacing one with the other would have forced a
+	// schema change on every consumer in the same breath.
+	//
+	// Σ TaxComponents[i].TaxAmount = TaxTotal whenever the list is filled. The
+	// identity spans rows, so no CHECK can hold it and the service does
+	// (migration 000013 says why).
+	TaxComponents []OrderLineTax
 	// Total is the line's total (minor unit):
 	// Subtotal - DiscountTotal + TaxTotal.
 	Total int64
 	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
+	// CreatedAt and UpdatedAt are UTC.
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// OrderLineTax is one rate applied inside a line's tax stack.
+//
+// It is a record of what was CHARGED. The amounts are not re-derived from the
+// line's total, because each component was floored on its own base and a
+// recomputation would produce a different split — and the split is what a
+// document prints.
+type OrderLineTax struct {
+	// ID is the identifier with the "olt_" prefix.
+	ID string
+	// OrderLineItemID is the line the component belongs to.
+	OrderLineItemID string
+	// Position is the component's place in the stack, base first, from zero.
+	//
+	// It is stored rather than derived: what reaches this module is an array
+	// and the chain that ordered it in the tax module is gone. A compound
+	// component's base is everything below it, so the order is what makes the
+	// figures reproducible.
+	Position int32
+	// RateID is the tax module's rate id; it is empty when an external provider
+	// carries no ids of its own. It is NOT a foreign key (Principle 2.2).
+	RateID string
+	// RateBps is the applied rate (basis points; 2000 = 20%).
+	RateBps int32
+	// Compound says the component was computed on the line's amount PLUS the
+	// taxes below it in the stack.
+	Compound bool
+	// TaxableAmount is the base THIS component was computed on (minor unit).
+	TaxableAmount int64
+	// TaxAmount is the tax this component produced (minor unit).
+	TaxAmount int64
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time

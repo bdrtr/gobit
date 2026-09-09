@@ -125,6 +125,13 @@ type ProviderItemTax struct {
 	// toplandığında gönderilen brüt çıkmalıdır. Kapsayıcı fiyatlandırmanın
 	// tamamı bu eşitlikte — müşteri etikette ne gördüyse onu öder.
 	TaxableAmount int64
+	// Components is the per-rate breakdown when the line was taxed by a STACK;
+	// it is empty when one rate applied, which is what [RateBps] then says.
+	//
+	// A provider that does not stack leaves it empty and stays correct. When it
+	// is filled it is VALIDATED: at least two entries, and their taxes add up
+	// to [TaxAmount] exactly — see [validateComponents].
+	Components []TaxComponent
 }
 
 // ProviderRegistry vergi sağlayıcılarını kimlikleriyle tutar.

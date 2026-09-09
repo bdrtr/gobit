@@ -150,6 +150,30 @@ type taxResponseLine struct {
 	TaxableAmount int64 `json:"taxable_amount"`
 	// TaxAmount is the computed tax (minor unit).
 	TaxAmount int64 `json:"tax_amount"`
+	// Components is the per-rate breakdown when a STACK taxed the line; it is
+	// absent when a single rate applied, which is what RateBps then says.
+	Components []taxResponseComponent `json:"components"`
+}
+
+// taxResponseComponent is one rate inside a stacked line's tax.
+//
+// It is carried rather than summarized because the line can hold only ONE rate
+// and a stacked line was charged under several: an invoice states every rate it
+// charged, and "5%" on a line taxed at 5+8 is a claim the customer's own
+// arithmetic disagrees with.
+type taxResponseComponent struct {
+	// RateID is the identity of the applied rate; it can be empty for an
+	// external provider with no ids of its own.
+	RateID string `json:"rate_id"`
+	// RateBps is the applied rate (BASIS POINTS; 2000 = 20%).
+	RateBps int32 `json:"rate_bps"`
+	// Compound says the component was computed on the line's amount PLUS the
+	// taxes below it in the stack.
+	Compound bool `json:"compound"`
+	// TaxableAmount is the base THIS component was computed on (minor unit).
+	TaxableAmount int64 `json:"taxable_amount"`
+	// TaxAmount is the tax this component produced (minor unit).
+	TaxAmount int64 `json:"tax_amount"`
 }
 
 // applyTaxes computes the tax of the lines, WRITES it onto the lines and returns
@@ -401,6 +425,24 @@ func applyTaxResponse(snap Snapshot, lines []LineTotals, resp taxResponse) error
 				base, line.ID, line.TaxAmount, snap.ID)
 		}
 
+		// A breakdown that does not add up to its own line would be printed on
+		// a document INSTEAD of the line's figure, and the two numbers would
+		// then be read by two different people. The tax module checks the same
+		// identity; this side checks it because this side is what passes the
+		// breakdown on.
+		var components int64
+		for j := range line.Components {
+			var addErr error
+			if components, addErr = addAmount(components, line.Components[j].TaxAmount); addErr != nil {
+				return addErr
+			}
+		}
+		if len(line.Components) > 0 && components != line.TaxAmount {
+			return errors.Internal(CodeTaxInvalid,
+				"the line's tax components do not add up to its tax: %q -> Σ=%d, line=%d (%s)",
+				line.ID, components, line.TaxAmount, snap.ID)
+		}
+
 		var err error
 		if sum, err = addAmount(sum, line.TaxAmount); err != nil {
 			return err
@@ -421,6 +463,7 @@ func applyTaxResponse(snap Snapshot, lines []LineTotals, resp taxResponse) error
 	for i := range lines {
 		lines[i].TaxTotal = resp.Items[i].TaxAmount
 		lines[i].TaxRateBps = resp.Items[i].RateBps
+		lines[i].TaxComponents = taxComponentsOf(resp.Items[i])
 
 		// In a tax-inclusive market the line's Subtotal ARRIVED as a gross
 		// amount, and leaving it there would count the tax twice: the totals
@@ -568,4 +611,28 @@ func asCountryRecord(value any) query.Record {
 	default:
 		return nil
 	}
+}
+
+// taxComponentsOf converts a response line's breakdown into the totals' schema.
+//
+// The two schemas are written out separately on purpose: this one is what tax
+// SAYS, and [LineTotals.TaxComponents] is what the cart PUBLISHES to the
+// checkout. Sharing one type would tie the published schema to a surface the
+// cart does not own.
+func taxComponentsOf(line taxResponseLine) []LineTaxComponent {
+	if len(line.Components) == 0 {
+		return nil
+	}
+
+	out := make([]LineTaxComponent, 0, len(line.Components))
+	for i := range line.Components {
+		out = append(out, LineTaxComponent{
+			RateID:        line.Components[i].RateID,
+			RateBps:       line.Components[i].RateBps,
+			Compound:      line.Components[i].Compound,
+			TaxableAmount: line.Components[i].TaxableAmount,
+			TaxAmount:     line.Components[i].TaxAmount,
+		})
+	}
+	return out
 }

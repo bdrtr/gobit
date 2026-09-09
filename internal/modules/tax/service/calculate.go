@@ -88,6 +88,13 @@ type ItemTax struct {
 	TaxableAmount int64
 	// TaxAmount hesaplanan vergidir (minor unit).
 	TaxAmount int64
+	// Components is the per-rate breakdown when a STACK taxed this line, base
+	// first; it is empty when a single rate applied ([RateID], [RateBps]).
+	//
+	// Σ Components[i].TaxAmount = TaxAmount whenever the list is filled, which
+	// is what lets a document print the components instead of the line's own
+	// figure (ADR 0096).
+	Components []TaxComponent
 }
 
 // CalculateTaxResult bir vergi hesabının sonucudur.
@@ -544,12 +551,17 @@ func validateLine(
 		base = line.TaxableAmount
 	}
 
+	if err := validateComponents(providerID, wantID, line.Components, line.TaxAmount); err != nil {
+		return ItemTax{}, err
+	}
+
 	return ItemTax{
 		ID:            wantID,
 		RateID:        line.RateID,
 		RateBps:       line.RateBps,
 		TaxableAmount: base,
 		TaxAmount:     line.TaxAmount,
+		Components:    line.Components,
 	}, nil
 }
 

@@ -98,6 +98,19 @@ type OrderLineItem struct {
 	TaxRateBps    int32
 }
 
+type OrderLineTax struct {
+	ID              string
+	OrderLineItemID string
+	Position        int32
+	RateID          string
+	RateBps         int32
+	Compound        bool
+	TaxableAmount   int64
+	TaxAmount       int64
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type OrderReplacement struct {
 	ID               string
 	OrderClaimID     string

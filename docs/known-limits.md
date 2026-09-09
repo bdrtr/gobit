@@ -124,11 +124,11 @@ past and is not corrected retroactively.
   the components, which is the number charged and the number stored. What the
   line carries as its rate is the stack's base — really applied, on a really
   recorded amount — so a document printing "5%" on a line taxed 5% + 8% states
-  a rate that is incomplete rather than wrong. Carrying every component to the
-  document means threading a component list through six schemas between the
-  calculation and the invoice, two of which drop unknown fields SILENTLY; the
-  ordering that makes that safe is written in ADR 0095's measurement, and the
-  work is the next change rather than a limit to live with.
+  a rate that is incomplete rather than wrong. The breakdown now reaches the
+  ORDER and is published on its API (ADR 0096); the hop that remains is the
+  document chain — the invoicing flow reads an order into a document and the
+  invoice module stores it, and neither knows the field yet. Both of those
+  boundaries ignore what they do not know, so they have to learn it together.
 
 - **In a tax-inclusive market the discount stays a GROSS figure beside a NET
   subtotal.** The tax is taken out of the amount actually being charged, so the

@@ -93,8 +93,40 @@ type LineTotals struct {
 	// figure recomputed later from the amount is a different claim from the one
 	// the customer was charged under.
 	TaxRateBps int32 `json:"tax_rate_bps"`
+	// TaxComponents is the per-rate breakdown when a STACK taxed the line, base
+	// first; it is empty when a single rate applied and [TaxRateBps] says it
+	// all.
+	//
+	// # Why the line keeps a rate of its own beside the list
+	//
+	// The rate is the stack's BASE: really applied, on a really recorded
+	// amount. Every reader that predates stacking keeps working with it, and
+	// the readers that print a document use the list. Dropping the rate for the
+	// list would have made a schema change mandatory for every consumer at
+	// once.
+	TaxComponents []LineTaxComponent `json:"tax_components,omitempty"`
 	// Total is the line's total: Subtotal - DiscountTotal + TaxTotal.
 	Total int64 `json:"total"`
+}
+
+// LineTaxComponent is one rate applied inside a line's tax stack.
+//
+// Σ TaxAmount over the list equals the line's TaxTotal; that identity is what
+// lets a document print the components INSTEAD of the line's own figure, and it
+// is checked where the breakdown enters this flow.
+type LineTaxComponent struct {
+	// RateID is the identity of the applied rate; it can be empty for an
+	// external provider with no ids of its own.
+	RateID string `json:"rate_id"`
+	// RateBps is the applied rate (BASIS POINTS; 2000 = 20%).
+	RateBps int32 `json:"rate_bps"`
+	// Compound says the component was computed on the line's amount PLUS the
+	// taxes below it in the stack.
+	Compound bool `json:"compound"`
+	// TaxableAmount is the base THIS component was computed on (minor unit).
+	TaxableAmount int64 `json:"taxable_amount"`
+	// TaxAmount is the tax this component produced (minor unit).
+	TaxAmount int64 `json:"tax_amount"`
 }
 
 // CalculateTotals recalculates the cart's totals from scratch and writes them to

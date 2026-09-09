@@ -153,6 +153,8 @@ type Store interface {
 
 	// CreateLineItem records a new order line.
 	CreateLineItem(ctx context.Context, item models.OrderLineItem) (models.OrderLineItem, error)
+	// CreateLineTax records one component of a line's tax stack.
+	CreateLineTax(ctx context.Context, component models.OrderLineTax) (models.OrderLineTax, error)
 	// ListLineItems returns the lines of the order in creation order.
 	ListLineItems(ctx context.Context, orderID string) ([]models.OrderLineItem, error)
 	// ListLineItemsFiltered lists lines ACROSS orders, filtered and paged.

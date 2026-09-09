@@ -199,6 +199,13 @@ type planLine struct {
 	// same figure. An invoice prints the rate of every line and must print the
 	// one that was CHARGED, not one recomputed afterwards.
 	TaxRateBps int32 `json:"tax_rate_bps"`
+	// TaxComponents is the per-rate breakdown when a STACK taxed the line, base
+	// first; it is empty when a single rate applied.
+	//
+	// The plan carries it for the same reason it carries the rate: the order is
+	// the permanent answer to "what was charged", and a rate the customer paid
+	// under cannot be recovered from the total afterwards.
+	TaxComponents []cartwf.LineTaxComponent `json:"tax_components,omitempty"`
 	// Total is the total of the line: Subtotal - DiscountTotal + TaxTotal.
 	Total int64 `json:"total"`
 
@@ -409,6 +416,7 @@ func (w *Workflows) planLines(ctx context.Context, snap Snapshot, totals cartwf.
 			DiscountTotal:   amounts.DiscountTotal,
 			TaxTotal:        amounts.TaxTotal,
 			TaxRateBps:      amounts.TaxRateBps,
+			TaxComponents:   amounts.TaxComponents,
 			Total:           amounts.Total,
 			Unmanaged:       facts[item.VariantID].Unmanaged,
 			AllowBackorder:  facts[item.VariantID].AllowBackorder,
@@ -795,6 +803,24 @@ type orderSnapshotItem struct {
 	TaxTotal      int64  `json:"tax_total"`
 	TaxRateBps    int32  `json:"tax_rate_bps"`
 	Total         int64  `json:"total"`
+	// TaxComponents is the per-rate breakdown of a stacked line; absent when a
+	// single rate applied.
+	//
+	// The order IGNORES fields it does not know (its interop says so in as many
+	// words), so this field only reaches the order because the order was taught
+	// it in the same change. That is why the two land together and not in two
+	// steps: between the steps the breakdown would be dropped in silence.
+	TaxComponents []orderSnapshotTaxComponent `json:"tax_components,omitempty"`
+}
+
+// orderSnapshotTaxComponent is one rate inside a stacked line's tax, on the wire
+// to the order.
+type orderSnapshotTaxComponent struct {
+	RateID        string `json:"rate_id"`
+	RateBps       int32  `json:"rate_bps"`
+	Compound      bool   `json:"compound"`
+	TaxableAmount int64  `json:"taxable_amount"`
+	TaxAmount     int64  `json:"tax_amount"`
 }
 
 // orderSnapshotJSON converts the plan into the body the order expects.
@@ -816,6 +842,7 @@ func (p *checkoutPlan) orderSnapshotJSON(idempotencyKey string) (json.RawMessage
 			TaxTotal:      p.Lines[i].TaxTotal,
 			TaxRateBps:    p.Lines[i].TaxRateBps,
 			Total:         p.Lines[i].Total,
+			TaxComponents: snapshotComponentsOf(p.Lines[i].TaxComponents),
 		})
 	}
 
@@ -844,4 +871,27 @@ func (p *checkoutPlan) orderSnapshotJSON(idempotencyKey string) (json.RawMessage
 			"the order snapshot could not be converted to JSON: %s", p.CartID)
 	}
 	return payload, nil
+}
+
+// snapshotComponentsOf converts the plan's breakdown into the order's schema.
+//
+// The conversion is written out rather than shared, because the order's schema
+// is a CONTRACT with a module that cannot import this package; changing the
+// cart's type must not silently change what the order is sent.
+func snapshotComponentsOf(components []cartwf.LineTaxComponent) []orderSnapshotTaxComponent {
+	if len(components) == 0 {
+		return nil
+	}
+
+	out := make([]orderSnapshotTaxComponent, 0, len(components))
+	for i := range components {
+		out = append(out, orderSnapshotTaxComponent{
+			RateID:        components[i].RateID,
+			RateBps:       components[i].RateBps,
+			Compound:      components[i].Compound,
+			TaxableAmount: components[i].TaxableAmount,
+			TaxAmount:     components[i].TaxAmount,
+		})
+	}
+	return out
 }

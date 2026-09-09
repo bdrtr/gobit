@@ -164,6 +164,14 @@ type interopItemTax struct {
 	TaxableAmount int64 `json:"taxable_amount"`
 	// TaxAmount is the calculated tax (minor unit).
 	TaxAmount int64 `json:"tax_amount"`
+	// Components is the per-rate breakdown when a STACK taxed the line, base
+	// first; the field is ABSENT when a single rate applied.
+	//
+	// The element type is [TaxComponent] itself rather than a schema type of
+	// its own, because [toInteropItemTax] is a direct struct conversion and Go
+	// requires the element types to be identical. The tags therefore live on
+	// that type; the reason is written there.
+	Components []TaxComponent `json:"components,omitempty"`
 }
 
 // Interop turns the tax service into a PRIMITIVE cross-module surface.

@@ -198,6 +198,25 @@ type interopOrderItem struct {
 	TaxRateBps    int32          `json:"tax_rate_bps"`
 	Total         int64          `json:"total"`
 	Metadata      map[string]any `json:"metadata"`
+	// TaxComponents is the per-rate breakdown when a STACK taxed the line, base
+	// FIRST; it is absent when a single rate applied and "tax_rate_bps" says it
+	// all.
+	//
+	// This field is why the sender and this schema had to change TOGETHER.
+	// Unknown fields are ignored here by design (see above), so a snapshot that
+	// carried a breakdown this type did not know would have been accepted with
+	// the breakdown SILENTLY DROPPED, and the order would have recorded a line
+	// taxed at the stack's base rate with nothing left to say otherwise.
+	TaxComponents []interopLineTax `json:"tax_components"`
+}
+
+// interopLineTax is one rate inside a stacked line's tax, on the wire.
+type interopLineTax struct {
+	RateID        string `json:"rate_id"`
+	RateBps       int32  `json:"rate_bps"`
+	Compound      bool   `json:"compound"`
+	TaxableAmount int64  `json:"taxable_amount"`
+	TaxAmount     int64  `json:"tax_amount"`
 }
 
 // PlaceOrderJSON opens an order from the cart snapshot and returns its
@@ -228,6 +247,7 @@ func (i *Interop) PlaceOrderJSON(ctx context.Context, snapshot json.RawMessage) 
 			TaxRateBps:    incoming.Items[k].TaxRateBps,
 			Total:         incoming.Items[k].Total,
 			Metadata:      incoming.Items[k].Metadata,
+			TaxComponents: lineTaxInputsOf(incoming.Items[k].TaxComponents),
 		})
 	}
 
@@ -590,5 +610,28 @@ func incomingAddresses(snapshot interopSnapshot) []models.OrderAddress {
 		out = append(out, *billing)
 	}
 
+	return out
+}
+
+// lineTaxInputsOf converts the wire breakdown into the service's input.
+//
+// The two shapes are written out separately because one is a CONTRACT with a
+// caller that cannot import this package: renaming a field in the input must not
+// silently change what a snapshot is allowed to say.
+func lineTaxInputsOf(components []interopLineTax) []CreateOrderLineTaxInput {
+	if len(components) == 0 {
+		return nil
+	}
+
+	out := make([]CreateOrderLineTaxInput, 0, len(components))
+	for i := range components {
+		out = append(out, CreateOrderLineTaxInput{
+			RateID:        components[i].RateID,
+			RateBps:       components[i].RateBps,
+			Compound:      components[i].Compound,
+			TaxableAmount: components[i].TaxableAmount,
+			TaxAmount:     components[i].TaxAmount,
+		})
+	}
 	return out
 }

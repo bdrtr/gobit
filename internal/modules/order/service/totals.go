@@ -202,5 +202,92 @@ func validateOrderItem(index int, item CreateOrderItemInput) error {
 			"the line total is inconsistent (line %d, %s): total=%d was given, subtotal(%d) - discount_total(%d) + tax_total(%d) = %d",
 			index, item.VariantID, item.Total, item.Subtotal, item.DiscountTotal, item.TaxTotal, expectedTotal)
 	}
+
+	return validateLineTaxComponents(index, item)
+}
+
+// maxLineTaxComponents is the most components one line's tax may be split into.
+//
+// Four is the depth the tax module allows a stack (federal + state + municipal +
+// a surcharge, plus one), and the number is REPEATED here rather than imported:
+// the two modules do not know each other (Principle 2.1), and what this module
+// is protecting is its own table rather than that module's rule. If they ever
+// disagree the stricter one wins and the caller is told which line it was.
+const maxLineTaxComponents = 4
+
+// maxLineTaxRateBps is the largest rate a tax component may carry (100%).
+//
+// The bound is written here rather than imported from the tax module for the
+// same reason as the count above: the two modules do not know each other, and
+// the same number is a CHECK on this module's own table (migration 000013).
+const maxLineTaxRateBps int32 = 10_000
+
+// validateLineTaxComponents validates one line's per-rate tax breakdown.
+//
+// # Why the sum is checked here rather than left to the database
+//
+// It spans rows. A CHECK sees one row, and the identity that matters — the
+// components add up to the line's tax — is over all of them. This is the gate
+// that keeps a document from printing a breakdown that disagrees with the amount
+// the customer was charged.
+func validateLineTaxComponents(index int, item CreateOrderItemInput) error {
+	if len(item.TaxComponents) == 0 {
+		return nil
+	}
+	if len(item.TaxComponents) < 2 {
+		return errors.Invalid(CodeInvalidInput,
+			"a tax breakdown of one says nothing the line does not (line %d, %s); "+
+				"send it empty when a single rate applied",
+			index, item.VariantID)
+	}
+	if len(item.TaxComponents) > maxLineTaxComponents {
+		return errors.Invalid(CodeInvalidInput,
+			"a line's tax can be split into at most %d components (line %d, %s): %d",
+			maxLineTaxComponents, index, item.VariantID, len(item.TaxComponents))
+	}
+
+	var sum int64
+	for at := range item.TaxComponents {
+		component := item.TaxComponents[at]
+		if component.RateBps < 0 || component.RateBps > maxLineTaxRateBps {
+			return errors.Invalid(CodeInvalidInput,
+				"the rate of a tax component must be in [0, %d] basis points "+
+					"(line %d, %s, component %d): %d",
+				maxLineTaxRateBps, index, item.VariantID, at, component.RateBps)
+		}
+		if at == 0 && component.Compound {
+			return errors.Invalid(CodeInvalidInput,
+				"the first tax component stands on nothing and cannot be compound "+
+					"(line %d, %s)", index, item.VariantID)
+		}
+		if err := checkAmount("items[].tax_components[].taxable_amount",
+			component.TaxableAmount, models.MaxTotal); err != nil {
+			return err
+		}
+		// The same bound the line carries, one component at a time: a rate is at
+		// most 100%, so a component cannot take more than the base it was
+		// computed on. A line whose total stays inside its own amount can still
+		// hide a component that does not.
+		if component.TaxAmount < 0 || component.TaxAmount > component.TaxableAmount {
+			return errors.Invalid(CodeInvalidInput,
+				"a tax component cannot exceed its own base (line %d, %s, component %d): "+
+					"tax=%d, base=%d",
+				index, item.VariantID, at, component.TaxAmount, component.TaxableAmount)
+		}
+
+		next, err := addAmount(sum, component.TaxAmount)
+		if err != nil {
+			return err
+		}
+		sum = next
+	}
+
+	if sum != item.TaxTotal {
+		return errors.Invalid(CodeTotalsInconsistent,
+			"the line's tax components have to add up to its tax (line %d, %s): "+
+				"the components total %d, tax_total=%d",
+			index, item.VariantID, sum, item.TaxTotal)
+	}
+
 	return nil
 }

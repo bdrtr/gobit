@@ -495,6 +495,33 @@ func (f *fakeStore) CreateLineItem(ctx context.Context, item models.OrderLineIte
 	return item, nil
 }
 
+// CreateLineTax writes one component of a line's tax stack.
+//
+// It ATTACHES the component to the line it names rather than keeping it in a
+// store of its own, because that is what the repository's read does and a fake
+// that only accepted the write would let a change that never reaches the line
+// pass every test.
+func (f *fakeStore) CreateLineTax(
+	ctx context.Context, component models.OrderLineTax,
+) (models.OrderLineTax, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	line, ok := f.items[component.OrderLineItemID]
+	if !ok {
+		return models.OrderLineTax{}, notFound(component.OrderLineItemID)
+	}
+	stamp := f.nextStamp()
+	component.CreatedAt = stamp
+	component.UpdatedAt = stamp
+
+	f.recordUndo(ctx, undoEntry(f.items, line.ID))
+	line.TaxComponents = append(line.TaxComponents, component)
+	f.items[line.ID] = line
+
+	return component, nil
+}
+
 // ListLineItems returns the lines of the order in creation order.
 func (f *fakeStore) ListLineItems(ctx context.Context, orderID string) ([]models.OrderLineItem, error) {
 	snapshot := f.view(ctx)

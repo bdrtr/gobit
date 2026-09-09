@@ -51,7 +51,7 @@ const (
 // moduleTables are the tables the module owns; the migration tests use this
 // list.
 var moduleTables = []string{
-	"orders", "order_line_items", "order_summaries",
+	"orders", "order_line_items", "order_line_taxes", "order_summaries",
 	"order_returns", "order_return_items", "order_exchanges", "order_claims",
 	"order_replacements", "order_replacement_items",
 }
