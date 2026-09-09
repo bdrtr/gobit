@@ -250,6 +250,13 @@ func (f *scopeCatalog) CreateCategory(
 	return models.Category{}, nil
 }
 
+func (f *scopeCatalog) UpdateCategory(
+	context.Context, string, service.UpdateCategoryInput,
+) (models.Category, error) {
+	f.count()
+	return models.Category{}, nil
+}
+
 // GetCategory counts the call.
 func (f *scopeCatalog) GetCategory(context.Context, string) (models.Category, error) {
 	f.count()

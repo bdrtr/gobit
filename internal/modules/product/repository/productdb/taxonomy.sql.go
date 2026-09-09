@@ -378,11 +378,13 @@ type ListCategoriesParams struct {
 }
 
 // public_only applies the two flags the category table has carried since the
-// first migration and that nothing has read until now: is_active is the
-// merchant's switch for a category that is not ready, and is_internal is for one
-// that exists for operators and was never meant to be browsable. The storefront
-// passes true; the admin surface passes false and sees everything, which is the
-// only way the merchant can turn a category back on.
+// first migration: is_active is the merchant's switch for a category that is not
+// ready, and is_internal is for one that exists for operators and was never
+// meant to be browsable. The storefront passes true; the admin surface passes
+// false and sees everything, which is what lets a merchant FIND a category they
+// switched off. Turning it back on is UpdateCategory's job — this listing only
+// shows it, and saying otherwise here was the sentence that hid the missing
+// write for as long as it was missing.
 func (q *Queries) ListCategories(ctx context.Context, arg ListCategoriesParams) ([]ProductCategory, error) {
 	rows, err := q.db.Query(ctx, listCategories,
 		arg.ParentID,
@@ -710,4 +712,109 @@ func (q *Queries) SoftDeleteTag(ctx context.Context, id string) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const updateCategory = `-- name: UpdateCategory :one
+WITH RECURSIVE ancestry(id, parent_id, depth) AS (
+    SELECT c.id, c.parent_id, 0
+      FROM product_category c
+     WHERE c.id = $5::text
+       AND c.deleted_at IS NULL
+    UNION ALL
+    SELECT c.id, c.parent_id, a.depth + 1
+      FROM product_category c
+      JOIN ancestry a ON c.id = a.parent_id
+     WHERE c.deleted_at IS NULL
+       AND a.depth < 64
+)
+UPDATE product_category SET
+    name        = COALESCE($1::text, name),
+    handle      = COALESCE($2::text, handle),
+    description = COALESCE($3::text, description),
+    parent_id   = CASE
+                      WHEN $4::boolean THEN NULL
+                      ELSE COALESCE($5::text, parent_id)
+                  END,
+    is_active   = COALESCE($6::boolean, is_active),
+    is_internal = COALESCE($7::boolean, is_internal),
+    rank        = COALESCE($8::int, rank),
+    updated_at  = now()
+WHERE id = $9::text
+  AND deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM ancestry
+       WHERE ancestry.id = $9::text
+          OR ancestry.depth >= 64
+  )
+RETURNING id, name, handle, description, parent_id, is_active, is_internal, rank, created_at, updated_at, deleted_at
+`
+
+type UpdateCategoryParams struct {
+	Name        *string
+	Handle      *string
+	Description *string
+	ClearParent bool
+	ParentID    *string
+	IsActive    *bool
+	IsInternal  *bool
+	Rank        *int32
+	ID          string
+}
+
+// UpdateCategory rewrites the fields a merchant may change, and REFUSES a
+// reparent that would put the category inside its own subtree.
+//
+// # The COALESCE pattern, and where it does not reach
+//
+// A field passed as NULL does not change, like UpdateProduct. The parent is the
+// one field that needs more, because "make this a root" is a real operation and
+// NULL already means "do not touch": clear_parent says it instead, and it wins
+// over parent_id so a request that sends both is not silently half-applied.
+//
+// # Why the cycle guard is HERE and not in the service
+//
+// A service that reads the ancestry and then writes has a window between the
+// two. Two reparents racing in that window each see a clean tree: set A's
+// parent to B and B's parent to A, both check, both commit, and the tree now
+// has a ring no read can escape. The guard has to be in the statement that
+// writes, and this one is: the recursive term walks UP from the new parent, and
+// the UPDATE refuses if the category being moved is on that path — which
+// covers a category being made its own parent, since the walk starts AT the
+// parent.
+//
+// # Why it fails CLOSED at the depth limit
+//
+// The walk is bounded because an ancestry that ALREADY contains a ring would
+// otherwise not terminate. A bound alone would be worse than none: an ancestor
+// deeper than the bound would go unseen and the ring it would close would be
+// written. So reaching the bound is itself a refusal. Sixty-four is far past any
+// catalog a person maintains, and a tree that deep cannot be verified here
+// rather than being waved through.
+func (q *Queries) UpdateCategory(ctx context.Context, arg UpdateCategoryParams) (ProductCategory, error) {
+	row := q.db.QueryRow(ctx, updateCategory,
+		arg.Name,
+		arg.Handle,
+		arg.Description,
+		arg.ClearParent,
+		arg.ParentID,
+		arg.IsActive,
+		arg.IsInternal,
+		arg.Rank,
+		arg.ID,
+	)
+	var i ProductCategory
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Handle,
+		&i.Description,
+		&i.ParentID,
+		&i.IsActive,
+		&i.IsInternal,
+		&i.Rank,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
 }

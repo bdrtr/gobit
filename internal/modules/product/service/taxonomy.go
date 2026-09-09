@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
@@ -187,6 +188,106 @@ func (s *Service) CreateCategory(ctx context.Context, in CreateCategoryInput) (m
 		IsInternal:  in.IsInternal,
 		Rank:        in.Rank,
 	})
+}
+
+// UpdateCategoryInput is the set of category fields a PATCH may change.
+//
+// A nil field is left alone, which is the contract UpdateProduct documents and
+// the same COALESCE pattern carries it. ClearParent is the one thing nil cannot
+// say: nil already means "do not touch", and "make this a root" needs its own
+// word.
+type UpdateCategoryInput struct {
+	Name        *string
+	Handle      *string
+	Description *string
+	ParentID    *string
+	ClearParent bool
+	IsActive    *bool
+	IsInternal  *bool
+	Rank        *int32
+}
+
+// UpdateCategory changes a category and can move it in the tree.
+//
+// # Why this exists
+//
+// It was MISSING, and a document said otherwise. Measured 2026-09-09: the only
+// UPDATE on product_category in the whole tree was the soft delete, and the
+// admin surface bound POST, GET and DELETE and no PATCH. So a category could
+// not be renamed, could not be moved, and — because is_active was written only
+// by the INSERT — a category switched off at creation stayed off for good. The
+// listing's own godoc meanwhile said the admin surface "is the only way the
+// merchant can turn a category back on", describing a write that did not exist.
+//
+// # Where the cycle rule is, and why NOT here
+//
+// The refusal of a move that would put a category inside its own subtree lives
+// in the statement (see the repository's UpdateCategory). A copy of it here
+// would be a second implementation of one rule, free to drift from the one that
+// runs — and it would not even be correct on its own, because a read followed
+// by a write leaves a window two racing moves slip through together.
+//
+// What this function adds is the DISTINCTION the statement cannot make: it
+// resolves the id first, so "no such category" and "that move is refused" are
+// two different answers instead of one empty result.
+func (s *Service) UpdateCategory(
+	ctx context.Context, id string, in UpdateCategoryInput,
+) (models.Category, error) {
+	categoryID, err := requireID("id", id)
+	if err != nil {
+		return models.Category{}, err
+	}
+	if _, err := s.repo.GetCategory(ctx, categoryID); err != nil {
+		return models.Category{}, err
+	}
+
+	if in.ClearParent && in.ParentID != nil {
+		return models.Category{}, invalid(
+			"parent_id and clear_parent cannot be sent together: one names a new parent and " +
+				"the other removes it")
+	}
+
+	update := repository.UpdateCategory{ClearParent: in.ClearParent}
+
+	if in.Name != nil {
+		name, err := requireText("name", *in.Name, maxTitleLen)
+		if err != nil {
+			return models.Category{}, err
+		}
+		update.Name = &name
+	}
+	if in.Handle != nil {
+		handle, err := validateHandle(strings.TrimSpace(*in.Handle))
+		if err != nil {
+			return models.Category{}, err
+		}
+		update.Handle = &handle
+	}
+	description, err := trimOptional(in.Description, "description", maxDescriptionLen)
+	if err != nil {
+		return models.Category{}, err
+	}
+	update.Description = description
+
+	if in.ParentID != nil {
+		parentID, err := requireID("parent_id", *in.ParentID)
+		if err != nil {
+			return models.Category{}, err
+		}
+		// The foreign key would refuse an unknown parent too, but it answers
+		// with a violated constraint; this says which id could not be found,
+		// exactly as CreateCategory does.
+		if _, err := s.repo.GetCategory(ctx, parentID); err != nil {
+			return models.Category{}, err
+		}
+		update.ParentID = &parentID
+	}
+
+	update.IsActive = in.IsActive
+	update.IsInternal = in.IsInternal
+	update.Rank = in.Rank
+
+	return s.repo.UpdateCategory(ctx, categoryID, update)
 }
 
 // GetCategory returns the category by id.

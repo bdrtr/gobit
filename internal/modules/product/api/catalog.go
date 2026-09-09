@@ -52,6 +52,7 @@ type Catalog interface {
 	DeleteCollection(ctx context.Context, id string) error
 
 	CreateCategory(ctx context.Context, in service.CreateCategoryInput) (models.Category, error)
+	UpdateCategory(ctx context.Context, id string, in service.UpdateCategoryInput) (models.Category, error)
 	GetCategory(ctx context.Context, id string) (models.Category, error)
 	ListCategories(ctx context.Context, opts service.ListCategoriesOptions) (service.ListResult[models.Category], error)
 	DeleteCategory(ctx context.Context, id string) error

@@ -72,11 +72,13 @@ WHERE handle = $1 AND deleted_at IS NULL;
 
 -- name: ListCategories :many
 -- public_only applies the two flags the category table has carried since the
--- first migration and that nothing has read until now: is_active is the
--- merchant's switch for a category that is not ready, and is_internal is for one
--- that exists for operators and was never meant to be browsable. The storefront
--- passes true; the admin surface passes false and sees everything, which is the
--- only way the merchant can turn a category back on.
+-- first migration: is_active is the merchant's switch for a category that is not
+-- ready, and is_internal is for one that exists for operators and was never
+-- meant to be browsable. The storefront passes true; the admin surface passes
+-- false and sees everything, which is what lets a merchant FIND a category they
+-- switched off. Turning it back on is UpdateCategory's job — this listing only
+-- shows it, and saying otherwise here was the sentence that hid the missing
+-- write for as long as it was missing.
 SELECT * FROM product_category
 WHERE deleted_at IS NULL
   AND (sqlc.narg('parent_id')::text IS NULL OR parent_id = sqlc.narg('parent_id')::text)
@@ -104,6 +106,70 @@ ORDER BY rank, id;
 -- name: CountChildCategories :one
 SELECT count(*) FROM product_category
 WHERE parent_id = $1 AND deleted_at IS NULL;
+
+-- UpdateCategory rewrites the fields a merchant may change, and REFUSES a
+-- reparent that would put the category inside its own subtree.
+--
+-- # The COALESCE pattern, and where it does not reach
+--
+-- A field passed as NULL does not change, like UpdateProduct. The parent is the
+-- one field that needs more, because "make this a root" is a real operation and
+-- NULL already means "do not touch": clear_parent says it instead, and it wins
+-- over parent_id so a request that sends both is not silently half-applied.
+--
+-- # Why the cycle guard is HERE and not in the service
+--
+-- A service that reads the ancestry and then writes has a window between the
+-- two. Two reparents racing in that window each see a clean tree: set A's
+-- parent to B and B's parent to A, both check, both commit, and the tree now
+-- has a ring no read can escape. The guard has to be in the statement that
+-- writes, and this one is: the recursive term walks UP from the new parent, and
+-- the UPDATE refuses if the category being moved is on that path — which
+-- covers a category being made its own parent, since the walk starts AT the
+-- parent.
+--
+-- # Why it fails CLOSED at the depth limit
+--
+-- The walk is bounded because an ancestry that ALREADY contains a ring would
+-- otherwise not terminate. A bound alone would be worse than none: an ancestor
+-- deeper than the bound would go unseen and the ring it would close would be
+-- written. So reaching the bound is itself a refusal. Sixty-four is far past any
+-- catalog a person maintains, and a tree that deep cannot be verified here
+-- rather than being waved through.
+--
+-- name: UpdateCategory :one
+WITH RECURSIVE ancestry(id, parent_id, depth) AS (
+    SELECT c.id, c.parent_id, 0
+      FROM product_category c
+     WHERE c.id = sqlc.narg('parent_id')::text
+       AND c.deleted_at IS NULL
+    UNION ALL
+    SELECT c.id, c.parent_id, a.depth + 1
+      FROM product_category c
+      JOIN ancestry a ON c.id = a.parent_id
+     WHERE c.deleted_at IS NULL
+       AND a.depth < 64
+)
+UPDATE product_category SET
+    name        = COALESCE(sqlc.narg('name')::text, name),
+    handle      = COALESCE(sqlc.narg('handle')::text, handle),
+    description = COALESCE(sqlc.narg('description')::text, description),
+    parent_id   = CASE
+                      WHEN sqlc.arg('clear_parent')::boolean THEN NULL
+                      ELSE COALESCE(sqlc.narg('parent_id')::text, parent_id)
+                  END,
+    is_active   = COALESCE(sqlc.narg('is_active')::boolean, is_active),
+    is_internal = COALESCE(sqlc.narg('is_internal')::boolean, is_internal),
+    rank        = COALESCE(sqlc.narg('rank')::int, rank),
+    updated_at  = now()
+WHERE id = sqlc.arg('id')::text
+  AND deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM ancestry
+       WHERE ancestry.id = sqlc.arg('id')::text
+          OR ancestry.depth >= 64
+  )
+RETURNING *;
 
 -- SoftDeleteCategory stamps the category's deleted_at.
 --

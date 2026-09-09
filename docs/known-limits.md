@@ -96,6 +96,27 @@ past and is not corrected retroactively.
   written with the sales channel rule in [`docs/security.md`](security.md) — the
   alternative was a catalog edit making a customer's full cart unpayable.
 
+## The category tree
+
+- **A category listing walks ONE level.** `parent_id` filters by DIRECT
+  parentage and the catalog's category filter matches DIRECT membership, so
+  asking for a category does not bring its subcategories' products with it.
+  Nothing in this module resolves descendants; the day the SQL grows to, the
+  filter is where it goes (`service/provider.go`).
+
+- **A move whose ancestry is deeper than sixty-four levels is refused, even when
+  it would have been legitimate.** The update that reparents a category walks up
+  from the new parent to make sure the category is not being placed inside its
+  own subtree, and that walk has to be bounded or an ancestry that already holds
+  a ring would not terminate. Reaching the bound is treated as a refusal rather
+  than as permission, because an ancestor past it would go unseen and the ring it
+  closes would be written. Sixty-four is far past any catalog a person maintains,
+  and the trade is stated in ADR 0085.
+
+- **A description cannot be emptied through the category PATCH.** A field that is
+  not supplied is preserved, which leaves no way to say "make this NULL" — the
+  same limit the product update carries and for the same reason.
+
 ## Installation and operation
 
 - **The admin panel writes the EDITABLE part of the catalog, not the creatable

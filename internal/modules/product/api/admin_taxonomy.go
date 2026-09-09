@@ -99,6 +99,53 @@ func (h *Handler) adminCreateCategory(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusCreated, category)
 }
 
+// updateCategoryRequest is the body of a category PATCH.
+//
+// Every field is a pointer because absent and empty are different answers here:
+// an absent field is left alone and a present one is written. ClearParent is
+// the exception and it is a plain bool, because "make this a root" is a request
+// a client either makes or does not.
+type updateCategoryRequest struct {
+	Name        *string `json:"name"`
+	Handle      *string `json:"handle"`
+	Description *string `json:"description"`
+	ParentID    *string `json:"parent_id"`
+	ClearParent bool    `json:"clear_parent"`
+	IsActive    *bool   `json:"is_active"`
+	IsInternal  *bool   `json:"is_internal"`
+	Rank        *int32  `json:"rank"`
+}
+
+// adminUpdateCategory PATCH /admin/v1/product-categories/{id}
+func (h *Handler) adminUpdateCategory(w http.ResponseWriter, r *http.Request) {
+	id, err := pathParam(r, "id")
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	req, err := decode[updateCategoryRequest](w, r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+
+	category, err := h.svc.UpdateCategory(r.Context(), id, service.UpdateCategoryInput{
+		Name:        req.Name,
+		Handle:      req.Handle,
+		Description: req.Description,
+		ParentID:    req.ParentID,
+		ClearParent: req.ClearParent,
+		IsActive:    req.IsActive,
+		IsInternal:  req.IsInternal,
+		Rank:        req.Rank,
+	})
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	writeItem(w, r, http.StatusOK, category)
+}
+
 // adminListCategories GET /admin/v1/product-categories
 func (h *Handler) adminListCategories(w http.ResponseWriter, r *http.Request) {
 	limit, offset, err := paging(r)

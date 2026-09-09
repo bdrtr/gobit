@@ -41,6 +41,9 @@ const (
 	codeInvalidRef = "product_invalid_reference"
 	// codeCheckFailed is the violation of a database CHECK constraint.
 	codeCheckFailed = "product_check_failed"
+
+	// codeCategoryCycle is the refusal the category update's own guard produces.
+	codeCategoryCycle = "product_category_cycle"
 	// codeDBFailed is a database error that cannot be classified.
 	codeDBFailed = "product_db_failed"
 	// codeCanceled is the context being canceled.
@@ -163,6 +166,7 @@ type Store interface {
 	ClearCollectionProducts(ctx context.Context, collectionID string) (int, error)
 
 	CreateCategory(ctx context.Context, c models.Category) (models.Category, error)
+	UpdateCategory(ctx context.Context, id string, in UpdateCategory) (models.Category, error)
 	GetCategory(ctx context.Context, id string) (models.Category, error)
 	// ListCategoriesByIDs reads the named categories in a SINGLE query; it is
 	// what keeps the read layer's category provider free of an N+1 when a

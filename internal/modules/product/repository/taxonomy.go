@@ -3,6 +3,9 @@ package repository
 import (
 	"context"
 
+	"github.com/jackc/pgx/v5"
+
+	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/repository/productdb"
 )
@@ -110,6 +113,60 @@ func (r *Repo) CreateCategory(ctx context.Context, c models.Category) (models.Ca
 		return models.Category{}, wrapDB(err, "could not create category (%s)", c.Handle)
 	}
 	return toCategory(row), nil
+}
+
+// UpdateCategory writes the changed fields and returns the category as stored.
+//
+// # What a statement matching NO ROW means here
+//
+// Two things, and the caller has to have ruled out the first: the id names no
+// live category, or the reparent was REFUSED. The refusal is the statement's
+// own guard — it walks up from the new parent and will not let a category
+// become its own descendant, and it also refuses an ancestry too deep to
+// verify. [github.com/bdrtr/gobit/internal/modules/product/service.Service.UpdateCategory]
+// resolves the id before calling, so what arrives here is the second, and it is
+// reported as an INVALID request rather than as a missing record.
+//
+// The guard lives in the statement rather than beside it because a read
+// followed by a write has a window: two reparents racing in that window each
+// see a clean tree and together close a ring.
+func (r *Repo) UpdateCategory(ctx context.Context, id string, in UpdateCategory) (models.Category, error) {
+	row, err := r.q.UpdateCategory(ctx, productdb.UpdateCategoryParams{
+		ID:          id,
+		Name:        in.Name,
+		Handle:      in.Handle,
+		Description: in.Description,
+		ClearParent: in.ClearParent,
+		ParentID:    in.ParentID,
+		IsActive:    in.IsActive,
+		IsInternal:  in.IsInternal,
+		Rank:        in.Rank,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.Category{}, errors.Wrap(err, errors.KindInvalid, codeCategoryCycle,
+			"the category (%s) could not be moved: the new parent is the category itself "+
+				"or one of its descendants, or the tree above it is too deep to verify", id)
+	}
+	if err != nil {
+		return models.Category{}, wrapDB(err, "could not update category (%s)", id)
+	}
+	return toCategory(row), nil
+}
+
+// UpdateCategory is the set of fields a category update may change.
+//
+// Every pointer is "leave it alone" when nil. ClearParent is a bool rather than
+// a third state on ParentID because nil already means "do not touch", and
+// "make this a root" needs a way to say itself.
+type UpdateCategory struct {
+	Name        *string
+	Handle      *string
+	Description *string
+	ParentID    *string
+	ClearParent bool
+	IsActive    *bool
+	IsInternal  *bool
+	Rank        *int32
 }
 
 // GetCategory returns the category by id.

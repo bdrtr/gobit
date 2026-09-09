@@ -1070,6 +1070,88 @@ func (m *memStore) CreateCategory(_ context.Context, c models.Category) (models.
 	return c, nil
 }
 
+// UpdateCategory mimics the real statement, INCLUDING its refusal.
+//
+// The rule that a category may not be moved under itself or one of its own
+// descendants lives in SQL (queries/taxonomy.sql, UpdateCategory) and this is a
+// second implementation of it, which is a cost paid deliberately: a fake that
+// ACCEPTED a move the database refuses would let a service test go green on a
+// tree the real one will not store, and this repository has been bitten by a
+// fake that disagreed with its subject before. What proves the real rule is
+// TestACategoryCannotBeMovedUnderItsOwnDescendant in the integration suite;
+// this only keeps the fake from lying about it.
+func (m *memStore) UpdateCategory(
+	_ context.Context, id string, in repository.UpdateCategory,
+) (models.Category, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("UpdateCategory"); err != nil {
+		return models.Category{}, err
+	}
+
+	// An unknown id answers with the REFUSAL and not with NotFound, because that
+	// is what the real statement produces: it matches no row for a missing id
+	// and for a refused move alike, and the repository cannot tell them apart.
+	// The fake said NotFound here at first, and a mutation caught it — removing
+	// the service's id resolution changed nothing in the unit tests while it
+	// would have turned every missing category into "that move is refused"
+	// against a database.
+	current, ok := m.categories[id]
+	if !ok || current.DeletedAt != nil {
+		return models.Category{}, errors.Invalid("product_category_cycle",
+			"the category (%s) could not be moved: the new parent is the category itself "+
+				"or one of its descendants, or the tree above it is too deep to verify", id)
+	}
+
+	if in.ParentID != nil {
+		// The walk goes UP from the new parent, exactly as the recursive term
+		// does, and the bound is the statement's bound for the same reason: an
+		// ancestry that already holds a ring must not spin here either.
+		for step, at := 0, in.ParentID; at != nil; step++ {
+			if *at == id || step >= 64 {
+				return models.Category{}, errors.Invalid("product_category_cycle",
+					"the category (%s) could not be moved: the new parent is the category "+
+						"itself or one of its descendants, or the tree above it is too deep "+
+						"to verify", id)
+			}
+			parent, found := m.categories[*at]
+			if !found || parent.DeletedAt != nil {
+				break
+			}
+			at = parent.ParentID
+		}
+	}
+
+	if in.Name != nil {
+		current.Name = *in.Name
+	}
+	if in.Handle != nil {
+		current.Handle = *in.Handle
+	}
+	if in.Description != nil {
+		current.Description = in.Description
+	}
+	switch {
+	case in.ClearParent:
+		current.ParentID = nil
+	case in.ParentID != nil:
+		current.ParentID = in.ParentID
+	}
+	if in.IsActive != nil {
+		current.IsActive = *in.IsActive
+	}
+	if in.IsInternal != nil {
+		current.IsInternal = *in.IsInternal
+	}
+	if in.Rank != nil {
+		current.Rank = *in.Rank
+	}
+	current.UpdatedAt = creationTime
+	m.categories[id] = current
+
+	return current, nil
+}
+
 func (m *memStore) GetCategory(_ context.Context, id string) (models.Category, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

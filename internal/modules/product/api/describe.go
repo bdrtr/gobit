@@ -746,6 +746,18 @@ func describeAdminTaxonomy(d *openapi.Doc) {
 		},
 	})
 
+	d.Describe(http.MethodPatch, "/admin/v1/product-categories/{id}", openapi.Operation{
+		Summary: "Changes a category and can move it in the tree.",
+		Description: "A field that is not supplied is preserved. Sending clear_parent makes " +
+			"the category a root, and it may not be sent together with parent_id. A move " +
+			"that would place the category under itself or under one of its own " +
+			"descendants is refused with 422.",
+		RequestBody: d.RequestBody(updateCategoryRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("The updated category", d.Item(models.Category{})),
+		},
+	})
+
 	// The refusal is described in prose and NOT recorded as a separate "409".
 	// The reason is the payment module's, and it holds here: the error body is
 	// the core's shared envelope, and the way to refer to it (the name of the

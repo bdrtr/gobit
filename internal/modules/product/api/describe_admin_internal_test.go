@@ -339,6 +339,10 @@ func adminEndpoints() []adminEndpoint {
 			record: filledCategory(), list: true,
 		},
 		{
+			method: http.MethodPatch, path: "/admin/v1/product-categories/{id}", status: "200",
+			request: updateCategoryRequest{}, record: filledCategory(),
+		},
+		{
 			method: http.MethodDelete, path: "/admin/v1/product-categories/{id}", status: "200",
 			record: deleted{},
 		},

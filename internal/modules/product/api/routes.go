@@ -173,6 +173,7 @@ func (h *Handler) Routes(r chi.Router) {
 	write.Delete("/admin/v1/product-collections/{id}", h.adminDeleteCollection)
 	write.Post("/admin/v1/product-categories", h.adminCreateCategory)
 	read.Get("/admin/v1/product-categories", h.adminListCategories)
+	write.Patch("/admin/v1/product-categories/{id}", h.adminUpdateCategory)
 	write.Delete("/admin/v1/product-categories/{id}", h.adminDeleteCategory)
 	write.Post("/admin/v1/product-tags", h.adminCreateTag)
 	read.Get("/admin/v1/product-tags", h.adminListTags)

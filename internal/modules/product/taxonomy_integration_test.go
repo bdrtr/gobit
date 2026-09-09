@@ -19,6 +19,8 @@ package product_test
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -267,4 +269,204 @@ func TestTheByHandleReadsDoNotSeeADeletedRow(t *testing.T) {
 
 	_, err = queries.GetCategoryByHandle(ctx, categoryHandle)
 	require.Error(t, err, "a deleted category must not answer to its handle")
+}
+
+// TestACategorySwitchedOffCanBeSwitchedBackOn is the defect this write was
+// missing for.
+//
+// Measured 2026-09-09: the only UPDATE on product_category in the whole tree was
+// the soft delete, is_active was written by the INSERT and by nothing else, and
+// the admin surface bound POST, GET and DELETE. So a category created with
+// is_active false stayed off for the life of the installation — while the
+// listing's own godoc said the admin surface "is the only way the merchant can
+// turn a category back on", describing a write that did not exist.
+//
+// The round trip is asserted through the STOREFRONT's own predicate, because
+// that is where the flag is read: a category the shopper cannot see, then can.
+func TestACategorySwitchedOffCanBeSwitchedBackOn(t *testing.T) {
+	ctx := context.Background()
+	svc := newIsolatedService(ctx, t)
+
+	off := false
+	category, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Winter", Handle: "winter", IsActive: &off,
+	})
+	require.NoError(t, err)
+	require.False(t, category.IsActive)
+
+	public, err := svc.ListCategories(ctx, service.ListCategoriesOptions{PublicOnly: true})
+	require.NoError(t, err)
+	assert.Empty(t, public.Items, "a switched-off category must not reach the storefront")
+
+	on := true
+	updated, err := svc.UpdateCategory(ctx, category.ID, service.UpdateCategoryInput{IsActive: &on})
+	require.NoError(t, err)
+	assert.True(t, updated.IsActive)
+
+	public, err = svc.ListCategories(ctx, service.ListCategoriesOptions{PublicOnly: true})
+	require.NoError(t, err)
+	require.Len(t, public.Items, 1,
+		"the category was switched back on and still does not reach the storefront")
+	assert.Equal(t, category.ID, public.Items[0].ID)
+}
+
+// TestACategoryCannotBeMovedUnderItsOwnDescendant proves the guard that lives in
+// the statement.
+//
+// The tree is A -> B -> C. Moving A under C would close a ring: C's ancestry
+// runs C, B, A, so A would become its own descendant. Nothing in the reads
+// would notice today — every category read walks ONE level — which is exactly
+// why the refusal has to be written rather than assumed. The day a recursive
+// read arrives it would not terminate.
+func TestACategoryCannotBeMovedUnderItsOwnDescendant(t *testing.T) {
+	ctx := context.Background()
+	svc := newIsolatedService(ctx, t)
+
+	top, err := svc.CreateCategory(ctx, service.CreateCategoryInput{Name: "A", Handle: "cat-a"})
+	require.NoError(t, err)
+	middle, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "B", Handle: "cat-b", ParentID: &top.ID,
+	})
+	require.NoError(t, err)
+	bottom, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "C", Handle: "cat-c", ParentID: &middle.ID,
+	})
+	require.NoError(t, err)
+
+	_, err = svc.UpdateCategory(ctx, top.ID, service.UpdateCategoryInput{ParentID: &bottom.ID})
+
+	require.Error(t, err, "moving the root under its own grandchild has to be refused")
+	assert.True(t, coreerrors.IsInvalid(err), "error: %v", err)
+	assert.Equal(t, "product_category_cycle", coreerrors.CodeOf(err))
+
+	// The refusal left the tree as it was: a guard that answered an error while
+	// writing the row would be worse than no guard.
+	unchanged, err := svc.GetCategory(ctx, top.ID)
+	require.NoError(t, err)
+	assert.Nil(t, unchanged.ParentID, "the refused move must not have been applied")
+
+	// A category may not become its own parent either, and it is the same walk:
+	// the ancestry starts AT the new parent.
+	_, err = svc.UpdateCategory(ctx, middle.ID, service.UpdateCategoryInput{ParentID: &middle.ID})
+	require.Error(t, err, "a category may not be its own parent")
+	assert.Equal(t, "product_category_cycle", coreerrors.CodeOf(err))
+}
+
+// TestTwoConcurrentReparentsCannotCloseARingBetweenThem is why the guard is in
+// the statement and not in the service.
+//
+// Two roots, A and B. One caller moves A under B while another moves B under A.
+// Read-then-write would let both through: each reads a tree with no ring, each
+// then writes, and the ring is closed by the pair rather than by either. The
+// guard is inside the UPDATE, so the second writer's ancestry walk sees what the
+// first one committed.
+//
+// The assertion is not "one failed": it is that the TREE has no ring afterwards,
+// which is the property the guard exists for. Either outcome of the race is
+// allowed — one wins and one is refused — and both being refused is allowed too.
+func TestTwoConcurrentReparentsCannotCloseARingBetweenThem(t *testing.T) {
+	ctx := context.Background()
+	svc := newIsolatedService(ctx, t)
+
+	first, err := svc.CreateCategory(ctx, service.CreateCategoryInput{Name: "A", Handle: "ring-a"})
+	require.NoError(t, err)
+	second, err := svc.CreateCategory(ctx, service.CreateCategoryInput{Name: "B", Handle: "ring-b"})
+	require.NoError(t, err)
+
+	var start sync.WaitGroup
+	start.Add(1)
+
+	var done sync.WaitGroup
+	done.Add(2)
+
+	moves := make(chan error, 2)
+	for _, move := range [][2]string{{first.ID, second.ID}, {second.ID, first.ID}} {
+		go func() {
+			defer done.Done()
+			parent := move[1]
+			start.Wait()
+			_, err := svc.UpdateCategory(ctx, move[0], service.UpdateCategoryInput{ParentID: &parent})
+			moves <- err
+		}()
+	}
+
+	start.Done()
+	done.Wait()
+	close(moves)
+
+	succeeded := 0
+	for err := range moves {
+		if err == nil {
+			succeeded++
+
+			continue
+		}
+		assert.Equal(t, "product_category_cycle", coreerrors.CodeOf(err),
+			"a refused move has to say WHY it was refused: %v", err)
+	}
+	assert.LessOrEqual(t, succeeded, 1, "both moves were applied, which is the ring itself")
+
+	// The tree is walked by hand, because no read in this module walks it: if A
+	// points at B and B points at A, neither is reachable from a root any more.
+	afterFirst, err := svc.GetCategory(ctx, first.ID)
+	require.NoError(t, err)
+	afterSecond, err := svc.GetCategory(ctx, second.ID)
+	require.NoError(t, err)
+
+	ring := afterFirst.ParentID != nil && *afterFirst.ParentID == second.ID &&
+		afterSecond.ParentID != nil && *afterSecond.ParentID == first.ID
+	assert.False(t, ring,
+		"the two categories point at each other: the guard did not survive the race")
+}
+
+// categoryWalkLimit is the depth the statement's ancestry walk is bounded at.
+//
+// It is repeated here rather than imported because the number lives in SQL and
+// this test is what notices when the two stop agreeing.
+const categoryWalkLimit = 64
+
+// TestAMoveIsRefusedWhenTheAncestryIsTooDeepToVerify pins the fail-closed half.
+//
+// The walk up from a new parent has to be bounded, because an ancestry that
+// ALREADY holds a ring would not terminate. A bound on its own would be worse
+// than none: an ancestor deeper than the bound would go unseen and the ring it
+// closes would be written. So the statement treats reaching the bound as a
+// refusal.
+//
+// The cost is real and is asserted here rather than described: in a tree deeper
+// than the bound, a move is refused even when it would have been legitimate.
+// Sixty-four levels is far past any catalog a person maintains, which is why
+// this is the side to fail on.
+func TestAMoveIsRefusedWhenTheAncestryIsTooDeepToVerify(t *testing.T) {
+	ctx := context.Background()
+	svc := newIsolatedService(ctx, t)
+
+	// One chain, one level deeper than the walk can see.
+	var parent *string
+	var deepest string
+	for level := range categoryWalkLimit + 2 {
+		created, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+			Name:     fmt.Sprintf("level %d", level),
+			Handle:   fmt.Sprintf("deep-%d", level),
+			ParentID: parent,
+		})
+		require.NoError(t, err)
+		deepest = created.ID
+		parent = &created.ID
+	}
+
+	// A LEAF of its own, with no relation to the chain: moving it under the
+	// deepest node closes no ring at all, and it is refused anyway because the
+	// statement cannot see far enough to say so.
+	loose, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "loose", Handle: "deep-loose",
+	})
+	require.NoError(t, err)
+
+	_, err = svc.UpdateCategory(ctx, loose.ID, service.UpdateCategoryInput{ParentID: &deepest})
+
+	require.Error(t, err, "a move under an unverifiable ancestry has to be refused")
+	assert.Equal(t, "product_category_cycle", coreerrors.CodeOf(err))
+	assert.Contains(t, err.Error(), "too deep",
+		"the refusal has to say it is a DEPTH refusal, not a ring")
 }
