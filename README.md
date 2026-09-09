@@ -103,7 +103,6 @@ examples/plugin       # a SEPARATE module: proof that the published surface
                       # compiles from outside
 examples/starter      # a SEPARATE module: an example application that imports
                       # gobit and is COMPILED AND RUN
-migrations            # the global (core) migrations
 deploy                # docker-compose, Dockerfile
 ```
 

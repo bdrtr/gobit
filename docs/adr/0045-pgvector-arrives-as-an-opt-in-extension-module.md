@@ -58,9 +58,10 @@ A plugin that brings a module is the established shape for a new capability:
 ledger (`searchpg_schema_migrations`), and it is present only when an operator
 names it in `PLUGINS`. Four of the NINE plugins the catalog in
 internal/app/plugins.go registers ship migrations today: paymentpaytr, searchpg,
-webhookout and webpush. The directory listing counts ten, but
-`plugins/payment-stripe` holds one empty `.gitkeep` and no Go code, and it is the
-catalog rather than the listing that decides what a plugin is.
+webhookout and webpush. The directory listing counted one more than the catalog, because a
+payment-stripe directory held one empty `.gitkeep` and no Go code — it is the
+catalog rather than the listing that decides what a plugin is. (That empty
+directory was removed on 2026-09-09 and the two now agree.)
 
 That is also where the cost is. Since 2026-09-06 the migration walk in
 internal/arch/arch_test.go reads every production tree, `plugins` included, so a
