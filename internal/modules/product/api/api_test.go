@@ -45,6 +45,10 @@ type fakeCatalog struct {
 
 	imagesOfUpload func(ctx context.Context, uploadID string) ([]models.Image, error)
 
+	addImage    func(ctx context.Context, productID string, in service.CreateImageInput) (models.Image, error)
+	updateImage func(ctx context.Context, productID, imageID string, in service.UpdateImageInput) (models.Image, error)
+	removeImage func(ctx context.Context, productID, imageID string) error
+
 	// The storefront's four vocabulary reads; see store_taxonomy_test.go.
 	listCollections  func(ctx context.Context, limit, offset int) (service.ListResult[models.Collection], error)
 	listCategories   func(ctx context.Context, opts service.ListCategoriesOptions) (service.ListResult[models.Category], error)
@@ -72,6 +76,22 @@ func (f *fakeCatalog) ListProducts(
 
 func (f *fakeCatalog) DeleteProduct(ctx context.Context, id string) error {
 	return f.deleteProduct(ctx, id)
+}
+
+func (f *fakeCatalog) AddProductImage(
+	ctx context.Context, productID string, in service.CreateImageInput,
+) (models.Image, error) {
+	return f.addImage(ctx, productID, in)
+}
+
+func (f *fakeCatalog) UpdateProductImage(
+	ctx context.Context, productID, imageID string, in service.UpdateImageInput,
+) (models.Image, error) {
+	return f.updateImage(ctx, productID, imageID, in)
+}
+
+func (f *fakeCatalog) RemoveProductImage(ctx context.Context, productID, imageID string) error {
+	return f.removeImage(ctx, productID, imageID)
 }
 
 func (f *fakeCatalog) CreateVariant(
@@ -889,4 +909,99 @@ func TestAdminListExpandDefaultsToOff(t *testing.T) {
 	require.Len(t, requested, 2)
 	assert.False(t, requested[0], "if expand is not given the relations MUST NOT BE PULLED")
 	assert.True(t, requested[1], "expand=true has to pull the relations")
+}
+
+// TestTheImageEndpointsReadBothIdentifiers is the pair the route carries.
+//
+// The path names a product AND an image, and the two are not interchangeable.
+// A handler reading the product's id where the image's belongs would address an
+// image that does not exist — or, worse, one that does and belongs to another
+// product — and the answer would look like a success.
+func TestTheImageEndpointsReadBothIdentifiers(t *testing.T) {
+	var gotProduct, gotImage string
+
+	catalog := &fakeCatalog{
+		updateImage: func(
+			_ context.Context, productID, imageID string, _ service.UpdateImageInput,
+		) (models.Image, error) {
+			gotProduct, gotImage = productID, imageID
+			return models.Image{ID: imageID, ProductID: productID}, nil
+		},
+		removeImage: func(_ context.Context, productID, imageID string) error {
+			gotProduct, gotImage = productID, imageID
+			return nil
+		},
+	}
+	r := newRouter(catalog)
+
+	rec := do(t, r, http.MethodPatch, "/admin/v1/products/prod_1/images/img_9",
+		`{"alt_text":"a shirt"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "prod_1", gotProduct, "the patch's product id")
+	assert.Equal(t, "img_9", gotImage, "the patch's image id")
+
+	gotProduct, gotImage = "", ""
+	rec = do(t, r, http.MethodDelete, "/admin/v1/products/prod_2/images/img_8", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "prod_2", gotProduct, "the removal's product id")
+	assert.Equal(t, "img_8", gotImage, "the removal's image id")
+}
+
+// TestAddingAnImageCarriesItsBodyAndItsProduct pins what reaches the service.
+func TestAddingAnImageCarriesItsBodyAndItsProduct(t *testing.T) {
+	var gotProduct string
+	var gotInput service.CreateImageInput
+
+	catalog := &fakeCatalog{
+		addImage: func(
+			_ context.Context, productID string, in service.CreateImageInput,
+		) (models.Image, error) {
+			gotProduct, gotInput = productID, in
+			return models.Image{ID: "img_1", ProductID: productID, URL: in.URL}, nil
+		},
+	}
+	r := newRouter(catalog)
+
+	rec := do(t, r, http.MethodPost, "/admin/v1/products/prod_1/images",
+		`{"url":"https://cdn.example/1.png","upload_id":"upl_1","alt_text":"a shirt","rank":2}`)
+
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Equal(t, "prod_1", gotProduct)
+	assert.Equal(t, "https://cdn.example/1.png", gotInput.URL)
+	assert.Equal(t, "upl_1", gotInput.UploadID)
+	assert.Equal(t, "a shirt", gotInput.AltText)
+	assert.Equal(t, int32(2), gotInput.Rank)
+}
+
+// TestAnImagePatchLeavesOutWhatItDoesNotSay is the PATCH contract at the edge of
+// the module.
+//
+// The body carries only the rank; the alt text has to arrive as NIL rather than
+// as an empty string, because an empty string is a VALUE for that column and
+// would clear a caption nobody asked to clear.
+func TestAnImagePatchLeavesOutWhatItDoesNotSay(t *testing.T) {
+	var gotInput service.UpdateImageInput
+
+	catalog := &fakeCatalog{
+		updateImage: func(
+			_ context.Context, _, imageID string, in service.UpdateImageInput,
+		) (models.Image, error) {
+			gotInput = in
+			return models.Image{ID: imageID}, nil
+		},
+	}
+	r := newRouter(catalog)
+
+	rec := do(t, r, http.MethodPatch, "/admin/v1/products/prod_1/images/img_1", `{"rank":4}`)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Nil(t, gotInput.AltText, "a field the body did not name arrives as nil")
+	require.NotNil(t, gotInput.Rank)
+	assert.Equal(t, int32(4), *gotInput.Rank)
+
+	// And a body that DOES name an empty text hands it over as a value.
+	rec = do(t, r, http.MethodPatch, "/admin/v1/products/prod_1/images/img_1", `{"alt_text":""}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NotNil(t, gotInput.AltText, "an empty text is a value, not an absence")
+	assert.Empty(t, *gotInput.AltText)
 }

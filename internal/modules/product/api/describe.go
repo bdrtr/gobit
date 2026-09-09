@@ -665,6 +665,55 @@ func describeAdminLinks(d *openapi.Doc) {
 			"200": openapi.Response("The images using the upload", d.Item(uploadImages{})),
 		},
 	})
+
+	describeAdminImages(d)
+}
+
+// describeAdminImages describes the per-image writes.
+func describeAdminImages(d *openapi.Doc) {
+	d.Describe(http.MethodPost, "/admin/v1/products/{id}/images", openapi.Operation{
+		Summary: "Adds one image to a product that already exists.",
+		// Where the image lands is stated because the natural guess is wrong:
+		// a client sending rank 0 means "I did not choose" and would otherwise
+		// expect the picture to stay at the front.
+		Description: "The picture lands LAST: a rank of zero means \"not given\" and " +
+			"resolves to one past the highest rank the product carries. Send a rank to " +
+			"place it. \n\n" +
+			"\"url\" is required even when \"upload_id\" is sent: the address is what a " +
+			"storefront renders, and this module does not derive it from the upload.",
+		RequestBody: d.RequestBody(createImageRequest{}),
+		Responses: map[string]any{
+			"201": openapi.Response("The added image", d.Item(models.Image{})),
+		},
+	})
+
+	d.Describe(http.MethodPatch, "/admin/v1/products/{id}/images/{imageId}", openapi.Operation{
+		Summary: "Corrects one image's alt text, rank or metadata.",
+		// The absent field is the one worth describing: a client looking for a
+		// way to swap the picture has to be told it is two calls, not a patch.
+		Description: "A field left out DOES NOT CHANGE. An empty \"alt_text\" is a value " +
+			"rather than an absence — it is HTML's own word for a decorative image — so " +
+			"sending \"\" clears the text on purpose. \n\n" +
+			"\"url\" cannot be patched. The address and the upload binding were written " +
+			"together, and moving one without the other leaves the image's own column and " +
+			"the binding pointing at different files; replacing a picture is a new image " +
+			"and the removal of the old one (ADR 0108).",
+		RequestBody: d.RequestBody(updateImageRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("The corrected image", d.Item(models.Image{})),
+		},
+	})
+
+	d.Describe(http.MethodDelete, "/admin/v1/products/{id}/images/{imageId}", openapi.Operation{
+		Summary: "Removes one image from a product.",
+		Description: "The upload BINDING goes with it and the FILE does not: the file " +
+			"belongs to the file module and may back another product's image. What the " +
+			"removal of the binding protects is the reverse read — an image no storefront " +
+			"shows must stop answering that its file is in use.",
+		Responses: map[string]any{
+			"200": openapi.Response("What was removed", d.Item(deleted{})),
+		},
+	})
 }
 
 // describeAdminSalesChannels describes the product-to-sales-channel link

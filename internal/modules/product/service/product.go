@@ -747,6 +747,11 @@ func buildImages(productID string, in []CreateImageInput) ([]models.Image, error
 		if err != nil {
 			return nil, err
 		}
+		altText := strings.TrimSpace(img.AltText)
+		if len(altText) > maxAltTextLen {
+			return nil, invalid("images[].alt_text can be at most %d characters (given: %d)",
+				maxAltTextLen, len(altText))
+		}
 		rank := img.Rank
 		if rank == 0 {
 			// If no rank was given the submission order is preserved; otherwise all the
@@ -758,7 +763,7 @@ func buildImages(productID string, in []CreateImageInput) ([]models.Image, error
 			ProductID: productID,
 			URL:       url,
 			UploadID:  uploadID,
-			AltText:   strings.TrimSpace(img.AltText),
+			AltText:   altText,
 			Rank:      rank,
 			Metadata:  img.Metadata,
 		})

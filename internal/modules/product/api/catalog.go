@@ -19,6 +19,11 @@ type Catalog interface {
 	ListProducts(ctx context.Context, opts service.ListProductsOptions) (service.ListResult[models.Product], error)
 	UpdateProduct(ctx context.Context, id string, in service.UpdateProductInput) (models.Product, error)
 	DeleteProduct(ctx context.Context, id string) error
+	// The image writes: one image at a time, each addressed by BOTH the
+	// product's id and the image's (ADR 0108).
+	AddProductImage(ctx context.Context, productID string, in service.CreateImageInput) (models.Image, error)
+	UpdateProductImage(ctx context.Context, productID, imageID string, in service.UpdateImageInput) (models.Image, error)
+	RemoveProductImage(ctx context.Context, productID, imageID string) error
 
 	CreateVariant(ctx context.Context, productID string, in service.CreateVariantInput) (models.Variant, error)
 	GetVariant(ctx context.Context, id string) (models.Variant, error)

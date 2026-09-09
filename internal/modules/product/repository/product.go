@@ -299,6 +299,82 @@ func (r *Repo) CreateImage(ctx context.Context, img models.Image) (models.Image,
 	return toImage(row)
 }
 
+// ImagePatch is a partial update of one product image.
+//
+// A nil field DOES NOT CHANGE. `url` is deliberately absent: the address and
+// the upload binding were written together, and moving one without the other
+// puts the image's own column at odds with the link record.
+type ImagePatch struct {
+	// AltText is the text a screen reader reads out. The EMPTY STRING is a
+	// value here and not an absence — HTML's own word for a decorative image —
+	// so a non-nil pointer to "" clears the text on purpose.
+	AltText *string
+	Rank    *int32
+	// Metadata replaces the whole bag when it is given.
+	Metadata map[string]any
+}
+
+// GetImageOfProduct reads one image of one product.
+//
+// BOTH identifiers are in the WHERE clause. Reading by the image's alone would
+// let a caller name a product of their own and reach another product's picture,
+// and the answer would look like a success.
+func (r *Repo) GetImageOfProduct(ctx context.Context, productID, imageID string) (models.Image, error) {
+	row, err := r.q.GetImageOfProduct(ctx, productdb.GetImageOfProductParams{
+		ID: imageID, ProductID: productID,
+	})
+	if err != nil {
+		return models.Image{}, wrapDB(err, "product image not found: %s", imageID)
+	}
+
+	return toImage(row)
+}
+
+// UpdateImage patches one image of one product.
+func (r *Repo) UpdateImage(
+	ctx context.Context, productID, imageID string, patch ImagePatch,
+) (models.Image, error) {
+	meta, err := patchMetadata(patch.Metadata)
+	if err != nil {
+		return models.Image{}, err
+	}
+
+	row, err := r.q.UpdateImage(ctx, productdb.UpdateImageParams{
+		ID:        imageID,
+		ProductID: productID,
+		AltText:   patch.AltText,
+		Rank:      patch.Rank,
+		Metadata:  meta,
+	})
+	if err != nil {
+		return models.Image{}, wrapDB(err, "product image could not be updated: %s", imageID)
+	}
+
+	return toImage(row)
+}
+
+// SoftDeleteImage removes one image of one product.
+//
+// A row count of zero is NOT FOUND rather than a silent success. The service
+// reads the image before calling this, so through that path the read normally
+// answers first; what this covers is the gap BETWEEN the read and the write.
+// Under READ COMMITTED two operators pressing remove at once both pass the read,
+// and the second UPDATE matches no row — without the count it would report a
+// deletion it did not perform.
+func (r *Repo) SoftDeleteImage(ctx context.Context, productID, imageID string) error {
+	n, err := r.q.SoftDeleteImage(ctx, productdb.SoftDeleteImageParams{
+		ID: imageID, ProductID: productID,
+	})
+	if err != nil {
+		return wrapDB(err, "product image could not be deleted: %s", imageID)
+	}
+	if n == 0 {
+		return notFound("product image", imageID)
+	}
+
+	return nil
+}
+
 // ListImagesByProductIDs returns the images of the given products in a SINGLE
 // query.
 func (r *Repo) ListImagesByProductIDs(ctx context.Context, productIDs []string) (map[string][]models.Image, error) {

@@ -157,6 +157,37 @@ func (q *Queries) DeleteImagesByProduct(ctx context.Context, productID string) e
 	return err
 }
 
+const getImageOfProduct = `-- name: GetImageOfProduct :one
+SELECT id, product_id, url, rank, metadata, created_at, updated_at, deleted_at, upload_id, alt_text FROM product_image
+WHERE id = $1 AND product_id = $2 AND deleted_at IS NULL
+`
+
+type GetImageOfProductParams struct {
+	ID        string
+	ProductID string
+}
+
+// Both identifiers are in the WHERE clause and that is the point: the route
+// carries the product's id and the image's, and reading only the image's would
+// let a caller edit another product's picture by naming their own product.
+func (q *Queries) GetImageOfProduct(ctx context.Context, arg GetImageOfProductParams) (ProductImage, error) {
+	row := q.db.QueryRow(ctx, getImageOfProduct, arg.ID, arg.ProductID)
+	var i ProductImage
+	err := row.Scan(
+		&i.ID,
+		&i.ProductID,
+		&i.Url,
+		&i.Rank,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.UploadID,
+		&i.AltText,
+	)
+	return i, err
+}
+
 const getProduct = `-- name: GetProduct :one
 SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id FROM product
 WHERE id = $1 AND deleted_at IS NULL
@@ -438,6 +469,24 @@ func (q *Queries) ListVariantIDsByProduct(ctx context.Context, productID string)
 	return items, nil
 }
 
+const softDeleteImage = `-- name: SoftDeleteImage :execrows
+UPDATE product_image SET deleted_at = now(), updated_at = now()
+WHERE id = $1 AND product_id = $2 AND deleted_at IS NULL
+`
+
+type SoftDeleteImageParams struct {
+	ID        string
+	ProductID string
+}
+
+func (q *Queries) SoftDeleteImage(ctx context.Context, arg SoftDeleteImageParams) (int64, error) {
+	result, err := q.db.Exec(ctx, softDeleteImage, arg.ID, arg.ProductID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const softDeleteOptionsByProduct = `-- name: SoftDeleteOptionsByProduct :execrows
 UPDATE product_option SET deleted_at = now(), updated_at = now()
 WHERE product_id = $1 AND deleted_at IS NULL
@@ -475,6 +524,55 @@ func (q *Queries) SoftDeleteVariantsByProduct(ctx context.Context, productID str
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const updateImage = `-- name: UpdateImage :one
+UPDATE product_image SET
+    alt_text   = COALESCE($1::text, alt_text),
+    rank       = COALESCE($2::int, rank),
+    metadata   = COALESCE($3::jsonb, metadata),
+    updated_at = now()
+WHERE id = $4 AND product_id = $5 AND deleted_at IS NULL
+RETURNING id, product_id, url, rank, metadata, created_at, updated_at, deleted_at, upload_id, alt_text
+`
+
+type UpdateImageParams struct {
+	AltText   *string
+	Rank      *int32
+	Metadata  []byte
+	ID        string
+	ProductID string
+}
+
+// The COALESCE pattern, as in UpdateProduct: a field passed as NULL DOES NOT
+// CHANGE. The address is NOT here — an image's url and its upload binding were
+// written together, and letting the address move on its own would put the row's
+// own column at odds with the link record (see migration 000002).
+//
+// alt_text is in it, and it is the reason this query exists: until it did, a
+// wrong alt text could only be corrected by deleting the product.
+func (q *Queries) UpdateImage(ctx context.Context, arg UpdateImageParams) (ProductImage, error) {
+	row := q.db.QueryRow(ctx, updateImage,
+		arg.AltText,
+		arg.Rank,
+		arg.Metadata,
+		arg.ID,
+		arg.ProductID,
+	)
+	var i ProductImage
+	err := row.Scan(
+		&i.ID,
+		&i.ProductID,
+		&i.Url,
+		&i.Rank,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.UploadID,
+		&i.AltText,
+	)
+	return i, err
 }
 
 const updateProduct = `-- name: UpdateProduct :one

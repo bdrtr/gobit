@@ -156,6 +156,16 @@ func (h *Handler) Routes(r chi.Router) {
 	// possible for the image's own column and the binding to disagree.
 	read.Get("/admin/v1/product-images/by-upload/{upload_id}", h.adminListImagesOfUpload)
 
+	// An image is added, corrected and removed ONE AT A TIME, and every one of
+	// the three carries BOTH identifiers: an image addressed by its own id
+	// alone would let a caller name a product of their own and reach somebody
+	// else's picture (ADR 0108). The patch reaches the alt text, the rank and
+	// the metadata; it does NOT reach the address, for the reason the paragraph
+	// above gives about the binding.
+	write.Post("/admin/v1/products/{id}/images", h.adminAddProductImage)
+	write.Patch("/admin/v1/products/{id}/images/{imageId}", h.adminUpdateProductImage)
+	write.Delete("/admin/v1/products/{id}/images/{imageId}", h.adminRemoveProductImage)
+
 	write.Post("/admin/v1/products/{id}/sales-channels", h.adminAddSalesChannel)
 	write.Delete("/admin/v1/products/{id}/sales-channels/{sales_channel_id}", h.adminRemoveSalesChannel)
 	read.Get("/admin/v1/products/{id}/sales-channels", h.adminListSalesChannels)

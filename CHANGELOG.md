@@ -20,6 +20,22 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir gorsel artik DUZELTILEBILIYOR, adresi ise degistirilemiyor**
+  (uc admin ucu, ADR 0108). ADR 0104 `alt_text`'i vitrinde ve GraphQL tipinde
+  YAYIMLADI ve duzeltilebilir birakmadi: `CreateProduct` gorselleri aliyordu ve
+  tabloyu baska hicbir sey yazmiyordu, yani yanlis yazilmis bir alt metin urun
+  yasadigi surece kaliyordu -- ve yayimlanmis yanlis bir metin, hic olmayan bir
+  metinden KOTUDUR, cunku ekran okuyucu artik hatayi okuyor. Yama alt metne,
+  siraya ve metadata'ya ulasiyor; ADRESE ULASMIYOR: `url` ile yukleme bagi ayni
+  cagrida yazildi, ve birini otekini birakmadan tasimak satirin kendi kolonuyla
+  bag kaydini ayri dosyalari gosterir hale getirir -- modulun "bu gorseli su
+  yuklemeye bagla" ucunu tam olarak bu yuzden acmadigi durum. Resmi degistirmek
+  YENI bir gorsel ve eskisinin silinmesi, yani ne yaptigini soyleyen iki cagri.
+  Her sorgu IKI kimlik tasiyor: yalnizca gorselin kimligiyle adreslenen bir uc,
+  cagirana kendi urununu adlandirip baskasinin resmini duzenletirdi.
+  `alt_text` bir uzunluk siniri kazandi, ve HER IKI yazma yolunda: iki yoldan
+  birinde duran sinir, sinir degildir.
+
 - **Iki sepet artik BIRLESEBILIYOR, ve adet TOPLANIYOR** (ADR 0107). Giris
   yapmak bir sepeti DEVREDEBILIYORDU ve KATLAYAMIYORDU: uyenin kendi sepeti
   varsa devir reddediliyordu ve musteri iki sepetle kaliyordu, birini bir daha

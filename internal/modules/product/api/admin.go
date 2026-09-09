@@ -255,6 +255,119 @@ func (h *Handler) adminUpdateProduct(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, product)
 }
 
+// updateImageRequest is the body of PATCH /admin/v1/products/{id}/images/{imageId}.
+//
+// Every field is a POINTER, which is the PATCH contract: a field left out does
+// not change. `url` is not among them — the address and the upload binding were
+// written together and moving one alone would put them at odds; replacing the
+// picture is a new image plus the removal of the old one.
+type updateImageRequest struct {
+	// AltText is the text a screen reader reads out. An empty STRING clears it
+	// on purpose, which is HTML's own word for a decorative image; leaving the
+	// field out is what means "do not change it".
+	AltText *string `json:"alt_text"`
+	// Rank is the image's position among the product's images.
+	Rank *int32 `json:"rank"`
+	// Metadata REPLACES the whole bag when it is given.
+	Metadata map[string]any `json:"metadata"`
+}
+
+// toInput converts the body into the service input.
+func (r updateImageRequest) toInput() service.UpdateImageInput {
+	return service.UpdateImageInput{
+		AltText:  r.AltText,
+		Rank:     r.Rank,
+		Metadata: r.Metadata,
+	}
+}
+
+// adminAddProductImage POST /admin/v1/products/{id}/images
+func (h *Handler) adminAddProductImage(w http.ResponseWriter, r *http.Request) {
+	id, err := pathParam(r, "id")
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	req, err := decode[createImageRequest](w, r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+
+	image, err := h.svc.AddProductImage(r.Context(), id, service.CreateImageInput{
+		URL:      req.URL,
+		UploadID: req.UploadID,
+		AltText:  req.AltText,
+		Rank:     req.Rank,
+		Metadata: req.Metadata,
+	})
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	writeItem(w, r, http.StatusCreated, image)
+}
+
+// adminUpdateProductImage PATCH /admin/v1/products/{id}/images/{imageId}
+//
+// It is the endpoint ADR 0104 left missing: `alt_text` was published and could
+// not be corrected, so a wrong description of a picture lasted as long as the
+// product did.
+func (h *Handler) adminUpdateProductImage(w http.ResponseWriter, r *http.Request) {
+	productID, imageID, err := imagePath(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	req, err := decode[updateImageRequest](w, r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+
+	image, err := h.svc.UpdateProductImage(r.Context(), productID, imageID, req.toInput())
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	writeItem(w, r, http.StatusOK, image)
+}
+
+// adminRemoveProductImage DELETE /admin/v1/products/{id}/images/{imageId}
+func (h *Handler) adminRemoveProductImage(w http.ResponseWriter, r *http.Request) {
+	productID, imageID, err := imagePath(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	if err := h.svc.RemoveProductImage(r.Context(), productID, imageID); err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	// The module's own delete answer, not a 204: every other delete here says
+	// what it deleted, and one endpoint answering differently would make the
+	// client generator produce two shapes for one intent.
+	writeItem(w, r, http.StatusOK, deleted{ID: imageID, Object: "product_image", Deleted: true})
+}
+
+// imagePath reads the product's id and the image's from the route.
+//
+// The two are read TOGETHER because they travel together: every handler below
+// needs both, and a handler that took only one of them would be addressing an
+// image without saying whose it is.
+func imagePath(r *http.Request) (productID, imageID string, err error) {
+	productID, err = pathParam(r, "id")
+	if err != nil {
+		return "", "", err
+	}
+	imageID, err = pathParam(r, "imageId")
+	if err != nil {
+		return "", "", err
+	}
+
+	return productID, imageID, nil
+}
+
 // adminDeleteProduct DELETE /admin/v1/products/{id}
 func (h *Handler) adminDeleteProduct(w http.ResponseWriter, r *http.Request) {
 	id, err := pathParam(r, "id")

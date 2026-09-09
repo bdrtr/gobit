@@ -1434,6 +1434,76 @@ func (m *memStore) ListImagesByProductIDs(_ context.Context, productIDs []string
 	return out, nil
 }
 
+// GetImageOfProduct returns the live image of that product.
+//
+// BOTH identifiers are matched, and that is not a convenience: the real query
+// carries both, and a fake matching only the image's id would let a test
+// "prove" that another product's picture is unreachable when nothing stops it.
+func (m *memStore) GetImageOfProduct(_ context.Context, productID, imageID string) (models.Image, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("GetImageOfProduct"); err != nil {
+		return models.Image{}, err
+	}
+
+	img, ok := m.images[imageID]
+	if !ok || img.DeletedAt != nil || img.ProductID != productID {
+		return models.Image{}, errors.NotFound("product_not_found",
+			"product image not found: %s", imageID)
+	}
+
+	return img, nil
+}
+
+// UpdateImage patches the image; a nil field does not change.
+func (m *memStore) UpdateImage(
+	_ context.Context, productID, imageID string, patch repository.ImagePatch,
+) (models.Image, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("UpdateImage"); err != nil {
+		return models.Image{}, err
+	}
+
+	img, ok := m.images[imageID]
+	if !ok || img.DeletedAt != nil || img.ProductID != productID {
+		return models.Image{}, errors.NotFound("product_not_found",
+			"product image not found: %s", imageID)
+	}
+
+	if patch.AltText != nil {
+		img.AltText = *patch.AltText
+	}
+	if patch.Rank != nil {
+		img.Rank = *patch.Rank
+	}
+	if patch.Metadata != nil {
+		img.Metadata = patch.Metadata
+	}
+	m.images[imageID] = img
+
+	return img, nil
+}
+
+// SoftDeleteImage stamps the image as deleted.
+func (m *memStore) SoftDeleteImage(_ context.Context, productID, imageID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("SoftDeleteImage"); err != nil {
+		return err
+	}
+
+	img, ok := m.images[imageID]
+	if !ok || img.DeletedAt != nil || img.ProductID != productID {
+		return errors.NotFound("product_not_found", "product image not found: %s", imageID)
+	}
+	stamp := creationTime
+	img.DeletedAt = &stamp
+	m.images[imageID] = img
+
+	return nil
+}
+
 // ListImagesByIDs returns the live images among the given ids.
 //
 // The SOFT DELETE filter is imitated on purpose: the real query carries

@@ -209,6 +209,13 @@ type Store interface {
 	ListCategoriesByProductIDs(ctx context.Context, productIDs []string) (map[string][]models.Category, error)
 
 	CreateImage(ctx context.Context, img models.Image) (models.Image, error)
+	// GetImageOfProduct, UpdateImage and SoftDeleteImage all take BOTH
+	// identifiers. An image addressed by its own id alone would let a caller
+	// name a product of their own and reach somebody else's picture
+	// (ADR 0108).
+	GetImageOfProduct(ctx context.Context, productID, imageID string) (models.Image, error)
+	UpdateImage(ctx context.Context, productID, imageID string, patch ImagePatch) (models.Image, error)
+	SoftDeleteImage(ctx context.Context, productID, imageID string) error
 	ListImagesByProductIDs(ctx context.Context, productIDs []string) (map[string][]models.Image, error)
 	// ListImagesByIDs reads images BY THEIR OWN ids; it is what turns the image
 	// ids the upload binding returns into records.

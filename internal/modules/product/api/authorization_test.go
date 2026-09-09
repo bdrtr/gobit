@@ -74,6 +74,28 @@ func (f *scopeCatalog) UpdateProduct(
 	return models.Product{}, nil
 }
 
+// AddProductImage counts the call.
+func (f *scopeCatalog) AddProductImage(
+	context.Context, string, service.CreateImageInput,
+) (models.Image, error) {
+	f.count()
+	return models.Image{}, nil
+}
+
+// UpdateProductImage counts the call.
+func (f *scopeCatalog) UpdateProductImage(
+	context.Context, string, string, service.UpdateImageInput,
+) (models.Image, error) {
+	f.count()
+	return models.Image{}, nil
+}
+
+// RemoveProductImage counts the call.
+func (f *scopeCatalog) RemoveProductImage(context.Context, string, string) error {
+	f.count()
+	return nil
+}
+
 // DeleteProduct counts the call.
 func (f *scopeCatalog) DeleteProduct(context.Context, string) error {
 	f.count()
@@ -409,6 +431,9 @@ var writeEndpoints = map[string]struct {
 	"unlink sales channel": {
 		http.MethodDelete, "/admin/v1/products/prod_1/sales-channels/sc_1", "",
 	},
+	"add image":         {http.MethodPost, "/admin/v1/products/prod_1/images", `{"url":"https://e/x.png"}`},
+	"update image":      {http.MethodPatch, "/admin/v1/products/prod_1/images/img_1", `{"rank":1}`},
+	"remove image":      {http.MethodDelete, "/admin/v1/products/prod_1/images/img_1", ""},
 	"create collection": {http.MethodPost, "/admin/v1/product-collections", `{}`},
 	"create category":   {http.MethodPost, "/admin/v1/product-categories", `{}`},
 	"create tag":        {http.MethodPost, "/admin/v1/product-tags", `{}`},

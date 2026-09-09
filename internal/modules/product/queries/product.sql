@@ -133,3 +133,30 @@ ORDER BY product_id, rank, id;
 -- name: DeleteImagesByProduct :exec
 UPDATE product_image SET deleted_at = now(), updated_at = now()
 WHERE product_id = $1 AND deleted_at IS NULL;
+
+-- name: GetImageOfProduct :one
+-- Both identifiers are in the WHERE clause and that is the point: the route
+-- carries the product's id and the image's, and reading only the image's would
+-- let a caller edit another product's picture by naming their own product.
+SELECT * FROM product_image
+WHERE id = $1 AND product_id = $2 AND deleted_at IS NULL;
+
+-- name: UpdateImage :one
+-- The COALESCE pattern, as in UpdateProduct: a field passed as NULL DOES NOT
+-- CHANGE. The address is NOT here — an image's url and its upload binding were
+-- written together, and letting the address move on its own would put the row's
+-- own column at odds with the link record (see migration 000002).
+--
+-- alt_text is in it, and it is the reason this query exists: until it did, a
+-- wrong alt text could only be corrected by deleting the product.
+UPDATE product_image SET
+    alt_text   = COALESCE(sqlc.narg('alt_text')::text, alt_text),
+    rank       = COALESCE(sqlc.narg('rank')::int, rank),
+    metadata   = COALESCE(sqlc.narg('metadata')::jsonb, metadata),
+    updated_at = now()
+WHERE id = sqlc.arg('id') AND product_id = sqlc.arg('product_id') AND deleted_at IS NULL
+RETURNING *;
+
+-- name: SoftDeleteImage :execrows
+UPDATE product_image SET deleted_at = now(), updated_at = now()
+WHERE id = $1 AND product_id = $2 AND deleted_at IS NULL;

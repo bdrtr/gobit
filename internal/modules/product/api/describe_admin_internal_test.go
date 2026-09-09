@@ -312,11 +312,24 @@ func adminEndpoints() []adminEndpoint {
 			record: productSalesChannels{},
 		},
 		{
-			// The REVERSE read of the image/upload binding. There is no write
-			// counterpart in the table because there is no write endpoint: an
-			// image is bound to its upload when the image itself is created.
+			// The REVERSE read of the image/upload binding. There is still no
+			// write counterpart for the BINDING itself: the three image writes
+			// below carry the upload id on the image, and nothing binds an
+			// existing image to a different upload (ADR 0108).
 			method: http.MethodGet, path: "/admin/v1/product-images/by-upload/{upload_id}", status: "200",
 			record: uploadImages{UploadID: "upl_1", Images: []models.Image{{}}},
+		},
+		{
+			method: http.MethodPost, path: "/admin/v1/products/{id}/images", status: "201",
+			request: createImageRequest{}, record: filledImage(),
+		},
+		{
+			method: http.MethodPatch, path: "/admin/v1/products/{id}/images/{imageId}",
+			status: "200", request: updateImageRequest{}, record: filledImage(),
+		},
+		{
+			method: http.MethodDelete, path: "/admin/v1/products/{id}/images/{imageId}",
+			status: "200", record: deleted{ID: "img_1", Object: "product_image", Deleted: true},
 		},
 		{
 			method: http.MethodPost, path: "/admin/v1/product-collections", status: "201",
@@ -456,6 +469,31 @@ func filledCollection() models.Collection {
 	now := time.Now().UTC()
 
 	return models.Collection{Metadata: map[string]any{"k": "v"}, DeletedAt: &now}
+}
+
+// filledImage produces an image whose omitempty and omitzero fields are written
+// too.
+//
+// DeletedAt is set even though these three endpoints never answer with a deleted
+// image: the schema declares the field because the record does, and the
+// comparison here is of key SETS. A sample that left it nil would make the test
+// accuse the document of declaring a field it correctly declares.
+func filledImage() models.Image {
+	upload := "upl_1"
+	now := time.Now().UTC()
+
+	return models.Image{
+		ID:        "img_1",
+		ProductID: "prod_1",
+		URL:       "https://example.test/x.png",
+		UploadID:  &upload,
+		AltText:   "a crushed box",
+		Rank:      1,
+		Metadata:  map[string]any{"k": "v"},
+		CreatedAt: now,
+		UpdatedAt: now,
+		DeletedAt: &now,
+	}
 }
 
 // filledProductType produces a type whose omitempty fields are written too.

@@ -23,10 +23,19 @@ const (
 // place the limit lives is here, and its purpose is to stop huge bodies from
 // spreading into memory and into the indexes.
 const (
-	maxHandleLen      = 128
-	maxTitleLen       = 255
-	maxValueLen       = 255
-	maxURLLen         = 2048
+	maxHandleLen = 128
+	maxTitleLen  = 255
+	maxValueLen  = 255
+	maxURLLen    = 2048
+	// maxAltTextLen bounds the text a screen reader reads out.
+	//
+	// It is generous rather than a style rule: guidance puts a useful alt text
+	// at a phrase, and anything past this is a description that belongs in the
+	// page rather than in the attribute. What the limit is really for is the
+	// column, which is unbounded `text`, and the fact that both write paths —
+	// the create body and the patch — now pass through it: a limit on one of
+	// two ways into a column is not a limit.
+	maxAltTextLen     = 1024
 	maxDescriptionLen = 16 * 1024
 )
 
