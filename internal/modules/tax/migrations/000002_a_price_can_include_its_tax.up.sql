@@ -1,0 +1,37 @@
+-- prices_include_tax says whether the prices of this market are QUOTED with the
+-- tax already inside them.
+--
+-- # What it is for
+--
+-- In Turkey — and across most of Europe — a retail price is written with VAT
+-- included: the shopper sees 199,00 and pays 199,00. gobit could only compute
+-- the other way round until now, adding tax ON TOP of a net price, so a
+-- merchant who wanted the sticker to be the amount charged had no way to say
+-- so. This column is where they say it.
+--
+-- # Why it is NULLABLE, and what NULL means
+--
+-- NULL is INHERIT, exactly as an empty provider_id is. The resolution walks the
+-- region chain from the most specific row to the country root and takes the
+-- first row that says something; a chain that says nothing anywhere is
+-- tax-exclusive, which is what every installation does today and therefore what
+-- an existing row must keep meaning.
+--
+-- A plain boolean with a DEFAULT would have made that impossible to express: a
+-- province could then no longer say "whatever my country says", only "true" or
+-- "false", and every existing row would have been given an opinion nobody wrote.
+--
+-- # Why it is on the REGION and not on the price
+--
+-- Because it is a property of the MARKET, not of the amount. The same catalog
+-- sells into several countries, and whether the number on the tag includes tax
+-- is decided by where the shopper is, not by which price row was matched. Put on
+-- the price, a merchant would have to restate it on every row of every price
+-- list, and a single row set the other way would quietly charge a different
+-- total than its neighbours.
+--
+-- It also lands where the RATE already is. The extraction needs the rate, the
+-- rate belongs to the region, and a flag anywhere else would have to be carried
+-- to this point through a boundary that cannot be type-checked (ADR 0006).
+ALTER TABLE tax_region
+    ADD COLUMN IF NOT EXISTS prices_include_tax BOOLEAN;

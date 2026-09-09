@@ -47,6 +47,63 @@ func addAmount(a, b int64) (int64, error) {
 	return a + b, nil
 }
 
+// TaxIncludedIn brüt bir tutarın İÇİNDEKİ vergiyi ayıklar.
+//
+// [TaxOf] tabanın ÜSTÜNE ekler; bu onun tersidir. Fiyatın vergiyi zaten
+// içerdiği pazarlarda — Türkiye'de perakende fiyatı böyle yazılır — müşterinin
+// gördüğü rakam brüttür ve satırın net tabanı ondan TÜRETİLİR:
+//
+//	vergi = brüt × oran / (10000 + oran),  taban = brüt − vergi
+//
+// # Neden ters hesap ŞART, "net'i bul sonra TaxOf ile vergilendir" YETMEZ
+//
+// Ölçüldü (9 Eylül 2026): ayıklanan net'i [TaxOf]'a geri vermek bir kuruş FAZLA
+// üretiyor, ve bunun olduğu tutarların oranının KAPALI BİR FORMÜLÜ var —
+// oran / (10000 + oran). Türkiye'nin %20 KDV'sinde her ALTI brütten biri,
+// %25'te beşte biri. Oran yükseldikçe kısayol daha da kötüleşiyor, ki bu bir
+// uygulayıcının tahmin edeceğinin tersidir. İki hesap birbirinin tersi
+// DEĞİLDİR ve biri ötekinin yerine kullanılamaz.
+//
+// Ölçüm: docs/measurements/0086-tax-inclusive-rounding.md
+//
+// Buradaki ayıklama, toplamı TANIM GEREĞİ tutturur: taban brütten vergi
+// çıkarılarak bulunur, yani taban + vergi her zaman brüte eşittir. Yuvarlama
+// yönü [TaxOf] ile aynıdır (AŞAĞI) ve artığı yine müşteri lehinedir: aşağı
+// yuvarlanan vergi, tabanı bir kuruş BÜYÜTÜR, tahsil edilen toplam değişmez.
+//
+// # Neden önce bölünüyor
+//
+// [TaxOf]'un gerekçesinin aynısı, tek farkla: bölen 10000 değil 10000 + oran.
+// brüt × oran çarpımı 10^22'ye kadar çıkar ve int64 9,22 × 10^18'de biter.
+// brüt = q × d + m yazılırsa (d = 10000 + oran) sonuç q × oran + (m × oran) / d
+// olur; q × oran en fazla 5 × 10^17, m × oran ise 2 × 10^8'in altındadır.
+// Ölçüldü: 215.015 değer çiftinde parçalı hesap ile doğrudan hesap birebir aynı,
+// ve [FuzzTaxIncludedIn] aynı özelliği math/big'e karşı sürekli koşuyor.
+func TaxIncludedIn(gross int64, rateBps int32) (int64, error) {
+	if gross < 0 {
+		return 0, errors.Internal(CodeAmountOverflow, "brüt tutar negatif olamaz: %d", gross)
+	}
+	if gross > MaxTaxableAmount {
+		return 0, errors.Invalid(CodeAmountOverflow,
+			"brüt tutar sınırı aşıyor: %d > %d", gross, MaxTaxableAmount)
+	}
+	if rateBps < models.MinRateBps || rateBps > models.MaxRateBps {
+		return 0, errors.Internal(CodeRateOutOfRange,
+			"vergi oranı [%d, %d] baz puan aralığında olmalı, %d bildirildi",
+			models.MinRateBps, models.MaxRateBps, rateBps)
+	}
+	if gross == 0 || rateBps == 0 {
+		return 0, nil
+	}
+
+	rate := int64(rateBps)
+	divisor := BpsScale + rate
+	whole := (gross / divisor) * rate
+	remainder := ((gross % divisor) * rate) / divisor
+
+	return whole + remainder, nil
+}
+
 // TaxOf verilen taban üzerinden baz puan oranıyla vergiyi hesaplar.
 //
 // # Yuvarlama yönü

@@ -31,8 +31,11 @@ func (r *Repo) CreateTaxRegion(ctx context.Context, region models.TaxRegion, now
 		ProvinceCode: region.ProvinceCode,
 		ParentID:     region.ParentID,
 		ProviderID:   region.ProviderID,
-		Metadata:     metadata,
-		CreatedAt:    fromTime(now),
+
+		PricesIncludeTax: region.PricesIncludeTax,
+
+		Metadata:  metadata,
+		CreatedAt: fromTime(now),
 	})
 	if err != nil {
 		return models.TaxRegion{}, wrapDB(err, "vergi bölgesi eklenemedi: %s/%s",
@@ -234,10 +237,13 @@ func toTaxRegion(row taxdb.TaxRegion) (models.TaxRegion, error) {
 		ProvinceCode: row.ProvinceCode,
 		ParentID:     row.ParentID,
 		ProviderID:   row.ProviderID,
-		Metadata:     metadata,
-		CreatedAt:    toTime(row.CreatedAt),
-		UpdatedAt:    toTime(row.UpdatedAt),
-		DeletedAt:    toTimePtr(row.DeletedAt),
+
+		PricesIncludeTax: row.PricesIncludeTax,
+
+		Metadata:  metadata,
+		CreatedAt: toTime(row.CreatedAt),
+		UpdatedAt: toTime(row.UpdatedAt),
+		DeletedAt: toTimePtr(row.DeletedAt),
 	}, nil
 }
 

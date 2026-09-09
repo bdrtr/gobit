@@ -124,6 +124,14 @@ type TaxRegion struct {
 	// applies. See the tax/service package comment, "The provider
 	// abstraction".
 	ProviderID string
+	// PricesIncludeTax says whether the prices of this market are quoted with
+	// the tax already inside them.
+	//
+	// NIL is INHERIT, the same way an empty ProviderID is: the resolution walks
+	// from the most specific region to the country root and takes the first row
+	// that says something. A chain that says nothing anywhere is tax-EXCLUSIVE,
+	// which is what every installation did before this field existed.
+	PricesIncludeTax *bool
 	// Metadata is free-form metadata; this module does not interpret its
 	// content.
 	Metadata map[string]any

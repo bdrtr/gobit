@@ -89,6 +89,14 @@ type CalculateTaxResult struct {
 	// RegionID hesabın dayandığı EN ÖZEL bölgedir (eyalet varsa o, yoksa
 	// ülke kökü); bölge bulunamadıysa boş.
 	RegionID string
+	// PricesIncludeTax, hesabın vergi DAHİL fiyat üzerinden yapıldığını
+	// söyler.
+	//
+	// Alanın var olması, [ItemTax.TaxableAmount]'un ne anlama geldiğini
+	// çağıranın OKUYABİLMESİ içindir: kapsayıcı hesapta taban gönderilen
+	// tutardan KÜÇÜKTÜR, ve bunu bilmeyen bir çağıran farkı bir hata sanardı.
+	// Sepet tarafındaki doğrulama tam olarak bu alana dallanıyor.
+	PricesIncludeTax bool
 	// RegionFound ülkeye ait bir vergi bölgesi bulunup bulunmadığıdır.
 	//
 	// Alan ZORUNLUDUR: sıfır vergi iki farklı sebepten doğabilir — oran
@@ -208,24 +216,48 @@ func (s *Service) CalculateTax(ctx context.Context, in CalculateTaxInput) (Calcu
 		return CalculateTaxResult{}, err
 	}
 
+	included := pricesIncludeTax(chain)
+
 	raw, err := provider.Calculate(ctx, ProviderInput{
-		RegionIDs:    regionIDs,
-		CountryCode:  normalized.CountryCode,
-		ProvinceCode: normalized.ProvinceCode,
-		Items:        normalized.Items,
-		Shipping:     normalized.Shipping,
+		RegionIDs:        regionIDs,
+		CountryCode:      normalized.CountryCode,
+		ProvinceCode:     normalized.ProvinceCode,
+		Items:            normalized.Items,
+		Shipping:         normalized.Shipping,
+		PricesIncludeTax: included,
 	})
 	if err != nil {
 		return CalculateTaxResult{}, err
 	}
 
-	result, err := assembleResult(normalized, raw, provider.ID())
+	result, err := assembleResult(normalized, raw, provider.ID(), included)
 	if err != nil {
 		return CalculateTaxResult{}, err
 	}
 	result.RegionID = chain[0].ID
 	result.RegionFound = true
+	result.PricesIncludeTax = included
 	return result, nil
+}
+
+// pricesIncludeTax bölge ZİNCİRİNDEN fiyatların vergi dahil yazılıp
+// yazılmadığını çözer; zincir en özelden geneledir.
+//
+// Devralma [Service.providerFor]'un aynısıdır ve bilinçli olarak öyle: bir
+// eyalet kendi cevabını verebilir, vermediyse ülkenin cevabını DEVRALIR. Hiç
+// kimse cevap vermediyse fiyatlar vergi HARİÇ'tir — alan var olmadan önce her
+// kurulumun yaptığı şey budur, ve mevcut bir satır kendisine yazılmamış bir
+// görüş edinmemelidir.
+//
+// İkinci bir devralma kuralı icat etmemek de karardır: sağlayıcıda "boş =
+// devral", burada "nil = devral". Aynı zincir, aynı cümle.
+func pricesIncludeTax(chain []models.TaxRegion) bool {
+	for i := range chain {
+		if chain[i].PricesIncludeTax != nil {
+			return *chain[i].PricesIncludeTax
+		}
+	}
+	return false
 }
 
 // providerFor bölge ZİNCİRİNİN sağlayıcısını çözer; zincir en özelden geneledir.
@@ -360,7 +392,9 @@ func zeroResult(in CalculateTaxInput) CalculateTaxResult {
 // üçüncü taraf olabilir ve kendi çıktısını denetlemesi beklenemez. Toplam da
 // burada, yuvarlanmış kalem vergileri üzerinden toplanır — kimlik
 // (TaxTotal = Σ kalem + kargo) sağlayıcının aritmetiğine bağlı kalmaz.
-func assembleResult(in CalculateTaxInput, raw ProviderResult, providerID string) (CalculateTaxResult, error) {
+func assembleResult(
+	in CalculateTaxInput, raw ProviderResult, providerID string, included bool,
+) (CalculateTaxResult, error) {
 	byID := make(map[string]ProviderItemTax, len(raw.Items))
 	for i := range raw.Items {
 		line := raw.Items[i]
@@ -388,7 +422,7 @@ func assembleResult(in CalculateTaxInput, raw ProviderResult, providerID string)
 			return CalculateTaxResult{}, errors.Internal(CodeProviderInvalidResult,
 				"%q sağlayıcısı %q kalemi için sonuç döndürmedi", providerID, in.Items[i].ID)
 		}
-		item, err := validateLine(providerID, line, in.Items[i].ID, in.Items[i].Amount)
+		item, err := validateLine(providerID, line, in.Items[i].ID, in.Items[i].Amount, included)
 		if err != nil {
 			return CalculateTaxResult{}, err
 		}
@@ -404,7 +438,7 @@ func assembleResult(in CalculateTaxInput, raw ProviderResult, providerID string)
 	if in.Shipping.Taxable {
 		shippingBase = in.Shipping.Amount
 	}
-	shipping, err := validateLine(providerID, raw.Shipping, ShippingLineID, shippingBase)
+	shipping, err := validateLine(providerID, raw.Shipping, ShippingLineID, shippingBase, included)
 	if err != nil {
 		return CalculateTaxResult{}, err
 	}
@@ -424,17 +458,40 @@ func assembleResult(in CalculateTaxInput, raw ProviderResult, providerID string)
 // vergi hiçbir koşulda tabanı aşamaz. Aşan bir değer, sağlayıcının kuruş ile
 // birim karıştırdığının (ya da bir para birimi çevrimini atladığının) en olası
 // göstergesidir ve sessizce geçseydi müşteriye iki kat fatura çıkardı.
-func validateLine(providerID string, line ProviderItemTax, wantID string, base int64) (ItemTax, error) {
+func validateLine(
+	providerID string, line ProviderItemTax, wantID string, amount int64, included bool,
+) (ItemTax, error) {
 	if line.RateBps < models.MinRateBps || line.RateBps > models.MaxRateBps {
 		return ItemTax{}, errors.Internal(CodeProviderInvalidResult,
 			"%q sağlayıcısı %q kalemi için sözleşme dışı oran döndürdü: %d baz puan ([%d, %d] beklenir)",
 			providerID, wantID, line.RateBps, models.MinRateBps, models.MaxRateBps)
 	}
-	if line.TaxAmount < 0 || line.TaxAmount > base {
+	if line.TaxAmount < 0 || line.TaxAmount > amount {
 		return ItemTax{}, errors.Internal(CodeProviderInvalidResult,
 			"%q sağlayıcısı %q kalemi için sözleşme dışı vergi döndürdü: %d ([0, %d] beklenir)",
-			providerID, wantID, line.TaxAmount, base)
+			providerID, wantID, line.TaxAmount, amount)
 	}
+
+	// Kapsayıcı OLMAYAN pazarda taban gönderilen tutarın kendisidir ve
+	// sağlayıcının bildirdiği taban OKUNMAZ. Bu, alanı hiç doldurmayan bir
+	// sağlayıcının bugünkü gibi çalışmaya devam etmesini sağlar.
+	base := amount
+	if included {
+		// Kapsayıcı pazarda taban ZORUNLU ve doğrulanır. Denetim "aralıkta mı"
+		// değil EŞİTLİK: taban ile vergi toplandığında gönderilen brüt
+		// çıkmalıdır. Aralık denetimi bir kuruşluk kaymayı geçirirdi ve
+		// müşteriden etiketin üstünde tahsil edilirdi — kapsayıcı
+		// fiyatlandırmanın var olma sebebi tam olarak bu.
+		if line.TaxableAmount < 0 || line.TaxableAmount+line.TaxAmount != amount {
+			return ItemTax{}, errors.Internal(CodeProviderInvalidResult,
+				"%q sağlayıcısı %q kalemi için vergi dahil fiyatı tutturmadı: "+
+					"taban %d + vergi %d = %d, gönderilen brüt %d",
+				providerID, wantID, line.TaxableAmount, line.TaxAmount,
+				line.TaxableAmount+line.TaxAmount, amount)
+		}
+		base = line.TaxableAmount
+	}
+
 	return ItemTax{
 		ID:            wantID,
 		RateID:        line.RateID,

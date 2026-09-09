@@ -134,6 +134,14 @@ type interopResponse struct {
 	// ProviderID is the id of the provider that did the calculation; empty when
 	// there is no region.
 	ProviderID string `json:"provider_id"`
+	// PricesIncludeTax says the amounts SENT already contained the tax.
+	//
+	// It is required, and the reason is that it changes what TaxableAmount
+	// means. When false the base is the amount the caller sent; when true the
+	// base is SMALLER than it, because the tax was taken out of it. A caller
+	// that could not tell the two apart would read the difference as a fault —
+	// and the cart's check is exactly the one that would report it.
+	PricesIncludeTax bool `json:"prices_include_tax"`
 	// TaxTotal is the total tax (minor unit).
 	TaxTotal int64 `json:"tax_total"`
 	// Items is the per-item tax; it comes back IN THE REQUEST's ORDER.
@@ -224,12 +232,13 @@ func (i *Interop) CalculateTaxJSON(ctx context.Context, request json.RawMessage)
 	}
 
 	resp := interopResponse{
-		RegionID:    result.RegionID,
-		RegionFound: result.RegionFound,
-		ProviderID:  result.ProviderID,
-		TaxTotal:    result.TaxTotal,
-		Items:       make([]interopItemTax, 0, len(result.Items)),
-		Shipping:    toInteropItemTax(result.Shipping),
+		RegionID:         result.RegionID,
+		RegionFound:      result.RegionFound,
+		PricesIncludeTax: result.PricesIncludeTax,
+		ProviderID:       result.ProviderID,
+		TaxTotal:         result.TaxTotal,
+		Items:            make([]interopItemTax, 0, len(result.Items)),
+		Shipping:         toInteropItemTax(result.Shipping),
 	}
 	for idx := range result.Items {
 		resp.Items = append(resp.Items, toInteropItemTax(result.Items[idx]))

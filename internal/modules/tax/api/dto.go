@@ -24,6 +24,9 @@ type taxRegionDTO struct {
 	// inherits the country's provider and a root region applies local
 	// calculation.
 	ProviderID string `json:"provider_id"`
+	// PricesIncludeTax is this row's OWN answer about tax-inclusive quoting;
+	// null means it inherits and says nothing of its own.
+	PricesIncludeTax *bool `json:"prices_include_tax"`
 	// Metadata is free-form metadata; when empty the field does not appear.
 	Metadata map[string]any `json:"metadata,omitempty"`
 	// CreatedAt is the creation instant (RFC3339, UTC).
@@ -90,6 +93,14 @@ type createTaxRegionRequest struct {
 	// inherits the country's provider and a root region uses local
 	// calculation.
 	ProviderID string `json:"provider_id"`
+	// PricesIncludeTax says whether the prices of this market are quoted with
+	// the tax already inside them.
+	//
+	// It is a POINTER because absent and false are different answers: absent
+	// means "inherit" — a province takes its country's answer and a country
+	// root falls back to tax-exclusive, which is what every installation did
+	// before this field existed — while false OVERRIDES an inherited true.
+	PricesIncludeTax *bool `json:"prices_include_tax"`
 	// Metadata is free-form metadata.
 	Metadata map[string]any `json:"metadata"`
 }
@@ -155,9 +166,12 @@ func toTaxRegionDTO(region models.TaxRegion) taxRegionDTO {
 		ProvinceCode: region.ProvinceCode,
 		ParentID:     region.ParentID,
 		ProviderID:   region.ProviderID,
-		Metadata:     region.Metadata,
-		CreatedAt:    region.CreatedAt,
-		UpdatedAt:    region.UpdatedAt,
+
+		PricesIncludeTax: region.PricesIncludeTax,
+
+		Metadata:  region.Metadata,
+		CreatedAt: region.CreatedAt,
+		UpdatedAt: region.UpdatedAt,
 	}
 }
 
@@ -197,7 +211,10 @@ func toCreateTaxRegionInput(req createTaxRegionRequest) service.CreateTaxRegionI
 		ProvinceCode: req.ProvinceCode,
 		ParentID:     req.ParentID,
 		ProviderID:   req.ProviderID,
-		Metadata:     req.Metadata,
+
+		PricesIncludeTax: req.PricesIncludeTax,
+
+		Metadata: req.Metadata,
 	}
 }
 

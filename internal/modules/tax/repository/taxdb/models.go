@@ -32,13 +32,14 @@ type TaxRateRule struct {
 }
 
 type TaxRegion struct {
-	ID           string
-	CountryCode  string
-	ProvinceCode *string
-	ParentID     *string
-	ProviderID   string
-	Metadata     []byte
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
-	DeletedAt    pgtype.Timestamptz
+	ID               string
+	CountryCode      string
+	ProvinceCode     *string
+	ParentID         *string
+	ProviderID       string
+	Metadata         []byte
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	DeletedAt        pgtype.Timestamptz
+	PricesIncludeTax *bool
 }

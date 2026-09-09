@@ -121,6 +121,14 @@ type taxResponse struct {
 	RegionFound bool `json:"region_found"`
 	// ProviderID is the identity of the provider that did the calculation.
 	ProviderID string `json:"provider_id"`
+	// PricesIncludeTax says the amounts SENT already contained the tax.
+	//
+	// It changes what TaxableAmount means, and therefore which invariant this
+	// side checks. False: the base is the amount we sent, and the tax is added
+	// on top. True: the base came back SMALLER, because the tax was taken out
+	// of it, and what has to hold instead is that base and tax add back up to
+	// what we sent.
+	PricesIncludeTax bool `json:"prices_include_tax"`
 	// TaxTotal is the total tax (minor unit).
 	TaxTotal int64 `json:"tax_total"`
 	// Items is the per-line tax; it returns IN THE ORDER OF THE REQUEST.
@@ -350,7 +358,10 @@ func applyTaxResponse(snap Snapshot, lines []LineTotals, resp taxResponse) error
 	}
 
 	var sum int64
-	for i := range resp.Items {
+	// The range goes over the slice that is INDEXED, which is what keeps the
+	// bound provable: the lengths were compared just above, so resp.Items[i] is
+	// in range for every i, and lines[i] is in range by construction.
+	for i := range lines {
 		line := resp.Items[i]
 		base := lines[i].Subtotal - lines[i].DiscountTotal
 
@@ -359,7 +370,23 @@ func applyTaxResponse(snap Snapshot, lines []LineTotals, resp taxResponse) error
 				"the tax result did not preserve the order of the request: record %d is %q, expected %q (%s)",
 				i, line.ID, lines[i].LineItemID, snap.ID)
 		}
-		if line.TaxableAmount != base {
+		// The base is checked against a DIFFERENT invariant in each mode, and
+		// the second one is not a relaxation of the first. Tax added on top:
+		// the base must be exactly what we sent, because nothing should have
+		// changed it. Tax taken out: the base must be what is LEFT after the
+		// tax, so that the two add back up to the amount the shopper saw. A
+		// check that merely allowed a smaller base would pass a line that is a
+		// kurus off, and being a kurus off is the whole thing tax-inclusive
+		// pricing exists to prevent.
+		switch {
+		case resp.PricesIncludeTax:
+			if line.TaxableAmount < 0 || line.TaxableAmount+line.TaxAmount != base {
+				return errors.Internal(CodeTaxInvalid,
+					"the tax-inclusive line does not add up: %q -> base %d + tax %d = %d, sent %d (%s)",
+					line.ID, line.TaxableAmount, line.TaxAmount,
+					line.TaxableAmount+line.TaxAmount, base, snap.ID)
+			}
+		case line.TaxableAmount != base:
 			return errors.Internal(CodeTaxInvalid,
 				"the tax base differs from the one sent: %q -> %d, sent %d (%s)",
 				line.ID, line.TaxableAmount, base, snap.ID)
@@ -389,9 +416,32 @@ func applyTaxResponse(snap Snapshot, lines []LineTotals, resp taxResponse) error
 			sum, resp.TaxTotal, snap.ID)
 	}
 
-	for i := range resp.Items {
+	// Ranging over the slice being WRITTEN keeps the bound provable; the two
+	// lengths were compared at the top of this function.
+	for i := range lines {
 		lines[i].TaxTotal = resp.Items[i].TaxAmount
 		lines[i].TaxRateBps = resp.Items[i].RateBps
+
+		// In a tax-inclusive market the line's Subtotal ARRIVED as a gross
+		// amount, and leaving it there would count the tax twice: the totals
+		// identity adds TaxTotal on top of Subtotal - DiscountTotal. So the
+		// subtotal becomes the NET the tax module extracted, plus the discount
+		// that was taken off the gross before it was sent.
+		//
+		// The arithmetic lands the cart total exactly on the gross:
+		//   Subtotal' - Discount + Tax
+		//     = (base + Discount) - Discount + Tax
+		//     = base + Tax
+		//     = the amount that was sent, which is gross - Discount.
+		//
+		// The DISCOUNT is deliberately left as it was entered, which makes it a
+		// GROSS figure sitting beside a NET subtotal. That hybrid is the price
+		// of keeping the identity exact, and it is stated rather than hidden:
+		// re-deriving a net discount would need a second extraction, and two
+		// roundings that must cancel are two roundings that eventually will not.
+		if resp.PricesIncludeTax {
+			lines[i].Subtotal = resp.Items[i].TaxableAmount + lines[i].DiscountTotal
+		}
 	}
 	return nil
 }

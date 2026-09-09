@@ -78,9 +78,14 @@ func TestRateTableEslesmeYoksaOranBulunmaz(t *testing.T) {
 	_, ok := table.selectRate([]matchKey{{models.ReferenceProduct, "prod_baska"}})
 	assert.False(t, ok)
 
-	applied, err := table.applyTo([]matchKey{{models.ReferenceProduct, "prod_baska"}}, "li_1", 10_000)
+	applied, err := table.applyTo([]matchKey{{models.ReferenceProduct, "prod_baska"}}, "li_1", 10_000, false)
 	require.NoError(t, err)
-	assert.Equal(t, ProviderItemTax{ID: "li_1"}, applied, "oran yoksa vergi sıfır ve kimlik boş olmalı")
+	// Taban, oran bulunmasa da BİLDİRİLİR ve tutarın kendisidir. Vergi
+	// dahil pazarda doğrulama "taban + vergi = gönderilen tutar" eşitliğini
+	// arıyor; sıfır bir taban orada eşitliği bozardı ve oranı olmayan her
+	// kalem sözleşme dışı sayılırdı.
+	assert.Equal(t, ProviderItemTax{ID: "li_1", TaxableAmount: 10_000}, applied,
+		"oran yoksa vergi sıfır, kimlik boş, taban ise tutarın kendisi olmalı")
 }
 
 // TestRateTableReferansTuruEslesmesiKatidir aynı kimliğin farklı referans
@@ -127,7 +132,8 @@ func TestLocalProviderBolgeYoksaSorguYapmaz(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, result.Items, 1)
-	assert.Equal(t, ProviderItemTax{ID: "li_1"}, result.Items[0])
+	assert.Equal(t, ProviderItemTax{ID: "li_1", TaxableAmount: 1_000}, result.Items[0],
+		"bölge yokken de taban tutarın kendisidir")
 	assert.Zero(t, repo.callCount("ListTaxRatesByRegions"))
 	assert.Zero(t, repo.callCount("ListTaxRateRulesByRates"))
 }

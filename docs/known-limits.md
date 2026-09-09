@@ -117,6 +117,16 @@ past and is not corrected retroactively.
   not supplied is preserved, which leaves no way to say "make this NULL" — the
   same limit the product update carries and for the same reason.
 
+## Tax
+
+- **In a tax-inclusive market the discount stays a GROSS figure beside a NET
+  subtotal.** The tax is taken out of the amount actually being charged, so the
+  line's subtotal becomes the extracted base plus the discount that was applied
+  to the gross. `Subtotal - Discount` is therefore the net taxable base and not
+  "net minus net". The alternative — extracting a net discount too — needs a
+  second rounding that has to cancel the first exactly, and ADR 0086 refuses to
+  depend on that.
+
 ## Installation and operation
 
 - **The admin panel writes the EDITABLE part of the catalog, not the creatable

@@ -25,7 +25,7 @@ func (q *Queries) CountTaxRegions(ctx context.Context, countryCode string) (int6
 }
 
 const getTaxRegion = `-- name: GetTaxRegion :one
-SELECT id, country_code, province_code, parent_id, provider_id, metadata, created_at, updated_at, deleted_at FROM tax_region
+SELECT id, country_code, province_code, parent_id, provider_id, metadata, created_at, updated_at, deleted_at, prices_include_tax FROM tax_region
 WHERE id = $1 AND deleted_at IS NULL
 `
 
@@ -42,12 +42,13 @@ func (q *Queries) GetTaxRegion(ctx context.Context, id string) (TaxRegion, error
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.PricesIncludeTax,
 	)
 	return i, err
 }
 
 const getTaxRegionForShare = `-- name: GetTaxRegionForShare :one
-SELECT id, country_code, province_code, parent_id, provider_id, metadata, created_at, updated_at, deleted_at FROM tax_region
+SELECT id, country_code, province_code, parent_id, provider_id, metadata, created_at, updated_at, deleted_at, prices_include_tax FROM tax_region
 WHERE id = $1 AND deleted_at IS NULL
 FOR SHARE
 `
@@ -84,12 +85,13 @@ func (q *Queries) GetTaxRegionForShare(ctx context.Context, id string) (TaxRegio
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.PricesIncludeTax,
 	)
 	return i, err
 }
 
 const getTaxRegionForUpdate = `-- name: GetTaxRegionForUpdate :one
-SELECT id, country_code, province_code, parent_id, provider_id, metadata, created_at, updated_at, deleted_at FROM tax_region
+SELECT id, country_code, province_code, parent_id, provider_id, metadata, created_at, updated_at, deleted_at, prices_include_tax FROM tax_region
 WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE
 `
@@ -107,12 +109,13 @@ func (q *Queries) GetTaxRegionForUpdate(ctx context.Context, id string) (TaxRegi
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.PricesIncludeTax,
 	)
 	return i, err
 }
 
 const getTaxRegionsByIDs = `-- name: GetTaxRegionsByIDs :many
-SELECT id, country_code, province_code, parent_id, provider_id, metadata, created_at, updated_at, deleted_at FROM tax_region
+SELECT id, country_code, province_code, parent_id, provider_id, metadata, created_at, updated_at, deleted_at, prices_include_tax FROM tax_region
 WHERE id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY id
 `
@@ -136,6 +139,7 @@ func (q *Queries) GetTaxRegionsByIDs(ctx context.Context, ids []string) ([]TaxRe
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.PricesIncludeTax,
 		); err != nil {
 			return nil, err
 		}
@@ -149,19 +153,20 @@ func (q *Queries) GetTaxRegionsByIDs(ctx context.Context, ids []string) ([]TaxRe
 
 const insertTaxRegion = `-- name: InsertTaxRegion :one
 
-INSERT INTO tax_region (id, country_code, province_code, parent_id, provider_id, metadata, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
-RETURNING id, country_code, province_code, parent_id, provider_id, metadata, created_at, updated_at, deleted_at
+INSERT INTO tax_region (id, country_code, province_code, parent_id, provider_id, prices_include_tax, metadata, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+RETURNING id, country_code, province_code, parent_id, provider_id, metadata, created_at, updated_at, deleted_at, prices_include_tax
 `
 
 type InsertTaxRegionParams struct {
-	ID           string
-	CountryCode  string
-	ProvinceCode *string
-	ParentID     *string
-	ProviderID   string
-	Metadata     []byte
-	CreatedAt    pgtype.Timestamptz
+	ID               string
+	CountryCode      string
+	ProvinceCode     *string
+	ParentID         *string
+	ProviderID       string
+	PricesIncludeTax *bool
+	Metadata         []byte
+	CreatedAt        pgtype.Timestamptz
 }
 
 // tax_region queries. Every read filters on deleted_at IS NULL.
@@ -172,6 +177,7 @@ func (q *Queries) InsertTaxRegion(ctx context.Context, arg InsertTaxRegionParams
 		arg.ProvinceCode,
 		arg.ParentID,
 		arg.ProviderID,
+		arg.PricesIncludeTax,
 		arg.Metadata,
 		arg.CreatedAt,
 	)
@@ -186,12 +192,13 @@ func (q *Queries) InsertTaxRegion(ctx context.Context, arg InsertTaxRegionParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.PricesIncludeTax,
 	)
 	return i, err
 }
 
 const listTaxRegions = `-- name: ListTaxRegions :many
-SELECT id, country_code, province_code, parent_id, provider_id, metadata, created_at, updated_at, deleted_at FROM tax_region
+SELECT id, country_code, province_code, parent_id, provider_id, metadata, created_at, updated_at, deleted_at, prices_include_tax FROM tax_region
 WHERE deleted_at IS NULL
   AND ($3::text = '' OR country_code = $3::text)
 ORDER BY country_code, (parent_id IS NULL) DESC, id
@@ -223,6 +230,7 @@ func (q *Queries) ListTaxRegions(ctx context.Context, arg ListTaxRegionsParams) 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.PricesIncludeTax,
 		); err != nil {
 			return nil, err
 		}
@@ -235,7 +243,7 @@ func (q *Queries) ListTaxRegions(ctx context.Context, arg ListTaxRegionsParams) 
 }
 
 const resolveTaxRegions = `-- name: ResolveTaxRegions :many
-SELECT id, country_code, province_code, parent_id, provider_id, metadata, created_at, updated_at, deleted_at FROM tax_region
+SELECT id, country_code, province_code, parent_id, provider_id, metadata, created_at, updated_at, deleted_at, prices_include_tax FROM tax_region
 WHERE deleted_at IS NULL
   AND country_code = $1::text
   AND (parent_id IS NULL OR province_code = $2::text)
@@ -278,6 +286,7 @@ func (q *Queries) ResolveTaxRegions(ctx context.Context, arg ResolveTaxRegionsPa
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.PricesIncludeTax,
 		); err != nil {
 			return nil, err
 		}

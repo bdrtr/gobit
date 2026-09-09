@@ -232,7 +232,10 @@ func TestMigrationGeriAlinabilir(t *testing.T) {
 	version, dirty, err := db.Version(ctx, testDSN, tax.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "yarıda kalmış migration olmamalı")
-	assert.Equal(t, uint(1), version)
+	// Baş sürüm, modüle bir migration eklendiğinde ELLE artırılır. Dosyalardan
+	// türetilmiyor: türetilseydi kendi kendisiyle uyuşur ve "baş uygulandı"
+	// cümlesi bir şey söylemez olurdu.
+	assert.Equal(t, uint(2), version)
 	assert.Zero(t, sayim(ctx, t, `SELECT count(*) FROM tax_region`),
 		"şema düşüp yeniden kurulduğu için hiçbir bölge kalmamalı")
 }
@@ -801,7 +804,8 @@ func TestInteropYuzeyiGercekVeriyleCalisir(t *testing.T) {
 		`{"country_code":"`+kok.CountryCode+`","items":[{"id":"li_1","amount":10000}]}`))
 	require.NoError(t, err)
 	assert.JSONEq(t,
-		`{"region_id":"`+kok.ID+`","region_found":true,"provider_id":"local","tax_total":1800,
+		`{"region_id":"`+kok.ID+`","region_found":true,"provider_id":"local",
+		  "prices_include_tax":false,"tax_total":1800,
 		  "items":[{"id":"li_1","rate_id":"`+ilkOranID(ctx, t, kok.ID)+`","rate_bps":1800,
 		            "taxable_amount":10000,"tax_amount":1800}],
 		  "shipping":{"id":"_shipping","rate_id":"","rate_bps":0,"taxable_amount":0,"tax_amount":0}}`,

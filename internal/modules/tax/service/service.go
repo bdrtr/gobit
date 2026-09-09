@@ -268,6 +268,15 @@ type CreateTaxRegionInput struct {
 	// ParentID is the country root the province region will be attached to. It
 	// must be left empty while creating a country root.
 	ParentID string
+	// PricesIncludeTax says whether the prices of this market are quoted with
+	// the tax already inside them.
+	//
+	// NIL is INHERIT and it is the default: a province with nothing to say
+	// takes its country's answer, and a country root with nothing to say is
+	// tax-EXCLUSIVE, which is what every installation did before this field
+	// existed. Sending false is therefore not the same as sending nothing —
+	// false OVERRIDES an inherited true.
+	PricesIncludeTax *bool
 	// ProviderID is the tax provider's id and it must be REGISTERED.
 	//
 	// It may be left empty: on a province region it means "inherit the
@@ -348,9 +357,10 @@ func (s *Service) CreateTaxRegion(ctx context.Context, in CreateTaxRegionInput) 
 	}
 
 	region := models.TaxRegion{
-		CountryCode: country,
-		ProviderID:  providerID,
-		Metadata:    in.Metadata,
+		CountryCode:      country,
+		ProviderID:       providerID,
+		PricesIncludeTax: in.PricesIncludeTax,
+		Metadata:         in.Metadata,
 	}
 
 	switch {

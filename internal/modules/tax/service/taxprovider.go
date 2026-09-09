@@ -77,6 +77,19 @@ type ProviderInput struct {
 	// Shipping kargo satırıdır; vergilendirilmeyecekse
 	// [ShippingInput.Taxable] false'tur.
 	Shipping ShippingInput
+	// PricesIncludeTax, gelen tutarların vergiyi ZATEN İÇERDİĞİNİ söyler.
+	//
+	// Türkiye'de ve Avrupa'nın çoğunda perakende fiyatı böyle yazılır: müşteri
+	// 199,00 görür ve 199,00 öder. False olduğunda tutarlar NET'tir ve vergi
+	// üstüne eklenir; bu, alanın var olmadığı zamanki davranıştır ve bir
+	// sağlayıcı bayrağı hiç okumazsa ona düşer.
+	//
+	// Bayrağın burada olması ZORUNLU: ayıklama oranı bilmeyi gerektirir, oranı
+	// seçen taraf sağlayıcıdır. Servis tarafında ayıklayıp sağlayıcıya net
+	// göndermek ÖLÇÜLDÜ ve YANLIŞ — ayıklanan net'i normal vergiye sokmak
+	// %20 KDV'de her altı tutardan birinde bir kuruş fazla üretiyor
+	// ([TaxIncludedIn]).
+	PricesIncludeTax bool
 }
 
 // ProviderResult sağlayıcının hesabıdır.
@@ -101,6 +114,17 @@ type ProviderItemTax struct {
 	RateBps int32
 	// TaxAmount hesaplanan vergidir (minor unit).
 	TaxAmount int64
+	// TaxableAmount verginin hesaplandığı TABANDIR (minor unit).
+	//
+	// [ProviderInput.PricesIncludeTax] false iken bu alan OKUNMAZ: taban,
+	// sağlayıcıya gönderilen tutarın kendisidir ve öyle kaydedilir. Alanın
+	// okunmaması, bayrağı hiç görmeyen bir sağlayıcının bugünkü gibi
+	// çalışmaya devam etmesini sağlar.
+	//
+	// Bayrak true iken alan ZORUNLUDUR ve doğrulanır: taban ile vergi
+	// toplandığında gönderilen brüt çıkmalıdır. Kapsayıcı fiyatlandırmanın
+	// tamamı bu eşitlikte — müşteri etikette ne gördüyse onu öder.
+	TaxableAmount int64
 }
 
 // ProviderRegistry vergi sağlayıcılarını kimlikleriyle tutar.

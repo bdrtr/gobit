@@ -191,7 +191,7 @@ framework cannot see.**
 
 | Document | What it answers |
 |---|---|
-| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: eighty-four records, each with its decision in one sentence. In case of conflict with the plan, **the ADR wins** |
+| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: eighty-five records, each with its decision in one sentence. In case of conflict with the plan, **the ADR wins** |
 | [`docs/measurements/`](./docs/measurements/) | Measurements: numbers, probe output, reproductions. An ADR links to one in a single line; nobody has to read them end to end |
 | [`docs/mimari.md`](./docs/mimari.md) | The architecture narrative: layers, the life cycle of a request and of a module, data, sagas, technology choices, the core packages |
 | [`docs/gaps.md`](./docs/gaps.md) | The defect ledger: every fault this repository found in itself, one sentence and the ADR that closed it |
@@ -200,7 +200,7 @@ framework cannot see.**
 | [`docs/api-surfaces.md`](./docs/api-surfaces.md) | The generated OpenAPI document and the GraphQL storefront read surface; the limits the server sets when the client decides the cost, and the error policy |
 | [`docs/extending.md`](./docs/extending.md) | Plugins, the file upload provider and the domain events — how a new capability is added |
 | [`docs/operating.md`](./docs/operating.md) | Running and developing: `/health` and `/ready`, the whole of the configuration, the event bus backends, observability, the make targets, changing the module path and the version history |
-| [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: twenty-six items in five groups — identity and authorization, sales channel scope, the category tree, installation and operation, the limit of the invariants |
+| [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: twenty-seven items in six groups — identity and authorization, sales channel scope, the category tree, tax, installation and operation, the limit of the invariants |
 | [`docs/measurements/catalog-search-cost.md`](./docs/measurements/catalog-search-cost.md) | The measured cost of catalog search |
 | [`CHANGELOG.md`](./CHANGELOG.md) | What changed, release by release |
 

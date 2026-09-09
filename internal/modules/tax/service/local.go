@@ -74,7 +74,8 @@ func (p *LocalProvider) Calculate(ctx context.Context, in ProviderInput) (Provid
 	}
 	if len(in.RegionIDs) == 0 || (len(in.Items) == 0 && !in.Shipping.Taxable) {
 		for i := range in.Items {
-			out.Items = append(out.Items, ProviderItemTax{ID: in.Items[i].ID})
+			out.Items = append(out.Items,
+				ProviderItemTax{ID: in.Items[i].ID, TaxableAmount: in.Items[i].Amount})
 		}
 		return out, nil
 	}
@@ -85,7 +86,8 @@ func (p *LocalProvider) Calculate(ctx context.Context, in ProviderInput) (Provid
 	}
 
 	for i := range in.Items {
-		tax, err := table.applyTo(itemKeys(in.Items[i]), in.Items[i].ID, in.Items[i].Amount)
+		tax, err := table.applyTo(
+			itemKeys(in.Items[i]), in.Items[i].ID, in.Items[i].Amount, in.PricesIncludeTax)
 		if err != nil {
 			return ProviderResult{}, err
 		}
@@ -93,7 +95,8 @@ func (p *LocalProvider) Calculate(ctx context.Context, in ProviderInput) (Provid
 	}
 
 	if in.Shipping.Taxable {
-		tax, err := table.applyTo(shippingKeys(in.Shipping), ShippingLineID, in.Shipping.Amount)
+		tax, err := table.applyTo(
+			shippingKeys(in.Shipping), ShippingLineID, in.Shipping.Amount, in.PricesIncludeTax)
 		if err != nil {
 			return ProviderResult{}, err
 		}
@@ -267,22 +270,43 @@ func (t rateTable) selectRate(keys []matchKey) (models.TaxRate, bool) {
 	return models.TaxRate{}, false
 }
 
-// applyTo seçilen oranı verilen tabana uygular.
-func (t rateTable) applyTo(keys []matchKey, lineID string, base int64) (ProviderItemTax, error) {
+// applyTo seçilen oranı verilen tutara uygular.
+//
+// İki hesap var ve hangisinin koştuğunu `included` belirler. Kapsayıcı
+// olmayan pazarda tutar NET'tir, vergi üstüne eklenir ve taban tutarın
+// kendisidir. Kapsayıcı pazarda tutar BRÜT'tür, vergi içinden ayıklanır ve
+// taban geriye kalandır — böylece taban ile vergi toplandığında müşterinin
+// gördüğü rakam çıkar. İkisi birbirinin yerine kullanılamaz; gerekçe ve ölçüm
+// [TaxIncludedIn]'de.
+func (t rateTable) applyTo(
+	keys []matchKey, lineID string, amount int64, included bool,
+) (ProviderItemTax, error) {
 	rate, ok := t.selectRate(keys)
 	if !ok {
-		return ProviderItemTax{ID: lineID}, nil
+		// Oran bulunamadığında vergi sıfırdır ve taban tutarın kendisidir —
+		// kapsayıcı pazarda da öyle, çünkü içinden ayıklanacak bir vergi yok.
+		return ProviderItemTax{ID: lineID, TaxableAmount: amount}, nil
 	}
 
-	amount, err := TaxOf(base, rate.RateBps)
+	compute := TaxOf
+	if included {
+		compute = TaxIncludedIn
+	}
+	tax, err := compute(amount, rate.RateBps)
 	if err != nil {
 		return ProviderItemTax{}, err
 	}
+
+	base := amount
+	if included {
+		base = amount - tax
+	}
 	return ProviderItemTax{
-		ID:        lineID,
-		RateID:    rate.ID,
-		RateBps:   rate.RateBps,
-		TaxAmount: amount,
+		ID:            lineID,
+		RateID:        rate.ID,
+		RateBps:       rate.RateBps,
+		TaxAmount:     tax,
+		TaxableAmount: base,
 	}, nil
 }
 

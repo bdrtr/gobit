@@ -1,8 +1,8 @@
 -- tax_region queries. Every read filters on deleted_at IS NULL.
 
 -- name: InsertTaxRegion :one
-INSERT INTO tax_region (id, country_code, province_code, parent_id, provider_id, metadata, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+INSERT INTO tax_region (id, country_code, province_code, parent_id, provider_id, prices_include_tax, metadata, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
 RETURNING *;
 
 -- name: GetTaxRegion :one
