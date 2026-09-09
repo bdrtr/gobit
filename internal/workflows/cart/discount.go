@@ -53,6 +53,18 @@ const (
 	attrIsGiftcard = "is_giftcard"
 	// attrDiscountable says whether a promotion may fall on the line at all.
 	attrDiscountable = "discountable"
+	// attrProductID is the line's PRODUCT, which a rule may name directly.
+	//
+	// The variant was there from the start and the product was not, which made
+	// "20% off this product" impossible to write: a merchant had to name every
+	// variant of it and name the new ones as they were added.
+	attrProductID = "product_id"
+	// attrCollectionID is the collection the line's product belongs to.
+	//
+	// It is the one taxonomy a product carries as a COLUMN, so it is the one
+	// that fits an attribute map holding a single value per key. A category and
+	// a tag are lists — see ADR 0103 for why they are not here.
+	attrCollectionID = "collection_id"
 	// attrTypeID is the product's TYPE, which a tax rate rule may match on.
 	//
 	// It sits with the other two because it is read the same way — a field of
@@ -86,6 +98,11 @@ type productFacts struct {
 	// shop running a promotion ON gift cards is a legitimate configuration
 	// rather than a contradiction.
 	Discountable bool
+	// ProductID is the product the line's variant belongs to.
+	ProductID string
+	// CollectionID is the collection that product is filed under; empty when it
+	// is in none.
+	CollectionID string
 	// TypeID is the product's TYPE, and its consumer is the TAX module rather
 	// than the promotion engine: a rate rule matches on it (ADR 0101).
 	//
@@ -404,6 +421,18 @@ func lineAttributes(variantID string, flags map[string]productFacts) map[string]
 	attributes[attrIsGiftcard] = strconv.FormatBool(flag.IsGiftcard)
 	attributes[attrDiscountable] = strconv.FormatBool(flag.Discountable)
 
+	// The product and its collection are written only when they are KNOWN. An
+	// empty string is a value a rule can be written against — a merchant could
+	// not type it, but a rule stored with an empty value would match every line
+	// whose product is in no collection — and the engine's own rule is that a
+	// line missing an attribute simply does not match. Absent is the safe word.
+	if flag.ProductID != "" {
+		attributes[attrProductID] = flag.ProductID
+	}
+	if flag.CollectionID != "" {
+		attributes[attrCollectionID] = flag.CollectionID
+	}
+
 	return attributes
 }
 
@@ -521,8 +550,10 @@ func uniqueProductIDs(productIDs map[string]string) []string {
 // read: no attributes, so a rule naming them does not match.
 func (w *Workflows) productFactsFor(ctx context.Context, productIDs []string) (map[string]productFacts, error) {
 	records, err := w.catalog.Graph(ctx, query.GraphSpec{
-		Entity:  EntityProduct,
-		Fields:  []string{query.IDField, attrIsGiftcard, attrDiscountable, attrTypeID},
+		Entity: EntityProduct,
+		Fields: []string{
+			query.IDField, attrIsGiftcard, attrDiscountable, attrTypeID, attrCollectionID,
+		},
 		Filters: map[string]any{FilterIDs: productIDs},
 		Limit:   len(productIDs),
 	})
@@ -546,9 +577,14 @@ func (w *Workflows) productFactsFor(ctx context.Context, productIDs []string) (m
 		// no type is the ordinary case, so a missing or non-string value leaves
 		// the field empty instead of dropping the product from the answer.
 		typeID, _ := records[i][attrTypeID].(string)
+		collectionID, _ := records[i][attrCollectionID].(string)
 
 		out[productID] = productFacts{
-			IsGiftcard: giftcard, Discountable: discountable, TypeID: typeID,
+			ProductID:    productID,
+			CollectionID: collectionID,
+			IsGiftcard:   giftcard,
+			Discountable: discountable,
+			TypeID:       typeID,
 		}
 	}
 	return out, nil

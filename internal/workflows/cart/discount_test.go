@@ -116,6 +116,7 @@ func TestCalculateTotalsDiscountRequestShape(t *testing.T) {
 		Quantity: 2,
 		Attributes: map[string]string{
 			attrVariantID:    testVariantA,
+			attrProductID:    testProductA,
 			attrIsGiftcard:   "false",
 			attrDiscountable: "true",
 		},
@@ -392,7 +393,8 @@ func (c *productCatalog) Graph(ctx context.Context, spec query.GraphSpec) ([]que
 			// The TYPE is answered too, because the catalog publishes it on the
 			// same record: a stub that returned only the two flags would let the
 			// tax hop be deleted without a test noticing.
-			attrTypeID: flag.TypeID,
+			attrTypeID:       flag.TypeID,
+			attrCollectionID: flag.CollectionID,
 		})
 	}
 	return out, nil
@@ -451,11 +453,13 @@ func TestEachLineCarriesItsOwnProductFlags(t *testing.T) {
 	attributes := attributesByLine(h.discounts.requests[0])
 	assert.Equal(t, map[string]string{
 		attrVariantID:    testVariantA,
+		attrProductID:    testProductA,
 		attrIsGiftcard:   "false",
 		attrDiscountable: "true",
 	}, attributes[testLineA])
 	assert.Equal(t, map[string]string{
 		attrVariantID:    testVariantB,
+		attrProductID:    testProductB,
 		attrIsGiftcard:   "true",
 		attrDiscountable: "false",
 	}, attributes[testLineB], "the gift card line must carry its OWN answer")
@@ -481,7 +485,7 @@ func TestAProductTheCatalogDoesNotAnswerLeavesTheLineWithoutFlags(t *testing.T) 
 	require.NoError(t, err, "one unreadable product must not stop the cart from being priced")
 
 	attributes := attributesByLine(h.discounts.requests[0])
-	assert.Len(t, attributes[testLineA], 3, "the line that WAS answered keeps its flags")
+	assert.Len(t, attributes[testLineA], 4, "the line that WAS answered keeps its facts")
 	assert.Equal(t, map[string]string{attrVariantID: testVariantB}, attributes[testLineB],
 		"an unanswered product means no flag keys, not made-up ones")
 	requireIdentity(t, totals)
@@ -608,4 +612,76 @@ func TestTwoLinesOfOneProductCostOneFlagRead(t *testing.T) {
 	assert.Equal(t, "true", attributes[testLineA][attrIsGiftcard])
 	assert.Equal(t, "true", attributes[testLineB][attrIsGiftcard],
 		"both lines of one product carry the same answer")
+}
+
+// TestALineCarriesItsProductAndCollectionToTheEngine is what "20% off this
+// product" needed.
+//
+// The line carried its VARIANT and nothing above it, so a merchant discounting a
+// product had to name every variant of it — and name the new ones as they were
+// added. Both keys come from the product row the round already reads.
+func TestALineCarriesItsProductAndCollectionToTheEngine(t *testing.T) {
+	h := newModuleHarness(t)
+	installProductCatalog(h, map[string]productFacts{
+		testProductA: {Discountable: true, CollectionID: "pcol_summer"},
+	})
+	serveSnapshot(h.carts, twoLineCart(1))
+
+	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	attributes := attributesByLine(h.discounts.requests[0])
+	assert.Equal(t, testProductA, attributes[testLineA][attrProductID],
+		"a rule naming the product has to be able to match the line")
+	assert.Equal(t, "pcol_summer", attributes[testLineA][attrCollectionID],
+		"and a rule naming the collection too")
+}
+
+// TestAProductInNoCollectionCarriesNoCollectionKey keeps ABSENT the safe word.
+//
+// An empty string is a value a rule can be written against, and a stored rule
+// with an empty value would then match every line whose product is in no
+// collection. The engine's own rule is that a line missing an attribute does not
+// match, which is the answer this wants.
+func TestAProductInNoCollectionCarriesNoCollectionKey(t *testing.T) {
+	h := newModuleHarness(t)
+	installProductCatalog(h, map[string]productFacts{
+		testProductA: {Discountable: true},
+	})
+	serveSnapshot(h.carts, twoLineCart(1))
+
+	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	attributes := attributesByLine(h.discounts.requests[0])
+	assert.NotContains(t, attributes[testLineA], attrCollectionID,
+		"a product in no collection sends no key, not an empty one")
+	assert.Equal(t, testProductA, attributes[testLineA][attrProductID],
+		"and the product is still there")
+}
+
+// TestTheProductAndCollectionCostNoExtraRead pins the whole reason both keys
+// could be added at all.
+//
+// They come off the record the round already fetches for the two flags and the
+// tax type. A second read for them would be the N+1 this file's other tests
+// keep out.
+func TestTheProductAndCollectionCostNoExtraRead(t *testing.T) {
+	h := newModuleHarness(t)
+	h.catalog.products = map[string]string{
+		testVariantA: testProductA,
+		testVariantB: testProductA,
+	}
+	catalog := installProductCatalog(h, map[string]productFacts{
+		testProductA: {Discountable: true, CollectionID: "pcol_summer"},
+	})
+	serveSnapshot(h.carts, twoLineCart(1))
+
+	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	require.Len(t, catalog.asked, 1, "one product row, read once")
+	attributes := attributesByLine(h.discounts.requests[0])
+	assert.Equal(t, "pcol_summer", attributes[testLineB][attrCollectionID],
+		"both lines of one product carry the same collection")
 }

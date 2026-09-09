@@ -20,6 +20,13 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir promosyon kurali artik URUNU ve KOLEKSIYONU adlandirabiliyor.** Satir
+  yalnizca VARYANTINI tasiyordu, yani bir urune indirim yazan tacir her
+  varyantini tek tek saymak zorundaydi. Iki anahtar da turun ZATEN okudugu urun
+  satirindan geliyor, yani ek maliyet yok. Kategori ve etiket LISTEDIR ve satir
+  niteligi tek bir dizedir; onlari tasimak motorun sozlesmesini degistirmek
+  demek, ve o karar burada YAZILI olarak erteleniyor (ADR 0103).
+
 - **Siparis belgeye tahsil ettigi HER orani veriyor** — ADR 0097'nin zaten
   yaptigini soyledigi sey. Yapmiyordu: siparisin fatura yuzeyinde
   `tax_components` alani hic yoktu, okuyucu ureticinin hic yazmadigi bir anahtari
