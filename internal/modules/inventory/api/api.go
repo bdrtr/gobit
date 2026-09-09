@@ -63,6 +63,10 @@ const maxBodyBytes int64 = 1 << 20 // 1 MiB
 // codeInvalidRequest gövde/parametre çözümlenemediğinde dönen hata kodudur.
 const codeInvalidRequest = "inventory_invalid_request"
 
+// codeLinkUnavailable kanal bağlama uçlarının link servisi olmadan
+// çağrıldığını bildirir (bkz. saleschannel.go).
+const codeLinkUnavailable = "inventory_link_unavailable"
+
 // Yetki sözlüğü: inventory'nin yönetim uçlarının istediği yetkiler.
 //
 // Sözlük tüm modüllerde AYNI biçimdedir ve BİLİNÇLİ olarak iki girdiden
@@ -124,11 +128,15 @@ type Inventory interface {
 // Handler inventory modülünün HTTP handler kümesidir.
 type Handler struct {
 	svc Inventory
+	// links, depo↔kanal bağını yazan çekirdek servistir. NIL OLABİLİR ve o
+	// hâlde yalnızca bağlama uçları KAPALI biter (bkz. Handler.bindings);
+	// modülün geri kalanı link servisi olmayan bir kurulumda da çalışır.
+	links ChannelBindings
 }
 
 // NewHandler verilen servis üzerinde çalışan handler kümesini üretir.
-func NewHandler(svc Inventory) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc Inventory, links ChannelBindings) *Handler {
+	return &Handler{svc: svc, links: links}
 }
 
 // Routes modülün admin route'larını router'a bağlar.
@@ -170,6 +178,13 @@ func (h *Handler) Routes(r chi.Router) {
 	// audience; a scope of its own would name a power nobody has to grant
 	// separately (ADR 0068).
 	okuma.Get(pathItemMovements, h.listMovements)
+
+	// Deponun hangi satış kanalları için sevk ettiği. Bağ bu modülün tablosu
+	// DEĞİL, core/link'in bağıdır: kanal auth modülünün kaydı ve modüller arası
+	// foreign key yasak (Prensip 2.2). Gerekçesi service.Definitions'ta.
+	okuma.Get(pathLocationChannels, h.listLocationSalesChannels)
+	yazma.Post(pathLocationChannels, h.bindLocationSalesChannel)
+	yazma.Delete(pathLocationChannel, h.unbindLocationSalesChannel)
 }
 
 // --- stok lokasyonları -------------------------------------------------------

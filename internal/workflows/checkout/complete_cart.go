@@ -121,6 +121,32 @@ type CompleteCartInput struct {
 	// [CodeReservationFailed]): what the caller sees is again "the order cannot
 	// be placed", and the reservations taken until then are released.
 	LocationID string
+	// SalesChannelIDs are the sales channels the order is placed on; they are
+	// OPTIONAL.
+	//
+	// # What they narrow
+	//
+	// A channel bound to at least one warehouse is served ONLY by those
+	// warehouses: the reservation candidates are intersected with them, and a
+	// [CompleteCartInput.LocationID] outside them is REFUSED rather than
+	// quietly honored. That is the whole point of the binding — a storefront
+	// that ships from Istanbul must not have its orders reserved in Ankara.
+	//
+	// # Why an unbound channel narrows NOTHING
+	//
+	// A channel with no warehouse bound is not a channel that ships from
+	// nowhere; it is one nobody has configured. Reading it the other way would
+	// turn the day this field arrived into an outage for every installation,
+	// since none of them has a binding yet. The safe state is therefore the
+	// one a merchant writes down, not the one the absence implies.
+	//
+	// # Where they come from
+	//
+	// The storefront endpoint fills them from the request's own identity
+	// (corehttp.SalesChannelIDs), so the channel is the one the publishable key
+	// already proved. An administrative caller sends none and nothing narrows,
+	// which is what this flow did before the binding existed.
+	SalesChannelIDs []string
 	// PaymentProviderID is the provider the payment will be opened at; it is
 	// REQUIRED.
 	//

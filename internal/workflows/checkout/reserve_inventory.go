@@ -39,6 +39,15 @@ type reservationRef struct {
 type reserveInventoryStep struct {
 	w    *Workflows
 	plan *checkoutPlan
+	// served are the warehouses the order's sales channels ship from, resolved
+	// ONCE at the start of the step.
+	//
+	// It is empty when the plan names no channel, and when the channels it
+	// names are bound to no warehouse — the two are the same answer here and
+	// deliberately so: neither is a restriction. Resolving it per line would
+	// ask the link service the same question once per line for a set that
+	// cannot change inside one step.
+	served map[string]bool
 }
 
 // reserveOutput is the inventory step's output written to the execution record.
@@ -199,6 +208,15 @@ func (s *reserveInventoryStep) Restore(sc *workflow.StepContext, output json.Raw
 // every warehouse and still drops the order; forgiving those would turn an
 // outage into silently unreserved orders.
 func (s *reserveInventoryStep) Invoke(ctx context.Context, sc *workflow.StepContext) (any, error) {
+	served, err := s.w.locationsServingChannels(ctx, s.plan.SalesChannelIDs)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.checkDeclaredLocation(served); err != nil {
+		return nil, err
+	}
+	s.served = served
+
 	refs := make([]reservationRef, 0, len(s.plan.Lines))
 	unreserved := make([]string, 0, len(s.plan.Lines))
 
@@ -317,7 +335,57 @@ func (s *reserveInventoryStep) locationFor(ctx context.Context, line planLine) (
 			"no location can reserve %d of item %s", line.Quantity, line.InventoryItemID)
 	}
 
-	return candidates, nil
+	// The channel's warehouses are applied AFTER the stock question and before
+	// the fulfillment module's preference, which is where they belong: which
+	// warehouses HOLD the units is a fact, which of them this channel may ship
+	// from is the merchant's rule, and only then does the ordering matter.
+	kept := s.withinChannel(candidates)
+	if len(kept) == 0 {
+		return nil, errors.Conflict(CodeChannelHasNoStock,
+			"no warehouse serving this order's sales channel can reserve %d of item %s; "+
+				"%d warehouse(s) hold the units and none of them ships for the channel",
+			line.Quantity, line.InventoryItemID, len(candidates))
+	}
+
+	return kept, nil
+}
+
+// withinChannel keeps the candidates the order's channels are served by.
+//
+// With no restriction in force every candidate is kept, which is what makes an
+// installation that has bound nothing behave exactly as it did before the
+// binding existed.
+func (s *reserveInventoryStep) withinChannel(candidates []string) []string {
+	if len(s.served) == 0 {
+		return candidates
+	}
+
+	kept := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if s.served[candidate] {
+			kept = append(kept, candidate)
+		}
+	}
+
+	return kept
+}
+
+// checkDeclaredLocation refuses a named warehouse the channel is not served by.
+//
+// A declared location is an INSTRUCTION rather than a preference — that is why
+// [reserveInventoryStep.locationFor] asks no module when one is given — and an
+// instruction that contradicts the merchant's own binding is a conflict rather
+// than something to silently correct. Answering it by choosing another
+// warehouse would mean the flow deciding where an administrative order ships
+// from; answering it by obeying would make the binding a suggestion.
+func (s *reserveInventoryStep) checkDeclaredLocation(served map[string]bool) error {
+	if s.plan.LocationID == "" || len(served) == 0 || served[s.plan.LocationID] {
+		return nil
+	}
+
+	return errors.Conflict(CodeLocationOutsideChannel,
+		"location %s does not ship for this order's sales channel; the order names a "+
+			"warehouse the channel is not served by", s.plan.LocationID)
 }
 
 // reserveLine reserves the line's stock and returns the location that was used.
@@ -592,4 +660,45 @@ func (s *reserveInventoryStep) Compensate(ctx context.Context, sc *workflow.Step
 	s.w.log.InfoContext(ctx, "compensation: stock reservations released",
 		"cart_id", s.plan.CartID, "reservations", len(refs))
 	return nil
+}
+
+// locationsServingChannels resolves the warehouses the given channels ship
+// from.
+//
+// # Why an empty answer is not an error
+//
+// Two different situations produce it and neither is a fault: the caller named
+// no channel (an administrative order, and the flow behaves as it did before
+// the binding existed), or the channels it named are bound to no warehouse.
+// The second is the merchant's "I have not configured this", and reading it as
+// "this channel ships from nowhere" would refuse every order on every
+// installation the day the binding shipped.
+//
+// # Why a link failure DOES fail the order
+//
+// The set is what narrows the reservation. A read that failed and was treated
+// as "no restriction" would place the order from a warehouse the channel may
+// not serve, which is exactly what the binding exists to prevent — and the
+// merchant would have no way to see that the rule had been skipped.
+func (w *Workflows) locationsServingChannels(
+	ctx context.Context, channelIDs []string,
+) (map[string]bool, error) {
+	if len(channelIDs) == 0 {
+		return nil, nil
+	}
+
+	bound, err := w.links.ListManyByTo(ctx, LinkLocationSalesChannel, channelIDs)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindOf(err), CodeChannelLocationsUnreadable,
+			"the warehouses serving the order's sales channels could not be read")
+	}
+
+	served := map[string]bool{}
+	for _, locationIDs := range bound {
+		for _, locationID := range locationIDs {
+			served[locationID] = true
+		}
+	}
+
+	return served, nil
 }

@@ -810,6 +810,44 @@ func TestCompleteCartProducesAnOrder(t *testing.T) {
 		"the contact address is the cart's data; it is not taken from the client")
 }
 
+// TestCompleteCartSendsTheIDENTITYsSalesChannels verifies that the channels
+// reach the flow and that they come from the KEY rather than from the body.
+//
+// They narrow which warehouses may serve the order. A client that could name a
+// channel would be choosing the shop's shipping topology, and one that named a
+// channel it does not hold would reserve stock the shop keeps for another
+// storefront.
+func TestCompleteCartSendsTheIDENTITYsSalesChannels(t *testing.T) {
+	svc := withLineItem()
+	flow := &fakeCheckout{response: json.RawMessage(
+		`{"order_id":"order_1","cart_id":"cart_1","currency_code":"TRY","amount":3600}`)}
+	h := newServerWithFlows(t, svc, api.Flows{Checkout: flow})
+
+	keyed := corehttp.Principal{
+		ID:              "key_1",
+		Kind:            "api_key",
+		Scopes:          []string{corehttp.ScopeAdmin},
+		SalesChannelIDs: []string{"sc_web"},
+	}
+
+	rec := doRequestAs(t, h, &keyed, http.MethodPost, "/store/v1/carts/cart_1/complete",
+		`{"payment_provider_id":"test","expected_total":3600}`)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	sent := map[string]any{}
+	require.NoError(t, json.Unmarshal(flow.got, &sent))
+	assert.Equal(t, []any{"sc_web"}, sent["sales_channel_ids"],
+		"the channels reach the flow, and they are the ones the key already proved")
+
+	// And the body cannot supply them at all: the request schema does not
+	// declare the field, so a client naming a channel is REFUSED rather than
+	// ignored — the same answer location_id gets, for the same reason.
+	named := doRequestAs(t, h, &keyed, http.MethodPost, "/store/v1/carts/cart_1/complete",
+		`{"payment_provider_id":"test","expected_total":3600,"sales_channel_ids":["sc_all"]}`)
+	assert.Equal(t, http.StatusUnprocessableEntity, named.Code, named.Body.String())
+}
+
 // TestCompleteCartEmailIsNotTakenFromTheBody verifies that the email CANNOT
 // TRAVEL in the request body.
 //

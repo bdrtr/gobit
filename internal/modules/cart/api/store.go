@@ -509,6 +509,10 @@ func (h *Handler) storeRemoveLineItem(w http.ResponseWriter, r *http.Request) {
 //     decision and the flow makes it by asking the stock + shipping modules per
 //     line item; letting the customer pick a warehouse would both leak the stock
 //     topology and leave where the order ships from up to them.
+//   - sales_channel_ids IS NOT THERE EITHER, and it is SENT anyway. The handler
+//     reads them off the request's identity and puts them in the flow request:
+//     they narrow which warehouses may serve the order, so a body-supplied
+//     channel would be a client choosing the shop's shipping topology.
 type completeCartRequest struct {
 	PaymentProviderID string `json:"payment_provider_id"`
 	// PaymentData is passed to the provider as it is; it is optional.
@@ -547,7 +551,16 @@ type completeCartFlowRequest struct {
 	PaymentProviderID string          `json:"payment_provider_id"`
 	PaymentData       json.RawMessage `json:"payment_data,omitempty"`
 	Email             string          `json:"email,omitempty"`
-	ExpectedTotal     int64           `json:"expected_total"`
+	// SalesChannelIDs are the channels the REQUEST holds, read from the
+	// publishable key rather than from the body.
+	//
+	// They narrow the warehouses the order may be reserved from. Taking them
+	// from the client would let a caller name a channel it does not hold and
+	// reserve from a warehouse the shop meant to keep for another storefront;
+	// read from the identity, the field can only ever be what the key already
+	// proved.
+	SalesChannelIDs []string `json:"sales_channel_ids,omitempty"`
+	ExpectedTotal   int64    `json:"expected_total"`
 }
 
 // completeCartFlowResult is the schema of the JSON returned from the completion
@@ -637,7 +650,12 @@ func (h *Handler) storeCompleteCart(w http.ResponseWriter, r *http.Request) {
 		PaymentProviderID: body.PaymentProviderID,
 		PaymentData:       body.PaymentData,
 		Email:             detail.Email,
-		ExpectedTotal:     *body.ExpectedTotal,
+		// The channels come from the IDENTITY, next to the email that comes
+		// from our own service: neither is taken from the body, and for the
+		// same reason — a client must not be able to widen what the request
+		// already proved it holds.
+		SalesChannelIDs: corehttp.SalesChannelIDs(ctx),
+		ExpectedTotal:   *body.ExpectedTotal,
 	})
 	if err != nil {
 		corehttp.WriteError(ctx, w, coreerrors.Wrap(err, coreerrors.KindInternal, codeInvalidRequest,

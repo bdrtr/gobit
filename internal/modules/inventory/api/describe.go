@@ -116,6 +116,50 @@ func describeLocations(d *openapi.Doc) {
 			"200": openapi.Response("The closed location", d.Item(stockLocationDTO{})),
 		},
 	})
+
+	describeLocationSalesChannels(d)
+}
+
+// describeLocationSalesChannels describes the warehouse-to-channel binding.
+func describeLocationSalesChannels(d *openapi.Doc) {
+	// What the binding MEANS is written here rather than left to the reader,
+	// because the empty case is the one a merchant gets wrong: a channel bound
+	// to no warehouse is not restricted at all.
+	const meaning = "A channel with at least one warehouse bound is served ONLY by those " +
+		"warehouses: an order placed on it reserves stock from them and from nowhere else. " +
+		"A channel bound to no warehouse is not a channel that ships from nowhere — it is " +
+		"one nobody has configured, and it is served by every warehouse."
+
+	d.Describe(http.MethodGet, pathLocationChannels, openapi.Operation{
+		Summary:     "Lists the sales channels this warehouse ships for.",
+		Description: meaning,
+		Responses: map[string]any{
+			"200": openapi.Response("The channels bound to the warehouse",
+				d.Item(salesChannelsResponse{})),
+		},
+	})
+
+	d.Describe(http.MethodPost, pathLocationChannels, openapi.Operation{
+		Summary: "Binds the warehouse to a sales channel it ships for.",
+		Description: meaning + " Binding a pair twice is one binding. The CHANNEL is not " +
+			"verified: it belongs to another module and this one validates no foreign " +
+			"reference, so a mistyped id is recorded and shows up as a channel nothing serves.",
+		RequestBody: d.RequestBody(salesChannelBindingRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("The channels bound after the write",
+				d.Item(salesChannelsResponse{})),
+		},
+	})
+
+	d.Describe(http.MethodDelete, pathLocationChannel, openapi.Operation{
+		Summary: "Removes the binding between the warehouse and the channel.",
+		Description: "Removing a binding that is not there succeeds: that is the state the " +
+			"caller asked for. The answer is the remaining list either way.",
+		Responses: map[string]any{
+			"200": openapi.Response("The channels bound after the removal",
+				d.Item(salesChannelsResponse{})),
+		},
+	})
 }
 
 // describeItems describes the inventory item endpoints.

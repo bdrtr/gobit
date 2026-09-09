@@ -346,9 +346,15 @@ type stubFulfillment struct {
 	// offered keeps, in order, the candidate lists passed to RankLocations.
 	//
 	// That the candidates are handed over exactly as they COME from the
-	// inventory module can only be proven this way: if checkout filtered or
-	// sorted the list, the workflow would still look like it "works", yet at
-	// that point it would be checkout that had decided the preference order.
+	// inventory module can only be proven this way: if checkout sorted the
+	// list, the workflow would still look like it "works", yet at that point it
+	// would be checkout that had decided the preference order.
+	//
+	// There is ONE filter checkout is allowed to apply and it is not a
+	// preference: the warehouses the order's sales channel is served by. That
+	// is the merchant's own binding rather than a policy this package invented,
+	// it happens BEFORE the ranking is asked for, and it is asserted in
+	// saleschannel_test.go by comparing this very field.
 	offered [][]string
 
 	// offeredRegions keeps, in order, the destination regions passed to
@@ -566,8 +572,14 @@ func (s *stubPayments) Collection(ctx context.Context, collectionID string) (
 type stubLinks struct {
 	rec *recorder
 
-	listManyFn func(ctx context.Context, name string, fromIDs []string) (map[string][]string, error)
-	createFn   func(ctx context.Context, name, fromID, toID string) error
+	listManyFn     func(ctx context.Context, name string, fromIDs []string) (map[string][]string, error)
+	listManyByToFn func(ctx context.Context, name string, toIDs []string) (map[string][]string, error)
+	createFn       func(ctx context.Context, name, fromID, toID string) error
+
+	// served is the warehouse-to-channel binding the reverse read answers with,
+	// keyed by CHANNEL id. It is a plain map because the question the checkout
+	// asks has one shape: "which warehouses does this channel ship from".
+	served map[string][]string
 
 	// created keeps, in order, the bindings that were written.
 	created []linkPair
@@ -589,6 +601,28 @@ func (s *stubLinks) Create(ctx context.Context, name, fromID, toID string) error
 	}
 
 	return s.createFn(ctx, name, fromID, toID)
+}
+
+// ListManyByTo applies the scripted REVERSE link read.
+//
+// Without a script it answers from [stubLinks.served], so a test that wants a
+// channel narrowed writes one map and nothing else.
+func (s *stubLinks) ListManyByTo(
+	ctx context.Context, name string, toIDs []string,
+) (map[string][]string, error) {
+	s.rec.add("link:list_many_by_to:" + name)
+	if s.listManyByToFn != nil {
+		return s.listManyByToFn(ctx, name, toIDs)
+	}
+
+	out := map[string][]string{}
+	for _, toID := range toIDs {
+		if bound := s.served[toID]; len(bound) > 0 {
+			out[toID] = bound
+		}
+	}
+
+	return out, nil
 }
 
 // ListMany applies the scripted link read.

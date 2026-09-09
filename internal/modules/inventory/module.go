@@ -32,6 +32,7 @@ import (
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/db"
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/link"
 	"github.com/bdrtr/gobit/core/module"
 	"github.com/bdrtr/gobit/core/openapi"
 	"github.com/bdrtr/gobit/core/personaldata"
@@ -63,6 +64,8 @@ const (
 	AdminName = ModuleName + ".admin"
 	// dbServiceName çekirdek veritabanı havuzunun container'daki adıdır.
 	dbServiceName = "core.db"
+	// linkServiceName çekirdek bağ servisinin container'daki adıdır.
+	linkServiceName = "core.link"
 )
 
 // Kişisel veri bildiriminde geçen tablo adları.
@@ -88,6 +91,8 @@ var migrationsRoot = mustSub(migrationsFS, "migrations")
 // Module inventory modülünün çekirdek sözleşmesini uygular.
 type Module struct {
 	svc *service.Service
+	// links, depo↔kanal bağını yazan çekirdek servistir; Register'da çözülür.
+	links api.ChannelBindings
 }
 
 // Modülün çekirdek sözleşmesini karşıladığı derleme zamanında doğrulanır.
@@ -136,6 +141,12 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 			"%s modülü %q servisini çözemedi", ModuleName, dbServiceName)
 	}
 
+	links, err := container.Resolve[link.LinkService](c, linkServiceName)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), "inventory_link_unavailable",
+			"%s modülü %q servisini çözemedi", ModuleName, linkServiceName)
+	}
+
 	svc := service.New(repository.New(pool.Pool()), slog.Default())
 
 	if err := c.Provide(ServiceName, svc); err != nil {
@@ -152,7 +163,18 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		return err
 	}
 
+	// Bağ tanımları BURADA bildirilir: şema tanımın yanında durur ve her
+	// açılışta idempotent doğrulanır (ADR 0005). Bağın tabloları core/link'e
+	// aittir, bu yüzden modülün migration'larında yeri yoktur.
+	for _, def := range service.Definitions() {
+		if err := links.Define(ctx, def); err != nil {
+			return errors.Wrap(err, errors.KindOf(err), "inventory_link_define_failed",
+				"%q bağ tanımı bildirilemedi", def.Name)
+		}
+	}
+
 	m.svc = svc
+	m.links = links
 	slog.Default().DebugContext(ctx, "inventory modülü kaydedildi",
 		"servis", ServiceName, "saglayici", ProviderName)
 	return nil
@@ -173,7 +195,7 @@ func (m *Module) Routes(r chi.Router) {
 		slog.Default().Warn("inventory modülü Register edilmeden Routes çağrıldı, route bağlanmadı")
 		return
 	}
-	api.NewHandler(m.svc).Routes(r)
+	api.NewHandler(m.svc, m.links).Routes(r)
 }
 
 // Describe modülün yönetim uçlarını OpenAPI belgesine işler.

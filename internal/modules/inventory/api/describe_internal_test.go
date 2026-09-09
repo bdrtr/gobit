@@ -41,7 +41,7 @@ func belge(t *testing.T) (yollar, bilesenler map[string]any) {
 	doc.ForModule("inventory", func() { Describe(doc) })
 
 	r := chi.NewRouter()
-	NewHandler(nil).Routes(r)
+	NewHandler(nil, nil).Routes(r)
 
 	ham, err := doc.Build(r)
 	require.NoError(t, err)
@@ -229,6 +229,22 @@ func uclar() []ucBeklentisi {
 			// record, which is exactly what the caller needs to see (closed_at).
 			metod: http.MethodPost, yol: pathStockLocationClose, durum: "200",
 			yanit: doluLokasyon(),
+		},
+		{
+			// Deponun hangi kanallar için sevk ettiği. Yanıt LİSTE zarfı değil:
+			// veri, dizi TAŞIYAN tek bir kayıt — sayfalanacak bir şey yok,
+			// çünkü küme bir deponun kanallarıyla sınırlı.
+			metod: http.MethodGet, yol: pathLocationChannels, durum: "200",
+			yanit: salesChannelsResponse{SalesChannelIDs: []string{"sc_1"}},
+		},
+		{
+			metod: http.MethodPost, yol: pathLocationChannels, durum: "200",
+			istek: salesChannelBindingRequest{},
+			yanit: salesChannelsResponse{SalesChannelIDs: []string{"sc_1"}},
+		},
+		{
+			metod: http.MethodDelete, yol: pathLocationChannel, durum: "200",
+			yanit: salesChannelsResponse{SalesChannelIDs: []string{"sc_1"}},
 		},
 		{
 			metod: http.MethodPost, yol: pathItems, durum: "201",

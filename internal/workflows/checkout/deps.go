@@ -59,6 +59,10 @@ const (
 	// LinkVariantInventory is the name of the link that binds a variant to an
 	// inventory item; its definition is declared by the product module.
 	LinkVariantInventory = "product_variant_inventory"
+	// LinkLocationSalesChannel is the name of the link that binds a warehouse
+	// to a sales channel it ships for; its definition is declared by the
+	// inventory module.
+	LinkLocationSalesChannel = "stock_location_sales_channel"
 	// EntityVariant is the entity name of variants in the Query layer.
 	EntityVariant = "variant"
 	// FieldTitle is the name of the field that holds the title in a variant
@@ -145,6 +149,20 @@ const (
 	// CodeReservationLeaked reports that the reserved inventory COULD NOT BE
 	// RELEASED; manual intervention is required.
 	CodeReservationLeaked = "checkout_workflow_reservation_leaked"
+	// CodeChannelHasNoStock reports that the warehouses holding the units are
+	// none of the ones the order's sales channel is served by.
+	//
+	// It is a code of its own rather than [CodeReservationFailed], because the
+	// two send an operator to different places: one says the shop is out of
+	// stock, this one says the stock is in a warehouse this channel may not
+	// ship from — which is a binding to change, not stock to buy.
+	CodeChannelHasNoStock = "checkout_workflow_channel_has_no_stock"
+	// CodeLocationOutsideChannel reports that the DECLARED location does not
+	// ship for the order's sales channel.
+	CodeLocationOutsideChannel = "checkout_workflow_location_outside_channel"
+	// CodeChannelLocationsUnreadable reports that the warehouses serving the
+	// channel could not be read.
+	CodeChannelLocationsUnreadable = "checkout_workflow_channel_locations_unreadable"
 	// CodePaymentUnderauthorized reports that the authorized amount does not
 	// cover the amount that must be collected (FULL PAYMENT RULE).
 	CodePaymentUnderauthorized = "checkout_workflow_payment_underauthorized"
@@ -447,6 +465,15 @@ type Links interface {
 	// ListMany returns the links of the given source identifiers in a SINGLE
 	// query.
 	ListMany(ctx context.Context, name string, fromIDs []string) (map[string][]string, error)
+
+	// ListManyByTo resolves the REVERSE direction in one query: for each toID
+	// it returns the fromIDs bound to it.
+	//
+	// The warehouse-to-channel binding is declared with the warehouse on the
+	// From end (the inventory module owns that end and declares the link), and
+	// the question this flow asks is the other way round — which warehouses
+	// does this channel ship from.
+	ListManyByTo(ctx context.Context, name string, toIDs []string) (map[string][]string, error)
 
 	// Create binds fromID to toID under the given definition.
 	//

@@ -33,7 +33,7 @@ func newRouter(t *testing.T) (chi.Router, *fakeInventory) {
 
 	svc := &fakeInventory{}
 	router := chi.NewRouter()
-	api.NewHandler(svc).Routes(router)
+	api.NewHandler(svc, newFakeBindings()).Routes(router)
 
 	return router, svc
 }

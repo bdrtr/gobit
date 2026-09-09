@@ -128,6 +128,14 @@ type checkoutPlan struct {
 	// steps do not modify it; which line was taken from which warehouse is
 	// written to the reservation trail (see [reservationRef]).
 	LocationID string `json:"location_id"`
+	// SalesChannelIDs are the channels the order is placed on; they may be
+	// empty.
+	//
+	// They are on the PLAN rather than read at the step, because the plan is
+	// what the recovery path replays: a saga resumed tomorrow has to narrow to
+	// the same warehouses it narrowed to today, and the request that carried
+	// the channel is long gone by then.
+	SalesChannelIDs []string `json:"sales_channel_ids"`
 	// PaymentProviderID is the provider the payment is opened at.
 	PaymentProviderID string `json:"payment_provider_id"`
 	// Amount is the total to be collected (minor unit).
@@ -279,6 +287,7 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 		CurrencyCode:      snap.CurrencyCode,
 		Revision:          snap.Revision,
 		LocationID:        in.LocationID,
+		SalesChannelIDs:   in.SalesChannelIDs,
 		PaymentProviderID: in.PaymentProviderID,
 		Amount:            totals.Total,
 		Subtotal:          totals.Subtotal,

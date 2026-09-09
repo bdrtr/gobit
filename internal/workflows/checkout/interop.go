@@ -73,6 +73,16 @@ type completeCartRequest struct {
 	PaymentData json.RawMessage `json:"payment_data,omitempty"`
 	// Email is the order's contact address; it is optional.
 	Email string `json:"email,omitempty"`
+	// SalesChannelIDs are the channels the order is placed on; they are
+	// optional and they NARROW the warehouses it can be reserved from.
+	//
+	// The storefront endpoint fills them from the request's own identity, so
+	// they are not a client input: a caller cannot widen its own channel set by
+	// sending one, because the module that sends this document reads them off
+	// the publishable key rather than off the body. An administrative caller
+	// sends none and nothing is narrowed — see
+	// [CompleteCartInput.SalesChannelIDs].
+	SalesChannelIDs []string `json:"sales_channel_ids,omitempty"`
 	// ExpectedTotal is the total the caller had the customer CONFIRM (minor
 	// unit).
 	//
@@ -146,6 +156,7 @@ func (i *Interop) CompleteCartJSON(ctx context.Context, request json.RawMessage)
 		PaymentProviderID: req.PaymentProviderID,
 		PaymentData:       req.PaymentData,
 		Email:             req.Email,
+		SalesChannelIDs:   req.SalesChannelIDs,
 		ExpectedTotal:     req.ExpectedTotal,
 	})
 	if err != nil {

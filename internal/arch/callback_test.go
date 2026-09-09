@@ -231,12 +231,20 @@ func routesIn(
 			return true
 		}
 
-		index := 0
+		index, arity := 0, 2
 		if selector.Sel.Name == "Method" {
 			// Method(verb, pattern, handler): the pattern is the second argument.
-			index = 1
+			index, arity = 1, 3
 		}
-		if len(call.Args) <= index {
+		// A chi registration takes EXACTLY (pattern, handler) — or the verb and
+		// those two. Any other arity is a method that merely shares the name,
+		// and the file filter above does not catch it: the inventory module's
+		// binding endpoints call the link service's
+		// Delete(ctx, name, fromID, toID) in a file that imports chi for its URL
+		// parameters, and this audit reported it as a route whose path it could
+		// not resolve. A false alarm is not a harmless one — it teaches people
+		// to ignore the audit that found the callback nobody was guarding.
+		if len(call.Args) != arity {
 			return true
 		}
 
