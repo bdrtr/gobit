@@ -14,9 +14,321 @@ Her madde **bir satırdır ve kararını adlandırır**. Gerekçe, ölçüm ve k
 okuma burada değil: karar `docs/adr/` içindeki kayıtta, kararı üreten tartışma
 onu getiren commit mesajında, sayılar `docs/measurements/` altında durur. Bu
 bölüm 2026-09-09'da 4.604 satırdan bu listeye indirildi — anlatının tamamı git
-geçmişinde duruyor.
+geçmişinde duruyor. Elli iki karar 2026-09-09'da toplu olarak eklendi: hepsi
+verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
+`TestTheChangelogNamesEveryUnreleasedDecision` artık soruyor (ADR 0098).
 
 ### Kararlar
+
+- **Degisiklik gunlugu artik SON SURUMDEN BERI alinan her karari anmak
+  zorunda, ve bunu bir kapi tutuyor.** Nufus iki belgenin kendi
+  tarihlerinden turetiliyor: git komutu yok, elle yazilmis bir taban yok.
+  Bedeli, bir kararin duyurulmasinin artik onu vermenin parcasi olmasi
+  (ADR 0098).
+
+- **Vergi kirilimi BELGEYE ulasti: fatura satiri artik her orani ayri
+  yaziyor.** Faturalama akisi siparisin `tax_components` alanini okuyor,
+  fatura modulu `invoice_line_taxes` icine yaziyor; bedeli ayni bes alanin
+  dorduncu kopyasi. Yeni tablo saklama korumasina alindi ve ADR 0095'in
+  acik biraktigi sinir kapandi (ADR 0097).
+
+- **Bir satir artik kendisini vergileyen HER orani hatirliyor.** Kirilim
+  vergiden sepete, kasadan `order_line_taxes` tablosuna kadar satirla
+  birlikte gidiyor; satirin kendi `tax_rate_bps`'i yiginin TABANI olarak
+  kaliyor, liste ise butunu. Yolun uzerindeki iki sinir bilmedigi alani
+  sessizce dusurdugu icin her sema TEK commit'te degisti (ADR 0096).
+
+- **Bir oran baska bir oranin USTUNDE durabiliyor.** Secim degismiyor: yine
+  tek oran secilir, sonra basini cektigi yigina genisletilir, her bilesen
+  kendi tabaninda yuvarlanir ve satirin vergisi bunlarin toplami olur.
+  Bedeli, satirda saklanan oranin yiginin TABANI olmasi — fatura simdilik
+  yalniz taban orani yaziyor (ADR 0095).
+
+- **Bir urun artik bir vergi SINIFI giyiyor** (ADR 0094) — `tax_class`
+  sinifi adlandirir, `tax_class_member` urunu baglar, ve bir oran kurali tek
+  tek urunlere degil bir sinifa yazilabiliyor. Sinifi vergi modulu kendi
+  tablolarindan cozer: kimse gondermez, telde hicbir sey degismez. Bir urun
+  en cok BIR sinifta olur; ozgullukte urunun arkasinda, tipin onunde gelir.
+
+- **Vitrinin stok rozeti artik yalnizca kanalin depolarini sayiyor.**
+  Envanter ayni toplami DEPO KIRILIMIYLA da yayimliyor, vitrin onu ikinci
+  bir genisletmeyle topluyor: rozet ile kasa artik ayni baglamayi okuyor.
+  Daraltmayan okuma hicbir sey odemiyor; kirilim eksikse cevap toplam degil
+  SIFIR (ADR 0093).
+
+- **Satis kanali artik KENDI depolarindan sevk ediyor** (ADR 0092) — stok
+  konumu ile kanal arasina bir bag kondu, ve kasa rezervasyonu siparisin
+  kanalina hizmet eden depolarla sinirlaniyor. Baga sahip olmayan kanal
+  hicbir seyi daraltmaz. Vitrin rozeti daraltilmadi: stokta gorunen urun
+  KASADA reddedilebilir.
+
+- **Bir kategoriyi tasimak artik butun agacin KILIDINI aliyor.**
+  `pg_advisory_xact_lock` ikinci tasiyani bekletiyor, ifadenin dongu
+  muhafizi de bekleyisin ardindan onu reddediyor. Halka kapatamayan bir
+  yazma — ad, sira, bayrak, ebeveyni bosaltma — kilit almiyor; bedel iki
+  tasimanin artik ayni anda kosmamasidir (ADR 0091, ADR 0085'i tadil eder).
+
+- **Bir talep artik yalnizca parayla degil MALLA da kapaniyor.**
+  `internal/workflows/returns.DispatchReplacement` mali ayirir, siparise
+  koli acar ve stoktan duser. Rezervasyon artik bir AMAC tasiyor: ayrilan
+  mal defterden `replacement` olarak cikiyor, satisla karismiyor. Bedeli,
+  bir akisin baska bir akisi adiyla cozmesi (ADR 0090).
+
+- **Mal ile cozulecek bir talep artik NE gonderilecegini soyluyor.**
+  `order_replacements` ve `order_replacement_items` siparisin yanina
+  kuruldu; dort yonetim ucu kaydediyor, okuyor, listeliyor ve geri aliyor.
+  Hicbir sey gonderilmiyor — `claim.go` bir `replace` talebini hala
+  cozmuyor, ama artik tahmine degil bir KAYDA karsi yazilabilir (ADR 0089).
+
+- **Iptal edilmis bir koliyi adlandiran anahtar REDDEDILIYOR** (ADR 0088) —
+  "zaten acik" cevabi, koliden sag kalmis bir baglantidan geliyordu. Durum
+  akisin zaten sahip oldugu dar yuzeyden okunuyor, yani modul siniri
+  genislemiyor; bedeli her acilista bir cagri. Hata sevkiyati adlandirir ve
+  YENI bir anahtarin gerektigini soyler.
+
+- **Bilinen sinirlarin grup ADLARI da tutuluyor, yalnizca sayilari degil.**
+  README'nin listesi `docs/known-limits.md` basliklarina kucuk harfle ve
+  SIRAYLA esitlendi: ortaya eklenip sona yazilan bir grup, fiyatladigi
+  belgeden baska bir belgeyi anlatir. Bir maddenin DOGRU baslik altinda
+  olup olmadigini yine hicbir kapi tutamaz (ADR 0087).
+
+- **Bir fiyat vergisini ICINDE tasiyabiliyor** — ve cikarma, duz hesabin
+  tersi degil, KENDI aritmetigi. Bayrak vergi BOLGESINDE durur ve NULL
+  DEVRALMA demektir; hicbir sey soylemeyen bir zincir vergi haric kalir,
+  yani mevcut kurulumlarda degisen bir sey yok. Etikette yazan tutar artik
+  kasada odenen tutar (ADR 0086).
+
+- **Kategori artik DEGISTIRILEBILIYOR: `PATCH
+  /admin/v1/product-categories/{id}`** — ad, ust kategori ve bayraklar
+  yazilabiliyor, kapali dogan bir kategori nihayet acilabiliyor. Halka
+  kapatacak bir tasimayi IFADENIN kendisi reddeder, yaninda duran bir
+  kontrol degil (ADR 0085).
+
+- **`docs/gaps.md`'nin numaralari artik tekil ve YOGUN.** Defterin ilk
+  paragrafinda zaten duran kurali nihayet
+  `internal/arch/gap_ledger_test.go` tutuyor. Ayni adrese oturan uc satir
+  D36-D38 olarak yeniden numaralandi; onlari getiren commit mesajlari eski
+  numaralari adlandirmaya devam ediyor (ADR 0084).
+
+- **Belgedeki zincirli komut blogu artik KOSULUYOR, yeniden yazilmiyor**
+  (ADR 0083). `docs/security.md`'nin blogu oldugu gibi `sh`'e veriliyor ve
+  cevaplari sirayla okunuyor: rota kapisinin goremedigi baslik adi, govde
+  alani ve `jq` yolu ilk kez tutuluyor. Bedeli, testin `curl` ile `jq`
+  istemesi ve onlarsiz atlamak yerine DUSMESI.
+
+- **Es zamanlilik sozu veren her tip artik IKI goroutine'den kosuluyor**
+  (ADR 0082) — nufus, paketin sozu ile tipin tasidigi ilkelin kesisiminden
+  geliyor ve tanigi `internal/arch/concurrency_promise_test.go` icindeki
+  yazili harita adlandiriyor. `Bootstrap`'in godoc'u da artik garantisinin
+  neyi kapsamadigini soyluyor: bir abone rota degildir.
+
+- **Baslangic yoklamasinin olctugu her yol artik bir TANIK test tasiyor.**
+  Oznesi kod degil KUME oldugu icin, sozlesmeyi bozan bir kume suiti uc
+  yerde kirmiziya ceviriyor; nufus bir listeden degil yoklamanin kendi
+  SQL'inden turuyor (`internal/arch/cluster_contract_test.go`). Suitin
+  kaplari uretimin initdb argumanlarina baglanmadi (ADR 0081).
+
+- **Uc fuzz hedefi yayimlandi, ve onemli tohumlar bulunmadi: HESAPLANDI.**
+  `go test` bir hedefin yalnizca TOHUMLARINI kosar; her hedef en az uc tohum
+  tasiyor (`internal/arch/fuzz_seed_test.go`), `make fuzz` ise CI'da
+  kosmuyor. Kalan kural: hedefi yazdiktan sonra korudugu kodu mutasyona
+  ugrat, uretilen girdi bulamazsa siniri hesapla ve tohumla (ADR 0080).
+
+- **Her benchmark bir `benchbudget.Budget` tasiyor, ve tavan islem basina
+  TAHSIS.** Butceler siradan test seridinde kosuyor; nufusu
+  `internal/arch/benchmark_budget_test.go` dosya adindan degil BILDIRIMDEN
+  turetiyor. Fiyatlanan bir yola eklenen tahsis artik bir testi kiriyor;
+  tahsis etmeden yavaslayan degisiklik ise hala gorunmuyor (ADR 0079).
+
+- **Her DOGRUDAN bagimlilik bir gerekce cumlesi, her DOLAYLI olan bir satir
+  tasiyor** — cumleyi bagimliligi secen yazar, kesfeden tuketici degil
+  (`internal/arch/dependency_allowlist_test.go`). `govulncheck` kokte ve iki
+  ornek modulde kosar, bilinen bir acik derlemeyi KIRAR, ve muafiyet
+  mekanizmasi yok (ADR 0078).
+
+- **`core/providertest` YAYIMLANDI: bir saglayici artik yazili bir cumleyi
+  degil, KOSULABILIR bir uyum suite'ini geciyor.** Yuzey on sekiz pakete
+  cikti ve agactaki on iki saglayici, bir gomenin kosacagi suite'in AYNISINI
+  kendi paketinden kosuyor. Suite yalnizca servise gitmeden tutani denetler
+  ve bunu soyler: yesil "calisiyor" demek degil (ADR 0077).
+
+- **ADR 0030'un gocu BASLADI: panelin ilk `/admin/v1` ekrani moderasyon
+  kuyrugu** (ADR 0076). Ekran bir kabuk ve bir betik, yeni modul sozlesmesi
+  yok. Oturum cerezi artik `/admin` agacinin tamamina gidiyor: yonetim
+  API'sinin CSRF bagisikligi bir YOKLUKtu, yerine bir savunma kondu —
+  cerezle gelen durum-degistirici istek ayni kokenli bir `Origin` istiyor.
+
+- **`docs/measurements/README.md` artik DENETLENIYOR: her satir raporunun
+  gercek uzunlugunu soyler, ve her raporun bir satiri vardir.** Asil kazanc
+  ikinci yon: indekslenmemis kanit, adini bilmeyenin BULAMADIGI kanittir.
+  Bedeli tek satir -- raporu buyuten commit indeksin satirini da tasir
+  (ADR 0075).
+
+- **Model ile operatorlerin uyusmasi artik SAYILIYOR.**
+  `GET /admin/v1/reviews/suggestion-agreement` model basina iki sayi verir:
+  karara baglanmis kac yorumda oneri var, ve onerilerin kaci yorumun
+  bittigi statuyu adlandirmis. ORAN yok; paydayi goren istemci kendi
+  hesaplar. Rapor okumada hesaplanir, hicbir sey saklanmaz (ADR 0074).
+
+- **Bir oneri verilen karardan SAG CIKAR: moderasyon onu silmez.** Yonetim
+  listesi artik `?suggested=` ile daraliyor, taninmayan deger bos sayfa
+  degil RED aliyor ve suzgeci kuyrukla sinirli `reviews_suggestion_idx`
+  tasiyor. Bedeli buyuyen bir tablo, aldigi sey modelle insanin anlasmasini
+  olcebilecek TEK korpus (ADR 0073).
+
+- **Model KAPALI bir soruyu yanitliyor, ve soruyu zamanlanmis bir is
+  soruyor.** `core/provider` bir siniflandirma sozlesmesi yayimliyor, tekil
+  `ai.provider` yuvasini `ai-anthropic` eklentisi dolduruyor, ve is yalnizca
+  yuva doluysa kaydediliyor. Eklentiyi adlandiran kurulum bir ALT ISLEYICI
+  ustlenir, ve hicbir dogruluk iddia edilmiyor: olculmedi (ADR 0072).
+
+- **Bir modelin onerisi yorumun YANINDA saklaniyor, kararinda degil.** Dort
+  kolon kendi basina duruyor; `status` ve `moderated_at`'e dokunulmuyor,
+  boylece ayna hala bir insanin karar verdigini soyluyor. Oneri butun olarak
+  var ya da hic yok, karari verilmis bir yoruma yazilmiyor, ve alisverisciye
+  hicbir yerde gorunmuyor. Henuz oneriyi yazan bir sey yok (ADR 0071).
+
+- **Bir sayi iddiasi KAPALI bir kelime dagarcigina karsi denetleniyor**
+  (ADR 0070) — sekiz nufus var, ve bir cumle kapiya ancak nufusun YOLUNU
+  ayni satirda yazarak giriyor. Kapi acildigi gun README'lerde yanlis
+  sayilar buldu. Her ADR kaydi ve bu dosya kapsam disi; evrensel
+  olumsuzlama ise kapisiz kaliyor, cunku nesnesi bir yuklem.
+
+- **Is raporunun KANALI yayimlandi, zamanlayici yayimlanmadi.**
+  `core/jobreport` uc fonksiyon tasiyor; kosucu `internal/core/job`'da kaldi
+  ve cekirdegin kendi isleri de ayni yayimlanmis paketten rapor veriyor —
+  TEK mekanizma. Artik bir eklentinin basarili kosusu da `gobit jobs`
+  detayinda konusabiliyor; bedeli `core/`'un on yedinci paketi (ADR 0069).
+
+- **Fiziksel stogun her degisimi bir SATIR birakiyor, ama sayiyi hala
+  `stocked_quantity` tutuyor** (`inventory_movements`). Hareket kolonla ayni
+  islemde yazilir ve `stocked_after` tasir; kayma tek satirda gorunur.
+  Ayirma bir hareket degil, satirin arkasinda aktor degil bir SEBEP var, ve
+  hicbir sey satiri silmiyor; defter yonetim ucuyla geldi (ADR 0068).
+
+- **`province` ulke altindaki birimdir, ilce DEGILDIR.** Elle yazilan her
+  bildirim artik bunu soyluyor; `internal/arch/province_test.go` SESSIZ bir
+  yenisini reddediyor. Uctan uca adres duzeltildi, ilcenin hala bir alani
+  yok (ADR 0067).
+
+- **Oneri deposu KURULMUYOR; bir oneri, konusu olan satirin sahibi modulde
+  durur ve o modulun yazma yolundan uygulanir** (ADR 0066). Tetik, bir
+  sorgunun yeniden uretemedigi ilk oneridir; uygulayan sey gobit degil,
+  mevcut ucu cagiran insandir. Bedeli: bugun oneri isteyen operator hicbir
+  sey bulmuyor, ve iki module yayilan bir onerinin burada evi yok.
+
+- **`coreprovider.QuoteInput` GENISLETILMEDI: ilce ve desi, agac bir koliyi
+  adresleyip olcebildigi gun gelir.** Bedeli, ilceye gore fiyatlayan bir
+  kargo entegrasyonunun duz tarifede kalmasi. Kurali bir kapi tutuyor:
+  `TestEveryQuoteInputFieldIsFilledByTheTree`, agacta hicbir uretim
+  dosyasinin doldurmadigi alani yayimlanmis girdide reddediyor (ADR 0065).
+
+- **Kayitli odeme araci beklemede, ve bekledigi sey bir ozellik degil bir
+  SAGLAYICI.** Depolanmis bir token'la odeme bugun uctan uca calisiyor;
+  eksik olan, boyle bir token'i URETEN bir ust akis. Alisverisci her kasada
+  kartini yeniden yaziyor, ve yayimlanmis yuzey hicbir uygulayicisi olmayan
+  bir sekle harcanmiyor (B9 → ADR 0064).
+
+- **Stok olayi ve dosya olayi YAYIMLANMADI: ileten bir eklenti bir konunun
+  ilk abonesi degildir.** `plugins/webhookout` her konuyu zorunlulukla tasir
+  ve `TestEveryTopicHasASubscriberThatChoseIt` bunu artik reddediyor.
+  Bedeli, her kapiyi gecebilecek iki olayin gonderilmemesi; B15 ile B7'nin
+  olay yarisi bosluk olarak degil KARAR olarak kapandi (ADR 0063).
+
+- **Bir geri cagrinin defteri, onu ALAN modulun kendi tablosudur** — kendine
+  ait bir `callback_log` yok. Okuyucu, kapsam ve saklama sorusu zaten
+  `paytr_payment` tarafinda cevaplanmis; isleyicisi hic kosmamis bir cagri
+  ise yalnizca log'ta kalir ve gobit ona saklama sozu vermez. Karar
+  IKINCI bir saglayici agaca girdigi gun yeniden acilir (ADR 0062).
+
+- **gobit dil ekseninin iki yarisini da kurmuyor, ve bu bir eksiklik degil
+  KARAR: A11 defterden bir cevapla cikti.** Kaydi olmayan bir yerel ayari
+  iki kapi reddediyor — `plugins/webpush` disinda bir Go adi ya da struct
+  etiketi, cihaz kaydi disinda bir SQL kolonu. Bedeli, yol ya da sorgu
+  anahtari olarak gelen bir yerel ayarin izlenmemesi (ADR 0061).
+
+- **Migration rolu ile runtime rolunu ayirmak OPERATORUN isi; gobit'in
+  ikili dosyasi degismiyor.** Tek DSN kalir, rol yonetimi ve acilis
+  sinamasi gelmez; verilen sey bir ayar degil, `security.md`'de yayimlanan
+  yetki listesi. Kutudan cikan tek superuser kurulumu ise hem degismeden
+  hem korumasiz kalir (ADR 0060).
+
+- **Olcum duzenegi artik CARPIK bir taksonomiyi de kurabiliyor:
+  `Spec.SkewedCategorySize` iki kucuk kategori dogurur, sifir hicbirini.**
+  Kucuk kategori vakasi artik elle kurulan bir deneme veritabanini degil bir
+  KOMUTU istiyor; bedeli, bir urunun ilk kez iki kategoriye ait olmasi ve
+  konumsal uyeliklerin boyu degistirirken sifirlanmayi istemesi (ADR 0058).
+
+- **Musteri adlandiran her vitrin ucu iddiasini TEK bir karsilastirmaya
+  veriyor:** `corehttp.ProvenCustomer`. b2b vitrini ile sepet ona baglandi,
+  adres defteri de onun uzerine tasindi. Sorgulanan sey UC degil IDDIA;
+  dogrulayici baglanmamis kurulumda hicbir sey geri cekilmiyor, yalnizca
+  WARN dusuyor (ADR 0057).
+
+- **Bir geri cagri `audit_log` satiri OLMUYOR; kaydi `CallbackRegistry`'nin
+  kendi gunlugu.** Her sonuc oraya bir satir birakiyor, reddedilenler dahil.
+  Bedeli, operatorun sorgu bekledigi yerde bir gunluk aramasi yapmasi:
+  `GET /admin/v1/audit-log` hicbir geri cagri gostermiyor (ADR 0056).
+
+- **Bir stok konumu BOS kapanir, ve kapali satir okunabilir kalir.**
+  Uzerinde birim ya da canli bir ayirma duran konum kapanmayi REDDEDER,
+  kapali konum stok yazmasi kabul etmez; uygunluk okumalari boylece
+  join'siz kaliyor. `deleted_at` yerini `closed_at`'e birakti, ve kapanis
+  nihaidir: geri acma yok (ADR 0055).
+
+- **Siparis ve odeme SILINMIYOR: on `deleted_at` kolonu dusuruldu, ve para
+  olaylarinin yuzeyi ucuncu bir ani kazanmadi.** Bir siparis STATU ile emekli
+  olur, bir para kaydi saklanir; artik hicbir kayit gizlenemez. Dort
+  benzersizlik kurali da nihayet HER satiri kapiyor: bir idempotency anahtari
+  elle damgalanarak serbest birakilamiyor (ADR 0054).
+
+- **gobit TEK dil saklar, ikinci dil gomen programin.** Locale kolonu,
+  ceviri tablosu ve ceviri modulu yok; ikinci dili bugun tasiyabilen tek yer
+  `metadata` alani olan tablolar, ve kategori, etiket, secenek ile gobit'in
+  seed ettigi ulke ve para birimi adlari o yolun disinda. Vitrine ulasan
+  hicbir istek henuz DIL soyleyemedigi icin A11 acik kaliyor (ADR 0050).
+
+- **Fiyati BIR grup belirliyor, ve gruplari SATICI siralar.** Sepet,
+  musterinin en yuksek sirali grubunu tek bir `customer_group_id` degeri
+  olarak yaziyor; `customer_group` bir `rank` kolonu kazandi. Fiyatlama,
+  kampanya ve teslimat hic degismedi; sirayi hic kurmayan magaza kimlik
+  sirasini alir (ADR 0049).
+
+- **Kume sozlesmesi KIMILDAMIYOR: pgvector istege bagli ayri bir eklenti
+  modulu olarak gelir** (ADR 0045). Uzanti satiri `none` kaliyor, cunku
+  kimsenin kurmak zorunda olmadigi bir eklenti hicbir kurulumun ne
+  saglamasi gerektigini degistirmez. `CREATE EXTENSION` yalnizca o modulun
+  kendi migration'ina ait; disina cikarsa ADR 0015 ayni degisiklikte acilir.
+
+- **Musterinin odedigi ile saticinin aldigi ayni sayi KALIYOR.** Bir fark
+  gerektiginde esitlik gevsetilmez; fark, kendi karsi tarafini tasiyan ayri
+  bir MUTABAKAT SATIRI olarak gelir ve satirin sekline ilk tuketici karar
+  verir. Esitligi tutan dort katman ilk kez tek tek adlandirildi; bedeli,
+  taksit vade farkinin bugun hala mumkun olmamasi (ADR 0042).
+
+- **Bir e-posta adresinin saklanma bicimi TEK kural: kirpilir, sonra GO
+  tarafinda kucuk harfe cevrilir, veritabaninda asla.** `invoice` da artik
+  Go'da katliyor: `buyer_email` belgenin dedigini aynen tutuyor, esitlik
+  `buyer_email_folded` uzerinden kuruluyor. Alti kopya yerinde kaliyor,
+  onlari `internal/arch/email_test.go` bir arada tutuyor (ADR 0038).
+
+- **Bir insan, silinebildigi seyi artik GOREBILIYOR** (ADR 0034) — kisisel
+  veri aciklamasi silmenin yanina yayimlandi ve bir kisinin dosyasi, onu
+  silen ayni supurge tarafindan toplaniyor. Cevap veremeyen bir tutucu
+  dosyanin icinde `Unresolvable` olarak gorunuyor: eksiklik bir deftere
+  degil, kisinin aldigi belgeye yaziliyor.
+
+- **Gelen bir saglayici cagrisi BAGLANMIYOR, KAYDEDILIYOR** (ADR 0028) —
+  eklenti rotayi `Host.RegisterCallback` ile bildirir, baglamayi cekirdek
+  yapar; kota, govde siniri, zaman asimi, imza dogrulamasi ve tekrar
+  penceresi hepsine uygulanir. Dogrulayicisi olmayan bir rota acilista
+  reddedilir: korumasiz bir uc artik IFADE EDILEMIYOR.
+
+- **Bilesim koku `internal/app`'e tasindi, ve modul kokundeki YAYIMLANMIS
+  cephe onu cagiriyor: `cmd/server` artik on bes satir.** Agac disinda bir
+  uygulama boylece mumkun, ve operator altkomutlari kutuphaneyle birlikte
+  geliyor. Cephe dort metottur; yasam dongusu yayimlanmadi ve `internal/`
+  agacini yalnizca o import edebilir (ADR 0027).
 
 - **Iki saat KALIYOR, ve her an kendi saatini adlandiriyor** (ADR 0053).
 
@@ -56,7 +368,7 @@ geçmişinde duruyor.
 - **Magaza aramasi da satis kanalini YOLUNDA tasiyor** (ADR 0044'un dorduncu
   rotasi) — ve kural artik bir iddia degil, bir MEKANIZMA.
 
-- **Magaza katalogu UC filtre kazandi** (ADR 0039 + 0040 + 0041) — secenek
+- **Magaza katalogu UC filtre kazandi** (ADR 0039, ADR 0040, ADR 0041) — secenek
   degeri, stok durumu ve fiyat araligi; hepsi tek bir yuzey.
 
 - **Satis kanali katalog YOLUNA tasindi** (ADR 0044) — magaza katalogu artik
@@ -300,17 +612,18 @@ geçmişinde duruyor.
 - **Alışverişçi artık kendi kargo fiyatını belirleyemiyor** (ADR 0021) — bu bir
   özellik değil, sömürülebilir bir açığın kapatılması.
 
-- **Ödeme mutabakatı** (`internal/jobs/paymentrecon`) — deponun adı konmuş tek
-  tutulmamış periyodik sözü, ve para hakkında.
+- **Ödeme mutabakatı** (`internal/jobs/paymentrecon`, ADR 0020) — deponun adı
+  konmuş tek tutulmamış periyodik sözü, ve para hakkında.
 
-- **Zamanlanmış iş geldi** (`internal/core/job`) — ama planladığımın onda biri
-  kadarıyla, ve asıl değeri kodda değil ÖLÇÜMDE.
+- **Zamanlanmış iş geldi** (`internal/core/job`, ADR 0019) — ama planladığımın
+  onda biri kadarıyla, ve asıl değeri kodda değil ÖLÇÜMDE.
 
 - **PayTR ile ödeme geldi** (`payment-paytr` eklentisi) — ve web push'la
   **aynı bulguya** çıktı, ters yönden.
 
-- **Tarayıcı push bildirimi geldi** (`web-push` eklentisi) — ve sağlayıcı
-  yuvasına GİRMEDİ. Bu turun asıl bulgusu kodu değil, kararı değiştirdi.
+- **Tarayıcı push bildirimi geldi** (`web-push` eklentisi, ADR 0018) — ve
+  sağlayıcı yuvasına GİRMEDİ. Bu turun asıl bulgusu kodu değil, kararı
+  değiştirdi.
 
 - **Yüklemeler artık nesne deposuna gidebiliyor** (`file-s3` eklentisi).
   Kutudan çıkan `local` sağlayıcısı TEK süreç için doğrudur ve İKİ süreç için
