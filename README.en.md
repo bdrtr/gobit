@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./logo.png" alt="the gobit logo" width="220">
+</p>
+
 # gobit
 
 [T&uuml;rk&ccedil;e](./README.md) · **English**
@@ -186,6 +190,67 @@ consent. gobit gives you the mechanism and the declaration of what it holds;
 calling those endpoints, accepting a request and deciding the window are yours.
 **A gobit that is installed and never called leaves a compliance problem the
 framework cannot see.**
+
+## Why it is built this way
+
+This repository started from a brief: an architecture note dated 6 September
+2026. It was a BRIEF and not a description — what follows is what became of it,
+and where the tree decided otherwise. In case of conflict the ADR wins.
+
+**A library, not a fork.** The embedding project tracks gobit in `go.mod` and
+assembles the installation through the published facade (ADR 0025). The fork
+model makes projects diverge and turns upgrading into a nightmare; that was the
+brief's first sentence and it held.
+
+**The panel becomes a client of the API — half built.** ADR 0030 decided the
+panel becomes a single-page client of `/admin/v1`, ADR 0076 moved the first
+screen there, and five screens are still rendered on the server. It stands open
+in the defect ledger (D34), and that is why this line exists: a decided future
+is not written as a present fact.
+
+**Measure, do not guess.** The brief's list of common mistakes had *offset
+pagination* on it. The measurement took it off: over 52,000 rows the first page
+costs 0.31 ms, about 50,000 rows deep it costs 34.71 ms, and a keyset seek stays
+flat at 0.06–0.08 ms (`internal/core/page`). So offset is not a mistake, it is a
+mistake at DEPTH — and the cursor went to the listings whose rows grow with the
+shop's trade. The brief carried that correction itself; so does the way this
+repository works.
+
+**The technology choices held.** PostgreSQL + `pgx` + `sqlc` (no ORM, type-safe
+SQL), golang-migrate for migrations, and tests against a real Postgres through
+`testcontainers` — the repository does not mock its own repository. Logging is
+`slog`; OpenTelemetry and error reporting sit in the plugin slots
+(`plugins/errorotlp`, `plugins/errorsentry`).
+
+**Three places the brief did not hold, by name.** Redis is here but NOT as a
+cache: it carries the event bus and the request guard, the product/category
+cache was never built, and to this day no ADR mentions one. Search did not go to
+Meilisearch; it stayed on PostgreSQL full-text (`plugins/searchpg`). NATS
+appears nowhere — the outbound event became `plugins/webhookout` and the outbox
+relay, the relay with a backoff and a dead letter behind it.
+
+**Money, stock, idempotency — the brief's three tightest lines.** Money is never
+a float, it is integer minor units. Stock moves under a lock, and overselling is
+something the schema refuses. An idempotency key is mandatory on payment and on
+order creation; a repeated request does not produce a second order.
+
+**AI is not a tool called from outside, it is a subsystem.** The first task was
+review moderation and that is how it arrived: the model produces a SUGGESTION,
+the suggestion is stored (ADR 0066), a filter shows it to the operator (ADR
+0073), and a human has the last word — whether the human agreed with the
+suggestion is recorded too (ADR 0074).
+
+**Half of the Turkey-specific list stands.** The PayTR plugin is here
+(`plugins/paymentpaytr`), so are VAT and tax regions, and so are the disclosure
+and erasure endpoints on the KVKK side (ADR 0033). The e-invoice integration and
+the domestic carrier APIs are NOT — the invoice module produces documents, it
+does not connect to e-fatura.
+
+**What the brief did not foresee, and what really grew.** The decision ledger
+(`docs/adr/`), the defect ledger (`docs/gaps.md`), and the gates that read the
+prose itself: a route address, a count or a cross-reference written in a
+document is verified by a test. What sets this repository apart is not a feature
+on a list; it is that.
 
 ## Where to read further
 

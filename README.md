@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./logo.png" alt="gobit logosu" width="220">
+</p>
+
 # gobit
 
 **Türkçe** · [English](./README.en.md)
@@ -210,6 +214,62 @@ cart and is never asked either way, so a shop that sells to guests keeps
 selling; `POST /store/v1/customers` is outside the set as well, because it MINTS
 the record. The whole boundary is in
 [`docs/known-limits.md`](./docs/known-limits.md).
+
+## Neden böyle kuruldu
+
+Bu depo bir tarifeden başladı: 6 Eylül 2026 tarihli bir mimari brifingi. Tarife
+bir TARİFTİ, tasvir değildi — aşağısı ondan ne olduğu, ve ağacın başka karar
+verdiği yerler. Çelişki hâlinde ADR geçerlidir.
+
+**Kütüphane, çatal değil.** Gömen proje gobit'i `go.mod`'da izler ve kurulumu
+yayımlanmış cepheden kurar (ADR 0025). Çatal modeli projeleri ayrıştırır ve
+yükseltmeyi kâbusa çevirir; tarifenin ilk cümlesi buydu ve tuttu.
+
+**Panel, API'nin istemcisi olacak — yarısı kuruldu.** ADR 0030 paneli
+`/admin/v1`'in tek sayfalık istemcisi yapmaya karar verdi, ADR 0076 ilk ekranı
+oraya taşıdı, beş ekran hâlâ sunucuda işleniyor. Kusur defterinde açık duruyor
+(D34) ve bu satır o yüzden var: karara bağlanmış bir gelecek, bugünün olgusu
+gibi anlatılmaz.
+
+**Ölç, tahmin etme.** Tarifenin "sık yapılan hatalar" listesinde *offset
+sayfalama* vardı. Ölçüm onu listeden çıkardı: 52.000 satırda ilk sayfa 0,31 ms,
+~50.000 satır derinlikte 34,71 ms, keyset ise 0,06–0,08 ms'de sabit
+(`internal/core/page`). Yani offset bir hata değil, DERİNLİKTE bir hata — ve
+cursor, satırları ticaretle büyüyen listelere gitti. Tarifenin kendisi bu
+düzeltmeyi taşıyordu; deponun çalışma biçimi de bu.
+
+**Teknoloji seçimleri tuttu.** PostgreSQL + `pgx` + `sqlc` (ORM yok, SQL tip
+güvenli), migration için golang-migrate, testler gerçek bir Postgres'e karşı
+`testcontainers` ile — depo kendi deposunu taklit etmiyor. Günlük `slog`;
+OpenTelemetry ve hata raporlama eklenti yuvasında (`plugins/errorotlp`,
+`plugins/errorsentry`).
+
+**Tarifenin tutmayan üç yeri, adıyla.** Redis var ama ÖNBELLEK olarak yok:
+olay yolunda ve istek korumasında kullanılıyor, ürün/kategori önbelleği hiç
+kurulmadı ve bugüne kadar hiçbir ADR ondan söz etmiyor. Arama Meilisearch'e
+gitmedi, PostgreSQL tam metin aramasında kaldı (`plugins/searchpg`). NATS
+hiçbir yerde yok; dışa akan olay `plugins/webhookout` ve outbox rölesi oldu —
+röle geri çekilme ve ölü mektupla birlikte.
+
+**Para, stok, idempotency — tarifenin en sıkı üç satırı.** Para asla float
+değil, tam sayı kuruş. Stok kilit altında hareket eder ve fazla satış şemanın
+reddettiği bir şeydir. Ödeme ve sipariş oluşturmada idempotency anahtarı
+zorunludur; tekrarlanan istek ikinci siparişi doğurmaz.
+
+**Yapay zekâ dışarıdan çağrılan bir araç değil, bir alt sistem.** İlk görev
+yorum moderasyonuydu ve öyle de geldi: model bir ÖNERİ üretir, öneri saklanır
+(ADR 0066), süzgeç onu operatöre gösterir (ADR 0073) ve son sözü insan söyler —
+insan kararıyla önerinin uyuşup uyuşmadığı da kaydedilir (ADR 0074).
+
+**Türkiye'ye özgü olanın yarısı duruyor.** PayTR eklentisi var
+(`plugins/paymentpaytr`), KDV ve vergi bölgeleri var, KVKK tarafında açıklama
+ve silme uçları var (ADR 0033). E-fatura entegrasyonu ve yerli kargo API'leri
+YOK — fatura modülü belge üretir, e-faturaya bağlanmaz.
+
+**Tarifede olmayan ve asıl büyüyen şey.** Karar defteri (`docs/adr/`), kusur
+defteri (`docs/gaps.md`) ve düzyazının kendisini okuyan kapılar: bir belgede
+yazan rota adresi, sayı ve çapraz referans testlerle doğrulanır. Bu depoyu
+diğerlerinden ayıran şey listedeki bir özellik değil, bu.
 
 ## Daha ileri okuma
 

@@ -94,7 +94,6 @@ clients/
 #
 # Diskten SİLİNMEZ; yalnızca sürüm kontrolüne girmez.
 /go-commerce-framework-plan.md
-/go-ecommerce-architecture.md
 /go-ecommerce-mimari.md
 
 # The agent tooling keeps git WORKTREES here — full copies of this repository.
