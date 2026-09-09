@@ -1,18 +1,18 @@
 //go:build integration
 
-// Bu dosyadaki testler gerçek bir PostgreSQL örneği (dolayısıyla Docker)
-// gerektirir; `make test` hızlı kalsın diye `integration` etiketiyle
-// ayrılmıştır. Çalıştırmak için: make test-integration
+// The tests in this file need a real PostgreSQL instance (and therefore
+// Docker); they carry the `integration` tag so that `make test` stays fast.
+// To run them: make test-integration
 //
-// Birim testleri sahte bir depo ile servisin KARARLARINI kanıtlar (oran
-// seçimi, yuvarlama yönü, taşma, hata sınıflandırması). Buradaki testler
-// kararların dayandığı ZEMİNİ kanıtlar: migration'ın VERİ VARKEN geri
-// alınabildiğini, kısmi benzersiz indekslerin ikinci kök bölgeyi ve ikinci
-// varsayılan oranı gerçekten reddettiğini, bileşik foreign key'in eyalet-ülke
-// tutarsızlığını engellediğini ve eşzamanlı iki isteğin kuralı birlikte
-// delemediğini. Sonuncular yalnızca burada, gerçek kısıtlar ve gerçek satır
-// kilitleri üzerinde sınanabilir — sahte bir depo kendi yazdığı kuralı
-// doğrulayamaz.
+// The unit tests prove the service's DECISIONS against a fake repository (rate
+// selection, rounding direction, overflow, error classification). The tests
+// here prove the GROUND those decisions stand on: that the migration rolls back
+// WITH DATA IN PLACE, that the partial unique indexes really refuse a second
+// root region and a second default rate, that the composite foreign key stops a
+// province-country mismatch, and that two concurrent requests cannot break the
+// rule together. The last of those can only be tried here, against real
+// constraints and real row locks — a fake repository cannot disagree with a
+// rule it wrote itself.
 package tax_test
 
 import (
@@ -44,32 +44,32 @@ import (
 
 const postgresImage = "postgres:16-alpine"
 
-// modulTablolari modülün sahip olduğu tablolardır; migration testleri bu
-// listeyi kullanır.
-var modulTablolari = []string{
+// moduleTables are the tables the module owns; the migration tests walk this
+// list.
+var moduleTables = []string{
 	"tax_region", "tax_rate", "tax_rate_rule", "tax_class", "tax_class_member",
 }
 
 var (
-	// testPool tüm testlerin paylaştığı havuzdur.
+	// testPool is the pool every test shares.
 	testPool *db.Pool
-	// testDSN migration çağrıları için bağlantı adresidir.
+	// testDSN is the connection string the migration calls take.
 	testDSN string
-	// ulkeSayaci testler arasında BENZERSİZ ülke kodu üretir.
+	// countryCounter hands out a UNIQUE country code per test.
 	//
-	// Zorunludur: bir ülkenin en fazla bir kök vergi bölgesi olabilir ve tüm
-	// testler aynı veritabanını paylaşır. Sabit bir kod kullanan iki test
-	// birbirinin kısıtına takılır ve hangisinin gerçekten kuralı sınadığı
-	// belirsizleşirdi.
-	ulkeSayaci atomic.Int64
+	// It is mandatory: a country has at most one root tax region and every
+	// test shares one database. Two tests using a fixed code would collide on
+	// each other's constraint, and which of them actually tried the rule would
+	// stop being knowable.
+	countryCounter atomic.Int64
 )
 
 func TestMain(m *testing.M) {
 	os.Exit(runWithPostgres(m))
 }
 
-// runWithPostgres tek bir Postgres konteyneri kaldırıp tüm testleri onun
-// üzerinde çalıştırır. os.Exit defer'ları atladığı için ayrı fonksiyondadır.
+// runWithPostgres brings up a single Postgres container and runs every test on
+// it. It is a separate function because os.Exit skips defers.
 func runWithPostgres(m *testing.M) int {
 	ctx := context.Background()
 
@@ -81,75 +81,74 @@ func runWithPostgres(m *testing.M) int {
 	)
 	defer func() {
 		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-			fmt.Fprintf(os.Stderr, "postgres konteyneri durdurulamadı: %v\n", termErr)
+			fmt.Fprintf(os.Stderr, "the postgres container could not be stopped: %v\n", termErr)
 		}
 	}()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "postgres konteyneri başlatılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the postgres container could not be started: %v\n", err)
 		return 1
 	}
 
 	testDSN, err = ctr.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı adresi alınamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection string could not be read: %v\n", err)
 		return 1
 	}
 
 	cfg := db.DefaultConfig(testDSN)
-	// Eşzamanlılık testi onlarca goroutine'i aynı anda koşturur; her işlem bir
-	// bağlantı tuttuğu için havuz varsayılandan geniş açılır.
+	// The concurrency tests run dozens of goroutines at once and every
+	// transaction holds a connection, so the pool opens wider than the default.
 	cfg.MaxConns = 24
 	testPool, err = db.New(ctx, cfg, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı havuzu açılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection pool could not be opened: %v\n", err)
 		return 1
 	}
 	defer testPool.Close()
 
 	if err := db.Migrate(ctx, testDSN, tax.New(nil).Migrations(), tax.ModuleName); err != nil {
-		fmt.Fprintf(os.Stderr, "migration uygulanamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the migrations could not be applied: %v\n", err)
 		return 1
 	}
 
 	return m.Run()
 }
 
-// yeniServis gerçek depo üzerinde çalışan bir servis kurar.
-func yeniServis(t *testing.T) *service.Service {
+// newService builds a service on top of the real repository.
+func newService(t *testing.T) *service.Service {
 	t.Helper()
 
 	return service.New(repository.New(testPool.Pool()), service.Options{})
 }
 
-// benzersizUlke bu koşuda başka hiçbir testin kullanmadığı bir ülke kodu
-// üretir.
+// uniqueCountry produces a country code no other test in this run uses.
 //
-// Kod ISO 3166-1'de tanımlı olmak ZORUNDA DEĞİLDİR: bu modül yalnızca BİÇİMİ
-// doğrular ve ülke listesi region modülünün verisidir (tax onu import edemez,
-// ADR 0001).
-func benzersizUlke(t *testing.T) string {
+// The code does NOT have to be defined in ISO 3166-1: this module validates
+// only the SHAPE, and the country list is the region module's data (tax cannot
+// import it, ADR 0001).
+func uniqueCountry(t *testing.T) string {
 	t.Helper()
 
-	n := ulkeSayaci.Add(1)
-	const harfler = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	kod := string(harfler[(n/26)%26]) + string(harfler[n%26])
-	require.Len(t, kod, 2)
-	return kod
+	n := countryCounter.Add(1)
+	const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	code := string(letters[(n/26)%26]) + string(letters[n%26])
+	require.Len(t, code, 2)
+	return code
 }
 
-// yeniKokBolge benzersiz bir ülke için kök vergi bölgesi oluşturur.
-func yeniKokBolge(ctx context.Context, t *testing.T, svc *service.Service) models.TaxRegion {
+// newRootRegion opens a root tax region for a unique country.
+func newRootRegion(ctx context.Context, t *testing.T, svc *service.Service) models.TaxRegion {
 	t.Helper()
 
-	bolge, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
-		CountryCode: benzersizUlke(t),
+	region, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
+		CountryCode: uniqueCountry(t),
 	})
 	require.NoError(t, err)
-	return bolge
+	return region
 }
 
-// tabloVar tablonun veritabanında olup olmadığını bildirir.
-func tabloVar(ctx context.Context, t *testing.T, table string) bool {
+// tableExists reports whether the table is present in the database.
+func tableExists(ctx context.Context, t *testing.T, table string) bool {
 	t.Helper()
 
 	var exists bool
@@ -163,8 +162,8 @@ func tabloVar(ctx context.Context, t *testing.T, table string) bool {
 	return exists
 }
 
-// sayim tek sütunlu bir sayım sorgusunu çalıştırır.
-func sayim(ctx context.Context, t *testing.T, sql string, args ...any) int64 {
+// countOf runs a single-column counting query.
+func countOf(ctx context.Context, t *testing.T, sql string, args ...any) int64 {
 	t.Helper()
 
 	var count int64
@@ -172,82 +171,83 @@ func sayim(ctx context.Context, t *testing.T, sql string, args ...any) int64 {
 	return count
 }
 
-// TestMigrationGeriAlinabilir migration'ın VERİ VARKEN geri alınabildiğini
-// doğrular (plan Bölüm 8).
+// TestMigrationsRollBackWithDataInPlace proves the migration can be rolled back
+// WITH DATA PRESENT (plan section 8).
 //
-// Geri alma modülün GERÇEK durumu üzerinde koşar: bölge, oran ve kural
-// satırları YERİNDE bırakılır. Şart bilinçlidir — modülün tek silme yolu SOFT
-// delete'tir, yani operatör API'den her kaydı silse bile satırlar tabloda kalır
-// ve modül içi foreign key'leri (kural -> oran -> bölge, eyalet -> kök) tutmaya
-// devam eder. Satırları ham SQL ile süpürmek, modülün API'siyle ULAŞILAMAZ bir
-// ön koşul kurar ve hatanın tetikleyicisini testten çıkarırdı.
+// The rollback runs against the module's REAL state: region, rate and rule rows
+// are left WHERE THEY ARE. That condition is deliberate — the module's only
+// delete path is a SOFT delete, so even an operator who removes every record
+// through the API leaves the rows in the tables, still holding the in-module
+// foreign keys (rule -> rate -> region, province -> root). Sweeping the rows
+// with raw SQL would build a precondition UNREACHABLE through the module's own
+// API and would take the trigger of the fault out of the test.
 //
-// internal/arch'taki TestMigrationsCanReallyBeRolledBack aynı gidiş dönüşü
-// BOŞ şema üzerinde koşar; veriye bağlı geri alma hatası ancak burada yakalanır.
-func TestMigrationGeriAlinabilir(t *testing.T) {
+// TestMigrationsCanReallyBeRolledBack in internal/arch runs the same round trip
+// on an EMPTY schema; a data-dependent rollback failure is caught only here.
+func TestMigrationsRollBackWithDataInPlace(t *testing.T) {
 	ctx := context.Background()
 
-	for _, table := range modulTablolari {
-		require.True(t, tabloVar(ctx, t, table), "%s başlangıçta var olmalı", table)
+	for _, table := range moduleTables {
+		require.True(t, tableExists(ctx, t, table), "%s must exist to begin with", table)
 	}
 
-	svc := yeniServis(t)
-	kok := yeniKokBolge(ctx, t, svc)
-	eyalet, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
-		CountryCode: kok.CountryCode, ProvinceCode: "34", ParentID: kok.ID,
+	svc := newService(t)
+	root := newRootRegion(ctx, t, svc)
+	province, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
+		CountryCode: root.CountryCode, ProvinceCode: "34", ParentID: root.ID,
 	})
 	require.NoError(t, err)
 
-	oran, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
-		TaxRegionID: eyalet.ID, Name: "İndirimli", RateBps: 100,
+	rate, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
+		TaxRegionID: province.ID, Name: "Reduced", RateBps: 100,
 	})
 	require.NoError(t, err)
 	_, err = svc.CreateRateRule(ctx, service.CreateRateRuleInput{
-		TaxRateID: oran.ID, Reference: "product", ReferenceID: "prod_1",
+		TaxRateID: rate.ID, Reference: "product", ReferenceID: "prod_1",
 	})
 	require.NoError(t, err)
 
-	// Yumuşak silinmiş bir kayıt da bırakılır: satır tabloda KALIR ve foreign
-	// key'i canlısı kadar sıkı tutar.
-	silinecek, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
-		TaxRegionID: kok.ID, Name: "Silinecek", RateBps: 500,
+	// A soft-deleted record is left behind too: the row STAYS in the table and
+	// holds its foreign key as tightly as a live one.
+	doomed, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
+		TaxRegionID: root.ID, Name: "Doomed", RateBps: 500,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.DeleteTaxRate(ctx, silinecek.ID))
-	require.Equal(t, int64(1), sayim(ctx, t,
-		`SELECT count(*) FROM tax_rate WHERE id = $1 AND deleted_at IS NOT NULL`, silinecek.ID),
-		"yumuşak silme satırı tabloda BIRAKIR")
+	require.NoError(t, svc.DeleteTaxRate(ctx, doomed.ID))
+	require.Equal(t, int64(1), countOf(ctx, t,
+		`SELECT count(*) FROM tax_rate WHERE id = $1 AND deleted_at IS NOT NULL`, doomed.ID),
+		"a soft delete LEAVES the row in the table")
 
 	src := tax.New(nil).Migrations()
 
 	require.NoError(t, db.MigrateDown(ctx, testDSN, src, tax.ModuleName, 0),
-		"down başarısız — bu, modülün bir daha migrate EDİLEMEMESİ demektir")
-	for _, table := range modulTablolari {
-		assert.False(t, tabloVar(ctx, t, table), "%s geri alma sonrası kalmamalı", table)
+		"down failed — which means the module can never be migrated again")
+	for _, table := range moduleTables {
+		assert.False(t, tableExists(ctx, t, table), "%s must not survive the rollback", table)
 	}
 
 	require.NoError(t, db.Migrate(ctx, testDSN, src, tax.ModuleName))
-	for _, table := range modulTablolari {
-		assert.True(t, tabloVar(ctx, t, table), "%s yeniden uygulanmalı", table)
+	for _, table := range moduleTables {
+		assert.True(t, tableExists(ctx, t, table), "%s must be applied again", table)
 	}
 
 	version, dirty, err := db.Version(ctx, testDSN, tax.ModuleName)
 	require.NoError(t, err)
-	assert.False(t, dirty, "yarıda kalmış migration olmamalı")
-	// Baş sürüm, modüle bir migration eklendiğinde ELLE artırılır. Dosyalardan
-	// türetilmiyor: türetilseydi kendi kendisiyle uyuşur ve "baş uygulandı"
-	// cümlesi bir şey söylemez olurdu.
+	assert.False(t, dirty, "no migration may be left half-applied")
+	// The head version is raised BY HAND when a migration joins the module. It
+	// is not derived from the files: derived, it would agree with itself and
+	// the sentence "the head was applied" would stop saying anything.
 	assert.Equal(t, uint(4), version)
-	assert.Zero(t, sayim(ctx, t, `SELECT count(*) FROM tax_region`),
-		"şema düşüp yeniden kurulduğu için hiçbir bölge kalmamalı")
+	assert.Zero(t, countOf(ctx, t, `SELECT count(*) FROM tax_region`),
+		"the schema was dropped and rebuilt, so no region may remain")
 }
 
-// TestCrossModuleForeignKeyYok Prensip 2.2'yi GERÇEK şema üzerinde doğrular.
+// TestNoCrossModuleForeignKey proves Principle 2.2 on the REAL schema.
 //
-// internal/arch aynı kuralı SQL metnini tarayarak denetler; bu test kısıtların
-// veritabanında gerçekten kurulduğunu ve hedeflerinin modül içinde kaldığını
-// gösterir.
-func TestCrossModuleForeignKeyYok(t *testing.T) {
+// internal/arch audits the same rule by scanning the SQL text; this test shows
+// the constraints are really built in the database and that their targets stay
+// inside the module.
+func TestNoCrossModuleForeignKey(t *testing.T) {
 	ctx := context.Background()
 
 	rows, err := testPool.Pool().Query(ctx,
@@ -255,240 +255,243 @@ func TestCrossModuleForeignKeyYok(t *testing.T) {
          FROM pg_constraint c
          JOIN pg_class src ON src.oid = c.conrelid
          JOIN pg_class tgt ON tgt.oid = c.confrelid
-         WHERE c.contype = 'f' AND src.relname = ANY($1)`, modulTablolari)
+         WHERE c.contype = 'f' AND src.relname = ANY($1)`, moduleTables)
 	require.NoError(t, err)
 	defer rows.Close()
 
-	sahipli := make(map[string]struct{}, len(modulTablolari))
-	for _, table := range modulTablolari {
-		sahipli[table] = struct{}{}
+	owned := make(map[string]struct{}, len(moduleTables))
+	for _, table := range moduleTables {
+		owned[table] = struct{}{}
 	}
 
-	var sayi int
+	var found int
 	for rows.Next() {
 		var name, src, tgt string
 		require.NoError(t, rows.Scan(&name, &src, &tgt))
-		assert.Contains(t, sahipli, tgt,
-			"%s kısıtı modül dışına referans veriyor (%s -> %s)", name, src, tgt)
-		sayi++
+		assert.Contains(t, owned, tgt,
+			"the %s constraint points outside the module (%s -> %s)", name, src, tgt)
+		found++
 	}
 	require.NoError(t, rows.Err())
-	assert.Equal(t, 5, sayi,
-		"bölge->bölge (eyalet), oran->bölge, oran->oran (yığın), kural->oran ve "+
-			"üyelik->sınıf bağları kurulmuş olmalı")
+	assert.Equal(t, 5, found,
+		"region->region (province), rate->region, rate->rate (stack), rule->rate "+
+			"and membership->class must all be built")
 }
 
-// TestIkinciKokBolgeReddedilir kısmi benzersiz indeksin çalıştığını doğrular.
-func TestIkinciKokBolgeReddedilir(t *testing.T) {
+// TestASecondRootRegionIsRefused proves the partial unique index works.
+func TestASecondRootRegionIsRefused(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	kok := yeniKokBolge(ctx, t, svc)
+	svc := newService(t)
+	root := newRootRegion(ctx, t, svc)
 
-	_, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{CountryCode: kok.CountryCode})
+	_, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{CountryCode: root.CountryCode})
 	require.Error(t, err)
 	assert.True(t, errors.IsConflict(err))
 	assert.Equal(t, service.CodeRootExists, errors.CodeOf(err))
 
-	// Silinen bir kökten sonra yenisi açılabilmelidir; aksi hâlde silme ülkeyi
-	// kalıcı olarak yapılandırılamaz bırakırdı (kısmi indeks deleted_at IS NULL
-	// süzer).
-	require.NoError(t, svc.DeleteTaxRegion(ctx, kok.ID))
-	_, err = svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{CountryCode: kok.CountryCode})
+	// After a deleted root a new one must be openable; otherwise a delete would
+	// leave the country permanently unconfigurable (the partial index filters
+	// on deleted_at IS NULL).
+	require.NoError(t, svc.DeleteTaxRegion(ctx, root.ID))
+	_, err = svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{CountryCode: root.CountryCode})
 	require.NoError(t, err)
 }
 
-// TestEszamanliKokBolgeTekKazanan servis denetimini birlikte geçen iki isteğin
-// veritabanı kısıtına takıldığını doğrular.
+// TestConcurrentRootRegionsLeaveOneWinner proves that two requests which pass
+// the service check together still collide in the database.
 //
-// Servis "önce oku, sonra yaz" yapar ve iki eşzamanlı istek o denetimi birlikte
-// geçebilir; son savunma kısmi benzersiz indekstir ve YALNIZCA gerçek
-// veritabanında sınanabilir.
-func TestEszamanliKokBolgeTekKazanan(t *testing.T) {
+// The service reads before it writes, and two concurrent requests can pass that
+// check together; the last defence is the partial unique index, and it can only
+// be tried against a real database.
+func TestConcurrentRootRegionsLeaveOneWinner(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	ulke := benzersizUlke(t)
+	svc := newService(t)
+	country := uniqueCountry(t)
 
-	const istekSayisi = 8
+	const requestCount = 8
 	var (
-		wg       sync.WaitGroup
-		mu       sync.Mutex
-		kazanan  []string
-		kodlar   []string
-		digerErr []error
+		wg        sync.WaitGroup
+		mu        sync.Mutex
+		winners   []string
+		codes     []string
+		otherErrs []error
 	)
 
-	wg.Add(istekSayisi)
-	for range istekSayisi {
+	wg.Add(requestCount)
+	for range requestCount {
 		go func() {
 			defer wg.Done()
 
-			bolge, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{CountryCode: ulke})
+			region, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{CountryCode: country})
 
 			mu.Lock()
 			defer mu.Unlock()
 			switch {
 			case err == nil:
-				kazanan = append(kazanan, bolge.ID)
+				winners = append(winners, region.ID)
 			case errors.IsConflict(err):
-				kodlar = append(kodlar, errors.CodeOf(err))
+				codes = append(codes, errors.CodeOf(err))
 			default:
-				digerErr = append(digerErr, err)
+				otherErrs = append(otherErrs, err)
 			}
 		}()
 	}
 	wg.Wait()
 
-	assert.Empty(t, digerErr, "beklenmeyen hata: %v", digerErr)
-	require.Len(t, kazanan, 1, "yarışı tam olarak bir istek kazanmalı")
-	assert.Len(t, kodlar, istekSayisi-1, "kaybedenlerin hepsi çakışma almalı")
-	for _, kod := range kodlar {
-		// Kaybeden istek hangi yoldan düşerse düşsün ("önce oku" denetimi ya
-		// da benzersiz indeks) aynı kodu almalıdır; ayrıntı için
-		// TestYarisiKaybedenKokAyniKoduAlir.
-		assert.Equal(t, service.CodeRootExists, kod)
+	assert.Empty(t, otherErrs, "unexpected error: %v", otherErrs)
+	require.Len(t, winners, 1, "exactly one request must win the race")
+	assert.Len(t, codes, requestCount-1, "every loser must get a conflict")
+	for _, code := range codes {
+		// Whichever way a losing request falls (the read-first check or the
+		// unique index) it must get the same code; for the detail see
+		// TestTheLosingRootRaceGetsTheSameCode.
+		assert.Equal(t, service.CodeRootExists, code)
 	}
-	assert.Equal(t, int64(1), sayim(ctx, t,
+	assert.Equal(t, int64(1), countOf(ctx, t,
 		`SELECT count(*) FROM tax_region WHERE country_code = $1 AND parent_id IS NULL AND deleted_at IS NULL`,
-		ulke))
+		country))
 }
 
-// TestYarisiKaybedenKokAyniKoduAlir "önce oku" denetimini geçen isteğin,
-// veritabanı indeksine çarptığında da AYNI hata kodunu aldığını doğrular.
+// TestTheLosingRootRaceGetsTheSameCode proves that a request which passes the
+// read-first check gets the SAME error code when it hits the database index.
 //
-// Yarış zamanlamaya değil KİLİDE bağlanır: rakip satır açık bir işlemde
-// yazılır ve commit EDİLMEZ. Servisin okuması onu göremez (read committed), ama
-// INSERT'i benzersiz indekste ona çarpar ve o işlem bitene kadar bekler. Böylece
-// yarışın kaybeden ucu her koşuda kesin olarak sınanır; TestEszamanliKokBolge-
-// TekKazanan aynı kodu doğrular ama kaybedenlerin hangi yoldan düştüğünü garanti
-// edemez.
-func TestYarisiKaybedenKokAyniKoduAlir(t *testing.T) {
+// The race is tied to a LOCK rather than to timing: the rival row is written in
+// an open transaction and is NOT committed. The service's read cannot see it
+// (read committed), but its INSERT hits it on the unique index and waits until
+// that transaction ends. The losing end of the race is therefore tried for
+// certain on every run; TestConcurrentRootRegionsLeaveOneWinner asserts the same
+// code but cannot guarantee which way its losers fell.
+func TestTheLosingRootRaceGetsTheSameCode(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	ulke := benzersizUlke(t)
+	svc := newService(t)
+	country := uniqueCountry(t)
 
 	tx, err := testPool.Pool().Begin(ctx)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	_, err = tx.Exec(ctx, `INSERT INTO tax_region (id, country_code) VALUES ($1, $2)`,
-		models.NewTaxRegionID(time.Now()), ulke)
+		models.NewTaxRegionID(time.Now()), country)
 	require.NoError(t, err)
 
-	sonuc := make(chan error, 1)
+	result := make(chan error, 1)
 	go func() {
-		_, createErr := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{CountryCode: ulke})
-		sonuc <- createErr
+		_, createErr := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{CountryCode: country})
+		result <- createErr
 	}()
 
-	// Commit, isteğin indekste BEKLEDİĞİ görülmeden yapılmamalıdır: erken bir
-	// commit isteği "önce oku" denetimine düşürür ve yarış yolu hiç sınanmazdı.
+	// The commit must not happen before the request is seen WAITING on the
+	// index: an early commit would drop the request onto the read-first check
+	// and the race path would never be tried.
 	require.Eventually(t, func() bool {
-		var bekleyen int64
+		var waiting int64
 		scanErr := testPool.Pool().QueryRow(ctx,
 			`SELECT count(*) FROM pg_stat_activity
              WHERE wait_event_type = 'Lock' AND query ILIKE '%INSERT INTO tax_region%'`).
-			Scan(&bekleyen)
-		return scanErr == nil && bekleyen > 0
+			Scan(&waiting)
+		return scanErr == nil && waiting > 0
 	}, 10*time.Second, 20*time.Millisecond,
-		"eşzamanlı istek benzersiz indekste beklemeliydi")
+		"the concurrent request should have waited on the unique index")
 
 	require.NoError(t, tx.Commit(ctx))
 
-	err = <-sonuc
+	err = <-result
 	require.Error(t, err)
 	assert.True(t, errors.IsConflict(err))
 	assert.Equal(t, service.CodeRootExists, errors.CodeOf(err),
-		"yarışı kaybeden istek, denetime takılan istekle AYNI kodu almalı")
+		"the request that loses the race must get the SAME code as the one the check stopped")
 }
 
-// TestSaglayiciKimligiKisiti provider_id'nin veritabanında da kırpılmış ve
-// sınırlı tutulduğunu doğrular.
+// TestProviderIDConstraint proves provider_id is kept trimmed and bounded in
+// the database as well.
 //
-// Servis aynı kuralı okunabilir bir hatayla önce uygular; bu test kısıtın
-// DOĞRUDAN SQL'e karşı da tuttuğunu gösterir — uygulama katmanı son savunma
-// değildir.
-func TestSaglayiciKimligiKisiti(t *testing.T) {
+// The service applies the same rule first, with a readable error; this test
+// shows the constraint also holds against DIRECT SQL — the application layer is
+// not the last defence.
+func TestProviderIDConstraint(t *testing.T) {
 	ctx := context.Background()
 
-	for ad, deger := range map[string]string{
-		"baştaki boşluk":  " local",
-		"sondaki boşluk":  "local ",
-		"sınırın üstünde": strings.Repeat("a", 256),
+	for name, value := range map[string]string{
+		"leading space":  " local",
+		"trailing space": "local ",
+		"over the limit": strings.Repeat("a", 256),
 	} {
-		t.Run(ad, func(t *testing.T) {
+		t.Run(name, func(t *testing.T) {
 			_, err := testPool.Pool().Exec(ctx,
 				`INSERT INTO tax_region (id, country_code, provider_id) VALUES ($1, $2, $3)`,
-				models.NewTaxRegionID(time.Now()), benzersizUlke(t), deger)
+				models.NewTaxRegionID(time.Now()), uniqueCountry(t), value)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "tax_region_provider_id_check")
 		})
 	}
 
-	// Sınırdaki değer ve boş değer serbesttir: kısıt yalnızca kırpılmamışı ve
-	// sınırı AŞANI reddeder.
+	// The value at the limit and the empty value are allowed: the constraint
+	// refuses only the untrimmed and the one that EXCEEDS the limit.
 	_, err := testPool.Pool().Exec(ctx,
 		`INSERT INTO tax_region (id, country_code, provider_id) VALUES ($1, $2, $3)`,
-		models.NewTaxRegionID(time.Now()), benzersizUlke(t), strings.Repeat("a", 255))
+		models.NewTaxRegionID(time.Now()), uniqueCountry(t), strings.Repeat("a", 255))
 	require.NoError(t, err)
 }
 
-// TestEyaletUlkeninSaglayicisiniDevralir devralmanın GERÇEK bölge sorgusu
-// üzerinde çalıştığını doğrular.
+// TestAProvinceInheritsTheCountrysProvider proves inheritance works over the
+// REAL region query.
 //
-// Birim testi kuralı sahte depoyla kanıtlar; burada kanıtlanan şey zincirin
-// SQL'den en özelden genele sıralı gelmesidir — sıra tersine dönseydi eyaletin
-// boş provider_id'si ülkeninkini EZER ve hesap yine yanlış otoriteye giderdi.
-func TestEyaletUlkeninSaglayicisiniDevralir(t *testing.T) {
+// The unit test proves the rule against a fake repository; what is proved here
+// is that the chain arrives from SQL ordered from most specific to most
+// general — reverse that order and the province's empty provider_id OVERWRITES
+// the country's, sending the calculation to the wrong authority again.
+func TestAProvinceInheritsTheCountrysProvider(t *testing.T) {
 	ctx := context.Background()
 
 	repo := repository.New(testPool.Pool())
-	kayit := service.NewProviderRegistry()
-	require.NoError(t, kayit.Register(service.NewLocalProvider(repo)))
-	require.NoError(t, kayit.Register(&sahteSaglayici{kimlik: "avalara"}))
-	svc := service.New(repo, service.Options{Providers: kayit})
+	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(service.NewLocalProvider(repo)))
+	require.NoError(t, registry.Register(&fakeProvider{id: "avalara"}))
+	svc := service.New(repo, service.Options{Providers: registry})
 
-	kok, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
-		CountryCode: benzersizUlke(t), ProviderID: "avalara",
+	root, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
+		CountryCode: uniqueCountry(t), ProviderID: "avalara",
 	})
 	require.NoError(t, err)
 
-	// Eyalet TEK BİR İSTİSNA için açılır ve sağlayıcısı boş bırakılır; kendi
-	// varsayılan oranı vardır, yani yerele düşen bir hesap 725 bulurdu.
-	eyalet, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
-		CountryCode: kok.CountryCode, ProvinceCode: "CA", ParentID: kok.ID,
+	// The province is opened for ONE exception and its provider is left empty;
+	// it has a default rate of its own, so a calculation falling to the local
+	// provider would find 725.
+	province, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
+		CountryCode: root.CountryCode, ProvinceCode: "CA", ParentID: root.ID,
 	})
 	require.NoError(t, err)
 	_, err = svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
-		TaxRegionID: eyalet.ID, Name: "Eyalet", RateBps: 725, IsDefault: true,
+		TaxRegionID: province.ID, Name: "Province", RateBps: 725, IsDefault: true,
 	})
 	require.NoError(t, err)
 
-	sonuc, err := svc.CalculateTax(ctx, service.CalculateTaxInput{
-		CountryCode:  kok.CountryCode,
+	result, err := svc.CalculateTax(ctx, service.CalculateTaxInput{
+		CountryCode:  root.CountryCode,
 		ProvinceCode: "CA",
 		Items:        []service.TaxableItem{{ID: "li_1", Amount: 10_000}},
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, "avalara", sonuc.ProviderID,
-		"eyaletin boş provider_id'si ülkenin dış otoritesini yerele DÜŞÜRMEMELİ")
-	require.Len(t, sonuc.Items, 1)
-	assert.Equal(t, int64(999), sonuc.Items[0].TaxAmount, "hesabı dış sağlayıcı yapmalı")
+	assert.Equal(t, "avalara", result.ProviderID,
+		"the province's empty provider_id must not DROP the country's external authority")
+	require.Len(t, result.Items, 1)
+	assert.Equal(t, int64(999), result.Items[0].TaxAmount, "the external provider must do the maths")
 }
 
-// sahteSaglayici sabit bir sonuç dönen dış vergi sağlayıcısıdır.
+// fakeProvider is an external tax provider that returns a fixed result.
 //
-// Yerel hesabın ÜRETEMEYECEĞİ bir tutar döner: sonuçtaki tutar, hesabı kimin
-// yaptığının kanıtıdır.
-type sahteSaglayici struct {
-	kimlik string
+// It returns an amount the local calculation CANNOT produce: the amount in the
+// result is the proof of who did the maths.
+type fakeProvider struct {
+	id string
 }
 
-// ID sağlayıcının kimliğini döner.
-func (p *sahteSaglayici) ID() string { return p.kimlik }
+// ID returns the provider's identifier.
+func (p *fakeProvider) ID() string { return p.id }
 
-// Calculate her kaleme sabit bir vergi yazar.
-func (p *sahteSaglayici) Calculate(
+// Calculate writes a fixed tax onto every line.
+func (p *fakeProvider) Calculate(
 	_ context.Context,
 	in service.ProviderInput,
 ) (service.ProviderResult, error) {
@@ -504,319 +507,323 @@ func (p *sahteSaglayici) Calculate(
 	return out, nil
 }
 
-// TestEyaletKokunUlkesiniDegistiremez bileşik foreign key'i doğrular.
+// TestAProvinceCannotChangeTheRootsCountry proves the composite foreign key.
 //
-// Servis aynı denetimi okunabilir bir hatayla önce yapar; bu test kısıtın
-// DOĞRUDAN SQL'e karşı da tuttuğunu gösterir.
-func TestEyaletKokunUlkesiniDegistiremez(t *testing.T) {
+// The service makes the same check first, with a readable error; this test
+// shows the constraint also holds against DIRECT SQL.
+func TestAProvinceCannotChangeTheRootsCountry(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	kok := yeniKokBolge(ctx, t, svc)
-	baskaUlke := benzersizUlke(t)
+	svc := newService(t)
+	root := newRootRegion(ctx, t, svc)
+	otherCountry := uniqueCountry(t)
 
 	_, err := testPool.Pool().Exec(ctx,
 		`INSERT INTO tax_region (id, country_code, province_code, parent_id)
          VALUES ($1, $2, 'XX', $3)`,
-		models.NewTaxRegionID(kok.CreatedAt), baskaUlke, kok.ID)
-	require.Error(t, err, "kökün ülkesinden farklı bir eyalet yazılamamalı")
+		models.NewTaxRegionID(root.CreatedAt), otherCountry, root.ID)
+	require.Error(t, err, "a province in a country other than its root must not be writable")
 	assert.Contains(t, err.Error(), "tax_region_parent_fk")
 }
 
-// TestYarimHiyerarsiVeritabanindaReddedilir CHECK kısıtını doğrular.
-func TestYarimHiyerarsiVeritabanindaReddedilir(t *testing.T) {
+// TestAHalfHierarchyIsRefusedByTheDatabase proves the CHECK constraint.
+func TestAHalfHierarchyIsRefusedByTheDatabase(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	kok := yeniKokBolge(ctx, t, svc)
+	svc := newService(t)
+	root := newRootRegion(ctx, t, svc)
 
-	t.Run("ebeveynsiz eyalet", func(t *testing.T) {
+	t.Run("province without a parent", func(t *testing.T) {
 		_, err := testPool.Pool().Exec(ctx,
 			`INSERT INTO tax_region (id, country_code, province_code) VALUES ($1, $2, 'XX')`,
-			models.NewTaxRegionID(kok.CreatedAt), benzersizUlke(t))
+			models.NewTaxRegionID(root.CreatedAt), uniqueCountry(t))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "tax_region_hierarchy_check")
 	})
 
-	t.Run("eyalet kodu taşıyan kök", func(t *testing.T) {
+	t.Run("root carrying a province code", func(t *testing.T) {
 		_, err := testPool.Pool().Exec(ctx,
 			`INSERT INTO tax_region (id, country_code, parent_id) VALUES ($1, $2, $3)`,
-			models.NewTaxRegionID(kok.CreatedAt), kok.CountryCode, kok.ID)
+			models.NewTaxRegionID(root.CreatedAt), root.CountryCode, root.ID)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "tax_region_hierarchy_check")
 	})
 }
 
-// TestIkinciVarsayilanOranReddedilir bölge başına tek varsayılan kuralının
-// veritabanında da tuttuğunu doğrular.
-func TestIkinciVarsayilanOranReddedilir(t *testing.T) {
+// TestASecondDefaultRateIsRefused proves the one-default-per-region rule holds
+// in the database too.
+func TestASecondDefaultRateIsRefused(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	kok := yeniKokBolge(ctx, t, svc)
+	svc := newService(t)
+	root := newRootRegion(ctx, t, svc)
 
-	ilk, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
-		TaxRegionID: kok.ID, Name: "KDV", RateBps: 2000, IsDefault: true,
+	first, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
+		TaxRegionID: root.ID, Name: "VAT", RateBps: 2000, IsDefault: true,
 	})
 	require.NoError(t, err)
 
 	_, err = svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
-		TaxRegionID: kok.ID, Name: "İkinci", RateBps: 1000, IsDefault: true,
+		TaxRegionID: root.ID, Name: "Second", RateBps: 1000, IsDefault: true,
 	})
 	require.Error(t, err)
 	assert.True(t, errors.IsConflict(err))
 	assert.Equal(t, service.CodeDefaultExists, errors.CodeOf(err))
 
-	// Doğrudan SQL de reddedilmeli: servis denetimi son savunma değildir.
+	// Direct SQL must be refused as well: the service check is not the last
+	// defence.
 	_, err = testPool.Pool().Exec(ctx,
 		`INSERT INTO tax_rate (id, tax_region_id, name, rate_bps, is_default)
-         VALUES ($1, $2, 'Ham', 1000, TRUE)`,
-		models.NewTaxRateID(kok.CreatedAt), kok.ID)
+         VALUES ($1, $2, 'Raw', 1000, TRUE)`,
+		models.NewTaxRateID(root.CreatedAt), root.ID)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tax_rate_default_uniq")
 
-	// Varsayılan silindikten sonra yenisi yazılabilmelidir.
-	require.NoError(t, svc.DeleteTaxRate(ctx, ilk.ID))
+	// After the default is deleted a new one must be writable.
+	require.NoError(t, svc.DeleteTaxRate(ctx, first.ID))
 	_, err = svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
-		TaxRegionID: kok.ID, Name: "Yeni", RateBps: 1800, IsDefault: true,
+		TaxRegionID: root.ID, Name: "New", RateBps: 1800, IsDefault: true,
 	})
 	require.NoError(t, err)
 }
 
-// TestOranAralikKisiti rate_bps CHECK'ini doğrular.
-func TestOranAralikKisiti(t *testing.T) {
+// TestRateRangeConstraint proves the rate_bps CHECK.
+func TestRateRangeConstraint(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	kok := yeniKokBolge(ctx, t, svc)
+	svc := newService(t)
+	root := newRootRegion(ctx, t, svc)
 
 	for _, bps := range []int32{-1, 10_001} {
 		_, err := testPool.Pool().Exec(ctx,
-			`INSERT INTO tax_rate (id, tax_region_id, name, rate_bps) VALUES ($1, $2, 'Ham', $3)`,
-			models.NewTaxRateID(kok.CreatedAt), kok.ID, bps)
-		require.Error(t, err, "oran: %d", bps)
+			`INSERT INTO tax_rate (id, tax_region_id, name, rate_bps) VALUES ($1, $2, 'Raw', $3)`,
+			models.NewTaxRateID(root.CreatedAt), root.ID, bps)
+		require.Error(t, err, "rate: %d", bps)
 		assert.Contains(t, err.Error(), "tax_rate_bps_check")
 	}
 }
 
-// TestVarsayilanOranaKuralEklenemez kapsam kuralının gerçek kilit altında
-// tuttuğunu doğrular.
-func TestVarsayilanOranaKuralEklenemez(t *testing.T) {
+// TestADefaultRateCannotCarryARule proves the scope rule holds under the real
+// lock.
+func TestADefaultRateCannotCarryARule(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	kok := yeniKokBolge(ctx, t, svc)
+	svc := newService(t)
+	root := newRootRegion(ctx, t, svc)
 
-	varsayilan, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
-		TaxRegionID: kok.ID, Name: "KDV", RateBps: 2000, IsDefault: true,
+	fallback, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
+		TaxRegionID: root.ID, Name: "VAT", RateBps: 2000, IsDefault: true,
 	})
 	require.NoError(t, err)
 
 	_, err = svc.CreateRateRule(ctx, service.CreateRateRuleInput{
-		TaxRateID: varsayilan.ID, Reference: "product", ReferenceID: "prod_1",
+		TaxRateID: fallback.ID, Reference: "product", ReferenceID: "prod_1",
 	})
 	require.Error(t, err)
 	assert.True(t, errors.IsConflict(err))
 
-	// Ters yön: kurallı bir oran varsayılan YAPILAMAZ.
-	kurallı, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
-		TaxRegionID: kok.ID, Name: "İndirimli", RateBps: 100,
+	// The other direction: a rate that carries a rule CANNOT be made the
+	// default.
+	ruled, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
+		TaxRegionID: root.ID, Name: "Reduced", RateBps: 100,
 	})
 	require.NoError(t, err)
 	_, err = svc.CreateRateRule(ctx, service.CreateRateRuleInput{
-		TaxRateID: kurallı.ID, Reference: "product", ReferenceID: "prod_1",
+		TaxRateID: ruled.ID, Reference: "product", ReferenceID: "prod_1",
 	})
 	require.NoError(t, err)
 
-	dogru := true
-	_, err = svc.UpdateTaxRate(ctx, kurallı.ID, service.UpdateTaxRateInput{IsDefault: &dogru})
+	yes := true
+	_, err = svc.UpdateTaxRate(ctx, ruled.ID, service.UpdateTaxRateInput{IsDefault: &yes})
 	require.Error(t, err)
 	assert.True(t, errors.IsConflict(err))
 }
 
-// TestKuralTekilligi aynı referansın iki kez yazılamayacağını doğrular.
-func TestKuralTekilligi(t *testing.T) {
+// TestRuleUniqueness proves the same reference cannot be written twice.
+func TestRuleUniqueness(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	kok := yeniKokBolge(ctx, t, svc)
-	oran, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
-		TaxRegionID: kok.ID, Name: "İndirimli", RateBps: 100,
+	svc := newService(t)
+	root := newRootRegion(ctx, t, svc)
+	rate, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
+		TaxRegionID: root.ID, Name: "Reduced", RateBps: 100,
 	})
 	require.NoError(t, err)
 
 	in := service.CreateRateRuleInput{
-		TaxRateID: oran.ID, Reference: "product", ReferenceID: "prod_1",
+		TaxRateID: rate.ID, Reference: "product", ReferenceID: "prod_1",
 	}
-	kural, err := svc.CreateRateRule(ctx, in)
+	rule, err := svc.CreateRateRule(ctx, in)
 	require.NoError(t, err)
 
 	_, err = svc.CreateRateRule(ctx, in)
 	require.Error(t, err)
 	assert.True(t, errors.IsConflict(err))
 
-	// Farklı referans TÜRÜ aynı kimlikle serbesttir: ürün ile ürün tipi ayrı
-	// ad uzaylarıdır.
+	// A different reference KIND with the same identifier is allowed: product
+	// and product type are separate namespaces.
 	_, err = svc.CreateRateRule(ctx, service.CreateRateRuleInput{
-		TaxRateID: oran.ID, Reference: "product_type", ReferenceID: "prod_1",
+		TaxRateID: rate.ID, Reference: "product_type", ReferenceID: "prod_1",
 	})
 	require.NoError(t, err)
 
-	// Silinen kuralın referansı yeniden yazılabilmelidir.
-	require.NoError(t, svc.DeleteRateRule(ctx, kural.ID))
+	// A deleted rule's reference must be writable again.
+	require.NoError(t, svc.DeleteRateRule(ctx, rule.ID))
 	_, err = svc.CreateRateRule(ctx, in)
 	require.NoError(t, err)
 }
 
-// TestGercekHesaplama vergi hesabının gerçek veritabanı üzerinde uçtan uca
-// çalıştığını doğrular.
+// TestCalculationOnTheRealSchema proves the tax calculation works end to end on
+// a real database.
 //
-// Birim testleri aynı dalları sahte depoyla kanıtlar; burada kanıtlanan şey
-// SORGULARIN doğruluğudur: bölge zincirinin sıralı çözülmesi, oranların ve
-// kuralların toplu okunması ve soft delete süzgeci.
-func TestGercekHesaplama(t *testing.T) {
+// The unit tests prove the same branches against a fake repository; what is
+// proved here is that the QUERIES are right: the region chain resolving in
+// order, rates and rules read in bulk, and the soft-delete filter.
+func TestCalculationOnTheRealSchema(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	kok := yeniKokBolge(ctx, t, svc)
-	eyalet, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
-		CountryCode: kok.CountryCode, ProvinceCode: "34", ParentID: kok.ID,
+	root := newRootRegion(ctx, t, svc)
+	province, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
+		CountryCode: root.CountryCode, ProvinceCode: "34", ParentID: root.ID,
 	})
 	require.NoError(t, err)
 
 	_, err = svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
-		TaxRegionID: kok.ID, Name: "KDV", RateBps: 2000, IsDefault: true,
+		TaxRegionID: root.ID, Name: "VAT", RateBps: 2000, IsDefault: true,
 	})
 	require.NoError(t, err)
 
-	indirimli, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
-		TaxRegionID: eyalet.ID, Name: "Kitap", RateBps: 100,
+	reduced, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
+		TaxRegionID: province.ID, Name: "Book", RateBps: 100,
 	})
 	require.NoError(t, err)
 	_, err = svc.CreateRateRule(ctx, service.CreateRateRuleInput{
-		TaxRateID: indirimli.ID, Reference: "product", ReferenceID: "prod_kitap",
+		TaxRateID: reduced.ID, Reference: "product", ReferenceID: "prod_book",
 	})
 	require.NoError(t, err)
 
 	in := service.CalculateTaxInput{
-		CountryCode:  kok.CountryCode,
+		CountryCode:  root.CountryCode,
 		ProvinceCode: "34",
 		Items: []service.TaxableItem{
-			{ID: "li_kitap", ProductID: "prod_kitap", Amount: 10_000},
-			{ID: "li_diger", ProductID: "prod_diger", Amount: 1_999},
+			{ID: "li_book", ProductID: "prod_book", Amount: 10_000},
+			{ID: "li_other", ProductID: "prod_other", Amount: 1_999},
 		},
 		Shipping: service.ShippingInput{OptionID: "sopt_1", Amount: 2_500},
 	}
 
-	sonuc, err := svc.CalculateTax(ctx, in)
+	result, err := svc.CalculateTax(ctx, in)
 	require.NoError(t, err)
 
-	require.True(t, sonuc.RegionFound)
-	assert.Equal(t, eyalet.ID, sonuc.RegionID, "en özel bölge dönmeli")
-	assert.Equal(t, service.LocalProviderID, sonuc.ProviderID)
-	require.Len(t, sonuc.Items, 2)
+	require.True(t, result.RegionFound)
+	assert.Equal(t, province.ID, result.RegionID, "the most specific region must be returned")
+	assert.Equal(t, service.LocalProviderID, result.ProviderID)
+	require.Len(t, result.Items, 2)
 
-	assert.Equal(t, int32(100), sonuc.Items[0].RateBps, "eyaletin kuralı eşleşmeli")
-	assert.Equal(t, int64(100), sonuc.Items[0].TaxAmount)
-	assert.Equal(t, int32(2000), sonuc.Items[1].RateBps, "eşleşmeyen kalem ülkeye düşmeli")
-	assert.Equal(t, int64(399), sonuc.Items[1].TaxAmount, "1999 × %%20 = 399,8 -> 399 (AŞAĞI)")
-	assert.Equal(t, int64(0), sonuc.Shipping.TaxAmount, "kargo istenmedikçe vergilenmez")
-	assert.Equal(t, int64(499), sonuc.TaxTotal)
+	assert.Equal(t, int32(100), result.Items[0].RateBps, "the province's rule must match")
+	assert.Equal(t, int64(100), result.Items[0].TaxAmount)
+	assert.Equal(t, int32(2000), result.Items[1].RateBps, "an unmatched line falls to the country")
+	assert.Equal(t, int64(399), result.Items[1].TaxAmount, "1999 × %%20 = 399.8 -> 399 (DOWN)")
+	assert.Equal(t, int64(0), result.Shipping.TaxAmount, "shipping is not taxed unless asked for")
+	assert.Equal(t, int64(499), result.TaxTotal)
 
-	// Kargo açıkça istendiğinde varsayılan orana düşer.
+	// When shipping is asked for explicitly it falls to the default rate.
 	in.Shipping.Taxable = true
-	sonuc, err = svc.CalculateTax(ctx, in)
+	result, err = svc.CalculateTax(ctx, in)
 	require.NoError(t, err)
-	assert.Equal(t, int64(500), sonuc.Shipping.TaxAmount, "2500 × %%20")
-	assert.Equal(t, int64(999), sonuc.TaxTotal)
+	assert.Equal(t, int64(500), result.Shipping.TaxAmount, "2500 × %%20")
+	assert.Equal(t, int64(999), result.TaxTotal)
 
-	// Eyalet silinince zincir tek halkaya iner ve kitap da ülke oranına düşer.
-	require.NoError(t, svc.DeleteTaxRegion(ctx, eyalet.ID))
-	sonuc, err = svc.CalculateTax(ctx, in)
+	// With the province deleted the chain falls to one link and the book falls
+	// to the country's rate too.
+	require.NoError(t, svc.DeleteTaxRegion(ctx, province.ID))
+	result, err = svc.CalculateTax(ctx, in)
 	require.NoError(t, err)
-	assert.Equal(t, kok.ID, sonuc.RegionID)
-	assert.Equal(t, int32(2000), sonuc.Items[0].RateBps,
-		"silinen eyaletin oranı hesaba GİRMEMELİ")
+	assert.Equal(t, root.ID, result.RegionID)
+	assert.Equal(t, int32(2000), result.Items[0].RateBps,
+		"a deleted province's rate must NOT enter the calculation")
 }
 
-// TestHesapYapilandirilmamisUlkedeSifirDoner bölgesiz ülkenin gerçek
-// veritabanında da hata değil sıfır ürettiğini doğrular.
-func TestHesapYapilandirilmamisUlkedeSifirDoner(t *testing.T) {
+// TestAnUnconfiguredCountryReturnsZero proves a country with no region produces
+// zero rather than an error on the real database as well.
+func TestAnUnconfiguredCountryReturnsZero(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	sonuc, err := svc.CalculateTax(ctx, service.CalculateTaxInput{
-		CountryCode: benzersizUlke(t),
+	result, err := svc.CalculateTax(ctx, service.CalculateTaxInput{
+		CountryCode: uniqueCountry(t),
 		Items:       []service.TaxableItem{{ID: "li_1", Amount: 10_000}},
 	})
 	require.NoError(t, err)
-	assert.False(t, sonuc.RegionFound)
-	assert.Equal(t, int64(0), sonuc.TaxTotal)
+	assert.False(t, result.RegionFound)
+	assert.Equal(t, int64(0), result.TaxTotal)
 }
 
-// TestBolgeSilmeAgaciKapsar silmenin alt bölgeleri, oranları ve kuralları
-// GERÇEKTEN kapsadığını doğrular.
-func TestBolgeSilmeAgaciKapsar(t *testing.T) {
+// TestDeletingARegionCoversItsTree proves the delete REALLY covers sub-regions,
+// rates and rules.
+func TestDeletingARegionCoversItsTree(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	kok := yeniKokBolge(ctx, t, svc)
-	eyalet, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
-		CountryCode: kok.CountryCode, ProvinceCode: "35", ParentID: kok.ID,
+	root := newRootRegion(ctx, t, svc)
+	province, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
+		CountryCode: root.CountryCode, ProvinceCode: "35", ParentID: root.ID,
 	})
 	require.NoError(t, err)
-	oran, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
-		TaxRegionID: eyalet.ID, Name: "İndirimli", RateBps: 100,
+	rate, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
+		TaxRegionID: province.ID, Name: "Reduced", RateBps: 100,
 	})
 	require.NoError(t, err)
 	_, err = svc.CreateRateRule(ctx, service.CreateRateRuleInput{
-		TaxRateID: oran.ID, Reference: "product", ReferenceID: "prod_1",
+		TaxRateID: rate.ID, Reference: "product", ReferenceID: "prod_1",
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, svc.DeleteTaxRegion(ctx, kok.ID))
+	require.NoError(t, svc.DeleteTaxRegion(ctx, root.ID))
 
-	assert.Zero(t, sayim(ctx, t,
+	assert.Zero(t, countOf(ctx, t,
 		`SELECT count(*) FROM tax_region WHERE country_code = $1 AND deleted_at IS NULL`,
-		kok.CountryCode), "kök ve eyalet birlikte silinmeli")
-	assert.Zero(t, sayim(ctx, t,
-		`SELECT count(*) FROM tax_rate WHERE id = $1 AND deleted_at IS NULL`, oran.ID),
-		"alt bölgenin oranı da silinmeli")
-	assert.Zero(t, sayim(ctx, t,
-		`SELECT count(*) FROM tax_rate_rule WHERE tax_rate_id = $1 AND deleted_at IS NULL`, oran.ID),
-		"oranın kuralları da silinmeli")
+		root.CountryCode), "root and province must be deleted together")
+	assert.Zero(t, countOf(ctx, t,
+		`SELECT count(*) FROM tax_rate WHERE id = $1 AND deleted_at IS NULL`, rate.ID),
+		"the sub-region's rate must be deleted too")
+	assert.Zero(t, countOf(ctx, t,
+		`SELECT count(*) FROM tax_rate_rule WHERE tax_rate_id = $1 AND deleted_at IS NULL`, rate.ID),
+		"the rate's rules must be deleted too")
 
-	// Silinmiş satırlar TABLODA durur: yumuşak silme kaydı yok etmez.
-	assert.Equal(t, int64(2), sayim(ctx, t,
-		`SELECT count(*) FROM tax_region WHERE country_code = $1`, kok.CountryCode))
+	// The deleted rows STAY in the table: a soft delete does not destroy a
+	// record.
+	assert.Equal(t, int64(2), countOf(ctx, t,
+		`SELECT count(*) FROM tax_region WHERE country_code = $1`, root.CountryCode))
 }
 
-// TestInteropYuzeyiGercekVeriyleCalisir modüller arası yüzeyi gerçek
-// veritabanında doğrular.
-func TestInteropYuzeyiGercekVeriyleCalisir(t *testing.T) {
+// TestTheInteropSurfaceWorksOnRealData proves the cross-module surface against
+// a real database.
+func TestTheInteropSurfaceWorksOnRealData(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 	interop := service.NewInterop(svc)
 
-	kok := yeniKokBolge(ctx, t, svc)
+	root := newRootRegion(ctx, t, svc)
 	_, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
-		TaxRegionID: kok.ID, Name: "KDV", RateBps: 1800, IsDefault: true,
+		TaxRegionID: root.ID, Name: "VAT", RateBps: 1800, IsDefault: true,
 	})
 	require.NoError(t, err)
 
-	oran, bulundu, err := interop.RateForCountry(ctx, kok.CountryCode)
+	rate, found, err := interop.RateForCountry(ctx, root.CountryCode)
 	require.NoError(t, err)
-	assert.True(t, bulundu)
-	assert.Equal(t, int32(1800), oran)
+	assert.True(t, found)
+	assert.Equal(t, int32(1800), rate)
 
 	raw, err := interop.CalculateTaxJSON(ctx, []byte(
-		`{"country_code":"`+kok.CountryCode+`","items":[{"id":"li_1","amount":10000}]}`))
+		`{"country_code":"`+root.CountryCode+`","items":[{"id":"li_1","amount":10000}]}`))
 	require.NoError(t, err)
 	assert.JSONEq(t,
-		`{"region_id":"`+kok.ID+`","region_found":true,"provider_id":"local",
+		`{"region_id":"`+root.ID+`","region_found":true,"provider_id":"local",
 		  "prices_include_tax":false,"tax_total":1800,
-		  "items":[{"id":"li_1","rate_id":"`+ilkOranID(ctx, t, kok.ID)+`","rate_bps":1800,
+		  "items":[{"id":"li_1","rate_id":"`+defaultRateID(ctx, t, root.ID)+`","rate_bps":1800,
 		            "taxable_amount":10000,"tax_amount":1800}],
 		  "shipping":{"id":"_shipping","rate_id":"","rate_bps":0,"taxable_amount":0,"tax_amount":0}}`,
 		string(raw))
 }
 
-// ilkOranID bir bölgenin varsayılan oranının kimliğini döner.
-func ilkOranID(ctx context.Context, t *testing.T, regionID string) string {
+// defaultRateID returns the identifier of a region's default rate.
+func defaultRateID(ctx context.Context, t *testing.T, regionID string) string {
 	t.Helper()
 
 	var id string
@@ -826,13 +833,13 @@ func ilkOranID(ctx context.Context, t *testing.T, regionID string) string {
 	return id
 }
 
-// TestModulKaydiCozulebilir modülün container'a kaydettiği adların gerçekten
-// çözülebildiğini ve beklenen arayüzleri karşıladığını doğrular.
+// TestTheModuleRegistrationResolves proves the names the module registers in
+// the container really resolve and satisfy the expected interfaces.
 //
-// ADR 0001'in bedeli buydu: sağlayıcı ile tüketici arasında derleme zamanı
-// bağı yoktur, uyumsuzluk ancak çözüm anında görünür. Bu test o anı erkene
-// çeker.
-func TestModulKaydiCozulebilir(t *testing.T) {
+// This was the price of ADR 0001: there is no compile-time bond between
+// provider and consumer, so a mismatch shows up only at resolution time. This
+// test brings that moment forward.
+func TestTheModuleRegistrationResolves(t *testing.T) {
 	ctx := context.Background()
 	c := container.New(nil)
 	require.NoError(t, c.Provide("core.db", testPool))
@@ -841,89 +848,92 @@ func TestModulKaydiCozulebilir(t *testing.T) {
 	require.NoError(t, mod.Register(ctx, c))
 
 	svc, err := container.Resolve[*service.Service](c, "tax.service")
-	require.NoError(t, err, "servis, sabit adıyla çözülebilmeli")
+	require.NoError(t, err, "the service must resolve under its fixed name")
 	require.NotNil(t, svc)
 	assert.Equal(t, "tax.service", tax.ServiceName,
-		"servis adı değişirse tüketici modüller onu bulamaz")
+		"if the service name changes, consumer modules cannot find it")
 
-	// Sepet akışının (internal/workflows/cart) yazacağı DAR arayüz burada
-	// çözülür; tax import EDİLMEDEN yalnızca imzayla eşleşir (ADR 0001/0006).
-	// json.RawMessage BİREBİR kullanılmalıdır: []byte ile aynı temel tipe
-	// sahip olsa da adlandırılmış bir tiptir ve container'ın tip denetimi imza
-	// EŞİTLİĞİ arar. Tüketici tarafında "[]byte" yazmak, çözüm anında
-	// uyumsuzluk hatası demektir.
+	// The NARROW interface the cart workflow (internal/workflows/cart) will
+	// write is resolved here; it matches by signature alone, without importing
+	// tax (ADR 0001/0006). json.RawMessage must be used EXACTLY: it shares an
+	// underlying type with []byte but it is a named type, and the container's
+	// type check looks for signature EQUALITY. Writing "[]byte" on the consumer
+	// side means a mismatch error at resolution time.
 	type taxCalculator interface {
 		CalculateTaxJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
 		RateForCountry(ctx context.Context, countryCode string) (int32, bool, error)
 	}
-	hesaplayici, err := container.Resolve[taxCalculator](c, tax.InteropName)
-	require.NoError(t, err, "dar tüketici arayüzü interop yüzeyini karşılamalı")
+	calculator, err := container.Resolve[taxCalculator](c, tax.InteropName)
+	require.NoError(t, err, "the narrow consumer interface must satisfy the interop surface")
 
 	registry, err := container.Resolve[*service.ProviderRegistry](c, tax.ProvidersName)
-	require.NoError(t, err, "sağlayıcı kaydı adıyla çözülebilmeli")
+	require.NoError(t, err, "the provider registry must resolve under its name")
 	assert.Equal(t, []string{service.LocalProviderID}, registry.IDs())
 
-	// Ad, ADR 0004'ün kuralıyla ELDE hesaplanır: sağlayıcı "<entity>.query"
-	// adıyla aranır. Sabiti kullanmak testi totolojiye çevirirdi.
+	// The name is computed BY HAND from ADR 0004's rule: a provider is looked
+	// up as "<entity>.query". Using the constant would turn the test into a
+	// tautology.
 	provider, err := container.Resolve[query.Provider](c, "tax_region"+query.ProviderSuffix)
-	require.NoError(t, err, "Query sağlayıcısı adıyla çözülebilmeli (ADR 0004)")
+	require.NoError(t, err, "the Query provider must resolve under its name (ADR 0004)")
 	assert.Equal(t, "tax_region", provider.Entity(),
-		"kayıt adının öneki Entity() ile aynı olmalı")
+		"the prefix of the registered name must equal Entity()")
 
-	kok := yeniKokBolge(ctx, t, svc)
+	root := newRootRegion(ctx, t, svc)
 	_, err = svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
-		TaxRegionID: kok.ID, Name: "KDV", RateBps: 2000, IsDefault: true,
+		TaxRegionID: root.ID, Name: "VAT", RateBps: 2000, IsDefault: true,
 	})
 	require.NoError(t, err)
 
-	oran, bulundu, err := hesaplayici.RateForCountry(ctx, kok.CountryCode)
+	rate, found, err := calculator.RateForCountry(ctx, root.CountryCode)
 	require.NoError(t, err)
-	assert.True(t, bulundu)
-	assert.Equal(t, int32(2000), oran)
+	assert.True(t, found)
+	assert.Equal(t, int32(2000), rate)
 
-	// Asıl kanıt: çekirdeğin Query katmanı, modülü hiç tanımadan yalnızca
-	// entity adıyla sağlayıcıyı bulup veriyi çekebilmeli.
+	// The real proof: the core Query layer must find the provider by entity
+	// name alone, knowing nothing about the module, and pull the data.
 	records, err := query.New(nil, c, nil).Graph(ctx, query.GraphSpec{
 		Entity:  "tax_region",
-		Filters: map[string]any{"id": kok.ID},
+		Filters: map[string]any{"id": root.ID},
 	})
 	require.NoError(t, err)
 	require.Len(t, records, 1)
-	assert.Equal(t, kok.ID, records[0][query.IDField])
-	assert.Equal(t, kok.CountryCode, records[0]["country_code"])
+	assert.Equal(t, root.ID, records[0][query.IDField])
+	assert.Equal(t, root.CountryCode, records[0]["country_code"])
 
 	rates, ok := records[0]["rates"].([]map[string]any)
-	require.True(t, ok, "oranlar kayıtla birlikte dönmeli: %#v", records[0]["rates"])
+	require.True(t, ok, "the rates must come back with the record: %#v", records[0]["rates"])
 	require.Len(t, rates, 1)
 	assert.Equal(t, int32(2000), rates[0]["rate_bps"])
 }
 
-// kilitBekleyenSayisi satır kilidinde bekleyen istek sayısını döner.
-func kilitBekleyenSayisi(ctx context.Context, t *testing.T) int64 {
+// lockWaiterCount returns how many requests are waiting on a row lock.
+func lockWaiterCount(ctx context.Context, t *testing.T) int64 {
 	t.Helper()
 
-	return sayim(ctx, t,
+	return countOf(ctx, t,
 		`SELECT count(*) FROM pg_stat_activity
          WHERE datname = current_database()
            AND wait_event_type = 'Lock'
            AND pid <> pg_backend_pid()`)
 }
 
-// requireKilitBekleyen bir isteğin gerçekten kilitte beklediğini doğrular.
+// requireLockWaiter proves a request is really waiting on a lock.
 //
-// Uyku yerine BEKLEME DURUMUNA bakılır: sabit bir uyku ya yavaş makinede erken
-// uyanıp testi kırılgan yapardı, ya da her koşuya boş bekleme eklerdi.
-func requireKilitBekleyen(ctx context.Context, t *testing.T) {
+// It watches the WAIT STATE rather than sleeping: a fixed sleep would either
+// wake early on a slow machine and make the test flaky, or add idle waiting to
+// every run.
+func requireLockWaiter(ctx context.Context, t *testing.T) {
 	t.Helper()
 
 	require.Eventually(t, func() bool {
-		return kilitBekleyenSayisi(ctx, t) > 0
-	}, 10*time.Second, 10*time.Millisecond, "istek satır kilidinde beklemeliydi")
+		return lockWaiterCount(ctx, t) > 0
+	}, 10*time.Second, 10*time.Millisecond, "the request should have waited on a row lock")
 }
 
-// kilitleyenIslem verilen bölge satırını TEKİL kilitleyen bir işlem açar ve
-// işlemi döner; çağıran onu ya commit eder ya da defer ile geri alır.
-func kilitleyenIslem(ctx context.Context, t *testing.T, regionID string) (pgx.Tx, func()) {
+// lockingTx opens a transaction that holds an EXCLUSIVE lock on the given
+// region row and returns it; the caller either commits it or rolls it back with
+// the returned release.
+func lockingTx(ctx context.Context, t *testing.T, regionID string) (pgx.Tx, func()) {
 	t.Helper()
 
 	conn, err := testPool.Pool().Acquire(ctx)
@@ -935,9 +945,9 @@ func kilitleyenIslem(ctx context.Context, t *testing.T, regionID string) (pgx.Tx
 		require.NoError(t, err)
 	}
 
-	var kilitli string
+	var locked string
 	require.NoError(t, tx.QueryRow(ctx,
-		`SELECT id FROM tax_region WHERE id = $1 FOR UPDATE`, regionID).Scan(&kilitli))
+		`SELECT id FROM tax_region WHERE id = $1 FOR UPDATE`, regionID).Scan(&locked))
 
 	return tx, func() {
 		_ = tx.Rollback(ctx)
@@ -945,242 +955,251 @@ func kilitleyenIslem(ctx context.Context, t *testing.T, regionID string) (pgx.Tx
 	}
 }
 
-// TestIslemIkiYazmayiBirlikteGeriAlir iki AYRI depo çağrısının tek bir işlemde
-// birleşebildiğini ve birlikte geri alındığını doğrular.
+// TestATransactionRollsBackBothWrites proves two SEPARATE repository calls can
+// join one transaction and are rolled back together.
 //
-// D6'NIN ASIL KANITI BUDUR. Depo işlemi bu paketin İÇİNDE, yalnızca
-// `func(q *taxdb.Queries) error` alan özel bir yardımcıyken bu test
-// YAZILAMAZDI: tutamağı yalnızca depo üretebiliyordu, dışarıya veremiyordu ve
-// iki depo çağrısı zorunlu olarak iki ayrı işlemde koşuyordu. Şimdi işlem
-// context'te taşınıyor ve çerçeveyi servis kuruyor.
+// THIS IS THE REAL PROOF OF D6. While the repository transaction lived INSIDE
+// that package, behind a private helper taking only `func(q *taxdb.Queries)
+// error`, this test COULD NOT BE WRITTEN: only the repository could produce the
+// handle, it could not hand it out, and two repository calls necessarily ran in
+// two separate transactions. The transaction now travels in the context and the
+// service opens the frame.
 //
-// Test üç şeyi birden gösterir ve üçü de ayrı ayrı gereklidir:
+// The test shows three things at once, and all three are needed:
 //
-//   - İki farklı depo metodu (bölge yazma, oran yazma) AYNI işlemde koşar.
-//   - İşlem İÇİNDEKİ bir okuma, henüz commit edilmemiş yazmaları GÖRÜR —
-//     yani context gerçekten işlemi taşır; iki ayrı bağlantı olsaydı okuma
-//     hiçbirini göremezdi ve test yine "yeşil" görünürdü.
-//   - Hata dönüldüğünde İKİ satır da geri alınır; tabloda hiç izi kalmaz.
-func TestIslemIkiYazmayiBirlikteGeriAlir(t *testing.T) {
+//   - Two different repository methods (writing a region, writing a rate) run
+//     in the SAME transaction.
+//   - A read INSIDE the transaction SEES writes that are not committed yet —
+//     that is, the context really carries the transaction; on two separate
+//     connections the read would see neither and the test would still look
+//     "green".
+//   - When an error is returned BOTH rows are rolled back; no trace is left in
+//     the tables.
+func TestATransactionRollsBackBothWrites(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 	repo := repository.New(testPool.Pool())
 
-	kok := yeniKokBolge(ctx, t, svc)
+	root := newRootRegion(ctx, t, svc)
 
 	now := time.Now().UTC()
-	eyaletKodu := "77"
-	eyalet := models.TaxRegion{
+	provinceCode := "77"
+	province := models.TaxRegion{
 		ID:           models.NewTaxRegionID(now),
-		CountryCode:  kok.CountryCode,
-		ProvinceCode: &eyaletKodu,
-		ParentID:     &kok.ID,
+		CountryCode:  root.CountryCode,
+		ProvinceCode: &provinceCode,
+		ParentID:     &root.ID,
 	}
-	oran := models.TaxRate{
+	rate := models.TaxRate{
 		ID:          models.NewTaxRateID(now),
-		TaxRegionID: eyalet.ID,
-		Name:        "KDV",
+		TaxRegionID: province.ID,
+		Name:        "VAT",
 		RateBps:     2000,
 		IsDefault:   true,
 	}
 
-	const kasitliKod = "kasitli_hata"
+	const deliberateCode = "deliberate_failure"
 	err := repo.WithTx(ctx, func(ctx context.Context) error {
-		if _, txErr := repo.CreateTaxRegion(ctx, eyalet, now); txErr != nil {
+		if _, txErr := repo.CreateTaxRegion(ctx, province, now); txErr != nil {
 			return txErr
 		}
-		// Oran, aynı işlemde yazılan eyalete bağlanır: foreign key ancak
-		// ikisi TEK işlemdeyse sağlanır, ayrı işlemlerde ikinci yazma
-		// commit edilmemiş bir satıra referans veremezdi.
-		if _, txErr := repo.CreateTaxRate(ctx, oran, now); txErr != nil {
+		// The rate points at the province written in the same transaction: the
+		// foreign key holds only if the two are in ONE transaction; in separate
+		// ones the second write could not reference an uncommitted row.
+		if _, txErr := repo.CreateTaxRate(ctx, rate, now); txErr != nil {
 			return txErr
 		}
 
-		okunan, txErr := repo.GetTaxRegion(ctx, eyalet.ID)
+		read, txErr := repo.GetTaxRegion(ctx, province.ID)
 		if txErr != nil {
 			return txErr
 		}
-		require.Equal(t, eyalet.ID, okunan.ID,
-			"işlem içindeki okuma, aynı işlemin yazdığı satırı görmeli")
+		require.Equal(t, province.ID, read.ID,
+			"a read inside the transaction must see the row that transaction wrote")
 
-		return errors.Internal(kasitliKod, "işlemi geri almak için kasıtlı hata")
+		return errors.Internal(deliberateCode, "a deliberate error, to roll the transaction back")
 	})
 
 	require.Error(t, err)
-	assert.Equal(t, kasitliKod, errors.CodeOf(err), "hata olduğu gibi yukarı geçmeli")
+	assert.Equal(t, deliberateCode, errors.CodeOf(err), "the error must pass upward as it is")
 
-	assert.Zero(t, sayim(ctx, t,
-		`SELECT count(*) FROM tax_region WHERE id = $1`, eyalet.ID),
-		"birinci yazma geri alınmalı")
-	assert.Zero(t, sayim(ctx, t,
-		`SELECT count(*) FROM tax_rate WHERE id = $1`, oran.ID),
-		"ikinci yazma geri alınmalı")
+	assert.Zero(t, countOf(ctx, t,
+		`SELECT count(*) FROM tax_region WHERE id = $1`, province.ID),
+		"the first write must be rolled back")
+	assert.Zero(t, countOf(ctx, t,
+		`SELECT count(*) FROM tax_rate WHERE id = $1`, rate.ID),
+		"the second write must be rolled back")
 }
 
-// TestIslemsizIkiYazmaYarimKalir yukarıdaki iddianın DİŞİ OLDUĞUNU gösterir.
+// TestWithoutATransactionTwoWritesLeaveHalfState shows the claim above HAS
+// TEETH.
 //
-// Kontrol testi olmadan [TestIslemIkiYazmayiBirlikteGeriAlir] "geri alma
-// çalışıyor" ile "yazma hiç olmuyor" arasındaki farkı ayırt edemezdi. Burada
-// aynı iki yazma İŞLEM ÇERÇEVESİ OLMADAN yapılır; ikincisi veritabanı kısıtına
-// takılır ve BİRİNCİSİ YERİNDE KALIR. Bu, çerçeve eklenmeden önce servisin
-// yaptığı şeydir.
-func TestIslemsizIkiYazmaYarimKalir(t *testing.T) {
+// Without this control test [TestATransactionRollsBackBothWrites] could not
+// tell "the rollback works" from "the write never happens". Here the same two
+// writes are made WITH NO TRANSACTION FRAME; the second hits a database
+// constraint and THE FIRST STAYS WHERE IT IS. That is what the service did
+// before the frame was added.
+func TestWithoutATransactionTwoWritesLeaveHalfState(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 	repo := repository.New(testPool.Pool())
 
-	kok := yeniKokBolge(ctx, t, svc)
+	root := newRootRegion(ctx, t, svc)
 
 	now := time.Now().UTC()
-	eyaletKodu := "78"
-	eyalet := models.TaxRegion{
+	provinceCode := "78"
+	province := models.TaxRegion{
 		ID:           models.NewTaxRegionID(now),
-		CountryCode:  kok.CountryCode,
-		ProvinceCode: &eyaletKodu,
-		ParentID:     &kok.ID,
+		CountryCode:  root.CountryCode,
+		ProvinceCode: &provinceCode,
+		ParentID:     &root.ID,
 	}
-	_, err := repo.CreateTaxRegion(ctx, eyalet, now)
+	_, err := repo.CreateTaxRegion(ctx, province, now)
 	require.NoError(t, err)
 
-	// İkinci yazma tax_rate_bps_check kısıtına takılır: oran %100'ü aşamaz.
+	// The second write hits tax_rate_bps_check: a rate cannot exceed 100%.
 	_, err = repo.CreateTaxRate(ctx, models.TaxRate{
 		ID:          models.NewTaxRateID(now),
-		TaxRegionID: eyalet.ID,
-		Name:        "Geçersiz",
+		TaxRegionID: province.ID,
+		Name:        "Invalid",
 		RateBps:     models.MaxRateBps + 1,
 	}, now)
 	require.Error(t, err)
 
-	assert.Equal(t, int64(1), sayim(ctx, t,
-		`SELECT count(*) FROM tax_region WHERE id = $1`, eyalet.ID),
-		"işlemsiz yazma geri alınmaz; yarım durum tam olarak budur")
+	assert.Equal(t, int64(1), countOf(ctx, t,
+		`SELECT count(*) FROM tax_region WHERE id = $1`, province.ID),
+		"a write outside a transaction is not rolled back; half state is exactly this")
 }
 
-// TestKilitIslemDisindaAlinamaz kilidin işlemsiz kullanımını yasaklar.
+// TestTheLockCannotBeTakenOutsideATransaction forbids using the lock without a
+// transaction.
 //
-// FOR SHARE kilidi işlem bitince serbest kalır: işlemsiz alınan bir kilit
-// hiçbir şeyi korumaz ama koruduğu SANILIR. Sessizce kilitsiz bir okumaya
-// dönmek, aşağıdaki iki testin koruduğu kuralı fark edilmeden kapatırdı.
-func TestKilitIslemDisindaAlinamaz(t *testing.T) {
+// A FOR SHARE lock is released when its transaction ends: a lock taken outside
+// one protects nothing while it is BELIEVED to protect something. Falling
+// silently back to an unlocked read would close the rule the two tests below
+// guard, and nobody would notice.
+func TestTheLockCannotBeTakenOutsideATransaction(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 	repo := repository.New(testPool.Pool())
 
-	kok := yeniKokBolge(ctx, t, svc)
+	root := newRootRegion(ctx, t, svc)
 
-	_, err := repo.LockTaxRegion(ctx, kok.ID)
-	require.Error(t, err, "kilit işlem dışında alınamamalı")
+	_, err := repo.LockTaxRegion(ctx, root.ID)
+	require.Error(t, err, "the lock must not be available outside a transaction")
 	assert.Equal(t, repository.CodeTxRequired, errors.CodeOf(err))
 	assert.Equal(t, errors.KindInternal, errors.KindOf(err),
-		"bu bir programlama hatasıdır, istemci girdisi değil")
+		"this is a programming fault, not client input")
 
-	// Aynı çağrı işlem İÇİNDE çalışır.
+	// The same call works INSIDE a transaction.
 	require.NoError(t, repo.WithTx(ctx, func(ctx context.Context) error {
-		kilitli, txErr := repo.LockTaxRegion(ctx, kok.ID)
+		locked, txErr := repo.LockTaxRegion(ctx, root.ID)
 		if txErr != nil {
 			return txErr
 		}
-		assert.Equal(t, kok.ID, kilitli.ID)
+		assert.Equal(t, root.ID, locked.ID)
 		return nil
 	}))
 }
 
-// TestEyaletSilinmekteOlanKokeEklenemez ebeveyn denetiminin yazmayla AYNI
-// işlemde ve kilit ALTINDA yapıldığını belirlenimci biçimde doğrular.
+// TestAProvinceCannotJoinARootBeingDeleted proves deterministically that the
+// parent check happens in the SAME transaction as the write and UNDER the lock.
 //
-// Kurgu yarışın kaybeden tarafını zamanlamaya bırakmadan üretir:
+// The setup produces the losing side of the race without leaving it to timing:
 //
-//  1. Rakip bir işlem kök bölge satırını TEKİL kilitler.
-//  2. Eyalet ekleme başlar ve kök kilidinde BEKLER.
-//  3. Rakip işlem kökü yumuşak siler ve commit eder.
-//  4. Bekleyen istek uyanır; FOR SHARE kilidi alındıktan sonra WHERE koşulu
-//     (deleted_at IS NULL) YENİDEN değerlendirilir ve satır "yok" görünür.
+//  1. A rival transaction takes an EXCLUSIVE lock on the root region row.
+//  2. The province insert starts and WAITS on the root's lock.
+//  3. The rival transaction soft-deletes the root and commits.
+//  4. The waiting request wakes; after the FOR SHARE lock is taken the WHERE
+//     clause (deleted_at IS NULL) is re-evaluated and the row looks "gone".
 //
-// Denetim kilitsiz ve ayrı bir işlemde yapılsaydı — çerçeve eklenmeden önceki
-// durum — istek 2. adımda kökü CANLI okur, hiç beklemez ve eyaleti SİLİNMİŞ
-// bir köke bağlardı. Foreign key bunu yakalamaz: silme yumuşaktır, kök satırı
-// yerinde durur. Sonuç yalnızca yetim bir satır değildir — ResolveTaxRegions
-// eyalet satırını KENDİ BAŞINA eşleştirir, yani o eyaletteki her sepet
-// operatörün sildiğini sandığı bir bölgeden vergilenmeye devam ederdi; ülkeye
-// yeni bir kök açıldıktan sonra bile, çünkü zincir en özelden genele yürür ve
-// eyalet başta gelir.
-func TestEyaletSilinmekteOlanKokeEklenemez(t *testing.T) {
+// Had the check been unlocked and in a separate transaction — the state before
+// the frame was added — the request would read the root LIVE at step 2, never
+// wait, and attach the province to a DELETED root. The foreign key does not
+// catch this: the delete is soft and the root row stays in place. The result is
+// not merely an orphan row — ResolveTaxRegions matches the province row ON ITS
+// OWN, so every cart in that province would keep being taxed from a region the
+// operator believes they deleted; even after a new root is opened for the
+// country, because the chain walks from most specific to most general and the
+// province comes first.
+func TestAProvinceCannotJoinARootBeingDeleted(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	kok := yeniKokBolge(ctx, t, svc)
+	svc := newService(t)
+	root := newRootRegion(ctx, t, svc)
 
-	tx, kapat := kilitleyenIslem(ctx, t, kok.ID)
-	defer kapat()
+	tx, release := lockingTx(ctx, t, root.ID)
+	defer release()
 
-	sonuc := make(chan error, 1)
+	result := make(chan error, 1)
 	go func() {
 		_, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
-			CountryCode: kok.CountryCode, ProvinceCode: "34", ParentID: kok.ID,
+			CountryCode: root.CountryCode, ProvinceCode: "34", ParentID: root.ID,
 		})
-		sonuc <- err
+		result <- err
 	}()
 
-	requireKilitBekleyen(ctx, t)
+	requireLockWaiter(ctx, t)
 
 	_, err := tx.Exec(ctx,
-		`UPDATE tax_region SET deleted_at = now(), updated_at = now() WHERE id = $1`, kok.ID)
+		`UPDATE tax_region SET deleted_at = now(), updated_at = now() WHERE id = $1`, root.ID)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit(ctx))
 
 	select {
-	case ekleErr := <-sonuc:
-		require.Error(t, ekleErr, "silinmiş köke eyalet eklenememeli")
-		assert.Equal(t, errors.KindNotFound, errors.KindOf(ekleErr))
+	case createErr := <-result:
+		require.Error(t, createErr, "a province must not join a deleted root")
+		assert.Equal(t, errors.KindNotFound, errors.KindOf(createErr))
 	case <-time.After(15 * time.Second):
-		t.Fatal("bekleyen istek zamanında tamamlanmadı")
+		t.Fatal("the waiting request did not finish in time")
 	}
 
-	assert.Zero(t, sayim(ctx, t,
-		`SELECT count(*) FROM tax_region WHERE parent_id = $1`, kok.ID),
-		"eyalet satırı hiç yazılmamalı")
+	assert.Zero(t, countOf(ctx, t,
+		`SELECT count(*) FROM tax_region WHERE parent_id = $1`, root.ID),
+		"the province row must never be written")
 }
 
-// TestOranSilinmekteOlanBolgeyeEklenemez oran ekleme yolunun aynı korumayı
-// aldığını doğrular.
+// TestARateCannotJoinARegionBeingDeleted proves the rate insert path takes the
+// same protection.
 //
-// Kurgu [TestEyaletSilinmekteOlanKokeEklenemez] ile aynıdır; kanıtladığı şey
-// farklıdır. repository.DeleteTaxRegion'ın godoc'u kilidin "aynı bölgeye
-// eşzamanlı bir oran ekleme akışıyla yarışı engellediğini", çünkü "oran ekleyen
-// akışın da bölgeyi paylaşımlı kilitle okuduğunu" söylüyordu. ÖLÇÜLDÜ: modülde
-// FOR SHARE alan tek bir sorgu bile yoktu, oran ekleme bölgeyi kilitsiz ve AYRI
-// bir işlemde okuyordu. Cümle bugün doğrudur ve bu test onu bağlar.
-func TestOranSilinmekteOlanBolgeyeEklenemez(t *testing.T) {
+// The setup is the same as [TestAProvinceCannotJoinARootBeingDeleted]; what it
+// proves is different. The godoc on repository.DeleteTaxRegion said the lock
+// "stops the race with a concurrent rate insert into the same region", because
+// "the rate insert reads the region under a shared lock too". IT WAS MEASURED:
+// there was not a single FOR SHARE query in the module, and the rate insert read
+// the region unlocked and in a SEPARATE transaction. The sentence is true today,
+// and this test binds it.
+func TestARateCannotJoinARegionBeingDeleted(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	kok := yeniKokBolge(ctx, t, svc)
+	svc := newService(t)
+	root := newRootRegion(ctx, t, svc)
 
-	tx, kapat := kilitleyenIslem(ctx, t, kok.ID)
-	defer kapat()
+	tx, release := lockingTx(ctx, t, root.ID)
+	defer release()
 
-	sonuc := make(chan error, 1)
+	result := make(chan error, 1)
 	go func() {
 		_, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
-			TaxRegionID: kok.ID, Name: "KDV", RateBps: 2000, IsDefault: true,
+			TaxRegionID: root.ID, Name: "VAT", RateBps: 2000, IsDefault: true,
 		})
-		sonuc <- err
+		result <- err
 	}()
 
-	requireKilitBekleyen(ctx, t)
+	requireLockWaiter(ctx, t)
 
 	_, err := tx.Exec(ctx,
-		`UPDATE tax_region SET deleted_at = now(), updated_at = now() WHERE id = $1`, kok.ID)
+		`UPDATE tax_region SET deleted_at = now(), updated_at = now() WHERE id = $1`, root.ID)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit(ctx))
 
 	select {
-	case ekleErr := <-sonuc:
-		require.Error(t, ekleErr, "silinmiş bölgeye oran eklenememeli")
-		assert.Equal(t, errors.KindNotFound, errors.KindOf(ekleErr))
+	case createErr := <-result:
+		require.Error(t, createErr, "a rate must not join a deleted region")
+		assert.Equal(t, errors.KindNotFound, errors.KindOf(createErr))
 	case <-time.After(15 * time.Second):
-		t.Fatal("bekleyen istek zamanında tamamlanmadı")
+		t.Fatal("the waiting request did not finish in time")
 	}
 
-	assert.Zero(t, sayim(ctx, t,
-		`SELECT count(*) FROM tax_rate WHERE tax_region_id = $1`, kok.ID),
-		"oran satırı hiç yazılmamalı")
+	assert.Zero(t, countOf(ctx, t,
+		`SELECT count(*) FROM tax_rate WHERE tax_region_id = $1`, root.ID),
+		"the rate row must never be written")
 }

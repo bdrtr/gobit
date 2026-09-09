@@ -193,6 +193,5 @@ internal/modules/tax/service/service_test.go
 internal/modules/tax/service/taxprovider.go
 internal/modules/tax/service/validate.go
 internal/modules/tax/service/validate_test.go
-internal/modules/tax/tax_integration_test.go
 plugins/paymentstripe/plugin.go
 plugins/paymentstripe/plugin_test.go

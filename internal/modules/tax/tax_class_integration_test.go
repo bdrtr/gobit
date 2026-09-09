@@ -1,9 +1,5 @@
 //go:build integration
 
-// This file is English because ADR 0012 makes language a property of the FILE
-// and every new file is English; tax_integration_test.go beside it stays
-// Turkish and lends its harness.
-//
 // The tests here run against a real PostgreSQL; to run them:
 // make test-integration
 //
@@ -32,7 +28,7 @@ func newTaxClass(ctx context.Context, t *testing.T, svc *service.Service) models
 	t.Helper()
 
 	class, err := svc.CreateTaxClass(ctx, service.CreateTaxClassInput{
-		Name: "Class " + t.Name() + benzersizUlke(t),
+		Name: "Class " + t.Name() + uniqueCountry(t),
 	})
 	require.NoError(t, err, "the fixture tax class could not be created")
 
@@ -47,7 +43,7 @@ func newTaxClass(ctx context.Context, t *testing.T, svc *service.Service) models
 // this is the proof that the DATABASE is what makes the move the only outcome.
 func TestAProductIsInAtMostOneClassOnTheRealSchema(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
 	books := newTaxClass(ctx, t, svc)
 	electronics := newTaxClass(ctx, t, svc)
@@ -74,7 +70,7 @@ func TestAProductIsInAtMostOneClassOnTheRealSchema(t *testing.T) {
 // TestASecondLiveClassCannotTakeTheSameName holds the name an operator picks by.
 func TestASecondLiveClassCannotTakeTheSameName(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
 	first := newTaxClass(ctx, t, svc)
 
@@ -95,9 +91,9 @@ func TestASecondLiveClassCannotTakeTheSameName(t *testing.T) {
 // side accepts it — the two vocabularies have to say the same thing.
 func TestAClassRuleIsAcceptedByTheWidenedVocabulary(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	country := benzersizUlke(t)
+	country := uniqueCountry(t)
 	region, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{CountryCode: country})
 	require.NoError(t, err)
 
@@ -148,14 +144,14 @@ func TestAMembershipCannotNameAClassThatIsNotThere(t *testing.T) {
 // — the same trick tax_region_parent_fk uses one table up.
 func TestAStackLivesInsideOneRegionOnTheRealSchema(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
 	first, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
-		CountryCode: benzersizUlke(t),
+		CountryCode: uniqueCountry(t),
 	})
 	require.NoError(t, err)
 	second, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
-		CountryCode: benzersizUlke(t),
+		CountryCode: uniqueCountry(t),
 	})
 	require.NoError(t, err)
 
@@ -179,10 +175,10 @@ func TestAStackLivesInsideOneRegionOnTheRealSchema(t *testing.T) {
 // same line could be taxed two ways.
 func TestOnlyOneRateStandsOnAnyRate(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
 	region, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
-		CountryCode: benzersizUlke(t),
+		CountryCode: uniqueCountry(t),
 	})
 	require.NoError(t, err)
 
@@ -212,10 +208,10 @@ func TestOnlyOneRateStandsOnAnyRate(t *testing.T) {
 // compound been nullable.
 func TestARateCannotCompoundWithNothingUnderIt(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
 	region, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
-		CountryCode: benzersizUlke(t),
+		CountryCode: uniqueCountry(t),
 	})
 	require.NoError(t, err)
 

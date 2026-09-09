@@ -1,8 +1,5 @@
 package service
 
-// This file is English because ADR 0012 makes language a property of the FILE
-// and every new file is English; the files beside it stay Turkish.
-
 import (
 	"context"
 
@@ -34,7 +31,7 @@ func (s *Service) assertStackable(
 		// this says it with the word the operator used.
 		if compound {
 			return errors.Invalid(CodeStackNotAllowed,
-				"bir oran ancak BAŞKA bir oranın üstünde dururken bileşik olabilir")
+				"a rate can only be compound while it stands on ANOTHER rate")
 		}
 
 		return nil
@@ -44,8 +41,8 @@ func (s *Service) assertStackable(
 		// The default is what applies when no rule matched, so it is chosen
 		// directly; a stacked rate is never chosen. One row cannot be both.
 		return errors.Invalid(CodeStackNotAllowed,
-			"varsayılan oran başka bir oranın üstünde duramaz: varsayılan SEÇİLİR, "+
-				"üstte duran oran ise seçilenin genişletilmesiyle uygulanır")
+			"the default rate cannot stand on another rate: the default is CHOSEN, "+
+				"while a standing rate applies by expanding what was chosen")
 	}
 
 	rates, err := s.repo.ListTaxRates(ctx, regionID)
@@ -70,12 +67,12 @@ func (s *Service) assertStackable(
 		// The foreign key is composite and would refuse this too, with a
 		// constraint name. Saying it here says WHICH id and why.
 		return errors.Invalid(CodeStackNotAllowed,
-			"üstünde durulacak oran bu bölgede yok: %s", stacksOnID)
+			"the rate to stand on is not in this region: %s", stacksOnID)
 	}
 	if _, taken := standing[stacksOnID]; taken {
 		return errors.Conflict(CodeStackNotAllowed,
-			"%s oranının üstünde zaten bir oran duruyor; bir yığın LİSTEDİR, "+
-				"iki dal olamaz", stacksOnID)
+			"a rate already stands on %s; a stack is a LIST and cannot "+
+				"branch in two", stacksOnID)
 	}
 
 	if err := s.assertNoRules(ctx, base.ID); err != nil {
@@ -94,7 +91,7 @@ func (s *Service) assertStackable(
 	for current := base; ; {
 		if seen[current.ID] {
 			return errors.Conflict(CodeStackNotAllowed,
-				"vergi oranı yığını kendine dönüyor: %s", current.ID)
+				"the tax rate stack turns back on itself: %s", current.ID)
 		}
 		seen[current.ID] = true
 		chain = append(chain, current)
@@ -108,7 +105,7 @@ func (s *Service) assertStackable(
 			// a hand-written write). The chain cannot be priced, and guessing
 			// its missing half would price a stack nobody configured.
 			return errors.Conflict(CodeStackNotAllowed,
-				"%s oranının üstünde durduğu oran bu bölgede yok: %s",
+				"the rate %s stands on is not in this region: %s",
 				current.ID, *current.StacksOnID)
 		}
 		current = below
@@ -121,7 +118,7 @@ func (s *Service) assertStackable(
 
 	if len(chain) > maxStackDepth {
 		return errors.Conflict(CodeStackNotAllowed,
-			"bir yığın en fazla %d bileşen taşıyabilir; bu yazma %d yapardı",
+			"a stack carries at most %d components; this write would make it %d",
 			maxStackDepth, len(chain))
 	}
 
@@ -142,7 +139,7 @@ func (s *Service) assertNoRules(ctx context.Context, rateID string) error {
 	}
 	if len(rules) > 0 {
 		return errors.Conflict(CodeStackNotAllowed,
-			"%s oranının kuralları var; kurallı bir oranın üstüne yığın kurulamaz",
+			"rate %s carries rules; a stack cannot be built on a ruled rate",
 			rateID)
 	}
 
@@ -162,8 +159,9 @@ func (s *Service) assertExclusiveRegion(ctx context.Context, regionID string) er
 	}
 	if pricesIncludeTax(chain) {
 		return errors.Conflict(CodeStackNotAllowed,
-			"bu bölgede fiyatlar vergi DAHİL yazılıyor; kapsayıcı fiyatta ters hesap "+
-				"tek orana göre tanımlıdır (ADR 0086) ve yığın kurulamaz")
+			"prices in this region are written tax INCLUSIVE; on an inclusive price "+
+				"the reverse calculation is defined for a single rate (ADR 0086), "+
+				"so no stack can be built")
 	}
 
 	return nil
@@ -204,8 +202,9 @@ func assertStackWithinBase(chain []models.TaxRate) error {
 
 	if taken > notionalBase {
 		return errors.Conflict(CodeStackExceedsBase,
-			"bu yığın satırın kendisinden fazlasını alırdı (%d birimde %d); "+
-				"oranların toplamı satırı aşamaz", notionalBase, taken)
+			"this stack would take more than the line itself (out of %d units it "+
+				"takes %d); the rates together cannot exceed the line",
+			notionalBase, taken)
 	}
 
 	return nil
@@ -266,8 +265,9 @@ func (s *Service) assertNoStackedRate(
 	for i := range rates {
 		if rates[i].StacksOnID != nil {
 			return errors.Conflict(CodeStackNotAllowed,
-				"bu bölgenin üstünde yığınlı bir oran var (%s); fiyatların vergi DAHİL "+
-					"yazıldığı bir bölge yığının üzerine açılamaz (ADR 0086)", rates[i].ID)
+				"the parent region carries a stacked rate (%s); a region whose prices "+
+					"are written tax INCLUSIVE cannot be opened over a stack "+
+					"(ADR 0086)", rates[i].ID)
 		}
 	}
 
