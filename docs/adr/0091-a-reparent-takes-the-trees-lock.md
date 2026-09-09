@@ -35,10 +35,11 @@ Two reparents never run at the same time. That is the price and it is small: a
 reparent is an operator action made by hand, and the lock is held for one
 statement.
 
-The key is class 2 in the convention the order module's spending lock
-introduced, because the advisory key space is one across the whole database and
-two unrelated locks that picked the same number would hold each other up with
-nothing to notice it.
+The key is class 3 in the convention the order module's spending lock
+introduced. It was written as class 2 first, which the job scheduler has held
+since it was written; the gate added with this record caught it on its first run
+(D47), because the advisory key space is one across the whole database and two
+unrelated locks on one number hold each other up with nothing to notice it.
 
 The race test now runs twenty rounds instead of one. Without the lock an
 unprotected tree closes a ring in better than 99.9% of runs, so the test fails

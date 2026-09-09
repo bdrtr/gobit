@@ -66,6 +66,7 @@ import (
 //	             which occupies the whole of class 0
 //	1            the order module's per-customer spending lock
 //	0x6C696E6B   the link module's declaration lock ("link_def")
+//	3            the product module's category reparent lock (ADR 0091)
 //
 // Class 0 is the one that matters. golang-migrate waits on its lock with
 // pg_advisory_lock on context.Background(), so the wait is unbounded AND

@@ -177,7 +177,8 @@ func (r *Repo) UpdateCategory(ctx context.Context, id string, in UpdateCategory)
 // information — it is a concurrency primitive.
 const advisoryLockSQL = `SELECT pg_advisory_xact_lock($1)`
 
-// categoryReparentLockKey is the key every category reparent serializes on.
+// categoryReparentLockClass is the CLASS number of the reparent lock, written
+// into the upper 32 bits of the key.
 //
 // # Why one key for the whole tree
 //
@@ -190,10 +191,19 @@ const advisoryLockSQL = `SELECT pg_advisory_xact_lock($1)`
 // # The key space is shared by the whole database
 //
 // The upper 32 bits are a CLASS number, the convention the order module's
-// spending lock introduced (class 1); this is class 2. Without the class, two
-// unrelated locks that happened to pick the same number would hold each other
-// up, and neither side would have any way to notice.
-const categoryReparentLockKey int64 = 2 << 32
+// spending lock introduced (class 1); this is class 3, because 2 is the job
+// scheduler's and 0 is golang-migrate's. Without the class, two unrelated locks
+// that happened to pick the same number would hold each other up, and neither
+// side would have any way to notice — which is what happened on the way in
+// (D47), and what internal/arch/advisory_lock_test.go now refuses.
+const categoryReparentLockClass int64 = 3
+
+// categoryReparentLockKey is the key every category reparent serializes on.
+//
+// The lower 32 bits are zero because there is ONE tree: unlike the spending
+// lock, which keys on a customer, there is nothing here to tell two locks
+// apart.
+const categoryReparentLockKey int64 = categoryReparentLockClass << 32
 
 // updateCategoryRow runs the update statement itself.
 func (r *Repo) updateCategoryRow(
