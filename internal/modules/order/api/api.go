@@ -110,6 +110,10 @@ type Orders interface {
 	Timeline(ctx context.Context, orderID string) ([]service.TimelineEntry, error)
 	// StorefrontTimeline returns the moments a CUSTOMER may see on their order.
 	StorefrontTimeline(ctx context.Context, orderID string) ([]service.TimelineEntry, error)
+	// CreateCreditLine writes off part of what the order owes.
+	CreateCreditLine(ctx context.Context, orderID string, in service.CreateCreditLineInput) (models.OrderCreditLine, error)
+	// ListCreditLines returns the order's credit lines, oldest first.
+	ListCreditLines(ctx context.Context, orderID string) ([]models.OrderCreditLine, error)
 	// PaymentOf returns the LIVE payment collection bound to the order; the
 	// second value reports whether one is bound at all.
 	PaymentOf(ctx context.Context, orderID string) (service.OrderPayment, bool, error)
@@ -397,10 +401,13 @@ type lineTaxDTO struct {
 // formula being written in two places and one of them being wrong. The value
 // can be NEGATIVE (overcollection).
 type summaryDTO struct {
-	ID            string    `json:"id"`
-	OrderID       string    `json:"order_id"`
-	PaidTotal     int64     `json:"paid_total"`
-	RefundedTotal int64     `json:"refunded_total"`
+	ID            string `json:"id"`
+	OrderID       string `json:"order_id"`
+	PaidTotal     int64  `json:"paid_total"`
+	RefundedTotal int64  `json:"refunded_total"`
+	// CreditedTotal is the sum of the order's credit lines: what was written
+	// off without changing what was sold.
+	CreditedTotal int64     `json:"credited_total"`
 	Outstanding   int64     `json:"outstanding"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
@@ -483,7 +490,7 @@ func toOrderDetailDTO(detail models.OrderDetail) orderDetailDTO {
 	out := orderDetailDTO{
 		orderDTO: toOrderDTO(detail.Order),
 		Items:    make([]lineItemDTO, 0, len(detail.Items)),
-		Summary:  toSummaryDTO(detail.Summary, detail.Total),
+		Summary:  toSummaryDTO(detail.Summary, detail.Total, detail.CreditedTotal),
 	}
 	// The loop is walked by index: the line item struct is large and copying it
 	// by value would carry a few hundred bytes for nothing on every turn.
@@ -533,15 +540,19 @@ func toLineTaxDTOs(components []models.OrderLineTax) []lineTaxDTO {
 	return out
 }
 
-// toSummaryDTO converts the summary to the external representation; the
-// outstanding amount is computed from the order total.
-func toSummaryDTO(summary models.OrderSummary, orderTotal int64) summaryDTO {
+// toSummaryDTO converts the summary to the external representation.
+//
+// The outstanding amount is computed from the order total AND the credited
+// total, because a concession lowers what is owed without lowering what was
+// sold (ADR 0105). Both are parameters because the summary stores neither.
+func toSummaryDTO(summary models.OrderSummary, orderTotal, creditedTotal int64) summaryDTO {
 	return summaryDTO{
 		ID:            summary.ID,
 		OrderID:       summary.OrderID,
 		PaidTotal:     summary.PaidTotal,
 		RefundedTotal: summary.RefundedTotal,
-		Outstanding:   summary.Outstanding(orderTotal),
+		CreditedTotal: creditedTotal,
+		Outstanding:   summary.Outstanding(orderTotal, creditedTotal),
 		CreatedAt:     summary.CreatedAt,
 		UpdatedAt:     summary.UpdatedAt,
 	}

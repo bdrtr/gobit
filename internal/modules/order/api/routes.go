@@ -114,6 +114,8 @@ func (h *Handler) Routes(r chi.Router) {
 	// Service.CancelClaim had queries, repository methods and transition tables
 	// and NO caller anywhere in production, exactly as the exchange's cancel
 	// had the day before.
+	write.Post("/admin/v1/orders/{id}/credit-lines", h.adminCreateCreditLine)
+	read.Get("/admin/v1/orders/{id}/credit-lines", h.adminListCreditLines)
 	read.Get("/admin/v1/orders/{id}/returns", h.adminListReturns)
 	write.Post("/admin/v1/orders/{id}/returns", h.adminCreateReturn)
 	read.Get("/admin/v1/orders/{id}/returns/{returnId}", h.adminGetReturn)

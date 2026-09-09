@@ -506,7 +506,17 @@ func (s *Service) loadDetail(ctx context.Context, find func(ctx context.Context)
 			return err
 		}
 
-		detail = models.OrderDetail{Order: order, Items: items, Summary: summary}
+		// A FIFTH fixed query. It runs inside the same snapshot for the reason
+		// the others do: a credit written between two reads would otherwise show
+		// an outstanding amount that never existed.
+		credited, err := s.store.CreditedTotal(ctx, order.ID)
+		if err != nil {
+			return err
+		}
+
+		detail = models.OrderDetail{
+			Order: order, Items: items, Summary: summary, CreditedTotal: credited,
+		}
 		detail.ShippingAddress, detail.BillingAddress = splitAddresses(addresses[order.ID])
 
 		return nil

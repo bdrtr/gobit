@@ -247,6 +247,12 @@ type OrderDetail struct {
 	// Summary is the order's payment/refund summary. Because the summary is
 	// born together with the order it is always populated here.
 	Summary OrderSummary
+	// CreditedTotal is the sum of the order's credit lines (minor unit).
+	//
+	// It is read rather than stored, and it is on the DETAIL rather than on the
+	// summary because the summary is a row and this is a sum over another
+	// table — putting it there would make a reader take it for a column.
+	CreditedTotal int64
 }
 
 // OrderLineItem is one line on the order.
@@ -391,17 +397,48 @@ type OrderSummary struct {
 	UpdatedAt time.Time
 }
 
+// OrderCreditLine is an amount that lowers what the order OWES without changing
+// what was SOLD.
+//
+// A goodwill gesture, a price match or a compensation agreed after the sale is
+// not a change to the basket: the customer still bought what they bought. The
+// order's own total therefore does not move, and this row is what stands between
+// it and the amount still to collect.
+type OrderCreditLine struct {
+	// ID is the identifier with the "ocl_" prefix.
+	ID string
+	// OrderID is the order the credit belongs to.
+	OrderID string
+	// Amount is the credited amount (minor unit); it is always POSITIVE.
+	//
+	// A negative credit is a CHARGE, which is a different verb with a different
+	// authorization — it would have to reach the payment module rather than this
+	// table.
+	Amount int64
+	// Reason is the merchant's short word for why; this module does not
+	// enumerate it and does not accept it empty.
+	Reason string
+	// Note is the merchant's free-form detail; it may be empty.
+	Note string
+	// CreatedAt and UpdatedAt are UTC.
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 // Outstanding returns the OUTSTANDING (not yet collected) amount of the order.
 //
-// The order total is taken as a parameter because the summary DOES NOT STORE it:
-// keeping the same number in two tables would open a place where the two could
-// diverge, and the sole owner of the order total is the orders table.
+// The order total and the credited total are taken as parameters because the
+// summary DOES NOT STORE either: keeping the same number in two tables would
+// open a place where the two could diverge. The order total belongs to the
+// orders table, and the credited total is the SUM of the order's credit lines —
+// 000001's reason for not storing the outstanding amount, applied to the credit.
 //
-// The result may be NEGATIVE: if the collected amount exceeds the order total
-// (overcollection) the difference is a debt to the customer. The value is not
-// clamped to zero; clamping would make overcollection invisible.
-func (s OrderSummary) Outstanding(orderTotal int64) int64 {
-	return orderTotal - (s.PaidTotal - s.RefundedTotal)
+// The result may be NEGATIVE: if the collected amount exceeds what is owed
+// (overcollection, or a credit granted after payment) the difference is a debt
+// to the customer. The value is not clamped to zero; clamping would make it
+// invisible.
+func (s OrderSummary) Outstanding(orderTotal, creditedTotal int64) int64 {
+	return orderTotal - creditedTotal - (s.PaidTotal - s.RefundedTotal)
 }
 
 // ReturnStatus is the status of a return record.

@@ -69,6 +69,16 @@ type OrderClaim struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type OrderCreditLine struct {
+	ID        string
+	OrderID   string
+	Amount    int64
+	Reason    string
+	Note      string
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
 type OrderExchange struct {
 	ID            string
 	OrderID       string

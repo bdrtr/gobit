@@ -37,6 +37,7 @@ type fakeSnapshot struct {
 	retItems  map[string]models.ReturnItem
 	exchanges map[string]models.Exchange
 	claims    map[string]models.Claim
+	credits   map[string]models.OrderCreditLine
 	replaces  map[string]models.Replacement
 	replItems map[string]models.ReplacementItem
 }
@@ -82,6 +83,7 @@ type fakeStore struct {
 	retItems  map[string]models.ReturnItem
 	exchanges map[string]models.Exchange
 	claims    map[string]models.Claim
+	credits   map[string]models.OrderCreditLine
 	replaces  map[string]models.Replacement
 	replItems map[string]models.ReplacementItem
 
@@ -156,6 +158,7 @@ func newFakeStore() *fakeStore {
 		retItems:  map[string]models.ReturnItem{},
 		exchanges: map[string]models.Exchange{},
 		claims:    map[string]models.Claim{},
+		credits:   map[string]models.OrderCreditLine{},
 		replaces:  map[string]models.Replacement{},
 		replItems: map[string]models.ReplacementItem{},
 		erased:    map[string]time.Time{},
@@ -187,6 +190,7 @@ func (f *fakeStore) snapshot() fakeSnapshot {
 		retItems:  maps.Clone(f.retItems),
 		exchanges: maps.Clone(f.exchanges),
 		claims:    maps.Clone(f.claims),
+		credits:   maps.Clone(f.credits),
 		replaces:  maps.Clone(f.replaces),
 		replItems: maps.Clone(f.replItems),
 	}
@@ -520,6 +524,72 @@ func (f *fakeStore) CreateLineTax(
 	f.items[line.ID] = line
 
 	return component, nil
+}
+
+// CreateCreditLine writes a credit line.
+func (f *fakeStore) CreateCreditLine(
+	ctx context.Context, credit models.OrderCreditLine,
+) (models.OrderCreditLine, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if _, ok := f.orders[credit.OrderID]; !ok {
+		return models.OrderCreditLine{}, notFound(credit.OrderID)
+	}
+	stamp := f.nextStamp()
+	credit.CreatedAt = stamp
+	credit.UpdatedAt = stamp
+
+	f.recordUndo(ctx, undoEntry(f.credits, credit.ID))
+	f.credits[credit.ID] = credit
+
+	return credit, nil
+}
+
+// ListCreditLines returns the order's credit lines, oldest first.
+func (f *fakeStore) ListCreditLines(
+	ctx context.Context, orderID string,
+) ([]models.OrderCreditLine, error) {
+	snapshot := f.view(ctx)
+
+	out := make([]models.OrderCreditLine, 0)
+	for id := range snapshot.credits {
+		if snapshot.credits[id].OrderID == orderID {
+			out = append(out, snapshot.credits[id])
+		}
+	}
+	// By (created_at, id), which is what ListOrderCreditLines orders by. Sorting
+	// by id alone looks the same until two credits land in the same millisecond,
+	// and then the random half of the id decides the order — a fake that is
+	// right only most of the time.
+	slices.SortFunc(out, func(a, b models.OrderCreditLine) int {
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.Compare(b.CreatedAt)
+		}
+
+		return strings.Compare(a.ID, b.ID)
+	})
+
+	return out, nil
+}
+
+// CreditedTotal really ADDS the rows up.
+//
+// A fake answering zero would let the ceiling check be deleted from the service
+// without a test noticing, and the ceiling is the only thing between a
+// concession and writing off more than the order was ever worth.
+func (f *fakeStore) CreditedTotal(ctx context.Context, orderID string) (int64, error) {
+	credits, err := f.ListCreditLines(ctx, orderID)
+	if err != nil {
+		return 0, err
+	}
+
+	var total int64
+	for i := range credits {
+		total += credits[i].Amount
+	}
+
+	return total, nil
 }
 
 // ListLineItems returns the lines of the order in creation order.

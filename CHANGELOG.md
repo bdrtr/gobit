@@ -20,6 +20,14 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir siparisin BORCU dusurulebiliyor, SATILAN degismeden**
+  (`order_credit_lines`, ADR 0105). Siparisin toplami sepetin anlik goruntusudur
+  ve kendi satirlarina bir CHECK ile civilidir; satistan sonra verilen bir taviz
+  musterinin ne aldigini degil ne odeyecegini degistirir. Tavan siparisin TOPLAMI
+  ve siparisin KILIDI altinda denetleniyor; odemeden sonra verilen bir taviz
+  bakiyeyi eksiye dusurur, ki bu "dukkan musteriye borclu" demektir ve bir iade
+  onu kapatir.
+
 - **Bir gorsel artik NE GOSTERDIGINI soyluyor** (`product_image.alt_text`) —
   vitrinde ve GraphQL tipinde yayimlaniyor. Bos deger EKSIK degil CEVAP: HTML
   `alt=""`'a "bu gorsel bilgi tasimaz" anlamini veriyor, yani dekoratif resmin

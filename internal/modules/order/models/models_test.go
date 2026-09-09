@@ -185,14 +185,26 @@ func TestOrderSummaryOutstanding(t *testing.T) {
 	const orderTotal int64 = 6100
 
 	assert.Equal(t, orderTotal,
-		models.OrderSummary{}.Outstanding(orderTotal),
+		models.OrderSummary{}.Outstanding(orderTotal, 0),
 		"with no payment at all the whole amount stays outstanding")
 	assert.Equal(t, int64(0),
-		models.OrderSummary{PaidTotal: 6100}.Outstanding(orderTotal))
+		models.OrderSummary{PaidTotal: 6100}.Outstanding(orderTotal, 0))
 	assert.Equal(t, int64(1000),
-		models.OrderSummary{PaidTotal: 6100, RefundedTotal: 1000}.Outstanding(orderTotal),
+		models.OrderSummary{PaidTotal: 6100, RefundedTotal: 1000}.Outstanding(orderTotal, 0),
 		"a refunded amount becomes a debt again")
 	assert.Equal(t, int64(-400),
-		models.OrderSummary{PaidTotal: 6500}.Outstanding(orderTotal),
+		models.OrderSummary{PaidTotal: 6500}.Outstanding(orderTotal, 0),
 		"overcollection must show as a negative outstanding amount")
+
+	// A credit lowers what is OWED, and it does it the same way a payment does:
+	// by standing between the order's total and the amount left to collect. The
+	// order's own total is not in this arithmetic at all — that is the point of
+	// ADR 0105.
+	assert.Equal(t, int64(4100),
+		models.OrderSummary{}.Outstanding(orderTotal, 2000),
+		"a credit lowers what is outstanding without touching what was sold")
+	assert.Equal(t, int64(-2000),
+		models.OrderSummary{PaidTotal: 6100}.Outstanding(orderTotal, 2000),
+		"a credit granted after payment makes the shop owe the customer, which is "+
+			"what a refund then settles")
 }

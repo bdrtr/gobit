@@ -153,6 +153,13 @@ type Store interface {
 
 	// CreateLineItem records a new order line.
 	CreateLineItem(ctx context.Context, item models.OrderLineItem) (models.OrderLineItem, error)
+	// CreateCreditLine records an amount that lowers what the order owes.
+	CreateCreditLine(ctx context.Context, credit models.OrderCreditLine) (models.OrderCreditLine, error)
+	// ListCreditLines returns the order's credit lines, oldest first.
+	ListCreditLines(ctx context.Context, orderID string) ([]models.OrderCreditLine, error)
+	// CreditedTotal is the SUM of the order's credit lines, read rather than
+	// stored.
+	CreditedTotal(ctx context.Context, orderID string) (int64, error)
 	// CreateLineTax records one component of a line's tax stack.
 	CreateLineTax(ctx context.Context, component models.OrderLineTax) (models.OrderLineTax, error)
 	// ListLineItems returns the lines of the order in creation order.

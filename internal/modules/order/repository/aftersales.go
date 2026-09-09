@@ -392,3 +392,55 @@ func (r *Repository) WriteOutboxEvent(
 
 	return outbox.Write(ctx, tx, eventbus.Event{ID: id, Name: name, Data: data})
 }
+
+// --- credit lines ------------------------------------------------------------
+
+// CreateCreditLine records an amount that lowers what the order owes.
+func (r *Repository) CreateCreditLine(
+	ctx context.Context, credit models.OrderCreditLine,
+) (models.OrderCreditLine, error) {
+	row, err := r.queries(ctx).CreateOrderCreditLine(ctx, orderdb.CreateOrderCreditLineParams{
+		ID:      credit.ID,
+		OrderID: credit.OrderID,
+		Amount:  credit.Amount,
+		Reason:  credit.Reason,
+		Note:    credit.Note,
+	})
+	if err != nil {
+		return models.OrderCreditLine{}, classify(err, codeQueryFailed,
+			"could not create the order credit line")
+	}
+
+	return toCreditLine(row), nil
+}
+
+// ListCreditLines returns the order's credit lines, oldest first.
+func (r *Repository) ListCreditLines(
+	ctx context.Context, orderID string,
+) ([]models.OrderCreditLine, error) {
+	rows, err := r.queries(ctx).ListOrderCreditLines(ctx, orderID)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "could not read the order credit lines")
+	}
+
+	out := make([]models.OrderCreditLine, 0, len(rows))
+	for i := range rows {
+		out = append(out, toCreditLine(rows[i]))
+	}
+
+	return out, nil
+}
+
+// CreditedTotal returns the sum of the order's credit lines.
+//
+// It is READ rather than stored, for the reason migration 000001 gives about the
+// outstanding amount: a running total in a second place is a number that can go
+// stale, and this one is the sum of rows the database can add up itself.
+func (r *Repository) CreditedTotal(ctx context.Context, orderID string) (int64, error) {
+	total, err := r.queries(ctx).SumOrderCreditLines(ctx, orderID)
+	if err != nil {
+		return 0, classify(err, codeQueryFailed, "could not read the order's credited total")
+	}
+
+	return total, nil
+}

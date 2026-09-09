@@ -511,6 +511,44 @@ func queryParameter(name, valueType, description string) openapi.Parameter {
 	}
 }
 
+// describeCreditLines documents the write-off.
+func describeCreditLines(d *openapi.Doc) {
+	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/credit-lines", openapi.Operation{
+		Summary: "Writes off part of what the order owes.",
+		Description: "THE ORDER'S TOTAL DOES NOT MOVE. That figure is the cart's snapshot — what " +
+			"was sold and at what price — and it is pinned to the order's own lines by a " +
+			"constraint. A goodwill gesture, a price match or a compensation agreed after " +
+			"the sale changes what the customer has left to pay, not what they bought. " +
+			"\n\n" +
+			"What changes is the summary's \"outstanding\", which is where a client should " +
+			"look for the effect; the summary also carries \"credited_total\". " +
+			"\n\n" +
+			"A credit may not take the credited total past the order's total: writing off " +
+			"more than the sale was ever worth is a data-entry error rather than a " +
+			"concession. A credit granted AFTER the customer paid is legitimate and makes " +
+			"the outstanding amount negative, which is this module's word for \"the shop " +
+			"owes the customer\" and is what a refund then settles. " +
+			"\n\n" +
+			"The amount has to be POSITIVE. A negative credit is a CHARGE — a different act " +
+			"with a different authorization — and it does not belong on this endpoint. The " +
+			"reason is REQUIRED: a credit with no reason is a number nobody can answer a " +
+			"question about six months later.",
+		RequestBody: d.RequestBody(createCreditLineRequest{}),
+		Responses: map[string]any{
+			"201": openapi.Response("The credit that was written", d.Item(creditLineDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/credit-lines", openapi.Operation{
+		Summary: "Lists the order's credit lines, oldest first.",
+		Description: "The record is an ARRAY inside the plain envelope: the credits belong to " +
+			"one order and there is no page to ask for.",
+		Responses: map[string]any{
+			"200": openapi.Response("The order's credit lines", d.Item([]creditLineDTO{})),
+		},
+	})
+}
+
 // describeTimeline documents the support desk's view.
 func describeTimeline(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/timeline", openapi.Operation{
@@ -569,6 +607,7 @@ func describeTimeline(d *openapi.Doc) {
 		},
 	})
 
+	describeCreditLines(d)
 	describeAfterSales(d)
 	describeOrderDetail(d)
 }

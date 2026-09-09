@@ -378,6 +378,25 @@ func describedEndpoints() []endpointExpectation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/admin/v1/orders/{id}/credit-lines", status: "201",
+			request: createCreditLineRequest{},
+			response: creditLineDTO{
+				ID: "ocl_1", OrderID: "order_1", Amount: 1000, Reason: "goodwill",
+				Note:      "agreed on the phone",
+				CreatedAt: describeSampleTime, UpdatedAt: describeSampleTime,
+			},
+		},
+		{
+			// Unpaged, like the timeline: the credits belong to one order.
+			method: http.MethodGet, path: "/admin/v1/orders/{id}/credit-lines", status: "200",
+			shape: unpagedList,
+			response: creditLineDTO{
+				ID: "ocl_1", OrderID: "order_1", Amount: 1000, Reason: "goodwill",
+				Note:      "agreed on the phone",
+				CreatedAt: describeSampleTime, UpdatedAt: describeSampleTime,
+			},
+		},
+		{
 			// The customer's timeline is the same shape with the money fields
 			// GONE from the type rather than left empty, so this row is what
 			// notices if they ever come back.

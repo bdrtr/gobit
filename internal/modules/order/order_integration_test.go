@@ -323,7 +323,7 @@ func TestOrderLifecycle(t *testing.T) {
 	require.Len(t, detail.Items, 1)
 	assert.Equal(t, int64(3600), detail.Items[0].Total)
 	assert.Equal(t, ord.ID, detail.Summary.OrderID)
-	assert.Equal(t, int64(6100), detail.Summary.Outstanding(detail.Total))
+	assert.Equal(t, int64(6100), detail.Summary.Outstanding(detail.Total, 0))
 
 	byNumber, err := svc.GetOrderByDisplayID(ctx, ord.DisplayID)
 	require.NoError(t, err)
@@ -845,7 +845,7 @@ func TestSummaryTotalsOnTheRealDatabase(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(6100), summary.PaidTotal)
 	assert.Equal(t, int64(1000), summary.RefundedTotal)
-	assert.Equal(t, int64(1000), summary.Outstanding(ord.Total))
+	assert.Equal(t, int64(1000), summary.Outstanding(ord.Total, 0))
 
 	// Refunding an amount that was not captured hits the database constraint too.
 	_, err = testPool.Pool().Exec(ctx,

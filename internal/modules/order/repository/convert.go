@@ -331,6 +331,19 @@ func toLineItem(row orderdb.OrderLineItem) (models.OrderLineItem, error) {
 	}, nil
 }
 
+// toCreditLine converts a database row into the domain model.
+func toCreditLine(row orderdb.OrderCreditLine) models.OrderCreditLine {
+	return models.OrderCreditLine{
+		ID:        row.ID,
+		OrderID:   row.OrderID,
+		Amount:    row.Amount,
+		Reason:    row.Reason,
+		Note:      row.Note,
+		CreatedAt: toTime(row.CreatedAt),
+		UpdatedAt: toTime(row.UpdatedAt),
+	}
+}
+
 // toLineTax converts a database row into the domain model.
 func toLineTax(row orderdb.OrderLineTax) models.OrderLineTax {
 	return models.OrderLineTax{

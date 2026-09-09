@@ -64,6 +64,8 @@ type fakeOrders struct {
 	paymentBound bool
 	timeline     []service.TimelineEntry
 	timelineErr  error
+	credits      []models.OrderCreditLine
+	creditErr    error
 	// paymentErr, when set, makes PaymentOf fail.
 	paymentErr error
 	// nextCursor is what the listing reports as the next page's position.
@@ -113,6 +115,28 @@ func (f *fakeOrders) CancelOrder(_ context.Context, orderID, reason string) erro
 // Timeline returns the scripted timeline.
 func (f *fakeOrders) Timeline(_ context.Context, _ string) ([]service.TimelineEntry, error) {
 	return f.timeline, f.timelineErr
+}
+
+// CreateCreditLine records the scripted credit.
+func (f *fakeOrders) CreateCreditLine(
+	_ context.Context, orderID string, in service.CreateCreditLineInput,
+) (models.OrderCreditLine, error) {
+	if f.creditErr != nil {
+		return models.OrderCreditLine{}, f.creditErr
+	}
+	credit := models.OrderCreditLine{
+		ID: "ocl_1", OrderID: orderID, Amount: in.Amount, Reason: in.Reason, Note: in.Note,
+	}
+	f.credits = append(f.credits, credit)
+
+	return credit, nil
+}
+
+// ListCreditLines returns the credits recorded so far.
+func (f *fakeOrders) ListCreditLines(
+	_ context.Context, _ string,
+) ([]models.OrderCreditLine, error) {
+	return f.credits, f.creditErr
 }
 
 // StorefrontTimeline returns the SAME scripted entries as Timeline, unfiltered.

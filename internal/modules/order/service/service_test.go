@@ -105,7 +105,7 @@ func TestCreateOrderWritesTheOrderItsLinesAndItsSummary(t *testing.T) {
 	// The summary is born together with the order and ZEROED.
 	assert.Equal(t, order.ID, detail.Summary.OrderID)
 	assert.Equal(t, int64(0), detail.Summary.PaidTotal)
-	assert.Equal(t, int64(6100), detail.Summary.Outstanding(detail.Total))
+	assert.Equal(t, int64(6100), detail.Summary.Outstanding(detail.Total, 0))
 }
 
 // TestCreateOrderSecondOrderTakesTheNextNumber validates that the number is
@@ -813,7 +813,7 @@ func TestSetOrderSummaryTotalsIsIdempotentAndBounded(t *testing.T) {
 		service.SummaryTotalsInput{PaidTotal: 6100})
 	require.NoError(t, err)
 	assert.Equal(t, int64(6100), summary.PaidTotal)
-	assert.Equal(t, int64(0), summary.Outstanding(order.Total))
+	assert.Equal(t, int64(0), summary.Outstanding(order.Total, 0))
 
 	// Writing the same value a second time is harmless: an absolute write makes
 	// repeated payment events idempotent.
@@ -826,7 +826,7 @@ func TestSetOrderSummaryTotalsIsIdempotentAndBounded(t *testing.T) {
 	overpaid, err := e.svc.SetOrderSummaryTotals(ctx, order.ID,
 		service.SummaryTotalsInput{PaidTotal: 6500})
 	require.NoError(t, err)
-	assert.Equal(t, int64(-400), overpaid.Outstanding(order.Total))
+	assert.Equal(t, int64(-400), overpaid.Outstanding(order.Total, 0))
 
 	// An amount that was not collected cannot be refunded.
 	_, err = e.svc.SetOrderSummaryTotals(ctx, order.ID,
