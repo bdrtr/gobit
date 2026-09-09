@@ -111,6 +111,9 @@ const (
 	// CodeReplacementNotOpen reports a transition asked of a replacement that
 	// is no longer open.
 	CodeReplacementNotOpen = "order_replacement_not_open"
+	// CodeReplacementNotHeld reports a dispatch of a replacement whose lines do
+	// not all name the promise their units are held under.
+	CodeReplacementNotHeld = "order_replacement_not_held"
 	// CodeSpendingLimitExceeded reports that the order exceeds the customer's
 	// spending limit within the period.
 	CodeSpendingLimitExceeded = "order_spending_limit_exceeded"

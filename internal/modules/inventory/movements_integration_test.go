@@ -158,13 +158,22 @@ func TestTheSchemaRefusesAMovementThatCannotBeTrue(t *testing.T) {
 			constraint: "inventory_movements_restock_adds",
 		},
 		{
+			name: "a replacement that ADDS units", reason: "replacement", delta: 1, after: 11,
+			reservationID: &reservation.ID,
+			constraint:    "inventory_movements_replacement_deducts",
+		},
+		{
 			name: "a sale naming no reservation", reason: "sale", delta: -1, after: 9,
-			constraint: "inventory_movements_sale_names_its_reservation",
+			constraint: "inventory_movements_promise_names_its_reservation",
+		},
+		{
+			name: "a replacement naming no reservation", reason: "replacement", delta: -1, after: 9,
+			constraint: "inventory_movements_promise_names_its_reservation",
 		},
 		{
 			name: "an adjustment naming a reservation", reason: "adjustment", delta: 1, after: 11,
 			reservationID: &reservation.ID,
-			constraint:    "inventory_movements_sale_names_its_reservation",
+			constraint:    "inventory_movements_promise_names_its_reservation",
 		},
 	}
 

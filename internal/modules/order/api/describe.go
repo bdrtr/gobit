@@ -459,6 +459,28 @@ func describeClaims(d *openapi.Doc) {
 				"200": openapi.Response("The withdrawn replacement", d.Item(replacementDTO{})),
 			},
 		})
+
+	d.Describe(http.MethodPost,
+		"/admin/v1/orders/{id}/claims/{claimId}/replacements/{replacementId}/dispatch",
+		openapi.Operation{
+			Summary: "Sends what the claim promised, and settles the claim by sending it.",
+			// The three movements are named because each one is visible
+			// somewhere else: the units leave the inventory module's count, the
+			// parcel appears in the fulfillment module, and the claim closes
+			// here. A caller that knew only "it dispatched" could not tell
+			// which of the three to look at when something is missing.
+			Description: "The units are set aside at the replacement's location, a parcel is " +
+				"opened on the order with the replacement's shipping option, the units come " +
+				"OUT of the physical count as a movement of their own reason, and the claim " +
+				"is marked settled. It is refused with 409 when the record was withdrawn, " +
+				"when a line's variant has no inventory item, and when there is not enough " +
+				"stock to send. \n\n" +
+				"Repeating it sends nothing a second time: already_sent then reports that " +
+				"the goods had gone, and fulfillment_id names the parcel they left in.",
+			Responses: map[string]any{
+				"200": openapi.Response("What was sent", d.Item(dispatchReplacementResponse{})),
+			},
+		})
 }
 
 // pageParameters returns the two parameters [parsePage] reads.

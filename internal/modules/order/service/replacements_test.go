@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -362,4 +363,202 @@ func TestReadingAReplacementValidatesItsIdentifier(t *testing.T) {
 	_, err = e.svc.CancelReplacement(ctx, "orepl_MISSING")
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
+}
+
+// TestDispatchingRecordsTheParcelAndTheMoment is the record half of sending.
+func TestDispatchingRecordsTheParcelAndTheMoment(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	claim, lineID := claimToReplace(t, e)
+
+	record, err := e.svc.CreateReplacement(ctx, replacementOf(claim.ID, lineID, 1))
+	require.NoError(t, err)
+	require.Len(t, record.Items, 1)
+	require.NoError(t, e.svc.RecordReplacementReservation(
+		ctx, record.ID, record.Items[0].ID, "invres_1"))
+
+	sent, err := e.svc.MarkReplacementDispatched(ctx, record.ID, "ful_1")
+	require.NoError(t, err)
+
+	assert.Equal(t, models.ReplacementDispatched, sent.Status)
+	assert.Equal(t, "ful_1", sent.FulfillmentID)
+	require.NotNil(t, sent.DispatchedAt)
+	assert.Nil(t, sent.CanceledAt, "sending is not withdrawing")
+}
+
+// TestADispatchIsRefusedWhileALineNamesNoPromise holds the one part of the
+// claim this module can check for itself.
+//
+// The stock and the parcel are the flow's half. What the record can see is
+// whether every line names the promise its units left against, and a line that
+// names none is a line nothing says left the warehouse.
+func TestADispatchIsRefusedWhileALineNamesNoPromise(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	claim, lineID := claimToReplace(t, e)
+
+	record, err := e.svc.CreateReplacement(ctx, replacementOf(claim.ID, lineID, 1))
+	require.NoError(t, err)
+
+	_, err = e.svc.MarkReplacementDispatched(ctx, record.ID, "ful_1")
+
+	require.Error(t, err)
+	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
+	assert.Equal(t, service.CodeReplacementNotHeld, errors.CodeOf(err))
+
+	readBack, err := e.svc.GetReplacement(ctx, record.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.ReplacementRequested, readBack.Status,
+		"a refused dispatch leaves the record where it was")
+}
+
+// TestDispatchingTwiceKeepsTheFirstParcel answers the retried flow.
+func TestDispatchingTwiceKeepsTheFirstParcel(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	claim, lineID := claimToReplace(t, e)
+
+	record, err := e.svc.CreateReplacement(ctx, replacementOf(claim.ID, lineID, 1))
+	require.NoError(t, err)
+	require.NoError(t, e.svc.RecordReplacementReservation(
+		ctx, record.ID, record.Items[0].ID, "invres_1"))
+
+	first, err := e.svc.MarkReplacementDispatched(ctx, record.ID, "ful_1")
+	require.NoError(t, err)
+
+	second, err := e.svc.MarkReplacementDispatched(ctx, record.ID, "ful_1")
+	require.NoError(t, err, "the repetition is the same request")
+	require.NotNil(t, second.DispatchedAt)
+	assert.Equal(t, *first.DispatchedAt, *second.DispatchedAt,
+		"the second call must not move the moment the goods left")
+
+	_, err = e.svc.MarkReplacementDispatched(ctx, record.ID, "ful_OTHER")
+	require.Error(t, err, "two parcels cannot both have carried the same goods")
+	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
+}
+
+// TestASentReplacementCannotBeWithdrawn keeps the record honest about goods
+// that are with the carrier.
+func TestASentReplacementCannotBeWithdrawn(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	claim, lineID := claimToReplace(t, e)
+
+	record, err := e.svc.CreateReplacement(ctx, replacementOf(claim.ID, lineID, 1))
+	require.NoError(t, err)
+	require.NoError(t, e.svc.RecordReplacementReservation(
+		ctx, record.ID, record.Items[0].ID, "invres_1"))
+	_, err = e.svc.MarkReplacementDispatched(ctx, record.ID, "ful_1")
+	require.NoError(t, err)
+
+	_, err = e.svc.CancelReplacement(ctx, record.ID)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
+	assert.Equal(t, service.CodeReplacementNotOpen, errors.CodeOf(err))
+}
+
+// TestAPromiseIsWrittenOnceAndOnlyOnItsOwnLine holds the two rules the write
+// takes the record's lock for.
+func TestAPromiseIsWrittenOnceAndOnlyOnItsOwnLine(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	claim, lineID := claimToReplace(t, e)
+
+	record, err := e.svc.CreateReplacement(ctx, replacementOf(claim.ID, lineID, 1))
+	require.NoError(t, err)
+	itemID := record.Items[0].ID
+
+	require.NoError(t, e.svc.RecordReplacementReservation(ctx, record.ID, itemID, "invres_1"))
+	require.NoError(t, e.svc.RecordReplacementReservation(ctx, record.ID, itemID, "invres_1"),
+		"the same promise written again is a retry saying what it already said")
+
+	err = e.svc.RecordReplacementReservation(ctx, record.ID, itemID, "invres_2")
+	require.Error(t, err, "a second promise would leave the first with nothing to release it")
+	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
+
+	err = e.svc.RecordReplacementReservation(ctx, record.ID, "oreplitem_ELSEWHERE", "invres_3")
+	require.Error(t, err)
+	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
+	assert.Equal(t, service.CodeReplacementLineUnknown, errors.CodeOf(err))
+}
+
+// TestUnitsAreNotSetAsideForAWithdrawnReplacement stops a flow that races a
+// withdrawal.
+func TestUnitsAreNotSetAsideForAWithdrawnReplacement(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	claim, lineID := claimToReplace(t, e)
+
+	record, err := e.svc.CreateReplacement(ctx, replacementOf(claim.ID, lineID, 1))
+	require.NoError(t, err)
+	_, err = e.svc.CancelReplacement(ctx, record.ID)
+	require.NoError(t, err)
+
+	err = e.svc.RecordReplacementReservation(ctx, record.ID, record.Items[0].ID, "invres_1")
+
+	require.Error(t, err)
+	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
+	assert.Equal(t, service.CodeReplacementNotOpen, errors.CodeOf(err))
+}
+
+// TestTheReplacementDetailCarriesWhatAFlowNeedsToSendIt pins the document the
+// flow reads.
+//
+// The variant is the field that makes it useful: the record points at an order
+// line and setting stock aside needs the product. The claim's status is there
+// for the retry path — a dispatch that died before settling the claim reads it
+// as still open on the next attempt.
+func TestTheReplacementDetailCarriesWhatAFlowNeedsToSendIt(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	claim, lineID := claimToReplace(t, e)
+
+	record, err := e.svc.CreateReplacement(ctx, replacementOf(claim.ID, lineID, 2))
+	require.NoError(t, err)
+
+	raw, err := e.svc.ReplacementDetailJSON(ctx, record.ID)
+	require.NoError(t, err)
+
+	var detail struct {
+		ReplacementID    string `json:"replacement_id"`
+		ClaimID          string `json:"claim_id"`
+		ClaimStatus      string `json:"claim_status"`
+		OrderID          string `json:"order_id"`
+		Status           string `json:"status"`
+		ShippingOptionID string `json:"shipping_option_id"`
+		LocationID       string `json:"location_id"`
+		Lines            []struct {
+			ReplacementItemID string `json:"replacement_item_id"`
+			OrderLineItemID   string `json:"order_line_item_id"`
+			VariantID         string `json:"variant_id"`
+			Quantity          int64  `json:"quantity"`
+			ReservationID     string `json:"reservation_id"`
+		} `json:"lines"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &detail))
+
+	assert.Equal(t, record.ID, detail.ReplacementID)
+	assert.Equal(t, claim.ID, detail.ClaimID)
+	assert.Equal(t, "requested", detail.ClaimStatus)
+	assert.Equal(t, claim.OrderID, detail.OrderID)
+	assert.Equal(t, "requested", detail.Status)
+	assert.Equal(t, testShippingOptionID, detail.ShippingOptionID)
+	assert.Equal(t, testLocationID, detail.LocationID)
+	require.Len(t, detail.Lines, 1)
+	assert.Equal(t, record.Items[0].ID, detail.Lines[0].ReplacementItemID)
+	assert.Equal(t, lineID, detail.Lines[0].OrderLineItemID)
+	assert.Equal(t, testVariantID, detail.Lines[0].VariantID,
+		"the variant is joined HERE, because pairing it elsewhere sends the wrong product")
+	assert.Equal(t, int64(2), detail.Lines[0].Quantity)
+	assert.Empty(t, detail.Lines[0].ReservationID, "nothing is held yet")
+
+	require.NoError(t, e.svc.RecordReplacementReservation(
+		ctx, record.ID, record.Items[0].ID, "invres_1"))
+
+	raw, err = e.svc.ReplacementDetailJSON(ctx, record.ID)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(raw, &detail))
+	assert.Equal(t, "invres_1", detail.Lines[0].ReservationID,
+		"what the earlier attempt held has to be readable by the next one")
 }

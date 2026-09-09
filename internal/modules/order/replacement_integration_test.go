@@ -14,6 +14,7 @@ package order_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -114,9 +115,9 @@ func TestWithdrawingAReplacementStampsTheDatabaseClock(t *testing.T) {
 // TestTheSchemaRefusesAReplacementStateNothingCanReach is 000008's rule applied
 // to a table born after it.
 //
-// The vocabulary is two words because two are all the code can write. A row
-// stamped 'dispatched' would be a claim that goods left the warehouse, made by
-// a database nobody dispatched anything through.
+// The vocabulary is three words because three are all the code can write. A row
+// stamped 'held' would say the goods are waiting on something, and nothing in
+// this framework waits or could ever move the row on.
 func TestTheSchemaRefusesAReplacementStateNothingCanReach(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newService(t)
@@ -126,7 +127,7 @@ func TestTheSchemaRefusesAReplacementStateNothingCanReach(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = testPool.Pool().Exec(ctx,
-		`UPDATE order_replacements SET status = 'dispatched' WHERE id = $1`, record.ID)
+		`UPDATE order_replacements SET status = 'held' WHERE id = $1`, record.ID)
 
 	require.Error(t, err, "a state nothing can reach must not be writable")
 	assert.Contains(t, err.Error(), "order_replacements_status_valid")
@@ -220,4 +221,128 @@ func TestAReplacementDoesNotOutliveItsClaim(t *testing.T) {
 		`SELECT count(*) FROM order_replacement_items WHERE order_replacement_id = $1`,
 		record.ID).Scan(&rows))
 	assert.Zero(t, rows, "and its lines with it")
+}
+
+// dispatchedReplacement records a replacement whose goods have left, with the
+// promise its line was held under.
+func dispatchedReplacement(
+	ctx context.Context, t *testing.T, svc *service.Service,
+) (record service.ReplacementRecord, claim models.Claim) {
+	t.Helper()
+
+	claim, lineID := replaceableClaim(ctx, t, svc)
+	record, err := svc.CreateReplacement(ctx, requestOf(claim.ID, lineID, 1))
+	require.NoError(t, err)
+	require.NoError(t, svc.RecordReplacementReservation(
+		ctx, record.ID, record.Items[0].ID, "invres_integration"))
+	_, err = svc.MarkReplacementDispatched(ctx, record.ID, "ful_integration")
+	require.NoError(t, err)
+
+	return record, claim
+}
+
+// TestADispatchedReplacementCarriesItsMomentAndItsParcel reads the row back
+// through a second path.
+//
+// A RETURNING clause can report values the row does not keep, and the point of
+// both columns is that the next read still finds them.
+func TestADispatchedReplacementCarriesItsMomentAndItsParcel(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	record, _ := dispatchedReplacement(ctx, t, svc)
+
+	sent, err := svc.GetReplacement(ctx, record.ID)
+	require.NoError(t, err)
+	require.NotNil(t, sent.DispatchedAt)
+	assert.Equal(t, "UTC", sent.DispatchedAt.Location().String(),
+		"the module hands out UTC whatever zone the connection reads in")
+
+	var (
+		status string
+		parcel *string
+		moment *time.Time
+	)
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT status, fulfillment_id, dispatched_at FROM order_replacements WHERE id = $1`,
+		record.ID).Scan(&status, &parcel, &moment))
+
+	assert.Equal(t, "dispatched", status)
+	require.NotNil(t, parcel)
+	assert.Equal(t, "ful_integration", *parcel)
+	require.NotNil(t, moment, "the moment has to be ON THE ROW, not only in the response")
+
+	var reservation *string
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT reservation_id FROM order_replacement_items WHERE order_replacement_id = $1`,
+		record.ID).Scan(&reservation))
+	require.NotNil(t, reservation)
+	assert.Equal(t, "invres_integration", *reservation,
+		"the promise stays on the line, which is what makes the dispatch retryable")
+}
+
+// TestGoodsCannotLeaveWithNothingCarryingThem holds the parcel's CHECK.
+func TestGoodsCannotLeaveWithNothingCarryingThem(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	claim, lineID := replaceableClaim(ctx, t, svc)
+	record, err := svc.CreateReplacement(ctx, requestOf(claim.ID, lineID, 1))
+	require.NoError(t, err)
+
+	_, err = testPool.Pool().Exec(ctx,
+		`UPDATE order_replacements SET status = 'dispatched', dispatched_at = now()
+         WHERE id = $1`, record.ID)
+
+	require.Error(t, err, "a dispatch that names no parcel is goods leaving with no carrier")
+	assert.Contains(t, err.Error(), "order_replacements_dispatched_names_its_parcel")
+}
+
+// TestADispatchAndItsMomentImplyEachOther holds the mirror CHECK in both
+// directions, the way 000011 wrote the withdrawal's.
+func TestADispatchAndItsMomentImplyEachOther(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	claim, lineID := replaceableClaim(ctx, t, svc)
+	record, err := svc.CreateReplacement(ctx, requestOf(claim.ID, lineID, 1))
+	require.NoError(t, err)
+
+	// A status without its moment.
+	_, err = testPool.Pool().Exec(ctx,
+		`UPDATE order_replacements SET status = 'dispatched', fulfillment_id = 'ful_x'
+         WHERE id = $1`, record.ID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "order_replacements_dispatched_stamp")
+
+	// And the reverse: a moment without its status.
+	_, err = testPool.Pool().Exec(ctx,
+		`UPDATE order_replacements SET dispatched_at = now() WHERE id = $1`, record.ID)
+	require.Error(t, err, "a departure moment on a waiting request would date a dispatch "+
+		"that did not happen")
+	assert.Contains(t, err.Error(), "order_replacements_dispatched_stamp")
+}
+
+// TestSentGoodsStillCountAgainstWhatWasBought is the ceiling's other half.
+//
+// A withdrawn promise frees its units; a DISPATCHED one must not. The goods
+// have gone, and a line whose replacement shipped cannot be replaced a second
+// time up to the same ceiling.
+func TestSentGoodsStillCountAgainstWhatWasBought(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	claim, lineID := replaceableClaim(ctx, t, svc)
+	record, err := svc.CreateReplacement(ctx, requestOf(claim.ID, lineID, 3))
+	require.NoError(t, err)
+	require.NoError(t, svc.RecordReplacementReservation(
+		ctx, record.ID, record.Items[0].ID, "invres_integration"))
+	_, err = svc.MarkReplacementDispatched(ctx, record.ID, "ful_integration")
+	require.NoError(t, err)
+
+	_, err = svc.CreateReplacement(ctx, requestOf(claim.ID, lineID, 1))
+
+	require.Error(t, err, "three of three have already been sent")
+	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
+	assert.Equal(t, service.CodeReplacementQuantityExceeded, errors.CodeOf(err))
 }

@@ -115,9 +115,10 @@ func (s *Service) recordMovement(
 				"every change to stocked_quantity is explained by a movement (ADR 0068)",
 			level.ID, delta)
 	}
-	if (reservationID != "") != (reason == models.MovementSale) {
+	if (reservationID != "") != reason.LeavesAgainstAPromise() {
 		return errors.Internal(CodeInconsistentState,
-			"a %q movement carries reservation %q; a reservation is named by a sale and by nothing else",
+			"a %q movement carries reservation %q; a reservation is named by the reasons that "+
+				"take units out against one, and by nothing else",
 			reason, reservationID)
 	}
 

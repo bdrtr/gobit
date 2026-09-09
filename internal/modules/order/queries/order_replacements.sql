@@ -31,3 +31,18 @@ UPDATE order_replacements
 SET status = 'canceled', canceled_at = now(), updated_at = now()
 WHERE id = $1
 RETURNING *;
+
+-- DispatchOrderReplacement records that the goods left: the moment, the parcel
+-- and the status are written together.
+--
+-- The status and its moment are one write because the schema requires them to
+-- agree; the parcel is in the same statement for the same reason, since a
+-- dispatched row that named none would violate the CHECK the moment it landed.
+-- name: DispatchOrderReplacement :one
+UPDATE order_replacements
+SET status = 'dispatched',
+    dispatched_at = now(),
+    fulfillment_id = sqlc.arg('fulfillment_id')::text,
+    updated_at = now()
+WHERE id = sqlc.arg('id')::text
+RETURNING *;

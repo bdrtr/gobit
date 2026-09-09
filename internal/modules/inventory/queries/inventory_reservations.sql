@@ -13,8 +13,9 @@
 
 -- name: CreateReservation :one
 INSERT INTO inventory_reservations (
-    id, inventory_item_id, location_id, quantity, line_item_id, status, description
-) VALUES ($1, $2, $3, $4, $5, $6, $7)
+    id, inventory_item_id, location_id, quantity, line_item_id, status, description,
+    purpose
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- LockReservation locks the reservation for the duration of the transaction;

@@ -671,11 +671,16 @@ func (f *fakeStore) AppendMovement(ctx context.Context, mv models.Movement) (mod
 	}
 	if !mv.Reason.Valid() {
 		return models.Movement{}, errors.Invalid("fake_movement_bad_reason",
-			"%q is not one of the four reasons the schema's CHECK allows", mv.Reason)
+			"%q is not one of the reasons the schema's CHECK allows", mv.Reason)
 	}
-	if (mv.ReservationID != "") != (mv.Reason == models.MovementSale) {
+	if (mv.ReservationID != "") != mv.Reason.LeavesAgainstAPromise() {
 		return models.Movement{}, errors.Invalid("fake_movement_reservation_mismatch",
-			"the schema's CHECK ties a reservation to a sale and to nothing else")
+			"the schema's CHECK ties a reservation to the reasons that take units out "+
+				"against one, and to nothing else")
+	}
+	if mv.Reason == models.MovementReplacement && mv.Delta >= 0 {
+		return models.Movement{}, errors.Invalid("fake_movement_replacement_sign",
+			"the schema's CHECK makes a replacement deduct")
 	}
 
 	mv.CreatedAt = time.Now().UTC()

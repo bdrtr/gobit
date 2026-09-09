@@ -116,18 +116,6 @@ func registerWorkflows(c *container.Container) error {
 		return err
 	}
 
-	// The return flow is set up on the same container for the same reason: it
-	// resolves its own dependency set rather than being handed one.
-	returnWorkflow, err := returnswf.FromContainer(c)
-	if err != nil {
-		return errors.Wrap(err, errors.KindOf(err), codeFlowSetupFailed,
-			"the return workflow could not be set up")
-	}
-
-	if err := c.Provide(returnswf.InteropName, returnswf.NewInterop(returnWorkflow)); err != nil {
-		return err
-	}
-
 	// The invoicing flow, on the same container and for the same reason. It is
 	// what turns an order into a document: the invoice module knows no orders
 	// and the order module knows no documents, so the assembling belongs here
@@ -147,13 +135,31 @@ func registerWorkflows(c *container.Container) error {
 	// module never validates the reference it is handed and the order module
 	// knows no parcels, so nothing could answer "which order is this parcel
 	// for" until the assembling landed here (ADR 0001/0006).
+	//
+	// It comes BEFORE the return flow, and the order is a dependency rather
+	// than a preference: sending a replacement opens a parcel, so the return
+	// flow resolves this one by name and a flow cannot resolve a surface that
+	// has not been provided yet.
 	fulfillingWorkflow, err := fulfillingwf.FromContainer(c)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeFlowSetupFailed,
 			"the fulfilling workflow could not be set up")
 	}
 
-	return c.Provide(fulfillingwf.InteropName, fulfillingwf.NewInterop(fulfillingWorkflow))
+	if err := c.Provide(fulfillingwf.InteropName,
+		fulfillingwf.NewInterop(fulfillingWorkflow)); err != nil {
+		return err
+	}
+
+	// The return flow is set up on the same container for the same reason: it
+	// resolves its own dependency set rather than being handed one.
+	returnWorkflow, err := returnswf.FromContainer(c)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeFlowSetupFailed,
+			"the return workflow could not be set up")
+	}
+
+	return c.Provide(returnswf.InteropName, returnswf.NewInterop(returnWorkflow))
 }
 
 // registerPanel builds the admin panel and binds its paths.

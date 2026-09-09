@@ -15,8 +15,11 @@ package inventory_test
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -183,7 +186,44 @@ func TestMigrationGeriAlinabilir(t *testing.T) {
 	version, dirty, err := db.Version(ctx, testDSN, inventory.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "yarıda kalmış migration olmamalı")
-	assert.Equal(t, uint(4), version)
+	assert.Equal(t, enYuksekMigrationSurumu(t, src), version)
+}
+
+// enYuksekMigrationSurumu gömülü migration kümesindeki en büyük sürüm
+// numarasını döner.
+//
+// Sayı ELLE YAZILMIYOR: sabit bir sayı, modüle her migration eklendiğinde bu
+// testi kırar ve kıran şey bir kusur değil, testin kendi eskimiş beklentisidir
+// — 000005 eklenirken tam olarak bu oldu. Kümeden okunduğunda iddia da doğru
+// olanına dönüşüyor: "geri almadan sonra HER ŞEY yeniden uygulandı", "sayı
+// beştir" değil. Aynı yardımcının sipariş modülündeki eşi
+// highestMigrationVersion'dır; test paketleri birbirini içe aktaramadığı için
+// tekrar ediyor.
+func enYuksekMigrationSurumu(t *testing.T, src fs.FS) uint {
+	t.Helper()
+
+	entries, err := fs.ReadDir(src, ".")
+	require.NoError(t, err)
+
+	var enYuksek uint
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".up.sql") {
+			continue
+		}
+
+		basamaklar := name[:strings.IndexByte(name, '_')]
+		n, convErr := strconv.ParseUint(basamaklar, 10, 32)
+		require.NoError(t, convErr, "%s bir sürüm numarasıyla başlamıyor", name)
+
+		if uint(n) > enYuksek {
+			enYuksek = uint(n)
+		}
+	}
+
+	require.Positive(t, enYuksek, "gömülü migration kümesi boş görünüyor")
+
+	return enYuksek
 }
 
 // TestCrossModuleForeignKeyYok modülün tablolarındaki TÜM foreign key'lerin

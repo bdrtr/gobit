@@ -32,3 +32,15 @@ JOIN order_replacements r ON r.id = i.order_replacement_id
 WHERE i.order_line_item_id = ANY(sqlc.arg('line_item_ids')::text[])
   AND r.status <> 'canceled'
 GROUP BY i.order_line_item_id;
+
+-- SetOrderReplacementItemReservation writes the promise a line's units are held
+-- under.
+--
+-- It is written BEFORE the units are confirmed, so a dispatch that dies between
+-- the two finds the promise on the row instead of making a second one.
+-- name: SetOrderReplacementItemReservation :one
+UPDATE order_replacement_items
+SET reservation_id = sqlc.arg('reservation_id')::text,
+    updated_at = now()
+WHERE id = sqlc.arg('id')::text
+RETURNING *;

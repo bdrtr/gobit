@@ -180,6 +180,77 @@ func TestConfirmingRecordsTheSaleThatTookTheUnits(t *testing.T) {
 	assert.Equal(t, reservation.ID, ledger[0].ReservationID)
 }
 
+// TestGoodsSentToSettleAClaimAreNotRecordedAsASale is why the promise carries a
+// purpose.
+//
+// The arithmetic of the two is identical — units set aside, then taken out of
+// the count — and the FACT is not: nobody paid for these. A ledger that called
+// them a sale would answer "what happened to this item" with the one word that
+// is wrong, and an operator reconciling a month of stock against a month of
+// revenue would find a gap with no name.
+func TestGoodsSentToSettleAClaimAreNotRecordedAsASale(t *testing.T) {
+	svc, store := newService(t)
+	store.seedItem(itemID, "SKU-1")
+	store.seedLevel(itemID, locA, 10, 0)
+
+	ctx := context.Background()
+	reservation, err := svc.Reserve(ctx, service.ReserveInput{
+		InventoryItemID: itemID, LocationID: locA, Quantity: 4,
+		Purpose: models.PurposeReplacement,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, models.PurposeReplacement, reservation.Purpose,
+		"the promise has to KEEP what it was made for; the confirm reads it back")
+
+	require.NoError(t, svc.ConfirmReservation(ctx, reservation.ID))
+
+	ledger := store.movementsFor(itemID)
+	require.Len(t, ledger, 1)
+	assert.Equal(t, models.MovementReplacement, ledger[0].Reason)
+	assert.Equal(t, int64(-4), ledger[0].Delta, "goods sent leave the count")
+	assert.Equal(t, int64(6), ledger[0].StockedAfter)
+	assert.Equal(t, reservation.ID, ledger[0].ReservationID,
+		"units that leave against a promise NAME the promise, whatever the promise was for")
+}
+
+// TestAPromiseWithNoPurposeIsASale keeps every reservation written before the
+// column existed readable.
+//
+// The checkout saga was the module's only caller, so 'sale' is not a default
+// chosen for convenience: it is what those rows really were.
+func TestAPromiseWithNoPurposeIsASale(t *testing.T) {
+	svc, store := newService(t)
+	store.seedItem(itemID, "SKU-1")
+	store.seedLevel(itemID, locA, 10, 0)
+
+	ctx := context.Background()
+	reservation, err := svc.Reserve(ctx, service.ReserveInput{
+		InventoryItemID: itemID, LocationID: locA, Quantity: 1,
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.ConfirmReservation(ctx, reservation.ID))
+
+	ledger := store.movementsFor(itemID)
+	require.Len(t, ledger, 1)
+	assert.Equal(t, models.MovementSale, ledger[0].Reason)
+}
+
+// TestAPurposeNobodyDefinedIsRefused keeps the column's vocabulary closed.
+func TestAPurposeNobodyDefinedIsRefused(t *testing.T) {
+	svc, store := newService(t)
+	store.seedItem(itemID, "SKU-1")
+	store.seedLevel(itemID, locA, 10, 0)
+
+	_, err := svc.Reserve(context.Background(), service.ReserveInput{
+		InventoryItemID: itemID, LocationID: locA, Quantity: 1,
+		Purpose: models.ReservationPurpose("gift"),
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
+	assert.Empty(t, store.movementsFor(itemID))
+}
+
 // TestAnAlreadyConfirmedReservationRecordsNothingTwice covers the idempotent
 // path. A second confirm returns success and must not put a second sale in the
 // ledger; a ledger that double-counts a retry is worse than no ledger, because

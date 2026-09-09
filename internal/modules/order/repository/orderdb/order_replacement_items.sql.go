@@ -14,7 +14,7 @@ const createOrderReplacementItem = `-- name: CreateOrderReplacementItem :one
 INSERT INTO order_replacement_items
     (id, order_replacement_id, order_line_item_id, quantity)
 VALUES ($1, $2, $3, $4)
-RETURNING id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at
+RETURNING id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id
 `
 
 type CreateOrderReplacementItemParams struct {
@@ -40,12 +40,13 @@ func (q *Queries) CreateOrderReplacementItem(ctx context.Context, arg CreateOrde
 		&i.Quantity,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReservationID,
 	)
 	return i, err
 }
 
 const listOrderReplacementItems = `-- name: ListOrderReplacementItems :many
-SELECT id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at FROM order_replacement_items
+SELECT id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id FROM order_replacement_items
 WHERE order_replacement_id = $1
 ORDER BY created_at, id
 `
@@ -68,6 +69,7 @@ func (q *Queries) ListOrderReplacementItems(ctx context.Context, orderReplacemen
 			&i.Quantity,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ReservationID,
 		); err != nil {
 			return nil, err
 		}
@@ -77,6 +79,39 @@ func (q *Queries) ListOrderReplacementItems(ctx context.Context, orderReplacemen
 		return nil, err
 	}
 	return items, nil
+}
+
+const setOrderReplacementItemReservation = `-- name: SetOrderReplacementItemReservation :one
+UPDATE order_replacement_items
+SET reservation_id = $1::text,
+    updated_at = now()
+WHERE id = $2::text
+RETURNING id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id
+`
+
+type SetOrderReplacementItemReservationParams struct {
+	ReservationID string
+	ID            string
+}
+
+// SetOrderReplacementItemReservation writes the promise a line's units are held
+// under.
+//
+// It is written BEFORE the units are confirmed, so a dispatch that dies between
+// the two finds the promise on the row instead of making a second one.
+func (q *Queries) SetOrderReplacementItemReservation(ctx context.Context, arg SetOrderReplacementItemReservationParams) (OrderReplacementItem, error) {
+	row := q.db.QueryRow(ctx, setOrderReplacementItemReservation, arg.ReservationID, arg.ID)
+	var i OrderReplacementItem
+	err := row.Scan(
+		&i.ID,
+		&i.OrderReplacementID,
+		&i.OrderLineItemID,
+		&i.Quantity,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ReservationID,
+	)
+	return i, err
 }
 
 const sumReplacedQuantities = `-- name: SumReplacedQuantities :many

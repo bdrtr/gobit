@@ -540,6 +540,7 @@ func (r *Repository) CreateReservation(ctx context.Context, res models.Reservati
 		LineItemID:      nullString(res.LineItemID),
 		Status:          res.Status.String(),
 		Description:     nullString(res.Description),
+		Purpose:         res.Purpose.String(),
 	})
 	if err != nil {
 		return models.Reservation{}, classify(err, codeQueryFailed, "rezervasyon oluşturulamadı")
@@ -750,6 +751,7 @@ func toReservation(row inventorydb.InventoryReservation) models.Reservation {
 		Quantity:        row.Quantity,
 		LineItemID:      stringValue(row.LineItemID),
 		Description:     stringValue(row.Description),
+		Purpose:         models.ReservationPurpose(row.Purpose),
 		Status:          models.ReservationStatus(row.Status),
 		CreatedAt:       timeValue(row.CreatedAt),
 		UpdatedAt:       timeValue(row.UpdatedAt),

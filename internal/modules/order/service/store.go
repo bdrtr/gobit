@@ -223,6 +223,15 @@ type Store interface {
 	CancelReplacement(ctx context.Context, id string) (models.Replacement, error)
 	// ListReplacementsByClaim returns a claim's replacements, newest first.
 	ListReplacementsByClaim(ctx context.Context, claimID string) ([]models.Replacement, error)
+	// DispatchReplacement records that the goods left, in the parcel named.
+	DispatchReplacement(
+		ctx context.Context, id, fulfillmentID string,
+	) (models.Replacement, error)
+	// SetReplacementItemReservation writes the promise a line's units are held
+	// under.
+	SetReplacementItemReservation(
+		ctx context.Context, itemID, reservationID string,
+	) (models.ReplacementItem, error)
 	// ListReplacementItems returns a replacement's lines.
 	ListReplacementItems(
 		ctx context.Context, replacementID string,

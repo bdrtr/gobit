@@ -70,8 +70,9 @@ func TestAZeroAmountMeansTheCLAIMsFigure(t *testing.T) {
 // TestAReplacementClaimIsREFUSEDNotStamped keeps a settlement from being
 // recorded when nothing was sent.
 //
-// Shipping goods against an existing order is not a capability this framework
-// has. Marking the claim complete would say the customer got something.
+// Money and goods are two different verbs: this one refunds, and
+// [Workflows.DispatchReplacement] sends. Letting the refund verb stamp a claim
+// to be settled with goods would say the customer got something.
 func TestAReplacementClaimIsREFUSEDNotStamped(t *testing.T) {
 	h := claimHarness(t)
 	h.orders.claim.ClaimType = claimTypeReplace

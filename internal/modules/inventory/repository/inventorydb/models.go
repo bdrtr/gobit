@@ -51,6 +51,7 @@ type InventoryReservation struct {
 	Description     *string
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
+	Purpose         string
 }
 
 type StockLocation struct {

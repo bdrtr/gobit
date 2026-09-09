@@ -38,24 +38,31 @@ type createReplacementRequest struct {
 
 // replacementItemDTO is one line of a replacement in a response.
 type replacementItemDTO struct {
-	ID              string    `json:"id"`
-	OrderLineItemID string    `json:"order_line_item_id"`
-	Quantity        int64     `json:"quantity"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID              string `json:"id"`
+	OrderLineItemID string `json:"order_line_item_id"`
+	Quantity        int64  `json:"quantity"`
+	// ReservationID is the promise the units are held under; it is empty until
+	// something sets them aside.
+	ReservationID string    `json:"reservation_id,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // replacementDTO is a replacement in a response.
 type replacementDTO struct {
-	ID               string               `json:"id"`
-	ClaimID          string               `json:"claim_id"`
-	Status           string               `json:"status"`
-	ShippingOptionID string               `json:"shipping_option_id"`
-	LocationID       string               `json:"location_id"`
-	Note             string               `json:"note,omitempty"`
-	Items            []replacementItemDTO `json:"items,omitempty"`
-	CanceledAt       *time.Time           `json:"canceled_at,omitempty"`
-	CreatedAt        time.Time            `json:"created_at"`
-	UpdatedAt        time.Time            `json:"updated_at"`
+	ID               string `json:"id"`
+	ClaimID          string `json:"claim_id"`
+	Status           string `json:"status"`
+	ShippingOptionID string `json:"shipping_option_id"`
+	LocationID       string `json:"location_id"`
+	Note             string `json:"note,omitempty"`
+	// FulfillmentID is the parcel the goods left in; it is empty until they do.
+	FulfillmentID string               `json:"fulfillment_id,omitempty"`
+	Items         []replacementItemDTO `json:"items,omitempty"`
+	CanceledAt    *time.Time           `json:"canceled_at,omitempty"`
+	// DispatchedAt is the moment the goods left; it is absent until they do.
+	DispatchedAt *time.Time `json:"dispatched_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 // adminCreateReplacement records what a claim will send.
@@ -156,7 +163,9 @@ func toReplacementSummaryDTO(record models.Replacement) replacementDTO {
 		ShippingOptionID: record.ShippingOptionID,
 		LocationID:       record.LocationID,
 		Note:             record.Note,
+		FulfillmentID:    record.FulfillmentID,
 		CanceledAt:       record.CanceledAt,
+		DispatchedAt:     record.DispatchedAt,
 		CreatedAt:        record.CreatedAt,
 		UpdatedAt:        record.UpdatedAt,
 	}
@@ -171,9 +180,54 @@ func toReplacementDTO(record service.ReplacementRecord) replacementDTO {
 			ID:              record.Items[i].ID,
 			OrderLineItemID: record.Items[i].OrderLineItemID,
 			Quantity:        record.Items[i].Quantity,
+			ReservationID:   record.Items[i].ReservationID,
 			CreatedAt:       record.Items[i].CreatedAt,
 		})
 	}
 
 	return out
+}
+
+// dispatchReplacementResponse is what the dispatch endpoint answers with.
+type dispatchReplacementResponse struct {
+	// FulfillmentID is the parcel the goods left in.
+	FulfillmentID string `json:"fulfillment_id"`
+	// SentUnits is how many units left the warehouse.
+	SentUnits int64 `json:"sent_units"`
+	// AlreadySent reports that the goods had already gone and nothing moved
+	// this time.
+	AlreadySent bool `json:"already_sent"`
+}
+
+// adminDispatchReplacement sends what the claim promised.
+//
+// It is the endpoint the record was waiting for. The record says WHAT to send
+// (ADR 0089) and this makes it leave: the units are set aside, a parcel is
+// opened, the units come out of the count and the claim is settled by the goods
+// rather than by money.
+func (h *Handler) adminDispatchReplacement(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	flow, err := h.returnReceiving()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	fulfillmentID, sentUnits, alreadySent, err := flow.DispatchReplacement(
+		ctx, chi.URLParam(r, paramReplacementID))
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{
+		Data: dispatchReplacementResponse{
+			FulfillmentID: fulfillmentID,
+			SentUnits:     sentUnits,
+			AlreadySent:   alreadySent,
+		},
+	})
 }

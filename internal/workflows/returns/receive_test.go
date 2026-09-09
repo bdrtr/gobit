@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -21,6 +22,10 @@ const (
 	testVariantB   = "var_b"
 	testItemA      = "invitem_a"
 	testItemB      = "invitem_b"
+
+	testReplacementID = "orepl_1"
+	testFulfillmentID = "ful_1"
+	testOptionID      = "so_1"
 )
 
 // stubOrders is the scriptable order surface.
@@ -42,6 +47,60 @@ type stubOrders struct {
 	summaryOrder    string
 	summaryPaid     int64
 	summaryRefunded int64
+
+	// The replacement half of the surface.
+	replacement      replacementDetail
+	replacementErr   error
+	reservationErr   error
+	reservationCalls []reservationCall
+	dispatchErr      error
+	dispatchCalls    []dispatchCall
+}
+
+// reservationCall is one RecordReplacementReservation call.
+type reservationCall struct {
+	replacementID string
+	itemID        string
+	reservationID string
+}
+
+// dispatchCall is one MarkReplacementDispatched call.
+type dispatchCall struct {
+	replacementID string
+	fulfillmentID string
+}
+
+// ReplacementDetailJSON returns the scripted replacement.
+func (s *stubOrders) ReplacementDetailJSON(_ context.Context, _ string) (json.RawMessage, error) {
+	if s.replacementErr != nil {
+		return nil, s.replacementErr
+	}
+
+	return json.Marshal(s.replacement)
+}
+
+// RecordReplacementReservation records the promise and applies the scripted
+// behavior.
+func (s *stubOrders) RecordReplacementReservation(
+	_ context.Context, replacementID, itemID, reservationID string,
+) error {
+	s.reservationCalls = append(s.reservationCalls, reservationCall{
+		replacementID: replacementID, itemID: itemID, reservationID: reservationID,
+	})
+
+	return s.reservationErr
+}
+
+// MarkReplacementDispatched records the stamp and applies the scripted
+// behavior.
+func (s *stubOrders) MarkReplacementDispatched(
+	_ context.Context, replacementID, fulfillmentID string,
+) error {
+	s.dispatchCalls = append(s.dispatchCalls, dispatchCall{
+		replacementID: replacementID, fulfillmentID: fulfillmentID,
+	})
+
+	return s.dispatchErr
 }
 
 // ReturnDetailJSON returns the scripted detail.
@@ -101,6 +160,24 @@ type restockCall struct {
 type stubInventory struct {
 	err   error
 	calls []restockCall
+
+	// The going-out half of the surface.
+	reserveID      string
+	reserveErr     error
+	reserveCalls   []reserveCall
+	confirmErr     error
+	confirmed      []string
+	releaseErr     error
+	released       []string
+	reserveCounter int
+}
+
+// reserveCall is one ReserveForReplacement call.
+type reserveCall struct {
+	itemID     string
+	locationID string
+	quantity   int64
+	lineItemID string
 }
 
 // Restock records the call and applies the scripted behavior.
@@ -108,6 +185,67 @@ func (s *stubInventory) Restock(_ context.Context, itemID, locationID string, qu
 	s.calls = append(s.calls, restockCall{itemID: itemID, locationID: locationID, quantity: quantity})
 
 	return s.err
+}
+
+// ReserveForReplacement records the call and answers with a promise id.
+//
+// The id is a COUNTER rather than a constant: two lines set aside under the
+// same promise would make a flow that confirms one of them twice look correct.
+func (s *stubInventory) ReserveForReplacement(
+	_ context.Context, itemID, locationID string, quantity int64, lineItemID string,
+) (string, error) {
+	s.reserveCalls = append(s.reserveCalls, reserveCall{
+		itemID: itemID, locationID: locationID, quantity: quantity, lineItemID: lineItemID,
+	})
+	if s.reserveErr != nil {
+		return "", s.reserveErr
+	}
+	s.reserveCounter++
+	if s.reserveID != "" {
+		return s.reserveID, nil
+	}
+
+	return fmt.Sprintf("invres_%d", s.reserveCounter), nil
+}
+
+// ConfirmReservation records the confirm and applies the scripted behavior.
+func (s *stubInventory) ConfirmReservation(_ context.Context, reservationID string) error {
+	s.confirmed = append(s.confirmed, reservationID)
+
+	return s.confirmErr
+}
+
+// ReleaseReservation records the release and applies the scripted behavior.
+func (s *stubInventory) ReleaseReservation(_ context.Context, reservationID string) error {
+	s.released = append(s.released, reservationID)
+
+	return s.releaseErr
+}
+
+// stubShipping is the scriptable surface of the fulfilling flow.
+type stubShipping struct {
+	fulfillmentID string
+	alreadyOpen   bool
+	err           error
+	calls         []shippingCall
+}
+
+// shippingCall is one OpenForOrder call.
+type shippingCall struct {
+	orderID string
+	request string
+}
+
+// OpenForOrder records the request and answers with the scripted parcel.
+func (s *stubShipping) OpenForOrder(
+	_ context.Context, orderID string, request json.RawMessage,
+) (fulfillmentID string, alreadyOpen bool, err error) {
+	s.calls = append(s.calls, shippingCall{orderID: orderID, request: string(request)})
+	if s.err != nil {
+		return "", false, s.err
+	}
+
+	return s.fulfillmentID, s.alreadyOpen, nil
 }
 
 // stubLinks is the scriptable link surface.
@@ -185,6 +323,7 @@ type harness struct {
 	inventory *stubInventory
 	payments  *stubPayments
 	links     *stubLinks
+	shipping  *stubShipping
 	wf        *Workflows
 }
 
@@ -208,6 +347,7 @@ func newHarness(t *testing.T) *harness {
 			testVariantA: {testItemA},
 			testVariantB: {testItemB},
 		}},
+		shipping: &stubShipping{fulfillmentID: testFulfillmentID},
 	}
 
 	wf, err := New(Deps{
@@ -215,6 +355,7 @@ func newHarness(t *testing.T) *harness {
 		Inventory: h.inventory,
 		Payments:  h.payments,
 		Links:     h.links,
+		Shipping:  h.shipping,
 	})
 	require.NoError(t, err)
 	h.wf = wf
@@ -378,6 +519,7 @@ func TestAMissingSurfaceIsRefusedAtWiring(t *testing.T) {
 		Inventory: &stubInventory{},
 		Payments:  &stubPayments{},
 		Links:     &stubLinks{},
+		Shipping:  &stubShipping{},
 	})
 
 	require.Error(t, err)

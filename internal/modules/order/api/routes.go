@@ -145,6 +145,11 @@ func (h *Handler) Routes(r chi.Router) {
 		h.adminGetReplacement)
 	write.Post("/admin/v1/orders/{id}/claims/{claimId}/replacements/{replacementId}/cancel",
 		h.adminCancelReplacement)
+	// Sending it is a WRITE that reaches two other modules, so it goes through
+	// the flow rather than the service: the units come out of the inventory
+	// module's count and the parcel is the fulfillment module's.
+	write.Post("/admin/v1/orders/{id}/claims/{claimId}/replacements/{replacementId}/dispatch",
+		h.adminDispatchReplacement)
 
 	// Invoicing. The endpoints are on the ORDER because "invoice this order" is
 	// a question asked about an order and the client asking it holds an order

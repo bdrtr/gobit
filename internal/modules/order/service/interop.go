@@ -326,6 +326,41 @@ func (i *Interop) ClaimDetailJSON(ctx context.Context, claimID string) (json.Raw
 	return i.svc.ClaimDetailJSON(ctx, claimID)
 }
 
+// ReplacementDetailJSON returns what a flow needs to send a replacement.
+//
+// The schema is documented on [Service.ReplacementDetailJSON]. The consumer is
+// the return flow, which needs the variant of every line to set its stock
+// aside and the promise ids to know what it has already set aside.
+func (i *Interop) ReplacementDetailJSON(
+	ctx context.Context, replacementID string,
+) (json.RawMessage, error) {
+	return i.svc.ReplacementDetailJSON(ctx, replacementID)
+}
+
+// RecordReplacementReservation writes the promise a replacement line's units
+// are held under.
+//
+// Repeating it with the SAME promise is a no-op, so a retried flow does not
+// have to remember whether it got this far.
+func (i *Interop) RecordReplacementReservation(
+	ctx context.Context, replacementID, itemID, reservationID string,
+) error {
+	return i.svc.RecordReplacementReservation(ctx, replacementID, itemID, reservationID)
+}
+
+// MarkReplacementDispatched records that the goods left, in the parcel named.
+//
+// It says they left and nothing about how: deducting the stock and opening the
+// parcel happened outside this module, which could not check either if it
+// wanted to.
+func (i *Interop) MarkReplacementDispatched(
+	ctx context.Context, replacementID, fulfillmentID string,
+) error {
+	_, err := i.svc.MarkReplacementDispatched(ctx, replacementID, fulfillmentID)
+
+	return err
+}
+
 // CompleteClaim records that the claim was settled.
 //
 // It says the claim WAS settled and nothing about how; sending the money or the

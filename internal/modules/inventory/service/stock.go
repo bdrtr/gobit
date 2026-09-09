@@ -310,6 +310,15 @@ type ReserveInput struct {
 	LineItemID string
 	// Description isteğe bağlı serbest açıklamadır.
 	Description string
+	// Purpose stoğun NİÇİN ayrıldığıdır; boş bırakılırsa
+	// [models.PurposeSale] okunur.
+	//
+	// Onayın yazacağı hareket sebebini belirleyen alan budur: mal ambardan
+	// çıktığında defter "satış" mı "yerine gönderim" mi olduğunu bu sözden
+	// öğrenir. Sebebi onaya parametre olarak vermek reddedildi — onay saga'dan,
+	// yeniden denemeden ve kurtarma yolundan çağrılıyor ve üçüncüsünde
+	// çağıranın elinde o bilgi yok.
+	Purpose models.ReservationPurpose
 }
 
 // Reserve satılabilir stoktan istenen adedi ayırır.
@@ -338,6 +347,14 @@ func (s *Service) Reserve(ctx context.Context, in ReserveInput) (models.Reservat
 	}
 	if err := checkTextLen("description", in.Description); err != nil {
 		return models.Reservation{}, err
+	}
+	purpose := in.Purpose
+	if purpose == "" {
+		purpose = models.PurposeSale
+	}
+	if !purpose.Valid() {
+		return models.Reservation{}, errors.Invalid(CodeInvalidInput,
+			"bilinmeyen rezervasyon amacı: %q", in.Purpose)
 	}
 
 	var out models.Reservation
@@ -376,6 +393,7 @@ func (s *Service) Reserve(ctx context.Context, in ReserveInput) (models.Reservat
 			Quantity:        in.Quantity,
 			LineItemID:      strings.TrimSpace(in.LineItemID),
 			Description:     strings.TrimSpace(in.Description),
+			Purpose:         purpose,
 			Status:          models.ReservationActive,
 		})
 		if err != nil {
@@ -513,8 +531,13 @@ func (s *Service) ConfirmReservation(ctx context.Context, reservationID string) 
 		// This is the ONE reservation transition that moves goods, so it is the
 		// one that leaves a movement: the units are gone from the warehouse and
 		// the row names the promise they went out against (ADR 0068).
+		//
+		// Hareketin sebebini SÖZÜN KENDİSİ söylüyor: satış için ayrılmış stok
+		// satış olarak, bir talebi karşılamak için ayrılmış stok yerine gönderim
+		// olarak düşülür. Onayın burada bir seçimi yok, çünkü seçim rezervasyon
+		// yazılırken yapıldı.
 		if _, err := s.writeQuantities(ctx, level, newStocked, newReserved,
-			models.MovementSale, reservationID); err != nil {
+			reservation.Purpose.MovementReason(), reservationID); err != nil {
 			return err
 		}
 		return s.store.SetReservationStatus(ctx, reservationID, models.ReservationConfirmed)

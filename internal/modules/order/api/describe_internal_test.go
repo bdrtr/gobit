@@ -324,6 +324,17 @@ func describedEndpoints() []endpointExpectation {
 			status: "200", response: filledReplacement(),
 		},
 		{
+			method: http.MethodPost,
+			path:   "/admin/v1/orders/{id}/claims/{claimId}/replacements/{replacementId}/dispatch",
+			// No request either: what to send, from where and by which carrier
+			// were all answered when the record was written, so a body here
+			// could only disagree with it.
+			status: "200",
+			response: dispatchReplacementResponse{
+				FulfillmentID: "ful_1", SentUnits: 2, AlreadySent: false,
+			},
+		},
+		{
 			// The issue endpoint answers 201 when it created the document and
 			// 200 when the order already had one. The 201 is the one this table
 			// checks; that both are described is what the document says.
@@ -535,8 +546,12 @@ func filledReplacement() replacementDTO {
 		ShippingOptionID: "so_1",
 		LocationID:       "sloc_1",
 		Note:             "the box arrived open",
-		Items:            []replacementItemDTO{{ID: "oreplitem_1"}},
-		CanceledAt:       &now,
+		FulfillmentID:    "ful_1",
+		Items: []replacementItemDTO{
+			{ID: "oreplitem_1", ReservationID: "invres_1"},
+		},
+		CanceledAt:   &now,
+		DispatchedAt: &now,
 	}
 }
 

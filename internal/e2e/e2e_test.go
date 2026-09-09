@@ -144,6 +144,7 @@ import (
 	taxsvc "github.com/bdrtr/gobit/internal/modules/tax/service"
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
+	fulfillingwf "github.com/bdrtr/gobit/internal/workflows/fulfilling"
 	invoicingwf "github.com/bdrtr/gobit/internal/workflows/invoicing"
 	returnswf "github.com/bdrtr/gobit/internal/workflows/returns"
 )
@@ -763,6 +764,13 @@ func setUpHarness(ctx context.Context) error {
 	if setupErr = setUpInvoicingWorkflow(); setupErr != nil {
 		return fmt.Errorf("could not set up the invoicing workflow: %w", setupErr)
 	}
+	// BEFORE the return flow, and the order is a dependency rather than a
+	// preference: sending a replacement opens a parcel, so the return flow
+	// resolves this one by name. internal/app/setup.go wires them in the same
+	// order for the same reason.
+	if setupErr = setUpFulfillingWorkflow(); setupErr != nil {
+		return fmt.Errorf("could not set up the fulfilling workflow: %w", setupErr)
+	}
 	if setupErr = setUpReturnsWorkflow(); setupErr != nil {
 		return fmt.Errorf("could not set up the return workflow: %w", setupErr)
 	}
@@ -959,6 +967,21 @@ func setUpInvoicingWorkflow() error {
 	}
 
 	return ctr.Provide(invoicingwf.InteropName, invoicingwf.NewInterop(flow))
+}
+
+// setUpFulfillingWorkflow builds the parcel flow and registers its surface.
+//
+// It is the flow that opens a SHIPMENT for an order and binds the two, and the
+// ground needs it for two callers: the order module's shipment endpoints, which
+// resolve it by name and fail closed without it, and the return flow, which
+// opens the parcel a replacement leaves in.
+func setUpFulfillingWorkflow() error {
+	flow, err := fulfillingwf.FromContainer(ctr)
+	if err != nil {
+		return err
+	}
+
+	return ctr.Provide(fulfillingwf.InteropName, fulfillingwf.NewInterop(flow))
 }
 
 // setUpReturnsWorkflow builds the after-sales flow and registers its surface.

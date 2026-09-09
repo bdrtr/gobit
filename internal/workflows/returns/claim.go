@@ -38,13 +38,17 @@ type SettleClaimResult struct {
 
 // SettleClaim settles a damage or shortage claim by refunding it.
 //
-// # Only the REFUND kind, and the other kind is refused rather than ignored
+// # Only the REFUND kind, and the other kind is sent somewhere else
 //
-// A claim is settled either with money or with a replacement. This flow does
-// the first. The second needs goods shipped out against an existing order —
-// there is no capability for that anywhere in the framework — so a claim of
-// that kind is REFUSED here with a message that says so, instead of being
-// quietly marked complete while nothing was sent.
+// A claim is settled either with money or with goods. This verb does the first
+// and [Workflows.DispatchReplacement] does the second, so a claim to be settled
+// with goods is refused here and told where to go — rather than being quietly
+// marked complete while nothing was sent.
+//
+// The refusal used to say the framework could not ship a replacement at all.
+// That was true until the record of WHAT to send existed (ADR 0089) and the
+// flow that sends it (ADR 0090); what is left is that money and goods are two
+// different verbs, which is a distinction rather than a limit.
 //
 // # Why it is not a return
 //
@@ -68,8 +72,8 @@ func (w *Workflows) SettleClaim(
 	}
 	if detail.ClaimType != claimTypeRefund {
 		return SettleClaimResult{}, errors.Conflict(CodeInvalidInput,
-			"claim %s is settled with a %s, not with money; shipping a replacement against an "+
-				"existing order is not something this framework can do yet",
+			"claim %s is settled with a %s, not with money; a replacement is sent by "+
+				"dispatching the record of what to send, and sending it settles the claim",
 			claimID, detail.ClaimType)
 	}
 	if detail.Status != statusRequested {

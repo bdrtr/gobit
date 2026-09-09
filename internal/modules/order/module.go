@@ -492,6 +492,18 @@ func (p *returnReceiving) SettleClaim(
 	return p.svc.SettleClaim(ctx, claimID, amount, reason)
 }
 
+// DispatchReplacement sends what the claim promised.
+func (p *returnReceiving) DispatchReplacement(
+	ctx context.Context, replacementID string,
+) (fulfillmentID string, sentUnits int64, alreadySent bool, err error) {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return "", 0, false, p.err
+	}
+
+	return p.svc.DispatchReplacement(ctx, replacementID)
+}
+
 // resolve looks the flow up in the container and remembers the outcome.
 func (p *returnReceiving) resolve(ctx context.Context) {
 	svc, err := container.Resolve[api.ReturnReceiving](p.c, returnFlowName)

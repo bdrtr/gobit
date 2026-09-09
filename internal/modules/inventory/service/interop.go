@@ -1,6 +1,10 @@
 package service
 
-import "context"
+import (
+	"context"
+
+	"github.com/bdrtr/gobit/internal/modules/inventory/models"
+)
 
 // This file is the CROSS-MODULE surface of the inventory module (ADR 0001,
 // ADR 0006).
@@ -13,7 +17,8 @@ import "context"
 // and it is resolved from the container by name.
 //
 // The surface is DELIBERATELY narrow and was picked according to what the flows
-// need: set the stock aside ([Interop.Reserve]), release what was set aside
+// need: set the stock aside ([Interop.Reserve] and, for goods being sent to
+// settle a claim, [Interop.ReserveForReplacement]), release what was set aside
 // ([Interop.ReleaseReservation]), turn it into deducted stock
 // ([Interop.ConfirmReservation]), ask for the sellable total
 // ([Interop.AvailableQuantity]) and list the locations that have enough stock
@@ -62,6 +67,41 @@ func (i *Interop) Reserve(
 	if err != nil {
 		return "", err
 	}
+	return res.ID, nil
+}
+
+// ReserveForReplacement sets stock aside for goods that will be SENT to settle
+// a claim, and returns the reservation id.
+//
+// # Why it is not Reserve with an extra argument
+//
+// The two calls differ in one word and that word is the point: the confirm
+// writes a movement whose reason comes from the promise, so what is chosen here
+// is what the ledger will say a month from now — units that left as a sale, or
+// units nobody paid for. Widening [Interop.Reserve] would put that choice in a
+// positional parameter next to three identifiers, where the checkout saga would
+// have to pass a value it never varies.
+//
+// Everything else is [Interop.Reserve]'s: insufficient stock is a Conflict the
+// caller reads as "this cannot be sent from here", and the set-aside is
+// serialized at the database level.
+func (i *Interop) ReserveForReplacement(
+	ctx context.Context,
+	inventoryItemID, locationID string,
+	quantity int64,
+	orderLineItemID string,
+) (reservationID string, err error) {
+	res, err := i.svc.Reserve(ctx, ReserveInput{
+		InventoryItemID: inventoryItemID,
+		LocationID:      locationID,
+		Quantity:        quantity,
+		LineItemID:      orderLineItemID,
+		Purpose:         models.PurposeReplacement,
+	})
+	if err != nil {
+		return "", err
+	}
+
 	return res.ID, nil
 }
 

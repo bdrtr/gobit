@@ -1736,6 +1736,48 @@ func (f *fakeStore) ListReplacementsByClaim(
 	return out, nil
 }
 
+// DispatchReplacement records that the goods left, in the parcel named.
+func (f *fakeStore) DispatchReplacement(
+	ctx context.Context, id, fulfillmentID string,
+) (models.Replacement, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	record, ok := f.replaces[id]
+	if !ok {
+		return models.Replacement{}, notFound(id)
+	}
+	stamp := f.nextStamp()
+	record.Status = models.ReplacementDispatched
+	record.DispatchedAt = &stamp
+	record.FulfillmentID = fulfillmentID
+	record.UpdatedAt = stamp
+	f.recordUndo(ctx, undoEntry(f.replaces, id))
+	f.replaces[id] = record
+
+	return record, nil
+}
+
+// SetReplacementItemReservation writes the promise a line's units are held
+// under.
+func (f *fakeStore) SetReplacementItemReservation(
+	ctx context.Context, itemID, reservationID string,
+) (models.ReplacementItem, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	item, ok := f.replItems[itemID]
+	if !ok {
+		return models.ReplacementItem{}, notFound(itemID)
+	}
+	item.ReservationID = reservationID
+	item.UpdatedAt = f.nextStamp()
+	f.recordUndo(ctx, undoEntry(f.replItems, itemID))
+	f.replItems[itemID] = item
+
+	return item, nil
+}
+
 // ListReplacementItems returns a replacement's lines in write order.
 func (f *fakeStore) ListReplacementItems(
 	_ context.Context, replacementID string,

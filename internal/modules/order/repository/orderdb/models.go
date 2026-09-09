@@ -108,6 +108,8 @@ type OrderReplacement struct {
 	CanceledAt       pgtype.Timestamptz
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	DispatchedAt     pgtype.Timestamptz
+	FulfillmentID    *string
 }
 
 type OrderReplacementItem struct {
@@ -117,6 +119,7 @@ type OrderReplacementItem struct {
 	Quantity           int64
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
+	ReservationID      *string
 }
 
 type OrderReturn struct {

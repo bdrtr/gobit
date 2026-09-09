@@ -83,6 +83,20 @@ func (r *Repository) CancelReplacement(
 	return toReplacement(row), nil
 }
 
+// DispatchReplacement records that the goods left, in the parcel named.
+func (r *Repository) DispatchReplacement(
+	ctx context.Context, id, fulfillmentID string,
+) (models.Replacement, error) {
+	row, err := r.queries(ctx).DispatchOrderReplacement(ctx,
+		orderdb.DispatchOrderReplacementParams{ID: id, FulfillmentID: fulfillmentID})
+	if err != nil {
+		return models.Replacement{}, classify(err, codeQueryFailed,
+			"the replacement could not be marked as dispatched: %s", id)
+	}
+
+	return toReplacement(row), nil
+}
+
 // ListReplacementsByClaim returns a claim's replacements, newest first.
 func (r *Repository) ListReplacementsByClaim(
 	ctx context.Context, claimID string,
@@ -110,6 +124,23 @@ func (r *Repository) CreateReplacementItem(
 	if err != nil {
 		return models.ReplacementItem{}, classify(err, codeQueryFailed,
 			"could not write the replacement line %s", in.OrderLineItemID)
+	}
+
+	return toReplacementItem(row), nil
+}
+
+// SetReplacementItemReservation writes the promise a line's units are held
+// under.
+func (r *Repository) SetReplacementItemReservation(
+	ctx context.Context, itemID, reservationID string,
+) (models.ReplacementItem, error) {
+	row, err := r.queries(ctx).SetOrderReplacementItemReservation(ctx,
+		orderdb.SetOrderReplacementItemReservationParams{
+			ID: itemID, ReservationID: reservationID,
+		})
+	if err != nil {
+		return models.ReplacementItem{}, classify(err, codeQueryFailed,
+			"the reservation of replacement line %s could not be written", itemID)
 	}
 
 	return toReplacementItem(row), nil
@@ -169,7 +200,9 @@ func toReplacement(row orderdb.OrderReplacement) models.Replacement {
 		ShippingOptionID: row.ShippingOptionID,
 		LocationID:       row.LocationID,
 		Note:             stringValue(row.Note),
+		FulfillmentID:    stringValue(row.FulfillmentID),
 		CanceledAt:       toTimePtr(row.CanceledAt),
+		DispatchedAt:     toTimePtr(row.DispatchedAt),
 		CreatedAt:        toTime(row.CreatedAt),
 		UpdatedAt:        toTime(row.UpdatedAt),
 	}
@@ -192,6 +225,7 @@ func toReplacementItem(row orderdb.OrderReplacementItem) models.ReplacementItem 
 		ReplacementID:   row.OrderReplacementID,
 		OrderLineItemID: row.OrderLineItemID,
 		Quantity:        row.Quantity,
+		ReservationID:   stringValue(row.ReservationID),
 		CreatedAt:       toTime(row.CreatedAt),
 		UpdatedAt:       toTime(row.UpdatedAt),
 	}

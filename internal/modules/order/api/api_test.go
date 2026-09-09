@@ -1050,6 +1050,27 @@ type fakeReceiving struct {
 	gotReason      string
 	settleCalls    int
 	gotClaimID     string
+
+	// The dispatch half of the flow.
+	dispatchParcel  string
+	dispatchUnits   int64
+	dispatchAlready bool
+	dispatchErr     error
+	dispatchCalls   int
+	gotDispatchID   string
+}
+
+// DispatchReplacement records the call and returns the scripted outcome.
+func (f *fakeReceiving) DispatchReplacement(
+	_ context.Context, replacementID string,
+) (fulfillmentID string, sentUnits int64, alreadySent bool, err error) {
+	f.dispatchCalls++
+	f.gotDispatchID = replacementID
+	if f.dispatchErr != nil {
+		return "", 0, false, f.dispatchErr
+	}
+
+	return f.dispatchParcel, f.dispatchUnits, f.dispatchAlready, nil
 }
 
 // SettleClaim records the call and returns the scripted outcome.
@@ -1420,4 +1441,61 @@ func TestAdminListReplacementsAnswersAnArray(t *testing.T) {
 	first, ok := rows[0].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "orepl_2", first["id"], "the order the service gave is kept")
+}
+
+// TestAdminDispatchReplacementReachesTheFlow is the endpoint the record was
+// waiting for.
+//
+// The record says what to send and this makes it leave, so the call has to go
+// through the FLOW: the units come out of the inventory module's count and the
+// parcel is the fulfillment module's, and the order module knows neither.
+func TestAdminDispatchReplacementReachesTheFlow(t *testing.T) {
+	flow := &fakeReceiving{dispatchParcel: "ful_1", dispatchUnits: 2}
+	r := newRouterWithFlow(&fakeOrders{}, flow)
+
+	rec := doRequest(t, r, http.MethodPost,
+		"/admin/v1/orders/order_1/claims/clm_1/replacements/orepl_1/dispatch", "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, 1, flow.dispatchCalls)
+	assert.Equal(t, "orepl_1", flow.gotDispatchID,
+		"the flow is asked about the REPLACEMENT, not the claim it settles")
+
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "ful_1", data["fulfillment_id"])
+	assert.Equal(t, float64(2), data["sent_units"])
+	assert.Equal(t, false, data["already_sent"])
+}
+
+// TestAdminDispatchReplacementReportsASecondPress keeps an operator from
+// believing a second parcel went out.
+func TestAdminDispatchReplacementReportsASecondPress(t *testing.T) {
+	flow := &fakeReceiving{dispatchParcel: "ful_1", dispatchAlready: true}
+	r := newRouterWithFlow(&fakeOrders{}, flow)
+
+	rec := doRequest(t, r, http.MethodPost,
+		"/admin/v1/orders/order_1/claims/clm_1/replacements/orepl_1/dispatch", "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, true, data["already_sent"])
+	assert.Equal(t, float64(0), data["sent_units"], "a second press moves nothing")
+}
+
+// TestAdminDispatchWithoutTheFlowFailsClosed keeps the record from claiming a
+// dispatch nothing could perform.
+//
+// It is the same reasoning the receive endpoint gives: without the flow the
+// correct answer is not "record it and skip the goods".
+func TestAdminDispatchWithoutTheFlowFailsClosed(t *testing.T) {
+	svc := &fakeOrders{}
+	r := newRouterWithFlow(svc, nil)
+
+	rec := doRequest(t, r, http.MethodPost,
+		"/admin/v1/orders/order_1/claims/clm_1/replacements/orepl_1/dispatch", "")
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Empty(t, svc.calls, "nothing may be recorded when nothing can be sent")
 }

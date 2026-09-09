@@ -189,6 +189,10 @@ func (s *Service) ListReplacementsOfClaim(
 // Withdrawing is idempotent: a replacement that is already canceled is returned
 // as it stands rather than refused. The repetition is the same request, and the
 // answer to it has not changed — the shape [Service.CancelReturn] uses.
+//
+// A DISPATCHED replacement is refused. Withdrawing it would say the goods were
+// never promised while they are with the carrier, and the schema would refuse
+// the write anyway: the two moments imply their statuses in both directions.
 func (s *Service) CancelReplacement(
 	ctx context.Context, id string,
 ) (models.Replacement, error) {
@@ -206,6 +210,12 @@ func (s *Service) CancelReplacement(
 			out = current
 
 			return nil
+		}
+		if current.Status == models.ReplacementDispatched {
+			return errors.Conflict(CodeReplacementNotOpen,
+				"replacement %s left in parcel %s; goods that have gone out are taken back "+
+					"by a return rather than by withdrawing the request that sent them",
+				id, current.FulfillmentID)
 		}
 
 		out, err = s.store.CancelReplacement(ctx, id)

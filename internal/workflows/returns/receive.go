@@ -154,7 +154,12 @@ func (w *Workflows) readReturn(ctx context.Context, returnID string) (returnDeta
 func (w *Workflows) restock(
 	ctx context.Context, detail returnDetail, locationID string, result *ReceiveResult,
 ) {
-	items, err := w.inventoryItems(ctx, detail.Lines)
+	variantIDs := make([]string, 0, len(detail.Lines))
+	for i := range detail.Lines {
+		variantIDs = append(variantIDs, detail.Lines[i].VariantID)
+	}
+
+	items, err := w.inventoryItems(ctx, variantIDs)
 	if err != nil {
 		w.log.ErrorContext(ctx,
 			"the returned lines could not be matched to inventory items; the goods ARRIVED and "+
@@ -199,20 +204,17 @@ func (w *Workflows) restock(
 	}
 }
 
-// inventoryItems resolves every returned variant to its inventory item in ONE
-// query.
+// inventoryItems resolves every variant to its inventory item in ONE query.
 //
 // A variant with no item is left OUT of the map rather than reported as an
 // error: an item can legitimately be missing for a variant that does not track
-// stock, and failing the whole receipt for one such line would strand the
-// others. The caller warns per line instead.
+// stock, and failing a whole receipt for one such line would strand the others.
+// The caller decides what a missing one means — receiving warns per line and
+// carries on, dispatching refuses, because goods that cannot be found cannot be
+// sent.
 func (w *Workflows) inventoryItems(
-	ctx context.Context, lines []returnLine,
+	ctx context.Context, variantIDs []string,
 ) (map[string]string, error) {
-	variantIDs := make([]string, 0, len(lines))
-	for i := range lines {
-		variantIDs = append(variantIDs, lines[i].VariantID)
-	}
 	if len(variantIDs) == 0 {
 		return map[string]string{}, nil
 	}
@@ -220,7 +222,7 @@ func (w *Workflows) inventoryItems(
 	linked, err := w.links.ListMany(ctx, LinkVariantInventory, variantIDs)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindOf(err), CodeNoInventoryItem,
-			"the inventory items of %d returned variants could not be read", len(variantIDs))
+			"the inventory items of %d variants could not be read", len(variantIDs))
 	}
 
 	out := make(map[string]string, len(linked))

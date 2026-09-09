@@ -48,9 +48,10 @@ func (q *Queries) CountActiveReservationsByLocation(ctx context.Context, locatio
 const createReservation = `-- name: CreateReservation :one
 
 INSERT INTO inventory_reservations (
-    id, inventory_item_id, location_id, quantity, line_item_id, status, description
-) VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, inventory_item_id, location_id, quantity, line_item_id, status, description, created_at, updated_at
+    id, inventory_item_id, location_id, quantity, line_item_id, status, description,
+    purpose
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, inventory_item_id, location_id, quantity, line_item_id, status, description, created_at, updated_at, purpose
 `
 
 type CreateReservationParams struct {
@@ -61,6 +62,7 @@ type CreateReservationParams struct {
 	LineItemID      *string
 	Status          string
 	Description     *string
+	Purpose         string
 }
 
 // inventory_reservations queries.
@@ -84,6 +86,7 @@ func (q *Queries) CreateReservation(ctx context.Context, arg CreateReservationPa
 		arg.LineItemID,
 		arg.Status,
 		arg.Description,
+		arg.Purpose,
 	)
 	var i InventoryReservation
 	err := row.Scan(
@@ -96,12 +99,13 @@ func (q *Queries) CreateReservation(ctx context.Context, arg CreateReservationPa
 		&i.Description,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Purpose,
 	)
 	return i, err
 }
 
 const getReservation = `-- name: GetReservation :one
-SELECT id, inventory_item_id, location_id, quantity, line_item_id, status, description, created_at, updated_at FROM inventory_reservations
+SELECT id, inventory_item_id, location_id, quantity, line_item_id, status, description, created_at, updated_at, purpose FROM inventory_reservations
 WHERE id = $1
 `
 
@@ -118,12 +122,13 @@ func (q *Queries) GetReservation(ctx context.Context, id string) (InventoryReser
 		&i.Description,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Purpose,
 	)
 	return i, err
 }
 
 const lockReservation = `-- name: LockReservation :one
-SELECT id, inventory_item_id, location_id, quantity, line_item_id, status, description, created_at, updated_at FROM inventory_reservations
+SELECT id, inventory_item_id, location_id, quantity, line_item_id, status, description, created_at, updated_at, purpose FROM inventory_reservations
 WHERE id = $1
 FOR UPDATE
 `
@@ -143,6 +148,7 @@ func (q *Queries) LockReservation(ctx context.Context, id string) (InventoryRese
 		&i.Description,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Purpose,
 	)
 	return i, err
 }

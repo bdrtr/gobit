@@ -43,6 +43,9 @@ const (
 	ServicePayment = "payment.interop"
 	// ServiceLink is the core's Module Links service.
 	ServiceLink = "core.link"
+	// ServiceShipping is the fulfilling FLOW's cross-flow surface. The value is
+	// repeated here for [LinkVariantInventory]'s reason.
+	ServiceShipping = "workflows.fulfilling.interop"
 )
 
 // LinkOrderPayment binds an order to the payment collection opened for it.
@@ -73,6 +76,17 @@ const (
 	CodeNoPayment = "returns_workflow_no_payment"
 	// CodeRefundFailed reports that the money could not be sent back.
 	CodeRefundFailed = "returns_workflow_refund_failed"
+	// CodeReplacementUnreadable reports that the replacement could not be read.
+	CodeReplacementUnreadable = "returns_workflow_replacement_unreadable"
+	// CodeReplacementNotOpen reports a dispatch of a replacement that is not
+	// waiting to be sent.
+	CodeReplacementNotOpen = "returns_workflow_replacement_not_open"
+	// CodeStockNotHeld reports that the units could not be set aside.
+	CodeStockNotHeld = "returns_workflow_stock_not_held"
+	// CodeParcelNotOpened reports that no parcel could be opened for the goods.
+	CodeParcelNotOpened = "returns_workflow_parcel_not_opened"
+	// CodeStockNotTaken reports that the promised units could not be deducted.
+	CodeStockNotTaken = "returns_workflow_stock_not_taken"
 )
 
 // Orders is the surface of the order module used by this flow.
@@ -89,6 +103,14 @@ type Orders interface {
 	ClaimDetailJSON(ctx context.Context, claimID string) (json.RawMessage, error)
 	// CompleteClaim records that the claim was settled.
 	CompleteClaim(ctx context.Context, claimID string) error
+
+	// ReplacementDetailJSON returns what a flow needs to send a replacement.
+	ReplacementDetailJSON(ctx context.Context, replacementID string) (json.RawMessage, error)
+	// RecordReplacementReservation writes the promise a line's units are held
+	// under; repeating it with the same promise is a no-op.
+	RecordReplacementReservation(ctx context.Context, replacementID, itemID, reservationID string) error
+	// MarkReplacementDispatched records that the goods left, in the parcel named.
+	MarkReplacementDispatched(ctx context.Context, replacementID, fulfillmentID string) error
 }
 
 // Payments is the surface of the payment module used by this flow.
@@ -108,6 +130,38 @@ type Payments interface {
 type Inventory interface {
 	// Restock puts quantity units of the item back at the location.
 	Restock(ctx context.Context, inventoryItemID, locationID string, quantity int64) error
+	// ReserveForReplacement sets units aside for goods being SENT to settle a
+	// claim and returns the promise's id. Insufficient stock is a Conflict.
+	//
+	// It is the replacement's own entry point rather than the sale's, because
+	// the confirm behind it writes what the ledger will say a month from now:
+	// units that left as a sale, or units nobody paid for.
+	ReserveForReplacement(
+		ctx context.Context,
+		inventoryItemID, locationID string,
+		quantity int64,
+		orderLineItemID string,
+	) (reservationID string, err error)
+	// ConfirmReservation turns the promise into deducted stock. It is
+	// idempotent: confirming a confirmed promise does nothing.
+	ConfirmReservation(ctx context.Context, reservationID string) error
+	// ReleaseReservation gives the units back. It is idempotent.
+	ReleaseReservation(ctx context.Context, reservationID string) error
+}
+
+// Shipping is the surface of the FULFILLING FLOW used by this flow.
+//
+// It is a flow rather than a module, and that is deliberate: opening a parcel
+// means creating a shipment AND binding it to its order, and the binding is
+// this layer's fact. Reaching the fulfillment module directly would open
+// parcels nothing could find again — and would miss the refusal that flow
+// makes when an idempotency key names a shipment somebody canceled (ADR 0088).
+type Shipping interface {
+	// OpenForOrder opens a shipment for an order and binds the two. The
+	// request carries the shipping option and the idempotency key.
+	OpenForOrder(
+		ctx context.Context, orderID string, request json.RawMessage,
+	) (fulfillmentID string, alreadyOpen bool, err error)
 }
 
 // Links is the surface of the core's Module Links service used by this flow.
@@ -138,6 +192,12 @@ type Deps struct {
 	Payments Payments
 	// Links is the Module Links surface; it is mandatory.
 	Links Links
+	// Shipping is the fulfilling flow's surface; it is mandatory.
+	//
+	// Like the two above it has no correct fallback: a replacement whose parcel
+	// was never opened is a promise the shop cannot keep, and dispatching
+	// without one would deduct stock for goods nobody is carrying.
+	Shipping Shipping
 	// Logger discards the logs when nil.
 	Logger *slog.Logger
 }
@@ -148,6 +208,7 @@ type Workflows struct {
 	inventory Inventory
 	payments  Payments
 	links     Links
+	shipping  Shipping
 	log       *slog.Logger
 }
 
@@ -161,6 +222,7 @@ func New(deps Deps) (*Workflows, error) {
 		{ServiceInventory, deps.Inventory == nil},
 		{ServicePayment, deps.Payments == nil},
 		{ServiceLink, deps.Links == nil},
+		{ServiceShipping, deps.Shipping == nil},
 	}
 	for _, dep := range missing {
 		if dep.empty {
@@ -179,6 +241,7 @@ func New(deps Deps) (*Workflows, error) {
 		inventory: deps.Inventory,
 		payments:  deps.Payments,
 		links:     deps.Links,
+		shipping:  deps.Shipping,
 		log:       log,
 	}, nil
 }
@@ -209,12 +272,17 @@ func FromContainer(c *container.Container) (*Workflows, error) {
 	if err != nil {
 		return nil, err
 	}
+	shipping, err := resolve[Shipping](c, ServiceShipping)
+	if err != nil {
+		return nil, err
+	}
 
 	return New(Deps{
 		Orders:    orders,
 		Inventory: inventory,
 		Payments:  payments,
 		Links:     links,
+		Shipping:  shipping,
 	})
 }
 

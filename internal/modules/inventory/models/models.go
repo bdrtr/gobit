@@ -126,6 +126,57 @@ func (s ReservationStatus) String() string {
 	return string(s)
 }
 
+// ReservationPurpose is WHY the stock was set aside.
+//
+// It is a property of the PROMISE rather than of the confirm, and that is the
+// whole reason the column exists: the confirm is reached from a saga, from a
+// retry and from the recovery path, and a reason passed by the caller is a
+// reason a caller can get wrong on the third of those. Written once, by the
+// flow that knows what the units are for, it still answers on every later read.
+//
+// The set is closed here and in the schema's CHECK, for [MovementReason]'s
+// reason: an open string would let a caller write its own vocabulary into the
+// column the ledger explains itself by.
+type ReservationPurpose string
+
+// The purposes a reservation is made for.
+const (
+	// PurposeSale is stock set aside for an order being placed, which is what
+	// the checkout saga takes. Its confirm is a [MovementSale].
+	PurposeSale ReservationPurpose = "sale"
+	// PurposeReplacement is stock set aside for goods being sent to settle a
+	// claim. Nobody pays for these units, so its confirm is a
+	// [MovementReplacement] and the ledger keeps the two apart.
+	PurposeReplacement ReservationPurpose = "replacement"
+)
+
+// Valid reports whether the purpose is a defined value.
+func (p ReservationPurpose) Valid() bool {
+	switch p {
+	case PurposeSale, PurposeReplacement:
+		return true
+	default:
+		return false
+	}
+}
+
+// String returns the text representation of the purpose.
+func (p ReservationPurpose) String() string { return string(p) }
+
+// MovementReason is the reason the units leaving against this promise are
+// recorded under.
+//
+// The mapping is here rather than at the confirm so the two vocabularies have
+// ONE place that relates them; a switch written at the call site would be a
+// second one to remember when either set grows.
+func (p ReservationPurpose) MovementReason() MovementReason {
+	if p == PurposeReplacement {
+		return MovementReplacement
+	}
+
+	return MovementSale
+}
+
 // Reservation is a quantity set aside from the sellable stock.
 //
 // The complete_cart saga in Phase 6 first creates it with Reserve, the
@@ -146,6 +197,10 @@ type Reservation struct {
 	LineItemID string
 	// Description is an optional free-form explanation.
 	Description string
+	// Purpose is WHY the stock was set aside; an empty value reads as
+	// [PurposeSale], which is what every reservation written before the column
+	// existed was.
+	Purpose ReservationPurpose
 	// Status is the state of the reservation.
 	Status ReservationStatus
 	// CreatedAt and UpdatedAt are UTC.

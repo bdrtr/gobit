@@ -7,22 +7,25 @@ type ReplacementStatus string
 
 // The states a replacement can be in.
 //
-// There are TWO of them, and the shortness is the decision. A replacement that
-// is held, dispatching or dispatched needs stock to have moved or a parcel to
-// exist, and neither is possible yet; a status no code path can produce is the
-// promise migration 000008 was written to withdraw. The vocabulary grows with
-// the flow that fills it.
+// There are THREE of them and the shortness is still the decision: each one is
+// written by a code path that exists. The third arrived with the flow that
+// moves the goods (migration 000012); there is no 'held' and no 'dispatching',
+// because nothing waits and nothing is half-sent — the dispatch sets stock
+// aside, opens a parcel and confirms, and the status is its outcome.
 const (
 	// ReplacementRequested means the replacement was asked for.
 	ReplacementRequested ReplacementStatus = "requested"
 	// ReplacementCanceled means the request was withdrawn.
 	ReplacementCanceled ReplacementStatus = "canceled"
+	// ReplacementDispatched means the goods left the warehouse: the stock was
+	// deducted and a parcel names them.
+	ReplacementDispatched ReplacementStatus = "dispatched"
 )
 
 // Valid reports whether the status is one this module writes.
 func (s ReplacementStatus) Valid() bool {
 	switch s {
-	case ReplacementRequested, ReplacementCanceled:
+	case ReplacementRequested, ReplacementCanceled, ReplacementDispatched:
 		return true
 	default:
 		return false
@@ -67,6 +70,15 @@ type Replacement struct {
 	// (order_replacements_canceled_stamp), so a canceled replacement without a
 	// moment cannot be written.
 	CanceledAt *time.Time
+	// DispatchedAt is the moment the goods left; nil until they do. Its pairing
+	// with Status is held the same way, by
+	// order_replacements_dispatched_stamp.
+	DispatchedAt *time.Time
+	// FulfillmentID is the parcel the goods left in. It belongs to the
+	// fulfillment module and IS NOT A FOREIGN KEY here (Principle 2.2); the
+	// database requires it on a dispatched row, because a dispatch with no
+	// parcel would be goods leaving with nothing to carry them.
+	FulfillmentID string
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -87,6 +99,13 @@ type ReplacementItem struct {
 	OrderLineItemID string
 	// Quantity is how many units of that line are being sent.
 	Quantity int64
+	// ReservationID is the promise the units are held under. It belongs to the
+	// inventory module and is not a foreign key here.
+	//
+	// It is what makes a dispatch retryable: a second attempt reuses the
+	// promise the first one made instead of setting the same units aside
+	// twice, and the confirm behind it is idempotent.
+	ReservationID string
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time

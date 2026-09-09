@@ -39,8 +39,9 @@ func (i *Interop) RefundReturn(
 
 // SettleClaim settles a damage or shortage claim by refunding it.
 //
-// A claim settled with a REPLACEMENT is refused rather than stamped: shipping
-// goods against an existing order is not a capability this framework has.
+// A claim settled with a REPLACEMENT is refused rather than stamped and sent to
+// [Interop.DispatchReplacement], which is the verb that settles it by sending
+// goods.
 func (i *Interop) SettleClaim(
 	ctx context.Context, claimID string, amount int64, reason string,
 ) (refunded int64, summaryRecorded bool, warnings []string, err error) {
@@ -68,4 +69,22 @@ func (i *Interop) ReceiveReturn(
 	}
 
 	return out.RestockedLines, out.RestockedUnits, out.Warnings, nil
+}
+
+// DispatchReplacement sends what a claim promised: it sets the units aside,
+// opens a parcel, takes the units out of the count and records all three.
+//
+// alreadySent being true means the goods had already gone and nothing moved
+// this time. It crosses as its own value rather than being inferred, for the
+// reason the fulfilling flow reports alreadyOpen: an operator who pressed the
+// button twice has to be told the second press sent nothing.
+func (i *Interop) DispatchReplacement(
+	ctx context.Context, replacementID string,
+) (fulfillmentID string, sentUnits int64, alreadySent bool, err error) {
+	out, err := i.w.DispatchReplacement(ctx, replacementID)
+	if err != nil {
+		return "", 0, false, err
+	}
+
+	return out.FulfillmentID, out.SentUnits, out.AlreadySent, nil
 }

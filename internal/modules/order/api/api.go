@@ -195,11 +195,20 @@ type ReturnReceiving interface {
 
 	// SettleClaim settles a damage or shortage claim by refunding it.
 	//
-	// A claim settled with a REPLACEMENT is refused: shipping goods against an
-	// existing order is not a capability this framework has, and stamping such
-	// a claim complete would say something was sent when nothing was.
+	// A claim settled with a REPLACEMENT is refused: money and goods are two
+	// different verbs, and the second one is DispatchReplacement.
 	SettleClaim(ctx context.Context, claimID string, amount int64, reason string) (
 		refunded int64, summaryRecorded bool, warnings []string, err error,
+	)
+
+	// DispatchReplacement sends what a claim promised: it sets the units
+	// aside, opens a parcel, takes the units out of the count and records all
+	// three.
+	//
+	// alreadySent being true means the goods had already gone and nothing
+	// moved this time.
+	DispatchReplacement(ctx context.Context, replacementID string) (
+		fulfillmentID string, sentUnits int64, alreadySent bool, err error,
 	)
 }
 
