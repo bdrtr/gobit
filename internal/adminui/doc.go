@@ -30,9 +30,15 @@
 //
 // # What it does not know
 //
-// It does NOT know modules and imports none of them. Data comes from the Query
-// layer through a narrow interface resolved from the container BY NAME (ADR
-// 0001/0004/0006); the cart workflow is the proven example of the same pattern.
+// It does NOT know modules and imports none of them. The server-rendered screens
+// take their data from the Query layer through a narrow interface resolved from
+// the container BY NAME (ADR 0001/0004/0006); the cart workflow is the proven
+// example of the same pattern.
+//
+// The review screen takes its data from `/admin/v1` instead, in the browser,
+// which is the shape ADR 0030 decided and ADR 0076 started. It knows no module
+// either — it reads an API — so the sentence above it stays true and the
+// mechanism under it does not.
 //
 // It reads through that interface and writes through THREE narrow surfaces, each
 // published by its owning module and registered under a name of its own:
@@ -60,12 +66,26 @@
 // TestTheCountsInTheProseAreTrue, which reads a LINE and admits a sentence that
 // names its population by path. Written this way the gate holds it true.
 //
-// # Five sections, and what the fifth reports
+// # The sections, and what the sales report does not print
 //
-// The menu holds the catalog, the orders, the sales report, the customers and
-// the inventory, in that order. The list lives in one place next to the routes
-// that serve it, so a section enters the menu by being added there rather than
-// by being written into a template nobody edits when adding a handler.
+// The menu holds the catalog, the orders, the sales report, the customers, the
+// inventory and the reviews, in that order. The list lives in one place next to
+// the routes that serve it, so a section enters the menu by being added there
+// rather than by being written into a template nobody edits when adding a
+// handler.
+//
+// This heading used to open "Five sections" and the paragraph named five of
+// them. Adding the sixth falsified both in the same commit that added it, which
+// is the class this repository keeps paying for — a document its own change
+// makes wrong. The count is GONE rather than corrected: it told a reader nothing
+// the list beneath it does not, so it was a surface that could only rot. The
+// LIST is the substance and [TestTheDocNamesEverySection] holds it.
+//
+// The two decisions are not the same one, and the difference is worth stating:
+// the measurements index keeps its line counts and got a gate (ADR 0075),
+// because that number tells a reader something they cannot see — how long the
+// file is. A number that only restates the sentence under it is not worth a
+// gate, it is worth deleting.
 //
 // The sales report ([UI.listSales]) is the panel's first consumer of the order
 // module's line entity, and it is the screen that most obviously LOOKS like it

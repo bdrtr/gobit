@@ -98,6 +98,14 @@ func TestEveryJobIsRegisteredInTheCompositionRoot(t *testing.T) {
 // payment/service's ReconciliationReport — while outboxrelay and sagawatch
 // import no module at all. Taking a module's whole service is what would
 // quietly hand a scheduled process the ability to change the world unwatched.
+//
+// **Amended 2026-09-09: there are FOUR jobs and TWO of them import a module for
+// its types.** `internal/jobs/reviewsuggest` takes review/models and
+// review/service, and it is the first job that also WRITES — see the amendment
+// under the sentence above. The count is amended rather than the paragraph
+// rewritten, because the 2026-09-07 correction is a record of a mistake worth
+// keeping: it was made by a sentence that counted, and this is the same
+// sentence counting again a commit later.
 func TestNoJobWritesThroughAModuleService(t *testing.T) {
 	t.Parallel()
 

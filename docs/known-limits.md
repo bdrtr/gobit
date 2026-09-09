@@ -102,14 +102,23 @@ past and is not corrected retroactively.
   part.** The panel under `/admin/ui`
   ([ADR 0011](adr/0011-yonetim-paneli-dorduncu-agac.md)) carries login, logout,
   the product list, the product page, the variant page, the order list, the
-  order page, the sales report, the customer list, the customer page and the
-  inventory list. Of those, only THREE forms WRITE
+  order page, the sales report, the customer list, the customer page, the
+  inventory list and the moderation queue. Of those, THREE forms WRITE
   ([ADR 0013](adr/0013-panel-write-surface.md)): a product's
   title/handle/status, a variant's BASE price per currency, and PHYSICAL stock
   per location. Every other screen is read-only; and there is no single-item
   page for inventory or for a sold line at all — the detail of a stock item IS
   its per-location levels on the variant page, and the context of a sold line IS
   the order the line is attached to.
+
+  **The moderation queue is the exception to the sentence above, and to the
+  paragraph's whole shape** ([ADR 0076](adr/0076-the-panels-migration-begins-with-the-review-screen.md)).
+  It writes — approving and rejecting a review — and it writes through NO panel
+  form and no module admin surface: it is a client of `/admin/v1`, which is what
+  [ADR 0030](adr/0030-the-panel-becomes-an-admin-api-client.md) decided every
+  screen becomes. It is the first, the other eleven are still rendered on the
+  server, and the order they move in is not decided. Until they do, the panel
+  carries two shapes and this entry describes both.
 
   Creating something that does not exist and deleting something that does still
   happens over `/admin/v1`, with `Authorization: Bearer`: product, variant,

@@ -1,5 +1,11 @@
 // Package provider defines the core contracts of the components that connect
-// to the outside world (payment, fulfillment, notification, file).
+// to the outside world (payment, fulfillment, notification, file, error
+// reporting and the model that answers a closed question about text).
+//
+// The list is written out rather than counted, and that is deliberate after a
+// count in this repository's prose was found stale on the commit that added the
+// sixth: a name tells a reader which contract they are looking for, and a
+// number tells them nothing they cannot see by reading the list.
 //
 // The interfaces here live in the CORE and know no module (Principle 2.4). The
 // concrete providers live either inside a module (e.g. the manual provider in

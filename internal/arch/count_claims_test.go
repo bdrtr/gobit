@@ -590,6 +590,47 @@ func (n countNumerals) at(tokens []string, index int) (value, span int) {
 	return -1, 0
 }
 
+// countUnquoted blanks the spans inside double quotes.
+//
+// A number inside quotation marks is being REPORTED, not asserted: the prose is
+// quoting a sentence somebody else wrote, usually one this repository has since
+// corrected. Two godocs in this package quote ADR 0069's "`core/` goes from
+// sixteen packages to seventeen" while explaining why an argument about it was
+// wrong, and holding them to today's tree would demand that a quotation be
+// falsified to stay green.
+//
+// It is a cheap rule and the scanner can afford it because it reads PROSE —
+// comments and markdown — where a double quote is a quotation. It does not read
+// Go string literals, where the same mark means something else.
+//
+// The cost is stated: a total that somebody writes inside quotation marks is not
+// audited. Nothing in the tree does that today, and a writer who wants the
+// sentence held can simply not quote it.
+func countUnquoted(line string) string {
+	var (
+		out   strings.Builder
+		quote bool
+	)
+
+	for _, r := range line {
+		if r == '"' || r == '\u201C' || r == '\u201D' {
+			quote = !quote
+			out.WriteRune(' ')
+
+			continue
+		}
+		if quote {
+			out.WriteRune(' ')
+
+			continue
+		}
+
+		out.WriteRune(r)
+	}
+
+	return out.String()
+}
+
 // countAnchored reports whether a line names a population BY ITS PATH, which is
 // what admits the line into the audit.
 //
@@ -603,13 +644,30 @@ func (n countNumerals) at(tokens []string, index int) (value, span int) {
 // and a shape prose does not fall into by accident.
 func countAnchored(line, anchor string) bool {
 	if !strings.Contains(anchor, "/") {
-		// The line is trimmed and a trailing slash is allowed before the run of
-		// spaces, because "core/" and an indented column are how this layout is
+		// A single segment anchors in PROSE when it is written as a path with a
+		// trailing slash — "the eleven plugins under plugins/" — and only then.
+		// The exact token is required: "core/" anchors, "core" does not (it is
+		// an ordinary word, and "the four core packages" is a subset), and
+		// "core/query" does not either (it names something else under it).
+		//
+		// This is the opt-in half of the anchor rule. A writer who means the
+		// whole population says so by naming its path, and a sentence that does
+		// not is left alone rather than guessed at.
+		for _, token := range countWord.FindAllString(line, -1) {
+			if strings.Trim(token, ".") == anchor+"/" {
+				return true
+			}
+		}
+
+		// The other half is the README's directory-layout column, where the
+		// segment opens the line and a run of spaces separates it from the
+		// description. The line is trimmed and a trailing slash is allowed,
+		// because "core/" and an indented column are how that layout is
 		// ordinarily written — and a claim that disappears when somebody adds a
 		// slash or re-aligns a column is a gate that goes QUIET on an edit
-		// nobody would think twice about. That was measured on this gate: with
-		// the strict form, writing the directory as "core/" removed the claim
-		// and the whole package stayed green with a false count standing.
+		// nobody would think twice about. Measured on this gate: with the strict
+		// form, writing the directory as "core/" removed the claim and the whole
+		// package stayed green with a false count standing.
 		rest, opens := strings.CutPrefix(strings.TrimSpace(line), anchor)
 		if !opens {
 			return false
@@ -680,6 +738,8 @@ func countQuotedRow(doc, line string) bool {
 // noun ends the claim: "twenty-one items in four groups" is two claims and not one
 // spanning both.
 func countClaimsIn(line string, population countedPopulation, numerals countNumerals) []countClaim {
+	line = countUnquoted(line)
+
 	if !countAnchored(line, population.anchor) {
 		return nil
 	}
@@ -937,6 +997,7 @@ var countClaimedToday = []string{
 // a diff somebody reads.
 var countClaimedElsewhere = []struct{ file, population string }{
 	{"internal/adminui/doc.go", "the commerce modules under internal/modules"},
+	{"internal/arch/module_sql_test.go", "the in-tree plugins"},
 	{"internal/smoke/process_test.go", "the commerce modules under internal/modules"},
 	{"internal/smoke/race_test.go", "the commerce modules under internal/modules"},
 }

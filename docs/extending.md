@@ -44,7 +44,7 @@ module a plugin brings can go through the lifecycle too), and `Start` runs
 **after** them (a provider registration only exists once the payment module is
 up). An unknown plugin name or a missing setting fails at startup.
 
-The plugins show three different ways of extending:
+The plugins show four different ways of extending:
 
 | Plugin | What it does | Which extension points |
 |---|---|---|
@@ -52,6 +52,7 @@ The plugins show three different ways of extending:
 | `search-pg` | **real feature** — listens to the product events, keeps a PostgreSQL full-text index fresh, opens the `GET /store/v1/sales-channels/{sales_channel_id}/search` and `POST /admin/v1/search/reindex` endpoints | a module and a migration of its own, an event subscription, routes of its own |
 | `error-sentry` | **real feature** — reports server faults to Sentry (or to a Sentry-compatible collector) | a slot the CORE owns; it needs no module at all |
 | `error-otlp` | **real feature** — reports the same faults to an OpenTelemetry collector as a LOG RECORD | the same slot, a SECOND implementation |
+| `ai-anthropic` | **real feature** — answers a closed question about a piece of text with Anthropic's Messages API | a core-owned slot whose CONSUMER is optional too: installing the plugin is what turns the feature on |
 
 ### Error reporting (`error-sentry`, `error-otlp`)
 
@@ -105,6 +106,46 @@ a fault nobody hears about.
   at once.
 - The log is written **first**: a collector in another data centre must not be
   able to cost the operator a log line.
+
+### Answering a closed question about text (`ai-anthropic`)
+
+```bash
+PLUGINS=ai-anthropic \
+  ANTHROPIC_API_KEY=sk-ant-... \
+  ANTHROPIC_MODEL=claude-haiku-4-5-20251001 make run
+```
+
+The contract is `provider.Classifier`: a caller supplies a question, a text and a
+CLOSED set of labels, and gets back one of those labels, a reason and the model
+that answered. A free-text contract was refused — every caller would invent its
+own parsing and each parser would break separately the day a model phrased
+itself differently (ADR 0072).
+
+**Installing the plugin is what turns the feature on, and that is the fourth
+extension shape.** The other core-owned slot, the error reporter, is asked for by
+the core on every request; this one is asked for by a scheduled job that
+registers itself ONLY when the slot is filled. So an installation that does not
+name this plugin runs a tree in which no model is called and no job appears in
+`gobit jobs` — and one that names it without the review module fails at startup
+rather than running a model with nothing to ask about.
+
+The one consumer in the box is `internal/jobs/reviewsuggest`: every quarter of an
+hour it asks about the reviews waiting for a moderator and stores what the model
+said as a PROPOSAL beside each one (ADR 0071). It approves nothing. The operator
+still decides, and the panel's moderation queue can be narrowed by what the model
+proposed (ADR 0073).
+
+> **What leaves the installation:** the text of a customer's review. Not their
+> name — the job does not send it — but a review is free text a member of the
+> public wrote. Naming this plugin makes whoever runs the installation
+> responsible for a SUB-PROCESSOR they did not have before, and gobit cannot make
+> that decision for a data controller (ADR 0029).
+
+gobit claims no accuracy for any model and ships no threshold: measuring one
+needs a corpus of reviews an operator has already decided about. That corpus
+accumulates on its own — a proposal is not cleared when the decision is made —
+and `GET /admin/v1/reviews/suggestion-agreement` reads it back as two counts per
+model, never as a percentage (ADR 0074).
 
 ### Search (`search-pg`)
 

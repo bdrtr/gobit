@@ -86,10 +86,12 @@ import (
 // Two different questions, and collapsing them was the trap. Deriving the
 // scanned components from ownership would make the criterion "does this
 // component create tables" — so a plugin that only READS somebody else's table
-// leaves the population by being the very thing the audit looks for. Six of the
-// ten plugins ship no migrations. [sqlSubjects] therefore walks the tree, the
+// leaves the population by being the very thing the audit looks for. Seven of
+// the eleven plugins of plugins/ ship no migrations. [sqlSubjects] walks the
 // way every other component-scanning gate in this package does, and the
-// per-subject floor skips a subject that owns nothing rather than failing it.
+// tree instead, the way every other component-scanning gate in this package
+// does, and the per-subject floor skips a subject that owns nothing rather than
+// failing it.
 //
 // That walk was "the migration owners plus every directory under plugins/"
 // until later the same day, and it was STILL a proxy. A component that is
@@ -882,10 +884,11 @@ type sqlAudited struct {
 // this repository keeps being wrong: the criterion would be "does this
 // component CREATE tables", so a plugin that only READS somebody else's table
 // removes itself from the audit by being exactly the thing the audit looks
-// for. Four of the ten plugins ship migrations; the other six — errorotlp,
-// errorsentry, files3, notificationsmtp, paymentstripe and payment-stripe —
-// would never be opened, and the gate would report that a plugin reading a
-// module's table is checked while 6/10 of its subjects were outside the walk.
+// for. Four of the eleven plugins of plugins/ ship migrations; the other seven
+// — aianthropic, errorotlp, errorsentry, files3, notificationsmtp,
+// payment-stripe and paymentstripe — would never be opened, and the gate would
+// report that a plugin reading a module's table is checked while seven of its
+// eleven subjects were outside the walk.
 //
 // "Owners plus plugins" was the same mistake one ring out, and internal/rig was
 // the component sitting in it; the file header carries the measurement. The
