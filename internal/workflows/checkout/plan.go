@@ -667,6 +667,23 @@ func (p *checkoutPlan) validate() error {
 		if err := checkAmount("line_discount_total", line.DiscountTotal, MaxTotal); err != nil {
 			return err
 		}
+		if line.DiscountTotal > line.Subtotal {
+			// An IDENTITY is not a BOUND, and the check below is only the
+			// identity: a line with subtotal 1000, discount 3000 and total
+			// -2000 satisfies it exactly, because -2000 really is 1000 - 3000.
+			// So the line total went negative and the sum of the lines carried
+			// it into the cart.
+			//
+			// Everything else in the tree refuses this shape — the cart
+			// service, the order service, and the CHECK constraint
+			// order_line_items_discount_within_subtotal — and this function
+			// exists to refuse it BEFORE any stock is reserved. A layer of
+			// defense weaker than the three it duplicates is the appearance of
+			// one.
+			return errors.Internal(CodeAmountInvalid,
+				"the line gives back more than it charges: %s (discount %d > subtotal %d)",
+				line.LineItemID, line.DiscountTotal, line.Subtotal)
+		}
 
 		expected, err := mulAmount(line.UnitPrice, line.Quantity)
 		if err != nil {
@@ -696,6 +713,20 @@ func (p *checkoutPlan) validate() error {
 	}
 	if err := checkAmount("discount_total", p.DiscountTotal, MaxTotal); err != nil {
 		return err
+	}
+	if p.DiscountTotal > p.Subtotal {
+		// The cart-level half of the rule above, and it is not implied by it: a
+		// cart discount is not required to be the sum of the line discounts
+		// anywhere in this function, so every line can be within its own
+		// ceiling while the cart is not.
+		//
+		// A discount EQUAL to the subtotal is legal here and refused one check
+		// later, by the positive-amount rule, with a message that says what it
+		// is — a fully discounted cart, which is a flow with no payment step.
+		// Refusing it here would report a free order as a corrupt total.
+		return errors.Internal(CodeAmountInvalid,
+			"the cart gives back more than it charges: %s (discount %d > subtotal %d)",
+			p.CartID, p.DiscountTotal, p.Subtotal)
 	}
 	if err := checkAmount("tax_total", p.TaxTotal, MaxTotal); err != nil {
 		return err

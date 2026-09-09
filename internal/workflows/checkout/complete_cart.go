@@ -334,6 +334,28 @@ func RecoveryOptions() []workflow.RunOption {
 // of the authorization, not of the rollback — and keeping it out of the record
 // is a security decision: payment details must not sit in the execution record.
 //
+// # The rehydrated plan is NOT re-validated, and that is a choice
+//
+// [checkoutPlan.validate] is called on the live path and deliberately not here,
+// although this is the one path where a corrupt plan could arrive — the record
+// is JSON somebody could have edited, or a partial write. Calling it was
+// considered and refused, because the two paths want opposite things from a
+// bad plan.
+//
+// On the live path a refusal costs nothing: no side effect has been applied
+// yet, which is what the validator's own godoc says it is for. Here every side
+// effect has ALREADY happened, and this function exists to build the chain that
+// undoes them. Refusing to build it would leave the stock reserved, the order
+// half-written and the authorization standing — a validator turning a
+// recoverable execution into an unrecoverable one because a total it does not
+// use is wrong.
+//
+// What the compensations use is the cart id and the ids and quantities the
+// steps carry; the totals are the live path's business. The cart id is checked
+// below for exactly that reason, and its check is not an exception to this
+// paragraph but the proof of it: an id is what a compensation cannot work
+// without.
+//
 // # An empty plan is REFUSED
 //
 // Decoding the JSON is not enough; `{}` decodes too. A chain built from a plan
