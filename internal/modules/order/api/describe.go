@@ -481,6 +481,69 @@ func describeClaims(d *openapi.Doc) {
 				"200": openapi.Response("What was sent", d.Item(dispatchReplacementResponse{})),
 			},
 		})
+
+	describeClaimEvidence(d)
+}
+
+// describeClaimEvidence documents what a claim can show.
+func describeClaimEvidence(d *openapi.Doc) {
+	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/claims/{claimId}/evidence",
+		openapi.Operation{
+			Summary: "Binds an uploaded file to the claim as evidence.",
+			// What the endpoint does NOT check is stated, because the opposite
+			// is the natural assumption: a client that read "upload_id" would
+			// expect a 404 for an id that names no file. It gets a 201.
+			Description: "The file is uploaded first, through the file module, and only its " +
+				"id is sent here. The id is NOT verified: this module cannot ask another " +
+				"one whether a record exists, so an id naming no file is stored and shows " +
+				"up as evidence that does not resolve. \n\n" +
+				"Binding the same file to the same claim twice is a CONFLICT rather than a " +
+				"second piece of evidence — a double click is not two photographs. The same " +
+				"file may be evidence on another claim. \n\n" +
+				"\"caption\" is optional free text and is trimmed.",
+			RequestBody: d.RequestBody(attachClaimEvidenceRequest{}),
+			Responses: map[string]any{
+				"201": openapi.Response("The bound evidence", d.Item(claimEvidenceDTO{})),
+			},
+		})
+
+	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/claims/{claimId}/evidence",
+		openapi.Operation{
+			Summary: "Lists the claim's evidence, oldest first.",
+			// The order is stated because it is the opposite of every other
+			// after-sales list here, and the reason is that these records are
+			// read as a sequence: what the parcel looked like, then the damage.
+			Description: "Oldest first, unlike the claim's other lists: evidence is read as " +
+				"the order it was filed in. The list is not paged — the evidence belongs to " +
+				"one claim. \n\n" +
+				"Each record carries the upload's id and NO address. A signed address " +
+				"expires and a claim is looked at long after it was opened, so the address " +
+				"is asked of the file module at the moment it is needed (ADR 0106).",
+			Responses: map[string]any{
+				"200": openapi.Response("The claim's evidence",
+					d.Item([]claimEvidenceDTO{})),
+			},
+		})
+
+	d.Describe(http.MethodDelete,
+		"/admin/v1/orders/{id}/claims/{claimId}/evidence/{evidenceId}",
+		openapi.Operation{
+			Summary: "Removes a file from the claim.",
+			// The distinction is the whole endpoint: the row is a BINDING, and
+			// deleting it is not deleting a picture.
+			Description: "The BINDING is deleted and the file is not: it lives in the file " +
+				"module and may be evidence on another claim. Unlike the claim's own " +
+				"records this row is removed rather than stamped, because it never said " +
+				"that something happened — it said that a file belongs here.",
+			Responses: map[string]any{
+				"204": emptyResponse("The binding was removed"),
+			},
+		})
+}
+
+// emptyResponse describes a response that carries no body.
+func emptyResponse(description string) map[string]any {
+	return map[string]any{"description": description}
 }
 
 // pageParameters returns the two parameters [parsePage] reads.

@@ -38,6 +38,7 @@ type fakeSnapshot struct {
 	exchanges map[string]models.Exchange
 	claims    map[string]models.Claim
 	credits   map[string]models.OrderCreditLine
+	evidence  map[string]models.ClaimEvidence
 	replaces  map[string]models.Replacement
 	replItems map[string]models.ReplacementItem
 }
@@ -84,6 +85,7 @@ type fakeStore struct {
 	exchanges map[string]models.Exchange
 	claims    map[string]models.Claim
 	credits   map[string]models.OrderCreditLine
+	evidence  map[string]models.ClaimEvidence
 	replaces  map[string]models.Replacement
 	replItems map[string]models.ReplacementItem
 
@@ -159,6 +161,7 @@ func newFakeStore() *fakeStore {
 		exchanges: map[string]models.Exchange{},
 		claims:    map[string]models.Claim{},
 		credits:   map[string]models.OrderCreditLine{},
+		evidence:  map[string]models.ClaimEvidence{},
 		replaces:  map[string]models.Replacement{},
 		replItems: map[string]models.ReplacementItem{},
 		erased:    map[string]time.Time{},
@@ -191,6 +194,7 @@ func (f *fakeStore) snapshot() fakeSnapshot {
 		exchanges: maps.Clone(f.exchanges),
 		claims:    maps.Clone(f.claims),
 		credits:   maps.Clone(f.credits),
+		evidence:  maps.Clone(f.evidence),
 		replaces:  maps.Clone(f.replaces),
 		replItems: maps.Clone(f.replItems),
 	}
@@ -524,6 +528,74 @@ func (f *fakeStore) CreateLineTax(
 	f.items[line.ID] = line
 
 	return component, nil
+}
+
+// CreateClaimEvidence binds a file to the claim.
+//
+// It enforces the UNIQUE the schema carries: the same upload attached to the
+// same claim twice is a double click, and a fake that accepted it would let the
+// constraint be deleted without a test noticing.
+func (f *fakeStore) CreateClaimEvidence(
+	ctx context.Context, evidence models.ClaimEvidence,
+) (models.ClaimEvidence, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	for id := range f.evidence {
+		existing := f.evidence[id]
+		if existing.OrderClaimID == evidence.OrderClaimID &&
+			existing.UploadID == evidence.UploadID {
+			return models.ClaimEvidence{}, errors.Conflict("order_claim_evidence_exists",
+				"that file is already evidence of this claim")
+		}
+	}
+
+	stamp := f.nextStamp()
+	evidence.CreatedAt = stamp
+	evidence.UpdatedAt = stamp
+
+	f.recordUndo(ctx, undoEntry(f.evidence, evidence.ID))
+	f.evidence[evidence.ID] = evidence
+
+	return evidence, nil
+}
+
+// ListClaimEvidence returns the claim's evidence, oldest first.
+func (f *fakeStore) ListClaimEvidence(
+	ctx context.Context, claimID string,
+) ([]models.ClaimEvidence, error) {
+	snapshot := f.view(ctx)
+
+	out := make([]models.ClaimEvidence, 0)
+	for id := range snapshot.evidence {
+		if snapshot.evidence[id].OrderClaimID == claimID {
+			out = append(out, snapshot.evidence[id])
+		}
+	}
+	slices.SortFunc(out, func(a, b models.ClaimEvidence) int {
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.Compare(b.CreatedAt)
+		}
+
+		return strings.Compare(a.ID, b.ID)
+	})
+
+	return out, nil
+}
+
+// DeleteClaimEvidence detaches a file from its claim.
+func (f *fakeStore) DeleteClaimEvidence(ctx context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if _, ok := f.evidence[id]; !ok {
+		return errors.NotFound("order_claim_evidence_not_found",
+			"the claim evidence was not found: %s", id)
+	}
+	f.recordUndo(ctx, undoEntry(f.evidence, id))
+	delete(f.evidence, id)
+
+	return nil
 }
 
 // CreateCreditLine writes a credit line.

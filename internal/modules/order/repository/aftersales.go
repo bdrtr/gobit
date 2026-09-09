@@ -444,3 +444,60 @@ func (r *Repository) CreditedTotal(ctx context.Context, orderID string) (int64, 
 
 	return total, nil
 }
+
+// --- claim evidence ----------------------------------------------------------
+
+// CreateClaimEvidence binds a file to the claim.
+func (r *Repository) CreateClaimEvidence(
+	ctx context.Context, evidence models.ClaimEvidence,
+) (models.ClaimEvidence, error) {
+	row, err := r.queries(ctx).CreateOrderClaimEvidence(ctx,
+		orderdb.CreateOrderClaimEvidenceParams{
+			ID:           evidence.ID,
+			OrderClaimID: evidence.OrderClaimID,
+			UploadID:     evidence.UploadID,
+			Caption:      evidence.Caption,
+		})
+	if err != nil {
+		return models.ClaimEvidence{}, classify(err, codeQueryFailed,
+			"could not attach the claim evidence")
+	}
+
+	return toClaimEvidence(row), nil
+}
+
+// ListClaimEvidence returns the claim's evidence, oldest first.
+func (r *Repository) ListClaimEvidence(
+	ctx context.Context, claimID string,
+) ([]models.ClaimEvidence, error) {
+	rows, err := r.queries(ctx).ListOrderClaimEvidence(ctx, claimID)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "could not read the claim evidence")
+	}
+
+	out := make([]models.ClaimEvidence, 0, len(rows))
+	for i := range rows {
+		out = append(out, toClaimEvidence(rows[i]))
+	}
+
+	return out, nil
+}
+
+// DeleteClaimEvidence detaches a file from its claim.
+//
+// It is a HARD delete, and it is the one write in this module that is: the row
+// is a BINDING rather than a record of something that happened. Detaching a file
+// attached by mistake should leave no trace, and the file itself is untouched —
+// it belongs to the file module, which knows nothing about this table.
+func (r *Repository) DeleteClaimEvidence(ctx context.Context, id string) error {
+	n, err := r.queries(ctx).DeleteOrderClaimEvidence(ctx, id)
+	if err != nil {
+		return classify(err, codeQueryFailed, "could not detach the claim evidence")
+	}
+	if n == 0 {
+		return coreerrors.NotFound("order_claim_evidence_not_found",
+			"the claim evidence was not found: %s", id)
+	}
+
+	return nil
+}

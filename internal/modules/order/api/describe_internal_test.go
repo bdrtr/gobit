@@ -335,6 +335,28 @@ func describedEndpoints() []endpointExpectation {
 			},
 		},
 		{
+			method: http.MethodPost,
+			path:   "/admin/v1/orders/{id}/claims/{claimId}/evidence",
+			status: "201", request: attachClaimEvidenceRequest{UploadID: "upl_1", Caption: "c"},
+			response: filledClaimEvidence(),
+		},
+		{
+			// Unpaged, for the replacement list's reason: the evidence belongs
+			// to one claim.
+			method: http.MethodGet,
+			path:   "/admin/v1/orders/{id}/claims/{claimId}/evidence",
+			status: "200", response: filledClaimEvidence(), shape: unpagedList,
+		},
+		{
+			// The first endpoint of this module that answers with NO body. Its
+			// row carries no response, and the table could not say that until
+			// 2026-09-10: every entry described a record, so a 204 would have
+			// been forced to claim one.
+			method: http.MethodDelete,
+			path:   "/admin/v1/orders/{id}/claims/{claimId}/evidence/{evidenceId}",
+			status: "204",
+		},
+		{
 			// The issue endpoint answers 201 when it created the document and
 			// 200 when the order already had one. The 201 is the one this table
 			// checks; that both are described is what the document says.
@@ -564,6 +586,17 @@ func filledClaim() claimDTO {
 	}
 }
 
+// filledClaimEvidence produces a piece of evidence whose omitempty caption is
+// written too.
+func filledClaimEvidence() claimEvidenceDTO {
+	return claimEvidenceDTO{
+		ID:           "clev_1",
+		OrderClaimID: "claim_1",
+		UploadID:     "upl_1",
+		Caption:      "the crushed corner",
+	}
+}
+
 // filledReplacement produces a replacement whose omitempty fields are written
 // too.
 func filledReplacement() replacementDTO {
@@ -624,6 +657,16 @@ func TestDescribedEndpointsDescribeTheirBodies(t *testing.T) {
 
 			definition, ok := responses[endpoint.status].(map[string]any)
 			require.True(t, ok, "the code the handler REALLY writes has to be documented: %s", endpoint.status)
+
+			// A row with no response is a 204. The assertion is that the
+			// document does not promise a body, because the client generator
+			// would otherwise wait for one that never arrives.
+			if endpoint.response == nil {
+				assert.NotContains(t, definition, "content",
+					"a response with no body must not promise a schema")
+
+				return
+			}
 
 			// A listing that takes a cursor has to give one back, and one that
 			// does not must not document a field it never writes. The answer is

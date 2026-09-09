@@ -153,6 +153,12 @@ type Store interface {
 
 	// CreateLineItem records a new order line.
 	CreateLineItem(ctx context.Context, item models.OrderLineItem) (models.OrderLineItem, error)
+	// CreateClaimEvidence binds a file to the claim.
+	CreateClaimEvidence(ctx context.Context, evidence models.ClaimEvidence) (models.ClaimEvidence, error)
+	// ListClaimEvidence returns the claim's evidence, oldest first.
+	ListClaimEvidence(ctx context.Context, claimID string) ([]models.ClaimEvidence, error)
+	// DeleteClaimEvidence detaches a file from its claim.
+	DeleteClaimEvidence(ctx context.Context, id string) error
 	// CreateCreditLine records an amount that lowers what the order owes.
 	CreateCreditLine(ctx context.Context, credit models.OrderCreditLine) (models.OrderCreditLine, error)
 	// ListCreditLines returns the order's credit lines, oldest first.

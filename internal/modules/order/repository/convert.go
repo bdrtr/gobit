@@ -44,6 +44,10 @@ const (
 	codeConcurrentUpdate   = "order_concurrent_update"
 	// codeReplacementNotFound reports that the replacement record does not exist.
 	codeReplacementNotFound = "order_replacement_not_found"
+
+	// codeEvidenceAttached names the double click: the same file bound to the
+	// same claim twice.
+	codeEvidenceAttached = "order_claim_evidence_already_attached"
 )
 
 // Constraint names; used to convert a driver error into a meaningful typed
@@ -53,6 +57,8 @@ const (
 	constraintDisplayIDUniq       = "orders_display_id_uniq"
 	constraintIdempotencyUniq     = "orders_idempotency_key_uniq"
 	constraintSummaryOrderUniq    = "order_summaries_order_id_key"
+	constraintEvidenceUploadUniq  = "order_claim_evidence_upload_uniq"
+	constraintEvidencePresent     = "order_claim_evidence_upload_present"
 	constraintOrderTotals         = "orders_totals_consistent"
 	constraintOrderDiscount       = "orders_discount_within_subtotal"
 	constraintLineTotals          = "order_line_items_totals_consistent"
@@ -71,6 +77,12 @@ const (
 	// constraintOrderFKSuffix is the common suffix of the foreign key names of
 	// every child table that links to the order.
 	constraintOrderFKSuffix = "_order_id_fkey"
+	// constraintClaimFKSuffix is the same for the tables hanging from a CLAIM.
+	// It is a suffix of its own rather than a case of the one above:
+	// "order_claim_evidence_order_claim_id_fkey" does not end in
+	// "_order_id_fkey", and a record hanging from a claim that is not there is
+	// "the claim was not found" rather than "the order was not found".
+	constraintClaimFKSuffix = "_order_claim_id_fkey"
 )
 
 // PostgreSQL SQLSTATE codes.
@@ -100,6 +112,9 @@ func classify(err error, code, format string, a ...any) error {
 	case sqlStateForeignKeyViolation:
 		// A line, a summary or a return record cannot be linked to an order that
 		// DOES NOT EXIST.
+		if strings.HasSuffix(pgErr.ConstraintName, constraintClaimFKSuffix) {
+			return errors.Wrap(err, errors.KindNotFound, codeClaimNotFound, "claim not found")
+		}
 		if strings.HasSuffix(pgErr.ConstraintName, constraintOrderFKSuffix) {
 			return errors.Wrap(err, errors.KindNotFound, codeOrderNotFound, "order not found")
 		}
@@ -134,6 +149,9 @@ func classifyUnique(err error, constraint, code, format string, a ...any) error 
 	case constraintOrdersPK:
 		return errors.Wrap(err, errors.KindConflict, codeOrderExists,
 			"an order with this identifier already exists")
+	case constraintEvidenceUploadUniq:
+		return errors.Wrap(err, errors.KindConflict, codeEvidenceAttached,
+			"this file is already evidence of the claim")
 	}
 	return errors.Wrap(err, errors.KindInternal, code, format, a...)
 }
@@ -165,6 +183,11 @@ func classifyCheck(err error, constraint, code, format string, a ...any) error {
 		// intervention; no path in the service can violate this constraint.
 		return errors.Wrap(err, errors.KindInternal, codeInconsistentState,
 			"the order status and the timestamp are inconsistent (constraint: %s)", constraint)
+	case constraint == constraintEvidencePresent:
+		// The service refuses the empty id first; landing here means the check
+		// was skipped or the SQL was applied directly.
+		return errors.Wrap(err, errors.KindInvalid, codeEvidenceAttached,
+			"the evidence has to name a file")
 	case strings.HasSuffix(constraint, constraintStatusSuffix):
 		return errors.Wrap(err, errors.KindInvalid, codeStatusInvalid,
 			"undefined status value (constraint: %s)", constraint)
@@ -329,6 +352,18 @@ func toLineItem(row orderdb.OrderLineItem) (models.OrderLineItem, error) {
 		CreatedAt:     toTime(row.CreatedAt),
 		UpdatedAt:     toTime(row.UpdatedAt),
 	}, nil
+}
+
+// toClaimEvidence converts a database row into the domain model.
+func toClaimEvidence(row orderdb.OrderClaimEvidence) models.ClaimEvidence {
+	return models.ClaimEvidence{
+		ID:           row.ID,
+		OrderClaimID: row.OrderClaimID,
+		UploadID:     row.UploadID,
+		Caption:      row.Caption,
+		CreatedAt:    toTime(row.CreatedAt),
+		UpdatedAt:    toTime(row.UpdatedAt),
+	}
 }
 
 // toCreditLine converts a database row into the domain model.

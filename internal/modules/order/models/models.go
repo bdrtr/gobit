@@ -397,6 +397,29 @@ type OrderSummary struct {
 	UpdatedAt time.Time
 }
 
+// ClaimEvidence binds a claim to a FILE that shows what went wrong.
+//
+// It carries the upload's id and NOT its address. An operator opens a claim days
+// or months after it was filed and an object store's address is signed and
+// expires; a stored address would be a record that is right about the file and
+// wrong about where to get it. The id resolves through the file module whenever
+// it is asked.
+type ClaimEvidence struct {
+	// ID is the identifier with the "clev_" prefix.
+	ID string
+	// OrderClaimID is the claim the evidence belongs to.
+	OrderClaimID string
+	// UploadID is the file module's upload id. It is NOT a foreign key
+	// (Principle 2.2) and it is never empty.
+	UploadID string
+	// Caption is what the operator says the picture shows; it may be empty,
+	// because a photograph of a crushed box often says it by itself.
+	Caption string
+	// CreatedAt and UpdatedAt are UTC.
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 // OrderCreditLine is an amount that lowers what the order OWES without changing
 // what was SOLD.
 //

@@ -89,6 +89,8 @@ const (
 	paramExchangeID = "exchangeId"
 	// paramClaimID is the URL parameter name of the claim record id.
 	paramClaimID = "claimId"
+	// paramEvidenceID is the claim evidence in the path.
+	paramEvidenceID = "evidenceId"
 )
 
 // Orders is the surface the handlers need from the service.
@@ -110,6 +112,12 @@ type Orders interface {
 	Timeline(ctx context.Context, orderID string) ([]service.TimelineEntry, error)
 	// StorefrontTimeline returns the moments a CUSTOMER may see on their order.
 	StorefrontTimeline(ctx context.Context, orderID string) ([]service.TimelineEntry, error)
+	// AttachClaimEvidence binds a file to the claim.
+	AttachClaimEvidence(ctx context.Context, claimID string, in service.AttachClaimEvidenceInput) (models.ClaimEvidence, error)
+	// ListClaimEvidence returns the claim's evidence, oldest first.
+	ListClaimEvidence(ctx context.Context, claimID string) ([]models.ClaimEvidence, error)
+	// DetachClaimEvidence removes a file from its claim.
+	DetachClaimEvidence(ctx context.Context, evidenceID string) error
 	// CreateCreditLine writes off part of what the order owes.
 	CreateCreditLine(ctx context.Context, orderID string, in service.CreateCreditLineInput) (models.OrderCreditLine, error)
 	// ListCreditLines returns the order's credit lines, oldest first.

@@ -20,6 +20,16 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir talep artik NE OLDUGUNU GOSTEREBILIYOR** (`order_claim_evidence`,
+  ADR 0106). Talep bir gerekce ve bir not tasiyordu, yani "kutu ezilmis geldi"
+  bir CUMLEYDI ve hicbir zaman bir fotograf degildi. Baglama yuklemenin
+  KIMLIGIYLE kuruluyor, adresiyle degil: `product_image` ikisini birden tasir
+  cunku adresi her urun goruntulemesinde bir sayfaya yaziliyor; bir talebin
+  kaniti aylar sonra, tek operator tarafindan, tek talep icin aciliyor ve
+  imzali bir adres o zamana kadar suresini doldurmus oluyor. Ayni dosya bir
+  talebin kaniti BIR KEZ olur -- cift tiklama ikinci bir fotograf degildir --
+  ama iki ayri talebin kaniti olabilir.
+
 - **Bir siparisin BORCU dusurulebiliyor, SATILAN degismeden**
   (`order_credit_lines`, ADR 0105). Siparisin toplami sepetin anlik goruntusudur
   ve kendi satirlarina bir CHECK ile civilidir; satistan sonra verilen bir taviz

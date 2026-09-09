@@ -35,6 +35,8 @@ const (
 	ReplacementIDPrefix = "orepl_"
 	// ReplacementItemIDPrefix is the prefix of a replacement line identifier.
 	ReplacementItemIDPrefix = "oreplitem_"
+	// ClaimEvidenceIDPrefix is the prefix of a claim evidence identifier.
+	ClaimEvidenceIDPrefix = "clev_"
 	// CreditLineIDPrefix is the prefix of an order credit line identifier.
 	CreditLineIDPrefix = "ocl_"
 	// LineTaxIDPrefix is the prefix of a line's tax component identifier.
@@ -60,6 +62,9 @@ func NewOrderID() string { return newID(OrderIDPrefix, time.Now()) }
 
 // NewLineItemID produces a new order line identifier.
 func NewLineItemID() string { return newID(LineItemIDPrefix, time.Now()) }
+
+// NewClaimEvidenceID produces a new claim evidence identifier.
+func NewClaimEvidenceID() string { return newID(ClaimEvidenceIDPrefix, time.Now()) }
 
 // NewCreditLineID produces a new order credit line identifier.
 func NewCreditLineID() string { return newID(CreditLineIDPrefix, time.Now()) }

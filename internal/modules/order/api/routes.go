@@ -134,6 +134,9 @@ func (h *Handler) Routes(r chi.Router) {
 	write.Post("/admin/v1/orders/{id}/claims", h.adminCreateClaim)
 	read.Get("/admin/v1/orders/{id}/claims/{claimId}", h.adminGetClaim)
 	write.Post("/admin/v1/orders/{id}/claims/{claimId}/settle", h.adminSettleClaim)
+	write.Post("/admin/v1/orders/{id}/claims/{claimId}/evidence", h.adminAttachClaimEvidence)
+	read.Get("/admin/v1/orders/{id}/claims/{claimId}/evidence", h.adminListClaimEvidence)
+	write.Delete("/admin/v1/orders/{id}/claims/{claimId}/evidence/{evidenceId}", h.adminDetachClaimEvidence)
 	// The claim's other exit. Settling refuses everything but a "requested"
 	// claim of type "refund", so without this route a claim opened in error had
 	// no exit at all; see Handler.adminCancelClaim.

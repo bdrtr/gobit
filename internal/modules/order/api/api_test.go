@@ -61,11 +61,19 @@ type fakeOrders struct {
 	// payment is the live payment view the fake reports.
 	payment service.OrderPayment
 	// paymentBound reports whether a collection is bound at all.
-	paymentBound bool
-	timeline     []service.TimelineEntry
-	timelineErr  error
-	credits      []models.OrderCreditLine
-	creditErr    error
+	paymentBound  bool
+	timeline      []service.TimelineEntry
+	timelineErr   error
+	credits       []models.OrderCreditLine
+	creditErr     error
+	evidence      []models.ClaimEvidence
+	evidenceErr   error
+	evidenceInput service.AttachClaimEvidenceInput
+	// gotEvidenceID is kept apart from gotChildID for the reason
+	// gotReplacementID is: the delete route carries the claim's id AND the
+	// evidence's, and reading the wrong one would delete nothing while
+	// answering 204.
+	gotEvidenceID string
 	// paymentErr, when set, makes PaymentOf fail.
 	paymentErr error
 	// nextCursor is what the listing reports as the next page's position.
@@ -115,6 +123,53 @@ func (f *fakeOrders) CancelOrder(_ context.Context, orderID, reason string) erro
 // Timeline returns the scripted timeline.
 func (f *fakeOrders) Timeline(_ context.Context, _ string) ([]service.TimelineEntry, error) {
 	return f.timeline, f.timelineErr
+}
+
+// AttachClaimEvidence records the scripted evidence.
+//
+// It keeps the claim id and the body it was given rather than answering from a
+// script alone: the route carries TWO ids and the handler could read the
+// order's where the claim's belongs, which a fake that ignored its arguments
+// could not see.
+func (f *fakeOrders) AttachClaimEvidence(
+	_ context.Context, claimID string, in service.AttachClaimEvidenceInput,
+) (models.ClaimEvidence, error) {
+	f.record("AttachClaimEvidence")
+	f.gotChildID = claimID
+	f.evidenceInput = in
+
+	if f.evidenceErr != nil {
+		return models.ClaimEvidence{}, f.evidenceErr
+	}
+	evidence := models.ClaimEvidence{
+		ID: "clev_1", OrderClaimID: claimID, UploadID: in.UploadID, Caption: in.Caption,
+	}
+	f.evidence = append(f.evidence, evidence)
+
+	return evidence, nil
+}
+
+// ListClaimEvidence returns the evidence recorded so far.
+func (f *fakeOrders) ListClaimEvidence(
+	_ context.Context, claimID string,
+) ([]models.ClaimEvidence, error) {
+	f.record("ListClaimEvidence")
+	f.gotChildID = claimID
+
+	return f.evidence, f.evidenceErr
+}
+
+// DetachClaimEvidence forgets the scripted evidence.
+func (f *fakeOrders) DetachClaimEvidence(_ context.Context, evidenceID string) error {
+	f.record("DetachClaimEvidence")
+	f.gotEvidenceID = evidenceID
+
+	if f.evidenceErr != nil {
+		return f.evidenceErr
+	}
+	f.evidence = nil
+
+	return nil
 }
 
 // CreateCreditLine records the scripted credit.
@@ -1571,4 +1626,90 @@ func TestTheCustomerTimelineFailsLikeEveryOtherRead(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Contains(t, rec.Body.String(), "order_not_found")
+}
+
+// TestAdminAttachEvidenceCarriesItsBodyAndItsClaim pins which of the route's
+// two ids the evidence is bound to.
+//
+// The path names an order AND a claim, and the evidence hangs from the claim.
+// A handler reading the order's id would bind every claim's evidence to the
+// same record and nothing in the answer would look wrong.
+func TestAdminAttachEvidenceCarriesItsBodyAndItsClaim(t *testing.T) {
+	svc := &fakeOrders{}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodPost,
+		"/admin/v1/orders/order_1/claims/clm_1/evidence",
+		`{"upload_id":"upl_1","caption":"the crushed corner"}`)
+
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Equal(t, []string{"AttachClaimEvidence"}, svc.calls)
+	assert.Equal(t, "clm_1", svc.gotChildID, "the evidence hangs from the CLAIM")
+	assert.Equal(t, "upl_1", svc.evidenceInput.UploadID)
+	assert.Equal(t, "the crushed corner", svc.evidenceInput.Caption)
+
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "upl_1", data["upload_id"])
+	assert.NotContains(t, data, "url",
+		"the record carries the upload's id and no address (ADR 0106)")
+}
+
+// TestAdminListEvidenceAnswersAnArray pins the shape of the listing, which the
+// client generator reads off the document — see
+// [TestDescribedEndpointsDescribeTheirBodies].
+func TestAdminListEvidenceAnswersAnArray(t *testing.T) {
+	svc := &fakeOrders{evidence: []models.ClaimEvidence{
+		{ID: "clev_1", OrderClaimID: "clm_1", UploadID: "upl_1"},
+		{ID: "clev_2", OrderClaimID: "clm_1", UploadID: "upl_2"},
+	}}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodGet,
+		"/admin/v1/orders/order_1/claims/clm_1/evidence", "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []string{"ListClaimEvidence"}, svc.calls)
+	assert.Equal(t, "clm_1", svc.gotChildID)
+
+	body := decodeResponse(t, rec)
+	assert.NotContains(t, body, "count", "an unpaged listing announces no count")
+	rows, ok := body["data"].([]any)
+	require.True(t, ok, "the data field of this listing is an array")
+	require.Len(t, rows, 2)
+
+	first, ok := rows[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "clev_1", first["id"], "the order the service gave is kept")
+}
+
+// TestAdminDetachEvidenceReadsTheEvidenceIdentifier is the id the delete route
+// could get wrong.
+//
+// The path carries the claim's id and the evidence's, and taking the claim's
+// would remove a row belonging to another claim — or nothing at all — while
+// still answering 204.
+func TestAdminDetachEvidenceReadsTheEvidenceIdentifier(t *testing.T) {
+	svc := &fakeOrders{}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodDelete,
+		"/admin/v1/orders/order_1/claims/clm_1/evidence/clev_9", "")
+
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	assert.Empty(t, rec.Body.String(), "a 204 carries no body")
+	assert.Equal(t, []string{"DetachClaimEvidence"}, svc.calls)
+	assert.Equal(t, "clev_9", svc.gotEvidenceID)
+}
+
+// TestAttachingEvidenceToAnUnknownClaimIsNotAServerError keeps the service's
+// answer on the way out.
+func TestAttachingEvidenceToAnUnknownClaimIsNotAServerError(t *testing.T) {
+	svc := &fakeOrders{evidenceErr: errors.NotFound("order_claim_not_found", "no such claim")}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodPost,
+		"/admin/v1/orders/order_1/claims/clm_1/evidence", `{"upload_id":"upl_1"}`)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 }
