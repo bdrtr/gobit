@@ -65,6 +65,9 @@ const (
 	CodeOrderUnreadable = "fulfilling_order_unreadable"
 	// CodeCreateFailed reports that the shipment could not be opened.
 	CodeCreateFailed = "fulfilling_create_failed"
+	// CodeShipmentCanceled reports that the idempotency key names a shipment
+	// that has been CANCELED, so nothing was opened.
+	CodeShipmentCanceled = "fulfilling_shipment_canceled"
 	// CodeLinkFailed reports that the shipment was opened and the binding to
 	// the order was NOT written.
 	//
@@ -104,6 +107,16 @@ type Fulfillments interface {
 	// FulfillmentStatus returns the shipment's status.
 	FulfillmentStatus(ctx context.Context, fulfillmentID string) (string, error)
 }
+
+// statusCanceled is the fulfillment module's word for a shipment that was
+// withdrawn.
+//
+// It is a literal here rather than an import, the same way the module and link
+// names in this package are: reaching into the module for a constant would tie
+// this flow to it at compile time for the sake of a string, and ADR 0006 keeps
+// the two apart on purpose. The cost is that the compiler cannot see the match,
+// and what stands in for it is a test that drives the real module.
+const statusCanceled = "canceled"
 
 // Links is the part of the core's link service this flow uses.
 type Links interface {

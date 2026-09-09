@@ -1388,3 +1388,66 @@ func TestASoftDeletedRuleIsNotReadableByItsIdentifier(t *testing.T) {
 	).Scan(&deletedAt))
 	assert.NotNil(t, deletedAt, "the deletion is a stamp; the row is still there")
 }
+
+// TestARepeatedKeyReturnsTheCanceledShipment pins what the module really does,
+// and it is the fact a FLOW-level decision rests on.
+//
+// # Why this is asserted here rather than assumed
+//
+// internal/workflows/fulfilling refuses to report a canceled shipment as an
+// open one, and the whole refusal rests on this: an idempotency key OUTLIVES
+// the shipment it opened, so repeating it resolves to the canceled parcel
+// instead of opening a new one. That was read out of the code — migration
+// 000003 made the key unique over EVERY shipment rather than the live ones, and
+// the create's repeated-key branch compares the reference, the option and the
+// item set and never looks at the status. Reading is not running, and a fake
+// that answered differently would have made the flow's test agree with itself.
+//
+// # What it does NOT say
+//
+// It does not say the module is wrong. The contract is "the same key returns
+// the same shipment" and it says nothing about status; returning what the key
+// produced is idempotency working. What was wrong was a CALLER treating that
+// answer as "a parcel is open", and that is where the fix went.
+func TestARepeatedKeyReturnsTheCanceledShipment(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	profile := newProfile(ctx, t, svc)
+	option := newOption(ctx, t, svc, profile.ID, 2_500)
+	key := "canceled-key-" + option.ID
+
+	opened, err := svc.CreateFulfillment(ctx, service.CreateFulfillmentInput{
+		Reference:        testReference,
+		ShippingOptionID: option.ID,
+		IdempotencyKey:   key,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, svc.CancelFulfillment(ctx, opened.ID))
+
+	repeated, err := svc.CreateFulfillment(ctx, service.CreateFulfillmentInput{
+		Reference:        testReference,
+		ShippingOptionID: option.ID,
+		IdempotencyKey:   key,
+	})
+	require.NoError(t, err,
+		"a repeated key must not fail; the key names a shipment and that shipment still exists")
+
+	assert.Equal(t, opened.ID, repeated.ID,
+		"the key resolves to the SHIPMENT it opened, canceled or not — this is what makes "+
+			"the caller-side refusal necessary")
+
+	current, err := svc.GetFulfillment(ctx, repeated.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.StatusCanceled, current.Status,
+		"the shipment the key names is canceled, and nothing about the repeated create "+
+			"revived it")
+
+	var rows int64
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT COUNT(*) FROM fulfillments WHERE idempotency_key = $1`, key).Scan(&rows))
+	assert.EqualValues(t, 1, rows,
+		"the canceled shipment still holds the key: migration 000003 made it unique over "+
+			"every shipment rather than the live ones")
+}

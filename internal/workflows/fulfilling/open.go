@@ -75,6 +75,38 @@ func (w *Workflows) OpenForOrder(
 			"a shipment could not be opened for order %s", orderID)
 	}
 
+	// An idempotency key OUTLIVES the shipment it opened, so a key whose
+	// shipment was later canceled still resolves to it.
+	//
+	// The module is right to return it — its contract is "the same key returns
+	// the same shipment" and it says nothing about status. What was wrong was
+	// this flow's answer: the binding written on the first open is NOT removed
+	// by a cancel, so AlreadyOpen was computed from a link that outlived the
+	// parcel and reported a canceled shipment as an open one. The caller then
+	// believed goods were on their way and nothing was ever going to ship.
+	//
+	// So the status is read and a canceled shipment is REFUSED rather than
+	// reported. The caller asked to OPEN one; the honest answer is that this
+	// key cannot open anything any more, and the message says which shipment it
+	// names so a fresh key is an informed choice rather than a guess.
+	//
+	// The read costs one call on every open. That is accepted: opening a parcel
+	// is an operator action rather than a request path, and the alternative was
+	// to widen a cross-module surface (ADR 0006) for a field one caller needs.
+	status, err := w.fulfillments.FulfillmentStatus(ctx, fulfillmentID)
+	if err != nil {
+		return OpenResult{}, errors.Wrap(err, errors.KindOf(err), CodeCreateFailed,
+			"shipment %s was opened for order %s but its status could not be read",
+			fulfillmentID, orderID)
+	}
+	if status == statusCanceled {
+		return OpenResult{}, errors.Conflict(CodeShipmentCanceled,
+			"the idempotency key names shipment %s, which was canceled; nothing was opened "+
+				"for order %s. A canceled shipment cannot be reopened — repeat the request "+
+				"with a NEW key to open another one",
+			fulfillmentID, orderID)
+	}
+
 	result := OpenResult{
 		OrderID:       orderID,
 		FulfillmentID: fulfillmentID,

@@ -148,8 +148,10 @@ func (f *fakeOrders) OrderContactJSON(context.Context, string) (json.RawMessage,
 
 // fakeFulfillments stands in for the fulfillment module's surface.
 type fakeFulfillments struct {
-	id        string
-	calls     int
+	id    string
+	calls int
+	// status is what FulfillmentStatus answers; empty means "pending".
+	status    string
 	statusErr error
 }
 
@@ -165,6 +167,9 @@ func (f *fakeFulfillments) CreateFulfillment(context.Context, string, string, st
 func (f *fakeFulfillments) FulfillmentStatus(context.Context, string) (string, error) {
 	if f.statusErr != nil {
 		return "", f.statusErr
+	}
+	if f.status != "" {
+		return f.status, nil
 	}
 
 	return "pending", nil
@@ -202,4 +207,75 @@ func (f *fakeLinks) ListMany(_ context.Context, _ string, fromIDs []string) (map
 	}
 
 	return out, nil
+}
+
+// TestAKeyThatNamesACanceledShipmentOpensNothing pins the defect this flow
+// carried.
+//
+// # The chain, and where the lie was
+//
+// An idempotency key OUTLIVES the shipment it opened: the module's uniqueness
+// is over every shipment, canceled ones included, so a repeated key resolves to
+// the canceled parcel. The module is right to return it — its contract is "the
+// same key returns the same shipment" and it says nothing about status.
+//
+// The lie was HERE. A cancel does not remove the order-to-shipment binding —
+// nothing in this package deletes one — so AlreadyOpen was computed from a link
+// that outlived the parcel, and the caller was told a canceled shipment was
+// open. Nothing was going to ship and nothing said so.
+func TestAKeyThatNamesACanceledShipmentOpensNothing(t *testing.T) {
+	t.Parallel()
+
+	fulfillments := &fakeFulfillments{id: "ful_1", status: "canceled"}
+	flow := newFlow(t, &fakeOrders{}, fulfillments, newFakeLinks())
+
+	_, err := flow.OpenForOrder(context.Background(), "order_1", "sopt_1", "key-1")
+
+	require.Error(t, err, "a key naming a canceled shipment may not report an open one")
+	assert.Equal(t, fulfilling.CodeShipmentCanceled, coreerrors.CodeOf(err))
+	assert.Contains(t, err.Error(), "ful_1",
+		"the refusal has to name the shipment, or a fresh key is a guess")
+	assert.Contains(t, err.Error(), "NEW key",
+		"the caller has to be told what WOULD work; a refusal with no way forward is a dead end")
+}
+
+// TestALiveShipmentStillOpens keeps the refusal from swallowing the ordinary
+// path.
+//
+// The check is on the status and only on the status: a pending shipment, opened
+// for the first time or returned for a repeated key, is answered exactly as it
+// was before.
+func TestALiveShipmentStillOpens(t *testing.T) {
+	t.Parallel()
+
+	fulfillments := &fakeFulfillments{id: "ful_1"}
+	flow := newFlow(t, &fakeOrders{}, fulfillments, newFakeLinks())
+
+	result, err := flow.OpenForOrder(context.Background(), "order_1", "sopt_1", "key-1")
+
+	require.NoError(t, err)
+	assert.Equal(t, "ful_1", result.FulfillmentID)
+}
+
+// TestAStatusThatCannotBeReadDoesNotPassAsOpen keeps the new read from failing
+// open.
+//
+// The status is what separates a live parcel from a canceled one, so a status
+// that could not be read leaves the question unanswered — and an unanswered
+// question about whether goods will move is not a yes. The parcel EXISTS by
+// then, so the error carries its id for the same reason the binding failure
+// does: pressing the button again with a fresh key opens a second one.
+func TestAStatusThatCannotBeReadDoesNotPassAsOpen(t *testing.T) {
+	t.Parallel()
+
+	fulfillments := &fakeFulfillments{
+		id:        "ful_1",
+		statusErr: coreerrors.Unavailable("db_down", "the database is unreachable"),
+	}
+	flow := newFlow(t, &fakeOrders{}, fulfillments, newFakeLinks())
+
+	_, err := flow.OpenForOrder(context.Background(), "order_1", "sopt_1", "key-1")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ful_1", "the opened shipment has to be named")
 }
