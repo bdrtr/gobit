@@ -192,6 +192,7 @@ make test-integration  # integration + end-to-end tests against a real Postgres
 make smoke             # starts the real binary, exercises process behaviour
 make load-test         # baseline load test (tuned with REQUESTS=… CONCURRENCY=…)
 make lint              # golangci-lint
+make vuln              # govulncheck over the root and both example modules
 make fmt               # gofmt -s + go mod tidy
 make build             # build the distributable binary as bin/gobit
 make psql              # connect to the running Postgres with psql

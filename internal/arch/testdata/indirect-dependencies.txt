@@ -1,0 +1,91 @@
+# The modules MVS pulls into the graph behind gobit's direct requires.
+#
+# gobit is a library (ADR 0025), so each of these is in an embedder's own
+# `go list -m all`, their vulnerability scan and their legal review, whether or
+# not anybody chose it. This file is not a judgement about any of them: it is
+# the DIFF. A module entering the graph appears here, in a change somebody
+# reviews, and the usual cause is a version bump of a direct require — which
+# changes no direct line.
+#
+# Names only. Seventy-five sentences about somebody else's transitive graph
+# would be seventy-five sentences nobody maintains, and the reasons for the
+# DIRECT requires are in internal/arch/dependency_allowlist_test.go, where a new
+# one cannot land without a sentence.
+#
+# Sorted; "#" opens a comment.
+
+dario.cat/mergo
+github.com/Azure/go-ansiterm
+github.com/Microsoft/go-winio
+github.com/agnivade/levenshtein
+github.com/beorn7/perks
+github.com/cenkalti/backoff/v4
+github.com/cenkalti/backoff/v5
+github.com/cespare/xxhash/v2
+github.com/coder/websocket
+github.com/containerd/errdefs
+github.com/containerd/errdefs/pkg
+github.com/containerd/log
+github.com/containerd/platforms
+github.com/cpuguy83/dockercfg
+github.com/distribution/reference
+github.com/docker/go-connections
+github.com/docker/go-units
+github.com/ebitengine/purego
+github.com/felixge/httpsnoop
+github.com/go-logr/logr
+github.com/go-logr/stdr
+github.com/go-ole/go-ole
+github.com/go-viper/mapstructure/v2
+github.com/goccy/go-yaml
+github.com/google/uuid
+github.com/grpc-ecosystem/grpc-gateway/v2
+github.com/hashicorp/golang-lru/v2
+github.com/jackc/pgpassfile
+github.com/jackc/pgservicefile
+github.com/jackc/puddle/v2
+github.com/klauspost/compress
+github.com/lib/pq
+github.com/lufia/plan9stats
+github.com/magiconair/properties
+github.com/mdelapenya/tlscert
+github.com/moby/docker-image-spec
+github.com/moby/go-archive
+github.com/moby/moby/api
+github.com/moby/moby/client
+github.com/moby/patternmatcher
+github.com/moby/sys/sequential
+github.com/moby/sys/user
+github.com/moby/sys/userns
+github.com/moby/term
+github.com/munnerz/goautoneg
+github.com/opencontainers/go-digest
+github.com/opencontainers/image-spec
+github.com/power-devops/perfstat
+github.com/prometheus/client_model
+github.com/prometheus/common
+github.com/prometheus/otlptranslator
+github.com/prometheus/procfs
+github.com/shirou/gopsutil/v4
+github.com/sirupsen/logrus
+github.com/sosodev/duration
+github.com/tklauser/go-sysconf
+github.com/tklauser/numcpus
+github.com/urfave/cli/v3
+github.com/yusufpapurcu/wmi
+go.opentelemetry.io/auto/sdk
+go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp
+go.opentelemetry.io/otel/exporters/otlp/otlptrace
+go.opentelemetry.io/proto/otlp
+go.uber.org/atomic
+go.yaml.in/yaml/v3
+golang.org/x/mod
+golang.org/x/net
+golang.org/x/sync
+golang.org/x/sys
+golang.org/x/text
+golang.org/x/tools
+google.golang.org/genproto/googleapis/api
+google.golang.org/genproto/googleapis/rpc
+google.golang.org/grpc
+google.golang.org/protobuf

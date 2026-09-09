@@ -29,6 +29,18 @@ jobs:
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.13.1
+      # govulncheck runs in the LINT job rather than in one of its own.
+      #
+      # It needs no database and no Docker, it finishes in seconds, and a fifth
+      # job would spend a runner's startup on a scan that is cheaper than the
+      # checkout it would wait for. What it does need is the module graph, which
+      # this job already has.
+      #
+      # It runs through `make vuln` and not through a bare command, so the
+      # target a developer runs locally is the target CI runs — including the
+      # two guards inside it, which no `run:` line here would carry.
+      - name: Known vulnerabilities
+        run: make vuln
 
   test:
     name: Test

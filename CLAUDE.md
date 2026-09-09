@@ -62,7 +62,7 @@ an ADR, not queued here.
 
 ## Verification
 
-`make lint`, `go test ./...`, `make test` (race), `make test-integration`
-(Docker), `make smoke` and `go mod tidy` are separate lanes; `go test ./...` is
-not the suite. A gate is not trusted until a mutation makes it fail, run with
-`-count=1`.
+`make lint`, `make vuln`, `go test ./...`, `make test` (race),
+`make test-integration` (Docker), `make smoke` and `go mod tidy` are separate
+lanes; `go test ./...` is not the suite. A gate is not trusted until a mutation
+makes it fail, run with `-count=1`.

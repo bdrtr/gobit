@@ -7,8 +7,10 @@ VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 
 LDFLAGS     := -s -w -X main.version=$(VERSION)
 
 GOLANGCI_VERSION := v2.13.1
+GOVULN_VERSION   := v1.1.4
 SQLC_VERSION     := v1.31.1
 GOLANGCI         := $(BIN_DIR)/golangci-lint
+GOVULN           := $(BIN_DIR)/govulncheck
 SQLC             := $(BIN_DIR)/sqlc
 
 # .env, make'in `include` mekanizmasıyla DEĞİL, POSIX kabuk semantiğiyle yüklenir.
@@ -127,6 +129,38 @@ load-test: ## Temel yük testini çalıştır (REQUESTS/CONCURRENCY ile ayarlan�
 
 lint: $(GOLANGCI) ## golangci-lint çalıştır
 	$(GOLANGCI) run ./...
+
+# vuln, bilinen açıkları ÜÇ modülde birden arar: kök ve iki örnek.
+#
+# Örnekler dahildir çünkü gobit bir KÜTÜPHANEDIR (ADR 0025) ve o iki modül,
+# gömen bir projenin gerçekten derlediği şeyin en yakın örneğidir. Kökün graf'ı
+# temiz olup starter'ınkinin olmaması mümkündür.
+#
+# `|| exit 1` DÖNGÜNÜN İÇİNDE, ve bu satır hedefin tek kırılgan yeri: bir shell
+# `for` döngüsü SON yinelemenin çıkış kodunu döndürür, yani kök kırmızı +
+# örnekler yeşil = make 0 döner. Yanlış yeşil. Aynı koruma `gen` hedefinde de
+# var ve aynı sebeple.
+#
+# `found` sayacı ise ikinci yarısı: bir glob hiçbir şey eşleştirmezse döngü hiç
+# dönmez ve hedef yine 0 döner — "hiçbir açık yok" ile "hiçbir yere bakmadım"
+# aynı çıkış koduyla anlatılamaz.
+#
+# BULGU VARSA BUILD KIRMIZI OLUR, ve düzeltmesi olmayan bir tavsiye için bir
+# muafiyet mekanizması BİLEREK yazılmadı: tüketicisi olmayan bir yetenek bu
+# deponun reddettiği şekildir (ADR 0009). O gün geldiğinde seçenekler pinlemek,
+# yamalamak ya da o gün yazılmış bir muafiyettir — üçü de birinin karar verdiği
+# şeyler, bugünden kurulmuş bir kaçış yolu değil.
+vuln: $(GOVULN) ## Bilinen açıkları ara (kök + örnek modüller)
+	@found=0; \
+	for mod in . examples/starter examples/plugin; do \
+		[ -f "$$mod/go.mod" ] || continue; \
+		echo "  $$mod: govulncheck"; \
+		(cd "$$mod" && $(abspath $(GOVULN)) ./...) || exit 1; \
+		found=$$((found+1)); \
+	done; \
+	if [ "$$found" -lt 3 ]; then \
+		echo "vuln: yalnızca $$found modül tarandı, 3 bekleniyordu" >&2; exit 1; \
+	fi
 
 fmt: $(GOLANGCI) ## Kaynakları biçimlendir (gofmt + goimports)
 	@$(GOLANGCI) fmt ./...
@@ -265,7 +299,7 @@ gen: $(SQLC) ## Üretilen kodu yenile: sqlc (repository) + gqlgen (GraphQL)
 
 ## --- Araçlar ---
 
-tools: $(GOLANGCI) $(SQLC) ## Sabitlenmiş sürümlerle yerel araçları kur
+tools: $(GOLANGCI) $(SQLC) $(GOVULN) ## Sabitlenmiş sürümlerle yerel araçları kur
 
 hooks: ## Push öncesi kapıyı bu klona kur (.githooks/pre-push)
 	git config core.hooksPath .githooks
@@ -279,6 +313,10 @@ $(GOLANGCI):
 $(SQLC):
 	@mkdir -p $(BIN_DIR)
 	GOBIN=$(BIN_DIR) go install github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION)
+
+$(GOVULN):
+	@mkdir -p $(BIN_DIR)
+	GOBIN=$(BIN_DIR) go install golang.org/x/vuln/cmd/govulncheck@$(GOVULN_VERSION)
 
 clean: ## Üretilmiş dosyaları temizle
 	rm -rf $(BIN_DIR) coverage.out coverage-integration.out openapi.json clients
