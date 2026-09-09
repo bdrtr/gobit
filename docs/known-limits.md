@@ -119,6 +119,17 @@ past and is not corrected retroactively.
 
 ## Tax
 
+- **An invoice prints the BASE rate of a stacked line, not every component.**
+  A rate can stand on another (ADR 0095) and the line's tax is then the sum of
+  the components, which is the number charged and the number stored. What the
+  line carries as its rate is the stack's base — really applied, on a really
+  recorded amount — so a document printing "5%" on a line taxed 5% + 8% states
+  a rate that is incomplete rather than wrong. Carrying every component to the
+  document means threading a component list through six schemas between the
+  calculation and the invoice, two of which drop unknown fields SILENTLY; the
+  ordering that makes that safe is written in ADR 0095's measurement, and the
+  work is the next change rather than a limit to live with.
+
 - **In a tax-inclusive market the discount stays a GROSS figure beside a NET
   subtotal.** The tax is taken out of the amount actually being charged, so the
   line's subtotal becomes the extracted base plus the discount that was applied

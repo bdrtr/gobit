@@ -123,7 +123,15 @@ func describeOranlar(d *openapi.Doc) {
 	d.Describe(http.MethodPost, pathAdminRates, openapi.Operation{
 		Summary: "Yeni bir vergi oranı oluşturur.",
 		Description: "Oranın bölgesi GÖVDEDE taşınır (tax_region_id); oran " +
-			"yalnızca bu uçtan YAZILIR, bölgenin altındaki uç yalnızca okumadır.",
+			"yalnızca bu uçtan YAZILIR, bölgenin altındaki uç yalnızca okumadır. " +
+			"\n\n" +
+			"stacks_on_id verilirse oran, aynı bölgedeki başka bir oranın ÜSTÜNDE " +
+			"durur: satıra önce taban oran, sonra bu oran uygulanır ve compound " +
+			"true ise bu oranın tabanı, altındakilerin vergisini de içerir. Üstte " +
+			"duran oran hiçbir zaman SEÇİLMEZ, dolayısıyla varsayılan olamaz ve " +
+			"kural taşıyamaz; yığının kapsamını TABAN belirler. Fiyatların vergi " +
+			"DAHİL yazıldığı bir bölgede yığın kurulamaz (ADR 0086) ve yığının " +
+			"oranları toplamda satırı aşamaz.",
 		RequestBody: d.RequestBody(createTaxRateRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("Oluşturulan vergi oranı", d.Item(taxRateDTO{})),

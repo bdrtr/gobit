@@ -31,6 +31,8 @@ func (r *Repo) CreateTaxRate(ctx context.Context, rate models.TaxRate, now time.
 		Code:        optionalText(rate.RateCode()),
 		RateBps:     rate.RateBps,
 		IsDefault:   rate.IsDefault,
+		StacksOnID:  rate.StacksOnID,
+		Compound:    rate.Compound,
 		Metadata:    metadata,
 		CreatedAt:   fromTime(now),
 	})
@@ -135,13 +137,15 @@ func (r *Repo) UpdateTaxRate(
 		}
 
 		written, err := q.UpdateTaxRate(ctx, taxdb.UpdateTaxRateParams{
-			ID:        id,
-			Name:      updated.Name,
-			Code:      optionalText(updated.RateCode()),
-			RateBps:   updated.RateBps,
-			IsDefault: updated.IsDefault,
-			Metadata:  metadata,
-			UpdatedAt: fromTime(now),
+			ID:         id,
+			Name:       updated.Name,
+			Code:       optionalText(updated.RateCode()),
+			RateBps:    updated.RateBps,
+			IsDefault:  updated.IsDefault,
+			StacksOnID: updated.StacksOnID,
+			Compound:   updated.Compound,
+			Metadata:   metadata,
+			UpdatedAt:  fromTime(now),
 		})
 		if err != nil {
 			return wrapDB(err, "vergi oranı güncellenemedi: %s", id)
@@ -199,6 +203,8 @@ func toTaxRate(row taxdb.TaxRate) (models.TaxRate, error) {
 		Code:        row.Code,
 		RateBps:     row.RateBps,
 		IsDefault:   row.IsDefault,
+		StacksOnID:  row.StacksOnID,
+		Compound:    row.Compound,
 		Metadata:    metadata,
 		CreatedAt:   toTime(row.CreatedAt),
 		UpdatedAt:   toTime(row.UpdatedAt),

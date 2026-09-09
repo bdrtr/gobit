@@ -197,6 +197,22 @@ type TaxRate struct {
 	RateBps int32
 	// IsDefault is whether this is the region's default rate.
 	IsDefault bool
+	// StacksOnID is the rate this one STANDS ON, in the same region; nil when
+	// it stands alone.
+	//
+	// A stacked rate is never CHOSEN for a line: it may not be a default and it
+	// may not carry rules. It is reached only by expanding the rate that was
+	// chosen, which is why rate selection did not change when stacking arrived
+	// (ADR 0095).
+	StacksOnID *string
+	// Compound says how this rate is computed: on the line's own amount
+	// (false), or on that amount PLUS the taxes below it in the stack (true).
+	//
+	// It is a separate word from [TaxRate.StacksOnID] because a market can levy
+	// a second tax on the same base — two taxes side by side rather than one on
+	// top of the other. A rate that stands on nothing can never be compound;
+	// there would be nothing under it to compound on.
+	Compound bool
 	// Metadata is free-form metadata; this module does not interpret its
 	// content.
 	Metadata map[string]any

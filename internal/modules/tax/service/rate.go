@@ -19,6 +19,14 @@ type CreateTaxRateInput struct {
 	RateBps int32
 	// IsDefault bölgenin varsayılan oranı olup olmadığıdır.
 	IsDefault bool
+	// StacksOnID bu oranın ÜSTÜNDE duracağı orandır; boş bırakılabilir.
+	//
+	// Dolu ise oran hiçbir zaman seçilmez: seçilen oranın genişletilmesiyle
+	// ulaşılır. Bu yüzden varsayılan OLAMAZ ve kural TAŞIYAMAZ (ADR 0095).
+	StacksOnID string
+	// Compound, oranın altındakilerin vergisi ÜZERİNDEN hesaplanıp
+	// hesaplanmayacağıdır; StacksOnID boşken doğru olamaz.
+	Compound bool
 	// Metadata serbest üstveridir.
 	Metadata map[string]any
 }
@@ -87,6 +95,10 @@ func (s *Service) CreateTaxRate(ctx context.Context, in CreateTaxRateInput) (mod
 				return err
 			}
 		}
+		if err := s.assertStackable(ctx, in.TaxRegionID, in.StacksOnID, in.IsDefault,
+			in.RateBps, in.Compound, ""); err != nil {
+			return err
+		}
 
 		now := s.clock()
 		rate := models.TaxRate{
@@ -95,10 +107,15 @@ func (s *Service) CreateTaxRate(ctx context.Context, in CreateTaxRateInput) (mod
 			Name:        name,
 			RateBps:     in.RateBps,
 			IsDefault:   in.IsDefault,
+			Compound:    in.Compound,
 			Metadata:    in.Metadata,
 		}
 		if code != "" {
 			rate.Code = &code
+		}
+		if in.StacksOnID != "" {
+			base := in.StacksOnID
+			rate.StacksOnID = &base
 		}
 
 		var err error

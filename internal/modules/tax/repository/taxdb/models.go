@@ -37,6 +37,8 @@ type TaxRate struct {
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
 	DeletedAt   pgtype.Timestamptz
+	StacksOnID  *string
+	Compound    bool
 }
 
 type TaxRateRule struct {

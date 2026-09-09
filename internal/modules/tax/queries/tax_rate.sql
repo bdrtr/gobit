@@ -1,9 +1,24 @@
 -- tax_rate queries. Every read filters on deleted_at IS NULL.
 
 -- name: InsertTaxRate :one
-INSERT INTO tax_rate (id, tax_region_id, name, code, rate_bps, is_default, metadata, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+INSERT INTO tax_rate (
+    id, tax_region_id, name, code, rate_bps, is_default, metadata,
+    stacks_on_id, compound, created_at, updated_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
 RETURNING *;
+
+-- ListTaxRatesStandingOn returns the rates that stand DIRECTLY on the given
+-- ones, in one query.
+--
+-- It is what expands a chosen rate into its stack: the walk is outward, one
+-- level per round trip, and a level holds at most one rate per base
+-- (tax_rate_stacks_on_uniq), so the number of round trips is the stack's DEPTH
+-- and never the number of rates.
+-- name: ListTaxRatesStandingOn :many
+SELECT * FROM tax_rate
+WHERE stacks_on_id = ANY(@base_ids::text[]) AND deleted_at IS NULL
+ORDER BY stacks_on_id, id;
 
 -- name: GetTaxRate :one
 SELECT * FROM tax_rate
@@ -36,7 +51,8 @@ WHERE tax_region_id = $1 AND deleted_at IS NULL;
 
 -- name: UpdateTaxRate :one
 UPDATE tax_rate
-SET name = $2, code = $3, rate_bps = $4, is_default = $5, metadata = $6, updated_at = $7
+SET name = $2, code = $3, rate_bps = $4, is_default = $5, metadata = $6,
+    stacks_on_id = $7, compound = $8, updated_at = $9
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 

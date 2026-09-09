@@ -139,3 +139,91 @@ func TestAMembershipCannotNameAClassThatIsNotThere(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tax_class_member_class_fk")
 }
+
+// TestAStackLivesInsideOneRegionOnTheRealSchema holds the composite foreign
+// key.
+//
+// A rate standing on one in ANOTHER region would be priced by a chain that
+// never loads it, so the reference carries the region and the key is composite
+// — the same trick tax_region_parent_fk uses one table up.
+func TestAStackLivesInsideOneRegionOnTheRealSchema(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+
+	first, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
+		CountryCode: benzersizUlke(t),
+	})
+	require.NoError(t, err)
+	second, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
+		CountryCode: benzersizUlke(t),
+	})
+	require.NoError(t, err)
+
+	base, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
+		TaxRegionID: first.ID, Name: "base", RateBps: 500,
+	})
+	require.NoError(t, err)
+
+	_, err = testPool.Pool().Exec(ctx,
+		`INSERT INTO tax_rate (id, tax_region_id, name, rate_bps, stacks_on_id)
+         VALUES ($1, $2, 'crossing', 100, $3)`,
+		models.NewTaxRateID(time.Now()), second.ID, base.ID)
+
+	require.Error(t, err, "a stack may not cross a region boundary")
+	assert.Contains(t, err.Error(), "tax_rate_stacks_on_fk")
+}
+
+// TestOnlyOneRateStandsOnAnyRate keeps the stack a LIST.
+//
+// With two rates on one base the order of the two would be undecided and the
+// same line could be taxed two ways.
+func TestOnlyOneRateStandsOnAnyRate(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+
+	region, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
+		CountryCode: benzersizUlke(t),
+	})
+	require.NoError(t, err)
+
+	base, err := svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
+		TaxRegionID: region.ID, Name: "base", RateBps: 500,
+	})
+	require.NoError(t, err)
+	_, err = svc.CreateTaxRate(ctx, service.CreateTaxRateInput{
+		TaxRegionID: region.ID, Name: "above", RateBps: 100, StacksOnID: base.ID,
+	})
+	require.NoError(t, err)
+
+	_, err = testPool.Pool().Exec(ctx,
+		`INSERT INTO tax_rate (id, tax_region_id, name, rate_bps, stacks_on_id)
+         VALUES ($1, $2, 'second above', 100, $3)`,
+		models.NewTaxRateID(time.Now()), region.ID, base.ID)
+
+	require.Error(t, err, "a stack is a list; a base carries at most one rate above it")
+	assert.Contains(t, err.Error(), "tax_rate_stacks_on_uniq")
+}
+
+// TestARateCannotCompoundWithNothingUnderIt is the null-safe CHECK.
+//
+// compound is NOT NULL, so neither side of the constraint's OR can be NULL and
+// Postgres cannot satisfy it by ignorance — which is the trap a naive
+// "stacks_on_id IS NOT NULL OR NOT compound" would have fallen into had
+// compound been nullable.
+func TestARateCannotCompoundWithNothingUnderIt(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+
+	region, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
+		CountryCode: benzersizUlke(t),
+	})
+	require.NoError(t, err)
+
+	_, err = testPool.Pool().Exec(ctx,
+		`INSERT INTO tax_rate (id, tax_region_id, name, rate_bps, compound)
+         VALUES ($1, $2, 'floating', 100, TRUE)`,
+		models.NewTaxRateID(time.Now()), region.ID)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tax_rate_compound_check")
+}

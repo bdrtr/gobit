@@ -5,6 +5,8 @@ import (
 	"slices"
 
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
+
+	"github.com/bdrtr/gobit/core/errors"
 )
 
 // LocalProvider vergiyi bu modülün KENDİ tablolarından hesaplar.
@@ -186,6 +188,12 @@ type rateTable struct {
 	ruled map[string][]ruledRate
 	// fallback bölge kimliğinden o bölgenin varsayılan oranına eşlemedir.
 	fallback map[string]models.TaxRate
+	// standing bir oranın kimliğinden, ONUN ÜSTÜNDE duran orana eşlemedir.
+	//
+	// Yığın bir LİSTEDİR: her tabanın üstünde en fazla bir oran durur (kısmi
+	// benzersiz indeks), yani bu harita yığını sırasıyla yürümeye yeter ve
+	// hiçbir konum kolonu gerekmez.
+	standing map[string]models.TaxRate
 }
 
 // newRateTable oranları ve kuralları hesap tablosuna çevirir.
@@ -205,9 +213,26 @@ func newRateTable(chain []string, rates []models.TaxRate, rules []models.TaxRate
 		chain:    slices.Clone(chain),
 		ruled:    make(map[string][]ruledRate, len(chain)),
 		fallback: make(map[string]models.TaxRate, len(chain)),
+		standing: make(map[string]models.TaxRate, len(rates)),
 	}
 	for i := range rates {
 		rate := rates[i]
+		if rate.StacksOnID != nil {
+			// Bir oranın ÜSTÜNDE duran oran hiçbir zaman SEÇİLMEZ: seçilen
+			// oranın genişletilmesiyle ulaşılır. Yazma zamanında varsayılan
+			// olması ve kurallı bir oranın üstüne kurulması reddediliyor;
+			// burada adaylardan çıkarmak o reddin ikinci savunma hattıdır,
+			// aynı satırın varsayılan bir oranın elle yazılmış kurallarını
+			// düşürmesi gibi.
+			//
+			// En fazla bir oran bir tabanın üstünde durabilir (kısmi benzersiz
+			// indeks). İkincisi yine de gelirse KİMLİĞİ KÜÇÜK olan korunur;
+			// sessizce sonuncuyu almak, vergiyi satır sırasına bağlardı.
+			if existing, ok := table.standing[*rate.StacksOnID]; !ok || rate.ID < existing.ID {
+				table.standing[*rate.StacksOnID] = rate
+			}
+			continue
+		}
 		if rate.IsDefault {
 			// Bölgede en fazla bir varsayılan oran olabilir (kısmi benzersiz
 			// indeks). İkincisi yine de gelirse KİMLİĞİ KÜÇÜK olan korunur;
@@ -291,26 +316,124 @@ func (t rateTable) applyTo(
 		return ProviderItemTax{ID: lineID, TaxableAmount: amount}, nil
 	}
 
-	compute := TaxOf
-	if included {
-		compute = TaxIncludedIn
-	}
-	tax, err := compute(amount, rate.RateBps)
+	stack, err := t.stackFrom(rate)
 	if err != nil {
 		return ProviderItemTax{}, err
 	}
 
-	base := amount
 	if included {
-		base = amount - tax
+		// KAPSAYICI FİYAT + YIĞIN REDDEDİLİR. TaxIncludedIn'in böleni TEK bir
+		// oran için 10000+oran'dır (money.go); n bileşen, yuvarlama artığını
+		// bir bileşene FERMANLA yükleyen bir ters soyma isterdi ve ADR 0086'nın
+		// ölçümü bunun ne kadar kolay yanlış gittiğinin kaydıdır.
+		//
+		// Yazma zamanında da reddediliyor (oran yazımında ve bölge yazımında),
+		// yani buraya düşen bir yapılandırma o kapılardan birinin delindiği
+		// anlamına gelir: sessizce yanlış bir sayı üretmek yerine durur.
+		if len(stack) > 1 {
+			return ProviderItemTax{}, errors.Internal(CodeInconsistentConfig,
+				"fiyatların vergi dahil olduğu bölgede %s oranı bir YIĞIN başlatıyor "+
+					"(%d bileşen); kapsayıcı fiyatta ters hesap tek orana göre tanımlıdır",
+				rate.ID, len(stack))
+		}
+
+		tax, taxErr := TaxIncludedIn(amount, rate.RateBps)
+		if taxErr != nil {
+			return ProviderItemTax{}, taxErr
+		}
+
+		return ProviderItemTax{
+			ID:            lineID,
+			RateID:        rate.ID,
+			RateBps:       rate.RateBps,
+			TaxAmount:     tax,
+			TaxableAmount: amount - tax,
+		}, nil
 	}
+
+	// Vergi HARİÇ yığın: her bileşen KENDİ tabanı üzerinden hesaplanır ve AYRI
+	// AYRI aşağı yuvarlanır. Tek bir yuvarlama sonda yapılsaydı, bileşen başına
+	// yazılan sayılar toplamlarına eşit olmazdı — ve bir fatura her bileşeni
+	// ayrı basar.
+	var total int64
+	for i := range stack {
+		base := amount
+		if stack[i].Compound {
+			// Bileşik bileşenin tabanı ALTINDAKİLERİN vergisini de içerir; o
+			// vergiler zaten yuvarlanmıştır, yani artık yukarı taşınmaz.
+			base, err = addAmount(amount, total)
+			if err != nil {
+				return ProviderItemTax{}, err
+			}
+		}
+
+		tax, taxErr := TaxOf(base, stack[i].RateBps)
+		if taxErr != nil {
+			return ProviderItemTax{}, taxErr
+		}
+		total, err = addAmount(total, tax)
+		if err != nil {
+			return ProviderItemTax{}, err
+		}
+	}
+
 	return ProviderItemTax{
-		ID:            lineID,
-		RateID:        rate.ID,
-		RateBps:       rate.RateBps,
-		TaxAmount:     tax,
-		TaxableAmount: base,
+		ID:      lineID,
+		RateID:  stack[0].ID,
+		RateBps: stack[0].RateBps,
+		// Satırın taşıdığı ORAN yığının TABANIDIR ve tutar toplamdır: taban,
+		// gerçekten uygulanmış bir orandır ve gerçekten kaydedilmiş bir tutarın
+		// üzerindedir. Yığınlı bir satırda EKSİKTİR — bileşenlerin tamamını
+		// taşımak ayrı bir dilim — ama YANLIŞ değildir.
+		TaxAmount:     total,
+		TaxableAmount: amount,
 	}, nil
+}
+
+// maxStackDepth bir yığının taşıyabileceği en fazla bileşen sayısıdır.
+//
+// Dört, bilinen en derin gerçek yığından (federal + eyalet + belediye + ek
+// harç) bir fazlasıdır. Sınır bir başarım önlemi değil, YAPILANDIRMANIN
+// okunabilirliğinin sınırıdır: beş kademeli bir vergi zincirini kimse gözle
+// doğrulayamaz, ve sınırsız bir zincir tek satırda keyfi büyüklükte bir hesap
+// açardı.
+const maxStackDepth = 4
+
+// stackFrom seçilen orandan başlayarak yığını UYGULAMA SIRASIYLA döner.
+//
+// Taban her zaman ilk sıradadır. Yürüyüş BELLEKTEKİ oranlar üzerindedir:
+// bölgenin bütün oranları zaten yüklüdür (bkz. [LocalProvider.loadRates]), yani
+// genişletme hiçbir ek sorgu yapmaz.
+//
+// # Neden DÖNGÜ koruması yok
+//
+// Yürüyüş SEÇİLEN orandan başlar ve seçilen bir oran hiçbir şeyin üstünde
+// durmaz — üstte duranlar aday havuzuna hiç girmiyor (bkz. [newRateTable]).
+// Her adım `standing` üzerinden ilerler ve o harita bir oranın TEK
+// stacks_on_id'sinden türer; dolayısıyla zincirin başlangıcına dönebilmesi
+// için başlangıcın da bir tabanı olması gerekirdi, ki o zaman seçilmezdi.
+//
+// Bu yüzden burada görülen kimlikleri saymanın bir karşılığı yok: yazıldı ve
+// hiçbir yapılandırmayla tetiklenemediği ölçüldü, sonra silindi. Yürüyüşü yine
+// de derinlik SINIRLIYOR — elle yazılmış (servisi atlayan) beş kademeli bir
+// zincir mümkün, ve sessizce dört bileşen üretmek yerine durur.
+func (t rateTable) stackFrom(base models.TaxRate) ([]models.TaxRate, error) {
+	stack := make([]models.TaxRate, 0, maxStackDepth)
+
+	current := base
+	for {
+		stack = append(stack, current)
+
+		next, ok := t.standing[current.ID]
+		if !ok {
+			return stack, nil
+		}
+		if len(stack) >= maxStackDepth {
+			return nil, errors.Internal(CodeInconsistentConfig,
+				"vergi oranı yığını %d bileşeni aşıyor (%s)", maxStackDepth, base.ID)
+		}
+		current = next
+	}
 }
 
 // matchSpecificity kuralların anahtarlarla EN BELİRGİN eşleşmesini döner;

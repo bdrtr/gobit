@@ -24,7 +24,7 @@ func (q *Queries) CountTaxRatesByRegion(ctx context.Context, taxRegionID string)
 }
 
 const getTaxRate = `-- name: GetTaxRate :one
-SELECT id, tax_region_id, name, code, rate_bps, is_default, metadata, created_at, updated_at, deleted_at FROM tax_rate
+SELECT id, tax_region_id, name, code, rate_bps, is_default, metadata, created_at, updated_at, deleted_at, stacks_on_id, compound FROM tax_rate
 WHERE id = $1 AND deleted_at IS NULL
 `
 
@@ -42,12 +42,14 @@ func (q *Queries) GetTaxRate(ctx context.Context, id string) (TaxRate, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.StacksOnID,
+		&i.Compound,
 	)
 	return i, err
 }
 
 const getTaxRateForUpdate = `-- name: GetTaxRateForUpdate :one
-SELECT id, tax_region_id, name, code, rate_bps, is_default, metadata, created_at, updated_at, deleted_at FROM tax_rate
+SELECT id, tax_region_id, name, code, rate_bps, is_default, metadata, created_at, updated_at, deleted_at, stacks_on_id, compound FROM tax_rate
 WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE
 `
@@ -66,15 +68,20 @@ func (q *Queries) GetTaxRateForUpdate(ctx context.Context, id string) (TaxRate, 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.StacksOnID,
+		&i.Compound,
 	)
 	return i, err
 }
 
 const insertTaxRate = `-- name: InsertTaxRate :one
 
-INSERT INTO tax_rate (id, tax_region_id, name, code, rate_bps, is_default, metadata, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
-RETURNING id, tax_region_id, name, code, rate_bps, is_default, metadata, created_at, updated_at, deleted_at
+INSERT INTO tax_rate (
+    id, tax_region_id, name, code, rate_bps, is_default, metadata,
+    stacks_on_id, compound, created_at, updated_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+RETURNING id, tax_region_id, name, code, rate_bps, is_default, metadata, created_at, updated_at, deleted_at, stacks_on_id, compound
 `
 
 type InsertTaxRateParams struct {
@@ -85,6 +92,8 @@ type InsertTaxRateParams struct {
 	RateBps     int32
 	IsDefault   bool
 	Metadata    []byte
+	StacksOnID  *string
+	Compound    bool
 	CreatedAt   pgtype.Timestamptz
 }
 
@@ -98,6 +107,8 @@ func (q *Queries) InsertTaxRate(ctx context.Context, arg InsertTaxRateParams) (T
 		arg.RateBps,
 		arg.IsDefault,
 		arg.Metadata,
+		arg.StacksOnID,
+		arg.Compound,
 		arg.CreatedAt,
 	)
 	var i TaxRate
@@ -112,12 +123,14 @@ func (q *Queries) InsertTaxRate(ctx context.Context, arg InsertTaxRateParams) (T
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.StacksOnID,
+		&i.Compound,
 	)
 	return i, err
 }
 
 const listTaxRatesByRegion = `-- name: ListTaxRatesByRegion :many
-SELECT id, tax_region_id, name, code, rate_bps, is_default, metadata, created_at, updated_at, deleted_at FROM tax_rate
+SELECT id, tax_region_id, name, code, rate_bps, is_default, metadata, created_at, updated_at, deleted_at, stacks_on_id, compound FROM tax_rate
 WHERE tax_region_id = $1 AND deleted_at IS NULL
 ORDER BY is_default DESC, id
 `
@@ -142,6 +155,8 @@ func (q *Queries) ListTaxRatesByRegion(ctx context.Context, taxRegionID string) 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.StacksOnID,
+			&i.Compound,
 		); err != nil {
 			return nil, err
 		}
@@ -154,7 +169,7 @@ func (q *Queries) ListTaxRatesByRegion(ctx context.Context, taxRegionID string) 
 }
 
 const listTaxRatesByRegions = `-- name: ListTaxRatesByRegions :many
-SELECT id, tax_region_id, name, code, rate_bps, is_default, metadata, created_at, updated_at, deleted_at FROM tax_rate
+SELECT id, tax_region_id, name, code, rate_bps, is_default, metadata, created_at, updated_at, deleted_at, stacks_on_id, compound FROM tax_rate
 WHERE tax_region_id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY tax_region_id, is_default DESC, id
 `
@@ -185,6 +200,54 @@ func (q *Queries) ListTaxRatesByRegions(ctx context.Context, regionIds []string)
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.StacksOnID,
+			&i.Compound,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTaxRatesStandingOn = `-- name: ListTaxRatesStandingOn :many
+SELECT id, tax_region_id, name, code, rate_bps, is_default, metadata, created_at, updated_at, deleted_at, stacks_on_id, compound FROM tax_rate
+WHERE stacks_on_id = ANY($1::text[]) AND deleted_at IS NULL
+ORDER BY stacks_on_id, id
+`
+
+// ListTaxRatesStandingOn returns the rates that stand DIRECTLY on the given
+// ones, in one query.
+//
+// It is what expands a chosen rate into its stack: the walk is outward, one
+// level per round trip, and a level holds at most one rate per base
+// (tax_rate_stacks_on_uniq), so the number of round trips is the stack's DEPTH
+// and never the number of rates.
+func (q *Queries) ListTaxRatesStandingOn(ctx context.Context, baseIds []string) ([]TaxRate, error) {
+	rows, err := q.db.Query(ctx, listTaxRatesStandingOn, baseIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TaxRate{}
+	for rows.Next() {
+		var i TaxRate
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaxRegionID,
+			&i.Name,
+			&i.Code,
+			&i.RateBps,
+			&i.IsDefault,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.StacksOnID,
+			&i.Compound,
 		); err != nil {
 			return nil, err
 		}
@@ -249,19 +312,22 @@ func (q *Queries) SoftDeleteTaxRatesByRegions(ctx context.Context, arg SoftDelet
 
 const updateTaxRate = `-- name: UpdateTaxRate :one
 UPDATE tax_rate
-SET name = $2, code = $3, rate_bps = $4, is_default = $5, metadata = $6, updated_at = $7
+SET name = $2, code = $3, rate_bps = $4, is_default = $5, metadata = $6,
+    stacks_on_id = $7, compound = $8, updated_at = $9
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, tax_region_id, name, code, rate_bps, is_default, metadata, created_at, updated_at, deleted_at
+RETURNING id, tax_region_id, name, code, rate_bps, is_default, metadata, created_at, updated_at, deleted_at, stacks_on_id, compound
 `
 
 type UpdateTaxRateParams struct {
-	ID        string
-	Name      string
-	Code      *string
-	RateBps   int32
-	IsDefault bool
-	Metadata  []byte
-	UpdatedAt pgtype.Timestamptz
+	ID         string
+	Name       string
+	Code       *string
+	RateBps    int32
+	IsDefault  bool
+	Metadata   []byte
+	StacksOnID *string
+	Compound   bool
+	UpdatedAt  pgtype.Timestamptz
 }
 
 func (q *Queries) UpdateTaxRate(ctx context.Context, arg UpdateTaxRateParams) (TaxRate, error) {
@@ -272,6 +338,8 @@ func (q *Queries) UpdateTaxRate(ctx context.Context, arg UpdateTaxRateParams) (T
 		arg.RateBps,
 		arg.IsDefault,
 		arg.Metadata,
+		arg.StacksOnID,
+		arg.Compound,
 		arg.UpdatedAt,
 	)
 	var i TaxRate
@@ -286,6 +354,8 @@ func (q *Queries) UpdateTaxRate(ctx context.Context, arg UpdateTaxRateParams) (T
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.StacksOnID,
+		&i.Compound,
 	)
 	return i, err
 }

@@ -80,6 +80,18 @@ const (
 	CodeRateOutOfRange = "tax_rate_out_of_range"
 	// CodeAmountOverflow reports that an amount exceeded the permitted range.
 	CodeAmountOverflow = "tax_amount_overflow"
+	// CodeInconsistentConfig reports a rate configuration the calculation
+	// cannot act on: a stack that returns to itself, one deeper than the limit,
+	// or a stack in a region whose prices include their tax. Every one of them
+	// is refused at WRITE time, so reaching it here means a write went around
+	// the service.
+	CodeInconsistentConfig = "tax_inconsistent_config"
+	// CodeStackExceedsBase reports that the rates of one stack would together
+	// take more than the line's own amount.
+	CodeStackExceedsBase = "tax_stack_exceeds_base"
+	// CodeStackNotAllowed reports a rate that may not stand on another: a
+	// default rate, one carrying rules, or one in a tax-inclusive region.
+	CodeStackNotAllowed = "tax_stack_not_allowed"
 	// CodeProviderExists reports that a provider with the same id is already
 	// registered.
 	CodeProviderExists = "tax_provider_exists"
@@ -384,6 +396,13 @@ func (s *Service) CreateTaxRegion(ctx context.Context, in CreateTaxRegionInput) 
 		return s.write(ctx, region)
 	case province != "" && in.ParentID != "":
 		region.ProvinceCode = &province
+		// A province that says prices INCLUDE their tax cannot be opened over a
+		// chain that already carries a stack: the pair is refused when a stack
+		// is written, and a region written LATER is the other way the same
+		// forbidden pair can appear (ADR 0095).
+		if err := s.assertNoStackedRate(ctx, in.ParentID, in.PricesIncludeTax); err != nil {
+			return models.TaxRegion{}, err
+		}
 		return s.writeProvince(ctx, region, in.ParentID)
 	case province == "":
 		return models.TaxRegion{}, errors.Invalid(CodeInvalidInput,

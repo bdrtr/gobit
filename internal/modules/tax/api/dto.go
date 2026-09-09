@@ -54,6 +54,11 @@ type taxRateDTO struct {
 	RateBps int32 `json:"rate_bps"`
 	// IsDefault is whether this is the region's default rate.
 	IsDefault bool `json:"is_default"`
+	// StacksOnID is the rate this one STANDS ON; null when it stands alone.
+	StacksOnID *string `json:"stacks_on_id"`
+	// Compound says the rate is computed on the taxes below it as well as on
+	// the line's own amount.
+	Compound bool `json:"compound"`
 	// Metadata is free-form metadata; when empty the field does not appear.
 	Metadata map[string]any `json:"metadata,omitempty"`
 	// CreatedAt is the creation instant (RFC3339, UTC).
@@ -124,6 +129,19 @@ type createTaxRateRequest struct {
 	RateBps int32 `json:"rate_bps"`
 	// IsDefault is whether this is the region's default rate.
 	IsDefault bool `json:"is_default"`
+	// StacksOnID is the rate this one will STAND ON, in the same region; it may
+	// be left empty.
+	//
+	// A stacked rate is never CHOSEN for a line — it is reached by expanding
+	// the rate that was chosen — so it may not be the region's default and it
+	// may not carry rules. The stack is set HERE and never by an update: where
+	// a rate sits in a stack is part of what it is, and moving it would reprice
+	// every line that follows while the rate kept its identity.
+	StacksOnID string `json:"stacks_on_id"`
+	// Compound says the rate is computed on the taxes below it as well as on
+	// the line's own amount. It cannot be true without stacks_on_id: there
+	// would be nothing under it to compound on.
+	Compound bool `json:"compound"`
 	// Metadata is free-form metadata.
 	Metadata map[string]any `json:"metadata"`
 }
@@ -184,6 +202,8 @@ func toTaxRateDTO(rate models.TaxRate) taxRateDTO {
 		Code:        rate.Code,
 		RateBps:     rate.RateBps,
 		IsDefault:   rate.IsDefault,
+		StacksOnID:  rate.StacksOnID,
+		Compound:    rate.Compound,
 		Metadata:    rate.Metadata,
 		CreatedAt:   rate.CreatedAt,
 		UpdatedAt:   rate.UpdatedAt,
@@ -226,6 +246,8 @@ func toCreateTaxRateInput(req createTaxRateRequest) service.CreateTaxRateInput {
 		Code:        req.Code,
 		RateBps:     req.RateBps,
 		IsDefault:   req.IsDefault,
+		StacksOnID:  req.StacksOnID,
+		Compound:    req.Compound,
 		Metadata:    req.Metadata,
 	}
 }

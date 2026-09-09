@@ -37,6 +37,15 @@ func (r *Repo) CreateTaxRateRule(
 				"%s bölgenin VARSAYILAN oranıdır ve kuralı olamaz; "+
 					"kurallı bir oran için ayrı bir oran tanımlayın", rule.TaxRateID)
 		}
+		if rate.StacksOnID != nil {
+			// Üstte duran oran SEÇİLMEZ, tabanın genişletilmesiyle uygulanır.
+			// Kural yazmak onu eşleşmeye bağlardı: oran yalnızca kuralı tuttuğu
+			// zaman uygulanır olurdu ve bu, kimsenin bildirmediği ikinci bir
+			// kapsam düzeneğidir. Yığının kapsamını TABAN belirler.
+			return errors.Conflict(CodeConstraintViolation,
+				"%s oranı başka bir oranın üstünde duruyor ve kuralı olamaz; "+
+					"yığının kapsamını TABAN oranın kuralları belirler", rule.TaxRateID)
+		}
 
 		row, err := q.InsertTaxRateRule(ctx, taxdb.InsertTaxRateRuleParams{
 			ID:          rule.ID,
