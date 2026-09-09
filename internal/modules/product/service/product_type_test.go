@@ -137,3 +137,32 @@ func TestTheTypeIsPublishedOnTheReadLayer(t *testing.T) {
 	assert.Equal(t, productType.ID, records[0]["type_id"],
 		"the read layer has to publish the type the cart asks for")
 }
+
+// TestAnImageSaysWhatItShows carries the alt text end to end and TRIMS it.
+//
+// The trim is the same rule every text field in this module follows, and it
+// matters more here: an alt text of one space is not a description, it is a
+// description somebody thought they gave.
+func TestAnImageSaysWhatItShows(t *testing.T) {
+	ctx := context.Background()
+	store := newMemStore()
+	svc := newService(t, store, nil, nil)
+
+	created, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle: "described-image",
+		Title:  "A Product",
+		Status: models.StatusPublished,
+		Images: []service.CreateImageInput{
+			{URL: "https://cdn.example/one.jpg", AltText: "  A red mug  "},
+			{URL: "https://cdn.example/two.jpg"},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, created.Images, 2)
+
+	assert.Equal(t, "A red mug", created.Images[0].AltText,
+		"the alt text is trimmed, like every other text this module stores")
+	assert.Empty(t, created.Images[1].AltText,
+		"an image nobody described carries the empty string, which is HTML's own "+
+			"word for a decorative picture")
+}

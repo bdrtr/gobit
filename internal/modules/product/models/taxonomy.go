@@ -75,7 +75,15 @@ type Image struct {
 	// only through this id. It is NOT a foreign key (Principle 2.2); the record
 	// lives in another module and is read through that module's cross-module
 	// surface.
-	UploadID  *string        `json:"upload_id,omitempty"`
+	UploadID *string `json:"upload_id,omitempty"`
+	// AltText is what the picture SHOWS, for a reader who cannot see it.
+	//
+	// An empty string is a real answer rather than a missing one: HTML gives
+	// alt="" the meaning "this image carries no information", which is what a
+	// decorative picture is. It is therefore not nullable — an image nobody
+	// described and an image described as decorative are the same to every
+	// reader this module has.
+	AltText   string         `json:"alt_text"`
 	Rank      int32          `json:"rank"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
 	CreatedAt time.Time      `json:"created_at,omitzero"`

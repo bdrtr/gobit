@@ -16,6 +16,7 @@ package service
 
 import (
 	"context"
+	"strings"
 
 	"github.com/bdrtr/gobit/core/errors"
 	corepage "github.com/bdrtr/gobit/internal/core/page"
@@ -67,6 +68,9 @@ type CreateImageInput struct {
 	// "cleared" — both mean the same thing, and the empty string says it
 	// without a second nil for the caller to reason about.
 	UploadID string
+	// AltText is what the picture shows, for a reader who cannot see it. It may
+	// be left empty, which is HTML's own word for a decorative image.
+	AltText  string
 	Rank     int32
 	Metadata map[string]any
 }
@@ -754,6 +758,7 @@ func buildImages(productID string, in []CreateImageInput) ([]models.Image, error
 			ProductID: productID,
 			URL:       url,
 			UploadID:  uploadID,
+			AltText:   strings.TrimSpace(img.AltText),
 			Rank:      rank,
 			Metadata:  img.Metadata,
 		})

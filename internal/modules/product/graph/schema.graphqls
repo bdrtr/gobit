@@ -367,6 +367,14 @@ type Image {
   id: ID!
   productId: ID!
   url: String!
+  """
+  What the picture SHOWS, for a reader who cannot see it.
+
+  An empty string is a real answer rather than a missing one: HTML gives alt=""
+  the meaning "this image carries no information", which is what a decorative
+  picture is. The field is therefore non-null.
+  """
+  altText: String!
   rank: Int!
   metadata: JSON
 }

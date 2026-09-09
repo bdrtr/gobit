@@ -51,6 +51,7 @@ type ComplexityRoot struct {
 	}
 
 	Image struct {
+		AltText   func(childComplexity int) int
 		ID        func(childComplexity int) int
 		Metadata  func(childComplexity int) int
 		ProductID func(childComplexity int) int
@@ -222,6 +223,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.Category.Rank(childComplexity), true
 
+	case "Image.altText":
+		if e.ComplexityRoot.Image.AltText == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Image.AltText(childComplexity), true
 	case "Image.id":
 		if e.ComplexityRoot.Image.ID == nil {
 			break
@@ -760,6 +767,8 @@ func (ec *executionContext) childFields_Image(ctx context.Context, field graphql
 		return ec.fieldContext_Image_productId(ctx, field)
 	case "url":
 		return ec.fieldContext_Image_url(ctx, field)
+	case "altText":
+		return ec.fieldContext_Image_altText(ctx, field)
 	case "rank":
 		return ec.fieldContext_Image_rank(ctx, field)
 	case "metadata":
@@ -1480,6 +1489,29 @@ func (ec *executionContext) _Image_url(ctx context.Context, field graphql.Collec
 	)
 }
 func (ec *executionContext) fieldContext_Image_url(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Image", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _Image_altText(ctx context.Context, field graphql.CollectedField, obj *models.Image) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Image_altText(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.AltText, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Image_altText(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("Image", field, false, false, errors.New("field of type String does not have child fields"))
 }
 
@@ -4353,6 +4385,11 @@ func (ec *executionContext) _Image(ctx context.Context, sel ast.SelectionSet, ob
 			}
 		case "url":
 			out.Values[i] = ec._Image_url(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "altText":
+			out.Values[i] = ec._Image_altText(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}

@@ -291,6 +291,7 @@ func (r *Repo) CreateImage(ctx context.Context, img models.Image) (models.Image,
 		// of ours". Substituting an empty string would produce a third state
 		// that the CHECK constraint rejects anyway.
 		UploadID: img.UploadID,
+		AltText:  img.AltText,
 	})
 	if err != nil {
 		return models.Image{}, wrapDB(err, "could not add product image: %s", img.ProductID)

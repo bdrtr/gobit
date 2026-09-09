@@ -10,9 +10,9 @@ import (
 )
 
 const createImage = `-- name: CreateImage :one
-INSERT INTO product_image (id, product_id, url, rank, metadata, upload_id)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, product_id, url, rank, metadata, created_at, updated_at, deleted_at, upload_id
+INSERT INTO product_image (id, product_id, url, rank, metadata, upload_id, alt_text)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, product_id, url, rank, metadata, created_at, updated_at, deleted_at, upload_id, alt_text
 `
 
 type CreateImageParams struct {
@@ -22,6 +22,7 @@ type CreateImageParams struct {
 	Rank      int32
 	Metadata  []byte
 	UploadID  *string
+	AltText   string
 }
 
 // upload_id may be NULL and it is not an error: an image whose address was
@@ -35,6 +36,7 @@ func (q *Queries) CreateImage(ctx context.Context, arg CreateImageParams) (Produ
 		arg.Rank,
 		arg.Metadata,
 		arg.UploadID,
+		arg.AltText,
 	)
 	var i ProductImage
 	err := row.Scan(
@@ -47,6 +49,7 @@ func (q *Queries) CreateImage(ctx context.Context, arg CreateImageParams) (Produ
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.UploadID,
+		&i.AltText,
 	)
 	return i, err
 }
@@ -267,7 +270,7 @@ func (q *Queries) GetProductForUpdate(ctx context.Context, id string) (Product, 
 }
 
 const listImagesByIDs = `-- name: ListImagesByIDs :many
-SELECT id, product_id, url, rank, metadata, created_at, updated_at, deleted_at, upload_id FROM product_image
+SELECT id, product_id, url, rank, metadata, created_at, updated_at, deleted_at, upload_id, alt_text FROM product_image
 WHERE id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY product_id, rank, id
 `
@@ -299,6 +302,7 @@ func (q *Queries) ListImagesByIDs(ctx context.Context, dollar_1 []string) ([]Pro
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.UploadID,
+			&i.AltText,
 		); err != nil {
 			return nil, err
 		}
@@ -311,7 +315,7 @@ func (q *Queries) ListImagesByIDs(ctx context.Context, dollar_1 []string) ([]Pro
 }
 
 const listImagesByProductIDs = `-- name: ListImagesByProductIDs :many
-SELECT id, product_id, url, rank, metadata, created_at, updated_at, deleted_at, upload_id FROM product_image
+SELECT id, product_id, url, rank, metadata, created_at, updated_at, deleted_at, upload_id, alt_text FROM product_image
 WHERE product_id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY product_id, rank, id
 `
@@ -335,6 +339,7 @@ func (q *Queries) ListImagesByProductIDs(ctx context.Context, dollar_1 []string)
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.UploadID,
+			&i.AltText,
 		); err != nil {
 			return nil, err
 		}

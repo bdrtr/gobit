@@ -72,6 +72,7 @@ type ProductImage struct {
 	UpdatedAt pgtype.Timestamptz
 	DeletedAt pgtype.Timestamptz
 	UploadID  *string
+	AltText   string
 }
 
 type ProductOption struct {

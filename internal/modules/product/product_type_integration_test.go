@@ -137,3 +137,34 @@ func TestADeletedTypeFreesItsHandle(t *testing.T) {
 	})
 	require.NoError(t, err, "a deleted type's handle is free again")
 }
+
+// TestAnImageKeepsItsAltTextOnTheRealSchema proves the column round-trips and
+// that an image written without one carries the empty string rather than NULL.
+//
+// The default is the half a fake cannot show: every image written before the
+// column existed gets ”, which is exactly what is true of them — nobody said
+// what they show.
+func TestAnImageKeepsItsAltTextOnTheRealSchema(t *testing.T) {
+	ctx := context.Background()
+	svc := newIsolatedService(ctx, t)
+
+	created, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle: uniqueHandle("alt-text"),
+		Title:  "A Product",
+		Status: models.StatusPublished,
+		Images: []service.CreateImageInput{
+			{URL: "https://cdn.example/described.jpg", AltText: "A red mug", Rank: 0},
+			{URL: "https://cdn.example/decorative.jpg", Rank: 1},
+		},
+	})
+	require.NoError(t, err)
+
+	read, err := svc.GetProduct(ctx, created.ID)
+	require.NoError(t, err)
+	require.Len(t, read.Images, 2)
+
+	assert.Equal(t, "A red mug", read.Images[0].AltText)
+	assert.Equal(t, "", read.Images[1].AltText,
+		"the column is NOT NULL, so an undescribed image reads back as empty, "+
+			"never as a null the caller has to handle")
+}

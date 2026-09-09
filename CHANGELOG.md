@@ -20,6 +20,12 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir gorsel artik NE GOSTERDIGINI soyluyor** (`product_image.alt_text`) —
+  vitrinde ve GraphQL tipinde yayimlaniyor. Bos deger EKSIK degil CEVAP: HTML
+  `alt=""`'a "bu gorsel bilgi tasimaz" anlamini veriyor, yani dekoratif resmin
+  kendisi. Kolon bu yuzden nullable degil, ve degeri kirpiliyor -- tek bosluktan
+  ibaret bir alt metin, birinin verdigini sandigi bir aciklamadir (ADR 0104).
+
 - **Bir promosyon kurali artik URUNU ve KOLEKSIYONU adlandirabiliyor.** Satir
   yalnizca VARYANTINI tasiyordu, yani bir urune indirim yazan tacir her
   varyantini tek tek saymak zorundaydi. Iki anahtar da turun ZATEN okudugu urun

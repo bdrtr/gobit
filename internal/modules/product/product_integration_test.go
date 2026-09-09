@@ -252,7 +252,7 @@ func TestMigrationUpDownIsReversible(t *testing.T) {
 	// written out rather than derived on purpose: a count taken from the
 	// embedded files would agree with itself whatever happened, and what this
 	// line is for is noticing that a migration was added.
-	assert.Equal(t, uint(5), version)
+	assert.Equal(t, uint(6), version)
 
 	// 000004 adds no table, so the table list above cannot notice it. What it
 	// adds is the index the catalog's option-value filter reads through, and an

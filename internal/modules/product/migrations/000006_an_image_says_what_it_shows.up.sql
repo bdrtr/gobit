@@ -1,0 +1,27 @@
+-- product_image gains the text a screen reader reads out.
+--
+-- # Why it is a column and not metadata
+--
+-- The generic `metadata` bag was the only place an alt text could go, and it is
+-- the wrong place for three reasons. Nothing validates a key nobody declared, so
+-- two installations would spell it two ways; no reader could rely on it, so the
+-- storefront and the GraphQL type could not publish it; and an accessibility
+-- attribute that is present only when somebody remembered a convention is one
+-- nobody can audit.
+--
+-- # Why it is NOT NULL DEFAULT ''
+--
+-- An image with no alt text and an image with an empty alt text are the same
+-- thing to a browser, and they mean the same thing to this module: nothing was
+-- written. A nullable column would put a third state in front of every reader
+-- for a distinction nobody acts on.
+--
+-- The empty string is also the CORRECT value for a decorative image. HTML says
+-- alt="" means "this picture carries no information", which is a real answer
+-- rather than a missing one — so the default is not merely convenient, it is the
+-- value the standard already gives to the case it describes.
+--
+-- Every image written before this column exists gets the empty string, which is
+-- exactly what is true of them: nobody said what they show.
+ALTER TABLE product_image
+    ADD COLUMN alt_text text NOT NULL DEFAULT '';

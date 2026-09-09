@@ -108,8 +108,8 @@ ORDER BY rank, id;
 -- upload_id may be NULL and it is not an error: an image whose address was
 -- never uploaded here (an imported catalog, a hand-typed CDN address) has no
 -- upload record to point at. See migration 000002.
-INSERT INTO product_image (id, product_id, url, rank, metadata, upload_id)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO product_image (id, product_id, url, rank, metadata, upload_id, alt_text)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING *;
 
 -- name: ListImagesByProductIDs :many

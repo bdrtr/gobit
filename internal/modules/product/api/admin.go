@@ -71,6 +71,7 @@ func (r createProductRequest) toInput() service.CreateProductInput {
 		in.Images = append(in.Images, service.CreateImageInput{
 			URL:      img.URL,
 			UploadID: img.UploadID,
+			AltText:  img.AltText,
 			Rank:     img.Rank,
 			Metadata: img.Metadata,
 		})
@@ -140,7 +141,13 @@ type createImageRequest struct {
 	// address alone would leave the image unable to say which file it shows —
 	// the record behind it, with the detected content type, the size and the
 	// checksum, is reachable only through this id.
-	UploadID string         `json:"upload_id"`
+	UploadID string `json:"upload_id"`
+	// AltText is what the picture shows, for a reader who cannot see it.
+	//
+	// It may be left out, and an empty value is a real answer rather than a
+	// missing one: HTML gives alt="" the meaning "this image carries no
+	// information", which is what a decorative picture is.
+	AltText  string         `json:"alt_text"`
 	Rank     int32          `json:"rank"`
 	Metadata map[string]any `json:"metadata"`
 }
