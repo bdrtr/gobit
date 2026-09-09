@@ -95,16 +95,6 @@ past and is not corrected retroactively.
   MORE of that product. This is the price of the decision whose justification is
   written with the sales channel rule in [`docs/security.md`](security.md) — the
   alternative was a catalog edit making a customer's full cart unpayable.
-- **The stock a storefront SHOWS is not narrowed by the channel's warehouses,
-  while the checkout IS.** A channel bound to a warehouse (ADR 0092) reserves
-  only from it, and the badge next to the product still counts every warehouse:
-  the sellable total the storefront reads is the sum over all locations
-  (`inventory.AvailableQuantity`). So a shopper can be shown "in stock" for
-  units that sit in a warehouse their storefront may not ship from, and find out
-  at the last step. It is refused rather than shipped from the wrong warehouse,
-  which is the safer of the two, and it is the reason the badge is next: making
-  it channel-aware needs a filter on a Query EXPANSION, which the core contract
-  does not carry today (`core/query`, Provider.FetchByIDs takes ids and fields).
 
 ## The category tree
 

@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -96,7 +97,16 @@ func TestAnOrderIsReservedOnlyFromTheWarehousesItsChannelShipsFrom(t *testing.T)
 	customerID, _ := newCustomer(ctx, t)
 	cartID, totals := prepareCart(ctx, t, customerID, variantID, happyQuantity)
 
-	// --- 1) the units exist, in the wrong warehouse ---
+	// --- 1) the BADGE already says so, before anyone tries to buy ---
+	//
+	// This is the half that keeps the shopper out of a doomed checkout: the
+	// listing is read with the same key the order will carry, and it counts the
+	// warehouses that key's channel ships from.
+	assert.False(t, badgeInStock(t, ground, variantID),
+		"the storefront must not offer units it cannot ship; the stock is in the west "+
+			"warehouse and this channel ships from the east")
+
+	// --- 2) the units exist, in the wrong warehouse ---
 	refused := keyedStorefrontRequest(t, ground.key, http.MethodPost,
 		"/store/v1/carts/"+cartID+"/complete",
 		storefrontCompletionBody(t, totals.Total))
@@ -111,8 +121,13 @@ func TestAnOrderIsReservedOnlyFromTheWarehousesItsChannelShipsFrom(t *testing.T)
 	assert.Equal(t, happyInitialStock, sellableQuantity(ctx, t, stockItemID),
 		"a refused order must reserve nothing")
 
-	// --- 2) the merchant binds the warehouse that holds the units ---
+	// --- 3) the merchant binds the warehouse that holds the units ---
 	bindWarehouseToChannel(t, ground.west, ground.channelID)
+
+	// --- 4) and the badge turns with it, from the same binding ---
+	assert.True(t, badgeInStock(t, ground, variantID),
+		"the badge and the checkout read the SAME binding; if they disagree, one of them "+
+			"is lying to the shopper")
 
 	done := keyedStorefrontRequest(t, ground.key, http.MethodPost,
 		"/store/v1/carts/"+cartID+"/complete",
@@ -132,4 +147,41 @@ func TestAnOrderIsReservedOnlyFromTheWarehousesItsChannelShipsFrom(t *testing.T)
 		"the units left the WEST warehouse, which is the one that was bound second")
 	assert.Zero(t, west.ReservedQuantity,
 		"a completed order holds nothing: the promise became a deduction")
+}
+
+// badgeInStock reads the storefront listing with the ground's own key and
+// reports whether the variant is offered as sellable.
+//
+// It goes over HTTP, through the channel-scoped path, because that is where the
+// answer is assembled: the handler puts the request's channels into the read
+// and the badge is computed from the warehouses they ship from.
+func badgeInStock(t *testing.T, ground channelWarehouseGround, variantID string) bool {
+	t.Helper()
+
+	recorder := magazaIstegi(t, catalogPath(ground.channelID, "/products"), ground.key)
+	require.Equal(t, http.StatusOK, recorder.Code,
+		"the storefront listing must answer 200; body: %s", recorder.Body.String())
+
+	var envelope struct {
+		Data []struct {
+			Variants []struct {
+				ID      string `json:"id"`
+				InStock bool   `json:"in_stock"`
+			} `json:"variants"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope),
+		"the listing could not be decoded; body: %s", recorder.Body.String())
+
+	for _, product := range envelope.Data {
+		for _, variant := range product.Variants {
+			if variant.ID == variantID {
+				return variant.InStock
+			}
+		}
+	}
+
+	t.Fatalf("variant %s is not in the channel's listing at all", variantID)
+
+	return false
 }

@@ -528,6 +528,38 @@ func (r *Repository) AvailableByItemIDs(ctx context.Context, ids []string) (map[
 	return out, nil
 }
 
+// AvailableByItemLocation satılabilir adedi kalem ve LOKASYON kırılımıyla döner.
+//
+// Boş kalan lokasyon haritada YOKTUR: sorgu satır döner, sayım değil (bkz.
+// [Repository.AvailableByItemIDs]). Çağıran, kanalının sevk ettiği lokasyonları
+// toplar; olmayan bir lokasyon sıfır katkı verir ve ayrıca yazılmasına gerek
+// yoktur.
+func (r *Repository) AvailableByItemLocation(
+	ctx context.Context, ids []string,
+) (map[string]map[string]int64, error) {
+	out := make(map[string]map[string]int64, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+
+	rows, err := r.queries(ctx).AvailableByItemAndLocation(ctx, ids)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed,
+			"satılabilir adet lokasyon kırılımıyla hesaplanamadı")
+	}
+
+	for _, row := range rows {
+		byLocation, ok := out[row.InventoryItemID]
+		if !ok {
+			byLocation = map[string]int64{}
+			out[row.InventoryItemID] = byLocation
+		}
+		byLocation[row.LocationID] = row.AvailableQuantity
+	}
+
+	return out, nil
+}
+
 // --- rezervasyonlar ----------------------------------------------------------
 
 // CreateReservation yeni bir rezervasyon kaydeder.

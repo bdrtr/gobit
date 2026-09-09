@@ -144,6 +144,15 @@ const (
 	LinkUploadProductImage = "upload_product_image"
 )
 
+// LinkStockLocationSalesChannel binds a warehouse to a sales channel it ships
+// for; the INVENTORY module declares it (ADR 0092).
+//
+// The name is repeated here rather than imported, the accepted price of
+// isolation (ADR 0001): this package cannot import that module. A typo does not
+// stay silent — core/link answers an undeclared name with NotFound, and the
+// badge then falls back to the unnarrowed total with a line in the log.
+const LinkStockLocationSalesChannel = "stock_location_sales_channel"
+
 // Definitions are the link definitions the product module declares.
 //
 // # Why the "module" field on the ends is an entity name

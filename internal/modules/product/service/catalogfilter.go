@@ -91,6 +91,16 @@ const (
 	// inventory field is read here or anywhere else in this package.
 	foreignAvailableQuantity = "available_quantity"
 
+	// foreignAvailableByLocation is the same total BROKEN DOWN by warehouse,
+	// published by inventory as service.FieldAvailableByLocation.
+	//
+	// It is asked for ONLY when the read is narrowed to a sales channel's
+	// warehouses (ADR 0092), and it NEVER reaches the response: the badge is
+	// computed from it and the key is removed from the record before it becomes
+	// [StoreVariant.InventoryItem]. A shop's warehouse topology is not a
+	// shopper's business, and the record IS published.
+	foreignAvailableByLocation = "available_by_location"
+
 	// foreignPrices is the list of price sub-records pricing writes on a
 	// price set record. Only the prices that are unconditional and valid at the
 	// moment of the read are in it; pricing eliminates the rest before it
@@ -149,14 +159,44 @@ const filterQuantity int64 = 1
 // quantity, which is the shape a renamed inventory field would produce. That is
 // deliberate and it is why the pairing is audited: the failure is silent in the
 // direction of hiding stock, never of selling it.
-func variantInStock(variant models.Variant, inventory query.Record) bool {
+func variantInStock(variant models.Variant, extra enrichment, served map[string]bool) bool {
 	if !variant.ManageInventory || variant.AllowBackorder {
 		return true
 	}
 
-	quantity, ok := recordInt(inventory, foreignAvailableQuantity)
+	if len(served) > 0 {
+		return sellableAt(extra.sellableByLocation, served) > 0
+	}
+
+	quantity, ok := recordInt(extra.inventory, foreignAvailableQuantity)
 
 	return ok && quantity > 0
+}
+
+// sellableAt sums the warehouses the read is allowed to count.
+//
+// # Why a missing breakdown answers ZERO
+//
+// The alternative is falling back to the unnarrowed total, and that is the one
+// answer this function must never give: it would show a shopper the stock of a
+// warehouse their storefront cannot ship from — the very thing the narrowing
+// exists to prevent, and the failure would be invisible because the badge would
+// look right. Zero is visible: the product reads as out of stock and somebody
+// asks why.
+//
+// The map is nil for a variant with no inventory link at all, which
+// [variantInStock] already answers false for, and nil when the breakdown was
+// not requested — which cannot happen while a channel narrows the read, because
+// that is what makes it requested.
+func sellableAt(byLocation map[string]int64, served map[string]bool) int64 {
+	var total int64
+	for locationID, quantity := range byLocation {
+		if served[locationID] {
+			total += quantity
+		}
+	}
+
+	return total
 }
 
 // productInStock aggregates the variant answers to the product.

@@ -25,6 +25,19 @@ const (
 	// FieldAvailableQuantity is the sellable total across ALL locations.
 	// The store listing of product reads the stock from this field.
 	FieldAvailableQuantity = "available_quantity"
+	// FieldAvailableByLocation is the same total BROKEN DOWN by location, as a
+	// map[locationID]quantity.
+	//
+	// It exists because an expansion carries no filter (ADR 0004): a caller
+	// that may only count some of the warehouses cannot say so, so it is given
+	// all of them and sums the ones it may. Today the only such caller is the
+	// storefront listing, which counts the warehouses the request's sales
+	// channel ships from (ADR 0092).
+	//
+	// It is computed ONLY when it is asked for, like the total beside it, so a
+	// reader that does not narrow pays nothing for it. A location with nothing
+	// sellable is ABSENT from the map rather than present with a zero.
+	FieldAvailableByLocation = "available_by_location"
 	// FieldCreatedAt is the creation time.
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt is the time of the last update.
@@ -37,15 +50,35 @@ const (
 // validation and the production to drift apart: asking for a field that is not
 // here returns errors.Invalid (ADR 0004), and every field that is here can also
 // be produced.
-var itemFieldGetters = map[string]func(item models.InventoryItem, available int64) any{
-	FieldID:                func(item models.InventoryItem, _ int64) any { return item.ID },
-	FieldSKU:               func(item models.InventoryItem, _ int64) any { return item.SKU },
-	FieldTitle:             func(item models.InventoryItem, _ int64) any { return item.Title },
-	FieldDescription:       func(item models.InventoryItem, _ int64) any { return item.Description },
-	FieldRequiresShipping:  func(item models.InventoryItem, _ int64) any { return item.RequiresShipping },
-	FieldCreatedAt:         func(item models.InventoryItem, _ int64) any { return item.CreatedAt },
-	FieldUpdatedAt:         func(item models.InventoryItem, _ int64) any { return item.UpdatedAt },
-	FieldAvailableQuantity: func(_ models.InventoryItem, available int64) any { return available },
+var itemFieldGetters = map[string]func(in fieldInput) any{
+	FieldID:                func(in fieldInput) any { return in.item.ID },
+	FieldSKU:               func(in fieldInput) any { return in.item.SKU },
+	FieldTitle:             func(in fieldInput) any { return in.item.Title },
+	FieldDescription:       func(in fieldInput) any { return in.item.Description },
+	FieldRequiresShipping:  func(in fieldInput) any { return in.item.RequiresShipping },
+	FieldCreatedAt:         func(in fieldInput) any { return in.item.CreatedAt },
+	FieldUpdatedAt:         func(in fieldInput) any { return in.item.UpdatedAt },
+	FieldAvailableQuantity: func(in fieldInput) any { return in.available },
+	FieldAvailableByLocation: func(in fieldInput) any {
+		return in.byLocation
+	},
+}
+
+// fieldInput is everything a getter may read.
+//
+// The extractors take ONE argument rather than a growing list, and the reason
+// is the field validation beside them: it is derived from this very map, so a
+// field that cannot be produced cannot be requested either. A field whose value
+// did not fit the getter signature would have to be written outside the table —
+// and then the two would drift, which is the shape this file was built to
+// avoid.
+type fieldInput struct {
+	item models.InventoryItem
+	// available is the sellable total over every location.
+	available int64
+	// byLocation is that total broken down; it is nil unless the caller asked
+	// for [FieldAvailableByLocation].
+	byLocation map[string]int64
 }
 
 // QueryProvider is the read surface the inventory module opens to the Query
@@ -160,11 +193,28 @@ func (p *QueryProvider) records(ctx context.Context, items []models.InventoryIte
 		}
 	}
 
+	byLocation := map[string]map[string]int64{}
+	if slices.Contains(selected, FieldAvailableByLocation) && len(items) > 0 {
+		ids := make([]string, 0, len(items))
+		for _, item := range items {
+			ids = append(ids, item.ID)
+		}
+		var err error
+		if byLocation, err = p.svc.AvailableQuantitiesByLocation(ctx, ids); err != nil {
+			return nil, err
+		}
+	}
+
 	out := make([]query.Record, 0, len(items))
 	for _, item := range items {
 		record := make(query.Record, len(selected))
+		in := fieldInput{
+			item:       item,
+			available:  available[item.ID],
+			byLocation: byLocation[item.ID],
+		}
 		for _, name := range selected {
-			record[name] = itemFieldGetters[name](item, available[item.ID])
+			record[name] = itemFieldGetters[name](in)
 		}
 		out = append(out, record)
 	}

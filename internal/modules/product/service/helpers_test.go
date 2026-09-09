@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -167,6 +168,15 @@ type fakeGraph struct {
 }
 
 // Graph returns the recorded records and records the call.
+//
+// # It answers only what was ASKED for
+//
+// The scripted records carry every expansion a test might want, and the real
+// Query layer writes ONLY the expansions the spec names. A fake that handed
+// back all of them regardless would make an expansion the caller stopped
+// requesting look like one it still gets — which is exactly the mutation that
+// stayed green until this filtering was added: removing the breakdown
+// expansion changed nothing, because the fake kept supplying it.
 func (f *fakeGraph) Graph(_ context.Context, spec query.GraphSpec) ([]query.Record, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -174,7 +184,28 @@ func (f *fakeGraph) Graph(_ context.Context, spec query.GraphSpec) ([]query.Reco
 	if f.err != nil {
 		return nil, f.err
 	}
-	return f.records, nil
+
+	asked := map[string]bool{query.IDField: true}
+	for _, expansion := range spec.Expand {
+		key := expansion.As
+		if key == "" {
+			key = expansion.Link
+		}
+		asked[key] = true
+	}
+
+	out := make([]query.Record, 0, len(f.records))
+	for _, record := range f.records {
+		kept := make(query.Record, len(record))
+		for name, value := range record {
+			if asked[name] {
+				kept[name] = value
+			}
+		}
+		out = append(out, kept)
+	}
+
+	return out, nil
 }
 
 // callCount returns how many times Graph was called.
@@ -331,4 +362,40 @@ func requireCount[T any](t *testing.T, res service.ListResult[T]) int {
 	require.NotNil(t, res.Count, "the count should have been computed")
 
 	return *res.Count
+}
+
+// ListManyByTo resolves the reverse direction: for each toID, the fromIDs bound
+// to it.
+//
+// It reads the SAME map the forward direction reads rather than a second one
+// scripted beside it: two stores would let a test bind a warehouse in one
+// direction and read it in the other, which is a fake agreeing with itself.
+func (f *fakeLinker) ListManyByTo(
+	_ context.Context, name string, toIDs []string,
+) (map[string][]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+
+	wanted := make(map[string]bool, len(toIDs))
+	for _, id := range toIDs {
+		wanted[id] = true
+	}
+
+	out := map[string][]string{}
+	for fromID, toList := range f.links[name] {
+		for _, toID := range toList {
+			if wanted[toID] {
+				out[toID] = append(out[toID], fromID)
+			}
+		}
+	}
+	for toID := range out {
+		slices.Sort(out[toID])
+	}
+
+	return out, nil
 }

@@ -66,3 +66,25 @@ WHERE location_id = $1 AND deleted_at IS NULL;
 UPDATE inventory_levels
 SET deleted_at = now(), updated_at = now()
 WHERE inventory_item_id = $1 AND deleted_at IS NULL;
+
+-- AvailableByItemAndLocation returns the sellable quantity of each item BROKEN
+-- DOWN by location, in one round trip.
+--
+-- # Why the breakdown and not a filtered sum
+--
+-- The caller that needs it is a storefront read going through the Query layer
+-- (ADR 0004), and an expansion carries no filter: the provider is handed ids
+-- and field names and nothing else, so it cannot be told WHICH locations the
+-- caller may count. It therefore answers with all of them and the caller sums
+-- the ones its sales channel ships from.
+--
+-- A location with nothing sellable is left out rather than reported as a zero,
+-- for AvailableQuantityByItemIDs' reason: the query returns rows, not a census.
+-- name: AvailableByItemAndLocation :many
+SELECT inventory_item_id,
+       location_id,
+       (stocked_quantity - reserved_quantity)::bigint AS available_quantity
+FROM inventory_levels
+WHERE inventory_item_id = ANY (sqlc.arg('ids')::text[])
+  AND deleted_at IS NULL
+  AND stocked_quantity > reserved_quantity;

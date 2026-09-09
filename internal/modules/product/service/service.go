@@ -38,6 +38,13 @@ type Linker interface {
 	Delete(ctx context.Context, name, fromID, toID string) error
 	// List returns the toIDs linked to fromID.
 	List(ctx context.Context, name, fromID string) ([]string, error)
+	// ListManyByTo resolves the REVERSE direction in one query: for each toID
+	// it returns the fromIDs bound to it.
+	//
+	// The storefront badge asks it exactly one question — which warehouses does
+	// this sales channel ship from — and the binding is declared with the
+	// warehouse on the From end by the module that owns warehouses.
+	ListManyByTo(ctx context.Context, name string, toIDs []string) (map[string][]string, error)
 }
 
 // Grapher is the cross-module read surface (the core's Query layer).

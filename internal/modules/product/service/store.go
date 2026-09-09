@@ -86,6 +86,9 @@ const (
 const (
 	keyPriceSet  = "price_set"
 	keyInventory = "inventory_item"
+	// keyInventoryStock is where the per-warehouse breakdown lands, and it is a
+	// key of its OWN so that the published record never carries it.
+	keyInventoryStock = "inventory_stock"
 )
 
 // codeProviderNotFound is the Query layer's "the provider of this entity is not
@@ -248,10 +251,73 @@ type StoreVariant struct {
 	InStock bool `json:"in_stock"`
 }
 
+// locationsServingChannels is the set of warehouses the request's sales
+// channels ship from (ADR 0092).
+//
+// # Why a failure does NOT fail the read
+//
+// The narrowing makes a badge more honest; it is not what keeps the shop
+// correct. That is the checkout, which resolves the same binding and REFUSES an
+// order it cannot serve from the channel's warehouses. So a link service that
+// cannot be reached degrades the badge to the unnarrowed total — with a line in
+// the log — instead of taking the catalog down for a display concern.
+//
+// The reverse choice is the checkout's, and the two are deliberately different:
+// there the same failure fails the order, because there the answer decides
+// where goods come from.
+func (s *Service) locationsServingChannels(
+	ctx context.Context, salesChannelIDs []string,
+) map[string]bool {
+	if len(salesChannelIDs) == 0 || s.links == nil {
+		return nil
+	}
+
+	bound, err := s.links.ListManyByTo(ctx, LinkStockLocationSalesChannel, salesChannelIDs)
+	if err != nil {
+		s.log.ErrorContext(ctx,
+			"the warehouses serving the request's sales channels could not be read; the "+
+				"stock badge counts EVERY warehouse for this response",
+			"sales_channel_ids", salesChannelIDs, "error", err)
+
+		return nil
+	}
+
+	served := map[string]bool{}
+	for _, locationIDs := range bound {
+		for _, locationID := range locationIDs {
+			served[locationID] = true
+		}
+	}
+
+	return served
+}
+
 // enrichment holds the additions a single variant gets from other modules.
 type enrichment struct {
 	priceSet  query.Record
 	inventory query.Record
+	// sellableByLocation is the stock of this variant broken down by warehouse,
+	// and it is NOT part of [StoreVariant]: it is read to decide the badge and
+	// goes no further. It is nil unless the read is narrowed to a sales
+	// channel's warehouses (ADR 0092).
+	sellableByLocation map[string]int64
+}
+
+// sellableByLocation reads the breakdown out of its own expansion record.
+//
+// A missing record and a record without the field both answer nil, and the
+// badge reads nil as "nothing sellable here" — see [sellableAt] for why that
+// direction is the safe one.
+func sellableByLocation(record query.Record) map[string]int64 {
+	if record == nil {
+		return nil
+	}
+	byLocation, ok := record[foreignAvailableByLocation].(map[string]int64)
+	if !ok {
+		return nil
+	}
+
+	return byLocation
 }
 
 // ListStoreProducts lists the published products with PRICE and STOCK
@@ -350,7 +416,7 @@ func (s *Service) ListStoreProducts(ctx context.Context, opts StoreListOptions) 
 		return ListResult[StoreProduct]{}, err
 	}
 
-	items, err := s.toStoreProducts(ctx, result.Items)
+	items, err := s.toStoreProducts(ctx, result.Items, opts.SalesChannelIDs)
 	if err != nil {
 		return ListResult[StoreProduct]{}, err
 	}
@@ -526,7 +592,7 @@ func (s *Service) scanStoreProducts(
 			return ListResult[StoreProduct]{}, err
 		}
 
-		enriched, err := s.toStoreProducts(ctx, page.Items)
+		enriched, err := s.toStoreProducts(ctx, page.Items, opts.SalesChannelIDs)
 		if err != nil {
 			return ListResult[StoreProduct]{}, err
 		}
@@ -636,7 +702,7 @@ func (s *Service) GetStoreProduct(
 		}
 	}
 
-	items, err := s.toStoreProducts(ctx, []models.Product{product})
+	items, err := s.toStoreProducts(ctx, []models.Product{product}, salesChannelIDs)
 	if err != nil {
 		return StoreProduct{}, err
 	}
@@ -743,12 +809,14 @@ func (s *Service) StoreProductsByIDs(ctx context.Context, ids, salesChannelIDs [
 	if err := s.attachRelations(ctx, visible); err != nil {
 		return nil, err
 	}
-	return s.toStoreProducts(ctx, visible)
+	return s.toStoreProducts(ctx, visible, salesChannelIDs)
 }
 
 // toStoreProducts converts the products into the storefront shape and enriches
 // the variants.
-func (s *Service) toStoreProducts(ctx context.Context, products []models.Product) ([]StoreProduct, error) {
+func (s *Service) toStoreProducts(
+	ctx context.Context, products []models.Product, salesChannelIDs []string,
+) ([]StoreProduct, error) {
 	variantIDs := make([]string, 0, len(products))
 	for i := range products {
 		variants := products[i].Variants
@@ -757,7 +825,11 @@ func (s *Service) toStoreProducts(ctx context.Context, products []models.Product
 		}
 	}
 
-	extras, err := s.enrichVariants(ctx, variantIDs)
+	// The warehouses the read may count, resolved ONCE for the whole page: the
+	// set belongs to the request's channels, not to a variant.
+	served := s.locationsServingChannels(ctx, salesChannelIDs)
+
+	extras, err := s.enrichVariants(ctx, variantIDs, len(served) > 0)
 	if err != nil {
 		return nil, err
 	}
@@ -777,7 +849,7 @@ func (s *Service) toStoreProducts(ctx context.Context, products []models.Product
 				// body takes, rather than in the handler that happens to need
 				// it: a definition that lives in one endpoint is the state gap
 				// A17 was filed against.
-				InStock: variantInStock(variant, extra.inventory),
+				InStock: variantInStock(variant, extra, served),
 			})
 		}
 		// The variant slice of the embedded product is emptied: carrying the
@@ -816,7 +888,9 @@ func (s *Service) toStoreProducts(ctx context.Context, products []models.Product
 // and a genuine fault would turn into a storefront page that returns 200 without
 // prices — the DoD of Phase 4 would be violated without leaving any trace beyond
 // a single log line.
-func (s *Service) enrichVariants(ctx context.Context, variantIDs []string) (map[string]enrichment, error) {
+func (s *Service) enrichVariants(
+	ctx context.Context, variantIDs []string, narrowed bool,
+) (map[string]enrichment, error) {
 	out := make(map[string]enrichment, len(variantIDs))
 	if len(variantIDs) == 0 {
 		return out, nil
@@ -826,15 +900,34 @@ func (s *Service) enrichVariants(ctx context.Context, variantIDs []string) (map[
 		return out, nil
 	}
 
+	expansions := []query.Expansion{
+		{Link: LinkVariantPriceSet, As: keyPriceSet},
+		{Link: LinkVariantInventory, As: keyInventory},
+	}
+	if narrowed {
+		// A SECOND expansion over the same link, asking for one field. The
+		// Query layer allows it as long as the output keys differ, and the
+		// separation is the point: the breakdown lands under a key of its own
+		// and never enters the record the storefront PUBLISHES
+		// ([StoreVariant.InventoryItem]). A shop's warehouse topology is not a
+		// shopper's business, and keeping it out is cheaper to prove than
+		// remembering to delete it.
+		//
+		// It costs one more provider call and one more query, and only while a
+		// sales channel narrows the read.
+		expansions = append(expansions, query.Expansion{
+			Link:   LinkVariantInventory,
+			As:     keyInventoryStock,
+			Fields: []string{foreignAvailableByLocation},
+		})
+	}
+
 	records, err := s.graph.Graph(ctx, query.GraphSpec{
 		Entity:  EntityVariant,
 		Fields:  []string{filterID},
 		Filters: map[string]any{filterIDs: variantIDs},
 		Limit:   len(variantIDs),
-		Expand: []query.Expansion{
-			{Link: LinkVariantPriceSet, As: keyPriceSet},
-			{Link: LinkVariantInventory, As: keyInventory},
-		},
+		Expand:  expansions,
 	})
 	if err != nil {
 		if errors.CodeOf(err) == codeProviderNotFound {
@@ -852,8 +945,9 @@ func (s *Service) enrichVariants(ctx context.Context, variantIDs []string) (map[
 			continue
 		}
 		out[id] = enrichment{
-			priceSet:  asRecord(rec[keyPriceSet]),
-			inventory: asRecord(rec[keyInventory]),
+			priceSet:           asRecord(rec[keyPriceSet]),
+			inventory:          asRecord(rec[keyInventory]),
+			sellableByLocation: sellableByLocation(asRecord(rec[keyInventoryStock])),
 		}
 	}
 	return out, nil

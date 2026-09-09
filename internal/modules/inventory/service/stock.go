@@ -216,6 +216,27 @@ func (s *Service) AvailableQuantity(ctx context.Context, itemID string) (int64, 
 	return total, nil
 }
 
+// AvailableQuantitiesByLocation satılabilir adedi kalem ve LOKASYON kırılımıyla
+// döner.
+//
+// # Neden kırılım, süzülmüş toplam değil
+//
+// Bunu isteyen okuma Query katmanından (ADR 0004) geçen bir vitrin okumasıdır
+// ve bir GENİŞLETME süzgeç taşımaz: sağlayıcıya kimlikler ve alan adları
+// verilir, "hangi lokasyonları sayabilirsin" verilmez. Dolayısıyla hepsi
+// döner ve çağıran, satış kanalının sevk ettiklerini toplar (ADR 0092).
+//
+// Boş kalan lokasyon haritada YOKTUR; olmayan bir lokasyon sıfır katkı verir.
+func (s *Service) AvailableQuantitiesByLocation(
+	ctx context.Context, itemIDs []string,
+) (map[string]map[string]int64, error) {
+	if len(itemIDs) == 0 {
+		return map[string]map[string]int64{}, nil
+	}
+
+	return s.store.AvailableByItemLocation(ctx, itemIDs)
+}
+
 // AvailableQuantities verilen kalemlerin satılabilir toplamlarını TEK sorguda
 // döner. Hiç seviyesi olmayan kalem sonuçta sıfırla yer alır.
 //

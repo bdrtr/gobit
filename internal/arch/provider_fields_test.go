@@ -110,6 +110,9 @@ var panelDecodedProviderFields = map[string]string{
 // into something a test can fail on.
 var catalogReadForeignFields = map[string]string{
 	"available_quantity": "inventory",
+	// The same total broken down by warehouse, read only while a sales channel
+	// narrows the storefront to the warehouses it ships from (ADR 0092).
+	"available_by_location": "inventory",
 }
 
 // catalogUnboundForeignFields names the fields the catalog reads that NO module

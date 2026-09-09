@@ -765,3 +765,38 @@ func paginate[T any](all []T, limit, offset int64) []T {
 	}
 	return rest
 }
+
+// AvailableByItemLocation aynı sayıları LOKASYON kırılımıyla döner.
+//
+// Satılabiliri kalmamış seviye haritada YOKTUR; gerçek sorgu da onu satır
+// olarak döndürmüyor. Sıfır yazan bir sahte, çağıranın "bu lokasyonda yok"
+// dalını sınanmamış bırakırdı.
+func (f *fakeStore) AvailableByItemLocation(
+	_ context.Context, ids []string,
+) (map[string]map[string]int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	wanted := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		wanted[id] = struct{}{}
+	}
+
+	out := map[string]map[string]int64{}
+	for _, level := range f.levels {
+		if _, ok := wanted[level.InventoryItemID]; !ok {
+			continue
+		}
+		if level.Available() <= 0 {
+			continue
+		}
+		byLocation, ok := out[level.InventoryItemID]
+		if !ok {
+			byLocation = map[string]int64{}
+			out[level.InventoryItemID] = byLocation
+		}
+		byLocation[level.LocationID] += level.Available()
+	}
+
+	return out, nil
+}

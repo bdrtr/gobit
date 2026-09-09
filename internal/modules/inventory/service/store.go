@@ -125,6 +125,11 @@ type Store interface {
 	// AvailableByItemIDs returns the sellable total per item in ONE query.
 	// An item with no level at all is absent from the result.
 	AvailableByItemIDs(ctx context.Context, ids []string) (map[string]int64, error)
+	// AvailableByItemLocation, satılabilir adedi kalem ve LOKASYON kırılımıyla
+	// tek sorguda döner. Boş kalan lokasyon haritada yoktur.
+	AvailableByItemLocation(
+		ctx context.Context, ids []string,
+	) (map[string]map[string]int64, error)
 
 	// CreateReservation yeni bir rezervasyon kaydeder.
 	CreateReservation(ctx context.Context, res models.Reservation) (models.Reservation, error)
