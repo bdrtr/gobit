@@ -84,7 +84,7 @@ Elle ayarlanması gereken avuç dolusu şunlardır:
 
 ```
 gobit.go              # YAYIMLANMIŞ cephe: New().Version().Add().Use().Main()
-core                  # YAYIMLANMIŞ sözleşmeler — on yedi paket (ADR 0026,
+core                  # YAYIMLANMIŞ sözleşmeler — on sekiz paket (ADR 0026,
                       # ADR 0069 ile genişledi): errors, db, container, module,
                       # eventbus (+outbox), link, query, provider, plugin,
                       # http (+redisguard), audit, errorreport, personaldata,
@@ -215,7 +215,7 @@ the record. The whole boundary is in
 
 | Belge | Neyi cevaplar |
 |---|---|
-| [`docs/adr/README.md`](./docs/adr/README.md) | Kararların İNDEKSİ: yetmiş beş kayıt, her biri tek cümlelik kararıyla. Plan ile çelişirse **ADR geçerlidir** |
+| [`docs/adr/README.md`](./docs/adr/README.md) | Kararların İNDEKSİ: yetmiş altı kayıt, her biri tek cümlelik kararıyla. Plan ile çelişirse **ADR geçerlidir** |
 | [`docs/measurements/`](./docs/measurements/) | Ölçümler: sayılar, sonda çıktıları, yeniden üretim adımları. Bir ADR'ye tek satırla bağlanır; kimse baştan sona okumak zorunda değil |
 | [`docs/mimari.md`](./docs/mimari.md) | Mimarinin anlatısı: katmanlar, isteğin ve modülün yaşam döngüsü, veri, saga'lar, teknoloji seçimleri, çekirdek paketler |
 | [`docs/gaps.md`](./docs/gaps.md) | Kusur defteri: deponun kendinde bulduğu her arıza, tek cümle ve onu kapatan ADR |

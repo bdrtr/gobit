@@ -44,6 +44,7 @@ var publishedPackages = []string{
 	"core/personaldata",
 	"core/plugin",
 	"core/provider",
+	"core/providertest",
 	"core/query",
 }
 
