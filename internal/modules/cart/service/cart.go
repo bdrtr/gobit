@@ -120,8 +120,17 @@ func (s *Service) GetCart(ctx context.Context, cartID string) (models.CartDetail
 		if err != nil {
 			return err
 		}
+		// The coupon codes are read in the SAME snapshot as everything else: a
+		// code read a moment later could belong to a different revision of the
+		// cart than the lines it is meant to discount.
+		codes, err := s.store.ListPromotionCodes(ctx, cartID)
+		if err != nil {
+			return err
+		}
 
-		detail = models.CartDetail{Cart: cart, Items: items, ShippingMethods: methods}
+		detail = models.CartDetail{
+			Cart: cart, Items: items, ShippingMethods: methods, PromotionCodes: codes,
+		}
 		for i := range addresses {
 			switch addresses[i].Type {
 			case models.AddressShipping:
@@ -339,6 +348,12 @@ func (s *Service) DeleteCart(ctx context.Context, cartID string) error {
 			return err
 		}
 		if err := s.store.SoftDeleteShippingMethodsByCart(ctx, cartID); err != nil {
+			return err
+		}
+		// The coupon codes are DELETED and not stamped, for the reason the
+		// table's migration gives: the row is a binding, and a cart that is gone
+		// holds no coupons.
+		if err := s.store.DeletePromotionCodesByCart(ctx, cartID); err != nil {
 			return err
 		}
 		return s.store.SoftDeleteCart(ctx, cartID)

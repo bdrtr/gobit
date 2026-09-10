@@ -41,6 +41,7 @@ const postgresImage = "postgres:16-alpine"
 // list.
 var moduleTables = []string{
 	"carts", "cart_line_items", "cart_addresses", "cart_shipping_methods",
+	"cart_promotion_code",
 }
 
 // Constants used in the test data. The region and customer ids belong to OTHER
@@ -167,7 +168,8 @@ func TestMigrationCanBeRolledBack(t *testing.T) {
 	version, dirty, err := db.Version(ctx, testDSN, cartmod.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "there must be no half-finished migration")
-	assert.Equal(t, uint(1), version)
+	assert.Equal(t, uint(2), version,
+		"the module has two migrations: the initial schema and the coupon table (ADR 0109)")
 }
 
 // TestNoCrossModuleForeignKeys verifies that ALL the foreign keys in the

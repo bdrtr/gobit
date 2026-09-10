@@ -39,12 +39,20 @@ func errUnexpected(what string) error {
 // stubCarts is the implementation of the [Carts] interface that the tests can
 // script.
 type stubCarts struct {
-	openCartFn  func(ctx context.Context, regionID, currencyCode, customerID, email string, metadata json.RawMessage) (string, error)
-	snapshotFn  func(ctx context.Context, cartID string) (json.RawMessage, error)
-	addLineFn   func(ctx context.Context, cartID, variantID, title string, quantity, unitPrice int64, metadata json.RawMessage) (string, error)
-	setQtyFn    func(ctx context.Context, cartID, lineItemID string, quantity int64) error
-	removeFn    func(ctx context.Context, cartID, lineItemID string) error
-	setTotalsFn func(ctx context.Context, cartID string, totals json.RawMessage) error
+	openCartFn   func(ctx context.Context, regionID, currencyCode, customerID, email string, metadata json.RawMessage) (string, error)
+	snapshotFn   func(ctx context.Context, cartID string) (json.RawMessage, error)
+	addLineFn    func(ctx context.Context, cartID, variantID, title string, quantity, unitPrice int64, metadata json.RawMessage) (string, error)
+	setQtyFn     func(ctx context.Context, cartID, lineItemID string, quantity int64) error
+	removeFn     func(ctx context.Context, cartID, lineItemID string) error
+	setTotalsFn  func(ctx context.Context, cartID string, totals json.RawMessage) error
+	addCodeFn    func(ctx context.Context, cartID, code string) error
+	removeCodeFn func(ctx context.Context, cartID, code string) error
+
+	// codes are the coupon codes the fake cart holds, per cart and in order.
+	// They are STATE and not a script: the flow writes a code and then reads the
+	// snapshot, and a fake that forgot the write would let a test "prove" that
+	// the code reached the discount round when nothing carried it.
+	codes map[string][]string
 
 	// written holds, in order, the decoded totals passed to SetCartTotalsJSON.
 	written []Totals
@@ -617,6 +625,22 @@ type stubDiscounts struct {
 	requests []discountRequest
 	// calls is the number of calls.
 	calls int
+	// usableCodes are the codes CouponApplies accepts. A nil map accepts
+	// EVERYTHING, which keeps the tests that predate the coupon path unchanged.
+	usableCodes map[string]bool
+	// couponChecks records the codes CouponApplies was asked about, in order.
+	couponChecks []string
+}
+
+// CouponApplies answers whether the code names a usable promotion.
+func (s *stubDiscounts) CouponApplies(_ context.Context, code string) error {
+	s.couponChecks = append(s.couponChecks, code)
+
+	if s.usableCodes == nil || s.usableCodes[code] {
+		return nil
+	}
+
+	return errors.NotFound("promotion_not_usable", "the coupon cannot be used: %s", code)
 }
 
 // ComputeDiscountsJSON decodes the request, applies the scripted discount and
@@ -654,6 +678,24 @@ func (s *stubDiscounts) ComputeDiscountsJSON(_ context.Context, request json.Raw
 		resp.ItemsDiscountTotal += amount
 	}
 	resp.DiscountTotal = resp.ItemsDiscountTotal
+
+	// The real module reports which promotions produced the discount and which
+	// codes it could not use. The fake answers the same way — with ONE promotion
+	// standing for the whole discount when a code was sent — because a fake that
+	// left the field out would let the cart's record of what applied stay empty
+	// while every test passed (D50).
+	resp.Applied = []discountApplied{}
+	resp.UnmatchedCodes = []string{}
+	for _, code := range req.Codes {
+		if s.usableCodes != nil && !s.usableCodes[code] {
+			resp.UnmatchedCodes = append(resp.UnmatchedCodes, code)
+			continue
+		}
+		resp.Applied = append(resp.Applied, discountApplied{
+			PromotionID: "promo_" + code, Code: code, Amount: resp.DiscountTotal,
+		})
+	}
+
 	return json.Marshal(resp)
 }
 
@@ -728,4 +770,41 @@ func (s *stubTaxes) CalculateTaxJSON(_ context.Context, request json.RawMessage)
 		resp.TaxTotal += amount
 	}
 	return json.Marshal(resp)
+}
+
+// AddCartPromotionCode writes a coupon code onto the fake cart.
+//
+// The double press is absorbed, as the real query's ON CONFLICT absorbs it.
+func (s *stubCarts) AddCartPromotionCode(ctx context.Context, cartID, code string) error {
+	if s.addCodeFn != nil {
+		return s.addCodeFn(ctx, cartID, code)
+	}
+	if s.codes == nil {
+		s.codes = map[string][]string{}
+	}
+	for _, held := range s.codes[cartID] {
+		if held == code {
+			return nil
+		}
+	}
+	s.codes[cartID] = append(s.codes[cartID], code)
+
+	return nil
+}
+
+// RemoveCartPromotionCode takes a coupon code off the fake cart.
+func (s *stubCarts) RemoveCartPromotionCode(ctx context.Context, cartID, code string) error {
+	if s.removeCodeFn != nil {
+		return s.removeCodeFn(ctx, cartID, code)
+	}
+	for i, held := range s.codes[cartID] {
+		if held == code {
+			s.codes[cartID] = append(s.codes[cartID][:i], s.codes[cartID][i+1:]...)
+
+			return nil
+		}
+	}
+
+	return errors.NotFound("cart_promotion_code_not_found",
+		"the cart is not holding that coupon code: %s", code)
 }

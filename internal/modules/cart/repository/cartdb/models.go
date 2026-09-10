@@ -66,6 +66,12 @@ type CartLineItem struct {
 	DeletedAt     pgtype.Timestamptz
 }
 
+type CartPromotionCode struct {
+	CartID    string
+	Code      string
+	CreatedAt pgtype.Timestamptz
+}
+
 type CartShippingMethod struct {
 	ID               string
 	CartID           string

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -171,15 +172,23 @@ func TestMigrateSubcommandsRunWithoutStartingTheServer(t *testing.T) {
 	})
 
 	t.Run("a confirmed rollback moves the ledger", func(t *testing.T) {
+		before := runCommand(t, cfg, "migrate", "status")
+		start := cartVersion(t, cartRow(t, before.stdout))
+
 		result := runCommand(t, cfg, "migrate", "down", "cart", "-confirm", "cart")
 
 		require.Zero(t, result.exitCode, "%s", result.logBuf())
 		assert.Contains(t, result.stdout, "is now at version",
 			"the rollback must report the version it READ BACK\n%s", result.logBuf())
 
+		// The assertion is that the ledger moved by ONE STEP, not that it reached
+		// zero. It said "nothing applied" for as long as cart had exactly one
+		// migration; the day it gained a second (ADR 0109) a default rollback
+		// landed on one and this test failed for a reason that has nothing to do
+		// with whether the confirmation reached the ledger.
 		after := runCommand(t, cfg, "migrate", "status")
-		assert.Contains(t, cartRow(t, after.stdout), "nothing applied",
-			"the confirmed rollback did not reach the ledger\n%s", after.logBuf())
+		assert.Equal(t, start-1, cartVersion(t, cartRow(t, after.stdout)),
+			"the confirmed rollback did not move the ledger by one step\n%s", after.logBuf())
 	})
 }
 
@@ -199,6 +208,26 @@ func cartRow(t *testing.T, table string) string {
 	t.Fatalf("no cart row in the status table:\n%s", table)
 
 	return ""
+}
+
+// cartVersion reads the version out of the status table's cart row.
+//
+// "nothing applied" is the word the command prints for version zero, so it maps
+// back to zero here; every other row carries the number as its second field.
+func cartVersion(t *testing.T, row string) int {
+	t.Helper()
+
+	if strings.Contains(row, "nothing applied") {
+		return 0
+	}
+
+	fields := strings.Fields(row)
+	require.GreaterOrEqual(t, len(fields), 2, "the cart row carries a version: %q", row)
+
+	version, err := strconv.Atoi(fields[1])
+	require.NoError(t, err, "the cart row's second field is the version: %q", row)
+
+	return version
 }
 
 // fetchToken obtains a session token from the login endpoint.

@@ -54,6 +54,14 @@ func TestRecoveryDefinitionCarriesTheRecordedSteps(t *testing.T) {
 	}
 	assert.Equal(t, []string{
 		StepReserveInventory,
+		// redeem_promotions was INSERTED here on 2026-09-10 (ADR 0109), and the
+		// paragraph above prices what that costs: a checkout that was half
+		// finished at the moment of the upgrade has a five-step record and a
+		// six-step definition, so the engine refuses to recover it and the
+		// operator gets "manual intervention". The alternative was to spend the
+		// coupons inside an existing step, which would have made the
+		// compensation of two unrelated things one step's problem.
+		StepRedeemPromotions,
 		StepCreateOrder,
 		StepAuthorizePayment,
 		StepCapturePayment,

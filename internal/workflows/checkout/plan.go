@@ -150,6 +150,15 @@ type checkoutPlan struct {
 	ShippingTotal int64 `json:"shipping_total"`
 	// Lines are the lines that will enter the order and the reservation.
 	Lines []planLine `json:"lines"`
+	// Promotions are the promotions the cart's discount rests on, and what each
+	// one gave.
+	//
+	// They are on the PLAN for [checkoutPlan.SalesChannelIDs]'s reason: the plan
+	// is what the recovery path replays, and a saga resumed tomorrow has to spend
+	// the same coupons for the same amounts. Reading them again at that moment
+	// would run a fresh discount round against a cart that has since changed, and
+	// book a figure into a campaign's budget that nobody was ever shown.
+	Promotions []planPromotion `json:"promotions,omitempty"`
 
 	// ShippingAddress and BillingAddress travel from the cart to the order
 	// UNTOUCHED: this flow does not read them, it carries them. Where an order
@@ -170,6 +179,17 @@ type checkoutPlan struct {
 	// carried along, which is why the field is EXCLUDED from JSON and lives
 	// only in memory, up to the step's call.
 	PaymentData json.RawMessage `json:"-"`
+}
+
+// planPromotion is one promotion the cart's discount rests on.
+type planPromotion struct {
+	// PromotionID is the promotion module's identity; it is kept opaque.
+	PromotionID string `json:"promotion_id"`
+	// Code is the coupon code; EMPTY for an automatic promotion.
+	Code string `json:"code,omitempty"`
+	// Amount is the discount this promotion produced (minor unit), AS THE
+	// CUSTOMER WAS SHOWN IT.
+	Amount int64 `json:"amount"`
 }
 
 // planLine is the form of a cart line that enters the order and the reservation.
@@ -302,6 +322,7 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 		TaxTotal:          totals.TaxTotal,
 		ShippingTotal:     totals.ShippingTotal,
 		Lines:             lines,
+		Promotions:        planPromotionsOf(totals),
 		PaymentData:       in.PaymentData,
 		ShippingAddress:   snap.ShippingAddress,
 		BillingAddress:    snap.BillingAddress,
@@ -893,5 +914,24 @@ func snapshotComponentsOf(components []cartwf.LineTaxComponent) []orderSnapshotT
 			TaxAmount:     components[i].TaxAmount,
 		})
 	}
+	return out
+}
+
+// planPromotionsOf takes the discount's breakdown off the round that produced
+// the total.
+//
+// It comes from the ROUND and not from the cart, because the round is where the
+// figures the customer was shown were decided; the cart stores one number and
+// cannot say who took it off.
+func planPromotionsOf(totals cartwf.Totals) []planPromotion {
+	out := make([]planPromotion, 0, len(totals.Applied))
+	for i := range totals.Applied {
+		out = append(out, planPromotion{
+			PromotionID: totals.Applied[i].PromotionID,
+			Code:        totals.Applied[i].Code,
+			Amount:      totals.Applied[i].Amount,
+		})
+	}
+
 	return out
 }

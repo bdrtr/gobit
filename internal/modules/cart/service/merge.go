@@ -75,6 +75,12 @@ func (s *Service) MergeCart(ctx context.Context, sourceID, targetID string) (mod
 		if err != nil {
 			return err
 		}
+		codes, err := s.foldCodes(ctx, source, target)
+		if err != nil {
+			return err
+		}
+		moved += codes
+
 		if err := s.closeSource(ctx, source.ID); err != nil {
 			return err
 		}
@@ -205,6 +211,55 @@ func (s *Service) foldLines(
 	return len(lines), nil
 }
 
+// foldCodes carries the source's coupon codes onto the target and reports how
+// many were not already there.
+//
+// The codes travel with the goods, and this AMENDS what ADR 0107 wrote: when the
+// merge was decided the cart could not hold a code at all, so "only the lines
+// move" described everything there was. Losing the coupon a shopper typed on
+// their phone is the same complaint the merge exists to answer, one field over.
+//
+// The union is idempotent for the line rule's reason: a code the target already
+// holds is a double press, not a second coupon.
+func (s *Service) foldCodes(ctx context.Context, source, target models.Cart) (int, error) {
+	codes, err := s.store.ListPromotionCodes(ctx, source.ID)
+	if err != nil {
+		return 0, err
+	}
+	if len(codes) == 0 {
+		return 0, nil
+	}
+
+	held, err := s.store.ListPromotionCodes(ctx, target.ID)
+	if err != nil {
+		return 0, err
+	}
+	already := make(map[string]struct{}, len(held))
+	for i := range held {
+		already[held[i]] = struct{}{}
+	}
+
+	moved := 0
+	for i := range codes {
+		if _, there := already[codes[i]]; there {
+			continue
+		}
+		if len(already)+moved >= MaxPromotionCodes {
+			// The ceiling holds on the merged cart too. Carrying past it would
+			// produce a cart the discount round refuses, which cannot be priced
+			// and therefore cannot be bought.
+			return 0, errors.Invalid(CodeTooManyPromotionCodes,
+				"the merged cart would hold more than %d coupon codes", MaxPromotionCodes)
+		}
+		if err := s.store.AddPromotionCode(ctx, target.ID, codes[i]); err != nil {
+			return 0, err
+		}
+		moved++
+	}
+
+	return moved, nil
+}
+
 // closeSource empties the merged cart and deletes it.
 //
 // It is [Service.DeleteCart]'s body without the lock and the completeness check,
@@ -219,6 +274,9 @@ func (s *Service) closeSource(ctx context.Context, sourceID string) error {
 		return err
 	}
 	if err := s.store.SoftDeleteShippingMethodsByCart(ctx, sourceID); err != nil {
+		return err
+	}
+	if err := s.store.DeletePromotionCodesByCart(ctx, sourceID); err != nil {
 		return err
 	}
 

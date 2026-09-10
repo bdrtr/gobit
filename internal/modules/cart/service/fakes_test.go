@@ -60,6 +60,9 @@ type fakeStore struct {
 	items     map[string]models.LineItem
 	addresses map[string]models.CartAddress
 	methods   map[string]models.ShippingMethod
+	// codes are the carts' coupon codes, in the order they were added; the slice
+	// keeps the order the query promises.
+	codes map[string][]string
 
 	// seq gives the added child records an increasing timestamp; the listing
 	// order being deterministic rests on it.
@@ -105,6 +108,7 @@ func newFakeStore() *fakeStore {
 		items:     map[string]models.LineItem{},
 		addresses: map[string]models.CartAddress{},
 		methods:   map[string]models.ShippingMethod{},
+		codes:     map[string][]string{},
 	}
 }
 
@@ -957,4 +961,79 @@ func sortNotes(notes []models.PersonalNote) {
 		}
 		return cmpString(a.ID, b.ID)
 	})
+}
+
+// AddPromotionCode writes a coupon code onto the cart.
+//
+// The DOUBLE press is absorbed here, as the real query's ON CONFLICT absorbs it:
+// a fake that appended a second row would let the service's own de-duplication
+// go untested in the opposite direction — a test could not tell whether the
+// single code came from the service or from the store.
+func (f *fakeStore) AddPromotionCode(_ context.Context, cartID, code string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	for _, existing := range f.codes[cartID] {
+		if existing == code {
+			return nil
+		}
+	}
+	f.codes[cartID] = append(f.codes[cartID], code)
+
+	return nil
+}
+
+// ListPromotionCodes returns the cart's coupon codes in the order they were
+// typed.
+func (f *fakeStore) ListPromotionCodes(_ context.Context, cartID string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return append([]string(nil), f.codes[cartID]...), nil
+}
+
+// PromotionCodesByCartIDs returns the codes of several carts at once.
+func (f *fakeStore) PromotionCodesByCartIDs(
+	_ context.Context, cartIDs []string,
+) (map[string][]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := make(map[string][]string, len(cartIDs))
+	for _, id := range cartIDs {
+		if codes := f.codes[id]; len(codes) > 0 {
+			out[id] = append([]string(nil), codes...)
+		}
+	}
+
+	return out, nil
+}
+
+// RemovePromotionCode takes a coupon code off the cart.
+//
+// A cart that was not holding it is NOT FOUND, because the real query counts the
+// rows it deleted and zero is an answer.
+func (f *fakeStore) RemovePromotionCode(_ context.Context, cartID, code string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	for i, existing := range f.codes[cartID] {
+		if existing == code {
+			f.codes[cartID] = append(f.codes[cartID][:i], f.codes[cartID][i+1:]...)
+
+			return nil
+		}
+	}
+
+	return errors.NotFound("cart_promotion_code_not_found",
+		"the cart is not holding that coupon code: %s", code)
+}
+
+// DeletePromotionCodesByCart takes every coupon code off the cart.
+func (f *fakeStore) DeletePromotionCodesByCart(_ context.Context, cartID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.codes, cartID)
+
+	return nil
 }

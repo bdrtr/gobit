@@ -117,6 +117,41 @@ func Describe(d *openapi.Doc) {
 		},
 	})
 
+	d.Describe(http.MethodPost, "/store/v1/carts/{id}/promotions", openapi.Operation{
+		Summary: "Applies a coupon code to the cart and reprices it.",
+		// The two refusals a client has to tell apart are stated, because they
+		// look the same from the screen and are not: one is "that code is not a
+		// coupon", the other is "the coupon is fine, it just gives you nothing
+		// today".
+		Description: "The code is checked BEFORE it is written: a code that names no usable " +
+			"promotion is refused and the cart is unchanged (422). A code that IS usable is " +
+			"written even when it discounts nothing on this cart — a valid coupon whose " +
+			"target matches none of the lines is not an invalid code, and it may start " +
+			"working when another item is added. \n\n" +
+			"The code is NOT case sensitive and is stored in upper case. Applying one the " +
+			"cart already holds changes nothing and succeeds. \n\n" +
+			"The answer is the whole cart, because a coupon changes what is owed: the " +
+			"totals in it are the ones this call computed.",
+		RequestBody: d.RequestBody(applyPromotionCodeRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("The cart after the coupon was applied",
+				d.Item(cartDetailDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodDelete, "/store/v1/carts/{id}/promotions/{code}", openapi.Operation{
+		Summary: "Takes a coupon code off the cart and reprices it.",
+		// Why it asks the promotion module nothing is worth saying: a client
+		// might expect a coupon that expired to be un-removable.
+		Description: "The promotion module is not consulted: a coupon that stopped being " +
+			"usable while the page was open still has to come off, or the shopper would be " +
+			"stuck with it. A code the cart is not holding is 404.",
+		Responses: map[string]any{
+			"200": openapi.Response("The cart after the coupon was removed",
+				d.Item(cartDetailDTO{})),
+		},
+	})
+
 	d.Describe(http.MethodDelete, "/store/v1/carts/{id}", openapi.Operation{
 		Summary: "Deletes the cart.",
 		Responses: map[string]any{

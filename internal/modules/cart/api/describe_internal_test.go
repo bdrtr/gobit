@@ -211,11 +211,7 @@ func storeEndpoints() []endpointExpectation {
 		},
 		{
 			method: http.MethodGet, path: "/store/v1/carts/{id}", status: "200",
-			response: cartDetailDTO{
-				cartDTO:         filledCart(now),
-				ShippingAddress: &address,
-				BillingAddress:  &address,
-			},
+			response: filledCartDetail(now, address),
 		},
 		{
 			method: http.MethodPost, path: "/store/v1/carts/{id}", status: "200",
@@ -224,6 +220,17 @@ func storeEndpoints() []endpointExpectation {
 		{
 			method: http.MethodPost, path: "/store/v1/carts/{id}/merge", status: "200",
 			request: mergeCartRequest{SourceCartID: "cart_1"}, response: filledCart(now),
+		},
+		{
+			// The answer is the whole cart with its children, because a coupon
+			// changes what is owed and the client would otherwise need a second
+			// call to learn the new total.
+			method: http.MethodPost, path: "/store/v1/carts/{id}/promotions", status: "200",
+			request: applyPromotionCodeRequest{Code: "SUMMER20"}, response: filledCartDetail(now, address),
+		},
+		{
+			method: http.MethodDelete, path: "/store/v1/carts/{id}/promotions/{code}",
+			status: "200", response: filledCartDetail(now, address),
 		},
 		{
 			method: http.MethodDelete, path: "/store/v1/carts/{id}", status: "204",
@@ -616,5 +623,19 @@ func TestStoreEndpointsPromiseNoQueryParameter(t *testing.T) {
 				"%s has to carry only path parameters; the %q query parameter is not read",
 				endpoint.key(), p["name"])
 		}
+	}
+}
+
+// filledCartDetail produces a cart detail whose omitempty fields are written
+// too.
+//
+// The three endpoints answering with the whole cart share it, so a field added
+// to the DTO is compared by all of them rather than by whichever row somebody
+// remembered to extend.
+func filledCartDetail(now time.Time, address addressDTO) cartDetailDTO {
+	return cartDetailDTO{
+		cartDTO:         filledCart(now),
+		ShippingAddress: &address,
+		BillingAddress:  &address,
 	}
 }

@@ -217,6 +217,20 @@ func (s *stubCarts) RemoveLineItem(_ context.Context, _, _ string) error {
 	return errUnexpected("RemoveLineItem")
 }
 
+// AddCartPromotionCode completes the surface of the cart workflows.
+//
+// The coupon path does not run in this package: what a checkout does with a
+// coupon is SPEND it, and that goes through the promotion module rather than
+// back into the cart.
+func (s *stubCarts) AddCartPromotionCode(_ context.Context, _, _ string) error {
+	return errUnexpected("AddCartPromotionCode")
+}
+
+// RemoveCartPromotionCode completes the surface of the cart workflows.
+func (s *stubCarts) RemoveCartPromotionCode(_ context.Context, _, _ string) error {
+	return errUnexpected("RemoveCartPromotionCode")
+}
+
 // SetCartTotalsJSON completes the surface of the cart workflows.
 //
 // It is scripted only in the test where the REAL cart calculation runs; this
@@ -663,6 +677,7 @@ type harness struct {
 	payments    *stubPayments
 	links       *stubLinks
 	catalog     *stubCatalog
+	promotions  *stubPromotions
 	wf          *Workflows
 }
 
@@ -685,6 +700,7 @@ func newHarness(t *testing.T) *harness {
 		payments:    &stubPayments{rec: rec},
 		links:       &stubLinks{rec: rec, listManyFn: defaultLinks},
 		catalog:     &stubCatalog{rec: rec, graphFn: defaultCatalog},
+		promotions:  &stubPromotions{rec: rec},
 	}
 
 	wf, err := New(Deps{
@@ -696,6 +712,7 @@ func newHarness(t *testing.T) *harness {
 		Payments:    h.payments,
 		Links:       h.links,
 		Catalog:     h.catalog,
+		Promotions:  h.promotions,
 		Executor:    workflow.NewInMemory(slog.New(slog.DiscardHandler)),
 		Logger:      slog.New(slog.DiscardHandler),
 	})
@@ -832,4 +849,63 @@ func scriptCatalog(h *harness, scripts map[string]variantScript) {
 	h.catalog.graphFn = func(_ context.Context, _ query.GraphSpec) ([]query.Record, error) {
 		return catalogRecords(scripts), nil
 	}
+}
+
+// stubPromotions is the fake implementation of the [Promotions] interface.
+//
+// It keeps a COUNTER per (promotion, reference) rather than a script, because
+// the two claims worth testing are about repetition: the redemption is
+// idempotent and the release is too, and a fake that only recorded calls could
+// not tell a second redemption from a second attempt at the first.
+type stubPromotions struct {
+	rec *recorder
+	// redeemErr, when set, makes the redemption of that promotion fail.
+	redeemErr map[string]error
+	// releaseErr, when set, makes every release fail.
+	releaseErr error
+	// spent counts the LIVE uses per promotion: a redemption adds one and a
+	// release takes it away, so a compensation that missed a promotion leaves a
+	// number behind.
+	spent map[string]int
+	// redeemedAmounts records the amount each promotion was spent for.
+	redeemedAmounts map[string]int64
+	// references records the reference every call was made with.
+	references []string
+}
+
+// RedeemPromotion spends one use.
+func (s *stubPromotions) RedeemPromotion(
+	_ context.Context, promotionID, _, reference, _ string, amount int64,
+) (string, error) {
+	s.rec.add("promotion:redeem")
+	s.references = append(s.references, reference)
+
+	if err := s.redeemErr[promotionID]; err != nil {
+		return "", err
+	}
+	if s.spent == nil {
+		s.spent = map[string]int{}
+		s.redeemedAmounts = map[string]int64{}
+	}
+	s.spent[promotionID]++
+	s.redeemedAmounts[promotionID] = amount
+
+	return "redemption_" + promotionID, nil
+}
+
+// ReleasePromotion gives a use back; it is idempotent.
+func (s *stubPromotions) ReleasePromotion(
+	_ context.Context, promotionID, _, _ string,
+) (bool, error) {
+	s.rec.add("promotion:release")
+
+	if s.releaseErr != nil {
+		return false, s.releaseErr
+	}
+	if s.spent[promotionID] == 0 {
+		return false, nil
+	}
+	s.spent[promotionID]--
+
+	return true, nil
 }

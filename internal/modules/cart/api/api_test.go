@@ -62,6 +62,37 @@ type fakeCarts struct {
 	gotMergeTarget string
 }
 
+// fakePromotions is the fake of the coupon flow.
+//
+// It records the code and the cart, because the two endpoints differ only in
+// which of them they take from the path and which from the body.
+type fakePromotions struct {
+	applied []string
+	removed []string
+	gotCart string
+	err     error
+}
+
+// That the fake satisfies the surface the handler expects is verified at compile
+// time.
+var _ api.CartPromotions = (*fakePromotions)(nil)
+
+// ApplyPromotionCode records the code.
+func (f *fakePromotions) ApplyPromotionCode(_ context.Context, cartID, code string) error {
+	f.gotCart = cartID
+	f.applied = append(f.applied, code)
+
+	return f.err
+}
+
+// RemovePromotionCode records the code.
+func (f *fakePromotions) RemovePromotionCode(_ context.Context, cartID, code string) error {
+	f.gotCart = cartID
+	f.removed = append(f.removed, code)
+
+	return f.err
+}
+
 // The fake satisfying the surface the handler expects is verified at compile time.
 var _ api.Carts = (*fakeCarts)(nil)
 
@@ -280,10 +311,11 @@ func newServer(t *testing.T, svc *fakeCarts) http.Handler {
 	t.Helper()
 
 	return newServerWithFlows(t, svc, api.Flows{
-		Opening:  &fakeOpening{cartID: "cart_1"},
-		Pricing:  &fakePricing{},
-		Checkout: &fakeCheckout{},
-		Shipping: &fakeShipping{methodID: "csm_1"},
+		Opening:    &fakeOpening{cartID: "cart_1"},
+		Pricing:    &fakePricing{},
+		Checkout:   &fakeCheckout{},
+		Shipping:   &fakeShipping{methodID: "csm_1"},
+		Promotions: &fakePromotions{},
 	})
 }
 
@@ -1368,4 +1400,77 @@ func TestARefusedMergeKeepsTheServicesAnswer(t *testing.T) {
 			assert.Equal(t, tc.status, rec.Code, rec.Body.String())
 		})
 	}
+}
+
+// TestTheCouponEndpointsGoThroughTheFlow is what keeps a code from being written
+// unchecked.
+//
+// This module cannot ask the promotion module whether a code names anything and
+// cannot reprice the cart; both are the flow's. A handler that called the
+// service directly would put a coupon on the cart that nothing checked, and
+// answer that it was applied.
+func TestTheCouponEndpointsGoThroughTheFlow(t *testing.T) {
+	flow := &fakePromotions{}
+	svc := &fakeCarts{detail: models.CartDetail{Cart: models.Cart{ID: "cart_1"}}}
+	h := newServerWithFlows(t, svc, api.Flows{Promotions: flow})
+
+	rec := doRequest(t, h, http.MethodPost, "/store/v1/carts/cart_1/promotions",
+		`{"code":"summer20"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, []string{"summer20"}, flow.applied,
+		"the code goes to the flow as the shopper typed it; the normalizing is the service's")
+	assert.Equal(t, "cart_1", flow.gotCart)
+
+	rec = doRequest(t, h, http.MethodDelete, "/store/v1/carts/cart_1/promotions/SUMMER20", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, []string{"SUMMER20"}, flow.removed, "the code comes from the PATH")
+}
+
+// TestTheCouponEndpointsAnswerWithTheWholeCart is why there is no code-list DTO.
+//
+// A coupon changes what is owed, and a client that got only the codes would need
+// a second call to learn the new total — with a window in between where the
+// screen shows a coupon beside the old amount.
+func TestTheCouponEndpointsAnswerWithTheWholeCart(t *testing.T) {
+	svc := &fakeCarts{detail: models.CartDetail{
+		Cart:           models.Cart{ID: "cart_1", Total: 800, DiscountTotal: 200},
+		PromotionCodes: []string{"SUMMER20"},
+	}}
+	h := newServerWithFlows(t, svc, api.Flows{Promotions: &fakePromotions{}})
+
+	rec := doRequest(t, h, http.MethodPost, "/store/v1/carts/cart_1/promotions",
+		`{"code":"SUMMER20"}`)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	data := object(t, bodyMap(t, rec)["data"])
+	assert.Equal(t, float64(800), data["total"])
+	assert.Equal(t, float64(200), data["discount_total"])
+	assert.Equal(t, []any{"SUMMER20"}, data["promotion_codes"])
+}
+
+// TestACartWithNoCouponAnswersWithAnEmptyArray keeps the wire from having two
+// spellings for "none".
+//
+// A field that is sometimes null and sometimes [] makes every other language's
+// client handle a case that does not exist.
+func TestACartWithNoCouponAnswersWithAnEmptyArray(t *testing.T) {
+	svc := &fakeCarts{detail: models.CartDetail{Cart: models.Cart{ID: "cart_1"}}}
+	h := newServer(t, svc)
+
+	rec := doRequest(t, h, http.MethodGet, "/store/v1/carts/cart_1", "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	data := object(t, bodyMap(t, rec)["data"])
+	assert.Equal(t, []any{}, data["promotion_codes"])
+}
+
+// TestACouponCannotBeAppliedWithoutTheFlow fails CLOSED.
+func TestACouponCannotBeAppliedWithoutTheFlow(t *testing.T) {
+	svc := &fakeCarts{}
+	h := newServerWithFlows(t, svc, api.Flows{})
+
+	rec := doRequest(t, h, http.MethodPost, "/store/v1/carts/cart_1/promotions",
+		`{"code":"SUMMER20"}`)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }

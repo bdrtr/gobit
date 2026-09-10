@@ -273,10 +273,11 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// pattern for its spending limit rule.
 	//
 	m.handler = api.New(svc, api.Flows{
-		Opening:  &cartOpening{c: c, log: log},
-		Pricing:  &linePricing{c: c, log: log},
-		Checkout: &cartCompletion{c: c, log: log},
-		Shipping: &shippingPricing{c: c, log: log},
+		Opening:    &cartOpening{c: c, log: log},
+		Pricing:    &linePricing{c: c, log: log},
+		Checkout:   &cartCompletion{c: c, log: log},
+		Shipping:   &shippingPricing{c: c, log: log},
+		Promotions: &cartPromotions{c: c, log: log},
 	},
 		// The customer identity is resolved the same way and for the same
 		// reason, one layer further out: it comes from the EMBEDDER's module,
@@ -519,6 +520,60 @@ func (p *linePricing) resolve(ctx context.Context) {
 	}
 	p.svc = svc
 	p.log.InfoContext(ctx, "line pricing flow bound", "flow", CartFlowsName)
+}
+
+// cartPromotions is the wrapper that resolves the COUPON flow ON FIRST USE.
+//
+// The laziness and the failing closed are [linePricing]'s. What is decided here
+// is not a number but whether a code is a coupon at all: without the flow the
+// module would write text onto the cart, tell the shopper it was applied, and
+// the till would give nothing (ADR 0109).
+type cartPromotions struct {
+	c    *container.Container
+	log  *slog.Logger
+	once sync.Once
+	svc  api.CartPromotions
+	err  error
+}
+
+// That the wrapper satisfies the surface the handler expects is pinned down at
+// compile time.
+var _ api.CartPromotions = (*cartPromotions)(nil)
+
+// ApplyPromotionCode writes a coupon code onto the cart and reprices it.
+func (p *cartPromotions) ApplyPromotionCode(ctx context.Context, cartID, code string) error {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return p.err
+	}
+
+	return p.svc.ApplyPromotionCode(ctx, cartID, code)
+}
+
+// RemovePromotionCode takes a coupon code off the cart and reprices it.
+func (p *cartPromotions) RemovePromotionCode(ctx context.Context, cartID, code string) error {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return p.err
+	}
+
+	return p.svc.RemovePromotionCode(ctx, cartID, code)
+}
+
+// resolve resolves the flow from the container; the rationale for the error kind
+// is [linePricing.resolve]'s.
+func (p *cartPromotions) resolve(ctx context.Context) {
+	svc, err := container.Resolve[api.CartPromotions](p.c, CartFlowsName)
+	if err != nil {
+		p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
+			"the %s module could not resolve the coupon flow (%q); a code cannot be "+
+				"applied without the server checking it and repricing the cart",
+			ModuleName, CartFlowsName)
+
+		return
+	}
+	p.svc = svc
+	p.log.InfoContext(ctx, "coupon flow bound", "flow", CartFlowsName)
 }
 
 // shippingPricing is the wrapper that resolves the shipping pricing flow ON

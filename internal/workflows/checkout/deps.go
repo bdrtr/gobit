@@ -39,6 +39,15 @@ const (
 	// undeclared name.
 	LinkOrderPayment = "order_payment"
 
+	// ServicePromotion is the promotion module's cross-module surface.
+	//
+	// The name is REPEATED here for [LinkOrderPayment]'s reason: this package
+	// cannot import the promotion module. It is resolved OPTIONALLY, so a typo
+	// would read as "the module is not installed" — which is why the cart
+	// workflows, the only other consumer, spell it the same way and both are
+	// exercised against a real container.
+	ServicePromotion = "promotion.interop"
+
 	// ServiceLink is the core's Module Links service.
 	ServiceLink = "core.link"
 	// ServiceQuery is the core's cross-module read layer.
@@ -185,6 +194,14 @@ const (
 	// CodeSharedStateInvalid reports that the data carried between steps is
 	// corrupt.
 	CodeSharedStateInvalid = "checkout_workflow_shared_state_invalid"
+	// CodePromotionUnavailable is a cart whose discount rests on a promotion in
+	// an installation where the promotion module is not bound.
+	CodePromotionUnavailable = "checkout_workflow_promotion_unavailable"
+	// CodePromotionRedeemFailed is a coupon that could not be spent.
+	CodePromotionRedeemFailed = "checkout_workflow_promotion_redeem_failed"
+	// CodePromotionReleaseLeaked is a coupon use that was taken and could not be
+	// given back; it is the manual-intervention signal.
+	CodePromotionReleaseLeaked = "checkout_workflow_promotion_release_leaked"
 )
 
 // Carts is the surface of the cart module ("cart.interop") used by this
@@ -496,6 +513,39 @@ type Catalog interface {
 	Graph(ctx context.Context, spec query.GraphSpec) ([]query.Record, error)
 }
 
+// Promotions is the surface of the promotion module ("promotion.interop") used
+// by this package.
+//
+// It is the OTHER half of the one the cart workflows declare. That package uses
+// the two methods that write nothing (the computation and the coupon check);
+// these two WRITE — they move a usage counter and a campaign's budget — and
+// spending a coupon is the order's job, not the cart's (see the promotion
+// package comment, "computation and redemption are SEPARATE").
+//
+// It is OPTIONAL. An installation that does not register the promotion module
+// has no promotions, so no cart's discount can rest on one; what must not happen
+// is a cart that HAS one being checked out without it, and that is refused at the
+// step rather than at setup (see [redeemPromotionsStep.Invoke]).
+type Promotions interface {
+	// RedeemPromotion spends one use of the promotion for the given reference and
+	// returns the redemption's identifier. It is IDEMPOTENT: a second call with
+	// the same reference writes nothing and returns the existing record.
+	//
+	// It returns errors.Conflict when the promotion is not published, when its
+	// campaign is over or its budget short, and when the usage limit is spent.
+	// The amount is the CALLER's: this call books what it is given and does not
+	// recompute the discount.
+	RedeemPromotion(
+		ctx context.Context,
+		promotionID, code, reference, currencyCode string,
+		amount int64,
+	) (string, error)
+
+	// ReleasePromotion gives a use back; it is the compensation and it is
+	// IDEMPOTENT. The bool reports whether THIS call reversed anything.
+	ReleasePromotion(ctx context.Context, promotionID, code, reference string) (bool, error)
+}
+
 // Deps holds the dependencies of the workflow.
 type Deps struct {
 	// Carts is the cart surface; it is mandatory.
@@ -519,6 +569,9 @@ type Deps struct {
 	Links Links
 	// Catalog is the Query surface; it is mandatory.
 	Catalog Catalog
+	// Promotions is the promotion surface; it is OPTIONAL and nil when the
+	// module is not installed.
+	Promotions Promotions
 	// Executor is the saga engine; it is mandatory.
 	//
 	// An in-memory engine (workflow.NewInMemory) is only for tests: idempotency
@@ -540,6 +593,7 @@ type Workflows struct {
 	payments    Payments
 	links       Links
 	catalog     Catalog
+	promotions  Promotions
 	executor    workflow.Executor
 	log         *slog.Logger
 }
@@ -583,8 +637,11 @@ func New(deps Deps) (*Workflows, error) {
 		payments:    deps.Payments,
 		links:       deps.Links,
 		catalog:     deps.Catalog,
-		executor:    deps.Executor,
-		log:         log,
+		// Promotions is NOT in the list above: it is the one optional surface,
+		// and an installation without the module sells without coupons.
+		promotions: deps.Promotions,
+		executor:   deps.Executor,
+		log:        log,
 	}, nil
 }
 
@@ -653,6 +710,16 @@ func FromContainer(c *container.Container) (*Workflows, error) {
 			"the order completion workflow could not build the cart totals")
 	}
 
+	// The promotion module is OPTIONAL, and it is resolved the way the cart
+	// workflows resolve it: an installation without it sells without coupons.
+	// What is not optional is the pair — a cart whose discount rests on a
+	// promotion cannot be checked out here without the module — and that is the
+	// redemption step's own refusal.
+	promotions, err := resolveOptional[Promotions](c, ServicePromotion)
+	if err != nil {
+		return nil, err
+	}
+
 	return New(Deps{
 		Carts:       carts,
 		Totals:      totals,
@@ -662,11 +729,43 @@ func FromContainer(c *container.Container) (*Workflows, error) {
 		Payments:    payments,
 		Links:       links,
 		Catalog:     catalog,
+		Promotions:  promotions,
 		Executor:    executor,
 		// The application sets the logger up with slog.SetDefault at startup; the
 		// workflow does not look for a separate logger registration.
 		Logger: slog.Default().With("workflow", WorkflowName),
 	})
+}
+
+// codeServiceNotFound is the container's "this name is not registered" error
+// code.
+//
+// It is REPEATED rather than imported, as the cart workflows repeat it: the
+// container's codes are its own contract and this package does not import that
+// package. A typo would make [resolveOptional] treat every failure as fatal,
+// which is the safe direction — the shop would refuse to start rather than sell
+// without coupons in silence.
+const codeServiceNotFound = "container_service_not_found"
+
+// resolveOptional resolves a service that MAY NOT BE REGISTERED.
+//
+// A name nobody registered comes back as the zero value and no error; every
+// other failure — a registration of the wrong type, say — is still an error.
+// Swallowing that second case would turn a mis-wired module into "the module is
+// not installed", and the shop would sell without coupons and say nothing.
+func resolveOptional[T any](c *container.Container, name string) (T, error) {
+	value, err := container.Resolve[T](c, name)
+	if err == nil {
+		return value, nil
+	}
+
+	var zero T
+	if errors.CodeOf(err) == codeServiceNotFound {
+		return zero, nil
+	}
+
+	return zero, errors.Wrap(err, errors.KindOf(err), CodeDependencyMissing,
+		"the order completion workflow could not resolve the %q service", name)
 }
 
 // resolve resolves a single service and wraps its error PRESERVING ITS KIND.

@@ -158,4 +158,19 @@ type Store interface {
 	// SoftDeleteShippingMethodsByCart deletes all of the cart's shipping
 	// methods.
 	SoftDeleteShippingMethodsByCart(ctx context.Context, cartID string) error
+
+	// AddPromotionCode writes a coupon code onto the cart; a code it already
+	// holds is absorbed rather than refused.
+	AddPromotionCode(ctx context.Context, cartID, code string) error
+	// ListPromotionCodes returns the cart's coupon codes in the order they were
+	// typed.
+	ListPromotionCodes(ctx context.Context, cartID string) ([]string, error)
+	// PromotionCodesByCartIDs returns the codes of several carts in a SINGLE
+	// query.
+	PromotionCodesByCartIDs(ctx context.Context, cartIDs []string) (map[string][]string, error)
+	// RemovePromotionCode takes a coupon code off the cart; a cart that was not
+	// holding it is NotFound.
+	RemovePromotionCode(ctx context.Context, cartID, code string) error
+	// DeletePromotionCodesByCart takes every coupon code off the cart.
+	DeletePromotionCodesByCart(ctx context.Context, cartID string) error
 }

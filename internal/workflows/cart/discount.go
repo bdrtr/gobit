@@ -133,8 +133,8 @@ type discountRequest struct {
 	// ShippingMethods is ALWAYS EMPTY; the rationale is in the
 	// [Workflows.discountRequestFor] godoc.
 	ShippingMethods []discountRequestShipping `json:"shipping_methods"`
-	// Codes are the coupon codes to apply and are ALWAYS EMPTY in this phase; the
-	// rationale is under the "Coupon codes" heading in the package comment.
+	// Codes are the coupon codes to apply; they come off the CART's own rows
+	// (ADR 0109) and never off the call that asked for the calculation.
 	Codes []string `json:"codes"`
 	// At is the instant of the calculation; it is left empty and promotion uses
 	// "now".
@@ -195,6 +195,44 @@ type discountResponse struct {
 	ShippingDiscountTotal int64 `json:"shipping_discount_total"`
 	// DiscountTotal is the total discount.
 	DiscountTotal int64 `json:"discount_total"`
+	// Applied names the promotions that actually produced a discount, IN THE
+	// ORDER they were applied.
+	//
+	// It is read because the cart has to REMEMBER it: the redemption at order
+	// time is addressed per promotion and takes an amount, and it has to be the
+	// amount the customer was shown. A consumer that dropped this field would
+	// leave the order unable to say which coupon to spend — which is the fault
+	// ADR 0102 found one boundary over, in the other direction.
+	Applied []discountApplied `json:"applied"`
+	// UnmatchedCodes are the codes that could not be tied to a usable
+	// promotion.
+	//
+	// It is read for the record and not for a refusal: a code that stops being
+	// usable while it sits in the cart must not make the cart unpriceable. What
+	// refuses an unusable code is [Workflows.ApplyPromotionCode], at the moment
+	// it is typed.
+	UnmatchedCodes []string `json:"unmatched_codes"`
+}
+
+// discountApplied is one promotion that produced a discount.
+type discountApplied struct {
+	// PromotionID is the promotion module's identity; it is kept opaque.
+	PromotionID string `json:"promotion_id"`
+	// Code is the coupon code; EMPTY for an automatic promotion.
+	Code string `json:"code"`
+	// IsAutomatic reports whether the promotion needed no code.
+	IsAutomatic bool `json:"is_automatic"`
+	// Amount is the discount this promotion produced (minor unit).
+	Amount int64 `json:"amount"`
+}
+
+// codesOrEmpty makes sure the request carries an ARRAY and never a null.
+func codesOrEmpty(codes []string) []string {
+	if codes == nil {
+		return []string{}
+	}
+
+	return codes
 }
 
 // discountLine is the schema of a single line discount in the response.
@@ -239,12 +277,12 @@ type discountLine struct {
 // can fix.
 func (w *Workflows) applyDiscounts(
 	ctx context.Context, snap Snapshot, lines []LineTotals, facts map[string]productFacts,
-) error {
+) ([]AppliedPromotion, error) {
 	if w.discounts == nil {
-		return nil
+		return nil, nil
 	}
 	if len(lines) != len(snap.Items) {
-		return errors.Internal(CodeDiscountInvalid,
+		return nil, errors.Internal(CodeDiscountInvalid,
 			"line count does not match the snapshot: %d calculated, %d lines (%s)",
 			len(lines), len(snap.Items), snap.ID)
 	}
@@ -255,7 +293,7 @@ func (w *Workflows) applyDiscounts(
 	// [Workflows.lineProductFacts].
 	payload, err := json.Marshal(w.discountRequestFor(ctx, snap, lines, facts))
 	if err != nil {
-		return errors.Wrap(err, errors.KindInternal, CodeDiscountFailed,
+		return nil, errors.Wrap(err, errors.KindInternal, CodeDiscountFailed,
 			"discount request could not be encoded to JSON: %s", snap.ID)
 	}
 
@@ -264,16 +302,39 @@ func (w *Workflows) applyDiscounts(
 		// The class is PRESERVED: promotion's Invalid is a contract mismatch, and
 		// had it been turned into Internal a fixable wiring error would look like
 		// a server failure.
-		return errors.Wrap(err, errors.KindOf(err), CodeDiscountFailed,
+		return nil, errors.Wrap(err, errors.KindOf(err), CodeDiscountFailed,
 			"cart discount could not be calculated: %s (%d lines)", snap.ID, len(lines))
 	}
 
 	var resp discountResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
-		return errors.Wrap(err, errors.KindInternal, CodeDiscountInvalid,
+		return nil, errors.Wrap(err, errors.KindInternal, CodeDiscountInvalid,
 			"discount result could not be decoded: %s", snap.ID)
 	}
-	return applyDiscountResponse(snap, lines, resp)
+	if err := applyDiscountResponse(snap, lines, resp); err != nil {
+		return nil, err
+	}
+
+	return appliedPromotionsOf(resp), nil
+}
+
+// appliedPromotionsOf turns the response's own record of what applied into the
+// shape the cart stores.
+//
+// The ORDER is kept: the promotion module applies them in a defined order and
+// the position is part of what the record means. The position is the INDEX
+// rather than a field on the wire, so the two cannot disagree.
+func appliedPromotionsOf(resp discountResponse) []AppliedPromotion {
+	out := make([]AppliedPromotion, 0, len(resp.Applied))
+	for i := range resp.Applied {
+		out = append(out, AppliedPromotion{
+			PromotionID: resp.Applied[i].PromotionID,
+			Code:        resp.Applied[i].Code,
+			Amount:      resp.Applied[i].Amount,
+		})
+	}
+
+	return out
 }
 
 // discountRequestFor translates the shape of the cart into promotion's request
@@ -335,7 +396,7 @@ func (w *Workflows) discountRequestFor(
 		Context:         attributes,
 		Items:           items,
 		ShippingMethods: []discountRequestShipping{},
-		Codes:           []string{},
+		Codes:           codesOrEmpty(snap.PromotionCodes),
 	}
 }
 

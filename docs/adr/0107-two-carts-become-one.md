@@ -5,7 +5,7 @@ quantities are summed, and the source is emptied and deleted. It costs a second
 row lock taken in identifier order and buys the member who signed in one cart
 instead of two.
 
-- **Status:** Accepted
+- **Status:** Accepted — amended by [0109](0109-a-cart-holds-the-coupon-the-customer-typed.md)
 - **Date:** 2026-09-10
 
 ## Context

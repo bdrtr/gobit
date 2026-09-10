@@ -120,6 +120,15 @@ var caseFoldingDeclarations = map[string]string{
 		"The fold is therefore ASCII by construction and upper() cannot disagree with Go " +
 		"about it on any cluster. This entry is what makes the difference between the two " +
 		"cases a written claim rather than an accident.",
+
+	"cart_promotion_code_upper": "SOUND, by the same argument as promotion_code_check and with " +
+		"a WIDER guarantee than that one needs. The cart does not restate promotion's alphabet " +
+		"— what a code means belongs to that module — so it enforces the property the fold " +
+		"actually depends on: service.normalizePromotionCode refuses any byte at or above 0x80 " +
+		"before the value reaches the database. ASCII folds identically under every CTYPE, so " +
+		"upper() cannot disagree with Go's strings.ToUpper on any cluster. Without that check " +
+		"a code carrying \"é\" would be stored on one installation and refused on another. " +
+		"ADR 0109",
 }
 
 // TestEverySqlThatFoldsCaseIsDeclared is the audit.

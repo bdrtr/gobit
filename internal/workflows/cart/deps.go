@@ -289,6 +289,18 @@ type Carts interface {
 	// If the declared revision does not match the cart's current shape it returns
 	// errors.Conflict. Its counterpart in the cart service is SetTotals.
 	SetCartTotalsJSON(ctx context.Context, cartID string, totals json.RawMessage) error
+
+	// AddCartPromotionCode writes a coupon code onto the cart.
+	//
+	// The cart module does NOT decide whether the code names anything — it
+	// cannot ask the promotion module — so this call stores text. What settles
+	// the question is [Workflows.ApplyPromotionCode], BEFORE it calls this. Its
+	// counterpart in the cart service is AddPromotionCode.
+	AddCartPromotionCode(ctx context.Context, cartID, code string) error
+
+	// RemoveCartPromotionCode takes a coupon code off the cart. If the cart was
+	// not holding it, errors.NotFound.
+	RemoveCartPromotionCode(ctx context.Context, cartID, code string) error
 }
 
 // Prices is the surface of the pricing module ("pricing.service") that this
@@ -352,13 +364,17 @@ type Customers interface {
 // Discounts is the surface of the promotion module ("promotion.interop") that
 // this package uses.
 //
-// The surface has a SINGLE method. promotion's interop publishes three methods
-// (ComputeDiscountsJSON, RedeemPromotion, ReleasePromotion) but the cart
-// computation uses only the first one: the computation IS SIDE-EFFECT FREE and
-// actually spending a coupon is the order's job (see the promotion package
-// comment, "computation and redemption are SEPARATE"). Writing the two unused
-// methods here would have meant this package owning a contract it does not need
-// and its fakes growing needlessly.
+// The surface has TWO methods and it deliberately does not have the other two.
+// promotion's interop publishes four (ComputeDiscountsJSON, CouponApplies,
+// RedeemPromotion, ReleasePromotion); this package uses the two that WRITE
+// NOTHING. The computation is side-effect free and actually spending a coupon is
+// the order's job (see the promotion package comment, "computation and
+// redemption are SEPARATE"), so RedeemPromotion and ReleasePromotion belong to
+// the checkout package and are declared there.
+//
+// CouponApplies joined when the cart grew a coupon field (ADR 0109): a code the
+// promotion module cannot use must be refused at the moment it is TYPED, and
+// this package is the only side that can ask.
 //
 // The schema of the request and response bodies is defined in one place, in the
 // [discountRequest] and [discountResponse] types.
@@ -366,6 +382,20 @@ type Discounts interface {
 	// ComputeDiscountsJSON computes the discounts for the cart context; IT WRITES
 	// NOTHING and consumes no coupon counter.
 	ComputeDiscountsJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
+
+	// CouponApplies reports whether a coupon code names a promotion a customer
+	// may use; it WRITES NOTHING.
+	//
+	// nil means usable. errors.NotFound means it is not, and it does NOT say
+	// why — the promotion module gives one answer to a code that does not exist,
+	// a promotion that is paused, a campaign that is over and a budget that is
+	// spent, because telling them apart would hand a code guesser a campaign
+	// calendar.
+	//
+	// It does NOT answer "does this coupon discount THIS cart". A valid coupon
+	// whose target matches no line is not an invalid code, only one that did
+	// nothing today.
+	CouponApplies(ctx context.Context, code string) error
 }
 
 // Taxes is the surface of the tax module ("tax.interop") that this package

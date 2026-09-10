@@ -213,7 +213,10 @@ func (w *Workflows) quoteRequestFor(ctx context.Context, snap Snapshot) (quoteRe
 			"error", factsErr, "cart_id", snap.ID, "lines", len(lines))
 	}
 
-	if err := w.applyDiscounts(ctx, snap, lines, facts); err != nil {
+	// The record of WHICH promotions applied is dropped here on purpose: a
+	// shipping quote is not a totals round and writes nothing to the cart, so
+	// keeping it would be keeping a value with no reader.
+	if _, err := w.applyDiscounts(ctx, snap, lines, facts); err != nil {
 		return quoteRequest{}, err
 	}
 

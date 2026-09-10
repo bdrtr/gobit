@@ -157,6 +157,14 @@ type CartDetail struct {
 	BillingAddress *CartAddress
 	// ShippingMethods are the shipping methods selected for the cart.
 	ShippingMethods []ShippingMethod
+	// PromotionCodes are the coupon codes the shopper typed, in the order they
+	// were typed. They are stored in UPPER case.
+	//
+	// They are CODES and not promotion identifiers, and the difference is the
+	// decision: what a code means is settled fresh by every discount round, so a
+	// promotion that is paused or whose campaign closes simply stops discounting
+	// and the code sitting here stops mattering by itself (ADR 0109).
+	PromotionCodes []string
 }
 
 // LineItem is a line in the cart.

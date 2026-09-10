@@ -217,6 +217,10 @@ const (
 	paramCartID     = "id"
 	paramLineItemID = "line_item_id"
 	paramMethodID   = "shipping_method_id"
+	// paramCode is the coupon code in the removal path. It is the CODE and not
+	// an identifier, because the code is what the cart holds and what the
+	// shopper reads on the screen; there is no row id to name.
+	paramCode = "code"
 )
 
 // Carts is the surface the handlers need from the service.
@@ -353,6 +357,32 @@ type LinePricing interface {
 	) (removed bool, err error)
 }
 
+// CartPromotions is the surface used by this package of the flow that applies a
+// COUPON CODE.
+//
+// # Why it is a flow and not the service
+//
+// Two things the cart module cannot do (Principle 2.1) have to happen when a
+// code is typed: somebody has to ask the promotion module whether the code names
+// anything, and the cart has to be repriced. Both belong to
+// internal/workflows/cart, and the interface is declared HERE because that is
+// the side that consumes it (ADR 0001's pattern).
+//
+// # Why it FAILS CLOSED
+//
+// [Handler.promotions] refuses when the flow is not bound, for the reason
+// [Handler.pricing] gives about the price. Writing the code without the flow
+// would put a coupon on the cart that nothing ever checked and nothing ever
+// priced, and the answer would tell the shopper it was applied.
+type CartPromotions interface {
+	// ApplyPromotionCode writes a coupon code onto the cart and reprices it. A
+	// code the promotion module cannot use is refused and NOT written.
+	ApplyPromotionCode(ctx context.Context, cartID, code string) error
+	// RemovePromotionCode takes a coupon code off the cart and reprices it. If
+	// the cart was not holding it, errors.NotFound.
+	RemovePromotionCode(ctx context.Context, cartID, code string) error
+}
+
 // ShippingPricing is the surface used by this package of the flow that PRICES a
 // shipping option (ADR 0001/0006).
 //
@@ -409,6 +439,8 @@ type Flows struct {
 	Checkout CartCompletion
 	// Shipping is the shipping-option pricing flow.
 	Shipping ShippingPricing
+	// Promotions is the coupon-code flow.
+	Promotions CartPromotions
 }
 
 // IdentityLookup hands back the customer identity the installation bound, a NIL
@@ -544,6 +576,23 @@ func (h *Handler) pricing() (LinePricing, error) {
 	return h.flows.Pricing, nil
 }
 
+// promotions returns the coupon flow; if it is not bound it returns an ERROR.
+//
+// # Why it fails CLOSED
+//
+// The same shape as [Handler.pricing]'s, about a different lie. Writing the code
+// without the flow would put a coupon on the cart that nothing checked and
+// nothing priced, and the answer would still tell the shopper it was applied —
+// so the screen would show a discount the till will not give.
+func (h *Handler) promotions() (CartPromotions, error) {
+	if h.flows.Promotions == nil {
+		return nil, coreerrors.Internal(codeFlowUnavailable,
+			"the coupon flow is not bound; a code cannot be applied without the server checking it and repricing the cart")
+	}
+
+	return h.flows.Promotions, nil
+}
+
 // shipping returns the shipping pricing flow; if it is not bound it returns an
 // ERROR.
 //
@@ -635,6 +684,13 @@ type cartDetailDTO struct {
 	ShippingAddress *addressDTO         `json:"shipping_address,omitempty"`
 	BillingAddress  *addressDTO         `json:"billing_address,omitempty"`
 	ShippingMethods []shippingMethodDTO `json:"shipping_methods"`
+	// PromotionCodes are the coupon codes the cart holds, in the order they were
+	// typed and in UPPER case.
+	//
+	// It is always present, empty included: a client that had to tell "no
+	// coupons" from "the field is missing" would be reading the wire rather than
+	// the cart.
+	PromotionCodes []string `json:"promotion_codes"`
 }
 
 // lineItemDTO is the cart line item's outward representation.
@@ -718,7 +774,9 @@ func toCartDetailDTO(detail models.CartDetail) cartDetailDTO {
 		cartDTO:         toCartDTO(detail.Cart),
 		Items:           make([]lineItemDTO, 0, len(detail.Items)),
 		ShippingMethods: make([]shippingMethodDTO, 0, len(detail.ShippingMethods)),
+		PromotionCodes:  make([]string, 0, len(detail.PromotionCodes)),
 	}
+	out.PromotionCodes = append(out.PromotionCodes, detail.PromotionCodes...)
 	// The loops are walked by index: the line item and method structs are large
 	// and copying them by value would carry a few hundred bytes needlessly on
 	// every turn.

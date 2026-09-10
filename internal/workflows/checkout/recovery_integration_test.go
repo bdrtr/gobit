@@ -264,16 +264,38 @@ func invokedStepRaw(index int, name, output string) workflow.StepRecord {
 	}
 }
 
+// stepIndex returns the position a step holds in the saga.
+//
+// The builders below used to carry the position as a LITERAL, and that made a
+// step inserted into the saga a silent rewrite of every fixture after it: the
+// record would name the right step at the wrong index, and recovery would
+// disagree with a definition the test believed it was reproducing. The number is
+// read off the production step list instead (ADR 0109 inserted redeem_promotions
+// at position one, and every literal below it was wrong that day).
+func stepIndex(t *testing.T, name string) int {
+	t.Helper()
+
+	var w Workflows
+	for i, step := range w.sagaSteps(&checkoutPlan{}) {
+		if step.Name() == name {
+			return i
+		}
+	}
+	t.Fatalf("the saga has no step called %q", name)
+
+	return -1
+}
+
 // reserveRecord is the row the stock step leaves behind: two lines reserved out
 // of the declared warehouse.
 //
-// This and the four builders below it are the record of a checkout that got all
-// the way through; each test takes the PREFIX its scenario ends at, because the
+// This and the builders below it are the record of a checkout that got all the
+// way through; each test takes the PREFIX its scenario ends at, because the
 // prefix is the only thing that distinguishes one crash from another.
 func reserveRecord(t *testing.T) workflow.StepRecord {
 	t.Helper()
 
-	return invokedStep(t, 0, StepReserveInventory, reserveOutput{Reservations: []reservationRef{
+	return invokedStep(t, stepIndex(t, StepReserveInventory), StepReserveInventory, reserveOutput{Reservations: []reservationRef{
 		{LineItemID: testLineA, ReservationID: "res_" + testLineA, LocationID: testLocationID},
 		{LineItemID: testLineB, ReservationID: "res_" + testLineB, LocationID: testLocationID},
 	}})
@@ -283,7 +305,7 @@ func reserveRecord(t *testing.T) workflow.StepRecord {
 func orderRecord(t *testing.T) workflow.StepRecord {
 	t.Helper()
 
-	return invokedStep(t, 1, StepCreateOrder, createOrderOutput{OrderID: testOrderID})
+	return invokedStep(t, stepIndex(t, StepCreateOrder), StepCreateOrder, createOrderOutput{OrderID: testOrderID})
 }
 
 // authorizeRecord is the row the authorization step leaves behind: the payment
@@ -291,7 +313,7 @@ func orderRecord(t *testing.T) workflow.StepRecord {
 func authorizeRecord(t *testing.T) workflow.StepRecord {
 	t.Helper()
 
-	return invokedStep(t, 2, StepAuthorizePayment, authorizeOutput{
+	return invokedStep(t, stepIndex(t, StepAuthorizePayment), StepAuthorizePayment, authorizeOutput{
 		CollectionID: testCollectionID, SessionID: testSessionID,
 		Status: "authorized", Authorized: testAmount,
 	})
@@ -303,7 +325,7 @@ func authorizeRecord(t *testing.T) workflow.StepRecord {
 func captureRecord(t *testing.T) workflow.StepRecord {
 	t.Helper()
 
-	return invokedStep(t, 3, StepCapturePayment, captureOutput{
+	return invokedStep(t, stepIndex(t, StepCapturePayment), StepCapturePayment, captureOutput{
 		PaymentID: testPaymentID, Captured: testAmount,
 	})
 }
@@ -314,10 +336,21 @@ func captureRecord(t *testing.T) workflow.StepRecord {
 func clearCartRecord(t *testing.T) workflow.StepRecord {
 	t.Helper()
 
-	return invokedStep(t, 4, StepClearCart, CompleteCartResult{
+	return invokedStep(t, stepIndex(t, StepClearCart), StepClearCart, CompleteCartResult{
 		CartID: testCartID, OrderID: testOrderID, PaymentID: testPaymentID,
 		CurrencyCode: testCurrency, Amount: testAmount,
 	})
+}
+
+// redeemRecord is the row the coupon step leaves behind.
+//
+// It is EMPTY, and that is a real outcome rather than a placeholder: the recovery
+// plan carries no promotion, so the step spent nothing and has nothing to give
+// back (see [redeemPromotionsStep.Restore]).
+func redeemRecord(t *testing.T) workflow.StepRecord {
+	t.Helper()
+
+	return invokedStep(t, stepIndex(t, StepRedeemPromotions), StepRedeemPromotions, redeemOutput{})
 }
 
 // finalStatus reads the execution's terminal state back out of the database.
@@ -368,7 +401,7 @@ func TestAbandonedStockIsReleasedFromTheRecordALONE(t *testing.T) {
 	ctx := context.Background()
 	h, store := durableHarness(t)
 
-	executionID, input := abandonedCheckout(ctx, t, store, reserveRecord(t), orderRecord(t))
+	executionID, input := abandonedCheckout(ctx, t, store, reserveRecord(t), redeemRecord(t), orderRecord(t))
 
 	require.NoError(t, runRecovery(ctx, t, h, input, executionID))
 
@@ -416,7 +449,7 @@ func TestRecoveryWillNotAssumeAnUnrecordedCaptureNeverRan(t *testing.T) {
 	h, store := durableHarness(t)
 
 	executionID, input := abandonedCheckout(ctx, t, store,
-		reserveRecord(t), orderRecord(t), authorizeRecord(t))
+		reserveRecord(t), redeemRecord(t), orderRecord(t), authorizeRecord(t))
 
 	err := runRecovery(ctx, t, h, input, executionID)
 
@@ -460,7 +493,7 @@ func TestARecordedCaptureStopsRecoveryFromRollingBackAPaidOrder(t *testing.T) {
 	h, store := durableHarness(t)
 
 	executionID, input := abandonedCheckout(ctx, t, store,
-		reserveRecord(t), orderRecord(t), authorizeRecord(t), captureRecord(t))
+		reserveRecord(t), redeemRecord(t), orderRecord(t), authorizeRecord(t), captureRecord(t))
 
 	err := runRecovery(ctx, t, h, input, executionID)
 
@@ -505,7 +538,7 @@ func TestTheBookkeepingStepDoesNotTurnRecoveryIntoManualWork(t *testing.T) {
 	h, store := durableHarness(t)
 
 	executionID, input := abandonedCheckout(ctx, t, store,
-		reserveRecord(t), orderRecord(t), authorizeRecord(t), captureRecord(t), clearCartRecord(t))
+		reserveRecord(t), redeemRecord(t), orderRecord(t), authorizeRecord(t), captureRecord(t), clearCartRecord(t))
 
 	err := runRecovery(ctx, t, h, input, executionID)
 	require.Error(t, err)
@@ -538,7 +571,7 @@ func TestARecordNamingNoReservationStopsRecovery(t *testing.T) {
 	h, store := durableHarness(t)
 
 	executionID, input := abandonedCheckout(ctx, t, store,
-		invokedStep(t, 0, StepReserveInventory, reserveOutput{}),
+		invokedStep(t, stepIndex(t, StepReserveInventory), StepReserveInventory, reserveOutput{}),
 		orderRecord(t),
 	)
 
@@ -573,7 +606,8 @@ func TestARecordNamingNoOrderStopsRecovery(t *testing.T) {
 
 	executionID, input := abandonedCheckout(ctx, t, store,
 		reserveRecord(t),
-		invokedStep(t, 1, StepCreateOrder, createOrderOutput{}),
+		redeemRecord(t),
+		invokedStep(t, stepIndex(t, StepCreateOrder), StepCreateOrder, createOrderOutput{}),
 	)
 
 	err := runRecovery(ctx, t, h, input, executionID)
@@ -605,8 +639,8 @@ func TestARecordNamingNoSessionStopsRecovery(t *testing.T) {
 	h, store := durableHarness(t)
 
 	executionID, input := abandonedCheckout(ctx, t, store,
-		reserveRecord(t), orderRecord(t),
-		invokedStep(t, 2, StepAuthorizePayment, authorizeOutput{Status: "authorized"}),
+		reserveRecord(t), redeemRecord(t), orderRecord(t),
+		invokedStep(t, stepIndex(t, StepAuthorizePayment), StepAuthorizePayment, authorizeOutput{Status: "authorized"}),
 		captureRecord(t),
 	)
 
@@ -646,8 +680,8 @@ func TestACaptureRowWhoseSHAPEChangedIsNotReadAsNoCapture(t *testing.T) {
 	h, store := durableHarness(t)
 
 	executionID, input := abandonedCheckout(ctx, t, store,
-		reserveRecord(t), orderRecord(t), authorizeRecord(t),
-		invokedStepRaw(3, StepCapturePayment, `{"payment_id": 7, "captured": 3000}`),
+		reserveRecord(t), redeemRecord(t), orderRecord(t), authorizeRecord(t),
+		invokedStepRaw(stepIndex(t, StepCapturePayment), StepCapturePayment, `{"payment_id": 7, "captured": 3000}`),
 	)
 
 	err := runRecovery(ctx, t, h, input, executionID)

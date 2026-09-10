@@ -38,13 +38,15 @@ type Snapshot struct {
 	// ShippingMethods are the shipping methods chosen for the cart.
 	ShippingMethods []SnapshotShippingMethod `json:"shipping_methods"`
 
-	// THE COUPON CODES WILL COME HERE. When the cart module grows a coupon
-	// field, a "promotion_codes []string" field is added to the schema and
-	// [Workflows.discountRequestFor] passes it into the request's "codes"
-	// array; nothing else changes. The field DOES NOT EXIST today because the
-	// cart does not store a code, and an unstored code entering the calculation
-	// would make the total of the same cart depend on which endpoint it went
-	// through (see the package comment, "Coupon codes").
+	// PromotionCodes are the coupon codes the cart HOLDS, in UPPER case.
+	//
+	// They come off the cart's own row and not off the call, and that is the
+	// whole decision: a code passed into one entry point of the totals flow
+	// would make the discount appear and disappear depending on which entry
+	// point ran last, so raising a quantity by one would silently drop the
+	// coupon (ADR 0109). This field is the first of the three points the
+	// package comment named.
+	PromotionCodes []string `json:"promotion_codes"`
 }
 
 // SnapshotItem is the set of fields of a cart line that enter the calculation.

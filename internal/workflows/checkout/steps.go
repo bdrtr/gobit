@@ -31,7 +31,30 @@ const (
 	// The flag is cleared ONLY when the collection PROVES that no capture
 	// happened (see capturePaymentStep.settle).
 	sharedCaptureAttempted = "checkout.capture_attempted"
+	// sharedRedeemed holds the promotion uses this saga has taken, so that the
+	// compensation can release exactly those and no others.
+	sharedRedeemed = "checkout.redeemed"
 )
+
+// sharedRedemptions reads the promotion uses from the shared map.
+//
+// It follows [sharedRefs]'s contract: a key that was never written is an empty
+// slice, and a key of an unexpected type is an error rather than a silent
+// nothing — compensation reporting "done" without having found the work it is
+// meant to undo is how a spent coupon stays spent.
+func sharedRedemptions(sc *workflow.StepContext) ([]redeemedRef, error) {
+	raw, exists := sc.Shared[sharedRedeemed]
+	if !exists {
+		return nil, nil
+	}
+	refs, ok := raw.([]redeemedRef)
+	if !ok {
+		return nil, errors.Internal(CodeSharedStateInvalid,
+			"key %q has an unexpected type: %T", sharedRedeemed, raw)
+	}
+
+	return refs, nil
+}
 
 // sharedRefs reads the reservation traces from the shared map.
 //

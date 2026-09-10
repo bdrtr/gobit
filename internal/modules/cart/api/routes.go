@@ -78,6 +78,12 @@ func (h *Handler) Routes(r chi.Router) {
 	// caller goes on using, and every other write addresses it the same way.
 	r.Post("/store/v1/carts/{id}/merge", h.storeMergeCart)
 
+	// The coupon codes. The write goes through a FLOW because this module cannot
+	// ask the promotion module whether a code names anything and cannot reprice
+	// the cart either; both are the flow's (ADR 0109).
+	r.Post("/store/v1/carts/{id}/promotions", h.storeApplyPromotionCode)
+	r.Delete("/store/v1/carts/{id}/promotions/{code}", h.storeRemovePromotionCode)
+
 	r.Post("/store/v1/carts/{id}/line-items", h.storeAddLineItem)
 	r.Patch("/store/v1/carts/{id}/line-items/{line_item_id}", h.storeUpdateLineItem)
 	r.Delete("/store/v1/carts/{id}/line-items/{line_item_id}", h.storeRemoveLineItem)

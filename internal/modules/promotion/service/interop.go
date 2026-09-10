@@ -251,6 +251,34 @@ func (i *Interop) RedeemPromotion(
 	return redemption.ID, nil
 }
 
+// CouponApplies reports whether a coupon code is usable BY A CUSTOMER; it WRITES
+// NOTHING.
+//
+// nil means usable. A code that does not exist, one whose promotion is a draft or
+// paused, whose campaign's window is closed or budget spent, or whose usage limit
+// is gone all come back as errors.NotFound and are NOT told apart — the reason is
+// written in [Service.LookupStoreCoupon]: "this code exists but its campaign has
+// not started" would hand a code guesser a campaign calendar.
+//
+// # The CART's rule is not asked here
+//
+// This surface does not say whether the coupon discounts THIS cart. A valid
+// coupon whose target matches no line is not an invalid code; it merely did
+// nothing today and may work when the customer adds another item. The same
+// distinction is drawn in [Service.ComputeDiscounts]'s unmatchedCodes, and the
+// two gates say the same thing on purpose.
+//
+// The counterpart on the consumer side:
+//
+//	type CouponChecker interface {
+//	    CouponApplies(ctx context.Context, code string) error
+//	}
+func (i *Interop) CouponApplies(ctx context.Context, code string) error {
+	_, err := i.svc.LookupStoreCoupon(ctx, code)
+
+	return err
+}
+
 // ReleasePromotion releases a use; this is the SAGA COMPENSATION and it is
 // IDEMPOTENT.
 //

@@ -312,6 +312,13 @@ func TestDownRollsBackTheOwnerThatWasNAMED(t *testing.T) {
 	// which is about something else entirely.
 	regionBefore, err := readOwnerState(t.Context(), dsn, "region")
 	require.NoError(t, err)
+	// Cart's version is read the same way and for the same reason. It used to be
+	// asserted as a literal zero, which held only while cart had exactly one
+	// migration; the day it gained a second (ADR 0109) a rollback of ONE step
+	// landed on one and this test failed for a reason that has nothing to do
+	// with which owner was named.
+	cartBefore, err := readOwnerState(t.Context(), dsn, "cart")
+	require.NoError(t, err)
 
 	var out bytes.Buffer
 	require.NoError(t, migrateDown(t.Context(), &out, dsn, sources,
@@ -326,7 +333,8 @@ func TestDownRollsBackTheOwnerThatWasNAMED(t *testing.T) {
 
 	cartState, err := readOwnerState(t.Context(), dsn, "cart")
 	require.NoError(t, err)
-	assert.Equal(t, uint(0), cartState.version, "the owner that WAS named must have moved")
+	assert.Equal(t, cartBefore.version-1, cartState.version,
+		"the owner that WAS named must have moved by exactly the one step it asked for")
 }
 
 // TestRollingBackToZeroLeavesNothingToRollBack covers the far end.

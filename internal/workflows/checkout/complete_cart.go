@@ -18,6 +18,8 @@ const (
 	WorkflowName = "complete_cart"
 	// StepReserveInventory is the name of the stock reservation step.
 	StepReserveInventory = "reserve_inventory"
+	// StepRedeemPromotions is the name of the step that SPENDS the coupons.
+	StepRedeemPromotions = "redeem_promotions"
 	// StepCreateOrder is the name of the order opening step.
 	StepCreateOrder = "create_order"
 	// StepAuthorizePayment is the name of the payment authorization step.
@@ -318,6 +320,11 @@ func (w *Workflows) CompleteCart(ctx context.Context, in CompleteCartInput) (Com
 func (w *Workflows) sagaSteps(plan *checkoutPlan) []workflow.Step {
 	return []workflow.Step{
 		&reserveInventoryStep{w: w, plan: plan},
+		// The coupons are spent BEFORE the order is opened. A promotion whose
+		// last use was taken while the shopper was on the payment page has to
+		// refuse the checkout, and refusing it after an order exists means
+		// canceling one that should never have been placed.
+		&redeemPromotionsStep{w: w, plan: plan},
 		&createOrderStep{w: w, plan: plan},
 		&authorizePaymentStep{w: w, plan: plan},
 		&capturePaymentStep{w: w, plan: plan},

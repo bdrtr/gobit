@@ -20,6 +20,27 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Musterinin YAZDIGI kupon artik sepete iniyor, ve siparis onu HARCIYOR**
+  (`cart_promotion_code` + saga adimi, ADR 0109). Promosyon motoru kurulduğundan
+  beri kupon kodu aliyordu ve kimse ona kod GONDERMIYORDU: sepetin kodu
+  koyacak yeri yoktu, indirim isteginin "codes" dizisi hep bostu, yani yalnizca
+  OTOMATIK promosyonlar bir sepete ulasabiliyordu -- tacir kuponu yayimliyor ve
+  yazan her musterinin hicbir sey almadigini izliyordu. Sessiz olan yarisi daha
+  kotuydu: kullanim sayacini ve kampanya butcesini hareket ettiren
+  `RedeemPromotion`'i bu depoda HICBIR SEY cagirmiyordu, yani tek kullanimlik
+  bir kupon hic sinirlanamiyordu.
+  Kod YAZILMADAN ONCE soruluyor; tersi, tur suresince kullanilamaz bir kodu
+  sepette tutar ve sonra geri almak zorunda kalir -- o geri almanin basarisizligi
+  musteriyi hicbir seyin karsilamayacagi bir kuponla birakir. HICBIR SEY
+  indirmeyen bir kupon yine de uygulaniyor: hedefine uyan satiri olmayan gecerli
+  bir kod gecersiz degildir, yalnizca bugun ise yaramamistir.
+  Kuponlar siparis ACILMADAN once harcaniyor, ve referans SEPET: son hakki
+  musteri odeme sayfasindayken alinan bir promosyon alisverisi reddetmeli, ve
+  siparis var olduktan sonra reddetmek hic acilmamasi gereken bir siparisi iptal
+  etmek demek. **Yukseltme aninda yarim kalmis bir alisveris kurtarilamaz** --
+  motor adim ADLARINI kayitla eslestiriyor ve bes adimlik kayit alti adimlik
+  tanimla uyusmuyor; bedel ADR'de yazili.
+
 - **Bir gorsel artik DUZELTILEBILIYOR, adresi ise degistirilemiyor**
   (uc admin ucu, ADR 0108). ADR 0104 `alt_text`'i vitrinde ve GraphQL tipinde
   YAYIMLADI ve duzeltilebilir birakmadi: `CreateProduct` gorselleri aliyordu ve

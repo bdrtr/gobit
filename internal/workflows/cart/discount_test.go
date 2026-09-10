@@ -124,13 +124,15 @@ func TestCalculateTotalsDiscountRequestShape(t *testing.T) {
 	assert.Equal(t, testLineB, req.Items[1].ID, "the order is the cart's order")
 }
 
-// TestCalculateTotalsNoCouponCodeIsSent PINS the fact that no code at all is sent
-// because the cart has no coupon field.
+// TestCalculateTotalsNoCouponCodeIsSent PINS what a cart holding NO coupon
+// sends: nothing.
 //
-// The decision is under the "Coupon codes" heading in the package comment: only
-// AUTOMATIC promotions are applied. The test is the guard of that decision — if
-// someone adds a code parameter to CalculateTotals this test falls over and the
-// decision has to be taken again.
+// Until 2026-09-10 it pinned something stronger — that no code could be sent at
+// all, because the cart had nowhere to keep one. ADR 0109 gave it that field,
+// and what survives of the old decision is the half that never changed: the
+// codes come off the CART's own rows and never off the call. A parameter added
+// to CalculateTotals would make the same cart's total depend on which entry
+// point ran last, which is the fault the package comment describes.
 func TestCalculateTotalsNoCouponCodeIsSent(t *testing.T) {
 	h := newModuleHarness(t)
 	serveSnapshot(h.carts, twoLineCart(1))
@@ -139,7 +141,7 @@ func TestCalculateTotalsNoCouponCodeIsSent(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, h.discounts.requests, 1)
-	assert.Empty(t, h.discounts.requests[0].Codes)
+	assert.Empty(t, h.discounts.requests[0].Codes, "this cart holds no coupon")
 	assert.Empty(t, h.discounts.requests[0].At, "the instant of the calculation is ALWAYS now")
 }
 

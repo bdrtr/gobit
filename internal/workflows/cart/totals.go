@@ -62,6 +62,25 @@ type Totals struct {
 	// Lines are the amounts calculated per line and they cover ALL the lines of
 	// the cart.
 	Lines []LineTotals `json:"lines"`
+	// Applied names the promotions that produced the discount and how much each
+	// one gave, in the order the round applied them.
+	//
+	// It travels in the body written to the cart because the CART has to
+	// remember it: the redemption when the cart becomes an order is addressed
+	// per promotion and takes an amount, and that amount has to be the one the
+	// customer was shown (ADR 0109). Recomputing it at order time would write a
+	// figure into a campaign's budget that nobody ever saw.
+	Applied []AppliedPromotion `json:"applied"`
+}
+
+// AppliedPromotion is one promotion the round applied, and how much it gave.
+type AppliedPromotion struct {
+	// PromotionID is the promotion module's identity; it is kept opaque.
+	PromotionID string `json:"promotion_id"`
+	// Code is the coupon code; EMPTY for an automatic promotion.
+	Code string `json:"code,omitempty"`
+	// Amount is the discount this promotion produced (minor unit).
+	Amount int64 `json:"amount"`
 }
 
 // LineTotals are the calculated amounts of a single cart line.
@@ -280,14 +299,21 @@ func (w *Workflows) computeTotals(ctx context.Context, snap Snapshot) (Totals, e
 		facts = read
 	}
 
-	if err := w.applyDiscounts(ctx, snap, lines, facts); err != nil {
+	applied, err := w.applyDiscounts(ctx, snap, lines, facts)
+	if err != nil {
 		return Totals{}, err
 	}
 	taxSource, err := w.applyTaxes(ctx, snap, shippingTotal, lines, facts)
 	if err != nil {
 		return Totals{}, err
 	}
-	return assembleTotals(snap, lines, shippingTotal, taxSource)
+	totals, err := assembleTotals(snap, lines, shippingTotal, taxSource)
+	if err != nil {
+		return Totals{}, err
+	}
+	totals.Applied = applied
+
+	return totals, nil
 }
 
 // lineSubtotals calculates every line's unit price and subtotal.

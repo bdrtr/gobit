@@ -74,6 +74,15 @@ type interopSnapshot struct {
 	// only worth making if it survives into the order.
 	ShippingAddress *interopAddress `json:"shipping_address,omitempty"`
 	BillingAddress  *interopAddress `json:"billing_address,omitempty"`
+	// PromotionCodes are the coupon codes the cart holds, in the order they were
+	// typed and in UPPER case.
+	//
+	// They cross this surface because the discount round takes them and the cart
+	// module cannot call the promotion module (Principle 2.1). It is an ARRAY and
+	// always present, empty included: a consumer that had to tell "no codes" from
+	// "the field is missing" would be asking about the wire rather than about the
+	// cart.
+	PromotionCodes []string `json:"promotion_codes"`
 }
 
 // interopAddress is one address as it crosses the surface.
@@ -213,6 +222,7 @@ func (i *Interop) CartSnapshotJSON(ctx context.Context, cartID string) (json.Raw
 		ShippingMethods: make([]interopShippingMethod, 0, len(detail.ShippingMethods)),
 		ShippingAddress: toInteropAddress(detail.ShippingAddress),
 		BillingAddress:  toInteropAddress(detail.BillingAddress),
+		PromotionCodes:  codesOrEmpty(detail.PromotionCodes),
 	}
 	for i := range detail.Items {
 		snapshot.Items = append(snapshot.Items, interopItem{
@@ -367,6 +377,37 @@ func (i *Interop) SetCartTotalsJSON(ctx context.Context, cartID string, totals j
 		Total:         incoming.Total,
 		Lines:         lines,
 	})
+}
+
+// AddCartPromotionCode writes a coupon code onto the cart.
+//
+// Whether the code names a real promotion is NOT settled here: this module
+// cannot ask the promotion module (Principle 2.1). The caller that can is the
+// cart flow, and it asks BEFORE calling this — so a code that reaches this
+// surface is one the promotion module has already accepted (ADR 0109).
+func (i *Interop) AddCartPromotionCode(ctx context.Context, cartID, code string) error {
+	_, err := i.svc.AddPromotionCode(ctx, cartID, code)
+
+	return err
+}
+
+// RemoveCartPromotionCode takes a coupon code off the cart.
+func (i *Interop) RemoveCartPromotionCode(ctx context.Context, cartID, code string) error {
+	return i.svc.RemovePromotionCode(ctx, cartID, code)
+}
+
+// codesOrEmpty makes sure the wire carries an ARRAY and never a null.
+//
+// A consumer decoding null into a slice gets nil, which is the same as an empty
+// list in Go and NOT the same on the wire: a schema that sometimes says null and
+// sometimes [] makes every other language's client handle a case that does not
+// exist.
+func codesOrEmpty(codes []string) []string {
+	if codes == nil {
+		return []string{}
+	}
+
+	return codes
 }
 
 // MarkCompleted marks the cart as completed.

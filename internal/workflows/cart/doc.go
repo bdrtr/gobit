@@ -119,13 +119,13 @@
 // storefront keeps working; the rationale is in the [Workflows.applyDiscounts]
 // godoc.
 //
-// # Coupon codes: AUTOMATIC promotions ONLY
+// # Coupon codes: off the CART, never off the call
 //
-// There is NO coupon field on the cart and [Workflows.CalculateTotals] takes NO
-// coupon code; only AUTOMATIC promotions enter the calculation.
+// [Workflows.CalculateTotals] takes no coupon code and never will. The codes come
+// from [Snapshot.PromotionCodes], which is the cart's own rows.
 //
 // The rejected alternative was to give the codes to CalculateTotals as an optional
-// parameter. It was rejected for two reasons:
+// parameter. It was rejected for two reasons, and both still hold:
 //
 //   - The totals calculation must be reproducible from the cart's OWN state. The
 //     flow is called from three places (directly, after adding a line and after
@@ -133,16 +133,18 @@
 //     WRITTEN to the cart would appear and disappear depending on which entry point
 //     was used last. The coupon silently dropping when the customer increases a
 //     quantity by one is the unavoidable consequence of that design.
-//   - The code is NOT PERSISTENT. Because the cart cannot store it, the order could
-//     be created with a total different from the discount seen on the cart; the saga
-//     of Phase 6 uses the cart's WRITTEN total.
+//   - The code has to be PERSISTENT. Otherwise the order is created with a total
+//     different from the discount seen on the cart; the saga of Phase 6 uses the
+//     cart's WRITTEN total.
 //
-// When a coupon field is added to the cart module the place it will be wired into is
-// clear and it is three points: a field carrying the codes is added to the [Snapshot]
-// schema, that field is passed into the request's "codes" array inside
-// [Workflows.discountRequestFor], and at order time promotion's RedeemPromotion is
-// called. In this round the first two points are empty and the third is outside this
-// package.
+// Until 2026-09-10 the cart could not store a code and only AUTOMATIC promotions
+// entered the calculation. This comment named the three points a coupon would be
+// wired into, and ADR 0109 wired all three: the [Snapshot] field, the request's
+// "codes" array in [Workflows.discountRequestFor], and — outside this package —
+// the redemption at order time, which is now a step of the checkout saga.
+// [Workflows.ApplyPromotionCode] is the entry point that writes a code, and it
+// asks the promotion module first: a code that names no usable promotion is
+// refused rather than stored.
 //
 // # Customer segment prices
 //

@@ -278,6 +278,86 @@ func (h *Handler) storeMergeCart(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toCartDTO(cart)})
 }
 
+// applyPromotionCodeRequest is the body of POST /store/v1/carts/{id}/promotions.
+type applyPromotionCodeRequest struct {
+	// Code is the coupon code the shopper typed; it is REQUIRED.
+	//
+	// It is NOT case sensitive: the code is stored in upper case, because
+	// "summer20" and "SUMMER20" are one coupon and keeping the difference would
+	// let a cart hold both and ask about a code the promotion module cannot
+	// match.
+	Code string `json:"code"`
+}
+
+// storeApplyPromotionCode writes a coupon code onto the cart and reprices it.
+//
+// # Why it goes through the FLOW
+//
+// For the reason [Handler.storeAddLineItem] gives about the price. The cart
+// module cannot ask the promotion module whether a code names anything
+// (Principle 2.1) and it cannot recompute the totals either. The flow does both,
+// and a code the discount round cannot use is removed again and refused — so a
+// code that stays on the cart is one the round accepted.
+//
+// The answer is the whole cart, not the code list: a coupon changes what the
+// shopper owes, and a client that got only the codes would have to make a second
+// call to find out the new total, with a window in between where the screen
+// shows a coupon beside the old amount.
+func (h *Handler) storeApplyPromotionCode(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var body applyPromotionCodeRequest
+	if err := decodeBody(w, r, &body); err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	flow, err := h.promotions()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	id := cartID(r)
+	if err := flow.ApplyPromotionCode(ctx, id, body.Code); err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	h.writeCart(ctx, w, id)
+}
+
+// storeRemovePromotionCode takes a coupon code off the cart and reprices it.
+func (h *Handler) storeRemovePromotionCode(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	flow, err := h.promotions()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	id := cartID(r)
+	if err := flow.RemovePromotionCode(ctx, id, chi.URLParam(r, paramCode)); err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	h.writeCart(ctx, w, id)
+}
+
+// writeCart reads the cart and writes it as the response.
+//
+// The read is a SECOND call and it is on purpose: the flow's answer is that the
+// write happened, and what the client needs is the cart AFTER the repricing.
+// Threading the whole record back out of the flow would make it carry a shape it
+// has no other use for.
+func (h *Handler) writeCart(ctx context.Context, w http.ResponseWriter, cartID string) {
+	detail, err := h.svc.GetCart(ctx, cartID)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toCartDetailDTO(detail)})
+}
+
 // storeDeleteCart soft deletes the cart.
 func (h *Handler) storeDeleteCart(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
