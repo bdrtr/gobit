@@ -27,10 +27,24 @@ type ComputeItem struct {
 	ID string
 	// Amount kalemin ara toplamıdır (birim × adet), minor unit.
 	//
-	// Birim fiyat DEĞİL satır tutarı taşınır: indirim satıra uygulanır ve
-	// birim fiyattan satır tutarını yeniden hesaplamak, bölünmeyen adetlerde
-	// çağıranınkinden farklı bir taban üretirdi.
+	// İndirim satıra uygulanır ve tabanı budur: birim fiyattan yeniden
+	// hesaplansaydı, bölünmeyen adetlerde çağıranınkinden farklı bir taban
+	// üretirdi.
 	Amount int64
+	// UnitAmount kalemin BİRİM fiyatıdır (minor unit) ve ZORUNLUDUR:
+	// UnitAmount × Quantity = Amount olmak zorundadır.
+	//
+	// Birim fiyatı çağıran GÖNDERİR, bu paket TÜRETMEZ. Türetme tek bir
+	// bölmedir ve tam da orada sessizdir: 100 kuruşluk üç birim 33 kuruşa
+	// yuvarlanır ve "al 2, birini bedava" promosyonu müşteriye vaat edilenden
+	// bir kuruş az verirdi. Gönderen tarafta sayı zaten vardır — sepet birim
+	// fiyatı seçen taraftır — ve göndermemek, bilinen bir sayıyı alıcıya tahmin
+	// ettirmek olurdu.
+	//
+	// Kimlik ZORUNLU tutulur, isteğe bağlı bir alan olarak bırakılmaz: yalnızca
+	// "buyget" mekaniğinin okuduğu bir alanı boş geçilebilir yapmak, o
+	// promosyonun bazı çağıranlarda sessizce çalışmaması demekti.
+	UnitAmount int64
 	// Quantity kalemin adedidir; "fixed" + "each" indiriminde kaç birime
 	// uygulanacağını belirler.
 	Quantity int64
@@ -153,9 +167,10 @@ type ComputeResult struct {
 // Bir promosyon şu koşulların HEPSİNİ sağlamıyorsa hesaba hiç girmez:
 //
 //   - Durumu "active"dir. Taslak ve pasif promosyonlar indirim üretmez.
-//   - Türü "standard"dır. "buyget" mekaniği bu fazda yoktur (bkz.
-//     [models.PromotionBuyGet]); yapısal olarak etkinleştirilemez, buradaki
-//     eleme ikinci savunmadır.
+//   - Türü TANIMLIDIR ve uygulama yöntemiyle UYUŞUR: "buyget" ise yöntem alım
+//     ve ödül adetlerini taşır, "standard" ise taşımaz. Yarım kalmış bir ödül
+//     indirim üretmez ve nedenini söyler (bkz. [SkipRewardMismatch]); mekaniğin
+//     kendisi [applyBuyGet]'tedir.
 //   - Bir uygulama yöntemi vardır. Yöntemsiz promosyon indirimin NASIL
 //     uygulanacağını söylemez ve atlanır.
 //   - Kullanım sınırı DOLMAMIŞTIR.
@@ -316,6 +331,9 @@ func normalizeComputeInput(in ComputeInput, now time.Time) (ComputeInput, error)
 		if err := validateQuantity("kalem adedi", item.Quantity); err != nil {
 			return ComputeInput{}, withIndex(err, detailItemIndex, i)
 		}
+		if err := validateUnitAmount(item); err != nil {
+			return ComputeInput{}, withIndex(err, detailItemIndex, i)
+		}
 		itemsSubtotal += item.Amount
 		if itemsSubtotal > models.MaxAmount {
 			return ComputeInput{}, errors.Invalid(CodeInvalidInput,
@@ -414,6 +432,27 @@ func validateLineID(label, id string, seen map[string]struct{}) error {
 	return nil
 }
 
+// validateUnitAmount kalemin birim fiyatını ve KİMLİĞİNİ doğrular.
+//
+// Kimlik (birim × adet = tutar) bu sözleşmenin taşıdığı tek çapraz kuraldır ve
+// burada zorlanmasının sebebi, iki sayının AYRI AYRI doğru olup birlikte yanlış
+// olabilmesidir: ödül hesabı birimden, satır sınırı tutardan okur, ve ikisi
+// ayrıştığında promosyon satırın taşıyabileceğinden fazlasını vaat eder.
+//
+// Çarpım int64'e sığar: birim en fazla [models.MaxAmount] (10^12), adet en fazla
+// [models.MaxQuantity] (10^6), yani ara sonuç 10^18'i aşmaz.
+func validateUnitAmount(item ComputeItem) error {
+	if err := validateAmount("kalem birim fiyatı", item.UnitAmount); err != nil {
+		return err
+	}
+	if item.UnitAmount*item.Quantity != item.Amount {
+		return errors.Invalid(CodeInvalidInput,
+			"kalem tutarı birim fiyat × adet olmalı: %d × %d = %d, %d verildi",
+			item.UnitAmount, item.Quantity, item.UnitAmount*item.Quantity, item.Amount)
+	}
+	return nil
+}
+
 // lineState hesap boyunca tek bir satırın değişen durumudur.
 type lineState struct {
 	// id satırın kimliğidir.
@@ -421,6 +460,9 @@ type lineState struct {
 	// amount satırın ORİJİNAL tutarıdır; hesap boyunca değişmez ve yüzde
 	// indirimlerin tabanıdır (bileşik olmama kararı).
 	amount int64
+	// unitAmount satırın birim fiyatıdır; ödül hesabının tabanıdır ve kargo
+	// yönteminde satır tutarının kendisidir (adedi birdir).
+	unitAmount int64
 	// quantity satırın adedidir; kargo yönteminde birdir.
 	quantity int64
 	// attributes hedef kurallarının bakacağı özniteliklerdir.
@@ -463,6 +505,7 @@ func computeDiscounts(candidates []models.PromotionCandidate, in ComputeInput) C
 		items = append(items, lineState{
 			id:         in.Items[i].ID,
 			amount:     in.Items[i].Amount,
+			unitAmount: in.Items[i].UnitAmount,
 			quantity:   in.Items[i].Quantity,
 			attributes: in.Items[i].Attributes,
 		})
@@ -470,9 +513,10 @@ func computeDiscounts(candidates []models.PromotionCandidate, in ComputeInput) C
 	shipping := make([]lineState, 0, len(in.ShippingMethods))
 	for i := range in.ShippingMethods {
 		shipping = append(shipping, lineState{
-			id:       in.ShippingMethods[i].ID,
-			amount:   in.ShippingMethods[i].Amount,
-			quantity: 1,
+			id:         in.ShippingMethods[i].ID,
+			amount:     in.ShippingMethods[i].Amount,
+			unitAmount: in.ShippingMethods[i].Amount,
+			quantity:   1,
 			// Kargo yönteminin adedi yoktur; "fixed" + "each" indiriminde bir
 			// birim sayılır.
 			attributes: in.ShippingMethods[i].Attributes,
@@ -638,6 +682,13 @@ func applyPromotion(candidate models.PromotionCandidate, items, shipping []lineS
 	targets := selectTargets(candidate, items, shipping)
 	if len(targets) == 0 {
 		return 0
+	}
+
+	// "Al X, kazan Y" hedefleri AYNI biçimde seçer ve ödülü BİRİM sayarak
+	// verir; tahsis biçimi ile azami adet orada okunmaz, çünkü kaç birime
+	// inileceğini yöntemin kendi sayı çifti söyler.
+	if candidate.Promotion.Type == models.PromotionBuyGet {
+		return applyBuyGet(candidate, items, targets)
 	}
 
 	// Sipariş hedefi TEK bir toplamı kalemlere dağıtır; tahsis biçimi yazma
@@ -816,6 +867,11 @@ func withIndex(err error, key string, index int) error {
 // kapanmış ya da bütçesi tükenmiş kampanyalar ve kullanım hakkı bitmiş kuponlar
 // müşteriye "yok" görünür.
 //
+// Mekanik ile yöntemin UYUŞMASI da burada aranır ve hesabın elemesiyle aynı
+// yüklemi kullanır ([mechanicMatchesMethod]). Ayrı yazılsalardı, biri kuponu
+// müşteriye sunarken öteki onu elerdi: müşteri kodu yazar, hiçbir şey olmaz ve
+// hiçbir yerde bir sebep durmaz.
+//
 // Ayrıca KURAL KOŞULLARI hiçbir zaman dışarı çıkmaz: bir kuralın sağ tarafı
 // (örn. bir müşteri grubunun kimliği) iş bilgisidir. Bu yüzden kurallar burada
 // DEĞERLENDİRİLMEZ de: sepet bağlamı olmadan değerlendirilemezler ve
@@ -824,7 +880,10 @@ func withIndex(err error, key string, index int) error {
 // söyler.
 func storeCouponVisible(candidate models.PromotionCandidate, at time.Time) bool {
 	promo := candidate.Promotion
-	if promo.Status != models.PromotionActive || promo.Type != models.PromotionStandard {
+	if promo.Status != models.PromotionActive || !promo.Type.Valid() {
+		return false
+	}
+	if !mechanicMatchesMethod(promo, candidate.Method) {
 		return false
 	}
 	if promo.UsageExhausted() {
@@ -841,6 +900,21 @@ func storeCouponVisible(candidate models.PromotionCandidate, at time.Time) bool 
 type StoreCoupon struct {
 	// Code kupon kodudur (BÜYÜK harf).
 	Code string
+	// Mechanic promosyonun mekaniğidir (standard | buyget).
+	//
+	// Ölçünün yanında DURMAK ZORUNDA: "al 2, birini kazan" kuponu yüzde on bin
+	// baz puan taşır ve mekanik söylenmeseydi vitrin onu "%100 indirim" diye
+	// gösterirdi — kuponun verdiğinden başka bir şey.
+	Mechanic models.PromotionType
+	// BuyQuantity ödülün hak edilmesi için alınması gereken adettir; yalnızca
+	// "buyget" kuponunda doludur.
+	BuyQuantity *int64
+	// ApplyToQuantity ödülün ineceği adettir; yalnızca "buyget" kuponunda
+	// doludur.
+	//
+	// İkisi de KOŞUL değil TEKLİFTİR: kuralların sağ tarafı hâlâ dışarı çıkmaz,
+	// çıkan şey kuponun ne verdiğidir.
+	ApplyToQuantity *int64
 	// MethodType indirimin ölçüsüdür (fixed | percentage).
 	MethodType models.ApplicationMethodType
 	// TargetType indirimin hedefidir (items | shipping_methods | order).
@@ -882,16 +956,21 @@ func (s *Service) LookupStoreCoupon(ctx context.Context, code string) (StoreCoup
 		return StoreCoupon{}, err
 	}
 
-	if !storeCouponVisible(candidate, s.clock()) || candidate.Method == nil {
+	// Yöntemin varlığı da görünürlük kararının içindedir; ayrı bir kontrol,
+	// aynı soruya iki yerden cevap vermek olurdu.
+	if !storeCouponVisible(candidate, s.clock()) {
 		return StoreCoupon{}, notUsable(normalized)
 	}
 
 	return StoreCoupon{
-		Code:         candidate.Promotion.Code,
-		MethodType:   candidate.Method.Type,
-		TargetType:   candidate.Method.TargetType,
-		Value:        candidate.Method.Value,
-		CurrencyCode: candidate.Method.CurrencyCode,
+		Code:            candidate.Promotion.Code,
+		Mechanic:        candidate.Promotion.Type,
+		BuyQuantity:     candidate.Method.BuyQuantity,
+		ApplyToQuantity: candidate.Method.ApplyToQuantity,
+		MethodType:      candidate.Method.Type,
+		TargetType:      candidate.Method.TargetType,
+		Value:           candidate.Method.Value,
+		CurrencyCode:    candidate.Method.CurrencyCode,
 	}, nil
 }
 

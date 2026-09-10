@@ -60,7 +60,7 @@ func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
 //	  "currency_code": "TRY",
 //	  "context": {"region_id": "reg_1", "customer_group_id": "vip"},
 //	  "items": [
-//	    {"id": "li_1", "amount": 25000, "quantity": 2,
+//	    {"id": "li_1", "amount": 25000, "unit_amount": 12500, "quantity": 2,
 //	     "attributes": {"product_category_id": "cat_1"}}
 //	  ],
 //	  "shipping_methods": [{"id": "sm_1", "amount": 4990, "attributes": {}}],
@@ -80,9 +80,15 @@ type interopRequest struct {
 }
 
 // interopRequestItem is the schema of a single cart line in the request.
+//
+// "unit_amount" is REQUIRED and must satisfy unit_amount x quantity = amount. The
+// buy-X-get-Y mechanic rewards UNITS, and a receiver that divided the line amount
+// by the quantity would round silently on a line that does not divide evenly —
+// the producer knows the number, so it sends it (see [ComputeItem.UnitAmount]).
 type interopRequestItem struct {
 	ID         string            `json:"id"`
 	Amount     int64             `json:"amount"`
+	UnitAmount int64             `json:"unit_amount"`
 	Quantity   int64             `json:"quantity"`
 	Attributes map[string]string `json:"attributes"`
 }
@@ -328,6 +334,7 @@ func decodeInteropRequest(raw json.RawMessage) (ComputeInput, error) {
 		items = append(items, ComputeItem{
 			ID:         req.Items[idx].ID,
 			Amount:     req.Items[idx].Amount,
+			UnitAmount: req.Items[idx].UnitAmount,
 			Quantity:   req.Items[idx].Quantity,
 			Attributes: req.Items[idx].Attributes,
 		})

@@ -39,15 +39,17 @@ func (r *Repo) SetApplicationMethod(
 		}
 
 		row, txErr := q.UpsertApplicationMethod(ctx, promotiondb.UpsertApplicationMethodParams{
-			ID:           m.ID,
-			PromotionID:  m.PromotionID,
-			Type:         string(m.Type),
-			TargetType:   string(m.TargetType),
-			Allocation:   string(m.Allocation),
-			Value:        m.Value,
-			MaxQuantity:  copyInt64(m.MaxQuantity),
-			CurrencyCode: nilIfEmpty(m.CurrencyCode),
-			CreatedAt:    fromTime(now),
+			ID:              m.ID,
+			PromotionID:     m.PromotionID,
+			Type:            string(m.Type),
+			TargetType:      string(m.TargetType),
+			Allocation:      string(m.Allocation),
+			Value:           m.Value,
+			MaxQuantity:     copyInt64(m.MaxQuantity),
+			BuyQuantity:     copyInt64(m.BuyQuantity),
+			ApplyToQuantity: copyInt64(m.ApplyToQuantity),
+			CurrencyCode:    nilIfEmpty(m.CurrencyCode),
+			CreatedAt:       fromTime(now),
 		})
 		if txErr != nil {
 			return wrapDB(txErr, "uygulama yöntemi yazılamadı: %s", m.PromotionID)
@@ -98,15 +100,17 @@ func (r *Repo) DeleteApplicationMethod(ctx context.Context, promotionID string, 
 // toApplicationMethod üretilen satırı domain modeline çevirir.
 func toApplicationMethod(row promotiondb.PromotionApplicationMethod) models.ApplicationMethod {
 	return models.ApplicationMethod{
-		ID:           row.ID,
-		PromotionID:  row.PromotionID,
-		Type:         models.ApplicationMethodType(row.Type),
-		TargetType:   models.ApplicationTargetType(row.TargetType),
-		Allocation:   models.Allocation(row.Allocation),
-		Value:        row.Value,
-		MaxQuantity:  copyInt64(row.MaxQuantity),
-		CurrencyCode: deref(row.CurrencyCode),
-		CreatedAt:    toTime(row.CreatedAt),
-		UpdatedAt:    toTime(row.UpdatedAt),
+		ID:              row.ID,
+		PromotionID:     row.PromotionID,
+		Type:            models.ApplicationMethodType(row.Type),
+		TargetType:      models.ApplicationTargetType(row.TargetType),
+		Allocation:      models.Allocation(row.Allocation),
+		Value:           row.Value,
+		MaxQuantity:     copyInt64(row.MaxQuantity),
+		BuyQuantity:     copyInt64(row.BuyQuantity),
+		ApplyToQuantity: copyInt64(row.ApplyToQuantity),
+		CurrencyCode:    deref(row.CurrencyCode),
+		CreatedAt:       toTime(row.CreatedAt),
+		UpdatedAt:       toTime(row.UpdatedAt),
 	}
 }

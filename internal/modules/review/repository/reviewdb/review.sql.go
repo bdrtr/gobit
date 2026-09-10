@@ -539,6 +539,20 @@ type SummarizeSuggestionAgreementRow struct {
 //
 // No rate is computed here or anywhere above. Two counts are the honest
 // primitive; a percentage over three decided reviews reads as a measurement.
+//
+// IT COSTS A TABLE SCAN, and that is accepted rather than unnoticed. Measured on
+// the rig at 505,000 reviews of which 151,500 carry both a decision and a
+// proposal: 43 ms, a parallel sequential scan over the whole table. There is no
+// index and none is proposed, for the reason the summary above it has none — the
+// cost is LINEAR in the table and the query is a report an operator opens when
+// they are deciding whether to keep paying for a model, not a page they hold
+// open. The crossing point is stated rather than hidden: at ten times this
+// table it is most of a second, and a shop that reads it on a dashboard refresh
+// is the case that wants something stored. Nothing else is.
+//
+// An index would also be an index over the ARCHIVE, which is the shape ADR 0073
+// rejected for the queue's filter: it grows without bound while the thing it
+// serves is read rarely.
 func (q *Queries) SummarizeSuggestionAgreement(ctx context.Context) ([]SummarizeSuggestionAgreementRow, error) {
 	rows, err := q.db.Query(ctx, summarizeSuggestionAgreement)
 	if err != nil {

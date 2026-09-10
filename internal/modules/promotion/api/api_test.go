@@ -350,7 +350,7 @@ func TestAdminHesapUcNoktasi(t *testing.T) {
 
 	rec = do(t, r, http.MethodPost, "/admin/v1/promotions/compute", `{
 	  "currency_code": "TRY",
-	  "items": [{"id": "li_1", "amount": 10000, "quantity": 1}],
+	  "items": [{"id": "li_1", "amount": 10000, "unit_amount": 10000, "quantity": 1}],
 	  "codes": ["HICYOK"]
 	}`)
 	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
@@ -622,7 +622,7 @@ func TestTheComputeEndpointSaysWhyAPromotionDidNotApply(t *testing.T) {
 
 	rec = do(t, r, http.MethodPost, "/admin/v1/promotions/compute", `{
 	  "currency_code": "TRY",
-	  "items": [{"id": "li_1", "amount": 10000, "quantity": 1}]
+	  "items": [{"id": "li_1", "amount": 10000, "unit_amount": 10000, "quantity": 1}]
 	}`)
 	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
 
@@ -655,7 +655,7 @@ func TestTheComputeEndpointReportsNoReasonWhenNothingWasRefused(t *testing.T) {
 
 	rec = do(t, r, http.MethodPost, "/admin/v1/promotions/compute", `{
 	  "currency_code": "TRY",
-	  "items": [{"id": "li_1", "amount": 10000, "quantity": 1}]
+	  "items": [{"id": "li_1", "amount": 10000, "unit_amount": 10000, "quantity": 1}]
 	}`)
 	require.Equal(t, http.StatusOK, rec.Code)
 

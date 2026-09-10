@@ -12,18 +12,20 @@
 -- name: UpsertApplicationMethod :one
 INSERT INTO promotion_application_method (
     id, promotion_id, type, target_type, allocation, value, max_quantity,
-    currency_code, created_at, updated_at
+    buy_quantity, apply_to_quantity, currency_code, created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
 ON CONFLICT (promotion_id) WHERE deleted_at IS NULL
 DO UPDATE SET
-    type          = EXCLUDED.type,
-    target_type   = EXCLUDED.target_type,
-    allocation    = EXCLUDED.allocation,
-    value         = EXCLUDED.value,
-    max_quantity  = EXCLUDED.max_quantity,
-    currency_code = EXCLUDED.currency_code,
-    updated_at    = EXCLUDED.updated_at
+    type              = EXCLUDED.type,
+    target_type       = EXCLUDED.target_type,
+    allocation        = EXCLUDED.allocation,
+    value             = EXCLUDED.value,
+    max_quantity      = EXCLUDED.max_quantity,
+    buy_quantity      = EXCLUDED.buy_quantity,
+    apply_to_quantity = EXCLUDED.apply_to_quantity,
+    currency_code     = EXCLUDED.currency_code,
+    updated_at        = EXCLUDED.updated_at
 RETURNING *;
 
 -- name: GetApplicationMethod :one

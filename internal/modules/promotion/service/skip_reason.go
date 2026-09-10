@@ -33,11 +33,30 @@ type SkipReason string
 const (
 	// SkipNotActive is a promotion that is a draft or has been paused.
 	SkipNotActive SkipReason = "not_active"
-	// SkipNotStandard is a promotion of a type this engine cannot apply — the
-	// buy-X-get-Y shape, which has no place to say how many units it rewards.
-	SkipNotStandard SkipReason = "not_standard"
+	// SkipMechanicUnknown is a promotion whose type is a word this engine does
+	// not define.
+	//
+	// The database refuses it with a CHECK, so the state arrives only from a row
+	// written by hand or from a constraint somebody dropped. It is named rather
+	// than ignored because the alternative is worse than a refusal: an unknown
+	// mechanic falling through to the standard one would apply a discount whose
+	// shape nobody chose.
+	SkipMechanicUnknown SkipReason = "mechanic_unknown"
 	// SkipNoApplicationMethod is a promotion nobody ever told what to discount.
 	SkipNoApplicationMethod SkipReason = "no_application_method"
+	// SkipRewardMismatch is a promotion whose MECHANIC and whose application
+	// method disagree: a buy-X-get-Y that does not say how many units are bought
+	// and how many are rewarded, or a standard promotion whose method carries
+	// those counts and has nothing to do with them.
+	//
+	// The two directions are ONE word for the reason [SkipCampaignClosed] merges
+	// three: the merchant's answer is the same either way — make the mechanic and
+	// the method agree — and the fix is in the same two places.
+	//
+	// Not applying is the safe direction. A half-configured reward that applied
+	// would give away units nobody earned, and this one is visible instead: the
+	// operator sees the word on the admin computation.
+	SkipRewardMismatch SkipReason = "reward_mismatch"
 	// SkipUsageExhausted is a promotion whose uses have run out.
 	SkipUsageExhausted SkipReason = "usage_exhausted"
 	// SkipCodeNotGiven is a coupon whose code was not among the ones sent.
@@ -97,10 +116,12 @@ func skipReasonOf(candidate models.PromotionCandidate, in ComputeInput) SkipReas
 	switch {
 	case promo.Status != models.PromotionActive:
 		return SkipNotActive
-	case promo.Type != models.PromotionStandard:
-		return SkipNotStandard
+	case !promo.Type.Valid():
+		return SkipMechanicUnknown
 	case candidate.Method == nil:
 		return SkipNoApplicationMethod
+	case !mechanicMatchesMethod(promo, candidate.Method):
+		return SkipRewardMismatch
 	case promo.UsageExhausted():
 		return SkipUsageExhausted
 	case !promo.IsAutomatic && !slices.Contains(in.Codes, promo.Code):

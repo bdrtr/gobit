@@ -25,7 +25,7 @@ func TestComputeDiscountsJSONSemayiKarsilar(t *testing.T) {
 	istek := []byte(`{
 	  "currency_code": "TRY",
 	  "context": {"region_id": "reg_1"},
-	  "items": [{"id": "li_1", "amount": 25000, "quantity": 2, "attributes": {"kategori": "giyim"}}],
+	  "items": [{"id": "li_1", "amount": 25000, "unit_amount": 12500, "quantity": 2, "attributes": {"kategori": "giyim"}}],
 	  "shipping_methods": [{"id": "sm_1", "amount": 4990, "attributes": {}}],
 	  "codes": ["yaz20", "HICYOK"],
 	  "at": "2026-08-24T10:00:00Z"
@@ -131,7 +131,7 @@ func TestComputeDiscountsJSONBuyukTamSayilariBozmaz(t *testing.T) {
 	interop := NewInterop(newTestService(repo))
 	// float64 yalnızca 2^53'e kadar tam sayıyı kayıpsız taşır; buradaki tutar
 	// onun üzerindedir ve JSON'dan float'a uğrasaydı kuruş düzeyinde bozulurdu.
-	istek := []byte(`{"currency_code":"TRY","items":[{"id":"li_1","amount":999999999999,"quantity":1}]}`)
+	istek := []byte(`{"currency_code":"TRY","items":[{"id":"li_1","amount":999999999999,"unit_amount":999999999999,"quantity":1}]}`)
 
 	payload, err := interop.ComputeDiscountsJSON(context.Background(), istek)
 	require.NoError(t, err)
@@ -153,7 +153,7 @@ func TestComputeDiscountsJSONZamanDamgasiKampanyaPenceresiniSecer(t *testing.T) 
 	}, percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
 
 	interop := NewInterop(newTestService(repo))
-	kalem := `"currency_code":"TRY","items":[{"id":"li_1","amount":10000,"quantity":1}]`
+	kalem := `"currency_code":"TRY","items":[{"id":"li_1","amount":10000,"unit_amount":10000,"quantity":1}]`
 
 	simdi, err := interop.ComputeDiscountsJSON(context.Background(), []byte("{"+kalem+"}"))
 	require.NoError(t, err)

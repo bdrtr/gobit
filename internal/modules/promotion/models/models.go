@@ -167,24 +167,20 @@ type PromotionType string
 const (
 	// PromotionStandard is the promotion that applies a discount directly.
 	PromotionStandard PromotionType = "standard"
-	// PromotionBuyGet is the "buy N pay M" mechanic.
+	// PromotionBuyGet is the "buy N, get M" mechanic.
 	//
-	// # It CANNOT BE ACTIVATED in this phase
+	// It answers two questions a standard promotion never asks: WHICH lines satisfy
+	// the buy condition, and on how many UNITS the reward lands. The first is a rule
+	// of its own ([RuleBuy]); the second is a pair of counts on the application
+	// method ([ApplicationMethod.BuyQuantity] and [ApplicationMethod.ApplyToQuantity]).
 	//
-	// The mechanic requires answering "which lines satisfy the BUY condition" and "on
-	// how many UNITS of which lines will the discount be applied"; the second one
-	// asks for the line's UNIT price, and the line amount (unit × quantity) carried
-	// by the service's computation input
-	// ([github.com/bdrtr/gobit/internal/modules/promotion/service.ComputeInput])
-	// cannot be turned into a unit price without dividing — and the division would
-	// produce a silent rounding error on a line that does not divide evenly by the
-	// quantity.
+	// The reward is measured per UNIT, so the computation input carries the line's
+	// unit price rather than deriving it: dividing the line amount by the quantity
+	// would round silently on a line that does not divide evenly.
 	//
-	// So as not to leave the gap SILENT, the type is closed STRUCTURALLY: a buyget
-	// promotion can be created but cannot be moved into the "active" status (see the
-	// service validation), and the computation skips it as a safety net as well. That
-	// way the state "an active promotion that is set up but does nothing" cannot
-	// arise.
+	// A buyget promotion whose method carries neither count produces no discount and
+	// is reported as skipped with a reason; the mechanic cannot be half-configured
+	// and silent.
 	PromotionBuyGet PromotionType = "buyget"
 )
 
@@ -346,6 +342,21 @@ type ApplicationMethod struct {
 	// single distributed total anyway and the notion of quantity is already out of
 	// play.
 	MaxQuantity *int64
+	// BuyQuantity is how many units must be bought before a [PromotionBuyGet]
+	// promotion rewards anything; it is nil on every other promotion.
+	//
+	// The units are counted over the lines the promotion's [RuleBuy] rules select,
+	// and the count is the QUANTITY of those lines rather than their number: "buy
+	// three" is satisfied by one line of three as well as by three lines of one.
+	BuyQuantity *int64
+	// ApplyToQuantity is how many units the reward lands on; it is nil on every
+	// other promotion.
+	//
+	// It is NOT [MaxQuantity] one level down. MaxQuantity bounds the units of a
+	// SINGLE line a fixed discount is repeated over; this one bounds the units of
+	// the whole reward, across every line the target rules selected, and the units
+	// it pays for are the CHEAPEST ones available.
+	ApplyToQuantity *int64
 	// CurrencyCode is the currency of a "fixed" discount (ISO 4217, UPPERCASE); on
 	// "percentage" it is empty.
 	CurrencyCode string
@@ -353,6 +364,17 @@ type ApplicationMethod struct {
 	CreatedAt time.Time
 	// UpdatedAt is the moment the record was last updated (UTC).
 	UpdatedAt time.Time
+}
+
+// RewardsPurchase reports whether the method carries the pair of counts a
+// [PromotionBuyGet] promotion needs.
+//
+// The two are asked for TOGETHER because either one alone describes nothing: a buy
+// quantity with no reward quantity rewards nothing, and a reward quantity with no
+// buy quantity is a discount that was never earned. The database holds the same
+// pairing as a CHECK, so a row written by hand cannot carry one of them either.
+func (m ApplicationMethod) RewardsPurchase() bool {
+	return m.BuyQuantity != nil && m.ApplyToQuantity != nil
 }
 
 // RuleOperator is the comparison operator of a promotion rule.
@@ -427,11 +449,22 @@ const (
 	// land on. It is meaningful on promotions whose target is "items" or "order"; on
 	// a shipping target the attributes of the shipping method are filtered.
 	RuleTarget RuleType = "target"
+	// RuleBuy looks at LINE attributes and filters which lines COUNT toward the buy
+	// condition of a [PromotionBuyGet] promotion.
+	//
+	// It is a third reading of the same attributes and not a variant of [RuleTarget]:
+	// what is bought and what is rewarded are two different sets, and a promotion
+	// saying "buy two shirts, get a tie" cannot be written with one of them. A
+	// buyget with no buy rule counts EVERY line, which is the "buy any three" shape.
+	//
+	// On a standard promotion it is inert: nothing reads it, because a standard
+	// promotion has no buy condition.
+	RuleBuy RuleType = "buy"
 )
 
 // Valid reports whether the rule type is defined.
 func (t RuleType) Valid() bool {
-	return t == RuleContext || t == RuleTarget
+	return t == RuleContext || t == RuleTarget || t == RuleBuy
 }
 
 // PromotionRule is a condition for a promotion to be applied.
@@ -530,6 +563,12 @@ func (c PromotionCandidate) ContextRules() []PromotionRule {
 // TargetRules returns the TARGET rules of the candidate.
 func (c PromotionCandidate) TargetRules() []PromotionRule {
 	return c.rulesOfType(RuleTarget)
+}
+
+// BuyRules returns the BUY rules of the candidate; only a buyget promotion reads
+// them.
+func (c PromotionCandidate) BuyRules() []PromotionRule {
+	return c.rulesOfType(RuleBuy)
 }
 
 // rulesOfType filters the rules of the given type.

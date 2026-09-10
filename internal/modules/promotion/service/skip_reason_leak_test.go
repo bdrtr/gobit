@@ -36,7 +36,7 @@ func TestTheInteropBodyDoesNotCarryTheReason(t *testing.T) {
 	interop := NewInterop(newTestService(repo))
 	request := []byte(`{
 	  "currency_code": "TRY",
-	  "items": [{"id": "li_1", "amount": 1000, "quantity": 1, "attributes": {}}],
+	  "items": [{"id": "li_1", "amount": 1000, "unit_amount": 1000, "quantity": 1, "attributes": {}}],
 	  "shipping_methods": [],
 	  "codes": ["PAUSED"],
 	  "at": "2026-08-24T10:00:00Z"

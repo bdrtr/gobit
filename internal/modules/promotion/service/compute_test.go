@@ -77,8 +77,30 @@ func seedPromotion(
 }
 
 // item hesap girdisine giren bir kalem üretir.
+// item bir kalem kurar ve BİRİM fiyatı tutardan türetir.
+//
+// Türetme yalnızca TESTTEDİR ve üretimde tam da bu yüzden yasaktır: bölme,
+// bölünmeyen bir tutarda sessizce yuvarlar. Testte sessiz değildir — kimliği
+// (birim × adet = tutar) [normalizeComputeInput] zorlar, yani bölünmeyen bir
+// tutarla kurulan kalem hesabın kapısında reddedilir ve testi düşürür. Birim
+// fiyatın kendisini konu eden testler onu [unitItem] ile açıkça yazar.
 func item(id string, amount, quantity int64, attrs map[string]string) ComputeItem {
-	return ComputeItem{ID: id, Amount: amount, Quantity: quantity, Attributes: attrs}
+	unit := int64(0)
+	if quantity > 0 {
+		unit = amount / quantity
+	}
+	return ComputeItem{ID: id, Amount: amount, UnitAmount: unit, Quantity: quantity, Attributes: attrs}
+}
+
+// unitItem BİRİM fiyattan bir kalem kurar; tutar birim × adettir.
+func unitItem(id string, unitAmount, quantity int64, attrs map[string]string) ComputeItem {
+	return ComputeItem{
+		ID:         id,
+		Amount:     unitAmount * quantity,
+		UnitAmount: unitAmount,
+		Quantity:   quantity,
+		Attributes: attrs,
+	}
 }
 
 // assertInvariants sonucun DEĞİŞMEZLERİNİ doğrular.
@@ -149,8 +171,8 @@ func TestComputeDiscountsSabitTutarEachAdedeUygulanir(t *testing.T) {
 	in := ComputeInput{
 		CurrencyCode: "TRY",
 		Items: []ComputeItem{
-			item("li_1", 5000, 3, nil), // 3 birim × 1000 = 3000
-			item("li_2", 2000, 1, nil), // 1 birim × 1000 = 1000
+			unitItem("li_1", 1666, 3, nil), // 3 birim × 1000 = 3000
+			unitItem("li_2", 2000, 1, nil), // 1 birim × 1000 = 1000
 		},
 	}
 	res, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
@@ -830,6 +852,29 @@ func TestComputeDiscountsGirdiDogrulamasi(t *testing.T) {
 			ad:      "geçersiz kupon kodu",
 			in:      ComputeInput{CurrencyCode: "TRY", Codes: []string{"a b"}},
 			gerekce: "kupon kodu boşluk içeremez",
+		},
+		{
+			ad: "birim fiyat gönderilmedi",
+			in: ComputeInput{CurrencyCode: "TRY", Items: []ComputeItem{
+				{ID: "li_1", Amount: 1000, Quantity: 1},
+			}},
+			gerekce: "birim fiyat ZORUNLUDUR; boş bırakılan alan, ödül mekaniğini " +
+				"bazı çağıranlarda sessizce çalışmaz kılardı",
+		},
+		{
+			ad: "birim fiyat × adet, tutarı vermiyor",
+			in: ComputeInput{CurrencyCode: "TRY", Items: []ComputeItem{
+				{ID: "li_1", Amount: 1000, UnitAmount: 400, Quantity: 2},
+			}},
+			gerekce: "ödül birimden, satır sınırı tutardan okunur; ikisi ayrıştığında " +
+				"promosyon satırın taşıyabileceğinden fazlasını vaat eder",
+		},
+		{
+			ad: "negatif birim fiyat",
+			in: ComputeInput{CurrencyCode: "TRY", Items: []ComputeItem{
+				{ID: "li_1", Amount: -2, UnitAmount: -1, Quantity: 2},
+			}},
+			gerekce: "negatif birim fiyat bir fiyat değildir",
 		},
 	}
 

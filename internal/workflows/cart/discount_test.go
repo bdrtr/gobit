@@ -111,16 +111,19 @@ func TestCalculateTotalsDiscountRequestShape(t *testing.T) {
 	assert.Equal(t, map[string]string{attrRegionID: testRegionID}, req.Context)
 	require.Len(t, req.Items, 2)
 	assert.Equal(t, discountRequestItem{
-		ID:       testLineA,
-		Amount:   2000,
-		Quantity: 2,
+		ID:         testLineA,
+		Amount:     2000,
+		UnitAmount: 1000,
+		Quantity:   2,
 		Attributes: map[string]string{
 			attrVariantID:    testVariantA,
 			attrProductID:    testProductA,
 			attrIsGiftcard:   "false",
 			attrDiscountable: "true",
 		},
-	}, req.Items[0], "the item amount is the PRE-DISCOUNT subtotal and the quantity is carried for tiering")
+	}, req.Items[0],
+		"the item amount is the PRE-DISCOUNT subtotal, the unit price is sent beside it "+
+			"and the quantity is carried for tiering")
 	assert.Equal(t, testLineB, req.Items[1].ID, "the order is the cart's order")
 }
 

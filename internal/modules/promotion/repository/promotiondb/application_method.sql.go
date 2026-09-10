@@ -12,7 +12,7 @@ import (
 )
 
 const getApplicationMethod = `-- name: GetApplicationMethod :one
-SELECT id, promotion_id, type, target_type, allocation, value, max_quantity, currency_code, created_at, updated_at, deleted_at FROM promotion_application_method
+SELECT id, promotion_id, type, target_type, allocation, value, max_quantity, currency_code, created_at, updated_at, deleted_at, buy_quantity, apply_to_quantity FROM promotion_application_method
 WHERE promotion_id = $1 AND deleted_at IS NULL
 `
 
@@ -31,12 +31,14 @@ func (q *Queries) GetApplicationMethod(ctx context.Context, promotionID string) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.BuyQuantity,
+		&i.ApplyToQuantity,
 	)
 	return i, err
 }
 
 const getApplicationMethodsByPromotions = `-- name: GetApplicationMethodsByPromotions :many
-SELECT id, promotion_id, type, target_type, allocation, value, max_quantity, currency_code, created_at, updated_at, deleted_at FROM promotion_application_method
+SELECT id, promotion_id, type, target_type, allocation, value, max_quantity, currency_code, created_at, updated_at, deleted_at, buy_quantity, apply_to_quantity FROM promotion_application_method
 WHERE promotion_id = ANY ($1::text[]) AND deleted_at IS NULL
 ORDER BY promotion_id
 `
@@ -65,6 +67,8 @@ func (q *Queries) GetApplicationMethodsByPromotions(ctx context.Context, promoti
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.BuyQuantity,
+			&i.ApplyToQuantity,
 		); err != nil {
 			return nil, err
 		}
@@ -99,31 +103,35 @@ const upsertApplicationMethod = `-- name: UpsertApplicationMethod :one
 
 INSERT INTO promotion_application_method (
     id, promotion_id, type, target_type, allocation, value, max_quantity,
-    currency_code, created_at, updated_at
+    buy_quantity, apply_to_quantity, currency_code, created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
 ON CONFLICT (promotion_id) WHERE deleted_at IS NULL
 DO UPDATE SET
-    type          = EXCLUDED.type,
-    target_type   = EXCLUDED.target_type,
-    allocation    = EXCLUDED.allocation,
-    value         = EXCLUDED.value,
-    max_quantity  = EXCLUDED.max_quantity,
-    currency_code = EXCLUDED.currency_code,
-    updated_at    = EXCLUDED.updated_at
-RETURNING id, promotion_id, type, target_type, allocation, value, max_quantity, currency_code, created_at, updated_at, deleted_at
+    type              = EXCLUDED.type,
+    target_type       = EXCLUDED.target_type,
+    allocation        = EXCLUDED.allocation,
+    value             = EXCLUDED.value,
+    max_quantity      = EXCLUDED.max_quantity,
+    buy_quantity      = EXCLUDED.buy_quantity,
+    apply_to_quantity = EXCLUDED.apply_to_quantity,
+    currency_code     = EXCLUDED.currency_code,
+    updated_at        = EXCLUDED.updated_at
+RETURNING id, promotion_id, type, target_type, allocation, value, max_quantity, currency_code, created_at, updated_at, deleted_at, buy_quantity, apply_to_quantity
 `
 
 type UpsertApplicationMethodParams struct {
-	ID           string
-	PromotionID  string
-	Type         string
-	TargetType   string
-	Allocation   string
-	Value        int64
-	MaxQuantity  *int64
-	CurrencyCode *string
-	CreatedAt    pgtype.Timestamptz
+	ID              string
+	PromotionID     string
+	Type            string
+	TargetType      string
+	Allocation      string
+	Value           int64
+	MaxQuantity     *int64
+	BuyQuantity     *int64
+	ApplyToQuantity *int64
+	CurrencyCode    *string
+	CreatedAt       pgtype.Timestamptz
 }
 
 // promotion_application_method queries.
@@ -145,6 +153,8 @@ func (q *Queries) UpsertApplicationMethod(ctx context.Context, arg UpsertApplica
 		arg.Allocation,
 		arg.Value,
 		arg.MaxQuantity,
+		arg.BuyQuantity,
+		arg.ApplyToQuantity,
 		arg.CurrencyCode,
 		arg.CreatedAt,
 	)
@@ -161,6 +171,8 @@ func (q *Queries) UpsertApplicationMethod(ctx context.Context, arg UpsertApplica
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.BuyQuantity,
+		&i.ApplyToQuantity,
 	)
 	return i, err
 }

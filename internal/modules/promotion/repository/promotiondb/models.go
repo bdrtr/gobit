@@ -40,17 +40,19 @@ type Promotion struct {
 }
 
 type PromotionApplicationMethod struct {
-	ID           string
-	PromotionID  string
-	Type         string
-	TargetType   string
-	Allocation   string
-	Value        int64
-	MaxQuantity  *int64
-	CurrencyCode *string
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
-	DeletedAt    pgtype.Timestamptz
+	ID              string
+	PromotionID     string
+	Type            string
+	TargetType      string
+	Allocation      string
+	Value           int64
+	MaxQuantity     *int64
+	CurrencyCode    *string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	DeletedAt       pgtype.Timestamptz
+	BuyQuantity     *int64
+	ApplyToQuantity *int64
 }
 
 type PromotionRedemption struct {

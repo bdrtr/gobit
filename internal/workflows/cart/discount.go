@@ -150,6 +150,13 @@ type discountRequestItem struct {
 	ID string `json:"id"`
 	// Amount is the line's PRE-DISCOUNT subtotal (unit x quantity).
 	Amount int64 `json:"amount"`
+	// UnitAmount is the line's unit price, and the other side REQUIRES it to be
+	// exactly Amount / Quantity.
+	//
+	// It is sent rather than left to be derived because the receiver's division
+	// would round: a "buy two, get one" reward is measured per UNIT, and this
+	// package is the one that already knows the number ([LineTotals.UnitPrice]).
+	UnitAmount int64 `json:"unit_amount"`
 	// Quantity is the quantity on the line; it determines how many units a "fixed
 	// amount per unit" discount applies to.
 	Quantity int64 `json:"quantity"`
@@ -380,6 +387,7 @@ func (w *Workflows) discountRequestFor(
 		items = append(items, discountRequestItem{
 			ID:         lines[i].LineItemID,
 			Amount:     lines[i].Subtotal,
+			UnitAmount: lines[i].UnitPrice,
 			Quantity:   snap.Items[i].Quantity,
 			Attributes: lineAttributes(snap.Items[i].VariantID, flags),
 		})

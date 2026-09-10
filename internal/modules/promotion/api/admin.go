@@ -259,6 +259,10 @@ type applicationMethodRequest struct {
 	Value int64 `json:"value"`
 	// MaxQuantity sabit tutarın uygulanacağı azami adettir.
 	MaxQuantity *int64 `json:"max_quantity"`
+	// BuyQuantity ödülün hak edilmesi için alınması gereken adettir.
+	BuyQuantity *int64 `json:"buy_quantity"`
+	// ApplyToQuantity ödülün ineceği adettir; alım adediyle BİRLİKTE verilir.
+	ApplyToQuantity *int64 `json:"apply_to_quantity"`
 	// CurrencyCode sabit tutarlı indirimin para birimidir.
 	CurrencyCode string `json:"currency_code"`
 }
@@ -277,12 +281,14 @@ func (a *API) setApplicationMethod(w http.ResponseWriter, r *http.Request) {
 	}
 
 	method, err := a.svc.SetApplicationMethod(ctx, pathID(r, "id"), service.ApplicationMethodInput{
-		Type:         models.ApplicationMethodType(req.Type),
-		TargetType:   models.ApplicationTargetType(req.TargetType),
-		Allocation:   models.Allocation(req.Allocation),
-		Value:        req.Value,
-		MaxQuantity:  req.MaxQuantity,
-		CurrencyCode: req.CurrencyCode,
+		Type:            models.ApplicationMethodType(req.Type),
+		TargetType:      models.ApplicationTargetType(req.TargetType),
+		Allocation:      models.Allocation(req.Allocation),
+		Value:           req.Value,
+		MaxQuantity:     req.MaxQuantity,
+		BuyQuantity:     req.BuyQuantity,
+		ApplyToQuantity: req.ApplyToQuantity,
+		CurrencyCode:    req.CurrencyCode,
 	})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
@@ -492,6 +498,9 @@ type computeItemRequest struct {
 	ID string `json:"id"`
 	// Amount kalemin ara toplamıdır (birim × adet), minor unit.
 	Amount int64 `json:"amount"`
+	// UnitAmount kalemin birim fiyatıdır; ZORUNLUDUR ve
+	// UnitAmount × Quantity = Amount olmak zorundadır.
+	UnitAmount int64 `json:"unit_amount"`
 	// Quantity kalemin adedidir.
 	Quantity int64 `json:"quantity"`
 	// Attributes hedef kurallarının bakacağı özniteliklerdir.
@@ -543,6 +552,7 @@ func (a *API) computeDiscounts(w http.ResponseWriter, r *http.Request) {
 		in.Items = append(in.Items, service.ComputeItem{
 			ID:         req.Items[i].ID,
 			Amount:     req.Items[i].Amount,
+			UnitAmount: req.Items[i].UnitAmount,
 			Quantity:   req.Items[i].Quantity,
 			Attributes: req.Items[i].Attributes,
 		})

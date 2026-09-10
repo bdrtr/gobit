@@ -20,6 +20,41 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir alım artık bir birim kazandırıyor** ("al X, kazan Y" mekaniği,
+  ADR 0112). `buyget` bir enum'da kelimeydi ve başka bir şey değildi: tür
+  yazılabiliyor, promosyon yayına alınamıyor, hesap da onu atlıyordu — hiç
+  inşa edilmemiş bir mekaniğin yerinde duran üç ret. Eksik olan üç şeydi ve
+  üçü ayrı cinstendi: kurallar `context` ile `target`tı, yani hangi satırın
+  ALINDIĞINI hangisinin ÖDÜLLENDİRİLDİĞİNDEN ayıran bir şey yoktu; uygulama
+  yöntemi tutar ölçüyordu, adet değil, yani ödülün kaç birime ineceğini
+  söyleyen bir alan yoktu; ve hesap girdisi satır tutarını taşıyordu, birim
+  fiyatı değil — ödül ise birim başına fiyatlanır ve türetme tek bir bölmedir,
+  bölme de yuvarlar.
+  Karar: `buy` kuralların seçtiği birimler `buy_quantity`'ye karşı sayılır,
+  sonra hedef kuralların seçtiği ve alımın TÜKETMEDİĞİ birimlerin EN UCUZ
+  `apply_to_quantity` tanesi indirilir. Alınan bir birim aynı zamanda
+  ödüllendirilen birim değildir, yani "al 2, birini kazan" sepette ÜÇ birim
+  ister; öteki okuma, aynı sözle müşteriye iki tanesini bir fiyatına verirdi.
+  Alımı EN PAHALI birimler karşılar, ödül en ucuza iner — süpermarketin kendi
+  kuralı ve tacir açısından güvenli yön. Ödül hesap başına BİR KEZ verilir;
+  tekrarlayan merdiven ("her üçüncüsü bedava") ayrı bir sözdür ve tetiği bir
+  tacirin onu yazmasıdır.
+  Bedeli iki yerde ödendi. Birim fiyat artık indirim isteğinin ZORUNLU alanıdır
+  ve kimliği (birim × adet = tutar) zorlanır — iki çağıran da (sepet akışı ve
+  yönetim hesabı ucu) gönderir, çünkü isteğe bağlı bir alan mekaniği bir
+  çağıranda çalıştırıp diğerinde sessizce çalıştırmazdı. Ve mekanik ile yöntem
+  UYUŞMAK zorundadır: sayı çifti olmayan bir buyget de, çifti taşıyan bir
+  standart promosyon da `reward_mismatch` ile elenir ve operatöre söylenir
+  (ADR 0110). Uygulamamak güvenli yöndür; eşleşmenin kendisi bir CHECK'tir,
+  yani elle yazılan bir satır da yarım kalamaz. `allocation` ile `max_quantity`
+  bu yolda okunmaz, ve `not_standard` eleme kelimesi kalktı — motor artık iki
+  mekaniği de uyguluyor.
+  Vitrinin kupon sorgusu da düzeldi: buyget kuponu artık MEKANİĞİ ve iki sayısı
+  ile dönüyor, ve hesabın eleyeceği bir kuponu müşteriye sunmuyor. İkisi de aynı
+  yüklemi kullanıyor; ayrı yazılsalardı müşteri kodu yazar, hiçbir şey olmaz ve
+  hiçbir yerde bir sebep durmazdı. Mekaniğin gövdede olması şart: "al 2, birini
+  kazan" kuponu on bin baz puan taşır ve mekanik söylenmeseydi vitrin onu
+  "%100 indirim" diye gösterirdi.
 - **Sepetin KENDI verisi artik bir promosyon kuralini yonetebiliyor**
   (`cart.` onekiyle bağlam, ADR 0111). Indirim motorunun kural baglamı sepet
   akisinin karar verdigi IKI addan kuruluyordu -- bolge ve musteri grubu -- ve

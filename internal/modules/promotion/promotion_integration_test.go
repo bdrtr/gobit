@@ -184,7 +184,11 @@ func TestMigrationlarGercektenGeriAlinabilir(t *testing.T) {
 	version, dirty, err := db.Version(ctx, testDSN, promotion.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "yarıda kalmış migration olmamalı")
-	assert.Equal(t, uint(1), version)
+	// Sayı ELLE yazılır ve gömülü dosyalardan TÜRETİLMEZ: türetilmiş bir sayı
+	// ne olursa olsun kendisiyle uyuşurdu, oysa bu satırın işi bir migration'ın
+	// EKLENDİĞİNİ fark ettirmektir. Aynı gerekçe product modülünün aynı
+	// satırının yanında da yazılıdır.
+	assert.Equal(t, uint(2), version)
 }
 
 // TestCrossModuleForeignKeyYok modülün tablolarındaki TÜM foreign key'lerin
@@ -306,7 +310,7 @@ func TestUygulamaYontemiYerineKonur(t *testing.T) {
 	// Yöntemi silinen promosyon hesapta indirim ÜRETMEZ.
 	res, err := svc.ComputeDiscounts(ctx, service.ComputeInput{
 		CurrencyCode: "TRY",
-		Items:        []service.ComputeItem{{ID: "li_1", Amount: 10000, Quantity: 1}},
+		Items:        []service.ComputeItem{{ID: "li_1", Amount: 10000, UnitAmount: 10000, Quantity: 1}},
 	})
 	require.NoError(t, err)
 	assert.Zero(t, res.DiscountTotal)
@@ -362,8 +366,8 @@ func TestHesapGercekVeritabaniUzerindeCalisir(t *testing.T) {
 		CurrencyCode: "TRY",
 		Context:      map[string]string{"region_id": "reg_1"},
 		Items: []service.ComputeItem{
-			{ID: "li_1", Amount: 10_000, Quantity: 1},
-			{ID: "li_2", Amount: 5_001, Quantity: 1},
+			{ID: "li_1", Amount: 10_000, UnitAmount: 10_000, Quantity: 1},
+			{ID: "li_2", Amount: 5_001, UnitAmount: 5_001, Quantity: 1},
 		},
 		Codes: []string{kupon.Code},
 	}
@@ -627,7 +631,7 @@ func TestInteropYuzeyiJSONSemasiniKarsilar(t *testing.T) {
 	interop := service.NewInterop(svc)
 	istek := []byte(`{
 	  "currency_code": "TRY",
-	  "items": [{"id": "li_1", "amount": 10000, "quantity": 1}],
+	  "items": [{"id": "li_1", "amount": 10000, "unit_amount": 10000, "quantity": 1}],
 	  "shipping_methods": [{"id": "sm_1", "amount": 4990}]
 	}`)
 
@@ -810,6 +814,46 @@ func TestVeritabaniKisitlariSonSavunmadir(t *testing.T) {
 			},
 			gerekce: "negatif bütçe yazılamaz",
 		},
+		{
+			ad: "yarım ödül çifti",
+			yaz: func() error {
+				promo, err := repo.CreatePromotion(ctx, models.Promotion{
+					ID: models.NewPromotionID(now), Code: uniqueCode(),
+					Type: models.PromotionBuyGet, Status: models.PromotionDraft,
+				}, now)
+				if err != nil {
+					return err
+				}
+				_, err = repo.SetApplicationMethod(ctx, models.ApplicationMethod{
+					ID: models.NewApplicationMethodID(now), PromotionID: promo.ID,
+					Type: models.MethodPercentage, TargetType: models.TargetItems,
+					Allocation: models.AllocationEach, Value: 10000,
+					BuyQuantity: ptr(int64(2)),
+				}, now)
+				return err
+			},
+			gerekce: "ödülsüz bir alım koşulu yazılamaz; çift TAM ya da HİÇ",
+		},
+		{
+			ad: "sıfır ödül adedi",
+			yaz: func() error {
+				promo, err := repo.CreatePromotion(ctx, models.Promotion{
+					ID: models.NewPromotionID(now), Code: uniqueCode(),
+					Type: models.PromotionBuyGet, Status: models.PromotionDraft,
+				}, now)
+				if err != nil {
+					return err
+				}
+				_, err = repo.SetApplicationMethod(ctx, models.ApplicationMethod{
+					ID: models.NewApplicationMethodID(now), PromotionID: promo.ID,
+					Type: models.MethodPercentage, TargetType: models.TargetItems,
+					Allocation: models.AllocationEach, Value: 10000,
+					BuyQuantity: ptr(int64(2)), ApplyToQuantity: ptr(int64(0)),
+				}, now)
+				return err
+			},
+			gerekce: "sıfır birime inen bir ödül, ödül değildir",
+		},
 	}
 
 	for _, tt := range testler {
@@ -821,6 +865,50 @@ func TestVeritabaniKisitlariSonSavunmadir(t *testing.T) {
 				"kısıt ihlali istemci hatası olarak sınıflandırılmalı: %v", err)
 		})
 	}
+}
+
+// TestOdulSayilariVeAlimKuraliVeritabanindanGeriGelir "al X, kazan Y" mekaniğinin
+// ZEMİNİNİ sınar: iki yeni kolon ve üçüncü kural türü gerçek şemada duruyor mu.
+//
+// Birim testleri mekaniği elle kurulmuş adaylar üzerinde kanıtlar; onların
+// kanıtlayamadığı şey, adayın veritabanından bu biçimde GELDİĞİDİR — göç
+// uygulanmamışsa ya da eşleme kolonu düşürüyorsa, hesap doğru çalışır ve hiçbir
+// promosyon ona ulaşamaz.
+func TestOdulSayilariVeAlimKuraliVeritabanindanGeriGelir(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+
+	promo, err := svc.CreatePromotion(ctx, service.PromotionInput{
+		Code: uniqueCode(), IsAutomatic: true,
+		Type: models.PromotionBuyGet, Status: models.PromotionActive,
+	})
+	require.NoError(t, err, "buyget promosyonu yayına alınabilir (ADR 0112)")
+
+	_, err = svc.SetApplicationMethod(ctx, promo.ID, service.ApplicationMethodInput{
+		Type: models.MethodPercentage, TargetType: models.TargetItems,
+		Allocation: models.AllocationEach, Value: 10000,
+		BuyQuantity: ptr(int64(2)), ApplyToQuantity: ptr(int64(1)),
+	})
+	require.NoError(t, err)
+
+	_, err = svc.AddPromotionRule(ctx, promo.ID, service.RuleInput{
+		RuleType: models.RuleBuy, Attribute: "variant_id",
+		Operator: models.OpIn, Values: []string{"var_1"},
+	})
+	require.NoError(t, err, "üçüncü kural türü şemanın CHECK'inden geçmeli")
+
+	yontem, err := svc.GetApplicationMethod(ctx, promo.ID)
+	require.NoError(t, err)
+	require.NotNil(t, yontem.BuyQuantity, "alım adedi veritabanından geri gelmeli")
+	require.NotNil(t, yontem.ApplyToQuantity, "ödül adedi veritabanından geri gelmeli")
+	assert.Equal(t, int64(2), *yontem.BuyQuantity)
+	assert.Equal(t, int64(1), *yontem.ApplyToQuantity)
+
+	kurallar, err := svc.ListPromotionRules(ctx, promo.ID)
+	require.NoError(t, err)
+	require.Len(t, kurallar, 1)
+	assert.Equal(t, models.RuleBuy, kurallar[0].RuleType,
+		"kural türü olduğu gibi geri gelmeli; hesap alım kümesini bununla seçer")
 }
 
 // TestRedeemYayindaOlmayanPromosyonuGercekVeritabanindaReddeder taslak ve pasif
@@ -1197,7 +1285,7 @@ func TestKuponKoduylaKullanimZinciriGercekVeritabanindaTamamlanir(t *testing.T) 
 
 	res, err := svc.ComputeDiscounts(ctx, service.ComputeInput{
 		CurrencyCode: "TRY",
-		Items:        []service.ComputeItem{{ID: "li_1", Amount: 10_000, Quantity: 1}},
+		Items:        []service.ComputeItem{{ID: "li_1", Amount: 10_000, UnitAmount: 10_000, Quantity: 1}},
 		Codes:        []string{kupon.Code},
 	})
 	require.NoError(t, err)

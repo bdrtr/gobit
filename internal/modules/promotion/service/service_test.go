@@ -52,24 +52,69 @@ func TestCreatePromotionAyniKodIkinciKezAlinamaz(t *testing.T) {
 		"kod büyük/küçük harften bağımsız BENZERSİZDİR")
 }
 
-func TestBuygetPromosyonuEtkinlestirilemez(t *testing.T) {
+func TestBuygetPromosyonuEtkinlestirilebilir(t *testing.T) {
 	repo := newMemRepo()
 	svc := newTestService(repo)
 
-	_, err := svc.CreatePromotion(context.Background(), PromotionInput{
+	aktif, err := svc.CreatePromotion(context.Background(), PromotionInput{
 		Code: "BUYGET", Type: models.PromotionBuyGet, Status: models.PromotionActive,
 	})
 
-	require.Error(t, err)
-	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
-	assert.Equal(t, CodeBuyGetNotActivatable, errors.CodeOf(err),
-		"mekanik yokken aktif buyget, hiçbir şey yapmayan bir promosyon bırakırdı")
+	require.NoError(t, err, "mekanik geldi (ADR 0112); tür artık yayına engel değil")
+	assert.Equal(t, models.PromotionBuyGet, aktif.Type)
+	assert.Equal(t, models.PromotionActive, aktif.Status)
+}
 
-	taslak, err := svc.CreatePromotion(context.Background(), PromotionInput{
-		Code: "BUYGET", Type: models.PromotionBuyGet,
-	})
-	require.NoError(t, err, "buyget promosyonu TASLAK olarak hazırlanabilir")
-	assert.Equal(t, models.PromotionBuyGet, taslak.Type)
+func TestOdulSayiCiftiTamYaDaHicVerilir(t *testing.T) {
+	iki := int64(2)
+
+	testler := []struct {
+		ad   string
+		in   ApplicationMethodInput
+		hata bool
+	}{
+		{
+			ad: "yalnızca alım adedi",
+			in: ApplicationMethodInput{
+				Type: models.MethodPercentage, TargetType: models.TargetItems,
+				Value: 10000, BuyQuantity: &iki,
+			},
+			hata: true,
+		},
+		{
+			ad: "yalnızca ödül adedi",
+			in: ApplicationMethodInput{
+				Type: models.MethodPercentage, TargetType: models.TargetItems,
+				Value: 10000, ApplyToQuantity: &iki,
+			},
+			hata: true,
+		},
+		{
+			ad: "ikisi birden",
+			in: ApplicationMethodInput{
+				Type: models.MethodPercentage, TargetType: models.TargetItems,
+				Value: 10000, BuyQuantity: &iki, ApplyToQuantity: &iki,
+			},
+		},
+		{
+			ad: "hiçbiri",
+			in: ApplicationMethodInput{
+				Type: models.MethodPercentage, TargetType: models.TargetItems, Value: 1000,
+			},
+		},
+	}
+
+	for _, tt := range testler {
+		t.Run(tt.ad, func(t *testing.T) {
+			_, err := buildApplicationMethod("appm_1", "promo_1", tt.in, time.Now().UTC())
+			if tt.hata {
+				require.Error(t, err, "yarım bir ödül, hak edilmemiş ya da ödülsüz bir koşuldur")
+				assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestPromotionGirdiDogrulamasi(t *testing.T) {
@@ -591,6 +636,17 @@ func TestLookupStoreCouponSizdirmaz(t *testing.T) {
 			kod:     "a b",
 			gerekce: "biçim hatası da 'yok' sayılır; biçim doğrulaması arama alanını daraltırdı",
 		},
+		{
+			ad: "sayı çifti olmayan buyget",
+			hazirla: func(repo *memRepo) {
+				seedPromotion(repo, models.Promotion{
+					ID: "promo_1", Code: "YARIM", Type: models.PromotionBuyGet,
+				}, percentageMethod("promo_1", 10000, models.TargetItems, models.AllocationEach))
+			},
+			kod: "YARIM",
+			gerekce: "hesabın eleyeceği kupon müşteriye SUNULMAMALI; " +
+				"sunulsaydı müşteri kodu yazar ve hiçbir şey olmazdı",
+		},
 	}
 
 	for _, tt := range testler {
@@ -606,6 +662,30 @@ func TestLookupStoreCouponSizdirmaz(t *testing.T) {
 				"tüm sebepler AYNI kodu dönmeli; ayrım sızıntı olurdu")
 		})
 	}
+}
+
+// TestLookupStoreCouponBuygetKuponunuMekanigiyleDoner kuponun ne verdiğini
+// söyleyen yarıyı pinler.
+//
+// Ölçü tek başına yanıltıcıdır: "al 2, birini kazan" kuponu on bin baz puan
+// taşır ve mekanik söylenmeseydi vitrin onu "%100 indirim" diye gösterirdi.
+func TestLookupStoreCouponBuygetKuponunuMekanigiyleDoner(t *testing.T) {
+	repo := newMemRepo()
+	yontem := percentageMethod("promo_1", 10000, models.TargetItems, models.AllocationEach)
+	yontem.BuyQuantity = ptr(int64(2))
+	yontem.ApplyToQuantity = ptr(int64(1))
+	seedPromotion(repo, models.Promotion{
+		ID: "promo_1", Code: "AL2KAZAN1", Type: models.PromotionBuyGet,
+	}, yontem)
+
+	kupon, err := newTestService(repo).LookupStoreCoupon(context.Background(), "al2kazan1")
+	require.NoError(t, err, "kurulu bir buyget kuponu müşteriye VARDIR")
+
+	assert.Equal(t, models.PromotionBuyGet, kupon.Mechanic)
+	require.NotNil(t, kupon.BuyQuantity)
+	require.NotNil(t, kupon.ApplyToQuantity)
+	assert.Equal(t, int64(2), *kupon.BuyQuantity)
+	assert.Equal(t, int64(1), *kupon.ApplyToQuantity)
 }
 
 func TestGetPromotionByCodeYonetimTaslagiGorur(t *testing.T) {

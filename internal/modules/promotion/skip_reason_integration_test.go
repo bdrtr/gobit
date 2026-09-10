@@ -45,7 +45,7 @@ func TestTheWiderReadSeesAPromotionTheNarrowOneCannot(t *testing.T) {
 
 	in := service.ComputeInput{
 		CurrencyCode: "TRY",
-		Items:        []service.ComputeItem{{ID: "li_1", Amount: 10000, Quantity: 1}},
+		Items:        []service.ComputeItem{{ID: "li_1", Amount: 10000, UnitAmount: 10000, Quantity: 1}},
 		Codes:        []string{code},
 	}
 
@@ -90,7 +90,7 @@ func TestBothQueriesGiveTheSameDiscountOnTheRealSchema(t *testing.T) {
 
 	in := service.ComputeInput{
 		CurrencyCode: "TRY",
-		Items:        []service.ComputeItem{{ID: "li_1", Amount: 10000, Quantity: 1}},
+		Items:        []service.ComputeItem{{ID: "li_1", Amount: 10000, UnitAmount: 10000, Quantity: 1}},
 	}
 
 	narrow, err := svc.ComputeDiscounts(ctx, in)
@@ -133,7 +133,7 @@ func TestADeletedPromotionIsGoneRatherThanSkipped(t *testing.T) {
 
 	wide, err := svc.ExplainDiscounts(ctx, service.ComputeInput{
 		CurrencyCode: "TRY",
-		Items:        []service.ComputeItem{{ID: "li_1", Amount: 10000, Quantity: 1}},
+		Items:        []service.ComputeItem{{ID: "li_1", Amount: 10000, UnitAmount: 10000, Quantity: 1}},
 		Codes:        []string{code},
 	})
 	require.NoError(t, err)
@@ -178,7 +178,7 @@ func TestTheWiderReadStillAsksAboutOneCart(t *testing.T) {
 
 	wide, err := svc.ExplainDiscounts(ctx, service.ComputeInput{
 		CurrencyCode: "TRY",
-		Items:        []service.ComputeItem{{ID: "li_1", Amount: 10000, Quantity: 1}},
+		Items:        []service.ComputeItem{{ID: "li_1", Amount: 10000, UnitAmount: 10000, Quantity: 1}},
 		// No codes at all: the question is about a cart with no coupon typed.
 	})
 	require.NoError(t, err)
@@ -192,7 +192,7 @@ func TestTheWiderReadStillAsksAboutOneCart(t *testing.T) {
 	// above is about the code rather than about the promotion being invisible.
 	asked, err := svc.ExplainDiscounts(ctx, service.ComputeInput{
 		CurrencyCode: "TRY",
-		Items:        []service.ComputeItem{{ID: "li_1", Amount: 10000, Quantity: 1}},
+		Items:        []service.ComputeItem{{ID: "li_1", Amount: 10000, UnitAmount: 10000, Quantity: 1}},
 		Codes:        []string{untypedCode},
 	})
 	require.NoError(t, err)

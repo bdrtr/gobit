@@ -46,7 +46,12 @@ func TestEveryReasonIsReachable(t *testing.T) {
 		SkipNotActive: func(c *models.PromotionCandidate, _ *ComputeInput) {
 			c.Promotion.Status = models.PromotionDraft
 		},
-		SkipNotStandard: func(c *models.PromotionCandidate, _ *ComputeInput) {
+		SkipMechanicUnknown: func(c *models.PromotionCandidate, _ *ComputeInput) {
+			c.Promotion.Type = models.PromotionType("raffle")
+		},
+		SkipRewardMismatch: func(c *models.PromotionCandidate, _ *ComputeInput) {
+			// The mechanic rewards a purchase and the method says nothing about
+			// how many units are bought or rewarded.
 			c.Promotion.Type = models.PromotionBuyGet
 		},
 		SkipNoApplicationMethod: func(c *models.PromotionCandidate, _ *ComputeInput) {
@@ -172,8 +177,9 @@ func reasonKeys(cases map[SkipReason]func(*models.PromotionCandidate, *ComputeIn
 func declaredSkipReasons() []SkipReason {
 	return []SkipReason{
 		SkipNotActive,
-		SkipNotStandard,
+		SkipMechanicUnknown,
 		SkipNoApplicationMethod,
+		SkipRewardMismatch,
 		SkipUsageExhausted,
 		SkipCodeNotGiven,
 		SkipCampaignClosed,

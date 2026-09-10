@@ -35,6 +35,15 @@ type ApplicationMethodInput struct {
 	Value int64
 	// MaxQuantity sabit tutarın uygulanacağı azami adettir; nil ise sınırsız.
 	MaxQuantity *int64
+	// BuyQuantity ödülün hak edilmesi için alınması gereken adettir; yalnızca
+	// "buyget" promosyonunda anlamlıdır.
+	BuyQuantity *int64
+	// ApplyToQuantity ödülün ineceği adettir; yalnızca "buyget" promosyonunda
+	// anlamlıdır.
+	//
+	// İkisi BİRLİKTE verilir ya da hiç verilmez; gerekçe
+	// [models.ApplicationMethod.RewardsPurchase] godoc'undadır.
+	ApplyToQuantity *int64
 	// CurrencyCode "fixed" indirimin para birimidir; "percentage"ta verilmemelidir.
 	CurrencyCode string
 }
@@ -219,6 +228,9 @@ func buildApplicationMethod(
 			return models.ApplicationMethod{}, err
 		}
 	}
+	if err := validateRewardQuantities(in.BuyQuantity, in.ApplyToQuantity); err != nil {
+		return models.ApplicationMethod{}, err
+	}
 
 	currency := ""
 	switch in.Type {
@@ -244,17 +256,43 @@ func buildApplicationMethod(
 	}
 
 	return models.ApplicationMethod{
-		ID:           id,
-		PromotionID:  promotionID,
-		Type:         in.Type,
-		TargetType:   in.TargetType,
-		Allocation:   allocation,
-		Value:        in.Value,
-		MaxQuantity:  copyInt64(in.MaxQuantity),
-		CurrencyCode: currency,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:              id,
+		PromotionID:     promotionID,
+		Type:            in.Type,
+		TargetType:      in.TargetType,
+		Allocation:      allocation,
+		Value:           in.Value,
+		MaxQuantity:     copyInt64(in.MaxQuantity),
+		BuyQuantity:     copyInt64(in.BuyQuantity),
+		ApplyToQuantity: copyInt64(in.ApplyToQuantity),
+		CurrencyCode:    currency,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}, nil
+}
+
+// validateRewardQuantities "al X, kazan Y" sayı çiftini doğrular.
+//
+// Çift ya TAM ya da HİÇ verilir. Tek başına bir alım adedi ödülsüz bir koşuldur
+// ve indirim üretmez; tek başına bir ödül adedi ise hak edilmemiş bir indirimdir.
+// Aynı eşleşme migration'da da CHECK olarak durur, yani elle yazılan bir satır da
+// yarım kalamaz.
+//
+// Promosyonun TÜRÜNE bakılmaz ve bakılamaz: tür başka bir tablodadır. Türle
+// çiftin uyuşmadığı hâlin sahibi hesaptır — çifti olmayan bir "buyget" indirim
+// üretmez ve nedenini söyler ([SkipRewardMismatch]).
+func validateRewardQuantities(buy, apply *int64) error {
+	if (buy == nil) != (apply == nil) {
+		return errors.Invalid(CodeInvalidInput,
+			"alım adedi ile ödül adedi birlikte verilir; biri verilip diğeri boş bırakılamaz")
+	}
+	if buy == nil {
+		return nil
+	}
+	if err := validateQuantity("alım adedi", *buy); err != nil {
+		return err
+	}
+	return validateQuantity("ödül adedi", *apply)
 }
 
 // matchRules verilen kuralların HEPSİNİN bağlamla eşleştiğini bildirir.

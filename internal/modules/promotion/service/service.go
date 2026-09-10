@@ -41,9 +41,6 @@ import (
 const (
 	// CodeInvalidInput reports that the input did not pass validation.
 	CodeInvalidInput = "promotion_invalid_input"
-	// CodeBuyGetNotActivatable reports that the buyget promotion cannot be activated
-	// in this phase (see [models.PromotionBuyGet]).
-	CodeBuyGetNotActivatable = "promotion_buyget_not_activatable"
 	// CodePromotionNotUsable reports that the promotion is not in a state that can be
 	// offered TO THE CUSTOMER; the store surface presents this as "not there".
 	CodePromotionNotUsable = "promotion_not_usable"
@@ -341,15 +338,6 @@ func buildPromotion(id string, in PromotionInput, now time.Time) (models.Promoti
 	if !status.Valid() {
 		return models.Promotion{}, errors.Invalid(CodeInvalidInput,
 			"promotion status is undefined: %q", string(in.Status))
-	}
-
-	// The buyget mechanic DOES NOT EXIST in this phase and, so as not to leave the gap
-	// silent, the type is closed structurally (see [models.PromotionBuyGet]). It can
-	// be prepared as draft or as inactive; it goes live only when the mechanic
-	// arrives.
-	if promoType == models.PromotionBuyGet && status == models.PromotionActive {
-		return models.Promotion{}, errors.Invalid(CodeBuyGetNotActivatable,
-			"the buyget promotion cannot be activated in this release; the mechanic is not implemented yet (code: %s)", code)
 	}
 
 	if in.CampaignID != nil {

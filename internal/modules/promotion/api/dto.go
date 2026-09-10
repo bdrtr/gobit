@@ -86,6 +86,12 @@ type applicationMethodDTO struct {
 	// MaxQuantity is the maximum quantity the fixed amount will be applied to; null if
 	// unbounded.
 	MaxQuantity *int64 `json:"max_quantity"`
+	// BuyQuantity is how many units must be bought before a buyget promotion rewards
+	// anything; null on every other promotion.
+	BuyQuantity *int64 `json:"buy_quantity"`
+	// ApplyToQuantity is how many units the reward lands on; null on every other
+	// promotion. It is written TOGETHER with the buy quantity.
+	ApplyToQuantity *int64 `json:"apply_to_quantity"`
 	// CurrencyCode is the currency of a fixed-amount discount; null on a percentage.
 	CurrencyCode *string `json:"currency_code"`
 	// CreatedAt is the moment of creation.
@@ -228,6 +234,18 @@ type appliedPromotionDTO struct {
 type storeCouponDTO struct {
 	// Code is the coupon code (UPPERCASE).
 	Code string `json:"code"`
+	// Mechanic is how the coupon discounts (standard | buyget).
+	//
+	// It has to stand beside the measure. A "buy two, get one" coupon carries ten
+	// thousand basis points, and a storefront that did not know the mechanic would
+	// render it as "100% off" — which is not what the coupon gives.
+	Mechanic string `json:"mechanic"`
+	// BuyQuantity is how many units earn the reward; null unless the mechanic is
+	// buyget.
+	BuyQuantity *int64 `json:"buy_quantity"`
+	// ApplyToQuantity is how many units the reward lands on; null unless the mechanic
+	// is buyget.
+	ApplyToQuantity *int64 `json:"apply_to_quantity"`
 	// Type is the measure of the discount (fixed | percentage).
 	Type string `json:"type"`
 	// TargetType is the target of the discount (items | shipping_methods | order).
@@ -280,16 +298,18 @@ func toPromotionDTO(p models.Promotion) promotionDTO {
 // toApplicationMethodDTO turns the application method into the response body.
 func toApplicationMethodDTO(m models.ApplicationMethod) applicationMethodDTO {
 	return applicationMethodDTO{
-		ID:           m.ID,
-		PromotionID:  m.PromotionID,
-		Type:         string(m.Type),
-		TargetType:   string(m.TargetType),
-		Allocation:   string(m.Allocation),
-		Value:        m.Value,
-		MaxQuantity:  m.MaxQuantity,
-		CurrencyCode: stringOrNil(m.CurrencyCode),
-		CreatedAt:    m.CreatedAt,
-		UpdatedAt:    m.UpdatedAt,
+		ID:              m.ID,
+		PromotionID:     m.PromotionID,
+		Type:            string(m.Type),
+		TargetType:      string(m.TargetType),
+		Allocation:      string(m.Allocation),
+		Value:           m.Value,
+		MaxQuantity:     m.MaxQuantity,
+		BuyQuantity:     m.BuyQuantity,
+		ApplyToQuantity: m.ApplyToQuantity,
+		CurrencyCode:    stringOrNil(m.CurrencyCode),
+		CreatedAt:       m.CreatedAt,
+		UpdatedAt:       m.UpdatedAt,
 	}
 }
 
@@ -384,11 +404,14 @@ func toComputeResultDTO(result service.ComputeResult) computeResultDTO {
 // toStoreCouponDTO turns the coupon into the CUSTOMER body.
 func toStoreCouponDTO(c service.StoreCoupon) storeCouponDTO {
 	return storeCouponDTO{
-		Code:         c.Code,
-		Type:         string(c.MethodType),
-		TargetType:   string(c.TargetType),
-		Value:        c.Value,
-		CurrencyCode: stringOrNil(c.CurrencyCode),
+		Code:            c.Code,
+		Mechanic:        string(c.Mechanic),
+		BuyQuantity:     c.BuyQuantity,
+		ApplyToQuantity: c.ApplyToQuantity,
+		Type:            string(c.MethodType),
+		TargetType:      string(c.TargetType),
+		Value:           c.Value,
+		CurrencyCode:    stringOrNil(c.CurrencyCode),
 	}
 }
 
