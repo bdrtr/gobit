@@ -629,8 +629,12 @@ type ExchangeStatus string
 const (
 	// ExchangeRequested means the exchange was requested.
 	ExchangeRequested ExchangeStatus = "requested"
+	// ExchangeFunded means the customer's side of the difference is in: a
+	// payment collection opened for exactly this exchange has been named on the
+	// record, and the request can no longer simply be withdrawn.
+	ExchangeFunded ExchangeStatus = "funded"
 	// ExchangeCompleted means the exchange was settled: its goods left and it
-	// owed nothing.
+	// owed nothing, or what it owed was funded.
 	ExchangeCompleted ExchangeStatus = "completed"
 	// ExchangeCanceled means the exchange request was withdrawn.
 	ExchangeCanceled ExchangeStatus = "canceled"
@@ -639,7 +643,7 @@ const (
 // Valid reports whether the status is a defined value.
 func (s ExchangeStatus) Valid() bool {
 	switch s {
-	case ExchangeRequested, ExchangeCompleted, ExchangeCanceled:
+	case ExchangeRequested, ExchangeFunded, ExchangeCompleted, ExchangeCanceled:
 		return true
 	default:
 		return false
@@ -686,6 +690,25 @@ type Exchange struct {
 	// (order_exchanges_canceled_stamp), so a canceled exchange without a moment
 	// cannot be written.
 	CanceledAt *time.Time
+	// PaymentCollectionID is the payment collection opened for THIS exchange's
+	// difference; empty until one is named.
+	//
+	// It is an identifier and never an amount, which is ADR 0119's rule: a
+	// figure the payment module owns can be changed by a route this module
+	// never hears about, and a copy of it goes stale in silence. An identifier
+	// cannot — a collection is the collection it is — and it is what lets a
+	// flow ask the live question.
+	//
+	// It carries no foreign key. The shape and its reason are migration
+	// 000012's, where a replacement holds the parcel's identifier and its items
+	// hold inventory's promise: written by the flow that holds both sides.
+	PaymentCollectionID string
+	// FundedAt is the moment the difference was funded; nil until it is.
+	//
+	// Paired with PaymentCollectionID in BOTH directions by the database
+	// (order_exchanges_funded_stamp), so a moment nobody can check and money
+	// nothing dates are equally unwritable.
+	FundedAt *time.Time
 	// CompletedAt is the moment the exchange was settled; nil until it is.
 	//
 	// Its pairing with Status is held in both directions as well
@@ -703,6 +726,22 @@ type Exchange struct {
 // replacement that sent them, and a difference in either direction is money this
 // framework cannot move against an existing order.
 func (e Exchange) OwesNothing() bool { return e.DifferenceDue == 0 }
+
+// Settleable reports whether the exchange may be completed at all.
+//
+// It is OwesNothing widened by exactly one case, and it is a SECOND predicate
+// rather than a new definition of the first on purpose: OwesNothing answers
+// "does this move money", which is still a real question and still has its own
+// callers, while this one answers "may the goods close it". Redefining the
+// first would have left its three existing test cases passing unchanged — none
+// of them carries a funding — and the widening would have shipped ungated.
+//
+// The database holds the same sentence (order_exchanges_completed_is_settled),
+// and a negative difference reaches neither side of it: only a positive one can
+// be funded (order_exchanges_funded_is_positive).
+func (e Exchange) Settleable() bool {
+	return e.DifferenceDue == 0 || e.FundedAt != nil
+}
 
 // ClaimType states how a damage/shortage record will be settled.
 type ClaimType string

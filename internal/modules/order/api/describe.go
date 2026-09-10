@@ -164,6 +164,7 @@ func Describe(d *openapi.Doc) {
 
 	describeReturns(d)
 	describeExchanges(d)
+	describeExchangeMoney(d)
 	describeClaims(d)
 	describeInvoicing(d)
 	describeFulfilling(d)
@@ -351,18 +352,68 @@ func describeExchanges(d *openapi.Doc) {
 			// of the usual triple it can actually wait for.
 			//
 			// This description said there was no completed state until ADR
-			// 0117. ADR 0114 had brought one back and no gate compared the
-			// sentence to the record, because the endpoint table is derived
-			// from the response type rather than from the truth.
-			Description: "The exchange's only OPERATOR-driven transition. Its " +
-				"status is \"requested\", \"completed\" or \"canceled\"; a " +
-				"completion is not requested through a route but follows the " +
-				"goods, when a replacement is dispatched, and only for an " +
-				"exchange whose difference is zero. One that owes money in " +
-				"either direction stays open after its goods leave, because " +
-				"moving that money against an existing order is not something " +
-				"this framework does yet. A second call on an already " +
-				"withdrawn record succeeds and keeps the first moment.",
+			// 0117 and no funded one until ADR 0120. Each time the record
+			// gained a word and this sentence did not follow it, because the
+			// endpoint table is derived from the response TYPE rather than
+			// from the truth.
+			Description: "Withdraws a request nobody has paid for. The status " +
+				"is \"requested\", \"funded\", \"completed\" or " +
+				"\"canceled\". A FUNDED exchange is refused here — the " +
+				"customer's money is on it and giving that back is a " +
+				"different act; use the refund endpoint, which does both. A " +
+				"completion is not requested through a route at all: it " +
+				"follows the goods, when a replacement is dispatched. A " +
+				"second call on an already withdrawn record succeeds and " +
+				"keeps the first moment.",
+			Responses: map[string]any{
+				"200": openapi.Response("The withdrawn exchange record", d.Item(exchangeDTO{})),
+			},
+		})
+}
+
+// describeExchangeMoney describes the two endpoints that move an exchange's
+// difference.
+//
+// They are a pair on purpose: the first records that the money came in and the
+// second is the only way back out of the state the first creates. Describing
+// one without the other would publish a door with no exit.
+func describeExchangeMoney(d *openapi.Doc) {
+	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/exchanges/{exchangeId}/funding",
+		openapi.Operation{
+			Summary: "Names the payment collection that answers the difference.",
+			Description: "The money is collected FIRST, through this API's own " +
+				"payment-collection endpoints: open a collection for exactly the " +
+				"difference in the order's currency, put a session on it, " +
+				"authorize and capture. This endpoint then records which " +
+				"collection answered, and refuses unless that collection was " +
+				"opened for exactly the difference, is in the order's currency, " +
+				"and holds it now — captured less refunded. The record keeps the " +
+				"collection's IDENTIFIER and the moment, never the amount: the " +
+				"figure belongs to the payment module and a copy of it here " +
+				"would go stale in silence. A repeat naming the same collection " +
+				"succeeds; naming a different one is refused. Only a POSITIVE " +
+				"difference can be funded — money owed TO the customer leaves " +
+				"by a refund, which this framework does not do from here.",
+			RequestBody: d.RequestBody(fundExchangeRequest{}),
+			Responses: map[string]any{
+				"200": openapi.Response("The funded exchange record", d.Item(exchangeDTO{})),
+			},
+		})
+
+	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/exchanges/{exchangeId}/refund",
+		openapi.Operation{
+			Summary: "Sends a funded exchange's difference back and withdraws it.",
+			Description: "The exit from a funded exchange, which the ordinary " +
+				"withdrawal refuses. Everything the bound collection still " +
+				"holds goes back and the request is withdrawn in the same " +
+				"call, so the two cannot be done in the wrong order. There is " +
+				"no amount: a partial refund would leave the exchange holding " +
+				"money, and the withdrawal is the point of the call. The " +
+				"withdrawn record KEEPS the moment it was funded and the " +
+				"collection that answers for where the money went. A repeat is " +
+				"safe: a collection with nothing left to refund is skipped and " +
+				"the withdrawal is idempotent.",
+			RequestBody: d.RequestBody(refundExchangeRequest{}),
 			Responses: map[string]any{
 				"200": openapi.Response("The withdrawn exchange record", d.Item(exchangeDTO{})),
 			},

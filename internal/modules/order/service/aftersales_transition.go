@@ -150,6 +150,115 @@ func (s *Service) CancelExchange(ctx context.Context, exchangeID string) (models
 		})
 }
 
+// WithdrawFundedExchange takes back an exchange whose difference was funded
+// and whose money has been sent back.
+//
+// # Why this is not CancelExchange
+//
+// A funded exchange refuses the ordinary withdrawal, and that refusal is the
+// point: the customer's money is on the record and taking the request back
+// without giving it up would leave money nothing answers for. This verb is the
+// exit, and it is FORWARD — the record reaches 'canceled' and keeps both
+// moments, so the row still says it once held money and which collection has it.
+//
+// # Why the money is not checked here
+//
+// It cannot be: the amount belongs to the payment module and this one may not
+// ask it (ADR 0006/0119). The caller is the flow that refunds first and calls
+// this after; what this module guarantees is the transition, not the refund.
+//
+// That is why it takes no route of its own. An operator reaches it through the
+// returns flow, which does the refund in the same act.
+func (s *Service) WithdrawFundedExchange(ctx context.Context, exchangeID string) (models.Exchange, error) {
+	return s.transitionExchange(ctx, exchangeID, "withdrawing a funded exchange",
+		func(status models.ExchangeStatus) models.AfterSalesAction {
+			switch status {
+			case models.ExchangeFunded:
+				return models.AfterSalesProceed
+			case models.ExchangeCanceled:
+				return models.AfterSalesNoop
+			default:
+				return models.AfterSalesConflict
+			}
+		},
+		s.store.WithdrawFundedExchange)
+}
+
+// FundExchange records WHICH payment collection answers the exchange's
+// difference, and dates the moment.
+//
+// # What this call does not do
+//
+// It does not check that the money is really there, and it cannot: the amount
+// belongs to the payment module and this one may not ask it (ADR 0006/0119).
+// The caller is the flow that holds both sides; it asks, and this call records
+// what it was told. What this module guarantees is everything the ROW can
+// answer for — that the difference is positive, that the record was open, and
+// that a collection is named exactly once.
+//
+// # Why a repeat is not simply idempotent
+//
+// A second call with the SAME collection is the retry path and returns the
+// record unchanged. A second call with a DIFFERENT one is refused, and the
+// refusal names the collection already recorded.
+//
+// Treating that as a noop would be the more dangerous silence: a flow that died
+// before recording would open a second collection, get "already funded" for an
+// answer, and leave money in a collection nothing on this side names — money
+// the customer can still be charged through the payment module's own published
+// endpoints.
+func (s *Service) FundExchange(
+	ctx context.Context, exchangeID, collectionID string,
+) (models.Exchange, error) {
+	if err := requireID("exchange_id", exchangeID); err != nil {
+		return models.Exchange{}, err
+	}
+	if err := requireText("payment_collection_id", collectionID); err != nil {
+		return models.Exchange{}, err
+	}
+
+	var out models.Exchange
+	err := s.store.WithTx(ctx, func(ctx context.Context) error {
+		current, err := s.store.LockExchange(ctx, exchangeID)
+		if err != nil {
+			return err
+		}
+
+		if current.Status == models.ExchangeFunded {
+			if current.PaymentCollectionID != collectionID {
+				return errors.Conflict(CodeAfterSalesTransition,
+					"exchange %s is already funded by collection %s; a second one cannot be named",
+					exchangeID, current.PaymentCollectionID)
+			}
+			out = current
+
+			return nil
+		}
+
+		if current.Status != models.ExchangeRequested {
+			return errors.Conflict(CodeAfterSalesTransition,
+				"funding is not possible on an exchange in status %q (%s)",
+				current.Status.String(), exchangeID)
+		}
+
+		if current.DifferenceDue <= 0 {
+			return errors.Conflict(CodeAfterSalesTransition,
+				"exchange %s owes nothing to collect (difference %d); money owed TO the "+
+					"customer leaves by a refund, which is a different act",
+				exchangeID, current.DifferenceDue)
+		}
+
+		out, err = s.store.FundExchange(ctx, exchangeID, collectionID)
+
+		return err
+	})
+	if err != nil {
+		return models.Exchange{}, err
+	}
+
+	return out, nil
+}
+
 // CompleteExchange records that the exchange was settled.
 //
 // # What settling means, and what this module can check

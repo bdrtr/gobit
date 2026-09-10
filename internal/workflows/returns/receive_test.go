@@ -38,6 +38,21 @@ type stubOrders struct {
 	receivedLocation string
 	receiveCalls     int
 
+	// funding is the exchange as ExchangeFundingJSON answers it, and the two
+	// error fields are the read and the write failing independently: a flow
+	// that treated them as one could not tell "the exchange is unreadable" from
+	// "the recording was refused".
+	funding          json.RawMessage
+	fundingErr       error
+	fundErr          error
+	fundCalls        int
+	fundedExchange   string
+	fundedCollection string
+
+	withdrawErr       error
+	withdrawCalls     int
+	withdrawnExchange string
+
 	claim         claimDetail
 	claimErr      error
 	completeErr   error
@@ -151,11 +166,40 @@ func (s *stubOrders) CompleteClaim(_ context.Context, id string) error {
 // verb closed it is asserted separately by [stubOrders.completedKind]. Two
 // counters would let a test that expected one settlement pass while the flow made
 // the other.
+
 func (s *stubOrders) CompleteExchange(_ context.Context, id string) error {
 	s.completeCalls++
 	s.completedKind, s.completedID = "exchange", id
 
 	return s.completeErr
+}
+
+// WithdrawFundedExchange records the withdrawal of a funded exchange.
+func (s *stubOrders) WithdrawFundedExchange(_ context.Context, exchangeID string) error {
+	s.withdrawCalls++
+	s.withdrawnExchange = exchangeID
+
+	return s.withdrawErr
+}
+
+// ExchangeFundingJSON answers what a funding decision needs.
+func (s *stubOrders) ExchangeFundingJSON(_ context.Context, id string) (json.RawMessage, error) {
+	if s.fundingErr != nil {
+		return nil, s.fundingErr
+	}
+	if s.funding == nil {
+		return nil, coreerrors.NotFound("order_exchange_not_found", "no exchange: %s", id)
+	}
+
+	return s.funding, nil
+}
+
+// FundExchange records which collection answers the difference.
+func (s *stubOrders) FundExchange(_ context.Context, exchangeID, collectionID string) error {
+	s.fundCalls++
+	s.fundedExchange, s.fundedCollection = exchangeID, collectionID
+
+	return s.fundErr
 }
 
 // ReceiveReturn records the stamp and applies the scripted behavior.
@@ -308,6 +352,12 @@ type stubPayments struct {
 	captured    int64
 	totalRefund int64
 	readErr     error
+	// amount and currency are what the collection was OPENED for, which the
+	// funding decision compares against the exchange. They default to the
+	// captured total and TRY so the tests that predate the funding keep
+	// scripting one number.
+	amount   int64
+	currency string
 
 	refundCalls []refundCall
 }
@@ -334,7 +384,28 @@ func (s *stubPayments) Collection(_ context.Context, _ string) (string, int64, i
 		return "", 0, 0, 0, 0, s.readErr
 	}
 
-	return "captured", s.captured, 0, s.captured, s.totalRefund, nil
+	amount := s.amount
+	if amount == 0 {
+		amount = s.captured
+	}
+
+	return "captured", amount, 0, s.captured, s.totalRefund, nil
+}
+
+// CollectionCurrency answers the collection's code.
+//
+// It is a SEPARATE stub method for the same reason it is a separate interface
+// method: widening Collection would have made every other consumer of that
+// signature grow with it.
+func (s *stubPayments) CollectionCurrency(_ context.Context, _ string) (string, error) {
+	if s.readErr != nil {
+		return "", s.readErr
+	}
+	if s.currency == "" {
+		return "TRY", nil
+	}
+
+	return s.currency, nil
 }
 
 // harness wires the flow over scriptable surfaces.

@@ -89,16 +89,18 @@ type OrderCreditLine struct {
 }
 
 type OrderExchange struct {
-	ID            string
-	OrderID       string
-	Status        string
-	DifferenceDue int64
-	Note          *string
-	Metadata      []byte
-	CanceledAt    pgtype.Timestamptz
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
-	CompletedAt   pgtype.Timestamptz
+	ID                  string
+	OrderID             string
+	Status              string
+	DifferenceDue       int64
+	Note                *string
+	Metadata            []byte
+	CanceledAt          pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	CompletedAt         pgtype.Timestamptz
+	PaymentCollectionID *string
+	FundedAt            pgtype.Timestamptz
 }
 
 type OrderLineCancellation struct {

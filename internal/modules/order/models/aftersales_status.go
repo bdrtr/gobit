@@ -103,6 +103,8 @@ func (s ReturnStatus) CancelAction() AfterSalesAction {
 // Transition table:
 //
 //	requested -> proceed
+//	funded    -> conflict  (the customer's money is on it; giving it back is
+//	                        a different act and it happens first)
 //	completed -> conflict  (the exchange was met and un-meeting it is a new
 //	                        record)
 //	canceled  -> noop      (already withdrawn; the FIRST withdrawal keeps its
@@ -110,13 +112,25 @@ func (s ReturnStatus) CancelAction() AfterSalesAction {
 //
 // The completed -> conflict entry is the claim's own: an exchange that was met
 // is not un-met by withdrawing the request, and reversing it is a new record.
+//
+// The funded -> conflict entry is the RETURN's own, where a received return
+// refuses a cancel for the same reason: something arrived that has to leave
+// again before the request can be taken back. It is why ADR 0120 made the
+// funding a STATUS rather than a stamp beside one — a rule the table can state
+// is a rule every caller reads, and a rule bolted next to the table is one each
+// caller has to remember.
+//
+// The exit is FORWARD and it is not in this table: refunding the difference and
+// withdrawing is one act of the returns flow, which can ask the payment module
+// what is still held. This module cannot ask (ADR 0006), which is exactly why
+// its own route refuses rather than guesses.
 func (s ExchangeStatus) CancelAction() AfterSalesAction {
 	switch s {
 	case ExchangeRequested:
 		return AfterSalesProceed
 	case ExchangeCanceled:
 		return AfterSalesNoop
-	case ExchangeCompleted:
+	case ExchangeFunded, ExchangeCompleted:
 		return AfterSalesConflict
 	default:
 		return AfterSalesConflict
@@ -128,6 +142,7 @@ func (s ExchangeStatus) CancelAction() AfterSalesAction {
 // Transition table:
 //
 //	requested -> proceed
+//	funded    -> proceed   (the money is in; the goods decide the rest)
 //	completed -> noop      (the FIRST settlement keeps its moment)
 //	canceled  -> conflict  (a withdrawn request has no goods to answer)
 //
@@ -143,7 +158,7 @@ func (s ExchangeStatus) CancelAction() AfterSalesAction {
 // describes what happens to one that may proceed at all.
 func (s ExchangeStatus) CompleteAction() AfterSalesAction {
 	switch s {
-	case ExchangeRequested:
+	case ExchangeRequested, ExchangeFunded:
 		return AfterSalesProceed
 	case ExchangeCompleted:
 		return AfterSalesNoop

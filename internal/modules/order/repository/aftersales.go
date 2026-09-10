@@ -336,6 +336,9 @@ func (r *Repository) CancelExchange(ctx context.Context, id string) (models.Exch
 // nothing and comes back as no rows. The caller reads that as "the state
 // changed" for the reason the sibling transitions do: it holds the row's lock,
 // so the only way to see it is a status this transition may not leave.
+//
+// Since migration 000018 the narrowing accepts 'funded' as well: the difference
+// was answered and the goods are what is left to decide.
 func (r *Repository) CompleteExchange(ctx context.Context, id string) (models.Exchange, error) {
 	row, err := r.queries(ctx).CompleteOrderExchange(ctx, id)
 	if err != nil {
@@ -346,6 +349,48 @@ func (r *Repository) CompleteExchange(ctx context.Context, id string) (models.Ex
 
 		return models.Exchange{}, classify(err, codeQueryFailed,
 			"could not complete the exchange record")
+	}
+
+	return toExchange(row)
+}
+
+// WithdrawFundedExchange takes back a funded exchange whose money went back.
+func (r *Repository) WithdrawFundedExchange(ctx context.Context, id string) (models.Exchange, error) {
+	row, err := r.queries(ctx).WithdrawFundedOrderExchange(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.Exchange{}, coreerrors.Conflict(codeStateChanged,
+				"the exchange record is not funded: %s", id)
+		}
+
+		return models.Exchange{}, classify(err, codeQueryFailed,
+			"could not withdraw the funded exchange record")
+	}
+
+	return toExchange(row)
+}
+
+// FundExchange names the payment collection that answers the exchange's
+// difference and dates the moment.
+//
+// A record that is no longer open reports the same conflict the completion
+// does: the query narrows on 'requested', so a second funding matches no row
+// rather than writing a second collection over the first.
+func (r *Repository) FundExchange(
+	ctx context.Context, id, collectionID string,
+) (models.Exchange, error) {
+	row, err := r.queries(ctx).FundOrderExchange(ctx, orderdb.FundOrderExchangeParams{
+		ID:                  id,
+		PaymentCollectionID: nullString(collectionID),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.Exchange{}, coreerrors.Conflict(codeStateChanged,
+				"the exchange record is no longer open: %s", id)
+		}
+
+		return models.Exchange{}, classify(err, codeQueryFailed,
+			"could not record the exchange's funding")
 	}
 
 	return toExchange(row)

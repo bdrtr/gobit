@@ -274,6 +274,22 @@ func describedEndpoints() []endpointExpectation {
 			status: "200", response: filledExchange(),
 		},
 		{
+			method:  http.MethodPost,
+			path:    "/admin/v1/orders/{id}/exchanges/{exchangeId}/funding",
+			status:  "200",
+			request: fundExchangeRequest{}, response: filledExchange(),
+		},
+		{
+			method: http.MethodPost,
+			path:   "/admin/v1/orders/{id}/exchanges/{exchangeId}/refund",
+			// The body carries only a note, and it is OPTIONAL: what goes back
+			// is everything the bound collection still holds, because a partial
+			// refund would leave the exchange holding money and the withdrawal
+			// is the point of the call.
+			status:  "200",
+			request: refundExchangeRequest{}, response: filledExchange(),
+		},
+		{
 			method: http.MethodPost,
 			path:   "/admin/v1/orders/{id}/exchanges/{exchangeId}/cancel",
 			// No request: the transition takes no body. There is nothing to
@@ -619,10 +635,12 @@ func filledExchange() exchangeDTO {
 	now := time.Now().UTC()
 
 	return exchangeDTO{
-		Note:        "size exchange",
-		Metadata:    map[string]any{"k": "v"},
-		CompletedAt: &now,
-		CanceledAt:  &now,
+		Note:                "size exchange",
+		Metadata:            map[string]any{"k": "v"},
+		PaymentCollectionID: "paycol_1",
+		FundedAt:            &now,
+		CompletedAt:         &now,
+		CanceledAt:          &now,
 	}
 }
 

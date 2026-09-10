@@ -20,6 +20,32 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir değişim artık farkını ALABİLİYOR** (ADR 0120). Göç 000008 değişimin
+  tamamlanmasını kaldırırken geri getirecek şeyi adıyla yazmıştı: mal çıkışı, ve
+  fark sıfır değilse para girişi. Malı ADR 0090 getirdi; para üç kayıt sürdü —
+  0117 satışın bağını yerinde tuttu, 0118 koleksiyonun kapısını kalan kapasiteye
+  çevirdi, 0119 order satırının payment'ın tutarını AYNALAMAYACAĞINA karar verdi.
+  Geriye tek soru kalmıştı: geri çekme muhafızı nereye konur. Ölçüldü ve geri
+  çekmeyi koruyan BEŞ şeklin hiçbiri ayakta kalmadı — parayı orada okumak bu
+  modülün soramayacağı bir modülü ister, sayacı okumak ise geri alınamayan bir
+  kayıt ve bir daha unutulamayan bir sipariş üretir.
+  Cevap soruyu taşıdı: **muhafız geri çekmede değil BAĞLAMADA duruyor.** Parayı
+  aldığı an değişim `requested`'dan çıkıyor ve geçiş tablosu bunun ne demek
+  olduğunu kendisi söylüyor — iadenin `received → conflict` satırının aynısı.
+  Karar: pozitif fark, operatörün parayı topladığı koleksiyonu ADLANDIRARAK
+  fonlanıyor; satır o koleksiyonun KİMLİĞİNİ ve ANI tutuyor, tutarını asla.
+  Fonlanmış bir değişimin malı onu tamamlayabiliyor, olağan geri çekme onu
+  reddediyor, ve çıkışı parayı geri gönderip isteği de geri alan TEK bir eylem.
+  Bedeller açık: statü sözlüğü üçten dörde çıktı ve yayımlandı. Tamamlanmanın
+  sınırı şemada KALDI, ve bu ancak satır bir KİMLİK tuttuğu için mümkün — bir
+  CHECK kolonu görür, link katmanına yazılmış bir bağı görmez. Bu, ADR 0117'nin
+  ikinci cümlesini geçersiz kılıyor: o kayıt link demişti çünkü görünen şekil
+  oydu; ağacın kendi şekli, iki tarafı birden tutan akışın yazdığı çapraz-modül
+  kimliği için bir KOLON (göç 000012 bunu gerekçesiyle yazmış).
+  Ve yeni statünün açacağı deliği kapattım: silme süpürgesi `requested` arıyordu,
+  `funded` onu tetiklemezdi — yani parası tutulan bir sipariş UNUTULABİLİR hâle
+  gelirdi. Dal ikisini birden okuyor.
+
 - **Bir sipariş paranın ikinci bir kopyasını TUTMUYOR** (ADR 0119). Değişimin
   farkı üç kez tasarlandı, altı aday üretildi ve altısı da bağımsız okumalarla
   yıkıldı. Neredeyse her şeyde ayrışıyorlardı ve tek bir şeyden öldüler: her biri

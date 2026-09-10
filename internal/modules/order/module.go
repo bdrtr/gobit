@@ -492,6 +492,30 @@ func (p *returnReceiving) SettleClaim(
 	return p.svc.SettleClaim(ctx, claimID, amount, reason)
 }
 
+// RefundExchangeDifference sends a funded exchange's money back and withdraws it.
+func (p *returnReceiving) RefundExchangeDifference(
+	ctx context.Context, exchangeID, reason string,
+) error {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return p.err
+	}
+
+	return p.svc.RefundExchangeDifference(ctx, exchangeID, reason)
+}
+
+// FundExchangeDifference records which collection answers the difference.
+func (p *returnReceiving) FundExchangeDifference(
+	ctx context.Context, exchangeID, collectionID string,
+) error {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return p.err
+	}
+
+	return p.svc.FundExchangeDifference(ctx, exchangeID, collectionID)
+}
+
 // DispatchReplacement sends what the claim promised.
 func (p *returnReceiving) DispatchReplacement(
 	ctx context.Context, replacementID string,

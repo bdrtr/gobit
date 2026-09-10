@@ -208,6 +208,22 @@ type ReturnReceiving interface {
 		restockedLines int, restockedUnits int64, warnings []string, err error,
 	)
 
+	// FundExchangeDifference records WHICH payment collection answers an
+	// exchange's difference.
+	//
+	// It goes through a flow because deciding it needs both modules: the
+	// exchange says what it owes and the payment module says what a collection
+	// holds, and this one may not ask the second (ADR 0006).
+	FundExchangeDifference(ctx context.Context, exchangeID, collectionID string) error
+
+	// RefundExchangeDifference sends a funded exchange's money back and takes
+	// the request back with it.
+	//
+	// It is the EXIT from a funded exchange, which refuses the ordinary
+	// withdrawal: without it a record whose goods turn out to be unsendable
+	// would sit funded for ever and its order could never be forgotten.
+	RefundExchangeDifference(ctx context.Context, exchangeID, reason string) error
+
 	// RefundReturn sends money back for a received return and records it on the
 	// order.
 	//
@@ -454,6 +470,16 @@ type exchangeDTO struct {
 	DifferenceDue int64          `json:"difference_due"`
 	Note          string         `json:"note,omitempty"`
 	Metadata      map[string]any `json:"metadata,omitempty"`
+	// PaymentCollectionID is the collection that answers the difference, and
+	// FundedAt is when it was named. Both are empty until the difference is
+	// funded, and the database holds them to each other in both directions.
+	//
+	// The identifier is published and the AMOUNT is not: the figure belongs to
+	// the payment module and a copy of it here would be a claim a route this
+	// module never hears about can invalidate (ADR 0119). A client that wants
+	// the numbers reads the collection.
+	PaymentCollectionID string     `json:"payment_collection_id,omitempty"`
+	FundedAt            *time.Time `json:"funded_at,omitempty"`
 	// CompletedAt and CanceledAt are the two moments the status can name.
 	//
 	// CompletedAt was missing until ADR 0117 while the status it dates was
@@ -603,16 +629,18 @@ func toReturnDTO(ret models.Return) returnDTO {
 // toExchangeDTO converts the model to the external representation.
 func toExchangeDTO(exchange models.Exchange) exchangeDTO {
 	return exchangeDTO{
-		ID:            exchange.ID,
-		OrderID:       exchange.OrderID,
-		Status:        exchange.Status.String(),
-		DifferenceDue: exchange.DifferenceDue,
-		Note:          exchange.Note,
-		Metadata:      exchange.Metadata,
-		CompletedAt:   exchange.CompletedAt,
-		CanceledAt:    exchange.CanceledAt,
-		CreatedAt:     exchange.CreatedAt,
-		UpdatedAt:     exchange.UpdatedAt,
+		ID:                  exchange.ID,
+		OrderID:             exchange.OrderID,
+		Status:              exchange.Status.String(),
+		DifferenceDue:       exchange.DifferenceDue,
+		Note:                exchange.Note,
+		Metadata:            exchange.Metadata,
+		PaymentCollectionID: exchange.PaymentCollectionID,
+		FundedAt:            exchange.FundedAt,
+		CompletedAt:         exchange.CompletedAt,
+		CanceledAt:          exchange.CanceledAt,
+		CreatedAt:           exchange.CreatedAt,
+		UpdatedAt:           exchange.UpdatedAt,
 	}
 }
 

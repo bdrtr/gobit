@@ -1351,18 +1351,84 @@ func (f *fakeStore) CompleteExchange(ctx context.Context, id string) (models.Exc
 		return models.Exchange{}, errors.NotFound("order_exchange_not_found",
 			"the exchange record was not found: %s", id)
 	}
-	if exchange.Status != models.ExchangeRequested {
+	if exchange.Status != models.ExchangeRequested && exchange.Status != models.ExchangeFunded {
 		return models.Exchange{}, errors.Conflict("order_state_changed",
 			"the exchange record is no longer open: %s", id)
 	}
-	if !exchange.OwesNothing() {
+	// order_exchanges_completed_is_settled, written out rather than taken from
+	// a model helper. A fake that asks the same method the code under test asks
+	// agrees with it even when both are wrong, which is how a constraint stops
+	// being tested at all.
+	if exchange.DifferenceDue != 0 &&
+		(exchange.DifferenceDue <= 0 || exchange.FundedAt == nil) {
 		return models.Exchange{}, errors.Invalid("order_query_failed",
-			"a completed exchange has to owe nothing: %s", id)
+			"a completed exchange has to owe nothing or be funded: %s", id)
 	}
 
 	stamp := f.nextStamp()
 	exchange.Status = models.ExchangeCompleted
 	exchange.CompletedAt = &stamp
+	exchange.UpdatedAt = stamp
+	f.recordUndo(ctx, undoEntry(f.exchanges, id))
+	f.exchanges[id] = exchange
+
+	return exchange, nil
+}
+
+// WithdrawFundedExchange takes a funded exchange back.
+func (f *fakeStore) WithdrawFundedExchange(ctx context.Context, id string) (models.Exchange, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	exchange, ok := f.exchanges[id]
+	if !ok {
+		return models.Exchange{}, errors.NotFound("order_exchange_not_found",
+			"the exchange record was not found: %s", id)
+	}
+	if exchange.Status != models.ExchangeFunded {
+		return models.Exchange{}, errors.Conflict("order_state_changed",
+			"the exchange record is not funded: %s", id)
+	}
+
+	stamp := f.nextStamp()
+	exchange.Status = models.ExchangeCanceled
+	exchange.CanceledAt = &stamp
+	exchange.UpdatedAt = stamp
+	f.recordUndo(ctx, undoEntry(f.exchanges, id))
+	f.exchanges[id] = exchange
+
+	return exchange, nil
+}
+
+// FundExchange names the collection answering the difference and dates it.
+//
+// The constraints are written out here on purpose, the same way
+// CompleteExchange's are: order_exchanges_funded_is_positive and the narrowing
+// the query does on 'requested'.
+func (f *fakeStore) FundExchange(
+	ctx context.Context, id, collectionID string,
+) (models.Exchange, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	exchange, ok := f.exchanges[id]
+	if !ok {
+		return models.Exchange{}, errors.NotFound("order_exchange_not_found",
+			"the exchange record was not found: %s", id)
+	}
+	if exchange.Status != models.ExchangeRequested {
+		return models.Exchange{}, errors.Conflict("order_state_changed",
+			"the exchange record is no longer open: %s", id)
+	}
+	if exchange.DifferenceDue <= 0 {
+		return models.Exchange{}, errors.Invalid("order_query_failed",
+			"only a positive difference can be funded: %s", id)
+	}
+
+	stamp := f.nextStamp()
+	exchange.Status = models.ExchangeFunded
+	exchange.PaymentCollectionID = collectionID
+	exchange.FundedAt = &stamp
 	exchange.UpdatedAt = stamp
 	f.recordUndo(ctx, undoEntry(f.exchanges, id))
 	f.exchanges[id] = exchange

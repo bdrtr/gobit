@@ -1167,6 +1167,13 @@ type fakeReceiving struct {
 	gotLocationID string
 	calls         int
 
+	fundErr             error
+	fundCalls           int
+	refundExchangeErr   error
+	refundExchangeCalls int
+	gotExchangeID       string
+	gotCollectionID     string
+
 	refunded       int64
 	recorded       bool
 	refundWarnings []string
@@ -1200,6 +1207,7 @@ func (f *fakeReceiving) DispatchReplacement(
 }
 
 // SettleClaim records the call and returns the scripted outcome.
+
 func (f *fakeReceiving) SettleClaim(
 	_ context.Context, claimID string, amount int64, reason string,
 ) (refunded int64, summaryRecorded bool, warnings []string, err error) {
@@ -1210,6 +1218,22 @@ func (f *fakeReceiving) SettleClaim(
 	}
 
 	return f.refunded, f.recorded, f.refundWarnings, nil
+}
+
+// RefundExchangeDifference records the refund-and-withdraw call.
+func (f *fakeReceiving) RefundExchangeDifference(_ context.Context, exchangeID, reason string) error {
+	f.refundExchangeCalls++
+	f.gotExchangeID, f.gotReason = exchangeID, reason
+
+	return f.refundExchangeErr
+}
+
+// FundExchangeDifference records which collection answers the difference.
+func (f *fakeReceiving) FundExchangeDifference(_ context.Context, exchangeID, collectionID string) error {
+	f.fundCalls++
+	f.gotExchangeID, f.gotCollectionID = exchangeID, collectionID
+
+	return f.fundErr
 }
 
 // RefundReturn records the call and returns the scripted outcome.

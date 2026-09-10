@@ -62,5 +62,47 @@ RETURNING *;
 -- name: CompleteOrderExchange :one
 UPDATE order_exchanges
 SET status = 'completed', completed_at = now(), updated_at = now()
+WHERE id = $1 AND status IN ('requested', 'funded')
+RETURNING *;
+
+-- WithdrawFundedOrderExchange takes back an exchange whose difference was
+-- funded and whose money has been sent back.
+--
+-- It is the EXIT from 'funded' and it goes FORWARD: the record reaches
+-- 'canceled', a terminal state, and keeps both moments. funded_at is not
+-- cleared -- the exchange really did hold the customer's money and the row goes
+-- on saying so, next to the collection that answers for where it went.
+--
+-- Clearing the moment instead would be the "reopen" ADR 0055 refused, and it
+-- would destroy the only local record that money ever moved.
+--
+-- Whether the money really went back is NOT decided here: it is the payment
+-- module's number and only a flow can ask it (ADR 0119). This statement
+-- narrows on the status alone.
+-- name: WithdrawFundedOrderExchange :one
+UPDATE order_exchanges
+SET status      = 'canceled',
+    canceled_at = now(),
+    updated_at  = now()
+WHERE id = $1 AND status = 'funded'
+RETURNING *;
+
+-- FundOrderExchange names the payment collection that answers this exchange's
+-- difference and dates the moment.
+--
+-- The narrowing is 'requested' alone: funding is written ONCE, and a second
+-- call against an already funded exchange matches no row rather than replacing
+-- the collection under it. Replacing it would drop the only sentence saying
+-- where the first collection's money went.
+--
+-- What is NOT written here is an amount. The figure lives in the payment
+-- module and a copy of it here would be a claim a route this module never
+-- hears about can invalidate (ADR 0119); the identifier cannot go stale.
+-- name: FundOrderExchange :one
+UPDATE order_exchanges
+SET status                = 'funded',
+    payment_collection_id = $2,
+    funded_at             = now(),
+    updated_at            = now()
 WHERE id = $1 AND status = 'requested'
 RETURNING *;

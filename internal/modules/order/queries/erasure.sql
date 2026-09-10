@@ -106,9 +106,15 @@ SELECT o.id,
            SELECT 1 FROM order_returns r
            WHERE r.order_id = o.id AND r.status = 'requested'
        ) AS return_requested,
+       -- 'funded' is here for the reason 'requested' is, and more sharply: a
+       -- funded exchange holds the customer's money in a collection this row
+       -- names, so forgetting the order would forget the only sentence saying
+       -- what that money answered. The status was added by migration 000018
+       -- and adding it to the vocabulary without adding it HERE would have
+       -- opened a hole the older status did not have.
        EXISTS (
            SELECT 1 FROM order_exchanges e
-           WHERE e.order_id = o.id AND e.status = 'requested'
+           WHERE e.order_id = o.id AND e.status IN ('requested', 'funded')
        ) AS exchange_requested,
        EXISTS (
            SELECT 1 FROM order_claims c

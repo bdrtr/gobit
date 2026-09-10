@@ -22,6 +22,28 @@ type receiveReturnRequest struct {
 	LocationID string `json:"location_id"`
 }
 
+// fundExchangeRequest names the collection that answers the difference.
+type fundExchangeRequest struct {
+	// PaymentCollectionID is the collection the operator already collected the
+	// difference into; it is REQUIRED.
+	//
+	// The amount is deliberately absent: the figure belongs to the payment
+	// module, this module records the SUBJECT of the answer and never its
+	// arithmetic (ADR 0119), and a caller that could name a figure would be
+	// naming one nothing checks against the money.
+	PaymentCollectionID string `json:"payment_collection_id"`
+}
+
+// refundExchangeRequest carries the operator's note for the refund.
+type refundExchangeRequest struct {
+	// Reason is free text recorded with the refund; it is optional.
+	//
+	// No amount: what goes back is everything the bound collection still holds,
+	// because a partial refund would leave the exchange holding money and the
+	// withdrawal is the whole point of the call.
+	Reason string `json:"reason"`
+}
+
 // receiveReturnResponse reports what the receipt did.
 type receiveReturnResponse struct {
 	RestockedLines int      `json:"restocked_lines"`
@@ -512,4 +534,88 @@ func (h *Handler) adminCancelClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toClaimDTO(claim)})
+}
+
+// adminFundExchange records which payment collection answers the exchange's
+// difference.
+//
+// It goes through the FLOW and not the service, for [Handler.adminReceiveReturn]'s
+// reason one record over: the decision needs the payment module, this one may
+// not ask it, and an endpoint bound to the service method would record a
+// funding nobody verified.
+//
+// The operator collected the money first, through the payment module's own
+// published endpoints. This says which collection it went into.
+func (h *Handler) adminFundExchange(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	flow, err := h.returnReceiving()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	var body fundExchangeRequest
+	if err := decodeBody(w, r, &body); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	exchangeID := chi.URLParam(r, paramExchangeID)
+	if err := flow.FundExchangeDifference(ctx, exchangeID, body.PaymentCollectionID); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	record, err := h.svc.GetExchange(ctx, exchangeID)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toExchangeDTO(record)})
+}
+
+// adminRefundExchange sends a funded exchange's difference back and withdraws
+// the request.
+//
+// It is the exit the funded state needs. A funded exchange refuses
+// [Handler.adminCancelExchange] — the customer's money is on it — and an
+// operator whose goods turned out to be unsendable reaches this instead.
+func (h *Handler) adminRefundExchange(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	flow, err := h.returnReceiving()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	var body refundExchangeRequest
+	if err := decodeBody(w, r, &body); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	exchangeID := chi.URLParam(r, paramExchangeID)
+	if err := flow.RefundExchangeDifference(ctx, exchangeID, body.Reason); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	record, err := h.svc.GetExchange(ctx, exchangeID)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toExchangeDTO(record)})
 }

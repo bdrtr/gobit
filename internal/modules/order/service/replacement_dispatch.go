@@ -144,7 +144,7 @@ func (s *Service) replacementSourceOf(
 		return replacementSource{
 			orderID:    exchange.OrderID,
 			status:     exchange.Status.String(),
-			settleable: exchange.OwesNothing(),
+			settleable: exchange.Settleable(),
 		}, nil
 	}
 

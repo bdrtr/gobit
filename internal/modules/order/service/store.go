@@ -289,6 +289,12 @@ type Store interface {
 	// it: ADR 0114 added the second transition and nothing asked this sentence
 	// to follow.
 	CancelExchange(ctx context.Context, id string) (models.Exchange, error)
+	// WithdrawFundedExchange takes back a funded exchange; the money is the
+	// caller's problem and the database only checks the status.
+	WithdrawFundedExchange(ctx context.Context, id string) (models.Exchange, error)
+	// FundExchange names the payment collection answering the exchange's
+	// difference and dates the moment; the database refuses a second one.
+	FundExchange(ctx context.Context, id, collectionID string) (models.Exchange, error)
 	// CompleteExchange records that the exchange was settled; the database
 	// refuses one that still owes money.
 	CompleteExchange(ctx context.Context, id string) (models.Exchange, error)

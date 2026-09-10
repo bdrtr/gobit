@@ -313,3 +313,104 @@ func TestAWithdrawnPromiseFreesTheExchange(t *testing.T) {
 	require.NoError(t, err, "a withdrawn promise no longer holds the exchange open")
 	assert.Equal(t, models.ExchangeCanceled, withdrawn.Status)
 }
+
+// TestANegativeDifferenceCannotBeFunded keeps the sign out at the module's own
+// door, not only at the flow's.
+//
+// The database refuses it too (order_exchanges_funded_is_positive), and both
+// are wanted: the constraint cannot be skipped by a second writer, and the
+// service's refusal is the one an operator can read.
+func TestANegativeDifferenceCannotBeFunded(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	exchange, _ := exchangeToSend(t, e, -500)
+
+	_, err := e.svc.FundExchange(ctx, exchange.ID, "paycol_1")
+
+	require.Error(t, err)
+	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
+}
+
+// TestASecondCollectionCannotBeNamed is the silence that would have cost money.
+//
+// A flow that died before recording would open a SECOND collection and call
+// again. Answering "already funded" quietly would leave that second collection
+// holding money nothing on this side names — money the customer can still be
+// charged through the payment module's own endpoints. The retry path, which
+// passes the SAME collection, is the one that stays quiet.
+func TestASecondCollectionCannotBeNamed(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	exchange, _ := exchangeToSend(t, e, 500)
+
+	funded, err := e.svc.FundExchange(ctx, exchange.ID, "paycol_1")
+	require.NoError(t, err)
+	assert.Equal(t, models.ExchangeFunded, funded.Status)
+
+	again, err := e.svc.FundExchange(ctx, exchange.ID, "paycol_1")
+	require.NoError(t, err, "the retry path names the same collection and is quiet")
+	assert.Equal(t, funded.FundedAt, again.FundedAt, "the FIRST funding keeps its moment")
+
+	_, err = e.svc.FundExchange(ctx, exchange.ID, "paycol_2")
+	require.Error(t, err, "a different collection is not a retry")
+	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
+	assert.Contains(t, err.Error(), "paycol_1", "the refusal names the collection already recorded")
+}
+
+// TestAFundedExchangeRefusesTheOrdinaryWithdrawal is the guard the whole record
+// is built around.
+func TestAFundedExchangeRefusesTheOrdinaryWithdrawal(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	exchange, _ := exchangeToSend(t, e, 500)
+	_, err := e.svc.FundExchange(ctx, exchange.ID, "paycol_1")
+	require.NoError(t, err)
+
+	_, err = e.svc.CancelExchange(ctx, exchange.ID)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
+}
+
+// TestTheFundedExchangeHasAnExit is why the refusal above is not a trap.
+//
+// Without it a record whose goods turn out to be unsendable would sit funded
+// for ever, and the order it hangs from could never be forgotten. The exit is
+// FORWARD: the record reaches a terminal state and keeps the moment it took
+// money, next to the collection that answers for where it went.
+func TestTheFundedExchangeHasAnExit(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	exchange, _ := exchangeToSend(t, e, 500)
+	_, err := e.svc.FundExchange(ctx, exchange.ID, "paycol_1")
+	require.NoError(t, err)
+
+	withdrawn, err := e.svc.WithdrawFundedExchange(ctx, exchange.ID)
+
+	require.NoError(t, err)
+	assert.Equal(t, models.ExchangeCanceled, withdrawn.Status)
+	require.NotNil(t, withdrawn.CanceledAt)
+	assert.NotNil(t, withdrawn.FundedAt, "the row still says it once held money")
+	assert.Equal(t, "paycol_1", withdrawn.PaymentCollectionID,
+		"and which collection answers for where it went")
+}
+
+// TestAFundedExchangeIsSettleableAndAnUnfundedOneIsNot pins the predicate the
+// dispatch reads.
+//
+// It is a SECOND predicate beside OwesNothing rather than a redefinition of it,
+// and this test is why: OwesNothing's three existing cases carry no funding, so
+// they would have passed unchanged under a widened definition and the widening
+// would have shipped ungated.
+func TestAFundedExchangeIsSettleableAndAnUnfundedOneIsNot(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	owing, _ := exchangeToSend(t, e, 500)
+
+	assert.False(t, owing.Settleable(), "money is owed and nothing answers it yet")
+
+	funded, err := e.svc.FundExchange(ctx, owing.ID, "paycol_1")
+	require.NoError(t, err)
+	assert.True(t, funded.Settleable(), "the difference is answered; the goods decide the rest")
+	assert.False(t, funded.OwesNothing(), "it still OWES; what changed is that it was paid")
+}

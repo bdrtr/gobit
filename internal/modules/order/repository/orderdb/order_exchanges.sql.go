@@ -13,7 +13,7 @@ const cancelOrderExchange = `-- name: CancelOrderExchange :one
 UPDATE order_exchanges
 SET status = 'canceled', canceled_at = now(), updated_at = now()
 WHERE id = $1
-RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at
+RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at
 `
 
 // CancelOrderExchange withdraws the exchange request.
@@ -35,6 +35,8 @@ func (q *Queries) CancelOrderExchange(ctx context.Context, id string) (OrderExch
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CompletedAt,
+		&i.PaymentCollectionID,
+		&i.FundedAt,
 	)
 	return i, err
 }
@@ -42,8 +44,8 @@ func (q *Queries) CancelOrderExchange(ctx context.Context, id string) (OrderExch
 const completeOrderExchange = `-- name: CompleteOrderExchange :one
 UPDATE order_exchanges
 SET status = 'completed', completed_at = now(), updated_at = now()
-WHERE id = $1 AND status = 'requested'
-RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at
+WHERE id = $1 AND status IN ('requested', 'funded')
+RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at
 `
 
 // CompleteOrderExchange records that the exchange was settled.
@@ -70,6 +72,8 @@ func (q *Queries) CompleteOrderExchange(ctx context.Context, id string) (OrderEx
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CompletedAt,
+		&i.PaymentCollectionID,
+		&i.FundedAt,
 	)
 	return i, err
 }
@@ -90,7 +94,7 @@ const createOrderExchange = `-- name: CreateOrderExchange :one
 
 INSERT INTO order_exchanges (id, order_id, status, difference_due, note, metadata)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at
+RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at
 `
 
 type CreateOrderExchangeParams struct {
@@ -132,12 +136,60 @@ func (q *Queries) CreateOrderExchange(ctx context.Context, arg CreateOrderExchan
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CompletedAt,
+		&i.PaymentCollectionID,
+		&i.FundedAt,
+	)
+	return i, err
+}
+
+const fundOrderExchange = `-- name: FundOrderExchange :one
+UPDATE order_exchanges
+SET status                = 'funded',
+    payment_collection_id = $2,
+    funded_at             = now(),
+    updated_at            = now()
+WHERE id = $1 AND status = 'requested'
+RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at
+`
+
+type FundOrderExchangeParams struct {
+	ID                  string
+	PaymentCollectionID *string
+}
+
+// FundOrderExchange names the payment collection that answers this exchange's
+// difference and dates the moment.
+//
+// The narrowing is 'requested' alone: funding is written ONCE, and a second
+// call against an already funded exchange matches no row rather than replacing
+// the collection under it. Replacing it would drop the only sentence saying
+// where the first collection's money went.
+//
+// What is NOT written here is an amount. The figure lives in the payment
+// module and a copy of it here would be a claim a route this module never
+// hears about can invalidate (ADR 0119); the identifier cannot go stale.
+func (q *Queries) FundOrderExchange(ctx context.Context, arg FundOrderExchangeParams) (OrderExchange, error) {
+	row := q.db.QueryRow(ctx, fundOrderExchange, arg.ID, arg.PaymentCollectionID)
+	var i OrderExchange
+	err := row.Scan(
+		&i.ID,
+		&i.OrderID,
+		&i.Status,
+		&i.DifferenceDue,
+		&i.Note,
+		&i.Metadata,
+		&i.CanceledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+		&i.PaymentCollectionID,
+		&i.FundedAt,
 	)
 	return i, err
 }
 
 const getOrderExchange = `-- name: GetOrderExchange :one
-SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at FROM order_exchanges
+SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at FROM order_exchanges
 WHERE id = $1
 `
 
@@ -155,12 +207,14 @@ func (q *Queries) GetOrderExchange(ctx context.Context, id string) (OrderExchang
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CompletedAt,
+		&i.PaymentCollectionID,
+		&i.FundedAt,
 	)
 	return i, err
 }
 
 const listOrderExchanges = `-- name: ListOrderExchanges :many
-SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at FROM order_exchanges
+SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at FROM order_exchanges
 WHERE order_id = $1
 ORDER BY created_at DESC, id DESC
 LIMIT $3::bigint OFFSET $2::bigint
@@ -192,6 +246,8 @@ func (q *Queries) ListOrderExchanges(ctx context.Context, arg ListOrderExchanges
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.CompletedAt,
+			&i.PaymentCollectionID,
+			&i.FundedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -204,7 +260,7 @@ func (q *Queries) ListOrderExchanges(ctx context.Context, arg ListOrderExchanges
 }
 
 const lockOrderExchange = `-- name: LockOrderExchange :one
-SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at FROM order_exchanges
+SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at FROM order_exchanges
 WHERE id = $1
 FOR UPDATE
 `
@@ -229,6 +285,51 @@ func (q *Queries) LockOrderExchange(ctx context.Context, id string) (OrderExchan
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CompletedAt,
+		&i.PaymentCollectionID,
+		&i.FundedAt,
+	)
+	return i, err
+}
+
+const withdrawFundedOrderExchange = `-- name: WithdrawFundedOrderExchange :one
+UPDATE order_exchanges
+SET status      = 'canceled',
+    canceled_at = now(),
+    updated_at  = now()
+WHERE id = $1 AND status = 'funded'
+RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at
+`
+
+// WithdrawFundedOrderExchange takes back an exchange whose difference was
+// funded and whose money has been sent back.
+//
+// It is the EXIT from 'funded' and it goes FORWARD: the record reaches
+// 'canceled', a terminal state, and keeps both moments. funded_at is not
+// cleared -- the exchange really did hold the customer's money and the row goes
+// on saying so, next to the collection that answers for where it went.
+//
+// Clearing the moment instead would be the "reopen" ADR 0055 refused, and it
+// would destroy the only local record that money ever moved.
+//
+// Whether the money really went back is NOT decided here: it is the payment
+// module's number and only a flow can ask it (ADR 0119). This statement
+// narrows on the status alone.
+func (q *Queries) WithdrawFundedOrderExchange(ctx context.Context, id string) (OrderExchange, error) {
+	row := q.db.QueryRow(ctx, withdrawFundedOrderExchange, id)
+	var i OrderExchange
+	err := row.Scan(
+		&i.ID,
+		&i.OrderID,
+		&i.Status,
+		&i.DifferenceDue,
+		&i.Note,
+		&i.Metadata,
+		&i.CanceledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+		&i.PaymentCollectionID,
+		&i.FundedAt,
 	)
 	return i, err
 }

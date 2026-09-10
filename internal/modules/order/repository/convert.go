@@ -528,16 +528,18 @@ func toExchange(row orderdb.OrderExchange) (models.Exchange, error) {
 		return models.Exchange{}, err
 	}
 	return models.Exchange{
-		ID:            row.ID,
-		OrderID:       row.OrderID,
-		Status:        models.ExchangeStatus(row.Status),
-		DifferenceDue: row.DifferenceDue,
-		Note:          stringValue(row.Note),
-		Metadata:      meta,
-		CanceledAt:    toTimePtr(row.CanceledAt),
-		CompletedAt:   toTimePtr(row.CompletedAt),
-		CreatedAt:     toTime(row.CreatedAt),
-		UpdatedAt:     toTime(row.UpdatedAt),
+		ID:                  row.ID,
+		OrderID:             row.OrderID,
+		Status:              models.ExchangeStatus(row.Status),
+		DifferenceDue:       row.DifferenceDue,
+		Note:                stringValue(row.Note),
+		Metadata:            meta,
+		PaymentCollectionID: stringValue(row.PaymentCollectionID),
+		FundedAt:            toTimePtr(row.FundedAt),
+		CanceledAt:          toTimePtr(row.CanceledAt),
+		CompletedAt:         toTimePtr(row.CompletedAt),
+		CreatedAt:           toTime(row.CreatedAt),
+		UpdatedAt:           toTime(row.UpdatedAt),
 	}, nil
 }
 

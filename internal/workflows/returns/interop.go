@@ -88,3 +88,22 @@ func (i *Interop) DispatchReplacement(
 
 	return out.FulfillmentID, out.SentUnits, out.AlreadySent, nil
 }
+
+// FundExchangeDifference records WHICH payment collection answers an exchange's
+// difference.
+//
+// The verb is the flow's because deciding it needs both modules: the exchange
+// says what it owes and the payment module says what the collection holds, and
+// neither may ask the other (ADR 0006).
+func (i *Interop) FundExchangeDifference(ctx context.Context, exchangeID, collectionID string) error {
+	return i.w.FundExchangeDifference(ctx, exchangeID, collectionID)
+}
+
+// RefundExchangeDifference sends a funded exchange's money back and takes the
+// request back with it.
+//
+// It is the EXIT from a funded exchange, which refuses the ordinary withdrawal.
+// The two halves are one call so they cannot be done in the wrong order.
+func (i *Interop) RefundExchangeDifference(ctx context.Context, exchangeID, reason string) error {
+	return i.w.RefundExchangeDifference(ctx, exchangeID, reason)
+}

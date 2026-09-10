@@ -130,11 +130,23 @@ func (h *Handler) Routes(r chi.Router) {
 	read.Get("/admin/v1/orders/{id}/exchanges", h.adminListExchanges)
 	write.Post("/admin/v1/orders/{id}/exchanges", h.adminCreateExchange)
 	read.Get("/admin/v1/orders/{id}/exchanges/{exchangeId}", h.adminGetExchange)
-	// The exchange's only transition an OPERATOR can drive. It has a second one
-	// since ADR 0114 — completion — and that one follows the goods rather than
-	// a request, so it is reached by dispatching a replacement and has no route
-	// of its own.
+	// The exchange has THREE transitions and two of them are here. Withdrawing
+	// is the request being taken back; funding says which collection answers
+	// the difference and takes the record out of 'requested' without closing
+	// it. The third — completion — follows the GOODS rather than a request, so
+	// it is reached by dispatching a replacement and has no route of its own
+	// (ADR 0114).
+	//
+	// The cancel goes straight to the service and the funding through a flow,
+	// and the split is the one this file states above: a request taken back
+	// tells nobody, while a funding has to be verified against a module this
+	// one may not ask.
 	write.Post("/admin/v1/orders/{id}/exchanges/{exchangeId}/cancel", h.adminCancelExchange)
+	write.Post("/admin/v1/orders/{id}/exchanges/{exchangeId}/funding", h.adminFundExchange)
+	// The funded exchange's exit. It is a separate address from the cancel
+	// above because it does a different thing — money goes back — and because
+	// the cancel REFUSES a funded record on purpose.
+	write.Post("/admin/v1/orders/{id}/exchanges/{exchangeId}/refund", h.adminRefundExchange)
 	read.Get("/admin/v1/orders/{id}/claims", h.adminListClaims)
 	write.Post("/admin/v1/orders/{id}/claims", h.adminCreateClaim)
 	read.Get("/admin/v1/orders/{id}/claims/{claimId}", h.adminGetClaim)

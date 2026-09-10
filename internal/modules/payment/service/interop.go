@@ -238,6 +238,25 @@ func (i *Interop) Collection(ctx context.Context, collectionID string) (
 	return col.Status.String(), col.Amount, col.AuthorizedAmount, col.CapturedAmount, col.RefundedAmount, nil
 }
 
+// CollectionCurrency returns the collection's ISO 4217 code.
+//
+// It is a SECOND method rather than a sixth return on [Interop.Collection], and
+// the reason is Go's structural typing: every consumer declares its own narrow
+// interface, so ADDING a method breaks none of them while widening a signature
+// breaks all of them — including the checkout saga, which has nothing to do
+// with this question.
+//
+// A second read cannot go stale: currency_code is written by the INSERT and no
+// statement in this module updates it.
+func (i *Interop) CollectionCurrency(ctx context.Context, collectionID string) (string, error) {
+	col, err := i.svc.GetPaymentCollection(ctx, collectionID)
+	if err != nil {
+		return "", err
+	}
+
+	return col.CurrencyCode, nil
+}
+
 // SessionStatus returns the session's current status.
 //
 // The tests that verify the compensation really runs look at this: a canceled

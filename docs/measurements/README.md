@@ -12,6 +12,7 @@ truth: a report says what was true on the day it was taken.
 
 | Report | Lines |
 |---|---|
+| [The guard moves to the binding — measured 2026-09-10](0120-the-guard-moves-to-the-binding.md) | 126 |
 | [Where the truth about collected money lives — measured 2026-09-10](0119-where-the-truth-about-collected-money-lives.md) | 130 |
 | [A counter in place of a balance — measured 2026-09-10](0118-a-counter-in-place-of-a-balance.md) | 162 |
 | [Why `order_payment` stays one to one — measured 2026-09-10](0117-why-order-payment-stays-one-to-one.md) | 269 |

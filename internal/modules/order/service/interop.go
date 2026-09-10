@@ -392,6 +392,70 @@ func (i *Interop) CompleteClaim(ctx context.Context, claimID string) error {
 	return err
 }
 
+// FundExchange records WHICH payment collection answers the exchange's
+// difference.
+//
+// The caller is the flow that holds both sides: it asked the payment module
+// what that collection holds and this records the answer's SUBJECT, never its
+// arithmetic (ADR 0119). A second call with the same collection returns
+// quietly; with a different one it is refused.
+func (i *Interop) FundExchange(ctx context.Context, exchangeID, collectionID string) error {
+	_, err := i.svc.FundExchange(ctx, exchangeID, collectionID)
+
+	return err
+}
+
+// WithdrawFundedExchange takes back a funded exchange after its money went back.
+//
+// The refund is the caller's half and happens first; this records the half that
+// is this module's.
+func (i *Interop) WithdrawFundedExchange(ctx context.Context, exchangeID string) error {
+	_, err := i.svc.WithdrawFundedExchange(ctx, exchangeID)
+
+	return err
+}
+
+// ExchangeFundingJSON is the exchange as a flow deciding a funding needs it.
+//
+// It carries the order's CURRENCY, which the exchange's own row does not have:
+// the amount is in the order and matching a collection to it is a decision the
+// flow makes, so handing it the pair here keeps the flow from resolving the
+// order a second time to learn it. The difference is the row's own figure and
+// is safe to publish — it is this module's number, not the payment module's.
+func (i *Interop) ExchangeFundingJSON(ctx context.Context, exchangeID string) (json.RawMessage, error) {
+	exchange, err := i.svc.GetExchange(ctx, exchangeID)
+	if err != nil {
+		return nil, err
+	}
+
+	order, err := i.svc.GetOrder(ctx, exchange.OrderID)
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(exchangeFunding{
+		ExchangeID:          exchange.ID,
+		OrderID:             exchange.OrderID,
+		Status:              exchange.Status.String(),
+		DifferenceDue:       exchange.DifferenceDue,
+		CurrencyCode:        order.CurrencyCode,
+		PaymentCollectionID: exchange.PaymentCollectionID,
+	})
+}
+
+// exchangeFunding is the wire shape of [Interop.ExchangeFundingJSON].
+//
+// The two ends cannot import each other (ADR 0006), so the compiler sees
+// nothing here and the integration lane is the proof.
+type exchangeFunding struct {
+	ExchangeID          string `json:"exchange_id"`
+	OrderID             string `json:"order_id"`
+	Status              string `json:"status"`
+	DifferenceDue       int64  `json:"difference_due"`
+	CurrencyCode        string `json:"currency_code"`
+	PaymentCollectionID string `json:"payment_collection_id,omitempty"`
+}
+
 // CompleteExchange records that the exchange was settled.
 //
 // It says the exchange WAS settled and nothing about how, exactly as

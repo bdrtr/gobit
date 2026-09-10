@@ -107,8 +107,20 @@ type Orders interface {
 	//
 	// It is the same verb one record over, and the flow picks between them by
 	// the source the replacement names. The order module refuses an exchange
-	// that still owes money.
+	// that still owes money and is not funded.
 	CompleteExchange(ctx context.Context, exchangeID string) error
+	// ExchangeFundingJSON returns what a flow deciding a funding needs: the
+	// difference the record owes and the ORDER's currency.
+	ExchangeFundingJSON(ctx context.Context, exchangeID string) (json.RawMessage, error)
+	// WithdrawFundedExchange takes back a funded exchange after its money has
+	// been sent back; the order module checks the status and not the money.
+	WithdrawFundedExchange(ctx context.Context, exchangeID string) error
+	// FundExchange records WHICH payment collection answers the difference.
+	//
+	// It records the subject of the answer and never its arithmetic: the amount
+	// belongs to the payment module and a copy of it on an order row is a claim
+	// a route that module publishes can invalidate in silence (ADR 0119).
+	FundExchange(ctx context.Context, exchangeID, collectionID string) error
 
 	// ReplacementDetailJSON returns what a flow needs to send a replacement.
 	ReplacementDetailJSON(ctx context.Context, replacementID string) (json.RawMessage, error)
@@ -130,6 +142,11 @@ type Payments interface {
 		amount, authorized, captured, refunded int64,
 		err error,
 	)
+	// CollectionCurrency returns the collection's ISO 4217 code.
+	//
+	// It is a separate method because widening [Payments.Collection] would break
+	// every other consumer that declares it, the checkout saga included.
+	CollectionCurrency(ctx context.Context, collectionID string) (string, error)
 }
 
 // Inventory is the surface of the inventory module used by this flow.
