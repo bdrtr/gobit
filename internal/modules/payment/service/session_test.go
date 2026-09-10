@@ -667,3 +667,89 @@ func TestCancelKilitSirasi(t *testing.T) {
 
 	assert.Equal(t, []string{"collection", "session"}, store.kilitSirasi())
 }
+
+// TestKismiTahsilatinKalaniIcinYeniOturumAcilabilir ADR 0118'in açtığı yoldur:
+// kısmen tahsil edilmiş bir koleksiyonun kalanı toplanabilir.
+//
+// Kısmi tahsilat uydurma bir hâl değil, yayımlanmış bir uçtan üretilen birinci
+// sınıf bir durum: admin tahsilat ucu tutarı OPSİYONEL alır ve [Service.
+// CapturePayment] onu yalnızca YUKARIDAN sınırlar, yani operatör bloke edilen
+// tutarın bir kısmını çekebilir. Bir sağlayıcının kısmen yetkilendirmesi de
+// aynı yere çıkar. Şema o hâli adıyla tanıyor
+// ([models.CollectionPartiallyCaptured]).
+//
+// ADR 0118'e kadar kalan bir daha toplanamıyordu: kapı koleksiyonun HİÇ bir şey
+// alıp almadığını soruyordu ve kısmi tahsilat da "almış" sayılıyordu. Bayrağın
+// ayıramadığı iki durumu aritmetik ayırır.
+func TestKismiTahsilatinKalaniIcinYeniOturumAcilabilir(t *testing.T) {
+	svc, _, _ := yeniServis(t)
+	ctx := context.Background()
+	col := koleksiyonAc(t, svc, tutar)
+	ilk := oturumAc(t, svc, col.ID, "key-1")
+	_, err := svc.AuthorizePayment(ctx, ilk.ID)
+	require.NoError(t, err)
+
+	_, err = svc.CapturePayment(ctx, ilk.ID, tutar/4)
+	require.NoError(t, err, "bloke tutarın bir kısmı tahsil edilebilir")
+
+	kalan, err := svc.CreateSession(ctx, col.ID, saglayiciID,
+		service.CreateSessionInput{IdempotencyKey: "key-2"})
+
+	require.NoError(t, err, "kısmen tahsil edilmiş koleksiyonun kalanı toplanabilmeli")
+	assert.Equal(t, tutar-tutar/4, kalan.Amount,
+		"yeni oturum yalnızca kalan tutar kadar açılır")
+}
+
+// TestKismiTahsilattanSonraKalandanFazlasiAcilamaz kalanın bir TAVAN olduğunu
+// doğrular, yalnızca bir izin olmadığını.
+//
+// Bu, ADR 0118'in en pahalı hatasının kapısı: tahsil edileni saymayan bir hesap
+// kalanı TAM tutar gösterir, oturum açılır, sağlayıcı parayı çeker ve ancak
+// ondan sonra `captured_amount <= amount` kısıtına çarpılır — sağlayıcıda para,
+// defterde hiçbir şey.
+func TestKismiTahsilattanSonraKalandanFazlasiAcilamaz(t *testing.T) {
+	svc, _, _ := yeniServis(t)
+	ctx := context.Background()
+	col := koleksiyonAc(t, svc, tutar)
+	ilk := oturumAc(t, svc, col.ID, "key-1")
+	_, err := svc.AuthorizePayment(ctx, ilk.ID)
+	require.NoError(t, err)
+	_, err = svc.CapturePayment(ctx, ilk.ID, tutar/4)
+	require.NoError(t, err)
+
+	_, err = svc.CreateSession(ctx, col.ID, saglayiciID, service.CreateSessionInput{
+		Amount:         tutar,
+		IdempotencyKey: "key-2",
+	})
+
+	require.Error(t, err, "kalan yalnızca dörtte üçtür")
+	assert.Equal(t, service.CodeInvalidTransition, errors.CodeOf(err))
+}
+
+// TestTamIadeEdilmisKoleksiyonYenidenAcilmaz ADR 0118'in BİLİNÇLİ olarak
+// yapmadığı şeydir.
+//
+// Bir iade tahsil edilen toplamı küçültmez, o yüzden kalan kapasite sıfır
+// kalır ve koleksiyon yeniden ödenebilir hâle GELMEZ. ADR 0117 bunun tetiğini
+// adıyla yazmıştı ("once it owes nothing"), ve o tetiğin bugün tüketicisi yok:
+// üretimdeki iki iade çağıranı da parayı yalnızca geri gönderiyor, hiçbiri
+// sonradan yeniden tahsil etmiyor. Tüketicisi olmayan yetenek yayımlanmaz
+// (ADR 0063), ve bu test o kararı kapıya bağlar.
+func TestTamIadeEdilmisKoleksiyonYenidenAcilmaz(t *testing.T) {
+	svc, _, _ := yeniServis(t)
+	ctx := context.Background()
+	col := koleksiyonAc(t, svc, tutar)
+	ilk := oturumAc(t, svc, col.ID, "key-1")
+	_, err := svc.AuthorizePayment(ctx, ilk.ID)
+	require.NoError(t, err)
+	odeme, err := svc.CapturePayment(ctx, ilk.ID, 0)
+	require.NoError(t, err)
+	_, err = svc.RefundPayment(ctx, odeme.ID, 0, "")
+	require.NoError(t, err, "tamamı iade edilir")
+
+	_, err = svc.CreateSession(ctx, col.ID, saglayiciID,
+		service.CreateSessionInput{IdempotencyKey: "key-2"})
+
+	require.Error(t, err, "iade koleksiyonu yeniden ödenebilir yapmaz")
+	assert.Equal(t, service.CodeCollectionClosed, errors.CodeOf(err))
+}

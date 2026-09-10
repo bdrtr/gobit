@@ -49,16 +49,22 @@ type CreateSessionInput struct {
 // telafiden SONRA yeniden denenen bir akış YENİ bir anahtar üretmek zorundadır
 // ve bu hata kodu ona bunu söyler.
 //
-// Tahsilatı başlamış bir koleksiyona yeni oturum açılamaz (errors.Conflict);
-// para çekilmişken ikinci bir ödeme yolu açmak, çift tahsilatın kapısıdır.
+// # Kalan tutar TAHSİL EDİLENİ de AÇIK OTURUMLARI da sayar
 //
-// # Kalan tutar AÇIK OTURUMLARI da sayar
+// Açılacak tutar, koleksiyonun tutarından tahsil edilmiş toplamın VE canlı
+// oturumların rezerve ettiğinin düşülmesiyle bulunur
+// (bkz. [Service.remainingToOpen]); kalan sıfırsa oturum açılmaz
+// (errors.Conflict), tutar verilmezse kalanın tamamı için açılır.
 //
-// Açılacak tutar, koleksiyonun tutarından canlı oturumların rezerve ettiği
-// toplamın düşülmesiyle bulunur (bkz. [Service.remainingToOpen]); tutar
-// verilmezse kalanın tamamı için oturum açılır. Yalnızca yetkilendirilmiş
-// tutara bakan bir hesap, aynı koleksiyonda her biri TAM tutarlı birden çok
-// oturum açılmasına ve hepsi yetkilendirilince ÇİFT TAHSİLATA izin verirdi.
+// Rezerv payı olmasa, aynı koleksiyonda her biri TAM tutarlı birden çok oturum
+// açılabilir ve hepsi yetkilendirilince ÇİFT TAHSİLAT olurdu. Tahsil edilen
+// payı olmasa aynı şey ARDIŞIK olarak olurdu: tahsilat oturumun rezervini
+// kapattığı için kalan yeniden tam tutar görünürdü.
+//
+// ADR 0118'e kadar tahsil edilen payı burada değildi ve yerine "tahsilatı
+// başlamış koleksiyona yeni oturum açılamaz" diye bir bayrak duruyordu. Bayrak
+// çift tahsilatı engelliyordu ama KISMİ bir tahsilatın kalanını da sonsuza
+// kadar toplanamaz yapıyordu; aritmetik iki durumu ayırır, bayrak ayıramazdı.
 //
 // Kilit sırası: koleksiyon. Sağlayıcı çağrısı bu kilit ALTINDA yapılır
 // (gerekçe için paket belgesine bakın).
@@ -120,18 +126,14 @@ func (s *Service) CreateSession(
 			return err
 		}
 
-		if col.CapturedAmount > 0 {
-			return errors.Conflict(CodeCollectionClosed,
-				"tahsilatı başlamış koleksiyona yeni oturum açılamaz: %s", col.ID)
-		}
-
-		remaining, err := s.remainingToOpen(ctx, col)
+		remaining, reserved, err := s.remainingToOpen(ctx, col)
 		if err != nil {
 			return err
 		}
 		if remaining <= 0 {
 			return errors.Conflict(CodeCollectionClosed,
-				"koleksiyonun tamamı açık oturumlarca kapatılmış, açılacak tutar kalmadı: %s", col.ID)
+				"koleksiyonda açılacak tutar kalmadı: tutar %d, tahsil edilen %d, açık oturumlarca rezerve edilen %d (%s)",
+				col.Amount, col.CapturedAmount, reserved, col.ID)
 		}
 		amount := in.Amount
 		if amount == 0 {
@@ -196,25 +198,48 @@ func (s *Service) CreateSession(
 }
 
 // remainingToOpen koleksiyonda yeni bir oturumun kapabileceği tutarı döner;
-// hiç kalmadıysa 0.
+// hiç kalmadıysa 0. İkinci dönüş, canlı oturumların rezerve ettiği toplamdır ve
+// yalnızca hata mesajını doğru yazmak için verilir.
 //
-// Hesap koleksiyonun tutarından, CANLI oturumların rezerve ettiği toplamı
-// düşer. Yalnızca yetkilendirilmiş tutara bakmak yetmez: hiçbiri
-// yetkilendirilmemişken aynı koleksiyona her biri TAM tutarlı iki oturum
+// Hesap koleksiyonun tutarından İKİ şeyi düşer: ZATEN TAHSİL EDİLMİŞ tutarı ve
+// CANLI oturumların rezerve ettiğini.
+//
+// Rezerv payı için: yalnızca yetkilendirilmiş tutara bakmak yetmez, çünkü
+// hiçbiri yetkilendirilmemişken aynı koleksiyona her biri TAM tutarlı iki oturum
 // açılabilir, ikisi de yetkilendirilince koleksiyonun iki katı bloke edilir ve
 // ikisi de tahsil edilince müşteriden iki kez para çekilirdi.
 //
+// # Tahsil edilen payı, ve neden ADR 0118'e kadar burada değildi
+//
+// Bu hesap tahsil edileni HİÇ okumuyordu, ve çift tahsilatın kapısını tek
+// başına [Service.CreateSession] içindeki "tahsilatı başlamış koleksiyona yeni
+// oturum açılamaz" satırı tutuyordu. O satır bir BAKİYE değil BİRİKİMLİ SAYAÇ
+// okuyordu — "şu an bir şey tutuyor mu" değil "hiç bir şey almış mı" — ve
+// kısmen tahsil edilmiş bir koleksiyonun kalanını sonsuza kadar toplanamaz
+// yapıyordu. Aritmetik buraya taşındığında o satıra gerek kalmadı: kalan sıfırsa
+// kapı zaten kapanıyor, ve tam tahsil edilmiş bir koleksiyonda kalan sıfırdır.
+//
+// Bir İADE kalanı BÜYÜTMEZ, çünkü tahsil edilen toplam iade yazılırken
+// değişmiyor (bkz. [Service.RefundPayment]). Bu bilinçlidir: iade edilmiş bir
+// koleksiyonu yeniden ödenebilir yapmanın bugün tüketicisi yok (ADR 0063), ve
+// `captured_amount <= amount` kısıtı aynı hesabın arkasındaki ikinci duvardır.
+//
 // İşlem İÇİNDE ve koleksiyonun kilidi ALTINDA çağrılmalıdır; kilitsiz okunan
 // bir toplam, araya giren bir oturum açılışıyla bayatlar.
-func (s *Service) remainingToOpen(ctx context.Context, col models.PaymentCollection) (int64, error) {
-	reserved, err := s.store.LiveSessionAmount(ctx, col.ID)
+func (s *Service) remainingToOpen(
+	ctx context.Context, col models.PaymentCollection,
+) (remaining, reserved int64, err error) {
+	reserved, err = s.store.LiveSessionAmount(ctx, col.ID)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	if reserved >= col.Amount {
-		return 0, nil
+
+	taken := col.CapturedAmount + reserved
+	if taken >= col.Amount {
+		return 0, reserved, nil
 	}
-	return col.Amount - reserved, nil
+
+	return col.Amount - taken, reserved, nil
 }
 
 // AuthorizePayment oturumun tutarını müşterinin üzerinde BLOKE eder.

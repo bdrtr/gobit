@@ -20,6 +20,33 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir koleksiyonun kapısı artık KALANI okuyor** (ADR 0118). Kapı
+  "bu koleksiyon hiç bir şey aldı mı" diye soruyordu, ve altındaki hesap tahsil
+  edileni hiç okumuyordu — yalnızca canlı oturumların rezervini düşüyordu. Yani
+  bayrak bir kısayol değildi, ikinci bir oturumla ikinci bir tahsilat arasındaki
+  TEK duvardı; kaba olmasının sebebi buydu, ve kısmi bir tahsilatın kalanını da
+  o kabalıkla sonsuza kadar toplanamaz yapıyordu.
+  Kısmi tahsilat bir köşe durumu değil: admin tahsilat ucu tutarı İSTEĞE BAĞLI
+  alıyor ve yalnızca yukarıdan sınırlıyor, bir sağlayıcı kısmen yetkilendirince
+  operatör hiçbir şey seçmeden aynı yere geliniyor, ve türetilmiş durum sözlüğü
+  o hâli yazıldığı günden beri adıyla tanıyor. Modül kendi sözünü de çiğniyordu:
+  oturum testi "iptal edilen bir oturum koleksiyonu sonsuza kadar kilitlememeli,
+  müşteri yeni bir ödeme yolu deneyebilmeli" diyor, ve bu yalnızca hiçbir şey
+  tahsil edilmemişken tutuyordu.
+  Karar: oturum açmak KALANI soruyor — tutar eksi tahsil edilen eksi canlı
+  oturumların rezervi — ve yalnızca bu sıfırken reddediyor. Çift tahsilatın
+  bariyeri bir bayraktan aritmetiğe taşınıyor, üstelik ikinci duvarın zaten
+  durduğu yere: `captured_amount <= amount` kısıtı bugüne kadar ancak sağlayıcı
+  parayı ÇEKTİKTEN sonra ateşlenebiliyordu.
+  Tam iade edilmiş bir koleksiyon YENİDEN AÇILMIYOR ve bu bilinçli: iade tahsil
+  edileni küçültmüyor, kalan kapasite sıfır kalıyor. ADR 0117'nin tetiği bu ama
+  tüketicisi yok — üretimdeki iki iade çağıranı da parayı yalnızca geri
+  gönderiyor (ADR 0063). Yan taraftan bir düzeltme: ADR 0117 "engel bağ değil
+  koleksiyon" diyordu; ölçüm daha dar bir cevap verdi — var olan koleksiyon
+  yeniden kullanılabilir olsa bile farkı ALAMAZ, çünkü `amount` bir daha
+  yazılmıyor. Fark İKİNCİ bir koleksiyon ister, ve onun adı hâlâ ertelenmiş
+  durumda. Kusurlar D53 ve D54.
+
 - **Satışın ödeme bağı yalnızca satışı taşıyor** (ADR 0117). ADR 0116 bir
   kardinaliteyi genişletilebilir yaptı ve tek soruyu yazılı olarak açık bıraktı:
   değişimin tahsilatı kendi adını ister mi. O güne kadar cevap zorunluydu —

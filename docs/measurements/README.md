@@ -12,6 +12,7 @@ truth: a report says what was true on the day it was taken.
 
 | Report | Lines |
 |---|---|
+| [A counter in place of a balance — measured 2026-09-10](0118-a-counter-in-place-of-a-balance.md) | 162 |
 | [Why `order_payment` stays one to one — measured 2026-09-10](0117-why-order-payment-stays-one-to-one.md) | 269 |
 | [The widening lane — measured 2026-09-10](0116-the-widening-lane.md) | 115 |
 | [Extracting a tax and re-taxing the remainder — measured 2026-09-09](0086-tax-inclusive-rounding.md) | 92 |

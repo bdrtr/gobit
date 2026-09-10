@@ -27,11 +27,19 @@ const CodeCollectionNothingToRefund = "payment_collection_nothing_to_refund"
 //
 // # How the amount is spread
 //
-// Captures are drawn in the order they were made, each up to what is left
-// refundable on it, until the requested amount is covered. Oldest first is
-// deliberate rather than arbitrary: it keeps the refundable remainder
-// concentrated on the most recent captures, which are the ones a later partial
-// refund is most likely to be about.
+// Captures are drawn NEWEST FIRST, each up to what is left refundable on it,
+// until the requested amount is covered. The order is the one
+// `ListPaymentsByCollection` returns and [planRefund] walks that list as it
+// comes.
+//
+// This paragraph claimed the opposite until ADR 0118 — "oldest first is
+// deliberate rather than arbitrary" — with a reason built on top of it. The
+// query has ordered by `created_at DESC` since it was written, so the reason
+// described a behavior that never shipped. Which order is BETTER is a separate
+// question this record does not answer: a provider that only refunds within a
+// window of the capture would prefer the oldest drawn first, and changing the
+// order is a behavior change nobody has asked for. The trigger is the first
+// provider that reports a closed refund window.
 //
 // A zero amount refunds EVERYTHING that is left, which is what "give the
 // customer their money back" means when nobody named a figure.
