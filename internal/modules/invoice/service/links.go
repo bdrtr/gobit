@@ -58,8 +58,22 @@ func Definitions() []link.LinkDefinition {
 			// It reopens the day a shop needs a second document against one
 			// sale. The nearest candidate is already in the model: a refund
 			// document (models.KindRefund) reverses part of a sale and is a
-			// document of its own. That day this becomes OneToMany and nothing
-			// else changes.
+			// document of its own — though nothing in the tree issues one
+			// today, so the trigger has not fired.
+			//
+			// This comment used to end "that day this becomes OneToMany and
+			// nothing else changes", the same sentence the payment module's
+			// link definition carried, and it was wrong in the same way (gap
+			// D51). ADR 0116 made the widening itself real, which makes the
+			// claim MORE dangerous rather than less: the edit now succeeds.
+			//
+			// What it would cost is not the mechanism but the reader.
+			// internal/workflows/invoicing/issue.go takes the first linked id
+			// and says why — "the definition is one to one, so more than one is
+			// a data fault rather than a choice" — and a widening rots that
+			// sentence without changing a single behavior, so no test sees it.
+			// Widening past OneToOne also drops from_uniq, which is the only
+			// structural bar to two writers binding two documents to one order.
 			Cardinality: link.OneToOne,
 		},
 	}

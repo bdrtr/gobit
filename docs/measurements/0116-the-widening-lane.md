@@ -85,6 +85,23 @@ means — but it is the property a link gives up by crossing this line, and it i
 worth knowing before crossing it rather than after. `order_payment` is not
 widened by ADR 0116; the record that widens it owns this paragraph.
 
+## The one-way door has two locks
+
+The record says a release that widens a link cannot be rolled back through this
+path, and names the first lock: the older binary declares the narrower
+cardinality and `change` refuses it. That lock is human-defeatable — correct the
+ledger row by hand and the declaration passes.
+
+The second is not, and it follows from the decision's own backbone sentence read
+backwards. Every pair a narrower cardinality admits is admitted by a wider one;
+the converse fails, so rows written AFTER the widening may violate the narrower
+constraint. Recreating `from_uniq` over them raises `23505`, inside the
+declaration transaction, and the only way through is to delete rows — which is
+to say, to throw away the records the widening existed to allow.
+
+Noted by an independent reading of the record rather than measured here; it
+sharpens the Consequences line rather than changing it.
+
 ## What was not measured
 
 Index drop time on a large link table. `DROP INDEX` takes an ACCESS EXCLUSIVE
