@@ -147,6 +147,14 @@ func (w *Workflows) DispatchReplacement(
 			"replacement %s names no lines, so there is nothing to send", replacementID)
 	}
 
+	// The money is asked about BEFORE the stock moves, and that placement is the
+	// decision rather than an ordering detail: below this line the units are
+	// off the shelf and in a parcel, and no answer can put them back. The whole
+	// value of the question is refusing to send goods the shop was not paid for.
+	if err := w.refuseUnfundedExchange(ctx, detail); err != nil {
+		return DispatchResult{}, err
+	}
+
 	held, err := w.holdStock(ctx, detail)
 	if err != nil {
 		return DispatchResult{}, err
@@ -301,6 +309,38 @@ func (w *Workflows) openParcel(
 	return fulfillmentID, alreadyOpen, nil
 }
 
+// refuseUnfundedExchange stops a dispatch whose exchange no longer holds the
+// money it was funded with.
+//
+// A claim is never refused here: it is settled by the goods alone and has no
+// money half to lose. An exchange owing nothing is not refused either — it names
+// no collection, so there is nothing that could have left.
+//
+// The refusal is a CONFLICT rather than a warning, because at this point nothing
+// has happened yet: the units are on the shelf, no parcel exists, and the honest
+// answer to "send these" is no. An operator who really means to send them has
+// the funding endpoint, and a customer who really is owed the money back has the
+// exchange's refund exit.
+func (w *Workflows) refuseUnfundedExchange(ctx context.Context, detail replacementDetail) error {
+	if detail.SourceKind != sourceExchange {
+		return nil
+	}
+
+	holds, held, due, err := w.exchangeStillHoldsItsDifference(ctx, detail.SourceID)
+	if err != nil {
+		return err
+	}
+	if !holds {
+		return errors.Conflict(CodeDifferenceNotHeld,
+			"exchange %s owes %d and its collection holds %d, so replacement %s is not sent; "+
+				"the difference was collected once and has since gone back, and sending the "+
+				"goods now would give them away",
+			detail.SourceID, due, held, detail.ReplacementID)
+	}
+
+	return nil
+}
+
 // settleDispatchedSource closes the record the goods answered.
 //
 // A source that is no longer open is left alone rather than refused: this runs
@@ -325,6 +365,25 @@ func (w *Workflows) openParcel(
 func (w *Workflows) settleDispatchedSource(ctx context.Context, detail replacementDetail) error {
 	if !detail.SourceOpen || !detail.SourceSettleable {
 		return nil
+	}
+
+	// Asked AGAIN, and not because the answer above was doubted: this runs on
+	// the retry path too, where nothing asked, and the money can leave between
+	// the parcel and this line. A record that says an exchange was settled while
+	// its collection holds nothing is the state ADR 0119 forbids, and it is the
+	// one thing still repairable at this point — the goods are already gone.
+	if detail.SourceKind == sourceExchange {
+		holds, amount, due, err := w.exchangeStillHoldsItsDifference(ctx, detail.SourceID)
+		if err != nil {
+			return err
+		}
+		if !holds {
+			w.log.ErrorContext(ctx, "the goods of an exchange LEFT and its difference is no longer held",
+				"exchange_id", detail.SourceID, "replacement_id", detail.ReplacementID,
+				"held", amount, "difference_due", due)
+
+			return nil
+		}
 	}
 
 	settle := w.orders.CompleteClaim

@@ -226,8 +226,7 @@ func TestASentReplacementStillSettlesAnOpenClaim(t *testing.T) {
 // over: the verb follows the source the replacement names.
 func TestAnExchangeSourcedDispatchSettlesTheExchange(t *testing.T) {
 	h := dispatchHarness(t)
-	h.orders.replacement.SourceKind = "exchange"
-	h.orders.replacement.SourceID = "exch_1"
+	exchangeSource(h, 1000)
 
 	_, err := h.wf.DispatchReplacement(context.Background(), testReplacementID)
 	require.NoError(t, err)
@@ -238,6 +237,23 @@ func TestAnExchangeSourcedDispatchSettlesTheExchange(t *testing.T) {
 	assert.Equal(t, "exch_1", h.orders.completedID)
 }
 
+// exchangeSource turns the harness's replacement into one an EXCHANGE sourced,
+// with its difference collected and still held.
+//
+// The last part is what the fixture has to answer now: the dispatch asks the
+// payment module whether the money it was funded with is still there, twice —
+// before the goods move and again before the record is closed (ADR 0124). A
+// fixture that only set a status would send the flow into a payment read with
+// nothing to read, which is what the compiler could not have told anyone.
+func exchangeSource(h *harness, difference int64) {
+	h.orders.replacement.SourceKind = "exchange"
+	h.orders.replacement.SourceID = "exch_1"
+	h.orders.funding = fundingOf(difference, "TRY", "paycol_1")
+	h.payments.amount = difference
+	h.payments.captured = difference
+	h.payments.totalRefund = 0
+}
+
 // TestAnExchangeThatOwesMoneyIsLeftOpen keeps a dispatch that really sent the
 // goods from failing over a state that is correct.
 //
@@ -245,8 +261,7 @@ func TestAnExchangeSourcedDispatchSettlesTheExchange(t *testing.T) {
 // second-guess it: asking anyway would earn a conflict AFTER the parcel left.
 func TestAnExchangeThatOwesMoneyIsLeftOpen(t *testing.T) {
 	h := dispatchHarness(t)
-	h.orders.replacement.SourceKind = "exchange"
-	h.orders.replacement.SourceID = "exch_1"
+	exchangeSource(h, 1000)
 	h.orders.replacement.SourceSettleable = false
 
 	result, err := h.wf.DispatchReplacement(context.Background(), testReplacementID)
@@ -269,8 +284,7 @@ func TestAnExchangeThatOwesMoneyIsLeftOpen(t *testing.T) {
 // fixture only ever produced the one status the copy knew.
 func TestAFundedExchangeIsSettledByTheGoods(t *testing.T) {
 	h := dispatchHarness(t)
-	h.orders.replacement.SourceKind = "exchange"
-	h.orders.replacement.SourceID = "exch_1"
+	exchangeSource(h, 1000)
 	// A status this flow has never heard of, and it must not need to: what it
 	// decides on is the pair of booleans the order module answered.
 	h.orders.replacement.SourceStatus = "funded"
@@ -339,4 +353,39 @@ func TestAnUnreadableReplacementStopsBeforeAnythingMoves(t *testing.T) {
 	assert.Equal(t, CodeReplacementUnreadable, coreerrors.CodeOf(err))
 	assert.Empty(t, h.inventory.reserveCalls)
 	assert.Empty(t, h.shipping.calls)
+}
+
+// TestADrainedExchangeIsNotSettledOnTheRetryPath keeps the RECORD honest after
+// the goods are already gone.
+//
+// The pre-flight refusal cannot reach this: it runs before the parcel, and here
+// the parcel left on an earlier attempt that died before settling. Between that
+// attempt and this one the difference went back through the payment module's own
+// route, so what the exchange holds is nothing.
+//
+// Refusing is not on the table — the goods are with the customer — and neither
+// is completing: a record saying an exchange was settled while its collection
+// holds nothing is exactly what ADR 0119 forbids. It stays open and it is
+// logged, which leaves a human with both facts and a decision.
+func TestADrainedExchangeIsNotSettledOnTheRetryPath(t *testing.T) {
+	h := dispatchHarness(t)
+	exchangeSource(h, 1000)
+	h.orders.replacement.SourceStatus = "funded"
+	h.orders.replacement.SourceOpen = true
+	h.orders.replacement.SourceSettleable = true
+	// The parcel left on an earlier attempt.
+	h.orders.replacement.Status = statusReplacementDispatched
+	h.orders.replacement.FulfillmentID = "ful_earlier"
+	// And the money went back since.
+	h.payments.totalRefund = 1000
+
+	result, err := h.wf.DispatchReplacement(context.Background(), testReplacementID)
+
+	require.NoError(t, err,
+		"the goods are already with the customer; failing the call would ask the caller "+
+			"to retry something that has happened")
+	assert.True(t, result.AlreadySent)
+	assert.Equal(t, 0, h.orders.completeCalls,
+		"the exchange must NOT be marked settled while its collection holds nothing")
+	assert.Empty(t, h.shipping.calls, "no second parcel")
 }

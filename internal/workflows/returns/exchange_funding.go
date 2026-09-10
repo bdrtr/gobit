@@ -144,6 +144,57 @@ func (w *Workflows) exchangeFunding(ctx context.Context, exchangeID string) (exc
 	return detail, nil
 }
 
+// exchangeStillHoldsItsDifference asks the payment module whether the money an
+// exchange was funded with is STILL there.
+//
+// # Why the question has to be asked again
+//
+// [Workflows.FundExchangeDifference] asked it once and the row kept the answer's
+// MOMENT — `funded_at` — because that is all an order row may keep about money
+// the payment module owns (ADR 0119). A moment is not a balance. The collection
+// is reachable by the payment module's own published refund route, with no flow
+// anywhere on that path, so the money can leave behind this one's back and the
+// stamp stays exactly where it was.
+//
+// It really can, and it was measured rather than feared: funding an exchange,
+// refunding its collection through POST /admin/v1/payments/{id}/refunds, and
+// dispatching sent the goods and marked the exchange completed with the
+// collection holding nothing (gap D61).
+//
+// # An exchange with nothing to hold holds it
+//
+// A difference of zero names no collection, so there is nothing to ask about
+// and the answer is yes. That is the ordinary exchange and it costs no query.
+//
+// # Equality rather than a floor, for the funding rule's reason
+//
+// The collection was opened for exactly the difference and its amount caps every
+// capture on it, so what it holds can only fall from here. The two predicates
+// are therefore the same one, and writing the equality keeps this sentence and
+// the funding rule readable as the same sentence.
+func (w *Workflows) exchangeStillHoldsItsDifference(
+	ctx context.Context, exchangeID string,
+) (holds bool, held, due int64, err error) {
+	detail, err := w.exchangeFunding(ctx, exchangeID)
+	if err != nil {
+		return false, 0, 0, err
+	}
+	if detail.PaymentCollectionID == "" {
+		return true, 0, detail.DifferenceDue, nil
+	}
+
+	_, _, _, captured, refunded, err := w.payments.Collection(ctx, detail.PaymentCollectionID)
+	if err != nil {
+		return false, 0, 0, errors.Wrap(err, errors.KindOf(err), CodeNoPayment,
+			"the collection funding exchange %s could not be read: %s",
+			exchangeID, detail.PaymentCollectionID)
+	}
+
+	held = captured - refunded
+
+	return held == detail.DifferenceDue, held, detail.DifferenceDue, nil
+}
+
 // RefundExchangeDifference sends a funded exchange's money back and takes the
 // request back with it.
 //

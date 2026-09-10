@@ -20,6 +20,18 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Sevkiyat artık paranın HÂLÂ ORADA olup olmadığını SORUYOR** (ADR 0124).
+  ADR 0120 değişimin farkını alabilmesini sağladı ve satır, paranın orada olduğu
+  ANI tutuyor — bir sipariş satırının payment'ın sahip olduğu bir rakam hakkında
+  tutabileceği tek şey o (ADR 0119). Ama bir AN, bir BAKİYE değil: koleksiyon
+  payment'ın kendi iade rotasından erişilebilir kalıyor ve o yolda hiçbir akış
+  yok. Ölçüldü: fonla, koleksiyonu iade et, sevk et — 200 döndü, gerçek bir koli
+  açıldı, birimler raftan indi ve değişim `completed` işaretlendi; koleksiyonda
+  hiçbir şey yokken (D61). Kusur eksik bir kural değil, DEĞİŞEN bir şey hakkında
+  BİR KEZ sorulmuş bir kural. Akış artık stok hareket etmeden önce soruyor —
+  reddin hâlâ bedelsiz olduğu yerde — ve kaydı kapatmadan önce bir daha, çünkü o
+  adım yeniden deneme yolunda da koşuyor.
+
 - **Canlı kodda anılan bir şema adı ARTIK ÇÖZÜLÜYOR** (ADR 0123). D59'un on
   bayat cümlesinden dördü, ADR 0120'nin düşürdüğü bir CHECK'i adlandırıyordu:
   okuyucuya iddiayı doğrulayacağı bir ad veriyor, ad ise hiçbir şeye çözülüyordu.

@@ -364,3 +364,117 @@ func TestAFundedExchangeIsClosedByItsGoods(t *testing.T) {
 		"the difference is not the order's money and the order's total must not gain it, "+
 			"here as in the exit scenario")
 }
+
+// TestAnExchangeWhoseMoneyWENTBACKDoesNotShip refuses to give the goods away.
+//
+// # The hole this closes
+//
+// Funding an exchange stamps the moment the money was there, because a moment
+// is all an order row may keep about a figure the payment module owns (ADR
+// 0119). The collection stays reachable by the payment module's OWN refund
+// route, with no flow anywhere on that path, so the money can leave and the
+// stamp does not move.
+//
+// Measured before it was fixed: the collection ended holding nothing, the
+// dispatch answered 200 with a real fulfillment id, and the exchange was marked
+// completed. The shop had sent the goods and had none of the customer's money,
+// and its own record said the exchange was settled. Gap D61.
+//
+// # Why the refusal comes before the parcel
+//
+// Below the stock hold the units are off the shelf and in a box, and no answer
+// can put them back. The whole value of asking is refusing to send goods the
+// shop was not paid for, so the question is asked while refusing still costs
+// nothing.
+func TestAnExchangeWhoseMoneyWENTBACKDoesNotShip(t *testing.T) {
+	ctx := t.Context()
+
+	customerID, email := newCustomer(ctx, t)
+	variantID, inventoryItemID := newStockedVariant(ctx, t, "E2E Drained Exchange Product",
+		map[string]int64{taxedCurrency: happyUnitPrice}, happyInitialStock)
+	cartID, _ := prepareCart(ctx, t, customerID, variantID, happyQuantity)
+
+	placed, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        stockLocationID,
+		PaymentProviderID: paymentmanual.ID,
+		PaymentData:       paymentBehavior(t, paymentmanual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     happyTotal,
+	})
+	require.NoError(t, err, "the fixture order could not be placed")
+
+	order, err := orderSvc.GetOrder(ctx, placed.OrderID)
+	require.NoError(t, err)
+	lineID := order.Items[0].ID
+	profileID := newShippingProfile(ctx, t, "E2E Drained Exchange Profile")
+	optionID := newShippingOption(ctx, t, profileID, "E2E Drained Exchange Shipping", 0, false)
+
+	opened, err := adminRequestWithBody(http.MethodPost,
+		"/admin/v1/orders/"+placed.OrderID+"/exchanges",
+		map[string]any{"difference_due": exchangeDifference})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, opened.Code, opened.Body.String())
+
+	var exchange exchangeResponse
+	require.NoError(t, json.Unmarshal(opened.Body.Bytes(), &exchange))
+	base := "/admin/v1/orders/" + placed.OrderID + "/exchanges/" + exchange.Data.ID
+
+	recorded, err := adminRequestWithBody(http.MethodPost, base+"/replacements",
+		map[string]any{
+			"shipping_option_id": optionID,
+			"location_id":        stockLocationID,
+			"lines": []map[string]any{
+				{"order_line_item_id": lineID, "quantity": replacedQuantity},
+			},
+		})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, recorded.Code, recorded.Body.String())
+
+	var replacement replacementResponseBody
+	require.NoError(t, json.Unmarshal(recorded.Body.Bytes(), &replacement))
+
+	collectionID := collectDifference(t, exchangeDifference, exchangeDifference)
+	funded, err := adminRequestWithBody(http.MethodPost, base+"/funding",
+		map[string]any{"payment_collection_id": collectionID})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, funded.Code, funded.Body.String())
+
+	// The money goes back BEHIND the flow: the payment module's own route, which
+	// no flow is on. This is the whole scenario — nothing else in the tree can
+	// empty a funded collection.
+	payments, err := paymentSvc.ListPayments(ctx, collectionID)
+	require.NoError(t, err)
+	require.Len(t, payments, 1)
+
+	back, err := adminRequestWithBody(http.MethodPost,
+		"/admin/v1/payments/"+payments[0].ID+"/refunds",
+		map[string]any{"amount": exchangeDifference, "reason": "the customer took it back"})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, back.Code, back.Body.String())
+
+	emptied, err := paymentSvc.GetPaymentCollection(ctx, collectionID)
+	require.NoError(t, err)
+	require.Zero(t, emptied.CapturedAmount-emptied.RefundedAmount,
+		"precondition: the collection holds nothing")
+
+	sent, err := adminRequestWithBody(http.MethodPost,
+		base+"/replacements/"+replacement.Data.ID+"/dispatch", nil)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusConflict, sent.Code,
+		"the goods must NOT be sent: the difference was collected once and has gone back, "+
+			"and the exchange row still carries the moment it was funded; body: %s",
+		sent.Body.String())
+
+	assert.Equal(t, happyRemainingStock, stockLevel(ctx, t, inventoryItemID).StockedQuantity,
+		"the units have to still be on the shelf; a refusal that has already taken them "+
+			"is a refusal that arrived too late")
+
+	stored, err := adminRequestWithBody(http.MethodGet, base, nil)
+	require.NoError(t, err)
+	var after exchangeResponse
+	require.NoError(t, json.Unmarshal(stored.Body.Bytes(), &after))
+	assert.Equal(t, "funded", after.Data.Status,
+		"the record must not say the exchange was SETTLED; the goods did not go and the "+
+			"money is not held, which is a state a human has to end")
+}
