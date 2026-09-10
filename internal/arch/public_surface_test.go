@@ -37,6 +37,7 @@ var publishedPackages = []string{
 	"core/eventbus/outbox",
 	"core/http",
 	"core/http/redisguard",
+	"core/identitytest",
 	"core/jobreport",
 	"core/link",
 	"core/module",

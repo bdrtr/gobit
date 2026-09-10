@@ -52,9 +52,13 @@ past and is not corrected retroactively.
   restores it for an installation that wants it, and the two modules still log a
   WARN naming the empty slot. Guest carts are untouched by either answer. The way
   to close the four properly is unchanged and it is one line of wiring: **bind a
-  verifier**. What gobit still does not do is VERIFY: an implementation that hands
-  the claimed identifier back satisfies the interface, and the framework cannot
-  tell. `POST /store/v1/customers` is outside the set because it mints the record;
+  verifier**. What gobit still does not do is VERIFY the proof itself, and since
+  [ADR 0126](adr/0126-a-customer-identity-passes-a-published-suite.md) it does
+  hold the SHAPE: `core/identitytest.Contract` refuses an implementation that
+  hands the claimed identifier back, invents one, returns one beside an error or
+  eats the request body. It opens no signature and never could, so a green run
+  means the shape is not wrong rather than that the session scheme is sound —
+  and nothing makes an embedder run it. `POST /store/v1/customers` is outside the set because it mints the record;
   so is the order module's storefront read, which names a cart rather than a
   person.
 - **A shopper can always decline to name a customer, and that is not closable.**

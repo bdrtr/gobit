@@ -305,6 +305,12 @@ core/http/redisguard Limiter
 core/http/redisguard Limiter.Allow
 core/http/redisguard NewIdempotencyStore
 core/http/redisguard NewLimiter
+core/identitytest Contract
+core/identitytest T
+core/identitytest T.Errorf
+core/identitytest T.Helper
+core/identitytest UpstreamTrust
+core/identitytest UpstreamTrust.TrustedUpstreamHeader
 core/jobreport Detail
 core/jobreport Report
 core/jobreport WithReporter

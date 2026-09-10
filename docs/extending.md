@@ -341,6 +341,18 @@ type in the signature from the standard library so that a type declared in
 CustomerID(r *http.Request) (string, error)
 ```
 
+Write it against `core/identitytest` (ADR 0126). One call from an ordinary test
+holds the four rules that need no key, no store and no upstream:
+
+```go
+func TestCompliance(t *testing.T) { identitytest.Contract(t, mySessions) }
+```
+
+It refuses the implementation a first attempt reaches for — read the claim, hand
+it back — and if your proof really does arrive in a header your gateway strips,
+implement `identitytest.UpstreamTrust` and name it. It opens no signature: a
+green run says the shape is not wrong, not that the scheme is sound.
+
 You bind it from an ordinary module, in the container, under the core's own
 name. There is no ordering requirement: the customer module resolves the name on
 the FIRST storefront request, so your module may be added last.

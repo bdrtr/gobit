@@ -20,6 +20,21 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir müşteri kimliği artık YAYIMLANMIŞ bir süitten geçiyor** (ADR 0126).
+  `corehttp.Identity` bu çerçevenin istediği ve gerçeklemediği tek arayüz, ve
+  gömenin ne yazdığını hiçbir şey denetlemiyordu — `docs/known-limits.md` bunu iki
+  kayıttır bir cümleyle söylüyordu: iddia edilen kimliği geri veren bir gerçekleme
+  arayüzü karşılar ve çerçeve bunu ayırt edemez. ADR 0125 bunu canlı bir soruya
+  çevirdi: müşteri adlandıran her vitrin ucu artık bir doğrulayıcı bağlanana kadar
+  reddediyor. Bariz kural ise İŞE YARAMIYOR — arayüzün kendi sözleşmesi "yukarı
+  akıştaki bir vekilin yazdığı başlık"ı meşru bir kaynak sayıyor ve haklı: süzen
+  bir geçidin arkasında o başlık kanıttır. İkisini ayıran şey başlık değil, onu
+  süzen bir şey olup olmadığı — ve isteği tutan hiçbir test geçidi göremez. Çözüm:
+  gerçekleme bunu BEYAN ediyor (`identitytest.UpstreamTrust`) ve süit o başlığı
+  sondalamıyor. Süitin kendi testlerindeki iki gerçekleme aynı kod: beyan eden
+  geçiyor, etmeyen ise implemente edilecek arayüzü ADIYLA söyleyen bir hatayla
+  düşüyor.
+
 - **Doğrulanmamış bir müşteri iddiasını sunmak artık bir SEÇİM** (ADR 0125).
   ADR 0057 müşteri adlandıran on iki vitrin ucunu tek bir karşılaştırmaya bağladı
   ve dördünün, hiçbir doğrulayıcı bağlı değilken iddiayı DENETLENMEDEN sunmasını
