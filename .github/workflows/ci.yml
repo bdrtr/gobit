@@ -26,6 +26,25 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
+      # The same question, asked of the generated tree (ADR 0122).
+      #
+      # The source .sql file is NOT the query the database runs — the string in
+      # the generated .sql.go is — so an edit to the source alone is executed by
+      # nothing, and build, vet, the unit lane and the integration lane against a
+      # real PostgreSQL all stay clean while it is wrong. Measured, not assumed:
+      # docs/measurements/0122.
+      #
+      # It runs here rather than in a job of its own for govulncheck's reason
+      # below: it needs the module graph this job already has, and `make gen`
+      # itself is two seconds. sqlc is built from the version the Makefile pins;
+      # gqlgen needs no install, running through `go tool` from go.mod.
+      #
+      # /bin/ is gitignored, so the tool this installs cannot dirty the tree it
+      # is about to judge.
+      - name: Is the generated code up to date
+        run: |
+          make gen
+          git diff --exit-code
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.13.1

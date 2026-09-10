@@ -13,6 +13,7 @@ truth: a report says what was true on the day it was taken.
 | Report | Lines |
 |---|---|
 | [What a payment event carries — measured 2026-09-10](0121-what-a-payment-event-carries.md) | 148 |
+| [What a stale generated tree hides — measured 2026-09-10](0122-what-a-stale-generated-tree-hides.md) | 90 |
 | [The guard moves to the binding — measured 2026-09-10](0120-the-guard-moves-to-the-binding.md) | 126 |
 | [Where the truth about collected money lives — measured 2026-09-10](0119-where-the-truth-about-collected-money-lives.md) | 130 |
 | [A counter in place of a balance — measured 2026-09-10](0118-a-counter-in-place-of-a-balance.md) | 162 |

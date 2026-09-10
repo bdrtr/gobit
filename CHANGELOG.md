@@ -20,6 +20,17 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Üretilen kod artık YENİDEN ÜRETİLEREK doğrulanıyor** (ADR 0122). Depo 75
+  sqlc dosyasını ve 14 gqlgen dosyasını ağaçta tutuyor ve hiçbir şey onları
+  kaynaklarıyla karşılaştırmıyordu. Kusur bir yorumla ortaya çıktı (D60), ama
+  ölçüm daha kötüsünü buldu: kaynak `.sql` veritabanının koştuğu sorgu DEĞİL —
+  koşulan şey üretilen dosyadaki dizge — yani yalnızca kaynağı düzenlemek
+  hiçbir şey tarafından çalıştırılmıyor. B2B harcama penceresini kaynakta bin
+  katına çıkarmak `go build`'i, `go vet`'i, birim şeridini ve gerçek
+  PostgreSQL'e karşı entegrasyon şeridini temiz bırakıyor; hepsi ESKİ sorguyu
+  koşuyor, ki doğru olan o. Düzenleme tam da yanlışken görünmez. CI artık
+  üreteçleri koşup farkı soruyor — go.mod için zaten sorduğu soru.
+
 - **Ödeme modülü artık paranın ne zaman hareket ettiğini SÖYLÜYOR** (ADR 0121).
   Siparişin özeti, payment'ın tuttuğunun bir RAPORU, ve onu yalnızca iki akış
   yazıyordu. Payment ise tahsilat ve iade rotalarını kendi yayımlıyor, o yollarda
