@@ -42,9 +42,22 @@ func (s *Service) GetOrderSummary(ctx context.Context, orderID string) (models.O
 // # Who calls this surface
 //
 // NOT the payment module: the two modules do not know each other (Principle
-// 2.1/2.4). The side that knows the result of the collection is the
-// complete_cart workflow or a subscriber listening to the payment events, and it
-// comes here through a narrow interface it resolved from the container.
+// 2.1/2.4). The side that knows the result of the collection is a FLOW, and it
+// comes here through a narrow interface it resolved from the container. Two of
+// them call it today: the checkout clearing a cart and the returns flow making
+// a refund.
+//
+// This paragraph also named "a subscriber listening to the payment events"
+// until ADR 0119, and no such subscriber can exist: the payment module publishes
+// no events at all, which is the same absence ADR 0022 recorded when it refused
+// one. The merge below is described as if it were fed by that subscriber's
+// delivery guarantees; the mechanism is sound and its stated reason was not.
+//
+// What follows from having only flows as callers is a real limit rather than a
+// wording problem, and it is gap D55: the payment module publishes a route that
+// refunds a capture, no flow is on that path, and this record therefore never
+// learns. These totals are a REPORT of what the flows saw, not the source of
+// truth about what the payment module holds (ADR 0119).
 //
 // # Why the write is a MERGE and not an overwrite
 //

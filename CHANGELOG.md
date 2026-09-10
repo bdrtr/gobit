@@ -20,6 +20,34 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir sipariş paranın ikinci bir kopyasını TUTMUYOR** (ADR 0119). Değişimin
+  farkı üç kez tasarlandı, altı aday üretildi ve altısı da bağımsız okumalarla
+  yıkıldı. Neredeyse her şeyde ayrışıyorlardı ve tek bir şeyden öldüler: her biri
+  değişimin satırına bir PARA sayısı koyup kuralı satır-yerel bir CHECK'e
+  bağlıyordu — göç 000017'nin tamamlanmayı sınırlarken savunduğu şekil.
+  Başka bir modülün sahibi olduğu para için o gerekçe taşımıyor. Ölçüldü: payment
+  bir tahsilatı iade eden bir rota YAYIMLIYOR, hiç olay yayımlamıyor (sıfır
+  `Publish`, sıfır konu, sıfır abone), ve `order_exchanges` üzerindeki bir kısıt
+  `payment_collections`'a yazılan bir satırı GÖREMEZ. Yani order tarafındaki bir
+  kopya, yayımlanmış bir rotanın sessizce geçersiz kılabildiği bir iddia, ve
+  şemanın sunduğu en güçlü muhafız tam da onu fark edemeyen muhafız.
+  Karar: payment'ın sahip olduğu bir tutar order satırına AYNALANMIYOR; o tutar
+  bir şeye karar veriyorsa, karar anında payment'a SORULUYOR. Order satırının
+  kaydedebileceği şey bir SORUNUN CEVAPLANDIĞI AN'dır, cevabın aritmetiği değil.
+  Bedeli açıkça ödeniyor: 000017'nin satır-yerel sınırı bu olgu için bırakılıyor
+  (o sınırın gerekçesi olgunun satırda olmasıydı, bu olgu satırda değil), ve ölçüm
+  ile yazma arasında modüller arası işlem olmadığı için kapanmayan bir pencere
+  kalıyor — bir tamamlama, yazıldığı ANI beyan eder, sonraki her anı değil.
+  Ağaçta zaten böyle bir kopya var ve artık adı konuldu: `order_summaries`'in
+  toplamları bir RAPOR, kaynak değil. O yüzeyin godoc'u kendi merge semantiğini
+  "payment olaylarını dinleyen bir abone" ile gerekçelendiriyordu ve öyle bir
+  abone VAR OLAMAZ; cümle düzeltildi, bayatlık düzeltilmedi — tetiği ADR 0022'nin
+  kendi tetiği. Kusur D55.
+  Üç turun kapattıkları bir sonraki kayda devrediliyor (bağ adı ve bire-bir
+  kardinalitesi, yalnızca-pozitif yüklem, tabanın değil EŞİTLİĞİN ölçü olması,
+  yapısal tavan, yeniden yazan `down`, imza genişletmek yerine metot eklemek), ve
+  bilerek açık bırakılan tek soru da: geri çekme muhafızı.
+
 - **Bir koleksiyonun kapısı artık KALANI okuyor** (ADR 0118). Kapı
   "bu koleksiyon hiç bir şey aldı mı" diye soruyordu, ve altındaki hesap tahsil
   edileni hiç okumuyordu — yalnızca canlı oturumların rezervini düşüyordu. Yani
