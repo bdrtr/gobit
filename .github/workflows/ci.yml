@@ -75,6 +75,15 @@ jobs:
       # -coverpkg: without it only the tested package's OWN code counts, and it
       # becomes invisible when one package is covered by another package's test.
       - run: go test -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
+      # The separate modules, which the line above cannot reach.
+      #
+      # A separate go.mod is a separate build unit, so `./...` from the root
+      # walks past contrib/identity-session entirely — twenty-eight tests that
+      # only LOOKED present until ADR 0127 gave them a lane. The target carries
+      # a floor for the vuln target's reason: "nothing failed" and "I ran
+      # nothing" must not share an exit code.
+      - name: The separate modules' tests
+        run: make test-modules
       # THIS NUMBER IS THE UNIT TESTS' ALONE (~55%) and misleads when read on its
       # own: in this repository most of the coverage comes from the integration
       # tests (unit + integration, ~76% with -coverpkg). The real number is in

@@ -11,6 +11,7 @@ go 1.26.6
 
 require (
 	github.com/bdrtr/gobit v0.0.0
+	github.com/bdrtr/gobit/contrib/identity-session v0.0.0
 	github.com/go-chi/chi/v5 v5.3.2
 )
 
@@ -66,4 +67,7 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 )
 
-replace github.com/bdrtr/gobit => ../..
+replace (
+	github.com/bdrtr/gobit => ../..
+	github.com/bdrtr/gobit/contrib/identity-session => ../../contrib/identity-session
+)

@@ -1,0 +1,206 @@
+// Package identitysession is a working customer identity for gobit.
+//
+// # What it is
+//
+// gobit requires a [corehttp.Identity] and issues none (ADR 0008, ADR 0043), and
+// since ADR 0125 every storefront route naming a customer refuses until one is
+// bound. This module is that one, ready to add:
+//
+//	shop := gobit.New().Add(identitysession.New(identitysession.Options{
+//		Secret: []byte(os.Getenv("SESSION_SECRET")),
+//	}))
+//
+// It brings a signed session cookie, argon2id passwords, a credential table and
+// two storefront endpoints. It passes `core/identitytest.Contract`.
+//
+// # Why it is a SEPARATE Go module
+//
+// gobit is imported, so a line in its go.mod is a line in every embedder's
+// module graph, vulnerability scan and legal review. This package grows towards
+// WebAuthn, and the library for that belongs in the graph of whoever asked for
+// it — not in the graph of a shop that wanted a product catalog (ADR 0127).
+//
+// The cost is that gobit's own arch gates do not walk this tree. What holds it
+// instead is the compliance suite gobit publishes for exactly this interface.
+//
+// # What it does NOT do
+//
+// It does not register customers from the storefront. That flow needs e-mail
+// verification, a rate limit and a decision about who may create a customer,
+// and none of those is a session's business; credentials are written by an
+// operator endpoint here. It does not rotate the signing secret, and it holds no
+// server-side session record — a signed cookie cannot be revoked before it
+// expires, which is the price of not having a table on the read path and is
+// stated where an operator reads it.
+package identitysession
+
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Sessions verifies a request against a signed cookie.
+//
+// It is the type that satisfies [corehttp.Identity], and it holds no store: a
+// session cookie carries the customer identifier and its own expiry, so reading
+// one costs no query. That is the whole reason the shape is a signed cookie —
+// the identity is consulted on twelve storefront routes and a table on that path
+// would be a query on every one of them.
+type Sessions struct {
+	secret     []byte
+	ttl        time.Duration
+	cookieName string
+	secure     bool
+	now        func() time.Time
+}
+
+// CustomerID returns the customer the cookie PROVES.
+//
+// # What it refuses, and why each refusal is separate
+//
+// A missing cookie is an anonymous caller; a malformed one is a caller who wrote
+// their own; a bad signature is a caller who edited one; an expired one is a
+// caller whose session ended. All four answer the same error TEXT on purpose —
+// telling them apart tells an attacker which half of a forgery worked.
+//
+// It does not touch the request. The cookie is read from the header and nothing
+// else is looked at, which is what keeps the handler's body intact — the mistake
+// gobit's own compliance suite refuses.
+func (s *Sessions) CustomerID(r *http.Request) (string, error) {
+	cookie, err := r.Cookie(s.cookieName)
+	if err != nil {
+		return "", errNoSession
+	}
+
+	customerID, expiry, err := s.open(cookie.Value)
+	if err != nil {
+		return "", err
+	}
+	if !s.now().Before(expiry) {
+		return "", errNoSession
+	}
+
+	return customerID, nil
+}
+
+// errNoSession is the single answer every failed read gives.
+var errNoSession = errors.New("identity-session: the request carries no valid session")
+
+// Issue writes the session cookie onto the response.
+//
+// The cookie is HttpOnly and SameSite=Lax, and Secure unless the installation
+// said it is running without TLS: a session a script can read is a session an
+// injected script can steal, and those three attributes are the whole of what a
+// cookie can do about it.
+func (s *Sessions) Issue(w http.ResponseWriter, customerID string) {
+	expiry := s.now().Add(s.ttl)
+	//nolint:gosec // G124 wants Secure as a literal; it is the installation's
+	// choice here and defaults to on. See Options.Insecure, which exists because
+	// a Secure cookie is not sent over plain HTTP at all and local development
+	// on a name that is not localhost would have no session.
+	http.SetCookie(w, &http.Cookie{
+		Name:     s.cookieName,
+		Value:    s.seal(customerID, expiry),
+		Path:     "/",
+		Expires:  expiry,
+		HttpOnly: true,
+		Secure:   s.secure,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// Clear ends the session.
+//
+// It overwrites the cookie with an expired empty one rather than only asking the
+// browser to drop it: a client that ignores MaxAge still sends what it holds, and
+// what it holds after this proves nobody.
+func (s *Sessions) Clear(w http.ResponseWriter) {
+	//nolint:gosec // G124, for [Sessions.Issue]'s reason: the attribute has to
+	// match the cookie being replaced or the browser keeps the old one.
+	http.SetCookie(w, &http.Cookie{
+		Name:     s.cookieName,
+		Value:    "",
+		Path:     "/",
+		Expires:  time.Unix(0, 0),
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   s.secure,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// seal produces the cookie value: the identifier, the expiry and a MAC over both.
+//
+// The expiry is INSIDE the MAC and not only in the cookie's own Expires
+// attribute, because the attribute is a request to the browser and the value is
+// what the server reads. A caller who edits the attribute changes nothing.
+func (s *Sessions) seal(customerID string, expiry time.Time) string {
+	payload := customerID + "." + strconv.FormatInt(expiry.Unix(), 10)
+
+	return payload + "." + base64.RawURLEncoding.EncodeToString(s.sign(payload))
+}
+
+// open reads a cookie value and refuses one this key did not seal.
+func (s *Sessions) open(value string) (customerID string, expiry time.Time, err error) {
+	// The signature is the LAST segment: the identifier may not contain a dot
+	// (it is a ULID-shaped token this framework mints) but saying so here would
+	// be a second copy of that rule, and cutting from the right needs no copy.
+	payload, signature, found := cutLast(value)
+	if !found {
+		return "", time.Time{}, errNoSession
+	}
+
+	raw, err := base64.RawURLEncoding.DecodeString(signature)
+	if err != nil {
+		return "", time.Time{}, errNoSession
+	}
+	// The MAC is checked BEFORE the payload is parsed: everything after this line
+	// is a value this key produced, and everything before it is a string a caller
+	// sent.
+	if !hmac.Equal(raw, s.sign(payload)) {
+		return "", time.Time{}, errNoSession
+	}
+
+	id, stamp, found := strings.Cut(payload, ".")
+	if !found || id == "" {
+		return "", time.Time{}, errNoSession
+	}
+	seconds, err := strconv.ParseInt(stamp, 10, 64)
+	if err != nil {
+		return "", time.Time{}, errNoSession
+	}
+
+	return id, time.Unix(seconds, 0), nil
+}
+
+// sign is the MAC over a cookie payload.
+func (s *Sessions) sign(payload string) []byte {
+	mac := hmac.New(sha256.New, s.secret)
+	mac.Write([]byte(payload))
+
+	return mac.Sum(nil)
+}
+
+// String keeps the signing secret out of a log line.
+//
+// A struct with a []byte field is printed in full by %v, and a session secret
+// printed once into a log file is a secret an operator has to rotate. There is
+// nothing else in here worth printing.
+func (s *Sessions) String() string { return fmt.Sprintf("identitysession.Sessions(%s)", s.cookieName) }
+
+// cutLast splits a value at its LAST dot.
+func cutLast(value string) (before, after string, found bool) {
+	i := strings.LastIndex(value, ".")
+	if i < 0 {
+		return "", "", false
+	}
+
+	return value[:i], value[i+1:], true
+}

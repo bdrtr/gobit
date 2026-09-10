@@ -9,6 +9,15 @@ LDFLAGS     := -s -w -X main.version=$(VERSION)
 GOLANGCI_VERSION := v2.13.1
 GOVULN_VERSION   := v1.1.4
 SQLC_VERSION     := v1.31.1
+
+# Ayrı go.mod'u olan modüller — kök DAHİL.
+#
+# Liste ve SAYI birlikte duruyor ve sayı bir TABAN: bir glob hiçbir şey
+# eşleştirmezse döngü hiç dönmez ve hedef yine 0 döner, yani "hiçbir açık yok"
+# ile "hiçbir yere bakmadım" aynı çıkış koduyla anlatılamaz. Listeye bir modül
+# eklerken sayı da artar, ve artmazsa taban düşer.
+SEPARATE_MODULES      := . examples/starter examples/plugin contrib/identity-session
+SEPARATE_MODULE_COUNT := 4
 GOLANGCI         := $(BIN_DIR)/golangci-lint
 GOVULN           := $(BIN_DIR)/govulncheck
 SQLC             := $(BIN_DIR)/sqlc
@@ -154,8 +163,25 @@ load-test: ## Temel yük testini çalıştır (REQUESTS/CONCURRENCY ile ayarlan�
 	GOBIT_LOAD_CONCURRENCY=$(or $(CONCURRENCY),32) \
 	go test -tags=integration -count=1 -v -run TestStaysCorrectUnderBaselineLoad ./internal/e2e/
 
-lint: $(GOLANGCI) ## golangci-lint çalıştır
+lint: $(GOLANGCI) ## golangci-lint çalıştır (kök + ayrı modüller)
 	$(GOLANGCI) run ./...
+	@# Ayrı bir go.mod ayrı bir derleme birimidir ve `run ./...` ona ULAŞMIYOR.
+	@# Aynı yapılandırmayla koşuluyor: kuralı kökten farklı olan bir ağaç, aynı
+	@# depoda iki farklı üsluba izin verirdi.
+	@#
+	@# Sayaç vuln hedefinin sayacıyla aynı sebeple: bir glob hiçbir şey
+	@# eşleştirmezse döngü hiç dönmez ve hedef yine 0 döner.
+	@found=0; \
+	for mod in $(SEPARATE_MODULES); do \
+		[ "$$mod" = "." ] && continue; \
+		[ -f "$$mod/go.mod" ] || continue; \
+		echo "  $$mod: golangci-lint"; \
+		(cd "$$mod" && $(abspath $(GOLANGCI)) run --config $(CURDIR)/.golangci.yml ./...) || exit 1; \
+		found=$$((found+1)); \
+	done; \
+	if [ "$$found" -lt $$(($(SEPARATE_MODULE_COUNT) - 1)) ]; then \
+		echo "lint: yalnızca $$found ayrı modül denetlendi" >&2; exit 1; \
+	fi
 
 # vuln, bilinen açıkları ÜÇ modülde birden arar: kök ve iki örnek.
 #
@@ -177,16 +203,38 @@ lint: $(GOLANGCI) ## golangci-lint çalıştır
 # deponun reddettiği şekildir (ADR 0009). O gün geldiğinde seçenekler pinlemek,
 # yamalamak ya da o gün yazılmış bir muafiyettir — üçü de birinin karar verdiği
 # şeyler, bugünden kurulmuş bir kaçış yolu değil.
-vuln: $(GOVULN) ## Bilinen açıkları ara (kök + örnek modüller)
+vuln: $(GOVULN) ## Bilinen açıkları ara (kök + ayrı modüller)
 	@found=0; \
-	for mod in . examples/starter examples/plugin; do \
+	for mod in $(SEPARATE_MODULES); do \
 		[ -f "$$mod/go.mod" ] || continue; \
 		echo "  $$mod: govulncheck"; \
 		(cd "$$mod" && $(abspath $(GOVULN)) ./...) || exit 1; \
 		found=$$((found+1)); \
 	done; \
-	if [ "$$found" -lt 3 ]; then \
-		echo "vuln: yalnızca $$found modül tarandı, 3 bekleniyordu" >&2; exit 1; \
+	if [ "$$found" -lt $(SEPARATE_MODULE_COUNT) ]; then \
+		echo "vuln: yalnızca $$found modül tarandı, $(SEPARATE_MODULE_COUNT) bekleniyordu" >&2; exit 1; \
+	fi
+
+# Ayrı go.mod'u olan her modülün testleri.
+#
+# `go test ./...` kökten koşulduğunda bu modüllere ULAŞMIYOR: ayrı bir modül,
+# ayrı bir derleme birimidir. contrib/identity-session yirmi sekiz test taşıyor
+# ve hiçbir şerit onları koşmuyordu; koşulmayan bir test, olmayan bir testten
+# KÖTÜDÜR, çünkü kapsam varmış gibi görünür.
+#
+# Örnek modüllerin testi yok ve derlenmeleri arch süitindeki
+# TestTheOutOfTreeExamplesCompile ile kanıtlanıyor; bu hedef onları da koşuyor,
+# çünkü "testi yok" bugünün olgusu, kuralın değil.
+test-modules: ## Ayrı modüllerin testlerini koştur
+	@found=0; \
+	for mod in $(SEPARATE_MODULES); do \
+		[ -f "$$mod/go.mod" ] || continue; \
+		echo "  $$mod: go test"; \
+		(cd "$$mod" && go test -count=1 ./...) || exit 1; \
+		found=$$((found+1)); \
+	done; \
+	if [ "$$found" -lt $(SEPARATE_MODULE_COUNT) ]; then \
+		echo "test-modules: yalnızca $$found modül koşuldu, $(SEPARATE_MODULE_COUNT) bekleniyordu" >&2; exit 1; \
 	fi
 
 fmt: $(GOLANGCI) ## Kaynakları biçimlendir (gofmt + goimports)

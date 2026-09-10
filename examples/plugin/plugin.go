@@ -48,7 +48,7 @@ func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 	// recording rather than quietly fixing: a subscription to a name nobody
 	// emits compiles, starts, and stays silent forever — the plugin looks wired
 	// and receives nothing. Nothing in the repository refuses it, so the only
-	// defence is that the name written here is one a publisher really uses.
+	// defense is that the name written here is one a publisher really uses.
 	h.Subscribe("order.placed", func(ctx context.Context, e coreeventbus.Event) error {
 		h.Logger().InfoContext(ctx, "an order was created", "event", e.Name)
 

@@ -20,6 +20,19 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Çalışan bir müşteri kimliği artık AĞAÇTA — ama modülün DIŞINDA** (ADR 0127).
+  `contrib/identity-session`: imzalı çerez oturumu, argon2id parolalar, kendi
+  tablosu ve iki vitrin ucu; gömen import edip `Add` ediyor. ADR 0125 müşteri
+  adlandıran her vitrin ucunu bir doğrulayıcı bağlanana kadar kapattı, ADR 0126
+  kuralları yayımladı — ama bağlanacak bir şey yoktu: buradaki her gerçekleme bir
+  test sahtesi. Yeri KARARDI: `plugins/*` ana modülde, yani oraya girecek bir
+  WebAuthn kütüphanesi ürün kataloğu isteyen bir dükkânın grafiğine, güvenlik
+  taramasına ve hukuk incelemesine düşer — bağımlılık kapısının kendi cümlesi. Ayrı
+  bir `go.mod` onu dışarıda tutuyor. İlk dilim kimseye hiçbir bağımlılık eklemiyor:
+  argon2id `golang.org/x/crypto` istiyor ve gobit onu zaten DOĞRUDAN require
+  ediyor. Passkey kendi kaydına kaldı. Dört kapı ve iki şerit yeni ağacı öğrendi ve
+  her biri bir şey buldu — en keskini, hiçbir şeyin koşmadığı yirmi sekiz test.
+
 - **Bir müşteri kimliği artık YAYIMLANMIŞ bir süitten geçiyor** (ADR 0126).
   `corehttp.Identity` bu çerçevenin istediği ve gerçeklemediği tek arayüz, ve
   gömenin ne yazdığını hiçbir şey denetlemiyordu — `docs/known-limits.md` bunu iki

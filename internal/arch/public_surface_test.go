@@ -243,8 +243,21 @@ func TestNoPackageEscapesTheSurface(t *testing.T) {
 // outOfTreeExamples are the separate modules that stand outside gobit.
 //
 // Each is a real Go module with its own go.mod, so the language itself refuses
-// them internal/. Between them they exercise both halves of what the surface
-// promises: writing an EXTENSION and running an INSTALLATION.
+// them internal/. Between them they exercise what the surface promises: writing
+// an EXTENSION, running an INSTALLATION, and — since ADR 0127 — filling the one
+// slot gobit requires and does not fill itself.
+//
+// The last of those is NOT an example, and the name stayed anyway.
+// contrib/identity-session is production code that ships in this repository and
+// lives outside its module for a reason of its own; it is on this list because
+// compiling it is the same proof — a verifier an embedder writes reaches
+// core/http, core/container, core/module, core/db and core/identitytest, or it
+// does not exist.
+//
+// Renaming the list and its test to match was tried and reverted: ADR 0025 and
+// ADR 0043 name [TestTheOutOfTreeExamplesCompile] in their prose, both records
+// are below the line where this repository stops rewriting its own history, and
+// a test name two dated records promise is not worth a tidier variable.
 var outOfTreeExamples = []struct {
 	dir  string
 	what string
@@ -259,6 +272,11 @@ var outOfTreeExamples = []struct {
 		dir: "examples/starter",
 		what: "an application that adds a module of its own and runs the whole " +
 			"installation through the published facade (ADR 0027)",
+	},
+	{
+		dir: "contrib/identity-session",
+		what: "a working customer identity: it fills corehttp.IdentityName, owns a " +
+			"table, mounts endpoints and passes core/identitytest (ADR 0127)",
 	},
 }
 
