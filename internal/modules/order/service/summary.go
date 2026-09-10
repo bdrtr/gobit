@@ -10,11 +10,15 @@ import (
 // SummaryTotalsInput are the CUMULATIVE amounts reported to the payment summary
 // of the order.
 //
-// Their being cumulative rather than incremental is deliberate: payment events
-// are delivered at least once (see core/eventbus) and an incremental write would
-// add the amount TWICE on a repeated event. The values given here mean "so far a
-// total of this much has been collected / refunded"; reporting the same value a
-// second time is harmless.
+// Their being cumulative rather than incremental is deliberate, and the reason
+// is the caller this was designed for: an event bus delivers at least once (see
+// core/eventbus) and an incremental write would add the amount TWICE on a
+// repeated delivery. The values given here mean "so far a total of this much has
+// been collected / refunded"; reporting the same value a second time is
+// harmless.
+//
+// No such caller exists yet — the payment module publishes no events — so today
+// the property is unused rather than wrong. See [Service.SetOrderSummaryTotals].
 //
 // The values ARE NOT OVERWRITTEN onto the record, they are MERGED with it; for
 // the rationale see [Service.SetOrderSummaryTotals].
@@ -63,18 +67,24 @@ func (s *Service) GetOrderSummary(ctx context.Context, orderID string) (models.O
 //
 // The reported values are not overwritten onto the record; for every field the
 // LARGER of the recorded value and the reported value is kept. The reason is
-// that the caller is fed from the event bus: delivery is AT LEAST ONCE and the
-// order IS NOT GUARANTEED. On an overwriting endpoint the reprocessing of a
-// late collection event would silently zero out a refund recorded after it — the
-// call would return without an error and the recorded money would disappear.
+// the caller this was DESIGNED for — one fed from an event bus, where delivery
+// is at least once and the order is not guaranteed. On an overwriting endpoint
+// the reprocessing of a late collection event would silently zero out a refund
+// recorded after it, and the call would return without an error.
+//
+// That caller does not exist yet, and the paragraph above says why. What is
+// written here is the SHAPE the semantics were built for, in the conditional it
+// belongs in: until ADR 0119 the whole passage said it in the indicative, and
+// correcting the sentence two paragraphs up while leaving this one is the exact
+// defect that record is about.
 //
 // Both amounts are the LIFETIME total of the order and by their nature they only
 // grow; that is why the merge loses no data and the call becomes both idempotent
 // and ORDER INDEPENDENT. A report that shrinks the value DOES NOT return an
-// error, it is ignored and logged at the DEBUG level: a late delivery is a fact,
-// not a mistake of the caller, and returning an error would put the subscriber
-// into an endless retry. Correcting an amount that was written wrongly is NOT
-// the job of this surface.
+// error, it is ignored and logged at the DEBUG level: a late delivery would be a
+// fact rather than a mistake of the caller, and returning an error would put a
+// retrying subscriber into an endless loop. Correcting an amount that was
+// written wrongly is NOT the job of this surface.
 //
 // # Why under the lock of the order
 //
