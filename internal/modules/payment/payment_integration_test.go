@@ -32,6 +32,8 @@ import (
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/db"
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/eventbus"
+	"github.com/bdrtr/gobit/core/eventbus/outbox"
 	"github.com/bdrtr/gobit/core/link"
 	coreprovider "github.com/bdrtr/gobit/core/provider"
 	"github.com/bdrtr/gobit/core/query"
@@ -113,6 +115,18 @@ func runWithPostgres(m *testing.M) int {
 		return 1
 	}
 
+	// Outbox bir ÇEKİRDEK şeması ve modül ona kendi işleminin içinde yazıyor
+	// (ADR 0121), yani düzeneğin onu da uygulaması gerekiyor — bileşim kökünün
+	// çekirdek şemalarını modül şemalarından önce uygulaması gibi.
+	//
+	// Bu satır ödeme modülünün göçlerinin event_outbox'a DOKUNMAMASI gerektiği
+	// için var: tabloyu core/eventbus/outbox sahipleniyor ve iki sahip aynı
+	// tabloyu ayrı sürümlerden ilerletemez.
+	if err := db.Migrate(ctx, testDSN, outbox.Migrations(), outbox.MigrationOwner); err != nil {
+		fmt.Fprintf(os.Stderr, "outbox migration'ı uygulanamadı: %v\n", err)
+		return 1
+	}
+
 	return m.Run()
 }
 
@@ -126,7 +140,7 @@ func newService(t *testing.T) (*service.Service, *manual.Provider) {
 	registry := service.NewProviderRegistry()
 	require.NoError(t, registry.Register(prov))
 
-	svc, err := service.New(service.Options{Store: repo, Providers: registry})
+	svc, err := service.New(service.Options{Store: repo, Providers: registry, Events: eventbus.NewInMemory(nil)})
 	require.NoError(t, err)
 	return svc, prov
 }
@@ -207,7 +221,7 @@ func yeniSayanServis(t *testing.T) (*service.Service, *sayanSaglayici) {
 	registry := service.NewProviderRegistry()
 	require.NoError(t, registry.Register(sayan))
 
-	svc, err := service.New(service.Options{Store: repo, Providers: registry})
+	svc, err := service.New(service.Options{Store: repo, Providers: registry, Events: eventbus.NewInMemory(nil)})
 	require.NoError(t, err)
 	return svc, sayan
 }
@@ -812,6 +826,10 @@ func TestModulContainerdaAdlariKaydeder(t *testing.T) {
 	// "order_payment" tanımını açılışta bildiriyor (ADR 0005), yani onsuz
 	// kaydolamaz. Ürün modülü de aynı gereksinimi taşıyor.
 	require.NoError(t, c.Provide("core.link", link.New(testPool, slog.New(slog.DiscardHandler))))
+	// Olay otobüsü de zorunlu (ADR 0121): modül para hareketlerini yayımlıyor
+	// ve kaybolan bir para olayının telafisi yok. Ayrı bir testte reddin
+	// kendisi doğrulanıyor.
+	require.NoError(t, c.Provide("core.eventbus", eventbus.NewInMemory(nil)))
 
 	mod := payment.New()
 	require.NoError(t, mod.Register(ctx, c))
@@ -832,6 +850,25 @@ func TestModulContainerdaAdlariKaydeder(t *testing.T) {
 	provider, err := container.Resolve[query.Provider](c, payment.ProviderName)
 	require.NoError(t, err)
 	assert.Equal(t, service.EntityName, provider.Entity())
+}
+
+// TestModulOtobussuzKaydolmaz olay otobüsünün ZORUNLU olduğunu doğrular.
+//
+// İsteğe bağlı olsaydı, otobüssüz bir kurulum sağlıklı görünür ve hiçbir şey
+// söylemezdi: tahsilatlar çalışır, iadeler çalışır, siparişin kaydı hiç
+// öğrenmez. Kaybolan bir para olayının telafisi yok — bu yüzden hata açılışta
+// verilir, ilk para hareketinde değil.
+func TestModulOtobussuzKaydolmaz(t *testing.T) {
+	ctx := context.Background()
+	c := container.New(nil)
+	require.NoError(t, c.Provide("core.db", testPool))
+	require.NoError(t, c.Provide("core.link", link.New(testPool, slog.New(slog.DiscardHandler))))
+
+	err := payment.New().Register(ctx, c)
+
+	require.Error(t, err, "otobüssüz kurulum AÇILIŞTA durmalı")
+	assert.Contains(t, err.Error(), "core.eventbus",
+		"hata, eksik olan servisi ADIYLA söylemeli; operatörün düzeltmesi gereken şey o")
 }
 
 // TestInteropUctanUcaAkisGercekVeritabaninda saga'nın kullanacağı İLKEL

@@ -81,7 +81,7 @@ func describeCollections(d *openapi.Doc) {
 			{
 				Name: "reference", In: inQuery,
 				Schema:      map[string]any{schemaType: typeString},
-				Description: "Limits the listing to one caller reference, an order id in practice.",
+				Description: "Limits the listing to one caller reference. It is what the CALLER wrote and this module never validates it; the checkout writes the CART's identifier there, not the order's. An order is reached from a collection over the order_payment link instead.",
 			},
 			{
 				Name: "status", In: inQuery,

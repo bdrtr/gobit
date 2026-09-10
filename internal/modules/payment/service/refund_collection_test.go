@@ -30,7 +30,7 @@ func newRefundService(t *testing.T) (*service.Service, *fakeProvider) {
 	registry := service.NewProviderRegistry()
 	require.NoError(t, registry.Register(prov))
 
-	svc, err := service.New(service.Options{Store: newFakeStore(), Providers: registry})
+	svc, err := service.New(service.Options{Store: newFakeStore(), Providers: registry, Events: newFakeBus()})
 	require.NoError(t, err)
 
 	return svc, prov

@@ -262,6 +262,15 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 			"the %s module could not resolve the event bus (%q)", ModuleName, svcEventBus)
 	}
 
+	// The SECOND authority, resolved separately: since ADR 0121 this module
+	// also listens, and the two interfaces say which of the two a reader is
+	// looking at.
+	subscriber, err := container.Resolve[service.EventSubscriber](c, svcEventBus)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
+			"the %s module could not resolve the event bus to subscribe (%q)", ModuleName, svcEventBus)
+	}
+
 	// At startup the application sets up the logger configured with
 	// slog.SetDefault; the module does not look for a separate logger
 	// registration.
@@ -311,6 +320,18 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// quantity and the amount of a sale are reachable only one order at a time.
 	if err := c.Provide(LineItemProviderName, service.NewLineItemQueryProvider(svc)); err != nil {
 		return err
+	}
+
+	// The subscription is set up in Register, where the module contract puts
+	// it, and a failure STOPS THE STARTUP. An order module that hears no
+	// payment event goes on reporting money it was told about by a flow and
+	// silently misses everything the payment module's own routes do — which is
+	// the defect this subscription exists to close, and it would look closed.
+	for _, topic := range []string{service.TopicPaymentCaptured, service.TopicPaymentRefunded} {
+		if err := subscriber.Subscribe(topic, svc.HandleMoneyMoved); err != nil {
+			return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
+				"the %s module could not subscribe to the %q event", ModuleName, topic)
+		}
 	}
 
 	m.svc = svc

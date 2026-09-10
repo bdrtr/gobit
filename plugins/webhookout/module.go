@@ -58,9 +58,9 @@ var migrationsRoot = mustSub(migrationFiles, "migrations")
 // and looked completely wired while its handler never ran once.
 //
 // So the list is written out, and it is the WHOLE set: a static census of every
-// eventbus.Event this repository can publish resolves to exactly these four.
+// eventbus.Event this repository can publish resolves to exactly these six.
 //
-// # What happens when a module gains a fifth
+// # What happens when a module gains another
 //
 // This plugin does not deliver it. Nothing errors: the new topic is published,
 // its other subscribers run, and a receiver registered for it does not exist
@@ -72,7 +72,7 @@ var migrationsRoot = mustSub(migrationFiles, "migrations")
 // That is made visible in two places rather than left to a reader:
 //
 //   - TestTheForwardedTopicsAreEveryPublishedTopic scans the production trees
-//     the way internal/arch does and FAILS the day a fifth topic appears here
+//     the way internal/arch does and FAILS the day another topic appears here
 //     without being added to this list. It is the gate; the rest is comfort.
 //   - The startup log prints this list, so an operator comparing gobit's
 //     release notes against their own installation has somewhere to look.
@@ -86,6 +86,8 @@ var migrationsRoot = mustSub(migrationFiles, "migrations")
 // the build; ranged over, the gate goes quiet and the handler waits forever.
 var ForwardedTopics = []string{
 	topicOrderPlaced,
+	topicPaymentCaptured,
+	topicPaymentRefunded,
 	topicProductCreated,
 	topicProductUpdated,
 	topicProductDeleted,
@@ -96,6 +98,18 @@ const (
 	// topicOrderPlaced is published when an order is created. It is the only
 	// order event gobit publishes today.
 	topicOrderPlaced = "order.placed"
+	// topicPaymentCaptured is published when money is collected against a
+	// payment collection.
+	//
+	// It carries the COLLECTION's identifier and a moment, and no amount. That
+	// is the publisher's decision and it is what makes forwarding it safe
+	// without a new redaction rule: money figures do not go on the wire to an
+	// operator's third-party endpoints, and a receiver that wants them asks
+	// this installation for the collection.
+	topicPaymentCaptured = "payment.captured"
+	// topicPaymentRefunded is published when money is sent back against a
+	// payment collection. Same payload, same reason.
+	topicPaymentRefunded = "payment.refunded"
 	// topicProductCreated is published when a new product is written.
 	topicProductCreated = "product.created"
 	// topicProductUpdated is published when a product's own fields change.

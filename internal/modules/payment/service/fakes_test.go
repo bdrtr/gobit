@@ -35,6 +35,9 @@ type fakeStore struct {
 	sessions    map[string]models.PaymentSession
 	payments    map[string]models.Payment
 	refunds     map[string]models.Refund
+	// outbox işlem içinde yazılan olayları SIRASIYLA tutar. Sıra önemli:
+	// olayın para hareketinden SONRA yazıldığını görmek istiyoruz.
+	outbox []outboxRow
 
 	// kilitler alınan kilitleri SIRASIYLA kaydeder ("collection", "session",
 	// "payment"). Kilit sırası bir eşzamanlılık sözleşmesidir ve gerçek
@@ -94,6 +97,31 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 		return err
 	}
 	return nil
+}
+
+// WriteOutboxEvent olayı kaydeder ve işlem dışında REDDEDER.
+//
+// Reddi taklit etmek önemli: gerçek depo işlem dışında yazmayı reddediyor ve
+// sahte kabul etseydi, olayı yanlış yerde yazan bir kod birim testinde yeşil
+// geçerdi.
+func (f *fakeStore) WriteOutboxEvent(ctx context.Context, id, name string, data map[string]any) error {
+	if ctx.Value(txMarkerKey{}) == nil {
+		return errors.Internal("payment_query_failed",
+			"bir outbox olayı yalnızca işlem içinde yazılabilir: %s", name)
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.outbox = append(f.outbox, outboxRow{ID: id, Name: name, Data: data})
+
+	return nil
+}
+
+// outboxRow sahtenin tuttuğu outbox satırı.
+type outboxRow struct {
+	ID   string
+	Name string
+	Data map[string]any
 }
 
 // requireTx kilit alan metotların işlem içinde çağrıldığını doğrular.

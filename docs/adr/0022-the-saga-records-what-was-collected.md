@@ -5,6 +5,7 @@ and records the actual amounts on the order. What was collected is a fact, not
 an assumption carried from the cart.
 
 - **Status:** Accepted
+- **Superseded by:** [0121](0121-the-payment-module-says-when-money-moved.md) — the day this record named has come: the payment module publishes, the subscriber it called "the better home" exists, and the write placed in the saga is now redundant. It stays where it is, because two writers of one cumulative figure cannot disagree.
 - **Date:** 2026-09-05
 - **Phase:** after the roadmap
 

@@ -113,6 +113,8 @@ func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 	// name statically and SKIPS one it cannot, so a loop variable would make
 	// these four the only subscriptions in the repository nothing checks.
 	h.Subscribe(topicOrderPlaced, p.mod.onEvent)
+	h.Subscribe(topicPaymentCaptured, p.mod.onEvent)
+	h.Subscribe(topicPaymentRefunded, p.mod.onEvent)
 	h.Subscribe(topicProductCreated, p.mod.onEvent)
 	h.Subscribe(topicProductUpdated, p.mod.onEvent)
 	h.Subscribe(topicProductDeleted, p.mod.onEvent)

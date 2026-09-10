@@ -125,12 +125,26 @@ func (s *Service) CapturePayment(ctx context.Context, sessionID string, amount i
 			return err
 		}
 
+		// Olay AYNI islemde outbox'a yazılıyor: para hareketi ile onun
+		// duyurusu ya birlikte commit olur ya hiçbiri. Kimlik TAHSİLAT
+		// satırından türetiliyor, koleksiyondan değil — bir koleksiyon defalarca
+		// para hareket ettirir ve koleksiyona anahtarli bir kimlik ikinci
+		// hareketi birincinin tekrarı gibi gösterirdi.
+		if err := s.recordMoneyMoved(ctx, EventPaymentCaptured,
+			payment.ID, col.ID, payment.CapturedAt); err != nil {
+			return err
+		}
+
 		out = payment
 		return nil
 	})
 	if err != nil {
 		return models.Payment{}, err
 	}
+
+	// Commit'ten SONRA, hızlı yol. Kaybı outbox rolesi karşılar.
+	s.publishMoneyMoved(ctx, EventPaymentCaptured, out.ID, out.PaymentCollectionID, out.CapturedAt)
+
 	return out, nil
 }
 
@@ -175,6 +189,7 @@ func (s *Service) RefundPayment(
 		return models.Refund{}, err
 	}
 
+	var refundedCollectionID string
 	var out models.Refund
 	err = s.store.WithTx(ctx, func(ctx context.Context) error {
 		col, ses, err := s.lockCollectionAndSession(ctx, preview.PaymentSessionID)
@@ -225,11 +240,25 @@ func (s *Service) RefundPayment(
 			return err
 		}
 
+		// Kimlik IADE satırından türetiliyor. Bu metot bilerek idempotent
+		// değil — iki kez çağrılan on birimlik bir iade, yirmi birimlik gerçek
+		// bir iadedir — ve koleksiyona anahtarli bir kimlik ikinci iadeyi
+		// sessizce yutardı, çünkü outbox satırı ON CONFLICT (id) DO NOTHING ile
+		// yazılıyor.
+		if err := s.recordMoneyMoved(ctx, EventPaymentRefunded,
+			created.ID, col.ID, created.CreatedAt); err != nil {
+			return err
+		}
+		refundedCollectionID = col.ID
+
 		out = created
 		return nil
 	})
 	if err != nil {
 		return models.Refund{}, err
 	}
+
+	s.publishMoneyMoved(ctx, EventPaymentRefunded, out.ID, refundedCollectionID, out.CreatedAt)
+
 	return out, nil
 }

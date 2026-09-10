@@ -240,20 +240,34 @@ integrations) listen to them. Which backend carries them is chosen by
 `EVENT_BUS=inmemory|redis`, and the difference between the two is what the
 second rule below is about.
 
-Today there are four subscribers: the search plugin `search-pg` (`product.*`),
+Today there are five subscribers: the search plugin `search-pg` (`product.*`),
 the notification module (`order.placed`), the browser push plugin `web-push`
-(`order.placed`) and the outbound webhook plugin `webhook-out` (all four of the
+(`order.placed`), the **order module** itself (`payment.captured`,
+`payment.refunded`) and the outbound webhook plugin `webhook-out` (all six of the
 topics below).
+
+The order module is the only subscriber that is not a plugin, and it is a
+subscriber for the reason a plugin would not do: money moved by the payment
+module's own routes has no flow on its path, so nothing else could tell the
+order (ADR 0121).
 
 | Event | Payload |
 |---|---|
 | `order.placed` | `order_id`, `display_id`, `status`, `region_id`, `customer_id`, `currency_code`, `total`, `item_count`, `placed_at` |
 | `product.created` / `product.updated` | `product_id`, `status` |
 | `product.deleted` | `product_id` |
+| `payment.captured` / `payment.refunded` | `payment_collection_id`, `occurred_at` |
 
 `placed_at` is a timestamp, but it too is a string: the moment the order was
 placed, converted to UTC and formatted with `time.RFC3339Nano`
-(`EventFieldPlacedAt`).
+(`EventFieldPlacedAt`). `occurred_at` is the same shape.
+
+The payment events carry **no amount**, and it is worth saying why the narrow
+rule below is not the whole reason. A refund is deliberately not idempotent, so
+a figure in the payload would be an INCREMENT; delivery is at least once, and a
+redelivered increment reports a total that never happened. What a subscriber
+wants is the cumulative figure, and the only place that is always current is the
+collection.
 
 Two rules are binding:
 

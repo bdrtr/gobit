@@ -121,6 +121,17 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 				"the %q filter must be text, %T given", name, value)
 		}
 		switch name {
+		case FieldID:
+			// Selecting a collection BY ITS OWN identifier is what a graph
+			// query does when the collection is the root and the order is
+			// reached backwards over the order_payment link. Without this the
+			// backward direction cannot be asked for at all: the reader would
+			// have to filter on `reference`, and that field carries the CART's
+			// identifier rather than the order's.
+			//
+			// It is routed to the fetch the joining already uses, so the two
+			// paths cannot answer differently.
+			return p.FetchByIDs(ctx, []string{text}, opts.Fields)
 		case FieldReference:
 			in.Reference = &text
 		case FieldStatus:

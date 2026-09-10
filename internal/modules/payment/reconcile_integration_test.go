@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bdrtr/gobit/core/eventbus"
 	"github.com/bdrtr/gobit/internal/modules/payment/manual"
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 	"github.com/bdrtr/gobit/internal/modules/payment/repository"
@@ -61,7 +62,7 @@ func reconService(t *testing.T) *service.Service {
 	registry := service.NewProviderRegistry()
 	require.NoError(t, registry.Register(manual.New(repo, nil)))
 
-	svc, err := service.New(service.Options{Store: repo, Providers: registry})
+	svc, err := service.New(service.Options{Store: repo, Providers: registry, Events: eventbus.NewInMemory(nil)})
 	require.NoError(t, err)
 
 	return svc

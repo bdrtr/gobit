@@ -17,8 +17,9 @@ import (
 // been collected / refunded"; reporting the same value a second time is
 // harmless.
 //
-// No such caller exists yet — the payment module publishes no events — so today
-// the property is unused rather than wrong. See [Service.SetOrderSummaryTotals].
+// That caller exists as of ADR 0121: [Service.HandleMoneyMoved] is subscribed to
+// the payment module's capture and refund events. See
+// [Service.SetOrderSummaryTotals].
 //
 // The values ARE NOT OVERWRITTEN onto the record, they are MERGED with it; for
 // the rationale see [Service.SetOrderSummaryTotals].
@@ -46,22 +47,22 @@ func (s *Service) GetOrderSummary(ctx context.Context, orderID string) (models.O
 // # Who calls this surface
 //
 // NOT the payment module: the two modules do not know each other (Principle
-// 2.1/2.4). The side that knows the result of the collection is a FLOW, and it
-// comes here through a narrow interface it resolved from the container. Two of
-// them call it today: the checkout clearing a cart and the returns flow making
-// a refund.
+// 2.1/2.4). Three callers reach this surface, and none of them is that module.
+// Two are FLOWS, each through a narrow interface it resolved from the
+// container: the checkout clearing a cart and the returns flow making a refund.
+// The third is [Service.HandleMoneyMoved], this module's own subscriber to the
+// payment module's capture and refund events (ADR 0121).
 //
-// This paragraph also named "a subscriber listening to the payment events"
-// until ADR 0119, and no such subscriber can exist: the payment module publishes
-// no events at all, which is the same absence ADR 0022 recorded when it refused
-// one. The merge below is described as if it were fed by that subscriber's
-// delivery guarantees; the mechanism is sound and its stated reason was not.
+// Until that subscriber the callers were the two flows alone, and the gap that
+// left was D55: the payment module publishes routes that refund and capture
+// directly, no flow is on those paths, and this record never learned. The
+// subscriber closes it by covering the whole lifetime rather than the moments a
+// flow happens to pass through.
 //
-// What follows from having only flows as callers is a real limit rather than a
-// wording problem, and it is gap D55: the payment module publishes a route that
-// refunds a capture, no flow is on that path, and this record therefore never
-// learns. These totals are a REPORT of what the flows saw, not the source of
-// truth about what the payment module holds (ADR 0119).
+// These totals stay a REPORT of what the payment module holds rather than the
+// truth about it (ADR 0119). The subscriber keeps them one by asking: it reads
+// the collection's cumulative figures at the moment it writes, because the
+// event deliberately carries none.
 //
 // # Why the write is a MERGE and not an overwrite
 //
@@ -72,11 +73,10 @@ func (s *Service) GetOrderSummary(ctx context.Context, orderID string) (models.O
 // the reprocessing of a late collection event would silently zero out a refund
 // recorded after it, and the call would return without an error.
 //
-// That caller does not exist yet, and the paragraph above says why. What is
-// written here is the SHAPE the semantics were built for, in the conditional it
-// belongs in: until ADR 0119 the whole passage said it in the indicative, and
-// correcting the sentence two paragraphs up while leaving this one is the exact
-// defect that record is about.
+// That caller is real as of ADR 0121, and the semantics were designed for it
+// three records before it was written. The passage spent one era in the
+// indicative for a mechanism that did not exist (corrected by ADR 0119) and one
+// in the conditional; it is in the indicative again because the subscriber is.
 //
 // Both amounts are the LIFETIME total of the order and by their nature they only
 // grow; that is why the merge loses no data and the call becomes both idempotent

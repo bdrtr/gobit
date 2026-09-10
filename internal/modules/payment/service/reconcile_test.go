@@ -81,7 +81,7 @@ func reconcileFixture(t *testing.T, providers ...coreprovider.PaymentProvider) (
 		require.NoError(t, registry.Register(p))
 	}
 
-	svc, err := service.New(service.Options{Store: store, Providers: registry})
+	svc, err := service.New(service.Options{Store: store, Providers: registry, Events: newFakeBus()})
 	require.NoError(t, err)
 
 	return svc, store

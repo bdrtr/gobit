@@ -101,6 +101,9 @@ const ProviderName = service.EntityName + query.ProviderSuffix
 // dbServiceName çekirdek veritabanı havuzunun container'daki adıdır.
 const dbServiceName = "core.db"
 
+// eventBusServiceName olay otobüsünün konteynerdeki adı.
+const eventBusServiceName = "core.eventbus"
+
 // linkServiceName Module Links servisinin container'daki adıdır.
 const linkServiceName = "core.link"
 
@@ -188,6 +191,18 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		}
 	}
 
+	// Dar bir arayüzle çözülüyor: modül yalnızca YAYIMLAR, abone olmaz ve
+	// otobüsü kapatmaz (bkz. service.EventPublisher).
+	//
+	// ZORUNLU, ve bu order modülünün kalibi: kaybolan bir para olayının
+	// telafisi yok. Olaysız bir kurulum, siparişin ne tahsil edildiğini ne iade
+	// edildiğini öğrenemediği bir kurulumdur.
+	bus, err := container.Resolve[service.EventPublisher](c, eventBusServiceName)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
+			"%s modülü olay otobüsünü çözemedi (%q)", ModuleName, eventBusServiceName)
+	}
+
 	log := slog.Default().With("modul", ModuleName)
 	repo := repository.New(pool.Pool())
 
@@ -200,6 +215,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	svc, err := service.New(service.Options{
 		Store:     repo,
 		Providers: providers,
+		Events:    bus,
 		Logger:    log,
 	})
 	if err != nil {

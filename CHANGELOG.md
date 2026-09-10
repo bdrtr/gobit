@@ -20,6 +20,28 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Ödeme modülü artık paranın ne zaman hareket ettiğini SÖYLÜYOR** (ADR 0121).
+  Siparişin özeti, payment'ın tuttuğunun bir RAPORU, ve onu yalnızca iki akış
+  yazıyordu. Payment ise tahsilat ve iade rotalarını kendi yayımlıyor, o yollarda
+  hiçbir akış yok — yani para hareket ediyor ve siparişin kaydı hiç öğrenmiyordu.
+  ADR 0022 bunu üç gün önce görmüş, aboneyi "daha iyi ev" diye adlandırmış ve tek
+  bir sebeple reddetmişti: payment hiçbir şey yayımlamıyordu. Aynı cümlede de
+  önce cevaplanması gereken soruyu bırakmıştı — **bir ödeme olayı ne taşır?**
+  Cevap: koleksiyonun KİMLİĞİNİ ve anı, tutarı DEĞİL. Üç sebebi var ve üçü de
+  ölçüldü. İade bilerek idempotent değil, yani yükteki bir tutar ARTIM olurdu ve
+  otobüs en az bir kez teslim ediyor — tekrar teslim edilen bir artım, hiç
+  olmamış bir toplam bildirir. Tüketicinin yazması ise yalnızca KÜMÜLATİF sayıda
+  doğru çalışan bir birleştirme. Ve yayımlanan her konu kurulum dışına
+  iletiliyor: yükteki para, operatörün kaydettiği üçüncü taraf uçlarına giderdi.
+  Abone siparişe `order_payment` bağı üzerinden TERS yönde ulaşıyor, çünkü
+  koleksiyonun `reference`'ı SEPET kimliği taşıyor — yayımlanan OpenAPI tarifi
+  bunu "an order id in practice" diye yanlış anlatıyordu, o da düzeltildi.
+  ADR 0119 bükülmüyor: yasak olan bir order satırının payment'ın rakamını KENDİ
+  GERÇEĞİ gibi tutması, rapor tutması değil — ve abone raporu YAZDIĞI AN sorarak
+  üretiyor. Kusurlar: D55 kapandı, ve kardeşi D57 açılıp aynı commit'te kapandı —
+  tahsilat rotası da aynı sessizliği taşıyordu ve D55 yalnızca bakılan rotadan
+  yazıldığı için kaçmıştı.
+
 - **Bir değişim artık farkını ALABİLİYOR** (ADR 0120). Göç 000008 değişimin
   tamamlanmasını kaldırırken geri getirecek şeyi adıyla yazmıştı: mal çıkışı, ve
   fark sıfır değilse para girişi. Malı ADR 0090 getirdi; para üç kayıt sürdü —

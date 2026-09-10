@@ -43,6 +43,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/eventbus"
+	"github.com/bdrtr/gobit/core/eventbus/outbox"
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 	"github.com/bdrtr/gobit/internal/modules/payment/repository/paymentdb"
 )
@@ -109,6 +111,28 @@ func (r *Repository) WithTx(ctx context.Context, fn func(ctx context.Context) er
 	}
 	committed = true
 	return nil
+}
+
+// WriteOutboxEvent olayı ÇAĞIRANIN İŞLEMİ İÇİNDE outbox'a yazar.
+//
+// Sözleşme order modülününkiyle aynı ve gerekçesi de aynı: bir olay, onu doğuran
+// yazmayla BİRLİKTE commit olmali. İşlem dışında çağrılmak bir hatadir ve
+// sessizce yazmak yerine reddedilir — commit olmayabilecek bir is için olay söz
+// veren bir satır, garantinin kendisini yalanlar.
+//
+// Satırı outbox paketi yazıyor; bu modülün göçlerinin event_outbox tablosuna
+// dokunmaması da bu yüzden doğru: tabloyu core/eventbus/outbox sahipleniyor.
+func (r *Repository) WriteOutboxEvent(
+	ctx context.Context, id, name string, data map[string]any,
+) error {
+	tx, inTx := txFromContext(ctx)
+	if !inTx {
+		return errors.Internal(codeQueryFailed,
+			"bir outbox olayı yalnızca işlem içinde yazılabilir (%s); dışarıda yazılan satır, "+
+				"hiç commit olmayabilecek bir iş için olay söz verir", name)
+	}
+
+	return outbox.Write(ctx, tx, eventbus.Event{ID: id, Name: name, Data: data})
 }
 
 // txFromContext context'teki işlem tutamağını döner.

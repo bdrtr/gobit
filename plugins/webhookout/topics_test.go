@@ -64,9 +64,9 @@ var scannedTrees = []string{"cmd", "core", "internal", "plugins"}
 // unresolvableNames are the publish sites whose event name is deliberately not
 // resolved, with the reason.
 //
-// Both are FORWARDING sites rather than declarations: neither decides a topic,
-// each carries one another file already declared. Erroring on them would make
-// this test fail on the framework's own plumbing instead of on a new topic,
+// All of them are FORWARDING sites rather than declarations: none decides a
+// topic, each carries one another file already declared. Erroring on them would
+// make this test fail on the framework's own plumbing instead of on a new topic,
 // and skipping them silently would let a genuinely unresolvable publish hide
 // among them.
 var unresolvableNames = map[string]string{
@@ -75,6 +75,9 @@ var unresolvableNames = map[string]string{
 	"internal/modules/order/repository/aftersales.go": "WriteOutboxEvent takes the name as a " +
 		"parameter and the order service is the caller that decides it; that call site is " +
 		"resolved on its own",
+	"internal/modules/payment/repository/repository.go": "the same shape as the order " +
+		"repository's WriteOutboxEvent: the name is a parameter and the payment service " +
+		"decides it, and those call sites resolve on their own",
 }
 
 // TestTheForwardedTopicsAreEveryPublishedTopic is the gate.

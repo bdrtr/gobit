@@ -2,12 +2,15 @@ package service_test
 
 import (
 	"context"
+	"slices"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/eventbus"
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 	"github.com/bdrtr/gobit/internal/modules/payment/service"
 )
@@ -29,9 +32,59 @@ func yeniServis(t *testing.T) (*service.Service, *fakeStore, *fakeProvider) {
 	registry := service.NewProviderRegistry()
 	require.NoError(t, registry.Register(prov))
 
-	svc, err := service.New(service.Options{Store: store, Providers: registry})
+	svc, err := service.New(service.Options{
+		Store: store, Providers: registry, Events: newFakeBus(),
+	})
 	require.NoError(t, err)
+
 	return svc, store, prov
+}
+
+// yeniServisOtobusle yeniServis ile aynı servisi kurar ve otobüsü de döner.
+//
+// Ayrı bir yardımcı olmasının sebebi çağıranların çoğu: testlerin neredeyse
+// tamamı otobüsle ilgilenmez ve dördüncü bir dönüş değeri hepsine "_" yazdırırdı.
+// Yayımlanan olaya bakan testler bunu çağırır.
+func yeniServisOtobusle(t *testing.T) (*service.Service, *fakeStore, *fakeBus) {
+	t.Helper()
+
+	store := newFakeStore()
+	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(newFakeProvider(saglayiciID)))
+
+	bus := newFakeBus()
+	svc, err := service.New(service.Options{
+		Store: store, Providers: registry, Events: bus,
+	})
+	require.NoError(t, err)
+
+	return svc, store, bus
+}
+
+// fakeBus olayları toplar ve hiçbirini yaymaz.
+type fakeBus struct {
+	mu        sync.Mutex
+	published []eventbus.Event
+}
+
+// newFakeBus boş bir otobüs verir.
+func newFakeBus() *fakeBus { return &fakeBus{} }
+
+// Publish olayı kaydeder.
+func (b *fakeBus) Publish(_ context.Context, e eventbus.Event) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.published = append(b.published, e)
+
+	return nil
+}
+
+// events yayımlanmış olayların kopyasını verir.
+func (b *fakeBus) events() []eventbus.Event {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return slices.Clone(b.published)
 }
 
 // koleksiyonAc test için bir ödeme koleksiyonu açar.

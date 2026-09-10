@@ -63,6 +63,7 @@ import (
 	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/eventbus"
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 )
 
@@ -159,6 +160,15 @@ type Store interface {
 	// transaction is rolled back.
 	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
 
+	// WriteOutboxEvent writes the event into the outbox INSIDE the caller's
+	// transaction.
+	//
+	// It is what makes a promised event commit together with the write that
+	// produced it: either both happen or neither. Being called OUTSIDE a
+	// transaction is an error and is refused — a row written there promises an
+	// event for work that may never commit.
+	WriteOutboxEvent(ctx context.Context, id, name string, data map[string]any) error
+
 	// CreatePaymentCollection records a new payment collection.
 	CreatePaymentCollection(ctx context.Context, col models.PaymentCollection) (models.PaymentCollection, error)
 	// GetPaymentCollection returns the collection by its identifier; NotFound
@@ -248,8 +258,28 @@ type Options struct {
 	Store Store
 	// Providers are the registered payment providers; they are required.
 	Providers *ProviderRegistry
+	// Events is the event bus; it is REQUIRED.
+	//
+	// Being required is deliberate and it is the order module's stance: a lost
+	// money event has no compensation. A payment module without a bus is an
+	// installation where the order learns neither what was collected nor what
+	// went back, and that is noticed not at startup but months later, on a
+	// reconciliation screen.
+	Events EventPublisher
 	// Logger, when given as nil, throws the logs away.
 	Logger *slog.Logger
+}
+
+// EventPublisher is the NARROW surface the service needs from the event bus.
+//
+// The module only PUBLISHES: it does not subscribe and it does not close the
+// bus. Depending on the whole of [eventbus.EventBus] would give the impression
+// that the module has the authority to do either. The [eventbus.Event] type is
+// used as it is, because the shape of an event is the core's contract and
+// redefining it here would let the two diverge.
+type EventPublisher interface {
+	// Publish publishes the event and DOES NOT WAIT for the handlers.
+	Publish(ctx context.Context, e eventbus.Event) error
 }
 
 // Service is the payment module's outward-facing service.
@@ -257,6 +287,7 @@ type Options struct {
 type Service struct {
 	store     Store
 	providers *ProviderRegistry
+	events    EventPublisher
 	log       *slog.Logger
 }
 
@@ -272,11 +303,14 @@ func New(opts Options) (*Service, error) {
 	if opts.Providers == nil {
 		return nil, errors.Internal(CodeNotReady, "the payment service cannot be constructed without a provider registry")
 	}
+	if opts.Events == nil {
+		return nil, errors.Internal(CodeNotReady, "the payment service cannot be constructed without an event bus")
+	}
 	log := opts.Logger
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Service{store: opts.Store, providers: opts.Providers, log: log}, nil
+	return &Service{store: opts.Store, providers: opts.Providers, events: opts.Events, log: log}, nil
 }
 
 // ProviderIDs returns the identifiers of the registered payment providers,

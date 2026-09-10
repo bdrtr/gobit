@@ -424,3 +424,71 @@ func TestCaptureKilitSirasi(t *testing.T) {
 
 	assert.Equal(t, []string{"collection", "session"}, store.kilitSirasi())
 }
+
+// TestTahsilatOlayiIslemIcindeYazilirVeSonrasindaYayimlanir para hareketinin
+// duyurusunun kaybolamayacağını doğrular.
+//
+// İki yazma var ve ikisi de gerekli: outbox satırı GARANTİ, doğrudan yayım
+// HIZ. Satır para hareketiyle aynı işlemde commit olur, yani süreç commit ile
+// yayım arasında ölse bile olay kaybolmaz; röle onu gönderir.
+func TestTahsilatOlayiIslemIcindeYazilirVeSonrasindaYayimlanir(t *testing.T) {
+	svc, store, otobus := yeniServisOtobusle(t)
+	ctx := context.Background()
+	col, ses := yetkilendirilmisOturum(t, svc)
+
+	odeme, err := svc.CapturePayment(ctx, ses.ID, 0)
+	require.NoError(t, err)
+
+	require.Len(t, store.outbox, 1, "olay işlem içinde outbox'a yazılmalı")
+	assert.Equal(t, service.EventPaymentCaptured, store.outbox[0].Name)
+	assert.Equal(t, col.ID, store.outbox[0].Data[service.EventFieldCollectionID],
+		"olay KOLEKSİYONU adlandırır")
+	assert.NotContains(t, store.outbox[0].Data, "amount",
+		"olay TUTAR taşımaz: iade idempotent değil, yani yükteki tutar bir ARTIM olurdu")
+	assert.Equal(t, service.EventPaymentCaptured+":"+odeme.ID, store.outbox[0].ID,
+		"kimlik TAHSİLAT satırından türer, koleksiyondan değil")
+
+	// Ve commit'ten sonra doğrudan da yayımlanır. İkisinin AYNI kimliği
+	// taşıması, outbox satırı ile bu yayımı İKİ olay değil TEK olay yapan şey:
+	// olay kimliğinde idempotent bir abone — otobüsün sözleşmesi zaten bunu
+	// şart koşuyor — iki teslimatı birbirinden ayırt edemez.
+	yayimlanan := otobus.events()
+	require.Len(t, yayimlanan, 1, "commit'ten sonra hızlı yol da yayımlamalı")
+	assert.Equal(t, store.outbox[0].ID, yayimlanan[0].ID,
+		"iki teslimat TEK olaydır; farklı kimlik iki kez işlenen bir para hareketi demek")
+	assert.Equal(t, store.outbox[0].Data, yayimlanan[0].Data,
+		"aynı kimliğin iki farklı gövde taşıması, abonenin hangisini gördüğüne göre "+
+			"başka davranması demek olurdu")
+}
+
+// TestIkiIadeIkiAyriOlayKimligiUretir outbox'un sessiz yutmasını engelleyen
+// kuralı doğrular.
+//
+// Outbox satırı ON CONFLICT (id) DO NOTHING ile yazılıyor, yani aynı kimlik
+// HATA vermez, sessizce DÜŞER. Koleksiyona anahtarlı bir kimlik ikinci iadeyi
+// birincinin tekrarı sanıp yok ederdi; kimlik iade SATIRINDAN türediği için iki
+// gerçek iade iki gerçek olaydır.
+func TestIkiIadeIkiAyriOlayKimligiUretir(t *testing.T) {
+	svc, store, _ := yeniServis(t)
+	ctx := context.Background()
+	_, ses := yetkilendirilmisOturum(t, svc)
+	odeme, err := svc.CapturePayment(ctx, ses.ID, 0)
+	require.NoError(t, err)
+
+	ilk, err := svc.RefundPayment(ctx, odeme.ID, tutar/4, "")
+	require.NoError(t, err)
+	ikinci, err := svc.RefundPayment(ctx, odeme.ID, tutar/4, "")
+	require.NoError(t, err)
+	require.NotEqual(t, ilk.ID, ikinci.ID)
+
+	var iadeOlaylari []string
+	for _, satir := range store.outbox {
+		if satir.Name == service.EventPaymentRefunded {
+			iadeOlaylari = append(iadeOlaylari, satir.ID)
+		}
+	}
+
+	require.Len(t, iadeOlaylari, 2, "iki gerçek iade iki olaydır")
+	assert.NotEqual(t, iadeOlaylari[0], iadeOlaylari[1],
+		"aynı kimlik outbox'ta sessizce düşürülürdü")
+}
