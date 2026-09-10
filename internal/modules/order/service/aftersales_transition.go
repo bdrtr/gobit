@@ -265,10 +265,10 @@ func (s *Service) FundExchange(
 //
 // The goods left: a replacement sourced from this exchange was dispatched, which
 // is the capability ADR 0090 built and the one migration 000008 named as missing.
-// The money did not move, because there is none to move — the database refuses a
-// completion on an exchange whose difference is not zero
-// (order_exchanges_completed_owes_nothing), and that refusal is the whole reason
-// the word came back bounded rather than general.
+// The money either was never owed or has already been collected and recorded
+// (ADR 0120) — the database refuses a completion on an exchange whose difference
+// is neither (order_exchanges_completed_is_settled), and that refusal is why the
+// word is bounded rather than general.
 //
 // What this module does NOT check is that a replacement really left. The
 // dispatch happens in a flow this module cannot see (ADR 0006) and the flow is

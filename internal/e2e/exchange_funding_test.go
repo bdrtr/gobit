@@ -243,3 +243,124 @@ func TestAnExchangeCollectsItsDifferenceAndCanSendItBack(t *testing.T) {
 		"the order was never refunded; the exchange's difference went back on its OWN "+
 			"collection and the two must not be added together")
 }
+
+// TestAFundedExchangeIsClosedByItsGoods walks ADR 0120's MAIN path, which the
+// scenario above does not: the difference is collected, the replacement goes
+// out, and the exchange closes.
+//
+// It is a second test rather than three more steps on the first, because the
+// two paths are mutually exclusive — an exchange either sends its goods or
+// takes its money back — and a test that could only walk one of them would leave
+// the other unwalked. The first version of this file walked only the EXIT, which
+// is the defect gap D57 names: the case written down is the one the author
+// happened to be looking at, not the population of cases that exist.
+//
+// # What only the whole chain can show
+//
+// Completion is guarded in two places that were widened separately: the Go
+// predicate [github.com/bdrtr/gobit/internal/modules/order/models.Exchange.Settleable] and the database CHECK
+// order_exchanges_completed_is_settled. Both say "no difference, or funded",
+// and neither can see the other. A unit test proves one, a migration test
+// proves the other, and only this proves that the funding an operator really
+// performed is the funding the closing rule really accepts.
+func TestAFundedExchangeIsClosedByItsGoods(t *testing.T) {
+	ctx := t.Context()
+
+	customerID, email := newCustomer(ctx, t)
+	variantID, inventoryItemID := newStockedVariant(ctx, t, "E2E Exchange Swap Product",
+		map[string]int64{taxedCurrency: happyUnitPrice}, happyInitialStock)
+
+	cartID, _ := prepareCart(ctx, t, customerID, variantID, happyQuantity)
+
+	placed, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        stockLocationID,
+		PaymentProviderID: paymentmanual.ID,
+		PaymentData:       paymentBehavior(t, paymentmanual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     happyTotal,
+	})
+	require.NoError(t, err, "the fixture order could not be placed")
+
+	order, err := orderSvc.GetOrder(ctx, placed.OrderID)
+	require.NoError(t, err)
+	require.Len(t, order.Items, 1, "precondition: the fixture order has a single line")
+	lineID := order.Items[0].ID
+
+	profileID := newShippingProfile(ctx, t, "E2E Exchange Swap Profile")
+	optionID := newShippingOption(ctx, t, profileID, "E2E Exchange Swap Shipping", 0, false)
+
+	opened, err := adminRequestWithBody(http.MethodPost,
+		"/admin/v1/orders/"+placed.OrderID+"/exchanges",
+		map[string]any{"difference_due": exchangeDifference, "note": "a swap that costs more"})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, opened.Code, opened.Body.String())
+
+	var exchange exchangeResponse
+	require.NoError(t, json.Unmarshal(opened.Body.Bytes(), &exchange))
+	exchangeID := exchange.Data.ID
+	base := "/admin/v1/orders/" + placed.OrderID + "/exchanges/" + exchangeID
+
+	// The goods may be recorded before the money arrives — recording sends
+	// nothing — but they may not GO before it does. That order is the whole
+	// point of a funded state.
+	recorded, err := adminRequestWithBody(http.MethodPost, base+"/replacements",
+		map[string]any{
+			"shipping_option_id": optionID,
+			"location_id":        stockLocationID,
+			"lines": []map[string]any{
+				{"order_line_item_id": lineID, "quantity": replacedQuantity},
+			},
+		})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, recorded.Code,
+		"the replacement could not be recorded; body: %s", recorded.Body.String())
+
+	var replacement replacementResponseBody
+	require.NoError(t, json.Unmarshal(recorded.Body.Bytes(), &replacement))
+	replacementID := replacement.Data.ID
+
+	funded, err := adminRequestWithBody(http.MethodPost, base+"/funding",
+		map[string]any{
+			"payment_collection_id": collectDifference(t, exchangeDifference, exchangeDifference),
+		})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, funded.Code,
+		"the funding must succeed; body: %s", funded.Body.String())
+
+	sent, err := adminRequestWithBody(http.MethodPost,
+		base+"/replacements/"+replacementID+"/dispatch", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, sent.Code,
+		"the dispatch must succeed; body: %s", sent.Body.String())
+
+	var dispatch dispatchResponseBody
+	require.NoError(t, json.Unmarshal(sent.Body.Bytes(), &dispatch))
+	assert.Equal(t, replacedQuantity, dispatch.Data.SentUnits)
+	require.NotEmpty(t, dispatch.Data.FulfillmentID, "the goods have to leave in a parcel")
+
+	stored, err := adminRequestWithBody(http.MethodGet, base, nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, stored.Code, stored.Body.String())
+
+	var closed exchangeResponse
+	require.NoError(t, json.Unmarshal(stored.Body.Bytes(), &closed))
+	assert.Equal(t, "completed", closed.Data.Status,
+		"an exchange whose difference is FUNDED has to close when its goods go out; before "+
+			"ADR 0120 only a difference of zero could, so one with money on it stayed open "+
+			"forever with the goods already gone")
+	assert.NotNil(t, closed.Data.FundedAt,
+		"the closed record still has to say when the money answered; it is the only "+
+			"evidence that the closing was allowed")
+
+	assert.Equal(t, happyRemainingStock-replacedQuantity,
+		stockLevel(ctx, t, inventoryItemID).StockedQuantity,
+		"the swapped unit really left the shelf; a completed exchange over stock that "+
+			"never moved is a parcel nobody packed")
+
+	final, err := orderSvc.GetOrder(ctx, placed.OrderID)
+	require.NoError(t, err)
+	assert.Equal(t, happyTotal, final.Summary.PaidTotal,
+		"the difference is not the order's money and the order's total must not gain it, "+
+			"here as in the exit scenario")
+}

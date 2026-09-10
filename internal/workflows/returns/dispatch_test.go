@@ -24,6 +24,7 @@ func dispatchHarness(t *testing.T) *harness {
 		SourceKind:       "claim",
 		SourceID:         testClaimID,
 		SourceStatus:     statusRequested,
+		SourceOpen:       true,
 		SourceSettleable: true,
 		OrderID:          testOrderID,
 		Status:           statusReplacementRequested,
@@ -186,6 +187,7 @@ func TestASentReplacementSendsNothingAgain(t *testing.T) {
 	h.orders.replacement.Status = statusReplacementDispatched
 	h.orders.replacement.FulfillmentID = "ful_earlier"
 	h.orders.replacement.SourceStatus = "completed"
+	h.orders.replacement.SourceOpen = false
 
 	result, err := h.wf.DispatchReplacement(context.Background(), testReplacementID)
 	require.NoError(t, err)
@@ -252,7 +254,36 @@ func TestAnExchangeThatOwesMoneyIsLeftOpen(t *testing.T) {
 
 	assert.NotEmpty(t, result.FulfillmentID, "the parcel was opened")
 	assert.Equal(t, 0, h.orders.completeCalls,
-		"the exchange stays open; its money half happened where this framework cannot see")
+		"the exchange stays open; the money it owes has not been collected")
+}
+
+// TestAFundedExchangeIsSettledByTheGoods proves the flow decides on the order
+// module's ANSWER and not on a status it recognizes.
+//
+// This is gap D59 in one assertion. The guard used to read
+// `source_status != "requested"`, which is a copy of a vocabulary this flow does
+// not own; ADR 0120 added "funded" to it and the copy went on excluding it, so
+// an exchange whose difference an operator had really collected stayed open with
+// its goods already gone. Nothing failed and nothing was logged — being quiet is
+// the guard's whole job — and every unit test here was green, because the
+// fixture only ever produced the one status the copy knew.
+func TestAFundedExchangeIsSettledByTheGoods(t *testing.T) {
+	h := dispatchHarness(t)
+	h.orders.replacement.SourceKind = "exchange"
+	h.orders.replacement.SourceID = "exch_1"
+	// A status this flow has never heard of, and it must not need to: what it
+	// decides on is the pair of booleans the order module answered.
+	h.orders.replacement.SourceStatus = "funded"
+	h.orders.replacement.SourceOpen = true
+	h.orders.replacement.SourceSettleable = true
+
+	result, err := h.wf.DispatchReplacement(context.Background(), testReplacementID)
+	require.NoError(t, err)
+
+	assert.NotEmpty(t, result.FulfillmentID, "the parcel was opened")
+	assert.Equal(t, 1, h.orders.completeCalls,
+		"the goods close a FUNDED exchange; leaving it open is the defect D59 records")
+	assert.Equal(t, "exch_1", h.orders.completedID)
 }
 
 // TestAWithdrawnReplacementIsNotSent keeps goods from leaving against a promise

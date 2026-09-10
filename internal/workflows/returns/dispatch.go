@@ -17,12 +17,19 @@ type replacementDetail struct {
 	ReplacementID string `json:"replacement_id"`
 	// SourceKind is "claim" or "exchange": which record the goods answer. It
 	// decides which verb settles the source once the parcel has left.
-	SourceKind   string `json:"source_kind"`
-	SourceID     string `json:"source_id"`
+	SourceKind string `json:"source_kind"`
+	SourceID   string `json:"source_id"`
+	// SourceStatus is the source's own status, carried for the error message
+	// and nothing else. This flow does not DECIDE on it: the vocabulary is the
+	// order module's and comparing against a literal here is what produced gap
+	// D59.
 	SourceStatus string `json:"source_status"`
+	// SourceOpen is that module's answer to "is this source still waiting".
+	SourceOpen bool `json:"source_open"`
 	// SourceSettleable is the order module's answer to "can this source be
-	// closed at all". An exchange that owes money cannot, and this flow does not
-	// second-guess it: the rule belongs to that module.
+	// closed at all". An exchange whose difference is neither zero nor funded
+	// cannot, and this flow does not second-guess it: the rule belongs to that
+	// module.
 	SourceSettleable bool              `json:"source_settleable"`
 	OrderID          string            `json:"order_id"`
 	Status           string            `json:"status"`
@@ -302,13 +309,21 @@ func (w *Workflows) openParcel(
 //
 // # A source that cannot be settled is left open, and that is not an error
 //
-// An exchange whose difference is not zero stays open after its goods leave: the
-// money half happened somewhere this framework cannot see (ADR 0114). The order
-// module answers that as source_settleable, and asking it anyway would earn a
-// CONFLICT — which would fail a dispatch that really did send the goods, over a
-// state that is correct.
+// An exchange whose difference is neither zero nor funded stays open after its
+// goods leave: the money half has not happened, and this framework will not
+// pretend it did. The order module answers that as source_settleable, and
+// asking it anyway would earn a CONFLICT — which would fail a dispatch that
+// really did send the goods, over a state that is correct.
+//
+// # Both conditions are the order module's ANSWERS, not this flow's arithmetic
+//
+// The first used to be `source_status != "requested"`, a copy of a vocabulary
+// this flow does not own. ADR 0120 added "funded" to it and the copy went on
+// excluding it, so an exchange whose difference an operator had really
+// collected stayed open forever with its goods already sent (gap D59). Nothing
+// failed and nothing was logged: the guard's whole job is to be quiet.
 func (w *Workflows) settleDispatchedSource(ctx context.Context, detail replacementDetail) error {
-	if detail.SourceStatus != statusRequested || !detail.SourceSettleable {
+	if !detail.SourceOpen || !detail.SourceSettleable {
 		return nil
 	}
 
@@ -319,8 +334,8 @@ func (w *Workflows) settleDispatchedSource(ctx context.Context, detail replaceme
 
 	if err := settle(ctx, detail.SourceID); err != nil {
 		return errors.Wrap(err, errors.KindOf(err), CodeInvalidInput,
-			"the goods of replacement %s left and %s %s could not be marked as settled",
-			detail.ReplacementID, detail.SourceKind, detail.SourceID)
+			"the goods of replacement %s left and %s %s (%s) could not be marked as settled",
+			detail.ReplacementID, detail.SourceKind, detail.SourceID, detail.SourceStatus)
 	}
 
 	return nil

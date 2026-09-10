@@ -55,9 +55,10 @@ RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, cre
 // ago: the caller holds the row's lock, so this cannot lose a race, and the
 // narrowing is what makes the query safe to read on its own.
 //
-// An exchange that owes money is refused by order_exchanges_completed_owes_nothing
-// rather than by this statement. The rule needs only the row, so the database is
-// where it can be kept once instead of in every writer.
+// An exchange that owes money it has not collected is refused by
+// order_exchanges_completed_is_settled rather than by this statement. The rule
+// needs only the row, so the database is where it can be kept once instead of in
+// every writer.
 func (q *Queries) CompleteOrderExchange(ctx context.Context, id string) (OrderExchange, error) {
 	row := q.db.QueryRow(ctx, completeOrderExchange, id)
 	var i OrderExchange
@@ -109,12 +110,12 @@ type CreateOrderExchangeParams struct {
 // order_exchanges queries (plan Section 6).
 //
 // The record is created, read, listed, WITHDRAWN and -- since ADR 0114 -- can be
-// COMPLETED when it owes nothing. The completion came back because one of the two
-// capabilities migration 000008 named arrived: goods can now be shipped against an
-// existing order (ADR 0090), and an exchange whose difference_due is zero needs
-// nothing else. The other half is still missing -- the order-to-payment link is
-// one-to-one, so money cannot be collected against an existing order -- which is
-// why the completion is bounded by a CHECK rather than offered for every record.
+// COMPLETED when it is settled. Both capabilities migration 000008 named have
+// arrived: goods can be shipped against an existing order (ADR 0090), and a
+// difference can be collected into a collection of the exchange's own and
+// recorded on the row (ADR 0120). The completion is still bounded by a CHECK
+// rather than offered for every record, because an exchange whose difference has
+// NOT been collected has had only half of it answered.
 func (q *Queries) CreateOrderExchange(ctx context.Context, arg CreateOrderExchangeParams) (OrderExchange, error) {
 	row := q.db.QueryRow(ctx, createOrderExchange,
 		arg.ID,

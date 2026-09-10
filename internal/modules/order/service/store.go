@@ -296,7 +296,7 @@ type Store interface {
 	// difference and dates the moment; the database refuses a second one.
 	FundExchange(ctx context.Context, id, collectionID string) (models.Exchange, error)
 	// CompleteExchange records that the exchange was settled; the database
-	// refuses one that still owes money.
+	// refuses one that owes money it has not collected.
 	CompleteExchange(ctx context.Context, id string) (models.Exchange, error)
 
 	// WriteOutboxEvent records an event INSIDE the current transaction.

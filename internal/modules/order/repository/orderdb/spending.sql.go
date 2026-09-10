@@ -56,12 +56,13 @@ type SumCustomerSpendParams struct {
 // The REFUNDED amount IS SUBTRACTED: if the money went back to the company, the
 // budget must come back too. Were it not subtracted, a fully refunded order would
 // lock up the employee's budget until the end of the period. The source is the
-// order_summaries.refunded_total column, and the side that writes it is the flow
-// that knows the payment result (see service.Service.SetOrderSummaryTotals); the
-// return FLOW itself does not exist yet (plan Phase 7+), so today the term is in
-// practice zero. It is part of the rule all the same: leaving the definition for
-// later would mean the budget being silently miscalculated once the return flow
-// arrives.
+// order_summaries.refunded_total column (see
+// service.Service.SetOrderSummaryTotals). Three writers keep it current: the
+// checkout, the returns flow, and — since ADR 0121 — this module's subscriber to
+// the payment module's own capture and refund events. The last one is what makes
+// the term trustworthy here: a refund made through a payment route has no flow on
+// its path, and until the subscriber the budget silently stayed consumed by money
+// the customer already had back.
 //
 // # Currency
 //

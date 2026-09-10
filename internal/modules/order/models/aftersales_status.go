@@ -153,9 +153,10 @@ func (s ExchangeStatus) CancelAction() AfterSalesAction {
 // an existing order — and the promise is kept by the query the dispatch calls.
 //
 // What the table does NOT say is that every exchange can be completed. The bound
-// is on the RECORD and not on the transition: an exchange that owes money is
-// refused by the database ([ExchangeStatus] carries the reason), and this table
-// describes what happens to one that may proceed at all.
+// is on the RECORD and not on the transition: an exchange that owes money it has
+// not collected is refused by the database ([ExchangeStatus] carries the
+// reason), and this table describes what happens to one that may proceed at all.
+// That is why "funded" proceeds here and an unfunded difference still does not.
 func (s ExchangeStatus) CompleteAction() AfterSalesAction {
 	switch s {
 	case ExchangeRequested, ExchangeFunded:

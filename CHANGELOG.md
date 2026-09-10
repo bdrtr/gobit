@@ -868,6 +868,16 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Düzeltildi
 
+- **Fonlanmış bir değişim, malı çıktıktan sonra sonsuza kadar AÇIK kalıyordu**
+  (D59). ADR 0120 değişime `funded` durumunu verdi ve kapanışın iki muhafızını
+  da onun için genişletti; sevkiyat akışı ise kaynağı kapatırken kendi üçüncü
+  koşulunu tutuyordu — sahibi olmadığı bir sözcük dağarcığının kopyasını. Yeni
+  sözcük kopyaya girmedi, yani operatör farkı tahsil edip malı gönderiyor ve
+  kayıt `funded` kalıyordu. Hiçbir şey düşmedi, hiçbir şey loglanmadı: o
+  muhafızın bütün işi sessiz olmak. Akış artık sipariş modülünün CEVABINA
+  bakıyor (`source_open`), duruma değil. Aynı commit'te ADR 0120 öncesi dünyayı
+  anlatan on cümle düzeltildi — biri yayımlanmış OpenAPI tarifi.
+
 - **Dört karar satırı bir KONU adlandırıyordu; ölçülüp SORUYA çevrildi — ve ilk
   taslak yirmi dört yanlış iddia taşıyordu** (A4, A5, A11, A12).
 

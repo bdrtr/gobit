@@ -717,11 +717,11 @@ func describeCreditLines(d *openapi.Doc) {
 			Description: "The three movements are the claim path's: the units are set aside, " +
 				"a parcel is opened on the order, and the units come OUT of the physical " +
 				"count as a movement of their own reason. \n\n" +
-				"THE SETTLEMENT IS CONDITIONAL and this is the difference. An exchange whose " +
-				"difference_due is zero is marked completed; one that owes money in either " +
-				"direction STAYS OPEN, because collecting or paying it against an existing " +
-				"order is not something this framework can do. The goods are recorded either " +
-				"way, by the replacement that sent them.",
+				"THE SETTLEMENT IS CONDITIONAL and this is the difference. An exchange is " +
+				"marked completed when it owes nothing, and also when it owes money that has " +
+				"already been collected and named on it through the funding endpoint. One " +
+				"whose difference is still unanswered STAYS OPEN. The goods are recorded " +
+				"either way, by the replacement that sent them.",
 			Responses: map[string]any{
 				"200": openapi.Response("What the dispatch did", d.Item(dispatchReplacementResponse{})),
 			},

@@ -158,12 +158,12 @@ func TestOrderStatusValid(t *testing.T) {
 // (ADR 0090), which was one of the two things migration 000008 said completing
 // would need.
 //
-// The other, moving money against an existing order, is still missing. So the
-// word is back and its BOUND is elsewhere: an exchange that owes nothing may be
-// completed, and the database refuses the rest
-// (order_exchanges_completed_owes_nothing). A vocabulary test is the wrong place
-// for that bound — a status set says which words exist, not which records may
-// wear them.
+// The other, moving money against an existing order, arrived in ADR 0120. So the
+// word is back and its BOUND is elsewhere: an exchange may be completed when it
+// owes nothing or when what it owes has been collected, and the database refuses
+// the rest (order_exchanges_completed_is_settled). A vocabulary test is the
+// wrong place for that bound — a status set says which words exist, not which
+// records may wear them.
 func TestExchangeStatusCarriesTheCompletionAgain(t *testing.T) {
 	assert.True(t, models.ExchangeRequested.Valid())
 	assert.True(t, models.ExchangeCompleted.Valid())

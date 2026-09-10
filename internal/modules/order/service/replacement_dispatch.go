@@ -62,6 +62,7 @@ func (s *Service) ReplacementDetailJSON(
 		SourceID:         record.SourceID(),
 		SourceStatus:     source.status,
 		SourceSettleable: source.settleable,
+		SourceOpen:       source.open,
 		OrderID:          source.orderID,
 		Status:           record.Status.String(),
 		ShippingOptionID: record.ShippingOptionID,
@@ -102,16 +103,29 @@ type replacementDetailJSON struct {
 	SourceKind string `json:"source_kind"`
 	// SourceID is that record's identifier.
 	SourceID string `json:"source_id"`
-	// SourceStatus is that record's own status. A flow reads it to know whether
-	// the source still has to be settled — after a dispatch that died between
-	// the parcel and the settlement, the answer is yes and nothing else could
-	// say so.
+	// SourceStatus is that record's own status, for a log line and an error
+	// message. It is NOT what a flow decides on; see [replacementDetailJSON.SourceOpen].
 	SourceStatus string `json:"source_status"`
+	// SourceOpen reports whether the source is still WAITING to be settled.
+	//
+	// After a dispatch that died between the parcel and the settlement the
+	// answer is yes, and nothing else could say so.
+	//
+	// It is a boolean answered here rather than a status compared over there,
+	// and the reason is the one below repeated: the vocabulary of statuses
+	// belongs to this module. The dispatch flow used to compare
+	// `source_status != "requested"` and held a copy of that vocabulary — which
+	// went on saying "not open" the day ADR 0120 added "funded", leaving every
+	// funded exchange open with its goods already gone (gap D59). The answer is
+	// derived from the transition table itself, so a status added there cannot
+	// be missed here.
+	SourceOpen bool `json:"source_open"`
 	// SourceSettleable reports whether settling the source is POSSIBLE at all.
 	//
-	// A claim always is. An exchange is only when it owes nothing: money cannot
-	// be moved against an existing order, so one with a difference stays open
-	// after its goods leave (ADR 0114).
+	// A claim always is. An exchange is when it owes nothing, or when the money
+	// it owes has been collected and recorded against it (ADR 0120). Until that
+	// record existed the second case could not, and an exchange with a
+	// difference stayed open after its goods left.
 	//
 	// The producer answers it rather than publishing difference_due for the
 	// consumer to judge. The rule is this module's, and a flow that re-derived it
@@ -145,6 +159,7 @@ func (s *Service) replacementSourceOf(
 			orderID:    exchange.OrderID,
 			status:     exchange.Status.String(),
 			settleable: exchange.Settleable(),
+			open:       exchange.Status.CompleteAction() == models.AfterSalesProceed,
 		}, nil
 	}
 
@@ -159,6 +174,7 @@ func (s *Service) replacementSourceOf(
 		// A claim is settled by the goods alone; there is no second half to
 		// wait for.
 		settleable: true,
+		open:       claim.Status.CompleteAction() == models.AfterSalesProceed,
 	}, nil
 }
 
@@ -170,6 +186,8 @@ type replacementSource struct {
 	status string
 	// settleable reports whether closing the source is possible at all.
 	settleable bool
+	// open reports whether the source is still waiting to be settled.
+	open bool
 }
 
 // replacementLineJSON is one line of a replacement on the wire.

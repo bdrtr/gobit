@@ -601,28 +601,28 @@ type ReturnItem struct {
 // The completion was absent between migrations 000008 and 000017, and its return
 // is the trigger 000008 wrote down: completing an exchange needs goods out and,
 // when [Exchange.DifferenceDue] is not zero, money moved against an existing
-// order. The first arrived (ADR 0090 ships goods against an order through a
-// replacement). The second did not, so the completion is bounded rather than
-// general: an exchange is completed only when it owes NOTHING, and the database
-// holds that bound (order_exchanges_completed_owes_nothing).
+// order. Both halves have arrived. ADR 0090 ships goods against an order through
+// a replacement; ADR 0120 gives the record a collection of its own and a moment
+// it was funded, so an exchange is completed when it owes nothing OR when what
+// it owes has been collected. The database holds that bound
+// (order_exchanges_completed_is_settled) and [Exchange.Settleable] says the same
+// sentence in Go.
 //
-// An exchange with a difference therefore stays open after its goods leave, and
-// that is the honest state: the goods half is recorded by the replacement, and
-// the money half happened somewhere this framework cannot see.
+// # Why the difference arrived under a name of its own
 //
-// # What the second half is waiting for, since ADR 0117
+// ADR 0116 made a link cardinality widenable, so "the order-to-payment link is
+// one-to-one" stopped being a fact about what can be built and became a
+// decision — taken in ADR 0117, and taken that way because that link's three
+// readers each expect ONE collection and a rule for choosing between two cannot
+// be written until the second one means something. The difference therefore
+// lives in order_exchanges.payment_collection_id, under a unique index of its
+// own, rather than as a second order_payment row.
 //
-// It is no longer the mechanism. ADR 0116 made a link cardinality widenable, so
-// "the order-to-payment link is one-to-one" stopped being a fact about what can
-// be built and became a decision — taken in ADR 0117, and taken this way
-// because that link's three readers each expect ONE collection and a rule for
-// choosing between two cannot be written until the second one means something.
-// A difference collected against an order will therefore arrive under a name of
-// its own rather than by widening order_payment.
+// # An exchange with an UNFUNDED difference still stays open
 //
-// What is missing is on the money side and is measured in ADR 0117's report: a
-// payment collection cannot be abandoned once it has taken anything, so no
-// record here can honestly say a difference was settled by one.
+// That is the honest state and it is unchanged: the goods half is recorded by
+// the replacement, the money half has not happened, and nothing here will
+// pretend it did. What changed is that there is now a way for it TO happen.
 type ExchangeStatus string
 
 // Exchange statuses.
@@ -657,10 +657,11 @@ func (s ExchangeStatus) String() string {
 
 // Exchange is an exchange record (plan Section 6).
 //
-// It is a request that can be withdrawn, and — since ADR 0114 — completed when
-// it owes nothing. Which differences can reach a completion, and why the rest
-// cannot yet, is spelled out once on [ExchangeStatus]; every other comment
-// about it in this repository points there rather than restating it.
+// It is a request that can be withdrawn, funded, and — since ADR 0114 —
+// completed when it is settled. Which differences can reach a completion, and
+// why an unfunded one still cannot, is spelled out once on [ExchangeStatus];
+// every other comment about it in this repository points there rather than
+// restating it.
 //
 // This godoc said "there is no completion" until ADR 0117. That was true when
 // it was written and stopped being true one record later, in the same commit
