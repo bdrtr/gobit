@@ -345,17 +345,24 @@ func describeExchanges(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/exchanges/{exchangeId}/cancel",
 		openapi.Operation{
 			Summary: "Withdraws the exchange request.",
-			// The two statuses and the ABSENT third are written out here for
-			// the same reason the claim's type values are: the schema shows
-			// "status" as a bare string, and a client that assumed the usual
-			// requested/completed/canceled triple would wait for a completion
-			// that cannot arrive.
-			Description: "The only transition an exchange has. Its status is " +
-				"\"requested\" or \"canceled\" and there is no completed state: " +
-				"completing an exchange would need goods shipped out against an " +
-				"existing order and, on a positive difference, money collected " +
-				"against it, and this framework can do neither. A second call on " +
-				"an already withdrawn record succeeds and keeps the first moment.",
+			// The three statuses and the BOUND on the third are written out
+			// here for the same reason the claim's type values are: the schema
+			// shows "status" as a bare string, and a client has to know which
+			// of the usual triple it can actually wait for.
+			//
+			// This description said there was no completed state until ADR
+			// 0117. ADR 0114 had brought one back and no gate compared the
+			// sentence to the record, because the endpoint table is derived
+			// from the response type rather than from the truth.
+			Description: "The exchange's only OPERATOR-driven transition. Its " +
+				"status is \"requested\", \"completed\" or \"canceled\"; a " +
+				"completion is not requested through a route but follows the " +
+				"goods, when a replacement is dispatched, and only for an " +
+				"exchange whose difference is zero. One that owes money in " +
+				"either direction stays open after its goods leave, because " +
+				"moving that money against an existing order is not something " +
+				"this framework does yet. A second call on an already " +
+				"withdrawn record succeeds and keeps the first moment.",
 			Responses: map[string]any{
 				"200": openapi.Response("The withdrawn exchange record", d.Item(exchangeDTO{})),
 			},

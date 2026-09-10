@@ -199,7 +199,7 @@ func TestTheCustomerSeesEverythingAboutTheGoods(t *testing.T) {
 		KindShipmentCanceled, KindShipmentReturned,
 		KindReturnOpened, KindReturnReceived, KindReturnCanceled,
 		KindClaimOpened, KindClaimCompleted, KindClaimCanceled,
-		KindExchangeOpened, KindExchangeCanceled,
+		KindExchangeOpened, KindExchangeCompleted, KindExchangeCanceled,
 	}
 
 	entries := make([]TimelineEntry, 0, len(goods))
@@ -219,4 +219,79 @@ func TestTheCustomerSeesEverythingAboutTheGoods(t *testing.T) {
 // notices and fixes.
 func TestANewKindIsInvisibleUntilSomebodyDecides(t *testing.T) {
 	assert.Empty(t, customerVisible([]TimelineEntry{{Kind: "invoice.issued"}}))
+}
+
+// TestTheTimelineReportsBothOfAnExchangesEndings is the entry ADR 0114 made
+// reachable and no surface reported.
+//
+// The defect had the same shape as the archiving one above and it is worth
+// stating twice, because the repository produced it twice. Migration 000017
+// brought the completed status and its column back; this file's own godoc went
+// on saying "completion is gone from the record entirely", and the composition
+// went on emitting the withdrawal alone. The claim beside it — the same record
+// shape, in the same loop — had carried both endings all along, so the tree
+// held the correct form and the wrong one at the same time.
+//
+// It is pinned HERE rather than in the composed timeline for the reason
+// [exchangeEntries] states: the composition needs a query catalog and can only
+// run end to end, which is where this entry hid.
+func TestTheTimelineReportsBothOfAnExchangesEndings(t *testing.T) {
+	t.Parallel()
+
+	opened := time.Date(2026, 9, 2, 9, 0, 0, 0, time.UTC)
+	completed := opened.Add(24 * time.Hour)
+
+	entries := exchangeEntries([]models.Exchange{{
+		ID:          "exch_1",
+		Status:      models.ExchangeCompleted,
+		CreatedAt:   opened,
+		CompletedAt: &completed,
+	}})
+
+	settled := findEntry(t, entries, KindExchangeCompleted)
+	require.NotNil(t, settled.At)
+	assert.Equal(t, completed, *settled.At)
+	assert.Equal(t, "exch_1", settled.RefID)
+	assert.Equal(t, ClockDatabase, settled.Clock,
+		"completed_at is written by the query's now(), not by the process")
+
+	assert.NotContains(t, kindsOf(entries), KindExchangeCanceled,
+		"an exchange that was completed was not also withdrawn")
+}
+
+// TestAWithdrawnExchangeReportsOnlyItsWithdrawal is the other direction, and it
+// is what keeps the entry above from being written unconditionally.
+//
+// The two moments are mutually exclusive on the row (order_exchanges_completed_
+// stamp and order_exchanges_canceled_stamp each hold a status to its moment),
+// so a mapping that reported both would describe a record the database cannot
+// hold.
+func TestAWithdrawnExchangeReportsOnlyItsWithdrawal(t *testing.T) {
+	t.Parallel()
+
+	opened := time.Date(2026, 9, 2, 9, 0, 0, 0, time.UTC)
+	withdrawn := opened.Add(2 * time.Hour)
+
+	entries := exchangeEntries([]models.Exchange{{
+		ID:         "exch_2",
+		Status:     models.ExchangeCanceled,
+		CreatedAt:  opened,
+		CanceledAt: &withdrawn,
+	}})
+
+	assert.Equal(t, []string{KindExchangeOpened, KindExchangeCanceled}, kindsOf(entries))
+}
+
+// TestAnOpenExchangeReportsOnlyItsOpening keeps the floor under the two tests
+// above: a record with neither moment produces neither entry.
+func TestAnOpenExchangeReportsOnlyItsOpening(t *testing.T) {
+	t.Parallel()
+
+	entries := exchangeEntries([]models.Exchange{{
+		ID:        "exch_3",
+		Status:    models.ExchangeRequested,
+		CreatedAt: time.Date(2026, 9, 2, 9, 0, 0, 0, time.UTC),
+	}})
+
+	assert.Equal(t, []string{KindExchangeOpened}, kindsOf(entries))
 }

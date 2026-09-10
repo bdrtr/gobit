@@ -20,6 +20,27 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Satışın ödeme bağı yalnızca satışı taşıyor** (ADR 0117). ADR 0116 bir
+  kardinaliteyi genişletilebilir yaptı ve tek soruyu yazılı olarak açık bıraktı:
+  değişimin tahsilatı kendi adını ister mi. O güne kadar cevap zorunluydu —
+  `order_payment`'ı genişletmek açılışı durduruyordu — ve artık durdurmuyor.
+  Ölçüldü: reddeden şey mekanizma değil SATIR. Bir link satırı iki kimlik ve bir
+  an taşıyor, o anı hiçbir okuma ifadesi SELECT etmiyor, ve genişletilmiş bir
+  `order_payment` altında checkout'un açtığı tahsilat ile bir değişimi
+  karşılayan tahsilatı ayırt edecek veri kalmıyor — üç okuyucunun üçü de eline
+  geçen ilkini alıyor. En pahalısı iade akışı: yorumu bir tarif değil GEREKÇE,
+  "bire-bir, o yüzden birden fazlası bir seçim değil veri hatasıdır" diyor, ve
+  genişletme davranışı aynı bırakıp gerekçeyi yalanlardı.
+  Karar: `order_payment` bire-bir kalıyor; bir siparişe karşı başka bir sebeple
+  toplanan para, satırın taşıyamadığı ayrımı ADIYLA taşıyan kendi bağına
+  bağlanacak. O bağın adı ve uçları burada KARARLAŞTIRILMIYOR — tüketicisi yok,
+  ve bu depo okunmayan bir adı yayımlamıyor.
+  Aynı turda ADR 0114'ün geride bıraktığı okuma yüzeyleri düzeltildi (D52):
+  admin değişim kaydı, durumunun zaten yayımladığı ANI kazandı, ve çizelge bir
+  değişimin iki bitişini birden bildiriyor. İkisi de mutasyonla kanıtlandı.
+  Farkı olan bir değişim hâlâ kapanmıyor, ve ölçülen engel bağ değil koleksiyon:
+  bir tahsilat koleksiyonu bir şey aldıktan sonra terk edilemiyor. Tetik yazılı.
+
 - **Bir bağın kardinalitesi artık GENİŞLEYEBİLİYOR** (`core/link`, ADR 0116).
   Ağaçta üç yer aynı adımı adlandırıyordu — ADR 0114'ün açık bıraktığı sınır,
   payment modülünün bağ tanımı ("o gün bu OneToMany olur ve **başka hiçbir şey

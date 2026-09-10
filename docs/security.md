@@ -493,7 +493,7 @@ Three things to know before you do it:
   and written at every startup by `link.Define`
   ([ADR 0005](adr/0005-link-semasi-migration-disinda.md), and the privileges row
   of [ADR 0015](adr/0015-postgresql-cluster-contract.md)), so the runtime role
-  runs DDL — and it therefore OWNS the eight link tables and `link_definitions`
+  runs DDL — and it therefore OWNS the nine link tables and `link_definitions`
   it creates, which the migrating role cannot then read.
 - **`serve` migrates at startup and has no knob that skips it.** With the schema
   already applied by the owner that call is a read of the version tables

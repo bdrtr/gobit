@@ -130,7 +130,10 @@ func (h *Handler) Routes(r chi.Router) {
 	read.Get("/admin/v1/orders/{id}/exchanges", h.adminListExchanges)
 	write.Post("/admin/v1/orders/{id}/exchanges", h.adminCreateExchange)
 	read.Get("/admin/v1/orders/{id}/exchanges/{exchangeId}", h.adminGetExchange)
-	// The exchange's ONLY transition.
+	// The exchange's only transition an OPERATOR can drive. It has a second one
+	// since ADR 0114 — completion — and that one follows the goods rather than
+	// a request, so it is reached by dispatching a replacement and has no route
+	// of its own.
 	write.Post("/admin/v1/orders/{id}/exchanges/{exchangeId}/cancel", h.adminCancelExchange)
 	read.Get("/admin/v1/orders/{id}/claims", h.adminListClaims)
 	write.Post("/admin/v1/orders/{id}/claims", h.adminCreateClaim)

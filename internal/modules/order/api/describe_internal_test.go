@@ -619,9 +619,10 @@ func filledExchange() exchangeDTO {
 	now := time.Now().UTC()
 
 	return exchangeDTO{
-		Note:       "size exchange",
-		Metadata:   map[string]any{"k": "v"},
-		CanceledAt: &now,
+		Note:        "size exchange",
+		Metadata:    map[string]any{"k": "v"},
+		CompletedAt: &now,
+		CanceledAt:  &now,
 	}
 }
 

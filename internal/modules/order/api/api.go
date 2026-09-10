@@ -454,9 +454,16 @@ type exchangeDTO struct {
 	DifferenceDue int64          `json:"difference_due"`
 	Note          string         `json:"note,omitempty"`
 	Metadata      map[string]any `json:"metadata,omitempty"`
-	CanceledAt    *time.Time     `json:"canceled_at,omitempty"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
+	// CompletedAt and CanceledAt are the two moments the status can name.
+	//
+	// CompletedAt was missing until ADR 0117 while the status it dates was
+	// not: ADR 0114 brought 'completed' back and this surface published the
+	// word without the moment. The endpoint table matched, because it is
+	// derived from THIS type rather than from the record.
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	CanceledAt  *time.Time `json:"canceled_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // claimDTO is the external representation of a claim record.
@@ -602,6 +609,7 @@ func toExchangeDTO(exchange models.Exchange) exchangeDTO {
 		DifferenceDue: exchange.DifferenceDue,
 		Note:          exchange.Note,
 		Metadata:      exchange.Metadata,
+		CompletedAt:   exchange.CompletedAt,
 		CanceledAt:    exchange.CanceledAt,
 		CreatedAt:     exchange.CreatedAt,
 		UpdatedAt:     exchange.UpdatedAt,

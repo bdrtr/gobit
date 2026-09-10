@@ -1761,3 +1761,52 @@ func TestAttachingEvidenceToAnUnknownClaimIsNotAServerError(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 }
+
+// TestTheExchangeSurfacePublishesTheMomentItsStatusNames is the contract fault
+// ADR 0114 left and no gate could see.
+//
+// That record brought the 'completed' status back and gave the row a
+// completed_at column; this surface published the WORD and not the MOMENT, so a
+// client reading a completed exchange was told it had ended and given no way to
+// say when. The claim beside it — same shape, same file, fifteen lines down —
+// had carried both all along.
+//
+// The endpoint table could not catch it. It derives the described fields from
+// the response TYPE, so a type missing a field is described as missing it and
+// the two agree about something untrue. Only an assertion against the record
+// itself closes that, which is what this is.
+func TestTheExchangeSurfacePublishesTheMomentItsStatusNames(t *testing.T) {
+	settled := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	svc := &fakeOrders{exchange: models.Exchange{
+		ID: "exch_1", OrderID: "order_1", Status: models.ExchangeCompleted,
+		CompletedAt: &settled,
+	}}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodGet, "/admin/v1/orders/order_1/exchanges/exch_1", "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, models.ExchangeCompleted.String(), data["status"])
+	assert.Equal(t, settled.Format(time.RFC3339Nano), data["completed_at"],
+		"the status says it ended; the surface has to say when")
+}
+
+// TestAnOpenExchangePublishesNeitherMoment keeps the field omitted rather than
+// null when there is nothing to report, which is the shape canceled_at already
+// had and the reason both carry omitempty.
+func TestAnOpenExchangePublishesNeitherMoment(t *testing.T) {
+	svc := &fakeOrders{exchange: models.Exchange{
+		ID: "exch_1", OrderID: "order_1", Status: models.ExchangeRequested,
+	}}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodGet, "/admin/v1/orders/order_1/exchanges/exch_1", "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
+	require.True(t, ok)
+	assert.NotContains(t, data, "completed_at")
+	assert.NotContains(t, data, "canceled_at")
+}

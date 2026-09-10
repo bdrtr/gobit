@@ -55,6 +55,7 @@ const (
 	KindClaimCompleted    = "claim.completed"
 	KindClaimCanceled     = "claim.canceled"
 	KindExchangeOpened    = "exchange.opened"
+	KindExchangeCompleted = "exchange.completed"
 	KindExchangeCanceled  = "exchange.canceled"
 )
 
@@ -133,9 +134,13 @@ type TimelineEntry struct {
 // It also claimed an exchange that was completed or canceled came back undated.
 // That entry could never fire: nothing wrote the exchange's status either, so
 // every exchange was "requested" and the branch testing for anything else was
-// unreachable. An exchange is now withdrawable and the withdrawal is dated
-// ([KindExchangeCanceled]); completion is gone from the record entirely, so
-// there is no longer a state to report without a moment.
+// unreachable. Both endings are dated now and both are reported
+// ([KindExchangeCompleted], [KindExchangeCanceled]).
+//
+// The completion half was missing until ADR 0117 for the reason the paragraph
+// below names: this godoc said "completion is gone from the record entirely"
+// and stayed saying it after ADR 0114 put the status and its column back, so
+// the timeline went silent on an ending the record could reach.
 //
 // The lesson is kept rather than the code: a timeline shorter than the truth is
 // the failure that hides a bug instead of showing it, and a comment claiming
@@ -392,20 +397,37 @@ func (s *Service) afterSalesEntries(ctx context.Context, orderID string) ([]Time
 	if err != nil {
 		return nil, err
 	}
+	return append(entries, exchangeEntries(exchanges)...), nil
+}
+
+// exchangeEntries are the moments an exchange record carries.
+//
+// It is split out of [Service.afterSalesEntries] for the reason [orderEntries]
+// is: the mapping is the part that goes wrong and the part a store cannot be
+// wired for. The composed [Service.Timeline] needs a query layer, so it can
+// only run in the end-to-end lane, and the entry this function was missing
+// would have gone unnoticed there for exactly as long as it went unnoticed
+// here.
+//
+// The two endings both go through [appendMoment] rather than through a status
+// test: the record's own column answers "when", so nothing here has to infer a
+// moment from a status. The pair mirrors the claim's, which has carried both
+// since it had both.
+func exchangeEntries(exchanges []models.Exchange) []TimelineEntry {
+	var entries []TimelineEntry
+
 	for i := range exchanges {
 		entries = append(entries, TimelineEntry{
 			At: &exchanges[i].CreatedAt, Kind: KindExchangeOpened, RefID: exchanges[i].ID,
 			Clock: ClockDatabase, Detail: exchanges[i].Status.String(),
 		})
-		// The withdrawal, when there was one. It goes through appendMoment like
-		// every other stamp rather than through a status test, and that is the
-		// point of the change: the record's own column now answers "when", so
-		// nothing here has to infer a moment from a status.
+		entries = appendMoment(entries, exchanges[i].CompletedAt,
+			KindExchangeCompleted, exchanges[i].ID)
 		entries = appendMoment(entries, exchanges[i].CanceledAt,
 			KindExchangeCanceled, exchanges[i].ID)
 	}
 
-	return entries, nil
+	return entries
 }
 
 // appendMoment adds an entry when the moment happened.
@@ -460,6 +482,7 @@ var customerVisibleKinds = map[string]bool{
 	KindClaimCompleted:    true,
 	KindClaimCanceled:     true,
 	KindExchangeOpened:    true,
+	KindExchangeCompleted: true,
 	KindExchangeCanceled:  true,
 }
 

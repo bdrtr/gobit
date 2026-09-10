@@ -602,14 +602,27 @@ type ReturnItem struct {
 // is the trigger 000008 wrote down: completing an exchange needs goods out and,
 // when [Exchange.DifferenceDue] is not zero, money moved against an existing
 // order. The first arrived (ADR 0090 ships goods against an order through a
-// replacement). The second did not — the order-to-payment link is still
-// one-to-one — so the completion is bounded rather than general: an exchange is
-// completed only when it owes NOTHING, and the database holds that bound
-// (order_exchanges_completed_owes_nothing).
+// replacement). The second did not, so the completion is bounded rather than
+// general: an exchange is completed only when it owes NOTHING, and the database
+// holds that bound (order_exchanges_completed_owes_nothing).
 //
 // An exchange with a difference therefore stays open after its goods leave, and
 // that is the honest state: the goods half is recorded by the replacement, and
 // the money half happened somewhere this framework cannot see.
+//
+// # What the second half is waiting for, since ADR 0117
+//
+// It is no longer the mechanism. ADR 0116 made a link cardinality widenable, so
+// "the order-to-payment link is one-to-one" stopped being a fact about what can
+// be built and became a decision — taken in ADR 0117, and taken this way
+// because that link's three readers each expect ONE collection and a rule for
+// choosing between two cannot be written until the second one means something.
+// A difference collected against an order will therefore arrive under a name of
+// its own rather than by widening order_payment.
+//
+// What is missing is on the money side and is measured in ADR 0117's report: a
+// payment collection cannot be abandoned once it has taken anything, so no
+// record here can honestly say a difference was settled by one.
 type ExchangeStatus string
 
 // Exchange statuses.
@@ -640,12 +653,14 @@ func (s ExchangeStatus) String() string {
 
 // Exchange is an exchange record (plan Section 6).
 //
-// It is a REQUEST that can be withdrawn, and nothing more. What it is not is
-// spelled out on [ExchangeStatus]: there is no completion, because the two
-// things completing one would require are capabilities the framework does not
-// have. An operator opens the record, the goods and the money are settled by
-// whatever means exist outside this system, and the record is either left open
-// or withdrawn.
+// It is a request that can be withdrawn, and — since ADR 0114 — completed when
+// it owes nothing. Which differences can reach a completion, and why the rest
+// cannot yet, is spelled out once on [ExchangeStatus]; every other comment
+// about it in this repository points there rather than restating it.
+//
+// This godoc said "there is no completion" until ADR 0117. That was true when
+// it was written and stopped being true one record later, in the same commit
+// that gave the row a completed_at column two fields down.
 type Exchange struct {
 	// ID is the identifier with the "exch_" prefix.
 	ID string

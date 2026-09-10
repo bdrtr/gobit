@@ -280,8 +280,14 @@ type Store interface {
 	LockExchange(ctx context.Context, id string) (models.Exchange, error)
 	// CancelExchange withdraws the exchange request.
 	//
-	// There is no CompleteExchange beside it and there cannot be one today; the
-	// reason is on [models.ExchangeStatus].
+	// It is one of the exchange's TWO transitions; the other is
+	// [Store.CompleteExchange] below, and which differences can reach it is on
+	// [models.ExchangeStatus].
+	//
+	// This comment said "there is no CompleteExchange beside it and there
+	// cannot be one today" until ADR 0117, with the method three lines under
+	// it: ADR 0114 added the second transition and nothing asked this sentence
+	// to follow.
 	CancelExchange(ctx context.Context, id string) (models.Exchange, error)
 	// CompleteExchange records that the exchange was settled; the database
 	// refuses one that still owes money.
