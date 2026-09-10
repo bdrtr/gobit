@@ -123,9 +123,31 @@ func (s *Service) transitionReturn(
 // opening work that cannot be done; taking one back is closing work that should
 // not be done, and refusing that because the order moved would strand the
 // record open forever.
+// # An open replacement refuses the withdrawal
+//
+// It is [Service.CancelClaim]'s guard, for the reason that record states: the
+// promise outlives the record that made it. ADR 0114 gave the exchange the same
+// capability — a replacement may name it as its source and be dispatched
+// against it — and this guard did not follow it here until D56. Without it a
+// withdrawn exchange still had goods on the way, and nothing between the two
+// said so.
 func (s *Service) CancelExchange(ctx context.Context, exchangeID string) (models.Exchange, error) {
 	return s.transitionExchange(ctx, exchangeID, "canceling",
-		models.ExchangeStatus.CancelAction, s.store.CancelExchange)
+		models.ExchangeStatus.CancelAction,
+		func(ctx context.Context, id string) (models.Exchange, error) {
+			open, err := s.openReplacementsOfExchange(ctx, id)
+			if err != nil {
+				return models.Exchange{}, err
+			}
+			if len(open) > 0 {
+				return models.Exchange{}, errors.Conflict(CodeReplacementNotOpen,
+					"exchange %s has an open replacement (%s); withdraw the replacement before "+
+						"the exchange, or the promise outlives the record that made it",
+					id, open[0].ID)
+			}
+
+			return s.store.CancelExchange(ctx, id)
+		})
 }
 
 // CompleteExchange records that the exchange was settled.
@@ -254,6 +276,28 @@ func (s *Service) openReplacementsOf(
 		return nil, err
 	}
 
+	return stillOpen(all), nil
+}
+
+// openReplacementsOfExchange is the same reading for the other record a
+// replacement can be sourced from.
+//
+// It exists because ADR 0114 gave the exchange what only the claim had — a
+// replacement naming it as the source — and the withdrawal guard written for
+// the claim did not follow. See [Service.CancelExchange].
+func (s *Service) openReplacementsOfExchange(
+	ctx context.Context, exchangeID string,
+) ([]models.Replacement, error) {
+	all, err := s.store.ListReplacementsByExchange(ctx, exchangeID)
+	if err != nil {
+		return nil, err
+	}
+
+	return stillOpen(all), nil
+}
+
+// stillOpen keeps the replacements that have not been withdrawn.
+func stillOpen(all []models.Replacement) []models.Replacement {
 	open := make([]models.Replacement, 0, len(all))
 	for i := range all {
 		if all[i].Status != models.ReplacementCanceled {
@@ -261,7 +305,7 @@ func (s *Service) openReplacementsOf(
 		}
 	}
 
-	return open, nil
+	return open
 }
 
 // transitionClaim applies one claim transition under the record's lock.

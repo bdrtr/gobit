@@ -264,3 +264,52 @@ func TestAnExchangesReplacementsAreListedApart(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, listed, 1, "the claim's promise is not the exchange's")
 }
+
+// TestAnExchangeWithAnOpenPromiseCannotBeWithdrawn is the claim's guard, on the
+// record ADR 0114 gave the same capability to.
+//
+// The claim has refused this since it could promise goods, and its reason is
+// the one that applies here word for word: the promise outlives the record that
+// made it. ADR 0114 let a replacement name an EXCHANGE as its source and be
+// dispatched against it, and the guard stayed on the claim — so a withdrawn
+// exchange still had goods on the way and nothing between the two said so.
+//
+// Gap D56. The asymmetry is the same shape D52 had: a capability moved to the
+// sibling record and the rule written for the first one did not follow.
+func TestAnExchangeWithAnOpenPromiseCannotBeWithdrawn(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	exchange, lineID := exchangeToSend(t, e, 0)
+
+	record, err := e.svc.CreateReplacement(ctx, replacementOfExchange(exchange.ID, lineID, 1))
+	require.NoError(t, err)
+
+	_, err = e.svc.CancelExchange(ctx, exchange.ID)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
+	assert.Equal(t, service.CodeReplacementNotOpen, errors.CodeOf(err))
+	assert.Contains(t, err.Error(), record.ID,
+		"the refusal has to name the replacement to withdraw first")
+}
+
+// TestAWithdrawnPromiseFreesTheExchange keeps the guard from becoming a lock.
+//
+// It is the other half of the claim's shape: withdrawing the replacement first
+// leaves the exchange withdrawable, so the record never reaches a state with no
+// way out. Without this the guard would trade one stuck record for another.
+func TestAWithdrawnPromiseFreesTheExchange(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	exchange, lineID := exchangeToSend(t, e, 0)
+
+	record, err := e.svc.CreateReplacement(ctx, replacementOfExchange(exchange.ID, lineID, 1))
+	require.NoError(t, err)
+	_, err = e.svc.CancelReplacement(ctx, record.ID)
+	require.NoError(t, err)
+
+	withdrawn, err := e.svc.CancelExchange(ctx, exchange.ID)
+
+	require.NoError(t, err, "a withdrawn promise no longer holds the exchange open")
+	assert.Equal(t, models.ExchangeCanceled, withdrawn.Status)
+}
