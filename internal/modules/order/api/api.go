@@ -156,10 +156,12 @@ type Orders interface {
 	// ListExchanges pages the order's exchange records.
 	ListExchanges(ctx context.Context, orderID string, page service.Page) ([]models.Exchange, int64, error)
 	// CancelExchange withdraws the exchange request.
-	//
-	// It is the ONLY transition an exchange has, and no CompleteExchange stands
-	// beside it: see [models.ExchangeStatus].
 	CancelExchange(ctx context.Context, exchangeID string) (models.Exchange, error)
+	// ListReplacementsOfExchange returns an exchange's replacements, newest
+	// first.
+	ListReplacementsOfExchange(
+		ctx context.Context, exchangeID string,
+	) ([]models.Replacement, error)
 
 	// CreateClaim opens a claim record on the order.
 	CreateClaim(ctx context.Context, in service.CreateClaimInput) (models.Claim, error)

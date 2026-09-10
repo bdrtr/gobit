@@ -38,10 +38,15 @@ type stubOrders struct {
 	receivedLocation string
 	receiveCalls     int
 
-	claim           claimDetail
-	claimErr        error
-	completeErr     error
-	completeCalls   int
+	claim         claimDetail
+	claimErr      error
+	completeErr   error
+	completeCalls int
+	// completedKind and completedID say WHICH record the flow closed. The
+	// counter alone cannot: a flow settling the wrong kind would still settle
+	// once.
+	completedKind   string
+	completedID     string
 	summaryErr      error
 	summaryCalls    int
 	summaryOrder    string
@@ -132,8 +137,23 @@ func (s *stubOrders) ClaimDetailJSON(_ context.Context, _ string) (json.RawMessa
 }
 
 // CompleteClaim records the stamp and applies the scripted behavior.
-func (s *stubOrders) CompleteClaim(_ context.Context, _ string) error {
+func (s *stubOrders) CompleteClaim(_ context.Context, id string) error {
 	s.completeCalls++
+	s.completedKind, s.completedID = "claim", id
+
+	return s.completeErr
+}
+
+// CompleteExchange records the stamp and applies the scripted behavior.
+//
+// It shares the counter with the claim's settlement on purpose: the tests that
+// count settlements are counting how many times the SOURCE was closed, and which
+// verb closed it is asserted separately by [stubOrders.completedKind]. Two
+// counters would let a test that expected one settlement pass while the flow made
+// the other.
+func (s *stubOrders) CompleteExchange(_ context.Context, id string) error {
+	s.completeCalls++
+	s.completedKind, s.completedID = "exchange", id
 
 	return s.completeErr
 }

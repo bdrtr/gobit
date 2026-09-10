@@ -36,7 +36,7 @@ func (s *Service) ReplacementDetailJSON(
 		return nil, err
 	}
 
-	claim, err := s.store.GetClaim(ctx, record.ClaimID)
+	source, err := s.replacementSourceOf(ctx, record)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +46,7 @@ func (s *Service) ReplacementDetailJSON(
 		return nil, err
 	}
 
-	lines, err := s.store.ListLineItems(ctx, claim.OrderID)
+	lines, err := s.store.ListLineItems(ctx, source.orderID)
 	if err != nil {
 		return nil, err
 	}
@@ -58,9 +58,11 @@ func (s *Service) ReplacementDetailJSON(
 
 	detail := replacementDetailJSON{
 		ReplacementID:    record.ID,
-		ClaimID:          record.ClaimID,
-		ClaimStatus:      claim.Status.String(),
-		OrderID:          claim.OrderID,
+		SourceKind:       string(record.Source()),
+		SourceID:         record.SourceID(),
+		SourceStatus:     source.status,
+		SourceSettleable: source.settleable,
+		OrderID:          source.orderID,
 		Status:           record.Status.String(),
 		ShippingOptionID: record.ShippingOptionID,
 		LocationID:       record.LocationID,
@@ -75,7 +77,7 @@ func (s *Service) ReplacementDetailJSON(
 			// send nothing and believe it sent something.
 			return nil, errors.Internal(CodeInconsistentState,
 				"replacement %s names line %s, which is not on order %s",
-				replacementID, items[i].OrderLineItemID, claim.OrderID)
+				replacementID, items[i].OrderLineItemID, source.orderID)
 		}
 		detail.Lines = append(detail.Lines, replacementLineJSON{
 			ReplacementItemID: items[i].ID,
@@ -92,18 +94,82 @@ func (s *Service) ReplacementDetailJSON(
 // replacementDetailJSON is the wire form of a replacement for a flow.
 type replacementDetailJSON struct {
 	ReplacementID string `json:"replacement_id"`
-	ClaimID       string `json:"claim_id"`
-	// ClaimStatus is the claim's own status. A flow reads it to know whether
-	// the claim still has to be settled — after a dispatch that died between
-	// the parcel and the claim, the answer is yes and nothing else could say
-	// so.
-	ClaimStatus      string                `json:"claim_status"`
+	// SourceKind is "claim" or "exchange": WHICH record the goods answer.
+	//
+	// It replaced a bare claim_id when an exchange became a source (ADR 0114).
+	// A second pair of fields, one of them always empty, would have made every
+	// reader ask which one was set; one kind and one id say it once.
+	SourceKind string `json:"source_kind"`
+	// SourceID is that record's identifier.
+	SourceID string `json:"source_id"`
+	// SourceStatus is that record's own status. A flow reads it to know whether
+	// the source still has to be settled — after a dispatch that died between
+	// the parcel and the settlement, the answer is yes and nothing else could
+	// say so.
+	SourceStatus string `json:"source_status"`
+	// SourceSettleable reports whether settling the source is POSSIBLE at all.
+	//
+	// A claim always is. An exchange is only when it owes nothing: money cannot
+	// be moved against an existing order, so one with a difference stays open
+	// after its goods leave (ADR 0114).
+	//
+	// The producer answers it rather than publishing difference_due for the
+	// consumer to judge. The rule is this module's, and a flow that re-derived it
+	// would hold a second copy — one that goes on saying yes on the day the rule
+	// changes.
+	SourceSettleable bool                  `json:"source_settleable"`
 	OrderID          string                `json:"order_id"`
 	Status           string                `json:"status"`
 	ShippingOptionID string                `json:"shipping_option_id"`
 	LocationID       string                `json:"location_id"`
 	FulfillmentID    string                `json:"fulfillment_id"`
 	Lines            []replacementLineJSON `json:"lines"`
+}
+
+// replacementSourceOf reads the record a replacement settles and returns the
+// ORDER it belongs to together with the source's own status.
+//
+// Both halves come from the source rather than from the replacement: the record
+// names one and only one, and the order it belongs to is the source's fact. A
+// copy on the replacement would be a second thing to keep true.
+func (s *Service) replacementSourceOf(
+	ctx context.Context, record models.Replacement,
+) (source replacementSource, err error) {
+	if record.Source() == models.SourceExchange {
+		exchange, exErr := s.store.GetExchange(ctx, record.ExchangeID)
+		if exErr != nil {
+			return replacementSource{}, exErr
+		}
+
+		return replacementSource{
+			orderID:    exchange.OrderID,
+			status:     exchange.Status.String(),
+			settleable: exchange.OwesNothing(),
+		}, nil
+	}
+
+	claim, claimErr := s.store.GetClaim(ctx, record.ClaimID)
+	if claimErr != nil {
+		return replacementSource{}, claimErr
+	}
+
+	return replacementSource{
+		orderID: claim.OrderID,
+		status:  claim.Status.String(),
+		// A claim is settled by the goods alone; there is no second half to
+		// wait for.
+		settleable: true,
+	}, nil
+}
+
+// replacementSource is what the source record says about itself.
+type replacementSource struct {
+	// orderID is the order the source belongs to.
+	orderID string
+	// status is the source's own status.
+	status string
+	// settleable reports whether closing the source is possible at all.
+	settleable bool
 }
 
 // replacementLineJSON is one line of a replacement on the wire.

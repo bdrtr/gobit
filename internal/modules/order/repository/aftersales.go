@@ -330,6 +330,27 @@ func (r *Repository) CancelExchange(ctx context.Context, id string) (models.Exch
 	return toExchange(row)
 }
 
+// CompleteExchange records that the exchange was settled.
+//
+// The query narrows to the 'requested' status, so a row that moved on affects
+// nothing and comes back as no rows. The caller reads that as "the state
+// changed" for the reason the sibling transitions do: it holds the row's lock,
+// so the only way to see it is a status this transition may not leave.
+func (r *Repository) CompleteExchange(ctx context.Context, id string) (models.Exchange, error) {
+	row, err := r.queries(ctx).CompleteOrderExchange(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.Exchange{}, coreerrors.Conflict(codeStateChanged,
+				"the exchange record is no longer open: %s", id)
+		}
+
+		return models.Exchange{}, classify(err, codeQueryFailed,
+			"could not complete the exchange record")
+	}
+
+	return toExchange(row)
+}
+
 // LockClaim locks the claim row until the end of the transaction.
 func (r *Repository) LockClaim(ctx context.Context, id string) (models.Claim, error) {
 	row, err := r.queries(ctx).LockOrderClaim(ctx, id)

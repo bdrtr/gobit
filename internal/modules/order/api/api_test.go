@@ -1439,6 +1439,20 @@ func (f *fakeOrders) ListReplacementsOfClaim(
 	return f.replacements, f.err
 }
 
+// ListReplacementsOfExchange returns the scripted replacements.
+//
+// It records the id it was given for the reason its claim sibling does: the
+// handler's job is to read the source out of the PATH, and a fake that dropped
+// it would let the route read the wrong parameter while the assertion passed.
+func (f *fakeOrders) ListReplacementsOfExchange(
+	_ context.Context, exchangeID string,
+) ([]models.Replacement, error) {
+	f.record("ListReplacementsOfExchange")
+	f.gotChildID = exchangeID
+
+	return f.replacements, f.err
+}
+
 // CancelReplacement withdraws a request.
 func (f *fakeOrders) CancelReplacement(
 	_ context.Context, id string,

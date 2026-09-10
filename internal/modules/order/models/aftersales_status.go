@@ -103,28 +103,52 @@ func (s ReturnStatus) CancelAction() AfterSalesAction {
 // Transition table:
 //
 //	requested -> proceed
+//	completed -> conflict  (the exchange was met and un-meeting it is a new
+//	                        record)
 //	canceled  -> noop      (already withdrawn; the FIRST withdrawal keeps its
 //	                        moment, for the reason AfterSalesNoop exists)
 //
-// # Why there is no CompleteAction beside it
-//
-// The exchange is the one after-sales record with two statuses instead of
-// three, and the missing transition is missing on purpose. It carried a table
-// here until 2026-09-06 — requested -> proceed, completed -> noop — and the
-// table was unreachable: no query wrote the status, so nothing ever called it,
-// and the transition it described could not have been honored if it had. See
-// [ExchangeStatus] for what completing would require and why the framework
-// cannot do it.
-//
-// A dead table is worse than an absent one here, because this file exists to be
-// READ AS THE RULE. An entry saying "requested -> proceed" is a promise that
-// completing works, made by the file whose whole purpose is to be the answer.
+// The completed -> conflict entry is the claim's own: an exchange that was met
+// is not un-met by withdrawing the request, and reversing it is a new record.
 func (s ExchangeStatus) CancelAction() AfterSalesAction {
 	switch s {
 	case ExchangeRequested:
 		return AfterSalesProceed
 	case ExchangeCanceled:
 		return AfterSalesNoop
+	case ExchangeCompleted:
+		return AfterSalesConflict
+	default:
+		return AfterSalesConflict
+	}
+}
+
+// CompleteAction returns the outcome of settling the exchange in this status.
+//
+// Transition table:
+//
+//	requested -> proceed
+//	completed -> noop      (the FIRST settlement keeps its moment)
+//	canceled  -> conflict  (a withdrawn request has no goods to answer)
+//
+// The table was absent between 2026-09-06 and ADR 0114, and its absence was the
+// right answer then: no query wrote the status, so an entry saying
+// "requested -> proceed" would have been a promise the file could not keep. What
+// changed is the capability rather than the reading — goods can now leave against
+// an existing order — and the promise is kept by the query the dispatch calls.
+//
+// What the table does NOT say is that every exchange can be completed. The bound
+// is on the RECORD and not on the transition: an exchange that owes money is
+// refused by the database ([ExchangeStatus] carries the reason), and this table
+// describes what happens to one that may proceed at all.
+func (s ExchangeStatus) CompleteAction() AfterSalesAction {
+	switch s {
+	case ExchangeRequested:
+		return AfterSalesProceed
+	case ExchangeCompleted:
+		return AfterSalesNoop
+	case ExchangeCanceled:
+		return AfterSalesConflict
 	default:
 		return AfterSalesConflict
 	}

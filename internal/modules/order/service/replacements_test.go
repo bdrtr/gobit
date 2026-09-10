@@ -522,8 +522,9 @@ func TestTheReplacementDetailCarriesWhatAFlowNeedsToSendIt(t *testing.T) {
 
 	var detail struct {
 		ReplacementID    string `json:"replacement_id"`
-		ClaimID          string `json:"claim_id"`
-		ClaimStatus      string `json:"claim_status"`
+		SourceKind       string `json:"source_kind"`
+		SourceID         string `json:"source_id"`
+		SourceStatus     string `json:"source_status"`
 		OrderID          string `json:"order_id"`
 		Status           string `json:"status"`
 		ShippingOptionID string `json:"shipping_option_id"`
@@ -539,8 +540,9 @@ func TestTheReplacementDetailCarriesWhatAFlowNeedsToSendIt(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &detail))
 
 	assert.Equal(t, record.ID, detail.ReplacementID)
-	assert.Equal(t, claim.ID, detail.ClaimID)
-	assert.Equal(t, "requested", detail.ClaimStatus)
+	assert.Equal(t, "claim", detail.SourceKind)
+	assert.Equal(t, claim.ID, detail.SourceID)
+	assert.Equal(t, "requested", detail.SourceStatus)
 	assert.Equal(t, claim.OrderID, detail.OrderID)
 	assert.Equal(t, "requested", detail.Status)
 	assert.Equal(t, testShippingOptionID, detail.ShippingOptionID)

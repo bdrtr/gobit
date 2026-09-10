@@ -148,21 +148,42 @@ func TestOrderStatusValid(t *testing.T) {
 	assert.False(t, models.OrderStatus("").Valid())
 }
 
-// TestExchangeStatusHasNoCompletedValue is a vocabulary test, and it is here
-// because the vocabulary is the promise.
+// TestExchangeStatusCarriesTheCompletionAgain is a vocabulary test, and it is
+// here because the vocabulary is the promise.
 //
-// "completed" was a defined status with a stamp column beside it and no writer
-// anywhere, so the type advertised a state the framework could not reach.
-// Completing an exchange needs goods shipped out against an existing order and,
-// on a positive difference, money collected against one; there is no capability
-// for the first and the order-to-payment link's one-to-one cardinality forbids
-// the second. Both halves are recorded in the source, not inferred here.
-func TestExchangeStatusHasNoCompletedValue(t *testing.T) {
+// Until ADR 0114 this test asserted the OPPOSITE, and it was right to: "completed"
+// was a defined status with a stamp beside it and no writer anywhere, so the type
+// advertised a state the framework could not reach. What changed is not the
+// reading but the capability — goods can now leave against an existing order
+// (ADR 0090), which was one of the two things migration 000008 said completing
+// would need.
+//
+// The other, moving money against an existing order, is still missing. So the
+// word is back and its BOUND is elsewhere: an exchange that owes nothing may be
+// completed, and the database refuses the rest
+// (order_exchanges_completed_owes_nothing). A vocabulary test is the wrong place
+// for that bound — a status set says which words exist, not which records may
+// wear them.
+func TestExchangeStatusCarriesTheCompletionAgain(t *testing.T) {
 	assert.True(t, models.ExchangeRequested.Valid())
+	assert.True(t, models.ExchangeCompleted.Valid())
 	assert.True(t, models.ExchangeCanceled.Valid())
-	assert.False(t, models.ExchangeStatus("completed").Valid(),
-		"an exchange cannot be completed, so the status must not be accepted")
+	assert.False(t, models.ExchangeStatus("shipped").Valid(),
+		"a word nothing writes is a state the type must not advertise")
 	assert.False(t, models.ExchangeStatus("").Valid())
+}
+
+// TestOnlyAnExchangeThatOwesNothingIsSettleable is the bound, read from the
+// model.
+//
+// The sign does not matter and that is the point: a positive difference is money
+// to collect and a negative one is money to pay back, and this framework can move
+// neither against an existing order.
+func TestOnlyAnExchangeThatOwesNothingIsSettleable(t *testing.T) {
+	assert.True(t, models.Exchange{DifferenceDue: 0}.OwesNothing())
+	assert.False(t, models.Exchange{DifferenceDue: 1}.OwesNothing())
+	assert.False(t, models.Exchange{DifferenceDue: -1}.OwesNothing(),
+		"money owed TO the customer is money all the same")
 }
 
 // TestTheExchangeCancelTable is the transition table read as a table.
@@ -172,8 +193,20 @@ func TestExchangeStatusHasNoCompletedValue(t *testing.T) {
 func TestTheExchangeCancelTable(t *testing.T) {
 	assert.Equal(t, models.AfterSalesProceed, models.ExchangeRequested.CancelAction())
 	assert.Equal(t, models.AfterSalesNoop, models.ExchangeCanceled.CancelAction())
-	assert.Equal(t, models.AfterSalesConflict, models.ExchangeStatus("completed").CancelAction(),
+	assert.Equal(t, models.AfterSalesConflict, models.ExchangeCompleted.CancelAction(),
+		"an exchange that was met is not un-met by withdrawing the request")
+	assert.Equal(t, models.AfterSalesConflict, models.ExchangeStatus("shipped").CancelAction(),
 		"a status this type does not define may not proceed")
+}
+
+// TestTheExchangeCompleteTable is the transition that came back.
+func TestTheExchangeCompleteTable(t *testing.T) {
+	assert.Equal(t, models.AfterSalesProceed, models.ExchangeRequested.CompleteAction())
+	assert.Equal(t, models.AfterSalesNoop, models.ExchangeCompleted.CompleteAction(),
+		"the FIRST settlement keeps its moment")
+	assert.Equal(t, models.AfterSalesConflict, models.ExchangeCanceled.CompleteAction(),
+		"a withdrawn request has no goods to answer")
+	assert.Equal(t, models.AfterSalesConflict, models.ExchangeStatus("shipped").CompleteAction())
 }
 
 // TestOrderSummaryOutstanding verifies the computation of the outstanding

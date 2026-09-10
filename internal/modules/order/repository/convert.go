@@ -535,6 +535,7 @@ func toExchange(row orderdb.OrderExchange) (models.Exchange, error) {
 		Note:          stringValue(row.Note),
 		Metadata:      meta,
 		CanceledAt:    toTimePtr(row.CanceledAt),
+		CompletedAt:   toTimePtr(row.CompletedAt),
 		CreatedAt:     toTime(row.CreatedAt),
 		UpdatedAt:     toTime(row.UpdatedAt),
 	}, nil

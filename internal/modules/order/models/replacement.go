@@ -35,7 +35,18 @@ func (s ReplacementStatus) Valid() bool {
 // String returns the status as it is stored.
 func (s ReplacementStatus) String() string { return string(s) }
 
-// Replacement is what a claim promises to send.
+// ReplacementSource names the kind of record a replacement settles.
+type ReplacementSource string
+
+// Replacement sources.
+const (
+	// SourceClaim is a damage or shortage claim to be met with goods.
+	SourceClaim ReplacementSource = "claim"
+	// SourceExchange is an exchange: goods going out against goods coming back.
+	SourceExchange ReplacementSource = "exchange"
+)
+
+// Replacement is what a claim or an exchange promises to send.
 //
 // # Why it is not part of the claim
 //
@@ -52,8 +63,17 @@ func (s ReplacementStatus) String() string { return string(s) }
 type Replacement struct {
 	// ID is the identifier with the "orepl_" prefix.
 	ID string
-	// ClaimID is the claim this replacement settles.
+	// ClaimID is the claim this replacement settles; empty when the source is an
+	// exchange.
 	ClaimID string
+	// ExchangeID is the exchange this replacement settles; empty when the source
+	// is a claim.
+	//
+	// Exactly ONE of the two is set and the database holds it
+	// (order_replacements_one_source): a record with neither hangs off nothing
+	// and could not be read back to an order, and a record with both would
+	// answer "which one settled it" twice. Read the pair through [Replacement.Source].
+	ExchangeID string
 	// Status is the state of the record.
 	Status ReplacementStatus
 	// ShippingOptionID is HOW it will be sent. It is answered when the
@@ -82,6 +102,28 @@ type Replacement struct {
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// Source reports which kind of record this replacement settles.
+//
+// It reads the pair rather than a column of its own: a stored discriminator
+// beside the two identifiers is a third thing that can disagree with them, and
+// the pair already says it.
+func (r Replacement) Source() ReplacementSource {
+	if r.ExchangeID != "" {
+		return SourceExchange
+	}
+
+	return SourceClaim
+}
+
+// SourceID is the identifier of the record this replacement settles.
+func (r Replacement) SourceID() string {
+	if r.ExchangeID != "" {
+		return r.ExchangeID
+	}
+
+	return r.ClaimID
 }
 
 // ReplacementItem is one line of a replacement: which line, and how many.

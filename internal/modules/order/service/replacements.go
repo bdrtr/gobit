@@ -15,10 +15,17 @@ type ReplacementLineInput struct {
 	Quantity int64
 }
 
-// CreateReplacementInput is what a claim promises to send.
+// CreateReplacementInput is what a claim or an exchange promises to send.
 type CreateReplacementInput struct {
-	// ClaimID is the claim the replacement settles.
+	// ClaimID is the claim the replacement settles; leave it empty to send
+	// against an exchange.
 	ClaimID string
+	// ExchangeID is the exchange the replacement settles; leave it empty to send
+	// against a claim.
+	//
+	// Exactly ONE of the two is given. Both would answer "what settled this" twice
+	// and neither would leave the record hanging off nothing.
+	ExchangeID string
 	// ShippingOptionID is HOW it will be sent.
 	ShippingOptionID string
 	// LocationID is the stock location it will be sent FROM.
@@ -36,7 +43,8 @@ type ReplacementRecord struct {
 	Items []models.ReplacementItem
 }
 
-// CreateReplacement records what a claim will send, and sends nothing.
+// CreateReplacement records what a claim or an exchange will send, and sends
+// nothing.
 //
 // # What this does and deliberately does NOT do
 //
@@ -46,12 +54,19 @@ type ReplacementRecord struct {
 // claim of type 'replace' was going to send, which is the first reason
 // internal/workflows/returns refuses to settle one.
 //
-// # Why the claim has to be OPEN and of the right type
+// # Why the source has to be OPEN
 //
 // A 'refund' claim is settled with money and its refund amount is the record of
 // that; promising goods on it would leave two settlements for one claim. A
-// claim that is already completed or withdrawn has had its answer, and adding
-// to it would change what a settled record says.
+// claim or an exchange that is already completed or withdrawn has had its
+// answer, and adding to it would change what a settled record says.
+//
+// # Why an exchange is a source at all
+//
+// An exchange IS goods out against goods back, so a record of what goes out is
+// what it was always missing (ADR 0114). It carries no type to check: unlike a
+// claim, every exchange settles with goods, and the money beside them — its
+// difference — is what this framework still cannot move.
 //
 // # Where the ceiling is checked
 //
@@ -68,7 +83,7 @@ type ReplacementRecord struct {
 func (s *Service) CreateReplacement(
 	ctx context.Context, in CreateReplacementInput,
 ) (ReplacementRecord, error) {
-	if err := requireID("claim_id", in.ClaimID); err != nil {
+	if err := checkReplacementSource(in); err != nil {
 		return ReplacementRecord{}, err
 	}
 	if err := requireID("shipping_option_id", in.ShippingOptionID); err != nil {
@@ -87,24 +102,15 @@ func (s *Service) CreateReplacement(
 
 	var out ReplacementRecord
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
-		claim, err := s.store.GetClaim(ctx, in.ClaimID)
+		orderID, err := s.openReplacementSource(ctx, in)
 		if err != nil {
 			return err
 		}
-		if claim.Type != models.ClaimReplace {
-			return errors.Conflict(CodeClaimNotReplaceable,
-				"claim %s is settled with %s, so it sends no goods", in.ClaimID, claim.Type)
-		}
-		if claim.Status != models.ClaimRequested {
-			return errors.Conflict(CodeNotPending,
-				"claim %s is %s; a replacement can only be added to an open claim",
-				in.ClaimID, claim.Status)
-		}
 
-		if _, err := s.requireLiveOrder(ctx, claim.OrderID, "a replacement record"); err != nil {
+		if _, err := s.requireLiveOrder(ctx, orderID, "a replacement record"); err != nil {
 			return err
 		}
-		lines, err := s.store.ListLineItems(ctx, claim.OrderID)
+		lines, err := s.store.ListLineItems(ctx, orderID)
 		if err != nil {
 			return err
 		}
@@ -119,6 +125,7 @@ func (s *Service) CreateReplacement(
 		created, err := s.store.CreateReplacement(ctx, models.Replacement{
 			ID:               models.NewReplacementID(),
 			ClaimID:          in.ClaimID,
+			ExchangeID:       in.ExchangeID,
 			Status:           models.ReplacementRequested,
 			ShippingOptionID: in.ShippingOptionID,
 			LocationID:       in.LocationID,
@@ -297,4 +304,83 @@ func replacementLineIDs(lines []ReplacementLineInput) []string {
 	}
 
 	return out
+}
+
+// checkReplacementSource requires EXACTLY ONE source and validates its shape.
+//
+// The rule is checked before any read because it is about the request rather
+// than about the world: a body naming both records, or neither, is malformed
+// whatever the database holds.
+func checkReplacementSource(in CreateReplacementInput) error {
+	switch {
+	case in.ClaimID != "" && in.ExchangeID != "":
+		return errors.Invalid(CodeInvalidInput,
+			"a replacement settles ONE record: claim %s and exchange %s were both given",
+			in.ClaimID, in.ExchangeID)
+	case in.ClaimID != "":
+		return requireID("claim_id", in.ClaimID)
+	case in.ExchangeID != "":
+		return requireID("exchange_id", in.ExchangeID)
+	default:
+		return errors.Invalid(CodeInvalidInput,
+			"a replacement has to say what it settles: neither a claim nor an exchange was given")
+	}
+}
+
+// openReplacementSource reads the source, refuses one that is not open, and
+// returns the ORDER it belongs to.
+//
+// The order comes from here rather than from the caller: the record hangs off a
+// claim or an exchange, and both name their order themselves. A caller passing
+// one would be passing a fact this module already holds, and the two could
+// disagree.
+func (s *Service) openReplacementSource(
+	ctx context.Context, in CreateReplacementInput,
+) (string, error) {
+	if in.ExchangeID != "" {
+		exchange, err := s.store.GetExchange(ctx, in.ExchangeID)
+		if err != nil {
+			return "", err
+		}
+		if exchange.Status != models.ExchangeRequested {
+			return "", errors.Conflict(CodeNotPending,
+				"exchange %s is %s; a replacement can only be added to an open exchange",
+				in.ExchangeID, exchange.Status)
+		}
+
+		return exchange.OrderID, nil
+	}
+
+	claim, err := s.store.GetClaim(ctx, in.ClaimID)
+	if err != nil {
+		return "", err
+	}
+	if claim.Type != models.ClaimReplace {
+		return "", errors.Conflict(CodeClaimNotReplaceable,
+			"claim %s is settled with %s, so it sends no goods", in.ClaimID, claim.Type)
+	}
+	if claim.Status != models.ClaimRequested {
+		return "", errors.Conflict(CodeNotPending,
+			"claim %s is %s; a replacement can only be added to an open claim",
+			in.ClaimID, claim.Status)
+	}
+
+	return claim.OrderID, nil
+}
+
+// ListReplacementsOfExchange returns an exchange's replacements, newest first.
+func (s *Service) ListReplacementsOfExchange(
+	ctx context.Context, exchangeID string,
+) ([]models.Replacement, error) {
+	if err := requireID("exchange_id", exchangeID); err != nil {
+		return nil, err
+	}
+	// The exchange's existence is verified for the reason
+	// [Service.ListReplacementsOfClaim] verifies the claim's: an empty slice for
+	// a record that is not there reads as "it promised nothing".
+	if _, err := s.store.GetExchange(ctx, exchangeID); err != nil {
+		return nil, err
+	}
+
+	return s.store.ListReplacementsByExchange(ctx, exchangeID)
 }

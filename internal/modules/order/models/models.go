@@ -598,21 +598,27 @@ type ReturnItem struct {
 
 // ExchangeStatus is the status of an exchange record.
 //
-// There are TWO of them, where the sibling records have three, and the missing
-// one is a statement about what this framework can do rather than about what an
-// exchange is. Completing an exchange means shipping goods out against an
-// existing order and, when [Exchange.DifferenceDue] is positive, collecting
-// money against one; there is no capability for the first anywhere in the
-// framework, and the order-to-payment link is one-to-one, which forbids the
-// second. A "completed" value would therefore be a state nothing could enter,
-// with a stamp nothing could write — which is what it was until migration
-// 000008 removed both.
+// The completion was absent between migrations 000008 and 000017, and its return
+// is the trigger 000008 wrote down: completing an exchange needs goods out and,
+// when [Exchange.DifferenceDue] is not zero, money moved against an existing
+// order. The first arrived (ADR 0090 ships goods against an order through a
+// replacement). The second did not — the order-to-payment link is still
+// one-to-one — so the completion is bounded rather than general: an exchange is
+// completed only when it owes NOTHING, and the database holds that bound
+// (order_exchanges_completed_owes_nothing).
+//
+// An exchange with a difference therefore stays open after its goods leave, and
+// that is the honest state: the goods half is recorded by the replacement, and
+// the money half happened somewhere this framework cannot see.
 type ExchangeStatus string
 
 // Exchange statuses.
 const (
 	// ExchangeRequested means the exchange was requested.
 	ExchangeRequested ExchangeStatus = "requested"
+	// ExchangeCompleted means the exchange was settled: its goods left and it
+	// owed nothing.
+	ExchangeCompleted ExchangeStatus = "completed"
 	// ExchangeCanceled means the exchange request was withdrawn.
 	ExchangeCanceled ExchangeStatus = "canceled"
 )
@@ -620,7 +626,7 @@ const (
 // Valid reports whether the status is a defined value.
 func (s ExchangeStatus) Valid() bool {
 	switch s {
-	case ExchangeRequested, ExchangeCanceled:
+	case ExchangeRequested, ExchangeCompleted, ExchangeCanceled:
 		return true
 	default:
 		return false
@@ -665,10 +671,23 @@ type Exchange struct {
 	// (order_exchanges_canceled_stamp), so a canceled exchange without a moment
 	// cannot be written.
 	CanceledAt *time.Time
+	// CompletedAt is the moment the exchange was settled; nil until it is.
+	//
+	// Its pairing with Status is held in both directions as well
+	// (order_exchanges_completed_stamp), and a second CHECK keeps the value
+	// honest: a completed exchange has a zero difference.
+	CompletedAt *time.Time
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
+
+// OwesNothing reports whether the exchange moves no money.
+//
+// It is the condition of completing one: the goods half is recorded by the
+// replacement that sent them, and a difference in either direction is money this
+// framework cannot move against an existing order.
+func (e Exchange) OwesNothing() bool { return e.DifferenceDue == 0 }
 
 // ClaimType states how a damage/shortage record will be settled.
 type ClaimType string

@@ -602,6 +602,70 @@ func describeCreditLines(d *openapi.Doc) {
 		},
 	})
 
+	// The same five, sourced from an EXCHANGE (ADR 0114). The paths differ and
+	// the answers do not: a replacement settles ONE record, and which kind is on
+	// the wire as source_kind.
+	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/exchanges/{exchangeId}/replacements",
+		openapi.Operation{
+			Summary: "Records what an exchange will send.",
+			Description: "It records the promise and SENDS NOTHING, exactly as the claim's " +
+				"endpoint does. An exchange needs no type check: every exchange settles with " +
+				"goods, and the money beside them -- its difference -- is what this framework " +
+				"cannot move against an existing order. \n\n" +
+				"The exchange has to be OPEN (409 otherwise), at least one line is required, " +
+				"and more of a line cannot be promised than was bought on it (409).",
+			RequestBody: d.RequestBody(createReplacementRequest{}),
+			Responses: map[string]any{
+				"201": openapi.Response("The recorded replacement", d.Item(replacementDTO{})),
+			},
+		})
+
+	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/exchanges/{exchangeId}/replacements",
+		openapi.Operation{
+			Summary:     "Lists the exchange's replacements, newest first.",
+			Description: "Not paged, for the reason the claim's listing is not.",
+			Responses: map[string]any{
+				"200": openapi.Response("The exchange's replacements", d.Item([]replacementDTO{})),
+			},
+		})
+
+	d.Describe(http.MethodGet,
+		"/admin/v1/orders/{id}/exchanges/{exchangeId}/replacements/{replacementId}",
+		openapi.Operation{
+			Summary: "Returns one replacement with its lines.",
+			Responses: map[string]any{
+				"200": openapi.Response("The replacement", d.Item(replacementDTO{})),
+			},
+		})
+
+	d.Describe(http.MethodPost,
+		"/admin/v1/orders/{id}/exchanges/{exchangeId}/replacements/{replacementId}/cancel",
+		openapi.Operation{
+			Summary: "Withdraws a replacement that has not been acted on.",
+			Description: "A second call succeeds and keeps the first moment, as on the " +
+				"claim's path.",
+			Responses: map[string]any{
+				"200": openapi.Response("The withdrawn replacement", d.Item(replacementDTO{})),
+			},
+		})
+
+	d.Describe(http.MethodPost,
+		"/admin/v1/orders/{id}/exchanges/{exchangeId}/replacements/{replacementId}/dispatch",
+		openapi.Operation{
+			Summary: "Sends what the exchange promised, and settles it when nothing is owed.",
+			Description: "The three movements are the claim path's: the units are set aside, " +
+				"a parcel is opened on the order, and the units come OUT of the physical " +
+				"count as a movement of their own reason. \n\n" +
+				"THE SETTLEMENT IS CONDITIONAL and this is the difference. An exchange whose " +
+				"difference_due is zero is marked completed; one that owes money in either " +
+				"direction STAYS OPEN, because collecting or paying it against an existing " +
+				"order is not something this framework can do. The goods are recorded either " +
+				"way, by the replacement that sent them.",
+			Responses: map[string]any{
+				"200": openapi.Response("What the dispatch did", d.Item(dispatchReplacementResponse{})),
+			},
+		})
+
 	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/credit-lines", openapi.Operation{
 		Summary: "Lists the order's credit lines, oldest first.",
 		Description: "The record is an ARRAY inside the plain envelope: the credits belong to " +

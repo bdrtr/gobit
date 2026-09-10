@@ -20,6 +20,29 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir değişim artık malını gönderebiliyor** (`order_replacements` ikinci bir
+  kaynak tanıyor, ADR 0114). Değişim, yalnızca geri çekilebilen bir istekti. Göç
+  000008 onun "tamamlandı" durumunu kaldırırken geri getirecek koşulu adıyla
+  yazmıştı: mal ÇIKMALI ve fark sıfır değilse para HAREKET ETMELİ, "ve çerçevede
+  ikisi de yok". İkisinden biri geldi — ADR 0090 mal çıkış akışını inşa etti ve
+  `order_replacements` onun gönderdiği kayıt. Ama o kayıt yalnızca bir TALEPTEN
+  beslenebiliyordu, çünkü yazıldığı gün mal isteyebilen tek şey bir talepti; oysa
+  değişim zaten "gelen mala karşılık giden mal" demek.
+  Karar: bir gönderim kaydı TEK bir kaynak adlandırır — talep ya da değişim — ve
+  gönderildiğinde o kaynağı kapatır. Değişim yalnızca `difference_due` sıfırsa
+  kapanır, ve bu sınırı veritabanı tutar (`order_exchanges_completed_owes_nothing`).
+  Farkı olan bir değişim, malı çıktıktan SONRA da açık kalır. Bu bir boşluk değil
+  dürüst hâl: malın yarısı gönderim kaydında duruyor, paranın yarısı ise bu
+  çerçevenin göremediği bir yerde oldu. Gerisinin tetiği payment modülünün kendi
+  link tanımında zaten yazılı — sipariş↔ödeme bağının bire-çok olduğu gün.
+  Modüller arası tel `claim_id`/`claim_status` yerine
+  `source_kind`/`source_id`/`source_status` taşıyor: biri hep boş iki çift, her
+  okuyucuya "hangisi doluydu" sorusunu sordururdu. İki uç birbirini import
+  edemiyor (ADR 0006), yani derleyici bu dikişi görmüyor; kanıt entegrasyon
+  şeridinde.
+  Değişimin artık İKİ geçişi var, yani `CancelExchange`'in godoc'unun "tek geçiş
+  için yazmaya değmez" dediği ortak çerçeve yazıldı: iki geçişte, "ikinci çağrı
+  İLK anı korur" kuralı yoksa iki yere yazılırdı.
 - **Bir satır artık KISMEN iptal edilebiliyor** (`order_line_cancellations`,
   ADR 0113). İptal ya hep ya hiçti: `CancelOrder` siparişin tamamını alır ve
   tahsilatı olan bir siparişi reddeder — ki olduğu şey için doğrudur, o

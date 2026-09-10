@@ -49,8 +49,13 @@ type replacementItemDTO struct {
 
 // replacementDTO is a replacement in a response.
 type replacementDTO struct {
-	ID               string `json:"id"`
-	ClaimID          string `json:"claim_id"`
+	ID string `json:"id"`
+	// SourceKind is "claim" or "exchange": which record the goods answer.
+	SourceKind string `json:"source_kind"`
+	// ClaimID and ExchangeID name that record; exactly ONE of them is set, and
+	// the empty one is omitted rather than sent as "".
+	ClaimID          string `json:"claim_id,omitempty"`
+	ExchangeID       string `json:"exchange_id,omitempty"`
 	Status           string `json:"status"`
 	ShippingOptionID string `json:"shipping_option_id"`
 	LocationID       string `json:"location_id"`
@@ -90,6 +95,7 @@ func (h *Handler) adminCreateReplacement(w http.ResponseWriter, r *http.Request)
 
 	record, err := h.svc.CreateReplacement(ctx, service.CreateReplacementInput{
 		ClaimID:          chi.URLParam(r, paramClaimID),
+		ExchangeID:       chi.URLParam(r, paramExchangeID),
 		ShippingOptionID: body.ShippingOptionID,
 		LocationID:       body.LocationID,
 		Note:             body.Note,
@@ -140,6 +146,26 @@ func (h *Handler) adminListReplacements(w http.ResponseWriter, r *http.Request) 
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: out})
 }
 
+// adminListExchangeReplacements returns an exchange's replacements, newest first.
+//
+// It is the claim listing one record over, and unpaged for the same reason.
+func (h *Handler) adminListExchangeReplacements(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	records, err := h.svc.ListReplacementsOfExchange(ctx, chi.URLParam(r, paramExchangeID))
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	out := make([]replacementDTO, 0, len(records))
+	for i := range records {
+		out = append(out, toReplacementSummaryDTO(records[i]))
+	}
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: out})
+}
+
 // adminCancelReplacement withdraws a request that has not been acted on.
 func (h *Handler) adminCancelReplacement(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -158,7 +184,9 @@ func (h *Handler) adminCancelReplacement(w http.ResponseWriter, r *http.Request)
 func toReplacementSummaryDTO(record models.Replacement) replacementDTO {
 	return replacementDTO{
 		ID:               record.ID,
+		SourceKind:       string(record.Source()),
 		ClaimID:          record.ClaimID,
+		ExchangeID:       record.ExchangeID,
 		Status:           record.Status.String(),
 		ShippingOptionID: record.ShippingOptionID,
 		LocationID:       record.LocationID,

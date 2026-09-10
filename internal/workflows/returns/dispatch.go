@@ -14,9 +14,16 @@ import (
 // document. The producing side documents it on
 // order/service.Service.ReplacementDetailJSON.
 type replacementDetail struct {
-	ReplacementID    string            `json:"replacement_id"`
-	ClaimID          string            `json:"claim_id"`
-	ClaimStatus      string            `json:"claim_status"`
+	ReplacementID string `json:"replacement_id"`
+	// SourceKind is "claim" or "exchange": which record the goods answer. It
+	// decides which verb settles the source once the parcel has left.
+	SourceKind   string `json:"source_kind"`
+	SourceID     string `json:"source_id"`
+	SourceStatus string `json:"source_status"`
+	// SourceSettleable is the order module's answer to "can this source be
+	// closed at all". An exchange that owes money cannot, and this flow does not
+	// second-guess it: the rule belongs to that module.
+	SourceSettleable bool              `json:"source_settleable"`
 	OrderID          string            `json:"order_id"`
 	Status           string            `json:"status"`
 	ShippingOptionID string            `json:"shipping_option_id"`
@@ -40,13 +47,18 @@ const (
 	statusReplacementRequested = "requested"
 	// statusReplacementDispatched is one whose goods have left.
 	statusReplacementDispatched = "dispatched"
+	// sourceExchange is the order module's word for a replacement that settles
+	// an EXCHANGE rather than a claim.
+	sourceExchange = "exchange"
 )
 
 // DispatchResult reports what sending the replacement did.
 type DispatchResult struct {
-	// ReplacementID, ClaimID and OrderID locate the record.
+	// ReplacementID, SourceID and OrderID locate the record; SourceKind says
+	// whether the source is a claim or an exchange.
 	ReplacementID string
-	ClaimID       string
+	SourceKind    string
+	SourceID      string
 	OrderID       string
 	// FulfillmentID is the parcel the goods left in.
 	FulfillmentID string
@@ -104,7 +116,8 @@ func (w *Workflows) DispatchReplacement(
 
 	result := DispatchResult{
 		ReplacementID: detail.ReplacementID,
-		ClaimID:       detail.ClaimID,
+		SourceKind:    detail.SourceKind,
+		SourceID:      detail.SourceID,
 		OrderID:       detail.OrderID,
 		FulfillmentID: detail.FulfillmentID,
 	}
@@ -115,7 +128,7 @@ func (w *Workflows) DispatchReplacement(
 		// dispatched may be exactly the one that died before it.
 		result.AlreadySent = true
 
-		return result, w.settleDispatchedClaim(ctx, detail)
+		return result, w.settleDispatchedSource(ctx, detail)
 	}
 	if detail.Status != statusReplacementRequested {
 		return DispatchResult{}, errors.Conflict(CodeReplacementNotOpen,
@@ -151,7 +164,7 @@ func (w *Workflows) DispatchReplacement(
 	if err := w.orders.MarkReplacementDispatched(ctx, replacementID, fulfillmentID); err != nil {
 		return DispatchResult{}, err
 	}
-	if err := w.settleDispatchedClaim(ctx, detail); err != nil {
+	if err := w.settleDispatchedSource(ctx, detail); err != nil {
 		return DispatchResult{}, err
 	}
 
@@ -281,20 +294,33 @@ func (w *Workflows) openParcel(
 	return fulfillmentID, alreadyOpen, nil
 }
 
-// settleDispatchedClaim closes the claim the goods answered.
+// settleDispatchedSource closes the record the goods answered.
 //
-// A claim that is no longer open is left alone rather than refused: this runs
+// A source that is no longer open is left alone rather than refused: this runs
 // on the retry path too, and the attempt that completed it may be the one that
 // died immediately afterwards.
-func (w *Workflows) settleDispatchedClaim(ctx context.Context, detail replacementDetail) error {
-	if detail.ClaimStatus != statusRequested {
+//
+// # A source that cannot be settled is left open, and that is not an error
+//
+// An exchange whose difference is not zero stays open after its goods leave: the
+// money half happened somewhere this framework cannot see (ADR 0114). The order
+// module answers that as source_settleable, and asking it anyway would earn a
+// CONFLICT — which would fail a dispatch that really did send the goods, over a
+// state that is correct.
+func (w *Workflows) settleDispatchedSource(ctx context.Context, detail replacementDetail) error {
+	if detail.SourceStatus != statusRequested || !detail.SourceSettleable {
 		return nil
 	}
 
-	if err := w.orders.CompleteClaim(ctx, detail.ClaimID); err != nil {
+	settle := w.orders.CompleteClaim
+	if detail.SourceKind == sourceExchange {
+		settle = w.orders.CompleteExchange
+	}
+
+	if err := settle(ctx, detail.SourceID); err != nil {
 		return errors.Wrap(err, errors.KindOf(err), CodeInvalidInput,
-			"the goods of replacement %s left and claim %s could not be marked as settled",
-			detail.ReplacementID, detail.ClaimID)
+			"the goods of replacement %s left and %s %s could not be marked as settled",
+			detail.ReplacementID, detail.SourceKind, detail.SourceID)
 	}
 
 	return nil

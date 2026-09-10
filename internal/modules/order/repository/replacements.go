@@ -17,14 +17,15 @@ func (r *Repository) CreateReplacement(
 ) (models.Replacement, error) {
 	row, err := r.queries(ctx).CreateOrderReplacement(ctx, orderdb.CreateOrderReplacementParams{
 		ID:               in.ID,
-		OrderClaimID:     in.ClaimID,
+		OrderClaimID:     nullString(in.ClaimID),
+		OrderExchangeID:  nullString(in.ExchangeID),
 		ShippingOptionID: in.ShippingOptionID,
 		LocationID:       in.LocationID,
 		Note:             nullString(in.Note),
 	})
 	if err != nil {
 		return models.Replacement{}, classify(err, codeQueryFailed,
-			"could not write the replacement of claim %s", in.ClaimID)
+			"could not write the replacement of %s %s", in.Source(), in.SourceID())
 	}
 
 	return toReplacement(row), nil
@@ -101,10 +102,23 @@ func (r *Repository) DispatchReplacement(
 func (r *Repository) ListReplacementsByClaim(
 	ctx context.Context, claimID string,
 ) ([]models.Replacement, error) {
-	rows, err := r.queries(ctx).ListOrderReplacementsByClaim(ctx, claimID)
+	rows, err := r.queries(ctx).ListOrderReplacementsByClaim(ctx, nullString(claimID))
 	if err != nil {
 		return nil, classify(err, codeQueryFailed,
 			"could not list the replacements of claim %s", claimID)
+	}
+
+	return toReplacements(rows), nil
+}
+
+// ListReplacementsByExchange returns an exchange's replacements, newest first.
+func (r *Repository) ListReplacementsByExchange(
+	ctx context.Context, exchangeID string,
+) ([]models.Replacement, error) {
+	rows, err := r.queries(ctx).ListOrderReplacementsByExchange(ctx, nullString(exchangeID))
+	if err != nil {
+		return nil, classify(err, codeQueryFailed,
+			"could not list the replacements of exchange %s", exchangeID)
 	}
 
 	return toReplacements(rows), nil
@@ -195,7 +209,8 @@ func (r *Repository) ReplacedQuantities(
 func toReplacement(row orderdb.OrderReplacement) models.Replacement {
 	return models.Replacement{
 		ID:               row.ID,
-		ClaimID:          row.OrderClaimID,
+		ClaimID:          stringValue(row.OrderClaimID),
+		ExchangeID:       stringValue(row.OrderExchangeID),
 		Status:           models.ReplacementStatus(row.Status),
 		ShippingOptionID: row.ShippingOptionID,
 		LocationID:       row.LocationID,

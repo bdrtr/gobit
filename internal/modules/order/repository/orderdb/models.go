@@ -98,6 +98,7 @@ type OrderExchange struct {
 	CanceledAt    pgtype.Timestamptz
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
+	CompletedAt   pgtype.Timestamptz
 }
 
 type OrderLineCancellation struct {
@@ -142,7 +143,7 @@ type OrderLineTax struct {
 
 type OrderReplacement struct {
 	ID               string
-	OrderClaimID     string
+	OrderClaimID     *string
 	Status           string
 	ShippingOptionID string
 	LocationID       string
@@ -152,6 +153,7 @@ type OrderReplacement struct {
 	UpdatedAt        pgtype.Timestamptz
 	DispatchedAt     pgtype.Timestamptz
 	FulfillmentID    *string
+	OrderExchangeID  *string
 }
 
 type OrderReplacementItem struct {

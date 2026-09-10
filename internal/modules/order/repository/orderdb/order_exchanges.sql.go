@@ -13,7 +13,7 @@ const cancelOrderExchange = `-- name: CancelOrderExchange :one
 UPDATE order_exchanges
 SET status = 'canceled', canceled_at = now(), updated_at = now()
 WHERE id = $1
-RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at
+RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at
 `
 
 // CancelOrderExchange withdraws the exchange request.
@@ -34,6 +34,42 @@ func (q *Queries) CancelOrderExchange(ctx context.Context, id string) (OrderExch
 		&i.CanceledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const completeOrderExchange = `-- name: CompleteOrderExchange :one
+UPDATE order_exchanges
+SET status = 'completed', completed_at = now(), updated_at = now()
+WHERE id = $1 AND status = 'requested'
+RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at
+`
+
+// CompleteOrderExchange records that the exchange was settled.
+//
+// The moment comes from the DATABASE clock for the reason the withdrawal's does.
+// The WHERE narrows to 'requested' rather than trusting a status read a moment
+// ago: the caller holds the row's lock, so this cannot lose a race, and the
+// narrowing is what makes the query safe to read on its own.
+//
+// An exchange that owes money is refused by order_exchanges_completed_owes_nothing
+// rather than by this statement. The rule needs only the row, so the database is
+// where it can be kept once instead of in every writer.
+func (q *Queries) CompleteOrderExchange(ctx context.Context, id string) (OrderExchange, error) {
+	row := q.db.QueryRow(ctx, completeOrderExchange, id)
+	var i OrderExchange
+	err := row.Scan(
+		&i.ID,
+		&i.OrderID,
+		&i.Status,
+		&i.DifferenceDue,
+		&i.Note,
+		&i.Metadata,
+		&i.CanceledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
 	)
 	return i, err
 }
@@ -54,7 +90,7 @@ const createOrderExchange = `-- name: CreateOrderExchange :one
 
 INSERT INTO order_exchanges (id, order_id, status, difference_due, note, metadata)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at
+RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at
 `
 
 type CreateOrderExchangeParams struct {
@@ -68,13 +104,13 @@ type CreateOrderExchangeParams struct {
 
 // order_exchanges queries (plan Section 6).
 //
-// The record is created, read, listed and WITHDRAWN. It is never completed, and
-// that is a capability statement rather than an omission: completing an
-// exchange means shipping goods against an existing order and — when
-// difference_due is positive — collecting money against one, and the framework
-// can do neither today (migration 000008 carries the argument and the sources).
-// The column that used to promise it is gone, so there is no stamp here left
-// without a writer.
+// The record is created, read, listed, WITHDRAWN and -- since ADR 0114 -- can be
+// COMPLETED when it owes nothing. The completion came back because one of the two
+// capabilities migration 000008 named arrived: goods can now be shipped against an
+// existing order (ADR 0090), and an exchange whose difference_due is zero needs
+// nothing else. The other half is still missing -- the order-to-payment link is
+// one-to-one, so money cannot be collected against an existing order -- which is
+// why the completion is bounded by a CHECK rather than offered for every record.
 func (q *Queries) CreateOrderExchange(ctx context.Context, arg CreateOrderExchangeParams) (OrderExchange, error) {
 	row := q.db.QueryRow(ctx, createOrderExchange,
 		arg.ID,
@@ -95,12 +131,13 @@ func (q *Queries) CreateOrderExchange(ctx context.Context, arg CreateOrderExchan
 		&i.CanceledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CompletedAt,
 	)
 	return i, err
 }
 
 const getOrderExchange = `-- name: GetOrderExchange :one
-SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at FROM order_exchanges
+SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at FROM order_exchanges
 WHERE id = $1
 `
 
@@ -117,12 +154,13 @@ func (q *Queries) GetOrderExchange(ctx context.Context, id string) (OrderExchang
 		&i.CanceledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CompletedAt,
 	)
 	return i, err
 }
 
 const listOrderExchanges = `-- name: ListOrderExchanges :many
-SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at FROM order_exchanges
+SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at FROM order_exchanges
 WHERE order_id = $1
 ORDER BY created_at DESC, id DESC
 LIMIT $3::bigint OFFSET $2::bigint
@@ -153,6 +191,7 @@ func (q *Queries) ListOrderExchanges(ctx context.Context, arg ListOrderExchanges
 			&i.CanceledAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CompletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -165,7 +204,7 @@ func (q *Queries) ListOrderExchanges(ctx context.Context, arg ListOrderExchanges
 }
 
 const lockOrderExchange = `-- name: LockOrderExchange :one
-SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at FROM order_exchanges
+SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at FROM order_exchanges
 WHERE id = $1
 FOR UPDATE
 `
@@ -189,6 +228,7 @@ func (q *Queries) LockOrderExchange(ctx context.Context, id string) (OrderExchan
 		&i.CanceledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CompletedAt,
 	)
 	return i, err
 }

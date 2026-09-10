@@ -392,6 +392,17 @@ func (i *Interop) CompleteClaim(ctx context.Context, claimID string) error {
 	return err
 }
 
+// CompleteExchange records that the exchange was settled.
+//
+// It says the exchange WAS settled and nothing about how, exactly as
+// [Interop.CompleteClaim] does. The database refuses one that still owes money,
+// so a caller cannot mark a balance handled by calling this.
+func (i *Interop) CompleteExchange(ctx context.Context, exchangeID string) error {
+	_, err := i.svc.CompleteExchange(ctx, exchangeID)
+
+	return err
+}
+
 // CompleteOrder stamps the order as completed.
 //
 // It is NOT idempotent: a second call returns errors.Conflict (for the

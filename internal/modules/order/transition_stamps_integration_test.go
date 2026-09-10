@@ -151,16 +151,19 @@ func TestAnExchangeCanBeWithdrawnOnTheRealDatabase(t *testing.T) {
 	assert.True(t, stamped)
 }
 
-// TestTheExchangeTableRefusesACompletion is D4's other half, and it is the
-// point of the whole decision.
+// TestTheExchangeTableRefusesACompletionWithoutItsMoment is what is left of D4's
+// other half after ADR 0114.
 //
-// Completing an exchange needs goods shipped out against an existing order and,
-// when the difference is positive, money collected against one. The framework
-// has no capability for the first — settling a claim with a replacement is
-// refused for exactly that reason — and the order-to-payment link is one-to-one,
-// which forbids the second. Rather than keep a status and a stamp for a
-// transition nothing could perform, the schema now refuses the state.
-func TestTheExchangeTableRefusesACompletion(t *testing.T) {
+// Until then this test asserted that 'completed' could not be written AT ALL and
+// that the stamp column was gone, and it was right to: nothing could perform the
+// transition. What changed is the capability — ADR 0090 ships goods against an
+// existing order — so the word came back, and what the schema refuses now is
+// narrower and stronger: a completion with no moment, and a completion on a
+// record that still owes money.
+//
+// The pairing is what this test keeps. The money bound has its own test beside
+// the transition that would violate it.
+func TestTheExchangeTableRefusesACompletionWithoutItsMoment(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newService(t)
 
@@ -173,19 +176,15 @@ func TestTheExchangeTableRefusesACompletion(t *testing.T) {
 	_, err = testPool.Pool().Exec(ctx,
 		`UPDATE order_exchanges SET status = 'completed' WHERE id = $1`, exchange.ID)
 
-	require.Error(t, err, "a state nothing can reach must not be writable")
-	assert.Contains(t, err.Error(), "order_exchanges_status_valid")
+	require.Error(t, err, "a status without its moment must not be writable")
+	assert.Contains(t, err.Error(), "order_exchanges_completed_stamp")
 
-	// The column is gone too, not merely unused. A column that still existed
-	// would keep coming back on every SELECT * and keep looking like a field
-	// waiting to be filled.
-	var present bool
-	require.NoError(t, testPool.Pool().QueryRow(ctx,
-		`SELECT EXISTS (
-			SELECT 1 FROM information_schema.columns
-			WHERE table_name = 'order_exchanges' AND column_name = 'completed_at'
-		)`).Scan(&present))
-	assert.False(t, present, "order_exchanges.completed_at must be gone")
+	// And the other direction: a moment with no status.
+	_, err = testPool.Pool().Exec(ctx,
+		`UPDATE order_exchanges SET completed_at = now() WHERE id = $1`, exchange.ID)
+
+	require.Error(t, err, "a moment without its status must not be writable either")
+	assert.Contains(t, err.Error(), "order_exchanges_completed_stamp")
 }
 
 // TestAWithdrawnExchangeCannotLoseItsMoment is the mirror constraint the order

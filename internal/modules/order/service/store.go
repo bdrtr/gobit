@@ -247,6 +247,8 @@ type Store interface {
 	LockReplacement(ctx context.Context, id string) (models.Replacement, error)
 	// CancelReplacement withdraws the request.
 	CancelReplacement(ctx context.Context, id string) (models.Replacement, error)
+	// ListReplacementsByExchange returns an exchange's replacements, newest first.
+	ListReplacementsByExchange(ctx context.Context, exchangeID string) ([]models.Replacement, error)
 	// ListReplacementsByClaim returns a claim's replacements, newest first.
 	ListReplacementsByClaim(ctx context.Context, claimID string) ([]models.Replacement, error)
 	// DispatchReplacement records that the goods left, in the parcel named.
@@ -281,6 +283,9 @@ type Store interface {
 	// There is no CompleteExchange beside it and there cannot be one today; the
 	// reason is on [models.ExchangeStatus].
 	CancelExchange(ctx context.Context, id string) (models.Exchange, error)
+	// CompleteExchange records that the exchange was settled; the database
+	// refuses one that still owes money.
+	CompleteExchange(ctx context.Context, id string) (models.Exchange, error)
 
 	// WriteOutboxEvent records an event INSIDE the current transaction.
 	//

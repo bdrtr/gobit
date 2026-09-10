@@ -103,6 +103,12 @@ type Orders interface {
 	ClaimDetailJSON(ctx context.Context, claimID string) (json.RawMessage, error)
 	// CompleteClaim records that the claim was settled.
 	CompleteClaim(ctx context.Context, claimID string) error
+	// CompleteExchange records that the exchange was settled.
+	//
+	// It is the same verb one record over, and the flow picks between them by
+	// the source the replacement names. The order module refuses an exchange
+	// that still owes money.
+	CompleteExchange(ctx context.Context, exchangeID string) error
 
 	// ReplacementDetailJSON returns what a flow needs to send a replacement.
 	ReplacementDetailJSON(ctx context.Context, replacementID string) (json.RawMessage, error)

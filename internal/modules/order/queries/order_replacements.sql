@@ -1,9 +1,16 @@
--- order_replacements queries: what a claim promises to send.
+-- order_replacements queries: what a claim or an exchange promises to send.
 
+-- CreateOrderReplacement writes the promise against ONE source.
+--
+-- Both source columns are passed and exactly one of them is non-null; the
+-- database refuses the other two shapes (order_replacements_one_source). Passing
+-- both and letting the CHECK decide is deliberate: a query per source would be
+-- two statements to keep in step, and the rule would then live in whichever
+-- caller picked between them.
 -- name: CreateOrderReplacement :one
 INSERT INTO order_replacements
-    (id, order_claim_id, shipping_option_id, location_id, note)
-VALUES ($1, $2, $3, $4, $5)
+    (id, order_claim_id, order_exchange_id, shipping_option_id, location_id, note)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: GetOrderReplacement :one
@@ -24,6 +31,13 @@ FOR UPDATE;
 -- name: ListOrderReplacementsByClaim :many
 SELECT * FROM order_replacements
 WHERE order_claim_id = $1
+ORDER BY created_at DESC, id DESC;
+
+-- ListOrderReplacementsByExchange returns an exchange's replacements, newest
+-- first.
+-- name: ListOrderReplacementsByExchange :many
+SELECT * FROM order_replacements
+WHERE order_exchange_id = $1
 ORDER BY created_at DESC, id DESC;
 
 -- name: CancelOrderReplacement :one

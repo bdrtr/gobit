@@ -334,6 +334,37 @@ func describedEndpoints() []endpointExpectation {
 				FulfillmentID: "ful_1", SentUnits: 2, AlreadySent: false,
 			},
 		},
+		// The same five one record over: a replacement sourced from an EXCHANGE
+		// (ADR 0114). The bodies are identical because the record is.
+		{
+			method: http.MethodPost,
+			path:   "/admin/v1/orders/{id}/exchanges/{exchangeId}/replacements",
+			status: "201", request: createReplacementRequest{},
+			response: filledReplacement(),
+		},
+		{
+			method: http.MethodGet,
+			path:   "/admin/v1/orders/{id}/exchanges/{exchangeId}/replacements",
+			status: "200", response: filledReplacement(), shape: unpagedList,
+		},
+		{
+			method: http.MethodGet,
+			path:   "/admin/v1/orders/{id}/exchanges/{exchangeId}/replacements/{replacementId}",
+			status: "200", response: filledReplacement(),
+		},
+		{
+			method: http.MethodPost,
+			path:   "/admin/v1/orders/{id}/exchanges/{exchangeId}/replacements/{replacementId}/cancel",
+			status: "200", response: filledReplacement(),
+		},
+		{
+			method: http.MethodPost,
+			path:   "/admin/v1/orders/{id}/exchanges/{exchangeId}/replacements/{replacementId}/dispatch",
+			status: "200",
+			response: dispatchReplacementResponse{
+				FulfillmentID: "ful_1", SentUnits: 2, AlreadySent: false,
+			},
+		},
 		{
 			method: http.MethodPost,
 			path:   "/admin/v1/orders/{id}/claims/{claimId}/evidence",
@@ -624,8 +655,14 @@ func filledReplacement() replacementDTO {
 	now := time.Now().UTC()
 
 	return replacementDTO{
-		ID:               "orepl_1",
-		ClaimID:          "oclaim_1",
+		ID:         "orepl_1",
+		SourceKind: "claim",
+		ClaimID:    "oclaim_1",
+		// The exchange id is set too, which no REAL record does: the body audit
+		// compares the FIELD SET, and a sample leaving an omitempty field out
+		// would describe a response that hides it. Which of the two a record
+		// really carries is the schema's own rule, held by a CHECK.
+		ExchangeID:       "exch_1",
 		Status:           "requested",
 		ShippingOptionID: "so_1",
 		LocationID:       "sloc_1",

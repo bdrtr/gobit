@@ -13,7 +13,7 @@ const cancelOrderReplacement = `-- name: CancelOrderReplacement :one
 UPDATE order_replacements
 SET status = 'canceled', canceled_at = now(), updated_at = now()
 WHERE id = $1
-RETURNING id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id
+RETURNING id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id
 `
 
 func (q *Queries) CancelOrderReplacement(ctx context.Context, id string) (OrderReplacement, error) {
@@ -31,6 +31,7 @@ func (q *Queries) CancelOrderReplacement(ctx context.Context, id string) (OrderR
 		&i.UpdatedAt,
 		&i.DispatchedAt,
 		&i.FulfillmentID,
+		&i.OrderExchangeID,
 	)
 	return i, err
 }
@@ -38,24 +39,33 @@ func (q *Queries) CancelOrderReplacement(ctx context.Context, id string) (OrderR
 const createOrderReplacement = `-- name: CreateOrderReplacement :one
 
 INSERT INTO order_replacements
-    (id, order_claim_id, shipping_option_id, location_id, note)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id
+    (id, order_claim_id, order_exchange_id, shipping_option_id, location_id, note)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id
 `
 
 type CreateOrderReplacementParams struct {
 	ID               string
-	OrderClaimID     string
+	OrderClaimID     *string
+	OrderExchangeID  *string
 	ShippingOptionID string
 	LocationID       string
 	Note             *string
 }
 
-// order_replacements queries: what a claim promises to send.
+// order_replacements queries: what a claim or an exchange promises to send.
+// CreateOrderReplacement writes the promise against ONE source.
+//
+// Both source columns are passed and exactly one of them is non-null; the
+// database refuses the other two shapes (order_replacements_one_source). Passing
+// both and letting the CHECK decide is deliberate: a query per source would be
+// two statements to keep in step, and the rule would then live in whichever
+// caller picked between them.
 func (q *Queries) CreateOrderReplacement(ctx context.Context, arg CreateOrderReplacementParams) (OrderReplacement, error) {
 	row := q.db.QueryRow(ctx, createOrderReplacement,
 		arg.ID,
 		arg.OrderClaimID,
+		arg.OrderExchangeID,
 		arg.ShippingOptionID,
 		arg.LocationID,
 		arg.Note,
@@ -73,6 +83,7 @@ func (q *Queries) CreateOrderReplacement(ctx context.Context, arg CreateOrderRep
 		&i.UpdatedAt,
 		&i.DispatchedAt,
 		&i.FulfillmentID,
+		&i.OrderExchangeID,
 	)
 	return i, err
 }
@@ -84,7 +95,7 @@ SET status = 'dispatched',
     fulfillment_id = $1::text,
     updated_at = now()
 WHERE id = $2::text
-RETURNING id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id
+RETURNING id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id
 `
 
 type DispatchOrderReplacementParams struct {
@@ -113,12 +124,13 @@ func (q *Queries) DispatchOrderReplacement(ctx context.Context, arg DispatchOrde
 		&i.UpdatedAt,
 		&i.DispatchedAt,
 		&i.FulfillmentID,
+		&i.OrderExchangeID,
 	)
 	return i, err
 }
 
 const getOrderReplacement = `-- name: GetOrderReplacement :one
-SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id FROM order_replacements
+SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id FROM order_replacements
 WHERE id = $1
 `
 
@@ -137,12 +149,13 @@ func (q *Queries) GetOrderReplacement(ctx context.Context, id string) (OrderRepl
 		&i.UpdatedAt,
 		&i.DispatchedAt,
 		&i.FulfillmentID,
+		&i.OrderExchangeID,
 	)
 	return i, err
 }
 
 const getOrderReplacementForUpdate = `-- name: GetOrderReplacementForUpdate :one
-SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id FROM order_replacements
+SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id FROM order_replacements
 WHERE id = $1
 FOR UPDATE
 `
@@ -167,18 +180,19 @@ func (q *Queries) GetOrderReplacementForUpdate(ctx context.Context, id string) (
 		&i.UpdatedAt,
 		&i.DispatchedAt,
 		&i.FulfillmentID,
+		&i.OrderExchangeID,
 	)
 	return i, err
 }
 
 const listOrderReplacementsByClaim = `-- name: ListOrderReplacementsByClaim :many
-SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id FROM order_replacements
+SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id FROM order_replacements
 WHERE order_claim_id = $1
 ORDER BY created_at DESC, id DESC
 `
 
 // ListOrderReplacementsByClaim returns a claim's replacements, newest first.
-func (q *Queries) ListOrderReplacementsByClaim(ctx context.Context, orderClaimID string) ([]OrderReplacement, error) {
+func (q *Queries) ListOrderReplacementsByClaim(ctx context.Context, orderClaimID *string) ([]OrderReplacement, error) {
 	rows, err := q.db.Query(ctx, listOrderReplacementsByClaim, orderClaimID)
 	if err != nil {
 		return nil, err
@@ -199,6 +213,48 @@ func (q *Queries) ListOrderReplacementsByClaim(ctx context.Context, orderClaimID
 			&i.UpdatedAt,
 			&i.DispatchedAt,
 			&i.FulfillmentID,
+			&i.OrderExchangeID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOrderReplacementsByExchange = `-- name: ListOrderReplacementsByExchange :many
+SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id FROM order_replacements
+WHERE order_exchange_id = $1
+ORDER BY created_at DESC, id DESC
+`
+
+// ListOrderReplacementsByExchange returns an exchange's replacements, newest
+// first.
+func (q *Queries) ListOrderReplacementsByExchange(ctx context.Context, orderExchangeID *string) ([]OrderReplacement, error) {
+	rows, err := q.db.Query(ctx, listOrderReplacementsByExchange, orderExchangeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrderReplacement{}
+	for rows.Next() {
+		var i OrderReplacement
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderClaimID,
+			&i.Status,
+			&i.ShippingOptionID,
+			&i.LocationID,
+			&i.Note,
+			&i.CanceledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DispatchedAt,
+			&i.FulfillmentID,
+			&i.OrderExchangeID,
 		); err != nil {
 			return nil, err
 		}

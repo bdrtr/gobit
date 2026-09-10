@@ -1335,6 +1335,64 @@ func (f *fakeStore) CancelExchange(ctx context.Context, id string) (models.Excha
 	return exchange, nil
 }
 
+// CompleteExchange settles the exchange.
+//
+// It imitates the two rules the DATABASE holds and nothing else: the query
+// narrows to the 'requested' status, and the CHECK refuses a completion on an
+// exchange that still owes money. A fake that skipped the second would let the
+// bound be deleted from the schema without a test noticing, and the bound is the
+// whole reason the word came back (ADR 0114).
+func (f *fakeStore) CompleteExchange(ctx context.Context, id string) (models.Exchange, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	exchange, ok := f.exchanges[id]
+	if !ok {
+		return models.Exchange{}, errors.NotFound("order_exchange_not_found",
+			"the exchange record was not found: %s", id)
+	}
+	if exchange.Status != models.ExchangeRequested {
+		return models.Exchange{}, errors.Conflict("order_state_changed",
+			"the exchange record is no longer open: %s", id)
+	}
+	if !exchange.OwesNothing() {
+		return models.Exchange{}, errors.Invalid("order_query_failed",
+			"a completed exchange has to owe nothing: %s", id)
+	}
+
+	stamp := f.nextStamp()
+	exchange.Status = models.ExchangeCompleted
+	exchange.CompletedAt = &stamp
+	exchange.UpdatedAt = stamp
+	f.recordUndo(ctx, undoEntry(f.exchanges, id))
+	f.exchanges[id] = exchange
+
+	return exchange, nil
+}
+
+// ListReplacementsByExchange returns an exchange's replacements, newest first.
+func (f *fakeStore) ListReplacementsByExchange(
+	ctx context.Context, exchangeID string,
+) ([]models.Replacement, error) {
+	snapshot := f.view(ctx)
+
+	out := make([]models.Replacement, 0)
+	for id := range snapshot.replaces {
+		if snapshot.replaces[id].ExchangeID == exchangeID {
+			out = append(out, snapshot.replaces[id])
+		}
+	}
+	slices.SortFunc(out, func(a, b models.Replacement) int {
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return b.CreatedAt.Compare(a.CreatedAt)
+		}
+
+		return strings.Compare(b.ID, a.ID)
+	})
+
+	return out, nil
+}
+
 // CreateClaim writes a claim record.
 func (f *fakeStore) CreateClaim(ctx context.Context, claim models.Claim) (models.Claim, error) {
 	f.mu.Lock()
@@ -1886,9 +1944,18 @@ func (f *fakeStore) CreateReplacement(
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if _, ok := f.claims[in.ClaimID]; !ok {
+	// The foreign key of the SOURCE the record names, which is one of two since
+	// ADR 0114. Checking the claim's alone would let an exchange-sourced record
+	// be refused for having no claim — a shape the schema allows and this fake
+	// would have called impossible.
+	if in.ExchangeID != "" {
+		if _, ok := f.exchanges[in.ExchangeID]; !ok {
+			return models.Replacement{}, notFound(in.ExchangeID)
+		}
+	} else if _, ok := f.claims[in.ClaimID]; !ok {
 		return models.Replacement{}, notFound(in.ClaimID)
 	}
+
 	stamp := f.nextStamp()
 	in.CreatedAt, in.UpdatedAt = stamp, stamp
 	f.recordUndo(ctx, undoEntry(f.replaces, in.ID))

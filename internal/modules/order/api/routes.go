@@ -159,6 +159,21 @@ func (h *Handler) Routes(r chi.Router) {
 	write.Post("/admin/v1/orders/{id}/claims/{claimId}/replacements/{replacementId}/dispatch",
 		h.adminDispatchReplacement)
 
+	// The same record sourced from an EXCHANGE (ADR 0114). The path names the
+	// source because that is what the record settles, exactly as the claim's
+	// does; three of the five handlers are shared verbatim, because they read
+	// only the replacement's own id and a replacement belongs to one source.
+	read.Get("/admin/v1/orders/{id}/exchanges/{exchangeId}/replacements",
+		h.adminListExchangeReplacements)
+	write.Post("/admin/v1/orders/{id}/exchanges/{exchangeId}/replacements",
+		h.adminCreateReplacement)
+	read.Get("/admin/v1/orders/{id}/exchanges/{exchangeId}/replacements/{replacementId}",
+		h.adminGetReplacement)
+	write.Post("/admin/v1/orders/{id}/exchanges/{exchangeId}/replacements/{replacementId}/cancel",
+		h.adminCancelReplacement)
+	write.Post("/admin/v1/orders/{id}/exchanges/{exchangeId}/replacements/{replacementId}/dispatch",
+		h.adminDispatchReplacement)
+
 	// Invoicing. The endpoints are on the ORDER because "invoice this order" is
 	// a question asked about an order and the client asking it holds an order
 	// id; the invoice module's own endpoint takes a finished document and knows

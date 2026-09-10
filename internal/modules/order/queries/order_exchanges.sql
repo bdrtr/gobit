@@ -1,12 +1,12 @@
 -- order_exchanges queries (plan Section 6).
 --
--- The record is created, read, listed and WITHDRAWN. It is never completed, and
--- that is a capability statement rather than an omission: completing an
--- exchange means shipping goods against an existing order and — when
--- difference_due is positive — collecting money against one, and the framework
--- can do neither today (migration 000008 carries the argument and the sources).
--- The column that used to promise it is gone, so there is no stamp here left
--- without a writer.
+-- The record is created, read, listed, WITHDRAWN and -- since ADR 0114 -- can be
+-- COMPLETED when it owes nothing. The completion came back because one of the two
+-- capabilities migration 000008 named arrived: goods can now be shipped against an
+-- existing order (ADR 0090), and an exchange whose difference_due is zero needs
+-- nothing else. The other half is still missing -- the order-to-payment link is
+-- one-to-one, so money cannot be collected against an existing order -- which is
+-- why the completion is bounded by a CHECK rather than offered for every record.
 
 -- name: CreateOrderExchange :one
 INSERT INTO order_exchanges (id, order_id, status, difference_due, note, metadata)
@@ -47,4 +47,20 @@ FOR UPDATE;
 UPDATE order_exchanges
 SET status = 'canceled', canceled_at = now(), updated_at = now()
 WHERE id = $1
+RETURNING *;
+
+-- CompleteOrderExchange records that the exchange was settled.
+--
+-- The moment comes from the DATABASE clock for the reason the withdrawal's does.
+-- The WHERE narrows to 'requested' rather than trusting a status read a moment
+-- ago: the caller holds the row's lock, so this cannot lose a race, and the
+-- narrowing is what makes the query safe to read on its own.
+--
+-- An exchange that owes money is refused by order_exchanges_completed_owes_nothing
+-- rather than by this statement. The rule needs only the row, so the database is
+-- where it can be kept once instead of in every writer.
+-- name: CompleteOrderExchange :one
+UPDATE order_exchanges
+SET status = 'completed', completed_at = now(), updated_at = now()
+WHERE id = $1 AND status = 'requested'
 RETURNING *;

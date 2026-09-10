@@ -110,22 +110,6 @@ func (s *Service) transitionReturn(
 
 // CancelExchange withdraws the exchange request.
 //
-// # Why this is the only transition an exchange has
-//
-// It is the only one the framework can honor. Completing an exchange means two
-// movements: goods shipped OUT against an order that already exists, and — when
-// [models.Exchange.DifferenceDue] is positive — money collected against that
-// same order. The first has no capability anywhere in this repository, which is
-// why settling a claim with a replacement is refused rather than stamped
-// (internal/workflows/returns/claim.go). The second is forbidden by the
-// order-to-payment link's one-to-one cardinality, whose own definition names
-// this record as the thing that will reopen it one day
-// (internal/modules/payment/service/links.go).
-//
-// Withdrawing needs neither. Nothing ships, nothing is collected, no other
-// module is reached: a request was opened and it is taken back. That is why
-// this method exists and its sibling does not.
-//
 // # Idempotent, and the second call keeps the FIRST moment
 //
 // The rule [Service.ReceiveReturn] states holds here for the same reason: a
@@ -139,16 +123,49 @@ func (s *Service) transitionReturn(
 // opening work that cannot be done; taking one back is closing work that should
 // not be done, and refusing that because the order moved would strand the
 // record open forever.
-//
-// # Why the body is here instead of a third frame
-//
-// [Service.transitionReturn] and [Service.transitionClaim] exist because their
-// record types have TWO transitions each, and the "second call keeps the first
-// moment" rule would otherwise have to be right in two places per type. The
-// exchange has one. A frame parameterized over a single call site would add an
-// indirection and a function value to read past, and would buy no place for the
-// rule to go wrong twice.
 func (s *Service) CancelExchange(ctx context.Context, exchangeID string) (models.Exchange, error) {
+	return s.transitionExchange(ctx, exchangeID, "canceling",
+		models.ExchangeStatus.CancelAction, s.store.CancelExchange)
+}
+
+// CompleteExchange records that the exchange was settled.
+//
+// # What settling means, and what this module can check
+//
+// The goods left: a replacement sourced from this exchange was dispatched, which
+// is the capability ADR 0090 built and the one migration 000008 named as missing.
+// The money did not move, because there is none to move — the database refuses a
+// completion on an exchange whose difference is not zero
+// (order_exchanges_completed_owes_nothing), and that refusal is the whole reason
+// the word came back bounded rather than general.
+//
+// What this module does NOT check is that a replacement really left. The
+// dispatch happens in a flow this module cannot see (ADR 0006) and the flow is
+// the caller; the same division holds for [Service.CompleteClaim].
+//
+// # Idempotent, for the reason the withdrawal is
+//
+// A second settlement keeps the first moment. The flow that calls this recovers
+// forward, so a retry after a successful call is the ordinary case rather than a
+// mistake.
+func (s *Service) CompleteExchange(ctx context.Context, exchangeID string) (models.Exchange, error) {
+	return s.transitionExchange(ctx, exchangeID, "completing",
+		models.ExchangeStatus.CompleteAction, s.store.CompleteExchange)
+}
+
+// transitionExchange is the shared frame of the exchange's two transitions.
+//
+// It exists for the reason [Service.transitionClaim] does, and it did NOT exist
+// while the exchange had one transition: a frame over a single call site is an
+// indirection to read past that buys no place for the rule to go wrong twice.
+// The completion made it two, and the "second call keeps the first moment" rule
+// is now written once instead of in each.
+func (s *Service) transitionExchange(
+	ctx context.Context,
+	exchangeID, what string,
+	action func(models.ExchangeStatus) models.AfterSalesAction,
+	write func(context.Context, string) (models.Exchange, error),
+) (models.Exchange, error) {
 	if err := requireID("exchange_id", exchangeID); err != nil {
 		return models.Exchange{}, err
 	}
@@ -160,22 +177,22 @@ func (s *Service) CancelExchange(ctx context.Context, exchangeID string) (models
 			return err
 		}
 
-		switch current.Status.CancelAction() {
+		switch action(current.Status) {
 		case models.AfterSalesNoop:
-			s.log.DebugContext(ctx, "the exchange record is already withdrawn, nothing was done",
-				"exchange_id", exchangeID, "status", current.Status.String())
+			s.log.DebugContext(ctx, "the exchange record is already in the target state, nothing was done",
+				"exchange_id", exchangeID, "status", current.Status.String(), "action", what)
 			out = current
 
 			return nil
 		case models.AfterSalesConflict:
 			return errors.Conflict(CodeAfterSalesTransition,
-				"canceling is not possible on an exchange in status %q (%s)",
-				current.Status.String(), exchangeID)
+				"%s is not possible on an exchange in status %q (%s)",
+				what, current.Status.String(), exchangeID)
 		case models.AfterSalesProceed:
 			// Handled below.
 		}
 
-		out, err = s.store.CancelExchange(ctx, exchangeID)
+		out, err = write(ctx, exchangeID)
 
 		return err
 	})

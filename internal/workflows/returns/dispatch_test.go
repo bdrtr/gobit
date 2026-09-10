@@ -21,8 +21,10 @@ func dispatchHarness(t *testing.T) *harness {
 	h := newHarness(t)
 	h.orders.replacement = replacementDetail{
 		ReplacementID:    testReplacementID,
-		ClaimID:          testClaimID,
-		ClaimStatus:      statusRequested,
+		SourceKind:       "claim",
+		SourceID:         testClaimID,
+		SourceStatus:     statusRequested,
+		SourceSettleable: true,
 		OrderID:          testOrderID,
 		Status:           statusReplacementRequested,
 		ShippingOptionID: testOptionID,
@@ -183,7 +185,7 @@ func TestASentReplacementSendsNothingAgain(t *testing.T) {
 	h := dispatchHarness(t)
 	h.orders.replacement.Status = statusReplacementDispatched
 	h.orders.replacement.FulfillmentID = "ful_earlier"
-	h.orders.replacement.ClaimStatus = "completed"
+	h.orders.replacement.SourceStatus = "completed"
 
 	result, err := h.wf.DispatchReplacement(context.Background(), testReplacementID)
 	require.NoError(t, err)
@@ -216,6 +218,41 @@ func TestASentReplacementStillSettlesAnOpenClaim(t *testing.T) {
 	assert.True(t, result.AlreadySent)
 	assert.Equal(t, 1, h.orders.completeCalls, "the claim the goods answered is closed")
 	assert.Empty(t, h.inventory.confirmed, "and nothing leaves the count a second time")
+}
+
+// TestAnExchangeSourcedDispatchSettlesTheExchange is the same flow one record
+// over: the verb follows the source the replacement names.
+func TestAnExchangeSourcedDispatchSettlesTheExchange(t *testing.T) {
+	h := dispatchHarness(t)
+	h.orders.replacement.SourceKind = "exchange"
+	h.orders.replacement.SourceID = "exch_1"
+
+	_, err := h.wf.DispatchReplacement(context.Background(), testReplacementID)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, h.orders.completeCalls, "the source is closed once")
+	assert.Equal(t, "exchange", h.orders.completedKind,
+		"the EXCHANGE is settled, not a claim; the counter alone could not tell")
+	assert.Equal(t, "exch_1", h.orders.completedID)
+}
+
+// TestAnExchangeThatOwesMoneyIsLeftOpen keeps a dispatch that really sent the
+// goods from failing over a state that is correct.
+//
+// The order module answers source_settleable, and this flow does not
+// second-guess it: asking anyway would earn a conflict AFTER the parcel left.
+func TestAnExchangeThatOwesMoneyIsLeftOpen(t *testing.T) {
+	h := dispatchHarness(t)
+	h.orders.replacement.SourceKind = "exchange"
+	h.orders.replacement.SourceID = "exch_1"
+	h.orders.replacement.SourceSettleable = false
+
+	result, err := h.wf.DispatchReplacement(context.Background(), testReplacementID)
+	require.NoError(t, err, "the goods left and that is not an error")
+
+	assert.NotEmpty(t, result.FulfillmentID, "the parcel was opened")
+	assert.Equal(t, 0, h.orders.completeCalls,
+		"the exchange stays open; its money half happened where this framework cannot see")
 }
 
 // TestAWithdrawnReplacementIsNotSent keeps goods from leaving against a promise

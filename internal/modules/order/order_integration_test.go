@@ -1023,6 +1023,118 @@ func TestACanceledLineFallsWithItsOrder(t *testing.T) {
 		"the cancellation hangs off the LINE, and the line falls with the order")
 }
 
+// TestAnExchangeSourcedReplacementOnTheRealDatabase proves the second source on
+// the real schema: the column, the CHECK and the read back.
+func TestAnExchangeSourcedReplacementOnTheRealDatabase(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	ord, err := svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+
+	detail, err := svc.GetOrder(ctx, ord.ID)
+	require.NoError(t, err)
+	require.Len(t, detail.Items, 1)
+
+	exchange, err := svc.CreateExchange(ctx, service.CreateExchangeInput{
+		OrderID: ord.ID, DifferenceDue: 0,
+	})
+	require.NoError(t, err)
+
+	record, err := svc.CreateReplacement(ctx, service.CreateReplacementInput{
+		ExchangeID:       exchange.ID,
+		ShippingOptionID: "so_1",
+		LocationID:       "sloc_1",
+		Lines: []service.ReplacementLineInput{
+			{OrderLineItemID: detail.Items[0].ID, Quantity: 1},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, exchange.ID, record.ExchangeID)
+	assert.Empty(t, record.ClaimID, "the claim column is NULL on this row")
+
+	listed, err := svc.ListReplacementsOfExchange(ctx, exchange.ID)
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.Equal(t, record.ID, listed[0].ID)
+	assert.Equal(t, models.SourceExchange, listed[0].Source())
+
+	// The settlement, over the real transition and the real CHECK.
+	settled, err := svc.CompleteExchange(ctx, exchange.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.ExchangeCompleted, settled.Status)
+	require.NotNil(t, settled.CompletedAt)
+}
+
+// TestTheReplacementSourceConstraintsAreTheLastDefence checks the two rules the
+// schema holds on its own.
+//
+// They are written THROUGH the repository, which is the seam a hand-written
+// statement would use: the service refuses both shapes first.
+func TestTheReplacementSourceConstraintsAreTheLastDefence(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	repo := repository.New(testPool.Pool())
+
+	ord, err := svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+
+	claim, err := svc.CreateClaim(ctx, service.CreateClaimInput{
+		OrderID: ord.ID, Type: models.ClaimReplace, Reason: "it arrived broken",
+	})
+	require.NoError(t, err)
+
+	exchange, err := svc.CreateExchange(ctx, service.CreateExchangeInput{OrderID: ord.ID})
+	require.NoError(t, err)
+
+	for name, replacement := range map[string]models.Replacement{
+		"both sources": {
+			ID: models.NewReplacementID(), ClaimID: claim.ID, ExchangeID: exchange.ID,
+			Status: models.ReplacementRequested, ShippingOptionID: "so_1", LocationID: "sloc_1",
+		},
+		"neither source": {
+			ID:     models.NewReplacementID(),
+			Status: models.ReplacementRequested, ShippingOptionID: "so_1", LocationID: "sloc_1",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, writeErr := repo.CreateReplacement(ctx, replacement)
+
+			require.Error(t, writeErr, "a replacement settles exactly ONE record")
+		})
+	}
+}
+
+// TestAnExchangeThatOwesMoneyCannotBeCompletedInTheDatabase is the bound that
+// made the completion narrow, checked where it lives.
+//
+// The service reaches the same refusal, but through this query rather than a
+// rule of its own: the CHECK is what makes the bound un-skippable by a second
+// writer.
+func TestAnExchangeThatOwesMoneyCannotBeCompletedInTheDatabase(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	ord, err := svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+
+	owing, err := svc.CreateExchange(ctx, service.CreateExchangeInput{
+		OrderID: ord.ID, DifferenceDue: 500,
+	})
+	require.NoError(t, err)
+
+	_, err = svc.CompleteExchange(ctx, owing.ID)
+
+	require.Error(t, err,
+		"money cannot be moved against an existing order, so nothing may say the "+
+			"exchange was settled")
+
+	var status string
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT status FROM order_exchanges WHERE id = $1`, owing.ID).Scan(&status))
+	assert.Equal(t, "requested", status, "and the record is left as it was")
+}
+
 // TestSummaryTotalsOnTheRealDatabase verifies writing the summary on the real
 // schema.
 func TestSummaryTotalsOnTheRealDatabase(t *testing.T) {
