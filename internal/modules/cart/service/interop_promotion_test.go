@@ -78,3 +78,52 @@ func TestTheInteropWritesAndRemovesACouponCode(t *testing.T) {
 	assert.Empty(t, codesOf(ctx, t, svc, cart.ID),
 		"the removal normalizes the same way the write does")
 }
+
+// TestTheSnapshotCarriesTheCartsMetadata is the PRODUCER's assertion about the
+// hop ADR 0111 opened.
+//
+// The consumer declares its own copy of this schema and cannot be imported here.
+// ADR 0102 measured what happens when only the consumer is tested: the
+// consumer's fake supplied a field the producer never emitted and every test
+// passed.
+func TestTheSnapshotCarriesTheCartsMetadata(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	interop := service.NewInterop(svc)
+
+	cart, err := svc.CreateCart(ctx, service.CreateCartInput{
+		RegionID:     regionID,
+		CurrencyCode: currency,
+		Metadata:     map[string]any{"brand": "acme"},
+	})
+	require.NoError(t, err)
+
+	raw, err := interop.CartSnapshotJSON(ctx, cart.ID)
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+
+	metadata, ok := decoded["metadata"].(map[string]any)
+	require.True(t, ok, "the bag has to be on the wire: %s", raw)
+	assert.Equal(t, "acme", metadata["brand"])
+}
+
+// TestTheSnapshotOfACartWithNoMetadataOmitsTheField pins the absent case.
+//
+// The field carries omitempty, so a cart with no metadata sends no key at all —
+// which the consumer reads as an empty bag. That is the same answer, and it keeps
+// the ordinary cart's body from growing a null.
+func TestTheSnapshotOfACartWithNoMetadataOmitsTheField(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	interop := service.NewInterop(svc)
+	cart := newCart(ctx, t, svc)
+
+	raw, err := interop.CartSnapshotJSON(ctx, cart.ID)
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	assert.NotContains(t, decoded, "metadata")
+}

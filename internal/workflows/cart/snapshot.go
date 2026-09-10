@@ -47,6 +47,9 @@ type Snapshot struct {
 	// coupon (ADR 0109). This field is the first of the three points the
 	// package comment named.
 	PromotionCodes []string `json:"promotion_codes"`
+	// Metadata is the cart's own free-form data; it becomes rule CONTEXT under a
+	// prefix (see [Workflows.ruleContext] and ADR 0111).
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 // SnapshotItem is the set of fields of a cart line that enter the calculation.

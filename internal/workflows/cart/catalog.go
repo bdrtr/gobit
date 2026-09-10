@@ -2,6 +2,7 @@ package cart
 
 import (
 	"context"
+	"slices"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/query"
@@ -238,6 +239,7 @@ func (w *Workflows) productIDsFor(ctx context.Context, variantIDs []string) (map
 // the caller can log it, and the context comes back with the region alone.
 func (w *Workflows) ruleContext(ctx context.Context, snap Snapshot) (map[string]string, error) {
 	attributes := map[string]string{attrRegionID: snap.RegionID}
+	addCartMetadata(attributes, snap.Metadata)
 
 	if snap.CustomerID == "" || w.customers == nil {
 		return attributes, nil
@@ -255,4 +257,62 @@ func (w *Workflows) ruleContext(ctx context.Context, snap Snapshot) (map[string]
 	attributes[attrCustomerGroupID] = groups[0]
 
 	return attributes, nil
+}
+
+// CartAttributePrefix is what every attribute taken from the cart's metadata is
+// written under.
+//
+// It exists so that the bag CANNOT shadow the names this flow decides. A cart
+// whose metadata carried a key called "customer_group_id" would otherwise let
+// whoever writes that bag hand themselves a segment discount — the shopper does
+// not write the cart's metadata, but the storefront that does is not the party
+// that decides who is in which group.
+//
+// The dot is deliberate: neither fixed name contains one, so the two spaces
+// cannot collide by any spelling.
+const CartAttributePrefix = "cart."
+
+// MaxCartAttributes bounds how many of the cart's metadata keys become rule
+// context.
+//
+// A bound has to exist: the bag is free-form and every attribute is copied into
+// the discount request on every totals round, so an unbounded one would let a
+// storefront make its own carts expensive to price. The keys are taken in SORTED
+// order, so which ones survive the bound is at least reproducible rather than
+// map-iteration order.
+const MaxCartAttributes = 32
+
+// addCartMetadata writes the cart's metadata into the rule context, prefixed.
+//
+// # Only STRING values cross
+//
+// The engine compares whole values, and a number would need a formatting rule:
+// 1 and 1.0 are the same number and two different attribute values, so a rule
+// stored against one would silently miss the other. A merchant who wants a
+// numeric rule writes the number as a string — the numeric operators parse it
+// (see promotion's matchNumeric), so nothing is lost but the ambiguity.
+//
+// A non-string value is SKIPPED rather than formatted, and skipping is the safe
+// direction: the engine's own rule is that a line missing an attribute does not
+// match, so an unreadable value narrows a discount instead of widening it.
+func addCartMetadata(attributes map[string]string, metadata map[string]any) {
+	if len(metadata) == 0 {
+		return
+	}
+
+	keys := make([]string, 0, len(metadata))
+	for key := range metadata {
+		if _, ok := metadata[key].(string); ok {
+			keys = append(keys, key)
+		}
+	}
+	slices.Sort(keys)
+
+	for i, key := range keys {
+		if i >= MaxCartAttributes {
+			return
+		}
+		value, _ := metadata[key].(string)
+		attributes[CartAttributePrefix+key] = value
+	}
 }

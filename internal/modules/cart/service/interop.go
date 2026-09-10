@@ -83,6 +83,19 @@ type interopSnapshot struct {
 	// "the field is missing" would be asking about the wire rather than about the
 	// cart.
 	PromotionCodes []string `json:"promotion_codes"`
+	// Metadata is the cart's own free-form data.
+	//
+	// It crosses because the discount engine's rule CONTEXT was built from two
+	// fixed names and an embedder had no way to add a third: a shop that sells to
+	// two brands from one installation could not write "10% off, brand A only"
+	// without a column in this module for a concept this module has never heard
+	// of (ADR 0111). The cart already carries the bag; what was missing was the
+	// hop.
+	//
+	// It is the cart's, NOT the line's: a line's metadata is the shopper's intent
+	// (a gift note) and the shopper must not be able to write the left-hand side
+	// of a discount rule.
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 // interopAddress is one address as it crosses the surface.
@@ -223,6 +236,7 @@ func (i *Interop) CartSnapshotJSON(ctx context.Context, cartID string) (json.Raw
 		ShippingAddress: toInteropAddress(detail.ShippingAddress),
 		BillingAddress:  toInteropAddress(detail.BillingAddress),
 		PromotionCodes:  codesOrEmpty(detail.PromotionCodes),
+		Metadata:        detail.Metadata,
 	}
 	for i := range detail.Items {
 		snapshot.Items = append(snapshot.Items, interopItem{

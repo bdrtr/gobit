@@ -20,6 +20,24 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Sepetin KENDI verisi artik bir promosyon kuralini yonetebiliyor**
+  (`cart.` onekiyle bağlam, ADR 0111). Indirim motorunun kural baglamı sepet
+  akisinin karar verdigi IKI addan kuruluyordu -- bolge ve musteri grubu -- ve
+  ucuncusunu ekleyen bir sey yoktu: `internal/app.Options` yalnizca
+  `Modules`/`Plugins` aliyor, yani gomen kisinin hicbir diki yeri yoktu. Bu,
+  siradan promosyonlari yazilamaz yapiyordu: tek kurulumdan iki marka satan bir
+  dukkan, "yuzde on, yalnizca A markasi" diyemiyordu -- cart modulunde o
+  modulun hic duymadigi bir kavram icin kolon acmadan. Bir cerceve icin bunun
+  tersi olmali.
+  Onek SUS DEGIL: metadata'sinda `customer_group_id` tasiyan bir sepet, aksi
+  halde o cantayi YAZAN tarafa kendine segment indirimi verdirirdi. Nokta
+  bilincli -- iki sabit adin ikisinde de nokta yok, yani iki uzay hicbir
+  yazimla carpisamaz. Yalnizca DIZE degerler geciyor: motor butun degerleri
+  karsilastiriyor, yani bir sayi bicimlendirme kurali isterdi ve 1 ile 1.0 ayni
+  sayi ama iki farkli oznitelik degeri. Sayi isteyen tacir sayiyi dize yazar;
+  sayisal islecler onu zaten cozuyor. Sayi SINIRLI, cunku her oznitelik her
+  toplam turunda indirim istegine kopyalaniyor.
+
 - **Elenen bir promosyon artik NEDEN elendigini soyluyor** — ve yalnizca
   operatore (`skipped[]`, ADR 0110). `eligible()` bool donuyor ve sebebi
   dusuruyordu: dokuz kapi tek bir `false` uretiyordu, yani hesap NEYIN
