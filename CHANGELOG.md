@@ -20,6 +20,16 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Canlı kodda anılan bir şema adı ARTIK ÇÖZÜLÜYOR** (ADR 0123). D59'un on
+  bayat cümlesinden dördü, ADR 0120'nin düşürdüğü bir CHECK'i adlandırıyordu:
+  okuyucuya iddiayı doğrulayacağı bir ad veriyor, ad ise hiçbir şeye çözülüyordu.
+  Bu, `doc_references_test.go`'nun yazıldığı sınıf — atıf okuyucuyu ARAMAYA
+  gönderir ve aranan şey yoktur — ama onun ulaşamadığı boyutta, çünkü bir kısıt
+  adı Go sembolü de yol da değil, bir yorumdaki kelime. Denetlenen dağarcık
+  göçlerin KENDİSİNDEN türetiliyor: şemanın hiç tanımladığı her ad. Göçler SIRAYLA
+  yürünüyor ve sıra işin kendisi — bir ad rutin olarak düşürülüp bir satır sonra
+  geri ekleniyor, bir CHECK böyle genişletiliyor.
+
 - **Üretilen kod artık YENİDEN ÜRETİLEREK doğrulanıyor** (ADR 0122). Depo 75
   sqlc dosyasını ve 14 gqlgen dosyasını ağaçta tutuyor ve hiçbir şey onları
   kaynaklarıyla karşılaştırmıyordu. Kusur bir yorumla ortaya çıktı (D60), ama
