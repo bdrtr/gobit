@@ -10,21 +10,21 @@ and buys the change three places in the tree already promised was free.
 
 ## Context
 
-Three places name the same next step. ADR 0114 left an exchange that owes money
-OPEN after its goods leave and named the trigger — "the day the order-to-payment
-link becomes one-to-many" — and the payment module's link definition says it in
-the imperative: "That day this becomes OneToMany and nothing else changes."
+ADR 0114 left an exchange that owes money OPEN after its goods leave and named
+the trigger — "the day the order-to-payment link becomes one-to-many". The
+payment module's link definition says it in the imperative: "That day this
+becomes OneToMany and nothing else changes." The capability list agrees.
 
-Nothing else changes is false, and in the strongest way: the declaration would
-not start. `core/link` compares an incoming definition against a durable ledger
-row for EQUALITY, so a changed cardinality is a conflict at startup. That
-comparison's own godoc says what it was written for — a NARROWING would apply a
-constraint without seeing the rows that already violate it — and equality
-refuses the other direction for a reason that does not apply to it.
+None of the three had been tried, and nothing else changes is false in the
+strongest way: the declaration would not start. `core/link` compares an incoming
+definition against a durable ledger row for EQUALITY, so a changed cardinality
+is a startup conflict. That comparison's godoc says what it was written for — a
+NARROWING would apply a constraint without seeing the rows that already violate
+it — and equality refuses the other direction for a reason that does not apply.
 
 The schema half is the same shape. The DDL is `IF NOT EXISTS` throughout, so a
-looser declaration creates nothing and removes nothing: the unique index built
-under the old cardinality survives and keeps enforcing it.
+looser declaration creates nothing and removes nothing: the index built under
+the old cardinality survives and keeps enforcing it.
 
 ## Decision
 
@@ -37,28 +37,28 @@ declaration lock. Every other difference, a narrowing included, stays a conflict
 
 The safety argument is one sentence, and it is the whole reason this direction
 is different: every pair a narrower cardinality admits is admitted by a wider
-one, so the rows on disk satisfy the new constraint by having satisfied the old
-one. A widening reads no data to know it is safe; a narrowing would have to.
+one, so a widening reads no data to know it is safe. A narrowing would have to.
 
 `verifySchema` gained the other half of its question: it asked whether the
-required indexes exist and now also asks whether the ones no longer required are
-GONE. Without it the failure arrives at Create time, telling an operator that a
-record is already bound under a cardinality that permits it.
+required indexes exist and now asks whether the rest are GONE. Without it the
+failure reaches an operator as a record already bound under a cardinality that
+permits it.
 
 A release that widens a link CANNOT be rolled back through this path: the older
-binary declares the narrower cardinality and is refused at startup. The refusal
-now names the allowed direction, because the reader who hits it is rolling back.
+binary declares the narrower cardinality and is refused. The refusal names the
+allowed direction, because the reader who hits it is rolling back.
 
-The drops run on every startup, not only the one that widens: a schema that
-converges on the declaration is one fewer state than one that converges only
-when something changed. An unrecognized cardinality on disk is a conflict rather
-than a widening, because there is no ordering between a known cardinality and
-one whose rules are unknown.
+The drops run on every startup rather than only the one that widens, so the
+schema converges on the declaration and not on what the ledger noticed.
+
+Widening past `OneToOne` SPENDS a concurrency guarantee: `from_uniq` is the only
+structural bar to two writers binding two targets to one record, because flows
+read this link and then write it and the advisory lock wraps `Define` alone. The
+cost is `OneToMany`'s own meaning; this is the record that makes it reachable.
 
 `order_payment` is NOT widened here. Its readers assume one collection and say
-so — the refund flow calls a second one "a data fault rather than a choice" and
-takes the first — and a rule for choosing between two is unwritable until the
-second has a meaning. That is the split ADR 0089 and ADR 0090 made.
+so, and a rule for choosing between two is unwritable until the second has a
+meaning.
 
 Measurement: [measurements/0116](../measurements/0116-the-widening-lane.md)
 
@@ -69,12 +69,12 @@ ledger refusing a widening that is safe and prices every future one at a new
 name; whether the exchange's collection wants its own name is not settled here.
 
 **Allowing a narrowing when no row violates it.** The index build already fails
-loudly on violating data, but a narrowing that happens to fit today silently
-tightens a promise embedders wrote against.
+loudly on violating data, but a narrowing that fits today silently tightens a
+promise embedders wrote against.
 
 **A migration that edits the ledger row.** It puts a framework-owned table into
 every embedder's migration path, and the declaration is the only place that
-knows what the new cardinality is.
+knows the new cardinality — `Define` under its own lock IS the migration.
 
-**Dropping the obsolete index on the first Create that needs it.** A schema that
-changes under load, on a path that holds no DDL lock.
+**Dropping the obsolete index on the first Create that needs it.** A schema
+changing under load, on a path that holds no DDL lock.

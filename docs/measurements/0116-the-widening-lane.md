@@ -63,6 +63,28 @@ verification is present, and they fail at different moments with different
 messages. That is the whole argument for the check — the same defect either
 stops a deployment or reaches an operator as a contradiction.
 
+## What a widening spends
+
+Read independently by a peer session and confirmed in the code. Under
+`OneToOne` the DDL writes two unique indexes; under `OneToMany` only `to_uniq`.
+So the widening drops `from_uniq`, and `from_uniq` is the ONLY structural bar to
+two writers binding two targets to the same left-side record: the flows read the
+link and then write it, with no lock between the two, and `core/link` takes its
+advisory lock around `Define` alone.
+
+`internal/workflows/checkout/authorize_payment.go` is where the consequence is
+concrete. It links the order to the collection BEFORE authorizing, and its godoc
+gives the reason — "nothing has been held on the customer's card yet". Under
+`OneToOne` a second concurrent binding therefore loses on the cardinality
+constraint with no money moved. Under a widened link both succeed, each with its
+own `collection_id`, and both can be driven through payment's published
+`payment-sessions → authorize → capture` endpoints.
+
+This is not an argument against the widening — the cost is what `OneToMany`
+means — but it is the property a link gives up by crossing this line, and it is
+worth knowing before crossing it rather than after. `order_payment` is not
+widened by ADR 0116; the record that widens it owns this paragraph.
+
 ## What was not measured
 
 Index drop time on a large link table. `DROP INDEX` takes an ACCESS EXCLUSIVE

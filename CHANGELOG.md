@@ -41,7 +41,11 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
   kardinaliteyi bildirir ve açılışta reddedilir), ve ret mesajı artık izin
   verilen yönü söylüyor çünkü oraya çarpan okur çoğunlukla geri alıyordur.
   `verifySchema` sorusunun öteki yarısını kazandı: gereken indeksler var mı diye
-  soruyordu, artık gerekmeyenler GİTTİ Mİ diye de soruyor.
+  soruyordu, artık gerekmeyenler GİTTİ Mİ diye de soruyor. Ve `OneToOne`'ı geçen
+  bir genişleme bir EŞZAMANLILIK güvencesi HARCIYOR: `from_uniq`, aynı sol taraf
+  kaydına iki hedef bağlanmasının tek yapısal engeli — akışlar bağı okuyup sonra
+  yazıyor ve advisory kilit yalnızca `Define`'ın etrafında. Bedel `OneToMany`'nin
+  kendi anlamı, ama onu erişilebilir yapan kayıt bu.
   `order_payment` burada genişletilMİYOR: okuyucuları tek tahsilat varsayıyor ve
   bunu yazıyor (iade akışı ikincisini "seçim değil veri hatası" sayıp ilkini
   alır), ikisi arasında seçim kuralı ise ikincisinin bir anlamı olmadan
