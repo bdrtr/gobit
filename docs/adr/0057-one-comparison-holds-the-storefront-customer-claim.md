@@ -6,9 +6,8 @@ installation that bound none is served as before, and is told what that costs.
 
 - **Status:** Accepted
 - **Date:** 2026-09-08
-- **Extends:** ADR 0008, whose fourth blocker was the guest-to-registered
-  handover; ADR 0043, which OWED b2b's copy and DEFERRED the cart — this record
-  overturns that deferral
+- **Extends:** ADR 0008, whose fourth blocker was the guest-to-registered handover; ADR 0043, which OWED b2b's copy and DEFERRED the cart — this record overturns that deferral
+- **Amended by:** [0125](0125-serving-an-unverified-customer-claim-is-a-choice.md) for the third decision paragraph alone: an installation binding no verifier now REFUSES the four, and the answer below is one setting away. The comparison, the claim-triggers-the-check rule and the per-module resolve all stand.
 
 ## Context
 

@@ -799,6 +799,28 @@ type Config struct {
 	// decision rather than an accident.
 	GraphQLIntrospection bool `env:"GRAPHQL_INTROSPECTION" envDefault:"true"`
 
+	// StorefrontTrustsUnverifiedCustomerClaim decides what the four storefront
+	// routes ADR 0057 added do when NO customer identity is bound.
+	//
+	// The default is FALSE, and it is named positively so that the zero value is
+	// the closed one: an installation that has never heard of this setting gets
+	// the safe answer, and so does every embedder building the modules with a
+	// zero Options.
+	//
+	// Given false, b2b's company and employee reads and a cart body carrying a
+	// `customer_id` answer 401 identity_not_bound, exactly as the address book
+	// already does. Given true, they serve the claim UNCHECKED — which is what
+	// they did between ADR 0057 and ADR 0125, and what an installation running
+	// only trusted callers may still want.
+	//
+	// Guest traffic is untouched by either value: a cart body naming nobody is
+	// never asked, which is the sentence ADR 0057 built the whole comparison
+	// around.
+	//
+	// The switch exists for [Config.GraphQLIntrospection]'s reason said the
+	// other way round: it makes being OPEN a decision rather than an accident.
+	StorefrontTrustsUnverifiedCustomerClaim bool `env:"STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM" envDefault:"false"`
+
 	// GraphQLMaxFieldRepetition is the upper bound on how many times the same field
 	// may be selected under the same object.
 	//

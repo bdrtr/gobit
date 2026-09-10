@@ -37,7 +37,7 @@ func belge(t *testing.T) map[string]any {
 	doc.ForModule("b2b", func() { Describe(doc) })
 
 	r := chi.NewRouter()
-	New(nil, nil).Routes(r)
+	New(nil, nil, false).Routes(r)
 
 	ham, err := doc.Build(r)
 	require.NoError(t, err)
@@ -66,7 +66,7 @@ func TestHerUcAnlatildi(t *testing.T) {
 	yollar := belge(t)
 
 	r := chi.NewRouter()
-	New(nil, nil).Routes(r)
+	New(nil, nil, false).Routes(r)
 
 	err := chi.Walk(r, func(metot, desen string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		islemler, ok := yollar[desen].(map[string]any)

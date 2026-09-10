@@ -188,6 +188,16 @@ func TestB2BEndToEndInARealProcess(t *testing.T) {
 	cfg := baseSettings(dsn, freePort(t))
 	cfg["ADMIN_BOOTSTRAP_EMAIL"] = seedEmail
 	cfg["ADMIN_BOOTSTRAP_PASSWORD"] = seedPassword
+	// This scenario is an installation that OPTED IN, and it says so here
+	// rather than in a helper: the b2b storefront reads below name a customer
+	// and this process binds no verifier, so the shipped default (ADR 0125)
+	// would refuse them. Turning it on is what an operator running only trusted
+	// callers does, and walking the surface is what this scenario is for.
+	//
+	// The default is not left untested — see
+	// TestTheB2BStorefrontRefusesAnUnverifiedClaimInARealProcess below, which
+	// runs a second process with the setting alone.
+	cfg["STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM"] = "true"
 
 	s := startServer(t, cfg)
 	s.waitForReady(startupTimeout)
@@ -314,4 +324,52 @@ func TestB2BEndToEndInARealProcess(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, code,
 			"a b2b admin request without credentials must be rejected; body: %s", body)
 	})
+}
+
+// TestTheB2BStorefrontRefusesAnUnverifiedClaimInARealProcess runs the SHIPPED
+// default through the real binary.
+//
+// # Why a second process rather than a subtest
+//
+// The setting is read once at startup, so a scenario cannot hold both answers.
+// The one above opts in and walks the surface; this one changes exactly one
+// environment variable and asks the shipped question: what does an installation
+// that made no choice do.
+//
+// # Why the smoke lane and not the module's own tests
+//
+// The module's tests prove the handler. Nothing between the environment variable
+// and that handler is theirs: the config field, the composition root passing it
+// to two module constructors, and the constructors reaching the handler. This is
+// the only lane where those exist at all, and the whole point of ADR 0125 is a
+// default that is genuinely the default rather than one written down.
+func TestTheB2BStorefrontRefusesAnUnverifiedClaimInARealProcess(t *testing.T) {
+	dsn := scenarioDatabase(t)
+
+	cfg := baseSettings(dsn, freePort(t))
+	cfg["ADMIN_BOOTSTRAP_EMAIL"] = seedEmail
+	cfg["ADMIN_BOOTSTRAP_PASSWORD"] = seedPassword
+	// Nothing about the claim is set: this is a stock installation.
+
+	s := startServer(t, cfg)
+	s.waitForReady(startupTimeout)
+
+	token, _, storefrontKey := setUpAdminHarness(t, s, "Smoke B2B Default Channel")
+	customerID := b2bOpenCustomer(t, s, token, "smoke-b2b-default@example.test")
+
+	for _, path := range []string{"/company", "/employee"} {
+		t.Run(path, func(t *testing.T) {
+			code, body := s.storefrontRequest(http.MethodGet,
+				"/store/v1/b2b/customers/"+customerID+path, storefrontKey, nil)
+
+			assert.Equal(t, http.StatusUnauthorized, code,
+				"a stock installation must REFUSE a claim it cannot verify; ANY other status "+
+					"means the request reached the service, so the setting never reached "+
+					"the module and the default exists only in the document (ADR 0125); "+
+					"body: %s", body)
+			assert.Contains(t, body, "identity_not_bound",
+				"the refusal has to name the empty slot; that string is the operator's "+
+					"only pointer to what they have to bind; body: %s", body)
+		})
+	}
 }

@@ -72,7 +72,7 @@ var notPersonalColumns = map[string][]string{
 // audit also catches the failure the per-column check cannot see — a whole new
 // table arriving with nobody asked whether it holds people.
 func TestPersonalDataCoversEveryPersonalColumn(t *testing.T) {
-	declaration := b2b.New(nil).PersonalData()
+	declaration := b2b.New(nil, b2b.Options{}).PersonalData()
 
 	declared := map[string]bool{}
 	for _, holding := range declaration.Holdings {
@@ -136,7 +136,7 @@ func TestPersonalDataCoversEveryPersonalColumn(t *testing.T) {
 // deleted as noise, because the table they point at looks empty of people.
 func TestTheEmployeeFactsAreDeclaredEvenThoughTheTableNamesNobody(t *testing.T) {
 	declared := map[string]personaldata.Holding{}
-	for _, holding := range b2b.New(nil).PersonalData().Holdings {
+	for _, holding := range b2b.New(nil, b2b.Options{}).PersonalData().Holdings {
 		if holding.Table == "b2b_company_employee" {
 			declared[holding.Column] = holding
 		}
@@ -165,7 +165,7 @@ func TestTheEmployeeFactsAreDeclaredEvenThoughTheTableNamesNobody(t *testing.T) 
 // would keep the same name in two places, and the day they disagree the report
 // tells a controller that a module it cannot find holds somebody's data.
 func TestTheHolderIsLeftForTheCoordinator(t *testing.T) {
-	assert.Empty(t, b2b.New(nil).PersonalData().Holder)
+	assert.Empty(t, b2b.New(nil, b2b.Options{}).PersonalData().Holder)
 }
 
 // TestTheModuleIsFoundAsADeclarer walks the path the coordinator walks.
@@ -176,7 +176,7 @@ func TestTheHolderIsLeftForTheCoordinator(t *testing.T) {
 // module.go closes that for the concrete type; this closes it for the value the
 // registry actually holds.
 func TestTheModuleIsFoundAsADeclarer(t *testing.T) {
-	var mod module.Module = b2b.New(nil)
+	var mod module.Module = b2b.New(nil, b2b.Options{})
 
 	declarer, ok := mod.(personaldata.Declarer)
 	require.True(t, ok, "a module the sweep cannot recognize is silently missing from every report")
@@ -193,7 +193,7 @@ func TestTheModuleIsFoundAsADeclarer(t *testing.T) {
 func readMigrations(t *testing.T) string {
 	t.Helper()
 
-	fsys := b2b.New(nil).Migrations()
+	fsys := b2b.New(nil, b2b.Options{}).Migrations()
 	names, err := fs.Glob(fsys, "*.up.sql")
 	require.NoError(t, err)
 	require.NotEmpty(t, names, "the module ships no up-migration; the scanner has gone blind")

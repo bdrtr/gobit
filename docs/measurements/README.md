@@ -16,6 +16,7 @@ truth: a report says what was true on the day it was taken.
 | [What a stale generated tree hides — measured 2026-09-10](0122-what-a-stale-generated-tree-hides.md) | 90 |
 | [Schema names in live code — measured 2026-09-10](0123-schema-names-in-live-code.md) | 53 |
 | [A stamp is not a balance — measured 2026-09-10](0124-a-stamp-is-not-a-balance.md) | 82 |
+| [What an unverified claim still buys — measured 2026-09-10](0125-what-an-unverified-claim-still-buys.md) | 81 |
 | [The guard moves to the binding — measured 2026-09-10](0120-the-guard-moves-to-the-binding.md) | 126 |
 | [Where the truth about collected money lives — measured 2026-09-10](0119-where-the-truth-about-collected-money-lives.md) | 130 |
 | [A counter in place of a balance — measured 2026-09-10](0118-a-counter-in-place-of-a-balance.md) | 162 |

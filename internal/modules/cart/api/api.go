@@ -469,6 +469,11 @@ type Handler struct {
 	// customer, and only the MISMATCH it can then see is refused; see
 	// [Handler.provenCustomer].
 	identity IdentityLookup
+	// trustUnverified says whether a claim may be served when NO verifier is
+	// bound. It is false by default and by zero value (ADR 0125): an embedding
+	// that never made the choice gets the closed answer, and an operator who
+	// wants the old one asks for it by name.
+	trustUnverified bool
 }
 
 // New produces the set of handlers working on the given service and flows.
@@ -482,8 +487,8 @@ type Handler struct {
 //
 // The region surface used to be a parameter here and the cart's currency was
 // read from it; that derivation is the cart-opening FLOW's today.
-func New(svc Carts, flows Flows, identity IdentityLookup) *Handler {
-	return &Handler{svc: svc, flows: flows, identity: identity}
+func New(svc Carts, flows Flows, identity IdentityLookup, trustUnverified bool) *Handler {
+	return &Handler{svc: svc, flows: flows, identity: identity, trustUnverified: trustUnverified}
 }
 
 // provenCustomer returns the customer the request may write into the cart.
@@ -503,15 +508,22 @@ func New(svc Carts, flows Flows, identity IdentityLookup) *Handler {
 //
 // # Why an installation with no verifier is still served
 //
-// Because the alternative takes a working surface away. With nothing bound
-// there is nothing to contradict the claim, and this function hands the claim
-// back UNCHECKED rather than refusing — the residue ADR 0057 states in the
-// open, not a check that quietly passes. Refusing here would stop an embedder
-// who never bound an identity from opening a cart for any customer at all, and
-// with it the b2b spending limit that only binds a cart naming one; ADR 0043's
-// reasoning is that gobit will not GUESS who a caller is, and guessing is not
-// what serving an unchecked claim does — believing it is, and the record says
-// so where an operator reads it.
+// It REFUSES, and it did not until ADR 0125. Between ADR 0057 and that record
+// this function handed the claim back unchecked, so an installation that had
+// bound nothing opened a cart for whatever customer the body named — a caller
+// who knew an identifier, which travels in every order response, could act as
+// that person. ADR 0057 accepted that in the open and priced it correctly for
+// its day: refusing would have withdrawn a working surface from an embedder who
+// did nothing wrong.
+//
+// What changed is that the choice now has a NAME. The old behavior is one
+// setting away (STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM), so nothing is
+// withdrawn from an embedder who wants it — what is withdrawn is getting it
+// without deciding. The zero value is the closed one, which is what a
+// half-wired embedding lands on.
+//
+// Guest carts are untouched by either answer: an empty claim names nobody and
+// never reaches the comparison.
 //
 // The comparison itself is corehttp.ProvenCustomer's, shared with the customer
 // and b2b storefronts (ADR 0057); the refusals and why each is the kind it is
@@ -530,7 +542,7 @@ func (h *Handler) provenCustomer(r *http.Request, claimed string) (string, error
 			return "", err
 		}
 	}
-	if identity == nil {
+	if identity == nil && h.trustUnverified {
 		return claimed, nil
 	}
 

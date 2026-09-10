@@ -612,7 +612,7 @@ func setUpHarness(ctx context.Context) error {
 	registry.Add(inventorymod.New())
 	registry.Add(regionmod.New(nil))
 	registry.Add(customermod.New(nil))
-	registry.Add(cartmod.New())
+	registry.Add(cartmod.New(cartmod.Options{}))
 	registry.Add(paymentmod.New())
 	registry.Add(ordermod.New())
 	// Phase 7: fulfillment, promotion, tax. All three are added in the ORDER of
@@ -666,7 +666,7 @@ func setUpHarness(ctx context.Context) error {
 	// CHANGES the order module's behavior: order resolves the spend rule from the
 	// container under the name "b2b.interop", and without the registration it
 	// counts every customer as unlimited.
-	registry.Add(b2bmod.New(nil))
+	registry.Add(b2bmod.New(nil, b2bmod.Options{}))
 	// Invoice. It is here so its migration runs on a real database and its
 	// endpoints enter the scope of the authorization audit that walks the
 	// router tree. It binds to no other module, so nothing else in this harness

@@ -178,6 +178,7 @@ var migrationsRoot = mustSub(migrationFiles, "migrations")
 type Module struct {
 	svc     *service.Service
 	handler *api.Handler
+	opts    Options
 }
 
 // That the core's contract is satisfied is pinned down at compile time.
@@ -207,12 +208,31 @@ var (
 	_ personaldata.Discloser = (*Module)(nil)
 )
 
+// Options are the module's startup choices.
+//
+// Its zero value is usable, and the zero value of the one field in it is the
+// CLOSED answer — which is the point of the field being named the way it is.
+type Options struct {
+	// TrustUnverifiedCustomerClaim serves a cart body's `customer_id` unchecked
+	// when no verifier is bound, instead of refusing it (ADR 0125).
+	//
+	// It is the installation's choice and never a per-request one, so it is
+	// taken here rather than resolved at request time the way the verifier
+	// itself is: a setting that could change between two requests would make
+	// two identical requests answer differently.
+	TrustUnverifiedCustomerClaim bool
+}
+
 // New produces a cart module ready to be registered.
 //
 // Dependencies are resolved during Register, not here: until that moment the
 // container may not have set up the core services.
-func New() *Module {
-	return &Module{}
+//
+// [Options] may be called with its zero value; the tests and an embedding that
+// has made no choice about the claim do exactly that, and land on the closed
+// answer.
+func New(opts Options) *Module {
+	return &Module{opts: opts}
 }
 
 // Name returns the module's unique name.
@@ -283,7 +303,8 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		// reason, one layer further out: it comes from the EMBEDDER's module,
 		// which the composition root adds after everything in the box. Unlike
 		// the flows, an absent one is not an error — see [identityBinding].
-		(&identityBinding{c: c, log: log}).identity)
+		(&identityBinding{c: c, log: log}).identity,
+		m.opts.TrustUnverifiedCustomerClaim)
 	slog.Default().DebugContext(ctx, "cart module registered",
 		"service", ServiceName, "provider", ProviderName)
 	return nil

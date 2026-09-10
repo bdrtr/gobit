@@ -140,7 +140,7 @@ func TestErasureEmptiesEveryDeclaredColumnItDoesNotKeep(t *testing.T) {
 		kept[entry] = true
 	}
 
-	for _, holding := range cartmod.New().PersonalData().Holdings {
+	for _, holding := range cartmod.New(cartmod.Options{}).PersonalData().Holdings {
 		key := holding.Table + "." + holding.Column
 		if kept[key] {
 			continue

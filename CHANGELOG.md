@@ -20,6 +20,25 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Doğrulanmamış bir müşteri iddiasını sunmak artık bir SEÇİM** (ADR 0125).
+  ADR 0057 müşteri adlandıran on iki vitrin ucunu tek bir karşılaştırmaya bağladı
+  ve dördünün, hiçbir doğrulayıcı bağlı değilken iddiayı DENETLENMEDEN sunmasını
+  bilerek seçti — gerekçesi yanlış da değildi: reddetmek, hiçbir yanlış yapmamış
+  bir gömenden çalışan bir yüzeyi geri çeker. Kalıntı açıkça yazıldı ve
+  `docs/known-limits.md`'ye kondu: bir müşteri kimliğini bilen (o kimlik her
+  sipariş yanıtında geziyor) biri, o kişinin şirketini ve harcama sınırını okuyor
+  ve onun adına sepet açıyordu — sepet yarısı o kişinin B2B ödeneğini harcıyor.
+  O kaydın yapamadığı şey bunu bir KARAR hâline getirmekti: bir kurulum, açık
+  cevabı sorunun var olduğunu bilmeyerek alıyordu ve açılışta bir WARN bir seçim
+  değildir. Dördü artık varsayılan olarak reddediyor — adres defterinin zaten
+  yaptığı gibi — ve eski cevap tek bir ayar uzakta
+  (`STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM`). Geri çekilen şey yüzey değil,
+  onu KARAR VERMEDEN almak. Varsayılan aynı zamanda SIFIR DEĞER: alan olumlu
+  adlandırıldı, çünkü `internal/e2e` bileşim kökünü sıfır Options ile taklit
+  ediyor ve modülleri elle kuran her gömen de öyle. Misafir trafiği iki değerde de
+  aynı — kimseyi adlandırmayan bir gövde hiç sorgulanmıyor, ki ADR 0057'nin bütün
+  karşılaştırmayı üzerine kurduğu cümle bu.
+
 - **Sevkiyat artık paranın HÂLÂ ORADA olup olmadığını SORUYOR** (ADR 0124).
   ADR 0120 değişimin farkını alabilmesini sağladı ve satır, paranın orada olduğu
   ANI tutuyor — bir sipariş satırının payment'ın sahip olduğu bir rakam hakkında

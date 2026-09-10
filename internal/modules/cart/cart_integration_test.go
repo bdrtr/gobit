@@ -101,7 +101,7 @@ func runWithPostgres(m *testing.M) int {
 	}
 	defer testPool.Close()
 
-	if err := db.Migrate(ctx, testDSN, cartmod.New().Migrations(), cartmod.ModuleName); err != nil {
+	if err := db.Migrate(ctx, testDSN, cartmod.New(cartmod.Options{}).Migrations(), cartmod.ModuleName); err != nil {
 		fmt.Fprintf(os.Stderr, "the migration could not be applied: %v\n", err)
 		return 1
 	}
@@ -149,7 +149,7 @@ func tableExists(ctx context.Context, t *testing.T, table string) bool {
 // rolled back (plan Section 8: up/down pairs, reversible).
 func TestMigrationCanBeRolledBack(t *testing.T) {
 	ctx := context.Background()
-	src := cartmod.New().Migrations()
+	src := cartmod.New(cartmod.Options{}).Migrations()
 
 	for _, table := range moduleTables {
 		require.True(t, tableExists(ctx, t, table), "%s must exist at the start", table)
@@ -775,7 +775,7 @@ func TestModuleRegisterBindsToTheContainer(t *testing.T) {
 	require.NoError(t, c.Provide("core.link", links))
 	require.NoError(t, c.Provide("core.query", query.New(links, c, nil)))
 
-	mod := cartmod.New()
+	mod := cartmod.New(cartmod.Options{})
 	require.NoError(t, mod.Register(ctx, c))
 
 	svc, err := container.Resolve[*service.Service](c, cartmod.ServiceName)
@@ -813,7 +813,7 @@ func TestQueryLayerReadsTheCart(t *testing.T) {
 	graph := query.New(links, c, nil)
 	require.NoError(t, c.Provide("core.query", graph))
 
-	mod := cartmod.New()
+	mod := cartmod.New(cartmod.Options{})
 	require.NoError(t, mod.Register(ctx, c))
 
 	svc := mod.Service()

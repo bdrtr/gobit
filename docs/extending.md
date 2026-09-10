@@ -320,11 +320,13 @@ installation that has bound an identity or one that has not — the guest path i
 what the storefront is for. Naming a customer is what puts the burden of proof
 on the claim.
 
-The first eight and the last four differ in one other way, and it decides
-whether this step is urgent for you. The eight refuse when you have bound
-nothing; the four do not (ADR 0057). So an installation that binds no verifier
-loses its address book and keeps its b2b storefront and its carts — with the
-claim in them believed.
+All twelve refuse when you have bound nothing, and four of them did not until
+ADR 0125: b2b's two reads and the two cart bodies served the claim unchecked, so
+an installation that bound no verifier kept them working with the claim in them
+BELIEVED. That is a setting now rather than a default —
+`STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM=true` brings the old answer back for
+an installation that wants it. Either way, a body naming nobody opens a guest
+cart and is never asked.
 
 **gobit does not answer that question and will not.** It holds no proof about
 the person behind a storefront request: no customer session, no cookie, no

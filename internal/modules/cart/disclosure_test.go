@@ -26,7 +26,7 @@ import (
 // nothing about her. module.go pins the same thing at compile time; this test
 // says out loud what the compile-time line is protecting.
 func TestTheModuleOffersTheDisclosureCapability(t *testing.T) {
-	var module any = cart.New()
+	var module any = cart.New(cart.Options{})
 
 	_, ok := module.(personaldata.Discloser)
 	assert.True(t, ok, "the cart module has to be findable as a discloser")
@@ -41,7 +41,7 @@ func TestTheModuleOffersTheDisclosureCapability(t *testing.T) {
 // The same reasoning makes [cart.Module.Erase] refuse; a missing route fails
 // visibly, a missing answer to a data subject does not.
 func TestAnUnregisteredModuleRefusesToDisclose(t *testing.T) {
-	disclosure, err := cart.New().PersonalDataOf(
+	disclosure, err := cart.New(cart.Options{}).PersonalDataOf(
 		context.Background(), personaldata.Subject{CustomerID: "cust_ANY"})
 
 	require.Error(t, err)

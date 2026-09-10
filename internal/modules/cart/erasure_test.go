@@ -96,7 +96,7 @@ var notPersonalColumns = map[string][]string{
 // declaration is a hole; a holding naming a column the migration does not create
 // sends an auditor searching for data that does not exist.
 func TestPersonalDataCoversEveryPersonalColumn(t *testing.T) {
-	declaration := cart.New().PersonalData()
+	declaration := cart.New(cart.Options{}).PersonalData()
 
 	declared := map[string]bool{}
 	for _, holding := range declaration.Holdings {
@@ -160,7 +160,7 @@ func TestPersonalDataCoversEveryPersonalColumn(t *testing.T) {
 // drifted. The name this module answers under is still pinned, one test below,
 // where it is actually used.
 func TestTheDeclarationLeavesTheHolderToTheSweep(t *testing.T) {
-	assert.Empty(t, cart.New().PersonalData().Holder,
+	assert.Empty(t, cart.New(cart.Options{}).PersonalData().Holder,
 		"the registry's name is the authority on who answered; the sweep fills this in")
 }
 
@@ -182,7 +182,7 @@ func TestTheHolderIsTheModuleName(t *testing.T) {
 func readMigration(t *testing.T) string {
 	t.Helper()
 
-	raw, err := fs.ReadFile(cart.New().Migrations(), migrationFile)
+	raw, err := fs.ReadFile(cart.New(cart.Options{}).Migrations(), migrationFile)
 	require.NoError(t, err)
 
 	return string(raw)

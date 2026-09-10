@@ -43,7 +43,7 @@ func buildDoc(t *testing.T) (paths, components map[string]any) {
 	doc.ForModule("cart", func() { Describe(doc) })
 
 	r := chi.NewRouter()
-	New(nil, Flows{}, nil).Routes(r)
+	New(nil, Flows{}, nil, false).Routes(r)
 
 	raw, err := doc.Build(r)
 	require.NoError(t, err)

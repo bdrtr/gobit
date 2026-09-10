@@ -161,6 +161,12 @@ type Handler struct {
 	// request belongs to. Only the DISAGREEMENT it can then see is refused;
 	// see [Handler.storeCustomerID].
 	identity IdentityLookup
+	// trustUnverified says whether the claim may be served when NO verifier is
+	// bound. It is false by default and by zero value (ADR 0125), and it is the
+	// SAME installation-wide choice the cart module takes — one field in the
+	// composition root feeds both, because two answers to one question is the
+	// divergence ADR 0057 built a shared comparison to prevent.
+	trustUnverified bool
 }
 
 // New verilen servis üzerinde çalışan handler kümesini üretir.
@@ -171,8 +177,8 @@ type Handler struct {
 // wrapper that resolves the embedder's implementation from the container ON
 // FIRST USE, so a nil arriving here means the caller built the handler by hand:
 // a test, or an embedder driving the package directly.
-func New(svc B2B, identity IdentityLookup) *Handler {
-	return &Handler{svc: svc, identity: identity}
+func New(svc B2B, identity IdentityLookup, trustUnverified bool) *Handler {
+	return &Handler{svc: svc, identity: identity, trustUnverified: trustUnverified}
 }
 
 // Routes b2b'nin admin ve store route'larını router'a bağlar.
@@ -307,9 +313,11 @@ func pathParam(r *http.Request, name string) string {
 //
 // Because nothing here can contradict the claim, and refusing an unchecked
 // claim would withdraw a working surface from an embedder who did nothing
-// wrong. The claim is handed back as it arrived, which is what this module did
-// before ADR 0057; the record names the residue instead of charging an upgrade
-// for it, and binding a verifier is what closes it.
+// wrong. Until ADR 0125 the claim was handed back as it arrived, which is what
+// this module did before ADR 0057; that record named the residue instead of
+// charging an upgrade for it. It is REFUSED now, and the old answer is one
+// setting away (STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM) — so an operator
+// who wants it still has it, and nobody gets it without deciding.
 //
 // # Why the comparison is not written here
 //
@@ -330,7 +338,7 @@ func (h *Handler) storeCustomerID(r *http.Request) (string, error) {
 			return "", err
 		}
 	}
-	if identity == nil {
+	if identity == nil && h.trustUnverified {
 		return claimed, nil
 	}
 

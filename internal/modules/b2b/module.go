@@ -124,6 +124,7 @@ type Module struct {
 	svc     *service.Service
 	handler *api.Handler
 	log     *slog.Logger
+	opts    Options
 }
 
 // Çekirdek sözleşmesinin karşılandığı derleme zamanında sabitlenir.
@@ -154,11 +155,27 @@ var _ personaldata.Declarer = (*Module)(nil)
 
 // New kurulmamış bir b2b modülü üretir; servis [Module.Register] içinde
 // kurulur. log nil ise loglar atılır.
-func New(log *slog.Logger) *Module {
+func New(log *slog.Logger, opts Options) *Module {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Module{log: log}
+	return &Module{log: log, opts: opts}
+}
+
+// Options are the module's startup choices.
+//
+// Its zero value is usable and the zero value of its one field is the CLOSED
+// answer, which is why the field is named the way it is.
+type Options struct {
+	// TrustUnverifiedCustomerClaim serves the storefront's company and employee
+	// reads on an unverified claim when no verifier is bound, instead of
+	// refusing them (ADR 0125).
+	//
+	// The cart module takes the same choice under the same name and the
+	// composition root feeds both from ONE field: this question has one answer
+	// per installation, and two would be the divergence ADR 0057 built a shared
+	// comparison to prevent.
+	TrustUnverifiedCustomerClaim bool
 }
 
 // Name modülün adını döner.
@@ -218,7 +235,8 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// Kimlik EMBEDDER'ın modülünden gelir ve o modül bu noktada henüz kayıtlı
 	// olmayabilir; bu yüzden çözüm İLK İSTEĞE ertelenir (bkz. identityBinding).
 	// Aynı kalıp order'ın harcama kuralında ve cart'ın akışlarında kullanılıyor.
-	m.handler = api.New(svc, (&identityBinding{c: c, log: m.log}).identity)
+	m.handler = api.New(svc, (&identityBinding{c: c, log: m.log}).identity,
+		m.opts.TrustUnverifiedCustomerClaim)
 	m.log.InfoContext(ctx, "b2b modülü kaydedildi",
 		slog.String("servis", ServiceName),
 		slog.String("interop", InteropName),

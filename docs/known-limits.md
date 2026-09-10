@@ -38,24 +38,25 @@ past and is not corrected retroactively.
   application registers its own from an ordinary module, in the container, under
   the name `corehttp.IdentityName` (`"core.identity"`). Bound, it decides all
   twelve: a request naming somebody else gets `403 identity_mismatch`.
-- **With NO identity bound the twelve split, and the four ADR 0057 added are
-  still an oracle.** The eight the customer module owns refuse every request with
-  `401 identity_not_bound` — closed rather than open, which is
+- **With NO identity bound all twelve refuse, and until ADR 0125 four of them
+  did not.** Every one of them answers `401 identity_not_bound` — closed rather
+  than open, which is
   [ADR 0007](adr/0007-sertlestirme-arizada-davranis.md)'s row for an unconfigured
   authenticator, and an installation upgrading past `v0.8.0` without binding one
-  loses its address book, loudly. The four ADR 0057 added do NOT refuse: b2b's
-  two reads still return the named customer's employer and spending limit, and a
-  cart body still opens a cart for the customer it names. That is deliberate —
-  those four ship working, and withdrawing them from an installation that did
-  nothing wrong costs more than the leak — and it is not a defect only because
-  the way to close it is one line of wiring: **bind a verifier**. Until then a
-  caller who knows an identifier, which travels in every order response, reads
-  that person's company and allowance and can open a cart in their name; the two
-  modules log a WARN saying so at startup. Guest carts are untouched either way.
-  What gobit still does not do is VERIFY: an implementation that hands the
-  claimed identifier back satisfies the interface, and the framework cannot tell.
-  `POST /store/v1/customers` is outside the set because it mints the record; so
-  is the order module's storefront read, which names a cart rather than a person.
+  loses its address book, loudly. The four ADR 0057 added — b2b's two reads and
+  the two cart bodies — served the claim unchecked until
+  [ADR 0125](adr/0125-serving-an-unverified-customer-claim-is-a-choice.md), so a
+  caller who knew an identifier, which travels in every order response, read that
+  person's company and allowance and opened a cart in their name. That is now a
+  CHOICE rather than a default: `STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM=true`
+  restores it for an installation that wants it, and the two modules still log a
+  WARN naming the empty slot. Guest carts are untouched by either answer. The way
+  to close the four properly is unchanged and it is one line of wiring: **bind a
+  verifier**. What gobit still does not do is VERIFY: an implementation that hands
+  the claimed identifier back satisfies the interface, and the framework cannot
+  tell. `POST /store/v1/customers` is outside the set because it mints the record;
+  so is the order module's storefront read, which names a cart rather than a
+  person.
 - **A shopper can always decline to name a customer, and that is not closable.**
   A cart without a `customer_id` belongs to a guest, and on a guest order the
   b2b spending rule is not even asked. Requiring the field would not help:

@@ -332,7 +332,7 @@ func newServerWithFlows(t *testing.T, svc *fakeCarts, flows api.Flows) http.Hand
 	t.Helper()
 
 	r := chi.NewRouter()
-	api.New(svc, flows, boundTo(signedInAs(testCustomerID))).Routes(r)
+	api.New(svc, flows, boundTo(signedInAs(testCustomerID)), false).Routes(r)
 	return r
 }
 

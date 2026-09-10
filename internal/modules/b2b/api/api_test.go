@@ -32,7 +32,7 @@ var sabitSaat = time.Date(2026, time.March, 17, 12, 0, 0, 0, time.UTC)
 // identity_test.go beside it.
 func yeniRouter(svc api.B2B) chi.Router {
 	r := chi.NewRouter()
-	api.New(svc, boundTo(pathProvingIdentity{})).Routes(r)
+	api.New(svc, boundTo(pathProvingIdentity{}), false).Routes(r)
 	return r
 }
 

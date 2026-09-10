@@ -91,7 +91,7 @@ func runWithPostgres(m *testing.M) int {
 	}
 	defer testPool.Close()
 
-	if err := db.Migrate(ctx, testDSN, b2b.New(nil).Migrations(), b2b.ModuleName); err != nil {
+	if err := db.Migrate(ctx, testDSN, b2b.New(nil, b2b.Options{}).Migrations(), b2b.ModuleName); err != nil {
 		fmt.Fprintf(os.Stderr, "migration uygulanamadı: %v\n", err)
 		return 1
 	}
@@ -193,7 +193,7 @@ func TestMigrationGeriAlinabilir(t *testing.T) {
 		`SELECT count(*) FROM b2b_company_employee WHERE company_id = $1`, company.ID),
 		"geri alma CANLI kayıtlar dururken koşmalı")
 
-	src := b2b.New(nil).Migrations()
+	src := b2b.New(nil, b2b.Options{}).Migrations()
 
 	require.NoError(t, db.MigrateDown(ctx, testDSN, src, b2b.ModuleName, 0),
 		"down başarısız — bu, modülün bir daha migrate EDİLEMEMESİ demektir")

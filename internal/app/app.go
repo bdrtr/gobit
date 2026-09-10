@@ -493,7 +493,13 @@ func registerModules(registry *module.Registry, cfg config.Config, log *slog.Log
 	// Phase 5: the cart flow
 	registry.Add(region.New(log))
 	registry.Add(customer.New(log))
-	registry.Add(cart.New())
+	// The two modules ADR 0057 put on the shared comparison are given the SAME
+	// field, and that is the one thing this wiring must not get wrong: a claim
+	// served by one and refused by the other would be exactly the divergence
+	// that record built one function to avoid.
+	registry.Add(cart.New(cart.Options{
+		TrustUnverifiedCustomerClaim: cfg.StorefrontTrustsUnverifiedCustomerClaim,
+	}))
 	// Phase 6: payment and order
 	registry.Add(payment.New())
 	registry.Add(order.New())
@@ -551,7 +557,10 @@ func registerModules(registry *module.Registry, cfg config.Config, log *slog.Log
 	// The cost of KEEPING the module in a B2C installation is small and
 	// visible: two empty tables and a spending rule that never triggers because
 	// there are no company records.
-	registry.Add(b2b.New(log))
+	registry.Add(b2b.New(log, b2b.Options{
+		// The SAME field as the cart's, three dozen lines up; see the note there.
+		TrustUnverifiedCustomerClaim: cfg.StorefrontTrustsUnverifiedCustomerClaim,
+	}))
 	// Invoice. It knows no other module: a workflow (or an operator) hands it a
 	// finished document and it gives that document a number no other document
 	// in its series will ever have. It is registered LAST because nothing else

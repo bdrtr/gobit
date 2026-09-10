@@ -78,10 +78,21 @@ func refusingService(t *testing.T) *stubB2B {
 // — the two are the same to the handler by construction, and this is the one
 // the module actually wires.
 func routerWithIdentity(svc api.B2B, identity corehttp.Identity) chi.Router {
+	return routerWithPolicy(svc, identity, false)
+}
+
+// routerWithPolicy is the same router with the installation's answer to "may an
+// unverified claim be served" spelled out.
+//
+// It is a second helper rather than a fourth argument on the first because
+// every caller but two is asking about a BOUND identity, where the setting
+// changes nothing: [corehttp.ProvenCustomer] compares, and a comparison does
+// not consult a policy.
+func routerWithPolicy(svc api.B2B, identity corehttp.Identity, trustUnverified bool) chi.Router {
 	r := chi.NewRouter()
 	api.New(svc, func(context.Context) (corehttp.Identity, error) {
 		return identity, nil
-	}).Routes(r)
+	}, trustUnverified).Routes(r)
 
 	return r
 }
@@ -178,16 +189,52 @@ func TestTheStorefrontStillAnswersWhenNoIdentityIsBound(t *testing.T) {
 			}, nil
 		},
 	}
-	r := routerWithIdentity(stub, nil)
+	r := routerWithPolicy(stub, nil, true)
 
 	for _, path := range storefrontRoutesNamingACustomer(t, r) {
 		t.Run(path, func(t *testing.T) {
 			rec := send(t, r, path)
 
 			require.Equal(t, http.StatusOK, rec.Code,
-				"%s answered %d with no identity bound.\nADR 0057 narrows the claim it can "+
-					"CONTRADICT; it does not withdraw a shipped surface from an installation "+
-					"that has bound no verifier.\nbody: %s", path, rec.Code, rec.Body.String())
+				"%s answered %d with no identity bound and the claim TRUSTED.\nADR 0057 "+
+					"narrows the claim it can CONTRADICT; ADR 0125 made serving an unverified "+
+					"one a choice, and an installation that made it keeps this surface.\n"+
+					"body: %s", path, rec.Code, rec.Body.String())
+		})
+	}
+}
+
+// TestTheStorefrontRefusesAnUnverifiedClaimByDEFAULT is the other half, and it
+// is the half that ships.
+//
+// Between ADR 0057 and ADR 0125 there was no choice to make: these two routes
+// answered 200 for whatever customer the path named, so a caller holding an
+// identifier — which travels in every order response — read that person's
+// employer and allowance. The surface is not withdrawn; getting it without
+// deciding is.
+func TestTheStorefrontRefusesAnUnverifiedClaimByDEFAULT(t *testing.T) {
+	t.Parallel()
+
+	stub := &stubB2B{
+		membershipFn: func(context.Context, string) (service.Membership, error) {
+			assert.Fail(t, "the service must not be reached at all",
+				"a refusal that happens after the read has already told the caller "+
+					"whether that person exists")
+
+			return service.Membership{}, nil
+		},
+	}
+	r := routerWithPolicy(stub, nil, false)
+
+	for _, path := range storefrontRoutesNamingACustomer(t, r) {
+		t.Run(path, func(t *testing.T) {
+			rec := send(t, r, path)
+
+			require.Equal(t, http.StatusUnauthorized, rec.Code,
+				"%s answered %d with nothing bound and the default policy; the closed "+
+					"answer is the one an installation that made no choice gets.\nbody: %s",
+				path, rec.Code, rec.Body.String())
+			assert.Equal(t, corehttp.CodeIdentityNotBound, errorCode(t, rec))
 		})
 	}
 }

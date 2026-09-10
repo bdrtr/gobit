@@ -64,7 +64,7 @@ func migrateDSN(t *testing.T) string {
 // these scenarios need is a schema they can destroy, and cart's is a real one
 // taken from the shipped module rather than a fixture written for the test.
 func cartSources() []migrationSource {
-	mod := cart.New()
+	mod := cart.New(cart.Options{})
 
 	return []migrationSource{{owner: mod.Name(), src: mod.Migrations()}}
 }
@@ -80,7 +80,7 @@ func cartSources() []migrationSource {
 // indistinguishable from matching by name.
 func twoOwnerSources() []migrationSource {
 	regionMod := region.New(slog.New(slog.DiscardHandler))
-	cartMod := cart.New()
+	cartMod := cart.New(cart.Options{})
 
 	return []migrationSource{
 		{owner: regionMod.Name(), src: regionMod.Migrations()},

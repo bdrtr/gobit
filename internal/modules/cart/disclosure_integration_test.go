@@ -113,7 +113,7 @@ func TestDisclosureCarriesEveryDeclaredColumnFromTheDatabase(t *testing.T) {
 	assert.Equal(t, service.ErasureHolder, disclosure.Holder)
 
 	values := disclosedValues(disclosure)
-	for _, holding := range cartmod.New().PersonalData().Holdings {
+	for _, holding := range cartmod.New(cartmod.Options{}).PersonalData().Holdings {
 		key := holding.Table + "." + holding.Column
 		assert.Contains(t, values, key,
 			"%s is declared and the disclosure did not carry it; the person receives a "+
@@ -394,7 +394,7 @@ func TestDisclosureCarriesNoColumnOutsideTheDeclaration(t *testing.T) {
 	require.Equal(t, personaldata.Disclosed, disclosure.State)
 
 	declared := map[string]personaldata.Kind{}
-	for _, holding := range cartmod.New().PersonalData().Holdings {
+	for _, holding := range cartmod.New(cartmod.Options{}).PersonalData().Holdings {
 		declared[holding.Table+"."+holding.Column] = holding.Kind
 	}
 

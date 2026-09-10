@@ -104,10 +104,23 @@ func refusingCart(t *testing.T) (*fakeCarts, api.Flows) {
 // — the two are the same to the handler by construction, and this is the one
 // the module actually wires.
 func mountCart(svc api.Carts, flows api.Flows, identity corehttp.Identity) http.Handler {
+	return mountCartWithPolicy(svc, flows, identity, false)
+}
+
+// mountCartWithPolicy is the same handler with the installation's answer to
+// "may an unverified claim be served" spelled out.
+//
+// It is a second helper rather than a fourth argument on the first because
+// every caller but two is asking about a BOUND identity or a GUEST body, and
+// the setting reaches neither: a comparison does not consult a policy, and an
+// empty claim never reaches the comparison.
+func mountCartWithPolicy(
+	svc api.Carts, flows api.Flows, identity corehttp.Identity, trustUnverified bool,
+) http.Handler {
 	r := chi.NewRouter()
 	api.New(svc, flows, func(context.Context) (corehttp.Identity, error) {
 		return identity, nil
-	}).Routes(r)
+	}, trustUnverified).Routes(r)
 
 	return r
 }
@@ -153,19 +166,77 @@ func TestABodyNamingACustomerIsStillServedWhenNothingIsBound(t *testing.T) {
 				cart:   models.Cart{ID: "cart_1"},
 				detail: models.CartDetail{Cart: models.Cart{ID: "cart_1"}},
 			}
-			h := mountCart(svc, api.Flows{Opening: opening}, nil)
+			h := mountCartWithPolicy(svc, api.Flows{Opening: opening}, nil, true)
 
 			rec := doRequest(t, h, tc.method, tc.path, tc.body(theClaimed))
 
 			require.Less(t, rec.Code, http.StatusBadRequest,
-				"%s %s answered %d with no identity bound.\nADR 0057 narrows the claim a "+
-					"bound verifier can CONTRADICT; it does not withdraw a shipped surface "+
-					"from an installation that has bound none.\nbody: %s",
+				"%s %s answered %d with no identity bound and the claim TRUSTED.\n"+
+					"ADR 0057 narrows the claim a bound verifier can CONTRADICT; ADR 0125 "+
+					"made serving an unverified one a choice, and an installation that made "+
+					"it keeps this surface.\nbody: %s",
 				tc.method, tc.path, rec.Code, rec.Body.String())
 			assert.Equal(t, theClaimed, tc.served(opening, svc),
 				"the claim was not refused but was not acted on either, which is the third "+
 					"outcome nobody asked for: with nothing bound the customer the BODY "+
 					"names is the customer the cart is opened for")
+		})
+	}
+}
+
+// TestABodyNamingACustomerIsRefusedByDEFAULT is the other half, and it is the
+// half that ships.
+//
+// Between ADR 0057 and ADR 0125 there was no choice to make: a body naming a
+// customer opened a cart for them in an installation that had bound nothing, so
+// a caller holding an identifier — which travels in every order response — shopped
+// as that person and spent their B2B allowance. The surface is not withdrawn;
+// getting it without deciding is.
+func TestABodyNamingACustomerIsRefusedByDEFAULT(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range claimingBodies {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			svc, flows := refusingCart(t)
+			h := mountCartWithPolicy(svc, flows, nil, false)
+
+			rec := doRequest(t, h, tc.method, tc.path, tc.body(theClaimed))
+
+			require.Equal(t, http.StatusUnauthorized, rec.Code,
+				"%s %s answered %d with nothing bound and the default policy.\nbody: %s",
+				tc.method, tc.path, rec.Code, rec.Body.String())
+			assert.Equal(t, corehttp.CodeIdentityNotBound, claimCode(t, rec))
+		})
+	}
+}
+
+// TestAGuestBodyIsUntouchedByThePolicy holds the sentence the whole comparison
+// was built around.
+//
+// A body naming nobody is never asked, in an installation that trusts the
+// unverified claim and in one that refuses it. A policy that reached the guest
+// path would close the door a shopper without an account walks through, which is
+// what ADR 0043 refused to do and ADR 0057 found the way around.
+func TestAGuestBodyIsUntouchedByThePolicy(t *testing.T) {
+	t.Parallel()
+
+	for _, trusted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("trust_unverified=%t", trusted), func(t *testing.T) {
+			t.Parallel()
+
+			opening := &fakeOpening{cartID: "cart_1"}
+			svc := &fakeCarts{
+				cart:   models.Cart{ID: "cart_1"},
+				detail: models.CartDetail{Cart: models.Cart{ID: "cart_1"}},
+			}
+			h := mountCartWithPolicy(svc, api.Flows{Opening: opening}, nil, trusted)
+
+			rec := doRequest(t, h, http.MethodPost, "/store/v1/carts", `{"country_code":"TR"}`)
+
+			require.Less(t, rec.Code, http.StatusBadRequest,
+				"a guest cart must open whatever the policy says; body: %s", rec.Body.String())
 		})
 	}
 }
