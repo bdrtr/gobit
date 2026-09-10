@@ -58,7 +58,15 @@ var migrationsRoot = mustSub(migrationFiles, "migrations")
 // and looked completely wired while its handler never ran once.
 //
 // So the list is written out, and it is the WHOLE set: a static census of every
-// eventbus.Event this repository can publish resolves to exactly these six.
+// eventbus.Event this repository can publish resolves to exactly this slice —
+// the six topics plugins/webhookout forwards.
+//
+// The number and the path sit on ONE line deliberately. It is the only place
+// the size is written, and the count gate is LINE-ANCHORED: a sentence whose
+// number and whose path fall on different lines never enters the audit, which
+// was measured here rather than assumed. Written this way the number cannot
+// outlive the list. The gate's vocabulary gained the entry the day the list
+// grew to six and four sentences around it stayed at four.
 //
 // # What happens when a module gains another
 //
@@ -79,11 +87,11 @@ var migrationsRoot = mustSub(migrationFiles, "migrations")
 //
 // # Why the names are constants and the subscriptions are written out
 //
-// [Plugin.Setup] could range over this slice. It calls Subscribe four times
+// [Plugin.Setup] could range over this slice. It calls Subscribe once per topic
 // with these constants instead, because the reverse gate resolves a
 // subscription's name STATICALLY and skips one it cannot resolve — a loop
-// variable is exactly such a name. Written out, a typo in any of the four fails
-// the build; ranged over, the gate goes quiet and the handler waits forever.
+// variable is exactly such a name. Written out, a typo in any of them fails the
+// build; ranged over, the gate goes quiet and the handler waits forever.
 var ForwardedTopics = []string{
 	topicOrderPlaced,
 	topicPaymentCaptured,
@@ -373,9 +381,17 @@ func (m *webhookModule) Routes(r chi.Router) {
 // If the database is unreachable at this instant, the enqueue fails, the error
 // is logged at ERROR by the bus, and that event is never delivered to anyone. No
 // repair pass exists, and building one out of event_outbox was measured and
-// refused: only "order.placed" is written there — the product events are
-// published directly — so a repair built on it would cover one topic in four
-// while looking like it covered all of them.
+// refused: it does not carry every topic, so a repair built on it would cover
+// SOME of them while looking like it covered all.
+//
+// The measurement behind that refusal has MOVED and the refusal has not. When it
+// was made, "order.placed" was the only topic written to the outbox and the
+// coverage would have been one in four. ADR 0121 put the payment module's
+// capture and refund there as well, so it is now three of the six this plugin
+// forwards — half, and the product events are still published directly. Half is
+// still partial and the shape of the objection is unchanged, which is why the
+// refusal stands; the number is corrected here because a record whose stated
+// reason has quietly halved in force is the kind that gets rebuilt on.
 func (m *webhookModule) onEvent(ctx context.Context, e eventbus.Event) error {
 	if m.store == nil {
 		// The subscription is installed by the core and does not go through

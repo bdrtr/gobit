@@ -22,9 +22,9 @@
 // contract.
 //
 // So this is the plugins/searchpg and plugins/webpush shape: a plugin that
-// brings a module, two tables, a migration, an admin surface, four event
-// subscriptions and one scheduled job, and that is named nowhere except one
-// line in the composition root's catalog. It is removable with
+// brings a module, two tables, a migration, an admin surface, a subscription
+// per forwarded topic and one scheduled job, and that is named nowhere except
+// one line in the composition root's catalog. It is removable with
 // `rm -rf plugins/webhookout` plus that line.
 //
 // # The four moving parts
@@ -93,9 +93,15 @@ func (p *Plugin) Name() string { return Name }
 //
 // The bus offers no wildcard, and the arch gates make that a good thing rather
 // than an inconvenience: a subscription to a topic nobody publishes fails the
-// build, so the four names below are checked against the publishers on every
-// run of the suite. See [ForwardedTopics] for what happens the day a fifth
-// topic exists.
+// build, so the names below are checked against the publishers on every run of
+// the suite. See [ForwardedTopics] for what happens the day another topic
+// exists.
+//
+// No count is written here on purpose. The list grew from four to six the day
+// the payment module started publishing (ADR 0121), and every sentence in these
+// two files that had priced it stayed at four — the same defect this repository
+// keeps producing. The one place the size IS stated names the path, so the
+// count gate audits it.
 //
 // # The job arrives WITH its consumer
 //
@@ -108,10 +114,10 @@ func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 
 	h.AddModule(p.mod)
 
-	// Four calls rather than a range over [ForwardedTopics], and the reason is
+	// Written out rather than ranged over [ForwardedTopics], and the reason is
 	// the gate: TestEverySubscribedTopicHasAPublisher resolves a subscription's
 	// name statically and SKIPS one it cannot, so a loop variable would make
-	// these four the only subscriptions in the repository nothing checks.
+	// these the only subscriptions in the repository nothing checks.
 	h.Subscribe(topicOrderPlaced, p.mod.onEvent)
 	h.Subscribe(topicPaymentCaptured, p.mod.onEvent)
 	h.Subscribe(topicPaymentRefunded, p.mod.onEvent)

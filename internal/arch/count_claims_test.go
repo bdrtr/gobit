@@ -2,6 +2,7 @@ package arch_test
 
 import (
 	"fmt"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
@@ -192,6 +193,67 @@ var countedPopulations = []countedPopulation{
 		floor:  2,
 		size:   func(t *testing.T) int { return countMarkdownLines(t, knownLimitsDoc, "## ") },
 	},
+	{
+		name:   "the topics plugins/webhookout forwards",
+		anchor: forwardedTopicsAnchor,
+		nouns:  regexp.MustCompile(`^(topics|topic|konu|konular|konuyu|konusu)$`),
+		floor:  3,
+		size:   countForwardedTopics,
+	},
+}
+
+// forwardedTopicsAnchor is the plugin whose forwarded-topic list is priced.
+const forwardedTopicsAnchor = "plugins/webhookout"
+
+// countForwardedTopics counts the entries of the plugin's ForwardedTopics slice.
+//
+// # Why this population, when tables and routes were refused
+//
+// It passes both tests the head of this file sets. It is stated as a TOTAL —
+// the slice is documented as the whole set of topics this repository publishes,
+// and the plugin's own gate fails in both directions on it — and it is
+// computable from a source that is not the sentence, which is the slice
+// literal itself.
+//
+// It was added the day the class bit. ADR 0121 took the list from four topics
+// to six, and FOUR sentences across the plugin's two files went on saying four:
+// its package prose, its subscription comment, the slice's own godoc, and a
+// refusal that priced outbox coverage at "one topic in four". Every gate in the
+// tree was green over all of them, because "topics" was not in this vocabulary.
+//
+// The size is read from the AST rather than by grepping the constants: a
+// commented-out entry, or a constant declared and never listed, would both fool
+// a line count, and it is exactly the drift between the list and its prose that
+// this entry exists to catch.
+func countForwardedTopics(t *testing.T) int {
+	t.Helper()
+
+	fset := token.NewFileSet()
+	path := filepath.Join(repoRoot, forwardedTopicsAnchor, "module.go")
+	tree, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+	require.NoError(t, err, "%s could not be parsed", path)
+
+	total := -1
+	for _, decl := range tree.Decls {
+		general, ok := decl.(*ast.GenDecl)
+		if !ok || general.Tok != token.VAR {
+			continue
+		}
+		for _, spec := range general.Specs {
+			value, ok := spec.(*ast.ValueSpec)
+			if !ok || len(value.Names) != 1 || value.Names[0].Name != "ForwardedTopics" {
+				continue
+			}
+			require.Len(t, value.Values, 1, "ForwardedTopics must have one initialiser")
+			literal, ok := value.Values[0].(*ast.CompositeLit)
+			require.True(t, ok, "ForwardedTopics must be a slice literal, got %T", value.Values[0])
+			total = len(literal.Elts)
+		}
+	}
+
+	require.NotEqual(t, -1, total, "ForwardedTopics was not found in %s", path)
+
+	return total
 }
 
 // knownLimitsDoc is the document whose entries and groups the reading tables of
