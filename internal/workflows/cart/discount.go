@@ -218,7 +218,7 @@ type discountResponse struct {
 type discountApplied struct {
 	// PromotionID is the promotion module's identity; it is kept opaque.
 	PromotionID string `json:"promotion_id"`
-	// Code is the coupon code; EMPTY for an automatic promotion.
+	// Code is the coupon code; the producer always sends one.
 	Code string `json:"code"`
 	// IsAutomatic reports whether the promotion needed no code.
 	IsAutomatic bool `json:"is_automatic"`

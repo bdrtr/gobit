@@ -196,10 +196,26 @@ func (m *memRepo) DeletePromotion(_ context.Context, id string, _ time.Time) err
 }
 
 func (m *memRepo) ListCandidates(_ context.Context, codes []string) ([]models.PromotionCandidate, error) {
+	return m.candidates(codes, true), nil
+}
+
+// ListCandidatesForDiagnosis aynı kümeyi DURUM SÜZGECİ OLMADAN döner.
+//
+// Süzgeç farkı taklit edilmek ZORUNDA: yönetim ucunun `skipped` cevabının en
+// sık üyesi (yayına alınmamış promosyon) yalnızca bu okumadan gelir, ve iki
+// okumayı aynı yapan bir sahte o farkı hiç kanıtlamaz.
+func (m *memRepo) ListCandidatesForDiagnosis(
+	_ context.Context, codes []string,
+) ([]models.PromotionCandidate, error) {
+	return m.candidates(codes, false), nil
+}
+
+// candidates iki okumanın paylaştığı gövdedir; onlyActive durum süzgecini açar.
+func (m *memRepo) candidates(codes []string, onlyActive bool) []models.PromotionCandidate {
 	out := make([]models.PromotionCandidate, 0, len(m.promotions))
 	for id := range m.promotions {
 		p := m.promotions[id]
-		if p.Status != models.PromotionActive {
+		if onlyActive && p.Status != models.PromotionActive {
 			continue
 		}
 		if !p.IsAutomatic && !slices.Contains(codes, p.Code) {
@@ -217,7 +233,8 @@ func (m *memRepo) ListCandidates(_ context.Context, codes []string) ([]models.Pr
 		out = append(out, candidate)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Promotion.ID < out[j].Promotion.ID })
-	return out, nil
+
+	return out
 }
 
 // canliPromosyon promosyonun altına satır yazan taklit metotların ortak

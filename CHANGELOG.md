@@ -20,6 +20,29 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Elenen bir promosyon artik NEDEN elendigini soyluyor** — ve yalnizca
+  operatore (`skipped[]`, ADR 0110). `eligible()` bool donuyor ve sebebi
+  dusuruyordu: dokuz kapi tek bir `false` uretiyordu, yani hesap NEYIN
+  uygulandigini soyleyebiliyor ve tacirin yayimladigi kuponun neden
+  uygulanmadigini soyleyemiyordu -- sifir indirim goruyor ve dokuz hipotezle
+  kaliyordu. ADR 0109 soruyu SIRADAN yapti: musteriler artik kod yazabiliyor.
+  Engel aday sorgusuydu. `ListApplicablePromotions` `status = 'active'` tasiyor,
+  yani yayimlanip AKTIF EDILMEMIS bir promosyon hic aday olmuyor -- ne uygulandi
+  ne elendi diye doner. Bir kodun hicbir sey yapmamasinin en sik sebebi tam
+  olarak bu, ve ucun veremedigi tek cevap oydu. `ExplainDiscounts` durum
+  suzgeci OLMAYAN okumayi kullaniyor; iki yolun TUTARLARI birebir ayni ve oyle
+  olmak zorunda, cunku tacire bir yolun sayilari gosteriliyor ve musteriden
+  otekinin sayilari tahsil ediliyor.
+  Sebep YALNIZCA yonetim ucunda: musteriye "bu kod var ama kampanyasi henuz
+  baslamadi" demek, kod tahmin eden birine kampanya takvimi cikarma imkani
+  tanir. Kampanyanin uc hali (silinmis, penceresi kapali, butcesi bitmis) TEK
+  kelime -- tacire ayni cevap, ve ayirmak kampanyanin takvimini yanita koymak
+  olurdu.
+  Sebep kumesi KAPALI ve sozluk ikinci kez yazildi, cunku Go adlandirilmis bir
+  dize tipinin uyelerini sayamiyor: kimsenin uretemedigi bir kelime, ucun vaat
+  edip hic vermedigi bir cevaptir -- ve bu varsayimsal degil, bu degisikligin
+  ILK hali sorgu genisletilmeden once `not_active` ile tam olarak onu yapiyordu.
+
 - **Musterinin YAZDIGI kupon artik sepete iniyor, ve siparis onu HARCIYOR**
   (`cart_promotion_code` + saga adimi, ADR 0109). Promosyon motoru kurulduğundan
   beri kupon kodu aliyordu ve kimse ona kod GONDERMIYORDU: sepetin kodu

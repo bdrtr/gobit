@@ -144,6 +144,15 @@ type redemptionDTO struct {
 // The field names are EXACTLY the same as the interop schema (service.Interop): the
 // two surfaces describing the same computation under different names would mean the
 // client not knowing which one to look at.
+//
+// # The ONE field the interop schema does not carry
+//
+// `skipped` is here and not there, and the difference is deliberate on both
+// counts. The interop body is consumed by the cart flow, which writes amounts
+// onto a cart and has no use for a reason — a field with no consumer is refused
+// (ADR 0009). And the cart's totals are read by the STOREFRONT, so a reason that
+// traveled that way would eventually be readable by the customer whose code was
+// refused, which is the leak this field must not open (ADR 0110).
 type computeResultDTO struct {
 	// CurrencyCode is the currency of the computation.
 	CurrencyCode string `json:"currency_code"`
@@ -159,8 +168,35 @@ type computeResultDTO struct {
 	DiscountTotal int64 `json:"discount_total"`
 	// Applied are the promotions that actually produced a discount.
 	Applied []appliedPromotionDTO `json:"applied"`
+	// Skipped are the promotions that were CONSIDERED and left out, each with a
+	// reason.
+	//
+	// It answers the question the rest of this body cannot: a merchant looking at
+	// a cart with no discount could see WHAT applied and never why the coupon
+	// they published did not. The population is the candidates the query
+	// returned; the reasons are a closed set (see service.SkipReason).
+	//
+	// It is on the ADMIN endpoint alone. Telling a customer that their code
+	// exists but its campaign has not started hands a code guesser a campaign
+	// calendar — the leak the storefront's coupon lookup refuses to open, and
+	// this must not open it from the side.
+	Skipped []skippedPromotionDTO `json:"skipped"`
 	// UnmatchedCodes are the coupon codes that could not be bound.
 	UnmatchedCodes []string `json:"unmatched_codes"`
+}
+
+// skippedPromotionDTO is the response body of one promotion that was left out.
+type skippedPromotionDTO struct {
+	// PromotionID is the promotion that was left out.
+	PromotionID string `json:"promotion_id"`
+	// Code is its coupon code, and it is always written.
+	//
+	// Every promotion here has a code; an AUTOMATIC one simply does not need it
+	// typed. A merchant reading this list wants the code either way — it is what
+	// they published and what they will search for.
+	Code string `json:"code"`
+	// Reason is why it was left out; it is one of the service.SkipReason values.
+	Reason string `json:"reason"`
 }
 
 // lineDiscountDTO is the response body of a single line discount.
@@ -309,7 +345,15 @@ func toComputeResultDTO(result service.ComputeResult) computeResultDTO {
 		ShippingDiscountTotal: result.ShippingDiscountTotal,
 		DiscountTotal:         result.DiscountTotal,
 		Applied:               make([]appliedPromotionDTO, 0, len(result.Applied)),
+		Skipped:               make([]skippedPromotionDTO, 0, len(result.Skipped)),
 		UnmatchedCodes:        result.UnmatchedCodes,
+	}
+	for i := range result.Skipped {
+		out.Skipped = append(out.Skipped, skippedPromotionDTO{
+			PromotionID: result.Skipped[i].PromotionID,
+			Code:        result.Skipped[i].Code,
+			Reason:      string(result.Skipped[i].Reason),
+		})
 	}
 	if out.UnmatchedCodes == nil {
 		out.UnmatchedCodes = []string{}

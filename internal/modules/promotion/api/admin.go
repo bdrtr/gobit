@@ -514,6 +514,12 @@ type computeShippingRequest struct {
 // YAN ETKİSİZDİR: hiçbir sayaç değişmez. Uç nokta yönetim tarafındadır çünkü
 // gövdesi promosyonların KİMLİKLERİNİ ve kodlarını döner; müşteri tarafındaki
 // karşılığı, indirimi sepet toplamına yazan sepet akışıdır.
+//
+// [service.Service.ExplainDiscounts]'u çağırır, ComputeDiscounts'u değil: tek
+// fark aday okumasıdır ve indirim tutarları birebir aynıdır. Fazlası
+// `skipped` — hangi promosyonun NEDEN uygulanmadığı — ve o cevap yalnızca burada
+// yayımlanır, çünkü müşteriye verilirse kod tahmin eden birine kampanya takvimi
+// çıkarma imkânı tanır (ADR 0110).
 func (a *API) computeDiscounts(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -549,7 +555,7 @@ func (a *API) computeDiscounts(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	result, err := a.svc.ComputeDiscounts(ctx, in)
+	result, err := a.svc.ExplainDiscounts(ctx, in)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return

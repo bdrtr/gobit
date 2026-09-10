@@ -105,27 +105,27 @@ func runWithPostgres(m *testing.M) int {
 	return m.Run()
 }
 
-// yeniServis gerçek depo üzerinde çalışan bir servis kurar.
-func yeniServis(t *testing.T) *service.Service {
+// newService gerçek depo üzerinde çalışan bir servis kurar.
+func newService(t *testing.T) *service.Service {
 	t.Helper()
 
 	return service.New(repository.New(testPool.Pool()), service.Options{})
 }
 
-// benzersizKod test başına çakışmayan bir kupon kodu üretir.
+// uniqueCode test başına çakışmayan bir kupon kodu üretir.
 //
 // Kod BENZERSİZ bir indekse girdiği için testler birbirinin kodunu kullanamaz;
 // kimlik üreticisi zaten çakışmayan bir gövde ürettiğinden ondan türetilir.
-func benzersizKod() string {
+func uniqueCode() string {
 	return "K" + models.NewPromotionID(time.Now())[len(models.PromotionIDPrefix):]
 }
 
-// aktifPromosyon yöntemi kurulmuş, aktif bir promosyon oluşturur.
-func aktifPromosyon(ctx context.Context, t *testing.T, svc *service.Service, in service.PromotionInput) models.Promotion {
+// activePromotion yöntemi kurulmuş, aktif bir promosyon oluşturur.
+func activePromotion(ctx context.Context, t *testing.T, svc *service.Service, in service.PromotionInput) models.Promotion {
 	t.Helper()
 
 	if in.Code == "" {
-		in.Code = benzersizKod()
+		in.Code = uniqueCode()
 	}
 	if in.Status == "" {
 		in.Status = models.PromotionActive
@@ -223,8 +223,8 @@ func TestCrossModuleForeignKeyYok(t *testing.T) {
 
 func TestKampanyaYasamDongusu(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	kimlik := "KAMPANYA-" + benzersizKod()
+	svc := newService(t)
+	kimlik := "KAMPANYA-" + uniqueCode()
 
 	campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
 		Name:               "Yaz İndirimi",
@@ -260,8 +260,8 @@ func TestKampanyaYasamDongusu(t *testing.T) {
 
 func TestKuponKoduBenzersizdir(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	kod := benzersizKod()
+	svc := newService(t)
+	kod := uniqueCode()
 
 	promo, err := svc.CreatePromotion(ctx, service.PromotionInput{Code: kod})
 	require.NoError(t, err)
@@ -282,8 +282,8 @@ func TestKuponKoduBenzersizdir(t *testing.T) {
 
 func TestUygulamaYontemiYerineKonur(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	promo := aktifPromosyon(ctx, t, svc, service.PromotionInput{})
+	svc := newService(t)
+	promo := activePromotion(ctx, t, svc, service.PromotionInput{})
 
 	ikinci, err := svc.SetApplicationMethod(ctx, promo.ID, service.ApplicationMethodInput{
 		Type:         models.MethodFixed,
@@ -314,8 +314,8 @@ func TestUygulamaYontemiYerineKonur(t *testing.T) {
 
 func TestKurallarVeritabaniKisitlariylaKorunur(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	promo := aktifPromosyon(ctx, t, svc, service.PromotionInput{})
+	svc := newService(t)
+	promo := activePromotion(ctx, t, svc, service.PromotionInput{})
 
 	rule, err := svc.AddPromotionRule(ctx, promo.ID, service.RuleInput{
 		RuleType:  models.RuleContext,
@@ -338,18 +338,18 @@ func TestKurallarVeritabaniKisitlariylaKorunur(t *testing.T) {
 
 func TestHesapGercekVeritabaniUzerindeCalisir(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
 	kampanya, err := svc.CreateCampaign(ctx, service.CampaignInput{
 		Name:               "Yaz",
-		CampaignIdentifier: "HESAP-" + benzersizKod(),
+		CampaignIdentifier: "HESAP-" + uniqueCode(),
 		BudgetType:         models.BudgetSpend,
 		BudgetLimit:        ptr(int64(1_000_000)),
 		BudgetCurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
 
-	kupon := aktifPromosyon(ctx, t, svc, service.PromotionInput{
+	kupon := activePromotion(ctx, t, svc, service.PromotionInput{
 		CampaignID: &kampanya.ID,
 	})
 	_, err = svc.AddPromotionRule(ctx, kupon.ID, service.RuleInput{
@@ -391,11 +391,11 @@ func TestHesapGercekVeritabaniUzerindeCalisir(t *testing.T) {
 // koşullu UPDATE'ten gelir.
 func TestEszamanliRedeemKullanimSinirindaTamOlarakSinirKadarKazanir(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
 	const sinir = 5
 	const yarismaci = 20
-	promo := aktifPromosyon(ctx, t, svc, service.PromotionInput{UsageLimit: ptr(int64(sinir))})
+	promo := activePromotion(ctx, t, svc, service.PromotionInput{UsageLimit: ptr(int64(sinir))})
 
 	basla := make(chan struct{})
 	sonuclar := make([]error, yarismaci)
@@ -440,10 +440,10 @@ func TestEszamanliRedeemKullanimSinirindaTamOlarakSinirKadarKazanir(t *testing.T
 // yaratır ve sayaç bir artar.
 func TestEszamanliRedeemAyniReferansIcinTekKayitYazar(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
 	const yarismaci = 16
-	promo := aktifPromosyon(ctx, t, svc, service.PromotionInput{})
+	promo := activePromotion(ctx, t, svc, service.PromotionInput{})
 
 	basla := make(chan struct{})
 	kimlikler := make([]string, yarismaci)
@@ -490,7 +490,7 @@ func TestEszamanliRedeemAyniReferansIcinTekKayitYazar(t *testing.T) {
 // test kilitlenmeyle (deadlock) takılırdı.
 func TestEszamanliRedeemKampanyaButcesiniAsmaz(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
 	const butce = 1000
 	const tutar = 100
@@ -498,15 +498,15 @@ func TestEszamanliRedeemKampanyaButcesiniAsmaz(t *testing.T) {
 
 	kampanya, err := svc.CreateCampaign(ctx, service.CampaignInput{
 		Name:               "Bütçeli",
-		CampaignIdentifier: "BUTCE-" + benzersizKod(),
+		CampaignIdentifier: "BUTCE-" + uniqueCode(),
 		BudgetType:         models.BudgetSpend,
 		BudgetLimit:        ptr(int64(butce)),
 		BudgetCurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
 
-	ilk := aktifPromosyon(ctx, t, svc, service.PromotionInput{CampaignID: &kampanya.ID})
-	ikinci := aktifPromosyon(ctx, t, svc, service.PromotionInput{CampaignID: &kampanya.ID})
+	ilk := activePromotion(ctx, t, svc, service.PromotionInput{CampaignID: &kampanya.ID})
+	ikinci := activePromotion(ctx, t, svc, service.PromotionInput{CampaignID: &kampanya.ID})
 	promosyonlar := []models.Promotion{ilk, ikinci}
 
 	basla := make(chan struct{})
@@ -551,19 +551,19 @@ func TestEszamanliRedeemKampanyaButcesiniAsmaz(t *testing.T) {
 // eşzamanlı hâlini kanıtlar.
 func TestEszamanliReleaseSayaciBirKezDusurur(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
 	const yarismaci = 16
 	kampanya, err := svc.CreateCampaign(ctx, service.CampaignInput{
 		Name:               "Telafi",
-		CampaignIdentifier: "TELAFI-" + benzersizKod(),
+		CampaignIdentifier: "TELAFI-" + uniqueCode(),
 		BudgetType:         models.BudgetSpend,
 		BudgetLimit:        ptr(int64(10_000)),
 		BudgetCurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
 
-	promo := aktifPromosyon(ctx, t, svc, service.PromotionInput{CampaignID: &kampanya.ID})
+	promo := activePromotion(ctx, t, svc, service.PromotionInput{CampaignID: &kampanya.ID})
 	_, err = svc.RedeemPromotion(ctx, service.RedeemInput{
 		PromotionID: promo.ID, Reference: "order_1", Amount: 750, CurrencyCode: "TRY",
 	})
@@ -608,8 +608,8 @@ func TestEszamanliReleaseSayaciBirKezDusurur(t *testing.T) {
 
 func TestReleaseHicKullanimYoksaHataVermez(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	promo := aktifPromosyon(ctx, t, svc, service.PromotionInput{})
+	svc := newService(t)
+	promo := activePromotion(ctx, t, svc, service.PromotionInput{})
 
 	released, err := svc.ReleasePromotion(ctx, service.ReleaseInput{
 		PromotionID: promo.ID, Reference: "hic_yazilmadi",
@@ -621,8 +621,8 @@ func TestReleaseHicKullanimYoksaHataVermez(t *testing.T) {
 
 func TestInteropYuzeyiJSONSemasiniKarsilar(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	promo := aktifPromosyon(ctx, t, svc, service.PromotionInput{IsAutomatic: true})
+	svc := newService(t)
+	promo := activePromotion(ctx, t, svc, service.PromotionInput{IsAutomatic: true})
 
 	interop := service.NewInterop(svc)
 	istek := []byte(`{
@@ -673,11 +673,11 @@ func TestInteropYuzeyiJSONSemasiniKarsilar(t *testing.T) {
 // AKTİF promosyonları ve dar bir alan kümesini açtığını doğrular (ADR 0004).
 func TestQuerySaglayicisiGercekDepodaSuzer(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	aktif := aktifPromosyon(ctx, t, svc, service.PromotionInput{})
+	aktif := activePromotion(ctx, t, svc, service.PromotionInput{})
 	taslak, err := svc.CreatePromotion(ctx, service.PromotionInput{
-		Code: benzersizKod(), Status: models.PromotionDraft,
+		Code: uniqueCode(), Status: models.PromotionDraft,
 	})
 	require.NoError(t, err)
 
@@ -725,7 +725,7 @@ func TestVeritabaniKisitlariSonSavunmadir(t *testing.T) {
 			ad: "tanımsız durum",
 			yaz: func() error {
 				_, err := repo.CreatePromotion(ctx, models.Promotion{
-					ID: models.NewPromotionID(now), Code: benzersizKod(),
+					ID: models.NewPromotionID(now), Code: uniqueCode(),
 					Type: models.PromotionStandard, Status: "olmayan",
 				}, now)
 				return err
@@ -736,7 +736,7 @@ func TestVeritabaniKisitlariSonSavunmadir(t *testing.T) {
 			ad: "para birimsiz spend bütçesi",
 			yaz: func() error {
 				_, err := repo.CreateCampaign(ctx, models.Campaign{
-					ID: models.NewCampaignID(now), Name: "X", CampaignIdentifier: benzersizKod(),
+					ID: models.NewCampaignID(now), Name: "X", CampaignIdentifier: uniqueCode(),
 					BudgetType: models.BudgetSpend, BudgetLimit: ptr(int64(100)),
 				}, now)
 				return err
@@ -747,7 +747,7 @@ func TestVeritabaniKisitlariSonSavunmadir(t *testing.T) {
 			ad: "para birimsiz sabit indirim yöntemi",
 			yaz: func() error {
 				promo, err := repo.CreatePromotion(ctx, models.Promotion{
-					ID: models.NewPromotionID(now), Code: benzersizKod(),
+					ID: models.NewPromotionID(now), Code: uniqueCode(),
 					Type: models.PromotionStandard, Status: models.PromotionDraft,
 				}, now)
 				if err != nil {
@@ -766,7 +766,7 @@ func TestVeritabaniKisitlariSonSavunmadir(t *testing.T) {
 			ad: "yüzde indirimde para birimi",
 			yaz: func() error {
 				promo, err := repo.CreatePromotion(ctx, models.Promotion{
-					ID: models.NewPromotionID(now), Code: benzersizKod(),
+					ID: models.NewPromotionID(now), Code: uniqueCode(),
 					Type: models.PromotionStandard, Status: models.PromotionDraft,
 				}, now)
 				if err != nil {
@@ -785,7 +785,7 @@ func TestVeritabaniKisitlariSonSavunmadir(t *testing.T) {
 			ad: "para birimsiz kullanım defteri satırı",
 			yaz: func() error {
 				promo, err := repo.CreatePromotion(ctx, models.Promotion{
-					ID: models.NewPromotionID(now), Code: benzersizKod(),
+					ID: models.NewPromotionID(now), Code: uniqueCode(),
 					Type: models.PromotionStandard, Status: models.PromotionActive,
 				}, now)
 				if err != nil {
@@ -793,7 +793,7 @@ func TestVeritabaniKisitlariSonSavunmadir(t *testing.T) {
 				}
 				_, _, err = repo.Redeem(ctx, models.Redemption{
 					ID: models.NewRedemptionID(now), PromotionID: promo.ID,
-					Reference: "order_" + benzersizKod(), Amount: 100,
+					Reference: "order_" + uniqueCode(), Amount: 100,
 				}, now)
 				return err
 			},
@@ -803,7 +803,7 @@ func TestVeritabaniKisitlariSonSavunmadir(t *testing.T) {
 			ad: "negatif bütçe sınırı",
 			yaz: func() error {
 				_, err := repo.CreateCampaign(ctx, models.Campaign{
-					ID: models.NewCampaignID(now), Name: "X", CampaignIdentifier: benzersizKod(),
+					ID: models.NewCampaignID(now), Name: "X", CampaignIdentifier: uniqueCode(),
 					BudgetType: models.BudgetUsage, BudgetLimit: ptr(int64(-1)),
 				}, now)
 				return err
@@ -830,25 +830,25 @@ func TestVeritabaniKisitlariSonSavunmadir(t *testing.T) {
 // taklit onu yalnızca taklit eder, burada zemin sınanır.
 func TestRedeemYayindaOlmayanPromosyonuGercekVeritabanindaReddeder(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
 	for _, durum := range []models.PromotionStatus{models.PromotionDraft, models.PromotionInactive} {
 		t.Run(string(durum), func(t *testing.T) {
 			kampanya, err := svc.CreateCampaign(ctx, service.CampaignInput{
 				Name:               "Yaz",
-				CampaignIdentifier: "TASLAK-" + benzersizKod(),
+				CampaignIdentifier: "TASLAK-" + uniqueCode(),
 				BudgetType:         models.BudgetSpend,
 				BudgetLimit:        ptr(int64(1_000_000)),
 				BudgetCurrencyCode: "TRY",
 			})
 			require.NoError(t, err)
 
-			promo := aktifPromosyon(ctx, t, svc, service.PromotionInput{
+			promo := activePromotion(ctx, t, svc, service.PromotionInput{
 				Status: durum, CampaignID: &kampanya.ID,
 			})
 
 			_, err = svc.RedeemPromotion(ctx, service.RedeemInput{
-				PromotionID: promo.ID, Reference: "order_" + benzersizKod(),
+				PromotionID: promo.ID, Reference: "order_" + uniqueCode(),
 				Amount: 2500, CurrencyCode: "TRY",
 			})
 
@@ -875,12 +875,12 @@ func TestRedeemYayindaOlmayanPromosyonuGercekVeritabanindaReddeder(t *testing.T)
 // anın kaydı olmalıdır.
 func TestRedeemKampanyaPenceresiKapaliysaGercekVeritabanindaReddeder(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 	simdi := time.Now().UTC()
 
 	kampanya, err := svc.CreateCampaign(ctx, service.CampaignInput{
 		Name:               "Bitmiş",
-		CampaignIdentifier: "PENCERE-" + benzersizKod(),
+		CampaignIdentifier: "PENCERE-" + uniqueCode(),
 		StartsAt:           ptr(simdi.Add(-48 * time.Hour)),
 		EndsAt:             ptr(simdi.Add(-24 * time.Hour)),
 		BudgetType:         models.BudgetSpend,
@@ -889,10 +889,10 @@ func TestRedeemKampanyaPenceresiKapaliysaGercekVeritabanindaReddeder(t *testing.
 	})
 	require.NoError(t, err)
 
-	promo := aktifPromosyon(ctx, t, svc, service.PromotionInput{CampaignID: &kampanya.ID})
+	promo := activePromotion(ctx, t, svc, service.PromotionInput{CampaignID: &kampanya.ID})
 
 	_, err = svc.RedeemPromotion(ctx, service.RedeemInput{
-		PromotionID: promo.ID, Reference: "order_" + benzersizKod(),
+		PromotionID: promo.ID, Reference: "order_" + uniqueCode(),
 		Amount: 2500, CurrencyCode: "TRY",
 	})
 
@@ -912,8 +912,8 @@ func TestRedeemKampanyaPenceresiKapaliysaGercekVeritabanindaReddeder(t *testing.
 // aynı isteğin birimi KORUYAN hâli ise geçmelidir.
 func TestUpdateCampaignButceBirimiKilidiVeritabanindadir(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	kimlik := "KILIT-" + benzersizKod()
+	svc := newService(t)
+	kimlik := "KILIT-" + uniqueCode()
 
 	kampanya, err := svc.CreateCampaign(ctx, service.CampaignInput{
 		Name:               "Yaz",
@@ -924,9 +924,9 @@ func TestUpdateCampaignButceBirimiKilidiVeritabanindadir(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	promo := aktifPromosyon(ctx, t, svc, service.PromotionInput{CampaignID: &kampanya.ID})
+	promo := activePromotion(ctx, t, svc, service.PromotionInput{CampaignID: &kampanya.ID})
 	_, err = svc.RedeemPromotion(ctx, service.RedeemInput{
-		PromotionID: promo.ID, Reference: "order_" + benzersizKod(),
+		PromotionID: promo.ID, Reference: "order_" + uniqueCode(),
 		Amount: 30_000, CurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
@@ -970,8 +970,8 @@ func TestUpdateCampaignButceBirimiKilidiVeritabanindadir(t *testing.T) {
 func TestUpdateCampaignOlmayanKampanyaNotFound(t *testing.T) {
 	ctx := context.Background()
 
-	_, err := yeniServis(t).UpdateCampaign(ctx, models.NewCampaignID(time.Now()), service.CampaignInput{
-		Name: "Yok", CampaignIdentifier: "YOK-" + benzersizKod(),
+	_, err := newService(t).UpdateCampaign(ctx, models.NewCampaignID(time.Now()), service.CampaignInput{
+		Name: "Yok", CampaignIdentifier: "YOK-" + uniqueCode(),
 	})
 
 	require.Error(t, err)
@@ -1096,8 +1096,8 @@ func promosyonuSilenIslem(
 // VARLIĞINA bakar.
 func TestKuralEklemeSilinenPromosyonaYazmaz(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	promo := aktifPromosyon(ctx, t, svc, service.PromotionInput{})
+	svc := newService(t)
+	promo := activePromotion(ctx, t, svc, service.PromotionInput{})
 
 	tx, pid, temizle := promosyonuSilenIslem(ctx, t, promo.ID)
 	defer temizle()
@@ -1135,10 +1135,10 @@ func TestKuralEklemeSilinenPromosyonaYazmaz(t *testing.T) {
 // olduğu bilgisi değil.
 func TestYontemYazmaSilinenPromosyonaYazmaz(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
 	promo, err := svc.CreatePromotion(ctx, service.PromotionInput{
-		Code:   benzersizKod(),
+		Code:   uniqueCode(),
 		Status: models.PromotionActive,
 	})
 	require.NoError(t, err)
@@ -1190,9 +1190,9 @@ func TestYontemYazmaSilinenPromosyonaYazmaz(t *testing.T) {
 // tuttuğunu gösteren tek denemedir.
 func TestKuponKoduylaKullanimZinciriGercekVeritabanindaTamamlanir(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	kupon := aktifPromosyon(ctx, t, svc, service.PromotionInput{})
+	kupon := activePromotion(ctx, t, svc, service.PromotionInput{})
 	require.False(t, kupon.IsAutomatic, "bu testin konusu KOD gerektiren promosyondur")
 
 	res, err := svc.ComputeDiscounts(ctx, service.ComputeInput{
@@ -1212,7 +1212,7 @@ func TestKuponKoduylaKullanimZinciriGercekVeritabanindaTamamlanir(t *testing.T) 
 	pay := uygulananPay(t, res, kupon.Code)
 	require.Equal(t, int64(2000), pay, "%20 × 10000 kuponun payı olmalı")
 
-	referans := "order_" + benzersizKod()
+	referans := "order_" + uniqueCode()
 	kullanim, err := svc.RedeemPromotion(ctx, service.RedeemInput{
 		Code:         lower(kupon.Code),
 		Reference:    referans,
@@ -1293,9 +1293,9 @@ func uygulananPay(t *testing.T, res service.ComputeResult, kod string) int64 {
 // reddedilirdi. Buraya konsaydı ısırmayan bir iddia olurdu.
 func TestSilinmisPromosyonunKuponKoduHicbirYuzeydeCozulmez(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	kupon := aktifPromosyon(ctx, t, svc, service.PromotionInput{})
+	kupon := activePromotion(ctx, t, svc, service.PromotionInput{})
 	require.NoError(t, svc.DeletePromotion(ctx, kupon.ID))
 
 	require.EqualValues(t, 1, sayim(ctx, t,
@@ -1341,30 +1341,30 @@ func TestSilinmisPromosyonunKuponKoduHicbirYuzeydeCozulmez(t *testing.T) {
 // elle korur ve SET listesi hakkında hiçbir şey söylemez.
 func TestPromosyonGuncellemeTanimiDegistirirKullanimSayacinaDokunmaz(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
 	kampanya, err := svc.CreateCampaign(ctx, service.CampaignInput{
 		Name:               "Yaz",
-		CampaignIdentifier: "GUNCELLEME-" + benzersizKod(),
+		CampaignIdentifier: "GUNCELLEME-" + uniqueCode(),
 		BudgetType:         models.BudgetSpend,
 		BudgetLimit:        ptr(int64(1_000_000)),
 		BudgetCurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
 
-	kupon := aktifPromosyon(ctx, t, svc, service.PromotionInput{
+	kupon := activePromotion(ctx, t, svc, service.PromotionInput{
 		CampaignID: &kampanya.ID,
 		UsageLimit: ptr(int64(5)),
 	})
 	for i := range 2 {
 		_, redeemErr := svc.RedeemPromotion(ctx, service.RedeemInput{
-			PromotionID: kupon.ID, Reference: fmt.Sprintf("order_%d_%s", i, benzersizKod()),
+			PromotionID: kupon.ID, Reference: fmt.Sprintf("order_%d_%s", i, uniqueCode()),
 			Amount: 2500, CurrencyCode: "TRY",
 		})
 		require.NoError(t, redeemErr)
 	}
 
-	yeniKod := benzersizKod()
+	yeniKod := uniqueCode()
 	guncellenen, err := svc.UpdatePromotion(ctx, kupon.ID, service.PromotionInput{
 		Code:       lower(yeniKod),
 		CampaignID: &kampanya.ID,
@@ -1417,14 +1417,14 @@ func TestPromosyonGuncellemeTanimiDegistirirKullanimSayacinaDokunmaz(t *testing.
 // kupon defteri ve yönetim listesi ayrışırdı).
 func TestPromosyonGuncellemeSilinmisSatiraInmez(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	kupon := aktifPromosyon(ctx, t, svc, service.PromotionInput{})
+	kupon := activePromotion(ctx, t, svc, service.PromotionInput{})
 	eskiKod := kupon.Code
 	require.NoError(t, svc.DeletePromotion(ctx, kupon.ID))
 
 	_, err := svc.UpdatePromotion(ctx, kupon.ID, service.PromotionInput{
-		Code: benzersizKod(), Status: models.PromotionActive,
+		Code: uniqueCode(), Status: models.PromotionActive,
 	})
 
 	require.Error(t, err, "silinmiş promosyon düzenlenememeli")
@@ -1449,10 +1449,10 @@ func TestPromosyonGuncellemeSilinmisSatiraInmez(t *testing.T) {
 // gördüğünde hata verir).
 func TestPromosyonGuncellemeBaskasininKuponKodunuAlamaz(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	birinci := aktifPromosyon(ctx, t, svc, service.PromotionInput{})
-	ikinci := aktifPromosyon(ctx, t, svc, service.PromotionInput{})
+	birinci := activePromotion(ctx, t, svc, service.PromotionInput{})
+	ikinci := activePromotion(ctx, t, svc, service.PromotionInput{})
 
 	_, err := svc.UpdatePromotion(ctx, ikinci.ID, service.PromotionInput{
 		Code: birinci.Code, Status: models.PromotionActive,

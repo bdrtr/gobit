@@ -604,3 +604,61 @@ func TestStoreUcuYetkiIstemez(t *testing.T) {
 	rec := doAs(t, r, yetkisiz, http.MethodGet, "/store/v1/promotions/HICBOYLEBIRKODYOK", "")
 	assert.Equal(t, http.StatusNotFound, rec.Code, "gövde: %s", rec.Body.String())
 }
+
+// TestTheComputeEndpointSaysWhyAPromotionDidNotApply is the answer the body
+// could not give.
+//
+// A merchant looking at a cart with no discount could see WHAT applied and never
+// why the coupon they published did not. The commonest cause is the one this test
+// uses: they never activated it.
+func TestTheComputeEndpointSaysWhyAPromotionDidNotApply(t *testing.T) {
+	r, _ := newTestRouter(t)
+	id := promosyonOlustur(t, r, `{"code": "DRAFTED", "status": "draft", "is_automatic": true}`)
+
+	rec := do(t, r, http.MethodPut, "/admin/v1/promotions/"+id+"/application-method", `{
+	  "type": "percentage", "target_type": "items", "allocation": "each", "value": 2000
+	}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	rec = do(t, r, http.MethodPost, "/admin/v1/promotions/compute", `{
+	  "currency_code": "TRY",
+	  "items": [{"id": "li_1", "amount": 10000, "quantity": 1}]
+	}`)
+	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+
+	result := decodeItem(t, rec)
+	assert.InDelta(t, 0, result["discount_total"], 0, "a draft promotion discounts nothing")
+
+	skipped, ok := result["skipped"].([]any)
+	require.True(t, ok, "the body has to carry the reasons: %s", rec.Body.String())
+	require.Len(t, skipped, 1)
+
+	row, ok := skipped[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, id, row["promotion_id"])
+	assert.Equal(t, "not_active", row["reason"])
+	assert.Equal(t, "DRAFTED", row["code"],
+		"the code is written even for an AUTOMATIC promotion: every promotion here has "+
+			"one, and it is what the merchant published and will search for")
+}
+
+// TestTheComputeEndpointReportsNoReasonWhenNothingWasRefused keeps the wire from
+// having two spellings for "none".
+func TestTheComputeEndpointReportsNoReasonWhenNothingWasRefused(t *testing.T) {
+	r, _ := newTestRouter(t)
+	id := promosyonOlustur(t, r, `{"code": "LIVE20", "status": "active", "is_automatic": true}`)
+
+	rec := do(t, r, http.MethodPut, "/admin/v1/promotions/"+id+"/application-method", `{
+	  "type": "percentage", "target_type": "items", "allocation": "each", "value": 2000
+	}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	rec = do(t, r, http.MethodPost, "/admin/v1/promotions/compute", `{
+	  "currency_code": "TRY",
+	  "items": [{"id": "li_1", "amount": 10000, "quantity": 1}]
+	}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	result := decodeItem(t, rec)
+	assert.Equal(t, []any{}, result["skipped"])
+}

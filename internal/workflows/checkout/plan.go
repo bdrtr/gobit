@@ -185,8 +185,8 @@ type checkoutPlan struct {
 type planPromotion struct {
 	// PromotionID is the promotion module's identity; it is kept opaque.
 	PromotionID string `json:"promotion_id"`
-	// Code is the coupon code; EMPTY for an automatic promotion.
-	Code string `json:"code,omitempty"`
+	// Code is the coupon code, which the promotion module always has.
+	Code string `json:"code"`
 	// Amount is the discount this promotion produced (minor unit), AS THE
 	// CUSTOMER WAS SHOWN IT.
 	Amount int64 `json:"amount"`

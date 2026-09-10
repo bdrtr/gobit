@@ -35,7 +35,8 @@ type redeemOutput struct {
 type redeemedRef struct {
 	// PromotionID is the promotion that was spent.
 	PromotionID string `json:"promotion_id"`
-	// Code is the coupon code; EMPTY for an automatic promotion.
+	// Code is the coupon code. The release takes it beside the id because the
+	// promotion module's own surface does; it is always set.
 	Code string `json:"code"`
 }
 

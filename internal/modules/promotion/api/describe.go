@@ -64,11 +64,19 @@ func Describe(d *openapi.Doc) {
 	describeKullanimlar(d)
 
 	d.Describe(http.MethodPost, "/admin/v1/promotions/compute", openapi.Operation{
-		Summary: "Verilen sepet bağlamı için indirimleri hesaplar.",
+		Summary: "Verilen sepet bağlamı için indirimleri hesaplar ve neyin " +
+			"UYGULANMADIĞINI söyler.",
 		Description: "YAN ETKİSİZDİR: hiçbir sayaç ve bütçe değişmez, bu yüzden " +
-			"yanıt 200'dür. Gövdenin alan adları modüller arası interop şemasıyla " +
-			"birebir aynıdır; yönetim ekranında denenen istek sepet akışında da " +
-			"aynı sonucu verir.",
+			"yanıt 200'dür. Tutarlar sepet akışının aldığı tutarlarla BİREBİR aynıdır; " +
+			"yönetim ekranında denenen istek sepette de aynı sonucu verir. \n\n" +
+			"\"skipped\", DEĞERLENDİRİLİP elenen promosyonları sebebiyle döner ve bu " +
+			"gövdenin interop şemasından ayrıldığı TEK alandır: sepet akışı bir sebeple " +
+			"ne yapacağını bilmez, ve sepetin toplamlarını vitrin okuduğu için oradan " +
+			"geçen bir sebep sonunda kodu reddedilen müşteriye ulaşırdı (ADR 0110). " +
+			"Nüfus, her otomatik promosyon ve GÖNDERİLEN kodların promosyonlarıdır — " +
+			"yayına alınmamış olanlar dahil, ki \"aktif etmemişsin\" bir kodun hiçbir " +
+			"şey yapmamasının en sık sebebi. Kimsenin yazmadığı bir kupon nüfusta yok: " +
+			"cevap kataloğun boyuyla büyümez.",
 		RequestBody: d.RequestBody(computeRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("İndirim hesabı", d.Item(computeResultDTO{})),

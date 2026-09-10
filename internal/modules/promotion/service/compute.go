@@ -123,6 +123,15 @@ type ComputeResult struct {
 	DiscountTotal int64
 	// Applied fiilen indirim üreten promosyonlardır, UYGULAMA SIRASINDA.
 	Applied []AppliedPromotion
+	// Skipped hesaba KATILMAYAN adaylardır ve her biri bir sebep taşır.
+	//
+	// Nüfus, sorgunun döndürdüğü adaylardır: her otomatik promosyon ve gönderilen
+	// kodların promosyonları. Kodu yazılmamış, otomatik de olmayan bir promosyon
+	// veritabanı okumasına hiç girmez — yani bu liste "değerlendirildi ve
+	// reddedildi", "dükkândaki her promosyon" değil.
+	//
+	// YALNIZCA yönetim ucunda yayımlanır; gerekçe [SkipReason] godoc'undadır.
+	Skipped []SkippedPromotion
 	// UnmatchedCodes uygulanabilir bir promosyona bağlanamayan kupon kodlarıdır.
 	//
 	// Kod yanlış olabilir, promosyon taslak/pasif olabilir, kampanyası bitmiş
@@ -232,6 +241,43 @@ func (s *Service) ComputeDiscounts(ctx context.Context, in ComputeInput) (Comput
 	if err != nil {
 		return ComputeResult{}, err
 	}
+	return computeDiscounts(candidates, normalized), nil
+}
+
+// ExplainDiscounts aynı hesabı yapar ve NEDEN uygulanmadığını da söyler; hiçbir
+// şey yazmaz.
+//
+// [Service.ComputeDiscounts]'tan tek farkı ADAY OKUMASI: bu, durum süzgeci
+// olmayan okumayı kullanır (repository.ListCandidatesForDiagnosis). Sebebi
+// [ComputeResult.Skipped]'ın işe yaramasıdır — süzgeçli okuma yayına alınmamış
+// bir promosyonu hiç döndürmez, yani "kodu yazdım hiçbir şey olmadı"nın EN SIK
+// cevabı ("aktif etmemişsin") verilemez.
+//
+// # İNDİRİM aynıdır
+//
+// İki yolun tutarları BİREBİR aynı olmak zorundadır ve öyledir: geniş kümenin
+// fazladan üyeleri elemeyi geçemez, yani uygulananlar kümesi değişmez. Hesabın
+// kendisi de aynı saf fonksiyondur ([computeDiscounts]); ayrılan tek şey
+// okumadır. Bu iddia testle sabitlenmiştir — ayrılmaları, tacire gösterilen
+// indirimin müşterinin gördüğünden farklı olması demekti.
+//
+// Yönetim ucu bunu çağırır; sepet akışının çağırdığı ilkel yüzey ÇAĞIRMAZ, ve
+// sebebi sızıntıdır: sepetin toplamlarını vitrin okuyor (ADR 0110).
+func (s *Service) ExplainDiscounts(ctx context.Context, in ComputeInput) (ComputeResult, error) {
+	if err := s.ready(); err != nil {
+		return ComputeResult{}, err
+	}
+
+	normalized, err := normalizeComputeInput(in, s.clock())
+	if err != nil {
+		return ComputeResult{}, err
+	}
+
+	candidates, err := s.repo.ListCandidatesForDiagnosis(ctx, normalized.Codes)
+	if err != nil {
+		return ComputeResult{}, err
+	}
+
 	return computeDiscounts(candidates, normalized), nil
 }
 
@@ -433,7 +479,7 @@ func computeDiscounts(candidates []models.PromotionCandidate, in ComputeInput) C
 		})
 	}
 
-	eligible := eligibleCandidates(candidates, in)
+	eligible, skipped := partitionCandidates(candidates, in)
 	applied := make([]AppliedPromotion, 0, len(eligible))
 	for i := range eligible {
 		amount := applyPromotion(eligible[i], items, shipping)
@@ -453,6 +499,7 @@ func computeDiscounts(candidates []models.PromotionCandidate, in ComputeInput) C
 		Items:           make([]LineDiscount, 0, len(items)),
 		ShippingMethods: make([]LineDiscount, 0, len(shipping)),
 		Applied:         applied,
+		Skipped:         skipped,
 		UnmatchedCodes:  unmatchedCodes(in.Codes, eligible),
 	}
 	for i := range items {
@@ -468,16 +515,32 @@ func computeDiscounts(candidates []models.PromotionCandidate, in ComputeInput) C
 	return result
 }
 
-// eligibleCandidates uygulanabilir adayları süzer ve UYGULAMA SIRASINA dizer.
+// partitionCandidates adayları uygulanabilir olanlar ve ELENENLER diye ikiye
+// ayırır; uygulanabilir olanlar UYGULAMA SIRASINA dizilir.
 //
 // Sıra kuralı [Service.ComputeDiscounts] godoc'unda tanımlıdır: önce kuponlar,
 // sonra otomatikler; her grup içinde kimliğe göre artan.
-func eligibleCandidates(candidates []models.PromotionCandidate, in ComputeInput) []models.PromotionCandidate {
+//
+// Elenenler ADAY SIRASINDA döner ve sıralanmaz: hangi promosyonun neden elendiği
+// bir uygulama sırası taşımaz, ve elenmiş bir promosyonu "önce"ye koymak
+// uygulanmayan bir şeye uygulama sırası atfetmek olurdu.
+func partitionCandidates(
+	candidates []models.PromotionCandidate, in ComputeInput,
+) (eligible []models.PromotionCandidate, skipped []SkippedPromotion) {
 	out := make([]models.PromotionCandidate, 0, len(candidates))
+	skipped = make([]SkippedPromotion, 0)
+
 	for i := range candidates {
-		if eligible(candidates[i], in) {
-			out = append(out, candidates[i])
+		if reason := skipReasonOf(candidates[i], in); reason != "" {
+			skipped = append(skipped, SkippedPromotion{
+				PromotionID: candidates[i].Promotion.ID,
+				Code:        candidates[i].Promotion.Code,
+				Reason:      reason,
+			})
+
+			continue
 		}
+		out = append(out, candidates[i])
 	}
 
 	slices.SortFunc(out, func(a, b models.PromotionCandidate) int {
@@ -491,38 +554,19 @@ func eligibleCandidates(candidates []models.PromotionCandidate, in ComputeInput)
 		}
 		return cmp.Compare(a.Promotion.ID, b.Promotion.ID)
 	})
-	return out
+
+	return out, skipped
 }
 
 // eligible bir adayın hesaba girip giremeyeceğini bildirir (bkz.
 // [Service.ComputeDiscounts] godoc'undaki "Eleme").
+//
+// Kararı [skipReasonOf] verir ve bu fonksiyon onun evet/hayır'ıdır. Eleme
+// koşullarının İKİ yerde yazılması, birinin diğerinden sessizce ayrılması
+// demekti: bir promosyon bir gerekçeyle uygulanır, başka bir gerekçeyle elenmiş
+// raporlanırdı.
 func eligible(candidate models.PromotionCandidate, in ComputeInput) bool {
-	promo := candidate.Promotion
-	if promo.Status != models.PromotionActive {
-		return false
-	}
-	if promo.Type != models.PromotionStandard {
-		return false
-	}
-	if candidate.Method == nil {
-		return false
-	}
-	if promo.UsageExhausted() {
-		return false
-	}
-	if !promo.IsAutomatic && !slices.Contains(in.Codes, promo.Code) {
-		return false
-	}
-	if !campaignUsable(candidate, in.At) {
-		return false
-	}
-	if !campaignBudgetCurrencyMatches(candidate, in.CurrencyCode) {
-		return false
-	}
-	if candidate.Method.Type == models.MethodFixed && candidate.Method.CurrencyCode != in.CurrencyCode {
-		return false
-	}
-	return matchRules(candidate.ContextRules(), in.Context)
+	return skipReasonOf(candidate, in) == ""
 }
 
 // campaignBudgetCurrencyMatches kampanyanın PARA ölçülü bütçesinin sepetin para

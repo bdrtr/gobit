@@ -77,8 +77,9 @@ type Totals struct {
 type AppliedPromotion struct {
 	// PromotionID is the promotion module's identity; it is kept opaque.
 	PromotionID string `json:"promotion_id"`
-	// Code is the coupon code; EMPTY for an automatic promotion.
-	Code string `json:"code,omitempty"`
+	// Code is the coupon code, and the promotion module always has one: being
+	// automatic decides whether it must be TYPED, not whether it exists.
+	Code string `json:"code"`
 	// Amount is the discount this promotion produced (minor unit).
 	Amount int64 `json:"amount"`
 }

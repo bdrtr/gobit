@@ -318,16 +318,34 @@ func (m *memRepo) DeletePromotion(_ context.Context, id string, _ time.Time) err
 }
 
 func (m *memRepo) ListCandidates(_ context.Context, codes []string) ([]models.PromotionCandidate, error) {
+	return m.candidates("ListCandidates", codes, true)
+}
+
+// ListCandidatesForDiagnosis aynı kümeyi DURUM SÜZGECİ OLMADAN döner.
+//
+// Süzgeç farkı taklit edilmek ZORUNDA: `skipped`'in tek işe yarayan üyesi
+// (yayına alınmamış promosyon) yalnızca bu okumadan geliyor, ve iki okumayı aynı
+// yapan bir sahte, gerçek sorgunun süzgeçsiz olduğunu hiç kanıtlamaz (D50).
+func (m *memRepo) ListCandidatesForDiagnosis(
+	_ context.Context, codes []string,
+) ([]models.PromotionCandidate, error) {
+	return m.candidates("ListCandidatesForDiagnosis", codes, false)
+}
+
+// candidates iki okumanın paylaştığı gövdedir; onlyActive durum süzgecini açar.
+func (m *memRepo) candidates(
+	hook string, codes []string, onlyActive bool,
+) ([]models.PromotionCandidate, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.hook("ListCandidates"); err != nil {
+	if err := m.hook(hook); err != nil {
 		return nil, err
 	}
 
 	out := make([]models.PromotionCandidate, 0, len(m.promotions))
 	for id := range m.promotions {
 		p := m.promotions[id]
-		if p.Status != models.PromotionActive {
+		if onlyActive && p.Status != models.PromotionActive {
 			continue
 		}
 		if !p.IsAutomatic && !slices.Contains(codes, p.Code) {

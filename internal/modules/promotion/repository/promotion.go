@@ -207,6 +207,51 @@ func (r *Repo) ListCandidates(ctx context.Context, codes []string) ([]models.Pro
 	if err != nil {
 		return nil, wrapDB(err, "uygulanabilir promosyonlar alınamadı")
 	}
+
+	return r.candidatesOf(ctx, rows)
+}
+
+// ListCandidatesForDiagnosis adayları DURUM SÜZGECİ OLMADAN döner.
+//
+// Yönetim tarafının "neden uygulanmadı" cevabı bu okumadan üretilir: bir kodun
+// hiçbir şey yapmamasının en sık sebebi promosyonun yayına ALINMAMIŞ olmasıdır,
+// ve süzgeçli okuma onu hiç döndürmediği için o cevap verilemez.
+//
+// Eleme kuralı BU okumada yaşamaz; service.skipReasonOf'ta yaşar. Aynı gerekçe
+// service.storeCandidate'ın godoc'unda da yazılı: durum kontrolü Go'da yapılırsa
+// "ne uygulanır" kuralı TEK yerde durur, sorgunun WHERE'i ile Go arasında
+// bölünmez — bölünürse süzgeci kaldıran bir değişiklik hiçbir testi düşürmez.
+//
+// SICAK YOL bunu kullanmaz: sepet toplamı her değişiklikte yeniden hesaplanıyor
+// ve durum süzgeci o okumayı uygulanabilir promosyonlarla sınırlı tutan şey.
+func (r *Repo) ListCandidatesForDiagnosis(
+	ctx context.Context, codes []string,
+) ([]models.PromotionCandidate, error) {
+	if err := r.ready(); err != nil {
+		return nil, err
+	}
+	if codes == nil {
+		codes = []string{}
+	}
+
+	rows, err := r.q.ListCandidatesForDiagnosis(ctx, codes)
+	if err != nil {
+		return nil, wrapDB(err, "aday promosyonlar alınamadı")
+	}
+
+	return r.candidatesOf(ctx, rows)
+}
+
+// candidatesOf promosyon satırlarını yöntemleri, kuralları ve kampanyalarıyla
+// birlikte adaylara çevirir.
+//
+// İki okuma da buraya iner ve ayrılmaları ŞART: alt okumaların dördü aynı ve
+// ikisini ayrı yazmak, birine eklenen bir alanın ötekinde eksik kalması demekti
+// — iki aday listesi aynı hesabı besliyor ve farkları yalnızca ELENEN üyeler
+// olmak zorunda.
+func (r *Repo) candidatesOf(
+	ctx context.Context, rows []promotiondb.Promotion,
+) ([]models.PromotionCandidate, error) {
 	if len(rows) == 0 {
 		return []models.PromotionCandidate{}, nil
 	}

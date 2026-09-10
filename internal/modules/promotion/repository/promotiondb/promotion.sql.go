@@ -305,6 +305,64 @@ func (q *Queries) ListApplicablePromotions(ctx context.Context, codes []string) 
 	return items, nil
 }
 
+const listCandidatesForDiagnosis = `-- name: ListCandidatesForDiagnosis :many
+SELECT id, code, is_automatic, type, campaign_id, status, usage_limit, usage_count, metadata, created_at, updated_at, deleted_at FROM promotion
+WHERE deleted_at IS NULL
+  AND (is_automatic OR code = ANY ($1::text[]))
+ORDER BY id
+`
+
+// ListCandidatesForDiagnosis returns the same set WITHOUT the status filter.
+//
+// It exists so that the admin computation can say WHY a promotion did not apply,
+// and the status is the answer a merchant needs most often: a coupon that was
+// published but never activated is the commonest reason a code does nothing. The
+// filtered query above cannot report it — a draft promotion is not a candidate at
+// all, so it comes back neither applied nor skipped, and the endpoint would
+// answer every question except the likely one.
+//
+// What it does NOT drop is the rest of the population. `deleted_at IS NULL`
+// stays because a deleted promotion is GONE rather than skipped, and the
+// automatic-or-code filter stays because the alternative is every promotion in
+// the shop — an answer whose size grows with the catalogue and which says
+// nothing about the cart that was asked about.
+//
+// The hot path does NOT use this. A cart's totals are recomputed on every change
+// and the status filter is what keeps that read proportional to the promotions
+// that could apply; this one is asked once, by an operator.
+func (q *Queries) ListCandidatesForDiagnosis(ctx context.Context, codes []string) ([]Promotion, error) {
+	rows, err := q.db.Query(ctx, listCandidatesForDiagnosis, codes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Promotion{}
+	for rows.Next() {
+		var i Promotion
+		if err := rows.Scan(
+			&i.ID,
+			&i.Code,
+			&i.IsAutomatic,
+			&i.Type,
+			&i.CampaignID,
+			&i.Status,
+			&i.UsageLimit,
+			&i.UsageCount,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPromotions = `-- name: ListPromotions :many
 SELECT id, code, is_automatic, type, campaign_id, status, usage_limit, usage_count, metadata, created_at, updated_at, deleted_at FROM promotion
 WHERE deleted_at IS NULL

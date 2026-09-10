@@ -100,6 +100,9 @@ type Repository interface {
 	UpdatePromotion(ctx context.Context, p models.Promotion, now time.Time) (models.Promotion, error)
 	DeletePromotion(ctx context.Context, id string, now time.Time) error
 	ListCandidates(ctx context.Context, codes []string) ([]models.PromotionCandidate, error)
+	// ListCandidatesForDiagnosis returns the same set WITHOUT the status filter;
+	// only [Service.ExplainDiscounts] uses it (ADR 0110).
+	ListCandidatesForDiagnosis(ctx context.Context, codes []string) ([]models.PromotionCandidate, error)
 
 	SetApplicationMethod(ctx context.Context, m models.ApplicationMethod, now time.Time) (models.ApplicationMethod, error)
 	GetApplicationMethod(ctx context.Context, promotionID string) (models.ApplicationMethod, error)
