@@ -122,6 +122,14 @@ type Orders interface {
 	CreateCreditLine(ctx context.Context, orderID string, in service.CreateCreditLineInput) (models.OrderCreditLine, error)
 	// ListCreditLines returns the order's credit lines, oldest first.
 	ListCreditLines(ctx context.Context, orderID string) ([]models.OrderCreditLine, error)
+	// CancelOrderLine writes off units of one line of a live order.
+	CancelOrderLine(
+		ctx context.Context, orderID string, in service.CancelOrderLineInput,
+	) (models.OrderLineCancellation, error)
+	// ListLineCancellations returns the order's line cancellations, oldest first.
+	ListLineCancellations(
+		ctx context.Context, orderID string,
+	) ([]models.OrderLineCancellation, error)
 	// PaymentOf returns the LIVE payment collection bound to the order; the
 	// second value reports whether one is bound at all.
 	PaymentOf(ctx context.Context, orderID string) (service.OrderPayment, bool, error)

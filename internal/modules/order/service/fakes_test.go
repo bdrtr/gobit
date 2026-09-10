@@ -41,6 +41,7 @@ type fakeSnapshot struct {
 	evidence  map[string]models.ClaimEvidence
 	replaces  map[string]models.Replacement
 	replItems map[string]models.ReplacementItem
+	cancels   map[string]models.OrderLineCancellation
 }
 
 // fakeStore is the in-memory counterpart of service.Store.
@@ -88,6 +89,7 @@ type fakeStore struct {
 	evidence  map[string]models.ClaimEvidence
 	replaces  map[string]models.Replacement
 	replItems map[string]models.ReplacementItem
+	cancels   map[string]models.OrderLineCancellation
 
 	// seq gives the added records an increasing timestamp; the listing order
 	// being deterministic rests on this.
@@ -164,6 +166,7 @@ func newFakeStore() *fakeStore {
 		evidence:  map[string]models.ClaimEvidence{},
 		replaces:  map[string]models.Replacement{},
 		replItems: map[string]models.ReplacementItem{},
+		cancels:   map[string]models.OrderLineCancellation{},
 		erased:    map[string]time.Time{},
 	}
 }
@@ -197,6 +200,7 @@ func (f *fakeStore) snapshot() fakeSnapshot {
 		evidence:  maps.Clone(f.evidence),
 		replaces:  maps.Clone(f.replaces),
 		replItems: maps.Clone(f.replItems),
+		cancels:   maps.Clone(f.cancels),
 	}
 }
 
@@ -662,6 +666,85 @@ func (f *fakeStore) CreditedTotal(ctx context.Context, orderID string) (int64, e
 	}
 
 	return total, nil
+}
+
+// CreateLineCancellation writes a line cancellation.
+//
+// The foreign key is imitated the way the real one behaves: the cancellation
+// names a LINE, so a line that is not there is what the database refuses.
+func (f *fakeStore) CreateLineCancellation(
+	ctx context.Context, cancellation models.OrderLineCancellation,
+) (models.OrderLineCancellation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if _, ok := f.items[cancellation.OrderLineItemID]; !ok {
+		return models.OrderLineCancellation{}, notFound(cancellation.OrderLineItemID)
+	}
+	stamp := f.nextStamp()
+	cancellation.CreatedAt = stamp
+	cancellation.UpdatedAt = stamp
+
+	f.recordUndo(ctx, undoEntry(f.cancels, cancellation.ID))
+	f.cancels[cancellation.ID] = cancellation
+
+	return cancellation, nil
+}
+
+// ListLineCancellations returns the order's cancellations, oldest first.
+//
+// The order is reached through the LINE, which is what the real query joins:
+// a fake that kept an order id of its own would answer questions the schema
+// cannot.
+func (f *fakeStore) ListLineCancellations(
+	ctx context.Context, orderID string,
+) ([]models.OrderLineCancellation, error) {
+	snapshot := f.view(ctx)
+
+	out := make([]models.OrderLineCancellation, 0)
+	for id := range snapshot.cancels {
+		line, ok := snapshot.items[snapshot.cancels[id].OrderLineItemID]
+		if !ok || line.OrderID != orderID {
+			continue
+		}
+		out = append(out, snapshot.cancels[id])
+	}
+	// By (created_at, id), for the reason ListCreditLines gives.
+	slices.SortFunc(out, func(a, b models.OrderLineCancellation) int {
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.Compare(b.CreatedAt)
+		}
+
+		return strings.Compare(a.ID, b.ID)
+	})
+
+	return out, nil
+}
+
+// CanceledQuantities really ADDS the rows up.
+//
+// A fake answering an empty map would let the ceiling be deleted from the
+// service without a test noticing, and the ceiling is the only thing between a
+// cancellation and writing off units the line does not have.
+func (f *fakeStore) CanceledQuantities(
+	ctx context.Context, lineItemIDs []string,
+) (map[string]int64, error) {
+	view := f.view(ctx)
+	wanted := make(map[string]bool, len(lineItemIDs))
+	for _, id := range lineItemIDs {
+		wanted[id] = true
+	}
+
+	out := map[string]int64{}
+	for _, id := range slices.Sorted(maps.Keys(view.cancels)) {
+		cancellation := view.cancels[id]
+		if !wanted[cancellation.OrderLineItemID] {
+			continue
+		}
+		out[cancellation.OrderLineItemID] += cancellation.Quantity
+	}
+
+	return out, nil
 }
 
 // ListLineItems returns the lines of the order in creation order.

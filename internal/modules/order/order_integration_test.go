@@ -53,7 +53,8 @@ const (
 var moduleTables = []string{
 	"orders", "order_line_items", "order_line_taxes", "order_summaries",
 	"order_returns", "order_return_items", "order_exchanges", "order_claims",
-	"order_replacements", "order_replacement_items",
+	"order_replacements", "order_replacement_items", "order_addresses",
+	"order_credit_lines", "order_claim_evidence", "order_line_cancellations",
 }
 
 // Constants used in the test data. The region, customer and variant ids belong
@@ -829,6 +830,197 @@ func TestAftersalesRecordsOnTheRealDatabase(t *testing.T) {
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
 		`SELECT count(*) FROM order_returns WHERE order_id = $1`, ord.ID).Scan(&remaining))
 	assert.Zero(t, remaining, "when the order is deleted the return record must fall too")
+}
+
+// slowSumStore widens the window between reading the ceiling's sums and writing
+// against them.
+//
+// It exists for [TestConcurrentLineCancellationsCannotExceedTheLine] alone.
+// Starting sixteen goroutines together is NOT enough to show the race and it was
+// measured: without the lock the test still passed, because each caller's read,
+// check and write finish before the next one's read begins, so nobody ever sees
+// a stale sum. The dangerous interleaving has to be made STRUCTURAL rather than
+// hoped for.
+//
+// The delay sits inside the read the ceiling rests on. With the lock the callers
+// queue at the order row and pay it one after another; without the lock they all
+// read a sum of zero at the same moment and all write. Every other method goes
+// to the real store.
+type slowSumStore struct {
+	*repository.Repository
+	// pause is how long the sum is held before it answers.
+	pause time.Duration
+}
+
+// CanceledQuantities answers the real sum, slowly.
+func (d *slowSumStore) CanceledQuantities(
+	ctx context.Context, lineItemIDs []string,
+) (map[string]int64, error) {
+	out, err := d.Repository.CanceledQuantities(ctx, lineItemIDs)
+	time.Sleep(d.pause)
+
+	return out, err
+}
+
+// TestConcurrentLineCancellationsCannotExceedTheLine is the claim the fake
+// cannot make: the ceiling holds against REAL concurrency.
+//
+// The check reads two sums and then writes a row. Under READ COMMITTED, sixteen
+// callers each writing off one unit of a three-unit line would all read a sum
+// taken before the others committed, all pass, and the line would end up with
+// sixteen units written off. What stops it is the order row's lock, and only
+// PostgreSQL can be asked whether it really does.
+func TestConcurrentLineCancellationsCannotExceedTheLine(t *testing.T) {
+	const callers = 16
+
+	ctx := context.Background()
+	svc, _ := newServiceWithStore(t, &slowSumStore{
+		Repository: repository.New(testPool.Pool()),
+		pause:      50 * time.Millisecond,
+	})
+
+	ord, err := svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+
+	detail, err := svc.GetOrder(ctx, ord.ID)
+	require.NoError(t, err)
+	require.Len(t, detail.Items, 1)
+	lineID := detail.Items[0].ID
+	bought := detail.Items[0].Quantity
+
+	var (
+		finish sync.WaitGroup
+		errs   = make([]error, callers)
+	)
+	finish.Add(callers)
+
+	for i := range callers {
+		go func(idx int) {
+			defer finish.Done()
+
+			_, cancelErr := svc.CancelOrderLine(ctx, ord.ID, service.CancelOrderLineInput{
+				OrderLineItemID: lineID, Quantity: 1, Reason: "out of stock",
+			})
+			errs[idx] = cancelErr
+		}(i)
+	}
+
+	finish.Wait()
+
+	var succeeded int64
+	for i := range errs {
+		if errs[i] == nil {
+			succeeded++
+
+			continue
+		}
+		assert.Equal(t, errors.KindConflict, errors.KindOf(errs[i]),
+			"a caller that lost the race is refused with a conflict, not an internal error: %v",
+			errs[i])
+	}
+	assert.Equal(t, bought, succeeded,
+		"exactly as many callers as the line has units may win")
+
+	var written int64
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT coalesce(sum(quantity), 0) FROM order_line_cancellations
+		 WHERE order_line_item_id = $1`, lineID).Scan(&written))
+	assert.Equal(t, bought, written, "and the table holds exactly the line's units")
+}
+
+// TestTheLineCancellationConstraintsAreTheLastDefence checks the two rules the
+// schema holds on its own.
+//
+// The service refuses both shapes before they reach the database. These are
+// written THROUGH the repository, which is the seam a hand-written statement
+// would use.
+func TestTheLineCancellationConstraintsAreTheLastDefence(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	repo := repository.New(testPool.Pool())
+
+	ord, err := svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+
+	detail, err := svc.GetOrder(ctx, ord.ID)
+	require.NoError(t, err)
+	require.Len(t, detail.Items, 1)
+	lineID := detail.Items[0].ID
+
+	for name, tc := range map[string]struct {
+		cancellation models.OrderLineCancellation
+		kind         errors.Kind
+	}{
+		"zero units": {
+			cancellation: models.OrderLineCancellation{
+				ID: models.NewLineCancellationID(), OrderLineItemID: lineID,
+				Quantity: 0, Reason: "nothing at all",
+			},
+			kind: errors.KindInvalid,
+		},
+		"no reason": {
+			cancellation: models.OrderLineCancellation{
+				ID: models.NewLineCancellationID(), OrderLineItemID: lineID,
+				Quantity: 1, Reason: "",
+			},
+			kind: errors.KindInvalid,
+		},
+		"a line that does not exist": {
+			cancellation: models.OrderLineCancellation{
+				ID: models.NewLineCancellationID(), OrderLineItemID: "oli_NOWHERE",
+				Quantity: 1, Reason: "out of stock",
+			},
+			// NOT Invalid: the write is well formed and names a line that is not
+			// there, which is the same answer the order's own foreign key gives.
+			kind: errors.KindNotFound,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, writeErr := repo.CreateLineCancellation(ctx, tc.cancellation)
+
+			require.Error(t, writeErr)
+			assert.Equal(t, tc.kind, errors.KindOf(writeErr),
+				"a constraint violation is a CLIENT error and each one has its own "+
+					"answer; an unclassified constraint reaches the caller as a 500: %v",
+				writeErr)
+		})
+	}
+}
+
+// TestACanceledLineFallsWithItsOrder keeps the in-module cascade honest.
+func TestACanceledLineFallsWithItsOrder(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	ord, err := svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+
+	detail, err := svc.GetOrder(ctx, ord.ID)
+	require.NoError(t, err)
+	require.Len(t, detail.Items, 1)
+
+	_, err = svc.CancelOrderLine(ctx, ord.ID, service.CancelOrderLineInput{
+		OrderLineItemID: detail.Items[0].ID, Quantity: 1, Reason: "out of stock",
+	})
+	require.NoError(t, err)
+
+	// Read back over the REAL query, which reaches the order through the line
+	// rather than through a column of its own; the fake cannot prove that join.
+	listed, err := svc.ListLineCancellations(ctx, ord.ID)
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.Equal(t, detail.Items[0].ID, listed[0].OrderLineItemID)
+	assert.Equal(t, "out of stock", listed[0].Reason)
+
+	_, err = testPool.Pool().Exec(ctx, `DELETE FROM orders WHERE id = $1`, ord.ID)
+	require.NoError(t, err)
+
+	var remaining int64
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM order_line_cancellations WHERE order_line_item_id = $1`,
+		detail.Items[0].ID).Scan(&remaining))
+	assert.Zero(t, remaining,
+		"the cancellation hangs off the LINE, and the line falls with the order")
 }
 
 // TestSummaryTotalsOnTheRealDatabase verifies writing the summary on the real

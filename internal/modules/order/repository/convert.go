@@ -48,6 +48,13 @@ const (
 	// codeEvidenceAttached names the double click: the same file bound to the
 	// same claim twice.
 	codeEvidenceAttached = "order_claim_evidence_already_attached"
+
+	// codeLineNotFound reports that the order line a record hangs from does not
+	// exist.
+	codeLineNotFound = "order_line_item_not_found"
+	// codeReasonRequired reports a record written without the reason its table
+	// requires.
+	codeReasonRequired = "order_reason_required"
 )
 
 // Constraint names; used to convert a driver error into a meaningful typed
@@ -64,6 +71,8 @@ const (
 	constraintLineTotals          = "order_line_items_totals_consistent"
 	constraintLineDiscount        = "order_line_items_discount_within_subtotal"
 	constraintLineQtyPositive     = "order_line_items_quantity_positive"
+	constraintCancelQtyPositive   = "order_line_cancellations_quantity_positive"
+	constraintCancelReason        = "order_line_cancellations_reason_present"
 	constraintRefundWithinPaid    = "order_summaries_refund_within_paid"
 	constraintOrdersCanceledStamp = "orders_canceled_stamp"
 	constraintOrdersCompleteStamp = "orders_completed_stamp"
@@ -83,6 +92,11 @@ const (
 	// "_order_id_fkey", and a record hanging from a claim that is not there is
 	// "the claim was not found" rather than "the order was not found".
 	constraintClaimFKSuffix = "_order_claim_id_fkey"
+	// constraintLineFKSuffix is the same for the tables hanging from a LINE.
+	// A record written against a line that is not there is "the line was not
+	// found" rather than a server fault, and it is a suffix for the reason the
+	// two above are: every such table names the column the same way.
+	constraintLineFKSuffix = "_order_line_item_id_fkey"
 )
 
 // PostgreSQL SQLSTATE codes.
@@ -117,6 +131,9 @@ func classify(err error, code, format string, a ...any) error {
 		}
 		if strings.HasSuffix(pgErr.ConstraintName, constraintOrderFKSuffix) {
 			return errors.Wrap(err, errors.KindNotFound, codeOrderNotFound, "order not found")
+		}
+		if strings.HasSuffix(pgErr.ConstraintName, constraintLineFKSuffix) {
+			return errors.Wrap(err, errors.KindNotFound, codeLineNotFound, "order line not found")
 		}
 	case sqlStateCheckViolation:
 		return classifyCheck(err, pgErr.ConstraintName, code, format, a...)
@@ -183,6 +200,14 @@ func classifyCheck(err error, constraint, code, format string, a ...any) error {
 		// intervention; no path in the service can violate this constraint.
 		return errors.Wrap(err, errors.KindInternal, codeInconsistentState,
 			"the order status and the timestamp are inconsistent (constraint: %s)", constraint)
+	case constraint == constraintCancelQtyPositive:
+		// The service refuses a zero or negative write-off first; landing here
+		// means the check was skipped or the SQL was applied directly.
+		return errors.Wrap(err, errors.KindInvalid, codeAmountOutOfRange,
+			"the canceled quantity must be positive")
+	case constraint == constraintCancelReason:
+		return errors.Wrap(err, errors.KindInvalid, codeReasonRequired,
+			"a cancellation has to say why")
 	case constraint == constraintEvidencePresent:
 		// The service refuses the empty id first; landing here means the check
 		// was skipped or the SQL was applied directly.
@@ -376,6 +401,19 @@ func toCreditLine(row orderdb.OrderCreditLine) models.OrderCreditLine {
 		Note:      row.Note,
 		CreatedAt: toTime(row.CreatedAt),
 		UpdatedAt: toTime(row.UpdatedAt),
+	}
+}
+
+// toLineCancellation converts a database row into the domain model.
+func toLineCancellation(row orderdb.OrderLineCancellation) models.OrderLineCancellation {
+	return models.OrderLineCancellation{
+		ID:              row.ID,
+		OrderLineItemID: row.OrderLineItemID,
+		Quantity:        row.Quantity,
+		Reason:          row.Reason,
+		Note:            row.Note,
+		CreatedAt:       toTime(row.CreatedAt),
+		UpdatedAt:       toTime(row.UpdatedAt),
 	}
 }
 

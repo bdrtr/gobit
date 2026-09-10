@@ -116,6 +116,8 @@ func (h *Handler) Routes(r chi.Router) {
 	// had the day before.
 	write.Post("/admin/v1/orders/{id}/credit-lines", h.adminCreateCreditLine)
 	read.Get("/admin/v1/orders/{id}/credit-lines", h.adminListCreditLines)
+	write.Post("/admin/v1/orders/{id}/line-cancellations", h.adminCancelOrderLine)
+	read.Get("/admin/v1/orders/{id}/line-cancellations", h.adminListLineCancellations)
 	read.Get("/admin/v1/orders/{id}/returns", h.adminListReturns)
 	write.Post("/admin/v1/orders/{id}/returns", h.adminCreateReturn)
 	read.Get("/admin/v1/orders/{id}/returns/{returnId}", h.adminGetReturn)

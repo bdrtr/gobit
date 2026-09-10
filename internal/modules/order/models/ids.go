@@ -41,6 +41,8 @@ const (
 	CreditLineIDPrefix = "ocl_"
 	// LineTaxIDPrefix is the prefix of a line's tax component identifier.
 	LineTaxIDPrefix = "olt_"
+	// LineCancellationIDPrefix is the prefix of a line cancellation identifier.
+	LineCancellationIDPrefix = "olc_"
 )
 
 // idEncoding is the unpadded encoding over the Crockford Base32 alphabet. A
@@ -71,6 +73,9 @@ func NewCreditLineID() string { return newID(CreditLineIDPrefix, time.Now()) }
 
 // NewLineTaxID produces a new identifier for a line's tax component.
 func NewLineTaxID() string { return newID(LineTaxIDPrefix, time.Now()) }
+
+// NewLineCancellationID produces a new order line cancellation identifier.
+func NewLineCancellationID() string { return newID(LineCancellationIDPrefix, time.Now()) }
 
 // NewSummaryID produces a new order summary identifier.
 func NewSummaryID() string { return newID(SummaryIDPrefix, time.Now()) }

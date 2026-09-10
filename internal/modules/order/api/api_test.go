@@ -66,6 +66,9 @@ type fakeOrders struct {
 	timelineErr   error
 	credits       []models.OrderCreditLine
 	creditErr     error
+	cancels       []models.OrderLineCancellation
+	cancelErr     error
+	cancelInput   service.CancelOrderLineInput
 	evidence      []models.ClaimEvidence
 	evidenceErr   error
 	evidenceInput service.AttachClaimEvidenceInput
@@ -192,6 +195,37 @@ func (f *fakeOrders) ListCreditLines(
 	_ context.Context, _ string,
 ) ([]models.OrderCreditLine, error) {
 	return f.credits, f.creditErr
+}
+
+// CancelOrderLine records the write-off the handler asked for.
+//
+// The INPUT is kept, not just the answer: the handler's job is to turn a body
+// into this struct, and a fake that dropped it would let a route send the wrong
+// line id while every assertion still passed.
+func (f *fakeOrders) CancelOrderLine(
+	_ context.Context, _ string, in service.CancelOrderLineInput,
+) (models.OrderLineCancellation, error) {
+	f.cancelInput = in
+	if f.cancelErr != nil {
+		return models.OrderLineCancellation{}, f.cancelErr
+	}
+	cancellation := models.OrderLineCancellation{
+		ID:              "olc_1",
+		OrderLineItemID: in.OrderLineItemID,
+		Quantity:        in.Quantity,
+		Reason:          in.Reason,
+		Note:            in.Note,
+	}
+	f.cancels = append(f.cancels, cancellation)
+
+	return cancellation, nil
+}
+
+// ListLineCancellations returns the cancellations recorded so far.
+func (f *fakeOrders) ListLineCancellations(
+	_ context.Context, _ string,
+) ([]models.OrderLineCancellation, error) {
+	return f.cancels, f.cancelErr
 }
 
 // StorefrontTimeline returns the SAME scripted entries as Timeline, unfiltered.

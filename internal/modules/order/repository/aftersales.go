@@ -445,6 +445,72 @@ func (r *Repository) CreditedTotal(ctx context.Context, orderID string) (int64, 
 	return total, nil
 }
 
+// --- line cancellations ------------------------------------------------------
+
+// CreateLineCancellation records units of a line that will not be delivered.
+func (r *Repository) CreateLineCancellation(
+	ctx context.Context, cancellation models.OrderLineCancellation,
+) (models.OrderLineCancellation, error) {
+	row, err := r.queries(ctx).CreateOrderLineCancellation(ctx,
+		orderdb.CreateOrderLineCancellationParams{
+			ID:              cancellation.ID,
+			OrderLineItemID: cancellation.OrderLineItemID,
+			Quantity:        cancellation.Quantity,
+			Reason:          cancellation.Reason,
+			Note:            cancellation.Note,
+		})
+	if err != nil {
+		return models.OrderLineCancellation{}, classify(err, codeQueryFailed,
+			"could not create the order line cancellation")
+	}
+
+	return toLineCancellation(row), nil
+}
+
+// ListLineCancellations returns the order's line cancellations, oldest first.
+func (r *Repository) ListLineCancellations(
+	ctx context.Context, orderID string,
+) ([]models.OrderLineCancellation, error) {
+	rows, err := r.queries(ctx).ListOrderLineCancellations(ctx, orderID)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed,
+			"could not read the order line cancellations")
+	}
+
+	out := make([]models.OrderLineCancellation, 0, len(rows))
+	for i := range rows {
+		out = append(out, toLineCancellation(rows[i]))
+	}
+
+	return out, nil
+}
+
+// CanceledQuantities reports how many units of each given order line have
+// already been written off.
+//
+// The shape is [Repository.ReturnedQuantities]'s and so is the reason: a line
+// nobody canceled is ABSENT rather than zero, because the query returns rows
+// and not a census.
+func (r *Repository) CanceledQuantities(
+	ctx context.Context, lineItemIDs []string,
+) (map[string]int64, error) {
+	out := make(map[string]int64, len(lineItemIDs))
+	if len(lineItemIDs) == 0 {
+		return out, nil
+	}
+
+	rows, err := r.queries(ctx).SumCanceledQuantities(ctx, lineItemIDs)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "could not sum the canceled quantities")
+	}
+
+	for i := range rows {
+		out[rows[i].OrderLineItemID] = rows[i].Canceled
+	}
+
+	return out, nil
+}
+
 // --- claim evidence ----------------------------------------------------------
 
 // CreateClaimEvidence binds a file to the claim.

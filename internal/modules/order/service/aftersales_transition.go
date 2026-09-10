@@ -296,13 +296,22 @@ func (s *Service) transitionClaim(
 }
 
 // checkReturnQuantities verifies that the requested lines belong to the order
-// and that no line is asked back more times than it was bought.
+// and that no line is asked back more times than it has units left.
 //
 // # Why the rule cannot live in the database
 //
 // It spans rows: what may be returned depends on every OTHER live return of the
-// same line. A CHECK sees only its own row, so the sum is read here — under the
-// order's lock, which is what makes reading it and writing against it atomic.
+// same line AND on every unit written off it. A CHECK sees only its own row, so
+// the sum is read here — under the order's lock, which is what makes reading it
+// and writing against it atomic.
+//
+// # Why a canceled unit counts against a return
+//
+// A unit that will never be delivered cannot come back. Counting only returns
+// would let the same three-unit line be asked back twice and canceled once, and
+// the goods that arrived at the warehouse would then disagree with the record by
+// a quantity nobody could account for. The two acts share one ceiling and
+// [Service.unitsSpokenFor] is where they are added.
 //
 // # Why a canceled return does not count
 //
@@ -312,7 +321,7 @@ func (s *Service) transitionClaim(
 // what was bought.
 func checkReturnQuantities(
 	lines []models.OrderLineItem,
-	alreadyReturned map[string]int64,
+	spokenFor map[string]int64,
 	requested []ReturnLineInput,
 ) error {
 	ordered := make(map[string]int64, len(lines))
@@ -327,12 +336,13 @@ func checkReturnQuantities(
 				"line %s is not on this order", requested[i].OrderLineItemID)
 		}
 
-		total := alreadyReturned[requested[i].OrderLineItemID] + requested[i].Quantity
+		total := spokenFor[requested[i].OrderLineItemID] + requested[i].Quantity
 		if total > bought {
 			return errors.Conflict(CodeReturnQuantityExceeded,
-				"more of line %s was asked back than was bought: %d requested plus %d already, %d bought",
+				"more of line %s was asked back than is left: %d requested plus %d already "+
+					"returned or canceled, %d bought",
 				requested[i].OrderLineItemID, requested[i].Quantity,
-				alreadyReturned[requested[i].OrderLineItemID], bought)
+				spokenFor[requested[i].OrderLineItemID], bought)
 		}
 	}
 

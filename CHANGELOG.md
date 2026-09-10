@@ -20,6 +20,34 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir satır artık KISMEN iptal edilebiliyor** (`order_line_cancellations`,
+  ADR 0113). İptal ya hep ya hiçti: `CancelOrder` siparişin tamamını alır ve
+  tahsilatı olan bir siparişi reddeder — ki olduğu şey için doğrudur, o
+  checkout sagasının telafisidir ve hiçbir şey sevk edilmemiş, hiçbir şey
+  çekilmemişken koşar. İfade edemediği şey sıradan olandı: canlı bir siparişin
+  bir satırı stoktan düşer, depoda hasarlanır ya da müşteri onu bırakırken
+  siparişin gerisi sevk olur. Modülde bunu söyleyecek hiçbir şey yoktu, ve
+  kaydetmenin iki yolu da yanlıştı — ya tüm siparişi iptal et, ya da sepetin
+  anlık görüntüsü olan satırın adedini düzenle.
+  Karar: kayıt satırın KAÇ biriminin teslim edilmeyeceğini, sebebiyle birlikte
+  tutuyor; tavan — alınan eksi iade istenen eksi zaten iptal edilen — SİPARİŞİN
+  KİLİDİ altında denetleniyor. İade yolu aynı toplamı okuyor, yani bir birim
+  hangi eylem konuştuysa BİR KEZ konuşulmuş oluyor: üç birimlik bir satır iki
+  kez iade istenip bir kez iptal edilemiyor.
+  Bedelleri adıyla yazılı. Siparişin TOPLAMI da satırın ADEDİ de kımıldamıyor
+  (ikisi de anlık görüntü, ve toplam satırlara CHECK ile çivili). DURUM da
+  kımıldamıyor: son satırı da iptal edilmiş bir sipariş hâlâ birinin kapatması
+  gereken bir sipariştir. PARA ikinci bir eylem — ödenmiş ama gelmeyecek bir
+  birim iade ya da kredidir (ADR 0105) ve hangisi olduğu bu modülün tutmadığı
+  bir politikaya bağlı; ödemeden önceki bir iptal ise hiçbir şey borçlu değil.
+  STOK geri konmuyor, ve adlandırılmaya değer sınır bu: order modülü
+  inventory'ye uzanamaz (ADR 0006), yani rezervasyonu bırakmak üstteki bir akışın
+  işidir ve henüz isteyen bir akış yok — tetik, isteyen ilk akıştır.
+  Eşzamanlılık iddiası gerçek Postgres üzerinde kanıtlı: kilit kaldırıldığında
+  on altı çağıranın on altısı da kazanıyor ve üç birimlik satıra on altı birim
+  yazılıyor. İlk yazdığım test bunu YAKALAMIYORDU — goroutine'leri yalnızca
+  başta buluşturmak yetmiyor; toplamın okunduğu yere yapısal bir gecikme
+  konunca mutasyon kesin biçimde kırmızıya döndü.
 - **Bir alım artık bir birim kazandırıyor** ("al X, kazan Y" mekaniği,
   ADR 0112). `buyget` bir enum'da kelimeydi ve başka bir şey değildi: tür
   yazılabiliyor, promosyon yayına alınamıyor, hesap da onu atlıyordu — hiç

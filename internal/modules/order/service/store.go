@@ -166,6 +166,17 @@ type Store interface {
 	// CreditedTotal is the SUM of the order's credit lines, read rather than
 	// stored.
 	CreditedTotal(ctx context.Context, orderID string) (int64, error)
+	// CreateLineCancellation records units of a line that will not be delivered.
+	CreateLineCancellation(
+		ctx context.Context, cancellation models.OrderLineCancellation,
+	) (models.OrderLineCancellation, error)
+	// ListLineCancellations returns the order's line cancellations, oldest first.
+	ListLineCancellations(
+		ctx context.Context, orderID string,
+	) ([]models.OrderLineCancellation, error)
+	// CanceledQuantities reports how many units of each given order line have
+	// already been written off; a line nobody canceled is absent from the map.
+	CanceledQuantities(ctx context.Context, lineItemIDs []string) (map[string]int64, error)
 	// CreateLineTax records one component of a line's tax stack.
 	CreateLineTax(ctx context.Context, component models.OrderLineTax) (models.OrderLineTax, error)
 	// ListLineItems returns the lines of the order in creation order.

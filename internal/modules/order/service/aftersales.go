@@ -116,11 +116,11 @@ func (s *Service) CreateReturn(ctx context.Context, in CreateReturnInput) (model
 		// would leave a rejected return in the table for the length of the
 		// transaction, and the sum the NEXT request reads is exactly that
 		// table.
-		returned, err := s.store.ReturnedQuantities(ctx, lineIDsOf(in.Lines))
+		spokenFor, err := s.unitsSpokenFor(ctx, lineIDsOf(in.Lines))
 		if err != nil {
 			return err
 		}
-		if err := checkReturnQuantities(lines, returned, in.Lines); err != nil {
+		if err := checkReturnQuantities(lines, spokenFor, in.Lines); err != nil {
 			return err
 		}
 

@@ -419,6 +419,27 @@ func describedEndpoints() []endpointExpectation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/admin/v1/orders/{id}/line-cancellations",
+			status:  "201",
+			request: cancelOrderLineRequest{},
+			response: lineCancellationDTO{
+				ID: "olc_1", OrderLineItemID: "oli_1", Quantity: 1, Reason: "out of stock",
+				Note:      "the last one was damaged",
+				CreatedAt: describeSampleTime, UpdatedAt: describeSampleTime,
+			},
+		},
+		{
+			// Unpaged, like the credits: the cancellations belong to one order.
+			method: http.MethodGet, path: "/admin/v1/orders/{id}/line-cancellations",
+			status: "200",
+			shape:  unpagedList,
+			response: lineCancellationDTO{
+				ID: "olc_1", OrderLineItemID: "oli_1", Quantity: 1, Reason: "out of stock",
+				Note:      "the last one was damaged",
+				CreatedAt: describeSampleTime, UpdatedAt: describeSampleTime,
+			},
+		},
+		{
 			// The customer's timeline is the same shape with the money fields
 			// GONE from the type rather than left empty, so this row is what
 			// notices if they ever come back.

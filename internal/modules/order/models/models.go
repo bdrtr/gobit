@@ -448,6 +448,37 @@ type OrderCreditLine struct {
 	UpdatedAt time.Time
 }
 
+// OrderLineCancellation is a number of units of one line that will NOT be
+// delivered.
+//
+// It is a fact about GOODS and not about money: the order's total still says
+// what was sold, and what the customer is owed for a unit they paid for and will
+// not receive is a refund or a credit ([OrderCreditLine]), which is a separate
+// act with a separate authorization.
+//
+// A unit is spoken for once it has been canceled OR asked back, and the two
+// ceilings are one arithmetic: nothing can be returned that was written off, and
+// nothing can be written off that is already coming back.
+type OrderLineCancellation struct {
+	// ID is the identifier with the "olc_" prefix.
+	ID string
+	// OrderLineItemID is the line whose units were written off.
+	//
+	// The ORDER is not repeated here: the line already names it, and a second
+	// copy is a second thing to keep true.
+	OrderLineItemID string
+	// Quantity is how many units were written off; it is always POSITIVE.
+	Quantity int64
+	// Reason is the merchant's short word for why; this module does not
+	// enumerate it and does not accept it empty.
+	Reason string
+	// Note is the merchant's free-form detail; it may be empty.
+	Note string
+	// CreatedAt and UpdatedAt are UTC.
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 // Outstanding returns the OUTSTANDING (not yet collected) amount of the order.
 //
 // The order total and the credited total are taken as parameters because the

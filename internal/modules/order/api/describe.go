@@ -612,6 +612,46 @@ func describeCreditLines(d *openapi.Doc) {
 	})
 }
 
+// describeLineCancellations documents the partial cancellation.
+func describeLineCancellations(d *openapi.Doc) {
+	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/line-cancellations", openapi.Operation{
+		Summary: "Writes off units of one line that will not be delivered.",
+		Description: "This is NOT the whole-order cancellation. That one is the checkout " +
+			"saga's compensation and refuses an order that has collected money; this one is " +
+			"for a live order whose line went out of stock, was damaged, or was dropped at " +
+			"the customer's request while the rest ships. " +
+			"\n\n" +
+			"NEITHER THE TOTAL NOR THE STATUS MOVES. The order's total says what was sold " +
+			"and goes on saying it; what a customer is owed for a unit they paid for and " +
+			"will not receive is a refund or a credit, which is a separate act with a " +
+			"separate authorization — and a cancellation made before payment owes nothing " +
+			"at all. An order whose every line is written off is still an order somebody " +
+			"has to close. " +
+			"\n\n" +
+			"A UNIT IS SPOKEN FOR ONCE, whichever act spoke for it: what may be canceled " +
+			"is what was bought minus what has been asked back minus what is already " +
+			"canceled, and the return endpoint reads the same ceiling from the other side. " +
+			"The quantity has to be POSITIVE and the reason is REQUIRED — a line that " +
+			"vanished for no recorded reason is a question nobody can answer six months " +
+			"later.",
+		RequestBody: d.RequestBody(cancelOrderLineRequest{}),
+		Responses: map[string]any{
+			"201": openapi.Response("The cancellation that was written",
+				d.Item(lineCancellationDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/line-cancellations", openapi.Operation{
+		Summary: "Lists the order's line cancellations, oldest first.",
+		Description: "The record is an ARRAY inside the plain envelope: the cancellations " +
+			"belong to one order and there is no page to ask for.",
+		Responses: map[string]any{
+			"200": openapi.Response("The order's line cancellations",
+				d.Item([]lineCancellationDTO{})),
+		},
+	})
+}
+
 // describeTimeline documents the support desk's view.
 func describeTimeline(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/timeline", openapi.Operation{
@@ -671,6 +711,7 @@ func describeTimeline(d *openapi.Doc) {
 	})
 
 	describeCreditLines(d)
+	describeLineCancellations(d)
 	describeAfterSales(d)
 	describeOrderDetail(d)
 }

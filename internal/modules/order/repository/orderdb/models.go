@@ -100,6 +100,16 @@ type OrderExchange struct {
 	UpdatedAt     pgtype.Timestamptz
 }
 
+type OrderLineCancellation struct {
+	ID              string
+	OrderLineItemID string
+	Quantity        int64
+	Reason          string
+	Note            string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type OrderLineItem struct {
 	ID            string
 	OrderID       string
