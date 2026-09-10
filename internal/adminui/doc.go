@@ -55,7 +55,7 @@
 // module.
 //
 // The panel's read and write surface together cover ONE module, out of the
-// seventeen modules of internal/modules. Nothing here is a general admin
+// eighteen modules of internal/modules. Nothing here is a general admin
 // surface, and no module gets an admin-facing contract until a panel screen
 // needs it: an unused compiler-unchecked contract is the error class ADR 0009
 // names.

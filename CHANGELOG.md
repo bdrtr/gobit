@@ -20,6 +20,30 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Mağaza artık kim olduğunu SÖYLÜYOR** (yeni `settings` modülü, ADR 0115).
+  Faturalama akışı iki tarafı da ÇAĞIRANINDAN alıyordu ve satıcının neden orada
+  olduğunu kendi godoc'u yazmıştı: "satıcının yasal bilgileri mağazanın kendi
+  yapılandırmasıdır ve burada hiçbir modülde yaşamıyor." Bunun iki sonucu vardı:
+  aynı mağazadan kesilen iki belge iki farklı satıcı adlandırabiliyordu, ve her
+  faturaya basılan kimlik, operatörün düzenleyemediği tek şeydi — fiyatı, ürünü,
+  siparişi değiştirebilen kişi mağazanın vergi dairesini düzeltmek için yeniden
+  dağıtım istemek zorundaydı.
+  Karar: `settings` modülü TEK bir `store_profile` tutuyor — yasal ad, vergi
+  numarası, vergi dairesi, e-posta, adres, ülke — ve faturalama akışı satıcıyı
+  ondan okuyor. Satıcı artık hiçbir isteğin parçası değil.
+  Bedelleri: profil yazılmadan belge kesilmesi REDDEDİLİYOR ve mesaj ucun adını
+  söylüyor (ilk faturasını kesen operatör tam da profili doldurmamış kişidir).
+  Yönetim gövdesi `seller` alanını KAYBEDİYOR — yayımlanmış bir yüzeyi
+  daraltmak burada yan etki değil kararın kendisi: çağıranın verebildiği bir
+  alan, iki çağıranın farklı verebildiği bir alandır. PATCH değil PUT, çünkü
+  kayıt bir KİMLİK ve kısmi yazma bir düzenlemeden gelen yasal adla başka bir
+  düzenlemeden gelen vergi numarasını yan yana bırakırdı. Kurulum başına TEK
+  profil (ADR 0009 çok kiracılılığı kurulum sınırına koyar).
+  Modül kolonlarını KİŞİSEL VERİ olarak beyan ediyor ama silici GERÇEKLEMİYOR:
+  şahıs şirketi bir kişidir, ama silinmeyi isteyen özne MÜŞTERİDİR ve
+  denetleyicinin kendi kimliğini silmek, kesilmiş belgeler onu basmaya devam
+  ederken mağazayı kendi kurulumundan silmek olurdu. E-posta HİÇBİR YERDE
+  katlanmıyor ve muafiyet bedelini yazıyor: bu adres basılıyor, eşleştirilmiyor.
 - **Bir değişim artık malını gönderebiliyor** (`order_replacements` ikinci bir
   kaynak tanıyor, ADR 0114). Değişim, yalnızca geri çekilebilen bir istekti. Göç
   000008 onun "tamamlandı" durumunu kaldırırken geri getirecek koşulu adıyla

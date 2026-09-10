@@ -66,6 +66,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion"
 	"github.com/bdrtr/gobit/internal/modules/region"
 	"github.com/bdrtr/gobit/internal/modules/review"
+	"github.com/bdrtr/gobit/internal/modules/settings"
 	"github.com/bdrtr/gobit/internal/modules/tax"
 )
 
@@ -557,6 +558,14 @@ func registerModules(registry *module.Registry, cfg config.Config, log *slog.Log
 	// depends on it — the dependency runs the other way, and only through a
 	// caller that already holds both.
 	registry.Add(invoice.New(invoice.Options{Logger: log}))
+	// Settings. It knows no module and no module knows it by import: the
+	// invoicing flow reads the shop's identity through the primitive surface,
+	// the way it reads everything else it cannot import (ADR 0114 era, ADR 0006).
+	//
+	// It is registered beside invoice because that is its only reader today, and
+	// the order between them does not matter: neither resolves the other during
+	// registration.
+	registry.Add(settings.New(log))
 	// Review. It knows no other module either: what a review is ABOUT is a
 	// product identifier it stores and never validates, the same rule an order
 	// line follows for the variant it sold.

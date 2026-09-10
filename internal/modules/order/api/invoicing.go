@@ -56,11 +56,13 @@ type invoicingParty struct {
 }
 
 // invoicingIssueRequest is the body of the issue endpoint.
+//
+// There is no seller here and that is the decision rather than an omission: the
+// shop's identity is its own record (ADR 0115), so the document's issuer is not
+// a per-request choice.
 type invoicingIssueRequest struct {
 	// SeriesPrefix is the letters of the series to take the number from.
 	SeriesPrefix string `json:"series_prefix"`
-	// Seller is the shop, as it is to be printed.
-	Seller invoicingParty `json:"seller"`
 	// Buyer is the customer; an empty e-mail is filled in from the order.
 	Buyer invoicingParty `json:"buyer"`
 	// Metadata is free structured context for the document.

@@ -27,15 +27,16 @@ func NewInterop(w *Workflows) *Interop { return &Interop{w: w} }
 
 // interopIssueRequest is the body [Interop.IssueForOrder] accepts.
 //
-// The two parties travel as JSON rather than as a dozen string arguments: they
-// are printed fields with fixed meanings, and a positional signature of twelve
-// strings is one a caller gets wrong silently.
+// The buyer travels as JSON rather than as six string arguments: they are
+// printed fields with fixed meanings, and a positional signature of six strings
+// is one a caller gets wrong silently.
 type interopIssueRequest struct {
 	// SeriesPrefix is the letters of the series to take the number from.
 	SeriesPrefix string `json:"series_prefix"`
-	// Seller and Buyer are the two sides as they are to be printed.
-	Seller Party `json:"seller"`
-	Buyer  Party `json:"buyer"`
+	// Buyer is the customer as they are to be printed. The SELLER is not here:
+	// it comes from the shop's own record (ADR 0115), so a caller cannot decide
+	// who issued the document.
+	Buyer Party `json:"buyer"`
 	// Metadata is free structured context for the document.
 	Metadata map[string]any `json:"metadata"`
 }
@@ -59,7 +60,6 @@ func (i *Interop) IssueForOrder(
 	out, err := i.w.IssueForOrder(ctx, IssueInput{
 		OrderID:      orderID,
 		SeriesPrefix: body.SeriesPrefix,
-		Seller:       body.Seller,
 		Buyer:        body.Buyer,
 		Metadata:     body.Metadata,
 	})

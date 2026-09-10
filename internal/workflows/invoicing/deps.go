@@ -51,6 +51,9 @@ const (
 	ServiceInvoice = "invoice.interop"
 	// ServiceLink is the core's Module Links service.
 	ServiceLink = "core.link"
+	// ServiceSettings is the settings module's cross-module surface: who the
+	// shop IS.
+	ServiceSettings = "settings.interop"
 )
 
 // Error codes.
@@ -64,6 +67,9 @@ const (
 	CodeLinkFailed = "invoicing_link_failed"
 	// CodeSetupFailed reports a dependency that could not be resolved.
 	CodeSetupFailed = "invoicing_setup_failed"
+	// CodeSellerUnknown reports that the shop has not said who it is, so no
+	// document can name its issuer.
+	CodeSellerUnknown = "invoicing_seller_unknown"
 )
 
 // Orders is the part of the order module this flow reads.
@@ -75,6 +81,17 @@ type Orders interface {
 	// OrderInvoiceJSON returns everything a document has to print about an
 	// order: its lines with their tax rates, its totals and its contact.
 	OrderInvoiceJSON(ctx context.Context, orderID string) (json.RawMessage, error)
+}
+
+// StoreProfile is the part of the settings module this flow reads.
+//
+// One method and one document: who the shop is. The seller used to come from
+// the CALLER of this flow, which meant two documents from one shop could name
+// two different sellers; ADR 0115 made it a record.
+type StoreProfile interface {
+	// StoreProfileJSON returns the shop's printed identity; NotFound when the
+	// shop has not said who it is.
+	StoreProfileJSON(ctx context.Context) (json.RawMessage, error)
 }
 
 // Links is the part of the core's link service this flow uses.
@@ -97,6 +114,8 @@ type Deps struct {
 	Invoices Invoices
 	// Links is the core's Module Links service.
 	Links Links
+	// Profile is the settings module's primitive surface.
+	Profile StoreProfile
 	// Logger falls back to slog.Default when nil.
 	Logger *slog.Logger
 }
@@ -106,6 +125,7 @@ type Workflows struct {
 	orders   Orders
 	invoices Invoices
 	links    Links
+	profile  StoreProfile
 	log      *slog.Logger
 }
 
@@ -122,6 +142,10 @@ func New(deps Deps) (*Workflows, error) {
 		return nil, errors.Internal(CodeSetupFailed, "the invoicing flow needs the invoice service")
 	case deps.Links == nil:
 		return nil, errors.Internal(CodeSetupFailed, "the invoicing flow needs the link service")
+	case deps.Profile == nil:
+		return nil, errors.Internal(CodeSetupFailed,
+			"the invoicing flow needs the store profile surface; without it no document "+
+				"can name its issuer")
 	}
 
 	if deps.Logger == nil {
@@ -132,6 +156,7 @@ func New(deps Deps) (*Workflows, error) {
 		orders:   deps.Orders,
 		invoices: deps.Invoices,
 		links:    deps.Links,
+		profile:  deps.Profile,
 		log:      deps.Logger,
 	}, nil
 }
@@ -159,5 +184,11 @@ func FromContainer(c *container.Container) (*Workflows, error) {
 			"the invoicing flow could not resolve %q", ServiceLink)
 	}
 
-	return New(Deps{Orders: orders, Invoices: invoices, Links: links})
+	profile, err := container.Resolve[StoreProfile](c, ServiceSettings)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindOf(err), CodeSetupFailed,
+			"the invoicing flow could not resolve %q", ServiceSettings)
+	}
+
+	return New(Deps{Orders: orders, Invoices: invoices, Links: links, Profile: profile})
 }

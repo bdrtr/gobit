@@ -117,6 +117,8 @@ linters:
               desc: "Principle 2.1/2.4 - the product module cannot depend directly on the invoice module; access goes through the container with a service interface."
             - pkg: "github.com/bdrtr/gobit/internal/modules/review"
               desc: "Principle 2.1/2.4 - the product module cannot depend directly on the review module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/settings"
+              desc: "Principle 2.1/2.4 - the product module cannot depend directly on the settings module; access goes through the container with a service interface."
 
         module-isolation-pricing:
           files:
@@ -155,6 +157,8 @@ linters:
               desc: "Principle 2.1/2.4 - the pricing module cannot depend directly on the invoice module; access goes through the container with a service interface."
             - pkg: "github.com/bdrtr/gobit/internal/modules/review"
               desc: "Principle 2.1/2.4 - the pricing module cannot depend directly on the review module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/settings"
+              desc: "Principle 2.1/2.4 - the pricing module cannot depend directly on the settings module; access goes through the container with a service interface."
 
         module-isolation-inventory:
           files:
@@ -193,6 +197,8 @@ linters:
               desc: "Principle 2.1/2.4 - the inventory module cannot depend directly on the invoice module; access goes through the container with a service interface."
             - pkg: "github.com/bdrtr/gobit/internal/modules/review"
               desc: "Principle 2.1/2.4 - the inventory module cannot depend directly on the review module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/settings"
+              desc: "Principle 2.1/2.4 - the inventory module cannot depend directly on the settings module; access goes through the container with a service interface."
 
         module-isolation-cart:
           files:
@@ -231,6 +237,8 @@ linters:
               desc: "Principle 2.1/2.4 - the cart module cannot depend directly on the invoice module; access goes through the container with a service interface."
             - pkg: "github.com/bdrtr/gobit/internal/modules/review"
               desc: "Principle 2.1/2.4 - the cart module cannot depend directly on the review module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/settings"
+              desc: "Principle 2.1/2.4 - the cart module cannot depend directly on the settings module; access goes through the container with a service interface."
 
         module-isolation-order:
           files:
@@ -269,6 +277,8 @@ linters:
               desc: "Principle 2.1/2.4 - the order module cannot depend directly on the invoice module; access goes through the container with a service interface."
             - pkg: "github.com/bdrtr/gobit/internal/modules/review"
               desc: "Principle 2.1/2.4 - the order module cannot depend directly on the review module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/settings"
+              desc: "Principle 2.1/2.4 - the order module cannot depend directly on the settings module; access goes through the container with a service interface."
 
         module-isolation-payment:
           files:
@@ -307,6 +317,8 @@ linters:
               desc: "Principle 2.1/2.4 - the payment module cannot depend directly on the invoice module; access goes through the container with a service interface."
             - pkg: "github.com/bdrtr/gobit/internal/modules/review"
               desc: "Principle 2.1/2.4 - the payment module cannot depend directly on the review module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/settings"
+              desc: "Principle 2.1/2.4 - the payment module cannot depend directly on the settings module; access goes through the container with a service interface."
 
         module-isolation-fulfillment:
           files:
@@ -345,6 +357,8 @@ linters:
               desc: "Principle 2.1/2.4 - the fulfillment module cannot depend directly on the invoice module; access goes through the container with a service interface."
             - pkg: "github.com/bdrtr/gobit/internal/modules/review"
               desc: "Principle 2.1/2.4 - the fulfillment module cannot depend directly on the review module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/settings"
+              desc: "Principle 2.1/2.4 - the fulfillment module cannot depend directly on the settings module; access goes through the container with a service interface."
 
         module-isolation-customer:
           files:
@@ -383,6 +397,8 @@ linters:
               desc: "Principle 2.1/2.4 - the customer module cannot depend directly on the invoice module; access goes through the container with a service interface."
             - pkg: "github.com/bdrtr/gobit/internal/modules/review"
               desc: "Principle 2.1/2.4 - the customer module cannot depend directly on the review module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/settings"
+              desc: "Principle 2.1/2.4 - the customer module cannot depend directly on the settings module; access goes through the container with a service interface."
 
         module-isolation-promotion:
           files:
@@ -421,6 +437,8 @@ linters:
               desc: "Principle 2.1/2.4 - the promotion module cannot depend directly on the invoice module; access goes through the container with a service interface."
             - pkg: "github.com/bdrtr/gobit/internal/modules/review"
               desc: "Principle 2.1/2.4 - the promotion module cannot depend directly on the review module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/settings"
+              desc: "Principle 2.1/2.4 - the promotion module cannot depend directly on the settings module; access goes through the container with a service interface."
 
         module-isolation-tax:
           files:
@@ -459,6 +477,8 @@ linters:
               desc: "Principle 2.1/2.4 - the tax module cannot depend directly on the invoice module; access goes through the container with a service interface."
             - pkg: "github.com/bdrtr/gobit/internal/modules/review"
               desc: "Principle 2.1/2.4 - the tax module cannot depend directly on the review module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/settings"
+              desc: "Principle 2.1/2.4 - the tax module cannot depend directly on the settings module; access goes through the container with a service interface."
 
         module-isolation-region:
           files:
@@ -497,6 +517,8 @@ linters:
               desc: "Principle 2.1/2.4 - the region module cannot depend directly on the invoice module; access goes through the container with a service interface."
             - pkg: "github.com/bdrtr/gobit/internal/modules/review"
               desc: "Principle 2.1/2.4 - the region module cannot depend directly on the review module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/settings"
+              desc: "Principle 2.1/2.4 - the region module cannot depend directly on the settings module; access goes through the container with a service interface."
 
         module-isolation-auth:
           files:
@@ -535,6 +557,8 @@ linters:
               desc: "Principle 2.1/2.4 - the auth module cannot depend directly on the invoice module; access goes through the container with a service interface."
             - pkg: "github.com/bdrtr/gobit/internal/modules/review"
               desc: "Principle 2.1/2.4 - the auth module cannot depend directly on the review module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/settings"
+              desc: "Principle 2.1/2.4 - the auth module cannot depend directly on the settings module; access goes through the container with a service interface."
 
         module-isolation-notification:
           files:
@@ -573,6 +597,8 @@ linters:
               desc: "Principle 2.1/2.4 - the notification module cannot depend directly on the invoice module; access goes through the container with a service interface."
             - pkg: "github.com/bdrtr/gobit/internal/modules/review"
               desc: "Principle 2.1/2.4 - the notification module cannot depend directly on the review module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/settings"
+              desc: "Principle 2.1/2.4 - the notification module cannot depend directly on the settings module; access goes through the container with a service interface."
 
         module-isolation-file:
           files:
@@ -611,6 +637,8 @@ linters:
               desc: "Principle 2.1/2.4 - the file module cannot depend directly on the invoice module; access goes through the container with a service interface."
             - pkg: "github.com/bdrtr/gobit/internal/modules/review"
               desc: "Principle 2.1/2.4 - the file module cannot depend directly on the review module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/settings"
+              desc: "Principle 2.1/2.4 - the file module cannot depend directly on the settings module; access goes through the container with a service interface."
 
         module-isolation-b2b:
           files:
@@ -648,6 +676,8 @@ linters:
               desc: "Principle 2.1/2.4 - the b2b module cannot depend directly on the invoice module; access goes through the container with a service interface."
             - pkg: "github.com/bdrtr/gobit/internal/modules/review"
               desc: "Principle 2.1/2.4 - the b2b module cannot depend directly on the review module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/settings"
+              desc: "Principle 2.1/2.4 - the b2b module cannot depend directly on the settings module; access goes through the container with a service interface."
 
         module-isolation-invoice:
           files:
@@ -685,6 +715,8 @@ linters:
               desc: "Principle 2.1/2.4 - the invoice module cannot depend directly on the b2b module; access goes through the container with a service interface."
             - pkg: "github.com/bdrtr/gobit/internal/modules/review"
               desc: "Principle 2.1/2.4 - the invoice module cannot depend directly on the review module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/settings"
+              desc: "Principle 2.1/2.4 - the invoice module cannot depend directly on the settings module; access goes through the container with a service interface."
 
         module-isolation-review:
           files:
@@ -722,6 +754,46 @@ linters:
               desc: "Principle 2.1/2.4 - the review module cannot depend directly on the b2b module; access goes through the container with a service interface."
             - pkg: "github.com/bdrtr/gobit/internal/modules/invoice"
               desc: "Principle 2.1/2.4 - the review module cannot depend directly on the invoice module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/settings"
+              desc: "Principle 2.1/2.4 - the review module cannot depend directly on the settings module; access goes through the container with a service interface."
+        module-isolation-settings:
+          files:
+            - "**/internal/modules/settings/**"
+          deny:
+            - pkg: "github.com/bdrtr/gobit/internal/modules/product"
+              desc: "Principle 2.1/2.4 - the settings module cannot depend directly on the product module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/pricing"
+              desc: "Principle 2.1/2.4 - the settings module cannot depend directly on the pricing module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/inventory"
+              desc: "Principle 2.1/2.4 - the settings module cannot depend directly on the inventory module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/cart"
+              desc: "Principle 2.1/2.4 - the settings module cannot depend directly on the cart module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/order"
+              desc: "Principle 2.1/2.4 - the settings module cannot depend directly on the order module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/payment"
+              desc: "Principle 2.1/2.4 - the settings module cannot depend directly on the payment module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/fulfillment"
+              desc: "Principle 2.1/2.4 - the settings module cannot depend directly on the fulfillment module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/customer"
+              desc: "Principle 2.1/2.4 - the settings module cannot depend directly on the customer module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/promotion"
+              desc: "Principle 2.1/2.4 - the settings module cannot depend directly on the promotion module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/tax"
+              desc: "Principle 2.1/2.4 - the settings module cannot depend directly on the tax module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/region"
+              desc: "Principle 2.1/2.4 - the settings module cannot depend directly on the region module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/auth"
+              desc: "Principle 2.1/2.4 - the settings module cannot depend directly on the auth module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/notification"
+              desc: "Principle 2.1/2.4 - the settings module cannot depend directly on the notification module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/file"
+              desc: "Principle 2.1/2.4 - the settings module cannot depend directly on the file module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/b2b"
+              desc: "Principle 2.1/2.4 - the settings module cannot depend directly on the b2b module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/invoice"
+              desc: "Principle 2.1/2.4 - the settings module cannot depend directly on the invoice module; access goes through the container with a service interface."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/review"
+              desc: "Principle 2.1/2.4 - the settings module cannot depend directly on the review module; access goes through the container with a service interface."
 
   exclusions:
     generated: lax

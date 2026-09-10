@@ -73,17 +73,50 @@ type invoiceDocumentResponse struct {
 func issueInvoiceBody() map[string]any {
 	return map[string]any{
 		"series_prefix": invoiceSeriesPrefix,
-		"seller": map[string]any{
-			"name":         "Gobit E2E Shop",
-			"tax_number":   "1234567890",
-			"tax_office":   "Kadikoy",
-			"country_code": "TR",
-		},
+		// No seller: the shop's identity is its own record since ADR 0115, and a
+		// body that still carried one would be refused as an unknown field.
 		"buyer": map[string]any{
 			"name":         "E2E Customer",
 			"country_code": "TR",
 		},
 	}
+}
+
+// The shop's identity, as the harness writes it before any document is issued.
+const (
+	e2eShopName      = "Gobit E2E Shop"
+	e2eShopTaxNumber = "1234567890"
+	e2eShopTaxOffice = "Central"
+	e2eShopAddress   = "1 Example Street"
+)
+
+// storeProfileBody is the shop's identity as the admin endpoint takes it.
+func storeProfileBody() map[string]any {
+	return map[string]any{
+		"legal_name":   e2eShopName,
+		"tax_number":   e2eShopTaxNumber,
+		"tax_office":   e2eShopTaxOffice,
+		"email":        "billing@example.test",
+		"address":      e2eShopAddress,
+		"country_code": "TR",
+	}
+}
+
+// writeStoreProfile makes sure the shop has said who it is.
+//
+// It is called by every test that issues a document, and it is idempotent: PUT
+// replaces, so running it in any order leaves the same record. The alternative —
+// writing it once in TestMain — would hide the endpoint from the authorization
+// walk and from the failure this ordering exposes, which is a test issuing a
+// document against a profile another test wrote.
+func writeStoreProfile(t *testing.T) {
+	t.Helper()
+
+	recorder, err := adminRequestWithBody(http.MethodPut,
+		"/admin/v1/store-profile", storeProfileBody())
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, recorder.Code,
+		"the shop's identity has to be writable: %s", recorder.Body.String())
 }
 
 // TestAnOrderCanBeInvoicedOverHTTP is the whole chain in one scenario.
@@ -109,6 +142,11 @@ func TestAnOrderCanBeInvoicedOverHTTP(t *testing.T) {
 	require.NotEmpty(t, order.OrderID)
 
 	// --- the document is issued ---
+	//
+	// The shop says who it is FIRST: the seller is no longer part of the body
+	// and issuing before the profile exists is refused (ADR 0115).
+	writeStoreProfile(t)
+
 	recorder, err := adminRequestWithBody(http.MethodPost,
 		"/admin/v1/orders/"+order.OrderID+"/invoice", issueInvoiceBody())
 	require.NoError(t, err)
@@ -185,6 +223,100 @@ func TestAnOrderCanBeInvoicedOverHTTP(t *testing.T) {
 	assert.Positive(t, invoice.Data.Lines[0].TaxRateBps,
 		"the RATE the line was charged at has to reach the document; a zero here means it was "+
 			"dropped somewhere between the cart's calculation and the printed row")
+}
+
+// TestTheDocumentNamesTheShopFromItsOwnRecord is the hop no unit test can make.
+//
+// The settings module answers with "legal_name" and the document's party field
+// is "name"; the two ends cannot import each other, so nothing but a real
+// request through both modules can say the mapping is right. A decoder that
+// matched field names would leave the seller nameless and every other assertion
+// in this file would still pass.
+func TestTheDocumentNamesTheShopFromItsOwnRecord(t *testing.T) {
+	ctx := t.Context()
+
+	writeStoreProfile(t)
+
+	customerID, email := newCustomer(ctx, t)
+	variantID, _ := newStockedVariant(ctx, t, "E2E Seller Product", map[string]int64{
+		taxedCurrency: happyUnitPrice,
+	}, happyInitialStock)
+
+	cartID, _ := prepareCart(ctx, t, customerID, variantID, happyQuantity)
+
+	order, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        stockLocationID,
+		PaymentProviderID: paymentmanual.ID,
+		PaymentData:       paymentBehavior(t, paymentmanual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     happyTotal,
+	})
+	require.NoError(t, err)
+
+	issued, err := adminRequestWithBody(http.MethodPost,
+		"/admin/v1/orders/"+order.OrderID+"/invoice", issueInvoiceBody())
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, issued.Code, issued.Body.String())
+
+	var identity invoiceIssueResponse
+	require.NoError(t, json.Unmarshal(issued.Body.Bytes(), &identity))
+
+	document, err := adminRequestWithBody(http.MethodGet,
+		"/admin/v1/invoices/"+identity.Data.InvoiceID, nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, document.Code, document.Body.String())
+
+	var printed struct {
+		Data struct {
+			Seller struct {
+				Name      string `json:"name"`
+				TaxNumber string `json:"tax_number"`
+				TaxOffice string `json:"tax_office"`
+				Address   string `json:"address"`
+			} `json:"seller"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(document.Body.Bytes(), &printed))
+
+	assert.Equal(t, e2eShopName, printed.Data.Seller.Name,
+		"the shop's legal_name is what the document prints as the seller's name")
+	assert.Equal(t, e2eShopTaxNumber, printed.Data.Seller.TaxNumber)
+	assert.Equal(t, e2eShopTaxOffice, printed.Data.Seller.TaxOffice)
+	assert.Equal(t, e2eShopAddress, printed.Data.Seller.Address)
+}
+
+// TestTheStoreProfileConstraintsAreTheLastDefence checks the three rules the
+// schema holds on its own.
+//
+// The service refuses all three first, which is exactly why they need a test
+// that goes around it: these statements are the shape a hand-written INSERT or a
+// second writer takes, and a CHECK nobody exercises is a CHECK nobody notices
+// the loss of.
+func TestTheStoreProfileConstraintsAreTheLastDefence(t *testing.T) {
+	ctx := t.Context()
+
+	writeStoreProfile(t)
+
+	for name, statement := range map[string]string{
+		"no legal name": `UPDATE store_profile SET legal_name = '' WHERE id = 'default'`,
+		"a country that is not a code": `UPDATE store_profile SET country_code = 'TUR'
+			WHERE id = 'default'`,
+		"a second profile": `INSERT INTO store_profile (id, legal_name, country_code)
+			VALUES ('second', 'Another Shop', 'TR')`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := testPool.Pool().Exec(ctx, statement)
+
+			require.Error(t, err, "the schema has to refuse it on its own")
+		})
+	}
+
+	// And the record is still the one the shop wrote.
+	var name string
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT legal_name FROM store_profile WHERE id = 'default'`).Scan(&name))
+	assert.Equal(t, e2eShopName, name)
 }
 
 // TestAnOrderWithoutAnInvoiceAnswersNotFound covers the read side's empty case.
@@ -278,6 +410,8 @@ func TestAStackedLineReachesTheDocumentWithNoFakeInBetween(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, completed.Code,
 		"the order could not be completed; body: %s", completed.Body.String())
+
+	writeStoreProfile(t)
 
 	issued, err := adminRequestWithBody(http.MethodPost,
 		"/admin/v1/orders/"+placed.ID+"/invoice", issueInvoiceBody())

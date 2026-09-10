@@ -24,7 +24,7 @@ import (
 // startupTimeout is the maximum time granted for the process to answer /health.
 //
 // It is generous: on a fresh database, startup applies the migrations of the
-// core and of the seventeen modules under internal/modules. Time spent on a slow CI runner is not a fault;
+// core and of the eighteen modules under internal/modules. Time spent on a slow CI runner is not a fault;
 // the real fault is the process NEVER coming up, and this timeout catches it.
 const startupTimeout = 90 * time.Second
 

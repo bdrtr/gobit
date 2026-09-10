@@ -53,20 +53,22 @@ type Party struct {
 
 // IssueInput is the request to invoice an order.
 //
-// The two parties come from the CALLER and the lines come from the order, and
-// the split is not arbitrary. The seller's legal details are the shop's own
-// configuration, which lives in no module here. The buyer's — the VKN or TCKN
-// and the tax office — are not in this repository's customer model at all: a
-// shop collects them at checkout as its own fields. A framework that guessed
-// them would produce a document that is wrong in the one way a document must
-// not be.
+// The BUYER comes from the caller, the SELLER from the shop's own record and the
+// lines from the order, and the split is not arbitrary. The buyer's details —
+// the VKN or TCKN and the tax office — are not in this repository's customer
+// model at all: a shop collects them at checkout as its own fields, and a
+// framework that guessed them would produce a document that is wrong in the one
+// way a document must not be.
+//
+// The seller used to come from the caller too, and its own note said why: "the
+// shop's own configuration, which lives in no module here". It lives in one now
+// (ADR 0115), which is what stops two documents from one shop naming two
+// different sellers.
 type IssueInput struct {
 	// OrderID is the sale to invoice.
 	OrderID string
 	// SeriesPrefix is the letters of the series to take the number from.
 	SeriesPrefix string
-	// Seller is the shop, as it is to be printed.
-	Seller Party
 	// Buyer is the customer, as they are to be printed.
 	//
 	// An empty Email is filled in from the order; everything else is taken as
@@ -180,6 +182,11 @@ func (w *Workflows) IssueForOrder(ctx context.Context, in IssueInput) (IssueResu
 		return IssueResult{}, err
 	}
 
+	seller, err := w.readSeller(ctx)
+	if err != nil {
+		return IssueResult{}, err
+	}
+
 	buyer := in.Buyer
 	if buyer.Email == "" {
 		buyer.Email = order.Email
@@ -189,7 +196,7 @@ func (w *Workflows) IssueForOrder(ctx context.Context, in IssueInput) (IssueResu
 		SeriesPrefix: in.SeriesPrefix,
 		Kind:         kindSale,
 		CurrencyCode: order.CurrencyCode,
-		Seller:       in.Seller,
+		Seller:       seller,
 		Buyer:        buyer,
 		Lines:        order.lines(),
 		// The document's subtotal carries the carriage, because carriage
@@ -430,4 +437,53 @@ func documentLineTaxesOf(components []invoiceOrderItemTax) []documentLineTax {
 		})
 	}
 	return out
+}
+
+// readSeller reads who the shop is.
+//
+// # Why the absence is refused rather than papered over
+//
+// A document with no issuer is not a document. The settings module answers
+// NotFound while the shop has not said who it is, and this turns that into a
+// message naming the endpoint: an operator issuing their first invoice is
+// exactly the person who has not filled the profile in yet, and "seller name is
+// required" from three layers down would not tell them where to go.
+func (w *Workflows) readSeller(ctx context.Context) (Party, error) {
+	raw, err := w.profile.StoreProfileJSON(ctx)
+	if err != nil {
+		return Party{}, errors.Wrap(err, errors.KindOf(err), CodeSellerUnknown,
+			"the shop has not said who it is, so no document can name its issuer; "+
+				"write PUT /admin/v1/store-profile first")
+	}
+
+	var profile storeProfile
+	if err := json.Unmarshal(raw, &profile); err != nil {
+		return Party{}, errors.Wrap(err, errors.KindInternal, CodeSellerUnknown,
+			"the store profile could not be parsed")
+	}
+
+	return Party{
+		Name:        profile.LegalName,
+		TaxNumber:   profile.TaxNumber,
+		TaxOffice:   profile.TaxOffice,
+		Email:       profile.Email,
+		Address:     profile.Address,
+		CountryCode: profile.CountryCode,
+	}, nil
+}
+
+// storeProfile is the settings module's answer, as this flow reads it.
+//
+// The mapping to [Party] is written out rather than done by matching field
+// names, and the reason is the first field: the shop calls it "legal_name" and a
+// document's party calls it "name". Decoding straight into Party would leave the
+// seller's name EMPTY and the document would be issued under nobody — the one
+// failure this whole record exists to prevent, arriving silently.
+type storeProfile struct {
+	LegalName   string `json:"legal_name"`
+	TaxNumber   string `json:"tax_number"`
+	TaxOffice   string `json:"tax_office"`
+	Email       string `json:"email"`
+	Address     string `json:"address"`
+	CountryCode string `json:"country_code"`
 }

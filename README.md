@@ -93,7 +93,7 @@ cmd/server            # the binary: the smallest program that can run gobit —
                       # and the example to copy
 internal/core         # the unpublished core: config, logger, job, workflow,
                       # observability, page
-internal/modules      # seventeen isolated commerce modules (product, pricing,
+internal/modules      # eighteen isolated commerce modules (product, pricing,
                       # inventory, cart, order, payment, …)
 internal/workflows    # cross-module sagas (cart, checkout, invoicing,
                       # fulfilling, returns, datasubject)
@@ -110,7 +110,7 @@ deploy                # docker-compose, Dockerfile
 
 Isolation is checked before the build by `depguard` in `.golangci.yml`: `core/**`
 and `internal/core/**` cannot import the modules (the plan's Principle 2.4), no
-module can import another module (Principles 2.1 / 2.4 — seventeen modules x
+module can import another module (Principles 2.1 / 2.4 — eighteen modules x
 sixteen prohibitions = complete isolation), and cross-module access goes through
 a narrow interface resolved from the container.
 When a module is added, the `depguard.rules` list is updated with it; the list is
@@ -230,7 +230,7 @@ on a list; it is that.
 
 | Document | What it answers |
 |---|---|
-| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 113 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
+| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 114 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
 | [`docs/mimari.md`](./docs/mimari.md) | The architecture narrative: layers, the life cycle of a request and of a module, data, sagas, the core packages |
 | [`docs/gaps.md`](./docs/gaps.md) | The defect ledger: every fault this repository found in itself, one sentence and the ADR that closed it |
 | [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: twenty-seven items in six groups — identity and authorization, sales channel scope, the category tree, tax, installation and operation, the limit of the invariants |

@@ -116,6 +116,8 @@ func TestOneSweepForgetsAPersonAcrossEveryHolderAndTheInvoiceSaysWhyItCannot(t *
 	require.Equal(t, http.StatusOK, completed.Code,
 		"the fixture order could not be marked complete; body: %s", completed.Body.String())
 
+	writeStoreProfile(t)
+
 	issued, err := adminRequestWithBody(http.MethodPost,
 		"/admin/v1/orders/"+placed.OrderID+"/invoice", issueInvoiceBody())
 	require.NoError(t, err)

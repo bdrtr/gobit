@@ -69,7 +69,7 @@ func TestConcurrentStartupCreatesSingleAdmin(t *testing.T) {
 	// The processes are started IN SEQUENCE but the race is real all the same:
 	// exec.Start takes milliseconds, while the seeding step runs at the END of
 	// startup — after the migrations of the core and of the
-	// seventeen modules of internal/modules, that is, seconds later. By then
+	// eighteen modules of internal/modules, that is, seconds later. By then
 	// all three have caught up with each other.
 	for i, s := range procs {
 		s.waitForReady(startupTimeout)

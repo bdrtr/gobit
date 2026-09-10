@@ -184,10 +184,13 @@ func describeInvoicing(d *openapi.Doc) {
 			"A number is spent for good once it is taken, so a second call does NOT issue a " +
 			"second document: it returns the one the order already has, with " +
 			"\"already_issued\": true and a 200 instead of a 201. " +
-			"The two parties come from THIS BODY and the lines come from the order. The " +
-			"seller's legal details are the shop's own configuration and the buyer's tax " +
-			"number is not in this framework's customer model, so neither can be guessed; " +
-			"an empty buyer e-mail is filled in from the order. " +
+			"The BUYER comes from this body, the SELLER from the shop's own record and the " +
+			"lines from the order. The buyer's tax number is not in this framework's " +
+			"customer model, so it cannot be guessed; an empty buyer e-mail is filled in " +
+			"from the order. The seller is NOT accepted here: the shop's identity is a " +
+			"record (PUT /admin/v1/store-profile), which is what stops two documents from " +
+			"one shop naming two different issuers, and issuing before it is written is " +
+			"refused with a message saying so. " +
 			"Carriage reaches the document as a LINE, because that is how it is printed.",
 		RequestBody: d.RequestBody(invoicingIssueRequest{}),
 		Responses: map[string]any{

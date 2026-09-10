@@ -187,6 +187,7 @@ type harness struct {
 	orders   *fakeOrders
 	invoices *fakeInvoices
 	links    *fakeLinks
+	profile  *fakeProfile
 }
 
 // newHarness builds a flow over fakes carrying one ordinary order.
@@ -222,12 +223,52 @@ func newHarness(t *testing.T) *harness {
 	invoices := newFakeInvoices()
 	links := newFakeLinks()
 
+	profile := &fakeProfile{profile: storeProfile{
+		LegalName: "Gobit Shop", TaxNumber: "1234567890", CountryCode: "TR",
+	}}
+
 	flow, err := invoicing.New(invoicing.Deps{
 		Orders:   orders,
 		Invoices: invoices,
 		Links:    links,
+		Profile:  profile,
 	})
 	require.NoError(t, err)
 
-	return &harness{flow: flow, orders: orders, invoices: invoices, links: links}
+	return &harness{
+		flow: flow, orders: orders, invoices: invoices, links: links, profile: profile,
+	}
+}
+
+// storeProfile is the settings module's answer as the fake sends it.
+//
+// The field names are the PRODUCER's, "legal_name" included, and that is the
+// point: a fake that spelled the first field "name" would make the flow's
+// mapping look right while the real seam left the seller nameless.
+type storeProfile struct {
+	LegalName   string `json:"legal_name"`
+	TaxNumber   string `json:"tax_number"`
+	TaxOffice   string `json:"tax_office"`
+	Email       string `json:"email"`
+	Address     string `json:"address"`
+	CountryCode string `json:"country_code"`
+}
+
+// fakeProfile answers with a scripted store profile.
+type fakeProfile struct {
+	profile storeProfile
+	// err, when set, is what the read answers instead.
+	err error
+	// calls counts the reads.
+	calls int
+}
+
+// StoreProfileJSON returns the scripted profile as the real surface would.
+func (f *fakeProfile) StoreProfileJSON(_ context.Context) (json.RawMessage, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+
+	return json.Marshal(f.profile)
 }

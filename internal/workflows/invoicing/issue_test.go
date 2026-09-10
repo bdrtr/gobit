@@ -203,12 +203,53 @@ func TestReadingAnInvoicedOrderReturnsItsIdentity(t *testing.T) {
 	assert.Equal(t, "issued", status)
 }
 
+// TestTheSellerComesFromTheShopsOwnRecord is the decision in one assertion.
+//
+// The caller cannot name the issuer, so two documents from one shop cannot name
+// two different sellers.
+func TestTheSellerComesFromTheShopsOwnRecord(t *testing.T) {
+	h := newHarness(t)
+	h.profile.profile = storeProfile{
+		LegalName: "Another Shop Ltd", TaxNumber: "9876543210",
+		TaxOffice: "Central", Address: "1 Example Street", CountryCode: "DE",
+	}
+
+	_, err := h.flow.IssueForOrder(context.Background(), validIssue())
+	require.NoError(t, err)
+
+	document := h.invoices.lastDocument(t)
+	assert.Equal(t, "Another Shop Ltd", document.Seller.Name,
+		"the shop's legal_name becomes the party's name; the two spell it differently "+
+			"and a decoder that matched field names would leave this empty")
+	assert.Equal(t, "9876543210", document.Seller.TaxNumber)
+	assert.Equal(t, "Central", document.Seller.TaxOffice)
+	assert.Equal(t, "1 Example Street", document.Seller.Address)
+	assert.Equal(t, "DE", document.Seller.CountryCode)
+	assert.Equal(t, 1, h.profile.calls, "the record is read once per document")
+}
+
+// TestNoDocumentIsIssuedBeforeTheShopSaysWhoItIs refuses the state that would
+// otherwise print an issuer of nobody.
+func TestNoDocumentIsIssuedBeforeTheShopSaysWhoItIs(t *testing.T) {
+	h := newHarness(t)
+	h.profile.err = errors.NotFound("settings_store_profile_not_found",
+		"the shop has not said who it is yet")
+
+	_, err := h.flow.IssueForOrder(context.Background(), validIssue())
+
+	require.Error(t, err)
+	assert.Equal(t, invoicing.CodeSellerUnknown, errors.CodeOf(err))
+	assert.Contains(t, err.Error(), "/admin/v1/store-profile",
+		"the operator issuing their first invoice is exactly the one who has not "+
+			"written the profile; the message has to say where to go")
+	assert.Empty(t, h.invoices.issued, "and nothing was issued")
+}
+
 // validIssue is a request that passes every rule.
 func validIssue() invoicing.IssueInput {
 	return invoicing.IssueInput{
 		OrderID:      "order_1",
 		SeriesPrefix: "GBT",
-		Seller:       invoicing.Party{Name: "Gobit Shop", TaxNumber: "1234567890", CountryCode: "TR"},
 		Buyer:        invoicing.Party{Name: "A Customer", CountryCode: "TR"},
 	}
 }
@@ -231,6 +272,12 @@ type issuedDocument struct {
 type party struct {
 	Name  string `json:"name"`
 	Email string `json:"email"`
+	// The rest of the printed party, read since ADR 0115 made the seller a
+	// record: a mapping that dropped a field would otherwise be invisible here.
+	TaxNumber   string `json:"tax_number"`
+	TaxOffice   string `json:"tax_office"`
+	Address     string `json:"address"`
+	CountryCode string `json:"country_code"`
 }
 
 // line is one row of that body.

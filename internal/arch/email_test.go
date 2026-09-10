@@ -248,6 +248,16 @@ var emailFoldExemptions = map[string]string{
 	// The map stays because the NEXT module to hold an address and fold it
 	// somewhere unreachable needs a place to say so, and because an audit whose
 	// escape hatch was deleted is an audit somebody will work around instead.
+	//
+	// The next module arrived on 2026-09-10 and it is a different shape from the
+	// one this audit was built for.
+	"settings": "store_profile.email is the SHOP's own address and it is folded " +
+		"NOWHERE, in Go or in SQL, because nothing ever compares it: it is PRINTED " +
+		"on the documents the shop issues and no query matches on it. Folding exists " +
+		"so that two spellings of the same person's address find each other; there is " +
+		"one row here and nobody looks it up. What that costs is stated rather than " +
+		"hidden: if a reader is ever added that matches on this column, the match will " +
+		"be case-sensitive and this entry has to go rather than grow a caveat.",
 }
 
 // TestEveryModuleThatStoresAnEmailFoldsItInGoOrSaysWhyNot closes the hole the

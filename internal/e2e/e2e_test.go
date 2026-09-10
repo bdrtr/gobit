@@ -140,6 +140,7 @@ import (
 	regionmod "github.com/bdrtr/gobit/internal/modules/region"
 	regionsvc "github.com/bdrtr/gobit/internal/modules/region/service"
 	reviewmod "github.com/bdrtr/gobit/internal/modules/review"
+	settingsmod "github.com/bdrtr/gobit/internal/modules/settings"
 	taxmod "github.com/bdrtr/gobit/internal/modules/tax"
 	taxsvc "github.com/bdrtr/gobit/internal/modules/tax/service"
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
@@ -671,6 +672,12 @@ func setUpHarness(ctx context.Context) error {
 	// router tree. It binds to no other module, so nothing else in this harness
 	// changes because it is registered.
 	registry.Add(invoicemod.New(invoicemod.Options{}))
+	// Settings. The invoicing flow reads the shop's identity from it over the
+	// primitive surface, and that hop can only be exercised here: in the flow's
+	// own tests the profile is a FAKE, and the two ends spell the first field
+	// differently ("legal_name" against a party's "name"), which is exactly the
+	// kind of mismatch no compiler sees (ADR 0115).
+	registry.Add(settingsmod.New(nil))
 	// Review. It is here for the reason invoice is — its migration runs on a
 	// real database and its endpoints enter the authorization audit that walks
 	// the router tree — and for one this harness is the ONLY place that can
