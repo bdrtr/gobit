@@ -89,11 +89,45 @@ func (lt *linkTable) requiredIndexes() []string {
 	}
 }
 
-// ddl returns the statements that create the link table and its cardinality
-// constraints.
+// obsoleteIndexes returns the names of the indexes this link owns that its
+// CURRENT cardinality does not need.
 //
-// All of them are IF NOT EXISTS: Define is called again on every startup and
-// finding an existing schema is the normal case.
+// It is the complement of [linkTable.requiredIndexes] over the three names a
+// link table can carry, so the two cannot disagree about a name: adding an
+// index means adding it to allIndexes and to the required switch, and anything
+// left over is obsolete by construction rather than by a second list.
+//
+// The set is non-empty only after a WIDENING (ADR 0116). A table created under
+// the current declaration never had these indexes, and dropping one that was
+// never there is what makes the statement safe to run on every startup.
+func (lt *linkTable) obsoleteIndexes() []string {
+	required := lt.requiredIndexes()
+	var obsolete []string
+	for _, index := range lt.allIndexes() {
+		if !slices.Contains(required, index) {
+			obsolete = append(obsolete, index)
+		}
+	}
+	return obsolete
+}
+
+// allIndexes returns every index name a link table can carry, in a stable
+// order.
+func (lt *linkTable) allIndexes() []string {
+	return []string{lt.fromIndex, lt.toIndex, lt.lookupIndex}
+}
+
+// ddl returns the statements that make the schema match the declaration: the
+// table, the indexes the cardinality needs, and the DROP of the ones it no
+// longer needs.
+//
+// The creations are IF NOT EXISTS and the drops are IF EXISTS: Define is called
+// again on every startup and finding an existing schema is the normal case.
+//
+// The drops are what a widening needs. A unique index is not removed by
+// declaring a looser cardinality, so leaving it would keep the OLD constraint
+// enforced while the ledger promised the new one — and the refusal would
+// surface at Create time, naming a cardinality the definition no longer has.
 //
 // A link table REFERENCES no module's table (plan Section 2.2); the ids are
 // free text. Whether the record a link points at really exists is the owning
@@ -124,6 +158,14 @@ func (lt *linkTable) ddl() []string {
 		// Under OneToOne/OneToMany to_id already carries a unique index.
 		stmts = append(stmts, fmt.Sprintf(
 			`CREATE INDEX IF NOT EXISTS %s ON %s (to_id)`, lt.lookupIndex, lt.table))
+	}
+
+	// The drops come LAST. Under ManyToMany the lookup index replaces the
+	// unique one on the same column, and creating the replacement before
+	// dropping the original is the order that never leaves the reverse query
+	// without an index.
+	for _, index := range lt.obsoleteIndexes() {
+		stmts = append(stmts, fmt.Sprintf(`DROP INDEX IF EXISTS %s`, index))
 	}
 	return stmts
 }

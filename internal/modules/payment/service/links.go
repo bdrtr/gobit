@@ -65,8 +65,24 @@ func Definitions() []link.LinkDefinition {
 			// It reopens the day an order legitimately needs a second
 			// collection. The nearest candidate is already visible in the
 			// schema: an exchange whose difference_due is positive is money
-			// collected against an existing order. That day this becomes
-			// OneToMany and nothing else changes.
+			// collected against an existing order.
+			//
+			// This comment used to end "that day this becomes OneToMany and
+			// nothing else changes", and that was wrong twice over: core/link
+			// compared a declaration against its durable ledger for EQUALITY,
+			// so the edit did not loosen a constraint but stopped the process,
+			// and the unique index built here would have outlived the
+			// declaration that dropped it. ADR 0116 made the widening real and
+			// gap D51 is the class — a godoc calling a future edit trivial is
+			// a claim about code nobody has run.
+			//
+			// What is left before the flip is NOT the mechanism but the
+			// READERS. The refund flow takes the first collection bound to the
+			// order and says a second one would be "a data fault rather than a
+			// choice"; the order's payment view and its timeline each expand
+			// this link expecting one. A rule for choosing among two cannot be
+			// written until the second one has a meaning, and that meaning is
+			// the exchange difference.
 			Cardinality: link.OneToOne,
 		},
 	}

@@ -2,6 +2,7 @@ package link
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -146,8 +147,16 @@ func TestDDLEnforcesCardinality(t *testing.T) {
 				assert.NotContains(t, all, toIdx)
 			}
 
+			// Define is called on every startup, so every statement must be
+			// idempotent. Until ADR 0116 that was the same thing as carrying
+			// "IF NOT EXISTS", because every statement was a creation; a drop
+			// spells the same guarantee "IF EXISTS".
 			for _, stmt := range stmts {
-				assert.Contains(t, stmt, "IF NOT EXISTS",
+				guard := "IF NOT EXISTS"
+				if strings.HasPrefix(stmt, "DROP ") {
+					guard = "IF EXISTS"
+				}
+				assert.Contains(t, stmt, guard,
 					"Define is called on every startup; the DDL must be idempotent")
 			}
 		})
@@ -373,4 +382,165 @@ func detailsOf(t *testing.T, err error) map[string]any {
 	var typed *errors.Error
 	require.True(t, errors.As(err, &typed), "the error must be a typed *errors.Error: %v", err)
 	return typed.Details
+}
+
+// TestParseCardinalityIsTheInverseOfString verifies the only conversion that
+// reaches disk in both directions.
+//
+// The pair is what makes a widening decidable (ADR 0116): the ledger holds
+// TEXT, and comparing a stored spelling against a declared one for ORDER means
+// reading it back into a value. A spelling nothing writes must not parse.
+func TestParseCardinalityIsTheInverseOfString(t *testing.T) {
+	for _, c := range []Cardinality{OneToOne, OneToMany, ManyToMany} {
+		got, ok := parseCardinality(c.String())
+		require.True(t, ok, "the spelling %q of %s must read back", c.String(), c)
+		assert.Equal(t, c, got)
+	}
+
+	for _, spelling := range []string{"", "one-to-one", "OneToOne", "unknown(9)", "one_to_all"} {
+		_, ok := parseCardinality(spelling)
+		assert.False(t, ok, "%q is not a cardinality this binary knows", spelling)
+	}
+}
+
+// TestWiderThanOrdersTheCardinalities verifies the relation the widening rests
+// on: a wider cardinality admits every pair the narrower one did.
+func TestWiderThanOrdersTheCardinalities(t *testing.T) {
+	assert.True(t, OneToMany.widerThan(OneToOne))
+	assert.True(t, ManyToMany.widerThan(OneToOne))
+	assert.True(t, ManyToMany.widerThan(OneToMany))
+
+	assert.False(t, OneToOne.widerThan(OneToMany))
+	assert.False(t, OneToOne.widerThan(ManyToMany))
+	assert.False(t, OneToMany.widerThan(ManyToMany))
+
+	for _, c := range []Cardinality{OneToOne, OneToMany, ManyToMany} {
+		assert.False(t, c.widerThan(c), "%s is not wider than itself", c)
+	}
+
+	// An undefined value has no place in the order: it is neither wider nor
+	// narrower than anything, so it can never be read as a widening.
+	undefined := Cardinality(9)
+	assert.False(t, undefined.widerThan(OneToOne))
+	assert.False(t, ManyToMany.widerThan(undefined))
+}
+
+// TestStoredDefinitionChange verifies what a declaration asks of the row
+// already in the ledger: nothing, a widening, or a conflict.
+//
+// The distinction is the whole of ADR 0116. Reading a NARROWING as a widening
+// would apply a constraint without seeing the rows that violate it; reading a
+// widening as a conflict is what kept a declared cardinality from ever moving.
+func TestStoredDefinitionChange(t *testing.T) {
+	stored := func(c string) storedDefinition {
+		return storedDefinition{
+			fromModule:  "product",
+			fromField:   "variant_id",
+			toModule:    "pricing",
+			toField:     "price_set_id",
+			cardinality: c,
+		}
+	}
+
+	cases := map[string]struct {
+		stored   storedDefinition
+		incoming Cardinality
+		want     definitionChange
+	}{
+		"the normal startup":        {stored("one_to_one"), OneToOne, definitionUnchanged},
+		"one step wider":            {stored("one_to_one"), OneToMany, definitionWidened},
+		"two steps wider":           {stored("one_to_one"), ManyToMany, definitionWidened},
+		"the last step":             {stored("one_to_many"), ManyToMany, definitionWidened},
+		"a narrowing":               {stored("one_to_many"), OneToOne, definitionConflicts},
+		"a narrowing by two":        {stored("many_to_many"), OneToOne, definitionConflicts},
+		"a spelling nothing writes": {stored("unknown(9)"), ManyToMany, definitionConflicts},
+		"an empty ledger cardinal":  {stored(""), OneToMany, definitionConflicts},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.stored.change(testDef("product_price", tc.incoming)))
+		})
+	}
+
+	// A side that moved is a DIFFERENT relation wearing a taken name, and no
+	// cardinality makes that a widening.
+	sideMoved := map[string]func(s *storedDefinition){
+		"from module": func(s *storedDefinition) { s.fromModule = "cart" },
+		"from field":  func(s *storedDefinition) { s.fromField = "cart_id" },
+		"to module":   func(s *storedDefinition) { s.toModule = "inventory" },
+		"to field":    func(s *storedDefinition) { s.toField = "item_id" },
+	}
+	for name, mutate := range sideMoved {
+		t.Run(name+" under a widening", func(t *testing.T) {
+			s := stored("one_to_one")
+			mutate(&s)
+			assert.Equal(t, definitionConflicts, s.change(testDef("product_price", OneToMany)),
+				"a moved side is a conflict even when the cardinality would widen")
+		})
+	}
+}
+
+// TestObsoleteIndexesAreTheComplementOfRequired verifies that the two index
+// lists partition the names a link table can carry.
+//
+// They are derived from one another on purpose: an index that is in NEITHER
+// list is one nothing creates and nothing drops, and it would survive a
+// widening still enforcing the constraint the definition dropped.
+func TestObsoleteIndexesAreTheComplementOfRequired(t *testing.T) {
+	for _, c := range []Cardinality{OneToOne, OneToMany, ManyToMany} {
+		t.Run(c.String(), func(t *testing.T) {
+			lt := mustLinkTable(t, testDef("product_price", c))
+
+			required := lt.requiredIndexes()
+			obsolete := lt.obsoleteIndexes()
+
+			assert.ElementsMatch(t, lt.allIndexes(), append(slices.Clone(required), obsolete...),
+				"every index name must be required or obsolete, and never both")
+			for _, index := range obsolete {
+				assert.NotContains(t, required, index)
+			}
+		})
+	}
+}
+
+// TestDDLDropsWhatTheCardinalityNoLongerNeeds verifies the statements a
+// widening depends on.
+//
+// A unique index is not removed by declaring a looser cardinality, so without
+// these drops the OLD constraint would keep being enforced while the ledger
+// promised the new one.
+func TestDDLDropsWhatTheCardinalityNoLongerNeeds(t *testing.T) {
+	table, err := TableName("product_price")
+	require.NoError(t, err)
+
+	cases := map[Cardinality][]string{
+		OneToOne:   {table + toLookupSuffix},
+		OneToMany:  {table + fromIndexSuffix, table + toLookupSuffix},
+		ManyToMany: {table + fromIndexSuffix, table + toIndexSuffix},
+	}
+	for c, dropped := range cases {
+		t.Run(c.String(), func(t *testing.T) {
+			stmts := mustLinkTable(t, testDef("product_price", c)).ddl()
+			joined := strings.Join(stmts, "\n")
+
+			for _, index := range dropped {
+				assert.Contains(t, joined, "DROP INDEX IF EXISTS "+index)
+			}
+			assert.Equal(t, len(dropped), strings.Count(joined, "DROP INDEX"),
+				"nothing but the obsolete indexes may be dropped")
+
+			// The creations come first. Under ManyToMany the lookup index
+			// replaces the unique one on the same column, and the reverse
+			// query must never be left without an index in between.
+			firstDrop := slices.IndexFunc(stmts, func(s string) bool {
+				return strings.HasPrefix(s, "DROP INDEX")
+			})
+			require.NotEqual(t, -1, firstDrop, "every cardinality drops something")
+			for i, stmt := range stmts {
+				if strings.Contains(stmt, "CREATE") {
+					assert.Less(t, i, firstDrop, "a creation may not follow a drop")
+				}
+			}
+		})
+	}
 }

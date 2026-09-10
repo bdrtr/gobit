@@ -69,6 +69,15 @@ VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (name) DO UPDATE SET name = ` + definitionsTable + `.name
 RETURNING from_module, from_field, to_module, to_field, cardinality`
 
+// widenDefinitionSQL moves a ledger row to a freer cardinality.
+//
+// It is the ONLY statement that changes a stored definition, and it changes the
+// one column that can legitimately change (ADR 0116). The row it writes is the
+// one the upsert above just locked, in the same transaction.
+const widenDefinitionSQL = `UPDATE ` + definitionsTable + `
+	SET cardinality = $2
+WHERE name = $1`
+
 // storedDefinition is the raw form of a row in the durable ledger.
 //
 // Cardinality lives on disk as TEXT (see [Cardinality.String]); that is why
@@ -86,11 +95,65 @@ type storedDefinition struct {
 
 // matches reports whether the ledger row is the same as the given definition.
 func (s storedDefinition) matches(def LinkDefinition) bool {
+	return s.sidesMatch(def) && s.cardinality == def.Cardinality.String()
+}
+
+// sidesMatch reports whether the ledger row binds the same two ends.
+//
+// The sides are compared apart from the cardinality because only one of the
+// two can legitimately change (ADR 0116): a link that starts naming a different
+// module or field is a DIFFERENT relation wearing a taken name, and no
+// direction of that change is safe.
+func (s storedDefinition) sidesMatch(def LinkDefinition) bool {
 	return s.fromModule == def.From.Module &&
 		s.fromField == def.From.Field &&
 		s.toModule == def.To.Module &&
-		s.toField == def.To.Field &&
-		s.cardinality == def.Cardinality.String()
+		s.toField == def.To.Field
+}
+
+// definitionChange is what a declaration asks of the row already in the ledger.
+type definitionChange uint8
+
+// The kinds of change a declaration can be.
+const (
+	// definitionUnchanged is the normal startup: the ledger already holds this
+	// definition.
+	definitionUnchanged definitionChange = iota
+	// definitionWidened is the same relation under a freer cardinality.
+	definitionWidened
+	// definitionConflicts is every other difference, including a NARROWING.
+	definitionConflicts
+)
+
+// change reports what the incoming definition asks of the stored row.
+//
+// # Why widening is the one difference that is allowed
+//
+// Every pair a narrower cardinality admits is admitted by a wider one, so the
+// rows already on disk satisfy the new constraint by the fact that they
+// satisfied the old one — the widening needs to look at no data to know it is
+// safe. The reverse is exactly the case [conflictWithStored] was written for:
+// a narrowing would apply a constraint without seeing the rows that already
+// violate it.
+//
+// An unrecognized spelling on disk is a conflict rather than a widening. It
+// means a release this binary does not know wrote the row, and there is no
+// ordering between a known cardinality and one whose rules are unknown.
+func (s storedDefinition) change(def LinkDefinition) definitionChange {
+	switch {
+	case !s.sidesMatch(def):
+		return definitionConflicts
+	case s.cardinality == def.Cardinality.String():
+		return definitionUnchanged
+	}
+	stored, ok := parseCardinality(s.cardinality)
+	if !ok {
+		return definitionConflicts
+	}
+	if def.Cardinality.widerThan(stored) {
+		return definitionWidened
+	}
+	return definitionConflicts
 }
 
 // String writes the ledger row in the same form as LinkDefinition.String.
@@ -200,7 +263,23 @@ func (s *service) declare(ctx context.Context, lt *linkTable) error {
 	if err != nil {
 		return wrapDB(err, codeDefineFailed, "could not write the definition of link %q to the ledger", lt.def.Name)
 	}
-	if !stored.matches(lt.def) {
+	switch stored.change(lt.def) {
+	case definitionUnchanged:
+	case definitionWidened:
+		// The ledger is moved to the new cardinality BEFORE the DDL, in the
+		// same transaction: if a statement below fails, the row goes back with
+		// it and the next startup declares against the cardinality that is
+		// really on disk.
+		if _, err := tx.Exec(ctx, widenDefinitionSQL, lt.def.Name, lt.def.Cardinality.String()); err != nil {
+			return wrapDB(err, codeDefineFailed,
+				"could not widen the cardinality of link %q in the ledger", lt.def.Name)
+		}
+		s.log.InfoContext(ctx, "link cardinality widened",
+			slog.String(keyLink, lt.def.Name),
+			slog.String("stored", stored.cardinality),
+			slog.String("cardinality", lt.def.Cardinality.String()),
+		)
+	default:
 		return conflictWithStored(stored, lt.def)
 	}
 
@@ -477,9 +556,15 @@ func conflictWithExisting(existing, incoming LinkDefinition) error {
 // RELEASE. Were it accepted silently, a change narrowing the cardinality, say,
 // would try to apply the new constraint without seeing the extra links that
 // already exist, and startup would fall over with an obscure index error.
+//
+// Since ADR 0116 a WIDENING is not this path: it is applied. The message names
+// the direction that is allowed, because the reader who hits this is most often
+// rolling a release back, and "declared differently" alone does not say that
+// going forward again is the way out.
 func conflictWithStored(stored storedDefinition, incoming LinkDefinition) error {
 	return errors.Conflict(codeDefinitionConflict,
-		"link %q is declared differently in the %s table: stored %s, incoming %s",
+		"link %q is declared differently in the %s table: stored %s, incoming %s; "+
+			"a cardinality may only be widened",
 		incoming.Name, definitionsTable, stored, incoming).
 		WithDetails(map[string]any{keyLink: incoming.Name, "stored": stored.String()})
 }
@@ -557,6 +642,25 @@ func verifySchema(ctx context.Context, tx pgx.Tx, lt *linkTable) error {
 		if err != nil {
 			return wrapDB(err, codeDefineFailed, "the index of link %q could not be verified", lt.def.Name)
 		}
+	}
+
+	// The other half of the same question, and the one a WIDENING needs
+	// (ADR 0116): an index the cardinality no longer requires must be GONE.
+	// A leftover unique index enforces the old constraint while the ledger
+	// promises the new one, and the refusal would then arrive at Create time
+	// naming a cardinality the definition no longer has.
+	for _, index := range lt.obsoleteIndexes() {
+		var kind string
+		err := tx.QueryRow(ctx, relkindSQL, index).Scan(&kind)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return wrapDB(err, codeDefineFailed, "the index of link %q could not be verified", lt.def.Name)
+		}
+		return errors.Internal(codeDefineFailed,
+			"the %s index of link %q outlived the %s cardinality it enforced; we do not continue with a constraint the definition no longer declares",
+			index, lt.def.Name, lt.def.Cardinality)
 	}
 	return nil
 }

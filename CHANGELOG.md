@@ -20,6 +20,33 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir bağın kardinalitesi artık GENİŞLEYEBİLİYOR** (`core/link`, ADR 0116).
+  Ağaçta üç yer aynı adımı adlandırıyordu — ADR 0114'ün açık bıraktığı sınır,
+  payment modülünün bağ tanımı ("o gün bu OneToMany olur ve **başka hiçbir şey
+  değişmez**") ve yetenek listesi. O cümle yanlıştı ve en sert biçimde yanlıştı:
+  `core/link` her tanımı kalıcı bir deftere yazıp gelen tanımla EŞİTLİK üzerinden
+  karşılaştırıyor, yani değişmiş bir kardinalite açılışta çakışmadır — uygulama
+  hiç başlamazdı. Şema yarısı da aynı şekildeydi: DDL baştan sona `IF NOT
+  EXISTS` olduğu için gevşek bir bildirim hiçbir şey yaratmıyor ve hiçbir şeyi
+  KALDIRMIYORDU; eski kardinalite altında kurulan tekil indeks hayatta kalıp
+  eskisini dayatmaya devam ederdi.
+  Karar: iki ucu değişmemiş ve kardinalitesi depodakinden GENİŞ olan bir bildirim
+  uygulanıyor — defter satırı taşınıyor ve yeni kardinalitenin istemediği
+  indeksler, bildirimin zaten tuttuğu kilidin altında, aynı işlemde düşürülüyor.
+  Güvenlik gerekçesi tek cümle: dar bir kardinalitenin kabul ettiği her çift
+  geniş olanınca da kabul edilir, yani diskteki satırlar yeni kısıtı eskisini
+  sağlamış olmakla sağlar — genişleme güvenli olduğunu bilmek için hiçbir veri
+  okumaz. DARALTMA okumak zorundadır ve reddedilmeye devam ediyor.
+  Bedelleri: bir bağı genişleten sürüm bu yoldan GERİ ALINAMAZ (eski ikili dar
+  kardinaliteyi bildirir ve açılışta reddedilir), ve ret mesajı artık izin
+  verilen yönü söylüyor çünkü oraya çarpan okur çoğunlukla geri alıyordur.
+  `verifySchema` sorusunun öteki yarısını kazandı: gereken indeksler var mı diye
+  soruyordu, artık gerekmeyenler GİTTİ Mİ diye de soruyor.
+  `order_payment` burada genişletilMİYOR: okuyucuları tek tahsilat varsayıyor ve
+  bunu yazıyor (iade akışı ikincisini "seçim değil veri hatası" sayıp ilkini
+  alır), ikisi arasında seçim kuralı ise ikincisinin bir anlamı olmadan
+  yazılamaz. ADR 0089/0090'ın yaptığı ayrımın aynısı.
+
 - **Mağaza artık kim olduğunu SÖYLÜYOR** (yeni `settings` modülü, ADR 0115).
   Faturalama akışı iki tarafı da ÇAĞIRANINDAN alıyordu ve satıcının neden orada
   olduğunu kendi godoc'u yazmıştı: "satıcının yasal bilgileri mağazanın kendi

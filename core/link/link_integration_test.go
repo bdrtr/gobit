@@ -213,13 +213,20 @@ func TestDefineIsIdempotent(t *testing.T) {
 // TestDefineRejectsChangedDefinition verifies that a definition changed
 // between releases is caught by the durable ledger. The in-process registry
 // cannot see this case; the only place that catches it is the database.
+//
+// Since ADR 0116 "changed" means NARROWED or moved: a widening is a declaration
+// this path applies, and [TestALinkCanBeWidened] is where that lives.
 func TestDefineRejectsChangedDefinition(t *testing.T) {
 	ctx := context.Background()
 	def := definition("define_changed", link.OneToMany)
 	require.NoError(t, newLinkService().Define(ctx, def))
 
+	// A NARROWING. Since ADR 0116 the widening direction is applied rather
+	// than refused, so the case this test is about has to be the other one:
+	// one_to_one demands a uniqueness the rows already on disk may violate,
+	// and nothing here looked at them.
 	changed := def
-	changed.Cardinality = link.ManyToMany
+	changed.Cardinality = link.OneToOne
 
 	// A NEW service with an empty registry: the conflict can only be known
 	// from the database.
@@ -230,6 +237,8 @@ func TestDefineRejectsChangedDefinition(t *testing.T) {
 		"the error class must be KindConflict, got %v", errors.KindOf(err))
 	assert.Equal(t, "link_definition_conflict", errors.CodeOf(err))
 	assert.Contains(t, err.Error(), "one_to_many", "the message must show the stored definition")
+	assert.Contains(t, err.Error(), "may only be widened",
+		"the reader is most often rolling a release back and needs the direction named")
 
 	// Because the transaction was rolled back, the ledger and the schema must
 	// be UNCHANGED.
@@ -241,6 +250,154 @@ func TestDefineRejectsChangedDefinition(t *testing.T) {
 	otherEnd := def
 	otherEnd.To.Module = "inventory"
 	assert.True(t, errors.IsConflict(newLinkService().Define(ctx, otherEnd)))
+}
+
+// TestALinkCanBeWidened proves the claim ADR 0116 rests on: a declared
+// cardinality can move to a freer one, ON A DATABASE THAT ALREADY HOLDS THE
+// TABLE, and the constraint that stopped the extra row is really gone.
+//
+// The unit tests show that the right DDL is produced. Only here does PostgreSQL
+// say whether it applied it — and the half that would have been missed without
+// a real database is the DROP: declaring one_to_many does not by itself remove
+// a unique index built under one_to_one, so without it the second row would
+// still be refused while the ledger promised it was allowed.
+func TestALinkCanBeWidened(t *testing.T) {
+	ctx := context.Background()
+	def := definition("widen_cardinality", link.OneToOne)
+
+	// The service is the PROCESS: a release declares the link and then works
+	// through the same registry. The widening is a second process, so it gets
+	// a second service, which is also what forces the durable-ledger path.
+	release1 := newLinkService()
+	require.NoError(t, release1.Define(ctx, def))
+
+	table := tableNameFor(t, def.Name)
+	require.NoError(t, release1.Create(ctx, def.Name, "order_1", "coll_1"))
+
+	// Under one_to_one the second target is refused, which is the state the
+	// widening is being asked to leave.
+	requireCardinalityConflict(t,
+		release1.Create(ctx, def.Name, "order_1", "coll_2"), "order_1")
+
+	widened := def
+	widened.Cardinality = link.OneToMany
+	release2 := newLinkService()
+	require.NoError(t, release2.Define(ctx, widened),
+		"a widening is a declaration, not a conflict")
+
+	assert.Equal(t, "one_to_many", ledgerRow(ctx, t, def.Name)[4],
+		"the ledger must carry the cardinality that is now enforced")
+	assert.False(t, indexExists(ctx, t, table, table+"_from_uniq"),
+		"the index enforcing the OLD constraint must be dropped, or the widening is a promise only")
+	assert.True(t, indexExists(ctx, t, table, table+"_to_uniq"),
+		"one_to_many still owns the to end")
+
+	require.NoError(t, release2.Create(ctx, def.Name, "order_1", "coll_2"),
+		"the second target is the whole point of the widening")
+
+	ids, err := release2.List(ctx, def.Name, "order_1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"coll_1", "coll_2"}, ids)
+
+	// The end the new cardinality still constrains is still constrained. A
+	// widening that quietly freed BOTH ends would let a collection belong to
+	// two orders.
+	requireCardinalityConflict(t, release2.Create(ctx, def.Name, "order_2", "coll_1"), "coll_1")
+}
+
+// TestAWidenedLinkCanBeWidenedAgain carries the same link to the last step and
+// proves the index SWAP on the to end: many_to_many replaces the unique index
+// with a plain one, so the reverse-direction query keeps an index across a
+// change that removes a constraint.
+func TestAWidenedLinkCanBeWidenedAgain(t *testing.T) {
+	ctx := context.Background()
+	def := definition("widen_twice", link.OneToMany)
+	release1 := newLinkService()
+	require.NoError(t, release1.Define(ctx, def))
+	require.NoError(t, release1.Create(ctx, def.Name, "order_1", "coll_1"))
+
+	table := tableNameFor(t, def.Name)
+	requireCardinalityConflict(t,
+		release1.Create(ctx, def.Name, "order_2", "coll_1"), "coll_1")
+
+	widened := def
+	widened.Cardinality = link.ManyToMany
+	release2 := newLinkService()
+	require.NoError(t, release2.Define(ctx, widened))
+
+	assert.Equal(t, "many_to_many", ledgerRow(ctx, t, def.Name)[4])
+	assert.False(t, indexExists(ctx, t, table, table+"_to_uniq"),
+		"many_to_many constrains neither end")
+	assert.True(t, indexExists(ctx, t, table, table+"_to_lookup"),
+		"the reverse-direction query must not be left to a table scan")
+
+	require.NoError(t, release2.Create(ctx, def.Name, "order_2", "coll_1"),
+		"under many_to_many a target may belong to more than one record")
+}
+
+// TestAWideningSurvivesTheDeclarationBeingRepeated verifies that the startup
+// after the widening is an ordinary one.
+//
+// It is the case a widening is most likely to get wrong: the drops run on every
+// Define, and the second run has nothing left to drop. If DROP INDEX were not
+// guarded the process would fail to start the day AFTER the upgrade, which is
+// the worst possible day to find out.
+func TestAWideningSurvivesTheDeclarationBeingRepeated(t *testing.T) {
+	ctx := context.Background()
+	def := definition("widen_repeat", link.OneToOne)
+	require.NoError(t, newLinkService().Define(ctx, def))
+
+	widened := def
+	widened.Cardinality = link.OneToMany
+	require.NoError(t, newLinkService().Define(ctx, widened))
+
+	restarted := newLinkService()
+	require.NoError(t, restarted.Define(ctx, widened),
+		"the startup after a widening is an ordinary startup")
+
+	assert.Equal(t, "one_to_many", ledgerRow(ctx, t, def.Name)[4])
+	require.NoError(t, restarted.Create(ctx, def.Name, "order_1", "coll_1"))
+	require.NoError(t, restarted.Create(ctx, def.Name, "order_1", "coll_2"))
+}
+
+// TestASchemaConvergesOnTheDeclarationWhenTheLedgerRowIsGone covers the way a
+// stored definition can be abandoned rather than changed.
+//
+// If the row is DELETED, the upsert on the next startup inserts a fresh one
+// carrying the new cardinality, RETURNING hands back what was just written, and
+// the comparison compares the declaration against itself. Nothing in the ledger
+// can object, and every startup after that looks consistent — while the index
+// built under the old cardinality is still there enforcing it.
+//
+// This is why the drops are unconditional rather than reserved for the widening
+// branch: the schema is made to match the DECLARATION, whatever the ledger was
+// able to say about it.
+func TestASchemaConvergesOnTheDeclarationWhenTheLedgerRowIsGone(t *testing.T) {
+	ctx := context.Background()
+	def := definition("widen_ledger_gone", link.OneToOne)
+	release1 := newLinkService()
+	require.NoError(t, release1.Define(ctx, def))
+
+	table := tableNameFor(t, def.Name)
+	require.True(t, indexExists(ctx, t, table, table+"_from_uniq"),
+		"one_to_one owns both ends, and this is the index the widening has to remove")
+
+	// The row leaves; the table and its indexes stay exactly as they were.
+	_, err := testPool.Pool().Exec(ctx, `DELETE FROM link_definitions WHERE name = $1`, def.Name)
+	require.NoError(t, err)
+
+	widened := def
+	widened.Cardinality = link.OneToMany
+	release2 := newLinkService()
+	require.NoError(t, release2.Define(ctx, widened),
+		"an absent row is an ordinary first declaration")
+
+	assert.False(t, indexExists(ctx, t, table, table+"_from_uniq"),
+		"the schema must match the declaration even when the ledger could not object")
+
+	require.NoError(t, release2.Create(ctx, def.Name, "order_1", "coll_1"))
+	require.NoError(t, release2.Create(ctx, def.Name, "order_1", "coll_2"),
+		"the cardinality the ledger now states is the one the database enforces")
 }
 
 // TestDefineIsSafeUnderConcurrency verifies that processes starting at the

@@ -166,6 +166,36 @@ func (c Cardinality) Valid() bool {
 	return c == OneToOne || c == OneToMany || c == ManyToMany
 }
 
+// parseCardinality reads back the spelling [Cardinality.String] writes.
+//
+// It is the inverse of the ONLY conversion that reaches disk, and it reports
+// failure rather than defaulting: an unrecognized spelling in the ledger means
+// the row was written by a release this binary does not know, and picking a
+// value for it would be a guess about what that release promised.
+func parseCardinality(s string) (Cardinality, bool) {
+	switch s {
+	case OneToOne.String():
+		return OneToOne, true
+	case OneToMany.String():
+		return OneToMany, true
+	case ManyToMany.String():
+		return ManyToMany, true
+	default:
+		return 0, false
+	}
+}
+
+// widerThan reports whether c admits every pair the other cardinality admits,
+// and at least one it does not.
+//
+// The constants are declared from strictest to freest, so the widening order IS
+// the numeric order; that coupling is stated here because it is the only place
+// that depends on it, and [Cardinality.String] exists precisely so the disk
+// does not.
+func (c Cardinality) widerThan(other Cardinality) bool {
+	return c.Valid() && other.Valid() && c > other
+}
+
 // LinkSide is one end of a link: which field of which module is being bound.
 //
 // Field is NOT A COLUMN NAME in the link table (see the [TableName] comments);
