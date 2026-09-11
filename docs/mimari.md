@@ -173,8 +173,11 @@ the only thing two modules share should be a SCHEMA, so that neither names the
 other's type nor gives birth to a shared package.
 
 The published surfaces are deliberately **narrow and speak in primitive types**:
-every method is a contract and the compiler does not check it — the interface is
-defined on the CONSUMING side and the provider satisfies it structurally.
+the interface is defined on the CONSUMING side and the provider satisfies it
+structurally. What the compiler checks of that and what it does not is worth
+keeping apart — the METHOD SET is pinned (below), the JSON inside a
+`json.RawMessage` is not, and a drifted field name is still found only by a test
+that runs both sides.
 Through `0.x` a signature may change, but the price has to be visible: it is
 written into `CHANGELOG.md` as a breaking change. The proof that the two sides
 still agree is a COMPILE-TIME pin: `internal/arch/interop_pins_test.go` assigns
@@ -530,9 +533,16 @@ Which backend the event bus runs on, and what each one loses, is in
 
 ## 12. Known limits
 
+The ARCHITECTURAL ones, which is a subset: the full list is
+[`known-limits.md`](known-limits.md), and it holds roughly three times as many.
+The two are kept apart because they answer different questions — this table is
+read while learning how the thing is built, that document while deciding whether
+it does what a shop needs. They drift apart when a limit is closed and only one
+of them is edited, which has happened.
+
 | Limit | Effect | Way out |
 |---|---|---|
-| Cross-module signatures are not checked at compile time | Drift shows up at run time | An integration test for every interop surface (the existing rule) |
+| The cross-module JSON SCHEMA is not checked at compile time | A drifted FIELD NAME leaves both packages' unit tests green and fails at run time | An integration test for every interop surface. The SIGNATURE is a different question and is no longer a limit: since [ADR 0136](adr/0136-the-compiler-checks-every-interop-pair.md) a pin file assigns every container-resolved producer to its consumer's interface, so a changed method set fails the BUILD |
 | Session revocation is only **wholesale** | No dropping a single device | A jti-based blacklist — which means a new store read on every request |
 | Load testing is in-process | Does not produce a capacity plan | An external load tool against a real deployment |
 | Rollback is for ONE owner and does not know the order | An operator who wants to roll back modules together repeats the command per owner; the command does not say in which order to roll back | Because there are no cross-module FKs, order is not a constraint today; a definition of order is added when it is genuinely needed |

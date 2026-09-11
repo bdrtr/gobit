@@ -472,11 +472,21 @@ past and is not corrected retroactively.
 
 ## The limit of the invariants
 
-- **Cross-module signatures are not checked at compile time.** A narrow
+- **The cross-module JSON SCHEMA is not checked at compile time.** A narrow
   interface plus resolution by name from the container is
-  [ADR 0001](adr/0001-modul-arasi-iletisim.md)'s accepted price: a field name
+  [ADR 0001](adr/0001-modul-arasi-iletisim.md)'s accepted price: a FIELD NAME
   drifting apart leaves both packages' unit tests green, and the two ends meet
-  over a real container in e2e.
+  over a real container in e2e. The composite data crosses as `json.RawMessage`
+  and nothing but a test that runs both sides can compare the two schemas.
+
+  The SIGNATURE is no longer part of this limit and the distinction is the
+  point. Since [ADR 0136](adr/0136-the-compiler-checks-every-interop-pair.md)
+  `internal/arch/interop_pins_test.go` assigns every container-resolved producer
+  to the interface its consumer declares, so a method that changes, moves or
+  disappears fails the BUILD. The sentence that used to stand here — that the
+  compiler never sees the two sides together — is what kept that file from being
+  written, and while it stood two shipped storefront coupon endpoints answered
+  500 to the first customer who typed a code (D73).
 - **`TestEveryWorkflowIsSetUpInTheCompositionRoot` is a SYNTACTIC proxy.** It
   asks the question "can a wrong configuration stop startup" as "does the path
   to setup go through a `go` expression"; when the `go` is hidden behind a

@@ -20,6 +20,18 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Düzeltmeler
 
+- **Kapatılmış bir sınır hâlâ SINIR olarak yayımlanıyordu** (D81). ADR 0136
+  modüller arası METOT KÜMESİNİ derleme zamanı denetimine çevirdi; ama iki
+  "bilinen sınırlar" belgesi de hâlâ "Cross-module signatures are not checked at
+  compile time" diye açılıyordu. Daha kötüsü: `docs/mimari.md` KENDİSİYLE
+  çelişiyordu — bölüm 5 bir önceki commit'te düzeltilmiş, bölüm 12'nin tablosu
+  ve bölüm 5'in içindeki bir cümle bırakılmıştı. Ağaç noktasal değil SÜPÜRÜLDÜ:
+  "derleyici denetlemiyor" cümlesinin yirmi kopyası var ve ON BEŞİ DOĞRU,
+  bilerek dokunulmadı — öznesi JSON ŞEMASI ya da sınırdan geçen DEĞERLER, ki
+  pin onlara dokunmuyor. Ayrım satırın tamamı: imza denetleniyor, ANLAM
+  denetlenmiyor. Ve `docs/mimari.md`'nin kendi "Known limits" bölümü yirmi dokuz
+  maddenin onunu taşıyan bir ALT KÜME olduğunu artık söylüyor.
+
 - **Entegrasyon şeridi bu makinede bir yıllık ÖNBELLEK sayesinde yeşildi**
   (D80). CI "pull access denied for minio/minio" ile düştü; bu ileti eksik
   etiket gibi okunuyor ama değil — Docker Hub, sabitlenmiş etiketi de `latest`i

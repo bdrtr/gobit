@@ -89,8 +89,15 @@ func (s *Service) RegionCurrency(ctx context.Context, regionID string) (code str
 //
 // So this surface is PERMANENT. If it is removed, an installation that runs
 // without the tax module (e.g. a small single-region shop) silently zeroes the
-// tax. Since the compiler does not check the contract (ADR 0006), the decision
-// to remove it can only be made by reading internal/workflows/cart.
+// tax.
+//
+// This paragraph used to end by saying the decision to remove it could only be
+// made by reading internal/workflows/cart, because the compiler does not check
+// the contract. That is no longer true of the METHOD: since ADR 0136 the pin
+// file in internal/arch assigns this type to the interface the cart flow
+// declares, so removing a method here fails the build rather than the shop. What
+// the compiler still cannot check is the meaning — a method that stays and
+// starts answering zero is the shape this paragraph is really about.
 //
 // The rate is an integer and it is in basis points (2000 = 20%): a float rate,
 // multiplied by an amount, would produce silent rounding at the cent level

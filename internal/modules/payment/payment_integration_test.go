@@ -874,9 +874,13 @@ func TestModulOtobussuzKaydolmaz(t *testing.T) {
 // TestInteropUctanUcaAkisGercekVeritabaninda saga'nın kullanacağı İLKEL
 // yüzeyin gerçek veritabanı üzerinde çalıştığını doğrular.
 //
-// Modüller arası uyum derleyici tarafından denetlenemez (ADR 0001'in kabul
-// edilen bedeli); bu yüzden yüzeyin gerçek bağımlılıklarla koştuğu bir
-// entegrasyon testi ZORUNLUDUR.
+// Yüzeyin İMZASI artık derleme zamanında denetleniyor (ADR 0136): internal/arch
+// içindeki pin dosyası bu tipi tüketicisinin bildirdiği arayüze atıyor, yani
+// eksilen bir metot yapıyı düşürür.
+//
+// Bu testin kanıtladığı şey o değil ve olmadı da: ilkel yüzeyin GERÇEK
+// bağımlılıklarla koştuğunu, yani SQL'in, işlemin ve dönen değerlerin doğru
+// olduğunu gösteriyor. İmza denetlenebilir, davranış denetlenemez.
 func TestInteropUctanUcaAkisGercekVeritabaninda(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newService(t)
