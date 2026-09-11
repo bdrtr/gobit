@@ -237,6 +237,36 @@ test-modules: ## Ayrı modüllerin testlerini koştur
 		echo "test-modules: yalnızca $$found modül koşuldu, $(SEPARATE_MODULE_COUNT) bekleniyordu" >&2; exit 1; \
 	fi
 
+# Ayrı modüllerin ENTEGRASYON testleri.
+#
+# Ayrı bir hedef, cunku `test-modules` CI'nin Test isinde kosuyor ve orada Docker
+# YOK. Bu hedef Integration isine ait.
+#
+# Taban MODUL BASINA degil, TOPLAMDA birdir.
+#
+# Hangi modulun entegrasyon testi olacagi bugunun olgusu — ornek moduller hic
+# test tasimiyor — ve modul basina bir taban, yazilmamis bir kurali dayatirdi.
+# Ama tabansiz birakmak olculdu ve KOTU cikti: tarama bozulunca hedef hicbir
+# sey kosmadan 0 donuyor, ki "hepsi gecti" ile "hicbirine bakmadim" yine ayni
+# cikis kodu demek.
+#
+# Bir taban ikisini birden veriyor: kimseye test yazma borcu yuklemiyor, ve
+# tarama sessizce bosa dustugunde duruyor. Bugun bir modul kosuyor; o da
+# kalmayacaksa bu satir birinin KARAR vermesini istiyor.
+test-modules-integration: ## Ayrı modüllerin entegrasyon testlerini koştur (Docker)
+	@found=0; \
+	for mod in $(SEPARATE_MODULES); do \
+		[ "$$mod" = "." ] && continue; \
+		[ -f "$$mod/go.mod" ] || continue; \
+		if ! grep -rqls '//go:build integration' "$$mod"; then continue; fi; \
+		echo "  $$mod: go test -tags=integration"; \
+		(cd "$$mod" && go test -tags=integration -count=1 ./...) || exit 1; \
+		found=$$((found+1)); \
+	done; \
+	if [ "$$found" -lt 1 ]; then \
+		echo "test-modules-integration: hicbir ayri modul kosulmadi" >&2; exit 1; \
+	fi
+
 fmt: $(GOLANGCI) ## Kaynakları biçimlendir (gofmt + goimports)
 	@$(GOLANGCI) fmt ./...
 	@go mod tidy

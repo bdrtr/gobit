@@ -176,6 +176,13 @@ const dbServiceName = "core.db"
 // same floor gobit's own JWT secret takes in production.
 const minSecretLen = 32
 
+// Credentials returns the store, for an embedder seeding accounts from its own
+// code rather than over the admin endpoint.
+//
+// It answers nil until [Module.Register] has run, for [Module.Sessions]'s
+// reason: before that there is no pool to read.
+func (m *Module) Credentials() Credentials { return m.store }
+
 // Sessions returns the verifier, for an embedder that signs people in itself.
 //
 // It answers nil until [Module.Register] has run, which is the honest answer:

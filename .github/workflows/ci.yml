@@ -119,6 +119,12 @@ jobs:
       # This is the repository's REAL coverage: unit + integration, with
       # cross-package attribution. The number in the Test job covers the unit
       # tests only.
+      # The separate modules' integration tests, which need the Docker this job
+      # has and the Test job does not. contrib/identity-session ships two SQL
+      # statements, three CHECKs and a unique index; nothing executed them until
+      # this step existed.
+      - name: The separate modules' integration tests
+        run: make test-modules-integration
       - name: Coverage summary (unit + integration)
         run: go tool cover -func=coverage-integration.out | tail -1
 

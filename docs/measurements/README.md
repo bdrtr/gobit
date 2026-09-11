@@ -18,7 +18,7 @@ truth: a report says what was true on the day it was taken.
 | [A stamp is not a balance — measured 2026-09-10](0124-a-stamp-is-not-a-balance.md) | 82 |
 | [What an unverified claim still buys — measured 2026-09-10](0125-what-an-unverified-claim-still-buys.md) | 81 |
 | [What a suite can tell about a verifier — measured 2026-09-10](0126-what-a-suite-can-tell-about-a-verifier.md) | 67 |
-| [Where a session package belongs — measured 2026-09-11](0127-where-a-session-package-belongs.md) | 87 |
+| [Where a session package belongs — measured 2026-09-11](0127-where-a-session-package-belongs.md) | 114 |
 | [The guard moves to the binding — measured 2026-09-10](0120-the-guard-moves-to-the-binding.md) | 126 |
 | [Where the truth about collected money lives — measured 2026-09-10](0119-where-the-truth-about-collected-money-lives.md) | 130 |
 | [A counter in place of a balance — measured 2026-09-10](0118-a-counter-in-place-of-a-balance.md) | 162 |

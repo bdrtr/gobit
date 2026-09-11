@@ -85,3 +85,30 @@ against its own fixtures — making `CustomerID` read the request body fails wit
 furthest from its cause.
 
 Three mutations, three deaths: the MAC check, the expiry check, and the body.
+
+## The SQL nothing ran, and the floor that was argued away and measured back
+
+The unit tests replace the store with one the test wrote, which proves the
+session half and nothing about the storage half. What shipped unexecuted was two
+statements, three CHECKs, one unique index and one migration. A mistyped column
+compiles; a CHECK refusing a row the store writes is invisible until the first
+sign-in in production.
+
+`make test-modules-integration` runs them, and the mutations say it is real:
+
+| Mutation | What fell |
+|---|---|
+| the read stops folding the address | the folding test and the whole-chain test |
+| the conflict target becomes the address, not the customer | one-row and one-address |
+| the folding CHECK is dropped from the migration | the schema witness and the raw-SQL test |
+
+The folding pair is the one worth naming: the store folds and the column CHECKs
+that it is folded, which is two rules for one fact. In a unit test the same
+function writes both sides and they always agree. Only the database can say the
+CHECK is the floor the store thinks it is.
+
+The target's own floor was argued against in its first draft — "which module has
+integration tests is today's fact, and a per-module floor imposes an unwritten
+rule" — and then measured. Breaking the scan so it matched nothing made the
+target run nothing and exit 0. The floor is ONE, in total: it puts no test-writing
+debt on any module and still refuses a scan that quietly found nobody.

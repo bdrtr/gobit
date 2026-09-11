@@ -39,15 +39,16 @@ gobit's own arch gates do not walk the tree, and what holds the package instead
 is the suite gobit published for exactly this interface — which found a real
 defect in it, not only in its own fixtures.
 
-Four gates and two lanes learned about the tree and each found something. The
+Four gates and THREE lanes learned about the tree and each found something. The
 language detector refused it before reading a byte, because a new root is how a
 population grows past a gate. The response-writing gate rejected a hand-written
 error envelope in five places, so the module answers through `corehttp.WriteError`
 like the routes beside it. Renaming the out-of-tree compilation gate to stop
 saying "examples" was reverted: two records below 0052 name that test, and this
-repository does not rewrite those. And twenty-eight tests nothing ran now have a
-lane with a floor, because "no failures" and "I ran nothing" must not share an
-exit code.
+repository does not rewrite those. And the tests nothing ran now have two lanes
+with floors, because "no failures" and "I ran nothing" must not share an exit
+code — the second lane runs the SQL, which the unit tests replace with a store
+they wrote themselves.
 
 A signed cookie cannot be revoked before it expires. That is the price of keeping
 the identity off the read path of twelve storefront routes, and it is written
