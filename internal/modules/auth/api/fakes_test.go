@@ -18,6 +18,17 @@ import (
 // looking only at the status code could not notice a handler that returns the
 // error after having performed the write.
 type fakeAuth struct {
+	// invitedUser and invitedBy are what InviteUser was last called with.
+	invitedUser string
+	invitedBy   string
+	inviteErr   error
+	// acceptedToken and acceptedPassword are what AcceptInvitation was last
+	// called with; the password is kept so a test can prove the handler passes
+	// it on rather than reading it out of the body twice.
+	acceptedToken    string
+	acceptedPassword string
+	acceptErr        error
+
 	// callCount is the number of calls that reached the service.
 	callCount int
 	// lastLogoutPrincipalID is the identity the logout endpoint passed to the
@@ -162,4 +173,20 @@ func (f *fakeAuth) UpdateSalesChannel(
 func (f *fakeAuth) DeleteSalesChannel(_ context.Context, _ string) error {
 	f.hit()
 	return nil
+}
+
+// InviteUser records the invitation the handler asked for.
+func (f *fakeAuth) InviteUser(_ context.Context, userID, invitedBy string) error {
+	f.invitedUser = userID
+	f.invitedBy = invitedBy
+
+	return f.inviteErr
+}
+
+// AcceptInvitation records the token and the password the handler passed on.
+func (f *fakeAuth) AcceptInvitation(_ context.Context, token, password string) error {
+	f.acceptedToken = token
+	f.acceptedPassword = password
+
+	return f.acceptErr
 }

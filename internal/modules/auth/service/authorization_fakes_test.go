@@ -6,6 +6,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/auth/models"
+	"github.com/bdrtr/gobit/internal/modules/auth/repository"
 	"github.com/bdrtr/gobit/internal/modules/auth/service"
 )
 
@@ -26,6 +27,8 @@ type fakeRepo struct {
 	lastUser models.User
 	// lastPatch is the partial update applied to a user last.
 	lastPatch models.UserPatch
+	// invites is the invitation table.
+	invites fakeInvitations
 }
 
 var _ service.Repository = (*fakeRepo)(nil)
@@ -209,4 +212,59 @@ func (d *fakeRepo) UpdateSalesChannel(
 func (d *fakeRepo) DeleteSalesChannel(_ context.Context, _ string, _ time.Time) error {
 	d.writeCount++
 	return nil
+}
+
+// fakeInvitations is the fake's invitation table, keyed by token hash.
+//
+// It imitates the two OBSERVABLE answers the real store gives: writing replaces the
+// row that user already had, and taking one removes it in the same breath. That the
+// SQL really does those is the integration lane's question.
+type fakeInvitations struct {
+	byHash map[string]models.UserInvitation
+	// expired makes every row written already past its deadline.
+	expired bool
+}
+
+// PutInvitation writes an invitation, replacing the user's own.
+func (d *fakeRepo) PutInvitation(
+	_ context.Context,
+	tokenHash, userID, invitedBy string,
+	expiresAt time.Time,
+) (models.UserInvitation, error) {
+	d.writeCount++
+	if d.invites.byHash == nil {
+		d.invites.byHash = map[string]models.UserInvitation{}
+	}
+	for hash, existing := range d.invites.byHash {
+		if existing.UserID == userID {
+			delete(d.invites.byHash, hash)
+		}
+	}
+	if d.invites.expired {
+		expiresAt = time.Now().UTC().Add(-time.Minute)
+	}
+
+	row := models.UserInvitation{
+		TokenHash: tokenHash, UserID: userID, InvitedBy: invitedBy,
+		ExpiresAt: expiresAt, CreatedAt: time.Now().UTC(),
+	}
+	d.invites.byHash[tokenHash] = row
+
+	return row, nil
+}
+
+// TakeInvitation removes the row and answers it, refusing an expired one.
+func (d *fakeRepo) TakeInvitation(
+	_ context.Context, tokenHash string,
+) (models.UserInvitation, error) {
+	row, found := d.invites.byHash[tokenHash]
+	if !found {
+		return models.UserInvitation{}, repository.ErrNoInvitation
+	}
+	delete(d.invites.byHash, tokenHash)
+	if !row.ExpiresAt.After(time.Now().UTC()) {
+		return models.UserInvitation{}, repository.ErrNoInvitation
+	}
+
+	return row, nil
 }

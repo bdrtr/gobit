@@ -58,6 +58,14 @@ type AuthUser struct {
 	DeletedAt pgtype.Timestamptz
 }
 
+type AuthUserInvitation struct {
+	TokenHash string
+	UserID    string
+	InvitedBy string
+	ExpiresAt pgtype.Timestamptz
+	CreatedAt pgtype.Timestamptz
+}
+
 type SalesChannel struct {
 	ID          string
 	Name        string

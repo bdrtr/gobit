@@ -31,6 +31,7 @@ package arch_test
 // that runs tests because it cannot reach a lane that compiles them.
 
 import (
+	"context"
 	"maps"
 	"slices"
 	"strings"
@@ -96,6 +97,16 @@ var (
 	_ ordersvc.SpendingPolicy     = (*b2bsvc.Interop)(nil)
 	_ notifsvc.OrderContactReader = (*ordersvc.Interop)(nil)
 )
+
+// The AUTH module resolving the NOTIFICATION module's surface.
+//
+// The consumer interface is unexported (`auth.messenger`), so this pin names the
+// producer against the shape the consumer needs rather than against the consumer's
+// own type — which is the one thing this file cannot do for an unexported
+// interface, and is written here rather than left to be noticed.
+var _ interface {
+	Send(ctx context.Context, template, channel, reference, to string, data map[string]string) error
+} = (*notifsvc.Interop)(nil)
 
 // A FLOW resolving a MODULE's surface.
 //
@@ -183,6 +194,7 @@ var pinnedNames = map[string]string{
 	"settings.interop":             "the invoicing flow's store profile",
 	"product.interop":              "the searchpg plugin's catalog read",
 	"auth.interop":                 "the composition root and the admin panel's authenticator",
+	"notification.interop":         "the auth module carrying an invitation",
 }
 
 // interopPinExemptions are the consumed interop names this file does NOT pin, and

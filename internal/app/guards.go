@@ -136,7 +136,7 @@ func guardStack(
 		// The login endpoint is EXEMPT from the guard: the request whose
 		// identity is to be checked is the one about to establish it. The path
 		// is not spelled out here, it is read from the auth module's constant.
-		AdminExempt: []string{authapi.LoginPath},
+		AdminExempt: []string{authapi.LoginPath, authapi.AcceptInvitationPath},
 		// Uploaded files are served WITHOUT identity (an <img> in a storefront
 		// cannot send a header) but NOT without a quota: every request performs
 		// a database read and a disk access. The prefix is not spelled out

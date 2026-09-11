@@ -222,6 +222,48 @@ func (q *Queries) LockLiveUser(ctx context.Context, id string) (AuthUser, error)
 	return i, err
 }
 
+const putInvitation = `-- name: PutInvitation :one
+INSERT INTO auth_user_invitation (token_hash, user_id, invited_by, expires_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (user_id) DO UPDATE
+SET token_hash = EXCLUDED.token_hash,
+    invited_by = EXCLUDED.invited_by,
+    expires_at = EXCLUDED.expires_at,
+    created_at = now()
+RETURNING token_hash, user_id, invited_by, expires_at, created_at
+`
+
+type PutInvitationParams struct {
+	TokenHash string
+	UserID    string
+	InvitedBy string
+	ExpiresAt pgtype.Timestamptz
+}
+
+// PutInvitation writes an invitation, REPLACING the one that user already had.
+//
+// The conflict target is the USER rather than the token: resending is the same
+// administrator asking again, and they expect the newest link to work. The old
+// token stops working in the same statement, which is what keeps one account from
+// accumulating live links.
+func (q *Queries) PutInvitation(ctx context.Context, arg PutInvitationParams) (AuthUserInvitation, error) {
+	row := q.db.QueryRow(ctx, putInvitation,
+		arg.TokenHash,
+		arg.UserID,
+		arg.InvitedBy,
+		arg.ExpiresAt,
+	)
+	var i AuthUserInvitation
+	err := row.Scan(
+		&i.TokenHash,
+		&i.UserID,
+		&i.InvitedBy,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const softDeleteIdentitiesOfUser = `-- name: SoftDeleteIdentitiesOfUser :exec
 UPDATE auth_identity
 SET deleted_at = $2, updated_at = $2
@@ -294,6 +336,36 @@ func (q *Queries) SyncIdentityProviderIdentity(ctx context.Context, arg SyncIden
 		arg.UpdatedAt,
 	)
 	return err
+}
+
+const takeInvitation = `-- name: TakeInvitation :one
+DELETE FROM auth_user_invitation
+WHERE token_hash = $1 AND expires_at > now()
+RETURNING token_hash, user_id, invited_by, expires_at, created_at
+`
+
+// TakeInvitation removes an invitation and answers what it held.
+//
+// Removing and reading are ONE statement, which is what makes a token single-use:
+// two requests carrying one token cannot both be answered, whatever their timing
+// and whatever the isolation level — the second deletes nothing and returns
+// nothing. A SELECT followed by a DELETE would need a lock to say as much, and this
+// repository has measured what a guard without one is worth under READ COMMITTED
+// (gap D46).
+//
+// The expiry is in the same WHERE for the same reason: a row that is too old is
+// simply not a row this statement can take, rather than a rule written twice.
+func (q *Queries) TakeInvitation(ctx context.Context, tokenHash string) (AuthUserInvitation, error) {
+	row := q.db.QueryRow(ctx, takeInvitation, tokenHash)
+	var i AuthUserInvitation
+	err := row.Scan(
+		&i.TokenHash,
+		&i.UserID,
+		&i.InvitedBy,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const updateUser = `-- name: UpdateUser :one

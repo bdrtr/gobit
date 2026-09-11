@@ -25,9 +25,15 @@ import (
 // on the day somebody adds a "phone" column and declares nothing, which is the
 // only failure worth catching here.
 
-// migrationFile is the module's only migration; it, and not this package,
-// decides what columns exist.
-const migrationFile = "000001_auth_init.up.sql"
+// upMigrations matches every forward migration the module ships.
+//
+// It used to be one file name in a constant, with a comment calling it "the
+// module's only migration". The module gained a second one and this audit did not
+// notice: its population was a NAME rather than the directory, so a table created
+// by 000002 was invisible and the declaration covering it failed as "a column
+// nobody can find". A list that decides what gets verified has to be checked
+// against the world — the sixth time this repository has closed that shape.
+var upMigrations = regexp.MustCompile(`\.up\.sql$`)
 
 // notPersonalColumns lists, per table, the columns that hold nothing about a
 // person, and it is the load-bearing half of
@@ -80,6 +86,14 @@ var notPersonalColumns = map[string][]string{
 	},
 	"auth_identity": {
 		"id", "user_id", "provider", "created_at", "updated_at", "deleted_at",
+	},
+	// token_hash is the digest of a secret and describes nobody; user_id and
+	// invited_by are join keys, on the same side as auth_identity.user_id above;
+	// expires_at is created_at plus a constant and says nothing created_at does
+	// not. What IS declared is created_at, because the row's existence is the fact
+	// about a person and a date is where that fact lives.
+	"auth_user_invitation": {
+		"token_hash", "user_id", "invited_by", "expires_at",
 	},
 	"sales_channel": {
 		"id", "is_disabled", "created_at", "updated_at", "deleted_at",
@@ -217,9 +231,29 @@ func TestTheAuthModuleOffersNoErasure(t *testing.T) {
 func readMigration(t *testing.T) string {
 	t.Helper()
 
-	raw, err := fs.ReadFile(auth.New(auth.Options{}).Migrations(), migrationFile)
+	migrations := auth.New(auth.Options{}).Migrations()
+
+	entries, err := fs.ReadDir(migrations, ".")
 	require.NoError(t, err)
-	return string(raw)
+
+	var schema strings.Builder
+	read := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !upMigrations.MatchString(entry.Name()) {
+			continue
+		}
+		raw, readErr := fs.ReadFile(migrations, entry.Name())
+		require.NoError(t, readErr)
+		schema.Write(raw)
+		schema.WriteString("\n")
+		read++
+	}
+
+	require.NotZero(t, read,
+		"no forward migration was read, so the audit has gone blind and would pass "+
+			"whatever this module's schema held")
+
+	return schema.String()
 }
 
 // createTable matches every table the migration creates.

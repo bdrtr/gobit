@@ -47,15 +47,23 @@ import (
 // unauthorizedExemptPaths are the admin endpoints that DO NOT ASK for
 // authorization.
 //
-// Both are deliberate, and the list staying this short is the test's real
-// claim: the login endpoint is only about to establish the identity, while the
-// identity endpoint reads back the established identity itself. An
-// unauthorized caller not even being able to learn who it is would make
-// debugging impossible without protecting anything.
+// Each is deliberate, and the list staying short is the test's real claim: the
+// login endpoint is only about to establish the identity, while the identity
+// endpoint reads back the established identity itself. An unauthorized caller not
+// even being able to learn who it is would make debugging impossible without
+// protecting anything.
+//
+// Accepting an invitation is the fourth and the only one that is exempt from
+// IDENTITY rather than from authorization: the person calling it has no account to
+// authenticate with yet, which is what they are calling it to get (ADR 0137). It is
+// the composition root's AdminExempt entry, so unlike the three above it never
+// reaches RequireAdmin at all — and it is still inside the audit ring and the rate
+// limit, which is what keeps "unauthenticated" from meaning "unwatched".
 var unauthorizedExemptPaths = map[string]struct{}{
-	authapi.LoginPath:       {},
-	"/admin/v1/auth/me":     {},
-	"/admin/v1/auth/logout": {},
+	authapi.LoginPath:            {},
+	authapi.AcceptInvitationPath: {},
+	"/admin/v1/auth/me":          {},
+	"/admin/v1/auth/logout":      {},
 }
 
 // pathParamRe captures the {param} and {param:regex} pieces of a chi route

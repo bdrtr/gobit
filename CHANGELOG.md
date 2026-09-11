@@ -20,6 +20,22 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir meslektaş artık KENDİ ilk parolasını belirliyor** (ADR 0137). Bugüne
+  kadar bir kullanıcı eklemenin iki yolu vardı ve ikisi de yanlıştı: ya
+  `CreateUser`'a parolayı siz yazıyordunuz — yani bir kişi bir başkasının sırrını
+  biliyordu ve "bu kullanıcı olarak kim davranabilir" kaydı ilk dakikadan yanlıştı
+  — ya da parolasız yaratıp hiç `auth_identity` satırı yazmıyordunuz, ki o da giriş
+  yapamayan ve sebebini hiçbir yerin söylemediği bir hesap. Artık davet var:
+  `POST /admin/v1/users/{id}/invitations` açıyor, `POST /admin/v1/auth/accept-invitation`
+  harcıyor. Jeton yanıtta DEĞİL — davet API'den geri verilseydi yönetici gene
+  meslektaşının ilk-parola bağlantısını tutuyor olurdu. Kabul ucu ikinci korumasız
+  admin yolu ve öyle olmak zorunda: onu çağıran kişinin henüz kimlik doğrulayacağı
+  bir hesabı yok. **Ve bunu mümkün kılan şey**: bildirim modülü artık modüller-arası
+  bir yüzeye sahip — o güne kadar gobit içinden posta göndermenin tek yolu bir
+  OLAYDI, ve bir olay kalıcı akışta durur, en az bir kez teslim edilir ve
+  operatörün üçüncü taraf uçlarına İLETİLİR; tek kullanımlık bir davet jetonu
+  bunların hiçbiri olamaz.
+
 - **Derleyici artık HER interop çiftini denetliyor** (ADR 0136). Bir tüketici,
   ihtiyaç duyduğu dar arayüzü KENDİ paketinde tanımlıyor ve somut değeri
   container'dan isimle çözüyor; iki taraf birbirini ithal etmediği için bir imza

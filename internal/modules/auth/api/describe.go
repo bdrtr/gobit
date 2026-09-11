@@ -124,6 +124,55 @@ func describeIdentity(d *openapi.Doc) {
 		},
 	})
 
+	d.Describe(http.MethodPost, AcceptInvitationPath, openapi.Operation{
+		Summary: "Sets a newly invited colleague's FIRST password.",
+		Description: "The second UNPROTECTED admin endpoint, and it has to be: the " +
+			"person calling it has no account to authenticate with yet — that is what " +
+			"they are calling it to get.\n\n" +
+			"The token is single use and is consumed BEFORE the password is written, " +
+			"in one statement. So a failure after that point loses the invitation and " +
+			"an administrator sends another; the other order would leave a link in a " +
+			"mailbox that could later reset a password somebody has since changed.\n\n" +
+			"One answer for a token that never existed, one already used and one " +
+			"expired. Telling them apart would say, for any token somebody tries, " +
+			"whether it was ever real.\n\n" +
+			"It answers 204 and NOT a session. The person now has a password and an " +
+			"ordinary login to make with it; handing back an admin token from an " +
+			"unauthenticated endpoint would be a second way to get one.",
+		RequestBody: passwordBody(d, acceptInvitationRequest{}),
+		Responses: map[string]any{
+			"204": emptyResponse("The password is set; log in with it"),
+			"422": openapi.ErrorResponse(
+				"The token is not a usable invitation — unknown, already used or " +
+					"expired. Code \"auth_invitation_not_usable\". A password that does " +
+					"not meet the policy is refused here too, with the policy's own code."),
+		},
+	})
+
+	d.Describe(http.MethodPost, "/admin/v1/users/{id}/invitations", openapi.Operation{
+		Summary: "Invites a user to set their own first password.",
+		Description: "It answers 204 and carries NO token. An invitation handed back " +
+			"over this API would be an administrator holding a colleague's " +
+			"first-password link, which is the thing this flow exists to stop — the " +
+			"token goes to the address on the account and nowhere else.\n\n" +
+			"Inviting again REPLACES the pending invitation, so the newest link is the " +
+			"one that works. A link lasts seventy-two hours by default: a colleague " +
+			"may be away for a weekend, which is the difference from the storefront's " +
+			"one hour.\n\n" +
+			"The account this opens may have no password at all — that is the state " +
+			"POST /admin/v1/users leaves when it is called without one, and until the " +
+			"invitation is accepted nobody can log in as that user, including the " +
+			"administrator who invited them.",
+		Responses: map[string]any{
+			"204": emptyResponse("The invitation was sent to the address on the account"),
+			"404": openapi.ErrorResponse("No user with that identifier."),
+			"500": openapi.ErrorResponse(
+				"Nothing is bound to carry an invitation, or the message could not be " +
+					"sent. Code \"auth_invitation_not_sendable\"; an invitation nobody " +
+					"receives is a row and not an invitation, so none was opened."),
+		},
+	})
+
 	d.Describe(http.MethodGet, "/admin/v1/auth/me", openapi.Operation{
 		Summary: "Returns the authenticated caller's identity and scopes.",
 		Responses: map[string]any{

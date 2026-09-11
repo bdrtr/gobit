@@ -98,6 +98,11 @@ func (s secret) LogValue() slog.Value { return slog.StringValue("REDACTED") }
 // Keeping it narrow simplifies the tests: the HTTP behavior can be verified
 // with a fake a few lines long, without a real database.
 type Auth interface {
+	// InviteUser opens an invitation for a user and has it carried to them. The
+	// token reaches the sender and never the response (ADR 0137).
+	InviteUser(ctx context.Context, userID, invitedBy string) error
+	// AcceptInvitation spends an invitation and sets the user's first password.
+	AcceptInvitation(ctx context.Context, token, password string) error
 	// Login produces a session token from an email and a password.
 	Login(ctx context.Context, email, password string) (string, time.Time, error)
 	// Logout drops ALL of the caller's sessions and returns the revocation
@@ -166,6 +171,19 @@ func New(svc Auth) *Handler {
 // exception changes along with it and does not one day silently fall under
 // protection and lock the system out.
 const LoginPath = "/admin/v1/auth/login"
+
+// AcceptInvitationPath is the full path of the endpoint a newly invited colleague
+// uses, and it is the SECOND unprotected admin path.
+//
+// It has to be unprotected for the reason login does: the person calling it has no
+// account to authenticate with yet — that is what they are calling it to get. It is
+// published as a constant for the same reason too, so the exemption follows the
+// path rather than being hand-written beside it (ADR 0137).
+//
+// What it is NOT exempt from: the audit ring and the rate limit both sit outside
+// identity, so an invitation attempt is recorded and bounded like every other
+// admin request.
+const AcceptInvitationPath = "/admin/v1/auth/accept-invitation"
 
 // The scope dictionary: the scopes auth's admin endpoints ask for.
 //
@@ -240,6 +258,7 @@ func (h *Handler) Routes(r chi.Router) {
 
 	// --- identity (login UNPROTECTED, /me and /logout ask for IDENTITY only) ---
 	r.Post(LoginPath, h.adminLogin)
+	r.Post(AcceptInvitationPath, h.adminAcceptInvitation)
 	r.Get("/admin/v1/auth/me", h.adminWhoami)
 	r.Post("/admin/v1/auth/logout", h.adminLogout)
 
@@ -248,6 +267,10 @@ func (h *Handler) Routes(r chi.Router) {
 	read.Get("/admin/v1/users", h.adminListUsers)
 	read.Get("/admin/v1/users/{id}", h.adminGetUser)
 	write.Put("/admin/v1/users/{id}", h.adminUpdateUser)
+	// Inviting is a WRITE on a user: it opens the right to become them. The scope
+	// dictionary stays at two entries deliberately (see above), so this asks for
+	// the one that already means "may change a user".
+	write.Post("/admin/v1/users/{id}/invitations", h.adminInviteUser)
 	write.Delete("/admin/v1/users/{id}", h.adminDeleteUser)
 	write.Post("/admin/v1/users/{id}/password", h.adminSetPassword)
 

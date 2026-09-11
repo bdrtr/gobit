@@ -85,6 +85,15 @@ const ServiceName = ModuleName + ".service"
 // by an internal/arch test.
 const ProvidersName = ModuleName + ".providers"
 
+// InteropName is the container name of this module's cross-module surface.
+//
+// It arrived late and the absence had a shape: until it existed, the only way to
+// cause a message to go out was to publish an EVENT, so nothing could send a
+// message carrying a secret — an event is durable in a stream and forwarded to an
+// operator's third-party endpoints by a gate that fails in both directions
+// (ADR 0137).
+const InteropName = ModuleName + ".interop"
+
 // DefaultProviderID is the id used when no provider is selected.
 //
 // The value comes from the logonly package: if the config's default ("log") and
@@ -217,6 +226,9 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(ProvidersName, providers); err != nil {
+		return err
+	}
+	if err := c.Provide(InteropName, service.NewInterop(svc)); err != nil {
 		return err
 	}
 

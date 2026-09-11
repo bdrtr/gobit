@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -572,4 +573,147 @@ func TestDataExceptionProducesAClientError(t *testing.T) {
 	// CODE (auth_constraint_violation) is part of Error().
 	assert.NotContains(t, err.Error(), "(constraint:",
 		"no half suffix must be added when there is no constraint name")
+}
+
+// TestOneUserHasONELiveInvitation is the unique index, executed.
+//
+// Inviting again is the same administrator asking again, and they expect the newest
+// link to work. Two live links to one account is two chances for whoever finds one,
+// so the replacement has to happen in the WRITE rather than in a delete somebody
+// remembers to make first (ADR 0137).
+func TestOneUserHasONELiveInvitation(t *testing.T) {
+	ctx := context.Background()
+	repo := newRepo(t)
+	user := newUser(ctx, t, repo)
+	deadline := time.Now().UTC().Add(time.Hour)
+
+	first := strings.Repeat("a", 64)
+	second := strings.Repeat("b", 64)
+	_, err := repo.PutInvitation(ctx, first, user.ID, user.ID, deadline)
+	require.NoError(t, err)
+	_, err = repo.PutInvitation(ctx, second, user.ID, user.ID, deadline)
+	require.NoError(t, err)
+
+	_, err = repo.TakeInvitation(ctx, first)
+	require.ErrorIs(t, err, repository.ErrNoInvitation, "the FIRST link stopped working")
+
+	taken, err := repo.TakeInvitation(ctx, second)
+	require.NoError(t, err, "and the newest one works")
+	assert.Equal(t, user.ID, taken.UserID)
+}
+
+// TestAnInvitationIsSpentByONEStatement is what makes a token single use.
+//
+// `DELETE … RETURNING` makes reading and consuming the same operation, so two
+// requests carrying one token cannot both be answered whatever the timing. The
+// alternative — SELECT then DELETE — needs a lock to say as much, and this
+// repository has measured what a guard without one is worth under READ COMMITTED.
+func TestAnInvitationIsSpentByONEStatement(t *testing.T) {
+	ctx := context.Background()
+	repo := newRepo(t)
+
+	for round := range 20 {
+		user := newUser(ctx, t, repo)
+		token := fmt.Sprintf("%064d", round)
+		_, err := repo.PutInvitation(ctx, token, user.ID, user.ID,
+			time.Now().UTC().Add(time.Hour))
+		require.NoError(t, err)
+
+		var start sync.WaitGroup
+		var done sync.WaitGroup
+		start.Add(1)
+		errs := make([]error, 2)
+		for i := range errs {
+			done.Add(1)
+			go func() {
+				defer done.Done()
+				start.Wait()
+				_, errs[i] = repo.TakeInvitation(context.Background(), token)
+			}()
+		}
+		start.Done()
+		done.Wait()
+
+		spent := 0
+		for _, err := range errs {
+			if err == nil {
+				spent++
+
+				continue
+			}
+			require.ErrorIs(t, err, repository.ErrNoInvitation,
+				"round %d: the loser is refused BY THE RULE rather than by a "+
+					"serialisation failure the caller would have to retry", round)
+		}
+		assert.Equal(t, 1, spent, "round %d: exactly one request may spend a token", round)
+	}
+}
+
+// TestAnExpiredInvitationIsNotTakenAndIsGone holds the expiry, in the same WHERE.
+func TestAnExpiredInvitationIsNotTakenAndIsGone(t *testing.T) {
+	ctx := context.Background()
+	repo := newRepo(t)
+	user := newUser(ctx, t, repo)
+	token := strings.Repeat("c", 64)
+
+	// Written directly: the CHECK refuses a deadline in the past, which is the
+	// CHECK doing its job and is asserted below.
+	_, err := testPool.Pool().Exec(ctx,
+		`INSERT INTO auth_user_invitation (token_hash, user_id, invited_by, expires_at, created_at)
+		 VALUES ($1, $2, $3, now() - interval '2 hours', now() - interval '3 hours')`,
+		token, user.ID, user.ID)
+	require.NoError(t, err)
+
+	_, err = repo.TakeInvitation(ctx, token)
+	require.ErrorIs(t, err, repository.ErrNoInvitation)
+
+	_, err = repo.PutInvitation(ctx, strings.Repeat("d", 64), user.ID, user.ID,
+		time.Now().UTC().Add(-time.Minute))
+	require.Error(t, err,
+		"a row that is already expired when it is written is a bug in the caller, and "+
+			"the CHECK is the cheapest place to refuse it")
+}
+
+// TestTheInvitationCHECKsRefuseWhatTheStoreWouldNeverWrite goes around the store:
+// the CHECKs are the FLOOR under the Go code.
+func TestTheInvitationCHECKsRefuseWhatTheStoreWouldNeverWrite(t *testing.T) {
+	ctx := context.Background()
+	repo := newRepo(t)
+	user := newUser(ctx, t, repo)
+
+	for _, tc := range []struct{ name, token, invitedBy string }{
+		{"a token hash that is not a digest", "not-a-sha-256", user.ID},
+		{"a token hash with uppercase hex", strings.Repeat("A", 64), user.ID},
+		{"a blank inviter", strings.Repeat("e", 64), "   "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := testPool.Pool().Exec(ctx,
+				`INSERT INTO auth_user_invitation (token_hash, user_id, invited_by, expires_at)
+				 VALUES ($1, $2, $3, now() + interval '1 hour')`,
+				tc.token, user.ID, tc.invitedBy)
+
+			require.Error(t, err, "the CHECK has to refuse it even when nothing in Go does")
+		})
+	}
+}
+
+// TestAnInvitationGoesWithItsUser is the CASCADE.
+//
+// An invitation to an account somebody removed is not a right anybody should still
+// hold, and leaving the row would let a deleted colleague's link still name a
+// user_id the foreign key no longer protects.
+func TestAnInvitationGoesWithItsUser(t *testing.T) {
+	ctx := context.Background()
+	repo := newRepo(t)
+	user := newUser(ctx, t, repo)
+	token := strings.Repeat("f", 64)
+
+	_, err := repo.PutInvitation(ctx, token, user.ID, user.ID, time.Now().UTC().Add(time.Hour))
+	require.NoError(t, err)
+
+	_, err = testPool.Pool().Exec(ctx, `DELETE FROM auth_user WHERE id = $1`, user.ID)
+	require.NoError(t, err)
+
+	_, err = repo.TakeInvitation(ctx, token)
+	require.ErrorIs(t, err, repository.ErrNoInvitation, "the invitation went with the account")
 }

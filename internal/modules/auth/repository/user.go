@@ -276,3 +276,62 @@ func derefOr(s *string) string {
 	}
 	return *s
 }
+
+// PutInvitation writes an invitation, replacing the one that user already had.
+func (r *Repo) PutInvitation(
+	ctx context.Context,
+	tokenHash, userID, invitedBy string,
+	expiresAt time.Time,
+) (models.UserInvitation, error) {
+	if err := r.ready(); err != nil {
+		return models.UserInvitation{}, err
+	}
+
+	row, err := r.q.PutInvitation(ctx, authdb.PutInvitationParams{
+		TokenHash: tokenHash,
+		UserID:    userID,
+		InvitedBy: invitedBy,
+		ExpiresAt: fromTime(expiresAt),
+	})
+	if err != nil {
+		return models.UserInvitation{}, classifyUserWrite(err, userID,
+			"could not write the invitation")
+	}
+
+	return toInvitation(row), nil
+}
+
+// TakeInvitation removes an invitation and answers what it held.
+//
+// A token that is unknown, already used or expired is [ErrNoInvitation] — one
+// answer for the three, because telling them apart would say, for any token
+// somebody tries, whether it was ever real.
+func (r *Repo) TakeInvitation(ctx context.Context, tokenHash string) (models.UserInvitation, error) {
+	if err := r.ready(); err != nil {
+		return models.UserInvitation{}, err
+	}
+
+	row, err := r.q.TakeInvitation(ctx, tokenHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.UserInvitation{}, ErrNoInvitation
+	}
+	if err != nil {
+		return models.UserInvitation{}, wrapDB(err, "could not take the invitation")
+	}
+
+	return toInvitation(row), nil
+}
+
+// ErrNoInvitation is a token that is not a usable invitation.
+var ErrNoInvitation = errors.New("auth: that token is not a usable invitation")
+
+// toInvitation converts the row.
+func toInvitation(row authdb.AuthUserInvitation) models.UserInvitation {
+	return models.UserInvitation{
+		TokenHash: row.TokenHash,
+		UserID:    row.UserID,
+		InvitedBy: row.InvitedBy,
+		ExpiresAt: toTime(row.ExpiresAt),
+		CreatedAt: toTime(row.CreatedAt),
+	}
+}

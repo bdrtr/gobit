@@ -213,6 +213,13 @@ func adminEndpoints() []endpointExpectation {
 			request: loginRequest{}, response: loginResponse{},
 		},
 		{
+			method: http.MethodPost, path: AcceptInvitationPath, status: "204",
+			request: acceptInvitationRequest{},
+		},
+		{
+			method: http.MethodPost, path: "/admin/v1/users/{id}/invitations", status: "204",
+		},
+		{
 			method: http.MethodGet, path: "/admin/v1/auth/me", status: "200",
 			response: fullPrincipal(),
 		},

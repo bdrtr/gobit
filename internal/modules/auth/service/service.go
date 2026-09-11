@@ -159,6 +159,11 @@ type Repository interface {
 	// are BOTH resolved inside this call: the service must not read the user
 	// first and pass what it read down (see [Service.SetPassword]).
 	SetPasswordHash(ctx context.Context, userID, provider, hash string, now time.Time) (models.AuthIdentity, error)
+	// PutInvitation writes an invitation, replacing the one that user had.
+	PutInvitation(ctx context.Context, tokenHash, userID, invitedBy string, expiresAt time.Time) (models.UserInvitation, error)
+	// TakeInvitation removes an invitation and answers what it held; a token that
+	// is unknown, used or expired is repository.ErrNoInvitation.
+	TakeInvitation(ctx context.Context, tokenHash string) (models.UserInvitation, error)
 	SessionAnchor(ctx context.Context, userID string) (time.Time, error)
 	RevokeSessions(ctx context.Context, userID string, now time.Time) ([]models.AuthIdentity, error)
 	RegisterLoginFailure(ctx context.Context, identityID string, threshold int, lockUntil, now time.Time) (models.AuthIdentity, error)
@@ -189,6 +194,11 @@ type Repository interface {
 // Every field other than JWTSecret has a reasonable default; the secret
 // ACCEPTS no default (see [Options.JWTSecret]).
 type Options struct {
+	// InvitationSender carries an invitation to the person it names.
+	//
+	// Nil means invitations cannot be opened at all, which is the only honest
+	// state: an invitation nobody receives is a row (ADR 0137).
+	InvitationSender InvitationSender
 	// Logger is the structured log target; if nil, logs are dropped.
 	Logger *slog.Logger
 	// Now is the time source; if nil, time.Now is used. Tests fill this in
@@ -232,9 +242,10 @@ type Options struct {
 // Service is the public service of the auth module. It is safe for concurrent
 // use.
 type Service struct {
-	repo Repository
-	log  *slog.Logger
-	now  func() time.Time
+	repo         Repository
+	inviteSender InvitationSender
+	log          *slog.Logger
+	now          func() time.Time
 
 	secret    []byte
 	tokenTTL  time.Duration
@@ -276,16 +287,17 @@ func New(repo Repository, opts Options) *Service {
 	}
 
 	svc := &Service{
-		repo:      repo,
-		log:       log,
-		now:       now,
-		secret:    []byte(opts.JWTSecret),
-		tokenTTL:  orDuration(opts.JWTTTL, DefaultJWTTTL),
-		issuer:    orString(opts.JWTIssuer, DefaultIssuer),
-		cost:      cost,
-		threshold: orInt(opts.LoginFailureThreshold, DefaultLoginFailureThreshold),
-		lockFor:   orDuration(opts.LoginLockDuration, DefaultLoginLockDuration),
-		throttle:  orDuration(opts.UsageThrottle, DefaultUsageThrottle),
+		repo:         repo,
+		inviteSender: opts.InvitationSender,
+		log:          log,
+		now:          now,
+		secret:       []byte(opts.JWTSecret),
+		tokenTTL:     orDuration(opts.JWTTTL, DefaultJWTTTL),
+		issuer:       orString(opts.JWTIssuer, DefaultIssuer),
+		cost:         cost,
+		threshold:    orInt(opts.LoginFailureThreshold, DefaultLoginFailureThreshold),
+		lockFor:      orDuration(opts.LoginLockDuration, DefaultLoginLockDuration),
+		throttle:     orDuration(opts.UsageThrottle, DefaultUsageThrottle),
 	}
 	svc.dummyHash = newDummyHash(cost)
 	return svc

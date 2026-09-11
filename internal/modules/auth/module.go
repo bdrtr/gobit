@@ -209,6 +209,7 @@ var _ personaldata.Declarer = (*Module)(nil)
 const (
 	tableUser         = "auth_user"
 	tableIdentity     = "auth_identity"
+	tableInvitation   = "auth_user_invitation"
 	tableSalesChannel = "sales_channel"
 	tableAPIKey       = "api_key"
 )
@@ -286,6 +287,9 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		BcryptCost:            m.opts.BcryptCost,
 		LoginFailureThreshold: m.opts.LoginFailureThreshold,
 		LoginLockDuration:     m.opts.LoginLockDuration,
+		// Resolved on first use rather than now: the notification module may not
+		// have registered yet (ADR 0137).
+		InvitationSender: newInvitationSender(c, m.log),
 	})
 	m.handler = api.New(m.svc)
 
@@ -446,6 +450,18 @@ func (m *Module) PersonalData() personaldata.Declaration {
 			{
 				Table: tableIdentity, Column: columnMetadata, Kind: personaldata.Open,
 				Why: "free-form context the shop keeps about one login method; gobit writes nothing into it and never rewrites it, so whether it holds personal data is the controller's judgement",
+			},
+			// The invitation table's identifiers are NOT declared, and the choice is
+			// this module's own rather than a fresh one: auth_identity.user_id is
+			// already on the not-personal side, and two stances on the same column
+			// name inside one module would be worse than differing from another's.
+			//
+			// The MOMENT is declared, and it is what keeps the table from being
+			// invisible to a controller: it says an account was opened for somebody
+			// and not yet claimed, on a date.
+			{
+				Table: tableInvitation, Column: "created_at", Kind: personaldata.Named,
+				Why: "when an invitation was sent to this staff member; the row's existence is the fact rather than any column of it — an account was opened for a named person and, while the row is here, not yet claimed",
 			},
 			{
 				Table: tableSalesChannel, Column: "name", Kind: personaldata.Open,
