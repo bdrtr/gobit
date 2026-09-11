@@ -139,10 +139,88 @@ var pluginCreateTable = regexp.MustCompile(`(?i)create\s+table\s+(?:if\s+not\s+e
 // here is a claim about the plugin's schema, and the audit below verifies it: a
 // plugin listed here that GROWS a person column fails.
 var pluginsWithNoPersonalData = map[string]string{
-	"searchpg":     "indexes the catalog; its table holds a product id and a tsvector",
-	"webhookout":   "holds receivers and delivery attempts, keyed by event and receiver",
-	"paymentpaytr": "holds a provider's payment references, keyed by the payment session",
-	"webpush":      "", // holds four, and declares them — see the audit below
+	"plugins/searchpg":         "indexes the catalog; its table holds a product id and a tsvector",
+	"plugins/webhookout":       "holds receivers and delivery attempts, keyed by event and receiver",
+	"plugins/paymentpaytr":     "holds a provider's payment references, keyed by the payment session",
+	"plugins/webpush":          "", // holds four, and declares them — see the audit below
+	"contrib/identity-session": "", // holds five, and declares them
+	"contrib/identity-passkey": "", // holds five, and declares them
+}
+
+// personalDataRoots are the trees of separately-shipped units this audit walks.
+//
+// It was `plugins` alone, and `contrib` was invisible to it: two modules there own
+// a table each, one holding an e-mail address and a password hash and the other a
+// customer id and a per-device credential id, and neither declared anything while
+// this gate stayed green. A separate go.mod does not make a table less personal.
+//
+// The list is DATA that decides what gets verified, so it is checked against disk
+// by [TestThePersonalDataRootsCoverEveryTreeOfUnits] rather than trusted — the
+// same reason the language detector checks its own roots and the module list is
+// derived from the go.mod files that exist.
+var personalDataRoots = []string{"plugins", "contrib"}
+
+// TestThePersonalDataRootsCoverEveryTreeOfUnits closes the blindness the roots
+// themselves can have.
+//
+// A tree of units with their own migrations, outside the module tree, is a place
+// this audit has to look. Adding one and not adding it here would leave it
+// unaudited with every gate green, which is exactly how `contrib` arrived.
+func TestThePersonalDataRootsCoverEveryTreeOfUnits(t *testing.T) {
+	t.Parallel()
+
+	entries, err := os.ReadDir(repoRoot)
+	require.NoError(t, err)
+
+	var found []string
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		// internal/ and core/ hold the module tree itself, which the app-level
+		// audit walks; examples/ ship no migrations of their own.
+		if entry.Name() == "internal" || entry.Name() == "core" || entry.Name() == "docs" {
+			continue
+		}
+		if treeOfUnitsWithMigrations(t, filepath.Join(repoRoot, entry.Name())) {
+			found = append(found, entry.Name())
+		}
+	}
+
+	sort.Strings(found)
+	expected := slices.Clone(personalDataRoots)
+	sort.Strings(expected)
+
+	assert.Equal(t, expected, found,
+		"personalDataRoots decides where this audit looks for tables that hold people, "+
+			"and the tree says something else. A directory holding units with their own "+
+			"migrations and missing from that list is unaudited with every gate green.")
+}
+
+// treeOfUnitsWithMigrations says whether a directory holds units that migrate.
+//
+// The shape is `<root>/<unit>/migrations/*.up.sql`, which is what a separately
+// shipped unit looks like in this repository.
+func treeOfUnitsWithMigrations(t *testing.T, root string) bool {
+	t.Helper()
+
+	units, err := os.ReadDir(root)
+	if err != nil {
+		return false
+	}
+
+	for _, unit := range units {
+		if !unit.IsDir() {
+			continue
+		}
+		found, globErr := filepath.Glob(filepath.Join(root, unit.Name(), "migrations", "*.up.sql"))
+		require.NoError(t, globErr)
+		if len(found) > 0 {
+			return true
+		}
+	}
+
+	return false
 }
 
 // TestEveryPersonColumnInAPluginIsDeclared is the audit.
@@ -230,7 +308,24 @@ func pluginSchemas(t *testing.T) map[string][]string {
 	t.Helper()
 
 	out := map[string][]string{}
-	root := filepath.Join(repoRoot, "plugins")
+
+	for _, tree := range personalDataRoots {
+		collectUnitSchemas(t, filepath.Join(repoRoot, tree), tree, out)
+	}
+
+	for plugin := range out {
+		sort.Strings(out[plugin])
+	}
+
+	return out
+}
+
+// collectUnitSchemas reads one tree's migrations into the shared map.
+//
+// The unit is keyed as "<tree>/<directory>" so that two trees cannot collide on a
+// name, and so a failure says which tree it is talking about.
+func collectUnitSchemas(t *testing.T, root, tree string, out map[string][]string) {
+	t.Helper()
 
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -250,7 +345,7 @@ func pluginSchemas(t *testing.T) map[string][]string {
 			return relErr
 		}
 
-		plugin := strings.Split(filepath.ToSlash(rel), "/")[0]
+		plugin := tree + "/" + strings.Split(filepath.ToSlash(rel), "/")[0]
 
 		// Comments first: these migrations explain every column above it, and the
 		// word "customer_id" in prose is not a column.
@@ -285,13 +380,7 @@ func pluginSchemas(t *testing.T) map[string][]string {
 
 		return nil
 	})
-	require.NoError(t, err, "the plugin tree could not be walked for migrations")
-
-	for plugin := range out {
-		sort.Strings(out[plugin])
-	}
-
-	return out
+	require.NoError(t, err, "a tree could not be walked for migrations: "+tree)
 }
 
 // pluginDeclarations returns the holdings each plugin declares, read from the
@@ -304,7 +393,18 @@ func pluginDeclarations(t *testing.T) map[string][]string {
 	t.Helper()
 
 	out := map[string][]string{}
-	root := filepath.Join(repoRoot, "plugins")
+
+	for _, tree := range personalDataRoots {
+		collectUnitDeclarations(t, filepath.Join(repoRoot, tree), tree, out)
+	}
+
+	return out
+}
+
+// collectUnitDeclarations reads one tree's personaldata.Holding literals.
+func collectUnitDeclarations(t *testing.T, root, tree string, out map[string][]string) {
+	t.Helper()
+
 	fset := token.NewFileSet()
 
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
@@ -325,7 +425,7 @@ func pluginDeclarations(t *testing.T) map[string][]string {
 			return relErr
 		}
 
-		plugin := strings.Split(filepath.ToSlash(rel), "/")[0]
+		plugin := tree + "/" + strings.Split(filepath.ToSlash(rel), "/")[0]
 		constants := stringConstants(parsed)
 
 		ast.Inspect(parsed, func(node ast.Node) bool {
@@ -349,13 +449,11 @@ func pluginDeclarations(t *testing.T) map[string][]string {
 
 		return nil
 	})
-	require.NoError(t, err, "the plugin tree could not be walked for declarations")
+	require.NoError(t, err, "a tree could not be walked for declarations: "+tree)
 
 	for plugin := range out {
 		sort.Strings(out[plugin])
 	}
-
-	return out
 }
 
 // holdingTableColumn reads the Table and Column of a personaldata.Holding

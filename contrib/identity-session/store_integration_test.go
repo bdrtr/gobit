@@ -21,6 +21,7 @@ import (
 	identitysession "github.com/bdrtr/gobit/contrib/identity-session"
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/db"
+	"github.com/bdrtr/gobit/core/personaldata"
 )
 
 // The tests in this file run the SQL.
@@ -36,6 +37,14 @@ import (
 // kind of pair that agrees in a unit test because the same function wrote both
 // sides. Only a real database can say the CHECK is the floor the store thinks it
 // is.
+
+// testHash is a stored password hash of the shape the CHECK insists on.
+//
+// It is a constant rather than a real derivation because nothing here is testing
+// argon2: what these scenarios exercise is the SQL, and a derivation would add a
+// second of CPU per row for no assertion.
+const testHash = "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$" +
+	"aGFzaGhhc2hoYXNoaGFzaGhhc2hoYXNoaGFzaGhhc2g"
 
 // testPool is the pool the scenarios share.
 var testPool *pgxpool.Pool
@@ -300,4 +309,107 @@ func send(t *testing.T, r chi.Router, method, path, body string) *httptest.Respo
 	r.ServeHTTP(rec, req)
 
 	return rec
+}
+
+// TestAnErasureTakesThePersonsCredentialRow is the data-subject sweep's half.
+func TestAnErasureTakesThePersonsCredentialRow(t *testing.T) {
+	m := registered(t)
+	store := m.Credentials()
+	customer := "cust_06G8SESSIONERASED00000"
+	stranger := "cust_06G8SESSIONKEPT0000000"
+
+	require.NoError(t, store.Put(t.Context(), customer, "erased@example.test", testHash))
+	require.NoError(t, store.Put(t.Context(), stranger, "kept@example.test", testHash))
+
+	result, err := m.Erase(t.Context(), personaldata.Subject{CustomerID: customer})
+	require.NoError(t, err)
+	assert.Equal(t, personaldata.Deleted, result.Outcome)
+	assert.Equal(t, 1, result.Rows)
+
+	_, _, err = store.Credential(t.Context(), "erased@example.test")
+	require.Error(t, err, "the row is gone")
+
+	_, _, err = store.Credential(t.Context(), "kept@example.test")
+	require.NoError(t, err, "and nobody else was touched")
+}
+
+// TestAnErasureByADDRESSAlsoFindsThePerson is the handle the passkey module does
+// not have.
+//
+// This module stores the address, so a subject that names only one is resolvable
+// here — and the fold matters: a request carrying "Person@Example.test" has to
+// reach the row written as "person@example.test", or an erasure quietly deletes
+// nothing and reports success.
+func TestAnErasureByADDRESSAlsoFindsThePerson(t *testing.T) {
+	m := registered(t)
+	require.NoError(t, m.Credentials().Put(t.Context(),
+		"cust_06G8SESSIONBYADDRESS00", "by-address@example.test", testHash))
+
+	result, err := m.Erase(t.Context(),
+		personaldata.Subject{Email: "  By-Address@Example.test  "})
+	require.NoError(t, err)
+
+	assert.Equal(t, personaldata.Deleted, result.Outcome)
+	assert.Equal(t, 1, result.Rows, "the address is folded and trimmed before it is used")
+}
+
+// TestADossierNamesTheHashAndDoesNotReproduceIt is the one field that is reported
+// by description.
+//
+// Dropping the column would make the dossier false about what is held; printing it
+// would put somebody's password hash into whatever carries the answer — an e-mail,
+// a ticket, a support tool. So the field is present and its value is a sentence.
+func TestADossierNamesTheHashAndDoesNotReproduceIt(t *testing.T) {
+	m := registered(t)
+	customer := "cust_06G8SESSIONDOSSIER0000"
+	require.NoError(t, m.Credentials().Put(t.Context(), customer, "dossier@example.test", testHash))
+
+	disclosure, err := m.PersonalDataOf(t.Context(), personaldata.Subject{CustomerID: customer})
+	require.NoError(t, err)
+
+	require.Equal(t, personaldata.Disclosed, disclosure.State)
+	require.Len(t, disclosure.Records, 1)
+
+	fields := map[string]any{}
+	for _, field := range disclosure.Records[0].Fields {
+		fields[field.Column] = field.Value
+	}
+
+	assert.Equal(t, "dossier@example.test", fields["email"])
+	assert.Equal(t, customer, fields["customer_id"])
+
+	hash, ok := fields["password_hash"]
+	require.True(t, ok, "the column is DECLARED, so leaving it out of the dossier would "+
+		"make the answer false about what is held")
+	assert.NotContains(t, hash, "$argon2id$",
+		"and the stored value must not travel: it is derived from the person's own secret")
+	assert.Contains(t, hash, "not reproduced")
+
+	// The hash is not read out of the database either, which is the same decision
+	// one layer down: a secret that is never going to be reported should not be in
+	// this process's memory to begin with.
+	for _, record := range disclosure.Records {
+		for _, field := range record.Fields {
+			text, isText := field.Value.(string)
+			if isText {
+				assert.NotContains(t, text, testHash,
+					"no field carries the stored hash")
+			}
+		}
+	}
+}
+
+// TestADossierForSomebodyWithNoPasswordSaysNOTHING keeps the two kinds of empty
+// apart.
+func TestADossierForSomebodyWithNoPasswordSaysNOTHING(t *testing.T) {
+	m := registered(t)
+
+	disclosure, err := m.PersonalDataOf(t.Context(),
+		personaldata.Subject{CustomerID: "cust_06G8SESSIONNOBODY0000"})
+	require.NoError(t, err)
+
+	assert.Equal(t, personaldata.Nothing, disclosure.State,
+		"this store CAN search and found nothing, which is a different answer from "+
+			"a store that cannot search")
+	assert.Empty(t, disclosure.Records)
 }

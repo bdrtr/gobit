@@ -447,3 +447,64 @@ func (s pgCredentials) Remove(
 
 	return held - 1, nil
 }
+
+// ErasePasskeysOf deletes every credential of a customer.
+//
+// # Not scoped by the relying party, on purpose
+//
+// Every other statement in this store is scoped by [pgCredentials.rpID], because
+// every other question is "which keys can sign this person in". This one is "what
+// is held about her", and a row left behind by an abandoned relying party is held
+// about her. Scoping it would leave somebody who asked to be forgotten with rows
+// on disk and a report saying they were deleted.
+//
+// It takes no row lock and applies no last-way-in rule. That guard defends a
+// person keeping their account; an erasure is that person asking for the account
+// to stop existing, and refusing it over the guard would refuse the erasure.
+func (s pgCredentials) ErasePasskeysOf(ctx context.Context, customerID string) (int, error) {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM passkey_credentials WHERE customer_id = $1`, customerID)
+	if err != nil {
+		return 0, fmt.Errorf("identity-passkey: the passkeys could not be erased: %w", err)
+	}
+
+	return int(tag.RowsAffected()), nil
+}
+
+// PasskeyRecordsOf reads every credential of a customer for a disclosure.
+//
+// Unscoped for [pgCredentials.ErasePasskeysOf]'s reason, and it reads the whole
+// stored credential rather than the narrow row a listing takes: a dossier that
+// withheld a column would be false about what is held.
+func (s pgCredentials) PasskeyRecordsOf(
+	ctx context.Context, customerID string,
+) ([]StoredKey, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT credential_id, rp_id, created_at, last_used_at, credential::text
+		 FROM passkey_credentials
+		 WHERE customer_id = $1
+		 ORDER BY created_at, credential_id`, customerID)
+	if err != nil {
+		return nil, fmt.Errorf("identity-passkey: the passkeys could not be read: %w", err)
+	}
+	defer rows.Close()
+
+	var out []StoredKey
+	for rows.Next() {
+		var key StoredKey
+		var rpID *string
+		if err := rows.Scan(&key.CredentialID, &rpID, &key.CreatedAt,
+			&key.LastUsedAt, &key.Credential); err != nil {
+			return nil, fmt.Errorf("identity-passkey: a passkey could not be scanned: %w", err)
+		}
+		if rpID != nil {
+			key.RelyingPartyID = *rpID
+		}
+		out = append(out, key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("identity-passkey: the passkeys could not be read: %w", err)
+	}
+
+	return out, nil
+}

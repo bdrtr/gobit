@@ -152,3 +152,60 @@ var _ PasswordLookup = pgCredentials{}
 // account — but the refusal would reach an operator as a constraint name, so the
 // folding is done here and the CHECK is the floor under it.
 func foldEmail(email string) string { return strings.ToLower(strings.TrimSpace(email)) }
+
+// EraseCredentialsOf deletes a person's credential row.
+//
+// Either handle finds it and BOTH are applied when both are given, because a
+// subject carrying a customer id and an address is one person and this module
+// keys on both: the id is the primary key and the address is unique. An OR is
+// what makes a subject assembled from two sources — an admin's customer id and
+// the address the person wrote in their request — erase the row either of them
+// names rather than only the row both do.
+func (s pgCredentials) EraseCredentialsOf(
+	ctx context.Context, customerID, email string,
+) (int, error) {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM customer_credentials
+		 WHERE ($1 <> '' AND customer_id = $1) OR ($2 <> '' AND email = $2)`,
+		customerID, email)
+	if err != nil {
+		return 0, fmt.Errorf("identity-session: the credentials could not be erased: %w", err)
+	}
+
+	return int(tag.RowsAffected()), nil
+}
+
+// CredentialRecordsOf reads what is held about a customer or an address.
+//
+// The hash column is NOT selected. A value that is never going to be reported
+// should not travel out of the database either — the dossier says a password is
+// set and does not reproduce it, and reading the hash into memory to then drop it
+// would be the same secret in one more place for no gain.
+func (s pgCredentials) CredentialRecordsOf(
+	ctx context.Context, customerID, email string,
+) ([]StoredCredential, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT customer_id, email, created_at, updated_at
+		 FROM customer_credentials
+		 WHERE ($1 <> '' AND customer_id = $1) OR ($2 <> '' AND email = $2)
+		 ORDER BY created_at, customer_id`, customerID, email)
+	if err != nil {
+		return nil, fmt.Errorf("identity-session: the credentials could not be read: %w", err)
+	}
+	defer rows.Close()
+
+	var out []StoredCredential
+	for rows.Next() {
+		var row StoredCredential
+		if err := rows.Scan(&row.CustomerID, &row.Email,
+			&row.CreatedAt, &row.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("identity-session: a credential could not be scanned: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("identity-session: the credentials could not be read: %w", err)
+	}
+
+	return out, nil
+}

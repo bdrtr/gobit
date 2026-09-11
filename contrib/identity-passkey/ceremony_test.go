@@ -127,6 +127,28 @@ func newHarness(t *testing.T) *harness {
 func newHarnessWith(t *testing.T, other identitypasskey.OtherSignIn) *harness {
 	t.Helper()
 
+	store := &memoryCredentials{}
+	h := newHarnessWithStore(t, other, store)
+	h.store = store
+
+	return h
+}
+
+// newHarnessWithStore is [newHarnessWith] with the bound store spelled out.
+//
+// The store is a constructor argument rather than something set afterwards,
+// because that is how the module takes it: [identitypasskey.Module.Register]
+// reads Options once and a store swapped in later would be a shape no
+// installation can produce.
+//
+// The returned harness's store field is left nil unless the caller is using the
+// in-memory one — a test that binds something else has no business reaching into
+// a map it does not own.
+func newHarnessWithStore(
+	t *testing.T, other identitypasskey.OtherSignIn, credentials identitypasskey.Credentials,
+) *harness {
+	t.Helper()
+
 	session := identitysession.New(identitysession.Options{
 		Secret:      []byte(testSecret),
 		Insecure:    true,
@@ -135,7 +157,6 @@ func newHarnessWith(t *testing.T, other identitypasskey.OtherSignIn) *harness {
 	c := container.New(nil)
 	require.NoError(t, session.Register(t.Context(), c))
 
-	store := &memoryCredentials{}
 	logs := &lockedBuffer{}
 	m := identitypasskey.New(identitypasskey.Options{
 		Logger:      slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
@@ -143,7 +164,7 @@ func newHarnessWith(t *testing.T, other identitypasskey.OtherSignIn) *harness {
 		RPID:        testRPID,
 		RPOrigins:   []string{testOrigin},
 		DisplayName: "Example Shop",
-		Credentials: store,
+		Credentials: credentials,
 		OtherSignIn: other,
 	})
 	require.NoError(t, m.Register(t.Context(), c))
@@ -155,7 +176,6 @@ func newHarnessWith(t *testing.T, other identitypasskey.OtherSignIn) *harness {
 		module:   m,
 		router:   r,
 		sessions: session.Sessions(),
-		store:    store,
 		logs:     logs,
 		rp: virtualwebauthn.RelyingParty{
 			ID: testRPID, Name: "Example Shop", Origin: testOrigin,

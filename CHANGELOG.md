@@ -20,6 +20,20 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **İki contrib kimlik modülü artık bir VERİ SAHİBİNE cevap veriyor**
+  (ADR 0132). `contrib/identity-session` ve `contrib/identity-passkey`, ADR
+  0029'un üç veri-sahibi yeteneğinden hiçbirini gerçeklemiyordu — oysa aralarında
+  bir e-posta adresi, bir argon2id parola özeti, bir müşteri kimliği, cihaz başına
+  bir kimlik bilgisi ve dört zaman damgası tutuyorlardı. Yani bir mağaza silme
+  talebini yerine getirip, silinen kişiyi içeri alan kimlik bilgilerini yerinde
+  bırakabiliyordu. Bunu yakalamak için yazılmış denetim de onları göremiyordu:
+  yalnızca `plugins/` altını geziyordu ve ayrı bir go.mod bir tabloyu daha az
+  kişisel yapmıyor — kökler artık DİSKE karşı doğrulanıyor. Passkey silmesi
+  bilinçli olarak RP kapsamı DIŞINDA: ötekiler "hangi anahtarlar bu kişiyi içeri
+  alır" sorusunu yanıtlıyor, bu ise "onun hakkında ne tutuluyor". Parola özeti
+  beyan ediliyor ama değeri üretilmiyor — sütunu düşürmek cevabı yanlış yapardı,
+  değerini basmak kişinin kendi sırrını dosyaya koyardı (D69).
+
 - **Bir passkey artık TEK bir doğrulayan tarafa ait** (ADR 0131). Passkey'i
   üreten doğrulayıcı onu bir RP kimliğine bağlar: `Options.RPID` değişen bir
   kurulum — alan adı taşınması, ya da bir alt alan adının düşürülmesi — kayıtlı

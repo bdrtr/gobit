@@ -784,3 +784,84 @@ func TestReRegisteringAKeyClaimsItForTheCurrentRelyingParty(t *testing.T) {
 		`SELECT count(*) FROM passkey_credentials WHERE customer_id = $1`, customer).Scan(&rows))
 	assert.Equal(t, 1, rows, "and it is still one row, not two")
 }
+
+// TestAnErasureTakesEVERYPasskeyOfThePerson is the data-subject sweep's half.
+//
+// # Why it is not the removal endpoint
+//
+// The removal refuses to take somebody's last way in (ADR 0130). An erasure is
+// that same person asking for the account to stop existing, so routing it through
+// that rule would refuse the erasure for exactly the person it is meant to serve.
+//
+// # Why it is not scoped by the relying party
+//
+// ADR 0131 scopes every other read to the configured relying party, because every
+// other question is "which keys can sign this person in". This question is "what is
+// held about her", and a row left behind by a domain move is held about her. The
+// fixture therefore has one row from an ABANDONED relying party, one from the
+// current one and one with no rp_id at all, and all three have to go.
+func TestAnErasureTakesEVERYPasskeyOfThePerson(t *testing.T) {
+	customer := "cust_06G8ERASEDPERSON0000000"
+	stranger := "cust_06G8ERASURESTRANGER000"
+	before := realStoreFor(t, "before.example")
+	after := realStoreFor(t, "after.example")
+
+	require.NoError(t, before.Put(t.Context(), customer, aCredential("abandoned-"+customer)))
+	require.NoError(t, after.Put(t.Context(), customer, aCredential("current-"+customer)))
+	_, err := testPool.Exec(t.Context(),
+		`INSERT INTO passkey_credentials (credential_id, customer_id, credential)
+		 VALUES ($1, $2, $3)`,
+		encodedID([]byte("legacy-"+customer)), customer, `{"id":"bGVnYWN5"}`)
+	require.NoError(t, err)
+	require.NoError(t, after.Put(t.Context(), stranger, aCredential("kept-"+stranger)))
+
+	records, ok := after.(identitypasskey.PersonalRecords)
+	require.True(t, ok, "the module's own store answers the data-subject capability")
+
+	rows, err := records.ErasePasskeysOf(t.Context(), customer)
+	require.NoError(t, err)
+	assert.Equal(t, 3, rows,
+		"the current key, the abandoned one and the one from before the column")
+
+	var left int
+	require.NoError(t, testPool.QueryRow(t.Context(),
+		`SELECT count(*) FROM passkey_credentials WHERE customer_id = $1`, customer).Scan(&left))
+	assert.Zero(t, left, "nothing of this person is left in the table")
+
+	require.NoError(t, testPool.QueryRow(t.Context(),
+		`SELECT count(*) FROM passkey_credentials WHERE customer_id = $1`, stranger).Scan(&left))
+	assert.Equal(t, 1, left, "and nobody else was touched")
+}
+
+// TestADossierCarriesEveryPasskeyRowAndTheWholeCredential is the disclosure.
+//
+// The listing endpoint withholds the person's hardware — the public key, the
+// AAGUID, the counter — because it exists for somebody choosing which key to
+// remove. A dossier answers "what do you hold about me", and withholding a column
+// from THAT answer makes it false. So this reads the whole stored credential, and
+// it reads abandoned rows too.
+func TestADossierCarriesEveryPasskeyRowAndTheWholeCredential(t *testing.T) {
+	customer := "cust_06G8DOSSIERPERSON00000"
+	before := realStoreFor(t, "before.example")
+	after := realStoreFor(t, "after.example")
+
+	require.NoError(t, before.Put(t.Context(), customer, aCredential("abandoned-"+customer)))
+	require.NoError(t, after.Put(t.Context(), customer, aCredential("current-"+customer)))
+
+	records, ok := after.(identitypasskey.PersonalRecords)
+	require.True(t, ok)
+
+	found, err := records.PasskeyRecordsOf(t.Context(), customer)
+	require.NoError(t, err)
+	require.Len(t, found, 2, "the abandoned row is held about her too")
+
+	byRP := map[string]identitypasskey.StoredKey{}
+	for _, key := range found {
+		byRP[key.RelyingPartyID] = key
+		assert.False(t, key.CreatedAt.IsZero())
+		assert.Contains(t, key.Credential, "publicKey",
+			"the whole credential travels, not the narrow row a listing takes")
+	}
+	assert.Contains(t, byRP, "before.example")
+	assert.Contains(t, byRP, "after.example")
+}
