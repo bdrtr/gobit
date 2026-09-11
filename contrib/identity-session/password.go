@@ -33,7 +33,7 @@ const (
 // ErrPasswordMismatch is what a wrong password answers.
 //
 // It is deliberately the same error a MISSING credential produces
-// ([Store.Credential] returning not-found is mapped to it): the two must not be
+// ([Credentials.Credential] returning not-found is mapped to it): the two must not be
 // distinguishable by a caller, or the sign-in endpoint becomes an oracle telling
 // an attacker which e-mail addresses have accounts.
 var ErrPasswordMismatch = errors.New("identity-session: the password does not match")

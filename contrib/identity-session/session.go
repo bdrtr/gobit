@@ -28,10 +28,12 @@
 // It does not register customers from the storefront. That flow needs e-mail
 // verification, a rate limit and a decision about who may create a customer,
 // and none of those is a session's business; credentials are written by an
-// operator endpoint here. It does not rotate the signing secret, and it holds no
-// server-side session record — a signed cookie cannot be revoked before it
-// expires, which is the price of not having a table on the read path and is
-// stated where an operator reads it.
+// operator endpoint here. It holds no server-side session record — a signed
+// cookie cannot be revoked before it expires, which is the price of not having a
+// table on the read path and is stated where an operator reads it.
+//
+// The signing key CAN be rotated without logging anybody out: see
+// [Options.RetiredSecrets].
 package identitysession
 
 import (
@@ -54,7 +56,13 @@ import (
 // the identity is consulted on twelve storefront routes and a table on that path
 // would be a query on every one of them.
 type Sessions struct {
-	secret     []byte
+	secret []byte
+	// retired are keys this verifier still ACCEPTS and never signs with.
+	//
+	// They are what makes a rotation something other than logging everybody out:
+	// the new key signs from the moment it is set, and a cookie carrying the old
+	// one keeps working until it expires (ADR 0129).
+	retired    [][]byte
 	ttl        time.Duration
 	cookieName string
 	secure     bool
@@ -214,7 +222,7 @@ func (s *Sessions) OpenValue(sealed string) (string, error) {
 		return "", errNoSession
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(signature)
-	if err != nil || !hmac.Equal(raw, s.sign(purposeValue, payload)) {
+	if err != nil || !s.verify(purposeValue, payload, raw) {
 		return "", errNoSession
 	}
 
@@ -249,9 +257,9 @@ func (s *Sessions) open(value string) (customerID string, expiry time.Time, err 
 		return "", time.Time{}, errNoSession
 	}
 	// The MAC is checked BEFORE the payload is parsed: everything after this line
-	// is a value this key produced, and everything before it is a string a caller
-	// sent.
-	if !hmac.Equal(raw, s.sign(purposeSession, payload)) {
+	// is a value one of this installation's keys produced, and everything before
+	// it is a string a caller sent.
+	if !s.verify(purposeSession, payload, raw) {
 		return "", time.Time{}, errNoSession
 	}
 
@@ -267,12 +275,47 @@ func (s *Sessions) open(value string) (customerID string, expiry time.Time, err 
 	return id, time.Unix(seconds, 0), nil
 }
 
+// verify accepts a MAC produced by the CURRENT key or by any retired one.
+//
+// # Why every key is tried and the loop does not stop early
+//
+// It stops as soon as one matches, and that is fine: what an attacker could
+// learn from the timing is WHICH of an installation's own keys signed a cookie
+// they already hold, which tells them nothing they can use. The comparison
+// against each key is still constant time, which is the part that matters — that
+// is about the MAC's bytes, not about which key produced them.
+//
+// A retired key is removed by taking it out of the list. Until then a cookie
+// signed with it works, which is the whole point of a rotation and also its one
+// hazard: a key that LEAKED must be dropped outright rather than retired, and
+// the record says so where an operator reads it (ADR 0129).
+func (s *Sessions) verify(purpose, payload string, mac []byte) bool {
+	if hmac.Equal(mac, s.sign(purpose, payload)) {
+		return true
+	}
+	for _, key := range s.retired {
+		if hmac.Equal(mac, macWith(key, purpose, payload)) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // sign is the MAC over a payload, bound to what the payload is FOR.
 //
 // The purpose goes in first and is followed by a separator no purpose contains,
 // so no pair of (purpose, payload) can produce the bytes of another pair.
 func (s *Sessions) sign(purpose, payload string) []byte {
-	mac := hmac.New(sha256.New, s.secret)
+	return macWith(s.secret, purpose, payload)
+}
+
+// macWith is the MAC under a given key.
+//
+// It is a function rather than a method because a retired key has no Sessions of
+// its own, and writing the construction twice is how the two would drift.
+func macWith(key []byte, purpose, payload string) []byte {
+	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(purpose))
 	mac.Write([]byte{0})
 	mac.Write([]byte(payload))

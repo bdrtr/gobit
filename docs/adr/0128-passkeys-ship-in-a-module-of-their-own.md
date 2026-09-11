@@ -54,9 +54,9 @@ what this module needs from a credential is the id and the owner, which are
 columns. The promise that shape makes is narrow and tested as such: a key written
 to Postgres and read back still signs its owner in.
 
-It registers no listing and no removal: a delete endpoint that can remove
-somebody's LAST key turns a convenience into a lockout. The module exports its
-credential store, so an embedder who has decided is not blocked.
+It registers no listing and no removal — a delete endpoint that can remove
+somebody's LAST key turns a convenience into a lockout — and exports
+`identitypasskey.Module.Store` so an embedder who has decided is not blocked.
 
 `examples/starter` does not add it — it needs a real domain, and a starter
 shipping a wrong relying party id would mint credentials the site that created

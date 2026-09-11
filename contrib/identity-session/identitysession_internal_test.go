@@ -530,3 +530,143 @@ func TestThePurposeCannotBeConfusedWithThePayload(t *testing.T) {
 			"today's two purposes are the same length, so nothing else would notice "+
 			"if it went")
 }
+
+// retiredSecret is the key a rotation moves out of the way.
+var retiredSecret = []byte("the key this installation used until today!")
+
+// rotated is a verifier that signs with the current key and accepts the old one.
+func rotated(t *testing.T, now func() time.Time) *Sessions {
+	t.Helper()
+
+	s := newSessions(t, now)
+	s.retired = [][]byte{retiredSecret}
+
+	return s
+}
+
+// TestARotationDoesNotLogAnybodyOut is what the whole feature is for.
+//
+// Changing a signing key without this means every shopper's cookie stops
+// verifying at the moment of the deploy — which is a real cost an operator
+// weighs against leaving a key in place too long, and the reason keys do not get
+// rotated.
+func TestARotationDoesNotLogAnybodyOut(t *testing.T) {
+	t.Parallel()
+
+	// A cookie minted BEFORE the rotation, by the key that is about to retire.
+	before := &Sessions{
+		secret: retiredSecret, ttl: DefaultTTL,
+		cookieName: DefaultCookieName, now: time.Now,
+	}
+	rec := httptest.NewRecorder()
+	before.Issue(rec, testCustomerID)
+	old := sessionCookie(t, rec)
+
+	after := rotated(t, time.Now)
+
+	id, err := after.CustomerID(requestWith(old))
+	require.NoError(t, err, "a cookie signed by the retired key must still prove its customer")
+	assert.Equal(t, testCustomerID, id)
+}
+
+// TestARotationSIGNSWithTheNewKeyOnly is the other half.
+//
+// A rotation that kept signing with the old key would accept everything and
+// change nothing, which is the failure that looks exactly like success.
+func TestARotationSIGNSWithTheNewKeyOnly(t *testing.T) {
+	t.Parallel()
+
+	after := rotated(t, time.Now)
+	rec := httptest.NewRecorder()
+	after.Issue(rec, testCustomerID)
+	fresh := sessionCookie(t, rec)
+
+	// The retired key alone must NOT accept a cookie minted after the rotation.
+	onlyOld := &Sessions{
+		secret: retiredSecret, ttl: DefaultTTL,
+		cookieName: DefaultCookieName, now: time.Now,
+	}
+	_, err := onlyOld.CustomerID(requestWith(fresh))
+	assert.Error(t, err,
+		"a cookie minted after the rotation must be signed by the NEW key; if the old "+
+			"one still verifies it, nothing was rotated")
+}
+
+// TestADroppedKeyStopsWorking is how a rotation ENDS.
+//
+// A retired key is removed by taking it out of the list, and until somebody does
+// the set of keys that can mint a session only grows. This is the assertion that
+// the removal is what it claims to be.
+func TestADroppedKeyStopsWorking(t *testing.T) {
+	t.Parallel()
+
+	before := &Sessions{
+		secret: retiredSecret, ttl: DefaultTTL,
+		cookieName: DefaultCookieName, now: time.Now,
+	}
+	rec := httptest.NewRecorder()
+	before.Issue(rec, testCustomerID)
+	old := sessionCookie(t, rec)
+
+	// The same verifier with the list emptied: the key is gone.
+	dropped := newSessions(t, time.Now)
+
+	_, err := dropped.CustomerID(requestWith(old))
+	assert.Error(t, err,
+		"a key taken out of RetiredSecrets must stop accepting what it signed; that is "+
+			"the only remedy for a key that LEAKED")
+}
+
+// TestARetiredKeyOpensASealedValueToo keeps the two paths on one rotation.
+//
+// A ceremony token outliving a rotation matters less than a session — it expires
+// in minutes — but a verifier that rotated one and not the other would be two
+// different answers to "which keys does this installation accept", and the
+// second one would be found by somebody's failed sign-in.
+func TestARetiredKeyOpensASealedValueToo(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, time.September, 11, 10, 0, 0, 0, time.UTC)
+	before := &Sessions{secret: retiredSecret, now: fixedClock(at)}
+	sealed := before.SealValue("a ceremony", time.Hour)
+
+	after := rotated(t, fixedClock(at))
+
+	got, err := after.OpenValue(sealed)
+	require.NoError(t, err)
+	assert.Equal(t, "a ceremony", got)
+}
+
+// TestARetiredKeyIsHeldToTheSameFloor closes the likeliest way a rotation goes
+// wrong: a placeholder in the list while somebody works it out.
+func TestARetiredKeyIsHeldToTheSameFloor(t *testing.T) {
+	t.Parallel()
+
+	err := New(Options{
+		Secret:         testSecret,
+		RetiredSecrets: [][]byte{[]byte("short")},
+		Credentials:    fakeCredentials{},
+	}).Register(context.Background(), container.New(nil))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "RetiredSecrets[0]",
+		"the failure has to name WHICH entry, because an operator rotating has a list")
+}
+
+// TestRetiringTheCurrentKeyIsRefused catches a rotation that did not happen.
+//
+// Listing the same key as both current and retired reads as a rotation and is
+// not one: every cookie still verifies, nothing changed, and the operator
+// believes the old key is out of service.
+func TestRetiringTheCurrentKeyIsRefused(t *testing.T) {
+	t.Parallel()
+
+	err := New(Options{
+		Secret:         testSecret,
+		RetiredSecrets: [][]byte{testSecret},
+		Credentials:    fakeCredentials{},
+	}).Register(context.Background(), container.New(nil))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "CURRENT secret")
+}

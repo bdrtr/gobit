@@ -20,6 +20,7 @@ truth: a report says what was true on the day it was taken.
 | [What a suite can tell about a verifier — measured 2026-09-10](0126-what-a-suite-can-tell-about-a-verifier.md) | 67 |
 | [Where a session package belongs — measured 2026-09-11](0127-where-a-session-package-belongs.md) | 132 |
 | [What a passkey costs a graph — measured 2026-09-11](0128-what-a-passkey-costs-a-graph.md) | 85 |
+| [What a rotation has to not break — measured 2026-09-11](0129-what-a-rotation-has-to-not-break.md) | 86 |
 | [The guard moves to the binding — measured 2026-09-10](0120-the-guard-moves-to-the-binding.md) | 126 |
 | [Where the truth about collected money lives — measured 2026-09-10](0119-where-the-truth-about-collected-money-lives.md) | 130 |
 | [A counter in place of a balance — measured 2026-09-10](0118-a-counter-in-place-of-a-balance.md) | 162 |

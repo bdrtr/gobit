@@ -1,6 +1,7 @@
 package identitysession
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"errors"
@@ -50,6 +51,27 @@ type Options struct {
 	// source would let anybody mint a session for any customer of every
 	// installation that never changed it.
 	Secret []byte
+	// RetiredSecrets are keys a session cookie may still carry and that nothing
+	// signs with.
+	//
+	// # What a rotation is
+	//
+	// Move the current secret here, put a new one in [Options.Secret], restart.
+	// From that moment every cookie is signed with the new key and every cookie
+	// already in a browser keeps working until it expires — which is what makes
+	// rotating a key something other than logging every shopper out (ADR 0129).
+	//
+	// A retired key stays useful for as long as a session lasts, so it can be
+	// dropped from this list one TTL after the rotation. Nothing here enforces
+	// that: a list that grew forever would be a slowly widening set of keys that
+	// can mint a session, and only the operator knows when the last cookie signed
+	// with one expired.
+	//
+	// # A LEAKED key does not belong here
+	//
+	// Retiring it keeps it able to mint sessions. A key that got out is dropped
+	// outright — which does log everybody out, and is the correct price.
+	RetiredSecrets [][]byte
 	// TTL is how long a session lasts; zero means [DefaultTTL].
 	TTL time.Duration
 	// CookieName is the cookie's name; empty means [DefaultCookieName].
@@ -136,6 +158,25 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 				"anybody mint a session for any customer",
 			len(m.opts.Secret), minSecretLen)
 	}
+	for i, retired := range m.opts.RetiredSecrets {
+		// A retired key still MINTS nothing and still ACCEPTS everything it
+		// signed, so a short one is the same hole as a short current one — and
+		// the likeliest way in is an operator padding the list with a
+		// placeholder while they work out the rotation.
+		if len(retired) < minSecretLen {
+			return fmt.Errorf(
+				"identity-session: Options.RetiredSecrets[%d] is %d bytes and at least %d "+
+					"are required; a retired key still accepts every session it signed",
+				i, len(retired), minSecretLen)
+		}
+		if bytes.Equal(retired, m.opts.Secret) {
+			return fmt.Errorf(
+				"identity-session: Options.RetiredSecrets[%d] is the CURRENT secret; a "+
+					"rotation moves the old key here and puts a NEW one in Options.Secret, "+
+					"and listing the same key twice means the rotation did not happen",
+				i)
+		}
+	}
 
 	m.store = m.opts.Credentials
 	if m.store == nil {
@@ -157,6 +198,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 
 	m.sessions = &Sessions{
 		secret:     m.opts.Secret,
+		retired:    m.opts.RetiredSecrets,
 		ttl:        ttl,
 		cookieName: name,
 		secure:     !m.opts.Insecure,

@@ -149,7 +149,7 @@ func scanDocReferences(t *testing.T) *referenceScan {
 		stdCache:       map[string]*referencePackage{},
 	}
 
-	for _, root := range productionTrees {
+	for _, root := range referencedTrees {
 		abs := filepath.Join(repoRoot, root)
 		if _, err := os.Stat(abs); err != nil {
 			t.Fatalf("the %q root was not found: %v", root, err)
@@ -686,6 +686,23 @@ func (s *referenceScan) referenceTarget(importPath string) (target *referencePac
 	}
 	return s.packages[dirOfImportPath(importPath)+"\x00"+name], true
 }
+
+// referencedTrees are the trees whose packages this audit can RESOLVE a name in.
+//
+// It is [productionTrees] plus contrib/, and the addition is not cosmetic. The
+// contrib trees are separate Go modules, so `go/build` cannot reach them through
+// this module's package resolution — but their import paths still begin with this
+// module's, so [referenceScan.referenceTarget] calls them in-repo and then finds
+// nothing. The result was silence of the worst kind: a reference to a symbol
+// there was neither verified nor reported, and a DELIBERATELY WRONG one was
+// measured passing.
+//
+// They are added HERE rather than to productionTrees because that list is what
+// every other audit in this package narrows to, and those audits are about
+// gobit's own module. This one is about whether a sentence in the documentation
+// points at something real, and contrib's symbols are as real as core's.
+var referencedTrees = append(append([]string{}, productionTrees...),
+	"contrib/identity-session", "contrib/identity-passkey")
 
 // importPathOfDir maps a repository-relative directory to its import path.
 //

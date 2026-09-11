@@ -20,6 +20,19 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **İmzalama anahtarı artık kimseyi dışarı atmadan DÖNDÜRÜLEBİLİYOR** (ADR 0129).
+  `contrib/identity-session` tek bir anahtarla imzalıyor ve doğruluyordu; onu
+  değiştirmek, her tarayıcıdaki her çerezin aynı anda doğrulanmaz olması demekti.
+  Yani bir döndürmenin bedeli her alışverişçinin oturumuydu — ki anahtarların
+  neden döndürülmediğinin sebebi bu, döndürülmemesi gerektiğinin değil. Modülün
+  kendi paket belgesi bunu bir cümleyle söylüyordu; yazılı bir sınır,
+  kapatılabilen bir sınırdır. `identitysession.Options.RetiredSecrets` çerezin hâlâ taşıyabileceği
+  ama hiçbir şeyin İMZALAMADIĞI anahtarları tutuyor. Sıra tam olarak özelliğin
+  kendisi: ikisini de kabul edip ESKİSİYLE imzalamaya devam eden bir gerçekleme,
+  "oturumlar çalışıyor" diyen her testi geçer ve hiçbir şey döndürmemiş olur.
+  SIZAN bir anahtar emekliye ayrılmaz, doğrudan atılır — bu herkesi dışarı atar ve
+  doğru bedel odur.
+
 - **Passkey'ler KENDİ modülünde** (ADR 0128). `contrib/identity-passkey` her iki
   WebAuthn törenini de yapıyor, kendi kimlik bilgisi tablosunu tutuyor ve kişiyi
   parolanın açtığı AYNI oturum çerezine sokuyor. Ayrı bir `go.mod`, çünkü ölçüldü:
