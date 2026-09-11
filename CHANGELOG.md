@@ -20,6 +20,17 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Uçtan uca zemin, üretimin bağladığı her akışı bağlıyor** (ADR 0141).
+  `internal/e2e` modül ve akış kümesini ELLE kuruyor — bilerek, çünkü gerçek
+  kurulumu çağıran bir zemin modülleri değil kurulumu sınardı. O kopyanın
+  bedeli kopya olmasıydı: üretim yedi akış bağlıyordu, zemin altı. Eksik olan,
+  deponun YALNIZCA otobüsle sürülen tek akışıydı — hiçbir şey onu çözmüyor,
+  hiçbir şey çağırmıyor, yani bağlanmamış hâli hiçbir isteği kırmıyor ve hiçbir
+  testi kızartmıyor; yalnızca stok rakamı eksik kalıyor. D75 ile D76 tam orada
+  haftalarca durdu. Kapı artık iki kökün İTHAL ettiği akış paketlerini
+  karşılaştırıyor, ve zemin ADR 0134/0135/0139/0140'ı aynı anda gören ilk
+  senaryoyu koşuyor.
+
 - **Bir koli artık hangi sipariş için açıldığını KAYDEDİYOR** (ADR 0140). Koli
   açmanın iki yolu var ve hiçbiri ikisini birden yapmıyordu: akışın açtığı koli
   bağlıydı ama kalem taşımıyordu (açtığı yüzey kalem almıyor), modülün yönetici

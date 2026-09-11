@@ -147,6 +147,7 @@ import (
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 	fulfillingwf "github.com/bdrtr/gobit/internal/workflows/fulfilling"
 	invoicingwf "github.com/bdrtr/gobit/internal/workflows/invoicing"
+	ordercancelwf "github.com/bdrtr/gobit/internal/workflows/ordercancel"
 	returnswf "github.com/bdrtr/gobit/internal/workflows/returns"
 )
 
@@ -781,6 +782,9 @@ func setUpHarness(ctx context.Context) error {
 	if setupErr = setUpReturnsWorkflow(); setupErr != nil {
 		return fmt.Errorf("could not set up the return workflow: %w", setupErr)
 	}
+	if setupErr = setUpOrderCancelWorkflow(); setupErr != nil {
+		return fmt.Errorf("could not set up the cancellation workflow: %w", setupErr)
+	}
 
 	if err := setUpRegionFixtures(ctx); err != nil {
 		return err
@@ -1011,6 +1015,26 @@ func setUpReturnsWorkflow() error {
 	}
 
 	return ctr.Provide(returnswf.InteropName, returnswf.NewInterop(flow))
+}
+
+// setUpOrderCancelWorkflow builds the cancellation flow and SUBSCRIBES it.
+//
+// It registers no surface: nothing resolves this flow by name, because nothing
+// calls it — it is the repository's only flow that is driven entirely by the bus
+// (ADR 0134/0139). FromContainer subscribes as part of wiring, so building it IS
+// registering it.
+//
+// # Why its absence here was a defect and not an omission
+//
+// This ground was missing it, and it was the only one of the six flows
+// internal/app/setup.go wires that it was missing. That is exactly where two
+// faults hid: a write-off that returned units sitting in a box and a parcel
+// cancellation that released nothing, both green against fakes for weeks because
+// no scenario ever ran the flow against real modules (D75, D76, ADR 0141).
+func setUpOrderCancelWorkflow() error {
+	_, err := ordercancelwf.FromContainer(ctr, nil)
+
+	return err
 }
 
 // setUpStockLocation prepares the single stock location the scenarios share.
