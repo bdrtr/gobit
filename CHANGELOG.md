@@ -20,6 +20,20 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir passkey artık TEK bir doğrulayan tarafa ait** (ADR 0131). Passkey'i
+  üreten doğrulayıcı onu bir RP kimliğine bağlar: `Options.RPID` değişen bir
+  kurulum — alan adı taşınması, ya da bir alt alan adının düşürülmesi — kayıtlı
+  her anahtarı kullanılamaz bırakıyor. Satırlar kalıyordu ve hangi tarafa ait
+  oldukları hiçbir yerde yazmıyordu, yani bir commit önce gönderilen "son giriş
+  yolunu koruma" kuralı onları SAYIYORDU: bir terk edilmiş ve bir yeni anahtar
+  tutan kişiye "iki yolunuz var" deniyor, YENİ olanı kaldırmaya izin veriliyordu
+  — koruma, önlemek için yazıldığı kilitlenmeyi üretiyordu. Sunucunun da bir
+  görüşü yoktu ve bu yarısı ölçüldü: `example.test` altında kaydedilmiş satır,
+  `moved.test` altında birini 204 ile içeri aldı. Artık `rp_id` bir sütun ve
+  deponun her okuması/yazması onunla kapsamlı; NULL, sütundan önceki satır
+  demek ve yapılandırılmış taraf olarak okunuyor — yani yükseltme kimseyi
+  dışarı atmıyor (D68).
+
 - **Bir kişi artık passkey'lerini GÖREBİLİYOR ve birini kaldırabiliyor**
   (ADR 0130). `contrib/identity-passkey` yalnızca kayıt ve giriş sunuyordu:
   telefonunu kaybeden biri hesabını neyin açtığını göremiyor, o cihazı iptal

@@ -82,7 +82,12 @@ func (m *Module) Describe(d *openapi.Doc) {
 			"registration and a 'synced' label read from them would be wrong in the " +
 			"direction that locks somebody out; the rest are the person's hardware, not " +
 			"their account.\n\n" +
-			"An empty list is an empty ARRAY under data, never null and never a 404.",
+			"An empty list is an empty ARRAY under data, never null and never a 404.\n\n" +
+			"Keys registered under a DIFFERENT relying party id are not listed. A passkey " +
+			"is bound to that id by the authenticator that minted it, so an installation " +
+			"that changed it left every earlier key unusable — they are not shown, not " +
+			"counted as a way into the account, and not accepted at sign-in. Everybody " +
+			"holding one registers again.",
 		Tags: []string{docTag},
 		Responses: map[string]any{
 			"200": openapi.Response("The caller's keys", nil),

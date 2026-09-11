@@ -22,6 +22,7 @@ truth: a report says what was true on the day it was taken.
 | [What a passkey costs a graph — measured 2026-09-11](0128-what-a-passkey-costs-a-graph.md) | 85 |
 | [What a rotation has to not break — measured 2026-09-11](0129-what-a-rotation-has-to-not-break.md) | 107 |
 | [The last way in — measured 2026-09-11](0130-the-last-way-in.md) | 174 |
+| [A key bound to a domain — measured 2026-09-11](0131-a-key-bound-to-a-domain.md) | 129 |
 | [The guard moves to the binding — measured 2026-09-10](0120-the-guard-moves-to-the-binding.md) | 126 |
 | [Where the truth about collected money lives — measured 2026-09-10](0119-where-the-truth-about-collected-money-lives.md) | 130 |
 | [A counter in place of a balance — measured 2026-09-10](0118-a-counter-in-place-of-a-balance.md) | 162 |

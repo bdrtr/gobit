@@ -141,6 +141,33 @@ func realStore(t *testing.T) identitypasskey.Credentials {
 	return newRealHarness(t).module.Store()
 }
 
+// realStoreFor is [realStore] under a named relying party.
+//
+// It is the same table and the same pool; what differs is the rp id the module
+// was configured with, which is the whole subject of the tests that use it.
+func realStoreFor(t *testing.T, rpID string) identitypasskey.Credentials {
+	t.Helper()
+
+	session := identitysession.New(identitysession.Options{
+		Secret: []byte(testSecret), Insecure: true, Credentials: noCredentials{},
+	})
+	c := container.New(nil)
+	require.NoError(t, session.Register(t.Context(), c))
+
+	pool, err := db.New(t.Context(), db.DefaultConfig(testDSN), nil)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	require.NoError(t, c.Provide("core.db", pool))
+
+	m := identitypasskey.New(identitypasskey.Options{
+		Session: session, RPID: rpID, RPOrigins: []string{"https://" + rpID},
+		DisplayName: "Example Shop",
+	})
+	require.NoError(t, m.Register(t.Context(), c))
+
+	return m.Store()
+}
+
 // aCredential is a credential shaped like one the library would hand over.
 func aCredential(id string) webauthn.Credential {
 	return webauthn.Credential{
@@ -152,12 +179,24 @@ func aCredential(id string) webauthn.Credential {
 
 // TestTheSchemaIsWhatTheModuleWrites is the witness under the rest.
 func TestTheSchemaIsWhatTheModuleWrites(t *testing.T) {
-	var columns int
-	require.NoError(t, testPool.QueryRow(t.Context(),
-		`SELECT count(*) FROM information_schema.columns WHERE table_name = 'passkey_credentials'`,
-	).Scan(&columns))
-	assert.Equal(t, 5, columns,
-		"credential_id, customer_id, credential, created_at, last_used_at")
+	// The columns are compared by NAME rather than counted. A count is a measure of
+	// the day it was written: this assertion said 5 and broke when rp_id arrived,
+	// reporting a number instead of saying which column it did not expect.
+	var columns []string
+	rows, err := testPool.Query(t.Context(),
+		`SELECT column_name FROM information_schema.columns
+		 WHERE table_name = 'passkey_credentials' ORDER BY column_name`)
+	require.NoError(t, err)
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		require.NoError(t, rows.Scan(&name))
+		columns = append(columns, name)
+	}
+	require.NoError(t, rows.Err())
+	assert.Equal(t, []string{
+		"created_at", "credential", "credential_id", "customer_id", "last_used_at", "rp_id",
+	}, columns)
 
 	var kind string
 	require.NoError(t, testPool.QueryRow(t.Context(),
@@ -602,4 +641,146 @@ func waitForTwoBlockedBackends(t *testing.T) {
 				"test exists to force did not happen and nothing was proved", waiting)
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+// TestAKeyOfAnAbandonedRelyingPartyIsNotAWayIn is gap D68, executed.
+//
+// # The sequence
+//
+// A shop registers passkeys under one relying party id and then moves domain.
+// Every key already registered is bound to the old id by the authenticator that
+// minted it, so none of them can be offered for the new one — and until the rp id
+// was a column this module could not tell which rows those were.
+//
+// The consequence was the opposite of what ADR 0130 shipped. A person holding one
+// abandoned key and one new key was counted as having two ways in, so removing the
+// NEW one was permitted, and the account was left with a row that cannot sign
+// anybody in. The guard that exists to prevent a lockout produced one.
+func TestAKeyOfAnAbandonedRelyingPartyIsNotAWayIn(t *testing.T) {
+	customer := "cust_06G8MOVEDDOMAIN00000000"
+	before := realStoreFor(t, "before.example")
+	after := realStoreFor(t, "after.example")
+
+	require.NoError(t, before.Put(t.Context(), customer, aCredential("old-key-"+customer)))
+	require.NoError(t, after.Put(t.Context(), customer, aCredential("new-key-"+customer)))
+
+	// The listing is the surface a person reads, and it shows one key rather than
+	// two: the abandoned one is not theirs to use any more.
+	keys, err := after.ListForCustomer(t.Context(), customer)
+	require.NoError(t, err)
+	require.Len(t, keys, 1, "only the key of the configured relying party is listed")
+	assert.Equal(t, encodedID([]byte("new-key-"+customer)), keys[0].ID)
+
+	// And the guard counts it as the last one. This is the assertion the gap is
+	// about: with the abandoned row counted, this removal was PERMITTED.
+	surviving, err := after.Remove(t.Context(), customer, []byte("new-key-"+customer), false)
+	require.ErrorIs(t, err, identitypasskey.ErrLastWayIn,
+		"the only usable key must be refused even though the table holds two rows")
+	assert.Equal(t, 1, surviving)
+
+	// The abandoned row is still on disk — nothing deletes somebody's data over a
+	// configuration change — and it is still invisible here.
+	var rows int
+	require.NoError(t, testPool.QueryRow(t.Context(),
+		`SELECT count(*) FROM passkey_credentials WHERE customer_id = $1`, customer).Scan(&rows))
+	assert.Equal(t, 2, rows, "both rows are on disk")
+}
+
+// TestAnAbandonedKeyCannotSignAnybodyIn closes the half the SERVER decides.
+//
+// Measured before the column existed: a credential row registered under one
+// relying party signed its owner in under another, with a 204. The authenticator
+// would not offer it in a browser — credentials are scoped to an RP ID — but the
+// module had no opinion of its own, and "the client will not do that" is not a
+// rule this module enforces.
+func TestAnAbandonedKeyCannotSignAnybodyIn(t *testing.T) {
+	customer := "cust_06G8ABANDONEDSIGNIN000"
+	before := realStoreFor(t, "before.example")
+	after := realStoreFor(t, "after.example")
+
+	require.NoError(t, before.Put(t.Context(), customer, aCredential("abandoned-"+customer)))
+
+	_, _, err := after.ByCredentialID(t.Context(), []byte("abandoned-"+customer))
+	require.ErrorIs(t, err, identitypasskey.ErrNoCredential,
+		"a credential of another relying party is not found, which is what the "+
+			"sign-in turns into a refusal")
+
+	// The ceremonies read the whole set too, and an abandoned key must not join the
+	// exclusion list either: excluding it would tell an authenticator not to mint a
+	// key it is the only remaining reason to mint.
+	credentials, err := after.ForCustomer(t.Context(), customer)
+	require.NoError(t, err)
+	assert.Empty(t, credentials, "this relying party has none of this person's keys")
+
+	// Stamping one is the same question asked by the sign-in's last step.
+	require.NoError(t, after.Used(t.Context(), []byte("abandoned-"+customer)),
+		"stamping a row this store cannot see is not an error — the sign-in already "+
+			"refused, and Used is deliberately forgiving (its own godoc)")
+
+	var stamped *time.Time
+	require.NoError(t, testPool.QueryRow(t.Context(),
+		`SELECT last_used_at FROM passkey_credentials WHERE credential_id = $1`,
+		encodedID([]byte("abandoned-"+customer))).Scan(&stamped))
+	assert.Nil(t, stamped, "and it stamped NOTHING, because the row is not this store's")
+}
+
+// TestARowFromBeforeTheColumnStillWorks is the migration's promise.
+//
+// The column arrived on a table that already held rows, and nothing can say which
+// relying party those were registered under. They are read as belonging to the
+// configured one, which is what they were unless the installation had already
+// moved — and it keeps an upgrade from logging everybody out.
+func TestARowFromBeforeTheColumnStillWorks(t *testing.T) {
+	customer := "cust_06G8BEFORECOLUMN000000"
+	store := realStoreFor(t, "after.example")
+
+	// A row as the previous version of this module wrote it: no rp_id at all.
+	_, err := testPool.Exec(t.Context(),
+		`INSERT INTO passkey_credentials (credential_id, customer_id, credential)
+		 VALUES ($1, $2, $3)`,
+		encodedID([]byte("legacy-"+customer)), customer, `{"id":"bGVnYWN5"}`)
+	require.NoError(t, err)
+
+	keys, err := store.ListForCustomer(t.Context(), customer)
+	require.NoError(t, err)
+	assert.Len(t, keys, 1, "a row from before the column is still this person's key")
+
+	_, err = store.Remove(t.Context(), customer, []byte("legacy-"+customer), false)
+	require.ErrorIs(t, err, identitypasskey.ErrLastWayIn,
+		"and it is still counted as a way in, so an upgrade does not make it removable")
+}
+
+// TestReRegisteringAKeyClaimsItForTheCurrentRelyingParty is the write half of the
+// scope.
+//
+// A credential id is minted per relying party, so the same id arriving under a
+// second one is rare — rare enough that the first version of this change left the
+// conflict update alone and no test noticed. What it would produce is the shape
+// this module refuses everywhere else: a 204 for a registration that stored a key
+// the configured relying party cannot see, so the person is told they registered a
+// passkey and has not.
+func TestReRegisteringAKeyClaimsItForTheCurrentRelyingParty(t *testing.T) {
+	customer := "cust_06G8RECLAIMEDKEY000000"
+	id := []byte("reclaimed-" + customer)
+	before := realStoreFor(t, "before.example")
+	after := realStoreFor(t, "after.example")
+
+	require.NoError(t, before.Put(t.Context(), customer, aCredential(string(id))))
+	require.NoError(t, after.Put(t.Context(), customer, aCredential(string(id))),
+		"the same person registering the same id under the new relying party")
+
+	keys, err := after.ListForCustomer(t.Context(), customer)
+	require.NoError(t, err)
+	assert.Len(t, keys, 1, "the row belongs to the relying party that just wrote it")
+
+	// And it is gone from the old one, because a row belongs to ONE relying party.
+	// That is the honest consequence: the key really was re-registered here.
+	oldKeys, err := before.ListForCustomer(t.Context(), customer)
+	require.NoError(t, err)
+	assert.Empty(t, oldKeys)
+
+	var rows int
+	require.NoError(t, testPool.QueryRow(t.Context(),
+		`SELECT count(*) FROM passkey_credentials WHERE customer_id = $1`, customer).Scan(&rows))
+	assert.Equal(t, 1, rows, "and it is still one row, not two")
 }

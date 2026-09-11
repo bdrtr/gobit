@@ -32,6 +32,24 @@ var ErrNoCredential = errors.New("identity-passkey: no such credential")
 //
 // It is an interface for [identitysession.Credentials]'s reason: an installation
 // keeping its keys somewhere else binds that and keeps the ceremonies.
+//
+// # A store speaks for ONE relying party, and that is part of the contract
+//
+// A passkey is scoped to an RP ID by the authenticator that minted it: a
+// credential created for one relying party is not offered when the browser is
+// asked for another. None of the methods here takes an RP ID, and that is
+// deliberate — the alternative was six signatures carrying a value that never
+// changes for the life of a store. So an implementation binds the relying party
+// it is constructed with and must not answer with credentials of any other.
+//
+// Getting this wrong is not a cosmetic fault. The rule that refuses to remove
+// somebody's last way in counts what this store reports, so a store that reports
+// credentials of an abandoned relying party reports ways in that are not, and the
+// guard permits the removal it exists to refuse (gap D68).
+//
+// The stored credential cannot be filtered after the fact: the library writes no
+// attestation bytes into it, so the relying party is not recoverable from the
+// value. Whatever stores it has to store that too.
 type Credentials interface {
 	// ForCustomer returns every credential a customer registered.
 	ForCustomer(ctx context.Context, customerID string) ([]webauthn.Credential, error)
@@ -72,15 +90,40 @@ type Credentials interface {
 }
 
 // pgCredentials is the store on this module's own table.
-type pgCredentials struct{ pool *pgxpool.Pool }
+type pgCredentials struct {
+	pool *pgxpool.Pool
+	// rpID is the relying party this store speaks about, and the ONLY one.
+	//
+	// A passkey is scoped to an RP ID by the authenticator that minted it, and the
+	// stored credential does not carry that id — measured: the library writes no
+	// attestation bytes into it, so there is nothing to read the relying party back
+	// out of. It has to be a column, and it has to be applied by whatever holds
+	// the configured value.
+	//
+	// So every read and every write here is scoped by it, and a row belonging to
+	// another relying party is invisible to this module: not listed, not counted as
+	// a way in, and not accepted at sign-in.
+	rpID string
+}
+
+// rpScope is the SQL that limits a statement to this store's relying party.
+//
+// `rp_id IS NULL` is a row written before the column existed, and it is read as
+// belonging to the configured relying party — which it does, unless the
+// installation had already moved, and in that case nothing recorded what it was.
+// Spelling it once means a query cannot be given the customer filter and miss
+// this one.
+const rpScope = ` AND (rp_id IS NULL OR rp_id = `
 
 // ForCustomer reads every credential the customer registered.
 func (s pgCredentials) ForCustomer(
 	ctx context.Context, customerID string,
 ) ([]webauthn.Credential, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT credential FROM passkey_credentials WHERE customer_id = $1 ORDER BY created_at`,
-		customerID)
+		`SELECT credential FROM passkey_credentials
+		 WHERE customer_id = $1`+rpScope+`$2)
+		 ORDER BY created_at`,
+		customerID, s.rpID)
 	if err != nil {
 		return nil, fmt.Errorf("identity-passkey: the credentials could not be read: %w", err)
 	}
@@ -112,8 +155,9 @@ func (s pgCredentials) ByCredentialID(
 ) (customerID string, credential webauthn.Credential, err error) {
 	var raw []byte
 	row := s.pool.QueryRow(ctx,
-		`SELECT customer_id, credential FROM passkey_credentials WHERE credential_id = $1`,
-		encodeCredentialID(credentialID))
+		`SELECT customer_id, credential FROM passkey_credentials
+		 WHERE credential_id = $1`+rpScope+`$2)`,
+		encodeCredentialID(credentialID), s.rpID)
 
 	switch err := row.Scan(&customerID, &raw); {
 	case errors.Is(err, pgx.ErrNoRows):
@@ -162,12 +206,12 @@ func (s pgCredentials) Put(
 	}
 
 	tag, err := s.pool.Exec(ctx,
-		`INSERT INTO passkey_credentials (credential_id, customer_id, credential)
-		 VALUES ($1, $2, $3)
+		`INSERT INTO passkey_credentials (credential_id, customer_id, credential, rp_id)
+		 VALUES ($1, $2, $3, $4)
 		 ON CONFLICT (credential_id) DO UPDATE
-		 SET credential = EXCLUDED.credential
+		 SET credential = EXCLUDED.credential, rp_id = EXCLUDED.rp_id
 		 WHERE passkey_credentials.customer_id = EXCLUDED.customer_id`,
-		encodeCredentialID(credential.ID), customerID, raw)
+		encodeCredentialID(credential.ID), customerID, raw, s.rpID)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
@@ -192,8 +236,9 @@ const uniqueViolation = "23505"
 // Used stamps the moment.
 func (s pgCredentials) Used(ctx context.Context, credentialID []byte) error {
 	if _, err := s.pool.Exec(ctx,
-		`UPDATE passkey_credentials SET last_used_at = now() WHERE credential_id = $1`,
-		encodeCredentialID(credentialID)); err != nil {
+		`UPDATE passkey_credentials SET last_used_at = now()
+		 WHERE credential_id = $1`+rpScope+`$2)`,
+		encodeCredentialID(credentialID), s.rpID); err != nil {
 		return fmt.Errorf("identity-passkey: the credential's use could not be stamped: %w", err)
 	}
 
@@ -284,8 +329,8 @@ func (s pgCredentials) ListForCustomer(
 		`SELECT credential_id, created_at, last_used_at,
 		        COALESCE(credential->'transport', '[]'::jsonb)
 		 FROM passkey_credentials
-		 WHERE customer_id = $1
-		 ORDER BY created_at, credential_id`, customerID)
+		 WHERE customer_id = $1`+rpScope+`$2)
+		 ORDER BY created_at, credential_id`, customerID, s.rpID)
 	if err != nil {
 		return nil, fmt.Errorf("identity-passkey: the keys could not be listed: %w", err)
 	}
@@ -345,8 +390,10 @@ func (s pgCredentials) Remove(
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	rows, err := tx.Query(ctx,
-		`SELECT credential_id FROM passkey_credentials WHERE customer_id = $1 FOR UPDATE`,
-		customerID)
+		`SELECT credential_id FROM passkey_credentials
+		 WHERE customer_id = $1`+rpScope+`$2)
+		 FOR UPDATE`,
+		customerID, s.rpID)
 	if err != nil {
 		return 0, fmt.Errorf("identity-passkey: the keys could not be locked: %w", err)
 	}
@@ -381,8 +428,9 @@ func (s pgCredentials) Remove(
 	}
 
 	tag, err := tx.Exec(ctx,
-		`DELETE FROM passkey_credentials WHERE credential_id = $1 AND customer_id = $2`,
-		target, customerID)
+		`DELETE FROM passkey_credentials
+		 WHERE credential_id = $1 AND customer_id = $2`+rpScope+`$3)`,
+		target, customerID, s.rpID)
 	if err != nil {
 		return 0, fmt.Errorf("identity-passkey: the key could not be removed: %w", err)
 	}

@@ -91,6 +91,16 @@ type Options struct {
 	// There is no default and there must not be. A credential is bound to this
 	// value forever; getting it wrong does not fail loudly, it produces keys
 	// that cannot be used from the site that created them.
+	//
+	// # Changing it abandons every key already registered
+	//
+	// A credential is bound to this value by the authenticator that minted it, so
+	// moving from "shop.example.com" to "example.com" — or the other way — leaves
+	// every existing passkey unusable, and no migration can carry them over. The
+	// module's own store records the relying party a row was written under and
+	// answers only for the configured one, so an abandoned row is not counted as a
+	// way into an account (gap D68). Everybody holding one still has to register
+	// again.
 	RPID string
 	// RPOrigins are the origins a ceremony may come from, scheme and port
 	// included. REQUIRED.
@@ -215,7 +225,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 			return fmt.Errorf("identity-passkey: %q could not be resolved: %w",
 				dbServiceName, resolveErr)
 		}
-		m.store = pgCredentials{pool: pool.Pool()}
+		m.store = pgCredentials{pool: pool.Pool(), rpID: m.opts.RPID}
 	}
 
 	// The verifier this installation bound, which is how a REGISTRATION knows
