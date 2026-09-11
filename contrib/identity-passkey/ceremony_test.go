@@ -3,6 +3,7 @@ package identitypasskey_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -418,4 +419,75 @@ func (s *memoryCredentials) Used(_ context.Context, credentialID []byte) error {
 	s.used = credentialID
 
 	return nil
+}
+
+// TestRegistrationAsksForADiscoverableCredential is gap D65, at the ceremony.
+//
+// The only sign-in this module offers is a discoverable one: the authenticator
+// names the account and the server knows nothing until it answers. A
+// registration that did not ask for a resident key accepted a credential the
+// authenticator stores no user handle for, answered 204, and the person could
+// never use it — the library refuses the assertion with "blank User Handle".
+func TestRegistrationAsksForADiscoverableCredential(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	begun := h.post(t, "/store/v1/auth/passkey/register/begin", "", h.signedInAs(t, testCustomer))
+	require.Equal(t, http.StatusOK, begun.Code, "body: %s", begun.Body.String())
+
+	var options struct {
+		PublicKey struct {
+			AuthenticatorSelection struct {
+				ResidentKey        string `json:"residentKey"`
+				RequireResidentKey *bool  `json:"requireResidentKey"`
+			} `json:"authenticatorSelection"`
+		} `json:"publicKey"`
+	}
+	require.NoError(t, json.Unmarshal(begun.Body.Bytes(), &options),
+		"the begin answer has to be the options object a browser is handed")
+
+	assert.Equal(t, "required", options.PublicKey.AuthenticatorSelection.ResidentKey,
+		"a discoverable sign-in needs a DISCOVERABLE credential, and asking for it is "+
+			"the only moment the authenticator can be told")
+	require.NotNil(t, options.PublicKey.AuthenticatorSelection.RequireResidentKey,
+		"the older spelling has to travel too; a browser may read either")
+	assert.True(t, *options.PublicKey.AuthenticatorSelection.RequireResidentKey)
+}
+
+// TestRegistrationExcludesTheKeysThePersonAlreadyHas keeps "add another passkey
+// first" meaning another DEVICE.
+//
+// Without the exclusion list an authenticator that already holds a key for this
+// site mints a SECOND credential rather than saying so, and every sentence in
+// this module that offers "register another one" can be satisfied twice on one
+// device — which is exactly the lockout those sentences exist to prevent.
+func TestRegistrationExcludesTheKeysThePersonAlreadyHas(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	signedIn := h.signedInAs(t, testCustomer)
+
+	first := h.post(t, "/store/v1/auth/passkey/register/begin", "", signedIn)
+	require.Equal(t, http.StatusOK, first.Code)
+	options, err := virtualwebauthn.ParseAttestationOptions(first.Body.String())
+	require.NoError(t, err)
+	assert.Empty(t, options.ExcludeCredentials,
+		"a person with no keys excludes nothing")
+
+	credential := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+	attestation := virtualwebauthn.CreateAttestationResponse(h.rp, h.auth, credential, *options)
+	stored := h.post(t, "/store/v1/auth/passkey/register/finish", attestation,
+		signedIn, ceremonyCookieOf(t, first))
+	require.Equal(t, http.StatusNoContent, stored.Code, "body: %s", stored.Body.String())
+
+	second := h.post(t, "/store/v1/auth/passkey/register/begin", "", signedIn)
+	require.Equal(t, http.StatusOK, second.Code)
+	again, err := virtualwebauthn.ParseAttestationOptions(second.Body.String())
+	require.NoError(t, err)
+
+	require.Len(t, again.ExcludeCredentials, 1,
+		"the key they already have has to be on the list the authenticator checks "+
+			"itself against")
+	assert.True(t, credential.IsExcludedForAttestation(*again),
+		"and it has to be THAT key; an exclusion list of the wrong ids excludes nobody")
 }

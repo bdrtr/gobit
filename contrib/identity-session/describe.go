@@ -44,7 +44,7 @@ func (m *Module) Describe(d *openapi.Doc) {
 		Tags: []string{docTag},
 		Responses: map[string]any{
 			"204": openapi.Response("The session cookie was set", nil),
-			"400": openapi.ErrorResponse(
+			"422": openapi.ErrorResponse(
 				"The body could not be parsed, or it carried a field this endpoint does " +
 					"not know. Code \"identity_session_invalid\"."),
 			"401": openapi.ErrorResponse(
@@ -90,7 +90,7 @@ func (m *Module) Describe(d *openapi.Doc) {
 		Tags: []string{docTag},
 		Responses: map[string]any{
 			"204": openapi.Response("The credential was written", nil),
-			"400": openapi.ErrorResponse(
+			"422": openapi.ErrorResponse(
 				"customer_id or email is missing, the password is empty, or the body " +
 					"could not be parsed. Code \"identity_session_invalid\"."),
 			"409": openapi.ErrorResponse(

@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -97,11 +98,28 @@ func (s pgCredentials) ByCredentialID(
 	return customerID, credential, nil
 }
 
-// Put stores a credential, replacing one with the same id.
+// ErrCredentialBelongsToAnother is a registration whose credential id is already
+// somebody else's.
+var ErrCredentialBelongsToAnother = errors.New(
+	"identity-passkey: that credential belongs to another customer")
+
+// Put stores a credential, replacing one THAT CUSTOMER already had.
 //
 // The conflict target is the CREDENTIAL: a key registered twice is the same key,
 // and a person re-registering one they already had should not end with two rows
 // that sign the same challenge.
+//
+// # Why the update is scoped to the same owner
+//
+// Until this scope existed the update set customer_id from the incoming row, so
+// a registration carrying an id that was already somebody else's MOVED their
+// credential onto the registering account — silently, with a 204. A credential
+// id comes from the client, so it is chosen by whoever controls the
+// authenticator; a hostile one can present any id it likes.
+//
+// Scoped, the conflict matches nothing for a foreign id and the insert fails on
+// the primary key instead, which this method turns into
+// [ErrCredentialBelongsToAnother] rather than a 500 (gap D64).
 func (s pgCredentials) Put(
 	ctx context.Context, customerID string, credential webauthn.Credential,
 ) error {
@@ -110,18 +128,33 @@ func (s pgCredentials) Put(
 		return fmt.Errorf("identity-passkey: the credential could not be encoded: %w", err)
 	}
 
-	if _, err := s.pool.Exec(ctx,
+	tag, err := s.pool.Exec(ctx,
 		`INSERT INTO passkey_credentials (credential_id, customer_id, credential)
 		 VALUES ($1, $2, $3)
 		 ON CONFLICT (credential_id) DO UPDATE
-		 SET customer_id = EXCLUDED.customer_id,
-		     credential = EXCLUDED.credential`,
-		encodeCredentialID(credential.ID), customerID, raw); err != nil {
+		 SET credential = EXCLUDED.credential
+		 WHERE passkey_credentials.customer_id = EXCLUDED.customer_id`,
+		encodeCredentialID(credential.ID), customerID, raw)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
+			return ErrCredentialBelongsToAnother
+		}
+
 		return fmt.Errorf("identity-passkey: the credential could not be written: %w", err)
+	}
+	// A conflict whose WHERE did not match updates NOTHING and reports no error.
+	// Inferring success from the absence of an error is what would let a foreign
+	// id answer 204 having written nothing at all.
+	if tag.RowsAffected() == 0 {
+		return ErrCredentialBelongsToAnother
 	}
 
 	return nil
 }
+
+// uniqueViolation is PostgreSQL's code for a primary key collision.
+const uniqueViolation = "23505"
 
 // Used stamps the moment.
 func (s pgCredentials) Used(ctx context.Context, credentialID []byte) error {

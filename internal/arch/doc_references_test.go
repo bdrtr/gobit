@@ -1413,7 +1413,12 @@ func testFileNames(t *testing.T) map[string]bool {
 	t.Helper()
 
 	names := map[string]bool{}
-	for _, root := range productionTrees {
+	// Every tree this audit READS, not only the production ones. It was
+	// productionTrees until the contrib trees joined the walk, and the first
+	// comment in one of them naming a sibling test file was reported as naming a
+	// file that does not exist — the third place in this file where a list did
+	// not grow with the walk.
+	for _, root := range referencedTrees {
 		for _, filePath := range treeFiles(t, root) {
 			base := filepath.Base(filePath)
 			if strings.HasSuffix(base, "_test.go") {

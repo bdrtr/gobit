@@ -325,3 +325,56 @@ func TestTheChecksRefuseWhatTheStoreWouldNeverWrite(t *testing.T) {
 func encodedID(raw []byte) string {
 	return base64.RawURLEncoding.EncodeToString(raw)
 }
+
+// TestARegistrationCannotTakeAnotherCustomersKey is gap D64, in the store.
+//
+// A credential id comes from the client: the authenticator mints it and a
+// hostile one presents whatever it likes. Until the conflict update was scoped
+// to the same owner, registering an id that was already somebody else's MOVED
+// their row onto the registering account and answered success.
+func TestARegistrationCannotTakeAnotherCustomersKey(t *testing.T) {
+	store := realStore(t)
+	victim := "cust_" + t.Name() + "_victim"
+	thief := "cust_" + t.Name() + "_thief"
+	credential := aCredential("cred_" + t.Name())
+
+	require.NoError(t, store.Put(t.Context(), victim, credential))
+
+	err := store.Put(t.Context(), thief, credential)
+
+	require.ErrorIs(t, err, identitypasskey.ErrCredentialBelongsToAnother,
+		"a foreign credential id must be refused and NAMED, not written and not a 500")
+
+	owner, _, readErr := store.ByCredentialID(t.Context(), credential.ID)
+	require.NoError(t, readErr)
+	assert.Equal(t, victim, owner, "the row stays with the customer who registered it")
+
+	left, err := store.ForCustomer(t.Context(), victim)
+	require.NoError(t, err)
+	assert.Len(t, left, 1, "and the victim keeps their way in")
+}
+
+// TestRegisteringYourOwnKeyAgainStillReplacesIt keeps the scope from closing the
+// case it was not about.
+//
+// The conflict target is the credential because a key registered twice is the
+// same key; scoping it to the owner must not turn a person re-registering their
+// own device into a refusal.
+func TestRegisteringYourOwnKeyAgainStillReplacesIt(t *testing.T) {
+	store := realStore(t)
+	customerID := "cust_" + t.Name()
+	credential := aCredential("cred_" + t.Name())
+
+	require.NoError(t, store.Put(t.Context(), customerID, credential))
+	credential.PublicKey = []byte("a rotated public key")
+	require.NoError(t, store.Put(t.Context(), customerID, credential),
+		"re-registering your own key is not a takeover")
+
+	_, got, err := store.ByCredentialID(t.Context(), credential.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("a rotated public key"), got.PublicKey)
+
+	credentials, err := store.ForCustomer(t.Context(), customerID)
+	require.NoError(t, err)
+	assert.Len(t, credentials, 1, "one key is still ONE row")
+}

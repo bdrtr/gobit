@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
@@ -64,7 +65,34 @@ func (m *Module) beginRegistration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	creation, session, err := m.web.BeginRegistration(user)
+	creation, session, err := m.web.BeginRegistration(user,
+		// A DISCOVERABLE credential is required, and it is not a preference:
+		// beginSignIn is a discoverable ceremony and this module offers no other.
+		// Without this the authenticator may mint a key it does not store a user
+		// handle for, registration answers 204, and the person can never sign in
+		// with it — the library refuses the assertion with "blank User Handle"
+		// (gap D65).
+		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
+			// BOTH spellings, and the struct is built by hand rather than through
+			// the library's selector for that reason: the selector sets the legacy
+			// `requireResidentKey` only, and a browser reading the modern
+			// `residentKey` would see no requirement at all. Written out, it was
+			// also visible that the selector's first argument is the ATTACHMENT
+			// and not the attestation preference — the first version of this call
+			// put "none" there, which is not an attachment any browser knows.
+			ResidentKey:        protocol.ResidentKeyRequirementRequired,
+			RequireResidentKey: protocol.ResidentKeyRequired(),
+			// The ATTACHMENT is left unconstrained: a passkey on a phone and one
+			// on a security key are both passkeys, and naming either would refuse
+			// the other.
+			UserVerification: protocol.VerificationPreferred,
+		}),
+		// The keys this person already has, so an authenticator that holds one
+		// of them says so instead of quietly minting a SECOND credential on the
+		// same device. Every "register another passkey first" sentence in this
+		// module means another DEVICE, and without this the person can satisfy
+		// it twice on one.
+		webauthn.WithExclusions(excluding(user.WebAuthnCredentials())))
 	if err != nil {
 		m.refuse(w, r, err)
 
@@ -267,4 +295,15 @@ func (m *Module) refuse(w http.ResponseWriter, r *http.Request, err error) {
 func (m *Module) unavailable(w http.ResponseWriter, r *http.Request, what string, err error) {
 	m.log.ErrorContext(r.Context(), "identity-passkey: "+what, "error", err)
 	corehttp.WriteError(r.Context(), w, coreerrors.Internal(CodeUnavailable, "%s", what))
+}
+
+// excluding turns a person's credentials into the list an authenticator checks
+// itself against.
+func excluding(credentials []webauthn.Credential) []protocol.CredentialDescriptor {
+	out := make([]protocol.CredentialDescriptor, 0, len(credentials))
+	for i := range credentials {
+		out = append(out, credentials[i].Descriptor())
+	}
+
+	return out
 }
