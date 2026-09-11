@@ -29,6 +29,7 @@ truth: a report says what was true on the day it was taken.
 | [What a parcel may hold — measured 2026-09-11](0135-what-a-parcel-may-hold.md) | 129 |
 | [What the compiler was never shown — measured 2026-09-11](0136-what-the-compiler-was-never-shown.md) | 119 |
 | [Who chooses the first password — measured 2026-09-11](0137-who-chooses-the-first-password.md) | 106 |
+| [What the lane was waiting for — measured 2026-09-11](0138-what-the-lane-was-waiting-for.md) | 131 |
 | [The guard moves to the binding — measured 2026-09-10](0120-the-guard-moves-to-the-binding.md) | 126 |
 | [Where the truth about collected money lives — measured 2026-09-10](0119-where-the-truth-about-collected-money-lives.md) | 130 |
 | [A counter in place of a balance — measured 2026-09-10](0118-a-counter-in-place-of-a-balance.md) | 162 |

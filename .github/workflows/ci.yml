@@ -104,6 +104,22 @@ jobs:
   integration:
     name: Integration
     runs-on: ubuntu-latest
+    # The reaper is OFF here and nowhere else (ADR 0138).
+    #
+    # testcontainers-go starts a Ryuk container whose job is to remove leaked
+    # containers on a machine that outlives the test run. This runner does not
+    # outlive it: GitHub destroys the VM when the job ends, so the reaper has
+    # nothing left to reap and can only lose a race — ONE Ryuk is shared by
+    # every `go test` package process, it terminates itself ten seconds after
+    # the last one disconnects, and a process that looks it up inside the window
+    # between "exited" and "removed" waits sixty seconds for a port that will
+    # never be published. That is the whole of what fell twice on 2026-09-11.
+    #
+    # internal/arch/reaper_test.go holds this to the claim that licenses it: a
+    # job may disable the reaper only while it runs on an ephemeral runner, and
+    # nothing outside this directory may disable it at all.
+    env:
+      TESTCONTAINERS_RYUK_DISABLED: "true"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -142,6 +158,11 @@ jobs:
   smoke:
     name: Smoke
     runs-on: ubuntu-latest
+    # Same runner, same argument as the Integration job above (ADR 0138). Smoke
+    # runs ONE package, so it never reaches the shared-reaper path that fell —
+    # it is turned off here because the reason is the runner and not the race.
+    env:
+      TESTCONTAINERS_RYUK_DISABLED: "true"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

@@ -20,6 +20,17 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Konteyner toplayıcısı, makinenin çöpe atıldığı yerde kapalı** (ADR 0138).
+  Doğrulama şeridi 11 Eylül'de iki kez, birbiriyle ilgisiz iki pakette,
+  altmışar saniye bekledikten sonra kırmızıya döndü; beklenen şey testin
+  istediği Postgres değil, süreçler arasında PAYLAŞILAN Ryuk konteyneriydi —
+  son istemcisi ayrıldıktan on saniye sonra kendini sonlandırıyor, kaydı
+  silinene kadar etiket aramasına yakalanıyor, ve ölmüş bir konteynerin asla
+  yayımlamayacağı bir port için altmış saniye bekleniyor. GitHub koşucusu iş
+  bitince yok edildiğinden toplayıcının koruyacağı bir şey yok: iki işte
+  kapatıldı, ve kararı meşrulaştıran iddia — koşucunun geçici olduğu — bir
+  arch kapısıyla iki yönde çivilendi.
+
 - **Bir meslektaş artık KENDİ ilk parolasını belirliyor** (ADR 0137). Bugüne
   kadar bir kullanıcı eklemenin iki yolu vardı ve ikisi de yanlıştı: ya
   `CreateUser`'a parolayı siz yazıyordunuz — yani bir kişi bir başkasının sırrını
