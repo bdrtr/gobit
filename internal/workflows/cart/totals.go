@@ -558,7 +558,11 @@ func (w *Workflows) unitPrices(ctx context.Context, snap Snapshot, priceSets map
 		return nil, nil
 	}
 
-	attributes, groupErr := w.ruleContext(ctx, snap)
+	// The list is discarded here: these two callers are PRICING, and a price set
+	// is chosen by the merchant-ranked head alone (ADR 0049). "Any of my groups"
+	// is a discount question — two price sets both matching would be two prices
+	// with nothing deciding between them.
+	attributes, _, groupErr := w.ruleContext(ctx, snap)
 	if groupErr != nil {
 		w.log.WarnContext(ctx, "the customer's groups could not be read; pricing without a segment",
 			"error", groupErr, "customer_id", snap.CustomerID)

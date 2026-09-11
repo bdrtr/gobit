@@ -237,26 +237,38 @@ func (w *Workflows) productIDsFor(ctx context.Context, variantIDs []string) (map
 // unavailable is worse than a cart total computed at the base price: the first
 // stops the shop, the second charges the ordinary price. The error is returned so
 // the caller can log it, and the context comes back with the region alone.
-func (w *Workflows) ruleContext(ctx context.Context, snap Snapshot) (map[string]string, error) {
-	attributes := map[string]string{attrRegionID: snap.RegionID}
+func (w *Workflows) ruleContext(
+	ctx context.Context, snap Snapshot,
+) (attributes map[string]string, lists map[string][]string, err error) {
+	attributes = map[string]string{attrRegionID: snap.RegionID}
 	addCartMetadata(attributes, snap.Metadata)
 
 	if snap.CustomerID == "" || w.customers == nil {
-		return attributes, nil
+		return attributes, nil, nil
 	}
 
-	groups, err := w.customers.CustomerGroupIDs(ctx, snap.CustomerID)
-	if err != nil {
-		return attributes, err
+	groups, groupErr := w.customers.CustomerGroupIDs(ctx, snap.CustomerID)
+	if groupErr != nil {
+		return attributes, nil, groupErr
 	}
 	if len(groups) == 0 {
-		return attributes, nil
+		return attributes, nil, nil
 	}
 
-	// The HEAD, because the surface promises rank order (ADR 0049).
+	// The groups go out TWICE, and the two answer different questions.
+	//
+	// The HEAD goes into the single-valued context, because the surface promises
+	// rank order (ADR 0049) and because every rule shipped before this read it
+	// there: an `eq vip` rule has to keep meaning "the group we picked is vip".
+	//
+	// ALL of them go into the list, where only the operator that reads a list looks.
+	// Without it a customer in {retail, vip} whose head is retail did not match a
+	// rule written for vip — a segment discount silently not applying to somebody
+	// who IS in the segment (ADR 0144).
 	attributes[attrCustomerGroupID] = groups[0]
+	lists = map[string][]string{attrCustomerGroupID: groups}
 
-	return attributes, nil
+	return attributes, lists, nil
 }
 
 // CartAttributePrefix is what every attribute taken from the cart's metadata is

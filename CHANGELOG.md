@@ -64,6 +64,19 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir kural artık "şu gruplardan HERHANGİ BİRİNDE mi" diye sorabiliyor**
+  (ADR 0144). Müşteri tüccarın koyduğu kadar grupta olur, ama sepet yalnızca
+  BİRİNİ gönderebiliyordu: sıralı baş (ADR 0049). Yani {retail, vip}
+  gruplarındaki, başı retail olan bir müşteri `customer_group_id in [vip]`
+  kuralına UYMUYORDU — segmentin İÇİNDEKİ birine segment indiriminin sessizce
+  uygulanmaması, ki ADR 0103 tam bu kusurla açılıyor. Dokuzuncu bir işleç
+  (`any_in`) bağlamın değer KÜMESİNİ okuyor ve sepet bütün grupları sıralı başın
+  YANINDA gönderiyor. Eski işleçler listeye BAKMIYOR: gönderilmiş bir `in`
+  kuralının cevabı aynı kalmalı, yoksa canlı bir indirim hiçbir şey duyurmadan
+  genişlerdi. Ölçüm ayrıca satırın "eksik" dediği üç hedefin de bağlı olduğunu
+  ve `cart/discount.go`'daki bir cümlenin ("müşteri grubu bağlama KONMUYOR")
+  uzun süredir yanlış olduğunu buldu.
+
 - **Bir yönetici artık İKİNCİ BİR ETKEN taşıyabiliyor** (ADR 0143). `auth_mfa_
   credential` göçü, ve `/admin/v1/auth/mfa` altında iki uç: kayıt ve onay.
   Uçlar hiçbir kullanıcı adlandırmıyor — çağıranın KENDİSİNE etki ediyorlar,

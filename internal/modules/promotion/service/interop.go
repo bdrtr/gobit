@@ -71,8 +71,14 @@ func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
 // "context", "attributes" and "codes" may be left empty. If "at" is left empty, "now"
 // is used; it is expected in RFC 3339 format.
 type interopRequest struct {
-	CurrencyCode    string                   `json:"currency_code"`
-	Context         map[string]string        `json:"context"`
+	CurrencyCode string            `json:"currency_code"`
+	Context      map[string]string `json:"context"`
+	// ContextLists is what a context rule reads as a SET (ADR 0144).
+	//
+	// A sibling of "context" rather than a change to it: this decoder refuses
+	// unknown fields, so a retype breaks every caller — and a rule shipped before
+	// this has to keep the answer it has. Only the "any_in" operator looks here.
+	ContextLists    map[string][]string      `json:"context_lists"`
 	Items           []interopRequestItem     `json:"items"`
 	ShippingMethods []interopRequestShipping `json:"shipping_methods"`
 	Codes           []string                 `json:"codes"`
@@ -351,6 +357,7 @@ func decodeInteropRequest(raw json.RawMessage) (ComputeInput, error) {
 	return ComputeInput{
 		CurrencyCode:    req.CurrencyCode,
 		Context:         req.Context,
+		ContextLists:    req.ContextLists,
 		Items:           items,
 		ShippingMethods: shipping,
 		Codes:           req.Codes,

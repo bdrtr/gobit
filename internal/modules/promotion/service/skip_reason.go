@@ -133,7 +133,7 @@ func skipReasonOf(candidate models.PromotionCandidate, in ComputeInput) SkipReas
 	case candidate.Method.Type == models.MethodFixed &&
 		candidate.Method.CurrencyCode != in.CurrencyCode:
 		return SkipCurrencyMismatch
-	case !matchRules(candidate.ContextRules(), in.Context):
+	case !matchRules(candidate.ContextRules(), in.Context, in.ContextLists):
 		return SkipRulesNotMatched
 	}
 

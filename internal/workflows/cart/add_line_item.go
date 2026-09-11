@@ -164,7 +164,11 @@ func (w *Workflows) AddLineItem(ctx context.Context, in AddLineItemInput) (AddLi
 		return AddLineItemResult{}, err
 	}
 
-	attributes, groupErr := w.ruleContext(ctx, snap)
+	// The list is discarded here: these two callers are PRICING, and a price set
+	// is chosen by the merchant-ranked head alone (ADR 0049). "Any of my groups"
+	// is a discount question — two price sets both matching would be two prices
+	// with nothing deciding between them.
+	attributes, _, groupErr := w.ruleContext(ctx, snap)
 	if groupErr != nil {
 		// The base price is a worse answer than the segment price and a far
 		// better one than no cart; see ruleContext.

@@ -80,6 +80,18 @@ type ComputeInput struct {
 	// {"region_id": "reg_1", "customer_group_id": "vip"}). nil olabilir; o
 	// durumda bağlam kuralı olan her promosyon elenir.
 	Context map[string]string
+	// ContextLists, bağlam kuralının LİSTE tarafından okuyacağı alanlardır (örn.
+	// {"customer_group_id": ["retail", "vip"]}).
+	//
+	// [Context]'in YANINDA duran ek bir alan, onun yerine geçen bir tip değişikliği
+	// DEĞİL: çağıranın gönderdiği gövde `DisallowUnknownFields` ile okunuyor, yani
+	// bir yeniden adlandırma ya da tip değişimi her çağıranı kırardı — ve gönderilmiş
+	// bir `in` kuralının cevabı aynı kalmalı.
+	//
+	// Yalnızca [models.RuleOperator.ReadsAList] doğru olan işleç buraya bakar. nil
+	// olabilir; o durumda o işleçli her kural eşleşmez, ki bu doğru cevap: liste
+	// gönderilmediyse müşterinin hangi gruplarda olduğu BİLİNMİYOR.
+	ContextLists map[string][]string
 	// Items sepet kalemleridir.
 	Items []ComputeItem
 	// ShippingMethods sepetin kargo yöntemleridir.
@@ -378,6 +390,7 @@ func normalizeComputeInput(in ComputeInput, now time.Time) (ComputeInput, error)
 	return ComputeInput{
 		CurrencyCode:    currency,
 		Context:         maps.Clone(in.Context),
+		ContextLists:    cloneLists(in.ContextLists),
 		Items:           items,
 		ShippingMethods: shipping,
 		Codes:           codes,
@@ -748,7 +761,11 @@ func selectTargets(candidate models.PromotionCandidate, items, shipping []lineSt
 func filterLines(lines []lineState, rules []models.PromotionRule) []*lineState {
 	out := make([]*lineState, 0, len(lines))
 	for i := range lines {
-		if len(rules) > 0 && !matchRules(rules, lines[i].attributes) {
+		// Satır kuralları için liste YOK, ve bu bir eksiklik değil bir karar: bir
+		// satırın nitelikleri tek bir varyantın olguları, ve "şu kategorilerden
+		// herhangi birinde" sorusu ürün modülünün üyeliği Query katmanından
+		// yayımlamasını ister — ayrı bir karar (ADR 0144'ün kapatmadığı yarı).
+		if len(rules) > 0 && !matchRules(rules, lines[i].attributes, nil) {
 			continue
 		}
 		out = append(out, &lines[i])
@@ -1024,4 +1041,23 @@ func (s *Service) storeCandidate(ctx context.Context, code string) (models.Promo
 func notUsable(code string) error {
 	return errors.NotFound(CodePromotionNotUsable,
 		"kupon kullanılabilir değil: %s", strings.TrimSpace(code))
+}
+
+// cloneLists bağlam listelerinin DERİN kopyasını üretir.
+//
+// maps.Clone yetmez: değerler dilim, ve yüzeysel bir kopya çağıranın dilimini
+// paylaşırdı — normalize edilmiş girdiyi değiştiren bir şey çağıranın verisini de
+// değiştirirdi. Bu dosyanın Context için maps.Clone çağırmasının sebebi de aynı
+// sınırdır, orada değerler dize olduğu için yeterli oluyor.
+func cloneLists(in map[string][]string) map[string][]string {
+	if in == nil {
+		return nil
+	}
+
+	out := make(map[string][]string, len(in))
+	for key, values := range in {
+		out[key] = slices.Clone(values)
+	}
+
+	return out
 }

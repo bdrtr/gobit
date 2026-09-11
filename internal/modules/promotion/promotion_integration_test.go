@@ -188,7 +188,7 @@ func TestMigrationlarGercektenGeriAlinabilir(t *testing.T) {
 	// ne olursa olsun kendisiyle uyuşurdu, oysa bu satırın işi bir migration'ın
 	// EKLENDİĞİNİ fark ettirmektir. Aynı gerekçe product modülünün aynı
 	// satırının yanında da yazılıdır.
-	assert.Equal(t, uint(2), version)
+	assert.Equal(t, uint(3), version)
 }
 
 // TestCrossModuleForeignKeyYok modülün tablolarındaki TÜM foreign key'lerin

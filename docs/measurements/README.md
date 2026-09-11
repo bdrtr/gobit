@@ -35,6 +35,7 @@ truth: a report says what was true on the day it was taken.
 | [What the ground was missing — measured 2026-09-11](0141-what-the-ground-was-missing.md) | 120 |
 | [The order that nothing enforced — measured 2026-09-11](0142-the-order-that-nothing-enforced.md) | 130 |
 | [The first secret that cannot be hashed — measured 2026-09-12](0143-the-first-secret-that-cannot-be-hashed.md) | 135 |
+| [What the wire could not carry — measured 2026-09-12](0144-what-the-wire-could-not-carry.md) | 113 |
 | [The guard moves to the binding — measured 2026-09-10](0120-the-guard-moves-to-the-binding.md) | 126 |
 | [Where the truth about collected money lives — measured 2026-09-10](0119-where-the-truth-about-collected-money-lives.md) | 130 |
 | [A counter in place of a balance — measured 2026-09-10](0118-a-counter-in-place-of-a-balance.md) | 162 |

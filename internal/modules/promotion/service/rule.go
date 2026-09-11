@@ -297,9 +297,11 @@ func validateRewardQuantities(buy, apply *int64) error {
 
 // matchRules verilen kuralların HEPSİNİN bağlamla eşleştiğini bildirir.
 // Kuralsız promosyon koşulsuzdur ve daima eşleşir.
-func matchRules(rules []models.PromotionRule, attributes map[string]string) bool {
+func matchRules(
+	rules []models.PromotionRule, attributes map[string]string, lists map[string][]string,
+) bool {
 	for i := range rules {
-		if !matchRule(rules[i], attributes) {
+		if !matchRule(rules[i], attributes, lists) {
 			return false
 		}
 	}
@@ -318,9 +320,19 @@ func matchRules(rules []models.PromotionRule, attributes map[string]string) bool
 // geri yükleme değerleri boş bırakabilir. Gerekçe tanınmayan işleçtekiyle
 // aynıdır — okunamayan bir koşul, kuralı sessizce devre dışı bırakıp indirimi
 // herkese AÇMAMALIDIR.
-func matchRule(rule models.PromotionRule, attributes map[string]string) bool {
+func matchRule(
+	rule models.PromotionRule, attributes map[string]string, lists map[string][]string,
+) bool {
 	if len(rule.Values) == 0 {
 		return false
+	}
+
+	// LİSTE tarafından okuyan işleç, tek değere HİÇ bakmaz ve tersi de doğrudur.
+	// İkisini karıştırmak, gönderilmiş bir `in` kuralının bir gün listeyi okumaya
+	// başlaması olurdu: sıralı başı vip OLMAYAN bir müşteriye indirim açılır ve
+	// canlı bir indirim, hiçbir şey duyurmadan değişir (ADR 0144).
+	if rule.Operator.ReadsAList() {
+		return matchAnyIn(rule, lists[rule.Attribute])
 	}
 
 	value, ok := attributes[rule.Attribute]
@@ -345,6 +357,26 @@ func matchRule(rule models.PromotionRule, attributes map[string]string) bool {
 		// getirmemelidir.
 		return false
 	}
+}
+
+// matchAnyIn bağlamın değer KÜMESİ ile kuralın değerlerinin kesiştiğini bildirir.
+//
+// Boş bir küme eşleşmez, ve bu bir kenar durum değil doğru cevap: liste hiç
+// gönderilmediyse müşterinin hangi gruplarda olduğu BİLİNMİYOR, ve bilinmeyen bir
+// segmenti eşleşmiş saymak segment indirimini herkese açardı — [matchRule]'un
+// bağlamda bulunmayan alan için verdiği cevabın aynısı.
+//
+// Karşılaştırma küçük iki liste üzerinde iç içe dönüyor: bir müşteri bir elin
+// parmağı kadar grupta olur ve bir kural bir elin parmağı kadar değer taşır, yani
+// bir küme kurmak kazandığından fazlasını harcardı.
+func matchAnyIn(rule models.PromotionRule, values []string) bool {
+	for _, value := range values {
+		if slices.Contains(rule.Values, value) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // matchNumeric sayısal işleçleri değerlendirir.

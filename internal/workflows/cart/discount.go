@@ -128,6 +128,13 @@ type discountRequest struct {
 	CurrencyCode string `json:"currency_code"`
 	// Context holds the fields that context rules will look at.
 	Context map[string]string `json:"context"`
+	// ContextLists holds the fields a context rule reads as a SET.
+	//
+	// A sibling of Context and not a replacement: the receiving side rejects
+	// unknown fields, so a retype would break it, and a shipped rule's answer has
+	// to stay exactly what it was. Only the operator that reads a list looks here
+	// (ADR 0144).
+	ContextLists map[string][]string `json:"context_lists"`
 	// Items are the cart's lines and they go in the cart's ORDER.
 	Items []discountRequestItem `json:"items"`
 	// ShippingMethods is ALWAYS EMPTY; the rationale is in the
@@ -363,13 +370,20 @@ func appliedPromotionsOf(resp discountResponse) []AppliedPromotion {
 // opened up the day [Totals] gains a "shipping_discount_total" field, and the place
 // it will be wired to is this empty slice in the request.
 //
-// # Only the region is put into the context
+// # What goes into the context
 //
-// The customer group is NOT put into the context; the rationale is the same as for
-// the price context (see the package comment, "Customer segment prices"): the cart
-// does not know the customer's groups, and silently picking one would tie the
-// discount to map iteration order. The group context is added here the day the
-// customer surface publishes the group list.
+// The region, the cart's own metadata (ADR 0111) and the customer's groups. This
+// paragraph said the opposite for a long time — "the customer group is NOT put
+// into the context … added here the day the customer surface publishes the group
+// list" — and that day had come and gone: [Workflows.ruleContext] has written it
+// since ADR 0049 published the ranked list. The sentence survived the change, and
+// a later round would have cited it as proof the leg was missing (ADR 0144).
+//
+// The groups go in TWICE and the two are different questions. The merchant-ranked
+// HEAD goes into Context, where `eq` and `in` read it and every shipped rule keeps
+// its exact answer. ALL of them go into ContextLists, where only `any_in` reads
+// them — which is what lets a rule ask "is this customer in any of these groups"
+// about a customer whose head is not the one the rule names.
 //
 // # The line attributes carry the product's two flags
 //
@@ -393,7 +407,7 @@ func (w *Workflows) discountRequestFor(
 		})
 	}
 
-	attributes, groupErr := w.ruleContext(ctx, snap)
+	attributes, lists, groupErr := w.ruleContext(ctx, snap)
 	if groupErr != nil {
 		w.log.WarnContext(ctx, "the customer's groups could not be read; discounting without a segment",
 			"error", groupErr, "customer_id", snap.CustomerID)
@@ -402,6 +416,7 @@ func (w *Workflows) discountRequestFor(
 	return discountRequest{
 		CurrencyCode:    snap.CurrencyCode,
 		Context:         attributes,
+		ContextLists:    lists,
 		Items:           items,
 		ShippingMethods: []discountRequestShipping{},
 		Codes:           codesOrEmpty(snap.PromotionCodes),

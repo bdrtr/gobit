@@ -407,12 +407,28 @@ const (
 	OpLt RuleOperator = "lt"
 	// OpLte wants numerical less-than-or-equal.
 	OpLte RuleOperator = "lte"
+	// OpAnyIn matches when the context's value SET intersects the rule's values.
+	//
+	// It is the only operator that reads a LIST out of the context rather than a
+	// single value, and it exists because one question could not be asked before:
+	// "is this customer in ANY of these groups". A customer belongs to as many
+	// groups as the merchant put them in, and the cart could send only one of them
+	// — the merchant-ranked head (ADR 0049) — so a customer in {retail, vip} whose
+	// head is retail did not match `customer_group_id in [vip]`. A segment discount
+	// silently not applying to somebody who IS in the segment is the defect ADR
+	// 0103 opens with (ADR 0144).
+	//
+	// The existing operators are untouched and keep reading the single value. That
+	// is not tidiness: a shipped `eq vip` rule that started consulting the list
+	// would begin discounting customers whose head is not vip, and a live discount
+	// would change with nothing announcing it.
+	OpAnyIn RuleOperator = "any_in"
 )
 
 // Valid reports whether the operator is defined.
 func (o RuleOperator) Valid() bool {
 	switch o {
-	case OpEq, OpNe, OpIn, OpNin, OpGt, OpGte, OpLt, OpLte:
+	case OpEq, OpNe, OpIn, OpNin, OpAnyIn, OpGt, OpGte, OpLt, OpLte:
 		return true
 	default:
 		return false
@@ -434,7 +450,17 @@ func (o RuleOperator) Numeric() bool {
 // MultiValue reports whether the operator can take more than one value.
 // Every other operator wants a SINGLE value.
 func (o RuleOperator) MultiValue() bool {
-	return o == OpIn || o == OpNin
+	return o == OpIn || o == OpNin || o == OpAnyIn
+}
+
+// ReadsAList reports whether the operator looks at the context's LIST side.
+//
+// It separates the two halves of "multi-valued": every operator in
+// [RuleOperator.MultiValue] takes several values in the RULE, and only this one
+// takes several in the CONTEXT. Folding them together is what would make a
+// shipped `in` rule start reading a list it was never written against.
+func (o RuleOperator) ReadsAList() bool {
+	return o == OpAnyIn
 }
 
 // RuleType reports WHAT a rule will look at.

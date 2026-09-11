@@ -482,6 +482,12 @@ type computeRequest struct {
 	CurrencyCode string `json:"currency_code"`
 	// Context bağlam kurallarının bakacağı alanlardır.
 	Context map[string]string `json:"context"`
+	// ContextLists is what a context rule reads as a SET (ADR 0144).
+	//
+	// The shape has to stay IDENTICAL to the interop request's, by that file's own
+	// rule: two surfaces computing the same thing from two schemas is two chances
+	// for one of them to drift. Only the "any_in" operator looks here.
+	ContextLists map[string][]string `json:"context_lists"`
 	// Items sepet kalemleridir.
 	Items []computeItemRequest `json:"items"`
 	// ShippingMethods sepetin kargo yöntemleridir.
@@ -541,6 +547,7 @@ func (a *API) computeDiscounts(w http.ResponseWriter, r *http.Request) {
 	in := service.ComputeInput{
 		CurrencyCode:    req.CurrencyCode,
 		Context:         req.Context,
+		ContextLists:    req.ContextLists,
 		Items:           make([]service.ComputeItem, 0, len(req.Items)),
 		ShippingMethods: make([]service.ComputeShippingMethod, 0, len(req.ShippingMethods)),
 		Codes:           req.Codes,

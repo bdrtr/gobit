@@ -1121,3 +1121,86 @@ func TestComputeDiscountsSayisalKuralCevrilemeyenDegerleEslesmez(t *testing.T) {
 		})
 	}
 }
+
+// anyInPromotion "şu gruplardan HERHANGİ BİRİNDE" kuralını taşıyan promosyonu kurar.
+func anyInPromotion(repo *memRepo, operator models.RuleOperator) {
+	seedPromotion(repo,
+		models.Promotion{ID: "promo_1", Code: "SEGMENT", IsAutomatic: true},
+		percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach),
+		models.PromotionRule{
+			ID: "prule_1", PromotionID: "promo_1", RuleType: models.RuleContext,
+			Attribute: "customer_group_id", Operator: operator, Values: []string{"vip"},
+		},
+	)
+}
+
+// TestAnyInSegmentIndirimiBASTAKIGrupOlmasaDaUygular kusurun kendisidir.
+//
+// Müşteri {retail, vip} gruplarında ve tüccarın sıraladığı BAŞ "retail". Sepetin
+// gönderebildiği tek değer o baştı, yani vip için yazılmış bir kural segmentin
+// İÇİNDEKİ müşteriye sessizce uygulanmıyordu — ADR 0103'ün açılış kusuru
+// (ADR 0144).
+func TestAnyInSegmentIndirimiBASTAKIGrupOlmasaDaUygular(t *testing.T) {
+	repo := newMemRepo()
+	anyInPromotion(repo, models.OpAnyIn)
+
+	in := ComputeInput{
+		CurrencyCode: "TRY",
+		Context:      map[string]string{"customer_group_id": "retail"},
+		ContextLists: map[string][]string{"customer_group_id": {"retail", "vip"}},
+		Items:        []ComputeItem{item("li_1", 10000, 1, nil)},
+	}
+	res, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
+	require.NoError(t, err)
+
+	assertInvariants(t, in, res)
+	assert.Equal(t, int64(5000), res.DiscountTotal,
+		"müşteri vip grubunda; baş grubun retail olması indirimi kapatmamalı")
+}
+
+// TestGONDERILMISKurallarinCevabiListeyleDEGISMEZ ikinci riski ayrı çiviler.
+//
+// Aynı müşteri, aynı liste, ama kural `in` ile yazılmış. `in` tek değere bakar ve
+// baş "retail" olduğu için eşleşmez — bugünkü cevabın ta kendisi. İşleçler
+// birbirine karışsaydı canlı bir indirim, hiçbir şey duyurmadan genişlerdi.
+//
+// Ayrı bir vaka olması şart: tek fikstürde ikisi de sınansaydı, baştan aşağı
+// yanlış bir uygulama ilk iddiaya takılır ve bu hiç ateşlenmezdi.
+func TestGONDERILMISKurallarinCevabiListeyleDEGISMEZ(t *testing.T) {
+	repo := newMemRepo()
+	anyInPromotion(repo, models.OpIn)
+
+	in := ComputeInput{
+		CurrencyCode: "TRY",
+		Context:      map[string]string{"customer_group_id": "retail"},
+		ContextLists: map[string][]string{"customer_group_id": {"retail", "vip"}},
+		Items:        []ComputeItem{item("li_1", 10000, 1, nil)},
+	}
+	res, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
+	require.NoError(t, err)
+
+	assertInvariants(t, in, res)
+	assert.Zero(t, res.DiscountTotal,
+		"`in` LİSTEYE BAKMAZ: gönderilmiş bir kuralın cevabı aynı kalmalı")
+}
+
+// TestAnyInListeGONDERILMEDIYSEEslesmez bilinmeyeni eşleşmiş saymaz.
+//
+// Liste yoksa müşterinin hangi gruplarda olduğu BİLİNMİYOR, ve bilinmeyen bir
+// segmenti eşleşmiş saymak segment indirimini herkese açardı — eşleştiricinin
+// bağlamda bulunmayan alana verdiği cevabın aynısı.
+func TestAnyInListeGONDERILMEDIYSEEslesmez(t *testing.T) {
+	repo := newMemRepo()
+	anyInPromotion(repo, models.OpAnyIn)
+
+	in := ComputeInput{
+		CurrencyCode: "TRY",
+		Context:      map[string]string{"customer_group_id": "vip"},
+		Items:        []ComputeItem{item("li_1", 10000, 1, nil)},
+	}
+	res, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
+	require.NoError(t, err)
+
+	assert.Zero(t, res.DiscountTotal,
+		"tek değer vip olsa bile: any_in LİSTE tarafını okur, ve liste yok")
+}
