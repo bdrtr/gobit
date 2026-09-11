@@ -41,6 +41,17 @@ type PersonalRecords interface {
 	EraseCredentialsOf(ctx context.Context, customerID, email string) (int, error)
 	// CredentialRecordsOf reads what is held about a customer or an address.
 	CredentialRecordsOf(ctx context.Context, customerID, email string) ([]StoredCredential, error)
+	// ErasePendingRegistrationOf deletes an unfinished sign-up for an address and
+	// answers how many rows went.
+	//
+	// By ADDRESS only, because a pending registration has no customer: there is no
+	// customer yet. A blank address erases nothing rather than everything.
+	ErasePendingRegistrationOf(ctx context.Context, email string) (int, error)
+	// PendingRegistrationOf reads an unfinished sign-up for a dossier.
+	//
+	// It answers the moments and never the token or the hash: the token is a live
+	// credential for whoever holds it, and the hash is the person's own secret.
+	PendingRegistrationOf(ctx context.Context, email string) (*StoredRegistration, error)
 }
 
 // StoredCredential is one row as a dossier reports it.
@@ -58,15 +69,33 @@ type StoredCredential struct {
 	UpdatedAt time.Time
 }
 
+// StoredRegistration is an unfinished sign-up as a dossier reports it.
+//
+// It carries neither the token nor the password hash. See
+// [Module.PersonalDataOf] for the hash's reason; the token's is sharper — it is
+// not a record OF something, it is a working link, and a dossier that reproduced
+// it would hand somebody's half-open account to whoever carries the answer.
+type StoredRegistration struct {
+	// Email is the address being proven.
+	Email string
+	// CreatedAt is when the registration was started.
+	CreatedAt time.Time
+	// ExpiresAt is when the link stops working.
+	ExpiresAt time.Time
+}
+
 // The table and columns this module declares.
 const (
-	tableCustomerCredentials = "customer_credentials"
+	tableCustomerCredentials   = "customer_credentials"
+	tableCustomerRegistrations = "customer_registrations"
 
 	columnCustomerID   = "customer_id"
 	columnEmail        = "email"
 	columnPasswordHash = "password_hash"
 	columnCreatedAt    = "created_at"
 	columnUpdatedAt    = "updated_at"
+	columnExpiresAt    = "expires_at"
+	columnTokenHash    = "token_hash"
 )
 
 // passwordHashNotReproduced is what a dossier says in place of the hash.
@@ -112,6 +141,44 @@ func (m *Module) PersonalData() personaldata.Declaration {
 				Kind: personaldata.Named,
 				Why:  "when they last changed it, which says they were here and roughly when",
 			},
+			// The pending-registration table is declared too, and it was NOT until
+			// the personal-data audit failed on it. A row there is not an account —
+			// nothing about the person exists in the shop yet — but it holds their
+			// address and a hash of the password they chose, which is personal data
+			// whatever it is a step towards.
+			{
+				Table: tableCustomerRegistrations, Column: columnEmail,
+				Kind: personaldata.Named,
+				Why: "an address somebody typed into the sign-up form and has not yet " +
+					"proven; it is a claim rather than an account, and it is still their " +
+					"address sitting in this shop's database",
+			},
+			{
+				Table: tableCustomerRegistrations, Column: columnPasswordHash,
+				Kind: personaldata.Named,
+				Why: "an argon2id hash of the password chosen during a registration that was " +
+					"never completed; hashed the moment it arrived, so the plaintext never " +
+					"outlived that request",
+			},
+			{
+				Table: tableCustomerRegistrations, Column: columnTokenHash,
+				Kind: personaldata.Named,
+				Why: "the SHA-256 of the link that was sent to that address; it identifies " +
+					"the registration rather than the person, and it is declared because a " +
+					"controller asked to erase somebody has to know this row is here",
+			},
+			{
+				Table: tableCustomerRegistrations, Column: columnCreatedAt,
+				Kind: personaldata.Named,
+				Why: "when that registration was started, which is a record of something " +
+					"the person did at a moment",
+			},
+			{
+				Table: tableCustomerRegistrations, Column: columnExpiresAt,
+				Kind: personaldata.Named,
+				Why: "when the link stops working; declared beside the moment above so that " +
+					"a controller reading this list sees the whole row rather than part of it",
+			},
 		},
 	}
 }
@@ -145,11 +212,28 @@ func (m *Module) Erase(ctx context.Context, s personaldata.Subject) (personaldat
 		return personaldata.Result{}, err
 	}
 
+	// A PENDING registration is erased too, and forgetting it was a real hole in
+	// the slice that added the table: an unfinished sign-up holds the person's
+	// address and a hash of their password, and an erasure that took the account
+	// and left the claim would have reported a complete deletion. Found by the
+	// personal-data audit, which reads the migrations rather than a list somebody
+	// kept.
+	//
+	// It is erased by ADDRESS only. The table has no customer id — there is no
+	// customer yet, which is the whole point of it — so a subject named only by a
+	// customer id cannot reach a pending row, and the count below says so by not
+	// growing.
+	pending, err := records.ErasePendingRegistrationOf(ctx, email)
+	if err != nil {
+		return personaldata.Result{}, err
+	}
+
 	m.log.InfoContext(ctx, "identity-session erased a person's credentials",
-		"rows", rows, "by_customer_id", customerID != "", "by_email", email != "")
+		"rows", rows+pending, "pending_registrations", pending,
+		"by_customer_id", customerID != "", "by_email", email != "")
 
 	return personaldata.Result{
-		Holder: ErasureHolder, Outcome: personaldata.Deleted, Rows: rows,
+		Holder: ErasureHolder, Outcome: personaldata.Deleted, Rows: rows + pending,
 	}, nil
 }
 
@@ -186,13 +270,17 @@ func (m *Module) PersonalDataOf(
 	if err != nil {
 		return personaldata.Disclosure{}, err
 	}
-	if len(found) == 0 {
+	pending, err := records.PendingRegistrationOf(ctx, email)
+	if err != nil {
+		return personaldata.Disclosure{}, err
+	}
+	if len(found) == 0 && pending == nil {
 		return personaldata.Disclosure{
 			Holder: ErasureHolder, State: personaldata.Nothing,
 		}, nil
 	}
 
-	out := make([]personaldata.Record, 0, len(found))
+	out := make([]personaldata.Record, 0, len(found)+1)
 	for _, row := range found {
 		out = append(out, personaldata.Record{
 			Table: tableCustomerCredentials,
@@ -206,6 +294,31 @@ func (m *Module) PersonalDataOf(
 				},
 				{Column: columnCreatedAt, Kind: personaldata.Named, Value: row.CreatedAt},
 				{Column: columnUpdatedAt, Kind: personaldata.Named, Value: row.UpdatedAt},
+			},
+		})
+	}
+
+	// An unfinished sign-up is its own record. Somebody who typed their address
+	// into the form and never clicked the link has a row in this shop, and a
+	// dossier that showed only completed accounts would be silent about it.
+	if pending != nil {
+		out = append(out, personaldata.Record{
+			Table: tableCustomerRegistrations,
+			ID:    pending.Email,
+			Fields: []personaldata.Field{
+				{Column: columnEmail, Kind: personaldata.Named, Value: pending.Email},
+				{Column: columnCreatedAt, Kind: personaldata.Named, Value: pending.CreatedAt},
+				{Column: columnExpiresAt, Kind: personaldata.Named, Value: pending.ExpiresAt},
+				{
+					Column: columnPasswordHash, Kind: personaldata.Named,
+					Value: passwordHashNotReproduced,
+				},
+				{
+					Column: columnTokenHash, Kind: personaldata.Named,
+					Value: "a sign-up link was sent to this address; the stored value is its " +
+						"SHA-256 and is deliberately not reproduced here, because the link " +
+						"itself would open the account",
+				},
 			},
 		})
 	}

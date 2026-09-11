@@ -2,6 +2,7 @@ package identitysession_test
 
 import (
 	"context"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,17 +28,26 @@ import (
 func TestTheDeclarationNamesEveryColumnOfTheTable(t *testing.T) {
 	t.Parallel()
 
-	declared := map[string]bool{}
+	declared := map[string][]string{}
 	for _, holding := range moduleWithStore(t, elsewhere{}).PersonalData().Holdings {
-		assert.Equal(t, "customer_credentials", holding.Table)
 		assert.NotEmpty(t, holding.Why, "a holding with no reason tells a controller nothing")
-		declared[holding.Column] = true
+		declared[holding.Table] = append(declared[holding.Table], holding.Column)
+	}
+	for table := range declared {
+		sort.Strings(declared[table])
 	}
 
-	assert.Equal(t, map[string]bool{
-		"customer_id": true, "email": true, "password_hash": true,
-		"created_at": true, "updated_at": true,
-	}, declared, "every column of the table, because every one of them is about somebody")
+	// BOTH tables. The registration table was missing here until the personal-data
+	// audit failed on it, and the assertion is keyed by table for that reason: an
+	// assertion that named one table would go on passing when a second arrived.
+	assert.Equal(t, map[string][]string{
+		"customer_credentials": {
+			"created_at", "customer_id", "email", "password_hash", "updated_at",
+		},
+		"customer_registrations": {
+			"created_at", "email", "expires_at", "password_hash", "token_hash",
+		},
+	}, declared, "every column of every table, because every one of them is about somebody")
 }
 
 // TestAStoreThatCannotEraseSaysSOAndSaysWhat is the answer an installation binding

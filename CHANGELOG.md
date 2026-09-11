@@ -20,6 +20,20 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir müşteri artık KENDİ hesabını açabiliyor** (ADR 0133).
+  `contrib/identity-session` yalnızca giriş yapıyor ve bir operatörün kimlik
+  bilgisi yazmasına izin veriyordu; bir müşteri hesap açamıyordu. İki uç eklendi:
+  kaydolma ve doğrulama. Kaydolma kişi hakkında HİÇBİR ŞEY yaratmıyor — ne
+  müşteri, ne kimlik bilgisi, ne oturum; yalnızca bu modülün kendi tablosunda
+  adresi, parolanın argon2id özetini ve token'ın özetini tutan bir satır. Hesabı
+  olan adres için de AYNI 202 dönüyor, yoksa "bu kişi burada alışveriş ediyor mu"
+  sorusu herkese cevaplanır; farklı olan gönderilen mesaj. Token
+  `DELETE ... RETURNING` ile tüketiliyor, yani tek-kullanımlık olması kilide
+  ihtiyaç duymuyor, ve hesap açılmadan ÖNCE harcanıyor. Müşteri kaydını kim
+  yaratacağı kurulumun bağladığı bir seam: `customer.service`'in
+  `RegisterGuestCustomer`'ı "aynı e-posta engel değil" diyor, yani kaydolma için
+  yanlış semantik. Uçlar seam bağlanmadıkça YOK — tipli nil de bağlanmamış sayılır.
+
 - **İki contrib kimlik modülü artık bir VERİ SAHİBİNE cevap veriyor**
   (ADR 0132). `contrib/identity-session` ve `contrib/identity-passkey`, ADR
   0029'un üç veri-sahibi yeteneğinden hiçbirini gerçeklemiyordu — oysa aralarında

@@ -6,6 +6,13 @@
 // gobit ships — sixteen commerce modules, their migrations, their routes, the
 // admin panel and the operator subcommands — comes with that call.
 //
+// # What the accounts package is for
+//
+// Self-registration needs two things gobit will not guess: which record a
+// customer is, and how a message reaches an address. The starter answers both in
+// its own accounts package, which is what a real project does — and a project
+// with its own users table answers them differently and the flow works the same.
+//
 // # Why the session module is here
 //
 // Since ADR 0125 every storefront route naming a customer refuses until a
@@ -23,6 +30,7 @@ import (
 	"github.com/bdrtr/gobit"
 	identitysession "github.com/bdrtr/gobit/contrib/identity-session"
 
+	"example.com/gobit-starter/accounts"
 	"example.com/gobit-starter/loyalty"
 )
 
@@ -31,6 +39,12 @@ import (
 var version = "dev"
 
 func main() {
+	// The accounts adapter is a module AND a seam: it is added so that gobit hands
+	// it the container, and passed to the session module so that self-registration
+	// has somebody to ask about customers. One value, two roles, because the thing
+	// that needs the container is the thing that answers the questions.
+	shopAccounts := accounts.New(nil)
+
 	shop := gobit.New().
 		Version(version).
 		Add(loyalty.New()).
@@ -44,9 +58,22 @@ func main() {
 		// SESSION_SECRET, deploy. One TTL later the old key can be dropped. A
 		// key that LEAKED is dropped outright instead, which does log everybody
 		// out and is the correct price.
+		Add(shopAccounts).
+		// Binding Accounts and Verification is what MOUNTS storefront
+		// self-registration (ADR 0133). Without them the module still signs people
+		// in and an operator still writes credentials; what is absent is the pair of
+		// endpoints a shopper uses to open an account, and absent is the only honest
+		// state for a flow that cannot finish.
+		//
+		// The verification here writes the link to the LOG. It is named
+		// LogOnlyVerification and warns on every send, because a real shop sends
+		// mail with its own client — and a deployment that keeps this one is putting
+		// sign-up links into its log files.
 		Add(identitysession.New(identitysession.Options{
 			Secret:         []byte(os.Getenv("SESSION_SECRET")),
 			RetiredSecrets: retiredSecrets(os.Getenv("SESSION_SECRET_RETIRED")),
+			Accounts:       shopAccounts,
+			Verification:   accounts.NewLogOnlyVerification(nil),
 		}))
 
 	if err := shop.Main(os.Args[1:], os.Stdout); err != nil {

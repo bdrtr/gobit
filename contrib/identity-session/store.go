@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -208,4 +209,117 @@ func (s pgCredentials) CredentialRecordsOf(
 	}
 
 	return out, nil
+}
+
+// PutRegistration writes a pending registration, replacing the address's own.
+//
+// The conflict target is the ADDRESS rather than the token: asking again is the
+// same person asking again, and they expect the newest link to work. The old
+// token stops working in the same statement, which is what keeps one address
+// from accumulating live links.
+func (s pgCredentials) PutRegistration(
+	ctx context.Context, tokenHash, email, passwordHash string, expiresAt time.Time,
+) error {
+	if _, err := s.pool.Exec(ctx,
+		`INSERT INTO customer_registrations (token_hash, email, password_hash, expires_at)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (email) DO UPDATE
+		 SET token_hash = EXCLUDED.token_hash,
+		     password_hash = EXCLUDED.password_hash,
+		     expires_at = EXCLUDED.expires_at,
+		     created_at = now()`,
+		tokenHash, email, passwordHash, expiresAt); err != nil {
+		return fmt.Errorf("identity-session: the registration could not be written: %w", err)
+	}
+
+	return nil
+}
+
+// TakeRegistration removes a pending registration and answers what it held.
+//
+// # One statement, because single-use is not a sequence
+//
+// `DELETE … RETURNING` makes reading and consuming the same operation: two
+// requests carrying one token cannot both be answered, whatever their timing and
+// whatever the isolation level — the second deletes nothing and therefore returns
+// nothing. A SELECT followed by a DELETE would need a lock to say as much, and
+// this repository has already measured what a guard without one is worth under
+// READ COMMITTED (gap D46).
+//
+// The expiry is in the same WHERE for the same reason. Checking it in Go after
+// reading the row would be correct and would put the rule in a second place;
+// here a row that is too old is simply not a row this statement can take.
+func (s pgCredentials) TakeRegistration(
+	ctx context.Context, tokenHash string,
+) (email, passwordHash string, err error) {
+	row := s.pool.QueryRow(ctx,
+		`DELETE FROM customer_registrations
+		 WHERE token_hash = $1 AND expires_at > now()
+		 RETURNING email, password_hash`, tokenHash)
+
+	switch err := row.Scan(&email, &passwordHash); {
+	case errors.Is(err, pgx.ErrNoRows):
+		return "", "", ErrNoRegistration
+	case err != nil:
+		return "", "", fmt.Errorf(
+			"identity-session: the registration could not be taken: %w", err)
+	}
+
+	return email, passwordHash, nil
+}
+
+// The store's own registration capability is pinned where the contract is
+// declared; a drifted signature would otherwise leave self-registration silently
+// unmounted, which is the failure this module is careful about everywhere else.
+var _ Registrations = pgCredentials{}
+
+// ErasePendingRegistrationOf deletes an unfinished sign-up for an address.
+//
+// By address only, because the table has no customer id: there is no customer yet,
+// which is the whole reason the table exists. A blank address is refused by the
+// guard rather than by the WHERE — `email = ”` would match nothing today and
+// would match a row the moment a CHECK was relaxed, and "erases nothing" is not a
+// thing to leave resting on another constraint.
+func (s pgCredentials) ErasePendingRegistrationOf(ctx context.Context, email string) (int, error) {
+	if email == "" {
+		return 0, nil
+	}
+
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM customer_registrations WHERE email = $1`, email)
+	if err != nil {
+		return 0, fmt.Errorf(
+			"identity-session: the pending registration could not be erased: %w", err)
+	}
+
+	return int(tag.RowsAffected()), nil
+}
+
+// PendingRegistrationOf reads an unfinished sign-up for a dossier.
+//
+// Neither the token hash nor the password hash is SELECTED. A value that is never
+// going to be reported should not travel out of the database: the token is a
+// working link and the hash is the person's own secret, and reading either into
+// memory to then drop it would be one more place each of them has been.
+func (s pgCredentials) PendingRegistrationOf(
+	ctx context.Context, email string,
+) (*StoredRegistration, error) {
+	if email == "" {
+		return nil, nil
+	}
+
+	var out StoredRegistration
+	row := s.pool.QueryRow(ctx,
+		`SELECT email, created_at, expires_at FROM customer_registrations WHERE email = $1`,
+		email)
+
+	switch err := row.Scan(&out.Email, &out.CreatedAt, &out.ExpiresAt); {
+	case errors.Is(err, pgx.ErrNoRows):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf(
+			"identity-session: the pending registration could not be read: %w", err)
+	}
+
+	return &out, nil
 }

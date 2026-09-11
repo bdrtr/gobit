@@ -9,7 +9,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -399,6 +401,94 @@ func TestADossierNamesTheHashAndDoesNotReproduceIt(t *testing.T) {
 	}
 }
 
+// TestAnErasureTakesAnUNFINISHEDSignUpToo is the hole the audit found.
+//
+// Somebody who typed their address into the sign-up form and never clicked the
+// link has no account — and has their address and a hash of their chosen password
+// sitting in this shop. An erasure that took the account and left the claim would
+// have reported a complete deletion.
+//
+// It is reached by ADDRESS only: the table has no customer id, because there is no
+// customer yet.
+func TestAnErasureTakesAnUNFINISHEDSignUpToo(t *testing.T) {
+	m := registered(t)
+	store := registrationStore(t)
+	email := "unfinished@example.test"
+	require.NoError(t, store.PutRegistration(t.Context(),
+		"unfinished-hash", email, testHash, time.Now().UTC().Add(time.Hour)))
+
+	result, err := m.Erase(t.Context(), personaldata.Subject{Email: email})
+	require.NoError(t, err)
+
+	assert.Equal(t, personaldata.Deleted, result.Outcome)
+	assert.Equal(t, 1, result.Rows, "the pending row counts: it was there and it is gone")
+
+	var rows int
+	require.NoError(t, testPool.QueryRow(t.Context(),
+		`SELECT count(*) FROM customer_registrations WHERE email = $1`, email).Scan(&rows))
+	assert.Zero(t, rows)
+}
+
+// TestAnErasureByCustomerIDCannotReachAPendingRow states the limit rather than
+// hiding it.
+//
+// A pending registration has no customer id to match on. So a subject named only
+// by a customer id leaves it, and that is not a defect to paper over — it is what
+// the table is. A controller sweeping a person who has both an account and an
+// unfinished sign-up under a second address needs the address to reach the second.
+func TestAnErasureByCustomerIDCannotReachAPendingRow(t *testing.T) {
+	m := registered(t)
+	store := registrationStore(t)
+	customer := "cust_06G8PENDINGELSEWHERE0"
+	require.NoError(t, m.Credentials().Put(t.Context(), customer, "has-account@example.test", testHash))
+	require.NoError(t, store.PutRegistration(t.Context(),
+		"other-address-hash", "other-address@example.test", testHash,
+		time.Now().UTC().Add(time.Hour)))
+
+	result, err := m.Erase(t.Context(), personaldata.Subject{CustomerID: customer})
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Rows, "the account went and the unrelated pending row did not")
+
+	var rows int
+	require.NoError(t, testPool.QueryRow(t.Context(),
+		`SELECT count(*) FROM customer_registrations WHERE email = $1`,
+		"other-address@example.test").Scan(&rows))
+	assert.Equal(t, 1, rows)
+}
+
+// TestADossierCarriesAnUnfinishedSignUpWithoutItsSecrets is the disclosure half.
+//
+// The row is reported, and neither the token nor the password hash is in it. The
+// token is sharper than the hash: it is not a record OF something, it is a working
+// link, and a dossier that reproduced it would hand a half-open account to
+// whoever carries the answer.
+func TestADossierCarriesAnUnfinishedSignUpWithoutItsSecrets(t *testing.T) {
+	m := registered(t)
+	store := registrationStore(t)
+	email := "dossier-pending@example.test"
+	require.NoError(t, store.PutRegistration(t.Context(),
+		"dossier-pending-hash", email, testHash, time.Now().UTC().Add(time.Hour)))
+
+	disclosure, err := m.PersonalDataOf(t.Context(), personaldata.Subject{Email: email})
+	require.NoError(t, err)
+
+	require.Equal(t, personaldata.Disclosed, disclosure.State,
+		"somebody with only an unfinished sign-up is not somebody this module holds "+
+			"nothing about")
+	require.Len(t, disclosure.Records, 1)
+	assert.Equal(t, "customer_registrations", disclosure.Records[0].Table)
+
+	fields := map[string]any{}
+	for _, field := range disclosure.Records[0].Fields {
+		fields[field.Column] = field.Value
+	}
+	assert.Equal(t, email, fields["email"])
+	assert.NotContains(t, fields["password_hash"], "$argon2id$")
+	assert.NotContains(t, fields["token_hash"], "dossier-pending-hash",
+		"the stored token hash must not travel either; the link it stands for opens "+
+			"the account")
+}
+
 // TestADossierForSomebodyWithNoPasswordSaysNOTHING keeps the two kinds of empty
 // apart.
 func TestADossierForSomebodyWithNoPasswordSaysNOTHING(t *testing.T) {
@@ -412,4 +502,134 @@ func TestADossierForSomebodyWithNoPasswordSaysNOTHING(t *testing.T) {
 		"this store CAN search and found nothing, which is a different answer from "+
 			"a store that cannot search")
 	assert.Empty(t, disclosure.Records)
+}
+
+// TestAskingAgainREPLACESThePendingRegistration is the conflict target, executed.
+//
+// The target is the ADDRESS and not the token: a person who did not get the
+// message asks again and expects the newest link to work. The old one has to stop
+// working in the same statement, or one address accumulates live links.
+func TestAskingAgainREPLACESThePendingRegistration(t *testing.T) {
+	store := registrationStore(t)
+	email := "again@example.test"
+	deadline := time.Now().UTC().Add(time.Hour)
+
+	require.NoError(t, store.PutRegistration(t.Context(), "hash-one", email, testHash, deadline))
+	require.NoError(t, store.PutRegistration(t.Context(), "hash-two", email, testHash, deadline))
+
+	var rows int
+	require.NoError(t, testPool.QueryRow(t.Context(),
+		`SELECT count(*) FROM customer_registrations WHERE email = $1`, email).Scan(&rows))
+	assert.Equal(t, 1, rows, "one address, one pending registration")
+
+	_, _, err := store.TakeRegistration(t.Context(), "hash-one")
+	require.ErrorIs(t, err, identitysession.ErrNoRegistration, "the FIRST link stopped working")
+
+	got, _, err := store.TakeRegistration(t.Context(), "hash-two")
+	require.NoError(t, err, "and the newest one works")
+	assert.Equal(t, email, got)
+}
+
+// TestATokenIsSingleUseBecauseTakingItIsONEStatement is the claim the design
+// rests on.
+//
+// `DELETE … RETURNING` makes reading and consuming the same operation, so two
+// requests carrying one token cannot both be answered whatever their timing. The
+// test forces the overlap rather than hoping for it: both goroutines are released
+// from one barrier and the assertion is that EXACTLY one of them got the row.
+func TestATokenIsSingleUseBecauseTakingItIsONEStatement(t *testing.T) {
+	store := registrationStore(t)
+
+	for round := range 20 {
+		email := fmt.Sprintf("single-use-%d@example.test", round)
+		token := fmt.Sprintf("token-hash-%d", round)
+		require.NoError(t, store.PutRegistration(
+			t.Context(), token, email, testHash, time.Now().UTC().Add(time.Hour)))
+
+		var start sync.WaitGroup
+		var done sync.WaitGroup
+		start.Add(1)
+		errs := make([]error, 2)
+		for i := range errs {
+			done.Add(1)
+			go func() {
+				defer done.Done()
+				start.Wait()
+				_, _, errs[i] = store.TakeRegistration(context.Background(), token)
+			}()
+		}
+		start.Done()
+		done.Wait()
+
+		took := 0
+		for _, err := range errs {
+			if err == nil {
+				took++
+
+				continue
+			}
+			require.ErrorIs(t, err, identitysession.ErrNoRegistration,
+				"round %d: the loser is refused BY THE RULE and not by a serialisation "+
+					"failure the caller would have to retry", round)
+		}
+		assert.Equal(t, 1, took, "round %d: exactly one request may consume a token", round)
+	}
+}
+
+// TestAnExpiredRegistrationIsNotTakenAndIsGone is the expiry, in the same WHERE.
+//
+// It is checked in SQL rather than in Go after the read, so a row that is too old
+// is simply not a row this statement can take — the rule lives in one place. The
+// row is still consumed, which is what a caller wants: an expired link is spent.
+func TestAnExpiredRegistrationIsNotTakenAndIsGone(t *testing.T) {
+	store := registrationStore(t)
+	email := "expired@example.test"
+
+	// Written directly, because PutRegistration's own CHECK refuses a deadline in
+	// the past — which is the CHECK doing its job and is asserted below.
+	_, err := testPool.Exec(t.Context(),
+		`INSERT INTO customer_registrations (token_hash, email, password_hash, expires_at, created_at)
+		 VALUES ($1, $2, $3, now() - interval '2 hours', now() - interval '3 hours')`,
+		"expired-hash", email, testHash)
+	require.NoError(t, err)
+
+	_, _, err = store.TakeRegistration(t.Context(), "expired-hash")
+	require.ErrorIs(t, err, identitysession.ErrNoRegistration)
+
+	require.Error(t, store.PutRegistration(t.Context(), "already-late", "late@example.test",
+		testHash, time.Now().UTC().Add(-time.Minute)),
+		"a row that is expired when it is written is a bug in the caller, and the CHECK "+
+			"is the cheapest place to refuse it")
+}
+
+// TestTheRegistrationChecksRefuseWhatTheStoreWouldNeverWrite goes around the
+// store, the way its sibling does for credentials: the CHECKs are the FLOOR under
+// the Go code and only a real database can say so.
+func TestTheRegistrationChecksRefuseWhatTheStoreWouldNeverWrite(t *testing.T) {
+	deadline := "now() + interval '1 hour'"
+
+	for _, tc := range []struct{ name, values string }{
+		{"an unfolded address", `'h1', 'Mixed@Example.test', '` + testHash + `', ` + deadline},
+		{"a blank address", `'h2', '   ', '` + testHash + `', ` + deadline},
+		{"a hash that is not argon2id", `'h3', 'plain@example.test', 'not-a-hash', ` + deadline},
+		{"a deadline before creation", `'h4', 'late@example.test', '` + testHash + `', now() - interval '1 hour'`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := testPool.Exec(t.Context(),
+				`INSERT INTO customer_registrations
+				 (token_hash, email, password_hash, expires_at) VALUES (`+tc.values+`)`)
+
+			require.Error(t, err, "the CHECK has to refuse it even when nothing in Go does")
+		})
+	}
+}
+
+// registrationStore is the module's own store, as its registration capability.
+func registrationStore(t *testing.T) identitysession.Registrations {
+	t.Helper()
+
+	store, ok := registered(t).Credentials().(identitysession.Registrations)
+	require.True(t, ok, "the module's own store answers the registration capability")
+
+	return store
 }

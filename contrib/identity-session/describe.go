@@ -74,15 +74,29 @@ func (m *Module) Describe(d *openapi.Doc) {
 		},
 	})
 
+	// The two registration endpoints are described only when they are MOUNTED.
+	//
+	// Describing them unconditionally was caught by the description loop the
+	// moment it was written, and the loop is right: a description matching no
+	// route promises an endpoint that does not exist, which is gap D62's defect
+	// with the direction reversed. An integrator reading the document of an
+	// installation that binds no Accounts would code against a 404.
+	if m.selfRegistrationMounted() {
+		m.describeSelfRegistration(d)
+	}
+
 	d.Describe(http.MethodPut, "/admin/v1/customer-credentials", openapi.Operation{
 		Summary: "Writes or replaces a customer's credential.",
 		Description: "Takes customer_id, email and password, and stores the password " +
 			"as an argon2id hash. It REPLACES whatever that customer had, so it is both " +
 			"the way an account is created and the way a password is reset.\n\n" +
-			"It is on the admin prefix and behind the operator authentication, because " +
-			"this module ships no storefront self-registration: that flow needs e-mail " +
-			"verification, a rate limit and a decision about who may create a customer, " +
-			"and none of those is a session's business.\n\n" +
+			"It is on the admin prefix and behind the operator authentication: it writes " +
+			"a credential for ANY customer the caller names, which is an operator's " +
+			"power and not a shopper's.\n\n" +
+			"Storefront self-registration is a DIFFERENT pair of endpoints and is mounted " +
+			"only when the installation binds somebody to open an account and somebody to " +
+			"carry a verification message (ADR 0133). Where this endpoint takes an " +
+			"operator's word for who somebody is, that flow takes a proven address.\n\n" +
 			"The customer is not checked for existence. This module owns credentials " +
 			"and gobit's customer records belong to another module that it does not " +
 			"import; what a credential for a customer who does not exist buys is a " +
@@ -96,6 +110,77 @@ func (m *Module) Describe(d *openapi.Doc) {
 			"409": openapi.ErrorResponse(
 				"The e-mail address already belongs to ANOTHER customer. Code " +
 					"\"identity_session_not_written\"; one address is one account."),
+		},
+	})
+}
+
+// describeSelfRegistration writes the two storefront registration endpoints.
+func (m *Module) describeSelfRegistration(d *openapi.Doc) {
+	d.Describe(http.MethodPost, "/store/v1/auth/register", openapi.Operation{
+		Summary: "Starts a self-registration for an e-mail address.",
+		Description: "Takes email and password. It answers 202 and creates NOTHING about " +
+			"the person: no customer, no credential, no session. What it writes is one row " +
+			"of this module's own, holding the address, the password as an argon2id hash, " +
+			"and the hash of a token that is sent to the address.\n\n" +
+			"It answers the SAME 202 whether that address already has an account or not. " +
+			"Anything else would answer, for any address a caller cares to try, whether " +
+			"that person shops here. What differs is the message: an address with an " +
+			"account is told it has one, so somebody who forgot is not left staring at a " +
+			"form that appeared to work.\n\n" +
+			"Asking again REPLACES the pending registration, so the newest link is the one " +
+			"that works. A link lasts an hour by default.\n\n" +
+			"The endpoint is RATE LIMITED per client address, because one request makes " +
+			"this shop send mail to an address a stranger chose. The default bound is kept " +
+			"in the process's own memory, so an installation behind several instances gets " +
+			"that many times the limit until it binds a shared limiter.\n\n" +
+			"It is mounted only when the installation has bound somebody to open an " +
+			"account and somebody to carry the message; otherwise it does not exist.",
+		Tags: []string{docTag},
+		Responses: map[string]any{
+			"202": openapi.Response("The registration was accepted; watch the address", nil),
+			"422": openapi.ErrorResponse(
+				"The address is missing or cannot be an address, the password is empty, " +
+					"or the body could not be parsed. Code " +
+					"\"identity_session_registration_invalid\"."),
+			"429": openapi.ErrorResponse(
+				"Too many registrations from this client address. No code: the rate limit " +
+					"is gobit's own middleware and answers before this module is reached."),
+			"500": openapi.ErrorResponse(
+				"The registration could not be recorded, or the message could not be " +
+					"sent. Code \"identity_session_unavailable\"; nothing was created, and " +
+					"the same request can be made again."),
+		},
+	})
+
+	d.Describe(http.MethodPost, "/store/v1/auth/register/verify", openapi.Operation{
+		Summary: "Proves an address and finishes the registration.",
+		Description: "Takes the token from the message. It opens the customer account if " +
+			"the address has none, writes the credential, and signs the person IN — they " +
+			"have just proved they control the address, which is the same proof a password " +
+			"reset rests on.\n\n" +
+			"The token is SINGLE USE and is consumed before the account is opened, in one " +
+			"statement. So a failure after that point loses the registration and the " +
+			"person starts again; the other order would leave a link in a mailbox that " +
+			"could later set somebody's password back to the one they signed up with.\n\n" +
+			"One answer for a token that never existed, one already used and one expired. " +
+			"Telling them apart would say, for any token somebody tries, whether it was " +
+			"ever real.\n\n" +
+			"An address that gained a customer between the two halves of the flow — they " +
+			"checked out as a guest in the meantime — keeps that record rather than " +
+			"getting a second one.",
+		Tags: []string{docTag},
+		Responses: map[string]any{
+			"204": openapi.Response("The account is open and the session cookie is set", nil),
+			"422": openapi.ErrorResponse(
+				"The token is not a usable pending registration: unknown, already used or " +
+					"expired. Code \"identity_session_registration_not_usable\"."),
+			"429": openapi.ErrorResponse(
+				"Too many attempts from this client address. No code: the rate limit is " +
+					"gobit's own middleware and answers before this module is reached."),
+			"500": openapi.ErrorResponse(
+				"The registration could not be read, the account could not be opened or " +
+					"the credential could not be written. Code " +
+					"\"identity_session_unavailable\"; the token is spent either way."),
 		},
 	})
 }

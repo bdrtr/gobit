@@ -90,6 +90,37 @@ type Options struct {
 	Credentials Credentials
 	// Logger is optional.
 	Logger *slog.Logger
+
+	// Accounts is the shop's own notion of a customer, and binding it is what
+	// TURNS ON storefront self-registration.
+	//
+	// Nil leaves the two registration endpoints unmounted. That is the default
+	// because opening an account needs a write this module may not make: see
+	// [Accounts] for why it is a seam rather than a call.
+	Accounts Accounts
+	// Verification carries the proof to the address, and binding it is the other
+	// half of turning self-registration on.
+	//
+	// Nil leaves the endpoints unmounted. A shop sends mail with its own client,
+	// its own templates and its own sending domain, and this module chooses none
+	// of those.
+	Verification Verification
+	// RegistrationTTL is how long a sign-up link works for.
+	//
+	// Zero means [DefaultRegistrationTTL].
+	RegistrationTTL time.Duration
+	// Limiter bounds how often the registration endpoints may be called.
+	//
+	// A registration endpoint sends mail to an address a stranger typed, so an
+	// unlimited one is a shop that can be pointed at anybody. Nil therefore does
+	// NOT mean no limit here: it means [DefaultRegistrationLimit] requests per
+	// [DefaultRegistrationWindow] per client address, kept in memory.
+	//
+	// In memory means PER PROCESS, so an installation behind several instances
+	// gets that many times the limit — and one that wants a real bound binds a
+	// shared limiter (core/http/redisguard). Said here because the default is
+	// the kind that looks like a limit and is a fraction of one.
+	Limiter corehttp.RateLimiter
 }
 
 // Module is the gobit module this package installs.
@@ -253,6 +284,66 @@ func (m *Module) Routes(r chi.Router) {
 	r.Post("/store/v1/auth/sign-in", m.signIn)
 	r.Post("/store/v1/auth/sign-out", m.signOut)
 	r.Put("/admin/v1/customer-credentials", m.putCredential)
+
+	if !m.selfRegistrationMounted() {
+		// Said once, at INFO rather than WARN: an installation that binds no
+		// Accounts has not misconfigured anything, it has chosen to open accounts
+		// its own way. What would be a fault is mounting an endpoint that takes a
+		// password and can never finish.
+		m.log.Info("identity-session: self-registration is not mounted",
+			"accounts_bound", !isNil(m.opts.Accounts),
+			"verification_bound", !isNil(m.opts.Verification),
+			"store_holds_registrations", m.storeHoldsRegistrations())
+
+		return
+	}
+
+	// The limit wraps only these two. Signing in is already bounded by not
+	// knowing the password, and gobit's own guard stack limits the whole API;
+	// what is different here is that ONE request makes this shop send mail to an
+	// address a stranger chose.
+	limited := r.With(corehttp.RateLimit(m.registrationLimiter(), corehttp.ClientIPKey))
+	limited.Post("/store/v1/auth/register", m.register)
+	limited.Post("/store/v1/auth/register/verify", m.verifyRegistration)
+}
+
+// storeHoldsRegistrations says whether the bound store can keep a pending row.
+func (m *Module) storeHoldsRegistrations() bool {
+	if m.store == nil {
+		return false
+	}
+	_, ok := m.store.(Registrations)
+
+	return ok
+}
+
+// The default bound on the registration endpoints.
+//
+// Five in ten minutes per client address. It is generous for a person — who asks
+// once, then maybe once more when the message is slow — and it costs an abuser
+// an address of their own per five messages.
+const (
+	// DefaultRegistrationLimit is how many registration requests one client
+	// address may make per window.
+	DefaultRegistrationLimit = 5
+	// DefaultRegistrationWindow is that window.
+	DefaultRegistrationWindow = 10 * time.Minute
+)
+
+// registrationLimiter answers the bound these endpoints run behind.
+//
+// The default is built HERE and kept by the middleware, because [Module.Routes]
+// is the only caller and runs once at startup. An earlier version memoised it in
+// a field; a mutation showed the memo could not matter — a field nothing reads
+// twice is a field that says the wrong thing about when it is written. What WOULD
+// matter is building one per request, and the shape that could do that is a call
+// from a handler, which there is none of.
+func (m *Module) registrationLimiter() corehttp.RateLimiter {
+	if m.opts.Limiter != nil {
+		return m.opts.Limiter
+	}
+
+	return corehttp.NewMemoryLimiter(DefaultRegistrationLimit, DefaultRegistrationWindow)
 }
 
 // signInRequest is the body of POST /store/v1/auth/sign-in.
@@ -320,10 +411,14 @@ func (m *Module) signOut(w http.ResponseWriter, r *http.Request) {
 // putCredential writes a customer's credential.
 //
 // It is on the ADMIN prefix, so it is behind gobit's own operator
-// authentication, and that placement is the slice this module ships rather than
-// an oversight: storefront self-registration needs e-mail verification, a rate
-// limit and a decision about who may create a customer, and a session module is
-// not where any of those belongs.
+// authentication, and that is what the endpoint IS rather than where it ended up:
+// it writes a credential for any customer the caller names, which is an
+// operator's power.
+//
+// Storefront self-registration is [Module.register] and [Module.verifyRegistration]
+// — a different pair, mounted only when the installation binds [Accounts] and
+// [Verification] (ADR 0133). The difference between them is whose word is taken
+// for who somebody is: here an operator's, there a proven address.
 func (m *Module) putCredential(w http.ResponseWriter, r *http.Request) {
 	var body credentialRequest
 	if !decode(w, r, &body) {
