@@ -52,8 +52,11 @@ import (
 // POST /admin/v1/regions DEFINES the region — there the operator writes not a
 // copy but the ORIGINAL and there is no source to copy from. Here, on the other
 // hand, the same field was a value the server already knew being repeated by the
-// client. On cart's own admin surface the question never arises: /admin/v1/carts
-// is READ ONLY and there is no admin endpoint that opens a cart.
+// client. Cart's own admin surface opens a cart too (ADR 0146) and the answer
+// there is the same as here: its body carries a country and no currency, because
+// the currency is a value the server already knows either way. The caller being
+// an administrator changes who may name the CUSTOMER, not who decides the
+// money.
 type createCartRequest struct {
 	// CountryCode is the customer's country (ISO 3166-1 alpha-2) and it is
 	// MANDATORY; the cart's region and currency are derived from it.

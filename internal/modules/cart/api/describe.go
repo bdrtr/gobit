@@ -41,10 +41,10 @@ const (
 // # Both surfaces are described
 //
 // The storefront endpoints are the need of a store client (storefront, SDK), the
-// /admin/v1 endpoints that of the admin panel. The admin surface is READ ONLY
-// (see admin.go); that is why its description carries no request body at all —
-// what is described is not a write endpoint without a body but a read endpoint
-// that HAS no body.
+// /admin/v1 endpoints that of the admin panel. The admin surface is a read
+// surface plus the two writes an operator taking an order over the telephone
+// needs (ADR 0146); the reads carry no request body because a read HAS none,
+// which is a different thing from a write endpoint whose body was forgotten.
 //
 // # A known limit: the "required" set of the request bodies is TOO WIDE
 //
@@ -65,7 +65,8 @@ const (
 //
 // None of the storefront cart endpoints look at the query string (see store.go)
 // and their schemas announce no parameter either; the ONLY endpoint that reads
-// the query string is GET /admin/v1/carts (see admin.go and [parsePage]).
+// the query string is GET /admin/v1/carts (see admin.go and [parsePage]). The
+// admin writes read none either: what they need beyond the path is in the body.
 // Writing a parameter that is not read into the schema would mean promising the
 // client a feature that DOES NOT WORK: the client generator puts an argument on
 // the method, the caller fills it in and the server silently ignores it.
@@ -251,10 +252,18 @@ func describeShipping(d *openapi.Doc) {
 
 // describeAdmin describes the /admin/v1 cart endpoints.
 //
-// The surface is READ ONLY (see admin.go), therefore no endpoint has a
-// requestBody. It is written here so that this is not taken for a "missing
-// description": the only party that changes the cart is the customer and there
-// is NO write endpoint on the admin side.
+// # What an operator may do here, and what they may not
+//
+// The surface reads every cart and writes exactly two things: it OPENS a cart
+// and it ADDS a priced line to one (ADR 0146), which is what taking an order
+// over the telephone needs. Everything after that — the addresses, the shipping
+// method, the payment — is the storefront's own surface, used with the cart's
+// id, so there is one implementation of each act rather than an admin copy that
+// drifts.
+//
+// Neither write takes an amount or a title. A surface that accepted them would
+// let an operator sell at a price nothing in the catalog says, and the whole
+// reason the order is built as a CART is that the cart prices it on the server.
 func describeAdmin(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/admin/v1/carts", openapi.Operation{
 		Summary: "Pages the carts by customer, region and completion state.",
@@ -293,6 +302,52 @@ func describeAdmin(d *openapi.Doc) {
 		Summary: "Returns a single cart with its line items, addresses and shipping methods.",
 		Responses: map[string]any{
 			"200": openapi.Response("The cart and its children", d.Item(cartDetailDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodPost, "/admin/v1/carts", openapi.Operation{
+		Summary: "Opens a cart on the customer's behalf, for an order taken over the telephone.",
+		// The thing a client cannot guess is stated: this body may name a
+		// customer without proving them, which is the opposite of the storefront's
+		// rule and the reason the endpoint exists.
+		Description: "customer_id opens the cart in that customer's name and is NOT proved here: " +
+			"the caller holds cart:write and the audit ring records who they were. That " +
+			"is the difference from the storefront, where the same field has to be " +
+			"proven (ADR 0125), and it is the point of the endpoint — a cart in the " +
+			"customer's name carries their history and their company's spending limit. " +
+			"An empty customer_id opens a guest cart. \n\n" +
+			"The region and the currency come from country_code, decided on the server " +
+			"exactly as on the storefront. No sales channel is asked for: nothing on " +
+			"this path reads one, and the line-item endpoint names it per request.",
+		RequestBody: d.RequestBody(adminCreateCartRequest{}),
+		Responses: map[string]any{
+			"201": openapi.Response("The opened cart and its children",
+				d.Item(cartDetailDTO{})),
+			"422": openapi.ErrorResponse(
+				"The body could not be read, or the country is not served by any region."),
+		},
+	})
+
+	d.Describe(http.MethodPost, "/admin/v1/carts/{id}/line-items", openapi.Operation{
+		Summary: "Adds a line to a cart at the price the server quotes; no amount can be sent.",
+		Description: "sales_channel_id is MANDATORY on every write and the cart does not " +
+			"remember the one it was opened with: the storefront's key carries the claim " +
+			"on every request and here the operator makes it per request. Sending a " +
+			"different channel than the one the cart was opened under is possible and is " +
+			"the operator's own doing. \n\n" +
+			"The variant is looked up in THAT channel's catalog, so a variant the channel " +
+			"does not carry is 404 — the same answer a shopper's request gets, and " +
+			"deliberately indistinguishable from a variant that does not exist. \n\n" +
+			"quantity is mandatory and has to be positive. The unit price and the title " +
+			"are the server's.",
+		RequestBody: d.RequestBody(adminAddLineItemRequest{}),
+		Responses: map[string]any{
+			"201": openapi.Response("The added line item", d.Item(lineItemDTO{})),
+			"404": openapi.ErrorResponse(
+				"No such cart, or the named channel's catalog does not carry that variant."),
+			"422": openapi.ErrorResponse(
+				"The body could not be read, sales_channel_id or quantity is missing, or " +
+					"the quantity is not positive."),
 		},
 	})
 }

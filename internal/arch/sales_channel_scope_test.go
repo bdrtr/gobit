@@ -349,6 +349,13 @@ func markExemption(file, function string, used []bool) bool {
 	return false
 }
 
+// channelScopeTrees are the trees both channel gates walk: everything that can
+// see an identity except core/http, which is where both acts are allowed to
+// live.
+var channelScopeTrees = []string{
+	modulesDir, "plugins", "internal/workflows", "internal/app", "internal/adminui",
+}
+
 // channelDerivationExemption is a function that reads the principal's channels
 // WITHOUT deriving a scope from them.
 type channelDerivationExemption struct {
@@ -409,7 +416,7 @@ func TestTheChannelDerivationIsNotCopied(t *testing.T) {
 	used := make([]bool, len(channelDerivationExemptions))
 	scanned := 0
 
-	for _, tree := range []string{modulesDir, "plugins", "internal/workflows", "internal/app", "internal/adminui"} {
+	for _, tree := range channelScopeTrees {
 		for _, file := range productionFiles(t, filepath.Join(repoRoot, tree)) {
 			scanned += checkChannelDerivation(t, file, used)
 		}
@@ -488,20 +495,233 @@ func asksForThePrincipal(fn *ast.FuncDecl) bool {
 	return asks
 }
 
-// readsTheChannelField reports whether the function reads a SalesChannelIDs
+// readsTheChannelField reports whether the function READS a SalesChannelIDs
 // field off something.
+//
+// An assignment TARGET is not a read, and the difference is the rule rather than
+// a softening of it. Deriving a scope means turning an identity's channels into
+// a filter, which cannot be done without reading them. Writing the field is the
+// opposite act — asserting a scope somebody named — and it is guarded by
+// [TestOnlyAGrantedSurfaceAssertsAChannel] instead, because a list of who may
+// DECIDE a scope is a different list from a list of who may READ one.
+//
+// A body that does both still trips the derivation gate: the read is still
+// there, and it is still the copy.
 func readsTheChannelField(fn *ast.FuncDecl) bool {
+	written := assignedChannelFields(fn)
+
 	reads := false
 	ast.Inspect(fn.Body, func(node ast.Node) bool {
-		if selector, ok := node.(*ast.SelectorExpr); ok &&
-			selector.Sel.Name == "SalesChannelIDs" {
-			reads = true
+		selector, ok := node.(*ast.SelectorExpr)
+		if !ok || selector.Sel.Name != "SalesChannelIDs" || written[selector] {
+			return true
 		}
+
+		reads = true
 
 		return true
 	})
 
 	return reads
+}
+
+// assignedChannelFields collects the channel selectors the function WRITES.
+//
+// The set is keyed by node rather than by name on purpose: in
+// `p.SalesChannelIDs = append(p.SalesChannelIDs, id)` the two selectors are
+// different nodes, so the right-hand one is still counted as the read it is.
+func assignedChannelFields(fn *ast.FuncDecl) map[*ast.SelectorExpr]bool {
+	written := map[*ast.SelectorExpr]bool{}
+
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		assign, ok := node.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+
+		for _, target := range assign.Lhs {
+			if selector, ok := target.(*ast.SelectorExpr); ok &&
+				selector.Sel.Name == "SalesChannelIDs" {
+				written[selector] = true
+			}
+		}
+
+		return true
+	})
+
+	return written
+}
+
+// channelAssertionGrant is a function allowed to put an identity into the
+// request with a channel scope IT chose.
+type channelAssertionGrant struct {
+	// file is the path relative to the repository root.
+	file string
+	// function is the name of the function (or method) making the claim.
+	function string
+	// why is the justification; a grant without one is the rule quietly eroding.
+	why string
+}
+
+// channelAssertionGrants are the functions allowed to name an identity's
+// channels outside core/http.
+var channelAssertionGrants = []channelAssertionGrant{
+	{
+		file:     "internal/modules/cart/api/admin_write.go",
+		function: "channelScoped",
+		why: "an administrator taking an order over the telephone DECLARES which " +
+			"shopfront the sale belongs to, which a multi-channel shop has to be able " +
+			"to say (ADR 0146). The claim is written into the principal so that the " +
+			"cart's scope rule runs unchanged rather than being skipped, the rest of " +
+			"the identity is carried over untouched so the audit row still names the " +
+			"administrator, and a request that makes no claim is refused with 422 " +
+			"rather than left with the empty scope that answers 404 for every product " +
+			"the shop has assigned to a channel.",
+	},
+}
+
+// TestOnlyAGrantedSurfaceAssertsAChannel refuses a second place that decides
+// what channels an identity holds.
+//
+// # Why this is a separate gate from the derivation
+//
+// [TestTheChannelDerivationIsNotCopied] guards the READ: turning an identity's
+// channels into a catalog filter has to happen in one place, or the copies drift
+// apart under the identity that holds none. Until ADR 0146 nothing outside
+// core/http wrote the field either, so one gate covering both acts cost nothing.
+//
+// It stopped being free the day an administrator was given a surface that names
+// the channel: the read gate would have refused the write as a fourth copy of a
+// derivation it is not. Splitting them keeps both answers exact — the derivation
+// still lives once, and the far rarer act of OVERWRITING a proven identity's
+// scope is now written down with the reason it is allowed.
+//
+// # What it cannot see
+//
+// Minting a principal from a key's record (auth/service/interop.go) writes the
+// field but never calls WithPrincipal — the core middleware does that — so this
+// scan does not reach it, deliberately. Answering "what does this key hold" is
+// the auth module's own job, tested there. What this gate refuses is a SECOND
+// answer replacing the first one mid-request.
+func TestOnlyAGrantedSurfaceAssertsAChannel(t *testing.T) {
+	t.Parallel()
+
+	used := make([]bool, len(channelAssertionGrants))
+	scanned := 0
+
+	for _, tree := range channelScopeTrees {
+		for _, file := range productionFiles(t, filepath.Join(repoRoot, tree)) {
+			scanned += checkChannelAssertion(t, file, used)
+		}
+	}
+
+	require.Positive(t, scanned,
+		"no channel assertion was found at all; the scan may no longer be checking "+
+			"anything (WithPrincipal or the field name may have been renamed)")
+
+	for i, grant := range channelAssertionGrants {
+		assert.True(t, used[i],
+			"an unused grant: %q in %s no longer asserts a channel.\n"+
+				"Its justification (%q) is not defending anything: either the claim was "+
+				"removed and the grant has to go with it, or it moved and the grant no "+
+				"longer sees it.",
+			grant.function, grant.file, grant.why)
+	}
+}
+
+// checkChannelAssertion checks one file and returns how many assertions it
+// found.
+func checkChannelAssertion(t *testing.T, file string, used []bool) int {
+	t.Helper()
+
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, file, nil, 0)
+	require.NoError(t, err, "%s could not be parsed", file)
+
+	rel := strings.TrimPrefix(file, repoRoot+"/")
+	found := 0
+
+	for _, decl := range parsed.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		if !putsThePrincipalBack(fn) || !namesTheChannels(fn) {
+			continue
+		}
+
+		found++
+		if markChannelGrant(rel, fn.Name.Name, used) {
+			continue
+		}
+
+		assert.Fail(t, "a second surface decides an identity's channels",
+			"%s.%s puts a principal into the context AND names its SalesChannelIDs.\n"+
+				"That pair is a scope the SERVER did not prove: everything downstream — "+
+				"the catalog read, the price list, the stock location — trusts the field "+
+				"as if the guard ring had put it there. One such surface exists on "+
+				"purpose (ADR 0146) and it is written in channelAssertionGrants with the "+
+				"reason; a second one needs its own reason, or the identity a request "+
+				"carries stops meaning anything.",
+			rel, fn.Name.Name)
+	}
+
+	return found
+}
+
+// putsThePrincipalBack reports whether the function calls WithPrincipal.
+func putsThePrincipalBack(fn *ast.FuncDecl) bool {
+	puts := false
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if selector, ok := call.Fun.(*ast.SelectorExpr); ok &&
+			selector.Sel.Name == "WithPrincipal" {
+			puts = true
+		}
+
+		return true
+	})
+
+	return puts
+}
+
+// namesTheChannels reports whether the function writes a SalesChannelIDs field,
+// either by assigning it or by building a value that carries it.
+func namesTheChannels(fn *ast.FuncDecl) bool {
+	if len(assignedChannelFields(fn)) > 0 {
+		return true
+	}
+
+	names := false
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		pair, ok := node.(*ast.KeyValueExpr)
+		if !ok {
+			return true
+		}
+		if key, ok := pair.Key.(*ast.Ident); ok && key.Name == "SalesChannelIDs" {
+			names = true
+		}
+
+		return true
+	})
+
+	return names
+}
+
+// markChannelGrant marks the grant covering the function, if there is one.
+func markChannelGrant(file, function string, used []bool) bool {
+	for i, grant := range channelAssertionGrants {
+		if grant.file == file && grant.function == function {
+			used[i] = true
+
+			return true
+		}
+	}
+
+	return false
 }
 
 // markChannelExemption marks the exemption covering the function, if there is

@@ -26,7 +26,8 @@
 //   - "cart.query" — the read provider opened to the Query layer (ADR 0004).
 //   - /store/v1/carts … — the customer API (the surface that builds the cart,
 //     changes it and TURNS IT INTO AN ORDER).
-//   - /admin/v1/carts — the admin API (READ ONLY).
+//   - /admin/v1/carts — the admin API: reads every cart, and opens one plus
+//     adds priced lines to it for an order taken over the telephone (ADR 0146).
 //
 // # The optional capabilities it implements
 //

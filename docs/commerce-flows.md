@@ -86,10 +86,11 @@ cart, in the order and on the invoice.
 
 Both were REMOVED from the storefront body (breaking; `0.x`). Because the body
 rejects an unknown field, an old client does not silently fall back to the old
-behavior — it gets a `422`. There is no counterpart on the admin side: `cart`'s
-`/admin/v1` surface is by definition read-only (the only party that changes a
-cart is the customer), so there is no endpoint to open for "let the administrator
-enter a price" either.
+behavior — it gets a `422`. There is no counterpart on the admin side either.
+That surface was read-only when the fields were removed; since ADR 0146 it opens
+a cart and adds priced lines to one, and NEITHER body takes an amount or a title.
+The reason an operator builds a cart at all is that a cart is priced by the
+server, so a price field there would remove the only thing the detour buys.
 
 If the pricer cannot be resolved, the line is NOT ADDED AT ALL. This is the
 deliberate opposite of the `b2b` spending rule: if `b2b` is not installed, "no

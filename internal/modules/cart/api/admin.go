@@ -9,12 +9,15 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart/service"
 )
 
-// The admin side is READ ONLY.
+// This file is the admin side's READS. Its writes are in admin_write.go, and
+// there are two of them (ADR 0146).
 //
-// The only party that changes the cart is the customer; a correction made from
-// the admin panel would mean changing the amount the customer saw behind their
-// back. Order corrections are the job of the order module (Return/Exchange/
-// Claim) in Phase 6.
+// What is not there is the whole rule: a cart the shopper is holding cannot be
+// CHANGED from the panel, because that would alter the amount they are looking
+// at behind their back. Opening a cart and adding a priced line cannot produce
+// that outcome — an opened cart is nobody's yet, and the money is taken on the
+// storefront with the totals in front of the shopper. Order corrections are the
+// job of the order module (Return/Exchange/Claim).
 
 // adminListCarts returns the carts in pages.
 //

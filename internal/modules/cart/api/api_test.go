@@ -1137,20 +1137,40 @@ func TestAdminListDefaultLimit(t *testing.T) {
 	assert.InDelta(t, float64(service.DefaultLimit), bodyMap(t, rec)["limit"], 0.0)
 }
 
-// TestAdminHasNoWriteEndpoint verifies that the admin side CANNOT CHANGE the
-// cart.
+// TestAdminCannotUndoWhatTheShopperSaw verifies that the admin side can ADD to a
+// cart and cannot CHANGE what is already in one.
 //
-// The only party that changes the cart is the customer; a correction made from
-// the admin panel would mean changing the amount the customer saw behind their
-// back.
-func TestAdminHasNoWriteEndpoint(t *testing.T) {
+// # What ADR 0146 opened and what it deliberately left shut
+//
+// The admin surface was read only, on the argument that a correction made from
+// the panel changes the amount the customer saw behind their back. Taking an
+// order over the telephone needs two of those writes — opening a cart and adding
+// a priced line — and they are the two that cannot produce that outcome: an
+// opened cart is nobody's yet, and a line the shopper has not seen is a line
+// they have not agreed to pay for either, because the money is taken through the
+// storefront's own completion with the totals in front of them.
+//
+// Everything in the list below would produce it. Changing a quantity, dropping a
+// line, writing an address, choosing a shipping method, taking a coupon off,
+// merging another cart in, deleting the cart — each one changes a cart the
+// shopper is holding into a different one while they look at the old figure. The
+// party that does those is the shopper, on the storefront surface, and that is
+// why the admin has no route for them.
+func TestAdminCannotUndoWhatTheShopperSaw(t *testing.T) {
 	h := newServer(t, &fakeCarts{})
 
 	for _, tc := range []struct{ method, path string }{
-		{http.MethodPost, "/admin/v1/carts"},
 		{http.MethodPatch, "/admin/v1/carts/cart_1"},
 		{http.MethodDelete, "/admin/v1/carts/cart_1"},
 		{http.MethodPut, "/admin/v1/carts/cart_1"},
+		{http.MethodPatch, "/admin/v1/carts/cart_1/line-items/item_1"},
+		{http.MethodDelete, "/admin/v1/carts/cart_1/line-items/item_1"},
+		{http.MethodPut, "/admin/v1/carts/cart_1/shipping-address"},
+		{http.MethodPut, "/admin/v1/carts/cart_1/billing-address"},
+		{http.MethodPost, "/admin/v1/carts/cart_1/shipping-methods"},
+		{http.MethodPost, "/admin/v1/carts/cart_1/merge"},
+		{http.MethodPost, "/admin/v1/carts/cart_1/promotions"},
+		{http.MethodDelete, "/admin/v1/carts/cart_1/promotions/SUMMER"},
 	} {
 		rec := doRequest(t, h, tc.method, tc.path, `{}`)
 		assert.Contains(t, []int{http.StatusNotFound, http.StatusMethodNotAllowed}, rec.Code,
@@ -1298,10 +1318,10 @@ func TestNarrowScopePassesOnAdminRead(t *testing.T) {
 // but has no scope at all could read every customer's cart together with their
 // email addresses with GET /admin/v1/carts.
 //
-// Because cart's admin surface has no WRITE endpoint, the case "going to a write
-// endpoint with a read scope" cannot be exercised here; an identity carrying
-// [api.ScopeWrite] is used instead and it is shown that the write scope DOES NOT
-// OPEN the read.
+// What is shown here is the other direction, which stayed true when ADR 0146
+// opened the writes: the write scope DOES NOT OPEN the read. A read scope on a
+// write endpoint is the mirror case and is exercised beside it, in
+// [TestTheAdminWritesAskForTheWriteScope].
 func TestUnscopedIdentityGets403OnAdminRead(t *testing.T) {
 	h := newServer(t, &fakeCarts{})
 

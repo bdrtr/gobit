@@ -518,5 +518,14 @@ past and is not corrected retroactively.
   pricing read and a decision about which price applies to a replacement, and
   neither has been made.
 
+- **An operator can build a telephone order but cannot finish it.** Since
+  [ADR 0146](adr/0146-an-operator-can-build-a-cart.md) the cart's admin surface
+  opens a cart and adds priced lines to it, and that is all it does: the shipping
+  address, the shipping method and the payment are the storefront's endpoints, so
+  the shopper has to complete the cart themselves. Completing it from the admin
+  side was refused rather than missed — the money would be taken without the
+  shopper ever seeing the total — but a shop whose callers cannot open a link is
+  not served by this.
+
 - **The load test is in-process** (`make load-test`, `internal/e2e`): it tests
   correctness under load, it does not produce a capacity plan.

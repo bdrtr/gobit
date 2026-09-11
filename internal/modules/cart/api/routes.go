@@ -14,6 +14,17 @@ import (
 // let the two drift, and the drift would restore a cross-shopper leak.
 const StoreCartsPath = "/store/v1/carts"
 
+// AdminCartsPath and AdminCartLineItemsPath are where an operator builds a cart
+// for somebody who is on the telephone (ADR 0146).
+//
+// They are constants for [StoreCartsPath]'s reason: a path written twice is a
+// path that can be spelled differently in the two places, and the documents that
+// name a route are audited against what Routes actually binds.
+const (
+	AdminCartsPath         = "/admin/v1/carts"
+	AdminCartLineItemsPath = "/admin/v1/carts/{id}/line-items"
+)
+
 // The scope vocabulary: the scopes cart's admin endpoints ask for.
 //
 // The names follow the same pattern in ALL modules ("<module>:read" /
@@ -31,12 +42,11 @@ const (
 
 	// ScopeWrite is the scope the WRITE endpoints on cart's admin surface ask for.
 	//
-	// It opens NO route today, because cart's /admin/v1 surface is read only
-	// (see [Handler.Routes]). It is published all the same: because the
-	// vocabulary is identical across modules, the day a write endpoint is added
-	// to the admin side the scope's name will not be invented ON THAT DAY.
-	// Picking the name on that day would mean the scope lists that have long
-	// since been handed out silently falling short.
+	// It opened no route for a long time, and was published all the same so that
+	// the name would not have to be invented on the day one was added — a scope
+	// picked on that day would mean every list already handed out silently fell
+	// short. ADR 0146 is that day: it opens the two endpoints an operator uses to
+	// build a cart for somebody over the telephone.
 	ScopeWrite = "cart:write"
 )
 
@@ -100,7 +110,17 @@ func (h *Handler) Routes(r chi.Router) {
 	// the container (see [Handler.storeCompleteCart]).
 	r.Post("/store/v1/carts/{id}/complete", h.storeCompleteCart)
 
-	// --- Admin API (administration, READ ONLY) ---
+	// --- Admin API (administration) ---
+	//
+	// It was READ ONLY until ADR 0146, and the two writes below are for one shop
+	// act: an operator taking an order over the telephone. They ask for the WRITE
+	// scope, which until that day opened no route — it was published early so the
+	// name would not have to be invented on the day it was needed, and this is
+	// that day.
 	readOnly.Get("/admin/v1/carts", h.adminListCarts)
 	readOnly.Get("/admin/v1/carts/{id}", h.adminGetCart)
+
+	writable := r.With(corehttp.RequireScope(ScopeWrite))
+	writable.Post(AdminCartsPath, h.adminCreateCart)
+	writable.Post(AdminCartLineItemsPath, h.adminAddLineItem)
 }

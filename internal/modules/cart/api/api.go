@@ -1,9 +1,15 @@
 // Package api is the HTTP surface of the cart module.
 //
 // There are two surfaces: the customer side (/store/v1/carts …) builds and
-// changes the cart, the admin side (/admin/v1/carts) is READ ONLY. The cart is
-// not changed from the admin panel; the only party that changes the cart is the
-// customer and order corrections are the job of the order module in Phase 6.
+// changes the cart, and the admin side (/admin/v1/carts) reads every cart and
+// writes exactly two things — it OPENS a cart and ADDS a priced line to one
+// (ADR 0146), which is what taking an order over the telephone needs.
+//
+// What the admin side still cannot do is CHANGE a cart the shopper is holding:
+// no quantity, no removal, no address, no shipping method, no completion. Those
+// would alter the figure the customer is looking at behind their back, and the
+// party that alters it is the customer. Order corrections remain the order
+// module's job (Return/Exchange/Claim).
 //
 // # Surfaces not opened to HTTP
 //
@@ -45,8 +51,10 @@
 // The endpoints under /admin/v1 ask for a scope SEPARATELY from identity:
 //
 //   - [ScopeRead] ("cart:read") — opens the GET endpoints.
-//   - [ScopeWrite] ("cart:write") — would open the write endpoints; because
-//     cart's admin surface is read only, it is bound to no route today.
+//   - [ScopeWrite] ("cart:write") — opens the two write endpoints: opening a
+//     cart and adding a priced line to one. It was published long before it
+//     opened a route, so the name would not have to be invented on the day one
+//     was needed (ADR 0146 is that day).
 //
 // corehttp.ScopeAdmin ("admin") is the SUPERIOR SCOPE and satisfies both of
 // them; it does not have to be granted separately to a fully privileged

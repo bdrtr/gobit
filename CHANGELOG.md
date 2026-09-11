@@ -64,6 +64,25 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir operatör artık TELEFONDAN sipariş alabiliyor** (ADR 0146). Sepetin
+  yönetici yüzeyi kararla salt okunurdu: panelden yapılan bir düzeltme,
+  müşterinin baktığı tutarı arkasından değiştirmek demekti. O gerekçe bir sepeti
+  DEĞİŞTİRMEYİ kapsıyor, AÇMAYI değil — ve sipariş modülü boşluğu dolduramıyor,
+  çünkü `CreateOrder`'ın rotası bilerek yok: HTTP üzerinden açılan bir sipariş
+  çağıranın belirlediği bir toplamı taşır. Tutarı sunucunun yapan şey sepettir.
+  Yüzey tam olarak iki yazma kazandı — sepeti açmak ve FİYATLANMIŞ bir satır
+  eklemek — ve satır yazması ZORUNLU bir `sales_channel_id` taşıyor: yönetici
+  anahtarı kanal taşımaz, kanalsız bir kimlik "kanalsız" değil "hiçbir kanala
+  bağlı" demektir, yani talep operatörün kataloğunun tamamını yazdığı varyant
+  kimliği hakkında bir iletiyle reddederdi. Handler kanalı principal'a YAZIYOR,
+  böylece sepetin mevcut kapsam kuralı atlanmak yerine olduğu gibi koşuyor.
+  Sepet açmak kanal İSTEMİYOR: o yolda kanalı hiçbir şey okumuyor, istemek
+  kimsenin bakmadığı bir bağlama yazılan bir iddia olurdu. Bedeli yazılı:
+  kapsamı sunucu kanıtlamadı, iddia her istekte ayrı yapılıyor (bir sepetin iki
+  satırı iki kanal altında yazılabilir) ve operatör müşterinin elindeki sepete
+  satır ekleyebiliyor — ama gördüğü şeyi DEĞİŞTİREN hiçbir şeyi yapamıyor ve
+  parayı hâlâ müşteri, mağaza yüzeyinden, önündeki toplama karşı ödüyor.
+
 - **Bir değişim artık BAŞKA BİR ÜRÜN gönderebiliyor** (ADR 0145). Modüldeki her
   satış-sonrası kalemi var olan bir sipariş satırını NOT NULL bir yabancı
   anahtarla gösteriyordu; müşterinin zaten sahip olduğu maldan söz eden kayıtlar
