@@ -6,12 +6,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// ErrLastWayIn is a removal that would leave the account with no way in.
+//
+// It is this module's own error and not a store failure: the store refused
+// because the rule refused, and a caller has to tell that from a database that
+// is down — one is a sentence for the person and the other is a 500.
+var ErrLastWayIn = errors.New("identity-passkey: that is the last way into the account")
 
 // ErrNoCredential is what an unknown passkey answers.
 //
@@ -30,6 +39,30 @@ type Credentials interface {
 	ByCredentialID(ctx context.Context, credentialID []byte) (customerID string, credential webauthn.Credential, err error)
 	// Put stores a credential against a customer.
 	Put(ctx context.Context, customerID string, credential webauthn.Credential) error
+	// ListForCustomer returns what a person may be shown about their own keys.
+	//
+	// It returns a NARROW row and never a webauthn.Credential, so a handler
+	// cannot publish what it was never handed: the public key, the sign
+	// counter, the attestation and the AAGUID are all in the credential and
+	// none of them is a person's business.
+	ListForCustomer(ctx context.Context, customerID string) ([]Key, error)
+	// Remove removes a credential, refusing the customer's LAST row unless the
+	// caller says another way in exists.
+	//
+	// allowLast is a decided bool and not a question this store asks, and that
+	// placement is deliberate: the caller asks whatever it has to ask BEFORE the
+	// transaction opens, because a cross-module query made while this
+	// transaction holds a row lock would be a second connection taken from the
+	// same pool — and enough concurrent removals would then all hold one and all
+	// wait for another.
+	//
+	// The guard is still applied under the lock, so a stale bool cannot widen it:
+	// with two rows held the count permits the removal whatever the bool says,
+	// and with one it is the bool that decides.
+	//
+	// It answers how many of that customer's rows SURVIVE, so a caller can tell
+	// "removed" from "refused" without a second query.
+	Remove(ctx context.Context, customerID string, credentialID []byte, allowLast bool) (surviving int, err error)
 	// Used stamps the moment a credential signed in.
 	//
 	// A failure here is NOT a failed sign-in: the stamp is for a person choosing
@@ -167,6 +200,38 @@ func (s pgCredentials) Used(ctx context.Context, credentialID []byte) error {
 	return nil
 }
 
+// decodeCredentialID turns a path segment back into the bytes the store keys on.
+//
+// A segment that is not base64url is not a different answer from a segment that
+// is somebody else's: both are ids this caller has no key for, and the handler
+// treats them the same.
+func decodeCredentialID(encoded string) ([]byte, error) {
+	trimmed := strings.TrimSpace(encoded)
+
+	raw, err := base64.RawURLEncoding.DecodeString(trimmed)
+	if err != nil {
+		return nil, fmt.Errorf("identity-passkey: the credential id is not base64url: %w", err)
+	}
+
+	// An encoding that does not come back as itself is REFUSED, and this is not
+	// pedantry about spare bits.
+	//
+	// Go's base64 decoder does not require the trailing bits of an unpadded group
+	// to be zero, so "b25sea" and "b25seQ" both decode to the same four bytes —
+	// measured, not assumed. Accepting both gives one key two names, and the
+	// listing only ever issues one of them. Nothing today keys on the string form,
+	// which is exactly why this is worth closing now: an audit line, a cache key
+	// or a rate limit written later would count two names as two subjects, and
+	// that defect would be nowhere near this function.
+	if base64.RawURLEncoding.EncodeToString(raw) != trimmed {
+		return nil, fmt.Errorf(
+			"identity-passkey: the credential id is not the canonical base64url of "+
+				"any credential: %q", trimmed)
+	}
+
+	return raw, nil
+}
+
 // encodeCredentialID is the one place a credential's raw bytes become a column
 // value.
 //
@@ -176,4 +241,161 @@ func (s pgCredentials) Used(ctx context.Context, credentialID []byte) error {
 // comparing two encodings.
 func encodeCredentialID(raw []byte) string {
 	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+// Key is what a person may be told about one of their own passkeys.
+//
+// # Why it is a type of its own
+//
+// Everything a credential carries beyond this is either theirs to know and
+// useless (the public key), a signal about their hardware (the AAGUID, the
+// attestation), or a clone-detection counter that means nothing out of context.
+// A narrow row is how the handler is kept from publishing them: it cannot leak
+// what the store never handed it (ADR 0130).
+type Key struct {
+	// ID is the credential's identifier, base64url — the only thing a removal
+	// can name.
+	ID string
+	// CreatedAt is when the key was registered.
+	CreatedAt time.Time
+	// LastUsedAt is the last sign-in this module MANAGED to record.
+	//
+	// Not the last sign-in. A failed stamp is deliberately swallowed, because
+	// refusing a session over a timestamp trades an account for a record, so this
+	// column can lag reality — and the published description says so, since a
+	// sentence an integrator reads is a promise (ADR 0026).
+	LastUsedAt *time.Time
+	// Transports is how the authenticator said it can be reached.
+	//
+	// It is frozen at registration, and that is why it is publishable while the
+	// backup flags are not: how a credential was MADE does not change, and
+	// whether it is currently synced does.
+	Transports []string
+}
+
+// ListForCustomer reads the person's keys, oldest first.
+//
+// Oldest first because the list is read by somebody deciding which key to
+// remove, and the order they registered them in is the only order they remember.
+func (s pgCredentials) ListForCustomer(
+	ctx context.Context, customerID string,
+) ([]Key, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT credential_id, created_at, last_used_at,
+		        COALESCE(credential->'transport', '[]'::jsonb)
+		 FROM passkey_credentials
+		 WHERE customer_id = $1
+		 ORDER BY created_at, credential_id`, customerID)
+	if err != nil {
+		return nil, fmt.Errorf("identity-passkey: the keys could not be listed: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Key
+	for rows.Next() {
+		var key Key
+		var transports []byte
+		if err := rows.Scan(&key.ID, &key.CreatedAt, &key.LastUsedAt, &transports); err != nil {
+			return nil, fmt.Errorf("identity-passkey: a key could not be scanned: %w", err)
+		}
+		if err := json.Unmarshal(transports, &key.Transports); err != nil {
+			// A credential whose transports are unreadable is still a key the
+			// person has, and hiding it would hide a way in. The field is
+			// dropped; the row is not.
+			key.Transports = nil
+		}
+		out = append(out, key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("identity-passkey: the keys could not be listed: %w", err)
+	}
+
+	return out, nil
+}
+
+// Remove removes a credential, refusing the last one unless the caller permits it.
+//
+// # Why the lock, and why it is this lock
+//
+// Measured on a real PostgreSQL: with the guard written inside the DELETE as a
+// subquery, two concurrent removals of two DIFFERENT keys both see two rows and
+// both delete, leaving the account with NONE — six runs out of six. Under READ
+// COMMITTED each statement takes its own snapshot and the two DELETEs touch
+// different rows, so nothing makes them wait for each other.
+//
+// `SELECT … WHERE customer_id = $1 FOR UPDATE` makes them wait: the second
+// transaction blocks on rows the first holds and, when it proceeds, re-reads
+// them — the row the first deleted is simply gone, so its count is one and its
+// guard refuses. An advisory lock was measured to work identically and was
+// refused: this repository keys those with a class number whose registry lives in
+// the main module, and a contrib module claiming one would be coordinating across
+// a module boundary for something a row lock already does.
+//
+// The count returned is of ROWS, which is not the same as ways in — a person can
+// hold two credentials on one authenticator, because nothing stops an
+// authenticator from minting a second one for a site it already has a key for
+// once the exclusion list is satisfied by a different device. The record says so.
+func (s pgCredentials) Remove(
+	ctx context.Context, customerID string, credentialID []byte, allowLast bool,
+) (int, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("identity-passkey: the removal could not be started: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	rows, err := tx.Query(ctx,
+		`SELECT credential_id FROM passkey_credentials WHERE customer_id = $1 FOR UPDATE`,
+		customerID)
+	if err != nil {
+		return 0, fmt.Errorf("identity-passkey: the keys could not be locked: %w", err)
+	}
+
+	held := 0
+	mine := false
+	target := encodeCredentialID(credentialID)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+
+			return 0, fmt.Errorf("identity-passkey: a locked key could not be read: %w", err)
+		}
+		held++
+		if id == target {
+			mine = true
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("identity-passkey: the keys could not be locked: %w", err)
+	}
+
+	// Not theirs, never existed, or already gone — one answer, because telling
+	// them apart tells a caller which credential ids exist.
+	if !mine {
+		return held, ErrNoCredential
+	}
+	if held < 2 && !allowLast {
+		return held, ErrLastWayIn
+	}
+
+	tag, err := tx.Exec(ctx,
+		`DELETE FROM passkey_credentials WHERE credential_id = $1 AND customer_id = $2`,
+		target, customerID)
+	if err != nil {
+		return 0, fmt.Errorf("identity-passkey: the key could not be removed: %w", err)
+	}
+	// Success is not inferred from the absence of an error: a DELETE matching
+	// nothing reports nothing, and the caller would tell somebody their stolen
+	// key is gone while it still signs in.
+	if tag.RowsAffected() == 0 {
+		return held, ErrNoCredential
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("identity-passkey: the removal could not be committed: %w", err)
+	}
+
+	return held - 1, nil
 }

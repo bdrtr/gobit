@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/descope/virtualwebauthn"
 	"github.com/go-chi/chi/v5"
@@ -377,4 +379,227 @@ func TestRegisteringYourOwnKeyAgainStillReplacesIt(t *testing.T) {
 	credentials, err := store.ForCustomer(t.Context(), customerID)
 	require.NoError(t, err)
 	assert.Len(t, credentials, 1, "one key is still ONE row")
+}
+
+// TestTheRealStoreRefusesTheLastKey runs the guard against the real CHECKs.
+//
+// The memory store imitates this rule, which is exactly why it cannot prove it:
+// the imitation and the SQL can disagree and the unit tests would stay green.
+func TestTheRealStoreRefusesTheLastKey(t *testing.T) {
+	store := realStore(t)
+	customer := "cust_06G8LASTKEYREFUSED000000"
+	require.NoError(t, store.Put(t.Context(), customer, aCredential("only-"+customer)))
+
+	surviving, err := store.Remove(t.Context(), customer, []byte("only-"+customer), false)
+
+	require.ErrorIs(t, err, identitypasskey.ErrLastWayIn)
+	assert.Equal(t, 1, surviving, "the count is what the caller reports to the person")
+
+	keys, err := store.ListForCustomer(t.Context(), customer)
+	require.NoError(t, err)
+	assert.Len(t, keys, 1, "the row is still there")
+}
+
+// TestTheRealStoreRemovesTheLastKeyWhenItIsAllowed is the other side of the same
+// guard: the store does not decide policy, it enforces what it is told.
+func TestTheRealStoreRemovesTheLastKeyWhenItIsAllowed(t *testing.T) {
+	store := realStore(t)
+	customer := "cust_06G8LASTKEYALLOWED00000"
+	require.NoError(t, store.Put(t.Context(), customer, aCredential("only-"+customer)))
+
+	surviving, err := store.Remove(t.Context(), customer, []byte("only-"+customer), true)
+
+	require.NoError(t, err)
+	assert.Equal(t, 0, surviving)
+
+	keys, err := store.ListForCustomer(t.Context(), customer)
+	require.NoError(t, err)
+	assert.Empty(t, keys, "an account with a password may hold no passkeys at all")
+}
+
+// TestARemovalCannotReachAnotherPersonsKey is the ownership half.
+//
+// The removal names a credential id and nothing else, and credential ids are not
+// secret — they are handed to every relying party the authenticator talks to. So
+// the store has to refuse an id that exists and belongs to somebody else, and it
+// has to refuse it the SAME way it refuses one that never existed.
+//
+// # The fixture is the test
+//
+// The first version of this gave the caller TWO keys and permission to remove
+// their last, and it passed with the ownership check deleted — because the
+// DELETE is itself scoped by customer_id, so it affected no rows and answered
+// "not found" anyway. Two rules, one answer, nothing isolated.
+//
+// The caller here holds exactly ONE key and may not remove it. That separates
+// them: without the ownership check the row count decides first and the store
+// answers "that is the only way into this account" — about a key that is not
+// theirs. It is the wrong answer and it is also a disclosure, since it is an
+// answer ABOUT somebody else's credential id.
+func TestARemovalCannotReachAnotherPersonsKey(t *testing.T) {
+	store := realStore(t)
+	owner := "cust_06G8REMOVEOWNER00000000"
+	stranger := "cust_06G8REMOVESTRANGER0000"
+	require.NoError(t, store.Put(t.Context(), owner, aCredential("key-of-"+owner)))
+	require.NoError(t, store.Put(t.Context(), stranger, aCredential("key-of-"+stranger)))
+
+	_, err := store.Remove(t.Context(), stranger, []byte("key-of-"+owner), false)
+
+	require.ErrorIs(t, err, identitypasskey.ErrNoCredential,
+		"somebody else's key is not found, which is the same answer as never existed")
+	require.NotErrorIs(t, err, identitypasskey.ErrLastWayIn,
+		"and it is decidedly NOT a sentence about how many ways into an account there are")
+
+	keys, err := store.ListForCustomer(t.Context(), owner)
+	require.NoError(t, err)
+	assert.Len(t, keys, 1, "and the owner still has it")
+
+	strangersKeys, err := store.ListForCustomer(t.Context(), stranger)
+	require.NoError(t, err)
+	assert.Len(t, strangersKeys, 1, "the caller's own key is untouched as well")
+}
+
+// TestTheListingAnswersOnePersonsRows checks the columns a client renders.
+func TestTheListingAnswersOnePersonsRows(t *testing.T) {
+	store := realStore(t)
+	customer := "cust_06G8LISTINGROWS0000000"
+	other := "cust_06G8LISTINGOTHER000000"
+	require.NoError(t, store.Put(t.Context(), customer, aCredential("first-"+customer)))
+	require.NoError(t, store.Put(t.Context(), customer, aCredential("second-"+customer)))
+	require.NoError(t, store.Put(t.Context(), other, aCredential("first-"+other)))
+
+	keys, err := store.ListForCustomer(t.Context(), customer)
+	require.NoError(t, err)
+
+	require.Len(t, keys, 2, "one person's rows and nobody else's")
+	for _, key := range keys {
+		assert.NotEmpty(t, key.ID)
+		assert.False(t, key.CreatedAt.IsZero(), "the column the client sorts on")
+		assert.Nil(t, key.LastUsedAt,
+			"a key that has never signed anybody in has no last use, and that has to "+
+				"arrive as null rather than as the zero time — a client formatting "+
+				"0001-01-01 shows a date, and a date is a claim")
+	}
+	assert.NotEqual(t, keys[0].ID, keys[1].ID)
+}
+
+// raceRounds is how many times the overlap is forced.
+//
+// One forced round is already deterministic — the two removals are PROVEN to be
+// in flight together before either is let go — so the rounds are not there to
+// make a rare thing happen. They are there because an ordering that happens to
+// be favourable is worth ruling out cheaply, and because this repository has
+// been burned once by a one-round concurrency test that was green half the time
+// (gap D46).
+const raceRounds = 20
+
+// TestTwoRemovalsCannotBOTHTakeTheLastKey is the lockout, executed.
+//
+// # What is being defended
+//
+// Two of a person's devices, each removing the OTHER's key at the same moment.
+// Both read "there are two, so removing one is fine", both remove one, and the
+// account has no way in. Nothing about the two requests is invalid on its own.
+//
+// # Why the store's guard has to be a LOCK and not a condition
+//
+// Measured in this repository: under READ COMMITTED, the guard written inside the
+// DELETE as a subquery counting the customer's rows produces ZERO keys left,
+// every run. Both statements see a snapshot taken before the other's delete, and
+// both are correct about a world that is already gone. `SELECT … WHERE
+// customer_id = $1 FOR UPDATE` in the same transaction as the DELETE serialises
+// them, and the second one then counts one row and refuses.
+//
+// # Why a third transaction holds the gate
+//
+// The overlap has to be FORCED, not hoped for. The store opens its own
+// transaction, so the test cannot step inside it — and the first probe written
+// for this, which started both goroutines from one channel, reported "no race"
+// five runs out of five because each goroutine opened its transaction after the
+// barrier. A test that does not prove the overlap happened is a test of the
+// scheduler.
+//
+// So a third transaction locks the customer's rows first. Both removals then
+// queue behind it, and the test waits for PostgreSQL itself to report two
+// backends waiting on a lock before releasing the gate. That condition is the
+// same in both worlds, which is what makes it a fair barrier: with the row lock
+// the two waiters are the SELECTs, and without it they are the DELETEs.
+func TestTwoRemovalsCannotBOTHTakeTheLastKey(t *testing.T) {
+	store := realStore(t)
+
+	for round := range raceRounds {
+		customer := fmt.Sprintf("cust_06G8RACE%013d", round)
+		first := []byte(fmt.Sprintf("first-%s", customer))
+		second := []byte(fmt.Sprintf("second-%s", customer))
+		require.NoError(t, store.Put(t.Context(), customer, aCredential(string(first))))
+		require.NoError(t, store.Put(t.Context(), customer, aCredential(string(second))))
+
+		gate, err := testPool.Begin(t.Context())
+		require.NoError(t, err)
+		_, err = gate.Exec(t.Context(),
+			`SELECT credential_id FROM passkey_credentials WHERE customer_id = $1 FOR UPDATE`,
+			customer)
+		require.NoError(t, err)
+
+		var wg sync.WaitGroup
+		errs := make([]error, 2)
+		for i, target := range [][]byte{first, second} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, errs[i] = store.Remove(context.Background(), customer, target, false)
+			}()
+		}
+
+		waitForTwoBlockedBackends(t)
+		require.NoError(t, gate.Commit(t.Context()))
+		wg.Wait()
+
+		succeeded := 0
+		for _, err := range errs {
+			if err == nil {
+				succeeded++
+
+				continue
+			}
+			require.ErrorIs(t, err, identitypasskey.ErrLastWayIn,
+				"the loser is refused BY THE RULE, not by a deadlock or a serialisation "+
+					"failure the caller would have to retry")
+		}
+		assert.Equal(t, 1, succeeded, "round %d: exactly one removal may win", round)
+
+		keys, err := store.ListForCustomer(t.Context(), customer)
+		require.NoError(t, err)
+		assert.Len(t, keys, 1,
+			"round %d: an account must not be left with no way in by two requests that "+
+				"were each individually reasonable", round)
+	}
+}
+
+// waitForTwoBlockedBackends blocks until PostgreSQL reports two backends waiting
+// on a lock.
+//
+// It polls a CONDITION rather than sleeping a duration, which is the difference
+// between a barrier and a guess. The deadline exists so a shape that can never
+// reach the condition fails as a failure instead of hanging the suite.
+func waitForTwoBlockedBackends(t *testing.T) {
+	t.Helper()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var waiting int
+		require.NoError(t, testPool.QueryRow(t.Context(),
+			`SELECT count(*) FROM pg_stat_activity
+			 WHERE datname = current_database()
+			   AND state = 'active'
+			   AND wait_event_type = 'Lock'`,
+		).Scan(&waiting))
+		if waiting >= 2 {
+			return
+		}
+		require.False(t, time.Now().After(deadline),
+			"two removals never queued behind the gate (%d waiting), so the overlap this "+
+				"test exists to force did not happen and nothing was proved", waiting)
+		time.Sleep(5 * time.Millisecond)
+	}
 }

@@ -26,6 +26,57 @@ type Credentials interface {
 	Put(ctx context.Context, customerID, email, passwordHash string) error
 }
 
+// ErrPasswordUnknown is what [Module.HasPassword] answers when the bound store
+// cannot say.
+//
+// It is a NAMED error and not a false, because the two mean opposite things to a
+// caller deciding whether somebody has another way into their account: "no
+// password" is an answer and "I could not look" is a question. A caller folding
+// the second into the first removes a person's last passkey on the strength of a
+// failed query.
+var ErrPasswordUnknown = errors.New(
+	"identity-session: whether that customer has a password could not be determined")
+
+// PasswordLookup is the OPTIONAL capability a credential store may offer.
+//
+// It answers ONE question — does this customer have a password here — and it is
+// optional for the reason [Credentials] is an interface at all: an installation
+// binds an LDAP directory or an existing users table, and adding a third method
+// to that interface would compile-break every one of them for a feature in a
+// different Go module. A store that does not implement this is not broken; it is
+// a store that cannot answer, and [Module.HasPassword] says so.
+type PasswordLookup interface {
+	// HasPassword reports whether the customer has a password in this store.
+	HasPassword(ctx context.Context, customerID string) (bool, error)
+}
+
+// HasPassword answers whether a customer can sign in here with a password.
+//
+// # Why this module answers it and does not know who is asking
+//
+// A caller deciding something about a person's ways into their account needs
+// this fact and cannot have this module's table. What it gets is the fact, with
+// no opinion about what the fact means: whether a password COUNTS as a way in is
+// the installation's judgment, made where the modules are assembled, and this
+// module never learns the word the caller uses for the other ways.
+//
+// It returns [ErrPasswordUnknown] when the bound store does not implement
+// [PasswordLookup], rather than false: see that error.
+func (m *Module) HasPassword(ctx context.Context, customerID string) (bool, error) {
+	if m.store == nil {
+		return false, fmt.Errorf("%w: the module has not registered", ErrPasswordUnknown)
+	}
+
+	lookup, ok := m.store.(PasswordLookup)
+	if !ok {
+		return false, fmt.Errorf(
+			"%w: the bound credential store does not implement identitysession.PasswordLookup",
+			ErrPasswordUnknown)
+	}
+
+	return lookup.HasPassword(ctx, customerID)
+}
+
 // pgCredentials is the store on this module's own table.
 type pgCredentials struct{ pool *pgxpool.Pool }
 
@@ -68,6 +119,31 @@ func (s pgCredentials) Put(ctx context.Context, customerID, email, passwordHash 
 
 	return nil
 }
+
+// HasPassword reports whether the customer has a credential here.
+//
+// It is a primary key probe: customer_id is the table's PRIMARY KEY, so this is
+// an index hit and needs no column, no index and no migration of its own. It
+// reads no hash — what the caller asked is whether a password EXISTS.
+func (s pgCredentials) HasPassword(ctx context.Context, customerID string) (bool, error) {
+	var exists bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM customer_credentials WHERE customer_id = $1)`,
+		customerID).Scan(&exists); err != nil {
+		// BOTH are wrapped. The sentinel is what the passkey module matches on with
+		// errors.Is, and the database error underneath is what an operator needs to
+		// tell a missing table from a refused connection — dropping it to %v would
+		// print it once and make it unmatchable.
+		return false, fmt.Errorf("%w: %w", ErrPasswordUnknown, err)
+	}
+
+	return exists, nil
+}
+
+// The optional capability is satisfied at compile time; a drifted signature would
+// otherwise cost nothing in the build and turn every answer into
+// [ErrPasswordUnknown] at run time.
+var _ PasswordLookup = pgCredentials{}
 
 // foldEmail is the one place an address is normalised.
 //

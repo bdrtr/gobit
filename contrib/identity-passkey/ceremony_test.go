@@ -3,11 +3,16 @@ package identitypasskey_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/descope/virtualwebauthn"
 	"github.com/go-chi/chi/v5"
@@ -46,6 +51,54 @@ type harness struct {
 	store    *memoryCredentials
 	rp       virtualwebauthn.RelyingParty
 	auth     virtualwebauthn.Authenticator
+	// logs is everything the module wrote while serving.
+	//
+	// It is a test SUBJECT rather than noise, because the framework masks the
+	// message of every KindInternal error on the wire — deliberately, so a DSN or
+	// a query cannot leak. Two unrelated faults therefore answer one identical
+	// body, and the log line is the only place an operator learns which of them
+	// happened.
+	logs *lockedBuffer
+}
+
+// lockedBuffer is a [bytes.Buffer] that survives being written from two
+// goroutines.
+//
+// slog holds no lock for its writer, and the concurrency tests in this package
+// serve requests in parallel against one harness.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+// Write appends under the lock.
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.Write(p)
+}
+
+// logLine is what the module logged, required to be non-empty.
+//
+// A test that asserts a sentence is ABSENT from the log would pass against a log
+// that was never written at all, so the presence of SOMETHING is checked here
+// once rather than remembered at each call.
+func (h *harness) logLine(t *testing.T) string {
+	t.Helper()
+
+	written := h.logs.String()
+	require.NotEmpty(t, written, "the module logged nothing, so no assertion about its log means anything")
+
+	return written
+}
+
+// String reads under the lock.
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.String()
 }
 
 // newHarness builds a module signed into a real session verifier.
@@ -63,6 +116,17 @@ type harness struct {
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 
+	return newHarnessWith(t, alwaysAnotherWayIn{})
+}
+
+// newHarnessWith is [newHarness] with the installation's answer about other ways
+// in spelled out.
+//
+// The ceremonies do not consult it, so they take the ordinary answer; the tests
+// that are ABOUT the answer name it.
+func newHarnessWith(t *testing.T, other identitypasskey.OtherSignIn) *harness {
+	t.Helper()
+
 	session := identitysession.New(identitysession.Options{
 		Secret:      []byte(testSecret),
 		Insecure:    true,
@@ -72,12 +136,15 @@ func newHarness(t *testing.T) *harness {
 	require.NoError(t, session.Register(t.Context(), c))
 
 	store := &memoryCredentials{}
+	logs := &lockedBuffer{}
 	m := identitypasskey.New(identitypasskey.Options{
+		Logger:      slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		Session:     session,
 		RPID:        testRPID,
 		RPOrigins:   []string{testOrigin},
 		DisplayName: "Example Shop",
 		Credentials: store,
+		OtherSignIn: other,
 	})
 	require.NoError(t, m.Register(t.Context(), c))
 
@@ -89,6 +156,7 @@ func newHarness(t *testing.T) *harness {
 		router:   r,
 		sessions: session.Sessions(),
 		store:    store,
+		logs:     logs,
 		rp: virtualwebauthn.RelyingParty{
 			ID: testRPID, Name: "Example Shop", Origin: testOrigin,
 		},
@@ -297,14 +365,22 @@ func (h *harness) signedInAs(t *testing.T, customerID string) *http.Cookie {
 	return sessionCookieOf(t, rec)
 }
 
-// post sends a request carrying whichever cookies the test hands it.
+// post sends a POST carrying whichever cookies the test hands it.
 func (h *harness) post(
 	t *testing.T, path, body string, cookies ...*http.Cookie,
 ) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequestWithContext(t.Context(),
-		http.MethodPost, path, strings.NewReader(body))
+	return h.do(t, http.MethodPost, path, body, cookies...)
+}
+
+// do sends one request.
+func (h *harness) do(
+	t *testing.T, method, path, body string, cookies ...*http.Cookie,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	req := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	var sent []string
@@ -321,6 +397,25 @@ func (h *harness) post(
 	h.router.ServeHTTP(rec, req)
 
 	return rec
+}
+
+// get sends a GET carrying whichever cookies the test hands it.
+func (h *harness) get(
+	t *testing.T, path string, cookies ...*http.Cookie,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	return h.do(t, http.MethodGet, path, "", cookies...)
+}
+
+// remove sends the DELETE for one credential id.
+func (h *harness) remove(
+	t *testing.T, credentialID string, cookies ...*http.Cookie,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	return h.do(t, http.MethodDelete,
+		"/store/v1/auth/passkey/keys/"+url.PathEscape(credentialID), "", cookies...)
 }
 
 // ceremonyCookieOf reads the ceremony cookie a begin call set.
@@ -370,6 +465,17 @@ func (noCredentials) Put(context.Context, string, string, string) error { return
 type memoryCredentials struct {
 	byCustomer map[string][]webauthn.Credential
 	used       []byte
+	// listErr and removeErr are the store FAILING, which is a different answer
+	// from the rule refusing and the handler has to tell them apart.
+	listErr   error
+	removeErr error
+	// phantomKeys makes ListForCustomer report MORE rows than Remove holds.
+	//
+	// It is the concurrency window written as a fixture: the handler counts
+	// without a lock, another request removes a row, and the locked count is then
+	// lower than the number the decision was made on. A store that cannot lie in
+	// that direction cannot exercise the branch that survives it.
+	phantomKeys int
 }
 
 // ForCustomer answers what the customer registered.
@@ -419,6 +525,69 @@ func (s *memoryCredentials) Used(_ context.Context, credentialID []byte) error {
 	s.used = credentialID
 
 	return nil
+}
+
+// ListForCustomer answers the narrow rows for a customer.
+func (s *memoryCredentials) ListForCustomer(
+	_ context.Context, customerID string,
+) ([]identitypasskey.Key, error) {
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+
+	credentials := s.byCustomer[customerID]
+	out := make([]identitypasskey.Key, 0, len(credentials)+s.phantomKeys)
+	for i := range credentials {
+		out = append(out, identitypasskey.Key{
+			ID:         base64.RawURLEncoding.EncodeToString(credentials[i].ID),
+			CreatedAt:  time.Unix(int64(1_700_000_000+i), 0).UTC(),
+			Transports: []string{"internal"},
+		})
+	}
+	for i := range s.phantomKeys {
+		out = append(out, identitypasskey.Key{
+			ID:        base64.RawURLEncoding.EncodeToString([]byte("gone" + string(rune('a'+i)))),
+			CreatedAt: time.Unix(int64(1_700_000_500+i), 0).UTC(),
+		})
+	}
+
+	return out, nil
+}
+
+// Remove imitates the real store's OBSERVABLE answers.
+//
+// The three it has to get right are the three the handler branches on, and a
+// fake that answered a plain error for any of them would make the handler's
+// branching untestable: a credential that is not this customer's is
+// [identitypasskey.ErrNoCredential] and not a refusal, the last row is
+// [identitypasskey.ErrLastWayIn] and not a not-found, and the surviving count
+// comes back either way. What it cannot imitate is the LOCK, which is why the
+// race has an integration test of its own.
+func (s *memoryCredentials) Remove(
+	_ context.Context, customerID string, credentialID []byte, allowLast bool,
+) (int, error) {
+	if s.removeErr != nil {
+		return 0, s.removeErr
+	}
+
+	credentials := s.byCustomer[customerID]
+	held := len(credentials)
+	at := -1
+	for i := range credentials {
+		if bytes.Equal(credentials[i].ID, credentialID) {
+			at = i
+		}
+	}
+	if at < 0 {
+		return held, identitypasskey.ErrNoCredential
+	}
+	if held < 2 && !allowLast {
+		return held, identitypasskey.ErrLastWayIn
+	}
+
+	s.byCustomer[customerID] = append(credentials[:at], credentials[at+1:]...)
+
+	return held - 1, nil
 }
 
 // TestRegistrationAsksForADiscoverableCredential is gap D65, at the ceremony.

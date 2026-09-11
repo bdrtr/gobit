@@ -47,6 +47,19 @@ type errorPath struct {
 	signedIn bool
 	status   int
 	code     string
+	// keys and other build a DEDICATED harness when a refusal needs state.
+	//
+	// The last-way-in refusal cannot be produced on a shared empty store: it needs
+	// a person who has exactly one key and no other way into the account, which is
+	// the whole shape of the rule.
+	keys  []string
+	other identitypasskey.OtherSignIn
+	// documentedPath is the path AS THE DOCUMENT SPELLS IT, when that differs from
+	// the one a request uses.
+	//
+	// A path parameter is `{credential_id}` in the document and a real value in a
+	// request, and nothing else in this package has needed the distinction before.
+	documentedPath string
 }
 
 // TestEveryDocumentedRefusalIsTheOneTheRouteAnswers drives each refusal and
@@ -85,22 +98,59 @@ func TestEveryDocumentedRefusalIsTheOneTheRouteAnswers(t *testing.T) {
 			body:   `{}`,
 			status: http.StatusUnprocessableEntity, code: identitypasskey.CodeCeremonyMissing,
 		},
+		{
+			name:   "listing without an account",
+			method: http.MethodGet, path: "/store/v1/auth/passkey/keys",
+			status: http.StatusUnauthorized, code: identitypasskey.CodeNotSignedIn,
+		},
+		{
+			name:   "removing without an account",
+			method: http.MethodDelete, path: "/store/v1/auth/passkey/keys/anything",
+			documentedPath: "/store/v1/auth/passkey/keys/{credential_id}",
+			status:         http.StatusUnauthorized, code: identitypasskey.CodeNotSignedIn,
+		},
+		{
+			name:   "removing an id that is not one of yours",
+			method: http.MethodDelete, path: "/store/v1/auth/passkey/keys/bm90LW1pbmU",
+			documentedPath: "/store/v1/auth/passkey/keys/{credential_id}",
+			signedIn:       true,
+			status:         http.StatusNotFound, code: identitypasskey.CodeNoSuchKey,
+		},
+		{
+			name:   "removing the only way into the account",
+			method: http.MethodDelete, path: "/store/v1/auth/passkey/keys/b25seQ",
+			documentedPath: "/store/v1/auth/passkey/keys/{credential_id}",
+			signedIn:       true,
+			keys:           []string{"only"}, other: identitypasskey.NoOtherSignIn(),
+			status: http.StatusConflict, code: identitypasskey.CodeLastWayIn,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var cookies []*http.Cookie
-			if tc.signedIn {
-				cookies = append(cookies, signedIn)
+			router, cookie := h, signedIn
+			if len(tc.keys) > 0 || tc.other != nil {
+				router = withKeys(t, tc.other, tc.keys...)
+				cookie = router.signedInAs(t, testCustomer)
 			}
 
-			rec := h.post(t, tc.path, tc.body, cookies...)
+			var cookies []*http.Cookie
+			if tc.signedIn {
+				cookies = append(cookies, cookie)
+			}
+
+			rec := router.do(t, tc.method, tc.path, tc.body, cookies...)
 
 			require.Equal(t, tc.status, rec.Code,
 				"%s %s answered %d; body: %s", tc.method, tc.path, rec.Code, rec.Body.String())
 			assert.Contains(t, rec.Body.String(), tc.code,
 				"the code is what a client branches on")
 
+			documented := tc.path
+			if tc.documentedPath != "" {
+				documented = tc.documentedPath
+			}
+
 			assert.Equal(t, strconv.Itoa(tc.status),
-				documentedStatusForCode(t, built, tc.path, tc.method, tc.code),
+				documentedStatusForCode(t, built, documented, tc.method, tc.code),
 				"%s %s answers %d with code %q and the published document puts that code "+
 					"under a DIFFERENT status.\n"+
 					"A description is a promise (ADR 0026): an integrator reading it codes "+
@@ -174,10 +224,11 @@ func documentedResponses(t *testing.T, built map[string]any, path, method string
 }
 
 // lowerMethod spells a method the way the document keys it.
+//
+// This used to special-case POST and return everything else unchanged, which was
+// correct for exactly as long as the table held only POSTs: an OpenAPI document
+// keys operations in lower case, so the first GET would have failed looking for
+// an operation named "GET". It was found by adding one.
 func lowerMethod(method string) string {
-	if method == http.MethodPost {
-		return "post"
-	}
-
-	return method
+	return strings.ToLower(method)
 }

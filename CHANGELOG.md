@@ -20,6 +20,18 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir kişi artık passkey'lerini GÖREBİLİYOR ve birini kaldırabiliyor**
+  (ADR 0130). `contrib/identity-passkey` yalnızca kayıt ve giriş sunuyordu:
+  telefonunu kaybeden biri hesabını neyin açtığını göremiyor, o cihazı iptal
+  edemiyordu. İki uç eklendi — çağıranın kendi anahtarlarının listesi ve birini
+  kaldırma. Kaldırma, hesabı girişsiz bırakacaksa reddediliyor ve bu kural bir
+  KOŞUL değil bir KİLİT: READ COMMITTED altında DELETE'in içine yazılan aynı
+  kontrol, eşzamanlı iki kaldırmada sıfır anahtar bırakıyor — ölçüldü, her
+  koşuda. "Başka bir giriş yolu var mı" sorusu bu modülün KENDİ sorusu, ve
+  işlem açılmadan önce soruluyor: satır kilidi tutarken başka bir modülü
+  sorgulamak aynı havuzdan ikinci bir bağlantı ister. "Bakamadık" asla "başka
+  yolunuz yok" değil — biri 500, diğeri 409.
+
 - **İmzalama anahtarı artık kimseyi dışarı atmadan DÖNDÜRÜLEBİLİYOR** (ADR 0129).
   `contrib/identity-session` tek bir anahtarla imzalıyor ve doğruluyordu; onu
   değiştirmek, her tarayıcıdaki her çerezin aynı anda doğrulanmaz olması demekti.

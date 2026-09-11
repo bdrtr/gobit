@@ -99,17 +99,30 @@ type Options struct {
 	DisplayName string
 	// Credentials replaces this module's own table with another store.
 	Credentials Credentials
+	// OtherSignIn states whether an account has a way in that is not a passkey.
+	//
+	// It decides one thing: whether a person's LAST passkey may be removed. Nil
+	// means [PasswordSignIn] over [Options.Session] — the ordinary arrangement,
+	// where a password in the session module is a way in — and [Module.Register]
+	// REFUSES that default when the identity this installation bound is not that
+	// session module's, because in such an installation a password there is a row
+	// nothing reads and the default would be confidently wrong (ADR 0130).
+	//
+	// A shop with no passwords wires [NoOtherSignIn], and the consequence is the
+	// honest one: the last passkey is never removable.
+	OtherSignIn OtherSignIn
 	// Logger is optional.
 	Logger *slog.Logger
 }
 
 // Module is the gobit module this package installs.
 type Module struct {
-	opts     Options
-	web      *webauthn.WebAuthn
-	sessions *identitysession.Sessions
-	store    Credentials
-	identity corehttp.Identity
+	opts        Options
+	web         *webauthn.WebAuthn
+	sessions    *identitysession.Sessions
+	store       Credentials
+	identity    corehttp.Identity
+	otherSignIn OtherSignIn
 	// displayName is what a person's authenticator shows; it falls back to the
 	// relying party id, which is at least true.
 	displayName string
@@ -218,6 +231,25 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	}
 	m.identity = identity
 
+	m.otherSignIn = m.opts.OtherSignIn
+	if m.otherSignIn == nil {
+		// The default is only correct when the verifier this installation bound
+		// IS the session module's, and that is checkable here because the slot
+		// was just resolved. Where it is not, refusing beats defaulting: a WARN
+		// at startup is not a choice (ADR 0125), and the wrong answer removes
+		// somebody's last way in.
+		if identity != any(m.sessions) {
+			return errors.New(
+				"identity-passkey: Options.OtherSignIn is required when the bound " +
+					corehttp.IdentityName + " is not this session module's verifier; a " +
+					"password in that module is not a way in for an installation that " +
+					"proves its customers some other way. Wire identitypasskey." +
+					"PasswordSignIn(session) if it is, or NoOtherSignIn() if a passkey " +
+					"is the only way in")
+		}
+		m.otherSignIn = PasswordSignIn(m.opts.Session)
+	}
+
 	m.log.InfoContext(ctx, "identity-passkey registered",
 		"rp_id", m.opts.RPID, "origins", len(m.opts.RPOrigins))
 
@@ -236,7 +268,7 @@ func (m *Module) Store() Credentials { return m.store }
 
 // Routes mounts the four ceremony endpoints.
 func (m *Module) Routes(r chi.Router) {
-	if m.web == nil || m.store == nil || m.sessions == nil {
+	if m.web == nil || m.store == nil || m.sessions == nil || m.otherSignIn == nil {
 		m.log.Warn("identity-passkey: Routes ran without Register, no endpoint was mounted")
 
 		return
@@ -246,4 +278,6 @@ func (m *Module) Routes(r chi.Router) {
 	r.Post("/store/v1/auth/passkey/register/finish", m.finishRegistration)
 	r.Post("/store/v1/auth/passkey/sign-in/begin", m.beginSignIn)
 	r.Post("/store/v1/auth/passkey/sign-in/finish", m.finishSignIn)
+	r.Get("/store/v1/auth/passkey/keys", m.listKeys)
+	r.Delete("/store/v1/auth/passkey/keys/{credential_id}", m.removeKey)
 }
