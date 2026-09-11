@@ -5,7 +5,9 @@ package repository
 
 import (
 	"context"
+	"errors"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/bdrtr/gobit/internal/modules/inventory/models"
@@ -40,7 +42,19 @@ func (r *Repository) AppendMovement(ctx context.Context, mv models.Movement) (mo
 		Reason:          mv.Reason.String(),
 		Delta:           mv.Delta,
 		StockedAfter:    mv.StockedAfter,
+		Reference:       nullString(mv.Reference),
 	})
+	// A cancellation whose reference is already in the ledger writes NOTHING and
+	// returns no row, which is the ON CONFLICT in the query doing its job: the bus
+	// delivers at least once and adding stock is deliberately not idempotent, so a
+	// redelivery has to be a no-op rather than a second helping of units.
+	//
+	// The caller is told by [models.ErrMovementAlreadyRecorded] rather than by a
+	// zero value, because "nothing happened and that is correct" and "nothing
+	// happened and something is wrong" are not the same answer.
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.Movement{}, models.ErrMovementAlreadyRecorded
+	}
 	if err != nil {
 		return models.Movement{}, classify(err, codeQueryFailed, "the stock movement could not be recorded")
 	}
@@ -93,6 +107,26 @@ func toMovement(row inventorydb.InventoryMovement) models.Movement {
 		Reason:          models.MovementReason(row.Reason),
 		Delta:           row.Delta,
 		StockedAfter:    row.StockedAfter,
+		Reference:       stringValue(row.Reference),
 		CreatedAt:       timeValue(row.CreatedAt),
 	}
+}
+
+// SaleLocations answers where an order's units were taken from, per item.
+//
+// It takes no lock and needs none: the ledger is append-only, so a sale movement
+// this reads cannot move afterwards.
+func (r *Repository) SaleLocations(ctx context.Context, reference string) (map[string]string, error) {
+	rows, err := r.queries(ctx).SaleLocationsForReference(ctx, reference)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed,
+			"the locations an order's stock left from could not be read")
+	}
+
+	out := make(map[string]string, len(rows))
+	for i := range rows {
+		out[rows[i].InventoryItemID] = rows[i].LocationID
+	}
+
+	return out, nil
 }

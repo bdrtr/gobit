@@ -53,7 +53,7 @@ func (s *Service) openLevel(
 		return models.InventoryLevel{}, err
 	}
 
-	if err := s.recordMovement(ctx, level, stocked, reason, ""); err != nil {
+	if err := s.recordMovement(ctx, level, stocked, reason, "", ""); err != nil {
 		return models.InventoryLevel{}, err
 	}
 
@@ -72,14 +72,15 @@ func (s *Service) writeQuantities(
 	level models.InventoryLevel,
 	stocked, reserved int64,
 	reason models.MovementReason,
-	reservationID string,
+	reservationID, reference string,
 ) (models.InventoryLevel, error) {
 	updated, err := s.store.UpdateInventoryLevelQuantities(ctx, level.ID, stocked, reserved)
 	if err != nil {
 		return models.InventoryLevel{}, err
 	}
 
-	if err := s.recordMovement(ctx, updated, stocked-level.StockedQuantity, reason, reservationID); err != nil {
+	if err := s.recordMovement(ctx, updated, stocked-level.StockedQuantity,
+		reason, reservationID, reference); err != nil {
 		return models.InventoryLevel{}, err
 	}
 
@@ -97,7 +98,7 @@ func (s *Service) recordMovement(
 	level models.InventoryLevel,
 	delta int64,
 	reason models.MovementReason,
-	reservationID string,
+	reservationID, reference string,
 ) error {
 	// A write that moved nothing leaves nothing, whatever the caller meant by
 	// it. This is not only the reservation flows: an operator who writes the
@@ -122,6 +123,13 @@ func (s *Service) recordMovement(
 			reason, reservationID)
 	}
 
+	if (reference != "") != reason.CarriesAReference() {
+		return errors.Internal(CodeInconsistentState,
+			"a %q movement carries reference %q; a reference is named by the reasons that "+
+				"have something to point at, and by nothing else",
+			reason, reference)
+	}
+
 	_, err := s.store.AppendMovement(ctx, models.Movement{
 		ID:              models.NewMovementID(),
 		InventoryItemID: level.InventoryItemID,
@@ -130,6 +138,7 @@ func (s *Service) recordMovement(
 		Reason:          reason,
 		Delta:           delta,
 		StockedAfter:    level.StockedQuantity,
+		Reference:       reference,
 	})
 
 	return err

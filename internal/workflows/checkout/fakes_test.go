@@ -333,7 +333,7 @@ func (s *stubInventory) ReleaseReservation(ctx context.Context, reservationID st
 }
 
 // ConfirmReservation applies the scripted confirmation behavior.
-func (s *stubInventory) ConfirmReservation(ctx context.Context, reservationID string) error {
+func (s *stubInventory) ConfirmReservation(ctx context.Context, reservationID, _ string) error {
 	s.rec.add("inventory:confirm:" + reservationID)
 	if s.confirmFn == nil {
 		return nil

@@ -796,3 +796,13 @@ func stampFor(status, target models.FulfillmentStatus, now time.Time) *time.Time
 	stamp := now
 	return &stamp
 }
+
+// CommittedQuantities sums, per order line, the units a live parcel holds.
+//
+// The rule about which parcels count is in the SQL and named on
+// [Interop.CommittedQuantities]: everything but a canceled one.
+func (s *Service) CommittedQuantities(
+	ctx context.Context, fulfillmentIDs []string,
+) (map[string]int64, error) {
+	return s.store.CommittedQuantities(ctx, fulfillmentIDs)
+}

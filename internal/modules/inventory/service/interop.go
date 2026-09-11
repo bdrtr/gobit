@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 
 	"github.com/bdrtr/gobit/internal/modules/inventory/models"
 )
@@ -159,8 +160,68 @@ func (i *Interop) Restock(
 //
 // It is called once the order is final; from this point on the stock is not
 // released again, a return is a separate flow.
-func (i *Interop) ConfirmReservation(ctx context.Context, reservationID string) error {
-	return i.svc.ConfirmReservation(ctx, reservationID)
+//
+// # Why it names the order
+//
+// The movement it writes carries the order, and that is the ONLY thing on the row
+// pointing outside the warehouse. It is there so that units written off later can
+// go back to the shelf they left: the reservation knew the location and is keyed
+// to the CART's line item, which an order does not carry, so without this the way
+// back is a chain through three modules (ADR 0134).
+//
+// An empty order is allowed and means "no order to name" — goods leaving against
+// a claim rather than a sale. It is not a default to reach for: a caller that has
+// an order and passes none has silently taken the way back away.
+func (i *Interop) ConfirmReservation(ctx context.Context, reservationID, orderID string) error {
+	return i.svc.ConfirmReservation(ctx, reservationID, orderID)
+}
+
+// ReturnCanceled puts back units that were deducted and will never be delivered.
+//
+// # Why it is not Restock
+//
+// [Interop.Restock] is goods a customer sent back, and its own record says two
+// calls mean two physical arrivals. Nothing arrives here: the units never left,
+// and what changed is that the promise to send them was withdrawn. The ledger has
+// an entry point per reason because an operator reads the two differently.
+//
+// # It is idempotent, and it is the only stock write that is
+//
+// The cancellation's id is the movement's reference and the ledger holds it
+// unique, so a redelivered event writes nothing. That is necessary rather than
+// tidy: this surface is driven by the bus, which delivers at least once, and
+// every other way of adding stock would grow it on each retry.
+//
+// # Why the second return value is a BOOL
+//
+// A second delivery is not a failure and the caller may want to say so in a log
+// line. The service reports it with a named error, and a named error cannot cross
+// this boundary: a consumer that cannot import this module cannot match a sentinel
+// it cannot name. A bool can be repeated verbatim in the consumer's own interface,
+// which is the same reason every signature here uses primitive types.
+//
+// True means the units were ALREADY back and this call wrote nothing.
+func (i *Interop) ReturnCanceled(
+	ctx context.Context,
+	inventoryItemID, locationID string,
+	quantity int64,
+	cancellationID string,
+) (alreadyBack bool, err error) {
+	_, err = i.svc.ReturnCanceledInventory(ctx, inventoryItemID, locationID, quantity, cancellationID)
+	if errors.Is(err, models.ErrMovementAlreadyRecorded) {
+		return true, nil
+	}
+
+	return false, err
+}
+
+// SaleLocations answers where an order's units were deducted from, per inventory
+// item.
+//
+// An empty map is a true answer: an order whose checkout never reached its last
+// step has reservations and no sale, so nothing left from anywhere.
+func (i *Interop) SaleLocations(ctx context.Context, orderID string) (map[string]string, error) {
+	return i.svc.SaleLocations(ctx, orderID)
 }
 
 // AvailableQuantity returns the item's available quantity across all locations.

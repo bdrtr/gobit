@@ -552,7 +552,7 @@ func TestConfirmReservationStoktanDuser(t *testing.T) {
 	store.seedReservation(resID, itemID, locA, 4, models.ReservationActive)
 	oncekiAvailable := store.level(itemID, locA).Available()
 
-	require.NoError(t, svc.ConfirmReservation(context.Background(), resID))
+	require.NoError(t, svc.ConfirmReservation(context.Background(), resID, testSaleOrderID))
 
 	level := store.level(itemID, locA)
 	assert.Equal(t, int64(6), level.StockedQuantity)
@@ -570,10 +570,10 @@ func TestConfirmReservationIdempotent(t *testing.T) {
 	store.seedLevel(itemID, locA, 10, 4)
 	store.seedReservation(resID, itemID, locA, 4, models.ReservationActive)
 
-	require.NoError(t, svc.ConfirmReservation(context.Background(), resID))
+	require.NoError(t, svc.ConfirmReservation(context.Background(), resID, testSaleOrderID))
 	yazmaSayisi := store.updateLevelCalls
 
-	require.NoError(t, svc.ConfirmReservation(context.Background(), resID))
+	require.NoError(t, svc.ConfirmReservation(context.Background(), resID, testSaleOrderID))
 	assert.Equal(t, int64(6), store.level(itemID, locA).StockedQuantity)
 	assert.Equal(t, yazmaSayisi, store.updateLevelCalls)
 }
@@ -586,7 +586,7 @@ func TestConfirmReservationSerbestBirakilmisConflict(t *testing.T) {
 	store.seedLevel(itemID, locA, 10, 0)
 	store.seedReservation(resID, itemID, locA, 4, models.ReservationReleased)
 
-	err := svc.ConfirmReservation(context.Background(), resID)
+	err := svc.ConfirmReservation(context.Background(), resID, testSaleOrderID)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
@@ -794,7 +794,7 @@ func TestConfirmReservationFizikselStokYetmezseInternal(t *testing.T) {
 	store.seedLevel(itemID, locA, 2, 5)
 	store.seedReservation(resID, itemID, locA, 3, models.ReservationActive)
 
-	err := svc.ConfirmReservation(context.Background(), resID)
+	err := svc.ConfirmReservation(context.Background(), resID, testSaleOrderID)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInternal, errors.KindOf(err))
@@ -811,7 +811,7 @@ func TestConfirmReservationRezerveAdetYetmezseInternal(t *testing.T) {
 	store.seedLevel(itemID, locA, 10, 1)
 	store.seedReservation(resID, itemID, locA, 5, models.ReservationActive)
 
-	err := svc.ConfirmReservation(context.Background(), resID)
+	err := svc.ConfirmReservation(context.Background(), resID, testSaleOrderID)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInternal, errors.KindOf(err))
@@ -849,7 +849,7 @@ func TestKilitSirasiKalemdenSeviyeye(t *testing.T) {
 			return svc.ReleaseReservation(ctx, resID)
 		}},
 		{"ConfirmReservation", func(ctx context.Context, svc *service.Service) error {
-			return svc.ConfirmReservation(ctx, resID)
+			return svc.ConfirmReservation(ctx, resID, testSaleOrderID)
 		}},
 	}
 

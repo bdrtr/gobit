@@ -401,3 +401,31 @@ func interopInt(value json.Number, field string) (int64, error) {
 	}
 	return parsed, nil
 }
+
+// CommittedQuantities sums, per order line, the units a live parcel holds.
+//
+// # Why a cancellation needs it
+//
+// The checkout deducts stock, so units written off afterwards are units nobody
+// will send and nobody counts as stock either. Which of them can go back on the
+// shelf depends on whether they already left: this answers that, per line, for a
+// set of parcels (ADR 0134).
+//
+// # What counts as gone
+//
+// Everything but a CANCELED parcel. A canceled one's goods never left the
+// building; a shipped or delivered one's did. A RETURNED parcel's units also did
+// leave — their coming back is the return flow's receipt, which puts its own stock
+// back, so counting them as gone here is what keeps each act with one effect. And
+// a PENDING parcel counts as gone because the warehouse is already picking it, and
+// treating those units as available would let a cancellation put back goods that
+// are in a box.
+//
+// The parcels are named by the caller rather than looked up from an order,
+// because the binding between the two is the "order_fulfillment" LINK and this
+// module does not read another module's links.
+func (i *Interop) CommittedQuantities(
+	ctx context.Context, fulfillmentIDs []string,
+) (map[string]int64, error) {
+	return i.svc.CommittedQuantities(ctx, fulfillmentIDs)
+}

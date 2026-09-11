@@ -153,6 +153,13 @@ type Store interface {
 	// written on the pool would survive a rolled-back level, and the ledger
 	// would claim units moved that never did (ADR 0068).
 	AppendMovement(ctx context.Context, mv models.Movement) (models.Movement, error)
+	// SaleLocations answers where an order's units were deducted from, as
+	// inventory item to location.
+	//
+	// It reads the ledger rather than the reservations, because a reservation is
+	// keyed to the CART's line item and an order does not carry one. The sale
+	// movement is the row that knows both.
+	SaleLocations(ctx context.Context, reference string) (map[string]string, error)
 	// ListMovements pages one item's movements, newest first. A page shorter
 	// than the filter's limit is the last page.
 	ListMovements(ctx context.Context, filter models.MovementFilter) ([]models.Movement, error)

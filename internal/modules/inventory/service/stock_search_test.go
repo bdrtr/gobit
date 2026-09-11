@@ -198,7 +198,7 @@ func runStockSearch(t *testing.T, seed int64) {
 			if id == "" {
 				continue
 			}
-			err := svc.ConfirmReservation(ctx, id)
+			err := svc.ConfirmReservation(ctx, id, testSaleOrderID)
 			after := readRow(t, svc, itemID, locA)
 			if err != nil {
 				record("%d confirm %s -> refused", step, id)
@@ -272,7 +272,7 @@ func runStockSearch(t *testing.T, seed int64) {
 				verb = "release"
 				err = svc.ReleaseReservation(ctx, id)
 			} else {
-				err = svc.ConfirmReservation(ctx, id)
+				err = svc.ConfirmReservation(ctx, id, testSaleOrderID)
 			}
 			after := readRow(t, svc, itemID, locA)
 			record("%d repeat %s %s -> err=%v", step, verb, id, err != nil)

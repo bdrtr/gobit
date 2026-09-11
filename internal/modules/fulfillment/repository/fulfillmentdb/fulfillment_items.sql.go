@@ -9,6 +9,54 @@ import (
 	"context"
 )
 
+const committedQuantitiesForFulfillments = `-- name: CommittedQuantitiesForFulfillments :many
+SELECT i.line_item_id, SUM(i.quantity)::bigint AS quantity
+FROM fulfillment_items i
+JOIN fulfillments f ON f.id = i.fulfillment_id
+WHERE i.fulfillment_id = ANY ($1::text[])
+  AND f.status <> 'canceled'
+GROUP BY i.line_item_id
+ORDER BY i.line_item_id
+`
+
+type CommittedQuantitiesForFulfillmentsRow struct {
+	LineItemID string
+	Quantity   int64
+}
+
+// CommittedQuantitiesForFulfillments sums, per order line, the units of that
+// line that a live parcel holds.
+//
+// "Live" means not canceled: a canceled parcel's goods never left the building,
+// so its units are still in the warehouse and still sellable, while a shipped,
+// delivered or even RETURNED parcel's units did leave. A returned one coming back
+// is the return flow's receipt and puts its own stock back, so counting it here
+// as still gone is the answer that leaves each act with one effect.
+//
+// 'pending' counts as gone as well. That is deliberate: a pending parcel is one
+// the warehouse is already picking, its stock was deducted at checkout, and
+// treating those units as available would let a cancellation put back goods that
+// are in a box.
+func (q *Queries) CommittedQuantitiesForFulfillments(ctx context.Context, fulfillmentIds []string) ([]CommittedQuantitiesForFulfillmentsRow, error) {
+	rows, err := q.db.Query(ctx, committedQuantitiesForFulfillments, fulfillmentIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CommittedQuantitiesForFulfillmentsRow{}
+	for rows.Next() {
+		var i CommittedQuantitiesForFulfillmentsRow
+		if err := rows.Scan(&i.LineItemID, &i.Quantity); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createFulfillmentItem = `-- name: CreateFulfillmentItem :one
 
 INSERT INTO fulfillment_items (id, fulfillment_id, line_item_id, quantity)

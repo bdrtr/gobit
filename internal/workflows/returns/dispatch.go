@@ -167,7 +167,10 @@ func (w *Workflows) DispatchReplacement(
 	result.FulfillmentID = fulfillmentID
 
 	for i := range held {
-		if err := w.inventory.ConfirmReservation(ctx, held[i].reservationID); err != nil {
+		// No order is named: a replacement's goods leave against a CLAIM, and the
+		// movement's reference exists so that a canceled ORDER line can find the
+		// shelf its units left. There is no such line here.
+		if err := w.inventory.ConfirmReservation(ctx, held[i].reservationID, ""); err != nil {
 			return DispatchResult{}, errors.Wrap(err, errors.KindOf(err), CodeStockNotTaken,
 				"the units of line %s could not be taken out of the count; parcel %s is open "+
 					"and the replacement is NOT recorded as sent",

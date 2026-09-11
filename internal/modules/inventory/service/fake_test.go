@@ -682,11 +682,52 @@ func (f *fakeStore) AppendMovement(ctx context.Context, mv models.Movement) (mod
 		return models.Movement{}, errors.Invalid("fake_movement_replacement_sign",
 			"the schema's CHECK makes a replacement deduct")
 	}
+	if mv.Reason == models.MovementCancellation && mv.Delta <= 0 {
+		return models.Movement{}, errors.Invalid("fake_movement_cancellation_sign",
+			"the schema's CHECK makes a cancellation add")
+	}
+	if (mv.Reference != "") != mv.Reason.CarriesAReference() {
+		return models.Movement{}, errors.Invalid("fake_movement_reference_mismatch",
+			"the schema's CHECKs tie a reference to the reasons that have something to "+
+				"point at, and to nothing else")
+	}
+	// The UNIQUE index, imitated: one cancellation puts its units back once, and
+	// the second delivery of an event writes nothing. Without this the fake would
+	// accept what the database refuses, and a unit test would prove idempotence
+	// that only the schema provides.
+	if mv.Reason == models.MovementCancellation {
+		for i := range f.movements {
+			if f.movements[i].Reason == models.MovementCancellation &&
+				f.movements[i].Reference == mv.Reference {
+				return models.Movement{}, models.ErrMovementAlreadyRecorded
+			}
+		}
+	}
 
 	mv.CreatedAt = time.Now().UTC()
 	f.movements = append(f.movements, mv)
 
 	return mv, nil
+}
+
+// SaleLocations answers where an order's units were deducted from, the way the
+// partial index does: the FIRST sale movement per item wins.
+func (f *fakeStore) SaleLocations(_ context.Context, reference string) (map[string]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := map[string]string{}
+	for i := range f.movements {
+		mv := f.movements[i]
+		if mv.Reason != models.MovementSale || mv.Reference != reference || reference == "" {
+			continue
+		}
+		if _, seen := out[mv.InventoryItemID]; !seen {
+			out[mv.InventoryItemID] = mv.LocationID
+		}
+	}
+
+	return out, nil
 }
 
 // ListMovements pages the item's movements NEWEST FIRST, the way the real

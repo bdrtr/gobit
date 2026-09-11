@@ -284,6 +284,10 @@ type Store interface {
 	// FulfillmentItemsByFulfillments returns the items for MULTIPLE fulfillments
 	// in a SINGLE query (no N+1).
 	FulfillmentItemsByFulfillments(ctx context.Context, fulfillmentIDs []string) ([]models.FulfillmentItem, error)
+	// CommittedQuantities sums, per order line, the units a LIVE parcel holds —
+	// one that was not canceled. It is what a cancellation asks before putting
+	// stock back.
+	CommittedQuantities(ctx context.Context, fulfillmentIDs []string) (map[string]int64, error)
 }
 
 // Options are the service's construction dependencies.

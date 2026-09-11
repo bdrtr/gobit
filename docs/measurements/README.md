@@ -25,6 +25,7 @@ truth: a report says what was true on the day it was taken.
 | [A key bound to a domain — measured 2026-09-11](0131-a-key-bound-to-a-domain.md) | 129 |
 | [A credential is personal data — measured 2026-09-11](0132-a-credential-is-personal-data.md) | 122 |
 | [Proving an address — measured 2026-09-11](0133-proving-an-address.md) | 154 |
+| [The stock of a canceled unit — measured 2026-09-11](0134-the-stock-of-a-canceled-unit.md) | 157 |
 | [The guard moves to the binding — measured 2026-09-10](0120-the-guard-moves-to-the-binding.md) | 126 |
 | [Where the truth about collected money lives — measured 2026-09-10](0119-where-the-truth-about-collected-money-lives.md) | 130 |
 | [A counter in place of a balance — measured 2026-09-10](0118-a-counter-in-place-of-a-balance.md) | 162 |

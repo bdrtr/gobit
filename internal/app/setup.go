@@ -26,6 +26,7 @@ import (
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 	fulfillingwf "github.com/bdrtr/gobit/internal/workflows/fulfilling"
 	invoicingwf "github.com/bdrtr/gobit/internal/workflows/invoicing"
+	ordercancelwf "github.com/bdrtr/gobit/internal/workflows/ordercancel"
 	returnswf "github.com/bdrtr/gobit/internal/workflows/returns"
 )
 
@@ -93,7 +94,7 @@ func describeAPI(title, apiVersion string, modules []module.Module) *openapi.Doc
 // cart and cannot turn it into an order; a server that is up but cannot sell is
 // noticed far later than a server that stops at startup. The error message
 // names the surface that could not be resolved (see cartwf.FromContainer).
-func registerWorkflows(c *container.Container) error {
+func registerWorkflows(c *container.Container, log *slog.Logger) error {
 	cartWorkflows, err := cartwf.FromContainer(c)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeFlowSetupFailed,
@@ -159,7 +160,22 @@ func registerWorkflows(c *container.Container) error {
 			"the return workflow could not be set up")
 	}
 
-	return c.Provide(returnswf.InteropName, returnswf.NewInterop(returnWorkflow))
+	if err := c.Provide(returnswf.InteropName, returnswf.NewInterop(returnWorkflow)); err != nil {
+		return err
+	}
+
+	// The cancellation flow is wired LAST and provides nothing.
+	//
+	// It is the first flow in this repository that only LISTENS: no endpoint, no
+	// interop, no caller. What it needs from being wired is the subscription, which
+	// FromContainer makes — a flow built and not subscribed would silently do
+	// nothing, which is the exact shape this slice exists to remove (ADR 0134).
+	if _, err := ordercancelwf.FromContainer(c, log); err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeFlowSetupFailed,
+			"the cancellation workflow could not be set up")
+	}
+
+	return nil
 }
 
 // registerPanel builds the admin panel and binds its paths.
@@ -517,7 +533,7 @@ func openApplication(
 	// chain of Phases 5-7 — pricing, discounts, tax, payment, fulfillment, the
 	// order.placed notification and the b2b spending limit — is attached to the
 	// production binary exactly here.
-	if err := registerWorkflows(c); err != nil {
+	if err := registerWorkflows(c, log); err != nil {
 		return nil, nil, err
 	}
 

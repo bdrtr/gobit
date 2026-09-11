@@ -284,6 +284,32 @@ func (r *Repository) FulfillmentItemsByFulfillments(
 	return out, nil
 }
 
+// CommittedQuantities sums, per order line, the units a LIVE parcel holds.
+//
+// It is the question a cancellation asks before putting stock back: units in a
+// parcel that was not canceled have left the warehouse, and units nowhere near a
+// parcel are still on the shelf with their stock already deducted.
+func (r *Repository) CommittedQuantities(
+	ctx context.Context,
+	fulfillmentIDs []string,
+) (map[string]int64, error) {
+	if len(fulfillmentIDs) == 0 {
+		return map[string]int64{}, nil
+	}
+
+	rows, err := r.queries(ctx).CommittedQuantitiesForFulfillments(ctx, fulfillmentIDs)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "could not sum the committed quantities")
+	}
+
+	out := make(map[string]int64, len(rows))
+	for i := range rows {
+		out[rows[i].LineItemID] = rows[i].Quantity
+	}
+
+	return out, nil
+}
+
 // --- the manual provider's ledger --------------------------------------------
 
 // InsertManualShipmentIfAbsent writes the provider shipment only if the

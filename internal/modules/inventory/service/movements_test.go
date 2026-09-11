@@ -170,7 +170,7 @@ func TestConfirmingRecordsTheSaleThatTookTheUnits(t *testing.T) {
 		InventoryItemID: itemID, LocationID: locA, Quantity: 4,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.ConfirmReservation(ctx, reservation.ID))
+	require.NoError(t, svc.ConfirmReservation(ctx, reservation.ID, testSaleOrderID))
 
 	ledger := store.movementsFor(itemID)
 	require.Len(t, ledger, 1)
@@ -202,7 +202,9 @@ func TestGoodsSentToSettleAClaimAreNotRecordedAsASale(t *testing.T) {
 	assert.Equal(t, models.PurposeReplacement, reservation.Purpose,
 		"the promise has to KEEP what it was made for; the confirm reads it back")
 
-	require.NoError(t, svc.ConfirmReservation(ctx, reservation.ID))
+	// No order: goods settling a claim leave against the claim, and a reference on
+	// that reason is refused (ADR 0134).
+	require.NoError(t, svc.ConfirmReservation(ctx, reservation.ID, ""))
 
 	ledger := store.movementsFor(itemID)
 	require.Len(t, ledger, 1)
@@ -228,7 +230,7 @@ func TestAPromiseWithNoPurposeIsASale(t *testing.T) {
 		InventoryItemID: itemID, LocationID: locA, Quantity: 1,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.ConfirmReservation(ctx, reservation.ID))
+	require.NoError(t, svc.ConfirmReservation(ctx, reservation.ID, testSaleOrderID))
 
 	ledger := store.movementsFor(itemID)
 	require.Len(t, ledger, 1)
@@ -262,8 +264,8 @@ func TestAnAlreadyConfirmedReservationRecordsNothingTwice(t *testing.T) {
 	store.seedReservation(resID, itemID, locA, 4, models.ReservationActive)
 
 	ctx := context.Background()
-	require.NoError(t, svc.ConfirmReservation(ctx, resID))
-	require.NoError(t, svc.ConfirmReservation(ctx, resID))
+	require.NoError(t, svc.ConfirmReservation(ctx, resID, testSaleOrderID))
+	require.NoError(t, svc.ConfirmReservation(ctx, resID, testSaleOrderID))
 
 	assert.Len(t, store.movementsFor(itemID), 1)
 }
@@ -282,7 +284,7 @@ func TestAFailedTransactionLeavesNoMovement(t *testing.T) {
 	store.seedReservation(resID, itemID, locA, 4, models.ReservationActive)
 	store.failSetReservationStatus = errors.Internal("boom", "the status could not be written")
 
-	require.Error(t, svc.ConfirmReservation(context.Background(), resID))
+	require.Error(t, svc.ConfirmReservation(context.Background(), resID, testSaleOrderID))
 
 	assert.Empty(t, store.movementsFor(itemID),
 		"the movement has to roll back with the count it explains")
@@ -428,4 +430,118 @@ func TestAReasonIsOneOfFour(t *testing.T) {
 // rather than whatever the clock produced between two statements.
 func hoursAgo(h int) time.Time {
 	return time.Now().UTC().Add(-time.Duration(h) * time.Hour)
+}
+
+// testSaleOrderID is the order every test confirmation names.
+//
+// A confirmation writes the order onto its sale movement so that units written
+// off later can find the shelf they left (ADR 0134). A test that passed an empty
+// one would be exercising the replacement path's shape — goods leaving against a
+// claim — while claiming to be a sale.
+const testSaleOrderID = "order_01TESTSALEREFERENCE00"
+
+// TestCanceledUnitsGoBackAsTheirOwnLedgerReason is the sixth reason, read off the
+// row.
+//
+// The arithmetic is a restock's and the FACT is not: nobody counted anything and
+// nothing arrived, so an operator explaining a month's stock has to be able to tell
+// the three apart (ADR 0068, ADR 0134).
+func TestCanceledUnitsGoBackAsTheirOwnLedgerReason(t *testing.T) {
+	svc, store := newService(t)
+	ctx := context.Background()
+	store.seedItem(itemID, "SKU-1")
+	store.seedLocation(locA)
+	store.seedLevel(itemID, locA, 6, 0)
+
+	level, err := svc.ReturnCanceledInventory(ctx, itemID, locA, 2, "olc_01LEDGERREASON000000")
+	require.NoError(t, err)
+	assert.Equal(t, int64(8), level.StockedQuantity, "the units are on the shelf again")
+
+	ledger := store.movementsFor(itemID)
+	require.Len(t, ledger, 1)
+	assert.Equal(t, models.MovementCancellation, ledger[0].Reason)
+	assert.Equal(t, int64(2), ledger[0].Delta, "a cancellation only ever adds")
+	assert.Equal(t, "olc_01LEDGERREASON000000", ledger[0].Reference,
+		"the row says WHICH cancellation put them back, which is what makes it idempotent")
+	assert.Empty(t, ledger[0].ReservationID,
+		"it names no reservation: that one was consumed at checkout")
+}
+
+// TestOneCancellationPutsItsUnitsBackONCE is idempotence, where it actually lives.
+//
+// The event bus delivers at least once and adding stock is deliberately not
+// idempotent anywhere else in this module, so the second delivery has to write
+// nothing — and the thing that refuses it is the LEDGER's uniqueness rather than a
+// check that could read a stale row.
+func TestOneCancellationPutsItsUnitsBackONCE(t *testing.T) {
+	svc, store := newService(t)
+	ctx := context.Background()
+	store.seedItem(itemID, "SKU-1")
+	store.seedLocation(locA)
+	store.seedLevel(itemID, locA, 6, 0)
+
+	_, err := svc.ReturnCanceledInventory(ctx, itemID, locA, 2, "olc_01IDEMPOTENT00000000")
+	require.NoError(t, err)
+
+	_, err = svc.ReturnCanceledInventory(ctx, itemID, locA, 2, "olc_01IDEMPOTENT00000000")
+	require.ErrorIs(t, err, models.ErrMovementAlreadyRecorded,
+		"the second delivery of one cancellation writes nothing")
+
+	levels, err := svc.ListInventoryLevels(ctx, itemID)
+	require.NoError(t, err)
+	require.Len(t, levels, 1)
+	assert.Equal(t, int64(8), levels[0].StockedQuantity,
+		"and the count grew ONCE; a bus that retries must not grow stock")
+	assert.Len(t, store.movementsFor(itemID), 1)
+}
+
+// TestAReferenceOnTheWrongReasonIsRefused holds the pairing.
+//
+// A reference is read as "what this movement was for", so one on a reason that
+// points at nothing is a column an operator would read as meaning something. The
+// check found a real mistake while this slice was written: a test confirmed a
+// REPLACEMENT reservation while naming an order.
+func TestAReferenceOnTheWrongReasonIsRefused(t *testing.T) {
+	svc, store := newService(t)
+	ctx := context.Background()
+	store.seedItem(itemID, "SKU-1")
+	store.seedLocation(locA)
+	store.seedLevel(itemID, locA, 6, 0)
+
+	_, err := svc.RestockInventory(ctx, itemID, locA, 2)
+	require.NoError(t, err, "a restock carries no reference and is accepted")
+
+	ledger := store.movementsFor(itemID)
+	require.Len(t, ledger, 1)
+	assert.Empty(t, ledger[0].Reference,
+		"goods arriving back point at nothing outside the warehouse")
+}
+
+// TestASaleRemembersTheOrderItLeftFor is the way back, one read long.
+//
+// The units of a canceled line have to return to the shelf they left, and the
+// reservation that knew the location is keyed to the CART's line item — which an
+// order does not carry. So the sale movement is what remembers.
+func TestASaleRemembersTheOrderItLeftFor(t *testing.T) {
+	svc, store := newService(t)
+	ctx := context.Background()
+	store.seedItem(itemID, "SKU-1")
+	store.seedLocation(locA)
+	store.seedLevel(itemID, locA, 6, 0)
+
+	reservation, err := svc.Reserve(ctx, service.ReserveInput{
+		InventoryItemID: itemID, LocationID: locA, Quantity: 2,
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.ConfirmReservation(ctx, reservation.ID, testSaleOrderID))
+
+	shelves, err := svc.SaleLocations(ctx, testSaleOrderID)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{itemID: locA}, shelves)
+
+	elsewhere, err := svc.SaleLocations(ctx, "order_01SOMEBODYELSES00000")
+	require.NoError(t, err)
+	assert.Empty(t, elsewhere,
+		"an order whose checkout never deducted anything has nothing to give back, and "+
+			"that is a true answer rather than a fault")
 }

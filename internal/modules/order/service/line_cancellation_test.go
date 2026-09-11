@@ -247,3 +247,86 @@ func TestAnotherOrdersCancellationsAreNotListed(t *testing.T) {
 	require.Len(t, list, 1)
 	assert.Equal(t, "ours", list[0].Reason)
 }
+
+// TestAWriteOffSAYSSoOnTheBus is the half of the act this module can do.
+//
+// It cannot put the stock back — the units live in another module (ADR 0006) — and
+// it cannot ask how many already shipped either. What it can do is say what
+// happened, with everything a listener needs that will not change afterwards
+// (ADR 0134).
+func TestAWriteOffSAYSSoOnTheBus(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	order, lineID := returnedOrder(t, e)
+
+	cancellation, err := e.svc.CancelOrderLine(ctx, order.ID, service.CancelOrderLineInput{
+		OrderLineItemID: lineID, Quantity: 1, Reason: "out of stock",
+	})
+	require.NoError(t, err)
+
+	published := e.bus.eventsNamed(service.EventOrderLineCanceled)
+	require.Len(t, published, 1, "one write-off, one event")
+
+	data := published[0].Data
+	assert.Equal(t, cancellation.ID, data[service.EventFieldCancellationID],
+		"the cancellation's id is what makes putting the stock back idempotent")
+	assert.Equal(t, order.ID, data[service.EventFieldOrderID])
+	assert.Equal(t, lineID, data[service.EventFieldOrderLineItemID])
+	assert.Equal(t, testVariantID, data[service.EventFieldVariantID],
+		"the variant is how a listener reaches the inventory item without reading the order")
+	assert.Equal(t, "1", data[service.EventFieldCanceledQuantity],
+		"every count travels as a decimal STRING: JSON has one number type")
+	assert.Equal(t, "3", data[service.EventFieldBoughtQuantity])
+
+	assert.Equal(t, service.EventOrderLineCanceled+":"+cancellation.ID, published[0].ID,
+		"the event's id comes from the ROW, not the order: a line is written off many "+
+			"times and the outbox drops a duplicate id without a word")
+}
+
+// TestASecondWriteOffSaysWhereItSitsInTheLINE is what keeps two cancellations from
+// putting the same units back twice.
+//
+// The listener caps what it returns by `bought - shipped`, and a second write-off
+// must not re-return what the first did. So the event carries where this row starts
+// rather than only how big it is.
+func TestASecondWriteOffSaysWhereItSitsInTheLINE(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	order, lineID := returnedOrder(t, e)
+
+	for range 2 {
+		_, err := e.svc.CancelOrderLine(ctx, order.ID, service.CancelOrderLineInput{
+			OrderLineItemID: lineID, Quantity: 1, Reason: "out of stock",
+		})
+		require.NoError(t, err)
+	}
+
+	published := e.bus.eventsNamed(service.EventOrderLineCanceled)
+	require.Len(t, published, 2)
+	assert.Equal(t, "0", published[0].Data[service.EventFieldCanceledBefore])
+	assert.Equal(t, "1", published[1].Data[service.EventFieldCanceledBefore],
+		"the second write-off starts where the first ended; a listener that read only "+
+			"the quantity would give back the same unit twice")
+}
+
+// TestTheCANCELLATIONAndItsPromiseCommitTogether is why the outbox row is written
+// inside the transaction.
+//
+// A write-off recorded with no event is stock that stays deducted forever with
+// nothing anywhere saying it should not be. That is the state the outbox exists to
+// prevent, so a failure to write the row fails the write-off.
+func TestTheCANCELLATIONAndItsPromiseCommitTogether(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	order, lineID := returnedOrder(t, e)
+	e.store.outboxErr = errors.New("the outbox is unreachable")
+
+	_, err := e.svc.CancelOrderLine(ctx, order.ID, service.CancelOrderLineInput{
+		OrderLineItemID: lineID, Quantity: 1, Reason: "out of stock",
+	})
+	require.Error(t, err, "no promise, no write-off")
+
+	cancellations, listErr := e.svc.ListLineCancellations(ctx, order.ID)
+	require.NoError(t, listErr)
+	assert.Empty(t, cancellations, "and the row rolled back with it")
+}

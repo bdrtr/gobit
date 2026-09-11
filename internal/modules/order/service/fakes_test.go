@@ -82,6 +82,10 @@ type fakeStore struct {
 	addresses map[string][]models.OrderAddress
 	returns   map[string]models.Return
 	outbox    map[string]outboxRow
+	// outboxErr, when set, makes WriteOutboxEvent fail. A write-off recorded with
+	// no event is stock that stays deducted forever, so the failure has to reach
+	// the caller (ADR 0134).
+	outboxErr error
 	retItems  map[string]models.ReturnItem
 	exchanges map[string]models.Exchange
 	claims    map[string]models.Claim
@@ -1131,6 +1135,10 @@ func (f *fakeStore) WriteOutboxEvent(
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	if f.outboxErr != nil {
+		return f.outboxErr
+	}
+
 	f.recordUndo(ctx, undoEntry(f.outbox, id))
 	f.outbox[id] = outboxRow{ID: id, Name: name, Data: data}
 
@@ -1518,6 +1526,21 @@ type fakeBus struct {
 // That the fake bus satisfies the surface the service expects is verified at
 // compile time.
 var _ service.EventPublisher = (*fakeBus)(nil)
+
+// eventsNamed answers the published events of one topic, in order.
+func (b *fakeBus) eventsNamed(name string) []eventbus.Event {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	out := make([]eventbus.Event, 0, len(b.published))
+	for i := range b.published {
+		if b.published[i].Name == name {
+			out = append(out, b.published[i])
+		}
+	}
+
+	return out
+}
 
 // newFakeBus produces an empty fake bus.
 func newFakeBus() *fakeBus { return &fakeBus{} }

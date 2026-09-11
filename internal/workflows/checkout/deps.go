@@ -312,7 +312,7 @@ type Inventory interface {
 	// ConfirmReservation turns the reservation into deducted inventory. After
 	// this point the inventory cannot be released; a refund is a separate
 	// workflow.
-	ConfirmReservation(ctx context.Context, reservationID string) error
+	ConfirmReservation(ctx context.Context, reservationID, orderID string) error
 }
 
 // Fulfillment is the surface of the fulfillment module ("fulfillment.interop")

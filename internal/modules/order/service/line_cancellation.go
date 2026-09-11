@@ -96,7 +96,12 @@ func (s *Service) CancelOrderLine(
 		return models.OrderLineCancellation{}, err
 	}
 
-	var created models.OrderLineCancellation
+	var (
+		created   models.OrderLineCancellation
+		variantID string
+		before    int64
+		bought    int64
+	)
 
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
 		if _, lockErr := s.requireLiveOrder(ctx, orderID, "a line cancellation"); lockErr != nil {
@@ -116,6 +121,18 @@ func (s *Service) CancelOrderLine(
 			return err
 		}
 
+		// The CANCELED sum alone, not [Service.unitsSpokenFor]'s total.
+		//
+		// The event carries where this row sits among the line's cancellations, so
+		// that a second one does not put back units the first already put back. A
+		// total that included RETURNS would be the wrong ruler: returned goods are
+		// restocked by the returns flow when they physically arrive, and counting
+		// them here would make every cancellation after a return give back too few.
+		canceledBefore, sumErr := s.store.CanceledQuantities(ctx, []string{in.OrderLineItemID})
+		if sumErr != nil {
+			return sumErr
+		}
+
 		var createErr error
 		created, createErr = s.store.CreateLineCancellation(ctx, models.OrderLineCancellation{
 			ID:              models.NewLineCancellationID(),
@@ -124,14 +141,50 @@ func (s *Service) CancelOrderLine(
 			Reason:          reason,
 			Note:            in.Note,
 		})
+		if createErr != nil {
+			return createErr
+		}
 
-		return createErr
+		line, found := lineByID(lines, in.OrderLineItemID)
+		if !found {
+			// checkCancelQuantity has already refused a line that is not on the
+			// order, so reaching here means the two disagree — which is a bug in
+			// this function rather than a caller's mistake.
+			return errors.Internal(CodeInconsistentState,
+				"line %s passed the cancellation ceiling and is not on order %s",
+				in.OrderLineItemID, orderID)
+		}
+
+		variantID = line.VariantID
+		before = canceledBefore[in.OrderLineItemID]
+		bought = line.Quantity
+
+		// The outbox row is written INSIDE this transaction, so a cancellation
+		// cannot commit without its promise to say so (ADR 0134). A failure here
+		// fails the write-off, because a write-off with no event is stock that
+		// stays deducted forever with nothing anywhere saying it should not be.
+		return s.recordLineCanceled(ctx, orderID, created, variantID, before, bought)
 	})
 	if err != nil {
 		return models.OrderLineCancellation{}, err
 	}
 
+	// Published AFTER the commit, so a subscriber cannot read a cancellation that
+	// is not there yet. The outbox row covers a lost publish; this is the fast path.
+	s.publishLineCanceled(ctx, orderID, created, variantID, before, bought)
+
 	return created, nil
+}
+
+// lineByID finds a line on the order.
+func lineByID(lines []models.OrderLineItem, id string) (models.OrderLineItem, bool) {
+	for i := range lines {
+		if lines[i].ID == id {
+			return lines[i], true
+		}
+	}
+
+	return models.OrderLineItem{}, false
 }
 
 // ListLineCancellations returns the order's line cancellations, oldest first.

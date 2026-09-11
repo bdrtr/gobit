@@ -69,7 +69,7 @@ func (s *Service) SetInventoryLevel(ctx context.Context, itemID, locationID stri
 		}
 
 		updated, err := s.writeQuantities(ctx, level, stockedQty, level.ReservedQuantity,
-			models.MovementStockCount, "")
+			models.MovementStockCount, "", "")
 		if err != nil {
 			return err
 		}
@@ -172,7 +172,7 @@ func (s *Service) adjust(
 				newStocked, level.StockedQuantity, level.ReservedQuantity)
 		}
 
-		updated, err := s.writeQuantities(ctx, level, newStocked, level.ReservedQuantity, reason, "")
+		updated, err := s.writeQuantities(ctx, level, newStocked, level.ReservedQuantity, reason, "", "")
 		if err != nil {
 			return err
 		}
@@ -403,7 +403,7 @@ func (s *Service) Reserve(ctx context.Context, in ReserveInput) (models.Reservat
 		// No movement: a reservation promises stock, it does not move it. The
 		// physical count is unchanged, and inventory_reservations is already
 		// this fact's record (ADR 0068).
-		if _, err := s.writeQuantities(ctx, level, level.StockedQuantity, newReserved, "", ""); err != nil {
+		if _, err := s.writeQuantities(ctx, level, level.StockedQuantity, newReserved, "", "", ""); err != nil {
 			return err
 		}
 
@@ -491,7 +491,7 @@ func (s *Service) ReleaseReservation(ctx context.Context, reservationID string) 
 
 		// No movement, for the mirror of Reserve's reason: the promise is given
 		// back and the goods never left.
-		if _, err := s.writeQuantities(ctx, level, level.StockedQuantity, newReserved, "", ""); err != nil {
+		if _, err := s.writeQuantities(ctx, level, level.StockedQuantity, newReserved, "", "", ""); err != nil {
 			return err
 		}
 		return s.store.SetReservationStatus(ctx, reservationID, models.ReservationReleased)
@@ -507,7 +507,7 @@ func (s *Service) ReleaseReservation(ctx context.Context, reservationID string) 
 //
 // Kilitler rezervasyon -> kalem -> seviye sırasında alınır (bkz. [Store]
 // "Kilit sırası"); kalem kilidi seviye kilidinden ÖNCE gelir.
-func (s *Service) ConfirmReservation(ctx context.Context, reservationID string) error {
+func (s *Service) ConfirmReservation(ctx context.Context, reservationID, orderID string) error {
 	if err := requireText("reservation_id", reservationID); err != nil {
 		return err
 	}
@@ -557,8 +557,18 @@ func (s *Service) ConfirmReservation(ctx context.Context, reservationID string) 
 		// satış olarak, bir talebi karşılamak için ayrılmış stok yerine gönderim
 		// olarak düşülür. Onayın burada bir seçimi yok, çünkü seçim rezervasyon
 		// yazılırken yapıldı.
+		// The ORDER is written onto the movement, and it is the only thing on this
+		// row that points outside the warehouse.
+		//
+		// It exists so that units written off later can go back to the shelf they
+		// left. The reservation knew the location and is keyed to the CART's line
+		// item, which an order does not carry — so without this the way back is a
+		// chain through three modules, and with it it is one read.
+		//
+		// It may be empty: a replacement's goods leave against a claim rather than
+		// an order, and a caller with no order to name says so by naming none.
 		if _, err := s.writeQuantities(ctx, level, newStocked, newReserved,
-			reservation.Purpose.MovementReason(), reservationID); err != nil {
+			reservation.Purpose.MovementReason(), reservationID, orderID); err != nil {
 			return err
 		}
 		return s.store.SetReservationStatus(ctx, reservationID, models.ReservationConfirmed)
@@ -619,4 +629,88 @@ func addQuantity(current, delta int64) (int64, error) {
 			"adet taşması: %d + %d int64 sınırını aşıyor", current, delta)
 	}
 	return current + delta, nil
+}
+
+// ReturnCanceledInventory puts back units that were deducted and will not leave.
+//
+// # Why it is neither an adjustment nor a restock
+//
+// The arithmetic is a restock's and the FACT is not. Nothing arrived: the units
+// never left the building, and what changed is that the promise to send them was
+// withdrawn. An operator reading the ledger to explain a month's stock is asking
+// which of the three it was, and the ledger answers by reason (ADR 0068).
+//
+// # It is IDEMPOTENT, and it is the only stock write that is
+//
+// It is driven by an event, and the bus delivers at least once. Adding stock is
+// deliberately not idempotent everywhere else — two restocks mean two physical
+// arrivals — so the second delivery of one cancellation has to write nothing. The
+// cancellation's own id is the movement's reference and the ledger holds it
+// unique, so the duplicate is refused by the DATABASE rather than by a check that
+// could read a stale row.
+//
+// A second delivery returns [models.ErrMovementAlreadyRecorded], which is not a
+// failure: it says the units are already back.
+func (s *Service) ReturnCanceledInventory(
+	ctx context.Context, itemID, locationID string, quantity int64, cancellationID string,
+) (models.InventoryLevel, error) {
+	if quantity <= 0 {
+		return models.InventoryLevel{}, errors.Invalid(CodeInvalidInput,
+			"the canceled quantity has to be positive: %d (item %s)", quantity, itemID)
+	}
+	if err := requireText("cancellation_id", cancellationID); err != nil {
+		return models.InventoryLevel{}, err
+	}
+	if err := requireIDs(itemID, locationID); err != nil {
+		return models.InventoryLevel{}, err
+	}
+
+	var out models.InventoryLevel
+	err := s.store.WithTx(ctx, func(ctx context.Context) error {
+		if err := s.requireOpenLocation(ctx, locationID); err != nil {
+			return err
+		}
+		if err := s.store.LockInventoryItemShared(ctx, itemID); err != nil {
+			return err
+		}
+
+		level, err := s.store.LockInventoryLevel(ctx, itemID, locationID)
+		if err != nil {
+			return err
+		}
+
+		newStocked, err := addQuantity(level.StockedQuantity, quantity)
+		if err != nil {
+			return err
+		}
+
+		updated, err := s.writeQuantities(ctx, level, newStocked, level.ReservedQuantity,
+			models.MovementCancellation, "", cancellationID)
+		if err != nil {
+			return err
+		}
+		out = updated
+
+		return nil
+	})
+	if err != nil {
+		return models.InventoryLevel{}, err
+	}
+
+	return out, nil
+}
+
+// SaleLocations answers where an order's units were taken from, per inventory
+// item.
+//
+// The map is empty rather than an error for an order whose stock was never
+// deducted — a saga that failed before its last step leaves reservations and no
+// sale — because "nothing left from anywhere" is a true answer and a caller that
+// had to tell it apart from a fault would have nothing to do with the difference.
+func (s *Service) SaleLocations(ctx context.Context, orderID string) (map[string]string, error) {
+	if err := requireText("order_id", orderID); err != nil {
+		return nil, err
+	}
+
+	return s.store.SaleLocations(ctx, orderID)
 }

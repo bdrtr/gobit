@@ -20,3 +20,25 @@ ORDER BY id;
 SELECT * FROM fulfillment_items
 WHERE fulfillment_id = ANY (sqlc.arg('fulfillment_ids')::text[])
 ORDER BY fulfillment_id, id;
+
+-- CommittedQuantitiesForFulfillments sums, per order line, the units of that
+-- line that a live parcel holds.
+--
+-- "Live" means not canceled: a canceled parcel's goods never left the building,
+-- so its units are still in the warehouse and still sellable, while a shipped,
+-- delivered or even RETURNED parcel's units did leave. A returned one coming back
+-- is the return flow's receipt and puts its own stock back, so counting it here
+-- as still gone is the answer that leaves each act with one effect.
+--
+-- 'pending' counts as gone as well. That is deliberate: a pending parcel is one
+-- the warehouse is already picking, its stock was deducted at checkout, and
+-- treating those units as available would let a cancellation put back goods that
+-- are in a box.
+-- name: CommittedQuantitiesForFulfillments :many
+SELECT i.line_item_id, SUM(i.quantity)::bigint AS quantity
+FROM fulfillment_items i
+JOIN fulfillments f ON f.id = i.fulfillment_id
+WHERE i.fulfillment_id = ANY (sqlc.arg('fulfillment_ids')::text[])
+  AND f.status <> 'canceled'
+GROUP BY i.line_item_id
+ORDER BY i.line_item_id;

@@ -59,7 +59,7 @@ var migrationsRoot = mustSub(migrationFiles, "migrations")
 //
 // So the list is written out, and it is the WHOLE set: a static census of every
 // eventbus.Event this repository can publish resolves to exactly this slice —
-// the six topics plugins/webhookout forwards.
+// the seven topics plugins/webhookout forwards.
 //
 // The number and the path sit on ONE line deliberately. It is the only place
 // the size is written, and the count gate is LINE-ANCHORED: a sentence whose
@@ -99,6 +99,7 @@ var ForwardedTopics = []string{
 	topicProductCreated,
 	topicProductUpdated,
 	topicProductDeleted,
+	topicOrderLineCanceled,
 }
 
 // The topics, as constants the arch gates can resolve.
@@ -124,6 +125,18 @@ const (
 	topicProductUpdated = "product.updated"
 	// topicProductDeleted is published when a product is SOFT deleted.
 	topicProductDeleted = "product.deleted"
+	// topicOrderLineCanceled is published when units of an order line are
+	// written off (ADR 0134).
+	//
+	// It carries the order, the line, the variant and three counts, and no money
+	// and no personal data — so it needs no new redaction rule. The counts are
+	// facts of an immutable row rather than increments, which is why the publisher
+	// carries them at all where the payment events carry none.
+	//
+	// Forwarding it was not a choice this plugin got to make: a topic published
+	// and not forwarded is a build failure here, in both directions, and rightly
+	// so. A receiver cannot even REGISTER for a name this list omits.
+	topicOrderLineCanceled = "order.line_canceled"
 )
 
 // redactedFields are the payload fields that never leave this installation, and

@@ -745,6 +745,31 @@ func (f *fakeStore) FulfillmentItemsByFulfillments(
 	return out, nil
 }
 
+// CommittedQuantities sums the units of LIVE parcels per line, the way the SQL
+// does: a canceled parcel's goods never left, so its items do not count.
+func (f *fakeStore) CommittedQuantities(
+	_ context.Context,
+	fulfillmentIDs []string,
+) (map[string]int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := map[string]int64{}
+	for _, id := range slices.Sorted(maps.Keys(f.items)) {
+		item := f.items[id]
+		if !slices.Contains(fulfillmentIDs, item.FulfillmentID) {
+			continue
+		}
+		parcel, known := f.fuls[item.FulfillmentID]
+		if known && parcel.Status == models.StatusCanceled {
+			continue
+		}
+		out[item.LineItemID] += item.Quantity
+	}
+
+	return out, nil
+}
+
 // paginate applies limit/offset to an in-memory list.
 func paginate[T any](items []T, limit, offset int64) []T {
 	if offset >= int64(len(items)) {

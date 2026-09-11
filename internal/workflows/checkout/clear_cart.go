@@ -132,7 +132,8 @@ func (s *clearCartStep) Invoke(ctx context.Context, sc *workflow.StepContext) (a
 	for i := range refs {
 		result.ReservationIDs = append(result.ReservationIDs, refs[i].ReservationID)
 
-		if confirmErr := s.w.inventory.ConfirmReservation(ctx, refs[i].ReservationID); confirmErr != nil {
+		if confirmErr := s.w.inventory.ConfirmReservation(
+			ctx, refs[i].ReservationID, result.OrderID); confirmErr != nil {
 			confirmed = false
 			s.w.log.ErrorContext(ctx, "the reservation could not be confirmed; the order is VALID, manual repair is required",
 				"cart_id", s.plan.CartID, "order_id", result.OrderID,

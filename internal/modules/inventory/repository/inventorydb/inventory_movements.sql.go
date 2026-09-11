@@ -14,9 +14,11 @@ import (
 const appendMovement = `-- name: AppendMovement :one
 
 INSERT INTO inventory_movements (
-    id, inventory_item_id, location_id, reservation_id, reason, delta, stocked_after
-) VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, inventory_item_id, location_id, reservation_id, reason, delta, stocked_after, created_at
+    id, inventory_item_id, location_id, reservation_id, reason, delta, stocked_after,
+    reference
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (reference) WHERE reason = 'cancellation' DO NOTHING
+RETURNING id, inventory_item_id, location_id, reservation_id, reason, delta, stocked_after, created_at, reference
 `
 
 type AppendMovementParams struct {
@@ -27,6 +29,7 @@ type AppendMovementParams struct {
 	Reason          string
 	Delta           int64
 	StockedAfter    int64
+	Reference       *string
 }
 
 // inventory_movements queries.
@@ -50,6 +53,7 @@ func (q *Queries) AppendMovement(ctx context.Context, arg AppendMovementParams) 
 		arg.Reason,
 		arg.Delta,
 		arg.StockedAfter,
+		arg.Reference,
 	)
 	var i InventoryMovement
 	err := row.Scan(
@@ -61,12 +65,13 @@ func (q *Queries) AppendMovement(ctx context.Context, arg AppendMovementParams) 
 		&i.Delta,
 		&i.StockedAfter,
 		&i.CreatedAt,
+		&i.Reference,
 	)
 	return i, err
 }
 
 const listMovementsForItem = `-- name: ListMovementsForItem :many
-SELECT id, inventory_item_id, location_id, reservation_id, reason, delta, stocked_after, created_at FROM inventory_movements
+SELECT id, inventory_item_id, location_id, reservation_id, reason, delta, stocked_after, created_at, reference FROM inventory_movements
 WHERE inventory_item_id = $1::text
   AND ($2::text IS NULL
        OR location_id = $2::text)
@@ -125,7 +130,51 @@ func (q *Queries) ListMovementsForItem(ctx context.Context, arg ListMovementsFor
 			&i.Delta,
 			&i.StockedAfter,
 			&i.CreatedAt,
+			&i.Reference,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const saleLocationsForReference = `-- name: SaleLocationsForReference :many
+SELECT DISTINCT ON (inventory_item_id) inventory_item_id, location_id
+FROM inventory_movements
+WHERE reason = 'sale' AND reference = $1::text
+ORDER BY inventory_item_id, created_at, id
+`
+
+type SaleLocationsForReferenceRow struct {
+	InventoryItemID string
+	LocationID      string
+}
+
+// SaleLocationsForReference answers where an order's units were taken from.
+//
+// One row per inventory item, holding the location the SALE deducted from. It is
+// the way back for a cancellation: the units have to return to the shelf they
+// left, and the reservation that knew the location is keyed to the CART's line
+// item, which the order does not carry.
+//
+// DISTINCT ON rather than a GROUP BY, because what is wanted is one location per
+// item and an order with two sale movements for one item at two locations has a
+// real answer for each — the first is taken and the caller is told nothing about
+// the second, which is a limit the record states rather than hides.
+func (q *Queries) SaleLocationsForReference(ctx context.Context, reference string) ([]SaleLocationsForReferenceRow, error) {
+	rows, err := q.db.Query(ctx, saleLocationsForReference, reference)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SaleLocationsForReferenceRow{}
+	for rows.Next() {
+		var i SaleLocationsForReferenceRow
+		if err := rows.Scan(&i.InventoryItemID, &i.LocationID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -930,7 +930,7 @@ func TestConfirmReservationStoktanDuser(t *testing.T) {
 	oncekiAvailable, err := svc.AvailableQuantity(ctx, item.ID)
 	require.NoError(t, err)
 
-	require.NoError(t, svc.ConfirmReservation(ctx, res.ID))
+	require.NoError(t, svc.ConfirmReservation(ctx, res.ID, testSaleOrderID))
 
 	levels, err := svc.ListInventoryLevels(ctx, item.ID)
 	require.NoError(t, err)
@@ -944,7 +944,7 @@ func TestConfirmReservationStoktanDuser(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, models.ReservationConfirmed, onaylanan.Status)
 
-	require.NoError(t, svc.ConfirmReservation(ctx, res.ID), "onay idempotent olmalı")
+	require.NoError(t, svc.ConfirmReservation(ctx, res.ID, testSaleOrderID), "onay idempotent olmalı")
 	assert.Equal(t, int64(6), stokAdedi(ctx, t, item.ID, loc.ID),
 		"ikinci onay stoğu bir kez daha düşürmemeli")
 

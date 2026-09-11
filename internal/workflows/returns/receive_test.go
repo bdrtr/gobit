@@ -273,7 +273,7 @@ func (s *stubInventory) ReserveForReplacement(
 }
 
 // ConfirmReservation records the confirm and applies the scripted behavior.
-func (s *stubInventory) ConfirmReservation(_ context.Context, reservationID string) error {
+func (s *stubInventory) ConfirmReservation(_ context.Context, reservationID, _ string) error {
 	s.confirmed = append(s.confirmed, reservationID)
 
 	return s.confirmErr

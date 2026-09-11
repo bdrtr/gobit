@@ -87,7 +87,7 @@ func TestGoodsSentToSettleAClaimAreTheirOwnLedgerReason(t *testing.T) {
 	svc := replacementService(t)
 
 	reservation, item := heldForAClaim(ctx, t, svc)
-	require.NoError(t, svc.ConfirmReservation(ctx, reservation.ID))
+	require.NoError(t, svc.ConfirmReservation(ctx, reservation.ID, noSaleOrder))
 
 	var (
 		reason        string
@@ -163,7 +163,7 @@ func TestAReplacementMovementCannotAddUnits(t *testing.T) {
 	svc := replacementService(t)
 
 	reservation, item := heldForAClaim(ctx, t, svc)
-	require.NoError(t, svc.ConfirmReservation(ctx, reservation.ID))
+	require.NoError(t, svc.ConfirmReservation(ctx, reservation.ID, noSaleOrder))
 
 	_, err := testPool.Pool().Exec(ctx,
 		`UPDATE inventory_movements SET delta = 4 WHERE inventory_item_id = $1`, item.ID)
@@ -182,7 +182,7 @@ func TestUnitsLeavingAgainstAPromiseNameIt(t *testing.T) {
 	svc := replacementService(t)
 
 	reservation, item := heldForAClaim(ctx, t, svc)
-	require.NoError(t, svc.ConfirmReservation(ctx, reservation.ID))
+	require.NoError(t, svc.ConfirmReservation(ctx, reservation.ID, noSaleOrder))
 
 	_, err := testPool.Pool().Exec(ctx,
 		`UPDATE inventory_movements SET reservation_id = NULL WHERE inventory_item_id = $1`,
@@ -196,3 +196,12 @@ func TestUnitsLeavingAgainstAPromiseNameIt(t *testing.T) {
 	require.Error(t, err, "a warehouse correction has no promise to name")
 	assert.Contains(t, err.Error(), "inventory_movements_promise_names_its_reservation")
 }
+
+// noSaleOrder is the empty order a REPLACEMENT confirmation names.
+//
+// Goods settling a claim leave against the claim, not against an order, and the
+// movement's reference exists so a canceled ORDER line can find the shelf its
+// units left (ADR 0134). Passing an order here would put a reference on a reason
+// that has nothing to point at, which the service refuses — it is how this file
+// found the pairing check.
+const noSaleOrder = ""

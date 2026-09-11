@@ -224,7 +224,7 @@ func TestTheLocationLockComesFirst(t *testing.T) {
 			return svc.ReleaseReservation(ctx, resID)
 		}},
 		{"ConfirmReservation", func(ctx context.Context, svc *service.Service) error {
-			return svc.ConfirmReservation(ctx, resID)
+			return svc.ConfirmReservation(ctx, resID, testSaleOrderID)
 		}},
 	}
 

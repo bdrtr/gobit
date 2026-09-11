@@ -215,7 +215,7 @@ func TestAConfirmedReservationLeavesASaleThatNamesIt(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, afterReserve, 1, "a reservation is not a movement; only the opening count is here")
 
-	require.NoError(t, svc.ConfirmReservation(ctx, reservation.ID))
+	require.NoError(t, svc.ConfirmReservation(ctx, reservation.ID, testSaleOrderID))
 
 	got, err := svc.ListMovements(ctx, service.ListMovementsInput{InventoryItemID: item.ID})
 	require.NoError(t, err)
@@ -421,4 +421,150 @@ func movementCount(ctx context.Context, t *testing.T, itemID string) int {
 	require.NoError(t, err, "the ledger could not be counted")
 
 	return count
+}
+
+// testSaleOrderID is the order the integration confirmations name; see the unit
+// lane's constant for why it is not empty.
+const testSaleOrderID = "order_01TESTSALEREFERENCE00"
+
+// TestOneCancellationPutsItsUnitsBackOnceAgainstTheDatabase is the UNIQUE index,
+// executed.
+//
+// The unit lane proves the service reports a duplicate; only the database proves
+// that two of them cannot both land. That matters because the second delivery of an
+// event is the ordinary case rather than an edge: the bus delivers at least once,
+// and every other way of adding stock in this module grows it on each retry.
+func TestOneCancellationPutsItsUnitsBackOnceAgainstTheDatabase(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+	item, loc := addItem(ctx, t, svc), addLocation(ctx, t, svc)
+	_, err := svc.SetInventoryLevel(ctx, item.ID, loc.ID, 10)
+	require.NoError(t, err)
+
+	const cancellationID = "olc_01REALIDEMPOTENCE000"
+
+	level, err := svc.ReturnCanceledInventory(ctx, item.ID, loc.ID, 3, cancellationID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(13), level.StockedQuantity)
+
+	_, err = svc.ReturnCanceledInventory(ctx, item.ID, loc.ID, 3, cancellationID)
+	require.ErrorIs(t, err, models.ErrMovementAlreadyRecorded,
+		"the ledger's own uniqueness refuses the duplicate")
+
+	levels, err := svc.ListInventoryLevels(ctx, item.ID)
+	require.NoError(t, err)
+	require.Len(t, levels, 1)
+	assert.Equal(t, int64(13), levels[0].StockedQuantity,
+		"the count grew ONCE against a real database")
+
+	got, err := svc.ListMovements(ctx, service.ListMovementsInput{InventoryItemID: item.ID})
+	require.NoError(t, err)
+	cancellations := 0
+	for i := range got {
+		if got[i].Reason == models.MovementCancellation {
+			cancellations++
+			assert.Equal(t, cancellationID, got[i].Reference)
+			assert.Positive(t, got[i].Delta, "a cancellation only ever adds")
+		}
+	}
+	assert.Equal(t, 1, cancellations, "one row, not two")
+}
+
+// TestTwoCancellationsOfOneLineEachGetTheirOwnRow keeps the uniqueness from being
+// too wide.
+//
+// The index is on the reference for the cancellation reason only. Two different
+// write-offs of the same line are two references and two rows; making them one
+// would lose the second one's units.
+func TestTwoCancellationsOfOneLineEachGetTheirOwnRow(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+	item, loc := addItem(ctx, t, svc), addLocation(ctx, t, svc)
+	_, err := svc.SetInventoryLevel(ctx, item.ID, loc.ID, 10)
+	require.NoError(t, err)
+
+	for _, id := range []string{"olc_01FIRSTWRITEOFF00000", "olc_01SECONDWRITEOFF0000"} {
+		_, err := svc.ReturnCanceledInventory(ctx, item.ID, loc.ID, 2, id)
+		require.NoError(t, err)
+	}
+
+	levels, err := svc.ListInventoryLevels(ctx, item.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(14), levels[0].StockedQuantity, "both write-offs came back")
+}
+
+// TestASaleRemembersItsOrderAgainstTheDatabase is the way back, on a real row.
+//
+// The location a cancellation returns units to is the one the SALE deducted from,
+// and the sale is the only row that knows both — the reservation is keyed to the
+// CART's line item, which an order does not carry (ADR 0134).
+func TestASaleRemembersItsOrderAgainstTheDatabase(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+	item, loc := addItem(ctx, t, svc), addLocation(ctx, t, svc)
+	_, err := svc.SetInventoryLevel(ctx, item.ID, loc.ID, 10)
+	require.NoError(t, err)
+
+	// Its OWN order id. testSaleOrderID is shared by every confirmation in this
+	// package, and SaleLocations asks by order — so reusing it here would find
+	// another test's sale movements and pass or fail depending on what else ran.
+	// It passed alone and failed in the full suite, which is the shape this
+	// repository already records: running a new integration test with -run is not
+	// running it.
+	const orderID = "order_01SALEREMEMBERSITS00"
+
+	reservation, err := svc.Reserve(ctx, service.ReserveInput{
+		InventoryItemID: item.ID, LocationID: loc.ID, Quantity: 3,
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.ConfirmReservation(ctx, reservation.ID, orderID))
+
+	shelves, err := svc.SaleLocations(ctx, orderID)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{item.ID: loc.ID}, shelves)
+
+	empty, err := svc.SaleLocations(ctx, "order_01NEVERDEDUCTED0000")
+	require.NoError(t, err)
+	assert.Empty(t, empty,
+		"an order whose checkout never reached its last step has nothing deducted, and "+
+			"an empty map is the true answer rather than a fault")
+}
+
+// TestTheCHECKsRefuseACancellationTheStoreWouldNeverWrite goes around the service:
+// the CHECKs are the FLOOR under the Go code.
+func TestTheCHECKsRefuseACancellationTheStoreWouldNeverWrite(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+	item, loc := addItem(ctx, t, svc), addLocation(ctx, t, svc)
+	_, err := svc.SetInventoryLevel(ctx, item.ID, loc.ID, 10)
+	require.NoError(t, err)
+
+	for _, tc := range []struct{ name, values string }{
+		{
+			"a cancellation that deducts",
+			`'mv_1', '` + item.ID + `', '` + loc.ID + `', NULL, 'cancellation', -2, 8, 'olc_x'`,
+		},
+		{
+			"a cancellation with no reference",
+			`'mv_2', '` + item.ID + `', '` + loc.ID + `', NULL, 'cancellation', 2, 12, NULL`,
+		},
+		{
+			"a reference that is blank",
+			`'mv_3', '` + item.ID + `', '` + loc.ID + `', NULL, 'cancellation', 2, 12, '   '`,
+		},
+		{
+			"a reason nobody defined",
+			`'mv_4', '` + item.ID + `', '` + loc.ID + `', NULL, 'shrinkage', 2, 12, NULL`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, execErr := testPool.Pool().Exec(ctx,
+				`INSERT INTO inventory_movements
+				 (id, inventory_item_id, location_id, reservation_id, reason, delta,
+				  stocked_after, reference) VALUES (`+tc.values+`)`)
+
+			require.Error(t, execErr,
+				"the CHECK has to refuse it even when nothing in Go does")
+		})
+	}
 }

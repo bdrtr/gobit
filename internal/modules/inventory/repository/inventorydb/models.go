@@ -39,6 +39,7 @@ type InventoryMovement struct {
 	Delta           int64
 	StockedAfter    int64
 	CreatedAt       pgtype.Timestamptz
+	Reference       *string
 }
 
 type InventoryReservation struct {

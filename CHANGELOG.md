@@ -20,6 +20,20 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **İptal edilen birimler artık RAFA geri dönüyor** (ADR 0134). Checkout'un son
+  adımı rezervasyonları onaylıyor, yani stoku DÜŞÜYOR — o hâlde var olan bir
+  siparişin birimleri satılabilir sayıdan çıkmış oluyor, ve sonradan silinen bir
+  satır hem kimsenin göndermeyeceği hem de stok sayılmayan bir birim. Hiçbir şey
+  onu geri koymuyordu: ne tam sipariş iptali, ne ADR 0113'ün kısmi iptali, ve
+  order modülü koyamaz (birimler başka bir modülde). Artık order
+  `order.line_canceled` yayımlıyor (outbox + doğrudan) ve YENİ bir akış abone
+  oluyor: fulfillment'a canlı kolinin kaç birim tuttuğunu soruyor ve
+  `min(iptal toplamı, alınan − kolideki)`'nin artışını geri koyuyor — yani ikinci
+  iptal çifte saymıyor ve sevk edilmiş birim rafa dönmüyor. Deponun İLK yalnızca
+  dinleyen akışı. Stok geri koyma ilk kez İDEMPOTENT: veri yolu en az bir kez
+  teslim ediyor, o yüzden iptal kimliği hareketin referansı ve defter onu tekil
+  tutuyor (D70).
+
 - **Bir müşteri artık KENDİ hesabını açabiliyor** (ADR 0133).
   `contrib/identity-session` yalnızca giriş yapıyor ve bir operatörün kimlik
   bilgisi yazmasına izin veriyordu; bir müşteri hesap açamıyordu. İki uç eklendi:

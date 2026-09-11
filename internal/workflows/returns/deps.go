@@ -167,7 +167,7 @@ type Inventory interface {
 	) (reservationID string, err error)
 	// ConfirmReservation turns the promise into deducted stock. It is
 	// idempotent: confirming a confirmed promise does nothing.
-	ConfirmReservation(ctx context.Context, reservationID string) error
+	ConfirmReservation(ctx context.Context, reservationID, orderID string) error
 	// ReleaseReservation gives the units back. It is idempotent.
 	ReleaseReservation(ctx context.Context, reservationID string) error
 }

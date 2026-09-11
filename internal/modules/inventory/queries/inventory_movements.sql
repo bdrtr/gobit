@@ -13,8 +13,10 @@
 -- together or neither does.
 -- name: AppendMovement :one
 INSERT INTO inventory_movements (
-    id, inventory_item_id, location_id, reservation_id, reason, delta, stocked_after
-) VALUES ($1, $2, $3, $4, $5, $6, $7)
+    id, inventory_item_id, location_id, reservation_id, reason, delta, stocked_after,
+    reference
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (reference) WHERE reason = 'cancellation' DO NOTHING
 RETURNING *;
 
 -- ListMovementsForItem pages one item's movements, newest first.
@@ -43,3 +45,20 @@ WHERE inventory_item_id = sqlc.arg('inventory_item_id')::text
   )
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('row_limit')::bigint;
+
+-- SaleLocationsForReference answers where an order's units were taken from.
+--
+-- One row per inventory item, holding the location the SALE deducted from. It is
+-- the way back for a cancellation: the units have to return to the shelf they
+-- left, and the reservation that knew the location is keyed to the CART's line
+-- item, which the order does not carry.
+--
+-- DISTINCT ON rather than a GROUP BY, because what is wanted is one location per
+-- item and an order with two sale movements for one item at two locations has a
+-- real answer for each — the first is taken and the caller is told nothing about
+-- the second, which is a limit the record states rather than hides.
+-- name: SaleLocationsForReference :many
+SELECT DISTINCT ON (inventory_item_id) inventory_item_id, location_id
+FROM inventory_movements
+WHERE reason = 'sale' AND reference = sqlc.arg('reference')::text
+ORDER BY inventory_item_id, created_at, id;

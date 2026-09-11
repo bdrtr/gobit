@@ -4,6 +4,7 @@ package models
 // and every new file is English; models.go next to it is already English too.
 
 import (
+	"errors"
 	"time"
 
 	"github.com/bdrtr/gobit/internal/core/page"
@@ -52,17 +53,54 @@ const (
 	// of its own because an operator reading the ledger to explain a month's
 	// stock is asking which of the two it was.
 	MovementReplacement MovementReason = "replacement"
+	// MovementCancellation is stock coming back from units that were deducted
+	// and will never leave: a line canceled after the checkout confirmed its
+	// reservation. It names no reservation — that one was consumed — and its
+	// delta is always positive.
+	//
+	// It is a reason of its own rather than a positive adjustment because the
+	// ledger's whole point is that the arithmetic and the FACT are different
+	// things: an operator reading 'adjustment' sees a warehouse correction and
+	// one reading 'return_restock' sees goods a customer sent back, and neither
+	// happened here — nobody counted anything and nothing arrived.
+	MovementCancellation MovementReason = "cancellation"
 )
+
+// ErrMovementAlreadyRecorded is a movement whose reference is already in the
+// ledger.
+//
+// It is not a failure. The only reason that carries a unique reference is a
+// cancellation, and a cancellation arrives on the event bus — which delivers at
+// least once. Adding stock is deliberately not idempotent, so the SECOND delivery
+// has to write nothing, and the caller has to be able to tell that from a write
+// that silently did nothing for a reason nobody chose.
+var ErrMovementAlreadyRecorded = errors.New(
+	"inventory: that movement is already in the ledger")
 
 // Valid reports whether the reason is a defined value.
 func (r MovementReason) Valid() bool {
 	switch r {
 	case MovementStockCount, MovementAdjustment, MovementSale, MovementReturnRestock,
-		MovementReplacement:
+		MovementReplacement, MovementCancellation:
 		return true
 	default:
 		return false
 	}
+}
+
+// CarriesAReference reports whether the reason names what the movement was FOR.
+//
+// A sale points at the order whose checkout deducted the units, and a
+// cancellation at the row that wrote them off. The other four point at nothing:
+// an operator's count, an operator's correction, goods arriving back, and a
+// replacement leaving are all facts about the warehouse rather than about a
+// record somewhere else.
+//
+// The pairing is checked when a movement is written, the way the reservation's is,
+// because a reference on the wrong reason is a column an operator would read as
+// meaning something.
+func (r MovementReason) CarriesAReference() bool {
+	return r == MovementSale || r == MovementCancellation
 }
 
 // String returns the text representation of the reason.
@@ -121,6 +159,14 @@ type Movement struct {
 	ReservationID string
 	// Reason is why the count changed.
 	Reason MovementReason
+	// Reference is what the movement was FOR, when its reason has something to
+	// point at: the order for a sale, the cancellation row for a cancellation.
+	//
+	// Empty for every other reason. Two things rest on it — a sale's reference is
+	// how a later cancellation finds the LOCATION its units were taken from, and a
+	// cancellation's is what makes putting them back idempotent under a bus that
+	// delivers at least once.
+	Reference string
 	// Delta is the signed change; it is never zero.
 	Delta int64
 	// StockedAfter is the physical count the change produced.

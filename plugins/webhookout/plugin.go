@@ -124,6 +124,7 @@ func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 	h.Subscribe(topicProductCreated, p.mod.onEvent)
 	h.Subscribe(topicProductUpdated, p.mod.onEvent)
 	h.Subscribe(topicProductDeleted, p.mod.onEvent)
+	h.Subscribe(topicOrderLineCanceled, p.mod.onEvent)
 
 	h.RegisterJob(coreplugin.Job{
 		Name:   jobName,

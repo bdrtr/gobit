@@ -30,7 +30,19 @@ func TestInteropSurfaceUsesPrimitiveTypes(t *testing.T) {
 			lineItemID string,
 		) (reservationID string, err error)
 		ReleaseReservation(ctx context.Context, reservationID string) error
-		ConfirmReservation(ctx context.Context, reservationID string) error
+		ConfirmReservation(ctx context.Context, reservationID, orderID string) error
+	}
+	// İptal edilen birimi geri koyan akışın arayüzü de AYRI: o akış rezervasyon
+	// yapmaz, lokasyon seçmez; yalnızca stoğun hangi raftan düştüğünü sorar ve
+	// geri koyar (ADR 0134).
+	type inventoryCancellations interface {
+		SaleLocations(ctx context.Context, orderID string) (map[string]string, error)
+		ReturnCanceled(
+			ctx context.Context,
+			inventoryItemID, locationID string,
+			quantity int64,
+			cancellationID string,
+		) (alreadyBack bool, err error)
 	}
 	// Lokasyon adaylarını soran yüzey AYRI bir arayüzdür: onu kullanan akış
 	// (hangi depodan gönderileceğini seçen adım) rezervasyon yapmaz ve dar
@@ -43,8 +55,9 @@ func TestInteropSurfaceUsesPrimitiveTypes(t *testing.T) {
 	interop := service.NewInterop(svc)
 
 	var (
-		_ inventoryReserver  = interop
-		_ inventoryLocations = interop
+		_ inventoryReserver      = interop
+		_ inventoryLocations     = interop
+		_ inventoryCancellations = interop
 	)
 }
 
