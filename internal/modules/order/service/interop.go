@@ -753,3 +753,63 @@ func interopLineTaxesOf(components []models.OrderLineTax) []interopLineTax {
 
 	return out
 }
+
+// interopDispatchableLine is one line of an order as a dispatch has to bound it.
+//
+// The counts cross as NUMBERS, following [interopInvoiceItem]: they are integers
+// on both sides and a string would only add a parse that can fail.
+type interopDispatchableLine struct {
+	// LineItemID is the line.
+	LineItemID string `json:"line_item_id"`
+	// Bought is how many units the line sold. Stock was deducted for all of them.
+	Bought int64 `json:"bought"`
+	// Canceled is how many of them were written off and will not be delivered.
+	//
+	// Returns are NOT here and it is not an omission. A returned unit shipped,
+	// came back and was restocked on receipt; whether it ships again is a new
+	// decision rather than a quantity still owed. What a dispatch must not exceed
+	// is what was sold minus what was written off.
+	Canceled int64 `json:"canceled"`
+}
+
+// DispatchableLinesJSON answers, per line, what a parcel may still be filled with.
+//
+// # Why this surface exists
+//
+// `POST /admin/v1/fulfillments` takes a line identifier and a quantity and checked
+// NEITHER against the order — not that the line belongs to it, not that the
+// quantity is within what was sold, and not that the units were written off. The
+// fulfillment module cannot check any of it: it does not know this one
+// (Principle 2.1/2.4). So it asks a flow, and the flow asks here (ADR 0135).
+//
+// The shipped side is deliberately absent from this answer. How many units are
+// already in a live parcel is the FULFILLMENT module's own record, and having the
+// order carry a copy of it would be the second copy this repository keeps finding
+// wrong (ADR 0119's shape).
+func (i *Interop) DispatchableLinesJSON(ctx context.Context, orderID string) (json.RawMessage, error) {
+	detail, err := i.svc.GetOrder(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, 0, len(detail.Items))
+	for i := range detail.Items {
+		ids = append(ids, detail.Items[i].ID)
+	}
+
+	canceled, err := i.svc.CanceledUnits(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	lines := make([]interopDispatchableLine, 0, len(detail.Items))
+	for i := range detail.Items {
+		lines = append(lines, interopDispatchableLine{
+			LineItemID: detail.Items[i].ID,
+			Bought:     detail.Items[i].Quantity,
+			Canceled:   canceled[detail.Items[i].ID],
+		})
+	}
+
+	return json.Marshal(lines)
+}

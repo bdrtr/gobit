@@ -948,6 +948,7 @@ type testSetup struct {
 	svc      *service.Service
 	store    *fakeStore
 	provider *fakeProvider
+	bound    *fakeDispatchBound
 }
 
 // newSetup builds a service running on a fake store and a fake provider.
@@ -960,15 +961,53 @@ func newSetup(t interface{ Fatalf(string, ...any) }) testSetup {
 		t.Fatalf("the provider could not be registered: %v", err)
 	}
 
+	bound := &fakeDispatchBound{}
+
 	svc, err := service.New(service.Options{
-		Store:     store,
-		Providers: registry,
-		Clock:     func() time.Time { return testNow },
+		Store:         store,
+		Providers:     registry,
+		Clock:         func() time.Time { return testNow },
+		DispatchBound: bound,
 	})
 	if err != nil {
 		t.Fatalf("the service could not be built: %v", err)
 	}
-	return testSetup{svc: svc, store: store, provider: provider}
+	return testSetup{svc: svc, store: store, provider: provider, bound: bound}
+}
+
+// fakeDispatchBound stands in for the fulfilling flow.
+//
+// It answers GENEROUSLY by default, because most tests here are about something
+// else and a bound that refused would make every one of them a test of the bound.
+// The tests that ARE about it set `owed` or `err`.
+type fakeDispatchBound struct {
+	// owed, when non-nil, is the answer; nil means "every line, a thousand units".
+	owed map[string]int64
+	err  error
+	// calls counts the questions, which is how a test proves a retry asks NOTHING.
+	calls int
+}
+
+// DispatchableQuantities answers what the order still owes.
+func (f *fakeDispatchBound) DispatchableQuantities(
+	_ context.Context, _ string, lineItemIDs []string,
+) (map[string]int64, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.owed != nil {
+		return f.owed, nil
+	}
+
+	// Generous by default: every line asked about owes a thousand. It is what lets
+	// the thirty-odd tests in this package go on being about what they were about.
+	out := make(map[string]int64, len(lineItemIDs))
+	for _, id := range lineItemIDs {
+		out[id] = 1000
+	}
+
+	return out, nil
 }
 
 // createProfile creates a shipping profile for the test and returns its

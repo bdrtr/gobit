@@ -242,6 +242,9 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		Store:     repo,
 		Providers: providers,
 		Logger:    log,
+		// Resolved on first use rather than now: the flow that answers is built
+		// after every module has registered (ADR 0135).
+		DispatchBound: newDispatchBound(c, log),
 	})
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,

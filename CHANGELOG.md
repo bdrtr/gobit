@@ -20,6 +20,19 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir koli artık siparişin BORÇLU olduğundan fazlasını taşıyamıyor**
+  (ADR 0135). `POST /admin/v1/fulfillments` satır kimliği ve adet alıyordu ve
+  hiçbirini siparişe karşı denetlemiyordu — okuyarak doğrulandı: boş kimlik,
+  global bir adet aralığı ve aynı satırın iki kez geçmesi reddediliyor, başka
+  hiçbir şey. Ne satırın o siparişe ait olduğu, ne adedin satılanın içinde
+  kaldığı, ne birimlerin başka bir kolide olduğu, ne de iptal edilmiş oldukları.
+  Yani bir operatör, müşteriye iptal edildiği söylenen malı sevk edebiliyordu —
+  ve ADR 0134'ten beri o birimlerin stoğu rafa geri döndüğü için aynı mal iki kez
+  çıkıyor, sayım farkı kadar eksiliyordu. Artık fulfillment modülü `fulfilling`
+  akışını istek anında çözüp `alınan − iptal − canlı kolideki` sınırını soruyor ve
+  aşan kalemi reddediyor. Uç KIMILDAMIYOR, ve sınır okunamazsa koli açılmıyor —
+  okunamayan bir sınır sınır değildir (D72).
+
 - **Bilinen sınırlar belgesi artık contrib kimlik modüllerini de KAPSIYOR**
   (D71). `docs/known-limits.md`, gobit'in yapmadığı şeyleri okumak için açılan
   belge, ve kimlik bölümü reddeden dört rotayı kapatmanın yolunu "tek satır

@@ -135,7 +135,23 @@ func TestAnUnreadableStatusStillReportsTheShipment(t *testing.T) {
 }
 
 // fakeOrders stands in for the order module's surface.
-type fakeOrders struct{ err error }
+type fakeOrders struct {
+	err error
+	// lines is what DispatchableLinesJSON answers; nil means an empty order.
+	lines    []testLine
+	linesErr error
+}
+
+// testLine is the order module's answer as a CONSUMER writes it.
+//
+// It is the flow's own struct copied by its JSON tags rather than imported, which
+// is the shape every consumer of a JSON interop surface has to use — and writing it
+// out here is what would catch a tag drifting on the producer's side.
+type testLine struct {
+	LineItemID string `json:"line_item_id"`
+	Bought     int64  `json:"bought"`
+	Canceled   int64  `json:"canceled"`
+}
 
 // OrderContactJSON reports whether the order exists.
 func (f *fakeOrders) OrderContactJSON(context.Context, string) (json.RawMessage, error) {
@@ -146,6 +162,15 @@ func (f *fakeOrders) OrderContactJSON(context.Context, string) (json.RawMessage,
 	return json.RawMessage(`{}`), nil
 }
 
+// DispatchableLinesJSON answers what the order sold and what was written off.
+func (f *fakeOrders) DispatchableLinesJSON(context.Context, string) (json.RawMessage, error) {
+	if f.linesErr != nil {
+		return nil, f.linesErr
+	}
+
+	return json.Marshal(f.lines)
+}
+
 // fakeFulfillments stands in for the fulfillment module's surface.
 type fakeFulfillments struct {
 	id    string
@@ -153,6 +178,24 @@ type fakeFulfillments struct {
 	// status is what FulfillmentStatus answers; empty means "pending".
 	status    string
 	statusErr error
+	// committed is what CommittedQuantities answers, per line.
+	committed    map[string]int64
+	committedErr error
+	// committedCalls counts the questions, which is how a test proves an order with
+	// no parcels is not asked at all.
+	committedCalls int
+}
+
+// CommittedQuantities answers what the live parcels hold.
+func (f *fakeFulfillments) CommittedQuantities(
+	context.Context, []string,
+) (map[string]int64, error) {
+	f.committedCalls++
+	if f.committedErr != nil {
+		return nil, f.committedErr
+	}
+
+	return f.committed, nil
 }
 
 // CreateFulfillment returns the same id whatever the key, the way an idempotent
@@ -179,6 +222,10 @@ func (f *fakeFulfillments) FulfillmentStatus(context.Context, string) (string, e
 type fakeLinks struct {
 	bound     map[string][]string
 	createErr error
+	// listErr, when set, makes ListMany fail. Reading the parcels of an order is
+	// what bounds a parcel's contents, so a failure there must not read as "no
+	// parcels" (ADR 0135).
+	listErr error
 }
 
 // newFakeLinks builds an empty link store.
@@ -201,6 +248,10 @@ func (f *fakeLinks) Create(_ context.Context, _, fromID, toID string) error {
 
 // ListMany returns what each id is bound to.
 func (f *fakeLinks) ListMany(_ context.Context, _ string, fromIDs []string) (map[string][]string, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+
 	out := map[string][]string{}
 	for _, id := range fromIDs {
 		out[id] = f.bound[id]

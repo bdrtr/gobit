@@ -94,3 +94,23 @@ type interopShipment struct {
 	// binding is still a fact and is still reported.
 	Status string `json:"status"`
 }
+
+// DispatchableQuantities answers, per order line, how many units a NEW parcel may
+// still hold.
+//
+// # Who asks, and why it is not the caller's own arithmetic
+//
+// The fulfillment module's create endpoint asks, before it opens anything. It has
+// the line identifiers and the quantities an operator sent and can check neither
+// against the order — it does not know this one (Principle 2.1/2.4). So it resolves
+// this flow by name at request time, the way the cart module resolves its pricing
+// flow: the endpoint stays where integrators found it and the cross-module decision
+// lives above it (ADR 0135).
+//
+// A line missing from the map is a line the order does not have, and the caller has
+// to read that as a refusal rather than as an unlimited quantity.
+func (i *Interop) DispatchableQuantities(
+	ctx context.Context, orderID string, lineItemIDs []string,
+) (map[string]int64, error) {
+	return i.w.DispatchableQuantities(ctx, orderID, lineItemIDs)
+}

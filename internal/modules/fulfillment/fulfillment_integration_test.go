@@ -125,7 +125,13 @@ func newService(t *testing.T) (*service.Service, *manual.Provider) {
 	registry := service.NewProviderRegistry()
 	require.NoError(t, registry.Register(prov))
 
-	svc, err := service.New(service.Options{Store: repo, Providers: registry})
+	svc, err := service.New(service.Options{
+		Store: repo, Providers: registry,
+		// A parcel cannot be opened without a bound on what the order still owes
+		// (ADR 0135), and these scenarios are about the SQL rather than the bound —
+		// so it answers generously and the dispatch tests next door answer for it.
+		DispatchBound: generousBound{},
+	})
 	require.NoError(t, err)
 	return svc, prov
 }
@@ -199,7 +205,13 @@ func newCountingService(t *testing.T) (*service.Service, *countingProvider) {
 	registry := service.NewProviderRegistry()
 	require.NoError(t, registry.Register(counting))
 
-	svc, err := service.New(service.Options{Store: repo, Providers: registry})
+	svc, err := service.New(service.Options{
+		Store: repo, Providers: registry,
+		// A parcel cannot be opened without a bound on what the order still owes
+		// (ADR 0135), and these scenarios are about the SQL rather than the bound —
+		// so it answers generously and the dispatch tests next door answer for it.
+		DispatchBound: generousBound{},
+	})
 	require.NoError(t, err)
 	return svc, counting
 }
@@ -1450,4 +1462,23 @@ func TestARepeatedKeyReturnsTheCanceledShipment(t *testing.T) {
 	assert.EqualValues(t, 1, rows,
 		"the canceled shipment still holds the key: migration 000003 made it unique over "+
 			"every shipment rather than the live ones")
+}
+
+// generousBound answers that every line asked about owes a thousand units.
+//
+// The module fails CLOSED when it cannot read what an order still owes, which is
+// what makes a missing bound loud — and these scenarios would otherwise all be
+// tests of that one refusal.
+type generousBound struct{}
+
+// DispatchableQuantities answers generously for whatever it is asked about.
+func (generousBound) DispatchableQuantities(
+	_ context.Context, _ string, lineItemIDs []string,
+) (map[string]int64, error) {
+	out := make(map[string]int64, len(lineItemIDs))
+	for _, id := range lineItemIDs {
+		out[id] = 1000
+	}
+
+	return out, nil
 }

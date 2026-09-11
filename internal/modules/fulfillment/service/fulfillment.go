@@ -122,6 +122,13 @@ func (s *Service) CreateFulfillment(
 	}
 	optionID := strings.TrimSpace(in.ShippingOptionID)
 
+	// The bound is checked BEFORE the transaction opens: asking another module
+	// while holding this one's locks takes a second connection from the same pool
+	// (ADR 0130's measurement, ADR 0135's reason).
+	if err := s.refuseOverDispatch(ctx, reference, key, items); err != nil {
+		return models.Fulfillment{}, err
+	}
+
 	var out models.Fulfillment
 	err = s.store.WithTx(ctx, func(ctx context.Context) error {
 		option, err := s.store.GetShippingOption(ctx, optionID)

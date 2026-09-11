@@ -94,6 +94,15 @@ type Orders interface {
 	// parcel bound to an order that does not exist — an orphan the operator
 	// would find only when the customer asked where it was.
 	OrderContactJSON(ctx context.Context, orderID string) (json.RawMessage, error)
+	// DispatchableLinesJSON returns, per line, how many units were sold and how
+	// many of them were written off.
+	//
+	// It is what bounds a parcel. The fulfillment module's create endpoint takes a
+	// line identifier and a quantity and could check neither against the order —
+	// it does not know this one — so a parcel could hold a line the order never
+	// had, more units than were sold, or units somebody had already been told were
+	// canceled (ADR 0135).
+	DispatchableLinesJSON(ctx context.Context, orderID string) (json.RawMessage, error)
 }
 
 // Fulfillments is the part of the fulfillment module this flow uses.
@@ -106,6 +115,13 @@ type Fulfillments interface {
 	CreateFulfillment(ctx context.Context, reference, optionID, idempotencyKey string) (string, error)
 	// FulfillmentStatus returns the shipment's status.
 	FulfillmentStatus(ctx context.Context, fulfillmentID string) (string, error)
+	// CommittedQuantities sums, per order line, the units a LIVE parcel holds.
+	//
+	// Live means not canceled: a canceled parcel's goods never left, so its units
+	// are still dispatchable. The parcels are named by this flow, because the
+	// binding between an order and its shipments is the "order_fulfillment" LINK
+	// and the fulfillment module does not read another module's links.
+	CommittedQuantities(ctx context.Context, fulfillmentIDs []string) (map[string]int64, error)
 }
 
 // statusCanceled is the fulfillment module's word for a shipment that was

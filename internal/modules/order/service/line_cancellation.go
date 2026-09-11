@@ -260,3 +260,18 @@ func checkCancelQuantity(
 
 	return nil
 }
+
+// CanceledUnits answers, per line, how many units were written off.
+//
+// It is the CANCELED sum alone rather than [Service.unitsSpokenFor]'s total,
+// because the two answer different questions: the ceiling asks what is spoken for
+// by either act, and a dispatch asks what will not be delivered. A returned unit
+// shipped and came back, so counting it here would bound a parcel by goods that
+// already left once.
+func (s *Service) CanceledUnits(ctx context.Context, lineItemIDs []string) (map[string]int64, error) {
+	if len(lineItemIDs) == 0 {
+		return map[string]int64{}, nil
+	}
+
+	return s.store.CanceledQuantities(ctx, lineItemIDs)
+}

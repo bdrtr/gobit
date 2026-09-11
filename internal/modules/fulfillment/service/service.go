@@ -303,6 +303,14 @@ type Options struct {
 	// Being injectable is for the tests: that a fulfillment's dispatch moment is
 	// really written can be exercised exactly with a fixed clock.
 	Clock func() time.Time
+	// DispatchBound answers how many units of an order line a parcel may still
+	// hold, and it is REQUIRED for opening one.
+	//
+	// Nil does not mean "no bound": a parcel cannot be opened at all, because a
+	// bound that cannot be read is not a bound (see [Service.refuseOverDispatch]).
+	// It is a lazy resolver rather than a value at construction, because the flow
+	// that answers is born after every module has registered.
+	DispatchBound DispatchBound
 }
 
 // Service is the fulfillment module's outward-facing service.
@@ -310,6 +318,7 @@ type Options struct {
 type Service struct {
 	store     Store
 	providers *ProviderRegistry
+	bound     DispatchBound
 	log       *slog.Logger
 	clock     func() time.Time
 }
@@ -336,7 +345,10 @@ func New(opts Options) (*Service, error) {
 	if clock == nil {
 		clock = time.Now
 	}
-	return &Service{store: opts.Store, providers: opts.Providers, log: log, clock: clock}, nil
+	return &Service{
+		store: opts.Store, providers: opts.Providers,
+		bound: opts.DispatchBound, log: log, clock: clock,
+	}, nil
 }
 
 // ProviderIDs returns the identifiers of the registered shipping providers, in

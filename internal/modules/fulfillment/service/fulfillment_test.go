@@ -412,7 +412,12 @@ func TestAnEmptyProviderIDIsAContractViolation(t *testing.T) {
 	emptyProvider := &emptyIDProvider{}
 	registry := service.NewProviderRegistry()
 	require.NoError(t, registry.Register(emptyProvider))
-	svc, err := service.New(service.Options{Store: setup.store, Providers: registry})
+	// A bound is required to open a parcel at all — the module fails CLOSED when it
+	// cannot read what an order still owes (ADR 0135), so this test would refuse
+	// before reaching the provider contract it is about.
+	svc, err := service.New(service.Options{
+		Store: setup.store, Providers: registry, DispatchBound: &fakeDispatchBound{},
+	})
 	require.NoError(t, err)
 
 	_, err = svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{

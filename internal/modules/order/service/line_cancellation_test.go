@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -329,4 +330,78 @@ func TestTheCANCELLATIONAndItsPromiseCommitTogether(t *testing.T) {
 	cancellations, listErr := e.svc.ListLineCancellations(ctx, order.ID)
 	require.NoError(t, listErr)
 	assert.Empty(t, cancellations, "and the row rolled back with it")
+}
+
+// TestTheDispatchableLinesSayWhatWasWrittenOff is the producer's side of the bound.
+//
+// A parcel may not hold more than the order owes, and what it owes is what was sold
+// minus what was written off (ADR 0135). The flow that computes the bound reads this
+// surface, so a zero here would let a canceled unit ship with every gate green —
+// which is exactly what happened before the surface existed.
+func TestTheDispatchableLinesSayWhatWasWrittenOff(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	order, lineID := returnedOrder(t, e)
+
+	_, err := e.svc.CancelOrderLine(ctx, order.ID, service.CancelOrderLineInput{
+		OrderLineItemID: lineID, Quantity: 2, Reason: "out of stock",
+	})
+	require.NoError(t, err)
+
+	raw, err := service.NewInterop(e.svc).DispatchableLinesJSON(ctx, order.ID)
+	require.NoError(t, err)
+
+	var lines []struct {
+		LineItemID string `json:"line_item_id"`
+		Bought     int64  `json:"bought"`
+		Canceled   int64  `json:"canceled"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &lines))
+
+	require.Len(t, lines, 1)
+	assert.Equal(t, lineID, lines[0].LineItemID)
+	assert.Equal(t, int64(3), lines[0].Bought, "the line's quantity is the cart's snapshot")
+	assert.Equal(t, int64(2), lines[0].Canceled,
+		"and the write-off is reported, so a parcel is bounded by one unit")
+}
+
+// TestTheDispatchableLinesCountNoRETURNS keeps the two sums apart.
+//
+// A returned unit shipped, came back and was restocked on receipt. Subtracting it
+// here would bound a parcel by goods that already left once, which is a new decision
+// rather than an outstanding quantity — and the cancellation CEILING does count both,
+// so the two sums genuinely differ.
+//
+// # The fixture has to have a real return
+//
+// The first version of this leaned on the name of the shared `returnedOrder` helper,
+// which despite it creates NO return — so the test asserted zero on an order with
+// neither a return nor a cancellation and could not tell the two sums apart. A
+// mutation swapping this surface for the returns-inclusive sum survived it. Found by
+// that mutation, which is what mutations are for.
+func TestTheDispatchableLinesCountNoRETURNS(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	order, lineID := returnedOrder(t, e)
+
+	_, err := e.svc.CreateReturn(ctx, service.CreateReturnInput{
+		OrderID:      order.ID,
+		RefundAmount: 1200,
+		Lines: []service.ReturnLineInput{
+			{OrderLineItemID: lineID, Quantity: 2, RefundAmount: 1200},
+		},
+	})
+	require.NoError(t, err)
+
+	raw, err := service.NewInterop(e.svc).DispatchableLinesJSON(ctx, order.ID)
+	require.NoError(t, err)
+
+	var lines []struct {
+		Canceled int64 `json:"canceled"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &lines))
+	require.Len(t, lines, 1)
+	assert.Zero(t, lines[0].Canceled,
+		"two units of this line are on a RETURN and none is canceled; this surface "+
+			"reports write-offs only, because a returned unit already shipped")
 }
