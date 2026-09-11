@@ -414,3 +414,156 @@ func TestAFundedExchangeIsSettleableAndAnUnfundedOneIsNot(t *testing.T) {
 	assert.True(t, funded.Settleable(), "the difference is answered; the goods decide the rest")
 	assert.False(t, funded.OwesNothing(), "it still OWES; what changed is that it was paid")
 }
+
+// replacementOfVariant promises a product the order did NOT sell.
+func replacementOfVariant(exchangeID, variantID string, quantity int64) service.CreateReplacementInput {
+	return service.CreateReplacementInput{
+		ExchangeID:       exchangeID,
+		ShippingOptionID: testShippingOptionID,
+		LocationID:       testLocationID,
+		Lines: []service.ReplacementLineInput{
+			{VariantID: variantID, Quantity: quantity},
+		},
+	}
+}
+
+// TestAnExchangeCanSendADIFFERENTProduct is what the record could not express.
+//
+// "Send me the same shirt a size larger" is the ordinary exchange. Until ADR 0145
+// a replacement item pointed at an order line with a NOT NULL foreign key, so the
+// only thing it could carry was units of the exact variant already sold — and the
+// money half has been able to take a difference since ADR 0120, with nothing for
+// it to answer.
+func TestAnExchangeCanSendADIFFERENTProduct(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	exchange, _ := exchangeToSend(t, e, 0)
+
+	record, err := e.svc.CreateReplacement(ctx,
+		replacementOfVariant(exchange.ID, "variant_larger", 1))
+	require.NoError(t, err)
+
+	require.Len(t, record.Items, 1)
+	assert.Equal(t, "variant_larger", record.Items[0].VariantID)
+	assert.Empty(t, record.Items[0].OrderLineItemID,
+		"an item names ONE thing; a line here would be a second answer to what is sent")
+	assert.True(t, record.Items[0].SendsAVariant())
+}
+
+// TestTheBOUGHTCeilingDoesNotApplyToAVariantTheOrderNeverSold separates the two
+// bounds.
+//
+// The line ceiling is "no more of a line than was bought on it", and goods the
+// order never sold are against no line's ceiling. Applying it anyway would refuse
+// every exchange for a different product, because the bought quantity of a variant
+// that is not on the order is zero.
+func TestTheBOUGHTCeilingDoesNotApplyToAVariantTheOrderNeverSold(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	exchange, _ := exchangeToSend(t, e, 0)
+
+	_, err := e.svc.CreateReplacement(ctx,
+		replacementOfVariant(exchange.ID, "variant_larger", 99))
+
+	require.NoError(t, err,
+		"the bound on a variant item is the exchange's money guard, not a quantity "+
+			"this order never sold")
+}
+
+// TestALineCeilingSTILLAppliesToALineShapedItem is the other half, and it is a
+// SEPARATE test on purpose.
+//
+// One fixture asserting both would let an implementation that dropped the ceiling
+// entirely pass the variant case and never reach this one.
+func TestALineCeilingSTILLAppliesToALineShapedItem(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	exchange, lineID := exchangeToSend(t, e, 0)
+
+	_, err := e.svc.CreateReplacement(ctx, replacementOfExchange(exchange.ID, lineID, 99))
+
+	require.Error(t, err, "more of a line than was bought on it is still refused")
+}
+
+// TestAnItemNamingBOTHOrNEITHERIsRefused pins the shape.
+//
+// Both is two answers to "what is being sent" and leaves the dispatch to pick;
+// neither is a row promising nothing. The service says which field to fill rather
+// than letting the schema's CHECK name a constraint.
+func TestAnItemNamingBOTHOrNEITHERIsRefused(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	exchange, lineID := exchangeToSend(t, e, 0)
+
+	for name, line := range map[string]service.ReplacementLineInput{
+		"both":    {OrderLineItemID: lineID, VariantID: "variant_larger", Quantity: 1},
+		"neither": {Quantity: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := replacementOfExchange(exchange.ID, lineID, 1)
+			in.Lines = []service.ReplacementLineInput{line}
+
+			_, err := e.svc.CreateReplacement(ctx, in)
+
+			require.Error(t, err)
+			assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
+		})
+	}
+}
+
+// TestTheSameVariantTwiceInOneReplacementIsRefused is the duplicate rule, on the
+// other side of the row.
+func TestTheSameVariantTwiceInOneReplacementIsRefused(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	exchange, _ := exchangeToSend(t, e, 0)
+
+	in := replacementOfVariant(exchange.ID, "variant_larger", 1)
+	in.Lines = append(in.Lines,
+		service.ReplacementLineInput{VariantID: "variant_larger", Quantity: 2})
+
+	_, err := e.svc.CreateReplacement(ctx, in)
+
+	require.Error(t, err, "the quantity carries the count; two rows would be two promises")
+}
+
+// TestTheDETAILCarriesAVariantItemWithoutJoiningTheOrder is what the dispatch
+// flow reads, and the reason a variant item works at all.
+//
+// The document derives a line item's variant by joining the order's lines — a
+// variant item has no line to join, and a version that tried would refuse it with
+// "names line , which is not on order". Nothing downstream would have to change
+// for a variant replacement to be dispatched, and nothing downstream would ever
+// SEE one either: the flow holds stock from this document's VariantID.
+//
+// A mutation restoring the join survived every other test in this file until this
+// one existed.
+func TestTheDETAILCarriesAVariantItemWithoutJoiningTheOrder(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	exchange, _ := exchangeToSend(t, e, 0)
+
+	record, err := e.svc.CreateReplacement(ctx,
+		replacementOfVariant(exchange.ID, "variant_larger", 1))
+	require.NoError(t, err)
+
+	raw, err := e.svc.ReplacementDetailJSON(ctx, record.ID)
+	require.NoError(t, err,
+		"a replacement that sends a product the order did not sell has to produce a "+
+			"document; refusing here is refusing the whole feature at dispatch time")
+
+	var detail struct {
+		Lines []struct {
+			OrderLineItemID string `json:"order_line_item_id"`
+			VariantID       string `json:"variant_id"`
+			Quantity        int64  `json:"quantity"`
+		} `json:"lines"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &detail))
+
+	require.Len(t, detail.Lines, 1)
+	assert.Equal(t, "variant_larger", detail.Lines[0].VariantID,
+		"the flow sets stock aside from THIS field and nothing else")
+	assert.Empty(t, detail.Lines[0].OrderLineItemID)
+	assert.Equal(t, int64(1), detail.Lines[0].Quantity)
+}

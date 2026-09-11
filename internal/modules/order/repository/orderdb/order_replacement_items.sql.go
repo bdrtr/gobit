@@ -12,24 +12,28 @@ import (
 const createOrderReplacementItem = `-- name: CreateOrderReplacementItem :one
 
 INSERT INTO order_replacement_items
-    (id, order_replacement_id, order_line_item_id, quantity)
-VALUES ($1, $2, $3, $4)
-RETURNING id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id
+    (id, order_replacement_id, order_line_item_id, variant_id, quantity)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id, variant_id
 `
 
 type CreateOrderReplacementItemParams struct {
 	ID                 string
 	OrderReplacementID string
-	OrderLineItemID    string
+	OrderLineItemID    *string
+	VariantID          *string
 	Quantity           int64
 }
 
 // order_replacement_items queries: which lines are being replaced.
+// Exactly ONE of order_line_item_id and variant_id is set; the CHECK in
+// migration 000019 holds it, and the service decides which shape a request has.
 func (q *Queries) CreateOrderReplacementItem(ctx context.Context, arg CreateOrderReplacementItemParams) (OrderReplacementItem, error) {
 	row := q.db.QueryRow(ctx, createOrderReplacementItem,
 		arg.ID,
 		arg.OrderReplacementID,
 		arg.OrderLineItemID,
+		arg.VariantID,
 		arg.Quantity,
 	)
 	var i OrderReplacementItem
@@ -41,12 +45,13 @@ func (q *Queries) CreateOrderReplacementItem(ctx context.Context, arg CreateOrde
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReservationID,
+		&i.VariantID,
 	)
 	return i, err
 }
 
 const listOrderReplacementItems = `-- name: ListOrderReplacementItems :many
-SELECT id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id FROM order_replacement_items
+SELECT id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id, variant_id FROM order_replacement_items
 WHERE order_replacement_id = $1
 ORDER BY created_at, id
 `
@@ -70,6 +75,7 @@ func (q *Queries) ListOrderReplacementItems(ctx context.Context, orderReplacemen
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ReservationID,
+			&i.VariantID,
 		); err != nil {
 			return nil, err
 		}
@@ -86,7 +92,7 @@ UPDATE order_replacement_items
 SET reservation_id = $1::text,
     updated_at = now()
 WHERE id = $2::text
-RETURNING id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id
+RETURNING id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id, variant_id
 `
 
 type SetOrderReplacementItemReservationParams struct {
@@ -110,6 +116,7 @@ func (q *Queries) SetOrderReplacementItemReservation(ctx context.Context, arg Se
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReservationID,
+		&i.VariantID,
 	)
 	return i, err
 }
@@ -119,12 +126,13 @@ SELECT i.order_line_item_id, SUM(i.quantity)::bigint AS replaced
 FROM order_replacement_items i
 JOIN order_replacements r ON r.id = i.order_replacement_id
 WHERE i.order_line_item_id = ANY($1::text[])
+  AND i.order_line_item_id IS NOT NULL
   AND r.status <> 'canceled'
 GROUP BY i.order_line_item_id
 `
 
 type SumReplacedQuantitiesRow struct {
-	OrderLineItemID string
+	OrderLineItemID *string
 	Replaced        int64
 }
 
@@ -140,6 +148,18 @@ type SumReplacedQuantitiesRow struct {
 // The service reads this under the order's lock and compares it against the
 // ordered quantity, exactly as SumReturnedQuantities is used. It has to be a
 // query rather than a CHECK because the rule spans rows.
+//
+// # Variant-shaped rows are NOT counted, and cannot be
+//
+// Since migration 000019 a replacement item may name a VARIANT instead of a line
+// (ADR 0145). The ceiling this sum feeds is "no more of a line than was bought on
+// it", and a row that names no line is not against any line's ceiling — it is
+// goods the order never sold. The `IS NOT NULL` is therefore a statement rather
+// than a filter: counting such a row would attribute it to a line chosen by
+// nothing.
+//
+// What bounds a variant-shaped row instead is written where the decision is: the
+// exchange's money guard, which refuses a dispatch until the difference is funded.
 func (q *Queries) SumReplacedQuantities(ctx context.Context, lineItemIds []string) ([]SumReplacedQuantitiesRow, error) {
 	rows, err := q.db.Query(ctx, sumReplacedQuantities, lineItemIds)
 	if err != nil {

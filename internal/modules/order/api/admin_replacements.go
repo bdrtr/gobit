@@ -16,8 +16,15 @@ const paramReplacementID = "replacementId"
 
 // replacementLineRequest is one line of a replacement request.
 type replacementLineRequest struct {
-	// OrderLineItemID is the order line being replaced.
-	OrderLineItemID string `json:"order_line_item_id"`
+	// OrderLineItemID is the order line being replaced; leave it out to send
+	// something the order did not sell.
+	OrderLineItemID string `json:"order_line_item_id,omitempty"`
+	// VariantID is the product being sent when it is not one of the order's.
+	//
+	// EXACTLY ONE of the two is given. "Send the same shirt a size larger" is the
+	// ordinary exchange, and until ADR 0145 the only thing a replacement could
+	// carry was units of a variant already on the order.
+	VariantID string `json:"variant_id,omitempty"`
 	// Quantity is how many units of it are being sent.
 	Quantity int64 `json:"quantity"`
 }
@@ -38,8 +45,10 @@ type createReplacementRequest struct {
 
 // replacementItemDTO is one line of a replacement in a response.
 type replacementItemDTO struct {
-	ID              string `json:"id"`
-	OrderLineItemID string `json:"order_line_item_id"`
+	ID string `json:"id"`
+	// OrderLineItemID is empty on an item that names a variant, and the reverse.
+	OrderLineItemID string `json:"order_line_item_id,omitempty"`
+	VariantID       string `json:"variant_id,omitempty"`
 	Quantity        int64  `json:"quantity"`
 	// ReservationID is the promise the units are held under; it is empty until
 	// something sets them aside.
@@ -89,6 +98,7 @@ func (h *Handler) adminCreateReplacement(w http.ResponseWriter, r *http.Request)
 	for i := range body.Lines {
 		lines = append(lines, service.ReplacementLineInput{
 			OrderLineItemID: body.Lines[i].OrderLineItemID,
+			VariantID:       body.Lines[i].VariantID,
 			Quantity:        body.Lines[i].Quantity,
 		})
 	}
@@ -207,6 +217,7 @@ func toReplacementDTO(record service.ReplacementRecord) replacementDTO {
 		out.Items = append(out.Items, replacementItemDTO{
 			ID:              record.Items[i].ID,
 			OrderLineItemID: record.Items[i].OrderLineItemID,
+			VariantID:       record.Items[i].VariantID,
 			Quantity:        record.Items[i].Quantity,
 			ReservationID:   record.Items[i].ReservationID,
 			CreatedAt:       record.Items[i].CreatedAt,

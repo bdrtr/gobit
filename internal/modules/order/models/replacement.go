@@ -137,8 +137,19 @@ type ReplacementItem struct {
 	ID string
 	// ReplacementID is the replacement the line belongs to.
 	ReplacementID string
-	// OrderLineItemID is the order line being replaced.
+	// OrderLineItemID is the order line being replaced; EMPTY on an item that
+	// names a variant instead.
 	OrderLineItemID string
+	// VariantID is the product being sent when it is NOT one the order sold.
+	//
+	// "Send me the same shirt a size larger" is the ordinary exchange, and until
+	// ADR 0145 the only thing a replacement could carry was units of a variant
+	// already on the order. Exactly one of this and [ReplacementItem.OrderLineItemID]
+	// is set, which the schema holds as a CHECK rather than as a convention.
+	//
+	// It belongs to the product module and is NOT a foreign key here, the same
+	// rule `order_line_items.variant_id` already follows.
+	VariantID string
 	// Quantity is how many units of that line are being sent.
 	Quantity int64
 	// ReservationID is the promise the units are held under. It belongs to the
@@ -152,3 +163,23 @@ type ReplacementItem struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
+
+// Names answers what the item is sending, for a message.
+//
+// One of the two identifiers is always empty, and a caller writing "%s" with the
+// wrong one would report a blank where the reader expects a name.
+func (i ReplacementItem) Names() string {
+	if i.OrderLineItemID != "" {
+		return i.OrderLineItemID
+	}
+
+	return i.VariantID
+}
+
+// SendsAVariant reports whether the item names goods the order did not sell.
+//
+// The two shapes are one fact — this many of this thing goes out — and only the
+// naming differs, so the readers that care are few: the bought-ceiling, which
+// applies to lines alone, and the detail document, which has a variant to publish
+// either way.
+func (i ReplacementItem) SendsAVariant() bool { return i.VariantID != "" }

@@ -64,6 +64,20 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir değişim artık BAŞKA BİR ÜRÜN gönderebiliyor** (ADR 0145). Modüldeki her
+  satış-sonrası kalemi var olan bir sipariş satırını NOT NULL bir yabancı
+  anahtarla gösteriyordu; müşterinin zaten sahip olduğu maldan söz eden kayıtlar
+  için doğru, bir DEĞİŞİM için değil. "Aynı gömleği bir beden büyük gönder"
+  sıradan değişimdir, ama `order_replacement_items` yalnızca siparişte zaten
+  olan varyantın birimlerini ifade edebiliyordu — ve değişimin para yarısı
+  ADR 0120'den beri fark tahsil edebiliyor, cevaplayacağı mal olmadan. Kalem
+  artık satır YERİNE bir varyant adlandırabiliyor (şemada CHECK: tam olarak
+  biri). Aşağı akışta hiçbir şey değişmedi ve bu şans değil ölçümün bulgusu:
+  sevkiyat akışı zaten yalnızca varyanttan çalışıyordu, satır oradaydı çünkü
+  satırın kendisi ne gönderdiğini söyleyemiyordu. Bedeli yazılı: satır kalemini
+  "alınandan fazlası olamaz" sınırlıyor, varyant kalemini ise yalnızca
+  operatörün YAZDIĞI fark tutarı — bu known-limits'e eklendi.
+
 - **Bir kural artık "şu gruplardan HERHANGİ BİRİNDE mi" diye sorabiliyor**
   (ADR 0144). Müşteri tüccarın koyduğu kadar grupta olur, ama sepet yalnızca
   BİRİNİ gönderebiliyordu: sıralı baş (ADR 0049). Yani {retail, vip}

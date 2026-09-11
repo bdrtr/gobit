@@ -509,5 +509,14 @@ past and is not corrected retroactively.
   million possibilities against an early-exit compare is sixty tries; the rate
   limit is what makes sixty tries not free.
 
+- **An exchange's goods and its money are related only by a human.**
+  `order_exchanges` carries no items and its `difference_due` is a figure the
+  operator types; the dispatch guard compares the payment collection against that
+  figure and nothing else. Since ADR 0145 a replacement can send a variant the
+  order never sold, so an operator can promise a jacket against a shirt's
+  difference and nothing will object. Pricing the item at settlement needs a
+  pricing read and a decision about which price applies to a replacement, and
+  neither has been made.
+
 - **The load test is in-process** (`make load-test`, `internal/e2e`): it tests
   correctness under load, it does not produce a capacity plan.

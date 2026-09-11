@@ -9,8 +9,16 @@ import (
 
 // ReplacementLineInput is one line of a replacement request.
 type ReplacementLineInput struct {
-	// OrderLineItemID is the order line being replaced.
+	// OrderLineItemID is the order line being replaced; leave it empty to send
+	// something the order did not sell.
 	OrderLineItemID string
+	// VariantID is the product being sent when it is not one of the order's.
+	//
+	// Exactly ONE of the two is given (ADR 0145). A line names goods the customer
+	// already has, and what bounds it is what was bought; a variant names goods
+	// the order never sold, and what bounds THAT is the exchange's money guard —
+	// a dispatch is refused until the difference is funded (ADR 0120).
+	VariantID string
 	// Quantity is how many units of it are being sent.
 	Quantity int64
 }
@@ -141,6 +149,7 @@ func (s *Service) CreateReplacement(
 				ID:              models.NewReplacementItemID(),
 				ReplacementID:   created.ID,
 				OrderLineItemID: in.Lines[i].OrderLineItemID,
+				VariantID:       in.Lines[i].VariantID,
 				Quantity:        in.Lines[i].Quantity,
 			})
 			if itemErr != nil {
@@ -246,27 +255,66 @@ func (s *Service) CancelReplacement(
 func checkReplacementLines(lines []ReplacementLineInput) error {
 	seen := make(map[string]bool, len(lines))
 	for i := range lines {
-		if err := requireID("order_line_item_id", lines[i].OrderLineItemID); err != nil {
+		named, err := replacementItemName(lines[i])
+		if err != nil {
 			return err
 		}
 		if lines[i].Quantity <= 0 {
 			return errors.Invalid(CodeInvalidInput,
-				"the replaced quantity has to be positive: line %s, quantity %d",
-				lines[i].OrderLineItemID, lines[i].Quantity)
+				"the replaced quantity has to be positive: %s, quantity %d",
+				named, lines[i].Quantity)
 		}
-		if seen[lines[i].OrderLineItemID] {
+		if seen[named] {
 			return errors.Invalid(CodeInvalidInput,
-				"line %s appears twice in one replacement; the quantity carries the count",
-				lines[i].OrderLineItemID)
+				"%s appears twice in one replacement; the quantity carries the count",
+				named)
 		}
-		seen[lines[i].OrderLineItemID] = true
+		seen[named] = true
 	}
 
 	return nil
 }
 
+// replacementItemName answers what one item is sending, and refuses a request
+// that names neither thing or both.
+//
+// EXACTLY ONE, and it is checked here rather than left to the schema's CHECK for
+// the reason the duplicate check gives above: a constraint violation names a
+// constraint, and the person filling in a form wants to be told which field to
+// fill. The database keeps the same rule underneath, because a service is not the
+// only thing that writes rows.
+func replacementItemName(line ReplacementLineInput) (string, error) {
+	switch {
+	case line.OrderLineItemID != "" && line.VariantID != "":
+		return "", errors.Invalid(CodeInvalidInput,
+			"a replacement item names either an order line or a variant, and this one "+
+				"names both (%s and %s); a row with two answers to \"what is being sent\" "+
+				"leaves the dispatch to pick",
+			line.OrderLineItemID, line.VariantID)
+	case line.OrderLineItemID != "":
+		return line.OrderLineItemID, requireID("order_line_item_id", line.OrderLineItemID)
+	case line.VariantID != "":
+		return line.VariantID, requireID("variant_id", line.VariantID)
+	default:
+		return "", errors.Invalid(CodeInvalidInput,
+			"a replacement item has to name what is being sent: an order line to send "+
+				"more of, or a variant the order did not sell")
+	}
+}
+
 // checkReplacementQuantities verifies that the requested lines belong to the
 // order and that no more of one is promised than was bought on it.
+//
+// # A variant-shaped item is bounded by something else
+//
+// The ceiling here is "no more of a line than was bought on it", and an item that
+// names a VARIANT is not against any line's ceiling — it is goods the order never
+// sold, so there is no bought quantity to compare it with (ADR 0145). What bounds
+// it instead is the exchange's money guard: a dispatch is refused until the
+// difference the operator asked for has been funded through its own collection
+// (ADR 0120). That is a weaker bound than the line's and it is written down
+// rather than implied, because the number the money is checked against is typed
+// by the operator.
 func checkReplacementQuantities(
 	lines []models.OrderLineItem,
 	alreadyPromised map[string]int64,
@@ -278,6 +326,10 @@ func checkReplacementQuantities(
 	}
 
 	for i := range requested {
+		if requested[i].VariantID != "" {
+			continue
+		}
+
 		bought, onOrder := ordered[requested[i].OrderLineItemID]
 		if !onOrder {
 			return errors.Invalid(CodeReplacementLineUnknown,
@@ -297,9 +349,15 @@ func checkReplacementQuantities(
 }
 
 // replacementLineIDs is the line ids of the requested lines.
+//
+// Variant-shaped items are LEFT OUT: they name no line, and an empty string in
+// the list would make the sum query look for a line called "".
 func replacementLineIDs(lines []ReplacementLineInput) []string {
 	out := make([]string, 0, len(lines))
 	for i := range lines {
+		if lines[i].OrderLineItemID == "" {
+			continue
+		}
 		out = append(out, lines[i].OrderLineItemID)
 	}
 

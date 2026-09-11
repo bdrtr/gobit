@@ -132,12 +132,13 @@ func (r *Repository) CreateReplacementItem(
 		orderdb.CreateOrderReplacementItemParams{
 			ID:                 in.ID,
 			OrderReplacementID: in.ReplacementID,
-			OrderLineItemID:    in.OrderLineItemID,
+			OrderLineItemID:    nullString(in.OrderLineItemID),
+			VariantID:          nullString(in.VariantID),
 			Quantity:           in.Quantity,
 		})
 	if err != nil {
 		return models.ReplacementItem{}, classify(err, codeQueryFailed,
-			"could not write the replacement line %s", in.OrderLineItemID)
+			"could not write the replacement line %s", in.Names())
 	}
 
 	return toReplacementItem(row), nil
@@ -199,7 +200,11 @@ func (r *Repository) ReplacedQuantities(
 	}
 
 	for i := range rows {
-		out[rows[i].OrderLineItemID] = rows[i].Replaced
+		// The query excludes variant-shaped rows, so every row here names a line.
+		// The pointer is dereferenced through the same helper the rest of this
+		// package uses rather than with a bare *: a nil here would be a query that
+		// stopped filtering, and a panic is a worse way to learn that than a zero.
+		out[stringValue(rows[i].OrderLineItemID)] = rows[i].Replaced
 	}
 
 	return out, nil
@@ -238,7 +243,8 @@ func toReplacementItem(row orderdb.OrderReplacementItem) models.ReplacementItem 
 	return models.ReplacementItem{
 		ID:              row.ID,
 		ReplacementID:   row.OrderReplacementID,
-		OrderLineItemID: row.OrderLineItemID,
+		OrderLineItemID: stringValue(row.OrderLineItemID),
+		VariantID:       stringValue(row.VariantID),
 		Quantity:        row.Quantity,
 		ReservationID:   stringValue(row.ReservationID),
 		CreatedAt:       toTime(row.CreatedAt),

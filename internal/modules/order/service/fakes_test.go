@@ -2194,7 +2194,8 @@ func (f *fakeStore) ListReplacementItems(
 	defer f.mu.Unlock()
 
 	out := make([]models.ReplacementItem, 0)
-	for _, item := range f.replItems {
+	for i := range f.replItems {
+		item := f.replItems[i]
 		if item.ReplacementID == replacementID {
 			out = append(out, item)
 		}
@@ -2229,8 +2230,13 @@ func (f *fakeStore) ReplacedQuantities(
 	}
 
 	out := make(map[string]int64, len(lineItemIDs))
-	for _, item := range f.replItems {
-		if !wanted[item.OrderLineItemID] {
+	for i := range f.replItems {
+		item := f.replItems[i]
+		// The real query excludes variant-shaped rows in SQL; a fake that counted
+		// them would attribute goods the order never sold to a line chosen by
+		// nothing, and the ceiling test would pass against a producer that does not
+		// behave like the producer (ADR 0145).
+		if item.SendsAVariant() || !wanted[item.OrderLineItemID] {
 			continue
 		}
 		record, ok := f.replaces[item.ReplacementID]

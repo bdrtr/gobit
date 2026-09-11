@@ -161,11 +161,12 @@ type OrderReplacement struct {
 type OrderReplacementItem struct {
 	ID                 string
 	OrderReplacementID string
-	OrderLineItemID    string
+	OrderLineItemID    *string
 	Quantity           int64
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
 	ReservationID      *string
+	VariantID          *string
 }
 
 type OrderReturn struct {

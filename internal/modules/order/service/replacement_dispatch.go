@@ -71,14 +71,21 @@ func (s *Service) ReplacementDetailJSON(
 		Lines:            make([]replacementLineJSON, 0, len(items)),
 	}
 	for i := range items {
-		variantID, onOrder := variantOf[items[i].OrderLineItemID]
-		if !onOrder {
-			// The same refusal [Service.ReturnDetailJSON] makes, for the mirror
-			// reason: a line reported without its variant would let a caller
-			// send nothing and believe it sent something.
-			return nil, errors.Internal(CodeInconsistentState,
-				"replacement %s names line %s, which is not on order %s",
-				replacementID, items[i].OrderLineItemID, source.orderID)
+		// An item that names a VARIANT carries its own answer and needs no join:
+		// the goods it sends are not on the order, which is the whole point of it
+		// (ADR 0145). The join below stays for the ones that name a line.
+		variantID := items[i].VariantID
+		if !items[i].SendsAVariant() {
+			onOrder := false
+			variantID, onOrder = variantOf[items[i].OrderLineItemID]
+			if !onOrder {
+				// The same refusal [Service.ReturnDetailJSON] makes, for the
+				// mirror reason: a line reported without its variant would let a
+				// caller send nothing and believe it sent something.
+				return nil, errors.Internal(CodeInconsistentState,
+					"replacement %s names line %s, which is not on order %s",
+					replacementID, items[i].OrderLineItemID, source.orderID)
+			}
 		}
 		detail.Lines = append(detail.Lines, replacementLineJSON{
 			ReplacementItemID: items[i].ID,
