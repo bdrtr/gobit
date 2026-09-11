@@ -38,7 +38,24 @@ import (
 // redis containers. An unpinned tag means the day MinIO changes its
 // validation is a day this suite fails for reasons unrelated to the change
 // being tested.
-const minioImage = "minio/minio:RELEASE.2025-09-07T16-13-09Z"
+//
+// # Why quay.io and not Docker Hub
+//
+// `minio/minio` on Docker Hub answers an anonymous pull with "denied: requested
+// access to the resource is denied" — the pinned tag AND `latest`, so it is the
+// repository and not the tag. MinIO publishes to its own registry, which serves
+// the SAME tag without credentials, and that is where this now points.
+//
+// It was found by CI going red while every local run was green, and the reason
+// is worth keeping: this machine had the Docker Hub image cached from a year
+// ago, so the lane never had to pull it. A green that rests on a local artefact
+// is not a green — the same shape as a gitignored build output making a lane
+// pass (D80).
+//
+// postgres:16-alpine and redis:7-alpine were checked at the same time and both
+// answer an anonymous pull. Those two are Docker Official Images; this one was a
+// vendor repository, which is the class where access can change under a pin.
+const minioImage = "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"
 
 // The container's root credentials. They are the test's own and reach nothing
 // outside the container's lifetime.

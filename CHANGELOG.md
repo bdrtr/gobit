@@ -20,6 +20,16 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Düzeltmeler
 
+- **Entegrasyon şeridi bu makinede bir yıllık ÖNBELLEK sayesinde yeşildi**
+  (D80). CI "pull access denied for minio/minio" ile düştü; bu ileti eksik
+  etiket gibi okunuyor ama değil — Docker Hub, sabitlenmiş etiketi de `latest`i
+  de anonim çekime kapatıyor, yani sorun etiket değil DEPO. Aynı etiket MinIO'nun
+  kendi kayıt defterinde (`quay.io/minio/minio`) kimliksiz servis ediliyor.
+  Sabitleme hiç sorun değildi; değişen şey sabitin ALTINDAKİ erişimdi — bir
+  pinin savunamayacağı sınıf. Yerelde her koşunun geçmesinin sebebi on iki aylık
+  önbellekti; düzeltmenin gerçek olduğunun kanıtı da önbellekte `quay.io/...`
+  adının bulunmaması: test çekmek ZORUNDA kaldı ve çekti.
+
 - **Entegrasyon şeridi yirmi koşuda bir, bir test sahtesindeki VERİ YARIŞINDAN
   düşüyordu** (D79). Sahte, gönderim sınırına kaç soru sorulduğunu sayıyor — bir
   tekrarın HİÇBİR ŞEY sormadığını kanıtlayan şey bu — ve sayaç, iki koliyi iki
