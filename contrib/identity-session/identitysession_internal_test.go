@@ -2,6 +2,7 @@ package identitysession
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -428,4 +429,104 @@ func fmtOf(v any) string {
 	}
 
 	return ""
+}
+
+// TestASealedValueIsNotASession is the whole reason the MAC carries a purpose.
+//
+// One key signs both, and the payload of a sealed value is often something a
+// caller influences — a passkey ceremony's challenge is the case this was
+// written for. Without domain separation a caller who could steer that payload
+// could mint a token that VERIFIES as a session and names whatever customer they
+// spelled. With it, neither shape can be read as the other whatever the bytes
+// say.
+func TestASealedValueIsNotASession(t *testing.T) {
+	t.Parallel()
+
+	sessions := newSessions(t, time.Now)
+
+	// A sealed value whose payload spells a session's shape exactly.
+	forged := sessions.SealValue(testCustomerID, time.Hour)
+
+	_, err := sessions.CustomerID(requestWith(&http.Cookie{
+		Name: DefaultCookieName, Value: forged,
+	}))
+	require.Error(t, err, "a sealed value must not be readable as a session")
+
+	// And the other direction: a session cookie is not a sealed value.
+	rec := httptest.NewRecorder()
+	sessions.Issue(rec, testCustomerID)
+
+	_, err = sessions.OpenValue(sessionCookie(t, rec).Value)
+	assert.Error(t, err, "a session must not be readable as a sealed value")
+}
+
+// TestASealedValueRoundTripsAndExpires is the primitive's own contract.
+func TestASealedValueRoundTripsAndExpires(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, time.September, 11, 9, 0, 0, 0, time.UTC)
+	sessions := newSessions(t, fixedClock(at))
+
+	// A payload with the separators the format uses, so a naive parse breaks.
+	const awkward = `{"challenge":"a.b.c","user":"cust_1"}`
+	sealed := sessions.SealValue(awkward, 5*time.Minute)
+
+	got, err := sessions.OpenValue(sealed)
+	require.NoError(t, err)
+	assert.Equal(t, awkward, got, "the value comes back byte for byte")
+
+	sessions.now = fixedClock(at.Add(5*time.Minute + time.Second))
+	_, err = sessions.OpenValue(sealed)
+	assert.Error(t, err, "a value past its ttl proves nothing")
+}
+
+// TestASealedValueRefusesAnEditedOne keeps the MAC honest on this path too.
+func TestASealedValueRefusesAnEditedOne(t *testing.T) {
+	t.Parallel()
+
+	sessions := newSessions(t, time.Now)
+	sealed := sessions.SealValue("the original", time.Hour)
+
+	for name, edited := range map[string]string{
+		"another payload": strings.Replace(sealed,
+			base64.RawURLEncoding.EncodeToString([]byte("the original")),
+			base64.RawURLEncoding.EncodeToString([]byte("the forged!!")), 1),
+		"no signature": payloadOf(t, sealed),
+		"empty":        "",
+		"junk":         "not.a.value",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := sessions.OpenValue(edited)
+			assert.Error(t, err, "an edited sealed value must prove nothing")
+		})
+	}
+}
+
+// TestThePurposeCannotBeConfusedWithThePayload pins the SEPARATOR, which no
+// behavior observes today.
+//
+// The two purposes this key signs for are the same length, so dropping the
+// separator between the purpose and the payload changes nothing any other test
+// here can see — measured: that mutation leaves the suite green. What it would
+// break is the next purpose, if it were a different length: without the
+// separator, signing ("s", "1x") and ("s1", "x") are the same bytes, and the
+// token minted for one purpose verifies for the other.
+//
+// So the property is asserted directly rather than through a behavior, because
+// the behavior that would show it does not exist yet and the cost of it
+// appearing is a forged token.
+func TestThePurposeCannotBeConfusedWithThePayload(t *testing.T) {
+	t.Parallel()
+
+	sessions := newSessions(t, time.Now)
+
+	assert.NotEqual(t,
+		sessions.sign("s", "1x"),
+		sessions.sign("s1", "x"),
+		"a purpose and a payload that CONCATENATE to the same bytes must not sign "+
+			"to the same MAC; the separator between them is the whole defense and "+
+			"today's two purposes are the same length, so nothing else would notice "+
+			"if it went")
 }

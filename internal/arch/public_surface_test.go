@@ -278,6 +278,11 @@ var outOfTreeExamples = []struct {
 		what: "a working customer identity: it fills corehttp.IdentityName, owns a " +
 			"table, mounts endpoints and passes core/identitytest (ADR 0127)",
 	},
+	{
+		dir: "contrib/identity-passkey",
+		what: "passkeys on top of that identity, in a module of its own so the " +
+			"WebAuthn library lands only in the graph that asked for it (ADR 0128)",
+	},
 }
 
 // TestTheOutOfTreeExamplesCompile is the surface's only end-to-end proof.

@@ -100,20 +100,54 @@ var errNoSession = errors.New("identity-session: the request carries no valid se
 // injected script can steal, and those three attributes are the whole of what a
 // cookie can do about it.
 func (s *Sessions) Issue(w http.ResponseWriter, customerID string) {
-	expiry := s.now().Add(s.ttl)
+	http.SetCookie(w, s.Cookie(s.cookieName, s.seal(customerID, s.now().Add(s.ttl)), s.ttl))
+}
+
+// Cookie builds a cookie carrying this installation's security attributes.
+//
+// It exists for a module that needs a cookie of its own with the same
+// protections and no second opinion about them — the passkey ceremony's
+// short-lived token is the case it was written for (ADR 0128). What it hands
+// back is the ATTRIBUTES rather than a second way to issue a session: the value
+// is the caller's, and a caller wanting one this key vouches for seals it with
+// [Sessions.SealValue] first.
+//
+// Whether Secure is set is the installation's answer and not the caller's, which
+// is the whole reason this is here rather than in every caller.
+func (s *Sessions) Cookie(name, value string, ttl time.Duration) *http.Cookie {
 	//nolint:gosec // G124 wants Secure as a literal; it is the installation's
 	// choice here and defaults to on. See Options.Insecure, which exists because
 	// a Secure cookie is not sent over plain HTTP at all and local development
 	// on a name that is not localhost would have no session.
-	http.SetCookie(w, &http.Cookie{
-		Name:     s.cookieName,
-		Value:    s.seal(customerID, expiry),
+	return &http.Cookie{
+		Name:     name,
+		Value:    value,
 		Path:     "/",
-		Expires:  expiry,
+		Expires:  s.now().Add(ttl),
 		HttpOnly: true,
 		Secure:   s.secure,
 		SameSite: http.SameSiteLaxMode,
-	})
+	}
+}
+
+// ClearCookie builds one that ends a cookie of that name.
+//
+// It overwrites with an expired EMPTY value rather than only asking the browser
+// to drop it, for [Sessions.Clear]'s reason: a client that ignores MaxAge still
+// sends what it holds.
+func (s *Sessions) ClearCookie(name string) *http.Cookie {
+	//nolint:gosec // G124, for [Sessions.Cookie]'s reason: the attributes have to
+	// match the cookie being replaced or the browser keeps the old one.
+	return &http.Cookie{
+		Name:     name,
+		Value:    "",
+		Path:     "/",
+		Expires:  time.Unix(0, 0),
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   s.secure,
+		SameSite: http.SameSiteLaxMode,
+	}
 }
 
 // Clear ends the session.
@@ -122,19 +156,26 @@ func (s *Sessions) Issue(w http.ResponseWriter, customerID string) {
 // browser to drop it: a client that ignores MaxAge still sends what it holds, and
 // what it holds after this proves nobody.
 func (s *Sessions) Clear(w http.ResponseWriter) {
-	//nolint:gosec // G124, for [Sessions.Issue]'s reason: the attribute has to
-	// match the cookie being replaced or the browser keeps the old one.
-	http.SetCookie(w, &http.Cookie{
-		Name:     s.cookieName,
-		Value:    "",
-		Path:     "/",
-		Expires:  time.Unix(0, 0),
-		MaxAge:   -1,
-		HttpOnly: true,
-		Secure:   s.secure,
-		SameSite: http.SameSiteLaxMode,
-	})
+	http.SetCookie(w, s.ClearCookie(s.cookieName))
 }
+
+// The purposes this key signs for.
+//
+// # Why a signed value carries what it is FOR
+//
+// One key signs more than one kind of value — a session, and a short-lived token
+// another module asked for ([Sessions.SealValue]). Without a purpose in the MAC
+// they are interchangeable: a token minted for a passkey ceremony, whose payload
+// a caller can often influence, would verify as a SESSION and name whatever
+// customer it happened to spell. Domain separation is one string and it makes
+// that impossible rather than unlikely.
+//
+// The labels are written out rather than derived from a caller's argument, so
+// two purposes cannot collide by one of them containing the other's name.
+const (
+	purposeSession = "s1"
+	purposeValue   = "v1"
+)
 
 // seal produces the cookie value: the identifier, the expiry and a MAC over both.
 //
@@ -144,7 +185,53 @@ func (s *Sessions) Clear(w http.ResponseWriter) {
 func (s *Sessions) seal(customerID string, expiry time.Time) string {
 	payload := customerID + "." + strconv.FormatInt(expiry.Unix(), 10)
 
-	return payload + "." + base64.RawURLEncoding.EncodeToString(s.sign(payload))
+	return payload + "." + base64.RawURLEncoding.EncodeToString(s.sign(purposeSession, payload))
+}
+
+// SealValue signs an arbitrary short-lived value with this installation's key.
+//
+// It exists for a module that needs a token this one's key can verify and has no
+// business holding a second secret — the passkey ceremony's challenge is the
+// case it was written for. The value is SIGNED and not encrypted: a caller can
+// read it and cannot change it.
+//
+// A sealed value is NOT a session and cannot become one; see the purposes above.
+func (s *Sessions) SealValue(value string, ttl time.Duration) string {
+	payload := base64.RawURLEncoding.EncodeToString([]byte(value)) +
+		"." + strconv.FormatInt(s.now().Add(ttl).Unix(), 10)
+
+	return payload + "." + base64.RawURLEncoding.EncodeToString(s.sign(purposeValue, payload))
+}
+
+// OpenValue reads a value back and refuses one this key did not seal.
+//
+// An expired value is refused with the same error as a forged one, for
+// [Sessions.CustomerID]'s reason: telling them apart tells a forger which half
+// of the forgery worked.
+func (s *Sessions) OpenValue(sealed string) (string, error) {
+	payload, signature, found := cutLast(sealed)
+	if !found {
+		return "", errNoSession
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(signature)
+	if err != nil || !hmac.Equal(raw, s.sign(purposeValue, payload)) {
+		return "", errNoSession
+	}
+
+	encoded, stamp, found := strings.Cut(payload, ".")
+	if !found {
+		return "", errNoSession
+	}
+	seconds, err := strconv.ParseInt(stamp, 10, 64)
+	if err != nil || !s.now().Before(time.Unix(seconds, 0)) {
+		return "", errNoSession
+	}
+	value, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return "", errNoSession
+	}
+
+	return string(value), nil
 }
 
 // open reads a cookie value and refuses one this key did not seal.
@@ -164,7 +251,7 @@ func (s *Sessions) open(value string) (customerID string, expiry time.Time, err 
 	// The MAC is checked BEFORE the payload is parsed: everything after this line
 	// is a value this key produced, and everything before it is a string a caller
 	// sent.
-	if !hmac.Equal(raw, s.sign(payload)) {
+	if !hmac.Equal(raw, s.sign(purposeSession, payload)) {
 		return "", time.Time{}, errNoSession
 	}
 
@@ -180,9 +267,14 @@ func (s *Sessions) open(value string) (customerID string, expiry time.Time, err 
 	return id, time.Unix(seconds, 0), nil
 }
 
-// sign is the MAC over a cookie payload.
-func (s *Sessions) sign(payload string) []byte {
+// sign is the MAC over a payload, bound to what the payload is FOR.
+//
+// The purpose goes in first and is followed by a separator no purpose contains,
+// so no pair of (purpose, payload) can produce the bytes of another pair.
+func (s *Sessions) sign(purpose, payload string) []byte {
 	mac := hmac.New(sha256.New, s.secret)
+	mac.Write([]byte(purpose))
+	mac.Write([]byte{0})
 	mac.Write([]byte(payload))
 
 	return mac.Sum(nil)

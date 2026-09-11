@@ -20,6 +20,21 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Passkey'ler KENDİ modülünde** (ADR 0128). `contrib/identity-passkey` her iki
+  WebAuthn törenini de yapıyor, kendi kimlik bilgisi tablosunu tutuyor ve kişiyi
+  parolanın açtığı AYNI oturum çerezine sokuyor. Ayrı bir `go.mod`, çünkü ölçüldü:
+  go-webauthn'ı import etmek gobit'in grafiğinde OLMAYAN dokuz modül ekliyor —
+  `go-tpm` ve `go-tpm-tools` dahil, yani çoğu dükkânın hiç görmeyeceği donanımın
+  attestation desteği. `contrib/identity-session`'ı parola için import eden bir
+  kurulum bunu taşımamalı. Tören durumu, oturum modülünün anahtarıyla mühürlenmiş
+  kısa ömürlü bir çerez; bu, o modülün MAC'ine "bu imza NE İÇİN" bilgisini
+  eklettirdi — tek anahtarın iki şekli imzalaması onları birbirinin yerine
+  geçirilebilir yapar. Giriş kimseyi ADLANDIRMIYOR: doğrulayıcı kişiye hangi
+  anahtarını kullanacağını soruyor, ki bu hem daha iyi akış hem de hesap sayımı
+  OLMAYAN tek akış. Törenler gerçek bir yazılım doğrulayıcısıyla KOŞULUYOR, çünkü
+  bu modülün yapabileceği her hata bir challenge, bir origin ya da bir kullanıcı
+  tutamağı hakkında ve handler'a dair hiçbir iddia bunların hiçbirini görmez.
+
 - **Çalışan bir müşteri kimliği artık AĞAÇTA — ama modülün DIŞINDA** (ADR 0127).
   `contrib/identity-session`: imzalı çerez oturumu, argon2id parolalar, kendi
   tablosu ve iki vitrin ucu; gömen import edip `Add` ediyor. ADR 0125 müşteri
