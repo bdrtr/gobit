@@ -948,6 +948,17 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Düzeltildi
 
+- **Yayımlanmış bir API tarifi, ucun yaptığının TERSİNİ söylüyordu** (D62).
+  ADR 0125 dört vitrin ucunu varsayılan olarak reddeder yaptı; eski davranışı
+  anlatan sekiz pasaj peşinden gitmedi. Üçü OpenAPI tarifiydi — yani
+  entegratöre verilmiş söz (ADR 0026) — ve belgeyi okuyan biri, ucun artık
+  VARSAYILAN olarak döndüğü bir statüye karşı kod yazardı. Diğer beşi Go'daydı;
+  ikisi `IdentityLookup`'ın var olma gerekçesini anlatırken reddi "ADR 0057'nin
+  kaçınmak için yeniden yazıldığı kırıcı değişiklik" diye tarif ediyordu — ki ADR
+  0125 tam onu, bilerek ve geri dönüş yolu vererek yaptı. Hiçbir kapı yakalamadı
+  ve yakalayamaz: sayım kapısı nüfus fiyatlar, şema-adı kapısı tanımlayıcı
+  çözer; ikisi de bir cümleyi ANLAMI için okumaz.
+
 - **Fonlanmış bir değişim, malı çıktıktan sonra sonsuza kadar AÇIK kalıyordu**
   (D59). ADR 0120 değişime `funded` durumunu verdi ve kapanışın iki muhafızını
   da onun için genişletti; sevkiyat akışı ise kaynağı kapatırken kendi üçüncü

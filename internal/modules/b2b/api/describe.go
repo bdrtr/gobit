@@ -185,13 +185,15 @@ func describeVitrin(d *openapi.Doc) {
 // storefrontClaimResponses merges a storefront operation's success response
 // with the refusals ADR 0057 gave both of these routes.
 //
-// # Why the statuses are CONDITIONAL
+// # What an installation that bound NOTHING answers
 //
-// They exist only where the installation has bound a corehttp.Identity. One
-// that bound none cannot contradict the customer named in the path and answers
-// exactly as it did before ADR 0057, so a reader must not conclude that these
-// endpoints stopped working. What they stopped doing is believing a claim a
-// bound verifier denies.
+// 401 identity_not_bound, on every one of these routes, since ADR 0125. Between
+// ADR 0057 and that record it served the path's claim unchecked, and the
+// sentence that stood here said so; the old answer is now a setting an operator
+// asks for by name (STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM).
+//
+// The 403 below is still conditional: contradicting a claim needs something to
+// contradict it with.
 //
 // # Why FIVE statuses and not the two this module returns
 //
@@ -210,12 +212,13 @@ func storefrontClaimResponses(success string, response any) map[string]any {
 	return map[string]any{
 		success: response,
 		"401": openapi.ErrorResponse(
-			"The publishable key was accepted, and the customer identity this installation " +
-				"bound refused the request with an error of its own that asks the shopper " +
-				"to sign in; the code is the embedder's. An installation that has bound NO " +
-				"identity does not answer here — it cannot check the path claim, and " +
-				"ADR 0057 leaves these endpoints serving rather than withdrawing a surface " +
-				"that works."),
+			"The publishable key was accepted and the request is not proven. Either the " +
+				"customer identity this installation bound refused it with an error of its " +
+				"own that asks the shopper to sign in — the code is the embedder's — or NO " +
+				"identity is bound at all, which answers \"identity_not_bound\" since ADR " +
+				"0125. An installation that wants the pre-0125 answer, where the path's " +
+				"claim was served unchecked, sets " +
+				"STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM."),
 		"403": openapi.ErrorResponse(
 			"Either the request proves a DIFFERENT customer than the one named in the " +
 				"path — code \"identity_mismatch\", which does not depend on whether that " +

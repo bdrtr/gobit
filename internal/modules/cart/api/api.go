@@ -110,13 +110,16 @@
 //     guards a different thing: a cart that already has an owner is never
 //     handed to a second one (service.CodeCustomerMismatch).
 //
-// Both are narrowed only where there is something to narrow WITH. An
-// installation that has bound no corehttp.Identity is served exactly as it was
-// before ADR 0057 — the claim is taken at its word — because withdrawing a
-// working surface from an embedder who did nothing wrong is a cost this record
-// declined to impose, and gobit refusing to GUESS was never gobit refusing to
-// serve. That leaves the oracle below OPEN in such an installation, and the one
-// sentence an operator can act on is: bind a verifier.
+// The second is narrowed only where there is something to narrow WITH: a
+// mismatch needs a proof to mismatch against. The first is not. An installation
+// that has bound no corehttp.Identity REFUSES a naming body since ADR 0125,
+// where ADR 0057 had it serve the claim at its word — that record declined to
+// withdraw a working surface from an embedder who did nothing wrong, and 0125
+// answered the same objection differently: the surface is one setting away
+// (STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM) and what was withdrawn is having
+// it without deciding. The oracle below is open only in an installation that
+// set it, and the sentence an operator can act on is unchanged: bind a
+// verifier.
 //
 // What those two cost while they were open is worth keeping, because it is what
 // the check buys. The cart's customer becomes the ORDER's customer, and the
@@ -450,10 +453,14 @@ type Flows struct {
 //
 // Because "this installation bound no verifier" is an answer this surface acts
 // on, and the corehttp.Identity contract cannot carry it: CustomerID returns an
-// identifier or an error, and an absent binding is neither. A wrapper that
-// answered with an error would make every cart naming a customer refuse in an
-// installation that has been selling correctly for a year — which is the
-// breaking change ADR 0057 was rewritten to avoid.
+// identifier or an error, and an absent binding is neither.
+//
+// What the surface DOES with that answer changed under it. ADR 0057 served the
+// claim, to avoid making every cart naming a customer refuse in an installation
+// that had been selling correctly for a year; ADR 0125 makes it refuse and gives
+// that installation one setting to keep the old answer. The distinction this
+// type carries is what lets either record be written — a lookup that could only
+// say "error" could express neither.
 //
 // It takes a context rather than the request because that is all the resolution
 // needs: the lookup reads the CONTAINER, and only the logging inside it wants a

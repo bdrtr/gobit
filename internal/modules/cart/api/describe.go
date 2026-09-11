@@ -319,15 +319,19 @@ func queryParameter(name, valueType, description string) openapi.Parameter {
 // endpoint names nobody, and describing a 403 on a line-item write would tell a
 // client to handle a status that endpoint cannot return.
 //
-// # Why the statuses are CONDITIONAL and the description says so
+// # What is CONDITIONAL and what is not, since ADR 0125
 //
-// Two things have to be true before any of them can be returned: the body has
-// to NAME a customer, and the installation has to have bound an identity. A
-// guest body never reaches the check, and an installation that bound nothing
-// has nothing to refuse with. Writing the refusals without that sentence would
-// read as "this endpoint needs an identity", and an integrator would conclude
-// that gobit cannot sell to a shopper without an account — which is the
-// opposite of the decision.
+// One thing has to be true before any of them can be returned: the body has to
+// NAME a customer. A guest body never reaches the check, in any installation,
+// and that sentence has to survive every rewrite of this passage — without it an
+// integrator concludes gobit cannot sell to a shopper without an account, which
+// is the opposite of the decision.
+//
+// What CHANGED is the other half. An installation that bound nothing used to
+// have nothing to refuse with and served the claim; since ADR 0125 it answers
+// 401 identity_not_bound, and the old behavior is a setting. So the 401 is
+// unconditional for a naming body and the 403 still needs a verifier to
+// contradict it.
 //
 // # Why FIVE statuses and not the one this package returns
 //
@@ -340,11 +344,13 @@ func claimRefusals(success string, response any) map[string]any {
 	return map[string]any{
 		success: response,
 		"401": openapi.ErrorResponse(
-			"The body named a customer and the identity this installation bound refused " +
-				"the request with an error of its own that asks the shopper to sign in; " +
-				"the code is the embedder's. An installation that has bound NO identity " +
-				"does not answer here — it cannot check the claim, and ADR 0057 leaves it " +
-				"serving rather than withdrawing a working endpoint."),
+			"The body named a customer and the request is not proven. Either the identity " +
+				"this installation bound refused it with an error of its own that asks the " +
+				"shopper to sign in — the code is the embedder's — or NO identity is bound " +
+				"at all, which answers \"identity_not_bound\" since ADR 0125. A body naming " +
+				"NOBODY is never asked and opens a guest cart either way. An installation " +
+				"that wants the pre-0125 answer sets " +
+				"STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM."),
 		"403": openapi.ErrorResponse(
 			"The request proves a DIFFERENT customer than the body named — code " +
 				"\"identity_mismatch\" — or the bound identity refused this request with a " +

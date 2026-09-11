@@ -149,9 +149,13 @@ type B2B interface {
 // It is a lookup rather than the corehttp.Identity itself because "this
 // installation bound no verifier" is an answer these two routes act on, and
 // that contract cannot carry it: CustomerID returns an identifier or an error,
-// and an absent binding is neither. A wrapper that answered with an error would
-// turn every b2b storefront read in an unprepared installation into a 401,
-// which is the breaking change ADR 0057 was rewritten to avoid.
+// and an absent binding is neither.
+//
+// What these routes DO with that answer changed under this type. ADR 0057 served
+// the path's claim rather than turning every b2b storefront read in an unprepared
+// installation into a 401; ADR 0125 makes it exactly that 401 and gives such an
+// installation one setting to keep the old answer. The distinction this lookup
+// carries is what let either record be written.
 type IdentityLookup func(ctx context.Context) (corehttp.Identity, error)
 
 // Handler b2b modülünün HTTP handler kümesidir.
