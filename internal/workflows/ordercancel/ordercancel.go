@@ -105,13 +105,15 @@ type Inventory interface {
 	// SaleLocations answers where an order's units were deducted from, as
 	// inventory item to location.
 	SaleLocations(ctx context.Context, orderID string) (map[string]string, error)
-	// ReturnCanceled puts units back. It is idempotent on the cancellation id,
-	// and alreadyBack says the units were there before this call.
+	// ReturnCanceled brings a LINE's returned units up to a target and reports
+	// whether the target was already met. It takes a target rather than a
+	// quantity because two acts put a line's units back and neither may compute a
+	// delta from a state the other has not yet changed (ADR 0142).
 	ReturnCanceled(
 		ctx context.Context,
-		inventoryItemID, locationID string,
-		quantity int64,
-		cancellationID string,
+		inventoryItemID, locationID, lineItemID string,
+		target int64,
+		reference string,
 	) (alreadyBack bool, err error)
 }
 
@@ -199,12 +201,12 @@ func (w *Workflow) HandleLineCanceled(ctx context.Context, e eventbus.Event) err
 		return err
 	}
 
-	quantity := returnableUnits(in.bought, committed, in.before, in.quantity)
-	if quantity == 0 {
-		w.log.DebugContext(ctx, "a canceled line has no units to put back",
+	target := targetOnShelf(in.bought, in.before+in.quantity, committed)
+	if target == 0 {
+		w.log.DebugContext(ctx, "a canceled line has no units that belong on the shelf",
 			"cancellation_id", in.cancellationID, "order_line_item_id", in.lineItemID,
 			"bought", in.bought, "committed", committed,
-			"canceled_before", in.before, "canceled_now", in.quantity)
+			"canceled_total", in.before+in.quantity)
 
 		return nil
 	}
@@ -218,60 +220,68 @@ func (w *Workflow) HandleLineCanceled(ctx context.Context, e eventbus.Event) err
 	}
 
 	alreadyBack, err := w.inventory.ReturnCanceled(
-		ctx, itemID, locationID, quantity, in.cancellationID)
+		ctx, itemID, locationID, in.lineItemID, target, in.cancellationID)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), CodeEventUnusable,
 			"the stock of canceled line %s could not be put back", in.lineItemID)
 	}
 	if alreadyBack {
-		// The second delivery of one event. The ledger refused to add the units
-		// twice, which is the whole reason the cancellation's id is the movement's
-		// reference — the bus delivers at least once and adding stock is deliberately
-		// not idempotent anywhere else.
-		w.log.DebugContext(ctx, "the canceled units were already put back",
-			"cancellation_id", in.cancellationID)
+		// The line is already at or above the target: a second delivery of this
+		// event, or the parcel act having got there first. Either way nothing is
+		// owed and nothing was written.
+		w.log.DebugContext(ctx, "the canceled units were already back on the shelf",
+			"cancellation_id", in.cancellationID, "target", target)
 
 		return nil
 	}
 
-	w.log.InfoContext(ctx, "the stock of a canceled line went back on the shelf",
+	w.log.InfoContext(ctx, "the stock of a canceled line was brought up to its target",
 		"cancellation_id", in.cancellationID, "order_line_item_id", in.lineItemID,
-		"inventory_item_id", itemID, "location_id", locationID, "quantity", quantity)
+		"inventory_item_id", itemID, "location_id", locationID, "target", target)
 
 	return nil
 }
 
-// returnableUnits is how many of THIS cancellation's units go back on the shelf.
+// targetOnShelf is how many of a line's written-off units belong on the shelf.
 //
-// # The arithmetic, and why it is not simply the canceled quantity
+// # One invariant, computed by both acts
 //
-// Stock was deducted for every unit bought. Units a live parcel holds have left.
-// So the units that were deducted and will not leave are `bought - committed`, and
-// that window is shared by every cancellation of the line: a second one must not
-// put back what the first already did.
+// Stock was deducted for every unit bought. Units a live parcel holds have left
+// or are about to. So the units that were deducted and will not leave are
+// `bought - committed`, and of those the ones that were actually written off are
 //
-//	before = min(canceledBefore, window)
-//	after  = min(canceledBefore + now, window)
-//	return = after - before
+//	min(canceledTotal, bought - committed)
 //
-// It is monotone and needs no record of what was returned before, because the
-// total put back is always `min(canceledTotal, window)` however the cancellations
-// were split. A line whose units have all shipped gives a window of zero and
-// therefore returns nothing, which is the answer: those goods are with the
-// customer and a write-off of them is a money act, not a stock one.
-func returnableUnits(bought, committed, canceledBefore, now int64) int64 {
+// Both sides move: a write-off grows `canceledTotal`, a parcel being canceled
+// shrinks `committed`. Each act computes this same number from the state it finds
+// and asks the inventory module to bring the line's total UP TO it.
+//
+// # Why a target and not an increment
+//
+// Because an increment needs to know what the other act has already done, and
+// the previous design had each of them ASSUME it. The parcel act's "what was
+// already owed" term assumed the write-offs had run; when the bus delivered them
+// in the other order — which it may, being asynchronous and at-least-once — the
+// parcel act put back what it expected the write-off to have left, and the
+// write-off then found a full window and put back everything. Five canceled units
+// became eight on the shelf (D82).
+//
+// A target has no such assumption. Whichever act arrives first does the work, the
+// other finds the total already there, and a redelivery finds it too.
+//
+// Clamped at zero: an order whose parcels hold more than it sold is a state this
+// flow did not create, and a negative window would ask for a negative target.
+func targetOnShelf(bought, canceledTotal, committed int64) int64 {
+	if canceledTotal <= 0 {
+		return 0
+	}
+
 	window := bought - committed
 	if window <= 0 {
 		return 0
 	}
 
-	before := min(canceledBefore, window)
-	after := min(canceledBefore+now, window)
-	if after <= before {
-		return 0
-	}
-
-	return after - before
+	return min(canceledTotal, window)
 }
 
 // committedQuantity answers how many units of the line a live parcel holds.

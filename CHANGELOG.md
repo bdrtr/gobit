@@ -64,6 +64,20 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **İki eylem de AYNI HEDEFİ hesaplıyor** (ADR 0142, D82). Bir satırın iptal
+  edilen birimlerini rafa iki eylem koyuyor: yazımın kendisi ve gerisini tutan
+  kolinin iptali. İkisi de FARK hesaplıyordu, ve koli eylemi "yazımın zaten geri
+  koyduğu" terimini çıkarıyordu — okumadığı, VARSAYDIĞI bir sayı. Otobüs sıra
+  vaat etmiyor: doğrudan yayımı kaybolan bir yazım, outbox aktarıcısıyla bir
+  dakika sonra, operatör koliyi iptal ettikten SONRA geliyor. Ölçüldü: beş
+  birimlik bir iptal için rafa SEKİZ birim yazıldı, ve iki eylemin referansları
+  farklı olduğu için defterin tekilliği bunu göremiyordu. Artık ikisi de
+  `min(iptal, satılan − kolideki)` hedefini hesaplıyor ve modül, kilidin altında
+  farkı hareket ettiriyor; sıra önemsizleşiyor ve yeniden teslim edilen olay
+  hedefi zaten karşılanmış buluyor. `inventory_movements` satır kimliği taşıyan
+  bir sütun kazandı, referansın tekil indeksi ise DÜŞTÜ — aynı eylem hedefi
+  büyüdüğünde meşru biçimde ikinci kez yazıyor.
+
 - **Uçtan uca zemin, üretimin bağladığı her akışı bağlıyor** (ADR 0141).
   `internal/e2e` modül ve akış kümesini ELLE kuruyor — bilerek, çünkü gerçek
   kurulumu çağıran bir zemin modülleri değil kurulumu sınardı. O kopyanın

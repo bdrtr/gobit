@@ -15,10 +15,9 @@ const appendMovement = `-- name: AppendMovement :one
 
 INSERT INTO inventory_movements (
     id, inventory_item_id, location_id, reservation_id, reason, delta, stocked_after,
-    reference
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-ON CONFLICT (reference) WHERE reason = 'cancellation' DO NOTHING
-RETURNING id, inventory_item_id, location_id, reservation_id, reason, delta, stocked_after, created_at, reference
+    reference, line_item_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, inventory_item_id, location_id, reservation_id, reason, delta, stocked_after, created_at, reference, line_item_id
 `
 
 type AppendMovementParams struct {
@@ -30,6 +29,7 @@ type AppendMovementParams struct {
 	Delta           int64
 	StockedAfter    int64
 	Reference       *string
+	LineItemID      *string
 }
 
 // inventory_movements queries.
@@ -44,6 +44,12 @@ type AppendMovementParams struct {
 // It is called INSIDE the transaction that writes inventory_levels — the
 // repository refuses it outside one — so the level and its explanation commit
 // together or neither does.
+// The ON CONFLICT clause is GONE, together with the unique index it inferred
+// (migration 000007). It held one cancellation movement per reference, which was
+// the idempotency of the old design: an act added a delta once. The delta is no
+// longer what an act computes — it brings the line's total UP TO a target read
+// under the level's lock — so the same reference can legitimately appear twice
+// and a redelivered event writes nothing because the target is already met.
 func (q *Queries) AppendMovement(ctx context.Context, arg AppendMovementParams) (InventoryMovement, error) {
 	row := q.db.QueryRow(ctx, appendMovement,
 		arg.ID,
@@ -54,6 +60,7 @@ func (q *Queries) AppendMovement(ctx context.Context, arg AppendMovementParams) 
 		arg.Delta,
 		arg.StockedAfter,
 		arg.Reference,
+		arg.LineItemID,
 	)
 	var i InventoryMovement
 	err := row.Scan(
@@ -66,12 +73,13 @@ func (q *Queries) AppendMovement(ctx context.Context, arg AppendMovementParams) 
 		&i.StockedAfter,
 		&i.CreatedAt,
 		&i.Reference,
+		&i.LineItemID,
 	)
 	return i, err
 }
 
 const listMovementsForItem = `-- name: ListMovementsForItem :many
-SELECT id, inventory_item_id, location_id, reservation_id, reason, delta, stocked_after, created_at, reference FROM inventory_movements
+SELECT id, inventory_item_id, location_id, reservation_id, reason, delta, stocked_after, created_at, reference, line_item_id FROM inventory_movements
 WHERE inventory_item_id = $1::text
   AND ($2::text IS NULL
        OR location_id = $2::text)
@@ -131,6 +139,7 @@ func (q *Queries) ListMovementsForItem(ctx context.Context, arg ListMovementsFor
 			&i.StockedAfter,
 			&i.CreatedAt,
 			&i.Reference,
+			&i.LineItemID,
 		); err != nil {
 			return nil, err
 		}
@@ -140,6 +149,46 @@ func (q *Queries) ListMovementsForItem(ctx context.Context, arg ListMovementsFor
 		return nil, err
 	}
 	return items, nil
+}
+
+const returnedForLine = `-- name: ReturnedForLine :one
+SELECT COALESCE(SUM(delta), 0)::bigint AS returned
+FROM inventory_movements
+WHERE reason = 'cancellation'
+  AND line_item_id = $1
+  AND inventory_item_id = $2
+`
+
+type ReturnedForLineParams struct {
+	LineItemID      *string
+	InventoryItemID string
+}
+
+// ReturnedForLine sums the units a line's write-offs have already put back, for
+// one inventory item.
+//
+// It is the question that makes the two acts order-independent: whichever runs
+// first brings the total to its target, and the other recomputes the target from
+// current state and tops up by the difference. Read INSIDE the transaction that
+// holds the level's lock, so two concurrent calls cannot both see the old sum.
+//
+// # Why the ITEM is in the predicate
+//
+// Because the lock is. The caller holds the level of one (item, location) pair,
+// and a sum that reached across items would be reading rows nothing in this
+// transaction protects. In production a line sells one variant and a variant
+// tracks one item, so the item narrows nothing — it makes the read match the
+// lock, which is a property rather than a filter. The integration suite found
+// this the way it finds things: the test passed alone and failed beside its
+// neighbour, which was reusing the line id on a different item.
+//
+// COALESCE, because a line nothing has returned yet has no rows rather than a
+// row of zero.
+func (q *Queries) ReturnedForLine(ctx context.Context, arg ReturnedForLineParams) (int64, error) {
+	row := q.db.QueryRow(ctx, returnedForLine, arg.LineItemID, arg.InventoryItemID)
+	var returned int64
+	err := row.Scan(&returned)
+	return returned, err
 }
 
 const saleLocationsForReference = `-- name: SaleLocationsForReference :many

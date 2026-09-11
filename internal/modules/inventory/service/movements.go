@@ -53,7 +53,7 @@ func (s *Service) openLevel(
 		return models.InventoryLevel{}, err
 	}
 
-	if err := s.recordMovement(ctx, level, stocked, reason, "", ""); err != nil {
+	if err := s.recordMovement(ctx, level, stocked, reason, "", "", ""); err != nil {
 		return models.InventoryLevel{}, err
 	}
 
@@ -72,7 +72,7 @@ func (s *Service) writeQuantities(
 	level models.InventoryLevel,
 	stocked, reserved int64,
 	reason models.MovementReason,
-	reservationID, reference string,
+	reservationID, reference, lineItemID string,
 ) (models.InventoryLevel, error) {
 	updated, err := s.store.UpdateInventoryLevelQuantities(ctx, level.ID, stocked, reserved)
 	if err != nil {
@@ -80,7 +80,7 @@ func (s *Service) writeQuantities(
 	}
 
 	if err := s.recordMovement(ctx, updated, stocked-level.StockedQuantity,
-		reason, reservationID, reference); err != nil {
+		reason, reservationID, reference, lineItemID); err != nil {
 		return models.InventoryLevel{}, err
 	}
 
@@ -98,7 +98,7 @@ func (s *Service) recordMovement(
 	level models.InventoryLevel,
 	delta int64,
 	reason models.MovementReason,
-	reservationID, reference string,
+	reservationID, reference, lineItemID string,
 ) error {
 	// A write that moved nothing leaves nothing, whatever the caller meant by
 	// it. This is not only the reservation flows: an operator who writes the
@@ -139,6 +139,7 @@ func (s *Service) recordMovement(
 		Delta:           delta,
 		StockedAfter:    level.StockedQuantity,
 		Reference:       reference,
+		LineItemID:      lineItemID,
 	})
 
 	return err

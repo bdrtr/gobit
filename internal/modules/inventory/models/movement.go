@@ -164,9 +164,22 @@ type Movement struct {
 	//
 	// Empty for every other reason. Two things rest on it — a sale's reference is
 	// how a later cancellation finds the LOCATION its units were taken from, and a
-	// cancellation's is what makes putting them back idempotent under a bus that
-	// delivers at least once.
+	// cancellation's names the act that wrote it, which is what an operator reads
+	// the ledger for.
+	//
+	// It used to be the idempotency mechanism as well — one cancellation, one
+	// row, held by a unique index. It is not any more: two acts can put a line's
+	// units back and the same act can write twice as its target grows, so the
+	// guard moved to the SUM below (migration 000007, ADR 0142).
 	Reference string
+	// LineItemID is the order line a cancellation put units back for.
+	//
+	// Set on a [MovementCancellation] and on nothing else. It is the column that
+	// makes "how much of this line is already back" a question the ledger can
+	// answer, and that question is what lets two acts — a write-off and a
+	// canceled parcel — bring the total to the same target in either order
+	// without either of them counting the other's work twice.
+	LineItemID string
 	// Delta is the signed change; it is never zero.
 	Delta int64
 	// StockedAfter is the physical count the change produced.

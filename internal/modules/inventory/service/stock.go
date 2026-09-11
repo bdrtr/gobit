@@ -69,7 +69,7 @@ func (s *Service) SetInventoryLevel(ctx context.Context, itemID, locationID stri
 		}
 
 		updated, err := s.writeQuantities(ctx, level, stockedQty, level.ReservedQuantity,
-			models.MovementStockCount, "", "")
+			models.MovementStockCount, "", "", "")
 		if err != nil {
 			return err
 		}
@@ -172,7 +172,7 @@ func (s *Service) adjust(
 				newStocked, level.StockedQuantity, level.ReservedQuantity)
 		}
 
-		updated, err := s.writeQuantities(ctx, level, newStocked, level.ReservedQuantity, reason, "", "")
+		updated, err := s.writeQuantities(ctx, level, newStocked, level.ReservedQuantity, reason, "", "", "")
 		if err != nil {
 			return err
 		}
@@ -403,7 +403,7 @@ func (s *Service) Reserve(ctx context.Context, in ReserveInput) (models.Reservat
 		// No movement: a reservation promises stock, it does not move it. The
 		// physical count is unchanged, and inventory_reservations is already
 		// this fact's record (ADR 0068).
-		if _, err := s.writeQuantities(ctx, level, level.StockedQuantity, newReserved, "", "", ""); err != nil {
+		if _, err := s.writeQuantities(ctx, level, level.StockedQuantity, newReserved, "", "", "", ""); err != nil {
 			return err
 		}
 
@@ -491,7 +491,7 @@ func (s *Service) ReleaseReservation(ctx context.Context, reservationID string) 
 
 		// No movement, for the mirror of Reserve's reason: the promise is given
 		// back and the goods never left.
-		if _, err := s.writeQuantities(ctx, level, level.StockedQuantity, newReserved, "", "", ""); err != nil {
+		if _, err := s.writeQuantities(ctx, level, level.StockedQuantity, newReserved, "", "", "", ""); err != nil {
 			return err
 		}
 		return s.store.SetReservationStatus(ctx, reservationID, models.ReservationReleased)
@@ -568,7 +568,7 @@ func (s *Service) ConfirmReservation(ctx context.Context, reservationID, orderID
 		// It may be empty: a replacement's goods leave against a claim rather than
 		// an order, and a caller with no order to name says so by naming none.
 		if _, err := s.writeQuantities(ctx, level, newStocked, newReserved,
-			reservation.Purpose.MovementReason(), reservationID, orderID); err != nil {
+			reservation.Purpose.MovementReason(), reservationID, orderID, ""); err != nil {
 			return err
 		}
 		return s.store.SetReservationStatus(ctx, reservationID, models.ReservationConfirmed)
@@ -631,7 +631,7 @@ func addQuantity(current, delta int64) (int64, error) {
 	return current + delta, nil
 }
 
-// ReturnCanceledInventory puts back units that were deducted and will not leave.
+// ReturnCanceledInventory brings a LINE's returned units up to a target.
 //
 // # Why it is neither an adjustment nor a restock
 //
@@ -640,25 +640,36 @@ func addQuantity(current, delta int64) (int64, error) {
 // withdrawn. An operator reading the ledger to explain a month's stock is asking
 // which of the three it was, and the ledger answers by reason (ADR 0068).
 //
-// # It is IDEMPOTENT, and it is the only stock write that is
+// # It takes a TARGET, not a quantity, and that is the whole correction
 //
-// It is driven by an event, and the bus delivers at least once. Adding stock is
-// deliberately not idempotent everywhere else — two restocks mean two physical
-// arrivals — so the second delivery of one cancellation has to write nothing. The
-// cancellation's own id is the movement's reference and the ledger holds it
-// unique, so the duplicate is refused by the DATABASE rather than by a check that
-// could read a stale row.
+// It used to take a quantity and add it, with the cancellation's id held unique
+// so a redelivered event wrote nothing. That was idempotent per ACT and the
+// invariant is per LINE — and two different acts put a line's units back: a
+// write-off, and the cancellation of the parcel that had been holding the rest.
+// Each computed a delta from a state the other had not yet changed, so running
+// them in the order nothing forbids credited the shelf with EIGHT units for a
+// cancellation of five (D82).
 //
-// A second delivery returns [models.ErrMovementAlreadyRecorded], which is not a
-// failure: it says the units are already back.
+// So the caller states where the total should BE, this reads where it is, and
+// the difference is what moves. Whichever act arrives first does the work and the
+// other finds the target already met; a redelivery finds it met too. The read and
+// the write are in ONE transaction under the level's lock, so two acts arriving
+// together cannot both see the old sum.
+//
+// A call that finds the target already met returns
+// [models.ErrMovementAlreadyRecorded], which is not a failure: it says the units
+// are already back.
 func (s *Service) ReturnCanceledInventory(
-	ctx context.Context, itemID, locationID string, quantity int64, cancellationID string,
+	ctx context.Context, itemID, locationID, lineItemID string, target int64, reference string,
 ) (models.InventoryLevel, error) {
-	if quantity <= 0 {
+	if target <= 0 {
 		return models.InventoryLevel{}, errors.Invalid(CodeInvalidInput,
-			"the canceled quantity has to be positive: %d (item %s)", quantity, itemID)
+			"the target on the shelf has to be positive: %d (item %s)", target, itemID)
 	}
-	if err := requireText("cancellation_id", cancellationID); err != nil {
+	if err := requireText("reference", reference); err != nil {
+		return models.InventoryLevel{}, err
+	}
+	if err := requireText("line_item_id", lineItemID); err != nil {
 		return models.InventoryLevel{}, err
 	}
 	if err := requireIDs(itemID, locationID); err != nil {
@@ -679,13 +690,25 @@ func (s *Service) ReturnCanceledInventory(
 			return err
 		}
 
+		// Read AFTER the locks. Before them it would be the stale sum two
+		// concurrent acts would both act on.
+		returned, err := s.store.ReturnedForLine(ctx, itemID, lineItemID)
+		if err != nil {
+			return err
+		}
+
+		quantity := target - returned
+		if quantity <= 0 {
+			return models.ErrMovementAlreadyRecorded
+		}
+
 		newStocked, err := addQuantity(level.StockedQuantity, quantity)
 		if err != nil {
 			return err
 		}
 
 		updated, err := s.writeQuantities(ctx, level, newStocked, level.ReservedQuantity,
-			models.MovementCancellation, "", cancellationID)
+			models.MovementCancellation, "", reference, lineItemID)
 		if err != nil {
 			return err
 		}

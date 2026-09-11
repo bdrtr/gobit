@@ -43,15 +43,13 @@ func (r *Repository) AppendMovement(ctx context.Context, mv models.Movement) (mo
 		Delta:           mv.Delta,
 		StockedAfter:    mv.StockedAfter,
 		Reference:       nullString(mv.Reference),
+		LineItemID:      nullString(mv.LineItemID),
 	})
-	// A cancellation whose reference is already in the ledger writes NOTHING and
-	// returns no row, which is the ON CONFLICT in the query doing its job: the bus
-	// delivers at least once and adding stock is deliberately not idempotent, so a
-	// redelivery has to be a no-op rather than a second helping of units.
-	//
-	// The caller is told by [models.ErrMovementAlreadyRecorded] rather than by a
-	// zero value, because "nothing happened and that is correct" and "nothing
-	// happened and something is wrong" are not the same answer.
+	// The ON CONFLICT that used to sit in this query is gone (migration 000007),
+	// and with it the no-row answer this branch reads. It is kept because the
+	// query is still a `:one` and a driver that returns no row here would
+	// otherwise surface as an unclassified error; what it can no longer mean is
+	// "a redelivery was swallowed".
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.Movement{}, models.ErrMovementAlreadyRecorded
 	}
@@ -108,6 +106,7 @@ func toMovement(row inventorydb.InventoryMovement) models.Movement {
 		Delta:           row.Delta,
 		StockedAfter:    row.StockedAfter,
 		Reference:       stringValue(row.Reference),
+		LineItemID:      stringValue(row.LineItemID),
 		CreatedAt:       timeValue(row.CreatedAt),
 	}
 }
@@ -129,4 +128,28 @@ func (r *Repository) SaleLocations(ctx context.Context, reference string) (map[s
 	}
 
 	return out, nil
+}
+
+// ReturnedForLine sums the units a line's write-offs have already put back.
+//
+// It is read INSIDE the transaction that holds the level's lock, which is what
+// makes "bring the total up to the target" safe against two acts arriving at
+// once: the second one cannot see the sum from before the first one's write.
+func (r *Repository) ReturnedForLine(
+	ctx context.Context, itemID, lineItemID string,
+) (int64, error) {
+	if err := requireTx(ctx, "ReturnedForLine"); err != nil {
+		return 0, err
+	}
+
+	returned, err := r.queries(ctx).ReturnedForLine(ctx, inventorydb.ReturnedForLineParams{
+		LineItemID:      nullString(lineItemID),
+		InventoryItemID: itemID,
+	})
+	if err != nil {
+		return 0, classify(err, codeQueryFailed,
+			"what has already gone back on the shelf for line %s could not be read", lineItemID)
+	}
+
+	return returned, nil
 }

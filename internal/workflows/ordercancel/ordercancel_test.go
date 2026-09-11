@@ -39,6 +39,12 @@ const (
 func TestUnshippedUnitsGoBackAndShippedOnesDoNot(t *testing.T) {
 	t.Parallel()
 
+	// want is the TOTAL that has to end up on the shelf, not the delta this call
+	// moves, and the change of unit is the point of ADR 0142: the amount a single
+	// act moves depends on what has already been moved, and the invariant does
+	// not. Where `before` is non-zero the earlier cancellation is DELIVERED
+	// first rather than assumed, so the ledger the second one reads is one this
+	// test produced.
 	for _, tc := range []struct {
 		name                           string
 		bought, committed, before, now int64
@@ -56,11 +62,11 @@ func TestUnshippedUnitsGoBackAndShippedOnesDoNot(t *testing.T) {
 		},
 		{
 			name:   "a SECOND cancellation inside the window",
-			bought: 5, committed: 0, before: 2, now: 2, want: 2,
+			bought: 5, committed: 0, before: 2, now: 2, want: 4,
 		},
 		{
 			name:   "a second cancellation that overruns what the first left",
-			bought: 5, committed: 3, before: 2, now: 2, want: 0,
+			bought: 5, committed: 3, before: 2, now: 2, want: 2,
 		},
 		{
 			name:   "more shipped than bought, which a bad parcel would make",
@@ -70,6 +76,11 @@ func TestUnshippedUnitsGoBackAndShippedOnesDoNot(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t)
 			h.committed[testLineItemID] = tc.committed
+
+			if tc.before > 0 {
+				require.NoError(t, h.handle(t, canceledEvent(tc.bought, 0, tc.before)),
+					"the earlier cancellation has to be delivered, not assumed")
+			}
 
 			err := h.handle(t, canceledEvent(tc.bought, tc.before, tc.now))
 			require.NoError(t, err)
@@ -374,10 +385,11 @@ type fakeInventory struct {
 	alreadyBack bool
 	returned    int64
 	calls       []int64
-	// references records what the ledger was asked to hold unique, in order. It
-	// is the field the idempotency argument is made of, so it is recorded rather
-	// than discarded.
+	// references records which act wrote each movement, in order.
 	references []string
+	// returnedPerLine is the ledger's per-line sum, which is what the real module
+	// reads under the level's lock before deciding what to move.
+	returnedPerLine map[string]int64
 }
 
 // SaleLocations answers where the units left from.
@@ -391,7 +403,7 @@ func (f *fakeInventory) SaleLocations(context.Context, string) (map[string]strin
 
 // ReturnCanceled records the units.
 func (f *fakeInventory) ReturnCanceled(
-	_ context.Context, _, _ string, quantity int64, reference string,
+	_ context.Context, _, _, lineItemID string, target int64, reference string,
 ) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -399,6 +411,21 @@ func (f *fakeInventory) ReturnCanceled(
 	if f.returnErr != nil {
 		return false, f.returnErr
 	}
+
+	// The module's own arithmetic, imitated: it brings the LINE's total up to the
+	// target and reports "already there" when there is nothing to move. A fake
+	// that simply added the number it was handed would accept what the real one
+	// refuses, and every order-independence claim below would be proved against
+	// a producer that does not behave like the producer (ADR 0142).
+	if f.returnedPerLine == nil {
+		f.returnedPerLine = map[string]int64{}
+	}
+	quantity := target - f.returnedPerLine[lineItemID]
+	if quantity <= 0 {
+		return true, nil
+	}
+	f.returnedPerLine[lineItemID] = target
+
 	f.calls = append(f.calls, quantity)
 	f.references = append(f.references, reference)
 	if f.alreadyBack {

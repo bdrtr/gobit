@@ -34,32 +34,58 @@ func orderLinesJSON(bought, canceled int64) string {
 		testLineItemID, bought, canceled, testVariantID)
 }
 
-// TestACanceledParcelGivesBackTheUnitsAWriteOffCouldNOTReach is the defect.
+// TestTheORDEROfTheTwoActsCannotChangeTheTotal is the regression for D82.
 //
-// Five bought, three in a pending parcel, all five written off. The line
-// cancellation could only return two — the other three were in a box. Canceling
-// the parcel is what ADR 0135 told the shop to do, and until ADR 0139 it flipped
-// a status and lost those three units: not sold, not shipped, not stock.
-func TestACanceledParcelGivesBackTheUnitsAWriteOffCouldNOTReach(t *testing.T) {
+// Five bought, three in a parcel, all five written off. The two acts may reach the
+// flow in either order — the bus is asynchronous and at-least-once, so a write-off
+// whose direct publish was lost arrives a minute later, after an operator has
+// already canceled the parcel.
+//
+// Under the difference-of-windows design that order mattered and nothing enforced
+// it: the parcel act put back three ANTICIPATING the write-off, the write-off then
+// found a full window and put back five, and the shelf was credited with EIGHT
+// units for a cancellation of five. Each act carried its own reference, so the
+// ledger could not see it either.
+func TestTheORDEROfTheTwoActsCannotChangeTheTotal(t *testing.T) {
 	t.Parallel()
 
-	h := newHarness(t)
-	h.held = map[string]int64{testLineItemID: 3}
-	h.committed = map[string]int64{} // the parcel is canceled, nothing is live
-	h.lines = orderLinesJSON(5, 5)
+	for _, order := range []string{"the write-off first", "the parcel first"} {
+		t.Run(order, func(t *testing.T) {
+			t.Parallel()
 
-	require.NoError(t, h.handleParcel(t, parcelEvent(testFulfillmentID)))
+			h := newHarness(t)
+			h.held = map[string]int64{testLineItemID: 3}
+			h.lines = orderLinesJSON(5, 5)
 
-	assert.Equal(t, int64(3), h.inventory.returned,
-		"the three units the parcel was holding are the ones the write-off could "+
-			"not reach; canceling the parcel is what releases them")
+			if order == "the write-off first" {
+				// The parcel is still live while the write-off is handled, so
+				// only the two units outside it can come back yet.
+				h.committed = map[string]int64{testLineItemID: 3}
+				require.NoError(t, h.handle(t, canceledEvent(5, 0, 5)))
+				require.Equal(t, int64(2), h.inventory.returned)
+
+				h.committed = map[string]int64{}
+				require.NoError(t, h.handleParcel(t, parcelEvent(testFulfillmentID)))
+			} else {
+				h.committed = map[string]int64{}
+				require.NoError(t, h.handleParcel(t, parcelEvent(testFulfillmentID)))
+				require.NoError(t, h.handle(t, canceledEvent(5, 0, 5)))
+			}
+
+			assert.Equal(t, int64(5), h.inventory.returned,
+				"five units were written off, so five belong on the shelf whichever "+
+					"act got there first")
+		})
+	}
 }
 
-// TestTheTwoActsTogetherPutBackExactlyWhatWasCanceled runs the real sequence.
+// TestTheTwoActsTogetherPutBackExactlyWhatWasCanceled runs the intended sequence
+// and watches the intermediate state.
 //
-// The line cancellation first, the parcel cancellation second, against ONE
-// inventory fake — so the assertion is about the total the shelf received rather
-// than about either act's arithmetic in isolation.
+// It overlaps with the order test above on purpose: that one proves the total is
+// order-independent, this one proves the STEP — that while the parcel is live the
+// write-off reaches only the units outside it, which is the property that makes
+// the parcel's cancellation meaningful at all.
 func TestTheTwoActsTogetherPutBackExactlyWhatWasCanceled(t *testing.T) {
 	t.Parallel()
 
@@ -103,23 +129,27 @@ func TestAParcelWhoseLineWasNeverWrittenOffReleasesNOStock(t *testing.T) {
 
 // TestTheWriteOffIsTheCeilingAndNotTheParcel pins the partial case.
 //
-// Five bought, FOUR written off, three in the parcel. While the parcel counted,
-// the reachable window was two and the write-off had already put two back; the
-// parcel going away raises the ceiling to four, so two more come back and the
-// fifth unit stays sold. The parcel held three and released two, which is the
-// whole point: what the box contained is not what is owed to the shelf.
+// Five bought, FOUR written off, three in the parcel. The write-off runs while the
+// parcel is live and reaches two; the parcel going away raises the ceiling to four,
+// so two more come back and the fifth unit stays sold. The parcel held three and
+// contributed two, which is the point: what the box contained is not what is owed
+// to the shelf.
 func TestTheWriteOffIsTheCeilingAndNotTheParcel(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
 	h.held = map[string]int64{testLineItemID: 3}
-	h.committed = map[string]int64{}
 	h.lines = orderLinesJSON(5, 4)
 
+	h.committed = map[string]int64{testLineItemID: 3}
+	require.NoError(t, h.handle(t, canceledEvent(5, 0, 4)))
+	require.Equal(t, int64(2), h.inventory.returned)
+
+	h.committed = map[string]int64{}
 	require.NoError(t, h.handleParcel(t, parcelEvent(testFulfillmentID)))
 
-	assert.Equal(t, int64(2), h.inventory.returned,
-		"two of the four written-off units were already back; the parcel releases the rest")
+	assert.Equal(t, int64(4), h.inventory.returned,
+		"four were written off, so four belong on the shelf; the fifth is still sold")
 }
 
 // TestAParcelReleasesNothingOnceTheWriteOffIsFullyBack is the neighbor case, and
@@ -138,10 +168,16 @@ func TestAParcelReleasesNothingOnceTheWriteOffIsFullyBack(t *testing.T) {
 	h.committed = map[string]int64{}
 	h.lines = orderLinesJSON(5, 2)
 
+	h.committed = map[string]int64{testLineItemID: 3}
+	require.NoError(t, h.handle(t, canceledEvent(5, 0, 2)))
+	require.Equal(t, int64(2), h.inventory.returned)
+
+	h.committed = map[string]int64{}
 	require.NoError(t, h.handleParcel(t, parcelEvent(testFulfillmentID)))
 
-	assert.Zero(t, h.inventory.returned,
-		"the write-off reached every unit it was owed while the parcel was still live")
+	assert.Equal(t, int64(2), h.inventory.returned,
+		"the write-off reached every unit it was owed while the parcel was still live, "+
+			"so the parcel going away adds nothing")
 }
 
 // TestParcelsHoldingMoreThanTheOrderSoldReleaseNOTHING covers the impossible
@@ -233,6 +269,11 @@ func TestTheReferenceIsTheParcelAndTheLine(t *testing.T) {
 }
 
 // TestARedeliveredParcelEventAddsNothing runs the second delivery for real.
+//
+// Nothing is injected to make it a no-op: the second delivery computes the same
+// target, the module reads the same per-line sum, and there is no difference to
+// move. That is the whole replacement for the uniqueness the ledger used to hold
+// on the reference (ADR 0142).
 func TestARedeliveredParcelEventAddsNothing(t *testing.T) {
 	t.Parallel()
 
@@ -242,15 +283,15 @@ func TestARedeliveredParcelEventAddsNothing(t *testing.T) {
 	h.lines = orderLinesJSON(5, 5)
 
 	require.NoError(t, h.handleParcel(t, parcelEvent(testFulfillmentID)))
-	require.Equal(t, int64(3), h.inventory.returned)
+	require.Equal(t, int64(5), h.inventory.returned)
+	require.Len(t, h.inventory.calls, 1)
 
-	// The ledger refuses the reference the second time, which is what the fake
-	// reports back as "already there".
-	h.inventory.alreadyBack = true
 	require.NoError(t, h.handleParcel(t, parcelEvent(testFulfillmentID)))
 
-	assert.Equal(t, int64(3), h.inventory.returned,
-		"a second delivery of one event writes nothing")
+	assert.Equal(t, int64(5), h.inventory.returned,
+		"a second delivery of one event moves nothing")
+	assert.Len(t, h.inventory.calls, 1,
+		"and it does not even reach the write: the target was already met")
 }
 
 // TestAParcelBoundToNoOrderIsNotAnError covers the parcel opened by hand.

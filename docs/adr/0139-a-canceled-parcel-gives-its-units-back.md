@@ -5,7 +5,7 @@ canceled, and the cancellation flow puts back the stock that parcel had been
 holding. It costs one more topic on every operator's webhook endpoints, and it
 closes a hole whose only known workaround was the thing that opened it.
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by [0142](0142-both-acts-compute-the-same-target.md)
 - **Date:** 2026-09-11
 
 ## Context

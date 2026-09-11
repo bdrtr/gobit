@@ -176,7 +176,7 @@ func (i *Interop) ConfirmReservation(ctx context.Context, reservationID, orderID
 	return i.svc.ConfirmReservation(ctx, reservationID, orderID)
 }
 
-// ReturnCanceled puts back units that were deducted and will never be delivered.
+// ReturnCanceled brings a LINE's returned units up to a target.
 //
 // # Why it is not Restock
 //
@@ -185,29 +185,36 @@ func (i *Interop) ConfirmReservation(ctx context.Context, reservationID, orderID
 // and what changed is that the promise to send them was withdrawn. The ledger has
 // an entry point per reason because an operator reads the two differently.
 //
-// # It is idempotent, and it is the only stock write that is
+// # Why it takes a TARGET and not a quantity
 //
-// The cancellation's id is the movement's reference and the ledger holds it
-// unique, so a redelivered event writes nothing. That is necessary rather than
-// tidy: this surface is driven by the bus, which delivers at least once, and
-// every other way of adding stock would grow it on each retry.
+// Two different acts put a line's written-off units back — the write-off itself,
+// and the cancellation of a parcel that had been holding the rest — and each of
+// them used to compute a delta from a state the other had not yet changed. Run in
+// the order nothing forbids, the pair credited the shelf with eight units for a
+// cancellation of five (D82, ADR 0142).
+//
+// So the caller states where the total should BE. The module reads where it is,
+// under the level's lock, and moves the difference. Order stops mattering and a
+// redelivered event finds the target already met.
 //
 // # Why the second return value is a BOOL
 //
-// A second delivery is not a failure and the caller may want to say so in a log
-// line. The service reports it with a named error, and a named error cannot cross
-// this boundary: a consumer that cannot import this module cannot match a sentinel
-// it cannot name. A bool can be repeated verbatim in the consumer's own interface,
-// which is the same reason every signature here uses primitive types.
+// A target already met is not a failure and the caller may want to say so in a
+// log line. The service reports it with a named error, and a named error cannot
+// cross this boundary: a consumer that cannot import this module cannot match a
+// sentinel it cannot name. A bool can be repeated verbatim in the consumer's own
+// interface, which is the same reason every signature here uses primitive types.
 //
-// True means the units were ALREADY back and this call wrote nothing.
+// True means the line was ALREADY at or above the target and this call wrote
+// nothing.
 func (i *Interop) ReturnCanceled(
 	ctx context.Context,
-	inventoryItemID, locationID string,
-	quantity int64,
-	cancellationID string,
+	inventoryItemID, locationID, lineItemID string,
+	target int64,
+	reference string,
 ) (alreadyBack bool, err error) {
-	_, err = i.svc.ReturnCanceledInventory(ctx, inventoryItemID, locationID, quantity, cancellationID)
+	_, err = i.svc.ReturnCanceledInventory(
+		ctx, inventoryItemID, locationID, lineItemID, target, reference)
 	if errors.Is(err, models.ErrMovementAlreadyRecorded) {
 		return true, nil
 	}

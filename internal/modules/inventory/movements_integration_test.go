@@ -427,13 +427,27 @@ func movementCount(ctx context.Context, t *testing.T, itemID string) int {
 // lane's constant for why it is not empty.
 const testSaleOrderID = "order_01TESTSALEREFERENCE00"
 
-// TestOneCancellationPutsItsUnitsBackOnceAgainstTheDatabase is the UNIQUE index,
+// testCancelLine is the order line the cancellation tests put units back for.
+//
+// It is SHARED across those tests on purpose, and the first version of this
+// comment claimed that was safe "because each test gets a fresh item" — which was
+// only true after the sum learned about the item. Before that, the sum reached
+// across items on the line id alone: this test passed by itself and failed beside
+// its neighbour, which is the shape a shared database keeps producing.
+const testCancelLine = "oli_01INTEGRATIONCANCEL0"
+
+// TestOneCancellationPutsItsUnitsBackOnceAgainstTheDatabase is the per-line SUM,
 // executed.
 //
-// The unit lane proves the service reports a duplicate; only the database proves
-// that two of them cannot both land. That matters because the second delivery of an
-// event is the ordinary case rather than an edge: the bus delivers at least once,
-// and every other way of adding stock in this module grows it on each retry.
+// The unit lane proves the service reports a target already met; only the database
+// proves that the sum it read is the one the rows add up to. That matters because
+// the second delivery of an event is the ordinary case rather than an edge: the bus
+// delivers at least once, and every other way of adding stock in this module grows
+// it on each retry.
+//
+// It used to be the unique index on the reference. That index is gone (ADR 0142):
+// it refused a second WRITE, and the same act now legitimately writes twice as its
+// target grows — what refuses a second UNIT is the sum.
 func TestOneCancellationPutsItsUnitsBackOnceAgainstTheDatabase(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
@@ -443,13 +457,13 @@ func TestOneCancellationPutsItsUnitsBackOnceAgainstTheDatabase(t *testing.T) {
 
 	const cancellationID = "olc_01REALIDEMPOTENCE000"
 
-	level, err := svc.ReturnCanceledInventory(ctx, item.ID, loc.ID, 3, cancellationID)
+	level, err := svc.ReturnCanceledInventory(ctx, item.ID, loc.ID, testCancelLine, 3, cancellationID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(13), level.StockedQuantity)
 
-	_, err = svc.ReturnCanceledInventory(ctx, item.ID, loc.ID, 3, cancellationID)
+	_, err = svc.ReturnCanceledInventory(ctx, item.ID, loc.ID, testCancelLine, 3, cancellationID)
 	require.ErrorIs(t, err, models.ErrMovementAlreadyRecorded,
-		"the ledger's own uniqueness refuses the duplicate")
+		"the line is already at the target, so there is no difference to move")
 
 	levels, err := svc.ListInventoryLevels(ctx, item.ID)
 	require.NoError(t, err)
@@ -473,9 +487,9 @@ func TestOneCancellationPutsItsUnitsBackOnceAgainstTheDatabase(t *testing.T) {
 // TestTwoCancellationsOfOneLineEachGetTheirOwnRow keeps the uniqueness from being
 // too wide.
 //
-// The index is on the reference for the cancellation reason only. Two different
-// write-offs of the same line are two references and two rows; making them one
-// would lose the second one's units.
+// Two write-offs of the same line raise the target twice, so each of them moves
+// its own units and each leaves its own row — the reference says which act, and an
+// operator reading the ledger needs both.
 func TestTwoCancellationsOfOneLineEachGetTheirOwnRow(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
@@ -483,8 +497,13 @@ func TestTwoCancellationsOfOneLineEachGetTheirOwnRow(t *testing.T) {
 	_, err := svc.SetInventoryLevel(ctx, item.ID, loc.ID, 10)
 	require.NoError(t, err)
 
-	for _, id := range []string{"olc_01FIRSTWRITEOFF00000", "olc_01SECONDWRITEOFF0000"} {
-		_, err := svc.ReturnCanceledInventory(ctx, item.ID, loc.ID, 2, id)
+	// The target GROWS between the two: two units after the first write-off, four
+	// after the second. A target that stayed at two would move nothing the second
+	// time, which is the behaviour a redelivery gets and not what a second
+	// write-off deserves.
+	for i, id := range []string{"olc_01FIRSTWRITEOFF00000", "olc_01SECONDWRITEOFF0000"} {
+		_, err := svc.ReturnCanceledInventory(
+			ctx, item.ID, loc.ID, testCancelLine, int64(2*(i+1)), id)
 		require.NoError(t, err)
 	}
 

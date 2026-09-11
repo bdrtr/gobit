@@ -153,6 +153,12 @@ type Store interface {
 	// written on the pool would survive a rolled-back level, and the ledger
 	// would claim units moved that never did (ADR 0068).
 	AppendMovement(ctx context.Context, mv models.Movement) (models.Movement, error)
+
+	// ReturnedForLine sums the units a line's write-offs have already put back.
+	// It is read inside the transaction that holds the level's lock, which is
+	// what makes bringing the total up to a target safe against two acts arriving
+	// at once.
+	ReturnedForLine(ctx context.Context, itemID, lineItemID string) (int64, error)
 	// SaleLocations answers where an order's units were deducted from, as
 	// inventory item to location.
 	//

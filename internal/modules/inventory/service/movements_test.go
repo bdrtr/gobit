@@ -440,6 +440,13 @@ func hoursAgo(h int) time.Time {
 // claim — while claiming to be a sale.
 const testSaleOrderID = "order_01TESTSALEREFERENCE00"
 
+// testCancelLine is the order line the cancellation tests put units back for.
+//
+// A line rather than nothing, because the ledger now counts what is back PER
+// LINE: that sum is what makes two acts able to bring the same line up to one
+// target in either order (ADR 0142).
+const testCancelLine = "oli_01TESTCANCELLINE0000"
+
 // TestCanceledUnitsGoBackAsTheirOwnLedgerReason is the sixth reason, read off the
 // row.
 //
@@ -453,7 +460,7 @@ func TestCanceledUnitsGoBackAsTheirOwnLedgerReason(t *testing.T) {
 	store.seedLocation(locA)
 	store.seedLevel(itemID, locA, 6, 0)
 
-	level, err := svc.ReturnCanceledInventory(ctx, itemID, locA, 2, "olc_01LEDGERREASON000000")
+	level, err := svc.ReturnCanceledInventory(ctx, itemID, locA, testCancelLine, 2, "olc_01LEDGERREASON000000")
 	require.NoError(t, err)
 	assert.Equal(t, int64(8), level.StockedQuantity, "the units are on the shelf again")
 
@@ -462,7 +469,9 @@ func TestCanceledUnitsGoBackAsTheirOwnLedgerReason(t *testing.T) {
 	assert.Equal(t, models.MovementCancellation, ledger[0].Reason)
 	assert.Equal(t, int64(2), ledger[0].Delta, "a cancellation only ever adds")
 	assert.Equal(t, "olc_01LEDGERREASON000000", ledger[0].Reference,
-		"the row says WHICH cancellation put them back, which is what makes it idempotent")
+		"the row says WHICH act put them back, which is what an operator reads it for")
+	assert.Equal(t, testCancelLine, ledger[0].LineItemID,
+		"and WHICH line, which is what the per-line sum is counted over")
 	assert.Empty(t, ledger[0].ReservationID,
 		"it names no reservation: that one was consumed at checkout")
 }
@@ -471,8 +480,10 @@ func TestCanceledUnitsGoBackAsTheirOwnLedgerReason(t *testing.T) {
 //
 // The event bus delivers at least once and adding stock is deliberately not
 // idempotent anywhere else in this module, so the second delivery has to write
-// nothing — and the thing that refuses it is the LEDGER's uniqueness rather than a
-// check that could read a stale row.
+// nothing. What refuses it is the SUM read under the level's lock: the target is
+// already met, so there is no difference to move. It used to be the ledger's
+// uniqueness on the reference, and that could not survive an act whose target
+// grows (ADR 0142).
 func TestOneCancellationPutsItsUnitsBackONCE(t *testing.T) {
 	svc, store := newService(t)
 	ctx := context.Background()
@@ -480,10 +491,10 @@ func TestOneCancellationPutsItsUnitsBackONCE(t *testing.T) {
 	store.seedLocation(locA)
 	store.seedLevel(itemID, locA, 6, 0)
 
-	_, err := svc.ReturnCanceledInventory(ctx, itemID, locA, 2, "olc_01IDEMPOTENT00000000")
+	_, err := svc.ReturnCanceledInventory(ctx, itemID, locA, testCancelLine, 2, "olc_01IDEMPOTENT00000000")
 	require.NoError(t, err)
 
-	_, err = svc.ReturnCanceledInventory(ctx, itemID, locA, 2, "olc_01IDEMPOTENT00000000")
+	_, err = svc.ReturnCanceledInventory(ctx, itemID, locA, testCancelLine, 2, "olc_01IDEMPOTENT00000000")
 	require.ErrorIs(t, err, models.ErrMovementAlreadyRecorded,
 		"the second delivery of one cancellation writes nothing")
 

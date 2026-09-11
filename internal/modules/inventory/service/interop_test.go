@@ -39,9 +39,9 @@ func TestInteropSurfaceUsesPrimitiveTypes(t *testing.T) {
 		SaleLocations(ctx context.Context, orderID string) (map[string]string, error)
 		ReturnCanceled(
 			ctx context.Context,
-			inventoryItemID, locationID string,
-			quantity int64,
-			cancellationID string,
+			inventoryItemID, locationID, lineItemID string,
+			target int64,
+			reference string,
 		) (alreadyBack bool, err error)
 	}
 	// Lokasyon adaylarını soran yüzey AYRI bir arayüzdür: onu kullanan akış

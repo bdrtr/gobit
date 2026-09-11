@@ -106,87 +106,39 @@ func (w *Workflow) HandleFulfillmentCanceled(ctx context.Context, e eventbus.Eve
 			continue
 		}
 
-		quantity := releasedUnits(
-			line.Bought, line.Canceled, committedAfter[lineItemID], releasedByParcel)
-		if quantity == 0 {
+		// The SAME invariant the write-off computes, from the state this act
+		// finds — the parcel is already excluded from committedAfter, so the
+		// window is the one that holds now.
+		target := targetOnShelf(line.Bought, line.Canceled, committedAfter[lineItemID])
+		if target == 0 {
 			continue
 		}
 
-		if err := w.putBack(ctx, orderID, line.VariantID, quantity,
+		if err := w.putBack(ctx, orderID, line.VariantID, lineItemID, target,
 			parcelReleaseReference(fulfillmentID, lineItemID)); err != nil {
 			return err
 		}
 
 		w.log.InfoContext(ctx,
-			"a canceled parcel released units a write-off had counted as gone",
+			"a canceled parcel let a line's written-off units reach the shelf",
 			"fulfillment_id", fulfillmentID, "order_id", orderID,
-			"order_line_item_id", lineItemID, "quantity", quantity)
+			"order_line_item_id", lineItemID, "target", target,
+			"released_by_this_parcel", releasedByParcel)
 	}
 
 	return nil
 }
 
-// releasedUnits is how many units THIS parcel's cancellation puts back.
-//
-// # The arithmetic, and why it is a difference of two windows
-//
-// [returnableUnits] says the total that may ever go back for a line is
-// `min(canceledTotal, bought − committed)`. Both sides of that move: a line
-// cancellation grows `canceledTotal`, and a parcel cancellation shrinks
-// `committed`. So the amount owed to the shelf after this parcel went away is
-//
-//	after  = min(canceledTotal, bought − committedAfter)
-//
-// and what was already owed while the parcel still counted is
-//
-//	before = min(canceledTotal, bought − committedAfter − heldByThisParcel)
-//
-// The difference is what this act releases, and it is a difference of STATES
-// rather than of records — so it needs no memory of what previous acts returned,
-// exactly like the line cancellation's own formula. Two parcels canceled in
-// either order put back the same total, and a redelivered event computes the same
-// number and writes it under the same reference, which the ledger refuses twice.
-//
-// A line nobody wrote off gives `canceledTotal = 0` and releases nothing: those
-// units are still sold, and a parcel going away makes them dispatchable again
-// rather than sellable again.
-func releasedUnits(bought, canceledTotal, committedAfter, heldByThisParcel int64) int64 {
-	// There is no early return for "nothing was canceled" or "the parcel held
-	// nothing", and the absence is deliberate: a mutation that deleted such a
-	// guard survived every test, because the two windows are equal in both cases
-	// and the difference is already zero. A guard nothing can make fail is a guard
-	// that says the arithmetic does not cover a case it covers.
-	after := windowOwed(bought, canceledTotal, committedAfter)
-	before := windowOwed(bought, canceledTotal, committedAfter+heldByThisParcel)
-	if after <= before {
-		return 0
-	}
-
-	return after - before
-}
-
-// windowOwed is how many of a line's canceled units belong on the shelf while
-// `committed` of them are in live parcels.
-//
-// Clamped at zero on both ends: a line whose parcels hold more than it sold is a
-// state this flow did not create, and a negative window would make the difference
-// above report units that do not exist.
-func windowOwed(bought, canceledTotal, committed int64) int64 {
-	window := bought - committed
-	if window <= 0 {
-		return 0
-	}
-
-	return min(canceledTotal, window)
-}
-
-// parcelReleaseReference is the ledger reference of one line's release.
+// parcelReleaseReference names the act in the ledger.
 //
 // It is the PARCEL and the LINE rather than a cancellation id, because this act
 // is not a cancellation: several write-offs can share one parcel and one parcel
-// can release several lines. The pair is what happens once, so it is what the
-// ledger holds unique — a redelivered event writes nothing, which is the
-// guarantee the bus's at-least-once delivery requires.
+// can release several lines.
+//
+// It is no longer what makes a redelivery harmless — that is the target (ADR
+// 0142) — and it no longer has to be unique, because the same act writes twice
+// when its target grows. What it is for is an operator reading the ledger and
+// asking which act put these units back.
 func parcelReleaseReference(fulfillmentID, lineItemID string) string {
 	return fulfillmentID + ":" + lineItemID
 }
@@ -285,21 +237,22 @@ func (w *Workflow) committedQuantities(
 // It is the tail [Workflow.HandleLineCanceled] runs too, lifted out so the two
 // acts cannot disagree about which shelf or about what a repeated delivery means.
 func (w *Workflow) putBack(
-	ctx context.Context, orderID, variantID string, quantity int64, reference string,
+	ctx context.Context, orderID, variantID, lineItemID string, target int64, reference string,
 ) error {
 	itemID, locationID, found, err := w.shelf(ctx, orderID, variantID)
 	if err != nil || !found {
 		return err
 	}
 
-	alreadyBack, err := w.inventory.ReturnCanceled(ctx, itemID, locationID, quantity, reference)
+	alreadyBack, err := w.inventory.ReturnCanceled(
+		ctx, itemID, locationID, lineItemID, target, reference)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), CodeEventUnusable,
-			"the released stock of %s could not be put back", reference)
+			"the shelf could not be brought up to %d for %s", target, reference)
 	}
 	if alreadyBack {
-		w.log.DebugContext(ctx, "the released units were already put back",
-			"reference", reference)
+		w.log.DebugContext(ctx, "the line was already at its target on the shelf",
+			"reference", reference, "target", target)
 	}
 
 	return nil

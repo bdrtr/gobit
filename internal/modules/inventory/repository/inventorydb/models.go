@@ -40,6 +40,7 @@ type InventoryMovement struct {
 	StockedAfter    int64
 	CreatedAt       pgtype.Timestamptz
 	Reference       *string
+	LineItemID      *string
 }
 
 type InventoryReservation struct {

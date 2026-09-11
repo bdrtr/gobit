@@ -691,23 +691,50 @@ func (f *fakeStore) AppendMovement(ctx context.Context, mv models.Movement) (mod
 			"the schema's CHECKs tie a reference to the reasons that have something to "+
 				"point at, and to nothing else")
 	}
-	// The UNIQUE index, imitated: one cancellation puts its units back once, and
-	// the second delivery of an event writes nothing. Without this the fake would
-	// accept what the database refuses, and a unit test would prove idempotence
-	// that only the schema provides.
-	if mv.Reason == models.MovementCancellation {
-		for i := range f.movements {
-			if f.movements[i].Reason == models.MovementCancellation &&
-				f.movements[i].Reference == mv.Reference {
-				return models.Movement{}, models.ErrMovementAlreadyRecorded
-			}
-		}
+	// The uniqueness on the reference is GONE from the schema (migration 000007)
+	// and so is its imitation here. The same act writes twice when its target
+	// grows, and a fake that refused the second write would prove a rule the
+	// database no longer has.
+	//
+	// What the schema DOES still tie to a cancellation is the line, and the fake
+	// imitates that instead.
+	if (mv.LineItemID != "") != (mv.Reason == models.MovementCancellation) {
+		return models.Movement{}, errors.Invalid("fake_movement_line_mismatch",
+			"the schema's CHECK sets line_item_id on a cancellation and on nothing else")
 	}
 
 	mv.CreatedAt = time.Now().UTC()
 	f.movements = append(f.movements, mv)
 
 	return mv, nil
+}
+
+// ReturnedForLine sums what a line's write-offs have already put back, the way
+// the partial index does.
+//
+// It refuses OUTSIDE a transaction, because the real one does: the sum is only
+// safe against two acts arriving at once when it is read under the level's lock,
+// and a fake that answered anyway would prove a safety the database does not give.
+func (f *fakeStore) ReturnedForLine(
+	ctx context.Context, itemID, lineItemID string,
+) (int64, error) {
+	if err := requireTx(ctx, "ReturnedForLine"); err != nil {
+		return 0, err
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var returned int64
+	for i := range f.movements {
+		if f.movements[i].Reason == models.MovementCancellation &&
+			f.movements[i].LineItemID == lineItemID &&
+			f.movements[i].InventoryItemID == itemID {
+			returned += f.movements[i].Delta
+		}
+	}
+
+	return returned, nil
 }
 
 // SaleLocations answers where an order's units were deducted from, the way the
