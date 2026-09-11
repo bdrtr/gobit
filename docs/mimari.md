@@ -176,9 +176,19 @@ The published surfaces are deliberately **narrow and speak in primitive types**:
 every method is a contract and the compiler does not check it — the interface is
 defined on the CONSUMING side and the provider satisfies it structurally.
 Through `0.x` a signature may change, but the price has to be visible: it is
-written into `CHANGELOG.md` as a breaking change, and the proof of a
-resolved-by-name seam is the e2e test, because a drifted signature leaves both
-packages' unit tests green as well. If rich data is needed, the right path is
+written into `CHANGELOG.md` as a breaking change. The proof that the two sides
+still agree is a COMPILE-TIME pin: `internal/arch/interop_pins_test.go` assigns
+every container-resolved producer to the interface its consumer declares, and a
+gate keeps that list complete
+([ADR 0136](adr/0136-the-compiler-checks-every-interop-pair.md)).
+
+This file used to say the proof was the e2e test, and that was the sentence that
+kept the pin from being written. Neither participant may import the other, but a
+THIRD package in the same Go module may import both — and while the belief stood,
+`*cart.Interop` was missing two methods, so two shipped storefront coupon
+endpoints answered 500 to the first customer who typed a code (D73). A drifted
+signature does leave both packages' unit tests green; what it no longer does is
+survive a build. If rich data is needed, the right path is
 not a new primitive method but the Query layer.
 
 The name dictionary in the container:
@@ -186,7 +196,7 @@ The name dictionary in the container:
 | Name | Contents |
 |---|---|
 | `<module>.service` | the primitive cross-module call surface |
-| `<module>.interop` | the narrow surface for sagas/core |
+| `<module>.interop` | the narrow cross-module surface: flows resolve it, and so do other MODULES (the product module resolves `file.interop`, auth resolves `notification.interop`) |
 | `<entity>.query` | the read provider opened to the Query layer ([ADR 0004](adr/0004-query-veri-erisimi.md)) |
 | `<module>.providers` | provider registry (payment, fulfillment) |
 | `core.*` | infrastructure: db, redis, eventbus, workflow, link, query |
@@ -269,17 +279,32 @@ shows that the subcommand exits and never binds the port.
 
 ---
 
-## 7. Workflows (sagas)
+## 7. Workflows
 
-Every multi-step cross-module operation is a saga on `internal/core/workflow`:
-sequential execution, compensation **in reverse order** on failure, retry, an
-idempotency key and panic isolation. The execution state is written to Postgres,
-so the claim "the same cart cannot be completed twice" is the behavior of a
-durable record rather than of an in-process map.
-
-`internal/workflows` does not import the modules either
+A **flow** is a package under `internal/workflows` that decides something across
+modules. It does not import them
 ([ADR 0006](adr/0006-workflow-modul-erisimi.md)); the same narrow interface +
 resolution by name rule applies here too.
+
+A **saga** is one KIND of flow: the kind that runs on `internal/core/workflow`
+with sequential execution, compensation **in reverse order** on failure, retry,
+an idempotency key and panic isolation. Its execution state is written to
+Postgres, so the claim "the same cart cannot be completed twice" is the behavior
+of a durable record rather than of an in-process map.
+
+The two words are not synonyms and the difference is measurable: there is
+exactly **1 saga** in `internal/workflows`, the checkout. The rest orchestrate
+modules with none of those properties — no execution record to recover, no
+compensation chain, no idempotency key — so looking for a `gobit stuck` entry
+for one of them finds nothing, correctly.
+
+One of them is a shape worth naming on its own: the cancellation flow is driven
+**entirely by the event bus**. Nothing resolves it and nothing calls it; wiring
+it IS subscribing it. That makes it the only flow whose absence is silent — an
+unwired one breaks no request and reddens no test, and two faults lived in
+exactly that silence (D75, D76). The gate that keeps the end-to-end ground
+wiring what production wires exists for this shape
+([ADR 0141](adr/0141-the-end-to-end-ground-wires-what-production-wires.md)).
 
 **Multi-warehouse allocation** was added to the saga later and its seam is split
 across two modules: inventory states the fact of "which warehouses have enough
@@ -389,11 +414,30 @@ In the module's `service` package, publish the event name and the payload keys
 as **constants**; on the Redis backend the name is also the stream name, and
 changing it means every subscriber silently stops receiving the event. The
 payload is kept narrow and all values are strings (rationale:
-`order/service/events.go`).
+`order/service/events.go`), including the counts — JSON has one number type, so
+an int64 put in reaches a subscriber as a float64 on Redis and as an int64 in
+memory.
 
-Whether a publish failure fails the write varies by module: in order it is
-inside the saga, in catalog it is after the commit, and returning an error there
-would be telling the caller "it was not applied".
+Two steps are not optional, and both are enforced by a build that goes red
+rather than by this paragraph:
+
+1. **Forward it.** `plugins/webhookout` must carry the topic. A published topic
+   that is not forwarded is a failure in both directions — a receiver cannot even
+   REGISTER for a name the list omits. A publish site whose name cannot be
+   resolved statically is not skipped either: it goes in that plugin's
+   `unresolvableNames` with its reason, or the census is blind.
+2. **Decide what a lost publish costs, and write the pair if it costs
+   anything.** An event that something must act on gets an outbox row INSIDE the
+   transaction and a direct publish after it: the row is the guarantee, the
+   publish is the speed, and both are built from ONE payload function so they
+   cannot drift. A cancellation recorded without its event is stock deducted
+   forever with nothing saying it should not be, which is why the fulfillment and
+   order modules fail the write when the row will not go in
+   ([ADR 0139](adr/0139-a-canceled-parcel-gives-its-units-back.md)).
+
+Where the publish sits varies with that answer: in order it is inside the saga,
+in catalog it is after the commit, and returning an error there would be telling
+the caller "it was not applied".
 
 ### A new plugin
 

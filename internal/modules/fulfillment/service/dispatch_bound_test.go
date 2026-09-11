@@ -170,7 +170,7 @@ func TestARetryAsksTheBoundNOTHING(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	asked := setup.bound.calls
+	asked := setup.bound.asked()
 
 	// The same key again, and by now the bound would say zero.
 	setup.bound.owed = map[string]int64{"oli_1": 0}
@@ -186,7 +186,7 @@ func TestARetryAsksTheBoundNOTHING(t *testing.T) {
 
 	require.NoError(t, err, "a retry has to come back with the shipment, not a refusal")
 	assert.Equal(t, first.ID, second.ID)
-	assert.Equal(t, asked, setup.bound.calls,
+	assert.Equal(t, asked, setup.bound.asked(),
 		"and it asked the bound NOTHING: the parcel it names is already counted as "+
 			"committed, so the question would answer no")
 }

@@ -1050,15 +1050,37 @@ type fakeDispatchBound struct {
 	// owed, when non-nil, is the answer; nil means "every line, a thousand units".
 	owed map[string]int64
 	err  error
+	// mu guards the counter, because one test opens two parcels CONCURRENTLY and
+	// both of them reach this fake through refuseOverDispatch.
+	//
+	// It was unguarded, and the lane was green: the race detector reports what it
+	// observes, and an unsynchronised increment on two goroutines surfaced in about
+	// one integration run in twenty. That is the worst rate to have — often enough
+	// to redden a lane nobody can reproduce, rare enough to be called a flake.
+	mu sync.Mutex
 	// calls counts the questions, which is how a test proves a retry asks NOTHING.
 	calls int
+}
+
+// asked returns how many questions this fake was given.
+//
+// A reader as well as the writer: a counter read on the test's goroutine while a
+// create is still running on another is the same race from the other side.
+func (f *fakeDispatchBound) asked() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.calls
 }
 
 // DispatchableQuantities answers what the order still owes.
 func (f *fakeDispatchBound) DispatchableQuantities(
 	_ context.Context, _ string, lineItemIDs []string,
 ) (map[string]int64, error) {
+	f.mu.Lock()
 	f.calls++
+	f.mu.Unlock()
+
 	if f.err != nil {
 		return nil, f.err
 	}

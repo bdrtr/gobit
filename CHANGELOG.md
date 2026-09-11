@@ -18,6 +18,28 @@ geçmişinde duruyor. Elli iki karar 2026-09-09'da toplu olarak eklendi: hepsi
 verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 `TestTheChangelogNamesEveryUnreleasedDecision` artık soruyor (ADR 0098).
 
+### Düzeltmeler
+
+- **Entegrasyon şeridi yirmi koşuda bir, bir test sahtesindeki VERİ YARIŞINDAN
+  düşüyordu** (D79). Sahte, gönderim sınırına kaç soru sorulduğunu sayıyor — bir
+  tekrarın HİÇBİR ŞEY sormadığını kanıtlayan şey bu — ve sayaç, iki koliyi iki
+  goroutine'de açan test altında korumasız artırılıyordu. Yapısı gereği yarış;
+  şeridin sessizliği dedektörün yalnızca gördüğünü bildirmesiydi. HEAD'de
+  ölçüldü: yirmi koşuda bir. Sayaç testin goroutine'inden de OKUNUYOR, o yüzden
+  okuyucu da korundu — yalnızca yazanı düzeltmek yarısını ayakta bırakırdı.
+
+- **Mimari anlatısı her akışa saga diyordu, ve sayıları denetleyen kapı ona
+  KATILIYORDU** (D78). `internal/workflows` altındaki yedi paketten yalnızca
+  biri saga motorunu kullanıyor; belge okuyucuya her akışın bir yürütme kaydı,
+  telafi zinciri ve idempotency anahtarı olduğunu öğretiyordu. Hiç anılmayan
+  şekil ise iki kusura mal olan şekildi: tamamen otobüsle sürülen, hiçbir şeyin
+  çözmediği akış. Düzyazıdan kötüsü DENETİMDİ — sayım sözlüğü `saga`yı
+  `workflows`un eşanlamlısı sayıp dizin sayısına karşı fiyatlıyordu, yani
+  "yedi saga" cümlesi onaylanırdı. Nüfus artık ithalden türetiliyor ve iki ad
+  ayrı girdi. Aynı belgede iki cümle daha bayattı: bağın kanıtının e2e testi
+  olduğu (oysa ADR 0136'dan beri derleme-zamanı pini) ve `<module>.interop`'un
+  "sagalar/çekirdek için" olduğu (oysa modüller birbirininkini çözüyor).
+
 ### Kararlar
 
 - **Uçtan uca zemin, üretimin bağladığı her akışı bağlıyor** (ADR 0141).

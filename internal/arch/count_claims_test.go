@@ -159,11 +159,30 @@ var countedPopulations = []countedPopulation{
 		size:   func(t *testing.T) int { return len(countSubdirectories(t, "plugins")) },
 	},
 	{
-		name:   "the workflow packages under internal/workflows",
+		name:   "the flow packages under internal/workflows",
 		anchor: workflowsDirName,
-		nouns:  regexp.MustCompile(`^(workflows|saga|sagalar|saga'lar)$`),
+		nouns:  regexp.MustCompile(`^(workflows|flows|akis|akislar|akisi)$`),
 		floor:  3,
 		size:   func(t *testing.T) int { return len(countSubdirectories(t, workflowsDirName)) },
+	},
+	{
+		// A SEPARATE population from the one above, and the split is a correction.
+		//
+		// This entry used to accept "saga" as a synonym for "workflow" and price it
+		// against the directory count. It is not a synonym: of the seven packages
+		// under internal/workflows, ONE uses the saga engine. So a sentence saying
+		// "the seven sagas" was admitted into the audit and certified — the gate
+		// that polices the prose was carrying the prose's own wrong equivalence.
+		//
+		// The population is derived from the IMPORT, because that is what makes a
+		// package a saga: a flow with no execution record, no compensation chain and
+		// no idempotency key is an orchestration, and one of them is a pure bus
+		// subscriber that nothing resolves at all.
+		name:   "the sagas under internal/workflows",
+		anchor: workflowsDirName,
+		nouns:  regexp.MustCompile(`^(sagas|saga|sagalar|saga'lar)$`),
+		floor:  1,
+		size:   countSagaPackages,
 	},
 	{
 		name:   "the decision records under docs/adr",
@@ -1303,12 +1322,83 @@ func TestTheCountClaimShapeBitesAndStops(t *testing.T) {
 			"%q was read as a claim about the module population and is not one", line)
 	}
 
-	limits := countedPopulations[6]
-	require.Equal(t, knownLimitsDoc, limits.anchor, "the seventh entry is the limits document")
+	// Looked up by what it IS rather than by where it sits. The index was written
+	// as a literal 6 and broke the day an entry was inserted above it — a number
+	// that measures today's vocabulary rather than stating the claim, which is the
+	// class this repository has a name for.
+	limits := populationNamed(t, "the entries of docs/known-limits.md")
+	require.Equal(t, knownLimitsDoc, limits.anchor,
+		"the entries population must be anchored at the limits document")
 	found = countClaimsIn(
 		"| [`docs/known-limits.md`](./docs/known-limits.md) | twenty-one items in four groups |", limits, numerals)
 	require.Len(t, found, 1,
 		"the first noun ends the claim: \"twenty-one items in four groups\" prices the "+
 			"items with twenty-one, and the groups are a claim of their own")
 	assert.Equal(t, 21, found[0].stated)
+}
+
+// countSagaPackages returns how many flow packages actually run on the saga
+// engine.
+//
+// A saga is a package that imports core/workflow: sequential steps, compensation
+// in reverse order, a durable execution record and an idempotency key. A flow that
+// imports none of that orchestrates modules without any of those properties, and
+// the difference is the whole reason this is counted separately from the
+// directories (see the vocabulary entry).
+//
+// Test files are skipped: what is being counted is what the package IS, and a test
+// that drives a saga engine does not make its package one.
+func countSagaPackages(t *testing.T) int {
+	t.Helper()
+
+	dirs := countSubdirectories(t, workflowsDirName)
+
+	sagas := 0
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(filepath.Join(repoRoot, workflowsDirName, dir))
+		require.NoError(t, err, "%s/%s could not be read", workflowsDirName, dir)
+
+		for _, entry := range entries {
+			name := entry.Name()
+			if entry.IsDir() || !strings.HasSuffix(name, ".go") ||
+				strings.HasSuffix(name, "_test.go") {
+				continue
+			}
+
+			body, readErr := os.ReadFile(
+				filepath.Join(repoRoot, workflowsDirName, dir, name))
+			require.NoError(t, readErr, "%s/%s/%s could not be read",
+				workflowsDirName, dir, name)
+
+			if strings.Contains(string(body), `"github.com/bdrtr/gobit/internal/core/workflow"`) {
+				sagas++
+
+				break
+			}
+		}
+	}
+
+	return sagas
+}
+
+// populationNamed returns the vocabulary entry with the given name.
+//
+// The lookup is by NAME and not by position, because a position is a measure of
+// how many entries happen to precede it: the first version of this helper's
+// caller held a literal index and went red the day a population was inserted
+// above it, reporting the wrong entry's anchor rather than a real fault.
+func populationNamed(t *testing.T, name string) countedPopulation {
+	t.Helper()
+
+	for _, population := range countedPopulations {
+		if population.name == name {
+			return population
+		}
+	}
+
+	require.FailNowf(t, "unknown population",
+		"no entry in the vocabulary is called %q; if it was renamed, this test has to "+
+			"be renamed with it rather than silently auditing a different one", name)
+
+	return countedPopulation{}
 }
