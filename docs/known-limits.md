@@ -61,6 +61,41 @@ past and is not corrected retroactively.
   and nothing makes an embedder run it. `POST /store/v1/customers` is outside the set because it mints the record;
   so is the order module's storefront read, which names a cart rather than a
   person.
+- **Since [ADR 0127](adr/0127-a-working-identity-ships-outside-the-module.md)
+  there IS one to bind, and what it does not close is written here rather than
+  discovered.** `contrib/identity-session` is a working customer identity in a Go
+  module of its own: a signed cookie, argon2id passwords, its own table, storefront
+  sign-in and sign-out, an operator endpoint, and since
+  [ADR 0133](adr/0133-a-shopper-opens-their-own-account.md) self-registration behind
+  a proven address. `contrib/identity-passkey` adds both WebAuthn ceremonies and,
+  since [ADR 0130](adr/0130-a-person-can-see-their-passkeys-and-remove-one.md),
+  listing a person's keys and removing one. Neither is in gobit's own dependency
+  graph — a separate `go.mod`, decided on a measurement: go-webauthn brings nine
+  modules gobit does not otherwise have, and an installation that wants a password
+  should not pay for them. Binding one is the one line of wiring the bullet above
+  asks for, and it is not a verifier gobit vouches for; it is one that passes
+  `core/identitytest.Contract`, which holds the shape and opens no signature. Its
+  limits:
+    - **A signed cookie cannot be revoked before it expires.** That is the price of
+      keeping the identity off the read path of twelve storefront routes, and it is
+      the same wholesale-only shape the admin side has one bullet down. Rotating the
+      signing key does NOT log anybody out (`RetiredSecrets`, ADR 0129) — which is
+      the point, and therefore not a revocation either. A key that LEAKED is dropped
+      outright, which logs everybody out and is the correct price.
+    - **A stolen cookie IS the account.** With the passkey module bound it can
+      register its own key and remove the owner's. The rule those endpoints enforce
+      is "an account keeps a way in", not "only the owner changes credentials", and
+      a gate that looked like the second while enforcing the first would be worse
+      than none — so it is named instead of guarded. What a shop can do about it is
+      outside these modules: a shorter TTL, a re-authentication step of its own.
+    - **A credential store an installation binds itself may answer nothing at all.**
+      `Credentials` exists so a shop can keep keys in LDAP or a users table it
+      already has, and such a store cannot erase rows out of gobit's tables or hold
+      a pending registration. Then the data-subject sweep reports `Retained` with
+      the reason and self-registration is not mounted
+      ([ADR 0132](adr/0132-the-contrib-identity-modules-answer-a-data-subject.md),
+      ADR 0133) — which is true, and is what a controller needs to hear instead of a
+      deletion that did not happen.
 - **A shopper can always decline to name a customer, and that is not closable.**
   A cart without a `customer_id` belongs to a guest, and on a guest order the
   b2b spending rule is not even asked. Requiring the field would not help:
@@ -134,6 +169,25 @@ past and is not corrected retroactively.
 
 ## Installation and operation
 
+- **The optional identity modules have two settings an operator can only get
+  wrong once.** Both are named where they are configured, and both are here because
+  the cost lands after a deploy rather than at startup.
+    - **Changing `Options.RPID` abandons every passkey already registered.** A
+      credential is bound to that value by the authenticator that minted it, so a
+      domain move — or dropping a subdomain — leaves every existing key unusable and
+      no migration can carry them over. The module records the relying party a row
+      was written under and answers only for the configured one, so an abandoned row
+      is not counted as a way into an account
+      ([ADR 0131](adr/0131-a-passkey-belongs-to-one-relying-party.md)) — it was, and
+      that made the last-way-in rule remove the only WORKING key. Everybody holding
+      one still has to register again.
+    - **Self-registration's default rate limit is per PROCESS.** It is kept in the
+      instance's own memory, so an installation behind several instances gets that
+      many times the bound until it binds a shared limiter
+      ([ADR 0133](adr/0133-a-shopper-opens-their-own-account.md)). The default exists
+      because one request makes the shop send mail to an address a stranger chose;
+      the published description says what it is, because a limit that is a fraction
+      of itself still looks like a limit.
 - **The admin panel writes the EDITABLE part of the catalog, not the creatable
   part.** The panel under `/admin/ui`
   ([ADR 0011](adr/0011-yonetim-paneli-dorduncu-agac.md)) carries login, logout,

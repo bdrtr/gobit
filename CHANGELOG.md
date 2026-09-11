@@ -20,6 +20,19 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bilinen sınırlar belgesi artık contrib kimlik modüllerini de KAPSIYOR**
+  (D71). `docs/known-limits.md`, gobit'in yapmadığı şeyleri okumak için açılan
+  belge, ve kimlik bölümü reddeden dört rotayı kapatmanın yolunu "tek satır
+  bağlama: bir doğrulayıcı bağla" diye bitiriyor. ADR 0127'den beri bağlanacak
+  BİR TANESİ var — bu depoda — ve dosyada `contrib` kelimesi hiç geçmiyordu.
+  Yani belgenin kendi tavsiyesini izleyen okur ne onun var olduğunu ne de neyi
+  kapatmadığını öğreniyordu: imzalı çerez süresi dolmadan iptal edilemez, çalınmış
+  bir çerez kendi passkey'ini kaydedip sahibinin anahtarını kaldırabilir,
+  kurulumun bağladığı bir kimlik bilgisi deposu hiçbir veri-sahibi yeteneğini
+  yanıtlamayabilir, `Options.RPID` değişimi kayıtlı her anahtarı terk eder, ve
+  kaydolmanın varsayılan hız sınırı SÜREÇ başına. Hepsi bir ADR'de yazılıydı;
+  hiçbiri birinin sınır aradığı yerde değildi.
+
 - **İptal edilen birimler artık RAFA geri dönüyor** (ADR 0134). Checkout'un son
   adımı rezervasyonları onaylıyor, yani stoku DÜŞÜYOR — o hâlde var olan bir
   siparişin birimleri satılabilir sayıdan çıkmış oluyor, ve sonradan silinen bir
