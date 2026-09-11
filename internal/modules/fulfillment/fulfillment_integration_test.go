@@ -30,6 +30,7 @@ import (
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/db"
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/eventbus"
 	"github.com/bdrtr/gobit/core/link"
 	coreprovider "github.com/bdrtr/gobit/core/provider"
 	"github.com/bdrtr/gobit/core/query"
@@ -675,6 +676,10 @@ func TestModuleRegistersItsContainerSurfaces(t *testing.T) {
 	// needs the link service as well. Handing it a real one rather than a stub
 	// is what makes the definition's SCHEMA part of what this test covers.
 	require.NoError(t, c.Provide("core.link", link.New(testPool, nil)))
+	// Since ADR 0139 the module PUBLISHES — a canceled parcel releases units a
+	// write-off counted as gone, and a flow has to hear it — so the bus is a hard
+	// dependency and the module does not register without one.
+	require.NoError(t, c.Provide("core.eventbus", eventbus.NewInMemory(nil)))
 
 	mod := fulfillment.New()
 	require.NoError(t, mod.Register(ctx, c))

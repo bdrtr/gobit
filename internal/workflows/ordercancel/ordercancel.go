@@ -27,10 +27,26 @@
 // that line are in a parcel and therefore gone. The inventory module knows which
 // shelf the units left and holds the ledger they go back into. Deciding across
 // them is this layer's job.
+//
+// # TWO events, because the window has two edges
+//
+// How many of a line's units belong on the shelf is
+// `min(canceled, bought − in a live parcel)`, and both sides of that move. A write
+// off grows the left side and this flow hears it as "order.line_canceled"; a
+// parcel being canceled shrinks the right side and it hears that as
+// "fulfillment.canceled" (ADR 0139).
+//
+// The second one was missing for a while and the gap had teeth, because the
+// missing half was the resolution the first half's record RECOMMENDED: ADR 0135
+// declined to withdraw a shipment under a customer and told the shop to cancel the
+// parcel instead. Doing that released units the write-off had already counted as
+// gone, and nothing recomputed anything — the goods were neither sold, nor
+// shipped, nor stock (gap D75).
 package ordercancel
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"strconv"
 
@@ -46,6 +62,8 @@ const (
 	ServiceInventory = "inventory.interop"
 	// ServiceFulfillment is the fulfillment module's cross-module surface.
 	ServiceFulfillment = "fulfillment.interop"
+	// ServiceOrder is the order module's cross-module surface.
+	ServiceOrder = "order.interop"
 	// ServiceLink is the core's Module Links service.
 	ServiceLink = "core.link"
 	// ServiceEventBus is the bus this flow listens on.
@@ -101,12 +119,30 @@ type Inventory interface {
 type Fulfillment interface {
 	// CommittedQuantities sums, per order line, the units a live parcel holds.
 	CommittedQuantities(ctx context.Context, fulfillmentIDs []string) (map[string]int64, error)
+	// QuantitiesOfFulfillment sums, per order line, the units ONE parcel holds —
+	// a CANCELED one included, which is the whole reason it is separate from the
+	// method above.
+	QuantitiesOfFulfillment(ctx context.Context, fulfillmentID string) (map[string]int64, error)
+}
+
+// Orders is the slice of the order module this flow calls.
+//
+// It reads what each line sold and what was written off. The line cancellation
+// gets those numbers on the event; a parcel cancellation has no such event to read
+// them from, so it asks.
+type Orders interface {
+	// DispatchableLinesJSON answers, per line, the bought and canceled counts
+	// and the variant, as a JSON array. The schema is repeated in [orderLine].
+	DispatchableLinesJSON(ctx context.Context, orderID string) (json.RawMessage, error)
 }
 
 // Links reads the Module Links this flow needs.
 type Links interface {
 	// ListMany returns the links of the given source ids in a SINGLE query.
 	ListMany(ctx context.Context, name string, fromIDs []string) (map[string][]string, error)
+	// ListManyByTo returns the links of the given TARGET ids, which is how a
+	// parcel finds the order it was opened for.
+	ListManyByTo(ctx context.Context, name string, toIDs []string) (map[string][]string, error)
 }
 
 // Subscriber is the narrow surface this flow needs to LISTEN.
@@ -119,20 +155,22 @@ type Subscriber interface {
 type Workflow struct {
 	inventory   Inventory
 	fulfillment Fulfillment
+	orders      Orders
 	links       Links
 	log         *slog.Logger
 }
 
 // New builds the flow from already-resolved dependencies.
 func New(
-	inventory Inventory, fulfillment Fulfillment, links Links, log *slog.Logger,
+	inventory Inventory, fulfillment Fulfillment, orders Orders, links Links, log *slog.Logger,
 ) *Workflow {
 	if log == nil {
 		log = slog.Default()
 	}
 
 	return &Workflow{
-		inventory: inventory, fulfillment: fulfillment, links: links, log: log,
+		inventory: inventory, fulfillment: fulfillment, orders: orders,
+		links: links, log: log,
 	}
 }
 
@@ -248,7 +286,7 @@ func (w *Workflow) committedQuantity(ctx context.Context, orderID, lineItemID st
 			"the cancellation flow is not wired, so a canceled line cannot be acted on")
 	}
 
-	byOrder, err := w.links.ListMany(ctx, "order_fulfillment", []string{orderID})
+	byOrder, err := w.links.ListMany(ctx, linkOrderFulfillment, []string{orderID})
 	if err != nil {
 		return 0, errors.Wrap(err, errors.KindOf(err), CodeEventUnusable,
 			"the parcels of order %s could not be read", orderID)
@@ -432,6 +470,10 @@ func FromContainer(c *container.Container, log *slog.Logger) (*Workflow, error) 
 	if err != nil {
 		return nil, err
 	}
+	orders, err := resolve[Orders](c, ServiceOrder)
+	if err != nil {
+		return nil, err
+	}
 	links, err := resolve[Links](c, ServiceLink)
 	if err != nil {
 		return nil, err
@@ -441,11 +483,15 @@ func FromContainer(c *container.Container, log *slog.Logger) (*Workflow, error) 
 		return nil, err
 	}
 
-	w := New(inventory, fulfillment, links, log)
+	w := New(inventory, fulfillment, orders, links, log)
 
 	if err := bus.Subscribe(topicLineCanceled, w.HandleLineCanceled); err != nil {
 		return nil, errors.Wrap(err, errors.KindOf(err), CodeNotReady,
 			"the cancellation flow could not subscribe to %q", topicLineCanceled)
+	}
+	if err := bus.Subscribe(topicFulfillmentCanceled, w.HandleFulfillmentCanceled); err != nil {
+		return nil, errors.Wrap(err, errors.KindOf(err), CodeNotReady,
+			"the cancellation flow could not subscribe to %q", topicFulfillmentCanceled)
 	}
 
 	return w, nil

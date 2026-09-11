@@ -429,3 +429,28 @@ func (i *Interop) CommittedQuantities(
 ) (map[string]int64, error) {
 	return i.svc.CommittedQuantities(ctx, fulfillmentIDs)
 }
+
+// QuantitiesOfFulfillment sums, per order line, the units ONE parcel holds.
+//
+// # Why it exists beside CommittedQuantities
+//
+// The two look alike and answer opposite questions. [Interop.CommittedQuantities]
+// skips a CANCELED parcel on purpose, because it is asked "how many units of this
+// line have left the building". This one is asked "what was in this box", by a
+// subscriber that is looking at the parcel BECAUSE it was just canceled — so the
+// status filter that makes the first answer right would make this one empty
+// exactly when it matters (ADR 0139).
+//
+// An unknown parcel answers an empty map. The caller is acting on an event, and a
+// parcel that no longer exists is a fact it can do nothing with.
+//
+// The counterpart on the consumer side:
+//
+//	type ParcelContents interface {
+//	    QuantitiesOfFulfillment(ctx context.Context, fulfillmentID string) (map[string]int64, error)
+//	}
+func (i *Interop) QuantitiesOfFulfillment(
+	ctx context.Context, fulfillmentID string,
+) (map[string]int64, error) {
+	return i.svc.QuantitiesOfFulfillment(ctx, fulfillmentID)
+}

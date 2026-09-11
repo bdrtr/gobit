@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/eventbus"
 	coreprovider "github.com/bdrtr/gobit/core/provider"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/service"
@@ -46,6 +47,8 @@ type fakeStore struct {
 	rules    map[string]models.ShippingOptionRule
 	fuls     map[string]models.Fulfillment
 	items    map[string]models.FulfillmentItem
+	// outbox holds what was written inside a transaction, in order.
+	outbox []outboxRow
 	// locations are the warehouse shipping policies; the key is the location
 	// identifier.
 	locations map[string]models.ShippingLocation
@@ -949,6 +952,7 @@ type testSetup struct {
 	store    *fakeStore
 	provider *fakeProvider
 	bound    *fakeDispatchBound
+	events   *fakePublisher
 }
 
 // newSetup builds a service running on a fake store and a fake provider.
@@ -963,16 +967,78 @@ func newSetup(t interface{ Fatalf(string, ...any) }) testSetup {
 
 	bound := &fakeDispatchBound{}
 
+	events := &fakePublisher{}
+
 	svc, err := service.New(service.Options{
 		Store:         store,
 		Providers:     registry,
 		Clock:         func() time.Time { return testNow },
 		DispatchBound: bound,
+		Events:        events,
 	})
 	if err != nil {
 		t.Fatalf("the service could not be built: %v", err)
 	}
-	return testSetup{svc: svc, store: store, provider: provider, bound: bound}
+	return testSetup{
+		svc: svc, store: store, provider: provider, bound: bound, events: events,
+	}
+}
+
+// newSetupWithoutBus builds the same service with NO publisher, which is the
+// wiring an installation without an event bus gets.
+func newSetupWithoutBus(t interface{ Fatalf(string, ...any) }) testSetup {
+	setup := newSetup(t)
+
+	registry := service.NewProviderRegistry()
+	if err := registry.Register(setup.provider); err != nil {
+		t.Fatalf("the provider could not be registered: %v", err)
+	}
+
+	svc, err := service.New(service.Options{
+		Store:         setup.store,
+		Providers:     registry,
+		Clock:         func() time.Time { return testNow },
+		DispatchBound: setup.bound,
+	})
+	if err != nil {
+		t.Fatalf("the service could not be built: %v", err)
+	}
+	setup.svc = svc
+
+	return setup
+}
+
+// fakePublisher records what left the module, and can refuse.
+type fakePublisher struct {
+	mu        sync.Mutex
+	published []eventbus.Event
+	err       error
+}
+
+// Publish records the event.
+func (f *fakePublisher) Publish(_ context.Context, e eventbus.Event) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.err != nil {
+		return f.err
+	}
+	f.published = append(f.published, e)
+
+	return nil
+}
+
+// names returns the topics that were published, in order.
+func (f *fakePublisher) names() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := make([]string, 0, len(f.published))
+	for i := range f.published {
+		out = append(out, f.published[i].Name)
+	}
+
+	return out
 }
 
 // fakeDispatchBound stands in for the fulfilling flow.
@@ -1182,4 +1248,37 @@ func (f *fakeStore) LocationPolicies(
 		return strings.Compare(a.LocationID, b.LocationID)
 	})
 	return out, nil
+}
+
+// outboxRow is one event the fake store was asked to write inside a transaction.
+type outboxRow struct {
+	id   string
+	name string
+	data map[string]any
+}
+
+// WriteOutboxEvent records the event and REFUSES outside a transaction, which is
+// the half of the contract worth imitating: the real repository's whole reason
+// for existing is that the row commits with the write it reports.
+func (f *fakeStore) WriteOutboxEvent(
+	ctx context.Context, id, name string, data map[string]any,
+) error {
+	if ctx.Value(txMarkerKey{}) == nil {
+		return errors.Internal("fulfillment_query_failed",
+			"an outbox event may only be written inside a transaction (%s)", name)
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.outbox = append(f.outbox, outboxRow{id: id, name: name, data: data})
+
+	return nil
+}
+
+// outboxRows returns what was written, in order.
+func (f *fakeStore) outboxRows() []outboxRow {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return slices.Clone(f.outbox)
 }

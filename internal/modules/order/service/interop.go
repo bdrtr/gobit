@@ -770,6 +770,15 @@ type interopDispatchableLine struct {
 	// decision rather than a quantity still owed. What a dispatch must not exceed
 	// is what was sold minus what was written off.
 	Canceled int64 `json:"canceled"`
+	// VariantID is the product variant the line sells.
+	//
+	// It is here for a reader this answer did not originally have. A parcel being
+	// canceled releases units that were counted as gone, and putting them back is
+	// an inventory write that needs the variant to reach the item that tracks the
+	// stock — the same journey [EventFieldVariantID] makes on the cancellation
+	// event, for the same reason: a subscriber reaches the inventory item without
+	// reading the order's own tables (ADR 0139).
+	VariantID string `json:"variant_id"`
 }
 
 // DispatchableLinesJSON answers, per line, what a parcel may still be filled with.
@@ -808,6 +817,7 @@ func (i *Interop) DispatchableLinesJSON(ctx context.Context, orderID string) (js
 			LineItemID: detail.Items[i].ID,
 			Bought:     detail.Items[i].Quantity,
 			Canceled:   canceled[detail.Items[i].ID],
+			VariantID:  detail.Items[i].VariantID,
 		})
 	}
 

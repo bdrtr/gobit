@@ -225,7 +225,52 @@ func (s *Service) CreateFulfillment(
 	if err != nil {
 		return models.Fulfillment{}, err
 	}
+
+	if err := s.bindToReference(ctx, out.ID, reference); err != nil {
+		return models.Fulfillment{}, err
+	}
+
 	return out, nil
+}
+
+// bindToReference writes the "order_fulfillment" binding for a parcel.
+//
+// # Why AFTER the transaction and not inside it
+//
+// The link service owns its own pool and keeps its transaction under a key this
+// module cannot see, which is the same reason the outbox needed a hand reaching
+// into this module's transaction rather than the other way round. So the parcel
+// commits first and the binding follows, exactly as the fulfilling flow did it
+// before this became the module's job (ADR 0140).
+//
+// # A failure FAILS the request, and the message carries the parcel's id
+//
+// The parcel exists. Reporting only "it failed" would invite the operator to press
+// the button again, and a fresh idempotency key opens a SECOND one — so the
+// identifier is in the sentence and the binding can be repaired instead. The
+// wording is the fulfilling flow's, moved here with the write it belongs to.
+func (s *Service) bindToReference(ctx context.Context, fulfillmentID, reference string) error {
+	if s.links == nil {
+		// Only reachable for a service assembled by hand: the module resolves the
+		// link service as a hard dependency.
+		return nil
+	}
+
+	// The binding is written on every create, including one that returned an
+	// EXISTING parcel. It is idempotent, and writing it again is what repairs a
+	// parcel whose first attempt committed and whose binding did not.
+	if err := s.links.Create(ctx, LinkOrderFulfillment, reference, fulfillmentID); err != nil {
+		s.log.ErrorContext(ctx,
+			"a parcel was opened and the binding to its order was NOT written",
+			"reference", reference, "fulfillment_id", fulfillmentID, "error", err)
+
+		return errors.Wrap(err, errors.KindOf(err), CodeLinkFailed,
+			"parcel %s was opened for %s and the binding between them could not be "+
+				"written; the parcel exists and nothing can say which order it belongs to",
+			fulfillmentID, reference)
+	}
+
+	return nil
 }
 
 // CancelFulfillment cancels the fulfillment.
@@ -251,7 +296,15 @@ func (s *Service) CancelFulfillment(ctx context.Context, id string) error {
 		return err
 	}
 
-	return s.store.WithTx(ctx, func(ctx context.Context) error {
+	// What the event will carry, filled inside the transaction and used after it.
+	// A parcel that was ALREADY canceled leaves these empty, which is how the
+	// publish below knows there was no new act to report.
+	var (
+		reference  string
+		canceledAt time.Time
+	)
+
+	err := s.store.WithTx(ctx, func(ctx context.Context) error {
 		ful, err := s.store.LockFulfillment(ctx, id)
 		if err != nil {
 			return err
@@ -292,11 +345,36 @@ func (s *Service) CancelFulfillment(ctx context.Context, id string) error {
 		}
 
 		now := s.now()
-		_, err = s.store.UpdateFulfillmentStatus(ctx, ful.ID, models.StatusCanceled,
+		if _, err = s.store.UpdateFulfillmentStatus(ctx, ful.ID, models.StatusCanceled,
 			ful.TrackingNumber, ful.TrackingURL,
-			ful.ShippedAt, ful.DeliveredAt, &now, ful.ReturnedAt)
-		return err
+			ful.ShippedAt, ful.DeliveredAt, &now, ful.ReturnedAt); err != nil {
+			return err
+		}
+
+		// The outbox row commits with the status. A parcel canceled without its
+		// event is units that left a live parcel and went nowhere: the
+		// cancellation that counted them as gone is never recomputed, and the
+		// stock stays deducted with nothing saying it should not be (ADR 0139).
+		if err := s.recordFulfillmentCanceled(ctx, ful.ID, ful.Reference, now); err != nil {
+			return err
+		}
+
+		reference, canceledAt = ful.Reference, now
+
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	// Empty means the switch above found the parcel already canceled and there is
+	// no second act to announce. Publishing anyway would tell a subscriber that
+	// units were released when none were.
+	if !canceledAt.IsZero() {
+		s.publishFulfillmentCanceled(ctx, id, reference, canceledAt)
+	}
+
+	return nil
 }
 
 // MarkShipped records that the carrier COLLECTED the fulfillment.
@@ -812,4 +890,36 @@ func (s *Service) CommittedQuantities(
 	ctx context.Context, fulfillmentIDs []string,
 ) (map[string]int64, error) {
 	return s.store.CommittedQuantities(ctx, fulfillmentIDs)
+}
+
+// QuantitiesOfFulfillment sums, per order line, the units ONE parcel holds.
+//
+// # Why it does not care what state the parcel is in
+//
+// [Service.CommittedQuantities] answers about LIVE parcels and skips the canceled
+// ones, because its question is "how many units of this line have left". This one
+// answers a different question — "what was in this box" — and the caller that asks
+// it is looking at a parcel precisely BECAUSE it was just canceled. Filtering by
+// status here would make the answer empty exactly when it is needed (ADR 0139).
+//
+// An unknown parcel answers an empty map rather than NotFound. The caller is a
+// subscriber acting on an event, and a parcel that no longer exists is a fact it
+// can do nothing with; a typed error would only be logged and dropped.
+func (s *Service) QuantitiesOfFulfillment(
+	ctx context.Context, fulfillmentID string,
+) (map[string]int64, error) {
+	items, err := s.store.ListFulfillmentItems(ctx, fulfillmentID)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[string]int64, len(items))
+	for i := range items {
+		// Summed rather than assigned. The unique index holds one row per
+		// (parcel, line) today, and a sum stays right if that ever stops being
+		// true, where an assignment would silently keep the last row.
+		out[items[i].LineItemID] += items[i].Quantity
+	}
+
+	return out, nil
 }

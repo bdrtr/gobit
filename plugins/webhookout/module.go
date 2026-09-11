@@ -59,7 +59,7 @@ var migrationsRoot = mustSub(migrationFiles, "migrations")
 //
 // So the list is written out, and it is the WHOLE set: a static census of every
 // eventbus.Event this repository can publish resolves to exactly this slice —
-// the seven topics plugins/webhookout forwards.
+// the eight topics plugins/webhookout forwards.
 //
 // The number and the path sit on ONE line deliberately. It is the only place
 // the size is written, and the count gate is LINE-ANCHORED: a sentence whose
@@ -100,6 +100,7 @@ var ForwardedTopics = []string{
 	topicProductUpdated,
 	topicProductDeleted,
 	topicOrderLineCanceled,
+	topicFulfillmentCanceled,
 }
 
 // The topics, as constants the arch gates can resolve.
@@ -137,6 +138,14 @@ const (
 	// and not forwarded is a build failure here, in both directions, and rightly
 	// so. A receiver cannot even REGISTER for a name this list omits.
 	topicOrderLineCanceled = "order.line_canceled"
+	// topicFulfillmentCanceled is published when a parcel will not be sent
+	// (ADR 0139). It is the fulfillment module's FIRST event.
+	//
+	// It carries the parcel, what it was opened for, and the moment — no money,
+	// no counts and no personal data, so it needs no new redaction rule. An
+	// operator's own system wants it for the reason gobit does: units that were
+	// counted as leaving the building are not leaving after all.
+	topicFulfillmentCanceled = "fulfillment.canceled"
 )
 
 // redactedFields are the payload fields that never leave this installation, and

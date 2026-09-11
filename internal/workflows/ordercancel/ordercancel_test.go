@@ -2,8 +2,10 @@ package ordercancel_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -208,6 +210,10 @@ func TestAnEventThatCannotBeActedOnIsRefused(t *testing.T) {
 // reason the flow repeats it: neither side imports the other.
 const linkVariantInventory = "product_variant_inventory"
 
+// linkOrderFulfillment is the other link name the flow uses, repeated for the
+// same reason.
+const linkOrderFulfillment = "order_fulfillment"
+
 // canceledEvent builds a payload the way the order module does.
 func canceledEvent(bought, before, now int64) eventbus.Event {
 	return eventbus.Event{
@@ -257,6 +263,14 @@ type harness struct {
 	committedErr error
 	links        map[string]map[string][]string
 	linkErr      error
+	// held is what ONE parcel carries, per line, and it answers for a canceled
+	// parcel too — the seam the parcel handler reads.
+	held    map[string]int64
+	heldErr error
+	// lines is the order module's answer, verbatim JSON, so the test exercises
+	// the same decoding production does.
+	lines    string
+	linesErr error
 }
 
 // newHarness wires a flow whose every seam answers the ordinary thing.
@@ -268,12 +282,13 @@ func newHarness(t *testing.T) *harness {
 			locations: map[string]string{testItemID: testLocationID},
 		},
 		committed: map[string]int64{},
+		held:      map[string]int64{},
 		links: map[string]map[string][]string{
-			"order_fulfillment":  {testOrderID: {testFulfillmentID}},
+			linkOrderFulfillment: {testOrderID: {testFulfillmentID}},
 			linkVariantInventory: {testVariantID: {testItemID}},
 		},
 	}
-	h.flow = ordercancel.New(h.inventory, h, h, slog.New(slog.DiscardHandler))
+	h.flow = ordercancel.New(h.inventory, h, h, h, slog.New(slog.DiscardHandler))
 
 	return h
 }
@@ -303,6 +318,53 @@ func (h *harness) ListMany(_ context.Context, name string, _ []string) (map[stri
 	return h.links[name], nil
 }
 
+// QuantitiesOfFulfillment answers what ONE parcel was holding.
+func (h *harness) QuantitiesOfFulfillment(context.Context, string) (map[string]int64, error) {
+	if h.heldErr != nil {
+		return nil, h.heldErr
+	}
+
+	return h.held, nil
+}
+
+// ListManyByTo answers the links in reverse, which is how a parcel finds its
+// order. The fixture inverts the SAME map rather than carrying a second one: two
+// maps could disagree, and a test whose seams disagree proves nothing.
+func (h *harness) ListManyByTo(
+	_ context.Context, name string, toIDs []string,
+) (map[string][]string, error) {
+	if h.linkErr != nil {
+		return nil, h.linkErr
+	}
+
+	out := map[string][]string{}
+	for from, tos := range h.links[name] {
+		for _, to := range tos {
+			if slices.Contains(toIDs, to) {
+				out[to] = append(out[to], from)
+			}
+		}
+	}
+
+	return out, nil
+}
+
+// DispatchableLinesJSON answers what the order sold and wrote off.
+func (h *harness) DispatchableLinesJSON(context.Context, string) (json.RawMessage, error) {
+	if h.linesErr != nil {
+		return nil, h.linesErr
+	}
+
+	return json.RawMessage(h.lines), nil
+}
+
+// handleParcel runs the SECOND subscriber.
+func (h *harness) handleParcel(t *testing.T, e eventbus.Event) error {
+	t.Helper()
+
+	return h.flow.HandleFulfillmentCanceled(t.Context(), e)
+}
+
 // fakeInventory records what the flow asked it to do.
 type fakeInventory struct {
 	mu          sync.Mutex
@@ -312,6 +374,10 @@ type fakeInventory struct {
 	alreadyBack bool
 	returned    int64
 	calls       []int64
+	// references records what the ledger was asked to hold unique, in order. It
+	// is the field the idempotency argument is made of, so it is recorded rather
+	// than discarded.
+	references []string
 }
 
 // SaleLocations answers where the units left from.
@@ -325,7 +391,7 @@ func (f *fakeInventory) SaleLocations(context.Context, string) (map[string]strin
 
 // ReturnCanceled records the units.
 func (f *fakeInventory) ReturnCanceled(
-	_ context.Context, _, _ string, quantity int64, _ string,
+	_ context.Context, _, _ string, quantity int64, reference string,
 ) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -334,6 +400,7 @@ func (f *fakeInventory) ReturnCanceled(
 		return false, f.returnErr
 	}
 	f.calls = append(f.calls, quantity)
+	f.references = append(f.references, reference)
 	if f.alreadyBack {
 		return true, nil
 	}

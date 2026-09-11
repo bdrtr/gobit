@@ -66,6 +66,7 @@ import (
 	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/eventbus"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 )
 
@@ -97,6 +98,14 @@ const (
 	// CodeProviderContract reports that the provider returned a response outside
 	// the contract; it does not occur in normal operation.
 	CodeProviderContract = "fulfillment_provider_contract_violation"
+	// CodeLinkFailed reports a parcel that was opened while the binding to what
+	// it was opened FOR could not be written.
+	//
+	// It is not the parcel failing: the parcel exists. What failed is the only
+	// record that says which order it belongs to, and without it the parcel is
+	// invisible to every question asked through the link — what an order still
+	// owes, what a write-off may put back, what a cancellation releases.
+	CodeLinkFailed = "fulfillment_link_failed"
 	// CodeNoShippingLocation reports that no location is left for the
 	// fulfillment to leave from (see [Service.RankLocations]).
 	CodeNoShippingLocation = "fulfillment_no_shipping_location"
@@ -159,6 +168,11 @@ type Store interface {
 	// WithTx runs fn in a single transaction; if fn returns an error the
 	// transaction is rolled back.
 	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
+
+	// WriteOutboxEvent records an event INSIDE the current transaction, so that
+	// the event and the write it reports commit together or not at all. Outside
+	// one it refuses.
+	WriteOutboxEvent(ctx context.Context, id, name string, data map[string]any) error
 
 	// CreateShippingProfile records a new shipping profile.
 	CreateShippingProfile(ctx context.Context, profile models.ShippingProfile) (models.ShippingProfile, error)
@@ -311,6 +325,52 @@ type Options struct {
 	// It is a lazy resolver rather than a value at construction, because the flow
 	// that answers is born after every module has registered.
 	DispatchBound DispatchBound
+	// Events publishes this module's events; nil means it publishes none.
+	//
+	// The MODULE does not allow nil: since ADR 0139 it resolves the bus as a hard
+	// dependency and refuses to register without one, because an installation
+	// that cancels parcels with nowhere to send the event keeps the stock of the
+	// units they held deducted for good.
+	//
+	// Nil is still handled here rather than rejected, because this constructor is
+	// reached directly by the module's own tests and by an embedder assembling a
+	// service by hand, and the safe reading of "no publisher" is "write no outbox
+	// row" — with no bus there is no relay either, so the row would be a promise
+	// nothing keeps.
+	Events EventPublisher
+	// Links binds a parcel to what it was opened FOR; nil writes no binding.
+	//
+	// The MODULE does not allow nil either: it owns the "order_fulfillment"
+	// definition and since ADR 0140 it is the side that writes the record, so it
+	// resolves the link service as a hard dependency.
+	Links LinkWriter
+}
+
+// LinkWriter is the slice of the core's Module Links this module needs to WRITE.
+//
+// # Why this module writes a binding whose left side is an order
+//
+// It already OWNS the definition, and the rule that put it here is that a link
+// belongs to the side holding the record the binding carries (see
+// [LinkOrderFulfillment]). Until ADR 0140 the definition's owner declared it and
+// somebody else wrote it, and the somebody else was one of the two ways a parcel
+// is opened — so the other way produced parcels nothing could attribute to an
+// order.
+type LinkWriter interface {
+	// Create binds fromID to toID under the named definition. It is idempotent:
+	// a pair that already exists is a no-op.
+	Create(ctx context.Context, definition, fromID, toID string) error
+}
+
+// EventPublisher is the slice of the bus this module needs to PUBLISH.
+//
+// It is declared here with core types rather than taken as the bus itself, for
+// the reason every narrow interface in this repository is declared on the
+// consumer's side: what this module needs is one method, and the surface it can
+// be handed should be one method wide.
+type EventPublisher interface {
+	// Publish sends the event to the subscribers.
+	Publish(ctx context.Context, e eventbus.Event) error
 }
 
 // Service is the fulfillment module's outward-facing service.
@@ -319,6 +379,8 @@ type Service struct {
 	store     Store
 	providers *ProviderRegistry
 	bound     DispatchBound
+	events    EventPublisher
+	links     LinkWriter
 	log       *slog.Logger
 	clock     func() time.Time
 }
@@ -347,7 +409,8 @@ func New(opts Options) (*Service, error) {
 	}
 	return &Service{
 		store: opts.Store, providers: opts.Providers,
-		bound: opts.DispatchBound, log: log, clock: clock,
+		bound: opts.DispatchBound, events: opts.Events, links: opts.Links,
+		log: log, clock: clock,
 	}, nil
 }
 

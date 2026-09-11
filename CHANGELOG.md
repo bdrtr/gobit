@@ -20,6 +20,32 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir koli artık hangi sipariş için açıldığını KAYDEDİYOR** (ADR 0140). Koli
+  açmanın iki yolu var ve hiçbiri ikisini birden yapmıyordu: akışın açtığı koli
+  bağlıydı ama kalem taşımıyordu (açtığı yüzey kalem almıyor), modülün yönetici
+  ucunun açtığı koli kalem taşıyordu ama hiçbir şeye bağlı değildi. Gerçek bir
+  veritabanına karşı ölçüldü: üç birimlik bir koli `CommittedQuantities`'e
+  `{oli: 3}` diyor, bağ listesine BOŞ. Yani `committed` terimi, katkısı olan her
+  koli için yapısal olarak sıfırdı — ve o terim ÜÇ kararın ortasında duruyor
+  (ADR 0134, 0135, 0139). Bağı artık tanımın sahibi olan modül yazıyor; akıştaki
+  yazım kaldırıldı, çünkü aynı kuralın iki yerde olması onun bir yerde
+  unutulmasının sebebiydi.
+
+- **İptal edilen bir koli, tuttuğu birimleri geri veriyor** (ADR 0139). Bir
+  satırın kaç biriminin rafa ait olduğu `min(iptal, satılan − canlı kolide)`
+  ve bu ifadenin İKİ tarafı da oynuyor; ama yalnızca birinin olayı vardı.
+  Açık bir kolinin altında iptal edilen satır, kutunun dışındaki birimleri geri
+  koyuyor ve gerisini doğru biçimde bırakıyordu — ADR 0135 tam o duruma bakıp
+  "çerçeve kimsenin sevkiyatını kendi başına geri çekmez" dedi ve dükkânın
+  çözümünü aynı cümlede adlandırdı: koliyi iptal et. Koliyi iptal etmek bir
+  durumu çeviriyor, stoğa dokunmuyor ve KİMSEYE söylemiyordu; fulfillment
+  modülü hiç olay yayımlamamıştı. Böylece o birimler ne kolide, ne müşteriye
+  borçlu, ne rafta kalıyordu. Modül artık `fulfillment.canceled` yayımlıyor ve
+  iptal akışı ikinci olayı olarak dinliyor: bıraktığı miktar, iki pencerenin
+  FARKI — durumların farkı olduğu için akışın daha önce ne iade ettiğini
+  hatırlamasına gerek yok, ve iki koli hangi sırayla iptal edilirse edilsin
+  toplam aynı.
+
 - **Konteyner toplayıcısı, makinenin çöpe atıldığı yerde kapalı** (ADR 0138).
   Doğrulama şeridi 11 Eylül'de iki kez, birbiriyle ilgisiz iki pakette,
   altmışar saniye bekledikten sonra kırmızıya döndü; beklenen şey testin

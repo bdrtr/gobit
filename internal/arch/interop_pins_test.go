@@ -142,6 +142,7 @@ var (
 
 	_ ordercancelwf.Inventory   = (*inventorysvc.Interop)(nil)
 	_ ordercancelwf.Fulfillment = (*fulfillsvc.Interop)(nil)
+	_ ordercancelwf.Orders      = (*ordersvc.Interop)(nil)
 )
 
 // A PLUGIN resolving a MODULE's surface, and the CORE resolving one.

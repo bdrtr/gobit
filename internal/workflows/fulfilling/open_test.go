@@ -23,20 +23,25 @@ func newFlow(t *testing.T, orders *fakeOrders, ful *fakeFulfillments, links *fak
 	return flow
 }
 
-// TestOpeningAShipmentBindsItToTheOrder is the whole point of the flow.
-func TestOpeningAShipmentBindsItToTheOrder(t *testing.T) {
+// TestOpeningAShipmentReportsTheParcelItOpened is what is left of the flow's job.
+//
+// The BINDING moved. This flow used to write the "order_fulfillment" link after
+// the module opened the parcel, and the module's own admin endpoint — the only
+// one that carries an item breakdown — wrote none, so those parcels belonged to
+// no order as far as every question asked through the link was concerned. The
+// definition's owner now writes it inside CreateFulfillment, which both paths go
+// through, and the tests for it live beside the write (ADR 0140).
+func TestOpeningAShipmentReportsTheParcelItOpened(t *testing.T) {
 	t.Parallel()
 
-	links := newFakeLinks()
-	flow := newFlow(t, &fakeOrders{}, &fakeFulfillments{id: "ful_1"}, links)
+	flow := newFlow(t, &fakeOrders{}, &fakeFulfillments{id: "ful_1"}, newFakeLinks())
 
 	result, err := flow.OpenForOrder(context.Background(), "order_1", "so_1", "key-1")
 	require.NoError(t, err)
 
 	assert.Equal(t, "ful_1", result.FulfillmentID)
 	assert.False(t, result.AlreadyOpen)
-	assert.Equal(t, []string{"ful_1"}, links.bound["order_1"],
-		"the shipment was opened and not bound; nothing could say which order the parcel is for")
+	assert.Equal(t, "order_1", result.OrderID)
 }
 
 // TestAnUnknownOrderOpensNoParcel is the refusal only this flow can make.
@@ -64,7 +69,7 @@ func TestASecondPressOpensNoSecondParcel(t *testing.T) {
 	t.Parallel()
 
 	links := newFakeLinks()
-	ful := &fakeFulfillments{id: "ful_1"}
+	ful := &fakeFulfillments{id: "ful_1", links: links}
 	flow := newFlow(t, &fakeOrders{}, ful, links)
 	ctx := context.Background()
 
@@ -76,7 +81,9 @@ func TestASecondPressOpensNoSecondParcel(t *testing.T) {
 	assert.False(t, first.AlreadyOpen)
 	assert.True(t, second.AlreadyOpen,
 		"the second press was reported as a new parcel; an operator would believe two exist")
-	assert.Equal(t, []string{"ful_1"}, links.bound["order_1"])
+	assert.Equal(t, 2, ful.calls,
+		"both presses reached the module, which is what makes its idempotency the "+
+			"thing being relied on rather than a check this flow does")
 }
 
 // TestAMissingIdempotencyKeyIsRefused keeps the one input that cannot be
@@ -92,28 +99,6 @@ func TestAMissingIdempotencyKeyIsRefused(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, coreerrors.IsInvalid(err), "%v", err)
 	assert.Zero(t, ful.calls)
-}
-
-// TestABindingFailureReportsTheParcelThatExists is the failure this flow can
-// leave, and the message is the whole remedy.
-//
-// Saying only "it failed" would invite the operator to press again, and with a
-// fresh key that opens a SECOND parcel.
-func TestABindingFailureReportsTheParcelThatExists(t *testing.T) {
-	t.Parallel()
-
-	links := newFakeLinks()
-	links.createErr = errors.New("the link table is unreachable")
-	flow := newFlow(t, &fakeOrders{}, &fakeFulfillments{id: "ful_7"}, links)
-
-	result, err := flow.OpenForOrder(context.Background(), "order_1", "so_1", "key-1")
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ful_7",
-		"the error does not name the parcel that EXISTS; the operator cannot repair the "+
-			"binding and will open a second one")
-	assert.Equal(t, "ful_7", result.FulfillmentID,
-		"the result dropped the shipment id the caller needs to recover")
 }
 
 // TestAnUnreadableStatusStillReportsTheShipment keeps one module's fault from
@@ -184,6 +169,15 @@ type fakeFulfillments struct {
 	// committedCalls counts the questions, which is how a test proves an order with
 	// no parcels is not asked at all.
 	committedCalls int
+	// links is where this fake writes the binding, because the real module writes
+	// one inside CreateFulfillment (ADR 0140).
+	//
+	// A fake that skipped it would be a fake that disagrees with its producer on
+	// the one fact the flow READS BACK: "already open" is decided by whether the
+	// parcel was bound BEFORE the call, so a fake that never binds reports every
+	// repeat as a fresh parcel. That is exactly what happened when the write
+	// moved, and the test caught it.
+	links *fakeLinks
 }
 
 // CommittedQuantities answers what the live parcels hold.
@@ -200,8 +194,16 @@ func (f *fakeFulfillments) CommittedQuantities(
 
 // CreateFulfillment returns the same id whatever the key, the way an idempotent
 // provider does for a repeated key.
-func (f *fakeFulfillments) CreateFulfillment(context.Context, string, string, string) (string, error) {
+func (f *fakeFulfillments) CreateFulfillment(
+	ctx context.Context, reference, _, _ string,
+) (string, error) {
 	f.calls++
+
+	if f.links != nil {
+		if err := f.links.Create(ctx, "order_fulfillment", reference, f.id); err != nil {
+			return "", err
+		}
+	}
 
 	return f.id, nil
 }

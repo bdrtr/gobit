@@ -113,20 +113,12 @@ func (w *Workflows) OpenForOrder(
 		AlreadyOpen:   bound[fulfillmentID],
 	}
 
-	if err := w.links.Create(ctx, LinkOrderFulfillment, orderID, fulfillmentID); err != nil {
-		// The parcel EXISTS. Saying only "it failed" would invite the operator
-		// to press the button again, and with a fresh key that opens a second
-		// one; the shipment id is in the message so the binding can be repaired
-		// instead.
-		w.log.ErrorContext(ctx,
-			"a shipment was opened and the binding to its order was NOT written",
-			"order_id", orderID, "fulfillment_id", fulfillmentID, "error", err)
-
-		return result, errors.Wrap(err, errors.KindOf(err), CodeLinkFailed,
-			"shipment %s was opened for order %s and the binding between them could not be "+
-				"written; the parcel exists and nothing can say which order it belongs to",
-			fulfillmentID, orderID)
-	}
+	// The binding is NOT written here any more. The fulfillment module owns the
+	// "order_fulfillment" definition and writes it inside CreateFulfillment, which
+	// is the call above — so both ways of opening a parcel bind, where before only
+	// this one did and the admin endpoint's item-carrying parcels were attributable
+	// to no order at all (ADR 0140). A second write here would be the same rule in
+	// two places.
 
 	return result, nil
 }

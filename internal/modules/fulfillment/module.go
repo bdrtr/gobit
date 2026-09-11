@@ -151,6 +151,9 @@ const (
 	// codeLinkDefine reports a link definition that could not be declared.
 	codeLinkDefine       = "fulfillment_module_link_define_failed"
 	codeProviderRegister = "fulfillment_module_provider_register_failed"
+	// svcEventBus is the core bus in the container. Since ADR 0139 this module
+	// publishes one event, and it resolves the bus to send it.
+	svcEventBus = "core.eventbus"
 )
 
 //go:embed migrations/*.sql
@@ -238,10 +241,23 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 			"the %s module could not register the default provider", ModuleName)
 	}
 
+	// It is resolved through a narrow interface: this module only PUBLISHES, it
+	// does not subscribe and does not close the bus (see service.EventPublisher).
+	bus, err := container.Resolve[service.EventPublisher](c, svcEventBus)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
+			"the %s module could not resolve the event bus (%q)", ModuleName, svcEventBus)
+	}
+
 	svc, err := service.New(service.Options{
 		Store:     repo,
 		Providers: providers,
 		Logger:    log,
+		Events:    bus,
+		// The module owns the "order_fulfillment" definition, so since ADR 0140 it
+		// is also the side that WRITES it — both ways of opening a parcel go
+		// through CreateFulfillment, and only one of them used to bind.
+		Links: links,
 		// Resolved on first use rather than now: the flow that answers is built
 		// after every module has registered (ADR 0135).
 		DispatchBound: newDispatchBound(c, log),

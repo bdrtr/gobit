@@ -78,6 +78,9 @@ var unresolvableNames = map[string]string{
 	"internal/modules/payment/repository/repository.go": "the same shape as the order " +
 		"repository's WriteOutboxEvent: the name is a parameter and the payment service " +
 		"decides it, and those call sites resolve on their own",
+	"internal/modules/fulfillment/repository/outbox.go": "the third module to carry the " +
+		"same hand (ADR 0139): WriteOutboxEvent takes the name as a parameter and the " +
+		"fulfillment service decides it, at a call site that resolves on its own",
 }
 
 // TestTheForwardedTopicsAreEveryPublishedTopic is the gate.
