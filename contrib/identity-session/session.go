@@ -167,7 +167,10 @@ func (s *Sessions) Clear(w http.ResponseWriter) {
 	http.SetCookie(w, s.ClearCookie(s.cookieName))
 }
 
-// The purposes this key signs for.
+// The purposes this installation's keys sign for.
+//
+// The CURRENT key signs and every key verifies, so a purpose has to be the same
+// string across a rotation or a retired key would stop opening what it sealed.
 //
 // # Why a signed value carries what it is FOR
 //
@@ -211,7 +214,8 @@ func (s *Sessions) SealValue(value string, ttl time.Duration) string {
 	return payload + "." + base64.RawURLEncoding.EncodeToString(s.sign(purposeValue, payload))
 }
 
-// OpenValue reads a value back and refuses one this key did not seal.
+// OpenValue reads a value back and refuses one none of this installation's keys
+// sealed — the current one or any retired one (ADR 0129).
 //
 // An expired value is refused with the same error as a forged one, for
 // [Sessions.CustomerID]'s reason: telling them apart tells a forger which half
@@ -242,7 +246,9 @@ func (s *Sessions) OpenValue(sealed string) (string, error) {
 	return string(value), nil
 }
 
-// open reads a cookie value and refuses one this key did not seal.
+// open reads a cookie value and refuses one none of this installation's keys
+// sealed. A retired key still opens what it sealed, which is what makes a
+// rotation something other than logging everybody out (ADR 0129).
 func (s *Sessions) open(value string) (customerID string, expiry time.Time, err error) {
 	// The signature is the LAST segment: the identifier may not contain a dot
 	// (it is a ULID-shaped token this framework mints) but saying so here would
