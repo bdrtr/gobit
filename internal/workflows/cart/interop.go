@@ -35,11 +35,24 @@ const InteropName = "workflows.cart.interop"
 //
 // # Why not ALL of the workflows
 //
-// The surface carries only the three workflows that are the storefront's HTTP
-// endpoints. [Workflows.CalculateTotals] is NOT here and will not be: it is not a
+// The surface carries the workflows that ARE the storefront's HTTP endpoints and
+// no others. [Workflows.CalculateTotals] is NOT here and will not be: it is not a
 // capability that gets exposed over HTTP — running the computation at the moment
 // the client asks for it would tie the amount to the client's timing. Writing an
 // unused method here would mean producing a contract with no consumer.
+//
+// The rule cuts both ways and the second direction went wrong for a while. The
+// cart module's two coupon endpoints resolve the cart API's CartPromotions from this
+// surface, and the surface carried neither method — so `POST
+// /store/v1/carts/{id}/promotions` and its DELETE sibling failed at resolution
+// with `container_type_mismatch`, on the first request, cached by a sync.Once for
+// the life of the process. Startup was green, the route was described, and the
+// module's fail-closed nil guard passed because the WRAPPER was present; what was
+// absent was one layer deeper (gap D73).
+//
+// The count used to be written into this paragraph as "the three workflows". It is
+// not written as a number any more: a number here is a second place to update, and
+// it was already wrong by one before the coupon methods were missing.
 //
 // [Workflows.CreateCart] stayed OUT for a while on that same ground: the
 // cart-opening endpoint was wired to the cart module's own service. That wiring
@@ -157,4 +170,23 @@ func (i *Interop) SetLineItemQuantity(
 		return false, err
 	}
 	return result.Removed, nil
+}
+
+// ApplyPromotionCode writes a coupon code onto the cart and reprices it.
+//
+// It is the storefront's `POST /store/v1/carts/{id}/promotions`, and it delegates
+// without deciding anything: the order — ask the promotion module, then write, then
+// reprice — is [Workflows.ApplyPromotionCode]'s, and a surface that re-stated it
+// would be a second copy of a rule that already has one place.
+func (i *Interop) ApplyPromotionCode(ctx context.Context, cartID, code string) error {
+	return i.w.ApplyPromotionCode(ctx, cartID, code)
+}
+
+// RemovePromotionCode takes a coupon code off the cart and reprices it.
+//
+// It is the storefront's `DELETE /store/v1/carts/{id}/promotions/{code}`. A cart
+// that was not holding the code answers NotFound, which is the workflow's decision
+// and not this surface's.
+func (i *Interop) RemovePromotionCode(ctx context.Context, cartID, code string) error {
+	return i.w.RemovePromotionCode(ctx, cartID, code)
 }

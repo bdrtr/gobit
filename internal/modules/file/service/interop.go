@@ -108,8 +108,12 @@ func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
 //	    UploadJSON(ctx context.Context, uploadID string) (json.RawMessage, error)
 //	}
 //
-// The consumer CANNOT import this package, so nothing but an integration test
-// can prove the two signatures agree — the compiler never sees them together.
+// The consumer cannot import this package and this package cannot import the
+// consumer. That used to be written here as "the compiler never sees them together",
+// and the conclusion was false: a THIRD package in the same Go module may import
+// both, and an assignment there costs one compile and no test run. The pin lives in
+// internal/arch (ADR 0136), and the sentence it replaced is why nobody wrote it for
+// as long as this comment stood.
 func (i *Interop) UploadJSON(ctx context.Context, uploadID string) (json.RawMessage, error) {
 	record, err := i.svc.GetUpload(ctx, uploadID)
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -335,4 +336,61 @@ func newContextRuledPromotion(
 	require.NoError(t, err)
 
 	return promotion.ID
+}
+
+// TestTheCouponROUTESReachTheFlow is the half every test above skipped.
+//
+// # What was wrong
+//
+// Every coupon test in this file calls `workflows.ApplyPromotionCode` DIRECTLY on
+// the flow. The storefront reaches it another way — the cart module resolves
+// `api.CartPromotions` from the container by name, lazily, on the first request —
+// and the registered value did not implement it: the flow's surface carried
+// neither coupon method. So the flow's logic was covered, its bridge was not, and
+// `POST /store/v1/carts/{id}/promotions` answered 500 to the first customer who
+// typed a code, cached by a sync.Once for the life of the process. Startup was
+// green and the route was described (gap D73).
+//
+// This test drives the ROUTES. A compile-time pin now holds the shapes
+// (internal/arch/interop_pins_test.go); what a pin cannot say is that the wiring
+// carries a request end to end, which is what this says.
+func TestTheCouponROUTESReachTheFlow(t *testing.T) {
+	ctx := t.Context()
+
+	customerID, _ := newCustomer(ctx, t)
+	variantID, _ := newStockedVariant(ctx, t, "E2E Coupon Route Product", map[string]int64{
+		taxedCurrency: couponUnitPrice,
+	}, couponStock)
+
+	code := fmt.Sprintf("E2E-COUPON-ROUTE-%d", fixtureCounter.Add(1))
+	newCouponPromotion(ctx, t, code, couponRateBps, []string{variantID})
+
+	cart, err := workflows.CreateCart(ctx, cartwf.CreateCartInput{
+		CountryCode: taxedCountry, CustomerID: customerID,
+	})
+	require.NoError(t, err, "the cart must open")
+	_, err = workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
+		CartID: cart.CartID, VariantID: variantID, Quantity: 1,
+	})
+	require.NoError(t, err, "the line must be addable")
+
+	applied := keyedStorefrontRequest(t, publishableKey, http.MethodPost,
+		"/store/v1/carts/"+cart.CartID+"/promotions",
+		fmt.Sprintf(`{"code":%q}`, code))
+	require.Equal(t, http.StatusOK, applied.Code,
+		"the coupon ENDPOINT must reach the flow; body: %s", applied.Body.String())
+
+	totals, err := workflows.CalculateTotals(ctx, cart.CartID)
+	require.NoError(t, err)
+	assert.Equal(t, couponDiscount, totals.DiscountTotal,
+		"and the code the endpoint wrote is the one that lowers the cart")
+
+	removed := keyedStorefrontRequest(t, publishableKey, http.MethodDelete,
+		"/store/v1/carts/"+cart.CartID+"/promotions/"+code, "")
+	require.Equal(t, http.StatusOK, removed.Code,
+		"the removal endpoint must reach the flow too; body: %s", removed.Body.String())
+
+	after, err := workflows.CalculateTotals(ctx, cart.CartID)
+	require.NoError(t, err)
+	assert.Zero(t, after.DiscountTotal, "and taking the code off puts the total back")
 }

@@ -20,6 +20,19 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Derleyici artık HER interop çiftini denetliyor** (ADR 0136). Bir tüketici,
+  ihtiyaç duyduğu dar arayüzü KENDİ paketinde tanımlıyor ve somut değeri
+  container'dan isimle çözüyor; iki taraf birbirini ithal etmediği için bir imza
+  kayması iki tarafta da derleniyor ve ancak ÇÖZÜM anında patlıyor — istek
+  yolunda, `sync.Once` ile önbelleğe alınmış hâlde, başlangıç yeşilken. Ve
+  patlamıştı: `*cart.Interop` ne `ApplyPromotionCode` ne `RemovePromotionCode`
+  taşıyordu, yani iki vitrin kupon ucu kod yazan ilk müşteriye 500 dönüyordu
+  (D73). Bunu yazmayı engelleyen şey başka bir modülün godoc'undaki bir cümleydi:
+  "derleyici ikisini asla birlikte görmez" — yanlış; aynı Go modülündeki ÜÇÜNCÜ
+  bir paket ikisini de ithal edebiliyor. `internal/arch/interop_pins_test.go`
+  artık otuz yedi atama taşıyor, ve nüfusu diskten türeten bir kapı listenin tam
+  kalmasını sağlıyor (ilk koşumunda elle yazdığım listede iki eksik buldu).
+
 - **Bir koli artık siparişin BORÇLU olduğundan fazlasını taşıyamıyor**
   (ADR 0135). `POST /admin/v1/fulfillments` satır kimliği ve adet alıyordu ve
   hiçbirini siparişe karşı denetlemiyordu — okuyarak doğrulandı: boş kimlik,
