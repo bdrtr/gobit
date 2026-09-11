@@ -112,3 +112,21 @@ integration tests is today's fact, and a per-module floor imposes an unwritten
 rule" — and then measured. Breaking the scan so it matched nothing made the
 target run nothing and exit 0. The floor is ONE, in total: it puts no test-writing
 debt on any module and still refuses a scan that quietly found nobody.
+
+## Describing itself, and the loop that closes only when somebody asks
+
+A module outside gobit can write itself into the OpenAPI document an
+installation serves — that is what ADR 0035 published the schema vocabulary for,
+and `examples/starter`'s loyalty module exists partly to prove it compiles from
+a separate Go module.
+
+Skipping it is silent in the direction that costs most: three endpoints an
+integrator can call and cannot find. The core reports both halves —
+`UndescribedRoutes` for a route nobody described, `UnmatchedDescriptions` for a
+description matching no route — and reports them to whoever asks. Nothing asks
+unless a test does, so one does.
+
+Two mutations, two deaths: deleting one description fails the loop from the
+route side, and misspelling a described path fails it from the other. A third
+case neither can see is a path spelled the same WRONG way in both places, so a
+second test matches every described path against the real router.

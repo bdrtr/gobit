@@ -17,6 +17,7 @@ import (
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/module"
+	"github.com/bdrtr/gobit/core/openapi"
 )
 
 // migrationsRoot holds this module's schema.
@@ -82,6 +83,12 @@ type Module struct {
 var (
 	_ module.Module     = (*Module)(nil)
 	_ corehttp.Identity = (*Sessions)(nil)
+	// The schema capability is OPTIONAL and the composition root looks for it
+	// with a type assertion, so a drifted method name would cost nothing at
+	// compile time and three endpoints in the published document. This line
+	// closes that silence — the same one gobit's own modules close for
+	// themselves.
+	_ openapi.Describer = (*Module)(nil)
 )
 
 // New builds the module.

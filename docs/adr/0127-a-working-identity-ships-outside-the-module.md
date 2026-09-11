@@ -54,10 +54,11 @@ A signed cookie cannot be revoked before it expires. That is the price of keepin
 the identity off the read path of twelve storefront routes, and it is written
 where an operator reads it rather than discovered.
 
-The module registers no storefront sign-up. Credentials are written by an
-operator endpoint, because self-registration needs e-mail verification, a rate
-limit and a decision about who may create a customer, and none of those is a
-session's business.
+It writes its three endpoints into the installation's OpenAPI document, which is
+ADR 0035's point rather than a decoration. It registers no storefront sign-up:
+credentials are written by an operator endpoint, because self-registration needs
+e-mail verification, a rate limit and a decision about who may create a customer,
+and none of those is a session's business.
 
 Measurement: [measurements/0127](../measurements/0127-where-a-session-package-belongs.md)
 
