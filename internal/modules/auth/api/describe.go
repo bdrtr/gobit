@@ -173,6 +173,54 @@ func describeIdentity(d *openapi.Doc) {
 		},
 	})
 
+	d.Describe(http.MethodPost, MFAEnrolPath, openapi.Operation{
+		Summary: "Draws a second factor for the CALLER and returns it once.",
+		Description: "It names no user, and the address is the argument: the enrollment " +
+			"is for whoever the request proved. An endpoint that took an identifier " +
+			"would let one administrator enroll a factor for another and walk away " +
+			"holding the secret of their phone, which is the whole of what the factor " +
+			"is worth.\n\n" +
+			"The response carries the secret, once, as base32 and as an `otpauth://` " +
+			"link for a QR code. There is no way to give an authenticator app a secret " +
+			"without showing one; what makes it safe here is that it is never readable " +
+			"again — asking twice draws a NEW secret and unconfirms the old one, which " +
+			"is what somebody with a lost phone does.\n\n" +
+			"The credential does not count until POST " + MFAConfirmPath + " succeeds.",
+		Responses: map[string]any{
+			"200": openapi.Response("The enrollment, readable once", d.Item(mfaEnrollmentDTO{})),
+			"422": openapi.ErrorResponse(
+				"The request was made with an API key. Code \"auth_mfa_not_a_person\"; " +
+					"a machine holds no authenticator."),
+			"500": openapi.ErrorResponse(
+				"This installation has no MFA_SECRET_KEY. Code \"auth_mfa_unavailable\"; " +
+					"a TOTP secret cannot be hashed, so without a key there is nowhere " +
+					"safe to put one and enrolling is refused rather than done in " +
+					"plaintext."),
+		},
+	})
+
+	d.Describe(http.MethodPost, MFAConfirmPath, openapi.Operation{
+		Summary: "Proves that the authenticator holds the enrolled secret.",
+		Description: "Until this succeeds the enrollment does not count. Between drawing " +
+			"a secret and the first correct code nobody has shown that the scan " +
+			"worked, and a credential that counted before it would lock out everybody " +
+			"whose phone died half way through.\n\n" +
+			"A code is six digits and is accepted one thirty-second step either side " +
+			"of now, so at most ninety seconds. A wrong code, a late one and a " +
+			"malformed one are the SAME answer: telling them apart would tell somebody " +
+			"guessing whether they are close.",
+		RequestBody: d.RequestBody(confirmMFARequest{}),
+		Responses: map[string]any{
+			"204": emptyResponse("The second factor is confirmed"),
+			"409": openapi.ErrorResponse(
+				"There is no enrollment waiting, or it is already confirmed. Code " +
+					"\"auth_mfa_not_enrolled\"; enroll again to replace it."),
+			"422": openapi.ErrorResponse(
+				"The code is not the one this authenticator produces right now. Code " +
+					"\"auth_mfa_code_wrong\"."),
+		},
+	})
+
 	d.Describe(http.MethodGet, "/admin/v1/auth/me", openapi.Operation{
 		Summary: "Returns the authenticated caller's identity and scopes.",
 		Responses: map[string]any{

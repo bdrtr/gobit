@@ -366,6 +366,23 @@ type Config struct {
 	// JWTTTL is the validity period of an admin session token.
 	JWTTTL time.Duration `env:"JWT_TTL" envDefault:"12h"`
 
+	// MFASecretKey encrypts the TOTP secrets of administrators who enrolled a
+	// second factor.
+	//
+	// It is SEPARATE from [Config.JWTSecret] and not derived from it, because the
+	// two rotate on different clocks: a signing secret is rotated when it may have
+	// leaked, and rotating it must not lock every administrator out of their
+	// authenticator app.
+	//
+	// It has no default and none is possible. A TOTP secret cannot be hashed — it
+	// has to be recoverable to be verified, which makes it the first secret this
+	// module stores that it can READ BACK — so without a key there is nowhere safe
+	// to put one and enrollment is REFUSED rather than done in plaintext. That is
+	// the same answer an unconfigured authenticator gets (ADR 0007): a security
+	// feature that silently does less than its name is worse than one that is
+	// visibly absent.
+	MFASecretKey string `env:"MFA_SECRET_KEY"`
+
 	// AdminBootstrapEmail is the e-mail of the FIRST admin user to be created at startup.
 	//
 	// A server coming up on an empty database has no administrator, and because the

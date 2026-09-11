@@ -64,6 +64,23 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir yönetici artık İKİNCİ BİR ETKEN taşıyabiliyor** (ADR 0143). `auth_mfa_
+  credential` göçü, ve `/admin/v1/auth/mfa` altında iki uç: kayıt ve onay.
+  Uçlar hiçbir kullanıcı adlandırmıyor — çağıranın KENDİSİNE etki ediyorlar,
+  çünkü meslektaşı adına kayıt açabilen bir yönetici onun telefonunun sırrını
+  elinde tutardı; api_key ile yapılan istek de reddediliyor, makinenin
+  doğrulayıcısı yok. Kayıt, ilk doğru koda kadar SAYILMIYOR.
+
+  Bu, modülün geri okuyabildiği İLK sır: parola argon2id, api anahtarı ve davet
+  jetonu SHA-256, hiçbiri geri getirilemez — ama altı haneyi doğrulamak onu
+  yeniden hesaplamak demek. Sır AES-GCM ile mühürleniyor ve anahtarı kurulum
+  veriyor (`MFA_SECRET_KEY`); anahtar yoksa kayıt REDDEDİLİYOR, çünkü öntanımlı
+  bir anahtar anahtar değildir ve düz metin, adının yaptığından azını sessizce
+  yapan bir güvenlik özelliğidir. Anahtar `JWT_SECRET`'tan AYRI: ikisi farklı
+  saatlerde döndürülür. TOTP bağımlılık olarak değil YAZILARAK geldi ve RFC
+  6238'in kendi test vektörlerine karşı doğrulanıyor. Giriş akışı henüz
+  dokunulmadı — zorunlu kılmak ayrı bir karar.
+
 - **İki eylem de AYNI HEDEFİ hesaplıyor** (ADR 0142, D82). Bir satırın iptal
   edilen birimlerini rafa iki eylem koyuyor: yazımın kendisi ve gerisini tutan
   kolinin iptali. İkisi de FARK hesaplıyordu, ve koli eylemi "yazımın zaten geri

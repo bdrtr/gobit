@@ -220,6 +220,14 @@ func adminEndpoints() []endpointExpectation {
 			method: http.MethodPost, path: "/admin/v1/users/{id}/invitations", status: "204",
 		},
 		{
+			method: http.MethodPost, path: MFAEnrolPath, status: "200",
+			response: mfaEnrollmentDTO{},
+		},
+		{
+			method: http.MethodPost, path: MFAConfirmPath, status: "204",
+			request: confirmMFARequest{},
+		},
+		{
 			method: http.MethodGet, path: "/admin/v1/auth/me", status: "200",
 			response: fullPrincipal(),
 		},

@@ -45,6 +45,13 @@ type AuthIdentity struct {
 	DeletedAt        pgtype.Timestamptz
 }
 
+type AuthMfaCredential struct {
+	UserID      string
+	Secret      []byte
+	ConfirmedAt pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+}
+
 type AuthUser struct {
 	ID        string
 	Email     string

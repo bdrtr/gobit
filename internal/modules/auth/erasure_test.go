@@ -95,6 +95,15 @@ var notPersonalColumns = map[string][]string{
 	"auth_user_invitation": {
 		"token_hash", "user_id", "invited_by", "expires_at",
 	},
+	// user_id is a join key, the same side as auth_identity.user_id. secret is a
+	// CIPHERTEXT of a TOTP seed: it describes nobody — it is a random twenty bytes
+	// that happens to be shared with a phone — and it is declared nowhere because
+	// an auditor sent to it would find a value with no meaning outside the
+	// algorithm. What IS declared is confirmed_at, because "this person proved a
+	// second factor, and when" is a fact about them.
+	"auth_mfa_credential": {
+		"user_id", "secret", "created_at",
+	},
 	"sales_channel": {
 		"id", "is_disabled", "created_at", "updated_at", "deleted_at",
 	},

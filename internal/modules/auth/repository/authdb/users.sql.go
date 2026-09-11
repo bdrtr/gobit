@@ -11,6 +11,30 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const confirmMFACredential = `-- name: ConfirmMFACredential :one
+UPDATE auth_mfa_credential
+SET confirmed_at = now()
+WHERE user_id = $1 AND confirmed_at IS NULL
+RETURNING user_id, secret, confirmed_at, created_at
+`
+
+// ConfirmMFACredential stamps the moment the first correct code arrived.
+//
+// The WHERE keeps it to an UNCONFIRMED credential, so a second confirmation of
+// the same enrolment changes nothing and the first moment is the one kept. A
+// stamp that moved would make "when did this person prove their phone" unanswerable.
+func (q *Queries) ConfirmMFACredential(ctx context.Context, userID string) (AuthMfaCredential, error) {
+	row := q.db.QueryRow(ctx, confirmMFACredential, userID)
+	var i AuthMfaCredential
+	err := row.Scan(
+		&i.UserID,
+		&i.Secret,
+		&i.ConfirmedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const countUsers = `-- name: CountUsers :one
 SELECT count(*) FROM auth_user
 WHERE deleted_at IS NULL
@@ -28,6 +52,23 @@ func (q *Queries) CountUsers(ctx context.Context, arg CountUsersParams) (int64, 
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const getMFACredential = `-- name: GetMFACredential :one
+SELECT user_id, secret, confirmed_at, created_at FROM auth_mfa_credential WHERE user_id = $1
+`
+
+// GetMFACredential reads one user's credential.
+func (q *Queries) GetMFACredential(ctx context.Context, userID string) (AuthMfaCredential, error) {
+	row := q.db.QueryRow(ctx, getMFACredential, userID)
+	var i AuthMfaCredential
+	err := row.Scan(
+		&i.UserID,
+		&i.Secret,
+		&i.ConfirmedAt,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const getUser = `-- name: GetUser :one
@@ -259,6 +300,37 @@ func (q *Queries) PutInvitation(ctx context.Context, arg PutInvitationParams) (A
 		&i.UserID,
 		&i.InvitedBy,
 		&i.ExpiresAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const putMFACredential = `-- name: PutMFACredential :one
+INSERT INTO auth_mfa_credential (user_id, secret)
+VALUES ($1, $2)
+ON CONFLICT (user_id) DO UPDATE
+SET secret = EXCLUDED.secret, confirmed_at = NULL, created_at = now()
+RETURNING user_id, secret, confirmed_at, created_at
+`
+
+type PutMFACredentialParams struct {
+	UserID string
+	Secret []byte
+}
+
+// PutMFACredential writes an enrolment, replacing any credential the user had.
+//
+// ON CONFLICT DO UPDATE and not an INSERT that fails: re-enrolling is the ordinary
+// path for somebody who lost their phone, and it has to make the old secret stop
+// working. The confirmation is RESET with it — a new secret nobody has proven yet
+// is exactly what an unconfirmed credential is.
+func (q *Queries) PutMFACredential(ctx context.Context, arg PutMFACredentialParams) (AuthMfaCredential, error) {
+	row := q.db.QueryRow(ctx, putMFACredential, arg.UserID, arg.Secret)
+	var i AuthMfaCredential
+	err := row.Scan(
+		&i.UserID,
+		&i.Secret,
+		&i.ConfirmedAt,
 		&i.CreatedAt,
 	)
 	return i, err

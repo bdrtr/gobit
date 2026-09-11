@@ -148,6 +148,15 @@ type Page[T any] struct {
 type Repository interface {
 	CreateUser(ctx context.Context, u models.User, identity *models.AuthIdentity) (models.User, error)
 	GetUser(ctx context.Context, id string) (models.User, error)
+
+	// PutMFACredential writes a second-factor enrollment, replacing the one that
+	// user had and clearing its confirmation. The secret arrives SEALED.
+	PutMFACredential(ctx context.Context, userID string, sealed []byte) (models.MFACredential, error)
+	// GetMFACredential reads one user's credential, or repository.ErrNoMFACredential.
+	GetMFACredential(ctx context.Context, userID string) (models.MFACredential, error)
+	// ConfirmMFACredential stamps the first correct code. A credential that is
+	// already confirmed matches nothing and answers the same sentinel.
+	ConfirmMFACredential(ctx context.Context, userID string) (models.MFACredential, error)
 	GetUserByEmail(ctx context.Context, email string) (models.User, error)
 	ListUsers(ctx context.Context, filter models.UserFilter, limit, offset int64) ([]models.User, int64, error)
 	UpdateUser(ctx context.Context, id string, patch models.UserPatch, now time.Time) (models.User, error)
@@ -220,6 +229,18 @@ type Options struct {
 	JWTSecret string
 	// JWTTTL is the token's validity duration; [DefaultJWTTTL] if 0.
 	JWTTTL time.Duration
+	// MFASecretKey encrypts the TOTP secrets of users who enroll a second factor.
+	//
+	// SEPARATE from [Options.JWTSecret] and deliberately not derived from it: the
+	// two rotate on different clocks, and rotating a signing secret must not lock
+	// every administrator out of their authenticator app.
+	//
+	// Empty is a legitimate wiring and its consequence is exact: the module starts,
+	// everything else works, and an enrollment is REFUSED with a message naming the
+	// variable. A TOTP secret cannot be hashed, so there is nowhere safe to put one
+	// without a key (ADR 0143).
+	MFASecretKey string
+
 	// JWTIssuer is the token's "iss" claim; [DefaultIssuer] if empty.
 	JWTIssuer string
 
@@ -255,6 +276,11 @@ type Service struct {
 	lockFor   time.Duration
 	throttle  time.Duration
 
+	// secrets seals and opens the one value this module cannot hash: a TOTP
+	// secret. A zero box means the installation set no key, and enrolling is
+	// refused rather than done in plaintext (ADR 0143).
+	secrets secretBox
+
 	// dummyHash is the dummy bcrypt hash used for timing equality; it is
 	// produced once on first need (see password.go).
 	dummyHash func() []byte
@@ -286,6 +312,16 @@ func New(repo Repository, opts Options) *Service {
 		cost = DefaultBcryptCost
 	}
 
+	// The key is derived to a fixed 32 bytes, so the only way this fails is a
+	// standard library that cannot build AES-256 — impossible in practice and
+	// still not swallowed: the box stays unready and every enrollment says so,
+	// which is the same answer a missing key gets.
+	secrets, secretsErr := newSecretBox(opts.MFASecretKey)
+	if secretsErr != nil {
+		log.Error("auth: the MFA cipher could not be prepared, so enrolling a second "+
+			"factor will be refused", slog.String("error", secretsErr.Error()))
+	}
+
 	svc := &Service{
 		repo:         repo,
 		inviteSender: opts.InvitationSender,
@@ -298,6 +334,7 @@ func New(repo Repository, opts Options) *Service {
 		threshold:    orInt(opts.LoginFailureThreshold, DefaultLoginFailureThreshold),
 		lockFor:      orDuration(opts.LoginLockDuration, DefaultLoginLockDuration),
 		throttle:     orDuration(opts.UsageThrottle, DefaultUsageThrottle),
+		secrets:      secrets,
 	}
 	svc.dummyHash = newDummyHash(cost)
 	return svc

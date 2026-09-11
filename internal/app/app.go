@@ -535,7 +535,15 @@ func registerModules(registry *module.Registry, cfg config.Config, log *slog.Log
 		JWTSecret: jwtSecret(cfg, log),
 		JWTTTL:    cfg.JWTTTL,
 		JWTIssuer: cfg.ServiceName,
-		Logger:    log,
+		// The MFA key is passed STRAIGHT through with no development fallback,
+		// unlike the signing secret above. A generated signing secret costs a
+		// restart's worth of sessions; a generated encryption key would make every
+		// enrolled authenticator stop working at the next restart, and the person
+		// holding the phone would have no way to tell that from a broken code
+		// (ADR 0143).
+		MFASecretKey: cfg.MFASecretKey,
+		MFAIssuer:    cfg.ServiceName,
+		Logger:       log,
 	}))
 	// Section 10: B2B. The installation where the buyer is not an individual
 	// but an EMPLOYEE with a limited spending authority. The module touches no

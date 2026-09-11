@@ -136,3 +136,31 @@ RETURNING *;
 DELETE FROM auth_user_invitation
 WHERE token_hash = $1 AND expires_at > now()
 RETURNING *;
+
+-- PutMFACredential writes an enrolment, replacing any credential the user had.
+--
+-- ON CONFLICT DO UPDATE and not an INSERT that fails: re-enrolling is the ordinary
+-- path for somebody who lost their phone, and it has to make the old secret stop
+-- working. The confirmation is RESET with it — a new secret nobody has proven yet
+-- is exactly what an unconfirmed credential is.
+-- name: PutMFACredential :one
+INSERT INTO auth_mfa_credential (user_id, secret)
+VALUES ($1, $2)
+ON CONFLICT (user_id) DO UPDATE
+SET secret = EXCLUDED.secret, confirmed_at = NULL, created_at = now()
+RETURNING *;
+
+-- GetMFACredential reads one user's credential.
+-- name: GetMFACredential :one
+SELECT * FROM auth_mfa_credential WHERE user_id = $1;
+
+-- ConfirmMFACredential stamps the moment the first correct code arrived.
+--
+-- The WHERE keeps it to an UNCONFIRMED credential, so a second confirmation of
+-- the same enrolment changes nothing and the first moment is the one kept. A
+-- stamp that moved would make "when did this person prove their phone" unanswerable.
+-- name: ConfirmMFACredential :one
+UPDATE auth_mfa_credential
+SET confirmed_at = now()
+WHERE user_id = $1 AND confirmed_at IS NULL
+RETURNING *;

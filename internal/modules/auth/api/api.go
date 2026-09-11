@@ -114,6 +114,12 @@ type Auth interface {
 
 	// CreateUser creates a new admin user; password may be empty.
 	CreateUser(ctx context.Context, in service.CreateUserInput, password string) (models.User, error)
+
+	// EnrolMFA draws a second factor for the given user and stores it
+	// UNCONFIRMED, answering the secret exactly once.
+	EnrolMFA(ctx context.Context, userID, issuer string) (service.MFAEnrollment, error)
+	// ConfirmMFA proves that the authenticator holds the stored secret.
+	ConfirmMFA(ctx context.Context, userID, code string) error
 	// GetUser returns the user by their identifier.
 	GetUser(ctx context.Context, id string) (models.User, error)
 	// ListUsers filters and pages the users.
@@ -157,11 +163,25 @@ type Auth interface {
 // Handler is the auth module's set of HTTP handlers.
 type Handler struct {
 	svc Auth
+	// mfaIssuer is the name an authenticator app shows beside the account.
+	//
+	// It is the shop's, so a person with three gobit installations in one app can
+	// tell them apart. Empty falls back to the service's default rather than
+	// failing: a wrong-looking label is a cosmetic fault and refusing to enroll
+	// over it would be a security feature withheld for a string.
+	mfaIssuer string
 }
 
 // New produces the set of handlers that works on the given service.
 func New(svc Auth) *Handler {
 	return &Handler{svc: svc}
+}
+
+// WithMFAIssuer names the installation in an authenticator app.
+func (h *Handler) WithMFAIssuer(issuer string) *Handler {
+	h.mfaIssuer = issuer
+
+	return h
 }
 
 // LoginPath is the full path of the login endpoint.
@@ -184,6 +204,18 @@ const LoginPath = "/admin/v1/auth/login"
 // identity, so an invitation attempt is recorded and bounded like every other
 // admin request.
 const AcceptInvitationPath = "/admin/v1/auth/accept-invitation"
+
+// MFAEnrolPath and MFAConfirmPath are where a person enrolls and proves a second
+// factor.
+//
+// Both are under `/admin/v1/auth/` rather than under `/admin/v1/users/{id}/`,
+// and the address is the argument: there is no id to put there. The endpoints act
+// on whoever the request proved, because an administrator who could enroll a factor
+// for a colleague would hold the secret of that colleague's phone.
+const (
+	MFAEnrolPath   = "/admin/v1/auth/mfa"
+	MFAConfirmPath = "/admin/v1/auth/mfa/confirm"
+)
 
 // The scope dictionary: the scopes auth's admin endpoints ask for.
 //
@@ -273,6 +305,17 @@ func (h *Handler) Routes(r chi.Router) {
 	write.Post("/admin/v1/users/{id}/invitations", h.adminInviteUser)
 	write.Delete("/admin/v1/users/{id}", h.adminDeleteUser)
 	write.Post("/admin/v1/users/{id}/password", h.adminSetPassword)
+
+	// --- the caller's own second factor ---
+	//
+	// Under the READ scope, and that is not an oversight. The scope dictionary
+	// answers "may this caller change OTHER PEOPLE's records", and these two
+	// change only the caller's own: a person who can sign in may enroll their own
+	// authenticator, and requiring the write scope would mean an installation
+	// could hand somebody an account they cannot protect. The endpoints name no
+	// user id for the same reason (see mfa.go).
+	read.Post(MFAEnrolPath, h.adminEnrolMFA)
+	read.Post(MFAConfirmPath, h.adminConfirmMFA)
 
 	// --- api keys ---
 	write.Post("/admin/v1/api-keys", h.adminCreateAPIKey)

@@ -335,3 +335,91 @@ func toInvitation(row authdb.AuthUserInvitation) models.UserInvitation {
 		CreatedAt: toTime(row.CreatedAt),
 	}
 }
+
+// --- multi-factor credentials -----------------------------------------------
+
+// PutMFACredential writes an enrollment, replacing the one that user had.
+//
+// The secret arrives SEALED. This package never holds the key and never opens
+// one: the ciphertext is bytes to it, which is what keeps the decision about
+// where the key lives in one place (see service/secretbox.go).
+func (r *Repo) PutMFACredential(
+	ctx context.Context, userID string, sealed []byte,
+) (models.MFACredential, error) {
+	if err := r.ready(); err != nil {
+		return models.MFACredential{}, err
+	}
+
+	row, err := r.q.PutMFACredential(ctx, authdb.PutMFACredentialParams{
+		UserID: userID,
+		Secret: sealed,
+	})
+	if err != nil {
+		return models.MFACredential{}, classifyUserWrite(err, userID,
+			"could not write the MFA credential")
+	}
+
+	return toMFACredential(row), nil
+}
+
+// GetMFACredential reads one user's credential.
+//
+// A user with none is [ErrNoMFACredential] rather than a zero value: "this person
+// has not enrolled" and "this person enrolled and we could not read it" are
+// different answers and only one of them is ordinary.
+func (r *Repo) GetMFACredential(ctx context.Context, userID string) (models.MFACredential, error) {
+	if err := r.ready(); err != nil {
+		return models.MFACredential{}, err
+	}
+
+	row, err := r.q.GetMFACredential(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.MFACredential{}, ErrNoMFACredential
+	}
+	if err != nil {
+		return models.MFACredential{}, wrapDB(err, "could not read the MFA credential")
+	}
+
+	return toMFACredential(row), nil
+}
+
+// ConfirmMFACredential stamps the moment the first correct code arrived.
+//
+// A credential that is already confirmed matches no row, and that is reported as
+// [ErrNoMFACredential] too: from the caller's side "there is nothing left to
+// confirm" is the same fact, and the service turns it into a sentence about
+// what the person should do next.
+func (r *Repo) ConfirmMFACredential(ctx context.Context, userID string) (models.MFACredential, error) {
+	if err := r.ready(); err != nil {
+		return models.MFACredential{}, err
+	}
+
+	row, err := r.q.ConfirmMFACredential(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.MFACredential{}, ErrNoMFACredential
+	}
+	if err != nil {
+		return models.MFACredential{}, classifyUserWrite(err, userID,
+			"could not confirm the MFA credential")
+	}
+
+	return toMFACredential(row), nil
+}
+
+// ErrNoMFACredential is a user with no credential left to read or confirm.
+var ErrNoMFACredential = errors.New("auth: that user has no MFA credential to act on")
+
+// toMFACredential converts the row.
+func toMFACredential(row authdb.AuthMfaCredential) models.MFACredential {
+	out := models.MFACredential{
+		UserID:    row.UserID,
+		Secret:    row.Secret,
+		CreatedAt: toTime(row.CreatedAt),
+	}
+	if row.ConfirmedAt.Valid {
+		confirmed := toTime(row.ConfirmedAt)
+		out.ConfirmedAt = &confirmed
+	}
+
+	return out
+}

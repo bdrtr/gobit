@@ -19,6 +19,13 @@ import (
 // scope list has to pass through as it is. A real in-memory repository would
 // add nothing to these two claims and would make the test unreadable.
 type fakeRepo struct {
+	// userEmail is what GetUser answers with, because an otpauth label carries
+	// the account name a person sees in their authenticator.
+	userEmail string
+	// mfa is the second-factor credential per user, and mfaErr the fault to
+	// inject.
+	mfa    map[string]models.MFACredential
+	mfaErr error
 	// writeCount is the number of write calls that came down to the repository.
 	writeCount int
 	// lastKey is the API key written to the repository last.
@@ -44,7 +51,7 @@ func (d *fakeRepo) CreateUser(
 }
 
 func (d *fakeRepo) GetUser(_ context.Context, id string) (models.User, error) {
-	return models.User{ID: id}, nil
+	return models.User{ID: id, Email: d.userEmail}, nil
 }
 
 func (d *fakeRepo) GetUserByEmail(_ context.Context, _ string) (models.User, error) {
@@ -267,4 +274,63 @@ func (d *fakeRepo) TakeInvitation(
 	}
 
 	return row, nil
+}
+
+// --- second factor ------------------------------------------------------------
+
+// PutMFACredential writes the enrolment, replacing any the user had.
+//
+// It clears the confirmation with it, which is what the ON CONFLICT in the real
+// query does: a fake that kept the old stamp would let a test prove that a NEW
+// secret counts as already proven.
+func (d *fakeRepo) PutMFACredential(
+	_ context.Context, userID string, sealed []byte,
+) (models.MFACredential, error) {
+	if d.mfaErr != nil {
+		return models.MFACredential{}, d.mfaErr
+	}
+	if d.mfa == nil {
+		d.mfa = map[string]models.MFACredential{}
+	}
+
+	d.mfa[userID] = models.MFACredential{UserID: userID, Secret: sealed}
+
+	return d.mfa[userID], nil
+}
+
+// GetMFACredential reads one, or says there is none.
+func (d *fakeRepo) GetMFACredential(
+	_ context.Context, userID string,
+) (models.MFACredential, error) {
+	if d.mfaErr != nil {
+		return models.MFACredential{}, d.mfaErr
+	}
+
+	credential, ok := d.mfa[userID]
+	if !ok {
+		return models.MFACredential{}, repository.ErrNoMFACredential
+	}
+
+	return credential, nil
+}
+
+// ConfirmMFACredential stamps an UNCONFIRMED credential and answers the sentinel
+// for anything else, which is what the WHERE clause in the real query does.
+func (d *fakeRepo) ConfirmMFACredential(
+	_ context.Context, userID string,
+) (models.MFACredential, error) {
+	if d.mfaErr != nil {
+		return models.MFACredential{}, d.mfaErr
+	}
+
+	credential, ok := d.mfa[userID]
+	if !ok || credential.Confirmed() {
+		return models.MFACredential{}, repository.ErrNoMFACredential
+	}
+
+	stamped := time.Now().UTC()
+	credential.ConfirmedAt = &stamped
+	d.mfa[userID] = credential
+
+	return credential, nil
 }

@@ -154,6 +154,11 @@ type Options struct {
 	JWTTTL time.Duration
 	// JWTIssuer is the token's "iss" claim; if empty, service.DefaultIssuer.
 	JWTIssuer string
+	// MFASecretKey encrypts the TOTP secrets of users who enroll a second factor.
+	// Empty means enrolling is refused; see service.Options.MFASecretKey.
+	MFASecretKey string
+	// MFAIssuer is the name an authenticator app shows beside the account.
+	MFAIssuer string
 	// BcryptCost is the cost parameter of the password hash; if 0,
 	// service.DefaultBcryptCost. It has to be raised as hardware gets faster.
 	BcryptCost int
@@ -210,6 +215,7 @@ const (
 	tableUser         = "auth_user"
 	tableIdentity     = "auth_identity"
 	tableInvitation   = "auth_user_invitation"
+	tableMFA          = "auth_mfa_credential"
 	tableSalesChannel = "sales_channel"
 	tableAPIKey       = "api_key"
 )
@@ -290,8 +296,9 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		// Resolved on first use rather than now: the notification module may not
 		// have registered yet (ADR 0137).
 		InvitationSender: newInvitationSender(c, m.log),
+		MFASecretKey:     m.opts.MFASecretKey,
 	})
-	m.handler = api.New(m.svc)
+	m.handler = api.New(m.svc).WithMFAIssuer(m.opts.MFAIssuer)
 
 	if err := c.Provide(ServiceName, m.svc); err != nil {
 		return err
@@ -462,6 +469,10 @@ func (m *Module) PersonalData() personaldata.Declaration {
 			{
 				Table: tableInvitation, Column: "created_at", Kind: personaldata.Named,
 				Why: "when an invitation was sent to this staff member; the row's existence is the fact rather than any column of it — an account was opened for a named person and, while the row is here, not yet claimed",
+			},
+			{
+				Table: tableMFA, Column: "confirmed_at", Kind: personaldata.Named,
+				Why: "when this staff member proved a second factor, which is a fact about how they sign in; the secret beside it is a random seed that describes nobody, and the row's absence is itself the answer for somebody who never enrolled",
 			},
 			{
 				Table: tableSalesChannel, Column: "name", Kind: personaldata.Open,

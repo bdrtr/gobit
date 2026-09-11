@@ -18,6 +18,13 @@ import (
 // looking only at the status code could not notice a handler that returns the
 // error after having performed the write.
 type fakeAuth struct {
+	// The second-factor calls, recorded: which user each acted for is the whole
+	// claim the endpoints make, because they take no id from the caller.
+	mfaEnrolFor   string
+	mfaConfirmFor string
+	mfaIssuer     string
+	mfaCode       string
+	mfaErr        error
 	// invitedUser and invitedBy are what InviteUser was last called with.
 	invitedUser string
 	invitedBy   string
@@ -189,4 +196,28 @@ func (f *fakeAuth) AcceptInvitation(_ context.Context, token, password string) e
 	f.acceptedPassword = password
 
 	return f.acceptErr
+}
+
+// EnrolMFA records the request and answers a fixed enrolment.
+func (f *fakeAuth) EnrolMFA(
+	_ context.Context, userID, issuer string,
+) (service.MFAEnrollment, error) {
+	f.mfaEnrolFor = userID
+	f.mfaIssuer = issuer
+	if f.mfaErr != nil {
+		return service.MFAEnrollment{}, f.mfaErr
+	}
+
+	return service.MFAEnrollment{
+		Secret: "JBSWY3DPEHPK3PXP",
+		URI:    "otpauth://totp/" + issuer + ":a@b?secret=JBSWY3DPEHPK3PXP",
+	}, nil
+}
+
+// ConfirmMFA records who confirmed with what.
+func (f *fakeAuth) ConfirmMFA(_ context.Context, userID, code string) error {
+	f.mfaConfirmFor = userID
+	f.mfaCode = code
+
+	return f.mfaErr
 }
