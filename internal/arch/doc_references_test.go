@@ -687,6 +687,63 @@ func (s *referenceScan) referenceTarget(importPath string) (target *referencePac
 	return s.packages[dirOfImportPath(importPath)+"\x00"+name], true
 }
 
+// TestTheReferencedTreeListCoversTheContribModules keeps the list from being
+// shortened silently.
+//
+// [TestTheLinkScannerIsNotBlind] derives its floor from [referencedTrees], so it
+// catches a walk that BROKE and not a list that was trimmed: removing a tree
+// removes it from both the walk and the floor, and everything passes. That is
+// the shape gobit's own [TestTheProductionTreeListCoversTheRepository] closes
+// for the production list, and this is its counterpart.
+//
+// The population comes from DISK: every directory under contrib/ that declares a
+// module of its own. A tree added there and not added here would have its
+// documentation references resolved against nothing and reported as fine.
+func TestTheReferencedTreeListCoversTheContribModules(t *testing.T) {
+	t.Parallel()
+
+	entries, err := os.ReadDir(filepath.Join(repoRoot, contribTree))
+	require.NoError(t, err, "the %s tree could not be read", contribTree)
+
+	found := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := contribTree + "/" + entry.Name()
+		if !isNestedModule(filepath.Join(repoRoot, dir)) {
+			continue
+		}
+		found++
+		assert.Contains(t, referencedTrees, dir,
+			"%s is a Go module of its own and is not in referencedTrees.\n"+
+				"Its documentation references would be resolved against a package this "+
+				"audit never read, which approves every one of them — the silence a "+
+				"deliberately wrong name was measured passing through before the list "+
+				"gained the contrib trees (ADR 0129).", dir)
+	}
+
+	require.Positive(t, found,
+		"no module was found under %s/, so this audit compared nothing; either the "+
+			"tree moved or the walk stopped reading it.", contribTree)
+}
+
+// contribTree is where this repository keeps production code that lives in Go
+// modules of its own.
+const contribTree = "contrib"
+
+// underTree reports whether a repository-relative path sits under a walked root.
+//
+// The repository root is the files at depth one and nothing else, which is the
+// same thing [treeOf] means by it.
+func underTree(filePath, root string) bool {
+	if root == repositoryRoot {
+		return !strings.Contains(filePath, "/")
+	}
+
+	return strings.HasPrefix(filePath, root+"/")
+}
+
 // referencedTrees are the trees whose packages this audit can RESOLVE a name in.
 //
 // It is [productionTrees] plus contrib/, and the addition is not cosmetic. The
@@ -875,8 +932,23 @@ func TestTheLinkScannerIsNotBlind(t *testing.T) {
 			linkFormNames[form])
 	}
 
-	for _, root := range productionTrees {
-		require.Positive(t, roots[root],
+	// Every tree the scan WALKS, not only the production ones: the contrib trees
+	// were added to that walk and left out of this floor, which would have made
+	// dropping them from it silent — and an unread tree is the shape where every
+	// rotten reference in it is approved.
+	//
+	// Counted by PREFIX rather than through [treeOf], which answers the first path
+	// segment: a root of two segments would never match it, and the one segment
+	// they share would put both contrib trees in one counter — so dropping either
+	// would still pass on the other's links.
+	for _, root := range referencedTrees {
+		seen := 0
+		for _, candidate := range scan.allLinkCandidates() {
+			if underTree(candidate.file.path, root) {
+				seen++
+			}
+		}
+		require.Positive(t, seen,
 			"no doc link was seen in the %s/ tree; the scan may never have read that root "+
 				"(the goFiles walk or the comment parsing). Every rotten reference in an "+
 				"unread tree is approved.", root)

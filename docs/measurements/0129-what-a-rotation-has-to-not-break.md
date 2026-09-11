@@ -84,3 +84,24 @@ about whether a sentence points at something real.
 It paid on the first run: `contrib/identity-session/password.go` had a godoc
 link to `[Store.Credential]` and the type is called `Credentials`. That link
 shipped two records ago and nothing could see it.
+
+## The floor the widening needed, and the one it could not be
+
+Adding the contrib trees to the walk left the scanner's blindness floor asking
+about the OLD list, so a walk that stopped reading them would have said nothing.
+The floor now covers every walked root.
+
+Getting it to work turned up two things about how these floors count. The
+counter is keyed through the helper that answers a path's FIRST segment, so a
+root of two segments never matched it at all — and the one segment the two
+contrib trees share would have put both in one counter, where dropping either
+would still pass on the other's links. Each root is counted by prefix now, on its
+own.
+
+What that floor still cannot catch is a list somebody SHORTENS: the floor's
+population is the list, so removing a tree removes it from both and everything
+passes — measured, not assumed. That is the same shape gobit already closes for
+its production trees by comparing the list against what is on disk, and this
+audit now has the counterpart: every directory under contrib/ that declares a
+module of its own must be on the list, or its references are resolved against a
+package nothing read.
