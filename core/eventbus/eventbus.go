@@ -15,8 +15,12 @@
 // comes back to the caller. The InMemory backend delivers at most once
 // (at-most-once) and the event is lost if the process dies; the Redis backend
 // delivers at least once (at-least-once) and resumes where it left off when
-// the process restarts. Handlers must therefore be written idempotently
-// (plan Section 2.6).
+// the process restarts. A message whose consumer died between the read and the
+// ACK is taken over by another consumer once it has been idle long enough
+// ([RedisConfig.ClaimMinIdle]); that takeover is where the second delivery of
+// "at least once" comes from, and without it the guarantee would hold for every
+// message except the ones in flight when a process dies. Handlers must
+// therefore be written idempotently (plan Section 2.6).
 //
 // # Ordering and concurrency guarantees
 //
@@ -48,6 +52,14 @@
 // an endless loop. Work needing retries and compensation belongs to
 // internal/core/workflow's saga engine (plan Phase 3); a handler is of course free to
 // retry inside itself.
+//
+// There is exactly one reason a message is delivered twice, and a handler's
+// outcome is not it: the consumer that read it stopped without ACKing, which in
+// this bus means the process died mid-dispatch. The Redis backend hands such a
+// message to another consumer after an idle threshold. The poison pill is
+// bounded there as well — a message that has been delivered three times without
+// an ACK has emptied three consumers, and it is ACKed and logged at error level
+// rather than handed to a fourth.
 //
 // # Context and observability
 //
@@ -193,10 +205,12 @@ const (
 
 // The fixed keys used in log records.
 const (
-	attrEvent   = "event"
-	attrEventID = "event_id"
-	attrError   = "error"
-	attrStream  = "stream"
+	attrEvent     = "event"
+	attrEventID   = "event_id"
+	attrError     = "error"
+	attrStream    = "stream"
+	attrMessageID = "message_id"
+	attrConsumer  = "consumer"
 )
 
 // idPrefix is the prefix of the generated event ids (plan Section 8).

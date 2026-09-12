@@ -660,11 +660,12 @@ past and is not corrected retroactively.
   nothing; pointed at a Redis installation it takes messages the server is owed,
   the way every verb did before
   [ADR 0160](adr/0160-a-command-does-not-take-the-servers-events.md).
-- **A message stranded in the Redis pending list is not reclaimed.** The bus has
-  no `XAUTOCLAIM`, no pending sweep and no dead-consumer detection, so a message
-  delivered to a process that exited before acknowledging it stays under that
-  consumer's name. ADR 0160 stops commands from stranding new ones; what is
-  already there is not recovered (D105).
+- **A dropped event is announced to a human and to nothing else.** A message
+  that has been delivered three times without an acknowledgement is ACKed and
+  logged at error level rather than handed to a fourth consumer
+  ([ADR 0162](adr/0162-a-message-a-dead-consumer-was-holding-comes-back.md)).
+  The log line is the dead letter: nothing stores it, nothing counts it and no
+  endpoint lists it, so an operator who is not watching the log learns nothing.
 
 - **A tool the model client is offered cannot say which privilege it needs.** The
   generated document carries no scope: its security schemes are `http/bearer` and

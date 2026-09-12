@@ -146,6 +146,7 @@ core/eventbus CodeSubscribeFailed
 core/eventbus ConsumerName
 core/eventbus DefaultBatchSize
 core/eventbus DefaultBlockTimeout
+core/eventbus DefaultClaimMinIdle
 core/eventbus DefaultGroup
 core/eventbus DefaultMaxLen
 core/eventbus DefaultStreamPrefix

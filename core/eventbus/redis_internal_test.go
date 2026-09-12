@@ -47,6 +47,21 @@ type fakeStreamClient struct {
 	// drained closes once the last scripted round has been served too.
 	drained     chan struct{}
 	drainedOnce sync.Once
+
+	// pendingOnce is served by the FIRST XPendingExt call and by nothing after
+	// it, which is what a real group does once the entries have been taken
+	// over: they move to this consumer's name, and a consumer's own entries are
+	// skipped.
+	pendingOnce  []redis.XPendingExt
+	claimReturns []redis.XMessage
+	pendingArgs  []*redis.XPendingExtArgs
+	claimArgs    []*redis.XClaimArgs
+
+	// swept closes after the first XPendingExt call. It is the only signal from
+	// the outside that the takeover sweep ran at all, and the scenarios that
+	// assert NOTHING was taken over have nothing else to wait for.
+	swept     chan struct{}
+	sweptOnce sync.Once
 }
 
 var _ streamClient = (*fakeStreamClient)(nil)
@@ -54,7 +69,11 @@ var _ streamClient = (*fakeStreamClient)(nil)
 // newFakeStreamClient builds a fake client returning the given rounds in
 // order.
 func newFakeStreamClient(reads ...fakeRead) *fakeStreamClient {
-	f := &fakeStreamClient{reads: reads, drained: make(chan struct{})}
+	f := &fakeStreamClient{
+		reads:   reads,
+		drained: make(chan struct{}),
+		swept:   make(chan struct{}),
+	}
 	if len(reads) == 0 {
 		f.drainedOnce.Do(func() { close(f.drained) })
 	}
@@ -124,6 +143,60 @@ func (f *fakeStreamClient) XAck(ctx context.Context, _, _ string, ids ...string)
 
 	cmd.SetVal(int64(len(ids)))
 	return cmd
+}
+
+// XPendingExt serves the scripted pending list and records the request.
+func (f *fakeStreamClient) XPendingExt(ctx context.Context, a *redis.XPendingExtArgs) *redis.XPendingExtCmd {
+	cmd := redis.NewXPendingExtCmd(ctx)
+
+	f.mu.Lock()
+	f.pendingArgs = append(f.pendingArgs, a)
+	// The IDLE filter is applied here rather than ignored, because a fake that
+	// answers the same whatever it is asked cannot test the asking: a scenario
+	// about an entry that is INSIDE the threshold has no way to be written
+	// against a fake that hands it over anyway.
+	var entries []redis.XPendingExt
+	for _, entry := range f.pendingOnce {
+		if a.Idle > 0 && entry.Idle < a.Idle {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	f.pendingOnce = nil
+	f.mu.Unlock()
+
+	f.sweptOnce.Do(func() { close(f.swept) })
+
+	cmd.SetVal(entries)
+	return cmd
+}
+
+// XClaim serves the scripted takeover and records the request.
+func (f *fakeStreamClient) XClaim(ctx context.Context, a *redis.XClaimArgs) *redis.XMessageSliceCmd {
+	cmd := redis.NewXMessageSliceCmd(ctx)
+
+	f.mu.Lock()
+	f.claimArgs = append(f.claimArgs, a)
+	msgs := f.claimReturns
+	f.claimReturns = nil
+	f.mu.Unlock()
+
+	cmd.SetVal(msgs)
+	return cmd
+}
+
+// pendingRequests returns the XPENDING calls in order.
+func (f *fakeStreamClient) pendingRequests() []*redis.XPendingExtArgs {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.pendingArgs)
+}
+
+// claimRequests returns the XCLAIM calls in order.
+func (f *fakeStreamClient) claimRequests() []*redis.XClaimArgs {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.claimArgs)
 }
 
 // requestedCursors returns the cursors given to XReadGroup in order.
@@ -704,5 +777,273 @@ func TestRedisShutdownReturnsWhenContextExpires(t *testing.T) {
 	}
 	if !bus.isClosed() {
 		t.Error("after the timeout the bus must count as closed")
+	}
+}
+
+// The takeover is the only path by which a message survives the death of the
+// process that read it (D105). The five scenarios below pin five different
+// subjects: the request that finds the candidates, the delivery itself, the two
+// messages that must NOT be taken, and the second check that makes the takeover
+// atomic.
+
+func TestReclaimAsksOnlyForMessagesIdleBeyondTheThreshold(t *testing.T) {
+	cfg := fakeConfig()
+	cfg.ClaimMinIdle = 90 * time.Second
+	stream := cfg.StreamName(testEventName)
+
+	fake := newFakeStreamClient()
+	bus := newRedisBus(fake, cfg, quietLogger())
+
+	if err := bus.Subscribe(testEventName, func(context.Context, Event) error { return nil }); err != nil {
+		t.Fatalf("Subscribe returned an error: %v", err)
+	}
+	waitClosed(t, fake.swept, "the takeover sweep never ran")
+	shutdownBus(t, bus)
+
+	requests := fake.pendingRequests()
+	if len(requests) == 0 {
+		t.Fatal("no XPENDING was made: nothing would ever find a message a dead consumer left behind")
+	}
+
+	got := requests[0]
+	if got.Idle != cfg.ClaimMinIdle {
+		t.Errorf("XPENDING idle = %s, expected %s. A slow consumer and a dead one leave the "+
+			"same entry, so the idle time is the only thing that separates them",
+			got.Idle, cfg.ClaimMinIdle)
+	}
+	if got.Stream != stream || got.Group != cfg.Group {
+		t.Errorf("XPENDING asked %q/%q, expected %q/%q", got.Stream, got.Group, stream, cfg.Group)
+	}
+	if got.Start != rangeStart || got.End != rangeEnd {
+		t.Errorf("XPENDING range = %q..%q, expected the whole pending list (%q..%q)",
+			got.Start, got.End, rangeStart, rangeEnd)
+	}
+}
+
+func TestReclaimDeliversWhatADeadConsumerWasHolding(t *testing.T) {
+	cfg := fakeConfig()
+	when := time.Date(2026, 8, 23, 12, 30, 0, 0, time.UTC)
+
+	fake := newFakeStreamClient()
+	fake.pendingOnce = []redis.XPendingExt{{
+		ID:         "5-0",
+		Consumer:   "consumer-that-died",
+		Idle:       2 * time.Minute,
+		RetryCount: 1,
+	}}
+	fake.claimReturns = []redis.XMessage{
+		eventMessage("5-0", "evt_stranded", testEventName, when, `{"order_id":"o_1"}`),
+	}
+
+	bus := newRedisBus(fake, cfg, quietLogger())
+
+	seen := make(chan string, 2)
+	if err := bus.Subscribe(testEventName, func(_ context.Context, e Event) error {
+		seen <- e.ID
+		return nil
+	}); err != nil {
+		t.Fatalf("Subscribe returned an error: %v", err)
+	}
+
+	select {
+	case id := <-seen:
+		if id != "evt_stranded" {
+			t.Errorf("the delivered event = %q, expected evt_stranded", id)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out: the message the dead consumer was holding never reached a handler")
+	}
+	shutdownBus(t, bus)
+
+	if acked := fake.ackedIDs(); !slices.Contains(acked, "5-0") {
+		t.Errorf("ACKed ids = %v. A taken-over message that is not ACKed stays pending, which "+
+			"is the very state this path exists to leave behind", acked)
+	}
+}
+
+func TestReclaimLeavesThisConsumersOwnPendingMessagesAlone(t *testing.T) {
+	cfg := fakeConfig()
+	when := time.Date(2026, 8, 23, 12, 30, 0, 0, time.UTC)
+
+	fake := newFakeStreamClient()
+	fake.pendingOnce = []redis.XPendingExt{{
+		ID:         "5-0",
+		Consumer:   cfg.Consumer,
+		Idle:       2 * time.Minute,
+		RetryCount: 1,
+	}}
+	// Scripted on purpose: if the message were claimed it would be delivered,
+	// so the scenario can tell a skipped candidate from an empty script.
+	fake.claimReturns = []redis.XMessage{
+		eventMessage("5-0", "evt_mine", testEventName, when, `{}`),
+	}
+
+	bus := newRedisBus(fake, cfg, quietLogger())
+
+	seen := make(chan string, 2)
+	if err := bus.Subscribe(testEventName, func(_ context.Context, e Event) error {
+		seen <- e.ID
+		return nil
+	}); err != nil {
+		t.Fatalf("Subscribe returned an error: %v", err)
+	}
+	waitClosed(t, fake.swept, "the takeover sweep never ran")
+	shutdownBus(t, bus)
+
+	if claims := fake.claimRequests(); len(claims) != 0 {
+		t.Errorf("this consumer's own message was claimed (%d XCLAIMs). At startup a process "+
+			"reads its own pending list, and while it runs a message under its own name is "+
+			"one it is still working on: taking it over is the process racing itself",
+			len(claims))
+	}
+	select {
+	case id := <-seen:
+		t.Errorf("the takeover delivered %q, which this process is already holding", id)
+	default:
+	}
+}
+
+func TestReclaimDropsAMessageThatEmptiedEveryConsumer(t *testing.T) {
+	cfg := fakeConfig()
+	when := time.Date(2026, 8, 23, 12, 30, 0, 0, time.UTC)
+
+	fake := newFakeStreamClient()
+	fake.pendingOnce = []redis.XPendingExt{{
+		ID:         "5-0",
+		Consumer:   "consumer-that-died",
+		Idle:       2 * time.Minute,
+		RetryCount: maxDeliveries,
+	}}
+	fake.claimReturns = []redis.XMessage{
+		eventMessage("5-0", "evt_poison", testEventName, when, `{}`),
+	}
+
+	bus := newRedisBus(fake, cfg, quietLogger())
+
+	seen := make(chan string, 2)
+	if err := bus.Subscribe(testEventName, func(_ context.Context, e Event) error {
+		seen <- e.ID
+		return nil
+	}); err != nil {
+		t.Fatalf("Subscribe returned an error: %v", err)
+	}
+	waitClosed(t, fake.swept, "the takeover sweep never ran")
+	shutdownBus(t, bus)
+
+	if claims := fake.claimRequests(); len(claims) != 0 {
+		t.Errorf("a message that has emptied %d consumers was handed to one more; without a "+
+			"dead letter queue that is the endless loop the package comment refuses to build",
+			maxDeliveries)
+	}
+	if acked := fake.ackedIDs(); !slices.Contains(acked, "5-0") {
+		t.Errorf("ACKed ids = %v. A dropped message that is not ACKed is swept again every "+
+			"round forever", acked)
+	}
+	select {
+	case id := <-seen:
+		t.Errorf("the dropped message %q was delivered anyway", id)
+	default:
+	}
+}
+
+func TestReclaimAsksRedisToCheckTheIdleTimeAgain(t *testing.T) {
+	cfg := fakeConfig()
+	cfg.ClaimMinIdle = 45 * time.Second
+
+	fake := newFakeStreamClient()
+	fake.pendingOnce = []redis.XPendingExt{{
+		ID:         "5-0",
+		Consumer:   "consumer-that-died",
+		Idle:       time.Minute,
+		RetryCount: 1,
+	}}
+	// The claim answers with NOTHING: between the two commands the owner ACKed
+	// the message, which is the race the second check exists for.
+	fake.claimReturns = nil
+
+	bus := newRedisBus(fake, cfg, quietLogger())
+
+	seen := make(chan string, 2)
+	if err := bus.Subscribe(testEventName, func(_ context.Context, e Event) error {
+		seen <- e.ID
+		return nil
+	}); err != nil {
+		t.Fatalf("Subscribe returned an error: %v", err)
+	}
+	waitClosed(t, fake.swept, "the takeover sweep never ran")
+	shutdownBus(t, bus)
+
+	claims := fake.claimRequests()
+	if len(claims) != 1 {
+		t.Fatalf("XCLAIM calls = %d, expected 1", len(claims))
+	}
+
+	got := claims[0]
+	if got.MinIdle != cfg.ClaimMinIdle {
+		t.Errorf("XCLAIM min-idle = %s, expected %s. Without it the takeover is not atomic: "+
+			"a message the owner finished between the two commands is delivered a second time",
+			got.MinIdle, cfg.ClaimMinIdle)
+	}
+	if got.Consumer != cfg.Consumer {
+		t.Errorf("XCLAIM consumer = %q, expected %q; the message has to become THIS process's "+
+			"pending entry, otherwise nothing would ACK it", got.Consumer, cfg.Consumer)
+	}
+	if !slices.Equal(got.Messages, []string{"5-0"}) {
+		t.Errorf("XCLAIM messages = %v, expected [5-0]", got.Messages)
+	}
+	select {
+	case id := <-seen:
+		t.Errorf("an empty claim delivered %q; the claim's ANSWER is what says the message "+
+			"belongs to this process now", id)
+	default:
+	}
+}
+
+func TestReclaimDoesNotEvenLookAtMessagesInsideTheThreshold(t *testing.T) {
+	cfg := fakeConfig()
+	cfg.ClaimMinIdle = time.Minute
+	when := time.Date(2026, 8, 23, 12, 30, 0, 0, time.UTC)
+
+	fake := newFakeStreamClient()
+	// Another consumer's message, delivered enough times to meet the drop rule,
+	// and idle for a SECOND: somebody is working on it right now.
+	fake.pendingOnce = []redis.XPendingExt{{
+		ID:         "5-0",
+		Consumer:   "consumer-that-is-busy",
+		Idle:       time.Second,
+		RetryCount: maxDeliveries,
+	}}
+	fake.claimReturns = []redis.XMessage{
+		eventMessage("5-0", "evt_in_flight", testEventName, when, `{}`),
+	}
+
+	bus := newRedisBus(fake, cfg, quietLogger())
+
+	seen := make(chan string, 2)
+	if err := bus.Subscribe(testEventName, func(_ context.Context, e Event) error {
+		seen <- e.ID
+		return nil
+	}); err != nil {
+		t.Fatalf("Subscribe returned an error: %v", err)
+	}
+	waitClosed(t, fake.swept, "the takeover sweep never ran")
+	shutdownBus(t, bus)
+
+	// The ACK is the subject. XCLAIM refuses a message that is not idle enough,
+	// so the takeover itself is safe without the filter — but the DROP is not:
+	// a message the sweep should never have seen would be acknowledged away
+	// from the consumer that is still working on it, and that consumer's result
+	// would be thrown away with it.
+	if acked := fake.ackedIDs(); len(acked) != 0 {
+		t.Errorf("ACKed ids = %v while a live consumer holds the message. The idle filter is "+
+			"what keeps the drop rule away from work in progress", acked)
+	}
+	if claims := fake.claimRequests(); len(claims) != 0 {
+		t.Errorf("a message inside the threshold was claimed (%d XCLAIMs)", len(claims))
+	}
+	select {
+	case id := <-seen:
+		t.Errorf("the event %q was delivered while another consumer is holding it", id)
+	default:
 	}
 }

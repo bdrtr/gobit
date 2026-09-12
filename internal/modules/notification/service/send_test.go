@@ -70,9 +70,10 @@ func TestNotifySendsAndWritesIntoTheLog(t *testing.T) {
 // TestNotifyDOESNOTSendTheSameTemplateAndReferenceASecondTime verifies the only
 // thing idempotency rests on.
 //
-// The event bus does not redeliver today, but republishing an event by hand is
-// possible; in that case the customer must not receive a second confirmation
-// e-mail for the same order. The provider's call COUNT is the only proof of
+// The bus delivers at least once — a message whose consumer died mid-dispatch
+// is taken over by another — and an operator can republish an event by hand; in
+// either case the customer must not receive a second confirmation e-mail for
+// the same order. The provider's call COUNT is the only proof of
 // this: looking at the record count would not have been enough, because a
 // second send could be made without opening a record too.
 func TestNotifyDOESNOTSendTheSameTemplateAndReferenceASecondTime(t *testing.T) {

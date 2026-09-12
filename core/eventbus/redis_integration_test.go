@@ -432,3 +432,140 @@ func TestRedisIntegrationHandlerPanicDoesNotStopConsumer(t *testing.T) {
 		}
 	}
 }
+
+// A process that reads a message and dies before ACKing it leaves that message
+// in ITS OWN pending list, and a restarted process comes back under a new name.
+// Measured before the takeover existed: the message sat there with its idle time
+// growing and a fresh consumer received nothing, forever (D105).
+//
+// The dead consumer here is not a bus but a raw XREADGROUP under a name that
+// never comes back, because that is exactly what a killed process leaves: a
+// pending entry with nobody behind it.
+
+func TestRedisIntegrationTakesOverWhatADeadConsumerWasHolding(t *testing.T) {
+	client := startRedis(t)
+	cfg := testConfig(t, "successor")
+	cfg.ClaimMinIdle = 300 * time.Millisecond
+	stream := cfg.StreamName("order.placed")
+
+	if err := client.XGroupCreateMkStream(t.Context(), stream, cfg.Group, "0").Err(); err != nil {
+		t.Fatalf("the consumer group could not be created: %v", err)
+	}
+
+	publisher, err := eventbus.NewRedisStream(client, cfg, discardLogger())
+	if err != nil {
+		t.Fatalf("NewRedisStream returned an error: %v", err)
+	}
+	defer func() { _ = publisher.Shutdown(context.Background()) }()
+	if err := publisher.Publish(t.Context(), eventbus.Event{
+		Name: "order.placed",
+		ID:   "evt_the_dead_one_held",
+	}); err != nil {
+		t.Fatalf("Publish returned an error: %v", err)
+	}
+
+	taken, err := client.XReadGroup(t.Context(), &redis.XReadGroupArgs{
+		Group:    cfg.Group,
+		Consumer: "consumer-that-was-killed",
+		Streams:  []string{stream, ">"},
+		Count:    1,
+	}).Result()
+	if err != nil {
+		t.Fatalf("the dying consumer could not read: %v", err)
+	}
+	if len(taken) != 1 || len(taken[0].Messages) != 1 {
+		t.Fatalf("the dying consumer read %v; the scenario needs it to hold exactly one message", taken)
+	}
+
+	successor, err := eventbus.NewRedisStream(client, cfg, discardLogger())
+	if err != nil {
+		t.Fatalf("NewRedisStream returned an error: %v", err)
+	}
+	defer func() { _ = successor.Shutdown(context.Background()) }()
+
+	got := make(chan string, 4)
+	if err := successor.Subscribe("order.placed", func(_ context.Context, e eventbus.Event) error {
+		got <- e.ID
+		return nil
+	}); err != nil {
+		t.Fatalf("Subscribe returned an error: %v", err)
+	}
+
+	select {
+	case id := <-got:
+		if id != "evt_the_dead_one_held" {
+			t.Errorf("the delivered event = %q, expected evt_the_dead_one_held", id)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("timed out: the message the killed consumer was holding never reached the " +
+			"successor. That is the whole of D105 — the event is lost while the stream " +
+			"reports it as delivered")
+	}
+
+	pending, err := client.XPendingExt(t.Context(), &redis.XPendingExtArgs{
+		Stream: stream, Group: cfg.Group, Start: "-", End: "+", Count: 10,
+	}).Result()
+	if err != nil {
+		t.Fatalf("XPendingExt returned an error: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Errorf("the pending list still holds %d entries after the takeover; a taken-over "+
+			"message that is not ACKed has only changed owner", len(pending))
+	}
+}
+
+func TestRedisIntegrationDoesNotTakeAMessageStillWithinTheThreshold(t *testing.T) {
+	client := startRedis(t)
+	cfg := testConfig(t, "impatient-successor")
+	// Far longer than this test runs: the other consumer is to look ALIVE.
+	cfg.ClaimMinIdle = 30 * time.Second
+	stream := cfg.StreamName("order.placed")
+
+	if err := client.XGroupCreateMkStream(t.Context(), stream, cfg.Group, "0").Err(); err != nil {
+		t.Fatalf("the consumer group could not be created: %v", err)
+	}
+
+	publisher, err := eventbus.NewRedisStream(client, cfg, discardLogger())
+	if err != nil {
+		t.Fatalf("NewRedisStream returned an error: %v", err)
+	}
+	defer func() { _ = publisher.Shutdown(context.Background()) }()
+	if err := publisher.Publish(t.Context(), eventbus.Event{
+		Name: "order.placed",
+		ID:   "evt_somebody_is_working_on_it",
+	}); err != nil {
+		t.Fatalf("Publish returned an error: %v", err)
+	}
+
+	if _, err := client.XReadGroup(t.Context(), &redis.XReadGroupArgs{
+		Group:    cfg.Group,
+		Consumer: "consumer-that-is-busy",
+		Streams:  []string{stream, ">"},
+		Count:    1,
+	}).Result(); err != nil {
+		t.Fatalf("the busy consumer could not read: %v", err)
+	}
+
+	other, err := eventbus.NewRedisStream(client, cfg, discardLogger())
+	if err != nil {
+		t.Fatalf("NewRedisStream returned an error: %v", err)
+	}
+	defer func() { _ = other.Shutdown(context.Background()) }()
+
+	got := make(chan string, 4)
+	if err := other.Subscribe("order.placed", func(_ context.Context, e eventbus.Event) error {
+		got <- e.ID
+		return nil
+	}); err != nil {
+		t.Fatalf("Subscribe returned an error: %v", err)
+	}
+
+	select {
+	case id := <-got:
+		t.Fatalf("the event %q was taken from a consumer that had held it for a moment. A "+
+			"consumer that is merely slow leaves the same pending entry as a dead one, so "+
+			"the threshold is the only thing keeping a live consumer's work from being "+
+			"done twice", id)
+	case <-time.After(3 * time.Second):
+	}
+}

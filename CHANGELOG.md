@@ -165,7 +165,24 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
-- **Bir MODEL istemcisi artık bu kuruluma soru sorabiliyor** (ADR 0161). Yönetim
+- **Ölü bir tüketicinin elinde kalan mesaj artık geri geliyor** (ADR 0162). Redis
+  otobüsü XREADGROUP ile bir mesajı tek tüketiciye veriyor ve verdiğini
+  hatırlıyor; o süreç ACK'lemeden ölürse mesaj ONUN askı listesinde kalıyordu, ve
+  yeniden başlayan süreç `<hostname>-<pid>` ile yeni bir ada geliyor, yani kendi
+  boş listesine bakıyor ve ">" imleci o mesajı bir daha kimseye önermiyordu. Kapı
+  yazılmadan ÖNCE gerçek Redis'e karşı ölçüldü: bir tüketici mesajı aldı ve
+  durdu, taze bir tüketici açıldı, on saniye sonra kayıt hâlâ oradaydı ve kimseye
+  bir şey önerilmemişti. Artık tüketim döngüsü iki okuma ARASINDA kendi akışını
+  süpürüyor: BAŞKA bir tüketicinin adı altında ve `ClaimMinIdle`'dan (varsayılan
+  bir dakika) uzun süredir boşta duran mesaj XCLAIM ile alınıp yeni bir mesaj gibi
+  dağıtılıyor. Böylece "en az bir kez" sözü, dayanıklılığın satın alındığı vakayı
+  —sürecin ölmesini— kapsıyor; bir handler'ın hatası ve paniği ise DEĞİŞMEDEN
+  ACK'lenmeye devam ediyor. Zehirli mesaj sınırlı: üç kez teslim edilip
+  ACK'lenmemiş mesaj dördüncüye verilmiyor, ACK'lenip hata seviyesinde
+  günlükleniyor — ölü mektup o satır, ve onu okuyan tek şey bir insan. Eşik,
+  YALNIZCA yavaş bir tüketiciyi ölüden ayıran şey olduğu için en yavaş
+  handler'dan uzun olmak zorunda; XCLAIM boşta kalma süresini İKİNCİ kez
+  sorduğu için iki komut arasında sahibinin bitirdiği mesaj hiç alınmıyor. Yönetim
   API'si yüz yirmi bir okuma işlemi cevaplıyor ve bugüne kadarki tek çağıranları
   bir tarayıcı ile curl'dü. "Hangi siparişler askıda" diye soran bir model
   istemcisinin, biri sarmalayıcı yazmadan girebileceği bir yol yoktu — ve bir

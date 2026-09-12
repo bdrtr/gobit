@@ -36,6 +36,14 @@ const (
 	DefaultBatchSize = 16
 	// DefaultMaxLen is the default approximate length limit of a stream.
 	DefaultMaxLen = 10_000
+	// DefaultClaimMinIdle is the default time a message must sit unacknowledged
+	// under another consumer's name before this process takes it over.
+	//
+	// A minute is chosen to be longer than any handler in this system runs: a
+	// message is taken over only when its consumer is gone, and taking one over
+	// while its consumer is still working on it means processing it twice. See
+	// [RedisConfig.ClaimMinIdle] for what a setup with slower handlers must do.
+	DefaultClaimMinIdle = time.Minute
 	// MaxLenUnlimited turns stream trimming off when given to
 	// RedisConfig.MaxLen.
 	MaxLenUnlimited = -1
@@ -65,6 +73,21 @@ const (
 	// readErrorBackoff is the pause after a read error; it keeps a broken
 	// Redis from being sent thousands of requests per second.
 	readErrorBackoff = time.Second
+	// rangeStart and rangeEnd are XPENDING's markers for "the whole pending
+	// list".
+	rangeStart = "-"
+	rangeEnd   = "+"
+	// maxDeliveries is how many times a message may be handed to a consumer
+	// before the bus stops handing it over.
+	//
+	// A message is taken over only from a consumer that stopped without ACKing,
+	// which in this bus means a process that died mid-dispatch: a handler's
+	// error and a handler's panic are both ACKed (see [redisBus.dispatch]). So a
+	// message that has emptied this many consumers is one that kills the process
+	// that reads it, and handing it to a third would be the endless loop the
+	// package comment refuses to build without a dead letter queue. It is ACKed
+	// and logged at error level instead; the log line is the dead letter.
+	maxDeliveries = 3
 )
 
 // The field names in a stream message.
@@ -103,6 +126,12 @@ type RedisConfig struct {
 	// cursorPending), that is, it also picks up the messages the other one is
 	// STILL processing, and the same event is processed twice. The bus cannot
 	// see this — a single process knows nothing but itself.
+	//
+	// A name that does not come back is a different matter and it is handled:
+	// what the vanished name was holding is taken over by whoever is running
+	// (see [RedisConfig.ClaimMinIdle]). A STABLE name recovers its own messages
+	// sooner, at startup and without waiting for the threshold, which is the
+	// reason to give one.
 	Consumer string
 
 	// BlockTimeout is how long XREADGROUP blocks while waiting for a message.
@@ -116,6 +145,26 @@ type RedisConfig struct {
 	// older entries above that bound are trimmed. If MaxLenUnlimited is given,
 	// trimming is turned off and the stream grows without bound.
 	MaxLen int64
+
+	// ClaimMinIdle is how long a message must sit unacknowledged under ANOTHER
+	// consumer's name before this process takes it over.
+	//
+	// It is the only defense against the case durability exists for: a process
+	// that read a message and died before ACKing it leaves that message in its
+	// own pending list, and a restarted process comes back under a new name
+	// (see [RedisConfig.Consumer]), so nobody would ever read it again.
+	//
+	// The value must be LONGER THAN THE SLOWEST HANDLER. A consumer that is
+	// merely slow is indistinguishable from one that is gone — the pending
+	// entry looks the same — so a threshold below a handler's runtime hands a
+	// live consumer's message to a second process and the event is processed
+	// twice. That is not a corruption in this system, because handlers are
+	// idempotent by contract (see the package comment), but it is work done
+	// twice and a log that reads as a duplicate.
+	//
+	// The sweep also decides the RECOVERY DELAY: it runs between two reads, so
+	// a stranded message comes back within roughly twice this value.
+	ClaimMinIdle time.Duration
 }
 
 // StreamName returns the Redis stream key corresponding to the given event
@@ -179,6 +228,9 @@ func (c RedisConfig) withDefaults() RedisConfig {
 	if c.MaxLen == 0 {
 		c.MaxLen = DefaultMaxLen
 	}
+	if c.ClaimMinIdle <= 0 {
+		c.ClaimMinIdle = DefaultClaimMinIdle
+	}
 	return c
 }
 
@@ -221,6 +273,8 @@ type streamClient interface {
 	XReadGroup(ctx context.Context, a *redis.XReadGroupArgs) *redis.XStreamSliceCmd
 	XAck(ctx context.Context, stream, group string, ids ...string) *redis.IntCmd
 	XGroupCreateMkStream(ctx context.Context, stream, group, start string) *redis.StatusCmd
+	XPendingExt(ctx context.Context, a *redis.XPendingExtArgs) *redis.XPendingExtCmd
+	XClaim(ctx context.Context, a *redis.XClaimArgs) *redis.XMessageSliceCmd
 }
 
 var _ streamClient = (*redis.Client)(nil)
@@ -257,7 +311,9 @@ var _ EventBus = (*redisBus)(nil)
 //
 // Every event name maps to a separate stream ("<prefix>:<event name>") and
 // every subscription to the cfg.Group consumer group; a processed message is
-// XACKed and consumption resumes where it left off when the process restarts.
+// XACKed and consumption resumes where it left off when the process restarts;
+// a message whose process died before the ACK is taken over by another consumer
+// (see [RedisConfig.ClaimMinIdle]).
 // The client is owned by the caller: Shutdown does not close it.
 //
 // If log is nil, slog.Default is used. If client is nil, errors.KindInvalid is
@@ -432,17 +488,32 @@ func (b *redisBus) ensureGroup(eventName string) error {
 //
 // First the messages this consumer took earlier but did not ACK (the pending
 // list) are read; that is what lets the process resume where it left off after
-// a restart. Once the list is drained it switches to the ">" marker and waits
-// only for new messages.
+// a restart under the SAME name. Once the list is drained it switches to the
+// ">" marker and waits only for new messages.
+//
+// Between two reads it also takes over what ANOTHER consumer left behind (see
+// [redisBus.reclaim]). The takeover is a phase of this loop rather than a
+// goroutine of its own on purpose: a stream's messages are processed in order
+// in a single consumer loop, and a second goroutine dispatching into the same
+// handlers would make that sentence false for exactly the messages that were
+// already handled once by a process that died.
 func (b *redisBus) consume(eventName string) {
 	defer b.wg.Done()
 
 	stream := b.cfg.StreamName(eventName)
 	cursor := cursorPending
+	// The zero time makes the first round sweep: a process that has just come
+	// up is the likeliest successor of one that has just gone down.
+	var lastSweep time.Time
 
 	for {
 		if b.ctx.Err() != nil {
 			return
+		}
+
+		if time.Since(lastSweep) >= b.cfg.ClaimMinIdle {
+			lastSweep = time.Now()
+			b.reclaim(stream, eventName)
 		}
 
 		res, err := b.client.XReadGroup(b.ctx, &redis.XReadGroupArgs{
@@ -491,19 +562,109 @@ func (b *redisBus) consume(eventName string) {
 	}
 }
 
+// reclaim takes over the messages another consumer left unacknowledged.
+//
+// This is the only path by which a message survives the death of the process
+// that read it. XREADGROUP hands a message to one consumer and remembers that
+// it did; if that process dies before the ACK, the message stays in ITS pending
+// list, and the restarted process comes back under a different name
+// ("<hostname>-<pid>"), so the ">" marker never offers it again and the
+// process's own pending read looks at a list that was always empty. Nothing
+// else in this bus reads a list that belongs to a name that will not come back.
+//
+// Three rules decide what is taken:
+//
+//   - ONLY ANOTHER CONSUMER'S. A message under this process's own name is one
+//     it read at startup or is still working on; taking it over would be this
+//     process racing itself.
+//   - ONLY BEYOND THE THRESHOLD. A slow consumer and a dead one leave the same
+//     pending entry, so the idle time is the only thing that separates them —
+//     and XCLAIM is asked to check it AGAIN, which is what makes the takeover
+//     atomic: if the owner ACKed or re-read the message in the meantime, the
+//     claim skips it rather than delivering it twice.
+//   - ONLY WHILE A CONSUMER COULD STILL SURVIVE IT. A message delivered
+//     [maxDeliveries] times without an ACK has emptied that many consumers; it
+//     is ACKed and logged instead of being handed to the next one.
+func (b *redisBus) reclaim(stream, eventName string) {
+	ctx, cancel := context.WithTimeout(b.ctx, controlTimeout)
+	defer cancel()
+
+	pending, err := b.client.XPendingExt(ctx, &redis.XPendingExtArgs{
+		Stream: stream,
+		Group:  b.cfg.Group,
+		Idle:   b.cfg.ClaimMinIdle,
+		Start:  rangeStart,
+		End:    rangeEnd,
+		Count:  b.cfg.BatchSize,
+	}).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		b.log.ErrorContext(ctx, "the pending event messages could not be read",
+			attrStream, stream, attrError, err)
+		return
+	}
+
+	ids := make([]string, 0, len(pending))
+	for _, entry := range pending {
+		switch {
+		case entry.Consumer == b.cfg.Consumer:
+			continue
+		case entry.RetryCount >= maxDeliveries:
+			// The dead letter is this log line. Dropping it is the same
+			// decision the bus makes for a handler's error, for the same
+			// reason: there is nowhere to put it that something reads.
+			b.log.ErrorContext(ctx, "the event message was dropped after emptying every consumer that took it",
+				attrStream, stream, attrMessageID, entry.ID, attrConsumer, entry.Consumer,
+				"deliveries", entry.RetryCount)
+			b.ack(stream, entry.ID)
+		default:
+			ids = append(ids, entry.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+
+	msgs, err := b.client.XClaim(ctx, &redis.XClaimArgs{
+		Stream:   stream,
+		Group:    b.cfg.Group,
+		Consumer: b.cfg.Consumer,
+		MinIdle:  b.cfg.ClaimMinIdle,
+		Messages: ids,
+	}).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		b.log.ErrorContext(ctx, "the pending event messages could not be taken over",
+			attrStream, stream, attrError, err)
+		return
+	}
+	if len(msgs) == 0 {
+		return
+	}
+
+	b.log.WarnContext(ctx, "event messages were taken over from a consumer that stopped without acknowledging them",
+		attrStream, stream, attrConsumer, b.cfg.Consumer, "messages", len(msgs))
+
+	for _, msg := range msgs {
+		b.dispatch(stream, eventName, msg)
+	}
+}
+
 // dispatch decodes a single message, gives it to the handlers and ACKs it.
 //
-// The message is ACKed even if a handler returns an error or panics: there is
-// deliberately no redelivery policy (see the package comment). A message that
-// cannot be decoded is logged and ACKed too; otherwise it would stay in the
-// pending list forever.
+// The message is ACKed even if a handler returns an error or panics: a handler's
+// outcome is deliberately not a reason to deliver an event again (see the
+// package comment). A message that cannot be decoded is logged and ACKed too;
+// otherwise it would stay in the pending list forever.
+//
+// The ACK is also why [redisBus.reclaim] never sees a message this line
+// finished: what stays pending is exactly what a process was holding when it
+// died.
 func (b *redisBus) dispatch(stream, eventName string, msg redis.XMessage) {
 	defer b.ack(stream, msg.ID)
 
 	e, err := decodeMessage(eventName, msg)
 	if err != nil {
 		b.log.ErrorContext(b.ctx, "the event message could not be decoded",
-			attrStream, stream, "message_id", msg.ID, attrError, err)
+			attrStream, stream, attrMessageID, msg.ID, attrError, err)
 		return
 	}
 
@@ -536,7 +697,7 @@ func (b *redisBus) ack(stream, messageID string) {
 
 	if err := b.client.XAck(ctx, stream, b.cfg.Group, messageID).Err(); err != nil {
 		b.log.ErrorContext(ctx, "the event message could not be ACKed",
-			attrStream, stream, "message_id", messageID, attrError, err)
+			attrStream, stream, attrMessageID, messageID, attrError, err)
 	}
 }
 

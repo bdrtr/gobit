@@ -437,9 +437,9 @@ func TestNotificationRecipientIsReadFromOrderNotEvent(t *testing.T) {
 // TestSecondEventForSameOrderProducesNoSecondNotification verifies that a manually
 // republished event does not send the customer a second email.
 //
-// The scenario is not made up: even though the bus does not redeliver today, an
-// operator can republish missed events and the Redis backend delivers AT LEAST
-// ONCE. The protection is the (template, reference) uniqueness in the delivery log
+// The scenario is not made up: the Redis backend delivers AT LEAST ONCE — a
+// message whose consumer died mid-dispatch is taken over by another — and an
+// operator can republish missed events by hand. The protection is the (template, reference) uniqueness in the delivery log
 // and it is exercised here on the REAL index.
 //
 // Two separate claims are set up together: no second RECORD is opened in the log
