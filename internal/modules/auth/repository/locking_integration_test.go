@@ -254,7 +254,7 @@ func TestARevivedIdentityCannotLogIn(t *testing.T) {
 		`SELECT count(*) FROM auth_identity WHERE user_id = $1 AND deleted_at IS NULL`, user.ID),
 		"the orphan the test needs has to exist, otherwise it measures nothing")
 
-	_, _, loginErr := svc.Login(ctx, user.Email, racePassword)
+	_, _, loginErr := svc.Login(ctx, user.Email, racePassword, "")
 	require.Error(t, loginErr, "a deleted user must not be able to log in")
 	assert.True(t, errors.IsUnauthorized(loginErr), "kind: %s", errors.KindOf(loginErr))
 }

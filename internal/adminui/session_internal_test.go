@@ -21,11 +21,16 @@ type fakeSession struct {
 	expiresAt time.Time
 	err       error
 
+	// gotCode is the authenticator code the form sent through, recorded because
+	// the panel dropping it would look exactly like an account with no factor.
+	gotCode string
+
 	logoutCalled      bool
 	logoutPrincipalID string
 }
 
-func (f *fakeSession) Login(_ context.Context, _, _ string) (string, time.Time, error) {
+func (f *fakeSession) Login(_ context.Context, _, _, code string) (string, time.Time, error) {
+	f.gotCode = code
 	if f.err != nil {
 		return "", time.Time{}, f.err
 	}
@@ -160,6 +165,66 @@ func TestFailedLoginWritesNoCookie(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	assert.Nil(t, sessionCookie(rec), "a failed sign-in must write NO cookie")
 	assert.Contains(t, rec.Body.String(), "Email or password is incorrect")
+}
+
+// TestTheFormCarriesTheAuthenticatorCode is the panel's whole part in the second
+// factor.
+//
+// The box is on the form and its value goes to the service; everything else about
+// the factor happens there. A panel that dropped the field would leave every
+// administrator who enrolled unable to sign in to the panel at all, with a message
+// telling them their password is wrong (ADR 0147).
+func TestTheFormCarriesTheAuthenticatorCode(t *testing.T) {
+	t.Parallel()
+
+	session := &fakeSession{token: "t", expiresAt: time.Now().Add(time.Hour)}
+	panel := newTestPanel(t, session, fakeAuthenticator{}, true)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, LoginPath,
+		strings.NewReader("email=a@b.c&password=x&code=123456"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	panel.submitLogin(rec, req)
+
+	assert.Equal(t, "123456", session.gotCode, "the six digits have to reach the service")
+}
+
+// TestTheFactorsRefusalsGetTheirOwnSentence keeps the panel usable for somebody
+// holding an authenticator.
+//
+// Every other refusal collapses into "email or password is incorrect", and that
+// is deliberate — it reveals no account. These two do not collapse, and they
+// reveal nothing either: both are only ever returned after the password MATCHED.
+// Printing the generic line here would tell an operator with the right password
+// and the app open that their password is wrong, and nothing on the page would
+// ever say otherwise.
+func TestTheFactorsRefusalsGetTheirOwnSentence(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct{ code, expect string }{
+		"no code sent": {CodeMFARequired, "Enter the code it shows"},
+		"wrong code":   {CodeMFACodeWrong, "not the one showing right now"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			panel := newTestPanel(t,
+				&fakeSession{err: errors.Unauthorized(tc.code, "refused")},
+				fakeAuthenticator{}, true)
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, LoginPath,
+				strings.NewReader("email=a@b.c&password=right"))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			panel.submitLogin(rec, req)
+
+			assert.Equal(t, http.StatusUnauthorized, rec.Code)
+			assert.Nil(t, sessionCookie(rec), "a refused sign-in writes NO cookie")
+			assert.Contains(t, rec.Body.String(), tc.expect)
+			assert.NotContains(t, rec.Body.String(), "Email or password is incorrect",
+				"the generic line would send somebody to change a password that is right")
+		})
+	}
 }
 
 // TestGuardReturnsLoginPageWithoutCookie pins what an unidentified request gets.

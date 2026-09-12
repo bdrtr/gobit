@@ -46,10 +46,11 @@ type AuthIdentity struct {
 }
 
 type AuthMfaCredential struct {
-	UserID      string
-	Secret      []byte
-	ConfirmedAt pgtype.Timestamptz
-	CreatedAt   pgtype.Timestamptz
+	UserID        string
+	Secret        []byte
+	ConfirmedAt   pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	PendingSecret []byte
 }
 
 type AuthUser struct {

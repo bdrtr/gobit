@@ -15,13 +15,13 @@ const confirmMFACredential = `-- name: ConfirmMFACredential :one
 UPDATE auth_mfa_credential
 SET confirmed_at = now()
 WHERE user_id = $1 AND confirmed_at IS NULL
-RETURNING user_id, secret, confirmed_at, created_at
+RETURNING user_id, secret, confirmed_at, created_at, pending_secret
 `
 
 // ConfirmMFACredential stamps the moment the first correct code arrived.
 //
 // The WHERE keeps it to an UNCONFIRMED credential, so a second confirmation of
-// the same enrolment changes nothing and the first moment is the one kept. A
+// the same enrollment changes nothing and the first moment is the one kept. A
 // stamp that moved would make "when did this person prove their phone" unanswerable.
 func (q *Queries) ConfirmMFACredential(ctx context.Context, userID string) (AuthMfaCredential, error) {
 	row := q.db.QueryRow(ctx, confirmMFACredential, userID)
@@ -31,6 +31,7 @@ func (q *Queries) ConfirmMFACredential(ctx context.Context, userID string) (Auth
 		&i.Secret,
 		&i.ConfirmedAt,
 		&i.CreatedAt,
+		&i.PendingSecret,
 	)
 	return i, err
 }
@@ -54,8 +55,26 @@ func (q *Queries) CountUsers(ctx context.Context, arg CountUsersParams) (int64, 
 	return count, err
 }
 
+const deleteMFACredential = `-- name: DeleteMFACredential :execrows
+DELETE FROM auth_mfa_credential WHERE user_id = $1
+`
+
+// DeleteMFACredential takes the second factor off an account.
+//
+// It answers two requests and they are the same write: the owner turning it off,
+// and the operator at the machine doing it for somebody whose phone is gone
+// (ADR 0147). Deleting a credential that is not there is not an error — the
+// account ends up in the state the caller asked for either way.
+func (q *Queries) DeleteMFACredential(ctx context.Context, userID string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteMFACredential, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getMFACredential = `-- name: GetMFACredential :one
-SELECT user_id, secret, confirmed_at, created_at FROM auth_mfa_credential WHERE user_id = $1
+SELECT user_id, secret, confirmed_at, created_at, pending_secret FROM auth_mfa_credential WHERE user_id = $1
 `
 
 // GetMFACredential reads one user's credential.
@@ -67,6 +86,7 @@ func (q *Queries) GetMFACredential(ctx context.Context, userID string) (AuthMfaC
 		&i.Secret,
 		&i.ConfirmedAt,
 		&i.CreatedAt,
+		&i.PendingSecret,
 	)
 	return i, err
 }
@@ -263,6 +283,31 @@ func (q *Queries) LockLiveUser(ctx context.Context, id string) (AuthUser, error)
 	return i, err
 }
 
+const promotePendingMFASecret = `-- name: PromotePendingMFASecret :one
+UPDATE auth_mfa_credential
+SET secret = pending_secret, pending_secret = NULL, confirmed_at = now()
+WHERE user_id = $1 AND pending_secret IS NOT NULL
+RETURNING user_id, secret, confirmed_at, created_at, pending_secret
+`
+
+// PromotePendingMFASecret makes the waiting secret the one that signs in.
+//
+// One statement, because the two halves cannot be apart: a promotion that cleared
+// the pending column first would leave the account with a secret nobody holds, and
+// one that stamped the confirmation first would accept both phones for an instant.
+func (q *Queries) PromotePendingMFASecret(ctx context.Context, userID string) (AuthMfaCredential, error) {
+	row := q.db.QueryRow(ctx, promotePendingMFASecret, userID)
+	var i AuthMfaCredential
+	err := row.Scan(
+		&i.UserID,
+		&i.Secret,
+		&i.ConfirmedAt,
+		&i.CreatedAt,
+		&i.PendingSecret,
+	)
+	return i, err
+}
+
 const putInvitation = `-- name: PutInvitation :one
 INSERT INTO auth_user_invitation (token_hash, user_id, invited_by, expires_at)
 VALUES ($1, $2, $3, $4)
@@ -309,8 +354,10 @@ const putMFACredential = `-- name: PutMFACredential :one
 INSERT INTO auth_mfa_credential (user_id, secret)
 VALUES ($1, $2)
 ON CONFLICT (user_id) DO UPDATE
-SET secret = EXCLUDED.secret, confirmed_at = NULL, created_at = now()
-RETURNING user_id, secret, confirmed_at, created_at
+SET secret = EXCLUDED.secret, confirmed_at = NULL, pending_secret = NULL,
+    created_at = now()
+WHERE auth_mfa_credential.confirmed_at IS NULL
+RETURNING user_id, secret, confirmed_at, created_at, pending_secret
 `
 
 type PutMFACredentialParams struct {
@@ -318,12 +365,16 @@ type PutMFACredentialParams struct {
 	Secret []byte
 }
 
-// PutMFACredential writes an enrolment, replacing any credential the user had.
+// PutMFACredential writes an enrollment nobody has proven yet.
 //
-// ON CONFLICT DO UPDATE and not an INSERT that fails: re-enrolling is the ordinary
-// path for somebody who lost their phone, and it has to make the old secret stop
-// working. The confirmation is RESET with it — a new secret nobody has proven yet
-// is exactly what an unconfirmed credential is.
+// ON CONFLICT DO UPDATE and not an INSERT that fails: starting over is the
+// ordinary path for somebody whose scan did not work, and it has to make the
+// half-written secret stop mattering.
+//
+// The WHERE is the rule a demanded factor needs (ADR 0147): this statement only
+// touches a credential that is NOT confirmed yet. A confirmed one is replaced
+// through PutPendingMFASecret instead, so an enrollment that is abandoned cannot
+// clear a confirmation and turn the demand off.
 func (q *Queries) PutMFACredential(ctx context.Context, arg PutMFACredentialParams) (AuthMfaCredential, error) {
 	row := q.db.QueryRow(ctx, putMFACredential, arg.UserID, arg.Secret)
 	var i AuthMfaCredential
@@ -332,6 +383,38 @@ func (q *Queries) PutMFACredential(ctx context.Context, arg PutMFACredentialPara
 		&i.Secret,
 		&i.ConfirmedAt,
 		&i.CreatedAt,
+		&i.PendingSecret,
+	)
+	return i, err
+}
+
+const putPendingMFASecret = `-- name: PutPendingMFASecret :one
+UPDATE auth_mfa_credential
+SET pending_secret = $2
+WHERE user_id = $1 AND confirmed_at IS NOT NULL
+RETURNING user_id, secret, confirmed_at, created_at, pending_secret
+`
+
+type PutPendingMFASecretParams struct {
+	UserID        string
+	PendingSecret []byte
+}
+
+// PutPendingMFASecret parks a new secret BESIDE the confirmed one.
+//
+// The confirmed secret is untouched, so the phone the person is using keeps
+// signing them in until they prove the new one. The WHERE says the same thing the
+// schema's CHECK says — a pending secret beside no confirmation would be a second
+// answer to "which secret does the login accept".
+func (q *Queries) PutPendingMFASecret(ctx context.Context, arg PutPendingMFASecretParams) (AuthMfaCredential, error) {
+	row := q.db.QueryRow(ctx, putPendingMFASecret, arg.UserID, arg.PendingSecret)
+	var i AuthMfaCredential
+	err := row.Scan(
+		&i.UserID,
+		&i.Secret,
+		&i.ConfirmedAt,
+		&i.CreatedAt,
+		&i.PendingSecret,
 	)
 	return i, err
 }

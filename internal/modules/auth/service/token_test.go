@@ -13,6 +13,7 @@ import (
 	"github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/internal/modules/auth/models"
+	"github.com/bdrtr/gobit/internal/modules/auth/repository"
 	"github.com/bdrtr/gobit/internal/modules/auth/service"
 )
 
@@ -78,6 +79,14 @@ type sessionRepo struct {
 	// has no live identity left; the scenario of a token belonging to a user
 	// whose identity was deleted is set up this way.
 	identityDeleted bool
+	// mfa is the user's second factor, or nil when they hold none.
+	//
+	// It is here rather than in the enrollment fixture because the claim that needs
+	// it is about LOGIN (ADR 0147), and login needs the password identity this
+	// fixture is the only one to carry. A pointer, so "no credential" and "an
+	// enrollment nobody proved" are different set-ups: the second one locks nobody
+	// out and the difference is exactly what the demand must respect.
+	mfa *models.MFACredential
 }
 
 // identity returns the row of the given provider; nil if there is none.
@@ -249,6 +258,17 @@ func (d *sessionRepo) RegisterLoginSuccess(_ context.Context, identityID string,
 	return nil
 }
 
+// GetMFACredential answers the user's second factor, or says there is none.
+func (d *sessionRepo) GetMFACredential(
+	_ context.Context, userID string,
+) (models.MFACredential, error) {
+	if d.mfa == nil || d.mfa.UserID != userID {
+		return models.MFACredential{}, repository.ErrNoMFACredential
+	}
+
+	return *d.mfa, nil
+}
+
 // RegisterLoginFailure counts the failed attempt and locks at the threshold.
 //
 // It DOES NOT TOUCH updated_at; that is the contract of the query.
@@ -317,7 +337,7 @@ func setupSession(t *testing.T) (*service.Service, *service.Interop, *sessionRep
 func obtainSessionToken(t *testing.T, svc *service.Service, password string) string {
 	t.Helper()
 
-	token, _, err := svc.Login(context.Background(), sessionEmail, password)
+	token, _, err := svc.Login(context.Background(), sessionEmail, password, "")
 	require.NoError(t, err, "the login has to succeed")
 	require.NotEmpty(t, token, "the login has to return a token")
 	return token
@@ -407,7 +427,7 @@ func TestFailedLoginAttemptDoesNotDropTheSession(t *testing.T) {
 	token := obtainSessionToken(t, svc, sessionPassword)
 
 	clock.advance(5 * time.Second)
-	_, _, err := svc.Login(ctx, sessionEmail, sessionWrongPassword)
+	_, _, err := svc.Login(ctx, sessionEmail, sessionWrongPassword, "")
 	require.Error(t, err, "a wrong password has to be rejected")
 
 	_, err = resolveSessionPrincipal(interop, token)

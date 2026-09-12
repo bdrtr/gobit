@@ -338,11 +338,15 @@ func toInvitation(row authdb.AuthUserInvitation) models.UserInvitation {
 
 // --- multi-factor credentials -----------------------------------------------
 
-// PutMFACredential writes an enrollment, replacing the one that user had.
+// PutMFACredential writes an enrollment nobody has proven yet.
 //
 // The secret arrives SEALED. This package never holds the key and never opens
 // one: the ciphertext is bytes to it, which is what keeps the decision about
 // where the key lives in one place (see service/secretbox.go).
+//
+// A CONFIRMED credential is not touched: the statement matches an unconfirmed row
+// only, and a confirmed one is reported as [ErrNoMFACredential] so the caller can
+// park the new secret beside it instead (ADR 0147).
 func (r *Repo) PutMFACredential(
 	ctx context.Context, userID string, sealed []byte,
 ) (models.MFACredential, error) {
@@ -354,12 +358,86 @@ func (r *Repo) PutMFACredential(
 		UserID: userID,
 		Secret: sealed,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.MFACredential{}, ErrNoMFACredential
+	}
 	if err != nil {
 		return models.MFACredential{}, classifyUserWrite(err, userID,
 			"could not write the MFA credential")
 	}
 
 	return toMFACredential(row), nil
+}
+
+// PutPendingMFASecret parks a sealed secret beside the confirmed one.
+//
+// A user whose credential is not confirmed matches no row and comes back as
+// [ErrNoMFACredential]: there is nothing to keep alive, so the caller writes the
+// secret itself with [Repo.PutMFACredential].
+func (r *Repo) PutPendingMFASecret(
+	ctx context.Context, userID string, sealed []byte,
+) (models.MFACredential, error) {
+	if err := r.ready(); err != nil {
+		return models.MFACredential{}, err
+	}
+
+	row, err := r.q.PutPendingMFASecret(ctx, authdb.PutPendingMFASecretParams{
+		UserID:        userID,
+		PendingSecret: sealed,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.MFACredential{}, ErrNoMFACredential
+	}
+	if err != nil {
+		return models.MFACredential{}, classifyUserWrite(err, userID,
+			"could not park the pending MFA secret")
+	}
+
+	return toMFACredential(row), nil
+}
+
+// PromotePendingMFASecret makes the waiting secret the one that signs in.
+//
+// A row with nothing waiting matches nothing and comes back as
+// [ErrNoMFACredential], which is also what a second promotion of the same
+// enrollment gets: the first one already moved it.
+func (r *Repo) PromotePendingMFASecret(
+	ctx context.Context, userID string,
+) (models.MFACredential, error) {
+	if err := r.ready(); err != nil {
+		return models.MFACredential{}, err
+	}
+
+	row, err := r.q.PromotePendingMFASecret(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.MFACredential{}, ErrNoMFACredential
+	}
+	if err != nil {
+		return models.MFACredential{}, classifyUserWrite(err, userID,
+			"could not promote the pending MFA secret")
+	}
+
+	return toMFACredential(row), nil
+}
+
+// DeleteMFACredential takes the second factor off an account and reports whether
+// there was one.
+//
+// The count is returned rather than swallowed because the two answers mean
+// different things to an operator running the reset by hand: "the factor is gone"
+// and "that account never had one" are both fine outcomes and only one of them is
+// the one they were expecting.
+func (r *Repo) DeleteMFACredential(ctx context.Context, userID string) (bool, error) {
+	if err := r.ready(); err != nil {
+		return false, err
+	}
+
+	removed, err := r.q.DeleteMFACredential(ctx, userID)
+	if err != nil {
+		return false, wrapDB(err, "could not remove the MFA credential")
+	}
+
+	return removed > 0, nil
 }
 
 // GetMFACredential reads one user's credential.
@@ -412,9 +490,10 @@ var ErrNoMFACredential = errors.New("auth: that user has no MFA credential to ac
 // toMFACredential converts the row.
 func toMFACredential(row authdb.AuthMfaCredential) models.MFACredential {
 	out := models.MFACredential{
-		UserID:    row.UserID,
-		Secret:    row.Secret,
-		CreatedAt: toTime(row.CreatedAt),
+		UserID:        row.UserID,
+		Secret:        row.Secret,
+		PendingSecret: row.PendingSecret,
+		CreatedAt:     toTime(row.CreatedAt),
 	}
 	if row.ConfirmedAt.Valid {
 		confirmed := toTime(row.ConfirmedAt)

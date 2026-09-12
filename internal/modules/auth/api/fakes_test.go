@@ -41,6 +41,13 @@ type fakeAuth struct {
 	// lastLogoutPrincipalID is the identity the logout endpoint passed to the
 	// service.
 	lastLogoutPrincipalID string
+	// lastLoginCode is the authenticator code the handler passed through; a
+	// handler that dropped it would look exactly like an account with no factor.
+	lastLoginCode string
+	// mfaRemovedFor is whose second factor the handler asked to remove; the
+	// endpoint takes no user id, so this is the only place the caller it acted on
+	// is visible.
+	mfaRemovedFor string
 	// lastLogoutPrincipalKind is the identity KIND the logout endpoint passed
 	// to the service.
 	//
@@ -65,8 +72,10 @@ var logoutMoment = time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
 // hit counts one service call.
 func (f *fakeAuth) hit() { f.callCount++ }
 
-func (f *fakeAuth) Login(_ context.Context, _, _ string) (string, time.Time, error) {
+func (f *fakeAuth) Login(_ context.Context, _, _, code string) (string, time.Time, error) {
 	f.hit()
+	f.lastLoginCode = code
+
 	return "token", time.Unix(0, 0).UTC(), nil
 }
 
@@ -220,4 +229,11 @@ func (f *fakeAuth) ConfirmMFA(_ context.Context, userID, code string) error {
 	f.mfaCode = code
 
 	return f.mfaErr
+}
+
+// RemoveMFA records whose factor was taken off.
+func (f *fakeAuth) RemoveMFA(_ context.Context, userID string) (bool, error) {
+	f.mfaRemovedFor = userID
+
+	return true, f.mfaErr
 }

@@ -61,7 +61,7 @@ func (u *UI) showLogin(w http.ResponseWriter, r *http.Request) {
 // not reveal whether an account exists — ALL of those decisions survive, because
 // the thing being called is the same service.
 //
-// # The message is not enriched
+// # The message is not enriched, EXCEPT about the second factor
 //
 // The service says "email or password is incorrect" and does not reveal which
 // accounts exist; having the panel improve on that would undo the decision.
@@ -69,14 +69,26 @@ func (u *UI) showLogin(w http.ResponseWriter, r *http.Request) {
 // whose class is neither Unauthorized nor Invalid becomes the panel's own error
 // page and the real cause goes to the log — see [UI.unexpectedFailure] for why
 // the JSON envelope is wrong on a path a browser navigated to.
+//
+// The second factor is the one case that gets its own sentence, and it reveals
+// nothing the caller does not already hold: [CodeMFARequired] and
+// [CodeMFACodeWrong] are only ever returned after the password MATCHED. Printing
+// "email or password is incorrect" there would tell an operator with a correct
+// password and an authenticator in their hand that their password is wrong, and
+// nothing on the page would ever tell them otherwise.
 func (u *UI) submitLogin(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		u.loginPage(w, r, http.StatusBadRequest, "The form could not be read.")
 		return
 	}
 
-	token, expiresAt, err := u.session.Login(r.Context(), r.PostFormValue("email"), r.PostFormValue("password"))
+	token, expiresAt, err := u.session.Login(r.Context(),
+		r.PostFormValue("email"), r.PostFormValue("password"), r.PostFormValue("code"))
 	if err != nil {
+		if hint := mfaMessage(err); hint != "" {
+			u.loginPage(w, r, http.StatusUnauthorized, hint)
+			return
+		}
 		if errors.IsUnauthorized(err) || errors.IsInvalid(err) {
 			u.loginPage(w, r, http.StatusUnauthorized, "Email or password is incorrect.")
 			return
@@ -88,6 +100,24 @@ func (u *UI) submitLogin(w http.ResponseWriter, r *http.Request) {
 	writeCookie(w, token, expiresAt, u.secureCookie)
 	writeMarker(w, expiresAt, u.secureCookie)
 	corehttp.WriteRedirect(r.Context(), w, returnTargetOf(r))
+}
+
+// mfaMessage answers what to print when the refusal is about the second factor,
+// and "" when it is not.
+//
+// The two cases are kept apart because they ask for different things from the
+// person reading them: one says "open your app", the other says "those digits are
+// not the ones it is showing now", and a single message for both would leave
+// somebody who mistyped believing their authenticator is broken.
+func mfaMessage(err error) string {
+	switch errors.CodeOf(err) {
+	case CodeMFARequired:
+		return "This account is protected by an authenticator. Enter the code it shows."
+	case CodeMFACodeWrong:
+		return "That authenticator code is not the one showing right now."
+	default:
+		return ""
+	}
 }
 
 // submitLogout ends the session.

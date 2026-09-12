@@ -118,7 +118,7 @@ func TestLogoutDoesNotChangeThePassword(t *testing.T) {
 	require.NoError(t, err)
 
 	clock.advance(time.Second)
-	_, _, err = svc.Login(ctx, sessionEmail, sessionPassword)
+	_, _, err = svc.Login(ctx, sessionEmail, sessionPassword, "")
 	require.NoError(t, err, "the logout must not invalidate the old password")
 }
 

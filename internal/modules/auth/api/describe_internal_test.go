@@ -228,6 +228,9 @@ func adminEndpoints() []endpointExpectation {
 			request: confirmMFARequest{},
 		},
 		{
+			method: http.MethodDelete, path: MFAEnrolPath, status: "204",
+		},
+		{
 			method: http.MethodGet, path: "/admin/v1/auth/me", status: "200",
 			response: fullPrincipal(),
 		},

@@ -818,6 +818,15 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 		"the panel's price write surface name must match the pricing module")
 	assert.Equal(t, inventory.AdminName, adminui.ServiceInventoryAdmin,
 		"the panel's inventory surface name must match the inventory module")
+
+	// The two refusals the panel prints its own sentence for. A renamed code on
+	// the auth side would turn "enter the code your authenticator shows" back into
+	// "email or password is incorrect" — and the person reading it would have both
+	// of those right (ADR 0147).
+	assert.Equal(t, authsvc.CodeMFARequired, adminui.CodeMFARequired,
+		"the panel's second-factor code must match the auth module")
+	assert.Equal(t, authsvc.CodeMFACodeWrong, adminui.CodeMFACodeWrong,
+		"the panel's wrong-code code must match the auth module")
 }
 
 // productServiceDirName is the directory holding the product module's service

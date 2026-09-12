@@ -42,6 +42,25 @@ prefix fails nothing: the endpoint keeps working, it just works without a quota.
 whose identity is to be checked is the one about to establish it. The exemption is
 not spelled out by hand, it is read from the `authapi.LoginPath` constant.
 
+**A session token is not handed out for a password alone when the account holds a
+second factor.** Since [ADR 0147](adr/0147-a-second-factor-is-demanded.md) an
+administrator who enrolled an authenticator sends `code` in the login body, and
+the refusals name themselves: `auth_mfa_required` when no code came,
+`auth_mfa_code_wrong` when the wrong one did. Both arrive only after the password
+MATCHED, so neither says anything about an account to a stranger. A wrong code
+counts as a failed attempt and can lock the account for a while — that counter is
+the only bound on guessing six digits — while an absent one does not, because it
+is the first half of an ordinary two-step sign-in.
+
+The demand reaches PEOPLE. A secret key holds no authenticator and nobody could
+scan a code for one, so machine access is unchanged; enrolling with a key is
+refused for the same reason. Nothing is required shop-wide: an account with no
+factor signs in exactly as before, which is what keeps an upgrade from locking
+every administrator out at once. The way back for a lost phone is
+`gobit mfa-reset <email> -confirm <email>`, at the machine — deliberately not an
+endpoint, because an administrator who could remove a colleague's factor would
+make one stolen session enough to reach every other account.
+
 The order of the guard stack is deliberate:
 
 1. **Rate limit** — *before* authentication. Otherwise an attacker trying

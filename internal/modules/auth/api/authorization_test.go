@@ -277,6 +277,37 @@ func TestIdentityEndpointsRequireNoScope(t *testing.T) {
 		"login and logout go down to the service; /auth/me reads from the context")
 }
 
+// TestTheLoginCarriesTheAuthenticatorCodeToTheService pins the field that makes
+// the second factor reachable at all.
+//
+// The handler is the whole of the code's journey — the body names it, the service
+// compares it — and a handler that dropped it would produce a login that behaves
+// exactly like an account with no factor: 401 for everybody who has one and no
+// way for a client to get past it (ADR 0147).
+func TestTheLoginCarriesTheAuthenticatorCodeToTheService(t *testing.T) {
+	r, svc := scopedRouter(t)
+
+	login := request(t, r, http.MethodPost, api.LoginPath,
+		`{"email":"a@b.co","password":"secret","code":"123456"}`)
+
+	require.Equal(t, http.StatusOK, login.Code, "body: %s", login.Body.String())
+	assert.Equal(t, "123456", svc.lastLoginCode,
+		"the six digits have to reach the service; nothing else compares them")
+}
+
+// TestALoginWithoutACodeSendsAnEmptyOne is the other half, and it is what every
+// installation with no authenticator sends.
+func TestALoginWithoutACodeSendsAnEmptyOne(t *testing.T) {
+	r, svc := scopedRouter(t)
+
+	login := request(t, r, http.MethodPost, api.LoginPath,
+		`{"email":"a@b.co","password":"secret"}`)
+
+	require.Equal(t, http.StatusOK, login.Code, "body: %s", login.Body.String())
+	assert.Empty(t, svc.lastLoginCode,
+		"an absent code is empty rather than invented; the service decides what that means")
+}
+
 // TestRequestWithoutIdentityReturns401AtTheScopeLayer proves that when there is
 // no identity the authorization layer returns a 401 and NOT a 403.
 //

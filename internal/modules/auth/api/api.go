@@ -103,8 +103,11 @@ type Auth interface {
 	InviteUser(ctx context.Context, userID, invitedBy string) error
 	// AcceptInvitation spends an invitation and sets the user's first password.
 	AcceptInvitation(ctx context.Context, token, password string) error
-	// Login produces a session token from an email and a password.
-	Login(ctx context.Context, email, password string) (string, time.Time, error)
+	// Login produces a session token from an email, a password and — when the
+	// account holds a proven second factor — the code its authenticator shows
+	// (ADR 0147). An empty code from such an account is refused with
+	// service.CodeMFARequired.
+	Login(ctx context.Context, email, password, code string) (string, time.Time, error)
 	// Logout drops ALL of the caller's sessions and returns the revocation
 	// moment.
 	//
@@ -120,6 +123,9 @@ type Auth interface {
 	EnrolMFA(ctx context.Context, userID, issuer string) (service.MFAEnrollment, error)
 	// ConfirmMFA proves that the authenticator holds the stored secret.
 	ConfirmMFA(ctx context.Context, userID, code string) error
+	// RemoveMFA takes the second factor off the given user's account and reports
+	// whether there was one to take.
+	RemoveMFA(ctx context.Context, userID string) (bool, error)
 	// GetUser returns the user by their identifier.
 	GetUser(ctx context.Context, id string) (models.User, error)
 	// ListUsers filters and pages the users.
@@ -316,6 +322,13 @@ func (h *Handler) Routes(r chi.Router) {
 	// user id for the same reason (see mfa.go).
 	read.Post(MFAEnrolPath, h.adminEnrolMFA)
 	read.Post(MFAConfirmPath, h.adminConfirmMFA)
+	// Turning it OFF is the same act on the same record and asks for the same
+	// scope. There is deliberately no endpoint that removes somebody ELSE's
+	// factor: an administrator who could would be one stolen session away from
+	// switching off a colleague's, and the whole point of the factor is that a
+	// stolen session is not enough (ADR 0147). The answer for a lost phone is
+	// `gobit mfa-reset`, at the machine.
+	read.Delete(MFAEnrolPath, h.adminRemoveMFA)
 
 	// --- api keys ---
 	write.Post("/admin/v1/api-keys", h.adminCreateAPIKey)

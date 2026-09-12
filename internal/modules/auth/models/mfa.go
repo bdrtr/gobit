@@ -22,6 +22,14 @@ type MFACredential struct {
 	// the only place in this module that holds the key. Nothing that crosses a
 	// module or an HTTP boundary ever carries it.
 	Secret []byte
+	// PendingSecret is a SEALED secret waiting to be proven, or nil.
+	//
+	// It exists only beside a confirmed [MFACredential.Secret] (ADR 0147): once a
+	// factor is DEMANDED at login, replacing the proven secret with one nobody has
+	// scanned would let an abandoned enrollment turn the demand off. So the new
+	// secret waits here, the old phone keeps signing in, and the confirmation
+	// moves across when a code from the new one arrives.
+	PendingSecret []byte
 	// ConfirmedAt is when the first correct code arrived, or nil.
 	ConfirmedAt *time.Time
 	// CreatedAt is when the secret was written.
@@ -30,3 +38,6 @@ type MFACredential struct {
 
 // Confirmed reports whether the credential has been proven.
 func (c MFACredential) Confirmed() bool { return c.ConfirmedAt != nil }
+
+// Waiting reports whether a replacement secret is waiting to be proven.
+func (c MFACredential) Waiting() bool { return len(c.PendingSecret) > 0 }

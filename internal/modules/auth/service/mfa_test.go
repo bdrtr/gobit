@@ -135,12 +135,21 @@ func TestAWrongCodeConfirmsNothing(t *testing.T) {
 	assert.False(t, confirmed)
 }
 
-// TestReEnrollingREPLACESAndUnconfirms is what somebody with a lost phone does.
+// TestReEnrollingKeepsTheProvenFactorUntilTheNewOneIsScanned is somebody moving
+// to a new phone while still holding the old one.
 //
-// The old secret has to stop working, and the new one has to be unproven until
-// its first code — otherwise a person could enroll a factor they never scanned and
-// be locked out by it.
-func TestReEnrollingREPLACESAndUnconfirms(t *testing.T) {
+// # The assertion that matters is the one in the middle
+//
+// A second enrollment used to clear the confirmation, and that was harmless while
+// nothing demanded the factor. Once a login does (ADR 0147), it becomes a way out
+// of the second factor that needs no secret at all: start an enrollment, walk away,
+// and the next password alone is enough. So the account stays CONFIRMED across the
+// enrollment, and what changes is only which secret the confirm endpoint compares
+// against.
+//
+// A person who has LOST the phone cannot come through here any more — they cannot
+// sign in to ask. That case is `gobit mfa-reset`, at the machine.
+func TestReEnrollingKeepsTheProvenFactorUntilTheNewOneIsScanned(t *testing.T) {
 	t.Parallel()
 
 	now := time.Unix(1111111111, 0).UTC()
@@ -157,12 +166,53 @@ func TestReEnrollingREPLACESAndUnconfirms(t *testing.T) {
 
 	confirmed, err := svc.HasConfirmedMFA(t.Context(), user)
 	require.NoError(t, err)
-	assert.False(t, confirmed, "the replacement is unproven until it is scanned")
+	assert.True(t, confirmed,
+		"the proven factor stands until the replacement is scanned; an abandoned "+
+			"enrollment must not be a way out of it")
 
 	err = svc.ConfirmMFA(t.Context(), user, codeFor(t, first.Secret, now))
-	require.Error(t, err, "the LOST phone's code must not confirm the new enrollment")
+	require.Error(t, err,
+		"the OLD phone's code must not confirm the new enrollment; it would leave "+
+			"somebody believing the app they just scanned works")
 
 	require.NoError(t, svc.ConfirmMFA(t.Context(), user, codeFor(t, second.Secret, now)))
+
+	// And now the old one is the one that stopped working: the promotion moved the
+	// secret, so what the first phone shows confirms nothing and signs nobody in.
+	stillConfirmed, err := svc.HasConfirmedMFA(t.Context(), user)
+	require.NoError(t, err)
+	assert.True(t, stillConfirmed)
+}
+
+// TestRemovingTheFactorLeavesTheAccountWithNone is the operator's reset and the
+// owner's switch-off, which are the same write.
+//
+// The second call is the one worth having: an account that has no factor is the
+// state the caller asked for, so removing nothing is not an error — it is the
+// answer "there is none", which is what an operator running the reset by hand
+// needs to be able to tell apart from "done".
+func TestRemovingTheFactorLeavesTheAccountWithNone(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1111111111, 0).UTC()
+	svc, _ := newMFAService(t, now)
+	user := testUser
+
+	enrollment, err := svc.EnrolMFA(t.Context(), user, "Acme")
+	require.NoError(t, err)
+	require.NoError(t, svc.ConfirmMFA(t.Context(), user, codeFor(t, enrollment.Secret, now)))
+
+	removed, err := svc.RemoveMFA(t.Context(), user)
+	require.NoError(t, err)
+	assert.True(t, removed, "there was one to remove")
+
+	confirmed, err := svc.HasConfirmedMFA(t.Context(), user)
+	require.NoError(t, err)
+	assert.False(t, confirmed, "the account holds no factor after the reset")
+
+	again, err := svc.RemoveMFA(t.Context(), user)
+	require.NoError(t, err)
+	assert.False(t, again, "removing nothing is not a failure, it is an answer")
 }
 
 // TestConfirmingTwiceIsRefusedRatherThanSilent keeps the first moment.

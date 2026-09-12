@@ -278,11 +278,12 @@ func (d *fakeRepo) TakeInvitation(
 
 // --- second factor ------------------------------------------------------------
 
-// PutMFACredential writes the enrolment, replacing any the user had.
+// PutMFACredential writes the enrollment, replacing an UNCONFIRMED one.
 //
-// It clears the confirmation with it, which is what the ON CONFLICT in the real
-// query does: a fake that kept the old stamp would let a test prove that a NEW
-// secret counts as already proven.
+// It clears nothing else and it refuses a CONFIRMED credential with the sentinel,
+// which is what the real query's WHERE clause does (ADR 0147). A fake that
+// overwrote a confirmed row would let a test prove that an abandoned enrollment
+// switches the second factor off, which is the thing that must not be provable.
 func (d *fakeRepo) PutMFACredential(
 	_ context.Context, userID string, sealed []byte,
 ) (models.MFACredential, error) {
@@ -292,10 +293,68 @@ func (d *fakeRepo) PutMFACredential(
 	if d.mfa == nil {
 		d.mfa = map[string]models.MFACredential{}
 	}
+	if existing, ok := d.mfa[userID]; ok && existing.Confirmed() {
+		return models.MFACredential{}, repository.ErrNoMFACredential
+	}
 
 	d.mfa[userID] = models.MFACredential{UserID: userID, Secret: sealed}
 
 	return d.mfa[userID], nil
+}
+
+// PutPendingMFASecret parks a secret beside a CONFIRMED one, like the real UPDATE.
+func (d *fakeRepo) PutPendingMFASecret(
+	_ context.Context, userID string, sealed []byte,
+) (models.MFACredential, error) {
+	if d.mfaErr != nil {
+		return models.MFACredential{}, d.mfaErr
+	}
+
+	credential, ok := d.mfa[userID]
+	if !ok || !credential.Confirmed() {
+		return models.MFACredential{}, repository.ErrNoMFACredential
+	}
+
+	credential.PendingSecret = sealed
+	d.mfa[userID] = credential
+
+	return credential, nil
+}
+
+// PromotePendingMFASecret moves the waiting secret across in ONE step, like the
+// real UPDATE: the secret, the empty pending column and the fresh stamp are one
+// write, so no test can observe a state in which two secrets are accepted.
+func (d *fakeRepo) PromotePendingMFASecret(
+	_ context.Context, userID string,
+) (models.MFACredential, error) {
+	if d.mfaErr != nil {
+		return models.MFACredential{}, d.mfaErr
+	}
+
+	credential, ok := d.mfa[userID]
+	if !ok || !credential.Waiting() {
+		return models.MFACredential{}, repository.ErrNoMFACredential
+	}
+
+	stamped := time.Now().UTC()
+	credential.Secret = credential.PendingSecret
+	credential.PendingSecret = nil
+	credential.ConfirmedAt = &stamped
+	d.mfa[userID] = credential
+
+	return credential, nil
+}
+
+// DeleteMFACredential drops the credential and reports whether there was one.
+func (d *fakeRepo) DeleteMFACredential(_ context.Context, userID string) (bool, error) {
+	if d.mfaErr != nil {
+		return false, d.mfaErr
+	}
+
+	_, ok := d.mfa[userID]
+	delete(d.mfa, userID)
+
+	return ok, nil
 }
 
 // GetMFACredential reads one, or says there is none.

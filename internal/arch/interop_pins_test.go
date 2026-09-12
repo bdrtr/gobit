@@ -40,6 +40,8 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	corehttp "github.com/bdrtr/gobit/core/http"
+	"github.com/bdrtr/gobit/core/query"
+	"github.com/bdrtr/gobit/internal/adminui"
 	authsvc "github.com/bdrtr/gobit/internal/modules/auth/service"
 	b2bsvc "github.com/bdrtr/gobit/internal/modules/b2b/service"
 	cartapi "github.com/bdrtr/gobit/internal/modules/cart/api"
@@ -160,6 +162,26 @@ var (
 	_ corehttp.Authenticator      = (*authsvc.Interop)(nil)
 )
 
+// The ADMIN PANEL resolving a module's surface.
+//
+// The panel is the fourth tree and may import no module (ADR 0004), so it declares
+// five narrow interfaces of its own and resolves five names by hand. None of them
+// was pinned until ADR 0147, and the gap was not theoretical: widening
+// [authsvc.Service.Login] with the second factor's code broke `adminui.Session` and every
+// lane that compiles stayed green — the panel would have failed at BOOT, in the
+// smoke lane, with "does not implement".
+//
+// Two of the five are OPTIONAL at resolution (a panel runs without the product
+// module), which makes the drift quieter still: the surface a missing module leaves
+// nil is indistinguishable from the surface a renamed method leaves unsatisfied.
+var (
+	_ adminui.Session       = (*authsvc.Service)(nil)
+	_ adminui.Catalog       = query.Query(nil)
+	_ adminui.ProductWriter = (*productsvc.AdminSurface)(nil)
+	_ adminui.PriceWriter   = (*pricingsvc.AdminSurface)(nil)
+	_ adminui.StockAdmin    = (*inventorysvc.AdminSurface)(nil)
+)
+
 // A FLOW resolving another FLOW's surface.
 //
 // One pair today: the returns flow opens a shipment through the fulfilling flow
@@ -196,6 +218,11 @@ var pinnedNames = map[string]string{
 	"product.interop":              "the searchpg plugin's catalog read",
 	"auth.interop":                 "the composition root and the admin panel's authenticator",
 	"notification.interop":         "the auth module carrying an invitation",
+	"auth.service":                 "the admin panel's sign-in and sign-out",
+	"core.query":                   "the admin panel's catalog read",
+	"product.admin":                "the admin panel's product form",
+	"pricing.admin":                "the admin panel's price form",
+	"inventory.admin":              "the admin panel's stock form",
 }
 
 // interopPinExemptions are the consumed interop names this file does NOT pin, and
@@ -211,6 +238,21 @@ var interopPinExemptions = map[string]string{
 		"IS pinned above — the name is listed here because it does not end in .interop " +
 		"and the derivation below prices the interop family.",
 }
+
+// The names this file pins that the derivation does NOT price, and the measured
+// size of what is still unpriced.
+//
+// The scan below walks the `.interop` family. Measured on 2026-09-12 the tree
+// resolves TWENTY-THREE provided names from outside the module that owns them, of
+// which nineteen are that family; the other four families are the five panel names
+// above plus the core's own services (`core.db`, `core.eventbus`, `core.link`,
+// `core.query`, `core.workflow`, `core.workflow.store`), the provider registries
+// and four module services resolved by other modules.
+//
+// Widening the derivation is a decision rather than an edit: a core service has one
+// consumer interface per module that resolves it, so "the" pin for `core.db` is a
+// choice this file cannot make on its own. What is NOT deferred is the cost of
+// being wrong, which is written above the panel's block — it already happened once.
 
 // TestEveryConsumedInteropNameIsPinned checks the list against the world.
 //

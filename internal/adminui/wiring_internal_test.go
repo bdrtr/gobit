@@ -23,7 +23,7 @@ func (wiringCatalog) Graph(context.Context, query.GraphSpec) ([]query.Record, er
 // wiringSession satisfies the panel's identity surface.
 type wiringSession struct{}
 
-func (wiringSession) Login(context.Context, string, string) (string, time.Time, error) {
+func (wiringSession) Login(context.Context, string, string, string) (string, time.Time, error) {
 	return "", time.Time{}, nil
 }
 

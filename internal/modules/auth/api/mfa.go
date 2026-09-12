@@ -100,6 +100,44 @@ func (h *Handler) adminConfirmMFA(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
+// adminRemoveMFA takes the CALLER's second factor off their account
+// (DELETE /admin/v1/auth/mfa).
+//
+// # Why it names no user either
+//
+// For [Handler.adminEnrolMFA]'s reason turned around. An endpoint that took a
+// user id would let an administrator switch OFF a colleague's second factor, and
+// an attacker holding one stolen admin session could then reach every other
+// account with a password alone — which undoes exactly what the factor is for
+// (ADR 0147).
+//
+// So a lost phone is not answered here. It is answered at the machine, with
+// `gobit mfa-reset`, by somebody who can already read the database.
+//
+// # Why 204 whether or not there was one
+//
+// The account ends up in the state the caller asked for either way, and telling
+// the two apart over HTTP would answer "does this account hold a factor" for a
+// caller who is entitled to ask it about themselves — but the answer is already
+// theirs to see, and a status code that varies invites a client to branch on
+// something that is not a failure.
+func (h *Handler) adminRemoveMFA(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	userID, ok := h.personOrRefuse(w, r)
+	if !ok {
+		return
+	}
+
+	if _, err := h.svc.RemoveMFA(ctx, userID); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
+}
+
 // personOrRefuse answers the id of the PERSON who made the request.
 //
 // It refuses two shapes and they are different faults. No principal at all means

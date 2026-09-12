@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	stderrors "errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/auth/models"
+	"github.com/bdrtr/gobit/internal/modules/auth/repository"
 )
 
 // This file carries the module's password decisions.
@@ -191,7 +194,8 @@ func (s *Service) SetPassword(ctx context.Context, userID, password string) erro
 	return nil
 }
 
-// Login authenticates with an email address and a password and produces a
+// Login authenticates with an email address, a password and — when the account
+// holds a second factor — the six digits its authenticator shows, and produces a
 // session token.
 //
 // # One error, one duration
@@ -213,11 +217,22 @@ func (s *Service) SetPassword(ctx context.Context, userID, password string) erro
 // immeasurable next to the bcrypt round (hundreds of milliseconds) that
 // dominates the duration.
 //
+// # The second factor, and why its answers are NOT the same error
+//
+// An account with a proven factor does not get a token from a password alone
+// (ADR 0147). The refusal names itself — [CodeMFARequired] when no code came,
+// [CodeMFACodeWrong] when the wrong one did — and that is not a hole in the
+// paragraph above: both are returned only AFTER the password matched, so the only
+// caller who can see them already knows the password. A client that could not tell
+// them apart from a wrong password would have no way to ask for the digits.
+//
 // # Return
 //
 // The token and the expiry moment are returned. The token IS A SECRET; the
 // caller must not log it, only pass it on in the response body.
-func (s *Service) Login(ctx context.Context, email, password string) (string, time.Time, error) {
+func (s *Service) Login(
+	ctx context.Context, email, password, code string,
+) (string, time.Time, error) {
 	if err := s.ready(); err != nil {
 		return "", time.Time{}, err
 	}
@@ -277,6 +292,10 @@ func (s *Service) Login(ctx context.Context, email, password string) (string, ti
 		return "", time.Time{}, s.failLogin(ctx, "the password did not match", user.ID)
 	}
 
+	if err := s.demandSecondFactor(ctx, user.ID, identity.ID, code, now); err != nil {
+		return "", time.Time{}, err
+	}
+
 	if err := s.repo.RegisterLoginSuccess(ctx, identity.ID, now); err != nil {
 		// If the counter could not be cleared the login is still valid; not
 		// letting the user in would mean locking the administration out because
@@ -294,6 +313,70 @@ func (s *Service) Login(ctx context.Context, email, password string) (string, ti
 		slog.String("user_id", user.ID),
 	)
 	return token, expiresAt, nil
+}
+
+// demandSecondFactor refuses the login unless the account's proven factor agrees.
+//
+// # Why it runs BEFORE the success is registered
+//
+// [repository.Repo.RegisterLoginSuccess] clears the failed-attempt counter, and
+// that counter is the only bound on guessing in this module. Clearing it on a
+// correct password would make the lockout unreachable for somebody who has the
+// password and is trying codes: every attempt would reset the count and a
+// six-digit secret would fall in an afternoon. So the order is the rule, not a
+// tidiness: the counter is cleared once the WHOLE login succeeded.
+//
+// # Which failure counts as an attempt
+//
+// A wrong code does, for the reason above. An ABSENT code does not: it is the
+// first half of an ordinary two-step sign-in, and counting it would mean every
+// login this account ever makes spends one of its attempts and a person who typed
+// their password correctly three times would be locked out.
+func (s *Service) demandSecondFactor(
+	ctx context.Context, userID, identityID, code string, now time.Time,
+) error {
+	credential, err := s.repo.GetMFACredential(ctx, userID)
+	if stderrors.Is(err, repository.ErrNoMFACredential) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !credential.Confirmed() {
+		// An enrollment nobody proved is not a factor yet; demanding it would lock
+		// out the person whose scan failed half way.
+		return nil
+	}
+
+	if strings.TrimSpace(code) == "" {
+		return errors.Unauthorized(CodeMFARequired,
+			"this account is protected by an authenticator; send the six digits it "+
+				"shows as \"code\" together with the password")
+	}
+
+	// The key can go missing between one boot and the next, and that must not
+	// become an account with no second factor. There is no check for it here: the
+	// box itself refuses a keyless open with CodeMFAUnavailable, so the failure is
+	// already closed and a second guard would only be a second place to get it
+	// wrong. A mutation proved exactly that — the explicit check broke no test
+	// because it decided nothing.
+	secret, err := s.secrets.open(credential.Secret)
+	if err != nil {
+		return err
+	}
+
+	matches, err := totpMatches(string(secret), code, s.clock())
+	if err != nil {
+		return err
+	}
+	if !matches {
+		s.registerFailure(ctx, identityID, now)
+
+		return errors.Unauthorized(CodeMFACodeWrong,
+			"that code is not the one this authenticator produces right now")
+	}
+
+	return nil
 }
 
 // failLogin LOGS the reason of a failed login and returns the generic error.

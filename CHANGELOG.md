@@ -64,6 +64,32 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **İkinci etken artık İSTENİYOR** (ADR 0147). ADR 0143 yöneticiye ikinci etkeni
+  TUTACAK yeri verdi — mühürlü TOTP sırrı, iki uç, RFC 6238 — ama "bu kişi
+  telefonunu kanıtladı mı" sorusunu soran metodun tek çağıranı kendi testiydi:
+  kişi kaydolup onaylıyor, sonra parolasıyla hiçbir şey olmamış gibi giriyordu.
+  Bu deponun kendi tekrarlayan kusuru, ve burada daha kötüsü — yaptığını iddia
+  ettiği şey yönetimi korumak, ve açan kurulum korunduğuna inanıyordu. Artık
+  `Login` jetonu imzalamadan önce hesabın kanıtlanmış etkenini soruyor; kod giriş
+  gövdesinde geliyor ve retler KENDİLERİNİ adlandırıyor (`auth_mfa_required`,
+  `auth_mfa_code_wrong`), ikisi de yalnızca parola DOĞRU çıktıktan sonra, yani
+  yabancıya hesap hakkında bir şey söylemiyorlar. Yanlış kod bir deneme sayılıyor
+  (altı haneyi tahmin etmenin tek sınırı o sayaç), eksik kod sayılmıyor (sıradan
+  iki adımlı girişin ilk yarısı). ADR 0143'ün bıraktığı üç soru ŞEKİLLE
+  cevaplandı: makine etkilenmiyor (talep parola girişinde, anahtarın
+  authenticator'ı yok), kanıtlanmamış kayıt hiçbir şey istemiyor (yarıda kalan
+  tarama kimseyi kilitlemiyor), ve yeniden kayıt artık onayı SİLMİYOR — yeni sır
+  `pending_secret`'ta kanıtlanmışın YANINDA bekliyor, çünkü silmek ikinci etkenden
+  hiç sır gerektirmeyen bir çıkış yolu olurdu. Telefonunu kaybeden artık kendi
+  başına düzeltemiyor ve hiçbir uç onun yerine düzeltmiyor: meslektaşının etkenini
+  kaldırabilen bir yönetici, çalınmış TEK bir oturumu her hesaba parolayla girmeye
+  yeterli kılardı. Kalan yol makinede: `gobit mfa-reset <email> -confirm <email>`.
+  Hiçbir şey mağaza genelinde zorunlu değil (kimse kaydolmadan zorunluluk herkesi
+  aynı anda kilitler) ve bu known-limits'e yazıldı. Ve `Login`'i genişletmek
+  `adminui.Session`'ı derlenen her şeritte YEŞİL kalarak kırdı: panel beş yüzeyi
+  adla çözüyor ve hiçbiri sabitlenmemişti — arıza AÇILIŞTA bekliyordu; beşi de
+  artık sabitli.
+
 - **Bir operatör artık TELEFONDAN sipariş alabiliyor** (ADR 0146). Sepetin
   yönetici yüzeyi kararla salt okunurdu: panelden yapılan bir düzeltme,
   müşterinin baktığı tutarı arkasından değiştirmek demekti. O gerekçe bir sepeti

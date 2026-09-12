@@ -118,10 +118,28 @@ type Catalog interface {
 // 0001); the panel does not import the auth module.
 type Session interface {
 	// Login verifies credentials and returns the token with its expiry.
-	Login(ctx context.Context, email, password string) (string, time.Time, error)
+	//
+	// code is the six digits an authenticator shows and is EMPTY for an account
+	// that holds none. An account that holds a proven one is refused without it,
+	// with [CodeMFARequired] (ADR 0147).
+	Login(ctx context.Context, email, password, code string) (string, time.Time, error)
 	// Logout drops ALL of the caller's sessions and returns the cut-off instant.
 	Logout(ctx context.Context, principalID, principalKind string) (time.Time, error)
 }
+
+// CodeMFARequired and CodeMFACodeWrong are the two refusals the panel has to
+// tell apart from a wrong password.
+//
+// They are LITERALS and not the identity service's own constants, because this
+// tree may not import a module (ADR 0001/0004) — the same shape the cart flow
+// uses for the product filter's name. What keeps them honest is a pin: a third
+// package imports both sides and compares them (internal/arch/interop_pins_test.go),
+// so a renamed code fails the build rather than turning "type your code" back into
+// "your password is wrong".
+const (
+	CodeMFARequired  = "auth_mfa_required"
+	CodeMFACodeWrong = "auth_mfa_code_wrong"
+)
 
 // UI is the admin panel. It is safe for concurrent use.
 type UI struct {

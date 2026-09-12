@@ -1268,7 +1268,7 @@ type panelSession struct {
 	token    string
 }
 
-func (p panelSession) Login(_ context.Context, email, password string) (string, time.Time, error) {
+func (p panelSession) Login(_ context.Context, email, password, _ string) (string, time.Time, error) {
 	if email != p.email || password != p.password {
 		return "", time.Time{}, errors.Unauthorized("auth_invalid_credentials", "invalid credentials")
 	}

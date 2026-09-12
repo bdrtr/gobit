@@ -149,14 +149,24 @@ type Repository interface {
 	CreateUser(ctx context.Context, u models.User, identity *models.AuthIdentity) (models.User, error)
 	GetUser(ctx context.Context, id string) (models.User, error)
 
-	// PutMFACredential writes a second-factor enrollment, replacing the one that
-	// user had and clearing its confirmation. The secret arrives SEALED.
+	// PutMFACredential writes a second-factor enrollment nobody has proven yet,
+	// replacing an unconfirmed one. The secret arrives SEALED. A CONFIRMED
+	// credential matches nothing and answers repository.ErrNoMFACredential.
 	PutMFACredential(ctx context.Context, userID string, sealed []byte) (models.MFACredential, error)
+	// PutPendingMFASecret parks a sealed secret beside the confirmed one; a
+	// credential that is not confirmed answers repository.ErrNoMFACredential.
+	PutPendingMFASecret(ctx context.Context, userID string, sealed []byte) (models.MFACredential, error)
+	// PromotePendingMFASecret makes the waiting secret the one that signs in, in
+	// one statement; nothing waiting answers repository.ErrNoMFACredential.
+	PromotePendingMFASecret(ctx context.Context, userID string) (models.MFACredential, error)
 	// GetMFACredential reads one user's credential, or repository.ErrNoMFACredential.
 	GetMFACredential(ctx context.Context, userID string) (models.MFACredential, error)
 	// ConfirmMFACredential stamps the first correct code. A credential that is
 	// already confirmed matches nothing and answers the same sentinel.
 	ConfirmMFACredential(ctx context.Context, userID string) (models.MFACredential, error)
+	// DeleteMFACredential takes the factor off an account and reports whether
+	// there was one to take.
+	DeleteMFACredential(ctx context.Context, userID string) (bool, error)
 	GetUserByEmail(ctx context.Context, email string) (models.User, error)
 	ListUsers(ctx context.Context, filter models.UserFilter, limit, offset int64) ([]models.User, int64, error)
 	UpdateUser(ctx context.Context, id string, patch models.UserPatch, now time.Time) (models.User, error)

@@ -112,15 +112,36 @@ func Describe(d *openapi.Doc) {
 // describeIdentity describes the login, identity read and logout endpoints.
 func describeIdentity(d *openapi.Doc) {
 	d.Describe(http.MethodPost, LoginPath, openapi.Operation{
-		Summary: "Produces an admin session token from an email and a password.",
+		Summary: "Produces an admin session token from an email, a password and the " +
+			"authenticator code when the account holds one.",
 		Description: "This is the only way to obtain a token and the endpoint is " +
 			"UNPROTECTED. A wrong email and a wrong password return the SAME 401; had " +
 			"a distinction been made, the response itself would have handed out the " +
-			"information 'this email is registered'.",
+			"information 'this email is registered'.\n\n" +
+			"`code` is the six digits the account's authenticator shows and is optional " +
+			"in the body. An account with a PROVEN second factor is refused without it, " +
+			"with code \"auth_mfa_required\", and refused with the wrong one, with " +
+			"\"auth_mfa_code_wrong\" — so a client that does not know whether this " +
+			"account has a factor sends the password alone, reads the code, asks for " +
+			"the digits and repeats the request. Both answers arrive only AFTER the " +
+			"password matched, so neither tells a stranger anything about the account.\n\n" +
+			"A wrong code counts as a failed attempt and can lock the account for a " +
+			"while, exactly as a wrong password does; an ABSENT code does not, because " +
+			"it is the first half of an ordinary two-step sign-in.",
 		RequestBody: passwordBody(d, loginRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("The session token, its type and its expiry moment",
 				d.Item(loginResponse{})),
+			"401": openapi.ErrorResponse(
+				"The credentials do not match — code \"auth_invalid_credentials\" for " +
+					"anything about the email or the password — or the account's second " +
+					"factor was not satisfied: \"auth_mfa_required\" when no code came " +
+					"and \"auth_mfa_code_wrong\" when the wrong one did."),
+			"500": openapi.ErrorResponse(
+				"The account holds a second factor and this installation has no " +
+					"MFA_SECRET_KEY, so the stored secret cannot be read. Code " +
+					"\"auth_mfa_unavailable\"; the login is refused rather than served " +
+					"without the factor."),
 		},
 	})
 
@@ -183,8 +204,15 @@ func describeIdentity(d *openapi.Doc) {
 			"The response carries the secret, once, as base32 and as an `otpauth://` " +
 			"link for a QR code. There is no way to give an authenticator app a secret " +
 			"without showing one; what makes it safe here is that it is never readable " +
-			"again — asking twice draws a NEW secret and unconfirms the old one, which " +
-			"is what somebody with a lost phone does.\n\n" +
+			"again — asking twice draws a NEW secret.\n\n" +
+			"What a second enrollment does NOT do is unconfirm the factor already on " +
+			"the account: the new secret WAITS beside the proven one and the old " +
+			"authenticator keeps signing in until a code from the new one arrives. " +
+			"Since a login demands the factor, an enrollment that cleared the " +
+			"confirmation and was then abandoned would be a way out of it that needs " +
+			"no secret at all.\n\n" +
+			"A LOST phone cannot be fixed here, because its owner cannot sign in to " +
+			"ask: that is `gobit mfa-reset`, run at the machine.\n\n" +
 			"The credential does not count until POST " + MFAConfirmPath + " succeeds.",
 		Responses: map[string]any{
 			"200": openapi.Response("The enrollment, readable once", d.Item(mfaEnrollmentDTO{})),
@@ -208,7 +236,11 @@ func describeIdentity(d *openapi.Doc) {
 			"A code is six digits and is accepted one thirty-second step either side " +
 			"of now, so at most ninety seconds. A wrong code, a late one and a " +
 			"malformed one are the SAME answer: telling them apart would tell somebody " +
-			"guessing whether they are close.",
+			"guessing whether they are close.\n\n" +
+			"When a second enrollment is waiting, the code has to come from the NEW " +
+			"authenticator: the old one's code confirms nothing, or somebody would " +
+			"walk away believing the app they just scanned works. The swap is one " +
+			"statement, so there is no moment in which both are accepted.",
 		RequestBody: d.RequestBody(confirmMFARequest{}),
 		Responses: map[string]any{
 			"204": emptyResponse("The second factor is confirmed"),
@@ -218,6 +250,23 @@ func describeIdentity(d *openapi.Doc) {
 			"422": openapi.ErrorResponse(
 				"The code is not the one this authenticator produces right now. Code " +
 					"\"auth_mfa_code_wrong\"."),
+		},
+	})
+
+	d.Describe(http.MethodDelete, MFAEnrolPath, openapi.Operation{
+		Summary: "Takes the CALLER's second factor off their account.",
+		Description: "It names no user for the enrollment endpoint's reason turned " +
+			"around: an endpoint that took an identifier would let one administrator " +
+			"switch OFF another's second factor, and a single stolen admin session " +
+			"would then open every account with a password alone.\n\n" +
+			"So this is not the answer for a lost phone — its owner cannot sign in to " +
+			"call it. That is `gobit mfa-reset`, run by somebody at the machine.\n\n" +
+			"An account that holds no factor is answered the same way: the state the " +
+			"caller asked for is the state they end up in.",
+		Responses: map[string]any{
+			"204": emptyResponse("The account holds no second factor"),
+			"422": openapi.ErrorResponse(
+				"The request was made with an API key. Code \"auth_mfa_not_a_person\"."),
 		},
 	})
 

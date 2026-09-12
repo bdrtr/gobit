@@ -39,7 +39,16 @@ func mfaRequest(
 ) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	return mfaRequestWithMethod(t, h, http.MethodPost, path, body, principalID, kind)
+}
+
+// mfaRequestWithMethod is [mfaRequest] for the verb that is not POST.
+func mfaRequestWithMethod(
+	t *testing.T, h http.Handler, method, path, body, principalID, kind string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	if principalID != "" {
 		req = req.WithContext(corehttp.WithPrincipal(req.Context(),
@@ -110,6 +119,46 @@ func TestConfirmingCarriesTheCodeAndTheCaller(t *testing.T) {
 	assert.Equal(t, "usr_01CALLER0000000000", svc.mfaConfirmFor)
 	assert.Equal(t, "123456", svc.mfaCode)
 	assert.Empty(t, rec.Body.String(), "204 carries no body")
+}
+
+// TestRemovingActsOnTheCALLERAndNobodyElse is the delete endpoint's whole claim,
+// and it is the enrollment's claim turned around.
+//
+// An endpoint that took a user id would let one administrator switch OFF another's
+// second factor. An attacker with one stolen admin session could then walk into
+// every other account with a password alone, which is the exact thing the factor
+// is there to stop — so the address carries no id and the handler acts on whoever
+// the ring proved (ADR 0147).
+func TestRemovingActsOnTheCALLERAndNobodyElse(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeAuth{}
+	router := mfaRouter(t, svc, "")
+
+	rec := mfaRequestWithMethod(t, router, http.MethodDelete, api.MFAEnrolPath, "",
+		"usr_01CALLER0000000000", "user")
+
+	require.Equal(t, http.StatusNoContent, rec.Code, "body: %s", rec.Body.String())
+	assert.Equal(t, "usr_01CALLER0000000000", svc.mfaRemovedFor)
+	assert.Empty(t, rec.Body.String(), "204 carries no body")
+}
+
+// TestAnAPIKeyCannotRemoveASecondFactor closes the other half of the same door.
+//
+// A key cannot enroll one, so a key removing one could only ever be removing
+// somebody else's — which is the request this surface does not offer at all.
+func TestAnAPIKeyCannotRemoveASecondFactor(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeAuth{}
+	router := mfaRouter(t, svc, "")
+
+	rec := mfaRequestWithMethod(t, router, http.MethodDelete, api.MFAEnrolPath, "",
+		"key_01MACHINE00000000", "api_key")
+
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body: %s", rec.Body.String())
+	assert.Empty(t, svc.mfaRemovedFor, "nothing may be removed for a machine")
+	assert.Contains(t, rec.Body.String(), api.CodeMFANotAPerson)
 }
 
 // TestTheIssuerReachesTheEnrollment is what a person sees in their app.

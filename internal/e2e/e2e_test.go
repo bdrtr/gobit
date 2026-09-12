@@ -184,6 +184,10 @@ const (
 const (
 	// testJWTSecret is the signing secret of the end-to-end tests.
 	testJWTSecret = "e2e-test-signing-secret-longer-than-32-bytes"
+	// testMFASecretKey seals the TOTP secrets of the administrators these tests
+	// enroll. It is SEPARATE from the signing secret for the reason production
+	// keeps them apart: they are rotated at different hours.
+	testMFASecretKey = "e2e-mfa-sealing-key-longer-than-32-bytes"
 	// adminEmail is the e-mail address of the fixture administrator.
 	adminEmail = "admin@gobit.test"
 	// adminPassword is the password of the fixture administrator.
@@ -656,6 +660,11 @@ func setUpHarness(ctx context.Context) error {
 		JWTSecret: testJWTSecret,
 		JWTTTL:    time.Hour,
 		JWTIssuer: "gobit-e2e",
+		// The key that lets an administrator hold a second factor. It is set here
+		// because without one the module REFUSES to enroll, and the demand at login
+		// (ADR 0147) can only be exercised end to end by an account that really
+		// enrolled — a harness with no key would prove the refusal and nothing else.
+		MFASecretKey: testMFASecretKey,
 		// The bcrypt cost is LOWERED for the test: the default cost adds ~100ms to
 		// every login call and the identity scenarios perform dozens of logins. The
 		// cost parameter ITSELF is not exercised here; the behavior of password

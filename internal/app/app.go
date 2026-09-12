@@ -179,6 +179,8 @@ func Main(args []string, out io.Writer, opts Options) error {
 		return runSeed(args[1:], out, opts)
 	case refoldInvoicesCommand:
 		return runRefoldInvoices(args[1:], out, opts)
+	case mfaResetCommand:
+		return runMFAReset(args[1:], out, opts)
 	default:
 		if err := writeReport(out, usageText(opts.version())); err != nil {
 			return err

@@ -26,6 +26,23 @@ template contributes is the escaping every field here gets.
   <label>Password
     <input type="password" name="password" required autocomplete="current-password">
   </label>
+  {{- /*
+  The authenticator box is ALWAYS on the form and is NOT required (ADR 0147).
+
+  The two-step alternative — take the password, discover the account holds a
+  factor, ask again — has to carry the password across the second request, and
+  the only places to carry it are a hidden field or server-side state. Neither is
+  worth it here: an operator with no authenticator leaves the box empty, and one
+  who has it types six digits they are already looking at.
+
+  inputmode and autocomplete are what a phone keyboard and a password manager
+  read; without them the field asks for a numeric secret and offers a full
+  keyboard for it.
+  */ -}}
+  <label>Authenticator code (if your account has one)
+    <input type="text" name="code" inputmode="numeric" autocomplete="one-time-code"
+           pattern="[0-9]*" maxlength="8">
+  </label>
   <button type="submit">Sign in</button>
 </form>
 {{ end }}

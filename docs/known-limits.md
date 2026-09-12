@@ -518,6 +518,18 @@ past and is not corrected retroactively.
   pricing read and a decision about which price applies to a replacement, and
   neither has been made.
 
+- **A second factor is demanded of whoever holds one, and required of nobody.**
+  Since [ADR 0147](adr/0147-a-second-factor-is-demanded.md) an administrator who
+  proved an authenticator cannot sign in with a password alone — but an
+  installation cannot insist that its administrators enrol. There is no setting,
+  and the reason is that its first effect would be locking out every administrator
+  at once: nobody has enrolled, so a shop-wide requirement needs a grace period
+  and a way to see who is still without one, which is a separate decision.
+  Recovery codes are absent for the same kind of reason: the way back from a lost
+  phone is `gobit mfa-reset <email> -confirm <email>`, which needs shell access
+  and answers the case in one act, so a second readable secret would be a second
+  thing to store and re-issue for nothing.
+
 - **An operator can build a telephone order but cannot finish it.** Since
   [ADR 0146](adr/0146-an-operator-can-build-a-cart.md) the cart's admin surface
   opens a cart and adds priced lines to it, and that is all it does: the shipping

@@ -25,6 +25,15 @@ type loginRequest struct {
 	// Password is the user's plaintext password; it travels as the [secret]
 	// type and is masked when logged.
 	Password secret `json:"password"`
+	// Code is the six digits the account's authenticator shows, when it has one.
+	//
+	// It is OPTIONAL in the body and mandatory for an account that holds a proven
+	// factor: a client that does not know whether this account has one sends the
+	// password alone, is answered `auth_mfa_required`, asks for the digits and
+	// repeats the request (ADR 0147). It is not typed as a [secret] — six digits
+	// that expire in thirty seconds are not worth masking in a log, and the
+	// masking is what makes the password's type stand out.
+	Code string `json:"code"`
 }
 
 // createUserRequest is the body of the user creation request.
