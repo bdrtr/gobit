@@ -176,6 +176,36 @@ func TestTheInstallationCarriesTheEmbeddersOwnModule(t *testing.T) {
 	assert.Equal(t, `{"points":42}`, own.Body.String())
 }
 
+// TestTheCatalogCachePolicyReachesTheWire is the end-to-end half of ADR 0151, and
+// it is here rather than in internal/e2e for a reason worth stating: the policy
+// comes from the ENVIRONMENT, and this is the only test surface that boots a whole
+// installation from environment variables it sets itself.
+//
+// What it proves beyond the handler's own test is that nothing between the handler
+// and the socket strips the header — a guard ring, the response writer, the
+// logging middleware. That is a chain no unit test sees.
+func TestTheCatalogCachePolicyReachesTheWire(t *testing.T) {
+	configureInstallation(t)
+	t.Setenv("STOREFRONT_CATALOG_CACHE_TTL", "120s")
+	t.Setenv("STOREFRONT_CATALOG_CACHE_SHARED", "true")
+
+	handler, stop, err := gobit.New().InProcess(t.Context())
+	require.NoError(t, err)
+
+	defer stop()
+
+	// A read with no publishable key is refused by the guard ring, and the refusal
+	// must carry NO cache header: a CDN storing a 401 would lock a whole channel's
+	// catalog out for the length of the TTL.
+	refused := request(t, handler, http.MethodGet,
+		"/store/v1/sales-channels/sc_1/products", nil)
+	require.Equal(t, http.StatusUnauthorized, refused.Code)
+	assert.Empty(t, refused.Header().Get("Cache-Control"),
+		"a refusal must never be cacheable, and this one is produced by the RING rather "+
+			"than by the handler — which is why it is asserted here and not beside the "+
+			"handler's own tests")
+}
+
 // TestTheHandlerIsUsableAfterTheContextThatBuiltItIsDone is the trap a harness
 // invites.
 //

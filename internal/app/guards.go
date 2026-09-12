@@ -106,6 +106,7 @@ func guardStack(
 	log *slog.Logger,
 ) ([]func(http.Handler) http.Handler, *corehttp.CallbackRegistry, error) {
 	warnAboutRateLimit(cfg, log)
+	warnAboutCatalogCache(cfg, log)
 
 	// The audit log is unconditional in a real server: an installation whose
 	// admin writes are not recorded looks exactly like one where nobody wrote
@@ -388,6 +389,41 @@ func warnAboutRateLimit(cfg config.Config, log *slog.Logger) {
 			"SINGLE bucket for the WHOLE STORE and one customer can lock the storefront",
 		"remedy", "give the number of reverse proxies you trust with TRUSTED_PROXY_HOPS; for an "+
 			"installation facing the internet directly 0 is CORRECT and this warning should be ignored")
+}
+
+// warnAboutCatalogCache reports a shared catalog cache, because it moves a gate.
+//
+// The publishable key is a GATE with no influence on the channel-scoped catalog
+// bodies since ADR 0044, so `public` lets a CDN serve those bodies to callers that
+// present no key at all for as long as the entry lives. Most shops want exactly
+// that — the storefront's catalog is what they show the world — and it is still
+// the kind of change an operator should be told they made, in the log they read
+// at boot.
+//
+// It is an Info and not a Warn in a private installation, and a Warn in a shared
+// one, which is the same split [warnAboutRateLimit] makes for the same reason: a
+// developer running locally is not making a production decision.
+func warnAboutCatalogCache(cfg config.Config, log *slog.Logger) {
+	if cfg.CatalogCacheTTL <= 0 || !cfg.CatalogCacheShared {
+		return
+	}
+
+	message := "the channel-scoped catalog is cacheable by SHARED caches"
+	fields := []any{
+		"ttl", cfg.CatalogCacheTTL.String(),
+		"consequence", "a CDN or reverse proxy may serve a stored catalog body to a caller " +
+			"that presents NO publishable key, for up to the TTL",
+		"remedy", "set STOREFRONT_CATALOG_CACHE_SHARED=false to keep the key a gate; the " +
+			"TTL then applies to the shopper's own client only",
+	}
+
+	if cfg.IsShared() {
+		log.Warn(message, fields...)
+
+		return
+	}
+
+	log.Info(message, fields...)
 }
 
 // jwtSecret returns the signing secret; in development it generates one for

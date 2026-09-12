@@ -251,6 +251,10 @@ func (h *Handler) storeListProducts(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(r.Context(), w, err)
 		return
 	}
+	// The body is a function of the URL alone (ADR 0044), so it may be reused;
+	// how long and by whom is the installation's (ADR 0151).
+	h.allowCaching(w)
+
 	writeList(w, r, result)
 }
 
@@ -279,6 +283,10 @@ func (h *Handler) storeGetProduct(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(r.Context(), w, err)
 		return
 	}
+	// The body is a function of the URL alone (ADR 0044), so it may be reused;
+	// how long and by whom is the installation's (ADR 0151).
+	h.allowCaching(w)
+
 	writeItem(w, r, http.StatusOK, product)
 }
 
@@ -455,6 +463,10 @@ func (h *Handler) storeListOptionValues(w http.ResponseWriter, r *http.Request) 
 
 		return
 	}
+	// The body is a function of the URL alone (ADR 0044), so it may be reused;
+	// how long and by whom is the installation's (ADR 0151).
+	h.allowCaching(w)
+
 	writeList(w, r, result)
 }
 

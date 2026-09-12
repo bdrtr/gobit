@@ -64,6 +64,31 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Katalog artık ne kadar süre YENİDEN KULLANILABİLECEĞİNİ söylüyor** (ADR 0151).
+  ADR 0044 satış kanalını katalog YOLUNA taşımıştı — "paylaşılan bir önbelleğin
+  saklayabileceği şey budur" — ve bilerek hiçbir önbellek açmamış, tazelik
+  politikasını da seçmemişti. Politikayı belirleyen olgu orada ÖLÇÜLMÜŞ: katalog
+  gövdesi YAZMA OLMADAN değişebiliyor, çünkü fiyat listesi penceresi SAATE karşı
+  açılıyor (`listablePrices` saati argüman alıyor). Yani yazmada geçersiz kılma
+  asla tam olamaz — 09:00 geldiğinde hiçbir şey yazmıyor — ve tek tam olabilecek
+  araç TTL. Artık üç kanal-kapsamlı okuma BAŞARI yolunda
+  `Cache-Control: <kapsam>, max-age=<ttl>` yazıyor; TTL
+  `STOREFRONT_CATALOG_CACHE_TTL`'den geliyor (sıfır — varsayılan — hiçbir başlık
+  yazmıyor) ve kapsam `STOREFRONT_CATALOG_CACHE_SHARED` açık değilse `private`.
+  İki ayar iki AYRI soru: TTL tazelik, `shared` GÜVENLİK — ADR 0044'ten beri
+  publishable key gövdeye etki etmeyen bir KAPI, yani `public` bir CDN'in saklanmış
+  gövdeyi ANAHTARSIZ çağırana servis etmesine izin verir. Çoğu mağaza tam bunu
+  istiyor (kanalın kataloğu vitrinin dünyaya gösterdiği şey, anahtar da tarayıcıda
+  duruyor) ama bu deponun onlar adına vereceği bir karar değil: varsayılan false ve
+  paylaşılan bir kurulum açılışta UYARI alıyor. Başlık handler başına ve başarı
+  yolunda yazılıyor; middleware rota tablosunu ikinci kez bilmek zorunda kalırdı ve
+  handler'ın gövdeyle mi retle mi cevaplayacağını GÖREMEZ — CDN'in TTL boyunca
+  sakladığı bir 404, düzeltildikten sonra da kayıp kalan bir ürün demek. Negatif
+  TTL açılışı durduruyor, sıfır kabul ediliyor: sıfır bir cevap, `-1h` ise
+  yaptığını söylediğini sanan bir yazım hatası. Beş mutasyondan biri hayatta kaldı
+  ve kusur KODDA değil TESTTEydi: doğrulayıcı `-1h`'yi reddediyordu ve bunu hiçbir
+  test tutmuyordu.
+
 - **gobit'i GÖMEN bir program artık onu kendi testinde ayağa kaldırabiliyor**
   (ADR 0150). gobit bir KÜTÜPHANE (ADR 0025) ama onu gömen bir programın ona karşı
   test yazma yolu yoktu: facade yalnızca `Main(args, out)` sunuyor — porta bağlanıp

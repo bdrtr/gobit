@@ -509,6 +509,11 @@ func registerModules(registry *module.Registry, cfg config.Config, log *slog.Log
 	// know the config package (Principle 2.4), the values are passed in from
 	// here as parameters.
 	registry.Add(product.New(product.Options{
+		// The catalog's freshness policy. Both values are the operator's and the
+		// module may not read configuration (Principle 2.4); the zero TTL — the
+		// default — writes no header at all (ADR 0151).
+		CatalogCacheTTL:    cfg.CatalogCacheTTL,
+		CatalogCacheShared: cfg.CatalogCacheShared,
 		GraphQL: graph.Options{
 			MaxDepth:      cfg.GraphQLMaxDepth,
 			MaxComplexity: cfg.GraphQLMaxComplexity,

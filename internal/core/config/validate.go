@@ -52,6 +52,16 @@ func (c Config) Validate() error {
 	if c.ShutdownTimeout <= 0 {
 		return fmt.Errorf("config: SHUTDOWN_TIMEOUT has to be positive, %s given", c.ShutdownTimeout)
 	}
+	// A NEGATIVE catalog cache TTL is refused while zero is accepted, and the two
+	// readings are different on purpose: zero is "write no cache header", which is
+	// the default and a real answer, while a negative duration is a value somebody
+	// typed wrongly. Treating it as "off" would let "-1h" look like it did what it
+	// says (ADR 0151).
+	if c.CatalogCacheTTL < 0 {
+		return fmt.Errorf(
+			"config: STOREFRONT_CATALOG_CACHE_TTL cannot be negative, %s given; zero turns "+
+				"the cache header off", c.CatalogCacheTTL)
+	}
 	for _, t := range []struct {
 		name  string
 		value time.Duration

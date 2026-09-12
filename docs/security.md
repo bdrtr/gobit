@@ -117,6 +117,19 @@ and its narrowing is not a second implementation: all four routes reach one
 published helper, `corehttp.SalesChannelScope`, and `internal/arch` refuses any
 other way of reading the segment.
 
+**A cacheable catalog moves the gate, and that is a setting rather than a
+default.** Since [ADR 0151](adr/0151-the-catalog-says-how-long-it-may-be-reused.md)
+the three channel-scoped REST reads carry `Cache-Control` when
+`STOREFRONT_CATALOG_CACHE_TTL` is positive — nothing by default. The second
+setting is the one that matters here: `STOREFRONT_CATALOG_CACHE_SHARED` writes
+`public` instead of `private`, and because the key influences these bodies in no
+way any more, a CDN may then serve a stored body to a caller presenting **no key at
+all** for as long as the entry lives. For most shops that is the point — a
+channel's catalog is what the storefront shows the world and a publishable key is
+not a secret — but it is the shop's decision, so the flag defaults to false and a
+shared installation is warned at boot. Refusals are never cacheable: a stored 401
+would lock a channel's catalog out for the length of the TTL.
+
 The binding is made from the admin side:
 
 ```

@@ -33,6 +33,7 @@ var envKeys = []string{
 	"GUARD_BACKEND", "REDIS_KEY_PREFIX", "NOTIFICATION_PROVIDER",
 	"FILE_PROVIDER", "FILE_ROOT", "FILE_MAX_UPLOAD_BYTES", "FILE_ALLOWED_TYPES",
 	"GRAPHQL_MAX_DEPTH", "GRAPHQL_MAX_COMPLEXITY", "GRAPHQL_INTROSPECTION",
+	"STOREFRONT_CATALOG_CACHE_TTL", "STOREFRONT_CATALOG_CACHE_SHARED",
 	"DB_MAX_CONNS", "DB_MIN_CONNS",
 }
 
@@ -296,6 +297,37 @@ func TestTimeoutValidation(t *testing.T) {
 				t.Fatalf("Load() should have returned an error (%s=%s)", tt.key, tt.value)
 			}
 		})
+	}
+}
+
+// TestTheCatalogCacheTTLRefusesANegativeValueAndAcceptsZero keeps the two
+// readings apart (ADR 0151).
+//
+// Zero is a real answer — "write no cache header", the default every installation
+// gets — while a negative duration is a value somebody typed wrongly. Reading the
+// second as the first would let `-1h` look like it did what it says, and the
+// operator would go on believing the catalog is uncacheable for an hour.
+func TestTheCatalogCacheTTLRefusesANegativeValueAndAcceptsZero(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("STOREFRONT_CATALOG_CACHE_TTL", "-1h")
+
+	if _, err := config.Load(); err == nil {
+		t.Fatal("Load() should have refused a negative STOREFRONT_CATALOG_CACHE_TTL")
+	}
+
+	clearEnv(t)
+	t.Setenv("STOREFRONT_CATALOG_CACHE_TTL", "0s")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("zero has to be accepted: %v", err)
+	}
+	if cfg.CatalogCacheTTL != 0 {
+		t.Fatalf("zero has to survive as zero, got %s", cfg.CatalogCacheTTL)
+	}
+	if cfg.CatalogCacheShared {
+		t.Fatal("the shared flag has to default to false; a cache nobody asked for " +
+			"must not be shareable")
 	}
 }
 

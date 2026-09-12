@@ -51,6 +51,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -149,6 +150,17 @@ type Options struct {
 	// Its zero value gives the package defaults; it does NOT MEAN
 	// "unlimited".
 	GraphQL graph.Options
+	// CatalogCacheTTL and CatalogCacheShared are the freshness policy of the
+	// CHANNEL-SCOPED storefront reads (ADR 0151).
+	//
+	// The zero TTL writes no cache header, so a module built with a zero Options
+	// serves exactly what it served before the setting existed. What the two mean
+	// and why the safe answer is the default is written where the configuration
+	// lives (config.Config.CatalogCacheTTL); this module does not interpret them,
+	// it passes them through — a default picked here would be a second definition
+	// of the same policy.
+	CatalogCacheTTL    time.Duration
+	CatalogCacheShared bool
 }
 
 // Module is the application the product module offers to the core.
@@ -297,7 +309,8 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	}
 
 	m.svc = svc
-	m.handler = api.New(svc, m.opts.GraphQL)
+	m.handler = api.New(svc, m.opts.GraphQL).
+		WithCatalogCache(m.opts.CatalogCacheTTL, m.opts.CatalogCacheShared)
 	return nil
 }
 

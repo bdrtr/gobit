@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -60,6 +61,9 @@ type Handler struct {
 	// parses the schema once and carries the parsed-query cache inside itself;
 	// rebuilding it on every request would throw both away.
 	graphql http.Handler
+	// cache is the freshness policy of the channel-scoped catalog reads
+	// (ADR 0151); its zero value writes no header.
+	cache catalogCache
 }
 
 // New builds a handler with the given service and GraphQL limits.
@@ -78,6 +82,23 @@ type Handler struct {
 // request arrives.
 func New(svc Catalog, graphOpts graph.Options) *Handler {
 	return &Handler{svc: svc, graphql: graph.NewHandler(svc, graphOpts)}
+}
+
+// WithCatalogCache sets the freshness policy of the channel-scoped catalog reads
+// (ADR 0151).
+//
+// It is a separate call rather than a parameter of [New] for the reason the MFA
+// issuer is one on the auth module's handler: the two values come from the
+// installation's configuration, which this package may not read (Principle 2.4),
+// and a constructor that grew a parameter for every such value would have to be
+// edited by every caller each time one arrives.
+//
+// A ttl of zero — the default — writes no header at all, so a handler nobody
+// calls this on behaves exactly as it did before the setting existed.
+func (h *Handler) WithCatalogCache(ttl time.Duration, shared bool) *Handler {
+	h.cache = catalogCache{ttl: ttl, shared: shared}
+
+	return h
 }
 
 // That the concrete service satisfies the surface the api layer expects is

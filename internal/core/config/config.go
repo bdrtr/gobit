@@ -838,6 +838,47 @@ type Config struct {
 	// other way round: it makes being OPEN a decision rather than an accident.
 	StorefrontTrustsUnverifiedCustomerClaim bool `env:"STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM" envDefault:"false"`
 
+	// CatalogCacheTTL is how long the CHANNEL-SCOPED catalog reads may be reused
+	// before they are fetched again, and ZERO — the default — writes no cache
+	// header at all (ADR 0151).
+	//
+	// # Why the default is off
+	//
+	// Turning it on changes what every existing installation serves, and it does so
+	// invisibly: a shopper sees a price that was true a minute ago. ADR 0044 moved
+	// the sales channel into the PATH so that a shared cache could store one body
+	// per URL, and it deliberately did not choose the freshness policy; what decides
+	// it is measured there — the catalog body can change WITHOUT a write, because a
+	// price list window opens against the clock. So no purge on write can be
+	// complete and a TTL is the only correct instrument, which means the value is a
+	// trade an operator makes rather than a default this repository can pick.
+	//
+	// # What the number means
+	//
+	// The longest a shopper may see a price, a stock state or a new product late. A
+	// shop whose prices turn over at a known hour sizes it against that hour; a shop
+	// whose catalog moves all day sizes it against how stale a listing may look
+	// beside the product page.
+	CatalogCacheTTL time.Duration `env:"STOREFRONT_CATALOG_CACHE_TTL" envDefault:"0s"`
+
+	// CatalogCacheShared says whether a cache OUTSIDE the shopper's own client may
+	// store those responses; the default is false, which writes `private`.
+	//
+	// # Why this is a separate question from the TTL
+	//
+	// Because it is a security decision and the TTL is a freshness one. After
+	// ADR 0044 the publishable key is a GATE and not an input to the body: the
+	// channel comes from the path, so the body is a function of the URL alone. A
+	// `public` response can therefore be stored by a CDN and served to a caller that
+	// presents NO KEY — the gate is bypassed for as long as the entry lives.
+	//
+	// For most shops that is acceptable and is what they are asking for: a channel's
+	// catalog is what the storefront shows the world, and the key is not a secret
+	// (it sits in the browser). What it is NOT is something this repository may
+	// decide for them, and the false default means an installation that turns the
+	// TTL on without reading this still keeps its gate.
+	CatalogCacheShared bool `env:"STOREFRONT_CATALOG_CACHE_SHARED" envDefault:"false"`
+
 	// GraphQLMaxFieldRepetition is the upper bound on how many times the same field
 	// may be selected under the same object.
 	//
