@@ -1204,3 +1204,169 @@ func TestAnyInListeGONDERILMEDIYSEEslesmez(t *testing.T) {
 	assert.Zero(t, res.DiscountTotal,
 		"tek değer vip olsa bile: any_in LİSTE tarafını okur, ve liste yok")
 }
+
+// listItem kalemi LİSTE öznitelikleriyle kurar (ADR 0148).
+func listItem(id string, amount, quantity int64, lists map[string][]string) ComputeItem {
+	out := item(id, amount, quantity, nil)
+	out.Lists = lists
+
+	return out
+}
+
+// categoryPromotion hedef kuralı "şu kategorilerden herhangi birinde" olan
+// promosyonu kurar.
+func categoryPromotion(repo *memRepo, operator models.RuleOperator, attribute string) {
+	seedPromotion(repo,
+		models.Promotion{ID: "promo_1", Code: "KATEGORI", IsAutomatic: true},
+		percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach),
+		models.PromotionRule{
+			ID: "prule_1", PromotionID: "promo_1", RuleType: models.RuleTarget,
+			Attribute: attribute, Operator: operator, Values: []string{"cat_shirts"},
+		},
+	)
+}
+
+// TestHedefKuraliSatirinKATEGORISINIOkuyabilir ADR 0144'ün bıraktığı yarıdır.
+//
+// İşleç vardı, satırın sunacağı küme yoktu: ürün modülü üyeliği yayımlamıyordu,
+// yani "şu kategorilerden herhangi birindeki satırlara %50" yazılamıyordu
+// (ADR 0148).
+//
+// İki kalem var ve YALNIZCA biri o kategoride: hepsini seçen bir uygulama da,
+// hiçbirini seçmeyen de bu testte düşer.
+func TestHedefKuraliSatirinKATEGORISINIOkuyabilir(t *testing.T) {
+	repo := newMemRepo()
+	categoryPromotion(repo, models.OpAnyIn, "category_ids")
+
+	in := ComputeInput{
+		CurrencyCode: "TRY",
+		Items: []ComputeItem{
+			listItem("li_1", 10000, 1, map[string][]string{
+				"category_ids": {"cat_hats", "cat_shirts"},
+			}),
+			listItem("li_2", 10000, 1, map[string][]string{
+				"category_ids": {"cat_hats"},
+			}),
+		},
+	}
+	res, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
+	require.NoError(t, err)
+
+	assertInvariants(t, in, res)
+	assert.Equal(t, int64(5000), res.DiscountTotal,
+		"yalnızca kategorideki satır indirim almalı: 10000'in %50'si")
+	assert.Equal(t, int64(5000), res.Items[0].Amount)
+	assert.Zero(t, res.Items[1].Amount,
+		"öteki kategorideki satıra indirim düşmemeli; düşüyorsa kural OKUNMUYOR")
+}
+
+// TestHedefKuraliETIKETIdeOkuyabilir ikinci listeyi ayrı çiviler.
+//
+// Aynı mekanizma iki alan taşıyor ve biri çalışırken ötekinin unutulması sessiz
+// olurdu: etiket kuralı hiçbir satırı seçmez, indirim üretmez, hata da yoktur.
+func TestHedefKuraliETIKETIdeOkuyabilir(t *testing.T) {
+	repo := newMemRepo()
+	seedPromotion(repo,
+		models.Promotion{ID: "promo_1", Code: "ETIKET", IsAutomatic: true},
+		percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach),
+		models.PromotionRule{
+			ID: "prule_1", PromotionID: "promo_1", RuleType: models.RuleTarget,
+			Attribute: "tag_ids", Operator: models.OpAnyIn, Values: []string{"tag_sale"},
+		},
+	)
+
+	in := ComputeInput{
+		CurrencyCode: "TRY",
+		Items: []ComputeItem{
+			listItem("li_1", 10000, 1, map[string][]string{"tag_ids": {"tag_sale"}}),
+			listItem("li_2", 10000, 1, map[string][]string{"tag_ids": {"tag_new"}}),
+		},
+	}
+	res, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
+	require.NoError(t, err)
+
+	assertInvariants(t, in, res)
+	assert.Equal(t, int64(5000), res.Items[0].Amount)
+	assert.Zero(t, res.Items[1].Amount)
+}
+
+// TestSatirKuralindaTekDegerliIslecLISTEYEBAKMAZ ADR 0144'ün kuralını SATIR
+// tarafında tekrar eder.
+//
+// Aynı liste, kural `in` ile yazılmış: eşleşmemeli. İşleçler birbirine karışsaydı,
+// gönderilmiş bir `category_ids in [cat_shirts]` kuralı — ki tek bir değerle asla
+// eşleşmiyordu — bir gün eşleşmeye başlar ve canlı bir indirim hiçbir şey
+// duyurmadan genişlerdi.
+//
+// Ayrı vaka olması şart: tek fikstürde ikisi de sınansaydı baştan aşağı yanlış bir
+// uygulama ilk iddiaya takılırdı.
+func TestSatirKuralindaTekDegerliIslecLISTEYEBAKMAZ(t *testing.T) {
+	repo := newMemRepo()
+	categoryPromotion(repo, models.OpIn, "category_ids")
+
+	in := ComputeInput{
+		CurrencyCode: "TRY",
+		Items: []ComputeItem{
+			listItem("li_1", 10000, 1, map[string][]string{
+				"category_ids": {"cat_shirts"},
+			}),
+		},
+	}
+	res, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
+	require.NoError(t, err)
+
+	assertInvariants(t, in, res)
+	assert.Zero(t, res.DiscountTotal,
+		"`in` LİSTEYE BAKMAZ; satır tarafında da öyle")
+}
+
+// TestListesizSatirKATEGORIKuraliylaEslesmez bilinmeyeni eşleşmiş saymaz.
+//
+// Bir satırın listesi YOKSA ürünün hangi kategorilerde olduğu bilinmiyor —
+// kataloğu okunamayan ürün tam olarak böyle görünür (bkz. sepet akışının
+// `lineLists`). Bilinmeyeni eşleşmiş saymak, indirimi okunamayan her ürüne
+// açardı.
+func TestListesizSatirKATEGORIKuraliylaEslesmez(t *testing.T) {
+	repo := newMemRepo()
+	categoryPromotion(repo, models.OpAnyIn, "category_ids")
+
+	in := ComputeInput{
+		CurrencyCode: "TRY",
+		Items:        []ComputeItem{item("li_1", 10000, 1, nil)},
+	}
+	res, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
+	require.NoError(t, err)
+
+	assert.Zero(t, res.DiscountTotal)
+}
+
+// TestKargoHedefiKATEGORIKuraliylaEslesmez kargo tarafını ayrı söyler.
+//
+// Bir kargo yöntemi hiçbir kategoride değildir ve liste taşımaz. Kural eşleşmez,
+// ki doğru cevap budur; eşleşseydi "şu kategorideki ürünlere indirim" kuralı
+// kargoyu bedavaya çevirirdi.
+func TestKargoHedefiKATEGORIKuraliylaEslesmez(t *testing.T) {
+	repo := newMemRepo()
+	seedPromotion(repo,
+		models.Promotion{ID: "promo_1", Code: "KARGO", IsAutomatic: true},
+		percentageMethod("promo_1", 10000, models.TargetShippingMethods, models.AllocationEach),
+		models.PromotionRule{
+			ID: "prule_1", PromotionID: "promo_1", RuleType: models.RuleTarget,
+			Attribute: "category_ids", Operator: models.OpAnyIn, Values: []string{"cat_shirts"},
+		},
+	)
+
+	in := ComputeInput{
+		CurrencyCode: "TRY",
+		Items: []ComputeItem{
+			listItem("li_1", 10000, 1, map[string][]string{"category_ids": {"cat_shirts"}}),
+		},
+		ShippingMethods: []ComputeShippingMethod{{ID: "sm_1", Amount: 4990}},
+	}
+	res, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
+	require.NoError(t, err)
+
+	assertInvariants(t, in, res)
+	assert.Zero(t, res.ShippingDiscountTotal,
+		"kargo yönteminin kategorisi yoktur; kural onu seçmemeli")
+}

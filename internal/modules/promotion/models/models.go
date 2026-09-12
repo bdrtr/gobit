@@ -422,6 +422,11 @@ const (
 	// is not tidiness: a shipped `eq vip` rule that started consulting the list
 	// would begin discounting customers whose head is not vip, and a live discount
 	// would change with nothing announcing it.
+	//
+	// Since ADR 0148 a TARGET rule reads a list too, and the lists it reads are the
+	// line's product's `category_ids` and `tag_ids`. That was the half ADR 0144
+	// left open: the operator existed, and a line had nothing set-shaped to offer
+	// it because the product module published no membership.
 	OpAnyIn RuleOperator = "any_in"
 )
 

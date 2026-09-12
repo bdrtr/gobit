@@ -386,7 +386,101 @@ func (p *productProvider) List(ctx context.Context, opts query.ListOptions) ([]q
 	if err != nil {
 		return nil, err
 	}
-	return records(products, productRecord, opts.Fields, EntityProduct)
+	return p.recordsWithMembership(ctx, products, opts.Fields)
+}
+
+// recordsWithMembership builds the records and fills the membership lists when
+// the caller asked for them.
+//
+// # Why it is conditional
+//
+// The lists cost two batch reads, and the readers that want them are the ones
+// asking a promotion rule's question. Every other consumer — the panel's catalog
+// grid, a link resolution, the tax leg's type lookup — names its fields and does
+// not name these, so it pays nothing. An EMPTY field list means "the whole
+// record" and therefore DOES pay: a caller who asked for everything and got two
+// empty lists for a product that is in three categories would have been told
+// something false.
+//
+// # Why the reads are not merged into the product query
+//
+// They are two more statements rather than two joins because a join would
+// multiply the product rows by their memberships and the page size is applied to
+// products. The same shape the service's own relation loading uses
+// ([Service.attachRelations]), for the same reason.
+func (p *productProvider) recordsWithMembership(
+	ctx context.Context, products []models.Product, fields []string,
+) ([]query.Record, error) {
+	built, err := records(products, productRecord, fields, EntityProduct)
+	if err != nil {
+		return nil, err
+	}
+	if len(products) == 0 || !wantsMembership(fields) {
+		return built, nil
+	}
+
+	ids := make([]string, 0, len(products))
+	for i := range products {
+		ids = append(ids, products[i].ID)
+	}
+
+	categories, err := p.repo.ListCategoriesByProductIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	tags, err := p.repo.ListTagsByProductIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range built {
+		if _, asked := built[i][fieldCategoryIDs]; asked {
+			built[i][fieldCategoryIDs] = categoryIDsOf(categories[products[i].ID])
+		}
+		if _, asked := built[i][fieldTagIDs]; asked {
+			built[i][fieldTagIDs] = tagIDsOf(tags[products[i].ID])
+		}
+	}
+
+	return built, nil
+}
+
+// wantsMembership reports whether the field selection includes a membership list.
+//
+// An empty selection is the whole record, which includes both.
+func wantsMembership(fields []string) bool {
+	if len(fields) == 0 {
+		return true
+	}
+
+	return slices.Contains(fields, fieldCategoryIDs) || slices.Contains(fields, fieldTagIDs)
+}
+
+// categoryIDsOf reduces the category rows to their ids, in the order the read
+// returned them.
+//
+// The order is the repository's (rank, then id) and it is kept rather than
+// re-sorted: a consumer that shows the first category shows the one the merchant
+// ranked first. A product in none gets an empty list and not nil, because the
+// field is published either way and `null` in a record would make every consumer
+// write the same nil check.
+func categoryIDsOf(categories []models.Category) []string {
+	out := make([]string, 0, len(categories))
+	for i := range categories {
+		out = append(out, categories[i].ID)
+	}
+
+	return out
+}
+
+// tagIDsOf reduces the tag rows to their ids; see [categoryIDsOf].
+func tagIDsOf(tags []models.Tag) []string {
+	out := make([]string, 0, len(tags))
+	for i := range tags {
+		out = append(out, tags[i].ID)
+	}
+
+	return out
 }
 
 // fetch reads by id if an id filter was given, and by the criteria if not.
@@ -428,13 +522,17 @@ func (p *productProvider) fetch(ctx context.Context, ids []string, filter reposi
 	return page(out, filter.Limit, filter.Offset), nil
 }
 
-// FetchByIDs returns the product records of the given ids in a SINGLE query.
+// FetchByIDs returns the product records of the given ids.
+//
+// It is "a SINGLE query" no longer when the caller asks for the membership lists,
+// and that is the only thing that changed here: a request naming the ordinary
+// fields still costs one statement.
 func (p *productProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([]query.Record, error) {
 	products, err := p.repo.ListProductsByIDs(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
-	return records(products, productRecord, fields, EntityProduct)
+	return p.recordsWithMembership(ctx, products, fields)
 }
 
 // Entity returns the name of the entity the provider offers.
@@ -617,13 +715,37 @@ const (
 	fieldUpdatedAt = "updated_at"
 )
 
+// The two MEMBERSHIP fields, and they are the only keys on a product record that
+// are not a column of [models.Product].
+//
+// A product belongs to ONE collection and ONE type, which is why those two are
+// scalars beside the rest; a category and a tag are lists, so they arrive from
+// the two map tables rather than from the product row. They are published because
+// a promotion rule cannot ask "is this line's product in any of these categories"
+// about data nothing publishes (ADR 0148), and the answer this record gives is
+// the same one the provider's `category_id` FILTER gives: DIRECT membership. A
+// category is a tree and neither side walks it.
+const (
+	fieldCategoryIDs = "category_ids"
+	fieldTagIDs      = "tag_ids"
+)
+
 // productRecord turns a product into a Query record.
 //
 // The keys are the same as the JSON field names: if the same data appeared under
 // two different names on two surfaces, the one writing the query and the one
 // reading the response would have to use different dictionaries.
+//
+// The two membership lists are EMPTY here and filled by
+// [productProvider.recordsWithMembership]: they are not on [models.Product] and
+// this function takes nothing else. An empty list rather than an absent key is
+// deliberate — [project] refuses a field the record does not carry, so a record
+// built without the key would make "category_ids" an unknown field on one code
+// path and a known one on another.
 func productRecord(p models.Product) query.Record {
 	return query.Record{
+		fieldCategoryIDs: []string{},
+		fieldTagIDs:      []string{},
 		"id":             p.ID,
 		"handle":         p.Handle,
 		"title":          p.Title,

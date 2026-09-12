@@ -71,6 +71,16 @@ const (
 	// the product record the catalog publishes — even though its consumer is the
 	// tax module rather than the promotion engine.
 	attrTypeID = "type_id"
+	// attrCategoryIDs and attrTagIDs are the line's product's MEMBERSHIPS, and
+	// they are lists rather than single values (ADR 0148).
+	//
+	// A product is in as many categories and carries as many tags as the merchant
+	// filed it under, so neither fits the attribute map: they go in the line's
+	// LIST map, where the `any_in` operator reads them (ADR 0144). The names are
+	// the field names the catalog publishes, for [attrIsGiftcard]'s reason — one
+	// string doing two jobs beats two spellings of one concept.
+	attrCategoryIDs = "category_ids"
+	attrTagIDs      = "tag_ids"
 )
 
 // EntityProduct is the entity name of products in the Query layer; the product
@@ -103,6 +113,15 @@ type productFacts struct {
 	// CollectionID is the collection that product is filed under; empty when it
 	// is in none.
 	CollectionID string
+	// CategoryIDs and TagIDs are the product's memberships, in the merchant's
+	// rank order (ADR 0148).
+	//
+	// They are lists because a product is in as many categories as it was filed
+	// under, which is why they reach the engine through the line's LIST map rather
+	// than its attribute map. They ride with the flags for [productFacts.TypeID]'s
+	// reason: the same record, the same read.
+	CategoryIDs []string
+	TagIDs      []string
 	// TypeID is the product's TYPE, and its consumer is the TAX module rather
 	// than the promotion engine: a rate rule matches on it (ADR 0101).
 	//
@@ -169,10 +188,22 @@ type discountRequestItem struct {
 	Quantity int64 `json:"quantity"`
 	// Attributes are the line attributes that target rules will look at.
 	Attributes map[string]string `json:"attributes"`
+	// Lists are the line attributes a target rule reads as a SET (ADR 0148).
+	//
+	// A sibling of Attributes for the reason [discountRequest.ContextLists] is a
+	// sibling of Context: the receiving side rejects unknown fields, so a retype
+	// would break it, and a rule that was shipped against a single value has to
+	// keep the answer it has. Only the `any_in` operator looks here.
+	Lists map[string][]string `json:"lists"`
 }
 
 // discountRequestShipping is the schema of a single shipping method in the
 // request.
+//
+// It carries NO list map, and the absence is a statement rather than an omission:
+// a shipping method is in no category and carries no tag, so a field for it would
+// be a promise nothing could ever fill. A rule asking a shipping target about a
+// category therefore matches nothing, which is the right answer.
 //
 // The type exists only so that the SCHEMA is COMPLETE; this package never sends a
 // shipping method.
@@ -404,6 +435,7 @@ func (w *Workflows) discountRequestFor(
 			UnitAmount: lines[i].UnitPrice,
 			Quantity:   snap.Items[i].Quantity,
 			Attributes: lineAttributes(snap.Items[i].VariantID, flags),
+			Lists:      lineLists(snap.Items[i].VariantID, flags),
 		})
 	}
 
@@ -482,6 +514,39 @@ func applyDiscountResponse(snap Snapshot, lines []LineTotals, resp discountRespo
 	return nil
 }
 
+// stringList reads a record value that should be a list of ids.
+//
+// # Why every other shape becomes an EMPTY list rather than an error
+//
+// The field is published by product's provider, so a renamed one fails the read
+// above — that half is loud. What can still arrive is a value of another shape,
+// from a provider that is not the product module's, and the choice there is the
+// same one [Workflows.productFactsFor] makes for a flag of the wrong type: the
+// line ends up with nothing to say about its categories, so a rule asking about
+// them does not match it. The opposite — guessing — would put a discount on a
+// line whose membership nobody read.
+//
+// `[]any` is the shape a record that has been through JSON carries, and `[]string`
+// the one an in-process provider hands over. Both are read; anything else is
+// dropped.
+func stringList(value any) []string {
+	switch list := value.(type) {
+	case []string:
+		return list
+	case []any:
+		out := make([]string, 0, len(list))
+		for _, item := range list {
+			if text, ok := item.(string); ok && text != "" {
+				out = append(out, text)
+			}
+		}
+
+		return out
+	default:
+		return nil
+	}
+}
+
 // lineAttributes builds one line's attribute map for the discount request.
 //
 // A variant with no flags is given the variant id ALONE, and the two keys are
@@ -518,6 +583,38 @@ func lineAttributes(variantID string, flags map[string]productFacts) map[string]
 	}
 
 	return attributes
+}
+
+// lineLists builds one line's LIST attributes for the discount request.
+//
+// # An empty membership is sent as an absent key, not an empty list
+//
+// The engine's `any_in` answers false for an empty list, so the two would behave
+// the same today — and they would stop behaving the same the day an operator gets
+// an operator meaning "in none of these". Absent says "this line has nothing to
+// say about categories", which is the fact; an empty list says "it is in zero
+// categories", which is a claim this package cannot make about a product it could
+// not read.
+//
+// A variant with no facts therefore gets NOTHING here, not even a key.
+func lineLists(variantID string, flags map[string]productFacts) map[string][]string {
+	flag, known := flags[variantID]
+	if !known {
+		return nil
+	}
+
+	lists := map[string][]string{}
+	if len(flag.CategoryIDs) > 0 {
+		lists[attrCategoryIDs] = flag.CategoryIDs
+	}
+	if len(flag.TagIDs) > 0 {
+		lists[attrTagIDs] = flag.TagIDs
+	}
+	if len(lists) == 0 {
+		return nil
+	}
+
+	return lists
 }
 
 // lineProductFacts resolves the two product flags of every line of the cart,
@@ -637,6 +734,7 @@ func (w *Workflows) productFactsFor(ctx context.Context, productIDs []string) (m
 		Entity: EntityProduct,
 		Fields: []string{
 			query.IDField, attrIsGiftcard, attrDiscountable, attrTypeID, attrCollectionID,
+			attrCategoryIDs, attrTagIDs,
 		},
 		Filters: map[string]any{FilterIDs: productIDs},
 		Limit:   len(productIDs),
@@ -669,6 +767,8 @@ func (w *Workflows) productFactsFor(ctx context.Context, productIDs []string) (m
 			IsGiftcard:   giftcard,
 			Discountable: discountable,
 			TypeID:       typeID,
+			CategoryIDs:  stringList(records[i][attrCategoryIDs]),
+			TagIDs:       stringList(records[i][attrTagIDs]),
 		}
 	}
 	return out, nil

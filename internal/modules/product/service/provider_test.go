@@ -103,14 +103,20 @@ func TestProductProviderFilters(t *testing.T) {
 // DRAFT, so dropping the status from the combination shows up as a count of two.
 type taxonomyFixture struct {
 	products query.Provider
-	shirts   models.Category
-	summer   models.Category
-	sale     models.Tag
-	fresh    models.Tag
+	// store is the same store the provider holds, so a test can count the reads
+	// the provider made rather than only what it returned.
+	store  *memStore
+	shirts models.Category
+	summer models.Category
+	sale   models.Tag
+	fresh  models.Tag
 	// listed is published, sits in BOTH categories and carries the "sale" tag.
 	listed models.Product
 	// draft sits in the shirt category and is not published.
 	draft models.Product
+	// loose belongs to NOTHING: no category, no tag. It is what makes a
+	// membership answer that leaked from one product to another visible.
+	loose models.Product
 }
 
 // newTaxonomyFixture builds the products, categories and tags of the taxonomy
@@ -146,7 +152,7 @@ func newTaxonomyFixture(t *testing.T) taxonomyFixture {
 	})
 	// The product that belongs to nothing. Without it a filter that was dropped
 	// on the floor would return the same two rows as a filter that was applied.
-	seedProductInput(t, svc, service.CreateProductInput{
+	loose := seedProductInput(t, svc, service.CreateProductInput{
 		Handle: "loose-hat",
 		Title:  "Loose Hat",
 		Status: models.StatusPublished,
@@ -154,12 +160,14 @@ func newTaxonomyFixture(t *testing.T) taxonomyFixture {
 
 	return taxonomyFixture{
 		products: service.NewProductProvider(store),
+		store:    store,
 		shirts:   shirts,
 		summer:   summer,
 		sale:     sale,
 		fresh:    fresh,
 		listed:   listed,
 		draft:    draft,
+		loose:    loose,
 	}
 }
 
@@ -812,4 +820,155 @@ func TestProviderPaging(t *testing.T) {
 	rest, err := products.List(ctx, query.ListOptions{Limit: 2, Offset: 2})
 	require.NoError(t, err)
 	assert.Len(t, rest, 1)
+}
+
+// The membership FIELDS, published so a promotion rule can ask about them
+// (ADR 0148).
+//
+// Everything below is about one pair of keys on the product record: the
+// categories a product is filed under and the tags it carries. They are the only
+// keys on that record that are not a column of the product row, which is why they
+// are worth their own block of tests — the read behind them can be skipped, can
+// be wrong per product, and can quietly cost two queries on every catalog page.
+
+// TestTheProductRecordPublishesItsMemberships is the producer's half of the
+// promotion question.
+//
+// A rule asking "is this line's product in any of these categories" needs the
+// answer to exist somewhere the cart can read. Before this it did not: the record
+// carried sixteen fields and none of them was a membership.
+func TestTheProductRecordPublishesItsMemberships(t *testing.T) {
+	t.Parallel()
+
+	fx := newTaxonomyFixture(t)
+
+	records, err := fx.products.List(context.Background(), query.ListOptions{
+		Fields:  []string{"id", "category_ids", "tag_ids"},
+		Filters: map[string]any{"ids": []string{fx.listed.ID}},
+	})
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+
+	assert.ElementsMatch(t, []string{fx.shirts.ID, fx.summer.ID},
+		records[0]["category_ids"],
+		"the product is in two categories and both have to be published")
+	assert.Equal(t, []string{fx.sale.ID}, records[0]["tag_ids"])
+}
+
+// TestAProductInNoCategoryPublishesAnEmptyList keeps the absent case a LIST.
+//
+// A nil would make every consumer write the same nil check, and a missing key
+// would make the field unknown on one code path and known on another — the Query
+// layer refuses a field the record does not carry, so the two would not even fail
+// the same way.
+func TestAProductInNoCategoryPublishesAnEmptyList(t *testing.T) {
+	t.Parallel()
+
+	fx := newTaxonomyFixture(t)
+
+	records, err := fx.products.List(context.Background(), query.ListOptions{
+		Fields:  []string{"id", "category_ids", "tag_ids"},
+		Filters: map[string]any{"handle": "loose-hat"},
+	})
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+
+	assert.Empty(t, records[0]["category_ids"])
+	assert.NotNil(t, records[0]["category_ids"], "an empty list, not a nil")
+	assert.Empty(t, records[0]["tag_ids"])
+	assert.NotNil(t, records[0]["tag_ids"])
+}
+
+// TestTheMembershipIsReadOnlyWhenItIsAskedFor is the cost half.
+//
+// The lists are two extra batch reads, and the consumers that want them are the
+// ones asking a rule's question. Every other reader — the panel's grid, a link
+// resolution, the tax leg's type lookup — names its fields and must pay nothing.
+func TestTheMembershipIsReadOnlyWhenItIsAskedFor(t *testing.T) {
+	t.Parallel()
+
+	fx := newTaxonomyFixture(t)
+	ctx := context.Background()
+
+	before := fx.store.callCount("ListCategoriesByProductIDs")
+
+	_, err := fx.products.List(ctx, query.ListOptions{Fields: []string{"id", "title"}})
+	require.NoError(t, err)
+	assert.Equal(t, before, fx.store.callCount("ListCategoriesByProductIDs"),
+		"a read that named neither list must not pay for one")
+
+	_, err = fx.products.List(ctx, query.ListOptions{Fields: []string{"id", "tag_ids"}})
+	require.NoError(t, err)
+	assert.Equal(t, before+1, fx.store.callCount("ListCategoriesByProductIDs"),
+		"asking for either list reads both; they come from one pass over the same ids")
+}
+
+// TestAskingForEverythingIncludesTheMemberships is the empty-selection case, and
+// it is the one that would have been wrong the quiet way.
+//
+// An empty field list means "the whole record". Returning it with two empty lists
+// would tell a caller who asked for everything that a product in three categories
+// is in none.
+func TestAskingForEverythingIncludesTheMemberships(t *testing.T) {
+	t.Parallel()
+
+	fx := newTaxonomyFixture(t)
+
+	records, err := fx.products.List(context.Background(), query.ListOptions{
+		Filters: map[string]any{"ids": []string{fx.listed.ID}},
+	})
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+
+	assert.ElementsMatch(t, []string{fx.shirts.ID, fx.summer.ID}, records[0]["category_ids"])
+	assert.Equal(t, []string{fx.sale.ID}, records[0]["tag_ids"])
+}
+
+// TestTheMembershipReachesFetchByIDsToo covers the OTHER entry point.
+//
+// `FetchByIDs` is what a link resolution goes through, and it used to be one
+// query with its own call to the record builder. A slice that taught only List
+// about the lists would leave a linked read answering "in no category" for the
+// same product — the same fact under two answers, decided by which path the
+// caller happened to take.
+func TestTheMembershipReachesFetchByIDsToo(t *testing.T) {
+	t.Parallel()
+
+	fx := newTaxonomyFixture(t)
+
+	records, err := fx.products.FetchByIDs(context.Background(),
+		[]string{fx.listed.ID}, []string{"id", "category_ids"})
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+
+	assert.ElementsMatch(t, []string{fx.shirts.ID, fx.summer.ID}, records[0]["category_ids"])
+}
+
+// TestTheMembershipIsPerProductAndNotShared is the mistake a batch read invites.
+//
+// One map, three products, and the answer for each has to be its own. A loop that
+// indexed the map by position rather than by id — or that reused the previous
+// product's slice — would pass every test above, because they all read ONE
+// product.
+func TestTheMembershipIsPerProductAndNotShared(t *testing.T) {
+	t.Parallel()
+
+	fx := newTaxonomyFixture(t)
+
+	records, err := fx.products.List(context.Background(), query.ListOptions{
+		Fields: []string{"id", "category_ids"},
+	})
+	require.NoError(t, err)
+	require.Len(t, records, 3, "the fixture has three products")
+
+	byID := map[string]any{}
+	for i := range records {
+		id, ok := records[i]["id"].(string)
+		require.True(t, ok)
+		byID[id] = records[i]["category_ids"]
+	}
+
+	assert.ElementsMatch(t, []string{fx.shirts.ID, fx.summer.ID}, byID[fx.listed.ID])
+	assert.Equal(t, []string{fx.shirts.ID}, byID[fx.draft.ID])
+	assert.Empty(t, byID[fx.loose.ID])
 }

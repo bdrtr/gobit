@@ -52,6 +52,13 @@ type ComputeItem struct {
 	// (örn. {"product_category_id": "cat_1"}). nil olabilir; o durumda hedef
 	// kuralı olan bir promosyon bu kalemi seçemez.
 	Attributes map[string]string
+	// Lists hedef kuralının KÜME olarak okuduğu kalem öznitelikleridir
+	// (örn. {"category_ids": ["cat_1", "cat_2"]}), ADR 0148.
+	//
+	// Attributes'ın kardeşi, yerine geçeni DEĞİL: yalnızca `any_in` işleci buraya
+	// bakar ve tek değere bakan işleçler buraya HİÇ bakmaz. Gönderilmiş bir `eq`
+	// kuralının cevabı, listenin gelmeye başlamasıyla değişemez.
+	Lists map[string][]string
 }
 
 // ComputeShippingMethod hesaba giren tek bir kargo yöntemidir.
@@ -480,6 +487,13 @@ type lineState struct {
 	quantity int64
 	// attributes hedef kurallarının bakacağı özniteliklerdir.
 	attributes map[string]string
+	// lists hedef kuralının KÜME olarak okuduğu özniteliklerdir (ADR 0148).
+	//
+	// Kargo yönteminde DAİMA boştur ve bu bir eksiklik değil: bir kargo yöntemi
+	// hiçbir kategoride değildir, etiket taşımaz, yani "şu kategorilerden herhangi
+	// birinde" sorusunun kargo için cevabı yoktur — kural eşleşmez, ki doğru cevap
+	// budur.
+	lists map[string][]string
 	// discount satıra o ana kadar uygulanmış TOPLAM indirimdir.
 	discount int64
 }
@@ -521,6 +535,7 @@ func computeDiscounts(candidates []models.PromotionCandidate, in ComputeInput) C
 			unitAmount: in.Items[i].UnitAmount,
 			quantity:   in.Items[i].Quantity,
 			attributes: in.Items[i].Attributes,
+			lists:      in.Items[i].Lists,
 		})
 	}
 	shipping := make([]lineState, 0, len(in.ShippingMethods))
@@ -761,11 +776,11 @@ func selectTargets(candidate models.PromotionCandidate, items, shipping []lineSt
 func filterLines(lines []lineState, rules []models.PromotionRule) []*lineState {
 	out := make([]*lineState, 0, len(lines))
 	for i := range lines {
-		// Satır kuralları için liste YOK, ve bu bir eksiklik değil bir karar: bir
-		// satırın nitelikleri tek bir varyantın olguları, ve "şu kategorilerden
-		// herhangi birinde" sorusu ürün modülünün üyeliği Query katmanından
-		// yayımlamasını ister — ayrı bir karar (ADR 0144'ün kapatmadığı yarı).
-		if len(rules) > 0 && !matchRules(rules, lines[i].attributes, nil) {
+		// Satırın LİSTELERİ ADR 0148 ile geldi: ürün modülü üyeliği Query
+		// katmanından yayımlıyor, sepet de her satırın kategori ve etiket
+		// kimliklerini gönderiyor. Kargo satırlarında liste boştur ve boş kalması
+		// doğrudur (bkz. [lineState.lists]).
+		if len(rules) > 0 && !matchRules(rules, lines[i].attributes, lines[i].lists) {
 			continue
 		}
 		out = append(out, &lines[i])

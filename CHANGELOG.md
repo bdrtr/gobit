@@ -64,6 +64,28 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir kural artık ürünün NEYE AİT olduğunu sorabiliyor** (ADR 0148). ADR 0144
+  kümeyi okuyan işleci (`any_in`) getirdi ve bağlam tarafına kümeyi verdi; satır
+  tarafına veremedi, çünkü bir ürünün kategorileri ve etiketleri ürün satırının
+  kolonu değil ve hiçbir şey onları yayımlamıyordu. Yani işleç vardı, sorularının
+  yarısı sorulamıyordu: tüccar "bu ürüne %20" ve "bu koleksiyona %20" yazabiliyor,
+  mağazanın gerçekten yürüttüğü kampanyayı — bir KATEGORİYE indirim —
+  yazamıyordu. Kural satırı kaydediliyor, yönetim ucu 200 dönüyor ve indirim
+  sessizce sıfır kalıyordu. Artık ürün kaydı `category_ids` ve `tag_ids`
+  yayımlıyor ve sepet her satırın listelerini gönderiyor. Okumalar YALNIZCA alan
+  adlandırıldığında yapılıyor: panelin ızgarası, bağ çözümü ve verginin tür
+  okuması hiçbir şey ödemiyor — ama BOŞ alan seçimi (yani "kaydın tamamı")
+  ödüyor, çünkü tamamı doğru olmak zorunda. Üyelik DOĞRUDAN, ki sağlayıcının
+  `category_id` SÜZGECİNİN verdiği cevabın aynısı: üst kategoriyi adlandıran bir
+  kural, yalnızca alt kategorilerde dosyalanmış ürünlere ulaşmıyor ve bu sınır
+  known-limits'te süzgecinkinin yanında duruyor. Kargo yöntemi liste TAŞIMIYOR ve
+  taşımayacak — hiçbir kategoride değildir — yani kargo hedefli bir kategori
+  kuralı hiçbir şey seçmiyor, ki doğru cevap budur. Ve bu turda düzyazıda kalmış
+  bir kural kapıya çevrildi: promosyon modülü aynı hesabı İKİ yüzeyde cevaplıyor
+  (sepetin interop'u ve `POST /admin/v1/promotions/compute`), ikisinin godoc'u da
+  şekillerin BİREBİR aynı kalmasını söylüyordu — alan birine eklendi, ötekine
+  eklenmedi ve hiçbir şey düşmedi (D85).
+
 - **İkinci etken artık İSTENİYOR** (ADR 0147). ADR 0143 yöneticiye ikinci etkeni
   TUTACAK yeri verdi — mühürlü TOTP sırrı, iki uç, RFC 6238 — ama "bu kişi
   telefonunu kanıtladı mı" sorusunu soran metodun tek çağıranı kendi testiydi:

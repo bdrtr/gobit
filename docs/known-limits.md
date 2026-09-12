@@ -138,11 +138,17 @@ past and is not corrected retroactively.
 
 ## The category tree
 
-- **A category listing walks ONE level.** `parent_id` filters by DIRECT
-  parentage and the catalog's category filter matches DIRECT membership, so
-  asking for a category does not bring its subcategories' products with it.
-  Nothing in this module resolves descendants; the day the SQL grows to, the
-  filter is where it goes (`service/provider.go`).
+- **A category listing walks ONE level, and so does a category PROMOTION.**
+  `parent_id` filters by DIRECT parentage and the catalog's category filter
+  matches DIRECT membership, so asking for a category does not bring its
+  subcategories' products with it. The `category_ids` the Query record publishes
+  since [ADR 0148](adr/0148-a-rule-can-ask-what-a-product-belongs-to.md) is the
+  same answer, deliberately: a rule reading "any of these categories" matches the
+  products filed under the named category and NOT the ones filed only under its
+  children, so a merchant running "half off Shirts" over a tree has to name the
+  subcategories too. Nothing in this module resolves descendants; the day the SQL
+  grows to, the filter and the record are the two places it goes
+  (`service/provider.go`).
 
 - **A move whose ancestry is deeper than sixty-four levels is refused, even when
   it would have been legitimate.** The update that reparents a category walks up

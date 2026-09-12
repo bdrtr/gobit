@@ -511,6 +511,14 @@ type computeItemRequest struct {
 	Quantity int64 `json:"quantity"`
 	// Attributes hedef kurallarının bakacağı özniteliklerdir.
 	Attributes map[string]string `json:"attributes"`
+	// Lists is what a TARGET rule reads as a SET (ADR 0148): the line's product's
+	// `category_ids` and `tag_ids`.
+	//
+	// It is here for [computeRequest.ContextLists]'s reason, and the cost of
+	// leaving it out would have been concrete: an operator trying a category rule
+	// on this endpoint would be told it discounts nothing, while the same rule
+	// discounts the same cart in the shop.
+	Lists map[string][]string `json:"lists"`
 }
 
 // computeShippingRequest hesaptaki tek bir kargo yönteminin gövdesidir.
@@ -562,6 +570,7 @@ func (a *API) computeDiscounts(w http.ResponseWriter, r *http.Request) {
 			UnitAmount: req.Items[i].UnitAmount,
 			Quantity:   req.Items[i].Quantity,
 			Attributes: req.Items[i].Attributes,
+			Lists:      req.Items[i].Lists,
 		})
 	}
 	for i := range req.ShippingMethods {

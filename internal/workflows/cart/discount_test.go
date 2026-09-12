@@ -400,6 +400,11 @@ func (c *productCatalog) Graph(ctx context.Context, spec query.GraphSpec) ([]que
 			// tax hop be deleted without a test noticing.
 			attrTypeID:       flag.TypeID,
 			attrCollectionID: flag.CollectionID,
+			// The two MEMBERSHIP lists, answered the way the provider answers
+			// them: an empty list for a product filed under nothing rather than a
+			// missing key (ADR 0148).
+			attrCategoryIDs: flag.CategoryIDs,
+			attrTagIDs:      flag.TagIDs,
 		})
 	}
 	return out, nil
@@ -425,6 +430,16 @@ func defaultProductFlags() map[string]productFacts {
 		testProductA: {Discountable: true},
 		testProductB: {Discountable: true},
 	}
+}
+
+// listsByLine collects the LIST attributes of a discount request by line id.
+func listsByLine(req discountRequest) map[string]map[string][]string {
+	out := make(map[string]map[string][]string, len(req.Items))
+	for i := range req.Items {
+		out[req.Items[i].ID] = req.Items[i].Lists
+	}
+
+	return out
 }
 
 // attributesByLine collects the attributes of a discount request by line id.
@@ -689,4 +704,124 @@ func TestTheProductAndCollectionCostNoExtraRead(t *testing.T) {
 	attributes := attributesByLine(h.discounts.requests[0])
 	assert.Equal(t, "pcol_summer", attributes[testLineB][attrCollectionID],
 		"both lines of one product carry the same collection")
+}
+
+// The LINE MEMBERSHIPS (ADR 0148).
+//
+// The half ADR 0144 left open: the `any_in` operator existed and a line had
+// nothing set-shaped to offer it, because the catalog published no membership.
+// What these tests hold is the cart's part — that each line carries ITS OWN
+// product's categories and tags, and that a line with none carries no key at all.
+// Whether a rule then matches belongs to the promotion module and is tested
+// there.
+
+// TestEachLineCarriesItsOwnMemberships is the discriminating test.
+//
+// The two products are filed under DIFFERENT categories, so an implementation
+// that read one product's lists and copied them onto the cart — the shape a batch
+// read invites — fails here and passes everything else.
+func TestEachLineCarriesItsOwnMemberships(t *testing.T) {
+	t.Parallel()
+
+	h := newModuleHarness(t)
+	h.catalog.products = map[string]string{
+		testVariantA: testProductA,
+		testVariantB: testProductB,
+	}
+	installProductCatalog(h, map[string]productFacts{
+		testProductA: {Discountable: true, CategoryIDs: []string{"cat_shirts", "cat_summer"}},
+		testProductB: {Discountable: true, CategoryIDs: []string{"cat_hats"}, TagIDs: []string{"tag_sale"}},
+	})
+	serveSnapshot(h.carts, twoLineCart(1))
+
+	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	lists := listsByLine(h.discounts.requests[0])
+
+	assert.Equal(t, []string{"cat_shirts", "cat_summer"}, lists[testLineA][attrCategoryIDs])
+	assert.Equal(t, []string{"cat_hats"}, lists[testLineB][attrCategoryIDs])
+	assert.Equal(t, []string{"tag_sale"}, lists[testLineB][attrTagIDs])
+	assert.NotContains(t, lists[testLineA], attrTagIDs,
+		"a product carrying no tag sends no tag key")
+}
+
+// TestAProductInNoCategoryCarriesNoListKey is the safe direction.
+//
+// The engine answers false for an empty list today, so an empty list and an absent
+// key behave the same — and they would stop behaving the same the day an operator
+// meaning "in NONE of these" arrives. Absent says "this line has nothing to say";
+// an empty list would be a claim about a product this package may not have read.
+func TestAProductInNoCategoryCarriesNoListKey(t *testing.T) {
+	t.Parallel()
+
+	h := newModuleHarness(t)
+	installProductCatalog(h, defaultProductFlags())
+	serveSnapshot(h.carts, twoLineCart(1))
+
+	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	lists := listsByLine(h.discounts.requests[0])
+
+	assert.Empty(t, lists[testLineA], "a product filed under nothing sends no lists at all")
+	assert.Empty(t, lists[testLineB])
+}
+
+// TestALineWhoseProductTheCatalogDoesNotAnswerSendsNoLists keeps a failed read
+// from becoming a claim.
+//
+// A product nobody could read has no memberships THIS PACKAGE knows about, and
+// sending empty lists would tell the engine it is in no category — which would be
+// the wrong half of a rule that excludes a category.
+func TestALineWhoseProductTheCatalogDoesNotAnswerSendsNoLists(t *testing.T) {
+	t.Parallel()
+
+	h := newModuleHarness(t)
+	h.catalog.products = map[string]string{
+		testVariantA: testProductA,
+		testVariantB: testProductB,
+	}
+	installProductCatalog(h, map[string]productFacts{
+		// Only the FIRST product is answered.
+		testProductA: {Discountable: true, CategoryIDs: []string{"cat_shirts"}},
+	})
+	serveSnapshot(h.carts, twoLineCart(1))
+
+	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	lists := listsByLine(h.discounts.requests[0])
+
+	assert.Equal(t, []string{"cat_shirts"}, lists[testLineA][attrCategoryIDs])
+	assert.Empty(t, lists[testLineB], "an unanswered product carries nothing")
+}
+
+// TestTheMembershipFieldsAreAskedOfTheCatalog is the producer-consumer pairing
+// seen from this side.
+//
+// The Query layer refuses a field its provider does not publish, so this is the
+// half that fails LOUDLY if the product module drops a field. Asserting the ASKED
+// field list is what makes the pairing visible from here: a cart that stopped
+// asking would send no lists and no error anywhere.
+func TestTheMembershipFieldsAreAskedOfTheCatalog(t *testing.T) {
+	t.Parallel()
+
+	h := newModuleHarness(t)
+	catalog := installProductCatalog(h, defaultProductFlags())
+	serveSnapshot(h.carts, twoLineCart(1))
+
+	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	var asked []string
+	for _, spec := range catalog.specs {
+		if spec.Entity == EntityProduct {
+			asked = spec.Fields
+		}
+	}
+
+	require.NotEmpty(t, asked, "the product read has to happen")
+	assert.Contains(t, asked, attrCategoryIDs)
+	assert.Contains(t, asked, attrTagIDs)
 }

@@ -61,7 +61,8 @@ func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
 //	  "context": {"region_id": "reg_1", "customer_group_id": "vip"},
 //	  "items": [
 //	    {"id": "li_1", "amount": 25000, "unit_amount": 12500, "quantity": 2,
-//	     "attributes": {"product_category_id": "cat_1"}}
+//	     "attributes": {"product_id": "prod_1"},
+//	     "lists": {"category_ids": ["cat_1", "cat_2"]}}
 //	  ],
 //	  "shipping_methods": [{"id": "sm_1", "amount": 4990, "attributes": {}}],
 //	  "codes": ["SUMMER20"],
@@ -97,6 +98,13 @@ type interopRequestItem struct {
 	UnitAmount int64             `json:"unit_amount"`
 	Quantity   int64             `json:"quantity"`
 	Attributes map[string]string `json:"attributes"`
+	// Lists is what a TARGET rule reads as a SET (ADR 0148): the line's product's
+	// category and tag ids.
+	//
+	// A sibling of "attributes" for "context_lists"'s reason — this decoder
+	// refuses unknown fields, so a retype breaks every caller, and a rule shipped
+	// against a single value has to keep the answer it has.
+	Lists map[string][]string `json:"lists"`
 }
 
 // interopRequestShipping is the schema of a single shipping method in the request.
@@ -343,6 +351,7 @@ func decodeInteropRequest(raw json.RawMessage) (ComputeInput, error) {
 			UnitAmount: req.Items[idx].UnitAmount,
 			Quantity:   req.Items[idx].Quantity,
 			Attributes: req.Items[idx].Attributes,
+			Lists:      req.Items[idx].Lists,
 		})
 	}
 	shipping := make([]ComputeShippingMethod, 0, len(req.ShippingMethods))
