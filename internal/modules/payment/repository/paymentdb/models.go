@@ -32,6 +32,7 @@ type PaymentCollection struct {
 	Metadata         []byte
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	CustomerID       *string
 }
 
 type PaymentManualSession struct {
@@ -64,6 +65,33 @@ type PaymentSession struct {
 	DeclineReason       *string
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
+}
+
+type PaymentStoreCreditEntry struct {
+	ID           string
+	CustomerID   string
+	CurrencyCode string
+	Amount       int64
+	Kind         string
+	Reference    string
+	Reason       string
+	CreatedAt    pgtype.Timestamptz
+}
+
+type PaymentStoreCreditSession struct {
+	ID               string
+	IdempotencyKey   string
+	Reference        string
+	CustomerID       string
+	Amount           int64
+	CurrencyCode     string
+	Status           string
+	AuthorizedAmount int64
+	CapturedAmount   int64
+	RefundedAmount   int64
+	DeclineReason    *string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
 }
 
 type Refund struct {

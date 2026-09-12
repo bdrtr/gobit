@@ -549,7 +549,15 @@ func registerModules(registry *module.Registry, cfg config.Config, log *slog.Log
 		TrustUnverifiedCustomerClaim: cfg.StorefrontTrustsUnverifiedCustomerClaim,
 	}))
 	// Phase 6: payment and order
-	registry.Add(payment.New())
+	registry.Add(payment.New(payment.Options{
+		// Store credit is turned on for the installations where the customer
+		// claim is PROVEN (ADR 0152). On one that has gone back to the legacy
+		// behavior — the cart body's customer_id is not questioned — this
+		// provider would mean anybody who types a customer's name can spend
+		// their balance; so the combination is not configurable, the provider
+		// is simply never registered.
+		StoreCredit: !cfg.StorefrontTrustsUnverifiedCustomerClaim,
+	}))
 	registry.Add(order.New())
 	// Phase 7: fulfillment, promotion, tax
 	registry.Add(fulfillment.New())

@@ -64,6 +64,31 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Mağaza artık müşteri için PARA TUTABİLİYOR** (ADR 0152). Geç kalan bir
+  teslimattan sonra müşteriyi elde tutmanın iki yolu var — parayı geri göndermek
+  ya da müşterinin hesabına yazmak — ve bu depo yalnızca birincisini
+  yapabiliyordu: hiçbir modülün hiçbir tablosu bakiye tutmuyordu, yani
+  "hesabınıza 200 lira yazdık" bir tabloda değil bir excel dosyasında duran bir
+  sözdü. Artık ödeme modülünün yalnızca EKLENEN bir defteri var — müşteri ve para
+  birimi başına işaretli tutar — ve onu kartın harcandığı yuvadan harcayan bir
+  `store_credit` sağlayıcısı. Bakiye satırların TOPLAMI ve hiçbir yerde
+  saklanmıyor: yetkilendirme EKSİ bir blokaj yazıyor, tahsilat hiçbir şey
+  yazmıyor, iptal serbest bırakıyor — yani müşterinin harcayabileceği tutarın
+  içinden açık blokajlar zaten düşülmüş oluyor ve bir düzeltme yeni bir SATIR.
+  Kararı tablodan ayıran şey HARCAMA yarısıydı: bir kişiye ait parayı yalnızca o
+  kişi harcayabilir, oysa ödemenin sahibini söyleyen taraf İSTEMCİYDİ — tahsilat
+  bir referans ve bir tutar taşıyor, kimseyi adlandırmıyordu. Artık tahsilat
+  müşteriyi taşıyor ve o müşteri sepetten geliyor (ADR 0125'ten beri KANITLANMIŞ
+  olan alan), yani bir misafir sepeti krediyle ödeyemiyor — sağlayıcı kimseyi
+  adlandırmayan oturumu reddediyor. Tehlikeli birleşim YAPILANDIRILAMIYOR:
+  `STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM` açık bir kurulumda sağlayıcı hiç
+  kaydedilmiyor, yani ödeme yöntemi KAYBOLUYOR — başkasının bakiyesini harcama
+  yoluna dönüşmüyor. Kilit kararın korrektlik argümanı ve gerçek bir sunucuda,
+  rakip bir işlemle kanıtlandı; ilk yazılan eşzamanlılık testi kilit
+  KALDIRILDIĞINDA da geçiyordu (yerel sunucu her işlemi bir sonraki goroutine
+  başlamadan bitiriyordu), o yüzden çakışmayı UMAN test yerine ÜRETEN test
+  yazıldı.
+
 - **Katalog artık ne kadar süre YENİDEN KULLANILABİLECEĞİNİ söylüyor** (ADR 0151).
   ADR 0044 satış kanalını katalog YOLUNA taşımıştı — "paylaşılan bir önbelleğin
   saklayabileceği şey budur" — ve bilerek hiçbir önbellek açmamış, tazelik

@@ -545,5 +545,26 @@ past and is not corrected retroactively.
   shopper ever seeing the total — but a shop whose callers cannot open a link is
   not served by this.
 
+- **A customer cannot see their own store credit.** Since
+  [ADR 0152](adr/0152-a-shop-can-hold-money-for-a-customer.md) a shop can hold
+  money for a customer and the customer can spend it at checkout, but the only
+  way to READ a balance is an admin endpoint: a storefront read needs the
+  customer claim in the request proven, and the payment module is not wired to
+  the surface that proves it. A shopper learns what they have when an operator
+  tells them, or when the total drops.
+
+- **Store credit does not expire and names no cause.** A credit issued today is
+  spendable forever, and `reference` is free text, so "this is the compensation
+  for return R-19" is a convention rather than a link. Expiry is a scheduled job
+  writing negative rows, and what it must not do is race a checkout holding the
+  same money.
+
+- **An installation that trusts an unproven customer claim has no store credit
+  at all.** With `STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM` on, the cart's
+  customer is not proven, so the provider is not registered
+  ([ADR 0152](adr/0152-a-shop-can-hold-money-for-a-customer.md)): the tender
+  disappears rather than becoming a way to spend somebody else's balance. A shop
+  that needs both has no answer here.
+
 - **The load test is in-process** (`make load-test`, `internal/e2e`): it tests
   correctness under load, it does not produce a capacity plan.

@@ -91,6 +91,15 @@ type PaymentCollection struct {
 	Amount int64
 	// CurrencyCode is the ISO 4217 code and is always stored in UPPER case.
 	CurrencyCode string
+	// CustomerID is WHOSE money this collection gathers, and most collections
+	// leave it empty.
+	//
+	// A guest paying by card names nobody. The field exists for the tenders whose
+	// funds belong to a PERSON — store credit today, loyalty points tomorrow:
+	// without it such a provider would have to take the owner from data the CLIENT
+	// sent, which is a shopper spending somebody else's balance by naming them
+	// (ADR 0152).
+	CustomerID string
 	// Status is the derived status; see [CollectionStatusFor].
 	Status CollectionStatus
 	// AuthorizedAmount is the total amount that is STILL on hold (minor unit).

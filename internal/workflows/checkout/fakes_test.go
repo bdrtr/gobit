@@ -498,12 +498,18 @@ func (s *stubOrders) SetOrderSummaryTotals(
 type stubPayments struct {
 	rec *recorder
 
-	createCollectionFn func(ctx context.Context, reference, currencyCode string, amount int64) (string, error)
-	openSessionFn      func(ctx context.Context, collectionID, providerID, key string, data json.RawMessage) (string, error)
-	authorizeFn        func(ctx context.Context, sessionID string) (string, int64, error)
-	captureFn          func(ctx context.Context, sessionID string, amount int64) (string, error)
-	cancelFn           func(ctx context.Context, sessionID string) error
-	collectionFn       func(ctx context.Context, collectionID string) (string, int64, int64, int64, int64, error)
+	createCollectionFn func(
+		ctx context.Context, reference, customerID, currencyCode string, amount int64,
+	) (string, error)
+	// lastCollectionCustomer is whose money the last collection was opened for; a
+	// flow that stopped carrying it would look exactly like a guest order
+	// (ADR 0152).
+	lastCollectionCustomer string
+	openSessionFn          func(ctx context.Context, collectionID, providerID, key string, data json.RawMessage) (string, error)
+	authorizeFn            func(ctx context.Context, sessionID string) (string, int64, error)
+	captureFn              func(ctx context.Context, sessionID string, amount int64) (string, error)
+	cancelFn               func(ctx context.Context, sessionID string) error
+	collectionFn           func(ctx context.Context, collectionID string) (string, int64, int64, int64, int64, error)
 
 	// captureAmounts keeps, in order, the amounts passed to Capture.
 	captureAmounts []int64
@@ -514,14 +520,15 @@ type stubPayments struct {
 // CreateCollection applies the scripted collection-opening behavior.
 func (s *stubPayments) CreateCollection(
 	ctx context.Context,
-	reference, currencyCode string,
+	reference, customerID, currencyCode string,
 	amount int64,
 ) (string, error) {
 	s.rec.add("payment:collection")
+	s.lastCollectionCustomer = customerID
 	if s.createCollectionFn == nil {
 		return testCollectionID, nil
 	}
-	return s.createCollectionFn(ctx, reference, currencyCode, amount)
+	return s.createCollectionFn(ctx, reference, customerID, currencyCode, amount)
 }
 
 // OpenSessionWithData applies the scripted session-opening behavior.

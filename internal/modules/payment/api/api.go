@@ -58,7 +58,21 @@ import (
 // ön ek MOUNT EDİLMEZ, çünkü mount eden ilk modül o alt ağacın tamamını
 // sahiplenir ve aynı ön eki kullanan diğer modüllerle çakışırdı.
 const (
-	pathAdminProviders        = "/admin/v1/payment-providers"
+	pathAdminProviders = "/admin/v1/payment-providers"
+	// pathAdminStoreCredits ve pathAdminStoreCreditBalance mağaza kredisinin iki
+	// yönetim ucudur (ADR 0152).
+	//
+	// Bakiye AYRI bir adres, listeye eklenmiş bir alan değil: liste zarfı
+	// {data, count, offset, limit} ve içine beşinci bir alan koymak, o zarfı
+	// okuyan her istemciye bu uca özel bir dal yazdırırdı. İki soru, iki adres.
+	//
+	// Aşağıdaki iki satırdaki bastırmanın gerekçesi: G101 adın içinde "cred"
+	// gördüğü için bunları bir sır sanıyor. İkisi de ROTA ADRESİ — belgeye giren,
+	// istemcinin yazdığı metin — ve adın taşıdığı sözcük "credential" değil
+	// "credit".
+	pathAdminStoreCredits       = "/admin/v1/store-credits"         //nolint:gosec // G101: bir rota adresi, sır değil
+	pathAdminStoreCreditBalance = "/admin/v1/store-credits/balance" //nolint:gosec // G101: bir rota adresi, sır değil
+
 	pathAdminCollections      = "/admin/v1/payment-collections"
 	pathAdminCollection       = "/admin/v1/payment-collections/{id}"
 	pathAdminCollectionSess   = "/admin/v1/payment-collections/{id}/payment-sessions"
@@ -96,6 +110,15 @@ const codeInvalidRequest = "payment_invalid_request"
 type Payments interface {
 	// ProviderIDs kayıtlı sağlayıcı kimliklerini döner.
 	ProviderIDs(ctx context.Context) []string
+
+	// IssueCredit bir müşteriye mağaza kredisi verir (ADR 0152).
+	IssueCredit(ctx context.Context, in service.IssueCreditInput) (models.StoreCreditEntry, error)
+	// StoreCreditBalance müşterinin tek bir para birimindeki bakiyesini döner.
+	StoreCreditBalance(ctx context.Context, customerID, currencyCode string) (int64, error)
+	// ListStoreCredit müşterinin kredi geçmişini sayfalar.
+	ListStoreCredit(
+		ctx context.Context, in service.ListStoreCreditInput,
+	) ([]models.StoreCreditEntry, int64, error)
 
 	// CreatePaymentCollection yeni bir ödeme koleksiyonu oluşturur.
 	CreatePaymentCollection(ctx context.Context, in service.CreateCollectionInput) (models.PaymentCollection, error)
@@ -185,6 +208,13 @@ func (h *Handler) Routes(r chi.Router) {
 	yazma := r.With(corehttp.RequireScope(ScopeWrite))
 
 	okuma.Get(pathAdminProviders, h.listProviders)
+
+	// Mağaza kredisi: vermek bir YAZMA, bakiye ve geçmiş OKUMA. Krediyi veren
+	// eylem müşterinin harcayabileceği para yaratıyor, yani ödeme yazma yetkisinin
+	// altında (ADR 0152).
+	yazma.Post(pathAdminStoreCredits, h.issueStoreCredit)
+	okuma.Get(pathAdminStoreCredits, h.listStoreCredit)
+	okuma.Get(pathAdminStoreCreditBalance, h.storeCreditBalance)
 
 	yazma.Post(pathAdminCollections, h.createCollection)
 	okuma.Get(pathAdminCollections, h.listCollections)

@@ -69,6 +69,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/manual"
 	"github.com/bdrtr/gobit/internal/modules/payment/repository"
 	"github.com/bdrtr/gobit/internal/modules/payment/service"
+	"github.com/bdrtr/gobit/internal/modules/payment/storecredit"
 )
 
 // ModuleName modülün adıdır; container adlarının ve migration sürüm defterinin
@@ -125,6 +126,8 @@ var migrationsRoot = mustSub(migrationFiles, "migrations")
 
 // Module payment modülünün çekirdeğe sunduğu uygulamadır.
 type Module struct {
+	// opts kurulumun verdiği ayarlardır; sıfır değeri güvenli tarafı seçer.
+	opts      Options
 	svc       *service.Service
 	providers *service.ProviderRegistry
 	handler   *api.Handler
@@ -145,7 +148,39 @@ var _ openapi.Describer = (*Module)(nil)
 //
 // Bağımlılıklar burada değil Register sırasında çözülür: container o ana kadar
 // çekirdek servisleri kurmuş olmayabilir.
-func New() *Module { return &Module{} }
+func New(opts ...Options) *Module {
+	m := &Module{}
+	if len(opts) > 0 {
+		m.opts = opts[0]
+	}
+
+	return m
+}
+
+// Options modülün kurulum tarafından verilen ayarlarıdır.
+//
+// Sıfır değeri GÜVENLİ tarafı seçiyor: mağaza kredisi kayıtlı DEĞİL. Modülü elle
+// kuran bir gömen, ayarı hiç duymamış olsa bile müşterinin parasını harcayan bir
+// ödeme yöntemi açmış olmuyor.
+type Options struct {
+	// StoreCredit mağaza kredisi sağlayıcısının kaydedilip kaydedilmeyeceğidir
+	// (ADR 0152).
+	//
+	// # Neden kapatılabilir bir şey
+	//
+	// Çünkü harcanan para BİR KİŞİNİN ve o kişinin kimliği sepetin müşteri
+	// alanından geliyor. ADR 0125'ten beri müşteri adlandıran bir sepet gövdesi
+	// KANITLANMAK zorunda — ama bir kurulum eski davranışa
+	// (STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM) dönebiliyor ve orada iddia
+	// sorgulanmıyor. O kurulumda mağaza kredisi, bir müşterinin adını yazan
+	// herkesin onun bakiyesini harcaması demek olurdu.
+	//
+	// Bu yüzden birleşim YAPILANDIRILAMIYOR: kurulum kök, iddiaya güvenen bir
+	// kurulumda sağlayıcıyı HİÇ KAYDETMİYOR. Ayarı burada tutmak, modülün
+	// yapılandırmayı okumasını gerektirmeden (İlke 2.4) o kararı tek bir yerde
+	// bırakıyor.
+	StoreCredit bool
+}
 
 // Name modülün benzersiz adını döner.
 func (m *Module) Name() string { return ModuleName }
@@ -210,6 +245,20 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	if err := providers.Register(manual.New(repo, log)); err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeProviderRegister,
 			"%s modülü varsayılan sağlayıcıyı kaydedemedi", ModuleName)
+	}
+	// Mağaza kredisi de bir ödeme yöntemi ve kutudan çıkıyor (ADR 0152): bir
+	// eklenti gerektirmiyor, çünkü harcadığı para bu modülün kendi defterinde.
+	// Kredisi olmayan bir kurulumda hiçbir şey değişmiyor — sağlayıcı kayıtlı ama
+	// bakiyesi sıfır olan kimse onunla ödeyemiyor.
+	//
+	// KAYDEDİLMEDİĞİ hâl ise bir güvenlik kararı ve gerekçesi [Options.StoreCredit]
+	// üzerinde: müşteri iddiasına kanıtsız güvenen bir kurulumda bu sağlayıcı
+	// başkasının bakiyesini harcatırdı, o yüzden birleşim yapılandırılamıyor.
+	if m.opts.StoreCredit {
+		if err := providers.Register(storecredit.New(repo, log)); err != nil {
+			return errors.Wrap(err, errors.KindOf(err), codeProviderRegister,
+				"%s modülü mağaza kredisi sağlayıcısını kaydedemedi", ModuleName)
+		}
 	}
 
 	svc, err := service.New(service.Options{

@@ -171,6 +171,27 @@ func TestHappyPathRunsTheFiveStepsInOrder(t *testing.T) {
 	}, h.rec.snapshot())
 }
 
+// TestTheCollectionIsOpenedForTheCartsCustomer pins the one field that decides
+// WHOSE money a tender may spend.
+//
+// The customer travels cart → plan → collection → provider session, and every
+// link is a place where it can arrive empty. When it does, a provider whose
+// funds belong to a person — store credit — cannot open a session at all, so the
+// tender silently stops working for everybody (ADR 0152). Nothing else in this
+// package reads the field, which is exactly why it needs its own witness: it
+// would be dropped without a single call changing.
+func TestTheCollectionIsOpenedForTheCartsCustomer(t *testing.T) {
+	h := newHarness(t)
+
+	_, err := h.wf.CompleteCart(context.Background(), h.input())
+	require.NoError(t, err)
+
+	assert.Equal(t, testCustomerID, h.payments.lastCollectionCustomer,
+		"the collection must be opened for the cart's customer; the alternative was "+
+			"to take the owner from data the client sent, which is somebody else's "+
+			"balance spent by typing their name")
+}
+
 // TestOrderSnapshotIsBuiltFromTotalsAndCatalog verifies that the body sent to
 // the order is assembled correctly from the cart, the totals and the catalog.
 //
@@ -1339,7 +1360,7 @@ func TestAnEmptyPaymentIDDoesNotDisableThePivot(t *testing.T) {
 func TestEmptyPaymentIdentifiersAreStoppedAtAuthorization(t *testing.T) {
 	tests := map[string]func(*harness){
 		"collection identifier empty": func(h *harness) {
-			h.payments.createCollectionFn = func(context.Context, string, string, int64) (string, error) {
+			h.payments.createCollectionFn = func(context.Context, string, string, string, int64) (string, error) {
 				return "", nil
 			}
 		},

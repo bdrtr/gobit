@@ -392,6 +392,31 @@ var storefrontStoredClaims = map[string]claimVerdict{
 		why: "the contact for a delivery to this address, on the writer's own address book " +
 			"entry; as cart_addresses.phone",
 	},
+	"payment.payment_collections.customer_id": {
+		limb: limbConfined,
+		why: "the customer of the CART being completed, carried by the checkout flow rather " +
+			"than by any request body — no storefront payment request type has a customer_id " +
+			"field, and the gate checks that rather than taking this sentence's word for it. " +
+			"What makes it the writer's own reach is ADR 0125: a cart body naming a customer " +
+			"has to be PROVEN, so by the time a collection is opened the party is judged. The " +
+			"one configuration that unjudges it — STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM — " +
+			"is also the one in which the composition root does not register the tender that " +
+			"reads this column at all (ADR 0152), so the pair cannot be configured",
+	},
+	"payment.payment_store_credit_entries.customer_id": {
+		limb: limbConfined,
+		why: "whose money the ledger row moves, and it is never a value a request carried: an " +
+			"issue is written by an ADMIN endpoint and a hold, release or refund by the " +
+			"provider, from the session it is acting on. The session's own owner is " +
+			"payment_collections.customer_id, judged above",
+	},
+	"payment.payment_store_credit_sessions.customer_id": {
+		limb: limbConfined,
+		why: "the owner copied from the collection when the session is opened, so it is the " +
+			"same party under the same judgement (see payment.payment_collections.customer_id). " +
+			"It is copied rather than joined because the provider may not read the module's " +
+			"own tables — the separation every provider in this tree keeps",
+	},
 	"order.order_returns.order_id": {
 		limb: limbInert,
 		why: "the SUBJECT of the return — what is being returned — and it arrives in the PATH. " +

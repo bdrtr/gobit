@@ -55,13 +55,20 @@ func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
 // reference is the identifier of the cart or of the order; this module does
 // not validate it (Principle 2.2 — the link is established through Module
 // Links).
+//
+// customerID is WHOSE money is being collected and may be EMPTY: a guest paying
+// by card names nobody. It is passed rather than left out because a tender whose
+// funds belong to a person — store credit — would otherwise have to take the
+// owner from data the client sent (ADR 0152). The caller knows it: the flow that
+// opens the collection is the one holding the cart.
 func (i *Interop) CreateCollection(
 	ctx context.Context,
-	reference, currencyCode string,
+	reference, customerID, currencyCode string,
 	amount int64,
 ) (string, error) {
 	col, err := i.svc.CreatePaymentCollection(ctx, CreateCollectionInput{
 		Reference:    reference,
+		CustomerID:   customerID,
 		CurrencyCode: currencyCode,
 		Amount:       amount,
 	})

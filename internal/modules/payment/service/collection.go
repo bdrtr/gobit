@@ -16,6 +16,13 @@ type CreateCollectionInput struct {
 	Amount int64
 	// CurrencyCode ISO 4217 kodudur; zorunludur.
 	CurrencyCode string
+	// CustomerID koleksiyonun KİMİN parasını topladığıdır; boş bırakılabilir.
+	//
+	// Kartla ödeyen bir misafir kimseyi adlandırmaz. Fonları bir KİŞİYE ait olan
+	// ödeme yöntemleri (mağaza kredisi) bu alan olmadan çalışamaz ve alternatifi
+	// sahibi istemcinin verisinden okumaktı — yani başkasının bakiyesini adını
+	// yazarak harcamak (ADR 0152).
+	CustomerID string
 	// Metadata çağıranın serbest ek verisidir.
 	Metadata map[string]any
 }
@@ -45,6 +52,7 @@ func (s *Service) CreatePaymentCollection(
 	return s.store.CreatePaymentCollection(ctx, models.PaymentCollection{
 		ID:           models.NewPaymentCollectionID(),
 		Reference:    reference,
+		CustomerID:   strings.TrimSpace(in.CustomerID),
 		Amount:       in.Amount,
 		CurrencyCode: currency,
 		Status:       models.CollectionNotPaid,

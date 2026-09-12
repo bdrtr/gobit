@@ -308,3 +308,123 @@ func TestProviderIDsKayitliSaglayicilariDoner(t *testing.T) {
 
 	assert.Equal(t, []string{saglayiciID}, svc.ProviderIDs(context.Background()))
 }
+
+// --- mağaza kredisi ----------------------------------------------------------
+
+// Mağaza kredisinin SERVİS yarısı (ADR 0152): operatörün verdiği kredi ve
+// okunan bakiye. Harcama tarafı sağlayıcıda ve orada sınanıyor.
+
+// TestVerilenKrediBakiyeyeGirer kararın en kısa hâli.
+func TestVerilenKrediBakiyeyeGirer(t *testing.T) {
+	svc, _, _ := yeniServis(t)
+	ctx := context.Background()
+
+	entry, err := svc.IssueCredit(ctx, service.IssueCreditInput{
+		CustomerID:   "cus_1",
+		CurrencyCode: "try",
+		Amount:       5_000,
+		Reason:       "iade yerine kredi",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, models.StoreCreditIssue, entry.Kind)
+	assert.Equal(t, int64(5_000), entry.Amount)
+	assert.Equal(t, "TRY", entry.CurrencyCode,
+		"para birimi NORMALLEŞTİRİLİR: 'try' ile 'TRY' aynı defteri okumalı, yoksa "+
+			"aynı müşterinin iki bakiyesi olurdu")
+
+	balance, err := svc.StoreCreditBalance(ctx, "cus_1", "TRY")
+	require.NoError(t, err)
+	assert.Equal(t, int64(5_000), balance)
+}
+
+// TestGerekcesizKrediReddedilir bakiye kolonunun tutamadığı yarıyı korur.
+func TestGerekcesizKrediReddedilir(t *testing.T) {
+	svc, _, _ := yeniServis(t)
+
+	_, err := svc.IssueCredit(context.Background(), service.IssueCreditInput{
+		CustomerID:   "cus_1",
+		CurrencyCode: "TRY",
+		Amount:       5_000,
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, service.CodeStoreCreditInvalidInput, errors.CodeOf(err))
+}
+
+// TestEksiKrediReddedilir operatörün bakiyeyi sıfırın altına indirmesini engeller.
+//
+// "Krediyi geri al" ayrı bir karar: eksi tutar yazmak, müşterinin harcadığı parayı
+// geri almanın gizli yolu olurdu ve defterde bir GERİ ALMA olarak değil bir VERİŞ
+// olarak görünürdü.
+func TestEksiKrediReddedilir(t *testing.T) {
+	svc, _, _ := yeniServis(t)
+
+	for ad, tutar := range map[string]int64{"eksi": -100, "sıfır": 0} {
+		t.Run(ad, func(t *testing.T) {
+			_, err := svc.IssueCredit(context.Background(), service.IssueCreditInput{
+				CustomerID:   "cus_1",
+				CurrencyCode: "TRY",
+				Amount:       tutar,
+				Reason:       "deneme",
+			})
+
+			require.Error(t, err)
+			assert.Equal(t, service.CodeStoreCreditInvalidInput, errors.CodeOf(err))
+		})
+	}
+}
+
+// TestBakiyePARABIRIMIBasinadir bir para birimindeki kredinin ötekinde kredi
+// olmadığını çiviler.
+//
+// Kur çevirmek bu modülün işi değil ve sessizce çevirmek müşteriye vaat edilenden
+// başka bir tutar vermek olurdu.
+func TestBakiyePARABIRIMIBasinadir(t *testing.T) {
+	svc, _, _ := yeniServis(t)
+	ctx := context.Background()
+
+	_, err := svc.IssueCredit(ctx, service.IssueCreditInput{
+		CustomerID: "cus_1", CurrencyCode: "TRY", Amount: 5_000, Reason: "x",
+	})
+	require.NoError(t, err)
+
+	other, err := svc.StoreCreditBalance(ctx, "cus_1", "EUR")
+	require.NoError(t, err)
+	assert.Zero(t, other, "TRY kredisi EUR bakiyesinde görünmemeli")
+}
+
+// TestKredisiOlmayanMusteriSIFIRDondurur yokluğu sıfırdan ayırmaz.
+//
+// Hiç kredi verilmemiş biriyle verilip tamamı harcanmış biri aynı miktarda paraya
+// sahiptir; aradaki farkı defterin kendisi anlatıyor.
+func TestKredisiOlmayanMusteriSIFIRDondurur(t *testing.T) {
+	svc, _, _ := yeniServis(t)
+
+	balance, err := svc.StoreCreditBalance(context.Background(), "cus_yok", "TRY")
+
+	require.NoError(t, err)
+	assert.Zero(t, balance)
+}
+
+// TestKrediGecmisiYenidenEskiyeDoner operatörün "neden" sorusunu cevaplar.
+func TestKrediGecmisiYenidenEskiyeDoner(t *testing.T) {
+	svc, _, _ := yeniServis(t)
+	ctx := context.Background()
+
+	for _, reason := range []string{"birinci", "ikinci"} {
+		_, err := svc.IssueCredit(ctx, service.IssueCreditInput{
+			CustomerID: "cus_1", CurrencyCode: "TRY", Amount: 1_000, Reason: reason,
+		})
+		require.NoError(t, err)
+	}
+
+	entries, total, err := svc.ListStoreCredit(ctx, service.ListStoreCreditInput{
+		CustomerID: "cus_1", CurrencyCode: "TRY",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(2), total)
+	require.Len(t, entries, 2)
+	assert.Equal(t, "ikinci", entries[0].Reason, "en yeni satır başta")
+}

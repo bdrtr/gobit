@@ -53,6 +53,12 @@ type fakeStore struct {
 	// failCreatePayment ayarlanırsa CreatePayment bu hatayı döner; işlem geri
 	// alma yolunu sınamak için kullanılır.
 	failCreatePayment error
+
+	// credit müşteri+para birimi başına kredi defteridir (ADR 0152).
+	//
+	// Gerçek tabloda bakiye satırların TOPLAMI; sahte de öyle tutuyor — tek bir
+	// sayı tutsaydı, blokajı eksi yazan bir hata testlerde görünmezdi.
+	credit map[string][]models.StoreCreditEntry
 }
 
 // newFakeStore boş bir sahte depo üretir.
@@ -776,4 +782,80 @@ func (p *fakeProvider) yetkilendirmeVerisi(data json.RawMessage) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.authorizeData = data
+}
+
+// --- mağaza kredisi defteri (ADR 0152) ---------------------------------------
+
+// creditKey defterin anahtarıdır: kredi para birimi başına ayrı tutulur.
+func creditKey(customerID, currencyCode string) string {
+	return customerID + "\x00" + currencyCode
+}
+
+// AppendStoreCreditEntry deftere tek bir olay ekler.
+func (f *fakeStore) AppendStoreCreditEntry(
+	_ context.Context, entry models.StoreCreditEntry,
+) (models.StoreCreditEntry, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.credit == nil {
+		f.credit = map[string][]models.StoreCreditEntry{}
+	}
+	key := creditKey(entry.CustomerID, entry.CurrencyCode)
+	f.credit[key] = append(f.credit[key], entry)
+
+	return entry, nil
+}
+
+// StoreCreditBalance satırların toplamını döner.
+func (f *fakeStore) StoreCreditBalance(
+	_ context.Context, customerID, currencyCode string,
+) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var balance int64
+	entries := f.credit[creditKey(customerID, currencyCode)]
+	for i := range entries {
+		balance += entries[i].Amount
+	}
+
+	return balance, nil
+}
+
+// LockStoreCreditEntries kilidi SIRAYA yazar; gerçek kilidin kendisi
+// veritabanının işi, burada alınıp alınmadığı okunabilir olsun diye kaydediliyor.
+func (f *fakeStore) LockStoreCreditEntries(_ context.Context, _, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.kilitler = append(f.kilitler, "store_credit")
+
+	return nil
+}
+
+// ListStoreCreditEntries geçmişi yeniden eskiye döner.
+func (f *fakeStore) ListStoreCreditEntries(
+	_ context.Context, customerID, currencyCode string, limit, offset int64,
+) ([]models.StoreCreditEntry, int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	all := f.credit[creditKey(customerID, currencyCode)]
+	total := int64(len(all))
+
+	out := make([]models.StoreCreditEntry, 0, len(all))
+	for i := len(all) - 1; i >= 0; i-- {
+		out = append(out, all[i])
+	}
+
+	if int(offset) >= len(out) {
+		return nil, total, nil
+	}
+	out = out[offset:]
+	if int(limit) < len(out) {
+		out = out[:limit]
+	}
+
+	return out, total, nil
 }

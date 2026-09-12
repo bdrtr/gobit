@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,6 +43,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 	"github.com/bdrtr/gobit/internal/modules/payment/repository"
 	"github.com/bdrtr/gobit/internal/modules/payment/service"
+	"github.com/bdrtr/gobit/internal/modules/payment/storecredit"
 )
 
 const postgresImage = "postgres:16-alpine"
@@ -51,6 +53,9 @@ const postgresImage = "postgres:16-alpine"
 var modulTablolari = []string{
 	"payment_collections", "payment_sessions", "payments", "refunds",
 	"payment_manual_sessions",
+	// Mağaza kredisinin iki tablosu (ADR 0152): defter modülün, oturumlar
+	// sağlayıcının.
+	"payment_store_credit_entries", "payment_store_credit_sessions",
 }
 
 // Test verisinde kullanılan sabitler. Referans BAŞKA bir modüle (sepet ya da
@@ -886,7 +891,7 @@ func TestInteropUctanUcaAkisGercekVeritabaninda(t *testing.T) {
 	svc, _ := newService(t)
 	iop := service.NewInterop(svc)
 
-	colID, err := iop.CreateCollection(ctx, testReference, testCurrency, testAmount)
+	colID, err := iop.CreateCollection(ctx, testReference, "", testCurrency, testAmount)
 	require.NoError(t, err)
 
 	sesID, err := iop.OpenSession(ctx, colID, manual.ID, "interop-"+colID)
@@ -928,7 +933,7 @@ func TestInteropEksikOdemeGercekVeritabaninda(t *testing.T) {
 	svc, _ := newService(t)
 	iop := service.NewInterop(svc)
 
-	colID, err := iop.CreateCollection(ctx, testReference, testCurrency, testAmount)
+	colID, err := iop.CreateCollection(ctx, testReference, "", testCurrency, testAmount)
 	require.NoError(t, err)
 	sesID, err := iop.OpenSessionWithData(ctx, colID, manual.ID, "interop-partial-"+colID,
 		[]byte(`{"manual_authorized_amount":1}`))
@@ -1020,7 +1025,7 @@ func TestInteropRedliOturumTelafiEdilebilir(t *testing.T) {
 	svc, _ := newService(t)
 	iop := service.NewInterop(svc)
 
-	colID, err := iop.CreateCollection(ctx, testReference, testCurrency, testAmount)
+	colID, err := iop.CreateCollection(ctx, testReference, "", testCurrency, testAmount)
 	require.NoError(t, err)
 
 	sesID, err := iop.OpenSessionWithData(ctx, colID, manual.ID, "interop-decline-"+colID,
@@ -1168,4 +1173,190 @@ func TestEszamanliIkiCaptureTekTahsilatUretir(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, testAmount, guncelKol.CapturedAmount,
 		"tahsil edilen tutar TEK tahsilat kadar olmalı, katları değil")
+}
+
+// --- mağaza kredisi ----------------------------------------------------------
+
+// TestModulAyarAcikkenKrediSaglayicisiniKaydeder ayar AÇIKKEN sağlayıcının
+// kaydedildiğini doğrular.
+//
+// Eşlik eden çift budur. [TestModulContainerdaAdlariKaydeder] varsayılan
+// kurulumda kayıtta YALNIZCA manuel sağlayıcının olduğunu çiviliyor; tek başına
+// o iddia, sağlayıcı hiç kaydedilmiyor olsa da geçerdi. İkisi birlikte reddin
+// AYARIN kararı olduğunu söylüyor — ki o ayar bir güvenlik kararı: müşteri
+// iddiasına kanıtsız güvenen bir kurulumda mağaza kredisi, birinin adını yazan
+// herkesin onun bakiyesini harcaması demek olurdu (ADR 0152).
+func TestModulAyarAcikkenKrediSaglayicisiniKaydeder(t *testing.T) {
+	ctx := context.Background()
+	c := container.New(nil)
+	require.NoError(t, c.Provide("core.db", testPool))
+	require.NoError(t, c.Provide("core.link", link.New(testPool, slog.New(slog.DiscardHandler))))
+	require.NoError(t, c.Provide("core.eventbus", eventbus.NewInMemory(nil)))
+
+	mod := payment.New(payment.Options{StoreCredit: true})
+	require.NoError(t, mod.Register(ctx, c))
+
+	registry, err := container.Resolve[*service.ProviderRegistry](c, payment.ProvidersName)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{manual.ID, storecredit.ID}, registry.IDs(),
+		"ayar açıkken mağaza kredisi de seçilebilir bir ödeme yöntemi olmalı")
+}
+
+// yeniKrediServisi mağaza kredisi sağlayıcısı KAYITLI bir servis kurar.
+//
+// Modül kurulumunun yaptığının aynısı (bkz. module.go): depo hem servisin hem
+// sağlayıcının deposu, çünkü ikisi de aynı işlemde yazıyor — blokaj satırı ile
+// oturum durumu birlikte ya yazılır ya yazılmaz.
+func yeniKrediServisi(t *testing.T) *service.Service {
+	t.Helper()
+
+	repo := repository.New(testPool.Pool())
+	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(storecredit.New(repo, nil)))
+
+	svc, err := service.New(service.Options{
+		Store: repo, Providers: registry, Events: eventbus.NewInMemory(nil),
+	})
+	require.NoError(t, err)
+
+	return svc
+}
+
+// bekleyenIstekSayisi verilen arka uç sürecinin KİLİDİNDE bekleyen istek
+// sayısını döner.
+//
+// Bekleyeni bilinen bir engelleyiciye daraltmak, iddiayı anlamlı kılan şeydir:
+// "bu veritabanında biri bir kilit bekliyor" cümlesini başka bir testin oturumu
+// da doğrular ve o hâlde iddia, sınanan istek tek bir ifade bile koşmadan önce
+// geçerdi — test yeşil olur, hiçbir şey ölçmezdi.
+func bekleyenIstekSayisi(ctx context.Context, t *testing.T, engelleyiciPID int32) int64 {
+	t.Helper()
+
+	var sayi int64
+	err := testPool.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM pg_stat_activity
+         WHERE datname = current_database()
+           AND wait_event_type = 'Lock'
+           AND $1 = ANY(pg_blocking_pids(pid))`, engelleyiciPID).Scan(&sayi)
+	require.NoError(t, err)
+
+	return sayi
+}
+
+// TestKrediAuthorizeDefterKilidindeBekler kararın KORREKTLİK argümanını gerçek
+// satır kilitleri üzerinde sınar.
+//
+// Sağlayıcı bakiyeyi OKUYUP ona göre davranıyor: yeterliyse eksi bir blokaj
+// yazıyor. Defter kilitlenmezse aynı müşterinin iki eşzamanlı yetkilendirmesi
+// aynı bakiyeyi okur, ikisi de yeterli bulur, ikisi de blokaj yazar — müşteri
+// aynı parayı iki kez harcar ve bakiye EKSİYE düşer.
+//
+// Çakışma UMULMUYOR, ÜRETİLİYOR. Rakip bir işlem defteri kilitler, sınanan
+// yetkilendirmenin o kilitte BEKLEDİĞİ pg_blocking_pids ile görülür, rakip
+// bakiyeyi harcayıp commit eder ve ancak ondan sonra yetkilendirme devam eder.
+// Kilit alınmasaydı bekleyen olmaz ve yetkilendirme bayat bakiyeyi okurdu.
+//
+// Birim testi yalnızca kilidin ÇAĞRILDIĞINI görebiliyor (sahte depo çağrı
+// sırasını kaydediyor); çağrının gerçekten SIRAYA SOKTUĞU yalnızca burada
+// görülebilir.
+func TestKrediAuthorizeDefterKilidindeBekler(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniKrediServisi(t)
+
+	musteri := "cus_" + models.NewPaymentCollectionID()
+	// Bakiye TEK bir harcamayı karşılıyor: ikisini birden karşılasaydı test
+	// hiçbir şey ayırt etmezdi — kilitli de kilitsiz de ikisi geçerdi.
+	_, err := svc.IssueCredit(ctx, service.IssueCreditInput{
+		CustomerID:   musteri,
+		CurrencyCode: testCurrency,
+		Amount:       testAmount,
+		Reason:       "kilit testi",
+	})
+	require.NoError(t, err)
+
+	col, err := svc.CreatePaymentCollection(ctx, service.CreateCollectionInput{
+		Reference:    testReference + "-credit-lock",
+		CustomerID:   musteri,
+		Amount:       testAmount,
+		CurrencyCode: testCurrency,
+	})
+	require.NoError(t, err)
+	ses, err := svc.CreateSession(ctx, col.ID, storecredit.ID,
+		service.CreateSessionInput{IdempotencyKey: "credit-lock-" + col.ID})
+	require.NoError(t, err)
+
+	// --- rakip işlem: defteri kilitler ve tutar ---
+
+	conn, err := testPool.Pool().Acquire(ctx)
+	require.NoError(t, err)
+	defer conn.Release()
+
+	rakip, err := conn.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = rakip.Rollback(ctx) }()
+
+	var rakipPID int32
+	require.NoError(t, rakip.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&rakipPID))
+
+	_, err = rakip.Exec(ctx,
+		`SELECT id FROM payment_store_credit_entries
+          WHERE customer_id = $1 AND currency_code = $2 FOR UPDATE`,
+		musteri, testCurrency)
+	require.NoError(t, err)
+
+	// --- sınanan yetkilendirme: kilitte BEKLEMELİ ---
+
+	bitti := make(chan error, 1)
+	go func() { _, authErr := svc.AuthorizePayment(ctx, ses.ID); bitti <- authErr }()
+
+	require.Eventually(t, func() bool {
+		return bekleyenIstekSayisi(ctx, t, rakipPID) > 0
+	}, 10*time.Second, 10*time.Millisecond,
+		"yetkilendirme rakip işlemin kilidinde BEKLEMELİ; beklemiyorsa defteri "+
+			"okumadan önce kilitlemiyor demektir ve bayat bir bakiye üzerinde karar veriyordur")
+
+	// Rakip parayı harcar ve commit eder. Bundan sonra bakiye sıfır.
+	_, err = rakip.Exec(ctx,
+		`INSERT INTO payment_store_credit_entries
+             (id, customer_id, currency_code, amount, kind, reference, reason)
+         VALUES ($1, $2, $3, $4, 'hold', 'rakip', '')`,
+		"screntry_"+col.ID, musteri, testCurrency, -testAmount)
+	require.NoError(t, err)
+	require.NoError(t, rakip.Commit(ctx))
+
+	// --- ve TAZE bakiyeyi okuyup reddetmeli ---
+
+	select {
+	case authErr := <-bitti:
+		require.Error(t, authErr,
+			"rakip parayı harcadıktan sonra yetkilendirme GEÇMEMELİ: geçtiyse kilit "+
+				"serbest kaldıktan sonra bile eski bakiye okunmuş demektir")
+		assert.True(t, errors.IsConflict(authErr),
+			"yetersiz bakiye bir REDDİR, sunucu hatası değil: %v", authErr)
+	case <-time.After(10 * time.Second):
+		t.Fatal("yetkilendirme rakip commit ettikten sonra da bitmedi")
+	}
+
+	bakiye, err := svc.StoreCreditBalance(ctx, musteri, testCurrency)
+	require.NoError(t, err)
+	assert.Zero(t, bakiye,
+		"defter sıfırda kalmalı; eksi bir bakiye müşterinin sahip olmadığı parayı "+
+			"harcadığı anlamına gelirdi")
+}
+
+// TestKrediDefteriGuncellenmez defterin yalnızca EKLENEN bir kayıt olduğunu
+// şemanın kendisinden okur.
+//
+// Bakiye satırların toplamı olduğu için bir düzeltme YENİ BİR SATIR; UPDATE ya
+// da DELETE eden bir sorgu sessizce tarihi değiştirirdi ve "bu müşterinin neden
+// 200 lirası var" sorusunun cevabı kaybolurdu.
+func TestKrediDefteriGuncellenmez(t *testing.T) {
+	sorgular, err := os.ReadFile("queries/payment_store_credit.sql")
+	require.NoError(t, err)
+
+	metin := strings.ToUpper(string(sorgular))
+	assert.NotContains(t, metin, "UPDATE PAYMENT_STORE_CREDIT_ENTRIES",
+		"defter satırı güncellenmez: düzeltme yeni bir satırdır")
+	assert.NotContains(t, metin, "DELETE FROM PAYMENT_STORE_CREDIT_ENTRIES",
+		"defter satırı silinmez: silinen bir satır, olmamış gibi görünen bir para hareketidir")
 }

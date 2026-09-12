@@ -618,7 +618,11 @@ func setUpHarness(ctx context.Context) error {
 	registry.Add(regionmod.New(nil))
 	registry.Add(customermod.New(nil))
 	registry.Add(cartmod.New(cartmod.Options{}))
-	registry.Add(paymentmod.New())
+	// Store credit is registered exactly as production registers it: `app.go` turns
+	// it on unless the installation trusts an unproven customer claim, and the
+	// default configuration does not (ADR 0152). Leaving it off here would mean the
+	// harness ran a payment module production never ships.
+	registry.Add(paymentmod.New(paymentmod.Options{StoreCredit: true}))
 	registry.Add(ordermod.New())
 	// Phase 7: fulfillment, promotion, tax. All three are added in the ORDER of
 	// main.go.

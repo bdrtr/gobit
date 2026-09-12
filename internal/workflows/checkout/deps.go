@@ -431,7 +431,14 @@ type Orders interface {
 type Payments interface {
 	// CreateCollection opens a payment collection for a reference and returns its
 	// identifier. The amount must be POSITIVE.
-	CreateCollection(ctx context.Context, reference, currencyCode string, amount int64) (collectionID string, err error)
+	//
+	// customerID is whose money is being collected and may be EMPTY for a guest.
+	// It is carried because a tender whose funds belong to a person — store credit
+	// — cannot take the owner from anywhere else without letting a shopper name
+	// somebody else (ADR 0152).
+	CreateCollection(
+		ctx context.Context, reference, customerID, currencyCode string, amount int64,
+	) (collectionID string, err error)
 
 	// OpenSessionWithData opens a payment session at a provider for the
 	// collection and returns the identifier of the session.

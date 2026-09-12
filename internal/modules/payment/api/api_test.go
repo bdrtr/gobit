@@ -861,3 +861,139 @@ func TestTahsilatListesiKoleksiyonunTahsilatlariniDoner(t *testing.T) {
 	assert.InDelta(t, 1000, toplam, 0,
 		"satırların toplamı koleksiyonun tahsil edilen tutarını vermeli")
 }
+
+// --- mağaza kredisi ----------------------------------------------------------
+
+// Mağaza kredisinin yönetim uçları (ADR 0152).
+//
+// Bu katmanın tek işi çeviri: gövdeyi oku, servise ilet, zarfı yaz. O yüzden her
+// test servise NE ULAŞTIĞINI ya da istemcinin NE GÖRDÜĞÜNÜ tutuyor.
+
+// TestKrediVermeGovdesiServiseUlasir handler'ın tek işini çiviler.
+func TestKrediVermeGovdesiServiseUlasir(t *testing.T) {
+	svc := &fakePayments{creditEntry: models.StoreCreditEntry{
+		ID:           "scredit_1",
+		CustomerID:   "cus_1",
+		CurrencyCode: "TRY",
+		Amount:       5_000,
+		Kind:         models.StoreCreditIssue,
+		Reason:       "iade yerine kredi",
+	}}
+	r := yeniRouter(svc)
+
+	rec := istek(t, r, http.MethodPost, "/admin/v1/store-credits",
+		`{"customer_id":"cus_1","currency_code":"TRY","amount":5000,"reason":"iade yerine kredi"}`)
+
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Equal(t, "cus_1", svc.lastCreditInput.CustomerID)
+	assert.Equal(t, int64(5_000), svc.lastCreditInput.Amount)
+	assert.Equal(t, "iade yerine kredi", svc.lastCreditInput.Reason,
+		"gerekçe servise ULAŞMALI: doğrulaması orada ve burada düşürülürse her kredi "+
+			"gerekçesiz görünürdü")
+
+	var envelope struct {
+		Data struct {
+			ID     string `json:"id"`
+			Amount int64  `json:"amount"`
+			Kind   string `json:"kind"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
+	assert.Equal(t, "scredit_1", envelope.Data.ID)
+	assert.Equal(t, "issue", envelope.Data.Kind)
+}
+
+// TestBakiyeUcuSorulanDefteriIletir bakiyenin hangi deftere ait olduğunu tutar.
+//
+// Müşteri ve para birimi birlikte bir defteri adlandırıyor; biri düşerse cevap
+// başka birinin parasını ya da başka bir para birimini gösterirdi.
+func TestBakiyeUcuSorulanDefteriIletir(t *testing.T) {
+	svc := &fakePayments{creditBalance: 7_500}
+	r := yeniRouter(svc)
+
+	rec := istek(t, r, http.MethodGet,
+		"/admin/v1/store-credits/balance?customer_id=cus_1&currency_code=try", "")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, [2]string{"cus_1", "try"}, svc.lastCreditQuery)
+
+	var envelope struct {
+		Data struct {
+			CustomerID   string `json:"customer_id"`
+			CurrencyCode string `json:"currency_code"`
+			Balance      int64  `json:"balance"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
+	assert.Equal(t, int64(7_500), envelope.Data.Balance)
+	assert.Equal(t, "TRY", envelope.Data.CurrencyCode,
+		"yanıt HANGİ defteri okuduğunu söylemeli: 'try' gönderen istemci 'TRY' görmeli")
+}
+
+// TestKrediGecmisiListeZarfiDoner zarfın şeklini çiviler.
+func TestKrediGecmisiListeZarfiDoner(t *testing.T) {
+	svc := &fakePayments{creditHistory: []models.StoreCreditEntry{
+		{ID: "scredit_2", Kind: models.StoreCreditHold, Amount: -5_000},
+		{ID: "scredit_1", Kind: models.StoreCreditIssue, Amount: 5_000},
+	}}
+	r := yeniRouter(svc)
+
+	rec := istek(t, r, http.MethodGet,
+		"/admin/v1/store-credits?customer_id=cus_1&currency_code=TRY", "")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var envelope struct {
+		Data []struct {
+			ID     string `json:"id"`
+			Amount int64  `json:"amount"`
+			Kind   string `json:"kind"`
+		} `json:"data"`
+		Count int64 `json:"count"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
+
+	assert.Equal(t, int64(2), envelope.Count)
+	require.Len(t, envelope.Data, 2)
+	assert.Equal(t, "hold", envelope.Data[0].Kind)
+	assert.Equal(t, int64(-5_000), envelope.Data[0].Amount,
+		"blokaj EKSİ görünür: bakiye satırların toplamı ve istemci de onu böyle okur")
+}
+
+// TestKrediVermeOKUMAYetkisineKapali yetkinin route'a takılı olduğunu çiviler.
+//
+// Kredi vermek müşterinin harcayabileceği PARA YARATIYOR — mağazanın kasasından
+// çıkacak parayı. Yalnızca rapor okusun diye verilmiş bir kimlik bunu
+// yapabilseydi kimlik doğrulama tek başına yetkilendirme yerine geçerdi.
+func TestKrediVermeOKUMAYetkisineKapali(t *testing.T) {
+	svc := &fakePayments{}
+	r := yeniRouter(svc)
+
+	rec := kimlikliIstek(t, r, http.MethodPost, "/admin/v1/store-credits",
+		`{"customer_id":"cus_1","currency_code":"TRY","amount":5000,"reason":"x"}`,
+		darYetkili())
+
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Empty(t, svc.lastCreditInput.CustomerID, "yetki yetmiyorsa servise hiç gidilmemeli")
+}
+
+// TestKrediOkumaUclariOKUMAYetkisiyleGecer reddin yetki AYRIMINDAN geldiğini
+// gösterir.
+//
+// Eşlik eden çift budur: tek başına bir 403, yetki haritasının topluca fazla dar
+// olmasından da gelebilirdi. Aynı kimliğin iki okuma ucunda geçmesi, ayrımın
+// yazma/okuma ekseninde olduğunu söylüyor.
+func TestKrediOkumaUclariOKUMAYetkisiyleGecer(t *testing.T) {
+	for ad, yol := range map[string]string{
+		"bakiye": "/admin/v1/store-credits/balance?customer_id=cus_1&currency_code=TRY",
+		"geçmiş": "/admin/v1/store-credits?customer_id=cus_1&currency_code=TRY",
+	} {
+		t.Run(ad, func(t *testing.T) {
+			r := yeniRouter(&fakePayments{})
+
+			rec := kimlikliIstek(t, r, http.MethodGet, yol, "", darYetkili())
+
+			assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		})
+	}
+}

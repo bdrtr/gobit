@@ -25,7 +25,9 @@ import (
 // Buradaki tanımın workflow tarafındaki tanımla aynı kalması bir sözleşmedir;
 // ayrışırlarsa e2e testi düşer.
 type paymentInterop interface {
-	CreateCollection(ctx context.Context, reference, currencyCode string, amount int64) (string, error)
+	CreateCollection(
+		ctx context.Context, reference, customerID, currencyCode string, amount int64,
+	) (string, error)
 	OpenSession(ctx context.Context, collectionID, providerID, idempotencyKey string) (string, error)
 	OpenSessionWithData(
 		ctx context.Context,
@@ -61,7 +63,7 @@ func TestInteropUctanUcaAkis(t *testing.T) {
 	iop, _ := yeniInterop(t)
 	ctx := context.Background()
 
-	colID, err := iop.CreateCollection(ctx, referans, paraKodu, tutar)
+	colID, err := iop.CreateCollection(ctx, referans, "", paraKodu, tutar)
 	require.NoError(t, err)
 	assert.NotEmpty(t, colID)
 
@@ -115,7 +117,7 @@ func koleksiyon(t *testing.T, iop *service.Interop, colID string) (
 func TestInteropEksikTahsilatTutarlardanGorunur(t *testing.T) {
 	iop, prov := yeniInterop(t)
 	ctx := context.Background()
-	colID, err := iop.CreateCollection(ctx, referans, paraKodu, tutar)
+	colID, err := iop.CreateCollection(ctx, referans, "", paraKodu, tutar)
 	require.NoError(t, err)
 	sesID, err := iop.OpenSession(ctx, colID, saglayiciID, "key-1")
 	require.NoError(t, err)
@@ -141,7 +143,7 @@ func TestInteropEksikTahsilatTutarlardanGorunur(t *testing.T) {
 func TestInteropAyniAnahtarTekOturum(t *testing.T) {
 	iop, prov := yeniInterop(t)
 	ctx := context.Background()
-	colID, err := iop.CreateCollection(ctx, referans, paraKodu, tutar)
+	colID, err := iop.CreateCollection(ctx, referans, "", paraKodu, tutar)
 	require.NoError(t, err)
 
 	ilk, err := iop.OpenSession(ctx, colID, saglayiciID, "key-1")
@@ -159,7 +161,7 @@ func TestInteropAyniAnahtarTekOturum(t *testing.T) {
 func TestInteropCancelIkiKezCagrilabilir(t *testing.T) {
 	iop, _ := yeniInterop(t)
 	ctx := context.Background()
-	colID, err := iop.CreateCollection(ctx, referans, paraKodu, tutar)
+	colID, err := iop.CreateCollection(ctx, referans, "", paraKodu, tutar)
 	require.NoError(t, err)
 	sesID, err := iop.OpenSession(ctx, colID, saglayiciID, "key-1")
 	require.NoError(t, err)
@@ -182,7 +184,7 @@ func TestInteropCancelIkiKezCagrilabilir(t *testing.T) {
 func TestInteropAuthorizeRedHataDondurur(t *testing.T) {
 	iop, prov := yeniInterop(t)
 	ctx := context.Background()
-	colID, err := iop.CreateCollection(ctx, referans, paraKodu, tutar)
+	colID, err := iop.CreateCollection(ctx, referans, "", paraKodu, tutar)
 	require.NoError(t, err)
 	sesID, err := iop.OpenSession(ctx, colID, saglayiciID, "key-1")
 	require.NoError(t, err)
@@ -204,7 +206,7 @@ func TestInteropAuthorizeRedHataDondurur(t *testing.T) {
 func TestInteropOpenSessionWithDataSayilariBozmaz(t *testing.T) {
 	iop, _ := yeniInterop(t)
 	ctx := context.Background()
-	colID, err := iop.CreateCollection(ctx, referans, paraKodu, models.MaxAmount)
+	colID, err := iop.CreateCollection(ctx, referans, "", paraKodu, models.MaxAmount)
 	require.NoError(t, err)
 
 	sesID, err := iop.OpenSessionWithData(ctx, colID, saglayiciID, "key-1",
@@ -219,7 +221,7 @@ func TestInteropOpenSessionWithDataSayilariBozmaz(t *testing.T) {
 func TestInteropBozukDataReddedilir(t *testing.T) {
 	iop, _ := yeniInterop(t)
 	ctx := context.Background()
-	colID, err := iop.CreateCollection(ctx, referans, paraKodu, tutar)
+	colID, err := iop.CreateCollection(ctx, referans, "", paraKodu, tutar)
 	require.NoError(t, err)
 
 	_, err = iop.OpenSessionWithData(ctx, colID, saglayiciID, "key-1", json.RawMessage(`[1,2]`))
@@ -237,7 +239,7 @@ func TestInteropHatalariOlduguGibiTasir(t *testing.T) {
 	iop, _ := yeniInterop(t)
 	ctx := context.Background()
 
-	_, err := iop.CreateCollection(ctx, "", paraKodu, tutar)
+	_, err := iop.CreateCollection(ctx, "", "", paraKodu, tutar)
 	assert.True(t, errors.HasKind(err, errors.KindInvalid), "hata: %v", err)
 
 	_, err = iop.OpenSession(ctx, "paycol_YOK", saglayiciID, "key-1")

@@ -110,6 +110,10 @@ func Describe(d *openapi.Doc) {
 		},
 	})
 
+	// Mağaza kredisinin üç ucu; neden ayrı bir dosyada oldukları
+	// describe_storecredit.go içinde (ADR 0152).
+	describeStoreCredits(d)
+
 	describeOturumlar(d)
 	describeTahsilatlar(d)
 	describeMagaza(d)

@@ -29,6 +29,17 @@ type fakePayments struct {
 	payments    []models.Payment
 	refunds     []models.Refund
 
+	// creditEntry, creditBalance ve creditHistory mağaza kredisi uçlarının
+	// senaryolandırılmış cevaplarıdır (ADR 0152).
+	creditEntry   models.StoreCreditEntry
+	creditBalance int64
+	creditHistory []models.StoreCreditEntry
+	// lastCreditInput handler'ın servise ilettiği girdidir; uçların tek işi bu
+	// çeviri olduğu için doğruluğu ancak burada görünür.
+	lastCreditInput service.IssueCreditInput
+	// lastCreditQuery bakiyenin hangi müşteri ve para birimi için sorulduğudur.
+	lastCreditQuery [2]string
+
 	// err ayarlanırsa çağrılan her metot bu hatayı döner; hata sınıfının
 	// status koduna doğru eşlendiği böyle sınanır.
 	err error
@@ -198,4 +209,42 @@ func (f *fakePayments) ListRefunds(_ context.Context, paymentID string) ([]model
 // notFound testlerde kullanılan tipli hatadır.
 func notFound() error {
 	return errors.NotFound("payment_collection_not_found", "koleksiyon bulunamadı")
+}
+
+// --- mağaza kredisi (ADR 0152) ----------------------------------------------
+
+// IssueCredit girdiyi kaydeder ve senaryolandırılmış satırı döner.
+func (f *fakePayments) IssueCredit(
+	_ context.Context, in service.IssueCreditInput,
+) (models.StoreCreditEntry, error) {
+	f.lastCreditInput = in
+	if f.err != nil {
+		return models.StoreCreditEntry{}, f.err
+	}
+
+	return f.creditEntry, nil
+}
+
+// StoreCreditBalance sorulan defteri kaydeder ve bakiyeyi döner.
+func (f *fakePayments) StoreCreditBalance(
+	_ context.Context, customerID, currencyCode string,
+) (int64, error) {
+	f.lastCreditQuery = [2]string{customerID, currencyCode}
+	if f.err != nil {
+		return 0, f.err
+	}
+
+	return f.creditBalance, nil
+}
+
+// ListStoreCredit geçmişi döner.
+func (f *fakePayments) ListStoreCredit(
+	_ context.Context, in service.ListStoreCreditInput,
+) ([]models.StoreCreditEntry, int64, error) {
+	f.lastCreditQuery = [2]string{in.CustomerID, in.CurrencyCode}
+	if f.err != nil {
+		return nil, 0, f.err
+	}
+
+	return f.creditHistory, int64(len(f.creditHistory)), nil
 }

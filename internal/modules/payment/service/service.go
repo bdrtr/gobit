@@ -169,6 +169,21 @@ type Store interface {
 	// event for work that may never commit.
 	WriteOutboxEvent(ctx context.Context, id, name string, data map[string]any) error
 
+	// AppendStoreCreditEntry appends ONE event to a customer's credit ledger; the
+	// balance is the sum of them and there is no update or delete (ADR 0152).
+	AppendStoreCreditEntry(ctx context.Context, entry models.StoreCreditEntry) (models.StoreCreditEntry, error)
+	// StoreCreditBalance sums one customer's entries in one currency; a customer
+	// with no entries is zero rather than an absence.
+	StoreCreditBalance(ctx context.Context, customerID, currencyCode string) (int64, error)
+	// LockStoreCreditEntries locks that customer's rows for the length of the
+	// transaction, so a balance read may be acted on. It may only be called inside
+	// [Store.WithTx].
+	LockStoreCreditEntries(ctx context.Context, customerID, currencyCode string) error
+	// ListStoreCreditEntries pages a customer's history, newest first.
+	ListStoreCreditEntries(
+		ctx context.Context, customerID, currencyCode string, limit, offset int64,
+	) ([]models.StoreCreditEntry, int64, error)
+
 	// CreatePaymentCollection records a new payment collection.
 	CreatePaymentCollection(ctx context.Context, col models.PaymentCollection) (models.PaymentCollection, error)
 	// GetPaymentCollection returns the collection by its identifier; NotFound

@@ -301,6 +301,28 @@ func anlatilanUclar() []ucBeklentisi {
 			metod: http.MethodGet, yol: pathStoreCollection, durum: "200",
 			yanit: doluKoleksiyon(),
 		},
+		// Mağaza kredisinin üç ucu (ADR 0152).
+		{
+			metod: http.MethodPost, yol: pathAdminStoreCredits, durum: "201",
+			istek: issueCreditRequest{}, yanit: doluKrediSatiri(),
+		},
+		{
+			metod: http.MethodGet, yol: pathAdminStoreCredits, durum: "200",
+			yanit: doluKrediSatiri(), liste: true,
+		},
+		{
+			metod: http.MethodGet, yol: pathAdminStoreCreditBalance, durum: "200",
+			yanit: storeCreditBalanceDTO{},
+		},
+	}
+}
+
+// doluKrediSatiri omitempty alanları da yazılan bir defter satırı üretir.
+func doluKrediSatiri() storeCreditEntryDTO {
+	return storeCreditEntryDTO{
+		Reference: "ret_1",
+		Reason:    "iade yerine kredi",
+		CreatedAt: time.Now().UTC(),
 	}
 }
 
@@ -645,6 +667,13 @@ func semaTutarTasiyor(t *testing.T, bilesenler, sema map[string]any) bool {
 }
 
 // tutarAlani alan adının para taşıyıp taşımadığını bildirir.
+//
+// "balance" 2026-09-12'de eklendi ve eklenmesinin sebebi kuralın kendisi: bu
+// testin cümlesi "TUTAR taşıyan her uç" ve bakiye de bir tutar — minor unit bir
+// tam sayı. Nüfusu yalnızca "amount" üzerinden kuran hâl, mağaza kredisinin
+// bakiye ucunu sessizce dışarıda bıraktı; bu, kapının söylediği cümleden DAR
+// olduğu hâlin bir örneğiydi, muafiyet değil.
 func tutarAlani(ad string) bool {
-	return ad == "amount" || strings.HasSuffix(ad, "_amount")
+	return ad == "amount" || strings.HasSuffix(ad, "_amount") ||
+		ad == "balance" || strings.HasSuffix(ad, "_balance")
 }

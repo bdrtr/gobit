@@ -90,8 +90,12 @@ func (s *authorizePaymentStep) Restore(sc *workflow.StepContext, output json.Raw
 // could not find the session", or to compensation quietly falling through to a
 // no-op.
 func (s *authorizePaymentStep) Invoke(ctx context.Context, sc *workflow.StepContext) (any, error) {
+	// The cart's customer travels with the collection, and it is EMPTY on a guest
+	// order. What needs it is a tender whose funds belong to a person — store
+	// credit — because the provider may not take the owner from the client's own
+	// payment data (ADR 0152).
 	collectionID, err := s.w.payments.CreateCollection(ctx,
-		s.plan.CartID, s.plan.CurrencyCode, s.plan.Amount)
+		s.plan.CartID, s.plan.CustomerID, s.plan.CurrencyCode, s.plan.Amount)
 	if err != nil {
 		return nil, err
 	}

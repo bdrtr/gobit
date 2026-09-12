@@ -39,6 +39,20 @@ type CreateSessionInput struct {
 	// A saga may retry a step (plan Section 2.6); without the key a retry
 	// would mean a SECOND attempt to charge the customer.
 	IdempotencyKey string
+	// CustomerID is WHOSE money the session spends, and it is empty for the
+	// tenders where that question has no answer.
+	//
+	// # Why it is a field and not a key in Data
+	//
+	// Because Data is the CLIENT's (it carries a card token, a return URL), and a
+	// tender whose funds belong to a person — store credit, loyalty points, an
+	// account on terms — would then take the owner from a value the shopper sent.
+	// Naming somebody else's id would spend their balance (ADR 0152).
+	//
+	// It is filled by the payment module from the collection, which is told by the
+	// flow that knows whose cart it is; a provider that does not need it ignores
+	// it, and most do.
+	CustomerID string
 	// Data is provider-specific free-form data (a card token, a return URL and
 	// so on).
 	Data map[string]any

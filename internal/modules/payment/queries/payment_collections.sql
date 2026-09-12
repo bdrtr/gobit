@@ -7,10 +7,16 @@
 -- serialize against each other, and it is why the derived status field is never
 -- written from two different computations.
 
+-- CreatePaymentCollection opens a collection.
+--
+-- customer_id is NULLABLE and most collections leave it empty: a guest paying by
+-- card names nobody. What needs it is a tender whose funds belong to a person, and
+-- the alternative — a provider taking the owner from client-supplied data — is a
+-- shopper spending somebody else's balance (ADR 0152).
 -- name: CreatePaymentCollection :one
 INSERT INTO payment_collections (
-    id, reference, amount, currency_code, status, metadata
-) VALUES ($1, $2, $3, $4, $5, $6)
+    id, reference, amount, currency_code, status, metadata, customer_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING *;
 
 -- name: GetPaymentCollection :one

@@ -23,6 +23,12 @@ const (
 	// identifiers. This identifier belongs to the PROVIDER and sits on the
 	// module's session record as external_id.
 	ManualSessionIDPrefix = "manses_"
+	// StoreCreditEntryIDPrefix is the prefix of store credit ledger entries.
+	StoreCreditEntryIDPrefix = "scredit_"
+	// StoreCreditSessionIDPrefix is the prefix of the store-credit provider's own
+	// session identifiers; like the manual provider's, it sits on the module's
+	// session record as external_id.
+	StoreCreditSessionIDPrefix = "scrses_"
 )
 
 // idEncoding is padding-free encoding over the Crockford Base32 alphabet. A
@@ -37,6 +43,12 @@ func NewPaymentCollectionID() string { return newID(PaymentCollectionIDPrefix, t
 
 // NewPaymentSessionID produces a new payment session identifier.
 func NewPaymentSessionID() string { return newID(PaymentSessionIDPrefix, time.Now()) }
+
+// NewStoreCreditEntryID produces a new store credit ledger entry identifier.
+func NewStoreCreditEntryID() string { return newID(StoreCreditEntryIDPrefix, time.Now()) }
+
+// NewStoreCreditSessionID produces a new store-credit provider session identifier.
+func NewStoreCreditSessionID() string { return newID(StoreCreditSessionIDPrefix, time.Now()) }
 
 // NewPaymentID produces a new capture identifier.
 func NewPaymentID() string { return newID(PaymentIDPrefix, time.Now()) }

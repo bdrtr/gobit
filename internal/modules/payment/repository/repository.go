@@ -178,6 +178,9 @@ func (r *Repository) CreatePaymentCollection(
 		CurrencyCode: col.CurrencyCode,
 		Status:       col.Status.String(),
 		Metadata:     meta,
+		// Boş bir müşteri kimliği NULL yazılır: "bu koleksiyonun sahibi yok" ile
+		// "sahibi boş dize" aynı şey değil, ve şema ikincisini zaten reddediyor.
+		CustomerID: nullText(col.CustomerID),
 	})
 	if err != nil {
 		return models.PaymentCollection{}, classify(err, codeQueryFailed, "ödeme koleksiyonu oluşturulamadı")
@@ -715,4 +718,17 @@ func (r *Repository) UpdateManualSessionState(
 			"manuel sağlayıcı oturumu güncellenemedi")
 	}
 	return toManualSession(row), nil
+}
+
+// nullText boş bir dizeyi NULL olarak yazar.
+//
+// "Bu koleksiyonun sahibi yok" ile "sahibi boş dize" aynı şey değil, ve şema
+// ikincisini zaten reddediyor; tek bir biçim yazmak okuyan tarafta da tek bir
+// kontrol bırakıyor (bkz. derefText).
+func nullText(value string) *string {
+	if value == "" {
+		return nil
+	}
+
+	return &value
 }

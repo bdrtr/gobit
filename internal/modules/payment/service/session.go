@@ -152,7 +152,12 @@ func (s *Service) CreateSession(
 			// iki sistemi eşleştiren alan budur.
 			Reference:      col.ID,
 			IdempotencyKey: key,
-			Data:           in.Data,
+			// Müşteri KOLEKSİYONDAN geliyor, Data'dan değil (ADR 0152): Data
+			// istemcinin ve fonları bir kişiye ait olan bir ödeme yöntemi sahibini
+			// oradan alsaydı, müşteri başkasının adını yazarak onun bakiyesini
+			// harcardı. Çoğu sağlayıcı bu alanı hiç okumuyor.
+			CustomerID: col.CustomerID,
+			Data:       in.Data,
 		})
 		if err != nil {
 			return err

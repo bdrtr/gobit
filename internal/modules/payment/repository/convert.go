@@ -23,22 +23,26 @@ import (
 // Hata kodları. Çağıran taraf errors.CodeOf ile bunlara bakabilir; API katmanı
 // da aynı kodları istemciye geçirir.
 const (
-	codeCollectionNotFound    = "payment_collection_not_found"
-	codeSessionNotFound       = "payment_session_not_found"
-	codePaymentNotFound       = "payment_not_found"
-	codeManualSessionNotFound = "payment_manual_session_not_found"
-	codeSessionExists         = "payment_session_idempotency_key_exists"
-	codePaymentExists         = "payment_session_already_captured"
-	codeAmountOutOfRange      = "payment_amount_out_of_range"
-	codeInconsistentAmounts   = "payment_amounts_inconsistent"
-	codeStatusInvalid         = "payment_status_invalid"
-	codeCurrencyInvalid       = "payment_currency_invalid"
-	codeDataInvalid           = "payment_json_invalid"
-	codeTxRequired            = "payment_tx_required"
-	codeTxBeginFailed         = "payment_tx_begin_failed"
-	codeTxCommitFailed        = "payment_tx_commit_failed"
-	codeQueryFailed           = "payment_query_failed"
-	codeConcurrentUpdate      = "payment_concurrent_update"
+	codeCollectionNotFound = "payment_collection_not_found"
+	codeSessionNotFound    = "payment_session_not_found"
+	// codeStoreCreditSessionNotFound mağaza-kredisi sağlayıcısının kendi
+	// defterinde bulunmayan oturum içindir; modülün oturumundan AYRI bir kayıttır
+	// ve karışmaları hangi defterin konuştuğunu belirsizleştirirdi (ADR 0152).
+	codeStoreCreditSessionNotFound = "payment_store_credit_session_not_found"
+	codePaymentNotFound            = "payment_not_found"
+	codeManualSessionNotFound      = "payment_manual_session_not_found"
+	codeSessionExists              = "payment_session_idempotency_key_exists"
+	codePaymentExists              = "payment_session_already_captured"
+	codeAmountOutOfRange           = "payment_amount_out_of_range"
+	codeInconsistentAmounts        = "payment_amounts_inconsistent"
+	codeStatusInvalid              = "payment_status_invalid"
+	codeCurrencyInvalid            = "payment_currency_invalid"
+	codeDataInvalid                = "payment_json_invalid"
+	codeTxRequired                 = "payment_tx_required"
+	codeTxBeginFailed              = "payment_tx_begin_failed"
+	codeTxCommitFailed             = "payment_tx_commit_failed"
+	codeQueryFailed                = "payment_query_failed"
+	codeConcurrentUpdate           = "payment_concurrent_update"
 )
 
 // Kısıt ve indeks adları; sürücü hatasını anlamlı bir tipli hataya çevirmek
@@ -298,6 +302,7 @@ func toCollection(row paymentdb.PaymentCollection) (models.PaymentCollection, er
 	return models.PaymentCollection{
 		ID:               row.ID,
 		Reference:        row.Reference,
+		CustomerID:       derefText(row.CustomerID),
 		Amount:           row.Amount,
 		CurrencyCode:     row.CurrencyCode,
 		Status:           models.CollectionStatus(row.Status),
@@ -373,4 +378,17 @@ func toManualSession(row paymentdb.PaymentManualSession) models.ManualSession {
 		CreatedAt:        toTime(row.CreatedAt),
 		UpdatedAt:        toTime(row.UpdatedAt),
 	}
+}
+
+// derefText bir nullable metin kolonunu boş dizeye çevirir.
+//
+// NULL ile boş dize bu modülde AYNI anlama gelir ve şema ikincisini yazmayı
+// reddeder: "sahibi yok" tek bir biçimde saklanır, okuyan taraf da tek bir
+// biçimde okur.
+func derefText(value *string) string {
+	if value == nil {
+		return ""
+	}
+
+	return *value
 }

@@ -40,9 +40,9 @@ func (q *Queries) CountPaymentCollections(ctx context.Context, arg CountPaymentC
 const createPaymentCollection = `-- name: CreatePaymentCollection :one
 
 INSERT INTO payment_collections (
-    id, reference, amount, currency_code, status, metadata
-) VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at
+    id, reference, amount, currency_code, status, metadata, customer_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at, customer_id
 `
 
 type CreatePaymentCollectionParams struct {
@@ -52,6 +52,7 @@ type CreatePaymentCollectionParams struct {
 	CurrencyCode string
 	Status       string
 	Metadata     []byte
+	CustomerID   *string
 }
 
 // payment_collections queries.
@@ -62,6 +63,12 @@ type CreatePaymentCollectionParams struct {
 // LockPaymentCollection; that is how two flows touching the same collection
 // serialize against each other, and it is why the derived status field is never
 // written from two different computations.
+// CreatePaymentCollection opens a collection.
+//
+// customer_id is NULLABLE and most collections leave it empty: a guest paying by
+// card names nobody. What needs it is a tender whose funds belong to a person, and
+// the alternative — a provider taking the owner from client-supplied data — is a
+// shopper spending somebody else's balance (ADR 0152).
 func (q *Queries) CreatePaymentCollection(ctx context.Context, arg CreatePaymentCollectionParams) (PaymentCollection, error) {
 	row := q.db.QueryRow(ctx, createPaymentCollection,
 		arg.ID,
@@ -70,6 +77,7 @@ func (q *Queries) CreatePaymentCollection(ctx context.Context, arg CreatePayment
 		arg.CurrencyCode,
 		arg.Status,
 		arg.Metadata,
+		arg.CustomerID,
 	)
 	var i PaymentCollection
 	err := row.Scan(
@@ -84,12 +92,13 @@ func (q *Queries) CreatePaymentCollection(ctx context.Context, arg CreatePayment
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CustomerID,
 	)
 	return i, err
 }
 
 const getPaymentCollection = `-- name: GetPaymentCollection :one
-SELECT id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at FROM payment_collections
+SELECT id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at, customer_id FROM payment_collections
 WHERE id = $1
 `
 
@@ -108,12 +117,13 @@ func (q *Queries) GetPaymentCollection(ctx context.Context, id string) (PaymentC
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CustomerID,
 	)
 	return i, err
 }
 
 const getPaymentCollectionsByIDs = `-- name: GetPaymentCollectionsByIDs :many
-SELECT id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at FROM payment_collections
+SELECT id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at, customer_id FROM payment_collections
 WHERE id = ANY ($1::text[])
 ORDER BY id
 `
@@ -141,6 +151,7 @@ func (q *Queries) GetPaymentCollectionsByIDs(ctx context.Context, ids []string) 
 			&i.Metadata,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CustomerID,
 		); err != nil {
 			return nil, err
 		}
@@ -153,7 +164,7 @@ func (q *Queries) GetPaymentCollectionsByIDs(ctx context.Context, ids []string) 
 }
 
 const listPaymentCollections = `-- name: ListPaymentCollections :many
-SELECT id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at FROM payment_collections
+SELECT id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at, customer_id FROM payment_collections
 WHERE ($1::text IS NULL OR reference = $1::text)
   AND ($2::text IS NULL OR status = $2::text)
 ORDER BY created_at DESC, id DESC
@@ -193,6 +204,7 @@ func (q *Queries) ListPaymentCollections(ctx context.Context, arg ListPaymentCol
 			&i.Metadata,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CustomerID,
 		); err != nil {
 			return nil, err
 		}
@@ -205,7 +217,7 @@ func (q *Queries) ListPaymentCollections(ctx context.Context, arg ListPaymentCol
 }
 
 const lockPaymentCollection = `-- name: LockPaymentCollection :one
-SELECT id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at FROM payment_collections
+SELECT id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at, customer_id FROM payment_collections
 WHERE id = $1
 FOR UPDATE
 `
@@ -230,6 +242,7 @@ func (q *Queries) LockPaymentCollection(ctx context.Context, id string) (Payment
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CustomerID,
 	)
 	return i, err
 }
@@ -305,7 +318,7 @@ SET status            = $2,
     refunded_amount   = $5,
     updated_at        = now()
 WHERE id = $1
-RETURNING id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at
+RETURNING id, reference, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, metadata, created_at, updated_at, customer_id
 `
 
 type UpdatePaymentCollectionTotalsParams struct {
@@ -343,6 +356,7 @@ func (q *Queries) UpdatePaymentCollectionTotals(ctx context.Context, arg UpdateP
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CustomerID,
 	)
 	return i, err
 }
