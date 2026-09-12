@@ -200,11 +200,16 @@ lint: $(GOLANGCI) ## golangci-lint çalıştır (kök + ayrı modüller)
 		echo "lint: yalnızca $$found ayrı modül denetlendi" >&2; exit 1; \
 	fi
 
-# vuln, bilinen açıkları ÜÇ modülde birden arar: kök ve iki örnek.
+# vuln, bilinen açıkları SEPARATE_MODULES'un tamamında arar: kök, örnekler ve
+# contrib ağaçları.
 #
-# Örnekler dahildir çünkü gobit bir KÜTÜPHANEDIR (ADR 0025) ve o iki modül,
-# gömen bir projenin gerçekten derlediği şeyin en yakın örneğidir. Kökün graf'ı
-# temiz olup starter'ınkinin olmaması mümkündür.
+# Sayı burada YAZILI DEĞİL, ve bir kez yazılıydı: "ÜÇ modülde birden" diyordu,
+# liste altıya çıkmıştı ve cümle üçte kalmıştı. Elle yazılmış bir sayım, saydığı
+# şey büyüdüğünde sessizce yanlış olur.
+#
+# Örnekler dahildir çünkü gobit bir KÜTÜPHANEDIR (ADR 0025) ve onlar, gömen bir
+# projenin gerçekten derlediği şeyin en yakın örneğidir. Kökün graf'ı temiz olup
+# starter'ınkinin olmaması mümkündür.
 #
 # `|| exit 1` DÖNGÜNÜN İÇİNDE, ve bu satır hedefin tek kırılgan yeri: bir shell
 # `for` döngüsü SON yinelemenin çıkış kodunu döndürür, yani kök kırmızı +

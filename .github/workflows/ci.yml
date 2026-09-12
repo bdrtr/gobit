@@ -45,9 +45,22 @@ jobs:
         run: |
           make gen
           git diff --exit-code
-      - uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.13.1
+      # The lint runs through `make lint` and not through the action, for the
+      # reason the vulnerability step below gives and one more of its own.
+      #
+      # The action lints the module it is standing in. This repository is SIX
+      # modules: the root, three examples and two contrib trees, each with its
+      # own go.mod — and `golangci-lint run ./...` cannot reach a separate one,
+      # which is why the Makefile target loops them with the same config and a
+      # floor derived from the list. Measured 2026-09-12 (D100): with the action
+      # here, the only linter that ever read examples/ and contrib/ was the
+      # pre-push hook, and `git push --no-verify` skips it.
+      #
+      # The version is the Makefile's pinned one, so the linter a developer runs
+      # and the linter CI runs cannot drift apart — which the action's own
+      # `version:` field made possible by holding a second copy of it.
+      - name: Lint
+        run: make lint
       # govulncheck runs in the LINT job rather than in one of its own.
       #
       # It needs no database and no Docker, it finishes in seconds, and a fifth

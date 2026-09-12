@@ -20,6 +20,22 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Düzeltmeler
 
+- **CI ayrı modülleri hiç lint'lemiyordu** (D100, D102). Lint işi kökü
+  `golangci-lint-action` ile geçiriyor, sonra `make vuln` koşuyordu; `make lint`
+  hiç koşmuyordu — ki ayrı modülleri dolaşan hedef o. Aksiyon içinde durduğu modülü
+  lint'ler, bu depo ise ALTI modül: kök, üç örnek, iki contrib ağacı. `examples/` ve
+  `contrib/`e ulaşan tek linter pre-push kancasıydı ve `git push --no-verify` onu
+  atlatıyor. Kuralı iş dosyasının KENDİ yorumu zaten söylüyordu, bir adım aşağıda:
+  "`make vuln` üzerinden koşuyor, çıplak bir komutla değil, ki geliştiricinin
+  yerelde koştuğu hedef CI'nın koştuğu hedef olsun". Artık lint de öyle, ve sürümün
+  iki yerine tek evi var — aksiyon Makefile'ınkinin yanında kendi kopyasını
+  pinliyordu. Bir kapı aksiyonu ADIYLA reddediyor ve dört hedefi `run:` satırlarında
+  arıyor; ilk sürümü bütün dosyada arıyordu ve `make vuln`'den söz eden bir YORUM
+  onu tatmin ediyordu, yani o adımı silmek yeşil kalıyordu. Aynı turda vuln
+  hedefinin yorumundaki "ÜÇ modülde" sayımı da düzeltildi (D102): liste altıya
+  çıkmıştı, cümle üçte kalmıştı — elle yazılmış bir sayım, saydığı şey büyüdüğünde
+  sessizce yanlış olur.
+
 - **Panelin varlıkları hiçbir zaman yeniden çekilmiyordu ve yetki arkasındakiler
   PAYLAŞILAN önbelleğe açıktı** (D94, D95). Damga yalnızca ETag'e giriyordu, adres
   hiç değişmiyordu ve yanıt `immutable` diyor — yani tarayıcıya bir yıl boyunca
