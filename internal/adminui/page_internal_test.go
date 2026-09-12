@@ -19,9 +19,19 @@ import (
 // The refusals are the interesting half: each one is a startup failure, and each
 // would otherwise be a screen an operator opens.
 
+// testPageScope is the privilege the registration below names.
+//
+// A plugin's own scope rather than a built-in one: the panel must not care which
+// module a scope belongs to, and a test using "product:read" here would pass even
+// if the panel silently looked the page's privilege up in its own table.
+const testPageScope = "analytics:read"
+
 // testPage is a well-formed registration.
 func testPage() Page {
-	return Page{Label: "Funnel", Path: URLPrefix + "/analytics/funnel", Script: []byte("// hi\n")}
+	return Page{
+		Label: "Funnel", Path: URLPrefix + "/analytics/funnel",
+		Scope: testPageScope, Script: []byte("// hi\n"),
+	}
 }
 
 // TestARegisteredScreenGetsBothARouteAndAMenuEntry is the inert shape this
@@ -84,23 +94,37 @@ func signedInRequest(path string) *http.Request {
 func TestAMalformedRegistrationStopsStartup(t *testing.T) {
 	builtIn := sections()[0].Path
 
-	for name, page := range map[string]Page{
-		"no label":  {Path: URLPrefix + "/x", Script: []byte("x")},
-		"no script": {Label: "X", Path: URLPrefix + "/x"},
-		"outside the panel's prefix": {
-			Label: "X", Path: "/admin/v1/x", Script: []byte("x"),
+	// Each case starts from a VALID registration and breaks exactly one thing.
+	// Spelling the broken pages out field by field is how a table stops
+	// discriminating: a page missing two fields trips whichever rule fires
+	// first, so every case after that one would pass without its own rule
+	// existing at all.
+	for name, break_ := range map[string]func(p *Page){
+		"no label":  func(p *Page) { p.Label = "" },
+		"no script": func(p *Page) { p.Script = nil },
+		"no scope":  func(p *Page) { p.Scope = "" },
+		"outside the panel's prefix": func(p *Page) {
+			p.Path = "/admin/v1/x"
 		},
-		"the panel's own prefix but not under it": {
-			Label: "X", Path: URLPrefix + "-elsewhere/x", Script: []byte("x"),
+		"the panel's own prefix but not under it": func(p *Page) {
+			p.Path = URLPrefix + "-elsewhere/x"
 		},
-		"collides with its own script address": {
-			Label: "X", Path: URLPrefix + "/x" + scriptSuffix, Script: []byte("x"),
+		"collides with its own script address": func(p *Page) {
+			p.Path = URLPrefix + "/x" + scriptSuffix
 		},
-		"collides with a screen the panel ships": {
-			Label: "X", Path: builtIn, Script: []byte("x"),
+		"collides with a screen the panel ships": func(p *Page) {
+			p.Path = builtIn
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			page := testPage()
+			break_(&page)
+
+			// The valid page it was broken from must be ACCEPTED, or the case
+			// below proves nothing about the field it changed.
+			_, valid := validatePages([]Page{testPage()})
+			require.NoError(t, valid)
+
 			_, err := validatePages([]Page{page})
 
 			require.Error(t, err)

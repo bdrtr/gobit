@@ -115,6 +115,13 @@ func TestSetupRegistersTheFunnelScreen(t *testing.T) {
 	assert.NotEmpty(t, pages[0].Script,
 		"the panel serves these BYTES from its own origin, which is what lets its "+
 			"content policy stay script-src 'self'")
+	// The SAME privilege the endpoint requires, and that is the assertion rather
+	// than "some non-empty scope": the screen is a client of that endpoint, so a
+	// shell opening wider than it would render an empty box under a heading for
+	// every operator in between, and one opening narrower would hide a screen
+	// they are entitled to (ADR 0156).
+	assert.Equal(t, analytics.ScopeRead, pages[0].Scope,
+		"the screen must ask for the privilege its own endpoint asks for")
 	// The script reads the prefix out of the shell and appends the rest, so what
 	// it carries is the endpoint MINUS the admin prefix. Asserting the whole path
 	// would be asserting a string the script deliberately does not hold.

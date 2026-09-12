@@ -81,6 +81,31 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir panel ekranı artık bir YETKİYE mal oluyor** (ADR 0156, D92, D93). Yönetim
+  API'si yetmiş bir rotada bir kapsam adlandırıyor ve `internal/e2e`'nin yetki
+  matrisi, kapsamı olmayan geçerli bir kimliğin 403 aldığını uçtan uca
+  kanıtlıyor. Panel aynı verinin İKİNCİ kapısıydı ve yalnızca kimliğe bakıyordu:
+  halkası principal'ı çözüp bağlama koyuyor, çerçeve de ondan tek bir bit
+  okuyordu — `_, signedIn := PrincipalFromContext(...)`. Kapsam listesi her
+  istekte oradaydı ve atamada düşürülüyordu. Bu teorik bir hesap değildi:
+  `POST /admin/v1/users` bir kapsam listesi alıyor, `PATCH` onu değiştiriyor, ve
+  böyle bir hesap panele girip bütün katalogu, her müşterinin adını ve adresini,
+  stok seviyelerini ve satış raporunu okuyordu — üstelik ürün başlığını
+  DEĞİŞTİREBİLİYORDU, çünkü panel modül yazma yüzeylerine doğrudan çağırıyor.
+  Artık her panel yolu, modülün kendi API'sinin kullandığı dizeyle yazılmış bir
+  yetkiyle TEK bir tabloda listeli; rota tutmayan operatörü panelin kendi 403
+  sayfasıyla ve eksik yetkiyi ADLANDIRARAK reddediyor, menü açılamayacak girdiyi
+  düşürüyor, kapı da operatörü açabileceği İLK ekrana gönderiyor. Bir eklentinin
+  kaydettiği ekran da yetkisini bildiriyor ve bildirmeyen bir kayıt AÇILIŞTA
+  reddediliyor. Yetki EKRAN başına: açılmış bir ekranın GÖSTERDİĞİNİ daraltmıyor
+  ve okuma katmanı principal'dan habersiz kalıyor (bilinen sınırlar). Kapıyı
+  router'ı İKİ kez yürüyen denetim tutuyor — biri her rotanın yetkisiz operatörü
+  reddettiğini, öteki her rotanın KENDİ yolunun listelendiği yetkiyi istediğini
+  kanıtlıyor; ikincisi var çünkü bağlama satırı yolunu iki kez adlandırıyor ve
+  bir ekranın yolunu başkasının handler'ıyla eşleyen satır yetkisiz operatörü
+  aynı doğrulukla reddediyor. Aynı turda ADR 0155'in politika kapısının NIL
+  sayfalarla kurulduğu ve bir eklentinin ekranını hiç yürümediği çıktı (D93).
+
 - **Bir eklenti artık yönetim PANELİNE ekran koyabiliyor** (ADR 0155, D91). Panel
   altı ekranla geliyordu ve yedinciyi eklemenin yolu yoktu: `sections()` altı
   elemanlı PAKET-ÖZEL bir dilim ve `internal/adminui` `internal/` altında, yani

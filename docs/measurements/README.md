@@ -88,3 +88,4 @@ truth: a report says what was true on the day it was taken.
 | [Platform features — measured against the brief, 2026-09-05](platform-features.md) | 172 |
 | [The embedded admin panel — measured against the brief, 2026-09-05](embedded-admin-panel.md) | 71 |
 | [Capability inventory — measured 2026-09-04](capability-inventory.md) | 285 |
+| [The second door — measured 2026-09-12](0156-the-second-door.md) | 203 |

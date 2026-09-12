@@ -48,6 +48,15 @@ type Page struct {
 	Label string
 	// Path is the panel path the shell answers on.
 	Path string
+	// Scope is the privilege an operator must carry to open the screen.
+	//
+	// It is REQUIRED, and the refusal is at startup rather than a default of
+	// "any operator who can sign in": a plugin's screen reads the plugin's own
+	// endpoint, that endpoint names a scope, and a shell that opened for
+	// somebody the endpoint refuses would show an empty box under a heading.
+	// The plugin should pass the SAME constant its route requires, so the two
+	// cannot drift apart.
+	Scope string
 	// Script is the screen's client, served from the panel's own origin.
 	Script []byte
 }
@@ -88,6 +97,10 @@ func validatePages(pages []Page) ([]pageScreen, error) {
 		case strings.TrimSpace(page.Label) == "":
 			return nil, errors.Internal(CodeNotReady,
 				"an admin page was registered with no label; nothing would name it in the menu")
+		case strings.TrimSpace(page.Scope) == "":
+			return nil, errors.Internal(CodeNotReady,
+				"the %q admin page names no privilege; it would open for any operator who "+
+					"can sign in, while the endpoint it reads from refuses them", page.Label)
 		case len(page.Script) == 0:
 			return nil, errors.Internal(CodeNotReady,
 				"the %q admin page carries no script, so its shell would render an empty "+
@@ -124,11 +137,16 @@ func validatePages(pages []Page) ([]pageScreen, error) {
 // mirror image of the split — a screen only somebody who knew the URL could open
 // — and the reverse is just as easy to write: a navigation entry whose link
 // answers 404. Bound together they cannot disagree.
+//
+// Both carry the screen's privilege too, and the script is not the lesser half:
+// it is bytes the panel serves from its own origin to a browser holding an
+// operator's session, and a plugin free to put whatever it likes in there has no
+// reason to be told which accounts could not open the screen it belongs to.
 func (u *UI) pageRoutes(r chi.Router) {
 	for i := range u.pages {
 		screen := u.pages[i]
-		r.Get(screen.page.Path, u.showPage(screen))
-		r.Get(screen.scriptPath(), u.servePageScript(screen))
+		r.Get(screen.page.Path, u.needs(screen.page.Path, u.showPage(screen)))
+		r.Get(screen.scriptPath(), u.needs(screen.scriptPath(), u.servePageScript(screen)))
 	}
 }
 

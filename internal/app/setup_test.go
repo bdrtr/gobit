@@ -1238,7 +1238,14 @@ func TestGuardStackExemptsTheGraphQLEndpointFromIdempotency(t *testing.T) {
 // the claim below is that a request WITHOUT a header is refused, and an
 // authenticator that says yes to everything would make that claim pass no
 // matter how the guard behaved.
-type panelIdentity struct{ token string }
+// The scopes are part of the fake because the panel's screens require them
+// (ADR 0156). Until then this returned a principal carrying NONE, and every panel
+// screen answered it — which is the defect that record was written for, sitting
+// in a fixture written for another purpose.
+type panelIdentity struct {
+	token  string
+	scopes []string
+}
 
 // AuthenticateAdmin accepts only the Bearer scheme and the known token.
 func (p panelIdentity) AuthenticateAdmin(_ context.Context, scheme, token string) (corehttp.Principal, error) {
@@ -1246,7 +1253,7 @@ func (p panelIdentity) AuthenticateAdmin(_ context.Context, scheme, token string
 		return corehttp.Principal{}, errors.Unauthorized("auth_invalid_token", "invalid token")
 	}
 
-	return corehttp.Principal{ID: "usr_panel", Kind: "user"}, nil
+	return corehttp.Principal{ID: "usr_panel", Kind: "user", Scopes: p.scopes}, nil
 }
 
 // AuthenticateStore is never reached by these tests.
@@ -1319,7 +1326,10 @@ func TestThePanelSessionReachesTheAdminAPIOnlyUnderTheOriginCheck(t *testing.T) 
 
 	const token = "a-valid-admin-token"
 
-	identity := panelIdentity{token: token}
+	// The catalog privilege, because the case below asserts the entry point
+	// redirects to the catalog: an operator carrying nothing is refused at the
+	// door now, which is a different claim and has its own test.
+	identity := panelIdentity{token: token, scopes: []string{"product:read"}}
 
 	c := container.New(discardLogger())
 	require.NoError(t, c.Provide(adminui.ServiceQuery, panelCatalog{}))
@@ -1594,7 +1604,14 @@ func TestEveryPanelRouteCarriesTheSecurityPolicy(t *testing.T) {
 	}))
 	require.NoError(t, c.Provide(adminui.InteropAuth, identity))
 
-	panel, err := adminui.FromContainer(c, false, nil)
+	// A registered screen is in the walk. Built with NIL pages this check audited
+	// only the paths the panel ships — narrower than the sentence it states, which
+	// is the class it was written against — and a plugin's shell and script could
+	// have served with no policy at all while it stayed green.
+	panel, err := adminui.FromContainer(c, false, []adminui.Page{{
+		Label: "Policy probe", Path: adminui.URLPrefix + "/policy-probe",
+		Scope: "probe:read", Script: []byte("// probe\n"),
+	}})
 	require.NoError(t, err)
 
 	r := corehttp.NewRouter(corehttp.RouterOptions{Version: "test"})
@@ -1612,9 +1629,10 @@ func TestEveryPanelRouteCarriesTheSecurityPolicy(t *testing.T) {
 		return nil
 	}))
 
-	require.GreaterOrEqual(t, len(routes), 20,
-		"the walk found %d panel routes, fewer than the twenty bound when this check was "+
-			"derived from the router. Either routes were removed, or the walk has gone "+
+	require.GreaterOrEqual(t, len(routes), 22,
+		"the walk found %d panel routes, fewer than the twenty-two bound when this check "+
+			"was derived from the router — twenty the panel ships plus a registered "+
+			"screen's shell and script. Either routes were removed, or the walk has gone "+
 			"BLIND — and a blind walk passes every route, including one that answers an "+
 			"operator's browser with no policy at all", len(routes))
 
@@ -1644,6 +1662,118 @@ func TestEveryPanelRouteCarriesTheSecurityPolicy(t *testing.T) {
 
 // pathParamPattern matches a chi path parameter.
 var pathParamPattern = regexp.MustCompile(`\{[^}]+\}`)
+
+// TestEveryPanelScreenRefusesAnOperatorWithoutThePrivilege is the population
+// check for the panel's privileges (ADR 0156).
+//
+// # Why the router is WALKED
+//
+// The scope table is a map, and a path that falls out of it gets an empty scope,
+// which means no wrapper and an open screen. Nothing about that fails to compile
+// and no unit test of a screen notices — the screen tests call their handler
+// directly, below the route, so they answer the same whether the wrapper is there
+// or not. What can see the difference is the router: every panel path is walked
+// and requested as an operator who is signed in and carries NO privilege.
+//
+// # What is exempt, and why the list is a literal
+//
+// Four paths, named here rather than read from the panel: the login page and its
+// submission (a privilege cannot be required of an identity that does not exist
+// yet), the sign-out (an operator granted nothing must still be able to clear
+// their own session) and the stylesheet (install-identical bytes the login page
+// needs). Reading the exemptions from the same table the routes were bound from
+// would make this check agree with any mistake in it.
+func TestEveryPanelScreenRefusesAnOperatorWithoutThePrivilege(t *testing.T) {
+	t.Parallel()
+
+	exempt := map[string]bool{
+		adminui.LoginPath:      true,
+		adminui.LogoutPath:     true,
+		adminui.StylesheetPath: true,
+	}
+
+	identity := panelIdentity{token: "a-valid-admin-token"}
+
+	c := container.New(discardLogger())
+	require.NoError(t, c.Provide(adminui.ServiceQuery, panelCatalog{}))
+	require.NoError(t, c.Provide(adminui.ServiceAuth, panelSession{
+		email: "operator@example.com", password: "a-long-enough-password",
+		token: identity.token,
+	}))
+	require.NoError(t, c.Provide(adminui.InteropAuth, identity))
+
+	// A registered screen is part of the population: a plugin's path appears in
+	// no route audit in this tree, so leaving it out would audit exactly the
+	// paths somebody remembered.
+	host := coreplugin.NewHost(c, module.NewRegistry(discardLogger(), nil), nil,
+		discardLogger(), nil)
+	host.RegisterAdminPage(coreplugin.AdminPage{
+		Label: "Privilege probe", Path: adminui.URLPrefix + "/privilege-probe",
+		Scope: "probe:read", Script: []byte("// probe\n"),
+	})
+
+	// The principal is injected rather than authenticated: the subject is the
+	// privilege, and a request with no identity at all would be refused one step
+	// earlier by the ring — which would make every route below pass without any
+	// scope check existing.
+	r := chi.NewRouter()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			next.ServeHTTP(w, req.WithContext(corehttp.WithPrincipal(req.Context(),
+				corehttp.Principal{ID: "usr_no_grant", Kind: "user"})))
+		})
+	})
+	_, err := registerPanel(baseConfig(), c, r, host)
+	require.NoError(t, err)
+
+	type route struct{ method, pattern string }
+	var routes []route
+	require.NoError(t, chi.Walk(r, func(
+		method, pattern string, _ http.Handler, _ ...func(http.Handler) http.Handler,
+	) error {
+		routes = append(routes, route{method: method, pattern: pattern})
+
+		return nil
+	}))
+
+	require.GreaterOrEqual(t, len(routes), 22,
+		"the walk found %d panel routes, fewer than the twenty-two bound when this check "+
+			"was derived from the router. Either routes were removed, or the walk has gone "+
+			"BLIND — and a blind walk passes every route, including one that hands an "+
+			"operator data their grants do not cover", len(routes))
+
+	audited := 0
+	for _, bound := range routes {
+		if exempt[bound.pattern] {
+			continue
+		}
+		audited++
+
+		t.Run(bound.method+" "+bound.pattern, func(t *testing.T) {
+			path := pathParamPattern.ReplaceAllString(bound.pattern, "scope-probe")
+
+			req := httptest.NewRequest(bound.method, path, http.NoBody)
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusForbidden, rec.Code,
+				"this panel path answered %d to a signed-in operator carrying NO privilege.\n"+
+					"Every /admin/v1 route names a scope and the e2e matrix proves an "+
+					"unprivileged identity is refused there; a panel path that answers is a "+
+					"second door into what the first one declined.", rec.Code)
+		})
+	}
+
+	// The subtests above ARE the audited population, so the count is asserted
+	// rather than left to whatever the exemption map happened to remove: an
+	// exemption added for one path would otherwise quietly shrink the audit.
+	// Four ROUTES, not three paths: the login page is bound on both GET and POST.
+	const exemptRoutes = 4
+	assert.Equal(t, len(routes)-exemptRoutes, audited,
+		"the exemptions removed %d routes rather than the four named ones (%d walked, %d "+
+			"audited). An exemption added for one path would otherwise quietly shrink this "+
+			"audit to whatever is left", len(routes)-audited, len(routes), audited)
+}
 
 // TestAPluginsScreenReachesThePanel is the composition root's own line, proven
 // (ADR 0155).
@@ -1676,9 +1806,11 @@ func TestAPluginsScreenReachesThePanel(t *testing.T) {
 	host := coreplugin.NewHost(c, module.NewRegistry(discardLogger(), nil), nil,
 		discardLogger(), nil)
 	const screenPath = adminui.URLPrefix + "/wiring-probe"
+	const screenScope = "probe:read"
 	host.RegisterAdminPage(coreplugin.AdminPage{
 		Label:  "Wiring probe",
 		Path:   screenPath,
+		Scope:  screenScope,
 		Script: []byte("// probe\n"),
 	})
 
@@ -1686,10 +1818,7 @@ func TestAPluginsScreenReachesThePanel(t *testing.T) {
 	_, err := registerPanel(baseConfig(), c, router, host)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, screenPath, http.NoBody)
-	req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
-		ID: "user_probe", Kind: "user", Scopes: []string{corehttp.ScopeAdmin},
-	}))
+	req := probeRequest(screenPath, screenScope)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1702,8 +1831,21 @@ func TestAPluginsScreenReachesThePanel(t *testing.T) {
 		"and it must be in the navigation, not only bound as a route")
 
 	script := httptest.NewRecorder()
-	router.ServeHTTP(script, httptest.NewRequest(http.MethodGet, screenPath+".js", http.NoBody))
+	router.ServeHTTP(script, probeRequest(screenPath+".js", screenScope))
 	require.Equal(t, http.StatusOK, script.Code)
 	assert.Equal(t, "// probe\n", script.Body.String(),
 		"the panel serves the plugin's own bytes, from the panel's origin")
+}
+
+// probeRequest is a request from an operator carrying exactly one privilege.
+//
+// Exactly one, not [corehttp.ScopeAdmin]: admin satisfies every scope, so a
+// principal holding it would reach the screen whether or not the registration's
+// privilege was the one the route asks for.
+func probeRequest(path, scope string) *http.Request {
+	req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+
+	return req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
+		ID: "user_probe", Kind: "user", Scopes: []string{scope},
+	}))
 }

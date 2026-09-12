@@ -83,6 +83,10 @@ type templateSet struct {
 	// (ADR 0155). They live here because the frame is filled in here, and a page
 	// that had to add its own menu entry would be a page that can forget to.
 	extra []navItem
+	// scopes is the panel's scope table, the SAME map the routes were bound
+	// from. The frame needs it to drop an entry the operator cannot open; taking
+	// it from anywhere else would let the menu offer a link the router refuses.
+	scopes map[string]string
 }
 
 // loadTemplates parses the embedded templates and verifies their names.
@@ -251,7 +255,7 @@ func (t *templateSet) decorateFrame(r *http.Request, data map[string]any) {
 	// The sign-out control appears only when there is a session to end. On the
 	// login page there is none, and a button that logs nobody out would be an
 	// invitation to a confusing click.
-	_, signedIn := corehttp.PrincipalFromContext(r.Context())
+	principal, signedIn := corehttp.PrincipalFromContext(r.Context())
 	data[signedInKey] = signedIn
 
 	if !signedIn {
@@ -264,6 +268,10 @@ func (t *templateSet) decorateFrame(r *http.Request, data map[string]any) {
 	// [validatePages] compares a registration against — a plugin's path must not
 	// be able to look like a built-in one to that check.
 	items = append(items, t.extra...)
+	// An entry the operator's grants do not open is dropped. The route refuses
+	// the request either way — that is the check; this is about not offering a
+	// link whose only possible answer is a refusal.
+	items = allowedItems(items, t.scopes, principal)
 	for i := range items {
 		// The section is current when the request is inside it, so a product's
 		// own page keeps "Catalog" marked rather than leaving the menu blank on

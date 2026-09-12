@@ -173,6 +173,12 @@ type UI struct {
 	// pages are the screens plugins registered (ADR 0155); empty is the ordinary
 	// case, because an installation with no plugin has none.
 	pages []pageScreen
+	// scopes is every panel path's privilege, built once at construction.
+	//
+	// It is the panel's ONE authority on the question: the route binding reads it
+	// to wrap a handler and the frame reads it to drop a menu entry, so a link
+	// the operator is offered and a screen the router opens cannot disagree.
+	scopes map[string]string
 }
 
 // FromContainer builds the panel on the container.
@@ -239,6 +245,10 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 	// whose link answers 404 — is the failure the panel has already been bitten
 	// by once.
 	templates.extra = navItemsOf(screens)
+	// The same map object reaches both readers. Handing the frame a copy would
+	// be the kind of duplication this field exists to remove.
+	scopes := screenScopes(screens)
+	templates.scopes = scopes
 
 	return &UI{
 		catalog:       catalog,
@@ -250,6 +260,7 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 		templates:     templates,
 		secureCookie:  secureCookie,
 		pages:         screens,
+		scopes:        scopes,
 	}, nil
 }
 

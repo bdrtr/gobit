@@ -134,8 +134,12 @@ func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 	// a table only somebody with a terminal can see, and the plugin's own point
 	// is that a shop can look at its conversion rate.
 	h.RegisterAdminPage(coreplugin.AdminPage{
-		Label:  PageLabel,
-		Path:   PagePath,
+		Label: PageLabel,
+		Path:  PagePath,
+		// The SAME constant the funnel endpoint requires. The screen is a client
+		// of that endpoint, so the two answering different accounts would mean an
+		// operator reaching a page whose only content is a refusal.
+		Scope:  ScopeRead,
 		Script: funnelScript,
 	})
 

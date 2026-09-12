@@ -456,6 +456,20 @@ type AdminPage struct {
 	// not run — a screen with an operator's data and no operator check.
 	Path string
 
+	// Scope is the privilege an operator must carry to open the screen, and it is
+	// REQUIRED.
+	//
+	// Pass the SAME constant the screen's own endpoint requires. The screen reads
+	// that endpoint with the operator's session, so a shell that opened wider
+	// than the endpoint would render an empty box under a heading for everybody
+	// in between — and one that opened narrower would hide a screen the operator
+	// is entitled to.
+	//
+	// There is no default. An unscoped screen would open for any account that can
+	// sign in to the panel, which is not the same set as the accounts allowed to
+	// read what it shows, and the panel refuses such a registration at STARTUP.
+	Scope string
+
 	// Script is the screen's client, as BYTES.
 	//
 	// It is bytes and not a URL, and that is the decision the whole shape rests

@@ -117,6 +117,27 @@ past and is not corrected retroactively.
 - **Session revocation is wholesale only.** `POST /admin/v1/auth/logout` and a
   password change drop ALL of the caller's sessions; there is no endpoint that
   drops a single device (see `internal/modules/auth/api`).
+- **The panel's privileges are per SCREEN, not per record or per field.** Since
+  [ADR 0156](adr/0156-a-panel-screen-costs-a-privilege.md) every panel path is
+  listed with the scope it requires, and the scope decides whether the screen
+  opens at all. What it cannot do is narrow what an opened screen SHOWS: an
+  operator holding `order:read` reads every order, not the ones for their
+  region or channel. The read layer the screens go through knows nothing about
+  principals, so there is nowhere below the route for a narrower answer to come
+  from.
+- **The panel's scope table is keyed by path, not by method and path.** The two
+  paths bound on both verbs want one privilege each — an edit form an operator
+  cannot submit is a screen that wastes their time — but a POST added later to
+  a read path would inherit the read privilege, and the router walk that audits
+  the table cannot tell the two apart because both answer the unprivileged
+  operator correctly.
+- **Nothing proves a panel screen asks for the RIGHT privilege.** The panel
+  spells its scopes itself (it imports no module, and core knows none), and
+  `internal/arch` reads both sides from source to refuse a value no module
+  declares. That catches a misspelling. A screen listed under a plausible but
+  wrong privilege — one module's scope over another module's data — compiles,
+  passes and is caught by nothing; the judgment is written in the table's godoc
+  and nowhere else.
 
 ## Sales channel scope
 

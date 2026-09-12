@@ -221,6 +221,7 @@ func panelPages(host *coreplugin.Host) []adminui.Page {
 		out = append(out, adminui.Page{
 			Label:  registered[i].Label,
 			Path:   registered[i].Path,
+			Scope:  registered[i].Scope,
 			Script: registered[i].Script,
 		})
 	}
