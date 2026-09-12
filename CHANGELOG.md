@@ -20,6 +20,21 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Düzeltmeler
 
+- **Üretim kodunun bir TEST paketini import etmesini hiçbir şey engellemiyordu**
+  (D106). Kural tek bir godoc'ta yaşıyordu — GraphQL handler'ının yakalama
+  yazıcısı, httptest'in "test ikilisine ait olduğunu" söyleyip tam bu yüzden dokuz
+  satırı elle yazıyor. Düzeltmeden önce mutasyonla kanıtlandı: YAYIMLANMIŞ ağaçtaki
+  bir dosyaya eklenen httptest import'u lint'ten ve bütün arch kapılarından geçti.
+  Artık bir kapı `net/http/httptest`, `testing`, `testing/fstest` ve
+  `testing/iotest`'i üretim dosyalarında reddediyor. Muafiyet LİSTELENMİŞ değil
+  TÜRETİLMİŞ: hiçbir test-dışı dosyanın import etmediği paket, adı ne olursa olsun
+  test desteğidir — bu, yayımlanmış uyumluluk paketi `core/identitytest`'i ve yerel
+  `internal/benchbudget`'ı ikisini de adlandırmadan kapsıyor ve birinin üretimden
+  erişilmeye başladığı günü yakalıyor. Türetimin kendisi yük taşıdığı için boyutu
+  İKİ yönde de denetleniyor: her şeyi test desteği sayacak şekilde bozulduğunda
+  gerçek bir ihlali yutup kapıyı yeşil bıraktı — ölçüldü, ve artık muafiyet sayısı
+  genişlediğinde düşüyor.
+
 - **Korumasız durum-değiştiren rotayı reddeden kapı, yalnız chi'nin FİİL
   metotlarını sayıyordu** (D103). `Handle`, `HandleFunc` ve `Mount` — üçü de HER
   metodu bağlar, yani POST'u da — nüfusun dışındaydı. Sonuç, kapının kaçakçılığın
