@@ -64,6 +64,30 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **gobit'i GÖMEN bir program artık onu kendi testinde ayağa kaldırabiliyor**
+  (ADR 0150). gobit bir KÜTÜPHANE (ADR 0025) ama onu gömen bir programın ona karşı
+  test yazma yolu yoktu: facade yalnızca `Main(args, out)` sunuyor — porta bağlanıp
+  blokluyor — ve arkasındaki her şey (göçler, modül kaydı, router, koruma
+  halkaları) `internal/` altında, dışarıdan erişilemez. Kalan iki seçenek ikiliyi
+  çalıştırıp sokete konuşmak ya da montajı kendi testinde YENİDEN YAZMAKTI; bu
+  deponun ikincisinin bedelini bildiği bir kaydı var (ADR 0141 tam o kopya
+  kaydığı için var). Artık `App.InProcess(ctx)` bütün kurulumu ayağa kaldırıp
+  `Main`'in sunacağı `http.Handler`'ı dönüyor — ve AYNI montaj fonksiyonundan
+  geçerek, çünkü kendi montajı olan bir koşum takımı "kurulum nedir" sorusuna
+  ikinci bir cevap olurdu ve testlerin güvendiği cevap kimsenin deploy etmediği
+  olurdu. PORTU ya da SAATİ olan hiçbir şey başlamıyor: HTTP sunucusu yok,
+  operatör dinleyicileri yok, ZAMANLI İŞ yok — bir relay'in testin kendi
+  iddialarının altında tıklaması, arızayı testin ne zaman baktığına bağlar. Bedeli
+  yazılı: olay abonesine yalnızca DOĞRUDAN yayımla ulaşıyor, outbox satırının
+  verdiği sözü tutan relay çalışmıyor. Yapılandırma ORTAMDAN okunuyor, tıpkı
+  `Main` gibi (ikinci bir yapılandırma yolu, hiçbir deployment'ın kullanmadığı
+  varsayılanlarla koşan bir test demek), ve bunun bedeli böyle bir testin
+  `t.Parallel` olamaması. Facade'ı genişletmek yayımlanmış yüzeyi denetleyen
+  kapıda bir delik de buldu (D86): ad envanteri yalnızca `core/` ağacını
+  yürüyordu, oysa paket listesi facade'ı da yayımlanmış ilan ediyor — yani
+  `gobit.App` ve metotları 1.0.0'a kadar tutulacak, hiçbir şeyin denetlemediği
+  sözlerdi ve `InProcess` eklendiğinde kapı yeşil kaldı.
+
 - **Bir taşıyıcıya artık kolinin NEREDE olduğu sorulabiliyor** (ADR 0149). Takip
   numarası sevk anında iliştirilebiliyordu ve çizelge beş anı taşıyordu, yani ELLE
   yarısı tamdı; SAĞLAYICI yarısı yoktu — kargo sözleşmesi üç metottu (`Quote`,

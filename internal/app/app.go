@@ -68,6 +68,8 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/review"
 	"github.com/bdrtr/gobit/internal/modules/settings"
 	"github.com/bdrtr/gobit/internal/modules/tax"
+
+	"github.com/go-chi/chi/v5"
 )
 
 // The names of the infrastructure services in the container. Modules resolve
@@ -275,121 +277,14 @@ func serve(opts Options) error {
 	}
 	defer closeApp()
 
-	c, registry, router := app.container, app.registry, app.router
-	pluginRegistry, host := app.plugins, app.host
-	panelRing, authn := app.panelRing, app.authn
-
-	// The admin panel is set up AFTER the workflows: it resolves the read
-	// surface from the container and that surface is not registered before
-	// Bootstrap. The panel is not a module (ADR 0011), so it does not enter the
-	// registry; the check for its wiring is the branch of the registration test
-	// in internal/arch that was extended to the panel tree.
-	panel, err := registerPanel(cfg, c, router)
+	handler, err := assemble(ctx, cfg, log, app, opts)
 	if err != nil {
 		return err
 	}
-	panelRing.Bind(panel)
 
-	// The authenticator is only in the container after Bootstrap. If it cannot
-	// be resolved, startup STOPS: carrying on with an admin surface that looks
-	// protected but rejects every request would hide the failure until the
-	// first sign-in attempt.
-	authenticator, err := container.Resolve[corehttp.Authenticator](c, auth.InteropName)
-	if err != nil {
-		return errors.Wrap(err, errors.KindOf(err), "auth_interop_missing",
-			"the authenticator %q could not be resolved", auth.InteropName)
-	}
-	authn.Bind(authenticator)
-
-	// The first-administrator seed also runs AFTER Bootstrap: the auth service
-	// is only in the container by then and the tables are only migrated by
-	// then. The service is taken through a NARROW interface (see setup.go), not
-	// by its concrete type.
-	//
-	// An error STOPS startup: an administrator that could not be created means
-	// a system with no admin surface, and that is noticed far sooner than a
-	// server which opens and then accepts no admin request at all.
-	users, err := container.Resolve[adminUsers](c, auth.ServiceName)
-	if err != nil {
-		return errors.Wrap(err, errors.KindOf(err), codeBootstrapFailed,
-			"the auth service %q could not be resolved", auth.ServiceName)
-	}
-	if err := seedAdmin(ctx, users, cfg, log); err != nil {
-		return err
-	}
-
-	// Provider and subscription registrations are applied AFTER the modules are
-	// up; routes are bound after the module routes.
-	if err := pluginRegistry.Start(ctx, host); err != nil {
-		return err
-	}
-	// The notification provider can only be checked HERE: providers brought by
-	// plugins are registered during Start, and when the module registers, the
-	// registry holds only the provider that ships in the box.
-	if err := verifyNotificationProvider(c, cfg.NotificationProvider); err != nil {
-		return err
-	}
-	// The file provider is checked here for the same reason; an unknown name
-	// STOPS startup.
-	if err := verifyFileProvider(c, cfg.FileProvider); err != nil {
-		return err
-	}
-
-	// A plugin route shadowing an existing path STOPS STARTUP. Swallowing the
-	// error would mean carrying on with an installation where a module endpoint
-	// has silently been taken over by a plugin, or where the plugin was never
-	// bound at all; both would only be noticed when the first request went to
-	// the wrong place.
-	// The callbacks are bound BEFORE the plugin routes, and the order carries
-	// the rule: a callback path is claimed first, so a plugin's own AddRoutes
-	// cannot shadow one — MountRoutes' conflict check sees the callback pattern
-	// already on the router and refuses the second binding by name.
-	//
-	// Mounting also FREEZES the registry. A callback registered after this point
-	// would never be bound, and a route the provider can reach that this ring
-	// does not know is exactly the unguarded endpoint the registry exists to
-	// remove; the refusal is loud rather than silent.
-	if err := app.callbacks.Mount(router); err != nil {
-		return err
-	}
-
-	if err := pluginRegistry.MountRoutes(router, host); err != nil {
-		return err
-	}
-
-	// The erasure surface is bound HERE and not earlier, for the same reason
-	// the schema is built here: the coordinator walks the registry, and a
-	// module brought in by a plugin only exists in it after MountRoutes. Bound
-	// during registerModules it would sweep gobit's own modules and quietly
-	// miss every holder of personal data a plugin added.
-	if _, err := registerErasure(c, router, registry.Modules()); err != nil {
-		return err
-	}
-
-	// The audit log's reader. It is bound here for the same reason: the store is
-	// core rather than a module, and no module owns the record of what every
-	// module's endpoints were asked to do. The table existed for a long time
-	// with two indexes and nothing that read a row (ADR 0037).
-	registerAuditLog(router, auditStore(c, log))
-
-	// The OpenAPI schema is GENERATED from the router tree, not written by
-	// hand: a hand-written schema starts lying silently at the first route
-	// change. The endpoint publishes only the route PATTERNS, not data.
-	//
-	// The module list is READ from the registry; no second list is kept here:
-	// modules brought in by plugins (see searchpg) appear only in the registry,
-	// and a hand-maintained list would silently leave them undescribed.
-	doc := describeAPI(cfg.ServiceName+" API", opts.version(), registry.Modules())
-	// The personal-data endpoints belong to no module, so the registry walk
-	// above never asks about them; without this line they enter the document as
-	// bare paths with no body and no response. An endpoint that hands back the
-	// most concentrated personal data in the system is the last one that should
-	// be undocumented.
-	describePersonalData(doc)
-	// The audit log's endpoint belongs to no module either.
-	describeAuditLog(doc)
-	router.Get(openAPIPath, doc.Handler(router))
-	checkSchema(ctx, doc, router, log)
+	// The tail below needs three of the application's parts: the container and the
+	// plugin host for the scheduled jobs, and the handler for the server.
+	c, host, router := app.container, app.host, handler
 
 	warnIfShutdownIsShorterThanTheSaga(ctx, cfg, log)
 
@@ -434,6 +329,152 @@ func serve(opts Options) error {
 	})
 
 	return srv.Run(ctx)
+}
+
+// assemble finishes the installation and returns the handler it serves.
+//
+// # Why this is a function and not the tail of serve
+//
+// Because a program that embeds gobit has to be able to bring the WHOLE
+// installation up in its own test and reach it over HTTP without a port
+// (ADR 0150). What such a test needs is exactly this: the panel bound, the
+// authenticator bound, the first administrator seeded, the plugins started, the
+// callbacks and plugin routes mounted, the erasure and audit surfaces bound and
+// the schema built.
+//
+// The alternative was for the test harness to do those steps itself, and this
+// repository has the gate that says what that costs: internal/e2e builds its own
+// router and TestTheEndToEndGroundWiresEveryFlowProductionDoes exists because
+// that copy drifted. A second assembly is a second answer to "what is an
+// installation", and the one the tests use would be the one nobody deploys.
+//
+// What it deliberately does NOT do is anything with a PORT or a CLOCK: no
+// operator listener, no scheduled job, no HTTP server. Those are serve's, and a
+// test that started them would be running a relay under its own assertions.
+func assemble(
+	ctx context.Context,
+	cfg config.Config,
+	log *slog.Logger,
+	app *application,
+	opts Options,
+) (chi.Router, error) {
+	c, registry, router := app.container, app.registry, app.router
+	pluginRegistry, host := app.plugins, app.host
+	panelRing, authn := app.panelRing, app.authn
+
+	// The admin panel is set up AFTER the workflows: it resolves the read
+	// surface from the container and that surface is not registered before
+	// Bootstrap. The panel is not a module (ADR 0011), so it does not enter the
+	// registry; the check for its wiring is the branch of the registration test
+	// in internal/arch that was extended to the panel tree.
+	panel, err := registerPanel(cfg, c, router)
+	if err != nil {
+		return nil, err
+	}
+	panelRing.Bind(panel)
+
+	// The authenticator is only in the container after Bootstrap. If it cannot
+	// be resolved, startup STOPS: carrying on with an admin surface that looks
+	// protected but rejects every request would hide the failure until the
+	// first sign-in attempt.
+	authenticator, err := container.Resolve[corehttp.Authenticator](c, auth.InteropName)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindOf(err), "auth_interop_missing",
+			"the authenticator %q could not be resolved", auth.InteropName)
+	}
+	authn.Bind(authenticator)
+
+	// The first-administrator seed also runs AFTER Bootstrap: the auth service
+	// is only in the container by then and the tables are only migrated by
+	// then. The service is taken through a NARROW interface (see setup.go), not
+	// by its concrete type.
+	//
+	// An error STOPS startup: an administrator that could not be created means
+	// a system with no admin surface, and that is noticed far sooner than a
+	// server which opens and then accepts no admin request at all.
+	users, err := container.Resolve[adminUsers](c, auth.ServiceName)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindOf(err), codeBootstrapFailed,
+			"the auth service %q could not be resolved", auth.ServiceName)
+	}
+	if err := seedAdmin(ctx, users, cfg, log); err != nil {
+		return nil, err
+	}
+
+	// Provider and subscription registrations are applied AFTER the modules are
+	// up; routes are bound after the module routes.
+	if err := pluginRegistry.Start(ctx, host); err != nil {
+		return nil, err
+	}
+	// The notification provider can only be checked HERE: providers brought by
+	// plugins are registered during Start, and when the module registers, the
+	// registry holds only the provider that ships in the box.
+	if err := verifyNotificationProvider(c, cfg.NotificationProvider); err != nil {
+		return nil, err
+	}
+	// The file provider is checked here for the same reason; an unknown name
+	// STOPS startup.
+	if err := verifyFileProvider(c, cfg.FileProvider); err != nil {
+		return nil, err
+	}
+
+	// A plugin route shadowing an existing path STOPS STARTUP. Swallowing the
+	// error would mean carrying on with an installation where a module endpoint
+	// has silently been taken over by a plugin, or where the plugin was never
+	// bound at all; both would only be noticed when the first request went to
+	// the wrong place.
+	// The callbacks are bound BEFORE the plugin routes, and the order carries
+	// the rule: a callback path is claimed first, so a plugin's own AddRoutes
+	// cannot shadow one — MountRoutes' conflict check sees the callback pattern
+	// already on the router and refuses the second binding by name.
+	//
+	// Mounting also FREEZES the registry. A callback registered after this point
+	// would never be bound, and a route the provider can reach that this ring
+	// does not know is exactly the unguarded endpoint the registry exists to
+	// remove; the refusal is loud rather than silent.
+	if err := app.callbacks.Mount(router); err != nil {
+		return nil, err
+	}
+
+	if err := pluginRegistry.MountRoutes(router, host); err != nil {
+		return nil, err
+	}
+
+	// The erasure surface is bound HERE and not earlier, for the same reason
+	// the schema is built here: the coordinator walks the registry, and a
+	// module brought in by a plugin only exists in it after MountRoutes. Bound
+	// during registerModules it would sweep gobit's own modules and quietly
+	// miss every holder of personal data a plugin added.
+	if _, err := registerErasure(c, router, registry.Modules()); err != nil {
+		return nil, err
+	}
+
+	// The audit log's reader. It is bound here for the same reason: the store is
+	// core rather than a module, and no module owns the record of what every
+	// module's endpoints were asked to do. The table existed for a long time
+	// with two indexes and nothing that read a row (ADR 0037).
+	registerAuditLog(router, auditStore(c, log))
+
+	// The OpenAPI schema is GENERATED from the router tree, not written by
+	// hand: a hand-written schema starts lying silently at the first route
+	// change. The endpoint publishes only the route PATTERNS, not data.
+	//
+	// The module list is READ from the registry; no second list is kept here:
+	// modules brought in by plugins (see searchpg) appear only in the registry,
+	// and a hand-maintained list would silently leave them undescribed.
+	doc := describeAPI(cfg.ServiceName+" API", opts.version(), registry.Modules())
+	// The personal-data endpoints belong to no module, so the registry walk
+	// above never asks about them; without this line they enter the document as
+	// bare paths with no body and no response. An endpoint that hands back the
+	// most concentrated personal data in the system is the last one that should
+	// be undocumented.
+	describePersonalData(doc)
+	// The audit log's endpoint belongs to no module either.
+	describeAuditLog(doc)
+	router.Get(openAPIPath, doc.Handler(router))
+	checkSchema(ctx, doc, router, log)
+
+	return app.router, nil
 }
 
 // registerModules adds every commerce module this binary ships to the registry.

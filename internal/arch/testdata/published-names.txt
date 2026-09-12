@@ -1,4 +1,8 @@
-# Everything `core/` promises, one name per line, as "<package path> <name>".
+# Everything this module promises, one name per line, as "<package path> <name>".
+#
+# The paths are the ones in publishedPackages: `core/...` and ".", the facade at
+# the repository root. The facade was outside this inventory until 2026-09-12 and
+# its seven names were promises nothing audited (D86).
 #
 # ADR 0026: every exported name here is kept until 1.0.0. This file is the
 # inventory that makes adding to or withdrawing from that promise a DECISION
@@ -8,6 +12,13 @@
 # A method is written "Type.Method", and an interface method the same way. The
 # lines are sorted; "#" opens a comment.
 
+. App
+. App.Add
+. App.InProcess
+. App.Main
+. App.Use
+. App.Version
+. New
 core/audit CodeReadFailed
 core/audit CodeWriteFailed
 core/audit DefaultLimit

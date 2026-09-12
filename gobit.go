@@ -37,7 +37,9 @@
 package gobit
 
 import (
+	"context"
 	"io"
+	"net/http"
 
 	"github.com/bdrtr/gobit/core/module"
 	"github.com/bdrtr/gobit/core/plugin"
@@ -89,6 +91,55 @@ func (a *App) Use(p plugin.Plugin) *App {
 	a.opts.Plugins = append(a.opts.Plugins, p)
 
 	return a
+}
+
+// InProcess brings the installation up WITHOUT listening and returns its HTTP
+// handler, so a program that embeds gobit can test its own module against a real
+// installation (ADR 0150).
+//
+//	func TestMyModule(t *testing.T) {
+//		t.Setenv("DATABASE_URL", dsn)       // a database the test owns
+//		t.Setenv("JWT_SECRET", "…")
+//
+//		handler, stop, err := gobit.New().Add(mymodule.New()).InProcess(t.Context())
+//		if err != nil {
+//			t.Fatal(err)
+//		}
+//		defer stop()
+//
+//		rec := httptest.NewRecorder()
+//		handler.ServeHTTP(rec, httptest.NewRequest("GET", "/store/v1/products", nil))
+//	}
+//
+// # It is the same installation Main serves
+//
+// The migrations, the modules, the plugins, the guard rings, the admin panel and
+// the generated schema all come up through the same assembly [App.Main] uses.
+// That is the reason this exists at all: the alternative is for the caller to
+// reimplement the assembly, and a test that runs a different installation from
+// the one that deploys proves the wrong thing.
+//
+// # What it does not start
+//
+// No HTTP server, no operator listener and NO SCHEDULED JOB. The first two would
+// need a port the test does not have; the third would put a clock under the
+// test's own assertions, and the jobs' work — publishing what the outbox
+// promised, sweeping a stuck saga — is usually what such a test is asserting
+// about. So an event reaches a subscriber through the direct publish only: the
+// outbox row is written and nothing relays it until somebody does.
+//
+// # The configuration comes from the environment
+//
+// Exactly as it does for [App.Main], because a second configuration path means a
+// second set of defaults and a test running under values no deployment has. The
+// caller sets what its scenario needs; the database is NOT created, migrated
+// down or cleaned up — it is the caller's, and a helper that dropped somebody's
+// schema on cleanup would be a helper nobody could point at a real database.
+//
+// The returned function releases the pool and shuts the container down. It has
+// to be called: each call opens a pool of its own.
+func (a *App) InProcess(ctx context.Context) (http.Handler, func(), error) {
+	return app.InProcess(ctx, a.opts)
 }
 
 // Main runs the installation and returns on the first error.

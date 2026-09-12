@@ -88,10 +88,11 @@ func TestThePublishedNamesAreTheDeclaredOnes(t *testing.T) {
 	for _, name := range slices.Sorted(maps.Keys(found)) {
 		if !declared[name] {
 			t.Errorf("%s is exported from the published tree and is NOT in %s.\n"+
-				"Every exported name under %s is a promise kept until 1.0.0 (ADR 0026). "+
+				"Every exported name in a published package is a promise kept until 1.0.0 "+
+				"(ADR 0026). "+
 				"If it is meant to be one, add the line; if it is not, unexport it — but "+
 				"it may not arrive without somebody deciding which.",
-				name, publishedNamesFile, publishedTree)
+				name, publishedNamesFile)
 		}
 	}
 
@@ -214,50 +215,63 @@ func declaredPublishedNames(t *testing.T) []string {
 	return names
 }
 
-// publishedNames collects the exported names of the published tree.
+// publishedNames collects the exported names of every published package.
+//
+// # Why it reads the package LIST and not one tree
+//
+// It walked `core/` alone until 2026-09-12, and the facade — the package at the
+// repository root, which [publishedPackages] has always declared as published —
+// was outside the inventory. So `gobit.App` and every method on it were promises
+// kept until 1.0.0 that nothing audited, and a new one could arrive without a
+// line in a diff anybody reads (D86, found by adding [github.com/bdrtr/gobit.App.InProcess] and
+// noticing the gate stayed green).
+//
+// The population is now the same list the package gate uses, which is what makes
+// the two unable to disagree about what "published" means.
 func publishedNames(t *testing.T) []string {
 	t.Helper()
 
 	var names []string
 
-	root := filepath.Join(repoRoot, publishedTree)
-	err := filepath.WalkDir(root, func(current string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !entry.IsDir() {
-			return nil
-		}
-		if slices.Contains(skippedDirs, entry.Name()) {
-			return filepath.SkipDir
-		}
-
-		relative, relErr := filepath.Rel(repoRoot, current)
-		if relErr != nil {
-			return relErr
-		}
-
-		// parseDir rather than the standard library's ParseDir: the shared
-		// helper is what every other gate in this package reads Go with, and
-		// the deprecated one associates files with packages without looking at
-		// build tags — which would make this inventory depend on which tags
-		// happened to be set when it ran.
-		fset := token.NewFileSet()
-		for _, file := range parseDir(t, fset, current, false) {
-			names = append(names, namesOfFile(filepath.ToSlash(relative), file.tree)...)
-		}
-
-		return nil
-	})
-	require.NoError(t, err, "the published tree could not be walked")
+	for _, pkg := range publishedPackages {
+		names = append(names, namesOfPackage(t, pkg)...)
+	}
 
 	require.GreaterOrEqual(t, len(names), publishedNamesFloor,
-		"only %d exported names were read out of %s; the reader has gone blind and "+
-			"an empty reading agrees with an empty inventory", len(names), publishedTree)
+		"only %d exported names were read out of the published packages; the reader has "+
+			"gone blind and an empty reading agrees with an empty inventory", len(names))
 
 	slices.Sort(names)
 
 	return slices.Compact(names)
+}
+
+// namesOfPackage collects the exported names of ONE published package.
+//
+// # Why it does not recurse
+//
+// A package is a directory, and every published one is named in
+// [publishedPackages] — core/eventbus/outbox and core/http/redisguard are their
+// own lines there, and the package gate one level up fails if a directory under
+// the published tree is missing from the list. Recursing was how the first
+// version of this read the facade, and it descended into contrib/ and examples/:
+// separate Go modules, whose names this module does not promise. A directory per
+// entry cannot make that mistake.
+func namesOfPackage(t *testing.T, pkg string) []string {
+	t.Helper()
+
+	// parseDir rather than the standard library's ParseDir: the shared helper is
+	// what every other gate in this package reads Go with, and the deprecated one
+	// associates files with packages without looking at build tags — which would
+	// make this inventory depend on which tags happened to be set when it ran.
+	fset := token.NewFileSet()
+
+	var names []string
+	for _, file := range parseDir(t, fset, filepath.Join(repoRoot, pkg), false) {
+		names = append(names, namesOfFile(filepath.ToSlash(pkg), file.tree)...)
+	}
+
+	return names
 }
 
 // namesOfFile returns one file's exported names, each prefixed with its package
