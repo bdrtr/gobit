@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,6 +27,8 @@ import (
 	"github.com/bdrtr/gobit/core/db"
 	"github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
+	"github.com/bdrtr/gobit/core/module"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	coreprovider "github.com/bdrtr/gobit/core/provider"
 	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/adminui"
@@ -1326,7 +1330,7 @@ func TestThePanelSessionReachesTheAdminAPIOnlyUnderTheOriginCheck(t *testing.T) 
 	}))
 	require.NoError(t, c.Provide(adminui.InteropAuth, identity))
 
-	panel, err := adminui.FromContainer(c, false)
+	panel, err := adminui.FromContainer(c, false, nil)
 	require.NoError(t, err)
 
 	ring := &adminui.Ring{}
@@ -1560,4 +1564,146 @@ func TestThePanelSessionReachesTheAdminAPIOnlyUnderTheOriginCheck(t *testing.T) 
 				"well come from a cookie that never worked at all")
 		assert.Equal(t, adminui.ProductsPath, rec.Header().Get("Location"))
 	})
+}
+
+// TestEveryPanelRouteCarriesTheSecurityPolicy is the CSP's population check
+// (ADR 0155).
+//
+// # The population is WALKED, not listed
+//
+// The panel binds twenty paths today and the twenty-first will be written by
+// copying a neighbor. A test naming the paths it checks would cover exactly the
+// ones somebody remembered, which is the shape this repository keeps logging: a
+// rule whose audited population is narrower than the sentence it states.
+//
+// So the router is walked and EVERY panel route is requested. What is asserted
+// is the header's presence on the response, whatever the status — a redirect to
+// the login page is the most common answer here, and a policy that arrived only
+// with a 200 would be absent from exactly the pages an unauthenticated browser
+// sees.
+func TestEveryPanelRouteCarriesTheSecurityPolicy(t *testing.T) {
+	t.Parallel()
+
+	identity := panelIdentity{token: "a-valid-admin-token"}
+
+	c := container.New(discardLogger())
+	require.NoError(t, c.Provide(adminui.ServiceQuery, panelCatalog{}))
+	require.NoError(t, c.Provide(adminui.ServiceAuth, panelSession{
+		email: "operator@example.com", password: "a-long-enough-password",
+		token: identity.token,
+	}))
+	require.NoError(t, c.Provide(adminui.InteropAuth, identity))
+
+	panel, err := adminui.FromContainer(c, false, nil)
+	require.NoError(t, err)
+
+	r := corehttp.NewRouter(corehttp.RouterOptions{Version: "test"})
+	panel.Routes(r)
+
+	type route struct{ method, pattern string }
+	var routes []route
+	require.NoError(t, chi.Walk(r, func(
+		method, pattern string, _ http.Handler, _ ...func(http.Handler) http.Handler,
+	) error {
+		if strings.HasPrefix(pattern, adminui.URLPrefix) {
+			routes = append(routes, route{method: method, pattern: pattern})
+		}
+
+		return nil
+	}))
+
+	require.GreaterOrEqual(t, len(routes), 20,
+		"the walk found %d panel routes, fewer than the twenty bound when this check was "+
+			"derived from the router. Either routes were removed, or the walk has gone "+
+			"BLIND — and a blind walk passes every route, including one that answers an "+
+			"operator's browser with no policy at all", len(routes))
+
+	for _, bound := range routes {
+		t.Run(bound.method+" "+bound.pattern, func(t *testing.T) {
+			// The path parameters are filled with a value that resolves to
+			// nothing; what is under test is the header, which is written before
+			// the handler runs.
+			path := pathParamPattern.ReplaceAllString(bound.pattern, "csp-probe")
+
+			req := httptest.NewRequest(bound.method, path, http.NoBody)
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
+
+			assert.NotEmpty(t, rec.Header().Get("Content-Security-Policy"),
+				"this panel route answers with no Content-Security-Policy (status %d).\n"+
+					"The panel renders HTML inside an administrator's session and serves "+
+					"scripts that carry it, so a page with no policy is a page where any "+
+					"injected script acts as the administrator.", rec.Code)
+			assert.Equal(t, "no-referrer", rec.Header().Get("Referrer-Policy"),
+				"a panel path carries identifiers, and a Referer sent to another site "+
+					"hands them over")
+			assert.Equal(t, "DENY", rec.Header().Get("X-Frame-Options"))
+		})
+	}
+}
+
+// pathParamPattern matches a chi path parameter.
+var pathParamPattern = regexp.MustCompile(`\{[^}]+\}`)
+
+// TestAPluginsScreenReachesThePanel is the composition root's own line, proven
+// (ADR 0155).
+//
+// # Why this test exists at all
+//
+// Because the wiring is one expression and nothing else in the tree reads it.
+// Measured while writing this slice: replacing `panelPages(host)` with nil left
+// every lane green — the plugin still registered its screen, the panel still
+// validated the empty list, and an operator simply never saw the page. That is
+// the "capability with no consumer" shape one layer out: the capability has a
+// consumer and the WIRE between them has none.
+//
+// The subject is therefore the rendered page: a host carrying a registration,
+// through registerPanel, to an HTML response an operator's browser would receive.
+func TestAPluginsScreenReachesThePanel(t *testing.T) {
+	t.Parallel()
+
+	identity := panelIdentity{token: "a-valid-admin-token"}
+
+	c := container.New(discardLogger())
+	require.NoError(t, c.Provide(adminui.ServiceQuery, panelCatalog{}))
+	require.NoError(t, c.Provide(adminui.ServiceAuth, panelSession{
+		email: "operator@example.com", password: "a-long-enough-password",
+		token: identity.token,
+	}))
+	require.NoError(t, c.Provide(adminui.InteropAuth, identity))
+
+	// A host with one registration, made the way a plugin makes it.
+	host := coreplugin.NewHost(c, module.NewRegistry(discardLogger(), nil), nil,
+		discardLogger(), nil)
+	const screenPath = adminui.URLPrefix + "/wiring-probe"
+	host.RegisterAdminPage(coreplugin.AdminPage{
+		Label:  "Wiring probe",
+		Path:   screenPath,
+		Script: []byte("// probe\n"),
+	})
+
+	router := corehttp.NewRouter(corehttp.RouterOptions{Version: "test"})
+	_, err := registerPanel(baseConfig(), c, router, host)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, screenPath, http.NoBody)
+	req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
+		ID: "user_probe", Kind: "user", Scopes: []string{corehttp.ScopeAdmin},
+	}))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	assert.Contains(t, body, "Wiring probe",
+		"the screen a plugin registered must reach the panel; the composition root is "+
+			"the only thing that carries it there")
+	assert.Contains(t, body, `href="`+screenPath+`"`,
+		"and it must be in the navigation, not only bound as a route")
+
+	script := httptest.NewRecorder()
+	router.ServeHTTP(script, httptest.NewRequest(http.MethodGet, screenPath+".js", http.NoBody))
+	require.Equal(t, http.StatusOK, script.Code)
+	assert.Equal(t, "// probe\n", script.Body.String(),
+		"the panel serves the plugin's own bytes, from the panel's origin")
 }

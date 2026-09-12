@@ -170,6 +170,9 @@ type UI struct {
 	// plain HTTP, where a Secure cookie would never be sent and the panel could
 	// not be opened at all.
 	secureCookie bool
+	// pages are the screens plugins registered (ADR 0155); empty is the ordinary
+	// case, because an installation with no plugin has none.
+	pages []pageScreen
 }
 
 // FromContainer builds the panel on the container.
@@ -183,7 +186,7 @@ type UI struct {
 // Templates are parsed HERE, not on first request: a broken template must stop
 // the server at startup. The composition root turns the error into an exit
 // code, so the failure shows up in deployment rather than in front of a user.
-func FromContainer(c *container.Container, secureCookie bool) (*UI, error) {
+func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI, error) {
 	if c == nil {
 		return nil, errors.Internal(CodeNotReady,
 			"admin panel cannot be built without a container")
@@ -224,6 +227,19 @@ func FromContainer(c *container.Container, secureCookie bool) (*UI, error) {
 		return nil, err
 	}
 
+	// The registrations are judged BEFORE the panel exists, so a malformed one
+	// stops startup instead of being discovered by an operator's click.
+	screens, err := validatePages(pages)
+	if err != nil {
+		return nil, err
+	}
+	// The menu entries are handed to the template set, which is what fills the
+	// frame: a screen whose route existed and whose entry did not would be
+	// reachable only by somebody who knew the URL, and the reverse — an entry
+	// whose link answers 404 — is the failure the panel has already been bitten
+	// by once.
+	templates.extra = navItemsOf(screens)
+
 	return &UI{
 		catalog:       catalog,
 		products:      products,
@@ -233,6 +249,7 @@ func FromContainer(c *container.Container, secureCookie bool) (*UI, error) {
 		authenticator: authenticator,
 		templates:     templates,
 		secureCookie:  secureCookie,
+		pages:         screens,
 	}, nil
 }
 

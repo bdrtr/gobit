@@ -408,6 +408,7 @@ core/personaldata State
 core/personaldata Subject
 core/personaldata Unresolvable
 core/plugin AIProviderName
+core/plugin AdminPage
 core/plugin CallbacksName
 core/plugin ErrorReporterName
 core/plugin FileProvidersName
@@ -415,10 +416,12 @@ core/plugin FulfillmentProvidersName
 core/plugin Host
 core/plugin Host.AddModule
 core/plugin Host.AddRoutes
+core/plugin Host.AdminPages
 core/plugin Host.Container
 core/plugin Host.Jobs
 core/plugin Host.Logger
 core/plugin Host.RegisterAIProvider
+core/plugin Host.RegisterAdminPage
 core/plugin Host.RegisterCallback
 core/plugin Host.RegisterErrorReporter
 core/plugin Host.RegisterFileProvider

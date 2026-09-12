@@ -81,6 +81,33 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir eklenti artık yönetim PANELİNE ekran koyabiliyor** (ADR 0155, D91). Panel
+  altı ekranla geliyordu ve yedinciyi eklemenin yolu yoktu: `sections()` altı
+  elemanlı PAKET-ÖZEL bir dilim ve `internal/adminui` `internal/` altında, yani
+  dışarıdan adlandırılamıyor. Bir eklenti yönetim UCU açabiliyordu —
+  `plugins/analytics` tam bu şekildi — ve onu okumanın tek yolu curl'du. Artık
+  `core/plugin.AdminPage{Label, Path, Script []byte}` yayımlanmış ve
+  `Host.RegisterAdminPage` onları topluyor; panel bunları kurucu argümanı olarak
+  alıyor, bozuk bir kaydı AÇILIŞTA reddediyor, ve kabuğu, betiği ve menü girdisini
+  TEK bir listeden bağlıyor. Betik URL değil BAYT ve politikayı mümkün kılan şey
+  bu: panel onu KENDİ kaynağından servis ediyor, yani `script-src 'self'` yeterli
+  ve hiçbir kurulumun politikası üçüncü bir köken için açılmıyor — eklenti
+  kurmamış olanlar dahil. Eklenti şablon göndermiyor ve ADR 0030'un reddettiği
+  alternatif reddedilmiş kalıyor: burada sahiplenilen TEK bir kabuk her kayıtlı
+  ekranı çiziyor, betik onu /admin/v1'den operatörün kendi oturumuyla dolduruyor.
+  Ve bu dilimin ikinci yarısı: panel bugüne kadar HİÇBİR içerik politikası
+  taşımıyordu — ağaçta `Content-Security-Policy` sıfır kez geçiyordu, `X-Frame-Options`
+  ve `Referrer-Policy` de. Bir operatörün oturum açtığı HTML'i çizen bir yüzey için
+  bu zaten yanlıştı; ADR 0030'dan beri daha kötüydü, çünkü panelin yeni ekranları
+  /admin/v1'in İSTEMCİSİ, yani panelin servis ettiği bir betik operatörün
+  oturumunu taşıyor. Politika nonce'suz sıkı olabildi çünkü panel bunu YAPISIYLA
+  hak etmişti ve bu ölçüldü: on dört şablon ve stil dosyası boyunca tam bir
+  `<script>` var (defer'li src), satır içi stil yok, olay niteliği yok, görsel
+  yok, `url()` yok, `template.HTML` yok. Politika her panel rotasını tutan TEK bir
+  chi grubuna kuruldu ve router'ı YÜRÜYEN bir kapı yirmisinin de taşıdığını
+  kanıtlıyor — handler başına bir çağrı, biri handler ekleyene kadar tutan bir
+  kuraldır. İlk tüketici `plugins/analytics`: huni ekranı artık panelin menüsünde.
+
 - **Bir proje artık BINARY'DEN başlatılabiliyor** (ADR 0154, D90). gobit bir
   kütüphane ve ön kapısı kapalıydı: hiçbir şey proje üretmiyordu, yani bir
   yazarın ilk adımı `cmd/server/main.go`'yu okuyup bir `go.mod` tahmin etmek,

@@ -369,7 +369,7 @@ func assemble(
 	// Bootstrap. The panel is not a module (ADR 0011), so it does not enter the
 	// registry; the check for its wiring is the branch of the registration test
 	// in internal/arch that was extended to the panel tree.
-	panel, err := registerPanel(cfg, c, router)
+	panel, err := registerPanel(cfg, c, router, host)
 	if err != nil {
 		return nil, err
 	}

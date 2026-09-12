@@ -22,6 +22,17 @@ import (
 // the router is built — so installing it from here is IMPOSSIBLE. The split is
 // written down in ADR 0011.
 func (u *UI) Routes(r chi.Router) {
+	// Every panel route goes inside ONE group so the policy is installed once
+	// (ADR 0155). chi's Group inlines the parent's middleware and starts its own
+	// stack, which is what makes Use legal here even though the router already
+	// carries routes — the restriction in the note above is about the PARENT.
+	r.Group(u.routes)
+}
+
+// routes binds the panel's paths onto the group that carries the policy.
+func (u *UI) routes(r chi.Router) {
+	r.Use(withSecurityHeaders)
+
 	r.Get(StylesheetPath, u.serveStylesheet)
 	r.Get(ReviewsScriptPath, u.serveReviewsScript)
 	r.Get(ReviewsPath, u.showReviews)
@@ -42,6 +53,11 @@ func (u *UI) Routes(r chi.Router) {
 	r.Get(CustomersPath, u.listCustomers)
 	r.Get(CustomerPath, u.showCustomer)
 	r.Get(InventoryPath, u.listInventory)
+
+	// The registered screens come LAST, after every path the panel ships, so a
+	// plugin cannot shadow one by registration order — and it could not anyway:
+	// a collision is refused before the panel is built (see [validatePages]).
+	u.pageRoutes(r)
 }
 
 // home is the panel's protected entry point.

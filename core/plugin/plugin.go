@@ -307,6 +307,8 @@ type Host struct {
 	routes []routeRegistration
 	// jobs are the scheduled jobs the plugins declared.
 	jobs []Job
+	// adminPages are the panel screens the plugins declared.
+	adminPages []AdminPage
 	// queue holds the tasks to be applied at Start.
 	queue []queuedTask
 }
@@ -431,6 +433,62 @@ func (h *Host) RegisterJob(j Job) {
 // the returned slice would either mutate the host's own or not, depending on
 // capacity — the least debuggable of all possible outcomes.
 func (h *Host) Jobs() []Job { return slices.Clone(h.jobs) }
+
+// AdminPage is a screen a plugin puts in the admin panel (ADR 0155).
+//
+// # Why the FORM is published and the panel is not
+//
+// ADR 0026's amendment: a contract can be published as a value type without
+// publishing the engine that consumes it, and where that is possible it is the
+// narrower promise. [Job] is the precedent — the scheduler that runs a job is
+// internal and always will be. The panel is the same: what an outside author
+// needs to name is the DESCRIPTION of a screen, not the renderer.
+type AdminPage struct {
+	// Label is what the panel's navigation shows. It is required.
+	Label string
+
+	// Path is the full panel path the screen answers on, and it MUST sit under
+	// the panel's own prefix.
+	//
+	// The panel refuses one that does not, and refuses one that collides with a
+	// screen it ships. Both are startup failures rather than request failures: a
+	// path outside the prefix would be bound where the panel's session ring does
+	// not run — a screen with an operator's data and no operator check.
+	Path string
+
+	// Script is the screen's client, as BYTES.
+	//
+	// It is bytes and not a URL, and that is the decision the whole shape rests
+	// on. The panel serves these bytes from its OWN origin, so its content
+	// policy can stay `script-src 'self'` and no third-party origin is ever
+	// named — a URL would have forced the policy open for every installation,
+	// including the ones that installed no plugin.
+	//
+	// The screen is a client of /admin/v1 (ADR 0030): the panel renders a shell
+	// carrying the API prefix, and this script fills it with the operator's own
+	// session. There is no template slot and a plugin never ships one, which is
+	// what keeps ADR 0030's rejected alternative rejected.
+	Script []byte
+}
+
+// RegisterAdminPage adds a screen to the admin panel.
+//
+// It is applied at Install time rather than queued, for the reason the provider
+// registrars are: the composition root READS the registrations while it builds
+// the panel, and a queued one would arrive after the panel had been built with
+// whatever it had.
+func (h *Host) RegisterAdminPage(p AdminPage) {
+	h.adminPages = append(h.adminPages, p)
+}
+
+// AdminPages returns the screens the plugins declared, in registration order.
+//
+// It is the composition root's read and there is no consumer for it inside this
+// package, because there cannot be one: the panel that renders these is
+// internal, which is the whole reason [AdminPage] exists as a separate type.
+//
+// The slice is a copy, for [Host.Jobs]'s reason.
+func (h *Host) AdminPages() []AdminPage { return slices.Clone(h.adminPages) }
 
 // RegisterPaymentProvider adds a payment provider to the payment module.
 //

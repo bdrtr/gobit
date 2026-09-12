@@ -46,6 +46,7 @@ truth: a report says what was true on the day it was taken.
 | [What a shop could not hold — measured 2026-09-12](0152-what-a-shop-could-not-hold.md) | 133 |
 | [What a cart never said — measured 2026-09-12](0153-what-a-cart-never-said.md) | 170 |
 | [The front door was shut — measured 2026-09-12](0154-the-front-door-was-shut.md) | 156 |
+| [The panel had no policy — measured 2026-09-12](0155-the-panel-had-no-policy.md) | 128 |
 | [The guard moves to the binding — measured 2026-09-10](0120-the-guard-moves-to-the-binding.md) | 126 |
 | [Where the truth about collected money lives — measured 2026-09-10](0119-where-the-truth-about-collected-money-lives.md) | 130 |
 | [A counter in place of a balance — measured 2026-09-10](0118-a-counter-in-place-of-a-balance.md) | 162 |

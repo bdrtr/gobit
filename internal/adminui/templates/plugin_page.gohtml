@@ -1,0 +1,30 @@
+{{- /*
+plugin_page.gohtml is the shell of a screen a PLUGIN registered (ADR 0155).
+
+It is the second page of ADR 0030's shape and it is deliberately the same shape
+as the first (reviews.gohtml): the server renders a shell, a script fills it from
+/admin/v1 with the operator's own session. The difference is only where the script
+came from — a plugin registered its BYTES and the panel serves them from its own
+origin, which is what lets the content policy stay script-src 'self'.
+
+A plugin ships no template and never will. ADR 0030 refused server-renderer
+extension points because they put every plugin's markup in this binary, and this
+page is what replaces that: one shell, owned here, for every registered screen.
+
+The noscript block is not a courtesy. A page whose whole content arrives by
+script shows an empty box when the script fails, and an operator cannot tell that
+from "there is no data".
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+<noscript>
+  <p class="notice">This screen is a client of the admin API and needs JavaScript.</p>
+</noscript>
+
+<div id="plugin-page" data-api="{{ .APIPrefix }}">
+  <p class="notice">Loading…</p>
+</div>
+
+<script src="{{ .PageScript }}" defer></script>
+{{ end }}

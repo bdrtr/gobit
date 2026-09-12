@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -58,6 +59,21 @@ func (b *fakeBus) Shutdown(context.Context) error { return nil }
 func setUp(t *testing.T, c *container.Container) (*module.Registry, *fakeBus, error) {
 	t.Helper()
 
+	modules, bus, _, err := setUpWithHost(t, c)
+
+	return modules, bus, err
+}
+
+// setUpWithHost is the same flow and also returns the host.
+//
+// It is separate for the reason the payment module keeps a second constructor:
+// most tests do not look at the host and a fourth return value would put "_" in
+// every one of them.
+func setUpWithHost(
+	t *testing.T, c *container.Container,
+) (*module.Registry, *fakeBus, *coreplugin.Host, error) {
+	t.Helper()
+
 	log := slog.New(slog.DiscardHandler)
 	modules := module.NewRegistry(log, nil)
 	bus := &fakeBus{}
@@ -67,10 +83,45 @@ func setUp(t *testing.T, c *container.Container) (*module.Registry, *fakeBus, er
 
 	h := coreplugin.NewHost(c, modules, bus, log, nil)
 	if err := reg.Install(t.Context(), h); err != nil {
-		return modules, bus, err
+		return modules, bus, h, err
 	}
 
-	return modules, bus, reg.Start(t.Context(), h)
+	return modules, bus, h, reg.Start(t.Context(), h)
+}
+
+// TestSetupRegistersTheFunnelScreen is the screen's registration (ADR 0155).
+//
+// It is asserted here, on the plugin's side of the boundary, because this is
+// where the decision lives: the plugin chooses to have a screen, and the panel
+// only renders what it is handed. Without this, removing the registration is a
+// change nothing in the repository notices — the funnel becomes a table only
+// somebody with a terminal can read, which is the opposite of the plugin's point.
+func TestSetupRegistersTheFunnelScreen(t *testing.T) {
+	t.Parallel()
+
+	c := container.New(slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
+
+	_, _, host, err := setUpWithHost(t, c)
+	require.NoError(t, err)
+
+	pages := host.AdminPages()
+	require.Len(t, pages, 1, "the plugin must put exactly one screen in the panel")
+	assert.Equal(t, analytics.PageLabel, pages[0].Label)
+	assert.Equal(t, analytics.PagePath, pages[0].Path)
+	assert.True(t, strings.HasPrefix(pages[0].Path, "/admin/ui/"),
+		"the screen must sit under the panel's prefix; a path outside it would be bound "+
+			"where the panel's session ring never runs")
+	assert.NotEmpty(t, pages[0].Script,
+		"the panel serves these BYTES from its own origin, which is what lets its "+
+			"content policy stay script-src 'self'")
+	// The script reads the prefix out of the shell and appends the rest, so what
+	// it carries is the endpoint MINUS the admin prefix. Asserting the whole path
+	// would be asserting a string the script deliberately does not hold.
+	assert.Contains(t, string(pages[0].Script),
+		strings.TrimPrefix(analytics.FunnelPath, "/admin/v1"),
+		"the screen's client must read THIS plugin's endpoint; a script that fetched "+
+			"something else would render somebody else's numbers")
 }
 
 // TestSetupRegistersTheModuleAndItsThreeSubscriptions is the plugin's contract

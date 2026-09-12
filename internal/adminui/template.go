@@ -62,6 +62,7 @@ var pages = []string{
 	"inventory.gohtml",
 	"sales.gohtml",
 	"reviews.gohtml",
+	"plugin_page.gohtml",
 }
 
 // templateSet maps a page name to that page's parsed template set.
@@ -78,6 +79,10 @@ var pages = []string{
 // the shortest path to handing an attacker admin privileges.
 type templateSet struct {
 	sets map[string]*template.Template
+	// extra are the navigation entries of the screens plugins registered
+	// (ADR 0155). They live here because the frame is filled in here, and a page
+	// that had to add its own menu entry would be a page that can forget to.
+	extra []navItem
 }
 
 // loadTemplates parses the embedded templates and verifies their names.
@@ -172,7 +177,7 @@ func (t *templateSet) render(
 	// that forgot one would render without a stylesheet or without its menu, and
 	// nothing would fail — the template would simply see an empty value. Putting
 	// them in one place makes forgetting impossible instead of unlikely.
-	decorateFrame(r, data)
+	t.decorateFrame(r, data)
 
 	set, ok := t.sets[page]
 	if !ok {
@@ -239,7 +244,7 @@ func sections() []navItem {
 }
 
 // decorateFrame fills in the fields the layout draws around every page.
-func decorateFrame(r *http.Request, data map[string]any) {
+func (t *templateSet) decorateFrame(r *http.Request, data map[string]any) {
 	data[stylesheetKey] = StylesheetPath
 	data[logoutKey] = LogoutPath
 
@@ -254,6 +259,11 @@ func decorateFrame(r *http.Request, data map[string]any) {
 	}
 
 	items := sections()
+	// A registered screen's entry comes after the six the panel ships, and it is
+	// added HERE rather than inside sections() because sections() is also what
+	// [validatePages] compares a registration against — a plugin's path must not
+	// be able to look like a built-in one to that check.
+	items = append(items, t.extra...)
 	for i := range items {
 		// The section is current when the request is inside it, so a product's
 		// own page keeps "Catalog" marked rather than leaving the menu blank on

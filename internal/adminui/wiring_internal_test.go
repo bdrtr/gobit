@@ -53,7 +53,7 @@ func wiringContainer(t *testing.T) *container.Container {
 func TestPanelOpensWithoutTheWriteSurface(t *testing.T) {
 	t.Parallel()
 
-	panel, err := FromContainer(wiringContainer(t), false)
+	panel, err := FromContainer(wiringContainer(t), false, nil)
 
 	require.NoError(t, err, "the panel must open without the product module")
 	require.NotNil(t, panel)
@@ -74,7 +74,7 @@ func TestAMismatchedWriteSurfaceStopsStartup(t *testing.T) {
 	// Registered under the right name, but it is not a ProductWriter.
 	require.NoError(t, c.Provide(ServiceProductAdmin, wiringCatalog{}))
 
-	_, err := FromContainer(c, false)
+	_, err := FromContainer(c, false, nil)
 
 	require.Error(t, err, "a registered name with the wrong surface must stop startup")
 	assert.Equal(t, CodeDependencyMissing, errors.CodeOf(err))
@@ -88,7 +88,7 @@ func TestPanelTakesTheWriteSurfaceWhenItIsThere(t *testing.T) {
 	c := wiringContainer(t)
 	require.NoError(t, c.Provide(ServiceProductAdmin, &fakeProductWriter{}))
 
-	panel, err := FromContainer(c, false)
+	panel, err := FromContainer(c, false, nil)
 
 	require.NoError(t, err)
 	assert.NotNil(t, panel.products, "a registered write surface must be wired")

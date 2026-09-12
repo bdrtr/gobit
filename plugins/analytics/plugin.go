@@ -55,6 +55,7 @@ package analytics
 
 import (
 	"context"
+	"embed"
 
 	coreplugin "github.com/bdrtr/gobit/core/plugin"
 )
@@ -129,9 +130,63 @@ func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 	h.Subscribe(eventCartCompleted, p.mod.cartCompleted)
 	h.Subscribe(eventOrderPlaced, p.mod.orderPlaced)
 
+	// The screen an operator actually reads (ADR 0155). Without it the funnel is
+	// a table only somebody with a terminal can see, and the plugin's own point
+	// is that a shop can look at its conversion rate.
+	h.RegisterAdminPage(coreplugin.AdminPage{
+		Label:  PageLabel,
+		Path:   PagePath,
+		Script: funnelScript,
+	})
+
 	h.Logger().Info("the analytics plugin was set up",
 		"module", ModuleName,
-		"funnel_endpoint", FunnelPath)
+		"funnel_endpoint", FunnelPath,
+		"panel_screen", PagePath)
 
 	return nil
+}
+
+// The panel screen this plugin registers (ADR 0155).
+const (
+	// PageLabel is what the panel's navigation shows.
+	PageLabel = "Funnel"
+	// PagePath is the panel path the screen answers on.
+	//
+	// It sits under the panel's prefix — the panel refuses one that does not,
+	// because a path outside it would be bound where the panel's session ring
+	// never runs. The prefix is repeated BY HAND for the reason every other
+	// constant in this file is: a plugin cannot import the panel, which is
+	// internal, and the published form it registers through carries the
+	// description of a screen rather than the panel itself.
+	PagePath = "/admin/ui/analytics/funnel"
+)
+
+// assetFiles holds the screen's client and is EMBEDDED IN THE BINARY.
+//
+// The panel serves these BYTES from its own origin, which is what lets its
+// content policy stay `script-src 'self'`: a URL would have forced the policy
+// open for every installation, including the ones that installed no plugin.
+//
+//go:embed assets/funnel.js
+var assetFiles embed.FS
+
+// funnelScript is the screen's client, read once at startup.
+//
+// Reading at init rather than per request means a missing asset fails the BUILD
+// (the embed directive) rather than the first page load, in front of an operator
+// — the panel's own reasoning for its assets.
+var funnelScript = mustReadAsset("assets/funnel.js")
+
+// mustReadAsset reads an embedded asset or panics.
+//
+// Its failure means the embed directive and the file have drifted apart, which
+// is a build-time mistake rather than a runtime condition.
+func mustReadAsset(name string) []byte {
+	body, err := assetFiles.ReadFile(name)
+	if err != nil {
+		panic("analytics: the embedded asset could not be read: " + err.Error())
+	}
+
+	return body
 }

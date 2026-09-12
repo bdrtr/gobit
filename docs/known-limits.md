@@ -606,5 +606,21 @@ past and is not corrected retroactively.
   signed-in-customer adapter the starter example carries is not in the template,
   and the module it needs has no released tag at all.
 
+- **A plugin's admin screen is not sandboxed from the panel.** Since
+  [ADR 0155](adr/0155-a-plugin-can-put-a-screen-in-the-panel.md) a plugin can put
+  a screen in the panel, and its script runs on the panel's own origin with the
+  operator's session cookie — which is what makes it work and also what makes
+  installing a plugin a decision about trust. The content policy bounds where
+  code may come FROM, not what it may do once it is there.
+
+- **A registered screen gets the frame and a script, and nothing else.** There
+  is no way to add a column to an existing screen and no page-level scope: a
+  screen is visible to anyone the panel lets in. ADR 0030's refusal of
+  server-renderer extension points is why there are no template slots.
+
+- **No lane boots the panel against a real server.** Its gates run over a real
+  router with fake services; `make smoke` starts the binary and never opens
+  `/admin/ui`. "The panel renders against a real database" is proven by nothing.
+
 - **The load test is in-process** (`make load-test`, `internal/e2e`): it tests
   correctness under load, it does not produce a capacity plan.

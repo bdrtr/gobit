@@ -188,14 +188,44 @@ func registerWorkflows(c *container.Container, log *slog.Logger) error {
 //
 // Setup RETURNS an error rather than panicking: a broken template stops startup
 // and the failure shows up in deployment, not in front of a user.
-func registerPanel(cfg config.Config, c *container.Container, router chi.Router) (*adminui.UI, error) {
-	panel, err := adminui.FromContainer(c, cfg.IsShared())
+func registerPanel(
+	cfg config.Config, c *container.Container, router chi.Router, host *coreplugin.Host,
+) (*adminui.UI, error) {
+	panel, err := adminui.FromContainer(c, cfg.IsShared(), panelPages(host))
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindOf(err), codeFlowSetupFailed,
 			"the admin panel could not be set up")
 	}
 	panel.Routes(router)
 	return panel, nil
+}
+
+// panelPages converts the plugins' registrations into the panel's own type.
+//
+// The conversion is HERE, in the composition root, and that is the point: the
+// panel does not import core/plugin and the plugin system does not import the
+// panel. Each declares the shape it needs and this line is the only place that
+// knows both (ADR 0001, and ADR 0155 for why the published form is a value type).
+//
+// It is called AFTER Install — the ordering is already right in the caller,
+// because the plugins are installed while the container is built and the panel is
+// assembled after the modules have come up.
+func panelPages(host *coreplugin.Host) []adminui.Page {
+	if host == nil {
+		return nil
+	}
+
+	registered := host.AdminPages()
+	out := make([]adminui.Page, 0, len(registered))
+	for i := range registered {
+		out = append(out, adminui.Page{
+			Label:  registered[i].Label,
+			Path:   registered[i].Path,
+			Script: registered[i].Script,
+		})
+	}
+
+	return out
 }
 
 // dbConfig builds the connection pool settings from the configuration.
