@@ -39,7 +39,7 @@ func (u *UI) showReviews(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		titleKey:         reviewsLabel,
 		apiPrefixKey:     corehttp.DefaultAdminPrefix,
-		reviewsScriptKey: ReviewsScriptPath,
+		reviewsScriptKey: assetURL(ReviewsScriptPath, reviewsScriptStamp),
 	}
 
 	u.templates.render(w, r, http.StatusOK, "reviews.gohtml", data)

@@ -64,11 +64,17 @@ type Page struct {
 // pageScreen is a validated page plus what serving it needs.
 type pageScreen struct {
 	page Page
-	etag string
+	// stamp is the script's content stamp; it goes in the address AND in the
+	// ETag, so a release that changes a plugin's script reaches a browser that
+	// already has the old one (D94).
+	stamp string
 }
 
 // scriptPath is where this screen's script is served.
 func (p pageScreen) scriptPath() string { return p.page.Path + scriptSuffix }
+
+// scriptURL is the address the shell asks for: the path plus the stamp.
+func (p pageScreen) scriptURL() string { return assetURL(p.scriptPath(), p.stamp) }
 
 // validatePages turns the registrations into screens, or refuses.
 //
@@ -125,7 +131,7 @@ func validatePages(pages []Page) ([]pageScreen, error) {
 		}
 
 		seen[page.Path] = true
-		out = append(out, pageScreen{page: page, etag: assetETag(page.Script)})
+		out = append(out, pageScreen{page: page, stamp: assetStamp(page.Script)})
 	}
 
 	return out, nil
@@ -156,7 +162,7 @@ func (u *UI) showPage(screen pageScreen) http.HandlerFunc {
 		u.templates.render(w, r, http.StatusOK, pluginPageTemplate, map[string]any{
 			titleKey:      screen.page.Label,
 			apiPrefixKey:  corehttp.DefaultAdminPrefix,
-			pageScriptKey: screen.scriptPath(),
+			pageScriptKey: screen.scriptURL(),
 		})
 	}
 }
@@ -165,10 +171,11 @@ func (u *UI) showPage(screen pageScreen) http.HandlerFunc {
 //
 // The type is the panel's own script type and the stamp is derived from the
 // bytes, exactly as the review screen's is: a release that changes a plugin's
-// script gets a new stamp automatically.
+// script gets a new stamp automatically, and the address carries it so the
+// browser asks for the new one.
 func (u *UI) servePageScript(screen pageScreen) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		corehttp.WriteAsset(r.Context(), w, reviewsScriptType, screen.etag, screen.page.Script)
+		u.writeAsset(r, w, screen.scriptPath(), reviewsScriptType, screen.stamp, screen.page.Script)
 	}
 }
 

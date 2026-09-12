@@ -39,14 +39,17 @@ const stylesheetType = "text/css; charset=utf-8"
 // process lives.
 var stylesheet = mustReadAsset(stylesheetFile)
 
-// stylesheetETag is the content stamp the browser caches against.
+// stylesheetStamp is the content stamp, and it goes in the ADDRESS as well as in
+// the header.
 //
-// It is derived from the BYTES rather than from a version string: a release
-// that changes the stylesheet gets a new stamp automatically, and one that does
-// not keeps the old one, so an operator's browser refetches exactly when the
-// file really changed. A hand-maintained version would drift the first time
-// somebody edited the CSS without remembering to bump it.
-var stylesheetETag = assetETag(stylesheet)
+// It is derived from the BYTES rather than from a version string: a release that
+// changes the stylesheet gets a new stamp automatically, and one that does not
+// keeps the old one. That sentence used to end "so an operator's browser
+// refetches exactly when the file really changed", and the sentence was FALSE —
+// the stamp went only into the ETag, the address never changed, and the cache
+// header says `immutable`, which tells the browser not to ask. A stamped address
+// is what makes the claim true (D94).
+var stylesheetStamp = assetStamp(stylesheet)
 
 // serveStylesheet writes the panel's stylesheet.
 //
@@ -56,7 +59,7 @@ var stylesheetETag = assetETag(stylesheet)
 // been called — the panel had no CSS at all. A capability with no consumer is
 // this repository's named second error class (ADR 0009); this is the consumer.
 func (u *UI) serveStylesheet(w http.ResponseWriter, r *http.Request) {
-	corehttp.WriteAsset(r.Context(), w, stylesheetType, stylesheetETag, stylesheet)
+	u.writeAsset(r, w, StylesheetPath, stylesheetType, stylesheetStamp, stylesheet)
 }
 
 // reviewsScriptFile is the embedded path of the review screen's client.
@@ -73,14 +76,44 @@ const reviewsScriptType = "text/javascript; charset=utf-8"
 
 // The review screen's client and its content stamp; see [stylesheet].
 var (
-	reviewsScript     = mustReadAsset(reviewsScriptFile)
-	reviewsScriptETag = assetETag(reviewsScript)
+	reviewsScript      = mustReadAsset(reviewsScriptFile)
+	reviewsScriptStamp = assetStamp(reviewsScript)
 )
 
 // serveReviewsScript writes the review screen's client.
 func (u *UI) serveReviewsScript(w http.ResponseWriter, r *http.Request) {
-	corehttp.WriteAsset(r.Context(), w, reviewsScriptType, reviewsScriptETag, reviewsScript)
+	u.writeAsset(r, w, ReviewsScriptPath, reviewsScriptType, reviewsScriptStamp, reviewsScript)
 }
+
+// writeAsset serves one of the panel's assets, and decides from the SCOPE TABLE
+// whether a shared cache may keep a copy.
+//
+// Derived rather than chosen per call site, and that is the whole reason this
+// function exists: since ADR 0156 the review screen's script and every
+// registered screen's script sit behind a privilege, and they were still being
+// served `Cache-Control: public` — an invitation to a proxy to hand them to a
+// caller this panel had just refused (D95). Reading the answer out of the same
+// table that installs the refusal means the two cannot disagree, and a path that
+// gains a privilege stops being publicly cacheable in the same edit.
+func (u *UI) writeAsset(
+	r *http.Request, w http.ResponseWriter, path, contentType, stamp string, body []byte,
+) {
+	etag := etagOf(stamp)
+	if u.scopes[path] == "" {
+		corehttp.WriteAsset(r.Context(), w, contentType, etag, body)
+
+		return
+	}
+
+	corehttp.WritePrivateAsset(r.Context(), w, contentType, etag, body)
+}
+
+// assetURL is the address an asset is requested at: its path plus its stamp.
+//
+// The stamp travels in the query rather than in the path so the route stays one
+// pattern — chi never sees the query — while the ADDRESS changes whenever the
+// bytes do, which is what the `immutable` cache header needs to be honest.
+func assetURL(path, stamp string) string { return path + "?v=" + stamp }
 
 // mustReadAsset reads an embedded asset or panics.
 //
@@ -96,13 +129,20 @@ func mustReadAsset(name string) []byte {
 	return body
 }
 
-// assetETag stamps the content.
+// assetStamp stamps the content.
 //
-// The stamp is quoted because that is what the header's grammar requires; an
-// unquoted value is silently ignored by some caches, which would turn the
-// immutable cache header into a promise nothing acts on.
-func assetETag(body []byte) string {
+// It returns the BARE hex because the stamp has two readers with different
+// grammars: an address takes it as it is, and the ETag header requires it
+// quoted. One derivation, two spellings — see [etagOf].
+func assetStamp(body []byte) string {
 	sum := sha256.Sum256(body)
 
-	return `"` + hex.EncodeToString(sum[:16]) + `"`
+	return hex.EncodeToString(sum[:16])
 }
+
+// etagOf quotes a stamp for the header.
+//
+// The quoting is required by the header's grammar; an unquoted value is silently
+// ignored by some caches, which would turn the cache header into a promise
+// nothing acts on.
+func etagOf(stamp string) string { return `"` + stamp + `"` }

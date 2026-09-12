@@ -249,7 +249,7 @@ func sections() []navItem {
 
 // decorateFrame fills in the fields the layout draws around every page.
 func (t *templateSet) decorateFrame(r *http.Request, data map[string]any) {
-	data[stylesheetKey] = StylesheetPath
+	data[stylesheetKey] = assetURL(StylesheetPath, stylesheetStamp)
 	data[logoutKey] = LogoutPath
 
 	// The sign-out control appears only when there is a session to end. On the

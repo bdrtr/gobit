@@ -125,12 +125,17 @@ func (u *UI) listOrders(w http.ResponseWriter, r *http.Request) {
 
 // showOrder renders one order.
 //
-// The LINES are deliberately absent. They are the order module's own records
-// and the read layer joins across LINKS, not within a module — so showing them
-// would need the panel to hold the order module's service, which is the
-// coupling the fourth tree exists to avoid. What this screen answers is the
-// question an operator opens an order for: who, when, how much, and where it
-// stands.
+// The LINES are absent, and the reason written here used to be that "the read
+// layer joins across LINKS, not within a module — so showing them would need the
+// panel to hold the order module's service". That was FALSE in both halves and
+// this screen's own neighbor disproves it: the order line is a read-layer ENTITY
+// of its own, it accepts an "order_id" filter, and the sales report in this very
+// package reads it through the same [Catalog] surface (D96).
+//
+// What is true is smaller: nothing has been written yet. What this screen answers
+// today is the question an operator opens an order for — who, when, how much, and
+// where it stands — and the lines are an opening rather than a boundary, which is
+// where docs/known-limits.md now records them.
 func (u *UI) showOrder(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if strings.TrimSpace(id) == "" {

@@ -1,11 +1,12 @@
 {{- /*
 order.gohtml is one order's page.
 
-The LINES are deliberately absent. They are the order module's own records and
-the read layer joins across LINKS, not within a module — showing them would need
-the panel to hold the order module's service, which is the coupling the fourth
-tree exists to avoid (ADR 0011). What this screen answers is the question an
-operator opens an order for: who, when, how much, and where it stands.
+The LINES are absent because nobody has written them yet. The reason this comment
+used to give — that the read layer joins across links and not within a module —
+was false, and the sales report in this same package disproves it by reading the
+order line entity through the same surface (D96). What this screen answers today
+is the question an operator opens an order for: who, when, how much, and where it
+stands.
 
 Every amount is printed with its currency, and an amount whose scale could not
 be read says it is in minor units instead of being divided by a guessed hundred.

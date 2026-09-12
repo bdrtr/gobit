@@ -163,12 +163,53 @@ func WriteRedirect(_ context.Context, w http.ResponseWriter, target string) {
 //
 // etag is the version stamp supplied by the caller; when empty no cache header
 // is written.
+//
+// # The URL has to carry the stamp
+//
+// The cache header says `immutable`, which tells the browser not to revalidate
+// AT ALL for the year it is given. That is correct only when a changed asset is
+// served at a CHANGED address: at a fixed one, a release that edits the file
+// never reaches a browser that already has the old copy, and the ETag is
+// computed for nothing because no conditional request is ever made. The caller
+// puts the stamp in the address; this function does not, because it does not
+// write the page the address appears in.
+//
+// # And it must be a PUBLIC asset
+//
+// `public` invites a shared cache — a CDN, a company proxy — to store the
+// response and hand it to somebody else. That is right for bytes that are the
+// same in every installation and behind no privilege. For an asset a privilege
+// gates, use [WritePrivateAsset]: same stamping, and a shared cache is told to
+// keep out.
 func WriteAsset(ctx context.Context, w http.ResponseWriter, contentType, etag string, body []byte) {
+	writeAsset(ctx, w, contentType, etag, "public", body)
+}
+
+// WritePrivateAsset writes an embedded static asset that a privilege gates.
+//
+// It differs from [WriteAsset] in one directive and the difference is the point:
+// `private` keeps the bytes out of every shared cache, so a proxy cannot answer
+// a caller the origin would have refused. The browser still caches it for the
+// year, keyed to the address the caller stamped.
+//
+// The asset's own bytes are usually identical in every installation, so what is
+// protected is not their content but the RULE: an endpoint that refuses a
+// request must not be answerable by something in front of it.
+func WritePrivateAsset(
+	ctx context.Context, w http.ResponseWriter, contentType, etag string, body []byte,
+) {
+	writeAsset(ctx, w, contentType, etag, "private", body)
+}
+
+// writeAsset is the body both asset writers share.
+func writeAsset(
+	ctx context.Context, w http.ResponseWriter, contentType, etag, reach string, body []byte,
+) {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set(headerContentTypeOptions, nosniff)
 	if etag != "" {
 		w.Header().Set("ETag", etag)
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		w.Header().Set("Cache-Control", reach+", max-age=31536000, immutable")
 	}
 	w.WriteHeader(http.StatusOK)
 

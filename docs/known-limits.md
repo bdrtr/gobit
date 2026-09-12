@@ -635,9 +635,19 @@ past and is not corrected retroactively.
   code may come FROM, not what it may do once it is there.
 
 - **A registered screen gets the frame and a script, and nothing else.** There
-  is no way to add a column to an existing screen and no page-level scope: a
-  screen is visible to anyone the panel lets in. ADR 0030's refusal of
-  server-renderer extension points is why there are no template slots.
+  is no way to add a column or a section to an existing screen; ADR 0030's
+  refusal of server-renderer extension points is why there are no template
+  slots. The other half of this bullet — "and no page-level scope" — was true
+  until [ADR 0156](adr/0156-a-panel-screen-costs-a-privilege.md) and is gone: a
+  registered screen now declares the privilege it requires and a registration
+  without one is refused at startup.
+
+- **The panel's order screen shows the order and not its lines.** Eight values —
+  the display id, the status, the date, the email and five amounts — and nothing
+  about what was bought, paid or shipped. Nothing prevents the lines: the order
+  line is a read-layer entity accepting an `order_id` filter and the sales report
+  reads it already. What the screen is missing is work, not a mechanism, and the
+  reason previously written in its own comment was false (D96).
 
 - **No lane boots the panel against a real server.** Its gates run over a real
   router with fake services; `make smoke` starts the binary and never opens

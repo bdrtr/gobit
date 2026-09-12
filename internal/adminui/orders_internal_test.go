@@ -173,7 +173,9 @@ func TestThePanelDrawsItsMenu(t *testing.T) {
 	assert.Contains(t, body, `href="`+ProductsPath+`"`, "the catalog has to be in the menu")
 	assert.Contains(t, body, `href="`+OrdersPath+`" aria-current="page"`,
 		"the section the request is in has to be marked")
-	assert.Contains(t, body, `href="`+StylesheetPath+`"`, "the frame has to link the stylesheet")
+	assert.Contains(t, body, `href="`+assetURL(StylesheetPath, stylesheetStamp)+`"`,
+		"the frame has to link the stylesheet, at the STAMPED address — an unstamped one "+
+			"is never refetched, because the response says immutable (D94)")
 	assert.Contains(t, body, "Sign out", "a signed-in operator has to be able to leave")
 }
 
@@ -197,8 +199,10 @@ func TestADetailPageKeepsItsSectionMarked(t *testing.T) {
 // corehttp.WriteAsset.
 //
 // The capability was built for the panel in ADR 0011 and had never been called.
-// What the stamp buys is that an operator's browser refetches the file exactly
-// when it changed and not otherwise, so the header and the body have to agree.
+// This asserts the RESPONSE: the type, the stamp and the body. That the stamp
+// also buys a refetch when the file changes is a claim about the ADDRESS, and it
+// was made here while nothing checked it — see
+// [TestTheStylesheetAddressCarriesTheStampItIsServedWith], which does (D94).
 func TestTheStylesheetIsServedWithItsStamp(t *testing.T) {
 	t.Parallel()
 
@@ -208,7 +212,7 @@ func TestTheStylesheetIsServedWithItsStamp(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, stylesheetType, rec.Header().Get("Content-Type"))
-	assert.Equal(t, stylesheetETag, rec.Header().Get("ETag"))
+	assert.Equal(t, etagOf(stylesheetStamp), rec.Header().Get("ETag"))
 	assert.Contains(t, rec.Header().Get("Cache-Control"), "immutable")
 	assert.NotEmpty(t, rec.Body.Bytes())
 	assert.Contains(t, rec.Body.String(), ".masthead", "the body has to be the stylesheet")

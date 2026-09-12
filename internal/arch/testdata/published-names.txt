@@ -300,6 +300,7 @@ core/http WithLogger
 core/http WithPrincipal
 core/http WithRequestID
 core/http WriteAsset
+core/http WritePrivateAsset
 core/http WriteError
 core/http WriteHTML
 core/http WriteJSON

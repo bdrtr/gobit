@@ -20,6 +20,32 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Düzeltmeler
 
+- **Panelin varlıkları hiçbir zaman yeniden çekilmiyordu ve yetki arkasındakiler
+  PAYLAŞILAN önbelleğe açıktı** (D94, D95). Damga yalnızca ETag'e giriyordu, adres
+  hiç değişmiyordu ve yanıt `immutable` diyor — yani tarayıcıya bir yıl boyunca
+  sormaması söyleniyordu. Kusur kendi godoc'unda yazılıydı: damganın baytlardan
+  türediğini söyleyip "böylece operatörün tarayıcısı dosya gerçekten değiştiğinde
+  tam o zaman yeniden çeker" diye bitiyordu, oysa hiçbir koşullu istek yapılmıyor
+  ve yazıcıda `If-None-Match` dalı yok. Yanındaki test aynı iddiayı ADINDA taşıyıp
+  yalnızca ETag'i doğruluyordu. Artık damga ADRESTE de duruyor, yani baytlar
+  değişince adres değişiyor ve `immutable` dürüst hâle geliyor. İkincisi bir önceki
+  commit'in kendi ürettiği kusur: ADR 0156 reviews betiğini ve her kayıtlı ekranın
+  betiğini yetki arkasına aldı, `Cache-Control` ise `public` kalmıştı — araya giren
+  bir vekilin, panelin reddettiği çağırana o baytları vermesi daveti.
+  `core/http.WritePrivateAsset` yayımlandı ve panel iki yazıcı arasında REDDİ
+  kuran AYNI kapsam tablosuna bakarak seçiyor, böylece yetki kazanan bir yol aynı
+  düzenlemede herkese açık önbelleklenebilir olmaktan çıkıyor. Korunan şey baytlar
+  değil — kurulumdan kuruluma aynılar — KURAL: reddeden bir uç, önündeki bir şeyin
+  cevaplayabildiği bir kural koymamış olur. Kapı router'ı yürüyüp damga taşıyan her
+  yanıtı buluyor ve İKİ yönü de iddia ediyor.
+- **Sipariş ekranının satırları neden göstermediğine dair gerekçesi yanlıştı**
+  (D96), iki kopyada. "Okuma katmanı BAĞLAR üzerinden birleştirir, modül İÇİNDE
+  değil" cümlesi iki yarısında da yanlış: sipariş satırı kendi başına bir okuma
+  varlığı, `order_id` süzgeci kabul ediyor, ve panelin KENDİ satış raporu onu aynı
+  yüzeyden bir dosya öteden okuyor. Aynı cümle MÜŞTERİ adresleri için iki kez daha
+  geçiyor ve orada DOĞRU — müşteri modülü tek bir varlık yayımlıyor, adres varlığı
+  yok — bu yüzden ifade her yerde değiştirilmedi, her kopyanın ÖZNESİ ayrıldı.
+
 - **Yüz otuz beş test dosyası, Docker'sız koşan HİÇBİR şeridin görmediği yerde
   duruyordu** (D88). Karşılanmayan bir derleme kısıtı dosyayı Go araç zincirine
   görünmez yapıyor: `go build ./...`, `go vet ./...`, `go test ./...` ve
