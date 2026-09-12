@@ -186,7 +186,13 @@ var turkishStems = []string{
 }
 
 // scannedExtensions are the file types the content scan reads.
-var scannedExtensions = []string{".go", ".sql", ".gohtml", ".md", ".graphqls"}
+//
+// `.tmpl` was added on 2026-09-12 with `gobit new` (ADR 0154), and the reason is
+// the direction the prose travels: a template is rendered into somebody else's
+// project, so Turkish left in one does not stay in this repository — it ships.
+// The obvious source for an environment template is `.env.example`, which is 833
+// lines of Turkish, so the risk is concrete rather than hypothetical.
+var scannedExtensions = []string{".go", ".sql", ".gohtml", ".md", ".graphqls", ".tmpl"}
 
 // scannedRoots are the trees the content scan walks, plus the repository root
 // itself for its top-level documents.

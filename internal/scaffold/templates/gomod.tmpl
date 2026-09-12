@@ -1,0 +1,12 @@
+module {{ .Module }}
+
+go {{ .GoVersion }}
+
+require {{ .GobitModule }} {{ if .GobitVersion }}{{ .GobitVersion }}{{ else }}v0.0.0{{ end }}
+{{ if .Replace }}
+// This line points at a gobit CHECKOUT rather than a released version, so this
+// project is not portable: the path below is valid on one machine only. It is
+// what `gobit new -replace` writes, and a project meant to be shared removes it
+// and requires a version instead.
+replace {{ .GobitModule }} => {{ .Replace }}
+{{ end }}

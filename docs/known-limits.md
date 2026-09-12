@@ -587,5 +587,24 @@ past and is not corrected retroactively.
   it means one delivery per opened cart. There is no per-topic subscription and no
   rate limit; the only lever is not registering a receiver.
 
+- **No released version of this library can be imported.** Measured 2026-09-12:
+  `github.com/bdrtr/gobit@latest` resolves to v0.8.0 and that tag does not
+  contain the root package — the facade landed after it — so `require ... v0.8.0`
+  plus `import "github.com/bdrtr/gobit"` fails at `go mod tidy`. The only version
+  anybody can import today is a pseudo-version of a commit, which is what
+  [`gobit new`](adr/0154-a-project-can-be-started-from-the-binary.md) writes.
+  The fix is a release, and nothing in the repository can substitute for one.
+
+- **No lane proves a generated project works at the version it PINS.** Every
+  out-of-tree proof rewrites the generated `go.mod` to point at the checkout, so
+  the lane compiles the template against the tip of the tree. It cannot tell
+  "works at the pinned version" from "works at HEAD", and today those differ.
+
+- **A generated project's own help calls itself `gobit`.** The binary name is a
+  constant in the composition root, so a project named `shop` tells its operator
+  to run `gobit migrate status`. And the generated project is GUEST-ONLY: the
+  signed-in-customer adapter the starter example carries is not in the template,
+  and the module it needs has no released tag at all.
+
 - **The load test is in-process** (`make load-test`, `internal/e2e`): it tests
   correctness under load, it does not produce a capacity plan.

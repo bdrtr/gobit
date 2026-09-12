@@ -1,0 +1,38 @@
+# The two services gobit needs, with the credentials .env defaults to.
+#
+# There is no service for this project itself: it is built and run from the
+# source tree during development, and a deployment builds its own image.
+services:
+  postgres:
+    image: postgres:16-alpine
+    # The locale matters: gobit folds case in the database, and a cluster
+    # created with the C locale does not fold non-ASCII letters.
+    command: postgres -c lc_messages=C
+    environment:
+      POSTGRES_USER: gobit
+      POSTGRES_PASSWORD: gobit
+      POSTGRES_DB: gobit
+      POSTGRES_INITDB_ARGS: "--locale=C.UTF-8 --encoding=UTF8"
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gobit"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - postgres:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass gobit
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "gobit", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres:

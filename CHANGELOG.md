@@ -81,6 +81,36 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir proje artık BINARY'DEN başlatılabiliyor** (ADR 0154, D90). gobit bir
+  kütüphane ve ön kapısı kapalıydı: hiçbir şey proje üretmiyordu, yani bir
+  yazarın ilk adımı `cmd/server/main.go`'yu okuyup bir `go.mod` tahmin etmek,
+  hangi ayarların var olduğunu tahmin etmek ve hangi servisleri kaldıracağını
+  tahmin etmekti. `gobit new <dir>` artık binary'nin İÇİNE gömülü şablonlardan
+  bir proje yazıyor. Ve dilimin şeklini belirleyen olgu şu — ölçüldü, tartışılmadı:
+  `github.com/bdrtr/gobit@latest` v0.8.0'a çözülüyor ve o etiket kök paketi
+  İÇERMİYOR (facade ondan sonra geldi), yani `require ... v0.8.0` + `import
+  "github.com/bdrtr/gobit"` `go mod tidy`'de "does not contain package" ile
+  düşüyor; `@latest` de aynı şekilde. Bugün import edilebilen tek sürüm bir
+  commit'in pseudo-version'ı, ve üretilen `go.mod` onu yazıyor: ÜRETEN
+  binary'nin derlendiği sürüm — etiketten derlendiyse etiket, değilse commit'in
+  pseudo-version'ı. Hiçbirini bilemeyen bir derleme TAHMİN ETMİYOR, reddediyor ve
+  `-replace` ile bir checkout'u gösteriyor. Biçim de önemli: bir etiket
+  erişilebilirse proxy YAMAYI artırıp damgayı `-0.` ile öneklendiriyor, yoksa
+  `v0.0.0-<zaman>-<hash>` veriyor — yanlışını yazan bir binary proxy'nin servis
+  ETMEDİĞİ bir sürümü adlandırır ve üretilen projede `go mod tidy` onu sessizce
+  üreticinin hiç seçmediği bir şeye çeviriri. Üç şablon tuzağı dosya ADLARIYLA
+  kapatıldı ve üçü de ölçüldü: içinde `go.mod` bulunan bir dizin embed
+  kümesinden SESSİZCE çıkıyor (`all:` bunu kaldırmıyor, ve satırın kendi önerisi
+  olan "`examples/starter`'ı göm" tam bu yüzden imkânsız), `.go` ile biten bir
+  şablon ağacın her üretim Go dosyasını ayrıştıran iki kapıyı ve `go build`'i
+  aynı anda kırıyor, `.env.tmpl` ise deponun kendi `.gitignore`'u tarafından
+  izlenmiyor. Üretilen proje DERLENİP KOŞULARAK kanıtlanıyor; o şeridin
+  kanıtlayamadığı şey de yazılı: go.mod'u bu checkout'a çevirdiği için
+  "şablon pinlediği sürümde çalışıyor" ile "ağacın ucunda çalışıyor" arasını
+  ayırt edemiyor. Dil kapısı artık `.tmpl` tarıyor — bir şablonun düzyazısı
+  başkasının projesine render ediliyor, yani orada kalan Türkçe burada kalmıyor,
+  SEVK EDİLİYOR.
+
 - **Bir mağaza artık sepetlerinin NEREYE gittiğini görebiliyor** (ADR 0153). Bir
   mağazanın vitrini hakkındaki ilk sorusu bir orandır: açılan sepetlerin kaçı
   siparişe döndü. Pay, sipariş modülü var olduğundan beri otobüstaydı; PAYDA

@@ -1,0 +1,28 @@
+# {{ .Binary }}
+
+A commerce server built on [gobit]({{ .GobitModule }}).
+
+## Run it
+
+```
+go mod tidy                   # resolve the library's own dependencies, once
+docker compose up -d          # Postgres and Redis
+# fill in JWT_SECRET, ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD in .env
+go run .                      # the server starts when there are NO arguments
+```
+
+The schema is applied AT STARTUP by every module that owns one, so there is no
+migrate-up step to forget. `go run . help` lists the operator subcommands.
+
+## What is in here
+
+`main.go` is the whole program: it chooses which modules and plugins are
+installed and hands the rest to `gobit.App`. Add your own module with `.Add()`
+and a plugin with `.Use()`.
+{{ if .Replace }}
+## Before you share this
+
+`go.mod` carries a `replace` line pointing at a gobit checkout on the machine
+that generated this project. Remove it and require a released version instead,
+or nobody else can build this.
+{{ end }}

@@ -81,6 +81,7 @@ are in [`docs/operating.md`](./docs/operating.md).
 
 ```
 gobit.go              # the PUBLISHED facade: New().Version().Add().Use().Main()
+                      # plus InProcess() (ADR 0150)
 core                  # the PUBLISHED contracts — nineteen packages (ADR 0026,
                       # widened by ADR 0069): errors, db, container, module,
                       # eventbus (+outbox), link, query, provider (+providertest),
@@ -88,7 +89,10 @@ core                  # the PUBLISHED contracts — nineteen packages (ADR 0026,
                       # errorreport, personaldata, openapi, jobreport
 internal/app          # the COMPOSITION ROOT (ADR 0027): config -> logger ->
                       # container -> router -> listen; the operator subcommands
-                      # (migrate, stuck, recover, jobs, deadletters, seed)
+                      # (migrate, stuck, recover, jobs, deadletters, seed,
+                      # refold-invoices, mfa-reset, new)
+internal/scaffold     # what `gobit new` writes: the embedded project templates
+                      # and the version a generated go.mod requires (ADR 0154)
 cmd/server            # the binary: the smallest program that can run gobit —
                       # and the example to copy
 internal/core         # the unpublished core: config, logger, job, workflow,
@@ -230,10 +234,10 @@ on a list; it is that.
 
 | Document | What it answers |
 |---|---|
-| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 152 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
+| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 153 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
 | [`docs/mimari.md`](./docs/mimari.md) | The architecture narrative: layers, the life cycle of a request and of a module, data, sagas, the core packages |
 | [`docs/gaps.md`](./docs/gaps.md) | The defect ledger: every fault this repository found in itself, one sentence and the ADR that closed it |
-| [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: thirty-nine items in six groups — identity and authorization, sales channel scope, the category tree, tax, installation and operation, the limit of the invariants |
+| [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: forty-two items in six groups — identity and authorization, sales channel scope, the category tree, tax, installation and operation, the limit of the invariants |
 | [`docs/security.md`](./docs/security.md) | Identity and authorization: the two surfaces, the scope dictionary, the hardening rings, an end-to-end curl walkthrough |
 | [`docs/commerce-flows.md`](./docs/commerce-flows.md) | From cart to order: who owns a flow, who decides the price, which warehouse it ships from |
 | [`docs/api-surfaces.md`](./docs/api-surfaces.md) | The OpenAPI document and the GraphQL storefront surface, with the limits the server sets |

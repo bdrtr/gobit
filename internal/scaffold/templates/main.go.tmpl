@@ -1,0 +1,28 @@
+// Command {{ .Module }} is a commerce server built on gobit.
+//
+// It is the smallest program that can run one. Everything a shop does — the
+// storefront and admin APIs, the migrations, the scheduled jobs, the operator
+// subcommands — lives behind gobit.App; this file only decides which modules and
+// plugins are installed, which is the one decision a framework cannot make for
+// you.
+//
+// Add a module of your own with .Add(), and a plugin with .Use().
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"{{ .GobitModule }}"
+)
+
+// version is filled in at build time with -ldflags "-X main.version=...".
+var version = "dev"
+
+func main() {
+	if err := gobit.New().Version(version).Main(os.Args[1:], os.Stdout); err != nil {
+		// The error must be visible even when the logger was never built.
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+		os.Exit(1)
+	}
+}

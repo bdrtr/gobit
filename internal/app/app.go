@@ -183,6 +183,8 @@ func Main(args []string, out io.Writer, opts Options) error {
 		return runRefoldInvoices(args[1:], out, opts)
 	case mfaResetCommand:
 		return runMFAReset(args[1:], out, opts)
+	case newCommand:
+		return runNew(args[1:], out, opts)
 	default:
 		if err := writeReport(out, usageText(opts.version())); err != nil {
 			return err

@@ -679,6 +679,7 @@ Usage:
   %s %-34s rebuild the measurement catalog
   %s %-34s re-fold every invoice's buyer-address handle
   %s %-34s remove ONE administrator's second factor
+  %s %-34s write a new project that embeds gobit
   %s %-34s print this text
 
 %s %s flags:
@@ -694,6 +695,10 @@ Usage:
 
 %s flags:
   -%-15s repeat the email address to authorize the removal
+
+%s flags:
+  -%-15s the generated project's module path (default example.com/<dir>)
+  -%-15s point the generated go.mod at a gobit checkout instead of a version
 
 %s flags:
   -%-15s how many single-variant products to build (default %d)
@@ -718,6 +723,7 @@ there is deliberately no "migrate up", so a deploy cannot forget it.
 		binaryName, seedCommand+" [flags]",
 		binaryName, refoldInvoicesCommand,
 		binaryName, mfaResetCommand+" <email> [flags]",
+		binaryName, newCommand+" <dir> [flags]",
 		binaryName, cmdHelp,
 		cmdMigrate, cmdDown,
 		flagSteps+" N", defaultDownSteps,
@@ -729,6 +735,9 @@ there is deliberately no "migrate up", so a deploy cannot forget it.
 		flagConfirm+" ID",
 		mfaResetCommand,
 		flagConfirm+" EMAIL",
+		newCommand,
+		flagModule+" PATH",
+		flagReplace+" DIR",
 		seedCommand,
 		flagProducts+" N", rig.DefaultSingleVariantProducts,
 		flagMulti+" N", rig.DefaultMultiVariantProducts,

@@ -8,6 +8,7 @@ import (
 	"go/types"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -206,18 +207,139 @@ func TestHelpPrintsTheUsageAndSucceeds(t *testing.T) {
 // default: the verb gets renamed, the switch follows the constant, the prose
 // does not. Generating the text from the same constants is what makes that
 // impossible, and this test is what proves the generation still happens.
+//
+// # The population is DERIVED from the dispatch, and it has to be
+//
+// Until 2026-09-12 this test iterated a HAND-WRITTEN list of seven names, of
+// which five were verbs. Measured against the switch at that moment: `seed` and
+// `refold-invoices` were in NO usage-text test at all, so a verb added to Main
+// and forgotten in usageText passed every lane in the repository — on the exact
+// surface the next slice was about to extend (gap D90). The list is now the
+// switch's own case clauses, read with go/ast, so a new verb cannot be absent
+// from the help text and cannot be absent from this test either.
+//
+// The case expressions that are STRING LITERALS are deliberately not in the
+// population: beside cmdHelp they are `-h`, `-help` and `--help`, which are
+// aliases of a verb the text already names rather than verbs of their own.
 func TestUsageNamesEveryVerbTheDispatchAccepts(t *testing.T) {
 	t.Parallel()
 
 	usage := usageText("dev")
 
-	for _, verb := range []string{cmdHelp, cmdMigrate, cmdStatus, cmdDown, stuckCommand, flagSteps, flagConfirm} {
-		assert.Contains(t, usage, verb, "the usage text does not mention %q", verb)
+	fset := token.NewFileSet()
+	files := productionFiles(t, fset)
+	constants := stringConstants(files)
+	verbs := dispatchVerbs(t, files, constants)
+
+	require.GreaterOrEqual(t, len(verbs), 9,
+		"the dispatch resolved %d verbs, which is fewer than the nine it had when this "+
+			"check was derived from it. Either verbs were removed, or the reader has gone "+
+			"BLIND — and a blind reader passes every verb, including one the help text "+
+			"never names", len(verbs))
+
+	// The verb is looked for in the USAGE LIST — as "<binary> <verb>" — and not
+	// anywhere in the text. A bare Contains on a short verb is satisfied by any
+	// occurrence: measured, removing `new` from the usage list left this check
+	// green because the flags section below still carried the word. What the help
+	// text owes a reader is the LINE that says how to invoke the verb.
+	for _, verb := range verbs {
+		assert.Contains(t, usage, binaryName+" "+verb,
+			"the usage list has no line for %q; the word may appear elsewhere in the "+
+				"text, which is not the same as telling a reader how to invoke it", verb)
+	}
+
+	for _, flagName := range []string{flagSteps, flagConfirm} {
+		assert.Contains(t, usage, flagName, "the usage text does not mention the %q flag", flagName)
 	}
 
 	assert.Contains(t, usage, "NO arguments",
 		"the usage must say how the server starts; it is the one thing that cannot be "+
 			"derived from the constants")
+}
+
+// stringConstants maps every package-level string constant to its value.
+//
+// The values are read from the SOURCE rather than referenced as identifiers,
+// because the point is to resolve a name the switch mentions without this test
+// having to know that name in advance.
+func stringConstants(files map[string]*ast.File) map[string]string {
+	out := map[string]string{}
+
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			general, ok := decl.(*ast.GenDecl)
+			if !ok || general.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range general.Specs {
+				value, ok := spec.(*ast.ValueSpec)
+				if !ok || len(value.Names) != len(value.Values) {
+					continue
+				}
+				for i, name := range value.Names {
+					literal, ok := value.Values[i].(*ast.BasicLit)
+					if !ok || literal.Kind != token.STRING {
+						continue
+					}
+					text, err := strconv.Unquote(literal.Value)
+					if err != nil {
+						continue
+					}
+					out[name.Name] = text
+				}
+			}
+		}
+	}
+
+	return out
+}
+
+// dispatchVerbs returns the verbs Main's switch accepts, in source order.
+//
+// It resolves only the case expressions that are IDENTIFIERS, and it FAILS on
+// one it cannot resolve rather than skipping it: a skipped case is a verb this
+// check silently stops covering, which is the failure the derivation exists to
+// prevent.
+func dispatchVerbs(t *testing.T, files map[string]*ast.File, constants map[string]string) []string {
+	t.Helper()
+
+	var verbs []string
+
+	for name, file := range files {
+		ast.Inspect(file, func(node ast.Node) bool {
+			fn, ok := node.(*ast.FuncDecl)
+			if !ok || fn.Name.Name != "Main" || fn.Recv != nil {
+				return true
+			}
+
+			ast.Inspect(fn.Body, func(inner ast.Node) bool {
+				clause, ok := inner.(*ast.CaseClause)
+				if !ok {
+					return true
+				}
+				for _, expr := range clause.List {
+					ident, ok := expr.(*ast.Ident)
+					if !ok {
+						// A string literal beside a constant is an alias; see
+						// the godoc above.
+						continue
+					}
+					value, found := constants[ident.Name]
+					require.True(t, found,
+						"%s: the dispatch names %q and this check could not resolve it to a "+
+							"string constant. An unresolved case is a verb nobody compares to "+
+							"the help text", name, ident.Name)
+					verbs = append(verbs, value)
+				}
+
+				return true
+			})
+
+			return false
+		})
+	}
+
+	return verbs
 }
 
 // TestDownNeedsTheOwnerAsItsFirstArgument pins the argument shape.

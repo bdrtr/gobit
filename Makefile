@@ -4,7 +4,24 @@
 BIN_DIR     := $(CURDIR)/bin
 COMPOSE     := docker compose -f deploy/docker-compose.yml
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS     := -s -w -X main.version=$(VERSION)
+
+# `gobit new`'in üretilen go.mod'a yazacağı sürümü belirleyen DERLEME OLGULARI
+# (ADR 0154). Üçü de git'ten OLDUĞU GİBİ alınır; aritmetiği (yamanın bir
+# artırılması, damganın biçimi, hash'in kısaltılması) Go tarafında ve TESTLİ.
+#
+# RELEASE yalnızca commit'in ÜSTÜNDE bir etiket varsa doluyor: `git describe
+# --exact-match` başka her durumda başarısız oluyor, yani etiketli olmayan bir
+# derleme kendisini sürüm sanamıyor.
+BUILD_RELEASE    := $(shell git describe --tags --exact-match 2>/dev/null)
+BUILD_BASE_TAG   := $(shell git describe --tags --abbrev=0 2>/dev/null)
+BUILD_COMMIT     := $(shell git rev-parse HEAD 2>/dev/null)
+BUILD_COMMIT_TS  := $(shell git log -1 --format=%ct 2>/dev/null)
+
+LDFLAGS     := -s -w -X main.version=$(VERSION) \
+	-X github.com/bdrtr/gobit/internal/app.buildRelease=$(BUILD_RELEASE) \
+	-X github.com/bdrtr/gobit/internal/app.buildBaseTag=$(BUILD_BASE_TAG) \
+	-X github.com/bdrtr/gobit/internal/app.buildCommit=$(BUILD_COMMIT) \
+	-X github.com/bdrtr/gobit/internal/app.buildCommitTime=$(BUILD_COMMIT_TS)
 
 GOLANGCI_VERSION := v2.13.1
 GOVULN_VERSION   := v1.1.4
