@@ -109,7 +109,7 @@ func rowOfADocument(ctx context.Context, t *testing.T, prefix string) string {
 }
 
 // TestTheComponentConstraintsHoldAgainstDirectSQL proves the service check is
-// not the last defence.
+// not the last defense.
 func TestTheComponentConstraintsHoldAgainstDirectSQL(t *testing.T) {
 	ctx := context.Background()
 

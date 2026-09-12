@@ -284,7 +284,7 @@ func TestFulfillmentIsCreatedForOrder(t *testing.T) {
 			"ledger")
 
 	err = shippingInterop.CancelFulfillment(ctx, fulfillmentmodels.NewFulfillmentID())
-	require.Error(t, err, "cancelling an UNKNOWN identity must return an error")
+	require.Error(t, err, "canceling an UNKNOWN identity must return an error")
 	require.True(t, errors.IsNotFound(err),
 		"the error must be NotFound, it must not be swallowed silently. Idempotency does "+
 			"not mean 'accept everything': a REAL fulfillment canceled twice and an "+
@@ -313,15 +313,15 @@ func TestStoreSurfaceHidesAdminOnlyOption(t *testing.T) {
 	storefrontID := newShippingOption(ctx, t, profileID, "E2E Storefront Shipping", shippingOptionFee, false)
 	adminID := newShippingOption(ctx, t, profileID, "E2E Admin Shipping", shippingAdminFee, true)
 
-	query := url.Values{}
-	query.Set("region_id", taxedRegionID)
-	query.Set("currency_code", taxedCurrency)
-	query.Set("country_code", taxedCountry)
-	query.Set("shipping_profile_id", profileID)
-	query.Set("subtotal", strconv.FormatInt(shippingSubtotal, 10))
-	query.Set("item_count", strconv.FormatInt(shippingQuantity, 10))
+	params := url.Values{}
+	params.Set("region_id", taxedRegionID)
+	params.Set("currency_code", taxedCurrency)
+	params.Set("country_code", taxedCountry)
+	params.Set("shipping_profile_id", profileID)
+	params.Set("subtotal", strconv.FormatInt(shippingSubtotal, 10))
+	params.Set("item_count", strconv.FormatInt(shippingQuantity, 10))
 
-	storefront := storeShippingOptions(t, query)
+	storefront := storeShippingOptions(t, params)
 
 	require.Len(t, storefront, 1,
 		"exactly ONE option must come back from the store endpoint: only the one that "+
@@ -455,11 +455,11 @@ func listShippingOptions(
 // deliberate: which fields are NOT PRESENT in the store representation is an
 // assertion too, and a typed struct would silently drop an extra field
 // standing in the response.
-func storeShippingOptions(t *testing.T, query url.Values) []map[string]any {
+func storeShippingOptions(t *testing.T, params url.Values) []map[string]any {
 	t.Helper()
 
 	request := httptest.NewRequest(http.MethodGet,
-		"/store/v1/shipping-options?"+query.Encode(), http.NoBody)
+		"/store/v1/shipping-options?"+params.Encode(), http.NoBody)
 	// The store surface has been demanding a publishable key since Phase 8; a
 	// request without a key becomes a 401 before it even reaches the router
 	// (see identity_test.go).

@@ -375,7 +375,7 @@ func TestStorageKeyIsUnique(t *testing.T) {
 	// Opening a second record with the same key requires bypassing the service
 	// and writing directly to the store: because the key is produced by the
 	// provider, no collision can arise in the normal flow. And what is being
-	// exercised here is the LAST LINE OF DEFENCE anyway.
+	// exercised here is the LAST LINE OF DEFENSE anyway.
 	_, err := testPool.Pool().Exec(context.Background(),
 		`INSERT INTO file_uploads (id, storage_key, provider_id, content_type, size, checksum, url)
 		 VALUES ($1, $2, 'local', 'image/png', 1, 'x', '/files/x')`,

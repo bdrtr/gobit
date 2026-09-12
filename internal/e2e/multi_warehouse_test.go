@@ -98,7 +98,7 @@ const (
 //
 // [checkoutwf.CompleteCartInput.LocationID] is deliberately left EMPTY: that is
 // the only way to tell the workflow "you pick the warehouse", and only then does
-// the division of labour come into play — the fact of "which warehouses hold
+// the division of labor come into play — the fact of "which warehouses hold
 // enough stock" is given by the inventory module, the decision of "which one do
 // we ship from" by the fulfillment module.
 func TestEmptyLocationReservesLinesFromDifferentWarehouses(t *testing.T) {
@@ -216,9 +216,9 @@ func TestEmptyLocationReservesLinesFromDifferentWarehouses(t *testing.T) {
 	// a reservation cannot create a level that does not exist, and had it done so
 	// stock would have been conjured out of nothing.
 	require.Len(t, stockLevels(ctx, t, itemA), 1,
-		"item A must stay levelled only in its own warehouse")
+		"item A must stay leveled only in its own warehouse")
 	require.Len(t, stockLevels(ctx, t, itemB), 1,
-		"item B must stay levelled only in its own warehouse")
+		"item B must stay leveled only in its own warehouse")
 }
 
 // The constants of the compensation scenario.
@@ -267,7 +267,7 @@ func TestLineWithNoWarehouseReleasesPreviousReservation(t *testing.T) {
 		map[string]int64{taxedCurrency: compensationPrice1},
 		map[string]int64{warehouseA: compensationStock1})
 	// The second item's stock is spread over TWO warehouses and neither is enough
-	// on its own. Not levelling the item at all would also have emptied the list
+	// on its own. Not leveling the item at all would also have emptied the list
 	// but would have been a weaker setup: "it has no stock" and "it has stock but
 	// no warehouse has enough" are different cases, and only the second one is
 	// what breaks.
@@ -314,7 +314,7 @@ func TestLineWithNoWarehouseReleasesPreviousReservation(t *testing.T) {
 
 	require.True(t, errors.IsConflict(err),
 		"the result must be an errors.Conflict: the input is valid, the state of the world "+
-			"is unfavourable, and the client can lower the quantity and try AGAIN. A new "+
+			"is unfavorable, and the client can lower the quantity and try AGAIN. A new "+
 			"error class would break the branch the client writes today for insufficient "+
 			"stock. Returned error: %v", err)
 	require.ErrorContains(t, err, checkoutwf.StepReserveInventory,
@@ -555,7 +555,7 @@ func variantAcrossWarehouses(
 
 	require.NotEmpty(t, stocks,
 		"a multi-warehouse fixture must ask for at least one warehouse; with no "+
-			"warehouse given the item is never levelled and the scenario would start "+
+			"warehouse given the item is never leveled and the scenario would start "+
 			"testing the 'it has no stock' case")
 
 	variantID = newVariant(ctx, t, title, prices)
@@ -630,7 +630,7 @@ func twoLineCart(
 
 // stockLevels returns the item's levels in ALL locations.
 //
-// [stockLevel] cannot be used here: it requires the item to be levelled in a
+// [stockLevel] cannot be used here: it requires the item to be leveled in a
 // SINGLE location, and this file's items are deliberately spread over more than
 // one warehouse.
 func stockLevels(ctx context.Context, t *testing.T, stockItemID string) []inventorymodels.InventoryLevel {
@@ -664,7 +664,7 @@ func warehouseLevel(
 	}
 
 	require.FailNow(t, "stock level not found",
-		"item %s must be levelled in warehouse %s", stockItemID, locationID)
+		"item %s must be leveled in warehouse %s", stockItemID, locationID)
 	return inventorymodels.InventoryLevel{}
 }
 

@@ -240,16 +240,6 @@ func readLineIDs(
 	return orderedLineIDs(lines)
 }
 
-// sortedLineIDs returns the identifiers of the lines, sorted ascending.
-//
-// It is for the assertions whose claim is MEMBERSHIP — which rows came back —
-// and not order. An assertion about the order must use [orderedLineIDs].
-func sortedLineIDs(lines []models.OrderLineItem) []string {
-	out := orderedLineIDs(lines)
-	slices.Sort(out)
-	return out
-}
-
 // TestLineItemMigrationBringsItsIndexes verifies that migration 000006 is
 // really applied.
 //

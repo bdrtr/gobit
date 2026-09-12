@@ -120,8 +120,8 @@ func walkByPrefix(t *testing.T, svc *service.Service, prefix string) (ids []stri
 		})
 		require.NoError(t, err)
 
-		for _, product := range result.Items {
-			ids = append(ids, product.ID)
+		for i := range result.Items {
+			ids = append(ids, result.Items[i].ID)
 		}
 
 		if result.NextCursor == "" {

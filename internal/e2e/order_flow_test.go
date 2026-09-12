@@ -435,7 +435,7 @@ func TestSagaRollsBackWhenPaymentFails(t *testing.T) {
 
 	levels, err := inventorySvc.ListInventoryLevels(ctx, inventoryItemID)
 	require.NoError(t, err, "the stock levels must be readable")
-	require.Len(t, levels, 1, "the fixture must be levelled at a single location")
+	require.Len(t, levels, 1, "the fixture must be leveled at a single location")
 
 	// --- 3) THE CART MUST NOT BE COMPLETED (it is still modifiable) ---
 	//
@@ -623,7 +623,7 @@ func TestNoOrderIsCreatedWhenStockIsInsufficient(t *testing.T) {
 			"for goods it cannot deliver")
 	require.True(t, errors.IsConflict(err),
 		"insufficient stock must be an errors.Conflict: the input is valid, the state of the "+
-			"world is unfavourable, and the client can lower the quantity and try AGAIN. "+
+			"world is unfavorable, and the client can lower the quantity and try AGAIN. "+
 			"Returned error: %v", err)
 	require.ErrorContains(t, err, checkoutwf.StepReserveInventory,
 		"the error must NAME THE STEP THAT BLEW UP; the step name is written to the execution "+
@@ -684,7 +684,7 @@ const (
 //
 // # Why this is the RIGHT behavior
 //
-// There are three lines of defence and the second call hits the CHEAPEST one:
+// There are three lines of defense and the second call hits the CHEAPEST one:
 //
 //  1. The cart stamp (the line here): it stops without making any outside call.
 //  2. The engine's idempotency key ("complete_cart:<cart>"): the record is in the

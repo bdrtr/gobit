@@ -643,7 +643,7 @@ func TestAnInvitationIsSpentByONEStatement(t *testing.T) {
 			}
 			require.ErrorIs(t, err, repository.ErrNoInvitation,
 				"round %d: the loser is refused BY THE RULE rather than by a "+
-					"serialisation failure the caller would have to retry", round)
+					"serialization failure the caller would have to retry", round)
 		}
 		assert.Equal(t, 1, spent, "round %d: exactly one request may spend a token", round)
 	}

@@ -58,9 +58,9 @@ import (
 // three products) but it does NOT SHARE the ground: this file's products have a
 // variant, a price and stock (only that way can the GraphQL surface be seen
 // returning the variant tree and the enrichment arriving from other modules), and
-// the neighbouring file's count assertions would break under those additions. The
+// the neighboring file's count assertions would break under those additions. The
 // reverse direction is protected too: because the products here are isolated in
-// their own collection, they do not fall into the neighbouring tests' catalogs.
+// their own collection, they do not fall into the neighboring tests' catalogs.
 
 // Fixture constants of the GraphQL ground.
 //
@@ -71,7 +71,7 @@ const (
 	// gqlChannelName is the name of the SECOND sales channel this file sets up.
 	//
 	// It is a channel separate from [secondChannelName]: a channel name is unique,
-	// and borrowing the neighbouring file's channel would have gathered the
+	// and borrowing the neighboring file's channel would have gathered the
 	// products of two files into a single storefront.
 	gqlChannelName = "e2e-graphql-storefront"
 	// gqlCollectionHandle is the handle of the collection that separates the
@@ -145,7 +145,7 @@ func gqlFixture(t *testing.T) gqlStage {
 
 	gqlSetupOnce.Do(func() {
 		// The setup context is NOT t.Context(): the ground is shared between
-		// tests and the first test's context is cancelled when that test ends.
+		// tests and the first test's context is canceled when that test ends.
 		gqlSetupStage, gqlSetupErr = gqlSetUpStage(context.Background())
 	})
 	require.NoError(t, gqlSetupErr, "the GraphQL fixture could not be set up")

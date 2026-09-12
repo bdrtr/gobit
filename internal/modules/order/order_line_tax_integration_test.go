@@ -115,7 +115,7 @@ func lineOfAnOrder(ctx context.Context, t *testing.T) string {
 }
 
 // TestTheComponentConstraintsHoldAgainstDirectSQL proves the service check is
-// not the last defence.
+// not the last defense.
 func TestTheComponentConstraintsHoldAgainstDirectSQL(t *testing.T) {
 	ctx := context.Background()
 

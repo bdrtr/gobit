@@ -112,7 +112,7 @@ func configureInstallation(t *testing.T) {
 // assembly ran — it is BUILT from the router tree, so a document with paths in it
 // means the modules registered and bound their routes. The storefront read proves
 // the guard rings are attached: it answers 401 without a publishable key, which is
-// the production behaviour and the one a harness that skipped the rings would get
+// the production behavior and the one a harness that skipped the rings would get
 // wrong in the friendliest possible way.
 func TestAnEmbedderCanBringAnInstallationUpInItsOwnProcess(t *testing.T) {
 	configureInstallation(t)

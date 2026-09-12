@@ -17,7 +17,7 @@
 //
 // # And why a real database
 //
-// The delivery queue's whole behaviour is in SQL: the fan-out is one INSERT ...
+// The delivery queue's whole behavior is in SQL: the fan-out is one INSERT ...
 // SELECT, the idempotency is a unique constraint, the claim is an UPDATE with a
 // lease, and giving up is a CASE inside the failure statement. None of that
 // exists in Go, so none of it can be tested in Go.
@@ -646,7 +646,7 @@ func TestTheOffSwitchesWork(t *testing.T) {
 
 	// And discard removes a dead one for good. A NEW event is used rather than
 	// the redriven one: the pass that proved the redrive worked also delivered
-	// everything else that was due, which is the correct behaviour and leaves
+	// everything else that was due, which is the correct behavior and leaves
 	// nothing to kill.
 	rec.answerWith(http.StatusInternalServerError)
 	require.NoError(t, m.onEvent(t.Context(), eventbus.Event{

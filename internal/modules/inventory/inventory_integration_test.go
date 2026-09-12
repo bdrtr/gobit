@@ -354,7 +354,7 @@ func TestStokSeviyesiVeSatilabilirAdet(t *testing.T) {
 // Until 2026-09-08 the error was CLASSIFIED out of the driver's foreign key
 // violation. It now comes from the shared location lock that is the first step
 // of the write path (ADR 0055), with the foreign key still in place as the last
-// defence. The error CODE is unchanged and so is what the caller sees of it:
+// defense. The error CODE is unchanged and so is what the caller sees of it:
 // something the client can fix stays a 404 rather than a 500.
 func TestOlmayanLokasyonaSeviyeAcilamaz(t *testing.T) {
 	ctx := context.Background()

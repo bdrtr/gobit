@@ -569,7 +569,7 @@ func TestATokenIsSingleUseBecauseTakingItIsONEStatement(t *testing.T) {
 				continue
 			}
 			require.ErrorIs(t, err, identitysession.ErrNoRegistration,
-				"round %d: the loser is refused BY THE RULE and not by a serialisation "+
+				"round %d: the loser is refused BY THE RULE and not by a serialization "+
 					"failure the caller would have to retry", round)
 		}
 		assert.Equal(t, 1, took, "round %d: exactly one request may consume a token", round)

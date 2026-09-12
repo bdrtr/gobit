@@ -109,7 +109,7 @@ func TestAMovementOutsideATransactionIsRefusedByTheRepository(t *testing.T) {
 		"a refused append must not have written anything")
 }
 
-// TestTheSchemaRefusesAMovementThatCannotBeTrue is the last line of defence.
+// TestTheSchemaRefusesAMovementThatCannotBeTrue is the last line of defense.
 //
 // Every one of these is refused in Go before it reaches the database. That is
 // exactly why they are checked here: an intervention made directly in SQL, or a
@@ -433,7 +433,7 @@ const testSaleOrderID = "order_01TESTSALEREFERENCE00"
 // comment claimed that was safe "because each test gets a fresh item" — which was
 // only true after the sum learned about the item. Before that, the sum reached
 // across items on the line id alone: this test passed by itself and failed beside
-// its neighbour, which is the shape a shared database keeps producing.
+// its neighbor, which is the shape a shared database keeps producing.
 const testCancelLine = "oli_01INTEGRATIONCANCEL0"
 
 // TestOneCancellationPutsItsUnitsBackOnceAgainstTheDatabase is the per-line SUM,
@@ -499,7 +499,7 @@ func TestTwoCancellationsOfOneLineEachGetTheirOwnRow(t *testing.T) {
 
 	// The target GROWS between the two: two units after the first write-off, four
 	// after the second. A target that stayed at two would move nothing the second
-	// time, which is the behaviour a redelivery gets and not what a second
+	// time, which is the behavior a redelivery gets and not what a second
 	// write-off deserves.
 	for i, id := range []string{"olc_01FIRSTWRITEOFF00000", "olc_01SECONDWRITEOFF0000"} {
 		_, err := svc.ReturnCanceledInventory(

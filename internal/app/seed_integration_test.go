@@ -132,7 +132,7 @@ func TestTheConfirmationIsComparedWithTheDatabaseTheConnectionReached(t *testing
 }
 
 // TestASeedNamesTheDatabaseItIsAboutToWriteTo is the operator's first line of
-// defence, and it is printed before anything is written.
+// defense, and it is printed before anything is written.
 //
 // Somebody about to rebuild a rig has usually just exported a DSN. The report
 // says which installation answered, so a run pointed at the wrong one is

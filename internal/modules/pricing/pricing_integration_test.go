@@ -909,13 +909,14 @@ func TestCalculateAmountsJSONMatchesPerSetOnRealData(t *testing.T) {
 				CurrencyCode: "TRY", Amount: int64(9000 + i), PriceListID: &list.ID,
 			})
 		case 3:
-			inputs = append(inputs, service.PriceInput{
-				CurrencyCode: "TRY", Amount: int64(600 + i),
-				Rules: []service.RuleInput{
-					{Attribute: "region_id", Operator: models.OpEq, Values: []string{"reg_1"}},
+			inputs = append(inputs,
+				service.PriceInput{
+					CurrencyCode: "TRY", Amount: int64(600 + i),
+					Rules: []service.RuleInput{
+						{Attribute: "region_id", Operator: models.OpEq, Values: []string{"reg_1"}},
+					},
 				},
-			})
-			inputs = append(inputs, service.PriceInput{CurrencyCode: "USD", Amount: int64(50 + i)})
+				service.PriceInput{CurrencyCode: "USD", Amount: int64(50 + i)})
 		}
 
 		set, err := svc.CreatePriceSet(ctx, inputs)

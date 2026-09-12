@@ -20,6 +20,23 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Düzeltmeler
 
+- **Yüz otuz beş test dosyası, Docker'sız koşan HİÇBİR şeridin görmediği yerde
+  duruyordu** (D88). Karşılanmayan bir derleme kısıtı dosyayı Go araç zincirine
+  görünmez yapıyor: `go build ./...`, `go vet ./...`, `go test ./...` ve
+  `golangci-lint run ./...` onu ATLIYOR, ve o dosyaları bugüne kadar derleyen tek
+  şey `make test-integration` — bir kap isteyen, dakikalar süren, yani insanın EN
+  SON koştuğu şerit. ADR 0152 için `Interop.CreateCollection` genişletildiğinde
+  `payment_integration_test.go` içindeki üç çağrı yeri artık uymuyordu ve bunu
+  elle koşulan `go vet -tags integration ./...` dışında söyleyen olmadı.
+  `.golangci.yml` artık `run.build-tags` içinde `integration` adını taşıyor.
+  Etiketin açılmasıyla hemen ortaya çıkanlar: ADR 0012'den beri her yerde
+  reddedilen US yazım kuralına aykırı elli iki İngiliz imlası, on gocritic
+  bulgusu, yutulmuş bir hata ve hiç çağrılmayan bir yardımcı — otuz sekiz
+  dosyada altmış dört bulgu, hiçbiri yeni değil ve hepsi görünmezdi. Etiket
+  listesi bilerek TEK: `smoke` dosyaları gerçek süreç başlatıyor, `load`
+  dosyaları benchmark, ikisinin de kendi şeridi var ve hiçbiri bir refactor'ın
+  sessizce kırdığı şey olmadı.
+
 - **Kapatılmış bir sınır hâlâ SINIR olarak yayımlanıyordu** (D81). ADR 0136
   modüller arası METOT KÜMESİNİ derleme zamanı denetimine çevirdi; ama iki
   "bilinen sınırlar" belgesi de hâlâ "Cross-module signatures are not checked at

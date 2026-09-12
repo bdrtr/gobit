@@ -48,7 +48,7 @@ import (
 //
 // It was found by CI going red while every local run was green, and the reason
 // is worth keeping: this machine had the Docker Hub image cached from a year
-// ago, so the lane never had to pull it. A green that rests on a local artefact
+// ago, so the lane never had to pull it. A green that rests on a local artifact
 // is not a green — the same shape as a gitignored build output making a lane
 // pass (D80).
 //

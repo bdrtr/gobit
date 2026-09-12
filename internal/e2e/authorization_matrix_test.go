@@ -32,7 +32,7 @@ import (
 //
 // A route that falls into no surface fails the test by name. That is the
 // property the matrix is for: an endpoint added tomorrow under a prefix nobody
-// thought about does not slip past by being unrecognised — the test says so and
+// thought about does not slip past by being unrecognized — the test says so and
 // names the pattern, which is the moment somebody decides what may reach it.
 
 // openRoutes are the endpoints that ask for NO identity, each for a written
@@ -120,7 +120,7 @@ var customerRoutes = map[string]struct{}{
 // matrixRoutes walks the router and classifies every endpoint.
 //
 // An unclassified route is a FAILURE and not a skip. A test that skipped what it
-// did not recognise would go quiet exactly when somebody mounted a new prefix,
+// did not recognize would go quiet exactly when somebody mounted a new prefix,
 // which is the moment it is most needed.
 func matrixRoutes(t *testing.T) []matrixRoute {
 	t.Helper()

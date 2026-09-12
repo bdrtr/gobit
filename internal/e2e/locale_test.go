@@ -118,6 +118,11 @@ func containerImages(t *testing.T) []string {
 
 		file, parseErr := parser.ParseFile(token.NewFileSet(), path, nil, 0)
 		if parseErr != nil {
+			// A file this walk cannot parse is SKIPPED rather than fatal: the
+			// walk reads the whole repository, which includes testdata that is
+			// deliberately not valid Go. Stopping on one would make the scan's
+			// coverage depend on which unparsable file it met first.
+			//nolint:nilerr // skipping an unparsable file is the intent, not a swallowed error
 			return nil
 		}
 

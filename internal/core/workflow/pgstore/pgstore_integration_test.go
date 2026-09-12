@@ -1219,8 +1219,8 @@ func buildAbandonedExecution(
 
 	exec := &workflow.Execution{ID: id, Workflow: wf.Name, IdempotencyKey: key, Status: workflow.StatusRunning}
 	require.NoError(t, store.Create(ctx, exec))
-	for _, record := range records {
-		require.NoError(t, store.AppendStep(ctx, id, record))
+	for i := range records {
+		require.NoError(t, store.AppendStep(ctx, id, records[i]))
 	}
 
 	_, err := testPool.Pool().Exec(ctx,

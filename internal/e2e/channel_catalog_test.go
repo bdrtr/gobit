@@ -170,9 +170,9 @@ func channelCatalogFixture(t *testing.T) channelCatalog {
 
 	channelCatalogOnce.Do(func() {
 		// The setup context is NOT t.Context(): the ground is shared between
-		// tests and the first test's context is cancelled when that test ends.
+		// tests and the first test's context is canceled when that test ends.
 		// Even though setup completes here, keeping that context would leave
-		// the door open for a step added later to run with a cancelled
+		// the door open for a step added later to run with a canceled
 		// context.
 		channelCatalogGround, channelCatalogErr = setUpChannelCatalog(context.Background())
 	})

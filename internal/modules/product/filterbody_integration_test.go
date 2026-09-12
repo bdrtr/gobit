@@ -162,7 +162,7 @@ func (f filterFixture) addOptionValue(t *testing.T, productID, title, value stri
 // seed writes one published product into the fixture's collection.
 //
 // The title carries the same marker as the handle so the "q" criterion has
-// something to match that is not shared with the neighbouring tests.
+// something to match that is not shared with the neighboring tests.
 func (f filterFixture) seed(t *testing.T, marker string) string {
 	t.Helper()
 
@@ -224,8 +224,8 @@ func (f filterFixture) ids(t *testing.T, filter repository.ProductFilter) []stri
 		"the count and the listing must answer the same question")
 
 	ids := make([]string, 0, len(products))
-	for _, p := range products {
-		ids = append(ids, p.ID)
+	for i := range products {
+		ids = append(ids, products[i].ID)
 	}
 	return ids
 }

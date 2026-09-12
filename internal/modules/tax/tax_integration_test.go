@@ -301,7 +301,7 @@ func TestASecondRootRegionIsRefused(t *testing.T) {
 // the service check together still collide in the database.
 //
 // The service reads before it writes, and two concurrent requests can pass that
-// check together; the last defence is the partial unique index, and it can only
+// check together; the last defense is the partial unique index, and it can only
 // be tried against a real database.
 func TestConcurrentRootRegionsLeaveOneWinner(t *testing.T) {
 	ctx := context.Background()
@@ -407,7 +407,7 @@ func TestTheLosingRootRaceGetsTheSameCode(t *testing.T) {
 //
 // The service applies the same rule first, with a readable error; this test
 // shows the constraint also holds against DIRECT SQL — the application layer is
-// not the last defence.
+// not the last defense.
 func TestProviderIDConstraint(t *testing.T) {
 	ctx := context.Background()
 
@@ -568,7 +568,7 @@ func TestASecondDefaultRateIsRefused(t *testing.T) {
 	assert.Equal(t, service.CodeDefaultExists, errors.CodeOf(err))
 
 	// Direct SQL must be refused as well: the service check is not the last
-	// defence.
+	// defense.
 	_, err = testPool.Pool().Exec(ctx,
 		`INSERT INTO tax_rate (id, tax_region_id, name, rate_bps, is_default)
          VALUES ($1, $2, 'Raw', 1000, TRUE)`,
@@ -933,13 +933,15 @@ func requireLockWaiter(ctx context.Context, t *testing.T) {
 // lockingTx opens a transaction that holds an EXCLUSIVE lock on the given
 // region row and returns it; the caller either commits it or rolls it back with
 // the returned release.
-func lockingTx(ctx context.Context, t *testing.T, regionID string) (pgx.Tx, func()) {
+func lockingTx(
+	ctx context.Context, t *testing.T, regionID string,
+) (tx pgx.Tx, release func()) {
 	t.Helper()
 
 	conn, err := testPool.Pool().Acquire(ctx)
 	require.NoError(t, err)
 
-	tx, err := conn.Begin(ctx)
+	tx, err = conn.Begin(ctx)
 	if err != nil {
 		conn.Release()
 		require.NoError(t, err)

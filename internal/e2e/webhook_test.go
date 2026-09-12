@@ -184,10 +184,15 @@ func runWebhookJob(t *testing.T) error {
 			continue
 		}
 
+		// The cancel is called BEFORE returning rather than deferred: a defer
+		// inside a loop only happens to be safe here because the body returns on
+		// the first match, and a later edit that keeps looking would leak one
+		// context per plugin.
 		ctx, cancel := context.WithTimeout(t.Context(), job.MaxRun)
-		defer cancel()
+		err := job.Run(ctx)
+		cancel()
 
-		return job.Run(ctx)
+		return err
 	}
 
 	t.Fatalf("the %s plugin registered no job; the delivery queue has no drain and every "+

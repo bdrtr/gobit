@@ -987,7 +987,7 @@ func TestTheCategoryAndTagFiltersReturnAProductOnce(t *testing.T) {
 	newIn, err := svc.CreateTag(ctx, uniqueHandle("new"))
 	require.NoError(t, err)
 
-	product, err := svc.CreateProduct(ctx, service.CreateProductInput{
+	created, err := svc.CreateProduct(ctx, service.CreateProductInput{
 		Handle:      uniqueHandle("multi"),
 		Title:       "In two categories and carrying two tags",
 		Status:      models.StatusPublished,
@@ -1011,14 +1011,14 @@ func TestTheCategoryAndTagFiltersReturnAProductOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, byCategory.Items, 1,
 		"the product came back more than once; the filter multiplies the row")
-	assert.Equal(t, product.ID, byCategory.Items[0].ID)
+	assert.Equal(t, created.ID, byCategory.Items[0].ID)
 	require.NotNil(t, byCategory.Count)
 	assert.Equal(t, 1, *byCategory.Count, "the count counted memberships rather than products")
 
 	byTag, err := svc.ListProducts(ctx, service.ListProductsOptions{TagID: &sale.ID})
 	require.NoError(t, err)
 	require.Len(t, byTag.Items, 1)
-	assert.Equal(t, product.ID, byTag.Items[0].ID)
+	assert.Equal(t, created.ID, byTag.Items[0].ID)
 
 	// A filter that matches nothing has to return nothing rather than everything:
 	// an "IS NULL OR" predicate written the wrong way round degrades to no filter
@@ -1435,7 +1435,7 @@ func TestDeletingATagHidesItFromItsProductsAndFreesItsValue(t *testing.T) {
 	keep, err := svc.CreateTag(ctx, uniqueHandle("kept"))
 	require.NoError(t, err)
 
-	product, err := svc.CreateProduct(ctx, service.CreateProductInput{
+	created, err := svc.CreateProduct(ctx, service.CreateProductInput{
 		Handle: uniqueHandle("tagged"),
 		Title:  "Carries two tags",
 		Status: models.StatusPublished,
@@ -1443,13 +1443,13 @@ func TestDeletingATagHidesItFromItsProductsAndFreesItsValue(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	before, err := svc.GetProduct(ctx, product.ID)
+	before, err := svc.GetProduct(ctx, created.ID)
 	require.NoError(t, err)
 	require.Len(t, before.Tags, 2)
 
 	require.NoError(t, svc.DeleteTag(ctx, tag.ID))
 
-	after, err := svc.GetProduct(ctx, product.ID)
+	after, err := svc.GetProduct(ctx, created.ID)
 	require.NoError(t, err)
 	require.Len(t, after.Tags, 1, "the deleted tag must fall off the product")
 	assert.Equal(t, keep.ID, after.Tags[0].ID, "the other tag must be untouched")

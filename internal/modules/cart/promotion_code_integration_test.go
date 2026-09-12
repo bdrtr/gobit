@@ -128,7 +128,7 @@ func TestTheCodesFollowTheCartWhenItIsDeleted(t *testing.T) {
 // TestTheCartCeilingHoldsAgainstTheRealSchema fills a cart to the limit.
 //
 // The number is the promotion module's `MaxCodesPerCompute`, restated in this
-// module because it cannot import that one. What binds the two is behaviour: a
+// module because it cannot import that one. What binds the two is behavior: a
 // cart filled to THIS ceiling has to be one the discount round still accepts,
 // and the end-to-end suite prices exactly such a cart.
 func TestTheCartCeilingHoldsAgainstTheRealSchema(t *testing.T) {

@@ -381,7 +381,7 @@ func TestACanceledDocumentKeepsItsNumber(t *testing.T) {
 // The page boundary is a ROW COMPARISON — (created_at, id) < (after_at,
 // after_id) — written with COALESCE sentinels rather than an "IS NULL OR"
 // branch, because the branch measures beautifully and then degrades into a full
-// index walk under a generic plan (see internal/core/page). A fake honouring a
+// index walk under a generic plan (see internal/core/page). A fake honoring a
 // cursor compares two struct fields in Go and would agree with any spelling of
 // that predicate, including one that repeats the boundary row on the next page
 // or skips it.
@@ -424,7 +424,7 @@ func TestTheListingWalksEveryDocumentOnceAndCountsThemAll(t *testing.T) {
 	}
 
 	// Two sales in the SAME series, so the filter has something to exclude that
-	// is otherwise indistinguishable: same prefix, same year, neighbouring
+	// is otherwise indistinguishable: same prefix, same year, neighboring
 	// numbers, written between the refunds and the walk.
 	for range 2 {
 		_, err := svc.Issue(ctx, issueFor("PAG"))

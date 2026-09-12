@@ -145,7 +145,7 @@ func TestASecondProviderCallWithADifferentAmountIsRefusedOnTheStoredRow(t *testi
 // requests arriving together both find the key free, both try to insert, and
 // "read first, write if absent" would open two provider sessions — two holds
 // on the customer's card for one basket. There is no lock in this path at all:
-// the single INSERT ... ON CONFLICT DO NOTHING statement is the whole defence,
+// the single INSERT ... ON CONFLICT DO NOTHING statement is the whole defense,
 // and its correctness is a property of Postgres's unique index. The loser of
 // the race must then see the winner's COMMITTED row on its re-read; if it read
 // too early it would get NotFound for a session that exists.

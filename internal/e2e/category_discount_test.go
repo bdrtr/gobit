@@ -28,7 +28,7 @@ import (
 // has to ask for that exact field and put it in the line's LIST map; the JSON on
 // the wire has to carry a key promotion's decoder recognizes — it refuses unknown
 // fields — and the engine's `any_in` has to read the list rather than the single
-// value. A unit test on any one of them passes while the neighbour sends nothing:
+// value. A unit test on any one of them passes while the neighbor sends nothing:
 // the cart's fake catalog answers whatever the test wrote, and the engine's fake
 // input carries whatever the test typed.
 //
@@ -73,7 +73,7 @@ func newCategorisedVariant(
 
 	seq := fixtureCounter.Add(1)
 	product, err := productSvc.CreateProduct(ctx, productsvc.CreateProductInput{
-		Handle:      fmt.Sprintf("e2e-categorised-%d", seq),
+		Handle:      fmt.Sprintf("e2e-categorized-%d", seq),
 		Title:       title,
 		Status:      productmodels.StatusPublished,
 		CategoryIDs: categoryIDs,

@@ -276,7 +276,7 @@ func requireStockEventually(
 	// Testify runs the condition in its own goroutine, and a require inside it
 	// calls t.FailNow, which is runtime.Goexit on a goroutine that is not the
 	// test's: the tick dies silently, no value is ever recorded, and the timeout
-	// reports whatever the variable was initialised to. The first draft used the
+	// reports whatever the variable was initialized to. The first draft used the
 	// shared stockLevel helper — which asserts — and reported "last read: 0" for a
 	// shelf that was not empty, which would have sent the next reader looking for
 	// a stock fault instead of a wiring one.

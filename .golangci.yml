@@ -4,6 +4,21 @@ version: "2"
 run:
   timeout: 5m
   tests: true
+  # The `integration` tagged files are analyzed too.
+  #
+  # Without this they are invisible to every cheap lane: `go build ./...`,
+  # `go test ./...` and `golangci-lint run ./...` all skip a file whose build
+  # constraint is not satisfied, so the only thing that compiles them is
+  # `make test-integration`, which needs Docker and takes minutes. A hundred and
+  # thirty-five files sat outside every fast check, and a signature change that
+  # broke three of them was green in every lane that runs without a container
+  # (gap D88).
+  #
+  # Only ONE tag is named, deliberately. `smoke` files start real processes and
+  # `load` files are benchmarks; both are their own lanes and neither has ever
+  # been the thing a refactor silently broke.
+  build-tags:
+    - integration
 
 linters:
   default: standard

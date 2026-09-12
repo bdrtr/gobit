@@ -26,7 +26,7 @@ import (
 //
 // Because the check is not observable without one. ADR 0057 narrows a claim a
 // bound verifier CONTRADICTS, so an installation that binds nothing has nothing
-// to refuse with and this file would be asserting the old behaviour. Binding
+// to refuse with and this file would be asserting the old behavior. Binding
 // one makes this harness the installation that took the decision.
 //
 // It has a cost the six cart scenarios pay: this verifier refuses a request
@@ -136,7 +136,7 @@ func TestACartCannotBeOpenedForACustomerTheRequestCannotProve(t *testing.T) {
 // in its strongest form — the guest path does not merely pass the check, it is
 // never asked.
 //
-// The neighbouring claim, that an installation which bound NOTHING keeps
+// The neighboring claim, that an installation which bound NOTHING keeps
 // selling to customers too, cannot be made from this harness: it binds a
 // verifier, and a second harness that did not would be a second copy of this
 // file's setup. It is held one layer down, over the wired modules and an empty

@@ -1343,7 +1343,7 @@ func TestASoftDeletedProfileCannotBeUpdatedBackIntoTheCatalog(t *testing.T) {
 }
 
 // TestASoftDeletedRuleIsNotReadableByItsIdentifier proves that reading a rule by
-// id honours the soft delete.
+// id honors the soft delete.
 //
 // A shipping option rule is an ELIMINATION: "subtotal >= 50000" is what closes
 // free shipping to a small cart. Deleting one is how an operator OPENS an option

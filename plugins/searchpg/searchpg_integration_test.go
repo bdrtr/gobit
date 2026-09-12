@@ -271,7 +271,7 @@ func TestExclusionKeepsTheRanking(t *testing.T) {
 //
 // On that query the ranking expression gets 'T' from querytree — there is no
 // positive signal to rank by — and the order falls to product_id. The test writes
-// that limit down IN BEHAVIOUR: the result set is right, its order is the
+// that limit down IN BEHAVIOR: the result set is right, its order is the
 // indexing order, and that is a known limit (see [searchSQL]). And had turning
 // the text 'T' into a tsquery produced a syntax error, a shopper typing "-blue"
 // into the search box would get a 500; that is this test's second job.

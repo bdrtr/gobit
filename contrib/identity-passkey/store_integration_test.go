@@ -3,6 +3,7 @@
 package identitypasskey_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -36,7 +37,7 @@ import (
 // until somebody's key stops working.
 //
 // The JSONB column is the case worth naming. The whole credential is stored as
-// the library serialises it, which is the decision that keeps a library upgrade
+// the library serializes it, which is the decision that keeps a library upgrade
 // from being a migration — and it is only true if a credential really does come
 // back equal to the one that went in, through a real column of a real type.
 
@@ -282,7 +283,7 @@ func TestOneKeyStaysOneRow(t *testing.T) {
 
 	seen := 0
 	for _, c := range credentials {
-		if string(c.ID) == string(credential.ID) {
+		if bytes.Equal(c.ID, credential.ID) {
 			seen++
 		}
 	}
@@ -527,7 +528,7 @@ func TestTheListingAnswersOnePersonsRows(t *testing.T) {
 // One forced round is already deterministic — the two removals are PROVEN to be
 // in flight together before either is let go — so the rounds are not there to
 // make a rare thing happen. They are there because an ordering that happens to
-// be favourable is worth ruling out cheaply, and because this repository has
+// be favorable is worth ruling out cheaply, and because this repository has
 // been burned once by a one-round concurrency test that was green half the time
 // (gap D46).
 const raceRounds = 20
@@ -546,7 +547,7 @@ const raceRounds = 20
 // DELETE as a subquery counting the customer's rows produces ZERO keys left,
 // every run. Both statements see a snapshot taken before the other's delete, and
 // both are correct about a world that is already gone. `SELECT … WHERE
-// customer_id = $1 FOR UPDATE` in the same transaction as the DELETE serialises
+// customer_id = $1 FOR UPDATE` in the same transaction as the DELETE serializes
 // them, and the second one then counts one row and refuses.
 //
 // # Why a third transaction holds the gate
@@ -602,7 +603,7 @@ func TestTwoRemovalsCannotBOTHTakeTheLastKey(t *testing.T) {
 				continue
 			}
 			require.ErrorIs(t, err, identitypasskey.ErrLastWayIn,
-				"the loser is refused BY THE RULE, not by a deadlock or a serialisation "+
+				"the loser is refused BY THE RULE, not by a deadlock or a serialization "+
 					"failure the caller would have to retry")
 		}
 		assert.Equal(t, 1, succeeded, "round %d: exactly one removal may win", round)

@@ -403,7 +403,7 @@ func analyzeAuditLog(ctx context.Context) error {
 }
 
 // TestAListingComesBackNewestFirstAndPagesWithoutRepeatingARow is the reader's
-// behaviour, as an operator following an incident experiences it.
+// behavior, as an operator following an incident experiences it.
 //
 // Newest first is not a preference: an incident is read backwards from now. And
 // the paging claim is the one offset cannot make — rows keep arriving while the

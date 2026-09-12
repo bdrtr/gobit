@@ -131,7 +131,7 @@ func catalogFilterFixture(t *testing.T) catalogFilter {
 
 	catalogFilterOnce.Do(func() {
 		// Not t.Context(): the ground outlives the first test that asks for it,
-		// and that test's context is cancelled when it ends.
+		// and that test's context is canceled when it ends.
 		catalogFilterGround, catalogFilterErr = setUpCatalogFilter(context.Background())
 	})
 	require.NoError(t, catalogFilterErr, "the catalog filter fixture could not be set up")
