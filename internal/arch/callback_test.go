@@ -38,8 +38,20 @@ const callbackRegistryFile = "core/http/callback.go"
 // /openapi.json, /files), and it is not what an unguarded endpoint costs. What
 // costs is a WRITE nothing authenticates — the class the one measured example
 // belonged to, where an unauthenticated POST moved a payment to paid.
+// Handle, HandleFunc and Mount are on the list for a stronger reason than the
+// verbs: they bind EVERY method, so an endpoint registered with one of them
+// answers POST by construction. They were missing, and the gate then refused the
+// honest form of a smuggled endpoint while admitting the smuggled one —
+// `r.Post("/x", h)` failed and `r.Handle("/x", h)` passed, both binding a POST
+// outside every guarded prefix. Measured by planting each in the composition
+// root on 2026-09-12.
+//
+// The arity rule below is what keeps them honest: chi's three take
+// (pattern, handler), and the callback registry's own `Mount(router)` takes one
+// argument, so it is excluded without an exemption naming it.
 var stateChangingMethods = map[string]bool{
 	"Post": true, "Put": true, "Patch": true, "Delete": true, "Method": true,
+	"Handle": true, "HandleFunc": true, "Mount": true,
 }
 
 // routeSite is one route registration found in the source.

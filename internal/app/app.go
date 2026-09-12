@@ -273,7 +273,7 @@ func serve(opts Options) error {
 		}
 	}()
 
-	app, closeApp, err := openApplication(ctx, cfg, log, reportSink, opts)
+	app, closeApp, err := openApplication(ctx, cfg, log, reportSink, opts, consumesEvents)
 	if err != nil {
 		return err
 	}
@@ -771,11 +771,16 @@ func setupEventBus(
 	cfg config.Config,
 	client *redis.Client,
 	log *slog.Logger,
+	role eventRole,
 ) (eventbus.EventBus, error) {
 	if cfg.EventBus != config.BackendRedis {
 		warnAboutEventBus(ctx, cfg, log)
 
-		return eventbus.NewInMemory(log), nil
+		// The in-memory bus is this process's own and shares nothing, so a
+		// command consuming from it takes nothing from anybody. It is still
+		// wrapped: what a command's subscribers do with an event they were never
+		// meant to see should not depend on which backend is configured.
+		return roleBus(eventbus.NewInMemory(log), log, role), nil
 	}
 
 	busCfg := eventbus.RedisConfig{
@@ -792,7 +797,17 @@ func setupEventBus(
 		"group", busCfg.Group,
 		"consumer", busCfg.Consumer)
 
-	return bus, nil
+	return roleBus(bus, log, role), nil
+}
+
+// roleBus returns the bus as it is for the server, and publish-only for a
+// command.
+func roleBus(inner eventbus.EventBus, log *slog.Logger, role eventRole) eventbus.EventBus {
+	if role == consumesEvents {
+		return inner
+	}
+
+	return publishOnly(inner, log)
 }
 
 // warnAboutEventBus reports the risk of the in-memory bus in a shared

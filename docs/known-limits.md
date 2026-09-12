@@ -653,6 +653,19 @@ past and is not corrected retroactively.
   reads it already. What the screen is missing is work, not a mechanism, and the
   reason previously written in its own comment was false (D96).
 
+- **The in-process harness consumes events like a server.** `InProcess` opens the
+  whole application, so its modules subscribe — which is what a test wants, and
+  what makes it a member of the consumer group when the installation is on the
+  Redis bus. Its bus is the in-memory one by default, so the ordinary case shares
+  nothing; pointed at a Redis installation it takes messages the server is owed,
+  the way every verb did before
+  [ADR 0160](adr/0160-a-command-does-not-take-the-servers-events.md).
+- **A message stranded in the Redis pending list is not reclaimed.** The bus has
+  no `XAUTOCLAIM`, no pending sweep and no dead-consumer detection, so a message
+  delivered to a process that exited before acknowledging it stays under that
+  consumer's name. ADR 0160 stops commands from stranding new ones; what is
+  already there is not recovered (D105).
+
 - **No lane boots the panel against a real server.** Its gates run over a real
   router with fake services; `make smoke` starts the binary and never opens
   `/admin/ui`. "The panel renders against a real database" is proven by nothing.

@@ -76,7 +76,7 @@ func runRecover(args []string, out io.Writer, opts Options) error {
 	// visible, because the operator is about to act on that same installation.
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	app, closeApp, err := openApplication(ctx, cfg, log, errorreport.NewSink(), opts)
+	app, closeApp, err := openApplication(ctx, cfg, log, errorreport.NewSink(), opts, publishesOnly)
 	if err != nil {
 		return err
 	}

@@ -406,12 +406,32 @@ type application struct {
 //
 // The returned close function releases the container services and then the
 // pool, in that order — the same order the deferred calls had.
+
+// eventRole says whether the process being opened will CONSUME events.
+//
+// It is a parameter rather than a guess because nothing else in the assembly can
+// tell: a command and the server register the same modules, and the modules
+// subscribe either way. See [commandBus] for what consuming costs a process that
+// is not serving (D104).
+type eventRole bool
+
+const (
+	// consumesEvents is the server: it serves requests and takes its share of
+	// the bus.
+	consumesEvents eventRole = true
+	// publishesOnly is every other verb: it opens the application to reach the
+	// schema and the services, and it must not take a message the server is
+	// owed.
+	publishesOnly eventRole = false
+)
+
 func openApplication(
 	ctx context.Context,
 	cfg config.Config,
 	log *slog.Logger,
 	reportSink *errorreport.Sink,
 	opts Options,
+	role eventRole,
 ) (*application, func(), error) {
 	c := container.New(log)
 
@@ -473,7 +493,7 @@ func openApplication(
 		return nil, nil, err
 	}
 
-	bus, err := setupEventBus(ctx, cfg, redisClient, log)
+	bus, err := setupEventBus(ctx, cfg, redisClient, log, role)
 	if err != nil {
 		return nil, nil, err
 	}

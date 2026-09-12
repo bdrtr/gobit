@@ -20,6 +20,22 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Düzeltmeler
 
+- **Korumasız durum-değiştiren rotayı reddeden kapı, yalnız chi'nin FİİL
+  metotlarını sayıyordu** (D103). `Handle`, `HandleFunc` ve `Mount` — üçü de HER
+  metodu bağlar, yani POST'u da — nüfusun dışındaydı. Sonuç, kapının kaçakçılığın
+  dürüst biçimini reddedip kaçak biçimini kabul etmesiydi: kompozisyon köküne
+  konan `r.Post("/mcp", h)` "korunan hiçbir önekin dışında bağlanmış" diye düşüyor,
+  `r.Handle("/mcp", h)` ise geçiyordu — ikisi de hiçbir şeyin doğrulamadığı,
+  kotalamadığı ve kaydetmediği bir POST bağlarken. MCP sunucusunun nereye
+  monte edilebileceği ölçülürken, kapıyı OKUYARAK değil oraya bir şey KOYMAYA
+  çalışarak bulundu. Ağaçta saklanan bir şey yoktu: üretimdeki tek
+  `Handle`/`HandleFunc` çağrıları operatör ve profil mux'larında ve o dosyalar chi
+  import etmiyor, yani zaten nüfusun dışında; `callbacks.Mount(router)` ise TEK
+  argümanlı ve toplayıcının mevcut arite kuralı onu adıyla muaf tutmadan dışarıda
+  bırakıyor. Bu, kapının kendisinin karşı yazıldığı sınıf — denetlediği nüfus
+  söylediği cümleden dar olan kural — ve doğrulanmamış bir POST'un bir ödemeyi
+  "ödendi"ye çevirmesi yüzünden var olan kapıda.
+
 - **CI ayrı modülleri hiç lint'lemiyordu** (D100, D102). Lint işi kökü
   `golangci-lint-action` ile geçiriyor, sonra `make vuln` koşuyordu; `make lint`
   hiç koşmuyordu — ki ayrı modülleri dolaşan hedef o. Aksiyon içinde durduğu modülü
@@ -122,6 +138,29 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
   "sagalar/çekirdek için" olduğu (oysa modüller birbirininkini çözüyor).
 
 ### Kararlar
+
+- **Bir KOMUT artık sunucunun olaylarını almıyor** (ADR 0160, D104, D105). Dispatch'teki
+  her fiil bütün uygulamayı açıyor — bilinçli, ve `seed`'in şemayı modüllerin
+  kendisinden alması, `recover`'ın onardığı servislere ulaşması bu yüzden mümkün.
+  Ama uygulamayı açmak modülleri kaydediyor, modülleri kaydetmek de onları olay
+  otobüsüne ABONE ediyor. Bellek içi otobüste bu zararsız: otobüs sürecin kendisi.
+  Redis'te değil — orada abone olmak bir bildirim değil, tüketici grubunu yoksa
+  yaratıp ondan okuyan bir goroutine başlatmak, ve aynı gruptaki tüketiciler her
+  mesajı YALNIZCA BİR KEZ alıyor. Yani `gobit seed`, Redis'li bir kurulumda
+  sunucunun grubuna katılıp koştuğu sürece `order.placed`, `payment.captured` ve
+  modüllerin dinlediği her topiği aldı. Aldığını da KOŞTURDU: bildirim modülünün
+  abonesi, abone olan aynı `Register`'da kayıtlı, yani bir seed komutu sipariş
+  onaylarını gönderdi. Ve çıkmadan önce onaylayamadığı mesaj, bir daha asla
+  dönmeyecek `<hostname>-<pid>` tüketicisinin bekleyen listesinde kaldı — otobüste
+  ne XAUTOCLAIM var ne bekleyen listesi süpürmesi (D105, AÇIK). Artık montaj bir
+  olay ROLÜ alıyor: istek cevaplayan iki yol (sunucu ve facade'ın süreç-içi koşum
+  takımı) tüketiyor, beş fiil ise gerçek otobüse YAYINLIYOR ve hiçbir şeye abone
+  olmuyor. Yayın bilerek dokunulmadan bırakıldı — komut bir servis üzerinden
+  yazarken aynı işlemde outbox satırı yazıp commit'ten sonra doğrudan yayımlıyor;
+  otobüsü bellek içiyle değiştirmek o doğrudan yarıyı sessizce düşürürdü. Nüfus
+  kapısı ÇAĞRI YERLERİNİ denetliyor: her `openApplication` çağrısı bir rol
+  adlandırmak zorunda ve istek cevaplamayan bir tüketen çağrı reddediliyor — gelecek
+  yılın fiili bir komşuyu kopyalayarak yazılacak ve her komşu bir komut.
 
 - **Bir TARAYICI artık gobit'e karşı alışveriş edebiliyor** (ADR 0159, D99, D100).
   Bu depoda gobit'in önüne tarayıcı koyan hiçbir şey yoktu: vitrin API'si kırk sekiz

@@ -311,7 +311,7 @@ func runJobs(args []string, out io.Writer, opts Options) error {
 	//
 	// Nothing is started here: opening builds and bootstraps, and the runner
 	// lives in serve (see [startJobs]).
-	app, closeApp, err := openApplication(ctx, cfg, log, errorreport.NewSink(), opts)
+	app, closeApp, err := openApplication(ctx, cfg, log, errorreport.NewSink(), opts, publishesOnly)
 	if err != nil {
 		return err
 	}

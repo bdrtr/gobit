@@ -757,7 +757,7 @@ func TestEventBusTakesTheNamespaceFromTheKeyPrefix(t *testing.T) {
 	cfg.EventBusConsumer = "gobit-0"
 	catcher := &recordCatcher{}
 
-	bus, err := setupEventBus(context.Background(), cfg, unconnectedRedis(), catcher.logger())
+	bus, err := setupEventBus(context.Background(), cfg, unconnectedRedis(), catcher.logger(), consumesEvents)
 
 	require.NoError(t, err)
 	require.NotNil(t, bus)
@@ -783,7 +783,7 @@ func TestEventBusGeneratesAConsumerNameWhenNoneIsGiven(t *testing.T) {
 	cfg.EventBus = config.BackendRedis
 	catcher := &recordCatcher{}
 
-	_, err := setupEventBus(context.Background(), cfg, unconnectedRedis(), catcher.logger())
+	_, err := setupEventBus(context.Background(), cfg, unconnectedRedis(), catcher.logger(), consumesEvents)
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, catcher.attribute("event bus: Redis Streams", "consumer"),
@@ -817,7 +817,7 @@ func TestInMemoryEventBusWarnsInASharedEnvironment(t *testing.T) {
 			cfg.EventBus = "inmemory"
 			catcher := &recordCatcher{}
 
-			_, err := setupEventBus(context.Background(), cfg, nil, catcher.logger())
+			_, err := setupEventBus(context.Background(), cfg, nil, catcher.logger(), consumesEvents)
 
 			require.NoError(t, err)
 			assert.Contains(t, catcher.messages(tt.level), "event bus: in-memory (single process)")

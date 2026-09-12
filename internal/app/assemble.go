@@ -72,7 +72,7 @@ func InProcess(ctx context.Context, opts Options) (http.Handler, func(), error) 
 		Middleware: errorreport.Middleware(reportSink, errorreport.Options{}),
 	})
 
-	app, closeApp, err := openApplication(ctx, cfg, log, reportSink, opts)
+	app, closeApp, err := openApplication(ctx, cfg, log, reportSink, opts, consumesEvents)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -73,7 +73,13 @@ func relayedPass(t *testing.T, dsn string, events ...eventbus.Event) scheduled {
 	logs := &syncBuffer{}
 	log := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	app, closeApp, err := openApplication(ctx, cfg, log, errorreport.NewSink(), Options{})
+	// consumesEvents, not publishesOnly: these scenarios exercise the RUNNER, and
+	// the runner's whole claim is that a job's event reaches a subscriber. A
+	// command's assembly subscribes to nothing (ADR 0160), so the scenario would
+	// fail on "the outbox row was marked but the event never reached a
+	// subscriber" — which is what it did when this call site was first written
+	// with the wrong role.
+	app, closeApp, err := openApplication(ctx, cfg, log, errorreport.NewSink(), Options{}, consumesEvents)
 	require.NoError(t, err, "the installation the runner needs could not be opened")
 	defer closeApp()
 
@@ -238,7 +244,13 @@ func TestEveryJobTheRootDeclaresCanBeBuiltAgainstARealInstallation(t *testing.T)
 	require.NoError(t, err)
 
 	log := slog.New(slog.DiscardHandler)
-	app, closeApp, err := openApplication(ctx, cfg, log, errorreport.NewSink(), Options{})
+	// consumesEvents, not publishesOnly: these scenarios exercise the RUNNER, and
+	// the runner's whole claim is that a job's event reaches a subscriber. A
+	// command's assembly subscribes to nothing (ADR 0160), so the scenario would
+	// fail on "the outbox row was marked but the event never reached a
+	// subscriber" — which is what it did when this call site was first written
+	// with the wrong role.
+	app, closeApp, err := openApplication(ctx, cfg, log, errorreport.NewSink(), Options{}, consumesEvents)
 	require.NoError(t, err)
 	defer closeApp()
 

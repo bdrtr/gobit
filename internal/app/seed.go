@@ -172,7 +172,7 @@ func runSeed(args []string, out io.Writer, opts Options) error {
 	// its ILIKE figures will not reproduce.
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	app, closeApp, err := openApplication(ctx, cfg, log, errorreport.NewSink(), opts)
+	app, closeApp, err := openApplication(ctx, cfg, log, errorreport.NewSink(), opts, publishesOnly)
 	if err != nil {
 		return err
 	}

@@ -92,3 +92,4 @@ truth: a report says what was true on the day it was taken.
 | [A door beside the door — measured 2026-09-12](0157-a-door-beside-the-door.md) | 131 |
 | [Fifteen calls nobody wrote down — measured 2026-09-12](0158-fifteen-calls-nobody-wrote-down.md) | 192 |
 | [A shop with no toolchain — measured 2026-09-12](0159-a-shop-with-no-toolchain.md) | 136 |
+| [What seed was eating — measured 2026-09-12](0160-what-seed-was-eating.md) | 113 |
