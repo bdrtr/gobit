@@ -30,6 +30,18 @@ import (
 func TestTheToolListIsThisInstallationsOwnSchema(t *testing.T) {
 	ctx := context.Background()
 
+	// The installation is one this test STARTS. The first version of this test
+	// called config.Load() with no DATABASE_URL and reached whatever answered on
+	// localhost:5432 — a developer's own database, which made the test pass on
+	// the machine that wrote it and fail on a runner where nothing listens. The
+	// tool list is derived from the router tree rather than from any data, so the
+	// assertions were not wrong; the FIXTURE was the machine (D107).
+	dsn := migrateDSN(t)
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("DATABASE_URL", dsn)
+	t.Setenv("JWT_SECRET", "mcp-integration-test-secret-32-bytes-long")
+	t.Setenv("LOG_LEVEL", "warn")
+
 	cfg, err := config.Load()
 	require.NoError(t, err)
 

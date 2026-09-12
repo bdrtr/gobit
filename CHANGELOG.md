@@ -20,6 +20,17 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Düzeltmeler
 
+- **Bir entegrasyon testi, bu deponun hiç başlatmadığı bir veritabanına bağlandı**
+  (D107). `TestTheToolListIsThisInstallationsOwnSchema` (ADR 0161) `config.Load()`
+  çağırıp `DATABASE_URL` vermiyordu, yani localhost:5432'de ne cevap veriyorsa ona
+  — testi yazan makinedeki geliştirme veritabanına. Yerelde dokuz şerit yeşil
+  geçti, CI koşucusunda `connection refused` ile kırmızı oldu ve main kırıldı.
+  İddiaları yanlış değildi (araç listesi router ağacından türetiliyor, veriden
+  değil); yanlış olan, sınanan KURULUMUN ortamdan gelmesiydi. Paketteki her komşu
+  senaryo zaten kendi kabını başlatıp DSN'ini ortama veriyor (`migrateDSN`), ve bu
+  test artık o şekli kullanıyor. Sınıf fikstürün: öznesi "bu kurulum" olan bir
+  kapı kurulumu BAŞLATMAK zorunda, yoksa ölçtüğü şey geliştiricinin makinesidir.
+
 - **Üretim kodunun bir TEST paketini import etmesini hiçbir şey engellemiyordu**
   (D106). Kural tek bir godoc'ta yaşıyordu — GraphQL handler'ının yakalama
   yazıcısı, httptest'in "test ikilisine ait olduğunu" söyleyip tam bu yüzden dokuz
