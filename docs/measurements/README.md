@@ -93,3 +93,4 @@ truth: a report says what was true on the day it was taken.
 | [Fifteen calls nobody wrote down — measured 2026-09-12](0158-fifteen-calls-nobody-wrote-down.md) | 192 |
 | [A shop with no toolchain — measured 2026-09-12](0159-a-shop-with-no-toolchain.md) | 136 |
 | [What seed was eating — measured 2026-09-12](0160-what-seed-was-eating.md) | 113 |
+| [A hundred and twenty-one tools — measured 2026-09-12](0161-a-hundred-and-twenty-one-tools.md) | 128 |

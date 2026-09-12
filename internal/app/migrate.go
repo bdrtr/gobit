@@ -680,6 +680,7 @@ Usage:
   %s %-34s re-fold every invoice's buyer-address handle
   %s %-34s remove ONE administrator's second factor
   %s %-34s write a new project that embeds gobit
+  %s %-34s answer a model client's read-only questions
   %s %-34s print this text
 
 %s %s flags:
@@ -724,6 +725,7 @@ there is deliberately no "migrate up", so a deploy cannot forget it.
 		binaryName, refoldInvoicesCommand,
 		binaryName, mfaResetCommand+" <email> [flags]",
 		binaryName, newCommand+" <dir> [flags]",
+		binaryName, mcpCommand,
 		binaryName, cmdHelp,
 		cmdMigrate, cmdDown,
 		flagSteps+" N", defaultDownSteps,

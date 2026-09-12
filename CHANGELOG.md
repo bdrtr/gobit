@@ -154,6 +154,30 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir MODEL istemcisi artık bu kuruluma soru sorabiliyor** (ADR 0161). Yönetim
+  API'si yüz yirmi bir okuma işlemi cevaplıyor ve bugüne kadarki tek çağıranları
+  bir tarayıcı ile curl'dü. "Hangi siparişler askıda" diye soran bir model
+  istemcisinin, biri sarmalayıcı yazmadan girebileceği bir yol yoktu — ve bir
+  sarmalayıcı, bayatlamakta özgür ikinci bir uç listesidir. Artık `gobit mcp`
+  stdin'de JSON-RPC okuyup dört metot cevaplıyor: initialize, ping, tools/list ve
+  tools/call. ARAÇ LİSTESİ açılışta, bu sürecin SERVİS ETTİĞİ belgeden türetiliyor
+  — yönetim öneki altındaki her GET işlemi için bir araç — ve bir çağrı, bu
+  sürecin monte ettiği router üzerinden süreç içi bir GET. Hiçbir şey yeniden
+  yazılmıyor: bir araç ancak bir uç varsa var oluyor, ucun kendi describe bloğunun
+  söylediğini söylüyor, ve çağrı yönetim yüzeyinin bütün halkalarından geçiyor —
+  kimlik, kapsam, kota ve denetim kaydı. SALT-OKUNUR olması bir söz değil iki
+  şeyin özelliği: liste yalnız GET'lerden kuruluyor, ve kimlik bilgisi üstün
+  kapsamı taşıyorsa sunucu açılmadan reddediliyor (kurulumun kendisine, herhangi
+  bir istemcinin kullanacağı uçtan sorularak). Adlar YOLDAN türetiliyor, çünkü bu
+  belgede hiçbir işlem `operationId` taşımıyor — ölçüldü; yani bir araç ucu
+  taşındığında taşınıyor, ki dürüst hata bu: taşınmayı atlatan bir araç başka bir
+  şey hakkında cevap verirdi. Belge hangi aracın hangi YETKİYİ istediğini
+  söyleyemiyor (kapsam taşımıyor), o yüzden anahtarın kapsamları karar veriyor ve
+  reddedilen çağrı API'nin kendi hata zarfıyla dönüyor — eksik yetkiyi o
+  adlandırıyor. İki sınır kaydedildi: bu ve belgenin düzyazısının bir kısmının
+  Türkçe olması (yüz yirmi araç açıklamasının kırk üçü; defter DOSYALARI yönetiyor,
+  içlerindeki metni değil).
+
 - **Bir KOMUT artık sunucunun olaylarını almıyor** (ADR 0160, D104, D105). Dispatch'teki
   her fiil bütün uygulamayı açıyor — bilinçli, ve `seed`'in şemayı modüllerin
   kendisinden alması, `recover`'ın onardığı servislere ulaşması bu yüzden mümkün.

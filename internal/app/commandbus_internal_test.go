@@ -172,3 +172,24 @@ func TestOnlyTheServingPathsConsumeEvents(t *testing.T) {
 			"verb that stopped naming its role would have been caught above, so a smaller "+
 			"number here means the scan stopped reading files", len(publishing))
 }
+
+// TestTheMCPVerbIsInTheDispatchAndTheUsage keeps the verb reachable and named.
+//
+// The dispatch and the usage text are two lists and the repository has paid for
+// their drift before: TestUsageNamesEveryVerbTheDispatchAccepts derives the
+// verbs from the switch for exactly that reason (D90). This adds nothing to that
+// rule — it names the new verb so that a reader of this package finds it where
+// the other verbs' own tests are.
+func TestTheMCPVerbIsInTheDispatchAndTheUsage(t *testing.T) {
+	t.Parallel()
+
+	body, err := os.ReadFile("app.go")
+	require.NoError(t, err)
+
+	assert.Contains(t, string(body), "case mcpCommand:",
+		"the mcp verb is not in the dispatch; the binary would print the usage and refuse")
+
+	usage := usageText("test")
+	assert.Contains(t, usage, binaryName+" "+mcpCommand,
+		"the usage text has no line for the mcp verb")
+}

@@ -666,6 +666,19 @@ past and is not corrected retroactively.
   consumer's name. ADR 0160 stops commands from stranding new ones; what is
   already there is not recovered (D105).
 
+- **A tool the model client is offered cannot say which privilege it needs.** The
+  generated document carries no scope: its security schemes are `http/bearer` and
+  `apiKey`, neither of which names one, and no operation states the privilege its
+  route requires. So the `mcp` verb's credential decides what a question can
+  reach, and a refusal arrives as the API's own error envelope — which does name
+  the missing privilege, after the call rather than before it
+  ([ADR 0161](adr/0161-a-model-client-can-ask-this-installation-questions.md)).
+- **Part of the served OpenAPI document is Turkish.** Forty-three of the tool
+  descriptions and twenty-six of the parameter descriptions, because ADR 0012
+  makes language a property of the FILE and the describe blocks carrying them are
+  in the ledger. The document is a published artifact every API client reads; the
+  ledger may only shrink, so the number moves in one direction on its own.
+
 - **No lane boots the panel against a real server.** Its gates run over a real
   router with fake services; `make smoke` starts the binary and never opens
   `/admin/ui`. "The panel renders against a real database" is proven by nothing.

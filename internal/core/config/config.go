@@ -442,6 +442,20 @@ type Config struct {
 	// startup logs are put side by side.
 	EventBusConsumer string `env:"EVENT_BUS_CONSUMER"`
 
+	// MCPAPIKey is the secret key the `mcp` verb presents on every tool call.
+	//
+	// It is the MODEL CLIENT's credential and not an operator's: a tool call is a
+	// caller, and a caller in this system holds a key. Minting it with the read
+	// scopes the questions need is the whole of what makes that server read-only
+	// at the surface — a key carrying the superior scope is refused before the
+	// server opens, because a read-only server must not hold a credential that
+	// can write.
+	//
+	// It is read by that verb ALONE. The server does not need it and neither does
+	// any other command, so an installation that never runs `gobit mcp` leaves it
+	// empty and nothing notices.
+	MCPAPIKey string `env:"MCP_API_KEY"`
+
 	// NotificationProvider is the identity of the provider that will send notifications.
 	//
 	// The default is [DefaultNotificationProvider], that is, the "log" provider that
