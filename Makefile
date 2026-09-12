@@ -80,15 +80,24 @@ build: ## Binary'yi bin/gobit olarak derle
 
 ## --- Kalite ---
 
+# Test şeritleri testlere ORTAMDAN veritabanı VERMEZ (ADR 0163). Ayarların
+# varsayılanı localhost:5432 ve localhost:6379'u gösteriyor ve bir geliştirme
+# makinesinde ikisi de dinliyor; kendi kurulumunu başlatmayı unutan bir test o
+# yüzden burada yeşil geçip koşucuda kırmızı olur — D107 tam olarak böyle oldu.
+# Adres aynı, port hiçbir şeyin dinlemediği 1: değer AYRIŞIYOR ama hâlâ
+# ÇÖZÜMLENİYOR, yani yalnızca bağlanmak başarısız oluyor; config'i başka bir şey
+# için yükleyen testler etkilenmiyor.
+NO_AMBIENT_SERVICES := DATABASE_URL='postgres://gobit:gobit@127.0.0.1:1/gobit?sslmode=disable' REDIS_URL='redis://:gobit@127.0.0.1:1/0'
+
 test: ## Birim testlerini çalıştır (race + coverage)
 	# -coverpkg olmadan yalnızca test edilen paketin KENDİ kodu sayılır; bir
 	# paketi başka paketin testi kapsadığında görünmez. Buradaki sayı YALNIZCA
 	# birim testlerinindir (~%55); deponun gerçek kapsamı entegrasyon
 	# testleriyle birlikte ölçülür (make test-integration, ~%76).
-	go test -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
+	$(NO_AMBIENT_SERVICES) go test -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
 
 test-integration: ## Entegrasyon testlerini çalıştır (testcontainers gerektirir)
-	go test -race -tags=integration -count=1 -coverpkg=./... \
+	$(NO_AMBIENT_SERVICES) go test -race -tags=integration -count=1 -coverpkg=./... \
 		-coverprofile=coverage-integration.out -covermode=atomic ./...
 	@go tool cover -func=coverage-integration.out | tail -1
 
@@ -103,7 +112,7 @@ test-integration: ## Entegrasyon testlerini çalıştır (testcontainers gerekti
 # Zaman aşımı açıkça verilir: varsayılan 10 dakika, konteyner çekme +
 # derleme + beş senaryonun toplamı için soğuk bir makinede dar kalabilir.
 smoke: ## Smoke testleri: gerçek ikiliyi açıp süreç davranışını sınar (Docker gerektirir)
-	go test -tags=smoke -count=1 -timeout 20m ./internal/smoke/
+	$(NO_AMBIENT_SERVICES) go test -tags=smoke -count=1 -timeout 20m ./internal/smoke/
 
 # Benchmark'lar veritabanına DOKUNMAZ: hepsi saf fonksiyonlar ya da sahte
 # servisler üzerinde koşar. Deponun geri kalan ölçümü SQL tarafındaydı

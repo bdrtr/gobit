@@ -179,6 +179,22 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir şerit artık teste geliştiricinin veritabanını VERMİYOR** (ADR 0163).
+  Ayarların varsayılanı localhost:5432 ve localhost:6379'u gösteriyor ve bir
+  geliştirme makinesinde ikisi de dinliyor, yani kendi kurulumunu başlatmayı
+  unutan bir test yerelde yeşil geçip koşucuda kırmızı oluyordu (D107). Kural
+  aslında zaten verilmişti ama TEK şeride ve düzyazıda: `internal/smoke` her
+  sunucu sürecinin ortamını sıfırdan kuruyor ve godoc'u gerekçeyi
+  `DATABASE_URL`'i adıyla sayarak yazıyor. Artık `make test`,
+  `make test-integration` ve `make smoke` iki adresi de hiçbir şeyin dinlemediği
+  127.0.0.1:1'e kuruyor. Adres ÇÖZÜMLENİYOR ama bağlanmıyor, yani config'i başka
+  bir şey için yükleyen testler etkilenmiyor. Değişiklikten ÖNCE ölçüldü: bütün
+  entegrasyon şeridi ve bütün smoke şeridi ölü adreslere karşı koşuldu, ikisi de
+  yeşil ve iki koşumda tek bir bağlantı denemesi yok — yani hiçbir senaryo
+  ortamdaki servise yaslanmıyormuş. Kapının değerleri elle yazılmıyor,
+  `config.go`'nun kendi `envDefault`'undan türetiliyor: şeridin değeri
+  varsayılana EŞİTLENİRSE de düşüyor.
+
 - **Ölü bir tüketicinin elinde kalan mesaj artık geri geliyor** (ADR 0162). Redis
   otobüsü XREADGROUP ile bir mesajı tek tüketiciye veriyor ve verdiğini
   hatırlıyor; o süreç ACK'lemeden ölürse mesaj ONUN askı listesinde kalıyordu, ve
