@@ -107,6 +107,28 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **İlk çalıştırma artık şeritlerin KOŞTURDUĞU bir belge** (ADR 0158, D98). Boş bir
+  veritabanından bir alışverişçinin siparişine giden yol on beş çağrı ve on biri
+  hiçbir yere yazılmamıştı: iki koşum takımının içinde yaşıyorlardı — smoke'un
+  vitrin senaryosu ve `internal/e2e`'nin düzeneği, her biri kendi bölgesini, fiyat
+  bağını ve stoğunu kendisi kuruyor. Bütün şeritler yeşildi ve boşluk TAM DA bu
+  yüzden görünmezdi. `security.md` boş veritabanından yürüyen tek belgeydi ve
+  katalogu okumakta bitiyor — boş veritabanında o boş bir liste, yani çağrının
+  başarısı satın alınabilir bir şey olup olmadığı hakkında hiçbir şey söylemiyor.
+  `gobit seed` de kapatmıyor: o fiil yük rig'ini kuruyor (elli iki bin ürün, toplu
+  SQL) ve bölge yaratmıyor. Artık `docs/first-run.md` yolun tamamını yapıştırılabilir
+  bir blok olarak taşıyor ve bir smoke senaryosu onu gerçek ikiliye karşı koşturup
+  her BAĞ için bir durum kodunu ve sondaki siparişi doğruluyor. Yazmak, iki koşum
+  takımının göremediği şeyi buldu: vitrin yardımcısı bölgesine İKİ ülke bağlıyor ve
+  bu yüzden "tek yargı yetkisi adlandırılamıyor" dalından, BÖLGENİN oranıyla
+  vergileniyor; tek ülkeli bir bölge — yani sıradan ilk kurulum — tax modülü
+  tarafından vergileniyor ve orada vergi bölgesi yoksa cevap sıfır. Bu bir kusur
+  değil (sunucu `tax_source=tax_unconfigured` ile uyarıyor) ama bunu bir operatöre
+  söyleyen hiçbir şey yoktu. Nüfus kuralı ZATEN VARDI —
+  `TestEveryChainedCurlFlowIsExecuted` belgeden türetilmiş anahtarlarla bir
+  belge→tanık haritası tutuyor — ve yeni belge oraya bir HATA olarak geldi; o
+  bulunmadan önce aynı iş için ikinci bir kapı yazılıp silindi.
+
 - **Panelin ADRESİ artık panelin** (ADR 0157, D97). ADR 0155 içerik politikasını
   panelin rotalarının girdiği TEK bir chi grubuna kurmuştu; gerekçe doğruydu,
   ÖZNESİ yanlıştı: bir grup panelin BAĞLADIĞI her rotayı kapsar, politikanın

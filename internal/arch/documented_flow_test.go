@@ -27,7 +27,8 @@ var (
 // The keys are derived from the documents, so a second flow arrives here as a
 // failure rather than as silence.
 var chainedFlowWitnesses = map[string]string{
-	"docs/security.md": "TestTheDocumentedAdminToStorefrontFlowRuns",
+	"docs/security.md":  "TestTheDocumentedAdminToStorefrontFlowRuns",
+	"docs/first-run.md": "TestTheDocumentedFirstRunReachesAnOrder",
 }
 
 // TestEveryChainedCurlFlowIsExecuted holds the one class of documented command
@@ -51,8 +52,9 @@ var chainedFlowWitnesses = map[string]string{
 //
 // So the rule is drawn where the cost is: a block that feeds a variable from one
 // request into another has to be EXECUTED by a test, not re-implemented beside
-// it. Measured 2026-09-09, exactly one block in the tree does that, and the map
-// above needs no exemptions.
+// it. Measured 2026-09-09, exactly one block in the tree did that; the second
+// arrived on 2026-09-12 (ADR 0158) and arrived AS A FAILURE HERE, which is what
+// the derived keys are for. The map still needs no exemptions.
 func TestEveryChainedCurlFlowIsExecuted(t *testing.T) {
 	chained := chainedFlowDocuments(t)
 
