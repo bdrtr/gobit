@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/eventbus"
 	"github.com/bdrtr/gobit/internal/modules/cart/models"
 	"github.com/bdrtr/gobit/internal/modules/cart/service"
 )
@@ -27,6 +28,10 @@ type fakeSnapshot struct {
 	items     map[string]models.LineItem
 	addresses map[string]models.CartAddress
 	methods   map[string]models.ShippingMethod
+	// outbox is part of the snapshot because the real outbox row is part of the
+	// transaction: a rolled-back cart must take its promised event with it
+	// (ADR 0153).
+	outbox []outboxRow
 }
 
 // fakeStore is the in-memory counterpart of service.Store.
@@ -99,6 +104,25 @@ type fakeStore struct {
 	// database an intervening write depends on timing and cannot be produced
 	// deterministically in a test.
 	hookListLineItems func()
+
+	// outbox records the events written INSIDE a transaction, in order.
+	//
+	// It imitates the real table in the one way the decision rests on: the row is
+	// part of the transaction, so a rolled-back cart takes its event with it
+	// (see [fakeStore.WithTx]'s snapshot). A fake that kept the row through a
+	// rollback would hide exactly the fault ADR 0153 put the write inside the
+	// transaction to prevent.
+	outbox []outboxRow
+	// failWriteOutboxEvent, when it is set, makes WriteOutboxEvent return this
+	// error.
+	failWriteOutboxEvent error
+}
+
+// outboxRow is one recorded event.
+type outboxRow struct {
+	id   string
+	name string
+	data map[string]any
 }
 
 // newFakeStore produces an empty fake store.
@@ -115,6 +139,72 @@ func newFakeStore() *fakeStore {
 // That the fake store satisfies the surface the service expects is verified at
 // compile time.
 var _ service.Store = (*fakeStore)(nil)
+
+// WriteOutboxEvent records the event and REFUSES outside a transaction, exactly
+// as the repository does — otherwise a test could prove a guarantee the real
+// store does not give.
+func (f *fakeStore) WriteOutboxEvent(
+	ctx context.Context, id, name string, data map[string]any,
+) error {
+	if ctx.Value(txMarkerKey{}) == nil {
+		return errors.Internal("cart_query_failed",
+			"an outbox event may only be written inside a transaction (%s)", name)
+	}
+	if f.failWriteOutboxEvent != nil {
+		return f.failWriteOutboxEvent
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.outbox = append(f.outbox, outboxRow{id: id, name: name, data: data})
+
+	return nil
+}
+
+// outboxNames returns the names of the recorded events, in order.
+func (f *fakeStore) outboxNames() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := make([]string, 0, len(f.outbox))
+	for i := range f.outbox {
+		out = append(out, f.outbox[i].name)
+	}
+
+	return out
+}
+
+// fakeBus collects the published events and delivers none.
+type fakeBus struct {
+	mu        sync.Mutex
+	published []eventbus.Event
+	err       error
+}
+
+// Publish records the event.
+func (b *fakeBus) Publish(_ context.Context, event eventbus.Event) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.err != nil {
+		return b.err
+	}
+	b.published = append(b.published, event)
+
+	return nil
+}
+
+// names returns the names of the published events, in order.
+func (b *fakeBus) names() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	out := make([]string, 0, len(b.published))
+	for i := range b.published {
+		out = append(out, b.published[i].Name)
+	}
+
+	return out
+}
 
 // addressKey is the map key of the (cart, type) pair.
 func addressKey(cartID string, kind models.AddressType) string {
@@ -140,6 +230,7 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 		f.mu.Lock()
 		f.carts, f.items = snapshot.carts, snapshot.items
 		f.addresses, f.methods = snapshot.addresses, snapshot.methods
+		f.outbox = snapshot.outbox
 		f.mu.Unlock()
 		return err
 	}
@@ -169,6 +260,7 @@ func (f *fakeStore) snapshot() fakeSnapshot {
 		items:     cloneMap(f.items),
 		addresses: cloneMap(f.addresses),
 		methods:   cloneMap(f.methods),
+		outbox:    slices.Clone(f.outbox),
 	}
 }
 

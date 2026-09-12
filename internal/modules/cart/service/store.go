@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 
+	"github.com/bdrtr/gobit/core/eventbus"
 	"github.com/bdrtr/gobit/internal/modules/cart/models"
 )
 
@@ -173,4 +174,23 @@ type Store interface {
 	RemovePromotionCode(ctx context.Context, cartID, code string) error
 	// DeletePromotionCodesByCart takes every coupon code off the cart.
 	DeletePromotionCodesByCart(ctx context.Context, cartID string) error
+
+	// WriteOutboxEvent writes the event into the outbox INSIDE the caller's
+	// transaction, so that the event and the cart commit together or not at all
+	// (ADR 0153).
+	//
+	// It is on the STORE rather than beside the bus because only the store is
+	// inside the transaction: the module keeps its transaction under its own
+	// context key, and the core that owns the outbox table cannot see it.
+	WriteOutboxEvent(ctx context.Context, id, name string, data map[string]any) error
+}
+
+// EventPublisher is the narrow surface the module uses to publish (ADR 0006).
+//
+// It is declared HERE, by the consumer, and satisfied structurally by
+// core/eventbus — the module does not take the bus's own interface, so the bus
+// can grow methods this module neither knows nor is asked about.
+type EventPublisher interface {
+	// Publish sends the event to whoever is listening.
+	Publish(ctx context.Context, event eventbus.Event) error
 }

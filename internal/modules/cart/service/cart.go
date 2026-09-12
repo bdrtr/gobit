@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 	corepage "github.com/bdrtr/gobit/internal/core/page"
@@ -63,17 +64,35 @@ func (s *Service) CreateCart(ctx context.Context, in CreateCartInput) (models.Ca
 		return models.Cart{}, err
 	}
 
-	cart, err := s.store.CreateCart(ctx, models.Cart{
-		ID:           models.NewCartID(),
-		RegionID:     in.RegionID,
-		CustomerID:   in.CustomerID,
-		Email:        email,
-		CurrencyCode: currency,
-		Metadata:     in.Metadata,
+	// The insert and the event's outbox row commit TOGETHER (ADR 0153). Before
+	// this the creation was a single statement; it is a transaction now because a
+	// cart written without its promised event is the state the outbox exists to
+	// prevent, and an event written for a cart that rolled back is the mirror of
+	// it.
+	var cart models.Cart
+	at := time.Now().UTC()
+	err = s.store.WithTx(ctx, func(ctx context.Context) error {
+		created, createErr := s.store.CreateCart(ctx, models.Cart{
+			ID:           models.NewCartID(),
+			RegionID:     in.RegionID,
+			CustomerID:   in.CustomerID,
+			Email:        email,
+			CurrencyCode: currency,
+			Metadata:     in.Metadata,
+		})
+		if createErr != nil {
+			return createErr
+		}
+		cart = created
+
+		return s.recordCartEvent(ctx, EventCartCreated, created, at)
 	})
 	if err != nil {
 		return models.Cart{}, err
 	}
+
+	s.publishCartEvent(ctx, EventCartCreated, cart, at)
+
 	return cart, nil
 }
 
@@ -401,6 +420,7 @@ func (s *Service) MarkCompleted(ctx context.Context, cartID string) (models.Cart
 	}
 
 	var completed models.Cart
+	at := time.Now().UTC()
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
 		cart, err := s.store.LockCart(ctx, cartID)
 		if err != nil {
@@ -423,10 +443,17 @@ func (s *Service) MarkCompleted(ctx context.Context, cartID string) (models.Cart
 				cart.Revision, cart.TotalsRevision)
 		}
 		completed, err = s.store.MarkCartCompleted(ctx, cartID)
-		return err
+		if err != nil {
+			return err
+		}
+
+		return s.recordCartEvent(ctx, EventCartCompleted, completed, at)
 	})
 	if err != nil {
 		return models.Cart{}, err
 	}
+
+	s.publishCartEvent(ctx, EventCartCompleted, completed, at)
+
 	return completed, nil
 }

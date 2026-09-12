@@ -59,7 +59,7 @@ var migrationsRoot = mustSub(migrationFiles, "migrations")
 //
 // So the list is written out, and it is the WHOLE set: a static census of every
 // eventbus.Event this repository can publish resolves to exactly this slice —
-// the eight topics plugins/webhookout forwards.
+// the ten topics plugins/webhookout forwards.
 //
 // The number and the path sit on ONE line deliberately. It is the only place
 // the size is written, and the count gate is LINE-ANCHORED: a sentence whose
@@ -101,6 +101,8 @@ var ForwardedTopics = []string{
 	topicProductDeleted,
 	topicOrderLineCanceled,
 	topicFulfillmentCanceled,
+	topicCartCreated,
+	topicCartCompleted,
 }
 
 // The topics, as constants the arch gates can resolve.
@@ -146,6 +148,24 @@ const (
 	// operator's own system wants it for the reason gobit does: units that were
 	// counted as leaving the building are not leaving after all.
 	topicFulfillmentCanceled = "fulfillment.canceled"
+	// topicCartCreated is published when a cart is opened (ADR 0153). It is the
+	// cart module's FIRST event.
+	//
+	// It carries the cart, its region and its currency — no money and no
+	// identity, so it needs no new redaction rule. It is also the highest-volume
+	// topic this plugin forwards, and that is a cost an operator should know
+	// about: every abandoned basket is a delivery. The publisher declined to go
+	// finer than the cart for exactly this reason — there is no per-LINE topic,
+	// because it would have multiplied this queue by the shopper's clicking.
+	topicCartCreated = "cart.created"
+	// topicCartCompleted is published when a cart is completed and becomes
+	// immutable (ADR 0153).
+	//
+	// It is NOT the same moment as "order.placed": the checkout saga places the
+	// order at its second step and completes the cart at its last, so a
+	// placement with no completion is an order that failed in between. A receiver
+	// that treats the two as one loses exactly that.
+	topicCartCompleted = "cart.completed"
 )
 
 // redactedFields are the payload fields that never leave this installation, and

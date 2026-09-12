@@ -114,14 +114,28 @@ const maxIDLen = 255
 // Service is the cart module's outward-facing service. It is safe for
 // concurrent use.
 type Service struct {
-	store Store
-	log   *slog.Logger
+	store  Store
+	events EventPublisher
+	log    *slog.Logger
 }
 
 // Options are the service's dependencies.
 type Options struct {
 	// Repo is the persistence surface; it is required.
 	Repo Store
+	// Events is the bus the module's own events are published on (ADR 0153); it
+	// is required.
+	//
+	// # Why required rather than optional
+	//
+	// Because the alternative is an installation that looks wired and is not.
+	// The outbox row is written inside the cart's transaction whatever happens
+	// here, so a missing bus would lose no event — it would only make every
+	// subscriber hear up to a minute late, forever, with nothing saying so. The
+	// payment module refused the same bargain for the same reason (ADR 0121),
+	// and a dependency that is checked at BUILD time is this service's own rule
+	// (see [New]).
+	Events EventPublisher
 	// Logger, when nil is given, makes the logs be discarded.
 	Logger *slog.Logger
 }
@@ -136,11 +150,18 @@ func New(opts Options) (*Service, error) {
 	if opts.Repo == nil {
 		return nil, errors.Internal(CodeNotReady, "the cart service cannot be built without a store")
 	}
+	if opts.Events == nil {
+		return nil, errors.Internal(CodeNotReady,
+			"the cart service cannot be built without an event bus: the module publishes "+
+				"cart.created and cart.completed, and a service built without one would "+
+				"deliver them only through the outbox relay — up to a minute late, for "+
+				"every installation, with nothing saying so")
+	}
 	log := opts.Logger
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Service{store: opts.Repo, log: log}, nil
+	return &Service{store: opts.Repo, events: opts.Events, log: log}, nil
 }
 
 // Page holds the pagination parameters of the list requests.

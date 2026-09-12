@@ -81,6 +81,9 @@ var unresolvableNames = map[string]string{
 	"internal/modules/fulfillment/repository/outbox.go": "the third module to carry the " +
 		"same hand (ADR 0139): WriteOutboxEvent takes the name as a parameter and the " +
 		"fulfillment service decides it, at a call site that resolves on its own",
+	"internal/modules/cart/repository/outbox.go": "the fourth module to carry the same " +
+		"hand (ADR 0153): WriteOutboxEvent takes the name as a parameter and the cart " +
+		"service decides it, at a call site that resolves on its own",
 }
 
 // TestTheForwardedTopicsAreEveryPublishedTopic is the gate.

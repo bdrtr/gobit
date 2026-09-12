@@ -566,5 +566,26 @@ past and is not corrected retroactively.
   disappears rather than becoming a way to spend somebody else's balance. A shop
   that needs both has no answer here.
 
+- **A missed cart event leaves the funnel one short, forever.** Since
+  [ADR 0153](adr/0153-a-shop-can-see-where-its-carts-go.md) the cart publishes
+  what happened to it and `plugins/analytics` counts it, but the bus does not
+  redeliver on a handler error and there is no repair path: the outbox relay
+  covers the ordinary loss and nothing covers the rest. A reconciliation job that
+  re-derived the counts from the modules' own tables was refused — it would be a
+  second history of the same facts, over rows a shop is allowed to delete.
+
+- **The funnel starts when the plugin is installed, and knows only days and
+  regions.** It says nothing about carts opened before `analytics` was named in
+  `PLUGINS`; a cart opened on one day and completed on the next is counted on two
+  different days, so a same-day ratio is an approximation; and there is no
+  per-customer and no storefront view, because both would need an identity in a
+  payload that deliberately carries none.
+
+- **Every published event reaches every registered webhook endpoint, including
+  `cart.created`.** `plugins/webhookout` forwards the whole topic set by
+  construction — its own gate fails the build in both directions — so installing
+  it means one delivery per opened cart. There is no per-topic subscription and no
+  rate limit; the only lever is not registering a receiver.
+
 - **The load test is in-process** (`make load-test`, `internal/e2e`): it tests
   correctness under load, it does not produce a capacity plan.

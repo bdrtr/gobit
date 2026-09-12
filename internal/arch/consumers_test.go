@@ -704,12 +704,14 @@ func owningModulePrefix(file *sourceFile) string {
 // handler. That decision is written here, with the topic name and its REASON;
 // as long as it is not written, a topic without a subscriber is a bug.
 //
-// The map is EMPTY today and this is not a gap but a finding: all four of the
-// four published topics have a subscriber inside the repository (plugins/searchpg
-// listens to the three catalog events, the notification module to
-// "order.placed"). The price of an exemption is high — an exempt topic means
-// going back to the state where "order.placed" did nothing for months — which
-// is why anyone adding a line here is expected to answer the question "who
+// The map is EMPTY today and this is not a gap but a finding: every published
+// topic has a subscriber inside the repository. The sentence that stood here
+// priced that set at FOUR and stayed at four while it grew to ten — the stale
+// published claim this repository keeps producing (D81, D85, D86) — so the
+// number is gone and the census is left to the test below, which counts the tree
+// rather than a comment. The price of an exemption is high — an exempt topic
+// means going back to the state where "order.placed" did nothing for months —
+// which is why anyone adding a line here is expected to answer the question "who
 // listens, in which installation" in the reason.
 var subscriberlessPublications = map[string]string{}
 

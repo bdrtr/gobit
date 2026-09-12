@@ -23,6 +23,7 @@ import (
 	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	productmodels "github.com/bdrtr/gobit/internal/modules/product/models"
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
+	"github.com/bdrtr/gobit/plugins/analytics"
 	"github.com/bdrtr/gobit/plugins/searchpg"
 	"github.com/bdrtr/gobit/plugins/webhookout"
 )
@@ -124,12 +125,18 @@ var (
 func setUpPlugins(ctx context.Context, modules *module.Registry, bus eventbus.EventBus) error {
 	pluginRegistry = coreplugin.NewRegistry(nil)
 	pluginRegistry.Add(searchpg.New())
+	pluginRegistry.Add(analytics.New())
 	// The outbound webhook plugin is installed on the same ground, and it costs
 	// the other scenarios nothing: with no receiver registered its subscriber
 	// writes no row and its job is never run by this harness. What it buys is
 	// webhook_test.go, where the chain from a real order to a real signed HTTP
 	// request is the only place that chain exists in one piece.
 	pluginRegistry.Add(webhookout.New())
+	// The funnel plugin is installed on the same ground for the same reason
+	// (ADR 0153): its three subscriptions are the only place in the tree where
+	// the cart module's real events meet a real consumer. It costs the other
+	// scenarios nothing — it writes a row per cart and reads none of them unless
+	// analytics_test.go asks.
 
 	pluginHost = coreplugin.NewHost(ctr, modules, bus, nil, nil)
 

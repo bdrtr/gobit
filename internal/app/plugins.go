@@ -20,6 +20,7 @@ import (
 	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/plugins/aianthropic"
+	"github.com/bdrtr/gobit/plugins/analytics"
 	"github.com/bdrtr/gobit/plugins/errorotlp"
 	"github.com/bdrtr/gobit/plugins/errorsentry"
 	"github.com/bdrtr/gobit/plugins/files3"
@@ -77,6 +78,7 @@ const codeUnknownPlugin = "plugin_unknown"
 // reporter — and choosing between them is what the PLUGINS variable is for.
 var pluginCatalog = map[string]func() coreplugin.Plugin{
 	aianthropic.Name:      func() coreplugin.Plugin { return aianthropic.New() },
+	analytics.Name:        func() coreplugin.Plugin { return analytics.New() },
 	errorotlp.Name:        func() coreplugin.Plugin { return errorotlp.New() },
 	errorsentry.Name:      func() coreplugin.Plugin { return errorsentry.New() },
 	files3.Name:           func() coreplugin.Plugin { return files3.New() },

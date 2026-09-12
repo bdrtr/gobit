@@ -164,6 +164,9 @@ const CartCompletionName = "workflows.checkout.interop"
 // svcDB is the database pool's name in the container.
 const svcDB = "core.db"
 
+// svcEventBus is the event bus's name in the container.
+const svcEventBus = "core.eventbus"
+
 // codeSetupFailed is the error code reporting that the module could not be
 // wired.
 const codeSetupFailed = "cart_module_setup_failed"
@@ -260,8 +263,19 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// the module does not look for a separate logger registration.
 	log := slog.Default().With("module", ModuleName)
 
+	// The bus is REQUIRED, and the reason is on [service.Options.Events]: the
+	// outbox covers a lost publish, so a missing bus would not lose the event —
+	// it would make every subscriber hear a minute late, in every installation,
+	// with nothing saying so (ADR 0153).
+	bus, err := container.Resolve[service.EventPublisher](c, svcEventBus)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
+			"the %s module could not resolve the event bus (%q)", ModuleName, svcEventBus)
+	}
+
 	svc, err := service.New(service.Options{
 		Repo:   repository.New(pool.Pool()),
+		Events: bus,
 		Logger: log,
 	})
 	if err != nil {

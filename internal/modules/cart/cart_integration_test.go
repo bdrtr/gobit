@@ -27,6 +27,8 @@ import (
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/db"
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/eventbus"
+	"github.com/bdrtr/gobit/core/eventbus/outbox"
 	"github.com/bdrtr/gobit/core/link"
 	"github.com/bdrtr/gobit/core/query"
 	cartmod "github.com/bdrtr/gobit/internal/modules/cart"
@@ -106,6 +108,17 @@ func runWithPostgres(m *testing.M) int {
 		return 1
 	}
 
+	// The outbox table is migrated too, because the module now writes an event
+	// row inside its own transaction (ADR 0153). This line exists because the
+	// cart module's migrations must NOT touch event_outbox: the table belongs to
+	// core/eventbus/outbox and two owners of one table is exactly the state
+	// migration versioning cannot express — the payment harness carries the same
+	// line for the same reason.
+	if err := db.Migrate(ctx, testDSN, outbox.Migrations(), outbox.MigrationOwner); err != nil {
+		fmt.Fprintf(os.Stderr, "the outbox migration could not be applied: %v\n", err)
+		return 1
+	}
+
 	return m.Run()
 }
 
@@ -113,9 +126,21 @@ func runWithPostgres(m *testing.M) int {
 func newService(t *testing.T) *service.Service {
 	t.Helper()
 
-	svc, err := service.New(service.Options{Repo: repository.New(testPool.Pool())})
-	require.NoError(t, err)
+	svc, _ := newServiceWithBus(t)
 	return svc
+}
+
+// newServiceWithBus sets up the same service and returns the bus as well.
+func newServiceWithBus(t *testing.T) (*service.Service, eventbus.EventBus) {
+	t.Helper()
+
+	bus := eventbus.NewInMemory(nil)
+	svc, err := service.New(service.Options{
+		Repo: repository.New(testPool.Pool()), Events: bus,
+	})
+	require.NoError(t, err)
+
+	return svc, bus
 }
 
 // newCart creates a guest cart for the test.
@@ -774,6 +799,10 @@ func TestModuleRegisterBindsToTheContainer(t *testing.T) {
 	require.NoError(t, c.Provide("core.db", testPool))
 	require.NoError(t, c.Provide("core.link", links))
 	require.NoError(t, c.Provide("core.query", query.New(links, c, nil)))
+	// The bus is REQUIRED since ADR 0153: the module publishes two events and
+	// refuses to be built without one. A container without it is a wiring
+	// mistake rather than a configuration, which is why Register fails loudly.
+	require.NoError(t, c.Provide("core.eventbus", eventbus.NewInMemory(nil)))
 
 	mod := cartmod.New(cartmod.Options{})
 	require.NoError(t, mod.Register(ctx, c))
@@ -812,6 +841,7 @@ func TestQueryLayerReadsTheCart(t *testing.T) {
 	require.NoError(t, c.Provide("core.link", links))
 	graph := query.New(links, c, nil)
 	require.NoError(t, c.Provide("core.query", graph))
+	require.NoError(t, c.Provide("core.eventbus", eventbus.NewInMemory(nil)))
 
 	mod := cartmod.New(cartmod.Options{})
 	require.NoError(t, mod.Register(ctx, c))

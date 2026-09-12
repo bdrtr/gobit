@@ -26,10 +26,24 @@ const (
 func newService(t *testing.T) (*service.Service, *fakeStore) {
 	t.Helper()
 
-	store := newFakeStore()
-	svc, err := service.New(service.Options{Repo: store})
-	require.NoError(t, err)
+	svc, store, _ := newServiceWithBus(t)
 	return svc, store
+}
+
+// newServiceWithBus builds the same service and returns the bus as well.
+//
+// It is a separate helper for the same reason the payment module keeps one: the
+// events interest a handful of tests and a third return value would put "_" in
+// every other one.
+func newServiceWithBus(t *testing.T) (*service.Service, *fakeStore, *fakeBus) {
+	t.Helper()
+
+	store := newFakeStore()
+	bus := &fakeBus{}
+	svc, err := service.New(service.Options{Repo: store, Events: bus})
+	require.NoError(t, err)
+
+	return svc, store, bus
 }
 
 // newCart creates a guest cart for the test.
@@ -51,9 +65,18 @@ func newCart(ctx context.Context, t *testing.T, svc *service.Service) models.Car
 // reason at all for the gap to show up on the first request rather than at
 // startup.
 func TestNewFailsAtBuildTimeOnAMissingDependency(t *testing.T) {
-	_, err := service.New(service.Options{})
-	require.Error(t, err)
-	assert.Equal(t, service.CodeNotReady, errors.CodeOf(err))
+	for name, opts := range map[string]service.Options{
+		"no store": {Events: &fakeBus{}},
+		"no bus":   {Repo: newFakeStore()},
+		"neither":  {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := service.New(opts)
+
+			require.Error(t, err)
+			assert.Equal(t, service.CodeNotReady, errors.CodeOf(err))
+		})
+	}
 }
 
 // TestCreateCartRequiresARegion verifies that a cart without a region is

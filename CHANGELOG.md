@@ -81,6 +81,35 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir mağaza artık sepetlerinin NEREYE gittiğini görebiliyor** (ADR 0153). Bir
+  mağazanın vitrini hakkındaki ilk sorusu bir orandır: açılan sepetlerin kaçı
+  siparişe döndü. Pay, sipariş modülü var olduğundan beri otobüstaydı; PAYDA
+  hiçbir yerde yoktu, çünkü sepet modülü hiçbir şey yayımlamıyor ve
+  `core/eventbus`'ı SIFIR kez import ediyordu — yani her alışverişçinin ilk
+  dokunduğu modül, kendisi hakkında hiçbir şey söylemeyen modüldü. Artık iki olay
+  yayımlıyor: `cart.created` ve `cart.completed`, ev deseniyle — işlemin İÇİNDE
+  outbox satırı, commit'ten SONRA doğrudan yayım — ve gövdeyi TEK yerde kuruyor
+  (sipariş modülü onu iki kez elle kuruyor ve iki kopyayı karşılaştıran hiçbir şey
+  yok; ödeme modülünün notu bunu yazıyordu, bu onu izleyen üçüncü modül).
+  Tüketicisi `plugins/analytics`: üç topiğe abone oluyor, olay BAŞINA BİR SATIR
+  yazıyor ve `GET /admin/v1/analytics/funnel` ucunu açıyor. Tamamlama ile sipariş
+  AYRI tutuluyor ve ucun gösterdiği en yararlı şey bu: saga siparişi İKİNCİ
+  adımında veriyor, sepeti SON adımında tamamlıyor, yani arada düşen bir sipariş
+  tamamlanmamış bir sepetle birlikte duruyor. Sayım TABLONUN özelliği: otobüs en
+  az bir kez teslim ediyor ve yayımcılar olay kimliğini kayıttan TÜRETİYOR, o
+  yüzden satırın anahtarı olayın kimliği ve `ON CONFLICT DO NOTHING`; artırılan
+  bir sayaç tek bir yeniden teslimde olmamış bir orana dönüşürdü. Kimliği OLMAYAN
+  bir olay yazılmıyor REDDEDİLİYOR — boş anahtar birincil anahtarı kapar ve
+  sonraki her olay onun tekrarı gibi görünürdü (ürün modülünün üç topiği kimlik
+  taşımıyor, yani bu varsayımsal bir şekil değil). Satırın önerdiği SIRA ölçülüp
+  reddedildi: `core/provider`'a bir `Analytics` arayüzü + yayımlanmış-adlar
+  defterine üç satır eklenip hiçbir gerçekleme yazılmadığında bütün `internal/arch`
+  şeridi YEŞİL kalıyor — yani o dilim, var olmayan bir tüketici için 1.0.0'a
+  verilmiş bir söz (ADR 0063 tam bunu reddediyor). Bedeli açık: iki topik daha
+  ZORUNLU olarak iletiliyor ve `cart.created` ağacın en yüksek hacimli topiği —
+  terk edilen her sepet artık bir webhook teslimi. Bu yüzden SATIR başına topik
+  yok.
+
 - **Mağaza artık müşteri için PARA TUTABİLİYOR** (ADR 0152). Geç kalan bir
   teslimattan sonra müşteriyi elde tutmanın iki yolu var — parayı geri göndermek
   ya da müşterinin hesabına yazmak — ve bu depo yalnızca birincisini
