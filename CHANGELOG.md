@@ -20,6 +20,24 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Düzeltmeler
 
+- **İki yoldan giden bir olayın gövdesi İKİ kez elle yazılmıştı** (D109).
+  `order.placed` hız için doğrudan yayımlanıyor, güvence için outbox'a yazılıyor
+  ve ikisi aynı TÜRETİLMİŞ olay kimliğini taşıyor — yükü ise dokuz anahtarlık iki
+  ayrı map literaliydi, okuduğum gün aynı ve karşılaştıranı olmayan. Bir kopyaya
+  alan eklenmesi tek bir olay kimliğine iki gövde verirdi ve abonenin hangisini
+  gördüğü, hızlı yolun mu röleyin mi yetiştiğine bağlı olurdu. Bunu bir defter
+  satırı yapan şey kuralın NEREDE durduğu: ödeme modülü yükünü yazıldığı günden
+  beri tek yerde kuruyor ve godoc'u order modülünü ADIYLA "kaçındığı şekil" diye
+  işaret ediyordu — kural doğruydu, yazılıydı, ve hiçbir yerde uygulanmıyordu.
+  Düzeltmeden önce ölçüldü: altı modül servisi yayımlıyor, beşi gövdeyi
+  adlandırılmış bir fonksiyondan kuruyor, biri kurmuyordu; beş konu iki yoldan
+  gidiyor. Kapı artık her test-dışı Go dosyasını yürüyüp bir outbox yazımıyla bir
+  `eventbus.Event` literalini paket içinde KONUYA göre eşliyor ve yük ifadeleri
+  aynı kurucu çağrısı olmayan çifti reddediyor; üç mutasyonla kanıtlandı, biri
+  özgün literali geri koymak. Aynı okumadan iki bayat cümle döküldü: ödeme
+  godoc'undaki suçlama (artık kapının tarifi) ve analytics eklentisinin dokuz
+  anahtar taşıyan bir yük için yazdığı "sekiz anahtarın ikisi".
+
 - **Bir kapı, beklediği şeyden SONRA koşan bir yan etkiye iddia kuruyordu**
   (D108). `TestRedisIntegrationTakesOverWhatADeadConsumerWasHolding` (ADR 0162)
   devralınan olayın handler'a ulaşmasını bekleyip askı listesinin boş olduğunu

@@ -63,9 +63,11 @@ const (
 // moneyMovedPayload is the body of both events.
 //
 // It is built in ONE place and used by both the outbox write and the direct
-// publish. The order module builds its payload twice, by hand, with nothing
-// comparing the two — a shape where one copy can gain a field and the other
-// cannot, and where the same event id would then carry two different bodies.
+// publish. Built twice by hand, one copy can gain a field while the other does
+// not, and the same event id would then carry two different bodies — the order
+// module was written that way and was repaired when nothing turned out to be
+// comparing the two (D109). The shape is now a gate rather than a habit:
+// internal/arch refuses a topic whose two paths do not take the same builder.
 func moneyMovedPayload(collectionID string, at time.Time) map[string]any {
 	return map[string]any{
 		EventFieldCollectionID: collectionID,

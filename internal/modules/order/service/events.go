@@ -121,17 +121,7 @@ func (s *Service) publishOrderPlaced(ctx context.Context, order models.Order, it
 	event := eventbus.Event{
 		ID:   outboxEventID(order.ID),
 		Name: EventOrderPlaced,
-		Data: map[string]any{
-			EventFieldOrderID:      order.ID,
-			EventFieldDisplayID:    strconv.FormatInt(order.DisplayID, 10),
-			EventFieldStatus:       order.Status.String(),
-			EventFieldRegionID:     order.RegionID,
-			EventFieldCustomerID:   order.CustomerID,
-			EventFieldCurrencyCode: order.CurrencyCode,
-			EventFieldTotal:        strconv.FormatInt(order.Total, 10),
-			EventFieldItemCount:    strconv.Itoa(itemCount),
-			EventFieldPlacedAt:     order.PlacedAt.UTC().Format(time.RFC3339Nano),
-		},
+		Data: orderPlacedPayload(order, itemCount),
 	}
 
 	if err := s.events.Publish(ctx, event); err != nil {
@@ -166,7 +156,23 @@ func (s *Service) publishOrderPlaced(ctx context.Context, order models.Order, it
 func (s *Service) recordOrderPlaced(
 	ctx context.Context, eventID string, order models.Order, itemCount int,
 ) error {
-	return s.store.WriteOutboxEvent(ctx, eventID, EventOrderPlaced, map[string]any{
+	return s.store.WriteOutboxEvent(ctx, eventID, EventOrderPlaced, orderPlacedPayload(order, itemCount))
+}
+
+// orderPlacedPayload is the body of the "order.placed" event.
+//
+// It is built in ONE place and given to both the outbox write and the direct
+// publish, because the two carry the SAME event id. Written twice by hand — as
+// it was until D109 — one copy could gain a field while the other did not, and
+// the same event would then have two bodies: which one a subscriber saw would
+// depend on whether the fast path or the relay delivered it, and nothing
+// compared them. The payment module has built its payload this way since it was
+// written and its godoc named this function's absence as the shape it avoided.
+//
+// For why the numeric fields go in as STRINGS see [EventFieldTotal] and the
+// block above it.
+func orderPlacedPayload(order models.Order, itemCount int) map[string]any {
+	return map[string]any{
 		EventFieldOrderID:      order.ID,
 		EventFieldDisplayID:    strconv.FormatInt(order.DisplayID, 10),
 		EventFieldStatus:       order.Status.String(),
@@ -176,7 +182,7 @@ func (s *Service) recordOrderPlaced(
 		EventFieldTotal:        strconv.FormatInt(order.Total, 10),
 		EventFieldItemCount:    strconv.Itoa(itemCount),
 		EventFieldPlacedAt:     order.PlacedAt.UTC().Format(time.RFC3339Nano),
-	})
+	}
 }
 
 // outboxEventID derives the event's id from the order's.

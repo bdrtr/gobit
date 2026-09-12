@@ -101,7 +101,7 @@ func (m *funnelModule) record(ctx context.Context, event eventbus.Event, momentK
 // stringField reads a required string out of the payload.
 //
 // A payload is read field by field rather than unmarshalled into a struct,
-// because this plugin needs two of the eight keys "order.placed" carries and
+// because this plugin needs two of the nine keys "order.placed" carries and
 // naming the rest would make every field the order module adds a field this
 // plugin has an opinion about.
 func stringField(event eventbus.Event, key string) (string, error) {
