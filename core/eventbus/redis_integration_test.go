@@ -502,15 +502,28 @@ func TestRedisIntegrationTakesOverWhatADeadConsumerWasHolding(t *testing.T) {
 			"reports it as delivered")
 	}
 
+	// The bus is stopped BEFORE the pending list is read, and the order is the
+	// whole point: the ACK runs in a defer AFTER the handler returns, so reading
+	// the list the moment the handler fires is a race against it. It was written
+	// that way first, it won the race on the machine that wrote it, and it lost
+	// on the runner. Shutdown waits for the consume loop, and the loop cannot
+	// return until the dispatch it is inside — ACK included — is finished.
+	if err := successor.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown returned an error: %v", err)
+	}
+
 	pending, err := client.XPendingExt(t.Context(), &redis.XPendingExtArgs{
 		Stream: stream, Group: cfg.Group, Start: "-", End: "+", Count: 10,
 	}).Result()
 	if err != nil {
 		t.Fatalf("XPendingExt returned an error: %v", err)
 	}
-	if len(pending) != 0 {
-		t.Errorf("the pending list still holds %d entries after the takeover; a taken-over "+
-			"message that is not ACKed has only changed owner", len(pending))
+	for _, entry := range pending {
+		// The OWNER is what tells the two failures apart: still under the killed
+		// consumer means the takeover never happened, while under this process's
+		// name means it happened and the ACK did not.
+		t.Errorf("the takeover left %s pending under %q after %s; a taken-over message that "+
+			"is not ACKed has only changed owner", entry.ID, entry.Consumer, entry.Idle)
 	}
 }
 

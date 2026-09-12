@@ -20,6 +20,20 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Düzeltmeler
 
+- **Bir kapı, beklediği şeyden SONRA koşan bir yan etkiye iddia kuruyordu**
+  (D108). `TestRedisIntegrationTakesOverWhatADeadConsumerWasHolding` (ADR 0162)
+  devralınan olayın handler'a ulaşmasını bekleyip askı listesinin boş olduğunu
+  iddia ediyordu; oysa ACK, handler DÖNDÜKTEN sonra bir `defer` içinde
+  koşuyor ve handler tamponlu kanala yazar yazmaz dönüyor. Yani iddia ACK'ten
+  önce koşabilirdi — CI'da koştu da, test yeşil girdikten bir push sonra. Yarış
+  İNŞADAN kanıtlı, üretimden değil: testi yazan makinede `-race` ile beş koşumda
+  bir kez bile düşmedi, ki zaten bu yüzden geçti. Onarım hoşgörü değil SIRA:
+  `Shutdown` tüketim döngüsünü bekliyor, döngü de içinde bulunduğu dağıtım —
+  ACK dahil — bitmeden dönemiyor. Hata iletisi artık askıdaki kaydın SAHİBİNİ de
+  yazıyor: öldürülen tüketicinin adı altında olması devralmanın hiç olmadığını,
+  bu sürecin adı altında olması olduğunu ama ACK'lenmediğini söyler, ve eski
+  ileti okuyana hangisi olduğunu söyleyemiyordu.
+
 - **Bir entegrasyon testi, bu deponun hiç başlatmadığı bir veritabanına bağlandı**
   (D107). `TestTheToolListIsThisInstallationsOwnSchema` (ADR 0161) `config.Load()`
   çağırıp `DATABASE_URL` vermiyordu, yani localhost:5432'de ne cevap veriyorsa ona
