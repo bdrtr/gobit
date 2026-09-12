@@ -127,6 +127,7 @@ const (
 	codeSubscribeFailed = "plugin_subscribe_failed"
 	codeRouteConflict   = "plugin_route_conflict"
 	codeRouteInvalid    = "plugin_route_invalid"
+	codeRouteReserved   = "plugin_route_reserved"
 )
 
 // Plugin is a plugin adding a capability to the core.
@@ -892,6 +893,20 @@ func (r *Registry) MountRoutes(router chi.Router, h *Host) error {
 		}
 
 		for _, pattern := range wanted {
+			if underAdminPanel(pattern) {
+				r.log.Error("plugin route inside the admin panel",
+					"plugin", registration.plugin, "route", pattern)
+
+				return coreerrors.Invalid(codeRouteReserved,
+					"the %s plugin tried to bind %s, which is inside the admin panel's "+
+						"address (%s). The panel's rules live there — a content policy, an "+
+						"origin check and a privilege per screen — and a route bound on the "+
+						"router beside it gets the first two and not the third. A plugin "+
+						"reaches the panel through RegisterAdminPage, which names a "+
+						"privilege and hands over a script the panel serves itself",
+					registration.plugin, pattern, adminPanelPrefix)
+			}
+
 			if _, conflicts := existing[pattern]; !conflicts {
 				continue
 			}
@@ -916,6 +931,40 @@ func (r *Registry) MountRoutes(router chi.Router, h *Host) error {
 	}
 
 	return nil
+}
+
+// adminPanelPrefix is the address the admin panel owns.
+//
+// It carries the same value as internal/adminui's URLPrefix and does NOT import
+// it: core may not reach into internal (ADR 0026), so the value is a contract
+// written twice. That the two agree is asserted in internal/arch, the way the
+// provider registry names are — a prefix that drifted would make this refusal
+// guard an address nothing serves, which is worse than no refusal because it
+// reads like one.
+const adminPanelPrefix = "/admin/ui"
+
+// underAdminPanel reports whether a collected pattern falls inside the panel's
+// address.
+//
+// # The argument is not a path
+//
+// [collectPatterns] keys on the method and the path together, so the value
+// arriving here carries a verb and a space before the path, and a prefix test
+// against the path alone matches NOTHING. The first version of this function did
+// exactly that and the refusal never fired; its gate caught it, which is the
+// only reason this comment exists.
+//
+// # The match is on a SEGMENT boundary
+//
+// A plain prefix test would refuse "/admin/uipload" — a path that has nothing to
+// do with the panel and would be turned away with a message about screens.
+func underAdminPanel(pattern string) bool {
+	path := pattern
+	if _, rest, found := strings.Cut(pattern, " "); found {
+		path = rest
+	}
+
+	return path == adminPanelPrefix || strings.HasPrefix(path, adminPanelPrefix+"/")
 }
 
 // wantedPatterns collects the patterns the route function wants to bind.

@@ -107,6 +107,32 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Panelin ADRESİ artık panelin** (ADR 0157, D97). ADR 0155 içerik politikasını
+  panelin rotalarının girdiği TEK bir chi grubuna kurmuştu; gerekçe doğruydu,
+  ÖZNESİ yanlıştı: bir grup panelin BAĞLADIĞI her rotayı kapsar, politikanın
+  söylediği cümle ise bir ADRES hakkında. Bir eklentinin `AddRoutes`'u aynı
+  router'da, panelden SONRA koşuyor ve tek kontrolü desen çakışması — çakışmayan
+  bir desen grubun dışına bağlanıyor. Probla ölçüldü, tartışılmadı:
+  `/admin/ui/rogue` boş `Content-Security-Policy` ve `X-Frame-Options` olmadan 200
+  dönüyordu, yanındaki panel rotası ikisini de taşıyordu. Delik ÜÇ halka değil BİR
+  halka derindi — kompozisyon kökü öteki iki panel halkasını (köken ve kimlik)
+  zaten ÖNEKE kuruyor, yani sayfa operatörün oturumunun içindeydi ve üzerinde
+  hangi betiklerin koşabileceğini söyleyen tek kural yoktu. Politika artık o iki
+  halkanın yanına, önekin tamamına ve ONLARDAN ÖNCE kuruluyor: bir reddi ve bir
+  404'ü de kapsıyor. YETKİ ise politikanın kapatamadığı İKİNCİ delikti — ADR 0156
+  her panel yolunu panelin kendi tablosunda fiyatlıyor, panelin bağlamadığı bir
+  rota hiçbir tabloda değil, yani hiç yetkisi olmayan bir operatör ona ulaşıyordu.
+  Bu yüzden karar iki yarım: bir eklenti artık panelin adresinin içine rota
+  BAĞLAYAMIYOR, kayıt açılışta reddediliyor ve ret iletisi GİRİŞ YOLUNU
+  adlandırıyor — `RegisterAdminPage`, bir yetki bildiren ve panelin kendi
+  kaynağından servis ettiği bir betik veren yol. Önek iki yerde yazılı (panel ve
+  `core/plugin`, ki o `internal`'ı import edemez) ve ikisini DAVRANIŞ bağlıyor:
+  panelin kendi sabiti registry'ye veriliyor ve reddin ateşlenmesi gerekiyor —
+  kaymış bir kopya, hiçbir şeyin servis etmediği bir adresi korurdu, ki bu kural
+  gibi okunup kural olmayan şeydir. Ret SEGMENT sınırında eşleşiyor, yani
+  `/admin/uipload` hâlâ bağlanıyor. Ağaçta panelin adresine bağlanan hiçbir şey
+  yoktu; panele ulaşan tek eklenti zaten sanctioned yolu kullanıyor.
+
 - **Bir panel ekranı artık bir YETKİYE mal oluyor** (ADR 0156, D92, D93). Yönetim
   API'si yetmiş bir rotada bir kapsam adlandırıyor ve `internal/e2e`'nin yetki
   matrisi, kapsamı olmayan geçerli bir kimliğin 403 aldığını uçtan uca

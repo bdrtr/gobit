@@ -1100,3 +1100,76 @@ func TestTwoPluginsEachBringingAJobKeepTheirOwnNames(t *testing.T) {
 	assert.Equal(t, "first", jobs[0].PluginName())
 	assert.Equal(t, "second", jobs[1].PluginName())
 }
+
+// TestAPluginCannotBindInsideTheAdminPanel is ADR 0157's refusal.
+//
+// # Why a refusal and not a policy fix alone
+//
+// The content policy now covers the panel's whole address, so a route bound
+// there would at least carry it. What it would NOT carry is the privilege: the
+// panel prices every one of its paths in a table of its own, and a route the
+// panel did not bind is in no table. A signed-in operator holding no grant at
+// all would reach it — which is exactly the door ADR 0156 shut one commit
+// earlier, reopened from the side.
+//
+// The way in is RegisterAdminPage, which names a privilege and hands over a
+// script the panel serves from its own origin.
+func TestAPluginCannotBindInsideTheAdminPanel(t *testing.T) {
+	t.Parallel()
+
+	for name, path := range map[string]string{
+		"the panel's own address": "/admin/ui",
+		"a screen under it":       "/admin/ui/rogue",
+		"deeper still":            "/admin/ui/a/b/c",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			err := mountPluginRoute(t, path)
+
+			require.Error(t, err, "%s was bound inside the panel's address", path)
+			assert.Contains(t, err.Error(), "RegisterAdminPage",
+				"the refusal must name the way IN; a rule that only says no teaches "+
+					"nothing about the sanctioned path")
+		})
+	}
+}
+
+// TestAPluginMayBindBesideTheAdminPanel is the other direction, and it is what
+// makes the refusal a rule rather than a prefix test.
+//
+// "/admin/uipload" shares the letters and not the address. Refusing it would
+// turn away a path that has nothing to do with the panel, with a message about
+// screens — the shape of a check whose subject is a string rather than a thing.
+func TestAPluginMayBindBesideTheAdminPanel(t *testing.T) {
+	t.Parallel()
+
+	for name, path := range map[string]string{
+		"a longer first segment": "/admin/uipload",
+		"the admin API":          "/admin/v1/webhooks",
+		"its own tree":           "/plugin-thing",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.NoError(t, mountPluginRoute(t, path),
+				"%s is not inside the panel's address and must bind", path)
+		})
+	}
+}
+
+// mountPluginRoute takes one plugin route through the registry's mount.
+func mountPluginRoute(t *testing.T, path string) error {
+	t.Helper()
+
+	log := slog.New(slog.DiscardHandler)
+	c := container.New(log)
+	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
+
+	h := coreplugin.NewHost(c, nil, nil, log, nil)
+	h.AddRoutes(func(r chi.Router) {
+		r.Get(path, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	})
+
+	return coreplugin.NewRegistry(log).MountRoutes(chi.NewRouter(), h)
+}

@@ -177,26 +177,37 @@ func TestTheScreenRendersItsShellAndServesItsScript(t *testing.T) {
 			"unchanged one is not")
 }
 
-// TestTheShellCarriesTheSecurityPolicy ties the two halves of this slice
+// TestTheShellWouldCarryTheSecurityPolicy ties the two halves of this slice
 // together.
 //
 // The screen runs a plugin's script inside the operator's session. The policy is
 // what says that script may only come from this origin — which is why the panel
 // serves the BYTES rather than a URL.
-func TestTheShellCarriesTheSecurityPolicy(t *testing.T) {
+//
+// # What this can and cannot assert
+//
+// The policy is no longer installed by this package: since ADR 0157 it is a
+// prefix-scoped middleware in the composition root's guard stack, because the
+// panel's own route group was NARROWER than the address an operator's browser
+// reaches (D97). So what is asserted here is the wrapping — that a registered
+// screen's shell and script, served through the same middleware, come back with
+// the policy. That the composition root actually installs it over the whole
+// prefix is internal/app's claim and is asserted there, on the real stack.
+func TestTheShellWouldCarryTheSecurityPolicy(t *testing.T) {
 	screens, err := validatePages([]Page{testPage()})
 	require.NoError(t, err)
 
 	templates, err := loadTemplates()
 	require.NoError(t, err)
 
-	ui := &UI{templates: templates, pages: screens}
+	ui := &UI{templates: templates, pages: screens, scopes: screenScopes(screens)}
 	r := chi.NewRouter()
+	r.Use(SecurityHeaders)
 	ui.Routes(r)
 
 	for _, path := range []string{testPage().Path, testPage().Path + scriptSuffix} {
 		rec := httptest.NewRecorder()
-		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, http.NoBody))
+		r.ServeHTTP(rec, signedInRequest(path))
 
 		policy := rec.Header().Get(headerContentSecurityPolicy)
 		require.NotEmpty(t, policy, "%s answered with no policy", path)

@@ -61,7 +61,7 @@ const (
 	frameOptions       = "DENY"
 )
 
-// withSecurityHeaders puts the policy on every response of the routes it wraps.
+// SecurityHeaders puts the policy on every response of the routes it wraps.
 //
 // # Why a middleware and not a call per handler
 //
@@ -70,11 +70,20 @@ const (
 // copying a neighbor, and a neighbor that had forgotten the call would
 // propagate the omission. Wrapped once, a new route is covered by existing.
 //
-// It is installed with chi's Group inside [UI.Routes] rather than through the
-// composition root's guard stack, because the stack is shared with /admin/v1 and
-// /store/v1 — surfaces that serve JSON to programs and have no use for a policy
-// about scripts. The header belongs to the pages, so it is bound with them.
-func withSecurityHeaders(next http.Handler) http.Handler {
+// # Why the composition root installs it on the PREFIX
+//
+// ADR 0155 put it on the chi group [UI.Routes] opens, which covers every route
+// the panel binds — and that is a narrower thing than every response under the
+// panel's address. A route bound on the same router AFTER the panel's group sits
+// outside it: it still passes the identity and origin rings, which the guard
+// stack scopes to the PREFIX, and it answered an operator's browser with no
+// policy at all. Measured, not argued, and recorded as D97.
+//
+// So it moved to where those two rings already are (ADR 0157). The stack is
+// shared with /admin/v1 and /store/v1 — surfaces that serve JSON to programs and
+// have no use for a policy about scripts — which is why it is SCOPED there, to
+// the panel's prefix, exactly as the origin and identity rings are.
+func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header := w.Header()
 		header.Set(headerContentSecurityPolicy, contentSecurityPolicy)

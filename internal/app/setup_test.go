@@ -1576,25 +1576,28 @@ func TestThePanelSessionReachesTheAdminAPIOnlyUnderTheOriginCheck(t *testing.T) 
 	})
 }
 
-// TestEveryPanelRouteCarriesTheSecurityPolicy is the CSP's population check
-// (ADR 0155).
+// TestEverythingUnderThePanelsPrefixCarriesThePolicy is the CSP's population
+// check (ADR 0155, widened by ADR 0157).
 //
-// # The population is WALKED, not listed
+// # The population was the wrong one
 //
-// The panel binds twenty paths today and the twenty-first will be written by
-// copying a neighbor. A test naming the paths it checks would cover exactly the
-// ones somebody remembered, which is the shape this repository keeps logging: a
-// rule whose audited population is narrower than the sentence it states.
+// It used to be "every route the panel binds", walked off the panel's own
+// router. That is narrower than the sentence the policy states, and the gap is
+// not hypothetical: a plugin's AddRoutes runs on the SAME router the panel was
+// mounted on and runs AFTER it, so a pattern that collides with nothing is bound
+// outside the panel's chi group. Measured — such a route answered 200 with an
+// empty Content-Security-Policy while a panel route beside it carried the full
+// one (D97).
 //
-// So the router is walked and EVERY panel route is requested. What is asserted
-// is the header's presence on the response, whatever the status — a redirect to
-// the login page is the most common answer here, and a policy that arrived only
-// with a 200 would be absent from exactly the pages an unauthenticated browser
-// sees.
-func TestEveryPanelRouteCarriesTheSecurityPolicy(t *testing.T) {
+// So the subject is now the PREFIX. The stack under test is the real one the
+// composition root builds, a route is bound under /admin/ui the way a plugin
+// would bind it, and a path that matches no route at all is requested too: the
+// policy has to be on the 404 as well, because "this address answers with a
+// policy" must not depend on something being there.
+func TestEverythingUnderThePanelsPrefixCarriesThePolicy(t *testing.T) {
 	t.Parallel()
 
-	identity := panelIdentity{token: "a-valid-admin-token"}
+	identity := panelIdentity{token: "a-valid-admin-token", scopes: []string{"product:read"}}
 
 	c := container.New(discardLogger())
 	require.NoError(t, c.Provide(adminui.ServiceQuery, panelCatalog{}))
@@ -1604,18 +1607,29 @@ func TestEveryPanelRouteCarriesTheSecurityPolicy(t *testing.T) {
 	}))
 	require.NoError(t, c.Provide(adminui.InteropAuth, identity))
 
-	// A registered screen is in the walk. Built with NIL pages this check audited
-	// only the paths the panel ships — narrower than the sentence it states, which
-	// is the class it was written against — and a plugin's shell and script could
-	// have served with no policy at all while it stayed green.
+	ring := &adminui.Ring{}
+	guards, _, err := guardStack(baseConfig(), identity, ring, nil, nil, discardLogger())
+	require.NoError(t, err)
+
+	r := corehttp.NewRouter(corehttp.RouterOptions{Version: "test", Middlewares: guards})
+
 	panel, err := adminui.FromContainer(c, false, []adminui.Page{{
 		Label: "Policy probe", Path: adminui.URLPrefix + "/policy-probe",
 		Scope: "probe:read", Script: []byte("// probe\n"),
 	}})
 	require.NoError(t, err)
-
-	r := corehttp.NewRouter(corehttp.RouterOptions{Version: "test"})
 	panel.Routes(r)
+	ring.Bind(panel)
+
+	// What a plugin's AddRoutes does: the same router, after the panel, outside
+	// its group. Nothing in the tree binds here today and ADR 0157 refuses it at
+	// startup — this is the shape the refusal exists for, and the policy has to
+	// hold even if something reaches the router another way.
+	const rogue = adminui.URLPrefix + "/bound-after-the-panel"
+	r.Get(rogue, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("<h1>a page the panel did not write</h1>"))
+	})
 
 	type route struct{ method, pattern string }
 	var routes []route
@@ -1629,18 +1643,21 @@ func TestEveryPanelRouteCarriesTheSecurityPolicy(t *testing.T) {
 		return nil
 	}))
 
-	require.GreaterOrEqual(t, len(routes), 22,
-		"the walk found %d panel routes, fewer than the twenty-two bound when this check "+
-			"was derived from the router — twenty the panel ships plus a registered "+
-			"screen's shell and script. Either routes were removed, or the walk has gone "+
-			"BLIND — and a blind walk passes every route, including one that answers an "+
-			"operator's browser with no policy at all", len(routes))
+	require.GreaterOrEqual(t, len(routes), 23,
+		"the walk found %d routes under the panel's prefix, fewer than the twenty-three "+
+			"bound when this check was derived: twenty the panel ships, a registered "+
+			"screen's shell and script, and the one bound after the group. Either routes "+
+			"were removed, or the walk has gone BLIND — and a blind walk passes every "+
+			"route, including one that answers an operator's browser with no policy",
+		len(routes))
+
+	// A path matching NO route is part of the population on purpose.
+	routes = append(routes, route{
+		method: http.MethodGet, pattern: adminui.URLPrefix + "/no-such-page",
+	})
 
 	for _, bound := range routes {
 		t.Run(bound.method+" "+bound.pattern, func(t *testing.T) {
-			// The path parameters are filled with a value that resolves to
-			// nothing; what is under test is the header, which is written before
-			// the handler runs.
 			path := pathParamPattern.ReplaceAllString(bound.pattern, "csp-probe")
 
 			req := httptest.NewRequest(bound.method, path, http.NoBody)
@@ -1648,10 +1665,10 @@ func TestEveryPanelRouteCarriesTheSecurityPolicy(t *testing.T) {
 			r.ServeHTTP(rec, req)
 
 			assert.NotEmpty(t, rec.Header().Get("Content-Security-Policy"),
-				"this panel route answers with no Content-Security-Policy (status %d).\n"+
-					"The panel renders HTML inside an administrator's session and serves "+
-					"scripts that carry it, so a page with no policy is a page where any "+
-					"injected script acts as the administrator.", rec.Code)
+				"this path under the panel's prefix answers with no Content-Security-Policy "+
+					"(status %d).\nThe panel renders HTML inside an administrator's session "+
+					"and serves scripts that carry it, so a page with no policy is a page "+
+					"where any injected script acts as the administrator.", rec.Code)
 			assert.Equal(t, "no-referrer", rec.Header().Get("Referrer-Policy"),
 				"a panel path carries identifiers, and a Referer sent to another site "+
 					"hands them over")

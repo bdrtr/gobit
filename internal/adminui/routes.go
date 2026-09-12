@@ -22,10 +22,15 @@ import (
 // the router is built — so installing it from here is IMPOSSIBLE. The split is
 // written down in ADR 0011.
 func (u *UI) Routes(r chi.Router) {
-	// Every panel route goes inside ONE group so the policy is installed once
-	// (ADR 0155). chi's Group inlines the parent's middleware and starts its own
-	// stack, which is what makes Use legal here even though the router already
-	// carries routes — the restriction in the note above is about the PARENT.
+	// The group remains, and what it carries has changed. The content policy used
+	// to be installed here (ADR 0155) and now sits in the composition root's
+	// guard stack, scoped to the panel's PREFIX: a route bound on this router
+	// after this group — which is what a plugin's own registration did — is
+	// outside the group and was answering with no policy at all (ADR 0157, D97).
+	//
+	// chi's Group inlines the parent's middleware and starts its own stack, which
+	// is what makes Use legal here even though the router already carries routes;
+	// the restriction in the note above is about the PARENT.
 	r.Group(u.routes)
 }
 
@@ -42,8 +47,6 @@ func (u *UI) Routes(r chi.Router) {
 // with no privilege, the other that each route demands the privilege its OWN path
 // is listed under.
 func (u *UI) routes(r chi.Router) {
-	r.Use(withSecurityHeaders)
-
 	r.Get(StylesheetPath, u.needs(StylesheetPath, u.serveStylesheet))
 	r.Get(ReviewsScriptPath, u.needs(ReviewsScriptPath, u.serveReviewsScript))
 	r.Get(ReviewsPath, u.needs(ReviewsPath, u.showReviews))

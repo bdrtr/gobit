@@ -637,7 +637,11 @@ past and is not corrected retroactively.
 - **A registered screen gets the frame and a script, and nothing else.** There
   is no way to add a column or a section to an existing screen; ADR 0030's
   refusal of server-renderer extension points is why there are no template
-  slots. The other half of this bullet — "and no page-level scope" — was true
+  slots. Since [ADR 0157](adr/0157-the-panels-address-belongs-to-the-panel.md) a
+  plugin cannot serve a page of its own at the panel's address either — the
+  registry refuses the binding at startup, because the rules that live there (a
+  content policy, an origin check, a privilege per screen) are applied by the
+  panel and a route beside it would get only the first two. The other half of this bullet — "and no page-level scope" — was true
   until [ADR 0156](adr/0156-a-panel-screen-costs-a-privilege.md) and is gone: a
   registered screen now declares the privilege it requires and a registration
   without one is refused at startup.

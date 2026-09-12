@@ -1,14 +1,23 @@
 package arch_test
 
 import (
+	"context"
+	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/bdrtr/gobit/core/container"
+	corehttp "github.com/bdrtr/gobit/core/http"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
+	"github.com/bdrtr/gobit/internal/adminui"
 )
 
 // The panel's privileges have to be privileges that EXIST (ADR 0156).
@@ -94,4 +103,45 @@ func declaredScopes(t *testing.T) map[string]bool {
 	}
 
 	return out
+}
+
+// TestThePluginRefusalCoversTheRealPanelAddress ties two hand-written copies of
+// one address by BEHAVIOR.
+//
+// core/plugin refuses a plugin route inside the admin panel (ADR 0157) and
+// spells the panel's prefix itself, because core may not import internal. A
+// string comparison would need that constant exported for no other reason, and
+// it would prove less: what matters is not that two literals match but that the
+// refusal actually covers the address the panel is served at. So the panel's own
+// constant is fed to the registry, and the refusal has to fire.
+//
+// The other direction is asserted too. A refusal that fired on everything would
+// pass the first half while taking every plugin's routes down with it.
+func TestThePluginRefusalCoversTheRealPanelAddress(t *testing.T) {
+	t.Parallel()
+
+	log := slog.New(slog.DiscardHandler)
+
+	mount := func(path string) error {
+		c := container.New(log)
+		t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
+
+		h := coreplugin.NewHost(c, nil, nil, log, nil)
+		h.AddRoutes(func(r chi.Router) {
+			r.Get(path, func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
+		})
+
+		return coreplugin.NewRegistry(log).MountRoutes(chi.NewRouter(), h)
+	}
+
+	require.Error(t, mount(adminui.URLPrefix+"/anything"),
+		"a plugin bound a route inside %s, the address the panel is actually served at. "+
+			"core/plugin spells that prefix by hand; if its copy drifted, the refusal "+
+			"guards an address nothing serves — which reads like a rule and is not one",
+		adminui.URLPrefix)
+
+	require.NoError(t, mount(corehttp.DefaultAdminPrefix+"/plugin-endpoint"),
+		"the refusal reached the admin API; a plugin's own endpoints live there")
 }
