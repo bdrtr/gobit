@@ -114,7 +114,8 @@ var moduleContract = map[string]struct {
 // package is deleted, the test still fails. So an exemption is a debt, and the
 // debt stays visible.
 //
-// Today it is empty: seventeen of the repository's seventeen modules are registered.
+// Today it is empty: every module the repository has is registered. The count that
+// stood here said seventeen of seventeen while the tree held eighteen (D110).
 var unregisteredModules = map[string]string{}
 
 // setupsOffTheStartupPath maps the import path of the workflow packages that are

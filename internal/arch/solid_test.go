@@ -469,7 +469,9 @@ func TestLayerPurity(t *testing.T) {
 // layerExemptions names the (module, layer) pairs that legitimately have no
 // such directory.
 //
-// It is EMPTY today: all 17 modules carry both an api and a service directory.
+// It is EMPTY today: every module carries both an api and a service directory.
+// The number is deliberately absent — it said 17 while the tree held 18 (D110),
+// and the sentence never needed one.
 // The map exists so that a module which genuinely has no HTTP surface can say
 // so in one reviewed line, instead of the counter above being loosened into an
 // assertion that no longer catches a renamed layer.

@@ -20,6 +20,26 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Düzeltmeler
 
+- **Beş cümle modül nüfusunu on yedi diye fiyatlıyordu, ağaç on sekiz tutuyor**
+  (D110). Sayım kapısı bir iddiayı ancak nüfusun YOLU sayıyla aynı satırdaysa
+  denetime alıyor ve bu ölçülmüş bir karar: çıplak "sayı + çoğul isim" şekli alt
+  kümelerce baskın, yalnız `internal/arch` içinde otuz tane var ("iki modül bir
+  şemayı paylaşıyor", "üç modül", "bir modül"). O yüzden kapı GENİŞLETİLMEDİ —
+  dizine göre bir gevşetme tam o cümleleri içine alırdı, ki kapının kendi
+  godoc'unun reddettiği "yanına kontrol eklenmiş muafiyet listesi" şekli bu.
+  Okuma üç ayrı cümle türü ayırdı: TARİHLİ ölçüm ("2026-09-07'de ölçüldü, matris
+  on beş modül adlandırıyordu") tarihindeki doğruyu söylüyor ve öyle bırakıldı;
+  GEREKSİZ sayı ("17 modülün hepsi hem api hem service dizini taşıyor",
+  "deponun on yedi modülünün on yedisi kayıtlı", "aynı adlı bir dosya on yedi
+  modülde birden var" — iki kopya) cümlenin ihtiyacı olmayan şeydi ve silindi,
+  böylece bir daha çürüyemez; ve BİLGİ TAŞIYAN sayı ("on yedi modül api
+  paketinden ON DÖRDÜ, diğer üçü sabitlerle tanımlıyor") iğnelenmiş bir kayda
+  dönüştü: türetilmiş kapsamın dışında kalan paketler artık her birinin
+  gerekçesini adlandıran bir kayda karşı iddia ediliyor. İğne, düzyazının
+  kaçırdığını buldu: `settings/api` kapsamdan sessizce çıkmış, ve adlandırılan
+  üçünden FARKLI bir sebeple — hiç `openapi.Parameter` kurmuyor ve hiç query
+  parametresi okumuyor, yani onlardan farklı olarak denetimsiz kalan bir şey yok.
+
 - **İki yoldan giden bir olayın gövdesi İKİ kez elle yazılmıştı** (D109).
   `order.placed` hız için doğrudan yayımlanıyor, güvence için outbox'a yazılıyor
   ve ikisi aynı TÜRETİLMİŞ olay kimliğini taşıyor — yükü ise dokuz anahtarlık iki

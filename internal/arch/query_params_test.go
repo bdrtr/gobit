@@ -48,15 +48,10 @@ import (
 // one of its own builders with a literal first argument, a builder here being
 // a function that returns an openapi.Parameter and itself writes In: "query"
 // as a literal, since buildsQueryParameter reads that field with the same
-// literal-only rule. That selects FOURTEEN of the seventeen module api
-// packages, and plugins/webhookout with them. The other three module packages
-// describe through constants, each in its own way: payment/api spells the
-// names out but writes `In: inQuery`, file/api passes queryLimit and
-// queryOffset into its local queryParameter builder, and notification/api
-// passes those two plus queryReference and queryStatus into its own copy of
-// that builder. Their described set comes back empty, scanQueryParams drops
-// the package for that reason, and since all three also READ query parameters
-// they are unaudited in BOTH directions. That is the price of deriving a scope
+// literal-only rule. That selects most of the module api packages, and
+// plugins/webhookout with them; the ones it does not reach are pinned in
+// [queryParamScopeGaps] rather than counted here, because this paragraph
+// counted them and went stale (D110). That is the price of deriving a scope
 // from a shape the source is free to stop having, and the derivation is still
 // worth it — a hand-written list would have gone stale the same day, but
 // silently in the other direction, by claiming coverage.
@@ -706,4 +701,75 @@ func TestTheQueryParameterScannerIsNotBlind(t *testing.T) {
 		assert.NotContains(t, importPath, "/internal/adminui",
 			"the panel publishes no document; describing is undefined for it")
 	}
+}
+
+// queryParamScopeGaps are the module api packages the scope rule does not reach,
+// each with the reason it does not.
+//
+// It is PINNED rather than described because the description went stale. The
+// godoc above said the rule dropped "three of the seventeen" module api packages
+// and named them; by the time anybody looked there were eighteen packages and
+// FOUR outside the scope, and the fourth had walked out without a word (D110).
+//
+// The two reasons are not the same cost and the values say which is which. A
+// package that describes a query parameter through a CONSTANT is unaudited in
+// both directions — it reads query parameters too, and neither side is checked.
+// A package that describes no query parameter at all is outside the scope of a
+// rule that has nothing to say about it, and nothing is lost.
+var queryParamScopeGaps = map[string]string{
+	"payment": "spells the names out but writes `In: inQuery`, so the described set reads " +
+		"back empty; it READS query parameters, so both directions are unaudited",
+	"file": "passes queryLimit and queryOffset into its local queryParameter builder; it " +
+		"READS query parameters, so both directions are unaudited",
+	"notification": "passes those two plus queryReference and queryStatus into its own copy " +
+		"of that builder; it READS query parameters, so both directions are unaudited",
+	"settings": "builds no openapi.Parameter and reads no query parameter, so the rule has " +
+		"nothing to audit in either direction",
+}
+
+// TestTheQueryParamScopeGapsAreTheOnesRecorded holds the derived scope to the
+// record of what it misses.
+//
+// The scope is derived from a SHAPE, which means a package can leave it by an
+// edit that looks like a tidy-up — replacing a literal with a constant — and
+// nothing here would report the loss. That is what happened: the prose said
+// three and nobody was counting.
+func TestTheQueryParamScopeGapsAreTheOnesRecorded(t *testing.T) {
+	t.Parallel()
+
+	tree := scanProductionSource(t)
+	scans := scanQueryParams(t, tree)
+
+	prefix := modulePrefix(t)
+
+	inScope := map[string]bool{}
+	for importPath := range scans {
+		rest, isModule := strings.CutPrefix(importPath, prefix)
+		if !isModule {
+			continue
+		}
+		if name, isAPI := strings.CutSuffix(rest, "/api"); isAPI {
+			inScope[name] = true
+		}
+	}
+
+	var outside []string
+	for _, module := range moduleNames(t) {
+		if !inScope[module] {
+			outside = append(outside, module)
+		}
+	}
+	sort.Strings(outside)
+
+	recorded := make([]string, 0, len(queryParamScopeGaps))
+	for module := range queryParamScopeGaps {
+		recorded = append(recorded, module)
+	}
+	sort.Strings(recorded)
+
+	assert.Equalf(t, recorded, outside,
+		"the module api packages OUTSIDE the query-parameter scope are %v and the record "+
+			"names %v. A package that left the scope is unaudited in both directions and the "+
+			"reason has to be written down; one that entered it has to leave the record, or "+
+			"the next reader prices the gap wrong", outside, recorded)
 }

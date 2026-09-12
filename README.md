@@ -116,9 +116,11 @@ deploy                # docker-compose, Dockerfile
 
 Isolation is checked before the build by `depguard` in `.golangci.yml`: `core/**`
 and `internal/core/**` cannot import the modules (the plan's Principle 2.4), no
-module can import another module (Principles 2.1 / 2.4 — eighteen modules x
-sixteen prohibitions = complete isolation), and cross-module access goes through
-a narrow interface resolved from the container.
+module can import another module (Principles 2.1 / 2.4 — one isolation section
+per module and one denial per other module, so the matrix is complete and
+[`TestTheDepguardMatrixNamesEveryModule`](./internal/arch/depguard_test.go)
+holds it that way), and cross-module access goes through a narrow interface
+resolved from the container.
 When a module is added, the `depguard.rules` list is updated with it; the list is
 kept **by hand**, but forgetting it does not leave the rule unenforced —
 `TestModulesDoNotImportEachOther` walks the module tree, looks at the real import
