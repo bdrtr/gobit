@@ -4,6 +4,7 @@ import (
 	"context"
 	"maps"
 	"sync"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/manual"
@@ -36,6 +37,17 @@ type memStore struct {
 // newMemStore produces an empty in-memory ledger.
 func newMemStore() *memStore {
 	return &memStore{shipments: map[string]models.ManualShipment{}}
+}
+
+// shipmentCount is how many shipments the ledger holds.
+//
+// It is what makes "Track writes nothing" provable: a read that opened a row
+// would show up here and nowhere in the answer.
+func (m *memStore) shipmentCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return len(m.shipments)
 }
 
 // That memStore satisfies the surface the provider expects is verified at
@@ -77,6 +89,13 @@ func (m *memStore) InsertManualShipmentIfAbsent(
 			return models.ManualShipment{}, false, nil
 		}
 	}
+	// The stamps are set HERE because the real table sets them: both columns are
+	// NOT NULL DEFAULT now(). A fake that left them zero would hide a field the
+	// provider answers with — the tracking read reports updated_at as the moment
+	// the parcel last moved, and it would have read as "never" forever.
+	stamped := time.Now().UTC()
+	shipment.CreatedAt, shipment.UpdatedAt = stamped, stamped
+
 	m.shipments[shipment.ID] = shipment
 	m.writes++
 	return shipment, true, nil
@@ -140,6 +159,7 @@ func (m *memStore) UpdateManualShipmentState(
 	shipment.Status = status
 	shipment.TrackingNumber = trackingNumber
 	shipment.TrackingURL = trackingURL
+	shipment.UpdatedAt = time.Now().UTC()
 	m.shipments[id] = shipment
 	m.writes++
 	return shipment, nil

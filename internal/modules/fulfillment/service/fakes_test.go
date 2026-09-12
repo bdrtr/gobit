@@ -7,7 +7,10 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/eventbus"
@@ -618,6 +621,24 @@ func (f *fakeStore) ListFulfillments(
 		matched = append(matched, ful)
 	}
 	return paginate(matched, filter.Limit, filter.Offset), int64(len(matched)), nil
+}
+
+// setExternalID takes the provider identifier off a fulfillment, or puts one on.
+//
+// It exists for the tracking read's "no label was ever opened" case, which the
+// service's own cancel path already guards against: a manual intervention can
+// leave a row whose provider identity is empty, and there is no service method
+// that produces that state on purpose.
+func (f *fakeStore) setExternalID(t *testing.T, id, externalID string) {
+	t.Helper()
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	ful, ok := f.fuls[id]
+	require.True(t, ok, "no such fulfillment in the fake store: %s", id)
+	ful.ExternalID = externalID
+	f.fuls[id] = ful
 }
 
 func (f *fakeStore) UpdateFulfillmentProviderResult(

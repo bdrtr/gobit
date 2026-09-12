@@ -109,6 +109,14 @@ const (
 	// back indistinguishable from one that never left.
 	pathAdminReturned = "/admin/v1/fulfillments/{id}/returned"
 
+	// pathAdminTracking asks the CARRIER where the parcel is (ADR 0149).
+	//
+	// It is a sub-resource of the fulfillment rather than a field on it because
+	// reading it calls a provider: a network call on every GET of a parcel would
+	// make listing parcels cost one carrier request per row, and a field that is
+	// sometimes fetched and sometimes not is a field nobody can rely on.
+	pathAdminTracking = "/admin/v1/fulfillments/{id}/tracking"
+
 	pathStoreOptions = "/store/v1/shipping-options"
 )
 
@@ -186,6 +194,9 @@ type Fulfillments interface {
 	// MarkReturned records that the parcel came back to the sender
 	// undelivered ("iade").
 	MarkReturned(ctx context.Context, id string) (models.Fulfillment, error)
+	// TrackShipment asks the shipment's provider where it is and reports that
+	// beside this module's own record. It writes nothing (ADR 0149).
+	TrackShipment(ctx context.Context, id string) (service.ShipmentTracking, error)
 }
 
 // Handler is the HTTP handler set of the fulfillment module.
@@ -295,6 +306,9 @@ func (h *Handler) Routes(r chi.Router) {
 	write.Post(pathAdminShip, h.shipFulfillment)
 	write.Post(pathAdminDeliver, h.deliverFulfillment)
 	write.Post(pathAdminReturned, h.returnFulfillment)
+	// A READ: it writes nothing, not even when the carrier says something this
+	// module does not hold (see tracking.go).
+	read.Get(pathAdminTracking, h.trackFulfillment)
 
 	// The store endpoint DOES NOT CHANGE: a publishable key carries no scope.
 	r.Get(pathStoreOptions, h.listStoreEligibleOptions)

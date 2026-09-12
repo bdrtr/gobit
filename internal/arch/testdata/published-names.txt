@@ -486,7 +486,10 @@ core/provider SessionInspector
 core/provider SessionInspector.InspectSession
 core/provider SessionPending
 core/provider SessionStatus
+core/provider ShipmentTracker
+core/provider ShipmentTracker.Track
 core/provider ShippingQuote
+core/provider TrackingUpdate
 core/provider UploadInput
 core/providertest Classifier
 core/providertest Identity

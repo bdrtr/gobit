@@ -516,3 +516,75 @@ func TestCoreContractIsSatisfied(t *testing.T) {
 	var contract coreprovider.FulfillmentProvider = provider
 	assert.Equal(t, manual.ID, contract.ID())
 }
+
+// TestTrackAnswersFromTheProvidersOwnLedger is the manual provider's half of the
+// tracking capability (ADR 0149).
+//
+// What it can say is exactly what its own row holds, and the test asserts that
+// rather than the module's view: the two ledgers are separate tables on purpose,
+// and a Track that somehow read the module's record would make the whole
+// comparison meaningless.
+func TestTrackAnswersFromTheProvidersOwnLedger(t *testing.T) {
+	t.Parallel()
+
+	provider, store := newProvider()
+	ctx := context.Background()
+
+	created, err := provider.Create(ctx, coreprovider.CreateFulfillmentInput{
+		Reference:      "ful_1",
+		OptionID:       "opt_1",
+		IdempotencyKey: "key-track",
+		Data: map[string]any{
+			manual.DataKeyTrackingNumber: "LABEL-1",
+			manual.DataKeyTrackingURL:    "https://manual.example/LABEL-1",
+		},
+	})
+	require.NoError(t, err)
+
+	update, err := provider.Track(ctx, created.ID)
+	require.NoError(t, err)
+
+	assert.Equal(t, coreprovider.FulfillmentPending, update.Status,
+		"the provider answers ITS OWN status; nothing has moved it")
+	assert.Equal(t, "LABEL-1", update.TrackingNumber,
+		"the number the label was opened with is the one worth reading here")
+	assert.Equal(t, "https://manual.example/LABEL-1", update.TrackingURL)
+	assert.Empty(t, update.Detail,
+		"a provider with no movement log must not invent a sentence a carrier never said")
+	assert.False(t, update.MovedAt.IsZero(), "the ledger's own moment is the answer")
+
+	// Nothing was written: a status page may refresh as often as it likes.
+	before := store.shipmentCount()
+	_, err = provider.Track(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before, store.shipmentCount(), "Track must write nothing")
+}
+
+// TestTrackDisownsAShipmentItNeverOpened is the contract's own rule.
+//
+// "The provider has no such shipment" and "the provider says it has not moved"
+// are different facts, and a zero update would make the first read as the second —
+// which is what hides a label opened against the wrong account.
+func TestTrackDisownsAShipmentItNeverOpened(t *testing.T) {
+	t.Parallel()
+
+	provider, _ := newProvider()
+
+	_, err := provider.Track(context.Background(), "manful_nosuch")
+
+	require.Error(t, err)
+	assert.True(t, errors.IsNotFound(err), "got %v", err)
+}
+
+// TestTrackRefusesAnEmptyIdentifier keeps a missing id from reading as a missing
+// shipment.
+func TestTrackRefusesAnEmptyIdentifier(t *testing.T) {
+	t.Parallel()
+
+	provider, _ := newProvider()
+
+	_, err := provider.Track(context.Background(), "  ")
+
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalid(err), "got %v", err)
+}

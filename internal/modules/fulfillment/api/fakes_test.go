@@ -28,9 +28,11 @@ type fakeFulfillments struct {
 	quoted      []service.QuotedOption
 	fulfillment models.Fulfillment
 	list        []models.Fulfillment
-	location    models.ShippingLocation
-	locations   []models.ShippingLocation
-	count       int64
+	// tracking is the report the tracking read answers with.
+	tracking  service.ShipmentTracking
+	location  models.ShippingLocation
+	locations []models.ShippingLocation
+	count     int64
 
 	err error
 
@@ -42,6 +44,9 @@ type fakeFulfillments struct {
 	lastRuleInput     service.CreateRuleInput
 	lastUpdateOption  service.UpdateOptionInput
 	lastUpdateProfile service.UpdateProfileInput
+	// lastTrackedID is the parcel the tracking read asked about; the endpoint
+	// takes it from the path and nothing else carries it.
+	lastTrackedID     string
 	lastShipTracking  [2]string
 	lastCanceledID    string
 	lastReturnedID    string
@@ -223,6 +228,18 @@ func (f *fakeFulfillments) MarkDelivered(_ context.Context, id string) (models.F
 func (f *fakeFulfillments) MarkReturned(_ context.Context, id string) (models.Fulfillment, error) {
 	f.lastReturnedID = id
 	return f.fulfillment, f.err
+}
+
+// TrackShipment answers the scripted tracking report.
+func (f *fakeFulfillments) TrackShipment(
+	_ context.Context, id string,
+) (service.ShipmentTracking, error) {
+	f.lastTrackedID = id
+	if f.err != nil {
+		return service.ShipmentTracking{}, f.err
+	}
+
+	return f.tracking, nil
 }
 
 // notFoundError is a typed not-found error used in the tests.

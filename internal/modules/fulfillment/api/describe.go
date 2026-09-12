@@ -331,6 +331,33 @@ func describeFulfillments(d *openapi.Doc) {
 		},
 	})
 
+	d.Describe(http.MethodGet, pathAdminTracking, openapi.Operation{
+		Summary: "Asks the carrier where the parcel is, beside what this module holds.",
+		Description: "It WRITES NOTHING, not even when the carrier says something this " +
+			"module does not hold: which side is authoritative depends on the provider — a " +
+			"real carrier knows where a parcel is, while the provider that ships in the box " +
+			"is the shop itself and there an operator's own record is the true one. So both " +
+			"views are returned side by side and a human decides.\n\n" +
+			"Branch on \"answer\" and NOT on whether the provider fields are empty. " +
+			"\"answered\" is the carrier's view; \"unknown_to_provider\" means the " +
+			"carrier disowns the identifier this module holds, which is what a label opened " +
+			"against the wrong account looks like; \"unaskable\" means the provider is not " +
+			"registered here or offers no tracking at all; \"unreachable\" means it was " +
+			"asked and could not answer; \"not_opened\" means no label was ever opened. A " +
+			"carrier answering \"pending\" with no tracking number looks exactly like a " +
+			"carrier nobody could ask, and those are different facts.\n\n" +
+			"\"tracking_numbers_agree\" is FALSE whenever the provider did not answer, so " +
+			"agreement can never be read out of a question nobody asked.",
+		Responses: map[string]any{
+			"200": openapi.Response("What the carrier says and what this module holds",
+				d.Item(trackingDTO{})),
+			"404": openapi.ErrorResponse(
+				"No fulfillment with that identifier. A parcel that cannot be TRACKED is a " +
+					"200 with an \"answer\" that says why; a 404 means the parcel itself " +
+					"does not exist."),
+		},
+	})
+
 	d.Describe(http.MethodPost, pathAdminReturned, openapi.Operation{
 		Summary: "Records that the parcel came back to the sender undelivered.",
 		Description: "The carriers' \"iade\": the parcel could not be delivered and came " +

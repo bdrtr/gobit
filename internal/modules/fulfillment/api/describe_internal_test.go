@@ -290,6 +290,10 @@ func describedEndpoints() []endpointExpectation {
 			method: http.MethodPost, path: pathAdminReturned, status: "200",
 			response: filledFulfillment(),
 		},
+		{
+			method: http.MethodGet, path: pathAdminTracking, status: "200",
+			response: filledTracking(),
+		},
 		// The four endpoints carrying the option RECORD. They were not in this
 		// table until 2026-09-07 and there was a reason: optionDTO wanted the
 		// component name the product module's models.Option already held, and
@@ -360,6 +364,38 @@ func filledFulfillment() fulfillmentDTO {
 		Data:           json.RawMessage(`{"k":"v"}`),
 		Metadata:       map[string]any{"k": "v"},
 		Items:          []fulfillmentItemDTO{{}},
+	}
+}
+
+// filledTracking is a tracking report with EVERY field set.
+//
+// The pointer halves have to be non-nil for the same reason [filledFulfillment]'s
+// timestamps do: a nil is indistinguishable from an absent field once the record
+// has been through encoding/json, and the comparison would then pass on a schema
+// that describes half the answer.
+func filledTracking() trackingDTO {
+	now := time.Now().UTC()
+
+	return trackingDTO{
+		FulfillmentID: "ful_1",
+		ProviderID:    "manual",
+		ExternalID:    "manful_1",
+		Answer:        "answered",
+		Reason:        "",
+		Local: trackingSideDTO{
+			Status:         "shipped",
+			TrackingNumber: "TN1",
+			TrackingURL:    "https://example/TN1",
+			MovedAt:        &now,
+		},
+		Provider: &trackingSideDTO{
+			Status:         "pending",
+			TrackingNumber: "TN2",
+			TrackingURL:    "https://example/TN2",
+			Detail:         "held at depot",
+			MovedAt:        &now,
+		},
+		TrackingNumbersAgree: false,
 	}
 }
 

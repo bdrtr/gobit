@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"time"
 )
 
 // FulfillmentStatus is a shipment's status on the provider side.
@@ -80,6 +81,77 @@ type Fulfillment struct {
 	TrackingURL    string
 	// Data is the raw data returned by the provider.
 	Data json.RawMessage
+}
+
+// TrackingUpdate is a provider's OWN view of where a shipment is.
+//
+// Every field is the provider's answer and none of it is this repository's
+// record: what the module holds sits beside it, and the two are reported apart so
+// that a label printed with one number and recorded with another is visible
+// (ADR 0149).
+type TrackingUpdate struct {
+	// Status is the shipment's status as the provider has it.
+	Status FulfillmentStatus
+	// TrackingNumber and TrackingURL are the carrier's, which may differ from
+	// the ones an operator typed into the module.
+	TrackingNumber string
+	TrackingURL    string
+	// Detail is the carrier's own words about the last movement, free-form and
+	// often empty ("handed to courier", "held at depot").
+	//
+	// It is NOT parsed and NOT mapped onto Status: a carrier's vocabulary is its
+	// own and a mapping table maintained here would be wrong in a way nobody
+	// could see. Status is the neutral answer; this is the sentence a human
+	// reads beside it.
+	Detail string
+	// MovedAt is when the carrier last moved the parcel (UTC), or the zero time
+	// when the provider does not say.
+	//
+	// A zero value means "not answered" rather than "the epoch": a provider that
+	// reports a status without a moment is ordinary, and inventing `now` would
+	// turn a silence into a movement that never happened.
+	MovedAt time.Time
+}
+
+// ShipmentTracker is the OPTIONAL capability of asking a provider where a
+// shipment is.
+//
+// # Why optional rather than a method on FulfillmentProvider
+//
+// [SessionInspector]'s reason, applied to parcels: adding a method to
+// [FulfillmentProvider] would make every provider change so that one of them can
+// gain a capability, and it would force a provider that genuinely cannot answer
+// to implement something that lies.
+//
+// A provider that does not implement this is not broken; nothing can be asked of
+// it, and whatever asks must SAY SO. "The carrier says it is still at the depot"
+// and "nobody could ask" must never look the same.
+//
+// # It is a READ
+//
+// Track must not create a label, must not change the provider's state and must be
+// safe to call repeatedly — a status page can refresh. What is done with what it
+// reveals is a decision for a human.
+//
+// # Why the module's own status is not overwritten with the answer
+//
+// Because which side is authoritative depends on the provider. A real carrier
+// knows where the parcel is and the module does not; the provider that ships in
+// the box is the SHOP itself, so there the module's status — an operator marking
+// a parcel handed over — is the true one and the provider's row is a stub nobody
+// moves. A write here would pick a winner for both cases and be wrong in one.
+type ShipmentTracker interface {
+	FulfillmentProvider
+
+	// Track returns the provider's view of the shipment, addressed by the
+	// identifier the provider itself gave it ([Fulfillment.ID], stored locally as
+	// the fulfillment's external id).
+	//
+	// A shipment the provider has never heard of returns a NotFound error rather
+	// than a zero update: "the provider has no such shipment" and "the provider
+	// says it has not moved" are different facts, and treating the first as the
+	// second would hide a label opened against the wrong account.
+	Track(ctx context.Context, shipmentID string) (TrackingUpdate, error)
 }
 
 // FulfillmentProvider is the contract a shipping provider offers the core

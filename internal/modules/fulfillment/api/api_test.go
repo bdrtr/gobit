@@ -1058,3 +1058,85 @@ func TestTheProfileTypeFilterReachesTheService(t *testing.T) {
 	assert.Nil(t, svc.lastProfileList.Type,
 		"no filter must stay nil; a pointer to the empty string would match no profile at all")
 }
+
+// The tracking endpoint (ADR 0149).
+
+// TestTheTrackingEndpointReportsBothSides pins what a client receives.
+func TestTheTrackingEndpointReportsBothSides(t *testing.T) {
+	moved := time.Date(2026, 9, 12, 8, 0, 0, 0, time.UTC)
+	svc := &fakeFulfillments{tracking: service.ShipmentTracking{
+		FulfillmentID:          "ful_1",
+		ProviderID:             "manual",
+		ExternalID:             "manful_1",
+		Answer:                 service.TrackingAnswered,
+		LocalStatus:            models.StatusShipped,
+		LocalTrackingNumber:    "OPERATOR-1",
+		ProviderStatus:         models.StatusPending,
+		ProviderTrackingNumber: "CARRIER-1",
+		ProviderDetail:         "held at depot",
+		ProviderMovedAt:        &moved,
+	}}
+	h := newRouter(svc)
+
+	rec := doRequest(t, h, http.MethodGet, "/admin/v1/fulfillments/ful_1/tracking", "")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "ful_1", svc.lastTrackedID,
+		"the parcel comes from the path and nothing else carries it")
+
+	data, ok := bodyMap(t, rec)["data"].(map[string]any)
+	require.True(t, ok, "the answer has to be a single envelope: %s", rec.Body.String())
+	assert.Equal(t, "answered", data["answer"])
+
+	local, ok := data["local"].(map[string]any)
+	require.True(t, ok, "the local half has to be an object: %s", rec.Body.String())
+	assert.Equal(t, "shipped", local["status"])
+	assert.Equal(t, "OPERATOR-1", local["tracking_number"])
+
+	provider, ok := data["provider"].(map[string]any)
+	require.True(t, ok, "the provider half has to be an object: %s", rec.Body.String())
+	assert.Equal(t, "pending", provider["status"])
+	assert.Equal(t, "CARRIER-1", provider["tracking_number"])
+	assert.Equal(t, "held at depot", provider["detail"])
+
+	assert.Equal(t, false, data["tracking_numbers_agree"],
+		"two different numbers do not agree")
+}
+
+// TestASilenceCarriesNoProviderObject is the shape rule that keeps a silence from
+// reading as an answer.
+//
+// An empty provider object would be read as "the carrier says: nothing", which is
+// exactly the sentence this endpoint exists to prevent. The four non-answers are
+// asserted together because they share one rule; what differs between them is the
+// service's business and is tested there.
+func TestASilenceCarriesNoProviderObject(t *testing.T) {
+	for name, answer := range map[string]service.TrackingAnswer{
+		"unaskable":   service.TrackingUnaskable,
+		"unknown":     service.TrackingUnknown,
+		"unreachable": service.TrackingUnreachable,
+		"not opened":  service.TrackingNotOpened,
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc := &fakeFulfillments{tracking: service.ShipmentTracking{
+				FulfillmentID: "ful_1",
+				Answer:        answer,
+				Reason:        "because of something an operator can read",
+				LocalStatus:   models.StatusPending,
+			}}
+			h := newRouter(svc)
+
+			rec := doRequest(t, h, http.MethodGet, "/admin/v1/fulfillments/ful_1/tracking", "")
+
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			data, ok := bodyMap(t, rec)["data"].(map[string]any)
+			require.True(t, ok, "the answer has to be a single envelope: %s", rec.Body.String())
+
+			assert.Equal(t, string(answer), data["answer"])
+			assert.NotContains(t, data, "provider",
+				"a silence must not carry an empty carrier object")
+			assert.Equal(t, "because of something an operator can read", data["reason"])
+			assert.Contains(t, data, "local", "what the module knows is still reported")
+		})
+	}
+}

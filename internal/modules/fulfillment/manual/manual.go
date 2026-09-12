@@ -183,6 +183,14 @@ type Provider struct {
 // signature drift does not survive until runtime.
 var _ coreprovider.FulfillmentProvider = (*Provider)(nil)
 
+// And that it answers where a shipment is (ADR 0149).
+//
+// The capability is OPTIONAL and the module asks for it with a type assertion, so
+// a drifted signature would make this provider silently unaskable rather than fail
+// to build. The assignment is what turns that into a compile error — the same
+// reason the payment module's manual provider pins [coreprovider.SessionInspector].
+var _ coreprovider.ShipmentTracker = (*Provider)(nil)
+
 // New produces a manual provider that works on the given store.
 // If log is nil, the logs are discarded.
 func New(store Store, log *slog.Logger) *Provider {
@@ -397,6 +405,53 @@ func (p *Provider) Cancel(ctx context.Context, fulfillmentID string) error {
 			shipment.TrackingNumber, shipment.TrackingURL)
 		return err
 	})
+}
+
+// Track answers where the shipment is, from the PROVIDER's own ledger.
+//
+// # What it can and cannot say here
+//
+// The provider that ships in the box is the shop itself, so this answer is the row
+// this provider wrote and nothing more: the status it was opened with, and the
+// tracking details the shipping option's configuration carried. A real carrier
+// answers from its network and its status moves without anybody here asking; this
+// one's moves only when the module cancels a shipment.
+//
+// That is not a defect and it is the reason the module reports this answer BESIDE
+// its own record rather than instead of it (ADR 0149): with the manual provider the
+// module's status — an operator marking a parcel handed over — is the true one, and
+// with a carrier it is the carrier's.
+//
+// What IS worth reading here even so: the tracking number. The module's copy is
+// what an operator typed at dispatch and this one is what the label was opened
+// with, so a parcel recorded under the wrong number is visible by comparing them.
+//
+// It writes nothing and may be called as often as a status page refreshes.
+func (p *Provider) Track(
+	ctx context.Context, shipmentID string,
+) (coreprovider.TrackingUpdate, error) {
+	if strings.TrimSpace(shipmentID) == "" {
+		return coreprovider.TrackingUpdate{}, errors.Invalid(CodeInvalidInput,
+			"the shipment identifier is required")
+	}
+
+	shipment, err := p.store.ManualShipment(ctx, shipmentID)
+	if err != nil {
+		// A shipment this provider has never opened comes back as the store's
+		// NotFound, which is exactly what the contract asks for: "the provider has
+		// no such shipment" must not read as "it has not moved".
+		return coreprovider.TrackingUpdate{}, err
+	}
+
+	return coreprovider.TrackingUpdate{
+		Status:         coreprovider.FulfillmentStatus(shipment.Status),
+		TrackingNumber: shipment.TrackingNumber,
+		TrackingURL:    shipment.TrackingURL,
+		// No Detail: inventing a sentence a carrier never said would put words in
+		// the provider's mouth, and an empty one is the honest answer for a
+		// provider whose ledger holds no movement log.
+		MovedAt: shipment.UpdatedAt,
+	}, nil
 }
 
 // GetShipment returns the shipment in the provider's ledger; errors.NotFound if

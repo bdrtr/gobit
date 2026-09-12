@@ -64,6 +64,28 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir taşıyıcıya artık kolinin NEREDE olduğu sorulabiliyor** (ADR 0149). Takip
+  numarası sevk anında iliştirilebiliyordu ve çizelge beş anı taşıyordu, yani ELLE
+  yarısı tamdı; SAĞLAYICI yarısı yoktu — kargo sözleşmesi üç metottu (`Quote`,
+  `Create`, `Cancel`) ve etiket basıldıktan sonra taşıyıcıya hiçbir şey
+  sormuyordu. Boşluğu kutudaki sağlayıcının kendi godoc'u adlandırıyordu:
+  `GetShipment` "çekirdek sözleşmenin parçası DEĞİL… iki defterin birbirinden
+  ayrıştığı bir hata ancak böyle görülebilir". İki defter bilerek ayrı tablolar ve
+  gerçekten ayrışıyorlar: sevk işaretlendiğinde modül `shipped` derken sağlayıcının
+  satırı `pending` kalıyor, ve operatörün yazdığı takip numarası etiketin açıldığı
+  numaranın yanında duruyor — yani yanlış numarayla kaydedilmiş bir koli artık
+  GÖRÜNÜYOR. `core/provider` artık İSTEĞE BAĞLI bir `ShipmentTracker` yayımlıyor
+  (`Track`, bir OKUMA, sağlayıcının kendi kimliğiyle) ve
+  `GET /admin/v1/fulfillments/{id}/tracking` taşıyıcının görüşünü modülün kaydının
+  YANINDA veriyor, hiçbir şey YAZMADAN: hangi tarafın yetkili olduğu sağlayıcıya
+  bağlı — gerçek taşıyıcı kolinin nerede olduğunu bilir, kutudaki sağlayıcı ise
+  mağazanın kendisi, orada operatörün kaydı doğrudur — ve yazmak iki durumdan
+  birinde yanlış tarafı seçmek olurdu. Cevap BEŞ biçimli ve istemci ADA bakıyor,
+  boşluğa değil: "pending" diyen bir taşıyıcı ile sorulamayan bir taşıyıcı aynı boş
+  alanları üretir. Yedi mutasyon ısırdı, biri hayatta kaldı ve kusur KODDA değil
+  TESTTEydi: fikstürlerin hiçbirinde modül tarafı boş değildi, o yüzden iki numara
+  zaten farklıydı — kapatan test iki tarafı da boş olan koli.
+
 - **Bir kural artık ürünün NEYE AİT olduğunu sorabiliyor** (ADR 0148). ADR 0144
   kümeyi okuyan işleci (`any_in`) getirdi ve bağlam tarafına kümeyi verdi; satır
   tarafına veremedi, çünkü bir ürünün kategorileri ve etiketleri ürün satırının
