@@ -107,6 +107,36 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir TARAYICI artık gobit'e karşı alışveriş edebiliyor** (ADR 0159, D99, D100).
+  Bu depoda gobit'in önüne tarayıcı koyan hiçbir şey yoktu: vitrin API'si kırk sekiz
+  rota, otuz yedisi misafire açık, ve herhangi birinin çalıştığının tek kanıtı onları
+  HTTP üzerinden süren bir Go koşum takımıydı. "Bunun üstüne dükkân kurabilir miyim"
+  diye soran birinin iki seçeneği vardı: testleri okumak ya da README'ye inanmak.
+  Satırın istediği Next.js/SvelteKit şekli ÖLÇÜLDÜ ve reddedildi: bütün depoda ona
+  değen tek kapı yol-dili kontrolü, yani bir node zinciri kendi kilit dosyası ve kendi
+  açık yüzeyiyle DENETİMSİZ girerdi. Onun yerine `examples/storefront` öteki dördü
+  gibi bir Go modülü: `main.go` yayımlanmış facade artı kendi modülü, modül de üç
+  kabuk ve çerçevesiz tek bir betik servis ediyor. Sayfalar gobit'in KENDİ sürecinde
+  koşuyor, yani tarayıcı `/store/v1` ile AYNI KÖKENDE ve hiçbir kurulumun örnek
+  çalışsın diye CORS açması gerekmiyor. Dükkân hiçbir servis tutmuyor ve veritabanı
+  okumuyor — her sayfadaki her rakamı tarayıcı çekiyor, ki örneği örnek hakkında değil
+  YÜZEY hakkında bir iddia yapan şey bu. Keşfedemediği iki değeri (publishable key ve
+  satış kanalı) AÇILIŞTA reddediyor: onlarsız başlayan bir dükkân sayfanın yaptığı her
+  isteğe 401 verir ve boş katalog gibi görünür. Kendi içerik politikasını taşıyor ve
+  panelinki OLAMAZ — katalog ürün görseli gösterir, panelin politikası ise `img-src`
+  olmayan `default-src 'none'` ile başlar; bir gömenin kendi sayfaları için yayımlanmış
+  politika yok, yani üç başlığı gömen kendisi yazıyor. Aynı değişiklikte `.js` dil
+  taramasına girdi (D99): depo zaten içeriği hiç okunmamış iki elle yazılmış betik
+  gönderiyordu ve bu örnek üçüncüsü olacaktı — operatörün SAYFANIN İÇİNDE okuduğu
+  düzyazı, hiçbir şeyin denetlemediği tek gönderilen metin. Ve ayrı modüllerin CI'da
+  hiç lint'lenmediği ortaya çıktı (D100, AÇIK): Lint işi kökü action ile geçiriyor ve
+  `make vuln` koşuyor, `make lint` koşmuyor — D88'in bir ağaç ötedeki şekli. Ve
+  beşinci modülü eklerken üçüncü bir şey çıktı (D101): hangi ayrı modüllerin
+  YAYIMLANMIŞ yüzeye karşı derlendiğini söyleyen tablo elle yazılıydı ve hiçbir şeye
+  bağlı değildi — taze girdiyi silmek bütün arch takımını yeşil bıraktı. Artık
+  nüfusu Makefile'ın `SEPARATE_MODULES`'ından geliyor, ki onu da başka bir kapı
+  diskteki go.mod'lara bağlıyor: zincir disk → Makefile → tablo.
+
 - **İlk çalıştırma artık şeritlerin KOŞTURDUĞU bir belge** (ADR 0158, D98). Boş bir
   veritabanından bir alışverişçinin siparişine giden yol on beş çağrı ve on biri
   hiçbir yere yazılmamıştı: iki koşum takımının içinde yaşıyorlardı — smoke'un

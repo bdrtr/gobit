@@ -33,8 +33,8 @@ SQLC_VERSION     := v1.31.1
 # eşleştirmezse döngü hiç dönmez ve hedef yine 0 döner, yani "hiçbir açık yok"
 # ile "hiçbir yere bakmadım" aynı çıkış koduyla anlatılamaz. Listeye bir modül
 # eklerken sayı da artar, ve artmazsa taban düşer.
-SEPARATE_MODULES      := . examples/starter examples/plugin contrib/identity-session contrib/identity-passkey
-SEPARATE_MODULE_COUNT := 5
+SEPARATE_MODULES      := . examples/starter examples/storefront examples/plugin contrib/identity-session contrib/identity-passkey
+SEPARATE_MODULE_COUNT := 6
 GOLANGCI         := $(BIN_DIR)/golangci-lint
 GOVULN           := $(BIN_DIR)/govulncheck
 SQLC             := $(BIN_DIR)/sqlc

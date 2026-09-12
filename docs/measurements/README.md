@@ -91,3 +91,4 @@ truth: a report says what was true on the day it was taken.
 | [The second door — measured 2026-09-12](0156-the-second-door.md) | 203 |
 | [A door beside the door — measured 2026-09-12](0157-a-door-beside-the-door.md) | 131 |
 | [Fifteen calls nobody wrote down — measured 2026-09-12](0158-fifteen-calls-nobody-wrote-down.md) | 192 |
+| [A shop with no toolchain — measured 2026-09-12](0159-a-shop-with-no-toolchain.md) | 136 |

@@ -192,7 +192,14 @@ var turkishStems = []string{
 // project, so Turkish left in one does not stay in this repository — it ships.
 // The obvious source for an environment template is `.env.example`, which is 833
 // lines of Turkish, so the risk is concrete rather than hypothetical.
-var scannedExtensions = []string{".go", ".sql", ".gohtml", ".md", ".graphqls", ".tmpl"}
+//
+// `.js` was added on 2026-09-12 with the storefront example (ADR 0159), and it
+// had been missing for longer than that: the panel's review screen and the
+// analytics funnel were already shipping hand-written browser code that this scan
+// had never read. A script's prose is the most visible prose the repository has —
+// it is what an operator reads INSIDE the page, not in a comment — and it was the
+// one shipped text nothing checked.
+var scannedExtensions = []string{".go", ".sql", ".gohtml", ".md", ".graphqls", ".tmpl", ".js"}
 
 // scannedRoots are the trees the content scan walks, plus the repository root
 // itself for its top-level documents.

@@ -1,0 +1,53 @@
+{{- /*
+page.gohtml is the shop's one shell.
+
+Three pages render it and differ only in the mount's id, which is what the script
+branches on. The values the script needs — the publishable key, the sales channel
+and the product handle — travel as DATA ATTRIBUTES rather than inside the script,
+so the script stays one file with one stamp for every installation.
+
+The noscript block is not a courtesy. Every figure on this page arrives by fetch,
+so a shopper whose script did not run sees an empty box, and an empty shop is
+indistinguishable from a broken one.
+*/ -}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ .Title }}</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 0 auto; max-width: 46rem; padding: 1.5rem; }
+  header { display: flex; gap: 1rem; align-items: baseline; margin-bottom: 1.5rem; }
+  h1 { font-size: 1.25rem; margin: 0; }
+  a { color: inherit; }
+  ul { list-style: none; padding: 0; }
+  li { border-bottom: 1px solid #ddd; padding: 0.75rem 0; }
+  .muted { color: #666; }
+  .notice { background: #fffbe6; border: 1px solid #e8d98a; padding: 0.75rem; }
+  button { font: inherit; padding: 0.4rem 0.8rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1><a href="{{ .Paths.List }}">Shop</a></h1>
+  <span class="muted"><a href="{{ .Paths.Cart }}">Cart</a></span>
+</header>
+
+<noscript>
+  <p class="notice">This shop reads the catalog from /store/v1 in the browser and needs JavaScript.</p>
+</noscript>
+
+<main id="shop"
+      data-mount="{{ .Mount }}"
+      data-handle="{{ .Handle }}"
+      data-key="{{ .Key }}"
+      data-channel="{{ .Channel }}"
+      data-cart-path="{{ .Paths.Cart }}"
+      data-list-path="{{ .Paths.List }}">
+  <p class="muted">Loading…</p>
+</main>
+
+<script src="{{ .Script }}" defer></script>
+</body>
+</html>

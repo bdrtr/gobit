@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -274,6 +275,12 @@ var outOfTreeExamples = []struct {
 			"installation through the published facade (ADR 0027)",
 	},
 	{
+		dir: "examples/storefront",
+		what: "a BROWSER in front of gobit: three pages and one hand-written script, " +
+			"served by a module that reads no database and holds no service, proving " +
+			"the surface carries enough to serve HTML and an asset (ADR 0159)",
+	},
+	{
 		dir: "contrib/identity-session",
 		what: "a working customer identity: it fills corehttp.IdentityName, owns a " +
 			"table, mounts endpoints and passes core/identitytest (ADR 0127)",
@@ -283,6 +290,60 @@ var outOfTreeExamples = []struct {
 		what: "passkeys on top of that identity, in a module of its own so the " +
 			"WebAuthn library lands only in the graph that asked for it (ADR 0128)",
 	},
+}
+
+// TestTheOutOfTreeTableCoversEveryModuleOffTheRoot ties the hand-written table to
+// the disk-derived list.
+//
+// [outOfTreeExamples] is typed by hand, and nothing bound it to anything: a
+// module added to the Makefile and forgotten here compiled in `make test-modules`
+// and was never built by [TestTheOutOfTreeExamplesCompile] — the one lane whose
+// whole subject is that the PUBLISHED SURFACE is enough to write it against.
+// Measured by mutation on 2026-09-12: removing a fresh entry left the arch suite
+// green.
+//
+// The population comes from the Makefile's SEPARATE_MODULES, which
+// [TestTheModuleListCoversEveryModuleOnDisk] already holds to the go.mod files on
+// disk. So the chain is disk → Makefile → this table, and the hand-written end
+// cannot fall behind the other two.
+//
+// The root is excluded because it is not out of tree; everything else that
+// declares its own module is, by the language's own rule.
+func TestTheOutOfTreeTableCoversEveryModuleOffTheRoot(t *testing.T) {
+	t.Parallel()
+
+	listed, _ := declaredModules(t)
+
+	tabled := make([]string, 0, len(outOfTreeExamples))
+	for _, example := range outOfTreeExamples {
+		tabled = append(tabled, example.dir)
+	}
+
+	audited := 0
+	for _, dir := range listed {
+		if dir == "." {
+			continue
+		}
+		audited++
+
+		assert.Containsf(t, tabled, dir,
+			"%s is a separate module and is not in outOfTreeExamples, so nothing builds "+
+				"it against the published surface.\nThe lanes that DO reach it — "+
+				"test-modules, lint, vuln — run inside the module and would pass a program "+
+				"that reached internal/ through a replace directive. The claim this table "+
+				"holds is a different one: that core/ and the facade are enough.", dir)
+	}
+
+	require.GreaterOrEqual(t, audited, 5,
+		"only %d separate module was read out of the Makefile; the parse has gone blind "+
+			"and a blind list is covered by definition", audited)
+
+	for _, dir := range tabled {
+		assert.Containsf(t, listed, dir,
+			"outOfTreeExamples names %q and the Makefile's SEPARATE_MODULES does not.\n"+
+				"An entry for a module the lanes do not run is a row that proves one thing "+
+				"about a tree nothing else touches", dir)
+	}
 }
 
 // TestTheOutOfTreeExamplesCompile is the surface's only end-to-end proof.

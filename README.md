@@ -107,6 +107,8 @@ examples/plugin       # a SEPARATE module: proof that the published surface
                       # compiles from outside
 examples/starter      # a SEPARATE module: an example application that imports
                       # gobit and is COMPILED AND RUN
+examples/storefront   # a SEPARATE module: three pages and one script that put a
+                      # BROWSER in front of gobit, same-origin with /store/v1
 deploy                # docker-compose, Dockerfile
 ```
 
@@ -234,7 +236,7 @@ on a list; it is that.
 
 | Document | What it answers |
 |---|---|
-| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 157 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
+| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 158 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
 | [`docs/mimari.md`](./docs/mimari.md) | The architecture narrative: layers, the life cycle of a request and of a module, data, sagas, the core packages |
 | [`docs/gaps.md`](./docs/gaps.md) | The defect ledger: every fault this repository found in itself, one sentence and the ADR that closed it |
 | [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: forty-nine items in six groups — identity and authorization, sales channel scope, the category tree, tax, installation and operation, the limit of the invariants |
