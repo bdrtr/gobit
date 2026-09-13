@@ -96,3 +96,4 @@ truth: a report says what was true on the day it was taken.
 | [A hundred and twenty-one tools — measured 2026-09-12](0161-a-hundred-and-twenty-one-tools.md) | 128 |
 | [What a killed consumer leaves behind — measured 2026-09-12](0162-what-a-killed-consumer-leaves-behind.md) | 99 |
 | [What the lanes were handing tests — measured 2026-09-12](0163-what-the-lanes-were-handing-tests.md) | 89 |
+| [A name that was already taken — measured 2026-09-13](0164-a-name-that-was-already-taken.md) | 246 |

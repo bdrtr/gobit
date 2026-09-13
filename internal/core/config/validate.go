@@ -62,6 +62,16 @@ func (c Config) Validate() error {
 			"config: STOREFRONT_CATALOG_CACHE_TTL cannot be negative, %s given; zero turns "+
 				"the cache header off", c.CatalogCacheTTL)
 	}
+	// The loyalty earn rate is bounded at BOTH ends for two different reasons.
+	// Zero is a real answer — earning is off — and a negative rate is a typo that
+	// would otherwise read as off and hide itself. Above the ceiling the value is
+	// refused rather than reduced: a shop that asked to pay two points per minor
+	// unit and silently got one would pay out at a rate it never chose (ADR 0164).
+	if c.LoyaltyEarnBasisPoints < 0 || c.LoyaltyEarnBasisPoints > MaxLoyaltyEarnBasisPoints {
+		return fmt.Errorf(
+			"config: PAYMENT_LOYALTY_EARN_BASIS_POINTS has to be between 0 and %d, %d given; "+
+				"zero turns earning off", MaxLoyaltyEarnBasisPoints, c.LoyaltyEarnBasisPoints)
+	}
 	for _, t := range []struct {
 		name  string
 		value time.Duration

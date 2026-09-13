@@ -23,6 +23,10 @@ import (
 // not written here does not exist for that installer.
 const envExamplePath = ".env.example"
 
+// configPackageDir is the package that DECLARES the settings; it is not a
+// consumer of them.
+const configPackageDir = "internal/core/config/"
+
 // composePath is the compose file that brings up the local development stack.
 //
 // Some of the variables in .env.example go not to the application but to THIS file
@@ -945,4 +949,207 @@ func fileDeclaring(t *testing.T, dir, variable string) *ast.File {
 		"rename and should be argued rather than discovered here.", dir, variable)
 
 	return nil
+}
+
+// configFieldsReadThroughAnAccessor are the Config fields no production file
+// selects by name, with the reason each one is still reached.
+//
+// The shape and the price are [pathReferenceExemptions]': an entry whose field
+// becomes selected again fails and asks for the line to come off, so the list
+// cannot outlive what it excuses.
+var configFieldsReadThroughAnAccessor = map[string]string{
+	"AppPort": "the server asks for the whole listen address rather than the number, " +
+		"through Config.Addr — which is the only place that knows an empty host means " +
+		"every interface. A caller that selected the port would be rebuilding that " +
+		"string, and the two would drift.",
+}
+
+// TestEveryConfigurationFieldReachesTheApplication refuses a setting that stops
+// at the configuration struct.
+//
+// # The defect it is written for
+//
+// A new environment variable is added: a field on [config.Config] with its tag,
+// a line in .env.example, a rule in Validate. Every configuration audit in this
+// file goes green — and the value is then never passed to the thing it
+// configures. The operator sets it, nothing happens, and they get no error
+// either, which is the sentence
+// [TestNoVariableInTheEnvExampleIsOrphaned] already writes about the hop BEFORE
+// this one. That gate's "reader" is a field in Config; the last hop, from the
+// field to whatever uses it, was audited by nothing.
+//
+// It is not hypothetical. Measured on 2026-09-13 by deleting one line from the
+// composition root: the loyalty earn rate kept its field, its document entry and
+// its validation rule, the whole arch lane stayed green, and no installation
+// could have earned a point.
+//
+// # Why the selector's BASE is checked
+//
+// The first version of this matched the field NAME wherever it was selected, and
+// it did not work: the composition root writes
+// `LoyaltyEarnBasisPoints: cfg.LoyaltyEarnBasisPoints` while the module writes
+// `m.opts.LoyaltyEarnBasisPoints`, so deleting the composition root's line left
+// the name selected on the OTHER side of the same wire and this audit green. It
+// was measured, not reasoned about. [configValueNames] is the repair: only a
+// selector whose base holds a [config.Config] counts.
+//
+// What that still leaves outside, said rather than implied: the audit asks
+// whether a field is read AT ALL, not whether every place that should read it
+// does. A setting passed to two modules and dropped from one stays green here.
+func TestEveryConfigurationFieldReachesTheApplication(t *testing.T) {
+	t.Parallel()
+
+	tree := scanProductionSource(t)
+
+	selected := map[string]bool{}
+	for _, file := range tree.files {
+		if strings.HasPrefix(file.path, configPackageDir) {
+			// The package declaring the field is not a consumer of it; Validate
+			// and the accessors read every one of them.
+			continue
+		}
+
+		holders := configValueNames(file.tree)
+		if len(holders) == 0 {
+			continue
+		}
+
+		ast.Inspect(file.tree, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if base, ok := sel.X.(*ast.Ident); ok && holders[base.Name] {
+				selected[sel.Sel.Name] = true
+			}
+
+			return true
+		})
+	}
+
+	settings := configSettings(t)
+	require.NotEmpty(t, settings, "no configuration field was read, so this audit read nothing")
+
+	for _, setting := range settings {
+		field := lastSegment(setting.path)
+		reason, excused := configFieldsReadThroughAnAccessor[field]
+		if excused {
+			assert.False(t, selected[field],
+				"%s is excused from this audit as reached through an accessor, and a "+
+					"production file now selects it by name.\n"+
+					"The reason recorded was: %s\n"+
+					"Take the line out of configFieldsReadThroughAnAccessor.",
+				lastSegment(setting.path), reason)
+
+			continue
+		}
+
+		assert.True(t, selected[field],
+			"no production file outside %s reads config.Config.%s (%s).\n"+
+				"A setting that stops at the configuration struct promises the operator a "+
+				"knob that does not work: they set it, nothing happens, and they get no "+
+				"error either. Pass it to whatever it configures — for a module that is "+
+				"the composition root, because a module may not read configuration "+
+				"(Principle 2.4) — or, if it really is reached through an accessor, record "+
+				"it in configFieldsReadThroughAnAccessor with the reason.",
+			configPackageDir, lastSegment(setting.path), setting.name)
+	}
+}
+
+// configValueNames returns the identifiers in one file that hold a
+// [config.Config].
+//
+// It is what makes the audit read `cfg.Field` and not every `.Field` in the
+// tree. The looser form was measured and it does not work: the composition root
+// writes `LoyaltyEarnBasisPoints: cfg.LoyaltyEarnBasisPoints` and the module
+// writes `m.opts.LoyaltyEarnBasisPoints`, so deleting the line the audit exists
+// to protect left the NAME selected somewhere else and the gate green. Proved by
+// putting the defect in.
+//
+// Two bindings carry a Config and both are syntactic: a declared type on a
+// parameter, a receiver, a result or a variable, and the `x, err := config.Load()`
+// form the entry points use. A Config reaching a name any other way is invisible
+// here, which makes the audit weaker rather than wrong.
+func configValueNames(file *ast.File) map[string]bool {
+	names := map[string]bool{}
+
+	isConfig := func(expr ast.Expr) bool {
+		if star, ok := expr.(*ast.StarExpr); ok {
+			expr = star.X
+		}
+		sel, ok := expr.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "Config" {
+			return false
+		}
+		pkg, ok := sel.X.(*ast.Ident)
+
+		return ok && pkg.Name == "config"
+	}
+
+	fields := func(list *ast.FieldList) {
+		if list == nil {
+			return
+		}
+		for _, field := range list.List {
+			if !isConfig(field.Type) {
+				continue
+			}
+			for _, name := range field.Names {
+				names[name.Name] = true
+			}
+		}
+	}
+
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.FuncDecl:
+			fields(node.Recv)
+			fields(node.Type.Params)
+			fields(node.Type.Results)
+		case *ast.FuncType:
+			fields(node.Params)
+			fields(node.Results)
+		case *ast.StructType:
+			fields(node.Fields)
+		case *ast.ValueSpec:
+			if isConfig(node.Type) {
+				for _, name := range node.Names {
+					names[name.Name] = true
+				}
+			}
+		case *ast.AssignStmt:
+			for _, rhs := range node.Rhs {
+				call, ok := rhs.(*ast.CallExpr)
+				if !ok {
+					continue
+				}
+				fn, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok || fn.Sel.Name != "Load" {
+					continue
+				}
+				if pkg, ok := fn.X.(*ast.Ident); !ok || pkg.Name != "config" {
+					continue
+				}
+				if len(node.Lhs) > 0 {
+					if name, ok := node.Lhs[0].(*ast.Ident); ok {
+						names[name.Name] = true
+					}
+				}
+			}
+		}
+
+		return true
+	})
+
+	return names
+}
+
+// lastSegment returns the final element of a dotted Go field path, which is the
+// name a selector expression carries.
+func lastSegment(path string) string {
+	if i := strings.LastIndex(path, "."); i >= 0 {
+		return path[i+1:]
+	}
+
+	return path
 }

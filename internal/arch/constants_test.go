@@ -32,6 +32,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/notification/logonly"
 	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
 	"github.com/bdrtr/gobit/internal/modules/payment"
+	paymentservice "github.com/bdrtr/gobit/internal/modules/payment/service"
 	"github.com/bdrtr/gobit/internal/modules/pricing"
 	"github.com/bdrtr/gobit/internal/modules/product"
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
@@ -183,6 +184,26 @@ func TestThePoolDefaultsAgreeWithTheDbPackage(t *testing.T) {
 		"the config's DB_MAX_CONNS default must match db.DefaultConfig's")
 	assert.Equal(t, pool.MinConns, config.DefaultDBMinConns,
 		"the config's DB_MIN_CONNS default must match db.DefaultConfig's")
+}
+
+// TestTheLoyaltyEarnCeilingAgreesWithThePaymentService binds the two homes of
+// the loyalty earn rate's ceiling.
+//
+// The side that ENFORCES the ceiling is the payment service, which refuses a
+// rate above it at construction because the arithmetic it feeds is its own; the
+// reading side is the core's configuration, and because the core CANNOT import
+// modules (Principle 2.4) it repeats the number by hand.
+//
+// The cost of drift has two directions and neither one is loud. A config
+// ceiling ABOVE the service's lets an operator's value pass validation and then
+// fail the whole startup on a module the message does not name; a config
+// ceiling BELOW it refuses at the door a rate the module would have accepted,
+// and an embedder who never passes through this package gets the other answer.
+func TestTheLoyaltyEarnCeilingAgreesWithThePaymentService(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, paymentservice.MaxLoyaltyEarnBasisPoints, config.MaxLoyaltyEarnBasisPoints,
+		"the config's loyalty earn ceiling must match the payment service's")
 }
 
 // TestTheGraphQLLimitDefaultsAgreeWithTheConfig verifies that the GraphQL

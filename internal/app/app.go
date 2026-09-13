@@ -561,6 +561,11 @@ func registerModules(registry *module.Registry, cfg config.Config, log *slog.Log
 		// their balance; so the combination is not configurable, the provider
 		// is simply never registered.
 		StoreCredit: !cfg.StorefrontTrustsUnverifiedCustomerClaim,
+		// The loyalty earn rate is read here rather than by the module, for
+		// Principle 2.4's reason: a module does not read configuration. Zero —
+		// the default — means the ledger is there and nothing is written into
+		// it (ADR 0164).
+		LoyaltyEarnBasisPoints: cfg.LoyaltyEarnBasisPoints,
 	}))
 	registry.Add(order.New())
 	// Phase 7: fulfillment, promotion, tax

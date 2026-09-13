@@ -217,6 +217,23 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **Bir tahsilat artık müşteriye PUAN kazandırıyor** (ADR 0164). Yalnızca eklenen
+  `payment_loyalty_entries` defteri ödeme modülünde duruyor ve satırı yazan tek
+  şey `writeCollectionTotals` — bir koleksiyonun toplamlarını kımıldatan tek
+  fonksiyon. Her satır bir FARK: hedef, koleksiyonun kendi kümülatif tutarından
+  hesaplanıyor, yazılmış olanın üstüne fark ekleniyor, yani aynı olay ikinci kez
+  geldiğinde hiçbir şey yazılmıyor ve bir iade EKSİ satır yazıyor. Özellik
+  listesinin önerdiği üç ismin üçü de ölçümde düştü: `loyalty` adı
+  `examples/starter/loyalty` tarafından ALINMIŞ (kayıt yinelenen adı rotaları
+  bağlamadan önce reddediyor ve starter'ı hiçbir şerit ayağa kaldırmıyor),
+  `order.placed` saga'nın ikinci adımında — para daha hareket etmeden — yayımlanıyor
+  ve misafir siparişinde müşterisi BOŞ, ve yalnız kazanım yarısı hiçbir kapının
+  göremediği bir tablo demek (ADR 0153'ün tersine çevirdiği dilim sırası). Oran
+  bir baz puan ayarı ve sıfır varsayılan: defter var, hiçbir kurulum kazanmıyor.
+  Tavan minor unit başına bir puan ve aşan değer SESSİZCE KÜÇÜLTÜLMÜYOR, ediliyor
+  — iki ayrı evi bir arch iddiası bağlıyor. Operatör bakiyeyi ve geçmişi
+  `payment:read` altında okuyor; yazma ucu yok, çünkü bu modülde yazmak PARA
+  HAREKETİ demek. Puan henüz harcanamıyor.
 - **Bir şerit artık teste geliştiricinin veritabanını VERMİYOR** (ADR 0163).
   Ayarların varsayılanı localhost:5432 ve localhost:6379'u gösteriyor ve bir
   geliştirme makinesinde ikisi de dinliyor, yani kendi kurulumunu başlatmayı

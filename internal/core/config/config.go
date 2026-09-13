@@ -241,6 +241,17 @@ const (
 	// DefaultDBMinConns is the default number of connections the pool tries to keep
 	// even while idle.
 	DefaultDBMinConns int32 = 2
+
+	// MaxLoyaltyEarnBasisPoints is the highest loyalty earn rate an installation
+	// may set: one point per minor unit of money (ADR 0164).
+	//
+	// The number is enforced TWICE and the two copies are bound by an arch
+	// assertion, for the GraphQL limits' reason: the core cannot import a module
+	// (Principle 2.4), so it repeats the payment service's ceiling by hand. The
+	// cost of drift is the ordinary one — an operator's value accepted here and
+	// refused at startup, or the reverse for an embedder who never passes
+	// through this package.
+	MaxLoyaltyEarnBasisPoints int64 = 10_000
 )
 
 // The valid enum values; Validate checks against these.
@@ -892,6 +903,24 @@ type Config struct {
 	// decide for them, and the false default means an installation that turns the
 	// TTL on without reading this still keeps its gate.
 	CatalogCacheShared bool `env:"STOREFRONT_CATALOG_CACHE_SHARED" envDefault:"false"`
+
+	// LoyaltyEarnBasisPoints is how many loyalty points a minor unit of captured
+	// money earns a named customer, in ten-thousandths (ADR 0164).
+	//
+	// # Why zero is the default
+	//
+	// Because a points program is a promise to customers, and a shop that has
+	// not decided to make one must not start making it by upgrading. At zero the
+	// ledger exists, nothing is written into it and the operator read answers
+	// zero.
+	//
+	// # What the number means
+	//
+	// 100 is one point per hundred minor units — a point per lira, per euro, per
+	// dollar. The arithmetic truncates, so a rate of 100 earns nothing on a
+	// purchase under one unit. The ceiling is 10000, one point per minor unit;
+	// above it the value is refused rather than quietly reduced.
+	LoyaltyEarnBasisPoints int64 `env:"PAYMENT_LOYALTY_EARN_BASIS_POINTS" envDefault:"0"`
 
 	// GraphQLMaxFieldRepetition is the upper bound on how many times the same field
 	// may be selected under the same object.

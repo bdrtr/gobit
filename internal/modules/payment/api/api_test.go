@@ -997,3 +997,91 @@ func TestKrediOkumaUclariOKUMAYetkisiyleGecer(t *testing.T) {
 		})
 	}
 }
+
+// TestTheLoyaltyBalanceEndpointNamesTheLedgerItRead holds which ledger was read.
+//
+// The customer and the currency name one ledger together. If either is dropped
+// the answer would be about somebody else's points, or about a currency the
+// caller did not ask for, and the answer repeats them so a client can see which.
+func TestTheLoyaltyBalanceEndpointNamesTheLedgerItRead(t *testing.T) {
+	svc := &fakePayments{loyaltyBalance: 340}
+	r := yeniRouter(svc)
+
+	rec := istek(t, r, http.MethodGet,
+		"/admin/v1/loyalty-points/balance?customer_id=cus_1&currency_code=try", "")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, [2]string{"cus_1", "try"}, svc.lastLoyaltyQuery,
+		"the query keys the handler reads are asserted nowhere else: the arch audit "+
+			"that holds described-against-read deliberately does not reach this package")
+
+	var envelope struct {
+		Data struct {
+			CustomerID   string `json:"customer_id"`
+			CurrencyCode string `json:"currency_code"`
+			Points       int64  `json:"points"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
+	assert.Equal(t, int64(340), envelope.Data.Points)
+	assert.Equal(t, "cus_1", envelope.Data.CustomerID)
+	assert.Equal(t, "TRY", envelope.Data.CurrencyCode,
+		"the answer says WHICH ledger it read: a client sending 'try' sees 'TRY'")
+}
+
+// TestTheLoyaltyHistoryReturnsTheListEnvelope nails the envelope's shape.
+func TestTheLoyaltyHistoryReturnsTheListEnvelope(t *testing.T) {
+	svc := &fakePayments{loyaltyHistory: []models.LoyaltyEntry{
+		{ID: "lpoint_2", Kind: models.LoyaltyReverse, Points: -25, Reference: "paycol_1"},
+		{ID: "lpoint_1", Kind: models.LoyaltyEarn, Points: 100, Reference: "paycol_1"},
+	}}
+	r := yeniRouter(svc)
+
+	rec := istek(t, r, http.MethodGet,
+		"/admin/v1/loyalty-points?customer_id=cus_1&currency_code=TRY&limit=5&offset=10", "")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, int64(5), svc.lastLoyaltyPage.Limit, "the paging reaches the service")
+	assert.Equal(t, int64(10), svc.lastLoyaltyPage.Offset)
+
+	var envelope struct {
+		Data []struct {
+			ID        string `json:"id"`
+			Points    int64  `json:"points"`
+			Kind      string `json:"kind"`
+			Reference string `json:"reference"`
+		} `json:"data"`
+		Count  int64 `json:"count"`
+		Offset int64 `json:"offset"`
+		Limit  int64 `json:"limit"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
+
+	assert.Equal(t, int64(2), envelope.Count)
+	require.Len(t, envelope.Data, 2)
+	assert.Equal(t, "reverse", envelope.Data[0].Kind)
+	assert.Equal(t, int64(-25), envelope.Data[0].Points,
+		"a reversal reads NEGATIVE: the balance is the sum of the rows and a client reads it the same way")
+	assert.Equal(t, "paycol_1", envelope.Data[0].Reference,
+		"the row names the collection it came from, which is what makes the history readable")
+}
+
+// TestTheLoyaltyReadsAreOpenToTheReadScope holds the privilege on the route.
+//
+// Both endpoints are READS, so an identity holding only payment:read must reach
+// them. There is no write half to check, and that is the record's own decision:
+// in this module a write means money moved, and a points adjustment does not.
+func TestTheLoyaltyReadsAreOpenToTheReadScope(t *testing.T) {
+	for _, path := range []string{
+		"/admin/v1/loyalty-points?customer_id=cus_1&currency_code=TRY",
+		"/admin/v1/loyalty-points/balance?customer_id=cus_1&currency_code=TRY",
+	} {
+		t.Run(path, func(t *testing.T) {
+			r := yeniRouter(&fakePayments{})
+
+			rec := kimlikliIstek(t, r, http.MethodGet, path, "", darYetkili())
+
+			assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		})
+	}
+}

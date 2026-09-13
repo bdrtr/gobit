@@ -22,7 +22,34 @@ const (
 	// "quey" would compile, produce a document, and only surface when a
 	// generated client stopped sending the filter.
 	inQuery = "query"
+	// The query parameter names the ledger listings share. They are constants for
+	// inQuery's reason, one step further out: a name misspelled in a description
+	// still produces a document, and what goes wrong is a filter the client sends
+	// and the server never reads.
+	paramCustomerID   = "customer_id"
+	paramCurrencyCode = "currency_code"
 )
+
+// pagingParameters are the two parameters every paged listing in this module
+// takes.
+//
+// One function rather than three copies: the three listings page the same way
+// and a description that drifted between them would tell a reader that one of
+// them does something the others do not.
+func pagingParameters() []openapi.Parameter {
+	return []openapi.Parameter{
+		{
+			Name: "limit", In: inQuery,
+			Schema:      map[string]any{schemaType: typeInteger},
+			Description: "Page size; the service's default applies when it is not given.",
+		},
+		{
+			Name: "offset", In: inQuery,
+			Schema:      map[string]any{schemaType: typeInteger},
+			Description: "Number of records to skip.",
+		},
+	}
+}
 
 // describeCollections records the four payment-collection endpoints.
 //
@@ -68,8 +95,8 @@ func describeCollections(d *openapi.Doc) {
 
 	d.Describe(http.MethodGet, pathAdminCollections, openapi.Operation{
 		Summary: "Lists payment collections.",
-		Description: "This is the ONLY endpoint in this module that reads the query string, " +
-			"and the parameters below are exactly the ones the handler reads — no more. " +
+		Description: "The parameters below are exactly the ones the handler reads — no " +
+			"more. " +
 			"A parameter written into the schema that the server ignores is worse than a " +
 			"missing one: the generated client puts an argument on the method, the caller " +
 			"fills it in, and the filtering silently does not happen." +
@@ -77,7 +104,7 @@ func describeCollections(d *openapi.Doc) {
 			"The three amount fields say where a collection stands without a second " +
 			"request: authorized is what is held, captured is what has moved, refunded is " +
 			"what has gone back. " + amountNote,
-		Parameters: []openapi.Parameter{
+		Parameters: append([]openapi.Parameter{
 			{
 				Name: "reference", In: inQuery,
 				Schema:      map[string]any{schemaType: typeString},
@@ -88,17 +115,7 @@ func describeCollections(d *openapi.Doc) {
 				Schema:      map[string]any{schemaType: typeString},
 				Description: "Limits the listing to one collection status.",
 			},
-			{
-				Name: "limit", In: inQuery,
-				Schema:      map[string]any{schemaType: typeInteger},
-				Description: "Page size; the service's default applies when it is not given.",
-			},
-			{
-				Name: "offset", In: inQuery,
-				Schema:      map[string]any{schemaType: typeInteger},
-				Description: "Number of records to skip.",
-			},
-		},
+		}, pagingParameters()...),
 		Responses: map[string]any{
 			"200": openapi.Response("A page of collections", d.List(collectionDTO{})),
 		},

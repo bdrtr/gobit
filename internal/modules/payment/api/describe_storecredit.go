@@ -44,12 +44,12 @@ func describeStoreCredits(d *openapi.Doc) {
 			"of money. " + amountNote,
 		Parameters: []openapi.Parameter{
 			{
-				Name: "customer_id", In: inQuery, Required: true,
+				Name: paramCustomerID, In: inQuery, Required: true,
 				Schema:      map[string]any{schemaType: typeString},
 				Description: "Whose balance is read. It is required: store credit is one person's money.",
 			},
 			{
-				Name: "currency_code", In: inQuery, Required: true,
+				Name: paramCurrencyCode, In: inQuery, Required: true,
 				Schema:      map[string]any{schemaType: typeString},
 				Description: "Which currency's ledger is read. It is required, and the answer repeats it in the normalized form the server used.",
 			},
@@ -67,28 +67,18 @@ func describeStoreCredits(d *openapi.Doc) {
 			"The amount is SIGNED — a hold is negative, an issue and the returns are " +
 			"positive — so a client that sums this page's rows gets the same number " +
 			"the balance endpoint answers with. " + amountNote,
-		Parameters: []openapi.Parameter{
+		Parameters: append([]openapi.Parameter{
 			{
-				Name: "customer_id", In: inQuery, Required: true,
+				Name: paramCustomerID, In: inQuery, Required: true,
 				Schema:      map[string]any{schemaType: typeString},
 				Description: "Whose history is read.",
 			},
 			{
-				Name: "currency_code", In: inQuery, Required: true,
+				Name: paramCurrencyCode, In: inQuery, Required: true,
 				Schema:      map[string]any{schemaType: typeString},
 				Description: "Which currency's ledger is read.",
 			},
-			{
-				Name: "limit", In: inQuery,
-				Schema:      map[string]any{schemaType: typeInteger},
-				Description: "Page size; the service's default applies when it is not given.",
-			},
-			{
-				Name: "offset", In: inQuery,
-				Schema:      map[string]any{schemaType: typeInteger},
-				Description: "Number of records to skip.",
-			},
-		},
+		}, pagingParameters()...),
 		Responses: map[string]any{
 			"200": openapi.Response("A page of ledger rows", d.List(storeCreditEntryDTO{})),
 		},

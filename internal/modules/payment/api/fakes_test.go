@@ -40,6 +40,15 @@ type fakePayments struct {
 	// lastCreditQuery bakiyenin hangi müşteri ve para birimi için sorulduğudur.
 	lastCreditQuery [2]string
 
+	// loyaltyBalance ve loyaltyHistory sadakat puanı uçlarının senaryolandırılmış
+	// cevaplarıdır (ADR 0164).
+	loyaltyBalance int64
+	loyaltyHistory []models.LoyaltyEntry
+	// lastLoyaltyQuery puanın hangi müşteri ve para birimi için sorulduğudur.
+	lastLoyaltyQuery [2]string
+	// lastLoyaltyPage listeleme ucunun servise ilettiği sayfalamadır.
+	lastLoyaltyPage service.Page
+
 	// err ayarlanırsa çağrılan her metot bu hatayı döner; hata sınıfının
 	// status koduna doğru eşlendiği böyle sınanır.
 	err error
@@ -247,4 +256,29 @@ func (f *fakePayments) ListStoreCredit(
 	}
 
 	return f.creditHistory, int64(len(f.creditHistory)), nil
+}
+
+// LoyaltyBalance müşterinin puanını döner.
+func (f *fakePayments) LoyaltyBalance(
+	_ context.Context, customerID, currencyCode string,
+) (int64, error) {
+	f.lastLoyaltyQuery = [2]string{customerID, currencyCode}
+	if f.err != nil {
+		return 0, f.err
+	}
+
+	return f.loyaltyBalance, nil
+}
+
+// ListLoyalty puan geçmişini döner.
+func (f *fakePayments) ListLoyalty(
+	_ context.Context, in service.ListLoyaltyInput,
+) ([]models.LoyaltyEntry, int64, error) {
+	f.lastLoyaltyQuery = [2]string{in.CustomerID, in.CurrencyCode}
+	f.lastLoyaltyPage = in.Page
+	if f.err != nil {
+		return nil, 0, f.err
+	}
+
+	return f.loyaltyHistory, int64(len(f.loyaltyHistory)), nil
 }

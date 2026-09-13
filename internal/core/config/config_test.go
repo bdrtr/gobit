@@ -34,6 +34,7 @@ var envKeys = []string{
 	"FILE_PROVIDER", "FILE_ROOT", "FILE_MAX_UPLOAD_BYTES", "FILE_ALLOWED_TYPES",
 	"GRAPHQL_MAX_DEPTH", "GRAPHQL_MAX_COMPLEXITY", "GRAPHQL_INTROSPECTION",
 	"STOREFRONT_CATALOG_CACHE_TTL", "STOREFRONT_CATALOG_CACHE_SHARED",
+	"PAYMENT_LOYALTY_EARN_BASIS_POINTS",
 	"DB_MAX_CONNS", "DB_MIN_CONNS",
 }
 
@@ -328,6 +329,47 @@ func TestTheCatalogCacheTTLRefusesANegativeValueAndAcceptsZero(t *testing.T) {
 	if cfg.CatalogCacheShared {
 		t.Fatal("the shared flag has to default to false; a cache nobody asked for " +
 			"must not be shareable")
+	}
+}
+
+// TestTheLoyaltyEarnRateIsBoundedAtBothEnds verifies that the rate is refused
+// below zero and above the ceiling, and that zero survives as zero.
+//
+// The two ends are refused for different reasons. Zero is a real answer —
+// earning is off, and it is the default — so a NEGATIVE rate is a typo that
+// would otherwise read as off and hide itself. Above the ceiling the value is
+// refused rather than reduced: a shop that asked to pay two points per minor
+// unit and silently got one would pay out at a rate it never chose (ADR 0164).
+func TestTheLoyaltyEarnRateIsBoundedAtBothEnds(t *testing.T) {
+	for _, rate := range []string{"-1", "10001"} {
+		clearEnv(t)
+		t.Setenv("PAYMENT_LOYALTY_EARN_BASIS_POINTS", rate)
+
+		if _, err := config.Load(); err == nil {
+			t.Fatalf("Load() should have refused PAYMENT_LOYALTY_EARN_BASIS_POINTS=%s", rate)
+		}
+	}
+
+	clearEnv(t)
+	t.Setenv("PAYMENT_LOYALTY_EARN_BASIS_POINTS", "0")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("zero has to be accepted: %v", err)
+	}
+	if cfg.LoyaltyEarnBasisPoints != 0 {
+		t.Fatalf("zero has to survive as zero, got %d", cfg.LoyaltyEarnBasisPoints)
+	}
+
+	clearEnv(t)
+	t.Setenv("PAYMENT_LOYALTY_EARN_BASIS_POINTS", "10000")
+
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatalf("the ceiling itself has to be accepted: %v", err)
+	}
+	if cfg.LoyaltyEarnBasisPoints != config.MaxLoyaltyEarnBasisPoints {
+		t.Fatalf("the ceiling has to survive, got %d", cfg.LoyaltyEarnBasisPoints)
 	}
 }
 

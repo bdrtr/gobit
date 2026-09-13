@@ -114,6 +114,10 @@ func Describe(d *openapi.Doc) {
 	// describe_storecredit.go içinde (ADR 0152).
 	describeStoreCredits(d)
 
+	// Sadakat puanının iki okuma ucu; ayrı dosya olma gerekçesi aynı
+	// (ADR 0164).
+	describeLoyaltyPoints(d)
+
 	describeOturumlar(d)
 	describeTahsilatlar(d)
 	describeMagaza(d)

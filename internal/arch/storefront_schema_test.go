@@ -410,6 +410,15 @@ var storefrontStoredClaims = map[string]claimVerdict{
 			"provider, from the session it is acting on. The session's own owner is " +
 			"payment_collections.customer_id, judged above",
 	},
+	"payment.payment_loyalty_entries.customer_id": {
+		limb: limbConfined,
+		why: "whose points the ledger row moves, and it is never a value a request carried: " +
+			"the row is written by the function that moves the collection's totals, from the " +
+			"COLLECTION it is acting on. The owner it copies is " +
+			"payment_collections.customer_id, judged above, and a collection with no customer " +
+			"writes no row at all — a guest earns nothing rather than earning under an empty " +
+			"name (ADR 0164)",
+	},
 	"payment.payment_store_credit_sessions.customer_id": {
 		limb: limbConfined,
 		why: "the owner copied from the collection when the session is opened, so it is the " +

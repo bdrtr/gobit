@@ -314,6 +314,23 @@ func anlatilanUclar() []ucBeklentisi {
 			metod: http.MethodGet, yol: pathAdminStoreCreditBalance, durum: "200",
 			yanit: storeCreditBalanceDTO{},
 		},
+		// Sadakat puanının iki okuma ucu (ADR 0164).
+		{
+			metod: http.MethodGet, yol: pathAdminLoyaltyPoints, durum: "200",
+			yanit: doluPuanSatiri(), liste: true,
+		},
+		{
+			metod: http.MethodGet, yol: pathAdminLoyaltyPointsBalance, durum: "200",
+			yanit: loyaltyBalanceDTO{},
+		},
+	}
+}
+
+// doluPuanSatiri bütün alanları yazılan bir puan defteri satırı üretir.
+func doluPuanSatiri() loyaltyEntryDTO {
+	return loyaltyEntryDTO{
+		Reference: "paycol_1",
+		CreatedAt: time.Now().UTC(),
 	}
 }
 

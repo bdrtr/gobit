@@ -184,6 +184,21 @@ type Store interface {
 		ctx context.Context, customerID, currencyCode string, limit, offset int64,
 	) ([]models.StoreCreditEntry, int64, error)
 
+	// AppendLoyaltyEntry appends ONE row to a customer's point ledger; the
+	// balance is the sum of them and there is no update or delete (ADR 0164).
+	AppendLoyaltyEntry(ctx context.Context, entry models.LoyaltyEntry) (models.LoyaltyEntry, error)
+	// LoyaltyPointsForReference sums what ONE collection has already earned. It
+	// is what makes the write a target instead of an increment, so it is read
+	// inside the collection's own lock and never on its own.
+	LoyaltyPointsForReference(ctx context.Context, reference string) (int64, error)
+	// LoyaltyBalance sums one customer's points in one currency; a customer with
+	// no entries is zero rather than an absence.
+	LoyaltyBalance(ctx context.Context, customerID, currencyCode string) (int64, error)
+	// ListLoyaltyEntries pages a customer's point history, newest first.
+	ListLoyaltyEntries(
+		ctx context.Context, customerID, currencyCode string, limit, offset int64,
+	) ([]models.LoyaltyEntry, int64, error)
+
 	// CreatePaymentCollection records a new payment collection.
 	CreatePaymentCollection(ctx context.Context, col models.PaymentCollection) (models.PaymentCollection, error)
 	// GetPaymentCollection returns the collection by its identifier; NotFound
@@ -283,6 +298,18 @@ type Options struct {
 	Events EventPublisher
 	// Logger, when given as nil, throws the logs away.
 	Logger *slog.Logger
+	// LoyaltyEarnBasisPoints is how many points a minor unit of captured money
+	// earns, in ten-thousandths (ADR 0164).
+	//
+	// ZERO turns earning off and is the default: the ledger exists, nothing is
+	// written into it, and the read answers zero. That is the safe side, because
+	// a points program nobody asked for is a promise to customers the shop did
+	// not make.
+	//
+	// The ceiling is one point per minor unit. Above it the rate would be a
+	// program this record has not thought about, and the multiplication it
+	// feeds would be a step closer to overflowing.
+	LoyaltyEarnBasisPoints int64
 }
 
 // EventPublisher is the NARROW surface the service needs from the event bus.
@@ -304,6 +331,9 @@ type Service struct {
 	providers *ProviderRegistry
 	events    EventPublisher
 	log       *slog.Logger
+
+	// earnBasisPoints is [Options.LoyaltyEarnBasisPoints]; zero earns nothing.
+	earnBasisPoints int64
 }
 
 // New produces a service with the given dependencies.
@@ -321,11 +351,22 @@ func New(opts Options) (*Service, error) {
 	if opts.Events == nil {
 		return nil, errors.Internal(CodeNotReady, "the payment service cannot be constructed without an event bus")
 	}
+	if opts.LoyaltyEarnBasisPoints < 0 || opts.LoyaltyEarnBasisPoints > MaxLoyaltyEarnBasisPoints {
+		return nil, errors.Internal(CodeNotReady,
+			"the loyalty earn rate has to be between 0 and %d basis points, %d given",
+			MaxLoyaltyEarnBasisPoints, opts.LoyaltyEarnBasisPoints)
+	}
 	log := opts.Logger
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Service{store: opts.Store, providers: opts.Providers, events: opts.Events, log: log}, nil
+	return &Service{
+		store:           opts.Store,
+		providers:       opts.Providers,
+		events:          opts.Events,
+		log:             log,
+		earnBasisPoints: opts.LoyaltyEarnBasisPoints,
+	}, nil
 }
 
 // ProviderIDs returns the identifiers of the registered payment providers,
@@ -402,6 +443,27 @@ func (s *Service) writeCollectionTotals(
 	next.CapturedAmount = captured
 	next.RefundedAmount = refunded
 
-	return s.store.UpdatePaymentCollectionTotals(ctx, col.ID,
+	updated, err := s.store.UpdatePaymentCollectionTotals(ctx, col.ID,
 		models.CollectionStatusFor(next, counts), authorized, captured, refunded)
+	if err != nil {
+		return models.PaymentCollection{}, err
+	}
+
+	// The points are carried to their target here and NOWHERE ELSE (ADR 0164).
+	//
+	// This is the one function every write of a collection's captured or
+	// refunded total goes through, and the earn rule is derived from exactly
+	// those two numbers. The alternative — each flow appending its own row — is
+	// the same rule written in six places, which is what the status derivation
+	// above already refused.
+	//
+	// It runs AFTER the totals are written so that the row the target is
+	// computed from is the one the database now holds: a refund larger than the
+	// capture fails the collection's own constraint here, before any point row
+	// exists, and the whole transaction goes back.
+	if err := s.earnLoyaltyPoints(ctx, updated); err != nil {
+		return models.PaymentCollection{}, err
+	}
+
+	return updated, nil
 }

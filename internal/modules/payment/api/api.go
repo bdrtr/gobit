@@ -20,10 +20,16 @@
 //
 // Yönetim uçları yetki İSTER ve yetki uç uç zorlanır (bkz. [Handler.Routes]):
 //
-//   - [ScopeRead] ("payment:read") — /admin/v1 altındaki GET uçlarını açar:
-//     sağlayıcı listesi, koleksiyonlar, oturumlar, tahsilatlar, iadeler.
-//   - [ScopeWrite] ("payment:write") — /admin/v1 altındaki POST uçlarını açar:
-//     koleksiyon ve oturum açma, yetkilendirme, tahsilat, iptal, iade.
+//   - [ScopeRead] ("payment:read") — bu modülün /admin/v1 altında bağladığı
+//     BÜTÜN GET uçlarını açar.
+//   - [ScopeWrite] ("payment:write") — bu modülün /admin/v1 altında bağladığı
+//     BÜTÜN POST uçlarını açar.
+//
+// İkisi de YÜZEYİ adlandırıyor, kaynakları saymıyor. Sayan bir cümle vardı ve
+// bayattı: ADR 0152 üç mağaza kredisi ucu bağladı, hiçbir listeye girmedi ve
+// hiçbir kapı bunu söylemedi; ADR 0164 iki puan ucu daha ekledi. Bir düzyazı
+// listesi, nüfusu büyüdüğü an sessizce yanlış olur (D111, ve D102 aynı onarımı
+// bir hedef listesi için yaptı).
 //
 // corehttp.ScopeAdmin ("admin") ÜST YETKİDİR; ikisini de tek başına karşılar
 // (bkz. corehttp.Principal.HasScope).
@@ -73,6 +79,15 @@ const (
 	pathAdminStoreCredits       = "/admin/v1/store-credits"         //nolint:gosec // G101: bir rota adresi, sır değil
 	pathAdminStoreCreditBalance = "/admin/v1/store-credits/balance" //nolint:gosec // G101: bir rota adresi, sır değil
 
+	// pathAdminLoyaltyPoints ve pathAdminLoyaltyPointsBalance sadakat puanının
+	// iki yönetim ucudur (ADR 0164).
+	//
+	// Mağaza kredisinin şekli: bakiye AYRI bir adres, listeye eklenmiş bir alan
+	// değil. İki soru, iki adres. Yazma ucu YOK — puanı yazan tek şey paranın
+	// kendisi ve onu bir operatör elle kımıldatamıyor.
+	pathAdminLoyaltyPoints        = "/admin/v1/loyalty-points"
+	pathAdminLoyaltyPointsBalance = "/admin/v1/loyalty-points/balance"
+
 	pathAdminCollections      = "/admin/v1/payment-collections"
 	pathAdminCollection       = "/admin/v1/payment-collections/{id}"
 	pathAdminCollectionSess   = "/admin/v1/payment-collections/{id}/payment-sessions"
@@ -119,6 +134,13 @@ type Payments interface {
 	ListStoreCredit(
 		ctx context.Context, in service.ListStoreCreditInput,
 	) ([]models.StoreCreditEntry, int64, error)
+
+	// LoyaltyBalance müşterinin tek bir para birimindeki puanını döner.
+	LoyaltyBalance(ctx context.Context, customerID, currencyCode string) (int64, error)
+	// ListLoyalty müşterinin puan geçmişini sayfalar.
+	ListLoyalty(
+		ctx context.Context, in service.ListLoyaltyInput,
+	) ([]models.LoyaltyEntry, int64, error)
 
 	// CreatePaymentCollection yeni bir ödeme koleksiyonu oluşturur.
 	CreatePaymentCollection(ctx context.Context, in service.CreateCollectionInput) (models.PaymentCollection, error)
@@ -168,19 +190,27 @@ func New(svc Payments) *Handler { return &Handler{svc: svc} }
 const (
 	// ScopeRead payment yönetim yüzeyindeki OKUMA uçlarının istediği yetkidir.
 	//
-	// Koleksiyonları, oturumları, tahsilatları ve iadeleri okumaya yeter; para
-	// hareketi doğuran hiçbir ucu açmaz. Tam yetkili kimliklere ayrıca
-	// verilmesi gerekmez: corehttp.ScopeAdmin taşıyan bir çağıran bunu da
-	// karşılar (bkz. corehttp.Principal.HasScope).
+	// Modülün /admin/v1 altındaki her GET ucunu açar ve para hareketi doğuran
+	// hiçbir ucu açmaz. Neyi okuduğunu tek tek saymıyor, çünkü sayan bir cümle
+	// büyüyen bir nüfusun gerisinde kalır (D111): ne okunabileceğini
+	// [Handler.Routes] söyler, ve okunabilenler arasında müşterinin mağaza
+	// kredisi ve sadakat puanı da var. Tam yetkili kimliklere ayrıca verilmesi
+	// gerekmez: corehttp.ScopeAdmin taşıyan bir çağıran bunu da karşılar
+	// (bkz. corehttp.Principal.HasScope).
 	ScopeRead = "payment:read"
 
 	// ScopeWrite payment yönetim yüzeyindeki YAZMA uçlarının istediği
 	// yetkidir.
 	//
 	// Bu modülde yazma, PARA HAREKETİ demektir: tahsilat müşterinin kartından
-	// çeker, iade kasadan çıkarır, iptal bloke tutarı serbest bırakır. Okuma
-	// yetkisinden ayrılmasının sebebi budur — raporlama için verilen bir
-	// kimliğin kasaya erişmemesi gerekir.
+	// çeker, iade kasadan çıkarır, iptal bloke tutarı serbest bırakır, kredi
+	// vermek müşterinin harcayabileceği para yaratır. Okuma yetkisinden
+	// ayrılmasının sebebi budur — raporlama için verilen bir kimliğin kasaya
+	// erişmemesi gerekir.
+	//
+	// Cümlenin kapsamı bir KARARI da tutuyor: sadakat puanının yazma ucu YOK,
+	// çünkü puanı kımıldatan tek şey paranın kendisi ve elle bir düzeltme bu
+	// cümleyi yanlış yapardı (ADR 0164).
 	ScopeWrite = "payment:write"
 )
 
@@ -215,6 +245,14 @@ func (h *Handler) Routes(r chi.Router) {
 	yazma.Post(pathAdminStoreCredits, h.issueStoreCredit)
 	okuma.Get(pathAdminStoreCredits, h.listStoreCredit)
 	okuma.Get(pathAdminStoreCreditBalance, h.storeCreditBalance)
+
+	// Sadakat puanı: yalnızca OKUMA. Puanı yazan eylem tahsilatın kendisi, yani
+	// bu modülde zaten yazma yetkisinin altında olan bir şey; ayrı bir yazma ucu
+	// operatöre parayla ilgisi olmayan bir puan kımıldatma yolu açardı ve
+	// ScopeWrite'ın "yazma PARA HAREKETİ demektir" cümlesini yanlış yapardı
+	// (ADR 0164).
+	okuma.Get(pathAdminLoyaltyPoints, h.listLoyaltyPoints)
+	okuma.Get(pathAdminLoyaltyPointsBalance, h.loyaltyPointBalance)
 
 	yazma.Post(pathAdminCollections, h.createCollection)
 	okuma.Get(pathAdminCollections, h.listCollections)

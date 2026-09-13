@@ -35,6 +35,16 @@ type PaymentCollection struct {
 	CustomerID       *string
 }
 
+type PaymentLoyaltyEntry struct {
+	ID           string
+	CustomerID   string
+	CurrencyCode string
+	Points       int64
+	Kind         string
+	Reference    string
+	CreatedAt    pgtype.Timestamptz
+}
+
 type PaymentManualSession struct {
 	ID               string
 	IdempotencyKey   string

@@ -180,6 +180,19 @@ type Options struct {
 	// yapılandırmayı okumasını gerektirmeden (İlke 2.4) o kararı tek bir yerde
 	// bırakıyor.
 	StoreCredit bool
+
+	// LoyaltyEarnBasisPoints tahsil edilen paranın her minor unit'inin kaç puan
+	// kazandırdığıdır, on binde olarak (ADR 0164).
+	//
+	// SIFIR kazanmayı KAPATIR ve varsayılan odur: defter var, içine hiçbir şey
+	// yazılmaz, okuma sıfır döner. Güvenli taraf o, çünkü kimsenin istemediği
+	// bir puan programı mağazanın vermediği bir söz demek.
+	//
+	// Tavan minor unit başına bir puandır ve aşan bir değer kuruluşta REDDEDİLİR
+	// (bkz. [service.MaxLoyaltyEarnBasisPoints]). Ayarı burada tutmak, modülün
+	// yapılandırmayı okumasını gerektirmeden (İlke 2.4) oranı tek bir yerde
+	// bırakıyor.
+	LoyaltyEarnBasisPoints int64
 }
 
 // Name modülün benzersiz adını döner.
@@ -262,10 +275,11 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	}
 
 	svc, err := service.New(service.Options{
-		Store:     repo,
-		Providers: providers,
-		Events:    bus,
-		Logger:    log,
+		Store:                  repo,
+		Providers:              providers,
+		Events:                 bus,
+		Logger:                 log,
+		LoyaltyEarnBasisPoints: m.opts.LoyaltyEarnBasisPoints,
 	})
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,

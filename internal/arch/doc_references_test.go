@@ -1596,6 +1596,14 @@ var testNameReferenceExemptions = []pathReferenceExemption{
 			"Turkish letters to make the point. The name is an example of the naming " +
 			"habit, not a claim that this test exists.",
 	},
+	{
+		file: "docs/measurements/0164-a-name-that-was-already-taken.md",
+		path: "TestKrediDefteriGuncellenmez",
+		reason: "The report's subject is that this gate was REPLACED: its subject was a " +
+			"file read by name, behind the integration tag, so the payment module's " +
+			"second ledger would have been invisible to it. Rewriting the name to the " +
+			"live one would make the sentence say the opposite of what happened.",
+	},
 }
 
 // findTestNameExemption is [findPathExemption] for the backticked-test-name list.

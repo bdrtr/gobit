@@ -92,9 +92,18 @@ clients/
 # okuyan herkesin onu bağlayıcı sanmasına yol açar, ve çeliştiğinde hangisinin
 # kazandığını ayrıca kurala bağlamak gerekir.
 #
+# Üçüncüsü aynı sınıftan: özellik karşılaştırma ve iş listesi. Bir turun neyi
+# ölçtüğünün ÇALIŞMA kaydı, kararın kendisi değil — karar ADR'de, kanıtı
+# ölçümde. Buraya 2026-09-13'te girdi ve gerekçesi ikisiyle aynı olmakla
+# kalmıyor: izlenmeyen hâliyle depoda durduğu sürece dil şeridini de kırıyordu,
+# çünkü `git ls-files --others --exclude-standard` onu deponun bir dosyası
+# sayıyor ve içeriği Türkçe (ADR 0012). Defterle susturulamazdı da — o liste
+# yalnızca KÜÇÜLEBİLİR.
+#
 # Diskten SİLİNMEZ; yalnızca sürüm kontrolüne girmez.
 /go-commerce-framework-plan.md
 /go-ecommerce-mimari.md
+/gobit-ozellik-listesi.md
 
 # The agent tooling keeps git WORKTREES here — full copies of this repository.
 # They belong to no commit and must not be added to one.

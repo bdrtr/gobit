@@ -56,6 +56,8 @@ var modulTablolari = []string{
 	// Mağaza kredisinin iki tablosu (ADR 0152): defter modülün, oturumlar
 	// sağlayıcının.
 	"payment_store_credit_entries", "payment_store_credit_sessions",
+	// Sadakat puanı defteri (ADR 0164).
+	"payment_loyalty_entries",
 }
 
 // Test verisinde kullanılan sabitler. Referans BAŞKA bir modüle (sepet ya da
@@ -1344,19 +1346,221 @@ func TestKrediAuthorizeDefterKilidindeBekler(t *testing.T) {
 			"harcadığı anlamına gelirdi")
 }
 
-// TestKrediDefteriGuncellenmez defterin yalnızca EKLENEN bir kayıt olduğunu
-// şemanın kendisinden okur.
+// Defterin yalnızca EKLENEN bir kayıt olduğunu okuyan kapı buradan TAŞINDI:
+// internal/arch'taki TestThePaymentLedgersAreAppendOnlyInSQL (ADR 0164).
 //
-// Bakiye satırların toplamı olduğu için bir düzeltme YENİ BİR SATIR; UPDATE ya
-// da DELETE eden bir sorgu sessizce tarihi değiştirirdi ve "bu müşterinin neden
-// 200 lirası var" sorusunun cevabı kaybolurdu.
-func TestKrediDefteriGuncellenmez(t *testing.T) {
-	sorgular, err := os.ReadFile("queries/payment_store_credit.sql")
+// Buradaki sürümün öznesi bir DOSYAydı — adıyla okunan tek bir yol — ve modülün
+// ikinci defteri eklendiği gün onu göremezdi. Taşınan sürümün öznesi DİZİN, iki
+// tabloyu da adıyla arıyor, dosya taşındığında sessizce boş dize okumak yerine
+// kırmızı oluyor ve entegrasyon etiketinin arkasında değil hızlı şeritte
+// koşuyor.
+
+// --- sadakat puanı defteri (ADR 0164) ----------------------------------------
+
+// earningService builds a real-repository service that earns at the given rate.
+func earningService(t *testing.T, basisPoints int64) *service.Service {
+	t.Helper()
+
+	repo := repository.New(testPool.Pool())
+	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(manual.New(repo, nil)))
+
+	svc, err := service.New(service.Options{
+		Store: repo, Providers: registry, Events: eventbus.NewInMemory(nil),
+		LoyaltyEarnBasisPoints: basisPoints,
+	})
 	require.NoError(t, err)
 
-	metin := strings.ToUpper(string(sorgular))
-	assert.NotContains(t, metin, "UPDATE PAYMENT_STORE_CREDIT_ENTRIES",
-		"defter satırı güncellenmez: düzeltme yeni bir satırdır")
-	assert.NotContains(t, metin, "DELETE FROM PAYMENT_STORE_CREDIT_ENTRIES",
-		"defter satırı silinmez: silinen bir satır, olmamış gibi görünen bir para hareketidir")
+	return svc
+}
+
+// TestACaptureWritesARealPointRow proves the ledger against the real schema.
+//
+// The unit tests prove the ARITHMETIC against a fake store. What only this test
+// can see is that the row the arithmetic produces satisfies the table: the sign
+// matches the kind, the currency matches the format, the reference is not blank
+// and the points are not zero. A row that the service is happy with and the
+// schema refuses would fail a capture whose money has already moved.
+func TestACaptureWritesARealPointRow(t *testing.T) {
+	ctx := context.Background()
+	svc := earningService(t, 100)
+	customer := "cus_" + models.NewPaymentCollectionID()
+
+	col, err := svc.CreatePaymentCollection(ctx, service.CreateCollectionInput{
+		Reference: testReference, Amount: testAmount,
+		CurrencyCode: testCurrency, CustomerID: customer,
+	})
+	require.NoError(t, err)
+
+	ses, err := svc.CreateSession(ctx, col.ID, manual.ID,
+		service.CreateSessionInput{IdempotencyKey: "loyalty-" + col.ID})
+	require.NoError(t, err)
+	_, err = svc.AuthorizePayment(ctx, ses.ID)
+	require.NoError(t, err)
+	capture, err := svc.CapturePayment(ctx, ses.ID, 0)
+	require.NoError(t, err)
+
+	balance, err := svc.LoyaltyBalance(ctx, customer, testCurrency)
+	require.NoError(t, err)
+	assert.Equal(t, testAmount*100/10_000, balance,
+		"the balance is the target the captured money implies")
+
+	rows, total, err := svc.ListLoyalty(ctx, service.ListLoyaltyInput{
+		CustomerID: customer, CurrencyCode: testCurrency,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, rows, 1)
+	assert.Equal(t, models.LoyaltyEarn, rows[0].Kind)
+	assert.Equal(t, col.ID, rows[0].Reference)
+	assert.False(t, rows[0].CreatedAt.IsZero(), "the moment is stamped by the schema's default")
+
+	_, err = svc.RefundPayment(ctx, capture.ID, testAmount/2, "half back")
+	require.NoError(t, err)
+
+	balance, err = svc.LoyaltyBalance(ctx, customer, testCurrency)
+	require.NoError(t, err)
+	assert.Equal(t, testAmount/2*100/10_000, balance,
+		"half the money back is half the points back")
+}
+
+// TestTheLedgerRefusesASignThatContradictsItsKind proves the constraint pair.
+//
+// The sign is decided by the kind and the SCHEMA holds the pairing, which is the
+// only reason a refund that was written positive — the mistake that hands a
+// customer points for taking their money back — cannot enter the table. No Go
+// code checks it, and none should: a check in the service is a check one caller
+// can go around.
+func TestTheLedgerRefusesASignThatContradictsItsKind(t *testing.T) {
+	ctx := context.Background()
+	repo := repository.New(testPool.Pool())
+	customer := "cus_" + models.NewPaymentCollectionID()
+
+	for _, bad := range []struct {
+		name  string
+		entry models.LoyaltyEntry
+	}{
+		{
+			name: "a reverse written positive",
+			entry: models.LoyaltyEntry{
+				CustomerID: customer, CurrencyCode: testCurrency,
+				Points: 10, Kind: models.LoyaltyReverse, Reference: "paycol_x",
+			},
+		},
+		{
+			name: "an earn written negative",
+			entry: models.LoyaltyEntry{
+				CustomerID: customer, CurrencyCode: testCurrency,
+				Points: -10, Kind: models.LoyaltyEarn, Reference: "paycol_x",
+			},
+		},
+		{
+			name: "a kind outside the vocabulary",
+			entry: models.LoyaltyEntry{
+				CustomerID: customer, CurrencyCode: testCurrency,
+				Points: 10, Kind: models.LoyaltyKind("bonus"), Reference: "paycol_x",
+			},
+		},
+		{
+			name: "no points at all",
+			entry: models.LoyaltyEntry{
+				CustomerID: customer, CurrencyCode: testCurrency,
+				Points: 0, Kind: models.LoyaltyEarn, Reference: "paycol_x",
+			},
+		},
+		{
+			name: "a row belonging to no collection",
+			entry: models.LoyaltyEntry{
+				CustomerID: customer, CurrencyCode: testCurrency,
+				Points: 10, Kind: models.LoyaltyEarn, Reference: "   ",
+			},
+		},
+		{
+			name: "a currency that is not a code",
+			entry: models.LoyaltyEntry{
+				CustomerID: customer, CurrencyCode: "try",
+				Points: 10, Kind: models.LoyaltyEarn, Reference: "paycol_x",
+			},
+		},
+		{
+			name: "points belonging to nobody",
+			entry: models.LoyaltyEntry{
+				CustomerID: "  ", CurrencyCode: testCurrency,
+				Points: 10, Kind: models.LoyaltyEarn, Reference: "paycol_x",
+			},
+		},
+	} {
+		t.Run(bad.name, func(t *testing.T) {
+			entry := bad.entry
+			entry.ID = models.NewLoyaltyEntryID()
+
+			_, err := repo.AppendLoyaltyEntry(ctx, entry)
+
+			require.Error(t, err, "the schema has to refuse this row")
+		})
+	}
+}
+
+// TestTwoConcurrentCapturesEarnTheTargetOnce proves the serialization the
+// decision rests on, with real row locks.
+//
+// Each capture computes a TARGET and appends the difference between it and what
+// the collection has already been written. That read and that write are inside
+// the collection's own lock, so two captures on the same collection queue up and
+// the second sees the first one's row. Without the lock both would read nothing
+// written, both would append their own whole target, and the customer would hold
+// twice the points the money earned.
+//
+// A unit test cannot see this: the fake store has no transactions and no rows to
+// lock, so it would be asserting about a mechanism it does not have.
+func TestTwoConcurrentCapturesEarnTheTargetOnce(t *testing.T) {
+	ctx := context.Background()
+	svc := earningService(t, 100)
+	customer := "cus_" + models.NewPaymentCollectionID()
+
+	col, err := svc.CreatePaymentCollection(ctx, service.CreateCollectionInput{
+		Reference: testReference, Amount: testAmount,
+		CurrencyCode: testCurrency, CustomerID: customer,
+	})
+	require.NoError(t, err)
+
+	// TWO sessions, each holding half, so both captures are real and both move
+	// the collection's captured total.
+	half := testAmount / 2
+	sessions := make([]models.PaymentSession, 0, 2)
+	for i := range 2 {
+		ses, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
+			IdempotencyKey: fmt.Sprintf("loyalty-race-%s-%d", col.ID, i),
+			Amount:         half,
+		})
+		require.NoError(t, err)
+		_, err = svc.AuthorizePayment(ctx, ses.ID)
+		require.NoError(t, err)
+		sessions = append(sessions, ses)
+	}
+
+	var wg sync.WaitGroup
+	errs := make([]error, len(sessions))
+	start := make(chan struct{})
+	for i := range sessions {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, errs[i] = svc.CapturePayment(ctx, sessions[i].ID, 0)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	for i := range errs {
+		require.NoError(t, errs[i], "both captures have to succeed")
+	}
+
+	balance, err := svc.LoyaltyBalance(ctx, customer, testCurrency)
+	require.NoError(t, err)
+	assert.Equal(t, testAmount*100/10_000, balance,
+		"the points are the target the whole captured amount implies, whatever order "+
+			"the two captures ran in; a balance of twice this would mean each capture "+
+			"read a ledger the other had not written to yet")
 }

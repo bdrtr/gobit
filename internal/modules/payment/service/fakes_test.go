@@ -59,6 +59,9 @@ type fakeStore struct {
 	// Gerçek tabloda bakiye satırların TOPLAMI; sahte de öyle tutuyor — tek bir
 	// sayı tutsaydı, blokajı eksi yazan bir hata testlerde görünmezdi.
 	credit map[string][]models.StoreCreditEntry
+
+	// loyalty puan defteridir ve müşteri+para birimi başına tutuluyor (ADR 0164).
+	loyalty map[string][]models.LoyaltyEntry
 }
 
 // newFakeStore boş bir sahte depo üretir.
@@ -82,16 +85,23 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 	}
 
 	f.mu.Lock()
+	// İKİ DEFTER de anlık görüntüye giriyor. Girmeselerdi "işlem geri alındı, o
+	// yüzden satır yazılmadı" diyen bir test YEŞİL geçerdi ve kanıtladığı şeyin
+	// tersi doğru olurdu: gerçek işlem satırı geri alır, sahte harita almaz.
 	snapshot := struct {
 		collections map[string]models.PaymentCollection
 		sessions    map[string]models.PaymentSession
 		payments    map[string]models.Payment
 		refunds     map[string]models.Refund
+		credit      map[string][]models.StoreCreditEntry
+		loyalty     map[string][]models.LoyaltyEntry
 	}{
 		collections: maps.Clone(f.collections),
 		sessions:    maps.Clone(f.sessions),
 		payments:    maps.Clone(f.payments),
 		refunds:     maps.Clone(f.refunds),
+		credit:      maps.Clone(f.credit),
+		loyalty:     maps.Clone(f.loyalty),
 	}
 	f.mu.Unlock()
 
@@ -99,6 +109,7 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 		f.mu.Lock()
 		f.collections, f.sessions = snapshot.collections, snapshot.sessions
 		f.payments, f.refunds = snapshot.payments, snapshot.refunds
+		f.credit, f.loyalty = snapshot.credit, snapshot.loyalty
 		f.mu.Unlock()
 		return err
 	}
@@ -845,6 +856,88 @@ func (f *fakeStore) ListStoreCreditEntries(
 	total := int64(len(all))
 
 	out := make([]models.StoreCreditEntry, 0, len(all))
+	for i := len(all) - 1; i >= 0; i-- {
+		out = append(out, all[i])
+	}
+
+	if int(offset) >= len(out) {
+		return nil, total, nil
+	}
+	out = out[offset:]
+	if int(limit) < len(out) {
+		out = out[:limit]
+	}
+
+	return out, total, nil
+}
+
+// --- sadakat puanı defteri (ADR 0164) ----------------------------------------
+
+// AppendLoyaltyEntry puan defterine tek bir satır ekler.
+func (f *fakeStore) AppendLoyaltyEntry(
+	_ context.Context, entry models.LoyaltyEntry,
+) (models.LoyaltyEntry, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.loyalty == nil {
+		f.loyalty = map[string][]models.LoyaltyEntry{}
+	}
+	key := creditKey(entry.CustomerID, entry.CurrencyCode)
+	f.loyalty[key] = append(f.loyalty[key], entry)
+
+	return entry, nil
+}
+
+// LoyaltyPointsForReference bir koleksiyonun yazılmış puanlarını toplar.
+//
+// Defter müşteri anahtarıyla tutulduğu için toplam BÜTÜN anahtarlarda aranıyor:
+// hedefin öznesi koleksiyon, saklamanın anahtarı müşteri ve ikisini karıştırmak
+// tam olarak gerçek sorgunun yapmadığı şey olurdu.
+func (f *fakeStore) LoyaltyPointsForReference(_ context.Context, reference string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var points int64
+	for key := range f.loyalty {
+		entries := f.loyalty[key]
+		for i := range entries {
+			if entries[i].Reference == reference {
+				points += entries[i].Points
+			}
+		}
+	}
+
+	return points, nil
+}
+
+// LoyaltyBalance satırların toplamını döner.
+func (f *fakeStore) LoyaltyBalance(
+	_ context.Context, customerID, currencyCode string,
+) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var points int64
+	entries := f.loyalty[creditKey(customerID, currencyCode)]
+	for i := range entries {
+		points += entries[i].Points
+	}
+
+	return points, nil
+}
+
+// ListLoyaltyEntries geçmişi yeniden eskiye döner.
+func (f *fakeStore) ListLoyaltyEntries(
+	_ context.Context, customerID, currencyCode string, limit, offset int64,
+) ([]models.LoyaltyEntry, int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	all := f.loyalty[creditKey(customerID, currencyCode)]
+	total := int64(len(all))
+
+	out := make([]models.LoyaltyEntry, 0, len(all))
 	for i := len(all) - 1; i >= 0; i-- {
 		out = append(out, all[i])
 	}
