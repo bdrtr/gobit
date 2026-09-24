@@ -53,6 +53,7 @@ package service
 import (
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 	corepage "github.com/bdrtr/gobit/internal/core/page"
@@ -199,6 +200,7 @@ type Service struct {
 	spending SpendingPolicy
 	catalog  Catalog
 	log      *slog.Logger
+	now      func() time.Time
 }
 
 // Options are the dependencies of the service.
@@ -225,6 +227,10 @@ type Options struct {
 	Catalog Catalog
 	// Logger discards the logs when it is given as nil.
 	Logger *slog.Logger
+	// Now is the clock a reading at a moment is refused a future moment by
+	// (ADR 0171); nil means time.Now. Every stamp the module writes still
+	// comes from the database.
+	Now func() time.Time
 }
 
 // New produces a service with the given dependencies.
@@ -252,12 +258,17 @@ func New(opts Options) (*Service, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
 	return &Service{
 		store:    opts.Repo,
 		events:   opts.Events,
 		spending: opts.Spending,
 		catalog:  opts.Catalog,
 		log:      log,
+		now:      now,
 	}, nil
 }
 

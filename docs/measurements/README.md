@@ -103,3 +103,4 @@ truth: a report says what was true on the day it was taken.
 | [What a line was charged — measured 2026-09-24](0168-what-a-line-was-charged.md) | 137 |
 | [What a CHECK let through — measured 2026-09-25](0169-what-a-check-let-through.md) | 98 |
 | [What the timeline left out — measured 2026-09-25](0170-what-the-timeline-left-out.md) | 128 |
+| [An order then — measured 2026-09-25](0171-an-order-then.md) | 81 |

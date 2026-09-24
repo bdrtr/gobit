@@ -448,6 +448,29 @@ func describedEndpoints() []endpointExpectation {
 			},
 		},
 		{
+			// Every field is filled in, for the timeline's reason: an empty list
+			// or a null status would drop nothing, but a zero-value sample says
+			// less than the schema does.
+			method: http.MethodGet, path: "/admin/v1/orders/{id}/as-of", status: "200",
+			response: orderAsOfDTO{
+				OrderID: "order_1", At: describeSampleTime, Status: &describeSampleStatus,
+				Money: moneyAsOfDTO{
+					Currency: "TRY", Total: 6100, Credited: 100, Captured: 6100,
+					Refunded: 500, Outstanding: 400,
+				},
+				Lines: []lineAsOfDTO{{
+					LineItemID: "oli_1", VariantID: "variant_1", Title: "Red T-Shirt",
+					Quantity: 3, UnitPrice: 1000, Canceled: 1,
+				}},
+				Returns:      []recordAsOfDTO{{ID: "oret_1", Status: "requested", Since: describeSampleTime}},
+				Claims:       []recordAsOfDTO{{ID: "oclm_1", Status: "completed", Since: describeSampleTime}},
+				Exchanges:    []recordAsOfDTO{{ID: "oexc_1", Status: "funded", Since: describeSampleTime}},
+				Replacements: []recordAsOfDTO{{ID: "orep_1", Status: "dispatched", Since: describeSampleTime}},
+				Shipments:    []recordAsOfDTO{{ID: "ful_1", Status: "shipped", Since: describeSampleTime}},
+				Contact:      "held",
+			},
+		},
+		{
 			method: http.MethodPost, path: "/admin/v1/orders/{id}/credit-lines", status: "201",
 			request: createCreditLineRequest{},
 			response: creditLineDTO{
@@ -870,3 +893,6 @@ func parameterNames(t *testing.T, op map[string]any, location string) []string {
 
 // describeSampleTime is a fixed moment for the document's samples.
 var describeSampleTime = time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+
+// describeSampleStatus is a status to point the as-of sample at.
+var describeSampleStatus = "completed"

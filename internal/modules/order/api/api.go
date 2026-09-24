@@ -112,6 +112,8 @@ type Orders interface {
 	Timeline(ctx context.Context, orderID string) ([]service.TimelineEntry, error)
 	// StorefrontTimeline returns the moments a CUSTOMER may see on their order.
 	StorefrontTimeline(ctx context.Context, orderID string) ([]service.TimelineEntry, error)
+	// OrderAsOf reads the order as it stood at a past moment (ADR 0171).
+	OrderAsOf(ctx context.Context, orderID string, at time.Time) (models.OrderAsOf, error)
 	// AttachClaimEvidence binds a file to the claim.
 	AttachClaimEvidence(ctx context.Context, claimID string, in service.AttachClaimEvidenceInput) (models.ClaimEvidence, error)
 	// ListClaimEvidence returns the claim's evidence, oldest first.

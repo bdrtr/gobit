@@ -268,18 +268,20 @@ func sortTimeline(entries []TimelineEntry) {
 	})
 }
 
-// timelineGraph reads the money and the shipments in ONE cross-module request.
+// orderGraph reads the order's payment collection and its shipments in ONE
+// cross-module request; the timeline and the reading at a moment (ADR 0171)
+// both start from it.
 //
 // Both hang off the order through links the far sides declared, so one Graph
 // with two expansions answers both — and the read layer resolves each expansion
 // in batch, which is the reason this is one round trip rather than one per
 // shipment.
-func (s *Service) timelineGraph(
+func (s *Service) orderGraph(
 	ctx context.Context, orderID string,
-) (money, shipments []TimelineEntry, err error) {
+) (collection query.Record, hasCollection bool, shipments any, err error) {
 	if s.catalog == nil {
-		return nil, nil, errors.Internal(CodeNotReady,
-			"the query layer is not wired, so an order's timeline cannot be assembled")
+		return nil, false, nil, errors.Internal(CodeNotReady,
+			"the query layer is not wired, so an order's history cannot be assembled")
 	}
 
 	records, err := s.catalog.Graph(ctx, query.GraphSpec{
@@ -306,20 +308,33 @@ func (s *Service) timelineGraph(
 		},
 	})
 	if err != nil {
-		return nil, nil, errors.Wrap(err, errors.KindOf(err), CodeCatalogReadFailed,
-			"the timeline of order %s could not be read", orderID)
+		return nil, false, nil, errors.Wrap(err, errors.KindOf(err), CodeCatalogReadFailed,
+			"the history of order %s could not be read", orderID)
 	}
 	if len(records) == 0 {
-		return nil, nil, errors.NotFound(CodeOrderNotFound, "order not found: %s", orderID)
+		return nil, false, nil, errors.NotFound(CodeOrderNotFound, "order not found: %s", orderID)
 	}
 
-	if collection, ok := firstExpanded(records[0][EntityPaymentCollection]); ok {
+	collection, hasCollection = firstExpanded(records[0][EntityPaymentCollection])
+
+	return collection, hasCollection, records[0][EntityFulfillment], nil
+}
+
+// timelineGraph turns the graph into the money and the shipment entries.
+func (s *Service) timelineGraph(
+	ctx context.Context, orderID string,
+) (money, shipments []TimelineEntry, err error) {
+	collection, hasCollection, parcels, err := s.orderGraph(ctx, orderID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if hasCollection {
 		if money, err = moneyEntries(collection); err != nil {
 			return nil, nil, err
 		}
 	}
 
-	return money, shipmentEntries(records[0][EntityFulfillment]), nil
+	return money, shipmentEntries(parcels), nil
 }
 
 // moneyEntries are every capture and every refund of the collection, each
@@ -334,43 +349,72 @@ func (s *Service) timelineGraph(
 // A movement this module cannot read is an error, not a skipped entry: a
 // timeline shorter than the truth is the failure this file exists to avoid.
 func moneyEntries(collection query.Record) ([]TimelineEntry, error) {
-	collectionID := recordText(collection, query.IDField)
+	movements, err := readMovements(collection)
+	if err != nil {
+		return nil, err
+	}
 	currency := recordText(collection, fieldPaymentCurrency)
 
-	movements, ok := movementList(collection[fieldPaymentMovements])
+	entries := make([]TimelineEntry, 0, len(movements))
+	for i := range movements {
+		entry := TimelineEntry{
+			At: &movements[i].At, RefID: movements[i].ID,
+			Amount: movements[i].Amount, Currency: currency,
+		}
+		if movements[i].Kind == movementCapture {
+			// A capture's moment is stamped by the process that captured, not
+			// by the database — see the Clock constants.
+			entry.Kind, entry.Clock = KindPaymentCaptured, ClockApplication
+		} else {
+			entry.Kind, entry.Clock = KindPaymentRefunded, ClockDatabase
+		}
+		entries = append(entries, entry)
+	}
+
+	return entries, nil
+}
+
+// paymentMovement is one capture or refund as this module reads it.
+type paymentMovement struct {
+	ID     string
+	Kind   string
+	Amount int64
+	At     time.Time
+}
+
+// readMovements reads and checks the collection's movements. Every one it
+// returns has an id, a moment, a positive amount and a known kind; anything
+// else is an error rather than a movement quietly left out.
+func readMovements(collection query.Record) ([]paymentMovement, error) {
+	collectionID := recordText(collection, query.IDField)
+
+	list, ok := movementList(collection[fieldPaymentMovements])
 	if !ok {
 		return nil, errors.Internal(CodeCatalogReadFailed,
 			"payment collection %s answered its movements as %T", collectionID,
 			collection[fieldPaymentMovements])
 	}
 
-	entries := make([]TimelineEntry, 0, len(movements))
-	for _, movement := range movements {
-		id := recordText(movement, movementID)
-		at := recordTime(movement, movementAt)
-		amount := recordInt(movement, movementAmount)
-		if id == "" || at == nil || amount <= 0 {
+	out := make([]paymentMovement, 0, len(list))
+	for _, record := range list {
+		movement := paymentMovement{
+			ID: recordText(record, movementID), Kind: recordText(record, movementKind),
+			Amount: recordInt(record, movementAmount),
+		}
+		at := recordTime(record, movementAt)
+		if movement.ID == "" || at == nil || movement.Amount <= 0 {
 			return nil, errors.Internal(CodeCatalogReadFailed,
 				"payment collection %s answered a movement with no id, moment or amount", collectionID)
 		}
-
-		entry := TimelineEntry{At: at, RefID: id, Amount: amount, Currency: currency}
-		switch recordText(movement, movementKind) {
-		case movementCapture:
-			// A capture's moment is stamped by the process that captured, not
-			// by the database — see the Clock constants.
-			entry.Kind, entry.Clock = KindPaymentCaptured, ClockApplication
-		case movementRefund:
-			entry.Kind, entry.Clock = KindPaymentRefunded, ClockDatabase
-		default:
+		if movement.Kind != movementCapture && movement.Kind != movementRefund {
 			return nil, errors.Internal(CodeCatalogReadFailed,
-				"payment collection %s answered a movement of kind %q",
-				collectionID, recordText(movement, movementKind))
+				"payment collection %s answered a movement of kind %q", collectionID, movement.Kind)
 		}
-		entries = append(entries, entry)
+		movement.At = *at
+		out = append(out, movement)
 	}
 
-	return entries, nil
+	return out, nil
 }
 
 // movementList reads the movements field: a list of records, which the

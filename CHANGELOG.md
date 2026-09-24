@@ -331,6 +331,16 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **An order can be read as it stood** (ADR 0171). A new admin endpoint,
+  `GET /admin/v1/orders/{id}/as-of?at=<RFC 3339>`, answers an order at a past
+  moment: its status, its money (total, credited, captured, refunded and
+  outstanding, summed from the payment movements rather than read from the
+  order's overwritten summary), what had been canceled of each line, and the
+  status of every return, claim, exchange, replacement and parcel then. What
+  the records cannot answer is said to be unknown: the status of an order
+  archived before archiving was dated, and a contact erased since. A moment
+  that has not happened or that precedes the order is refused with a 422.
+
 - **An order's timeline tells every movement** (ADR 0170). Each capture and
   each refund is its own entry with the amount it moved; before, the timeline
   showed only the first capture and the last refund, each carrying the

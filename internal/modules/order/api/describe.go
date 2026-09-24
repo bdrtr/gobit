@@ -169,6 +169,45 @@ func Describe(d *openapi.Doc) {
 	describeInvoicing(d)
 	describeFulfilling(d)
 	describeTimeline(d)
+	describeAsOf(d)
+}
+
+// describeAsOf documents the order read at a past moment (ADR 0171).
+func describeAsOf(d *openapi.Doc) {
+	at := queryParameter("at", typeString,
+		"The moment to read the order at, in RFC 3339. It is REQUIRED: without it the "+
+			"question is the order read's, and a missing moment answered with the present "+
+			"would be a silent wrong answer.")
+	at.Required = true
+
+	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/as-of", openapi.Operation{
+		Summary: "The order as it stood at a past moment.",
+		Description: "Every field is DERIVED from records that carry their own moment — the " +
+			"order's stamps, its line cancellations and credits, its after-sales records' " +
+			"stamps, the payment collection's captures and refunds, and the parcels' " +
+			"transitions — so nothing is stored and nothing can drift. A status is the one " +
+			"entered by the latest stamp at or before the moment, and a record created after " +
+			"it is not listed. " +
+			"\n\n" +
+			"THE MONEY IS SUMMED FROM THE MOVEMENTS, not read from the order's recorded " +
+			"summary, which keeps only its latest value; \"outstanding\" is the live order's " +
+			"own formula over those sums. " +
+			"\n\n" +
+			"WHAT IT CANNOT SAY IS SAID. \"status\" is null for an order archived before its " +
+			"archiving was dated, read after its completion: completed or archived, and the " +
+			"records do not say which. \"contact\" is \"held\" when the contact the order " +
+			"holds now is the one it held then, \"erased\" when it had been erased by the " +
+			"moment, and \"erased_since\" when it was held then and is gone now. " +
+			"\n\n" +
+			"A capture and a parcel's transitions are stamped by the process that wrote them " +
+			"and everything else by the database, so a moment between two events on different " +
+			"clocks is answered as exactly as those clocks agree. A moment that has not " +
+			"happened, or one before the order was placed, is refused with a 422.",
+		Parameters: []openapi.Parameter{at},
+		Responses: map[string]any{
+			"200": openapi.Response("The order at the moment", d.Item(orderAsOfDTO{})),
+		},
+	})
 }
 
 // describeInvoicing describes the two endpoints that reach the invoicing flow.

@@ -64,6 +64,9 @@ type fakeOrders struct {
 	paymentBound  bool
 	timeline      []service.TimelineEntry
 	timelineErr   error
+	asOf          models.OrderAsOf
+	asOfErr       error
+	gotAsOfAt     time.Time
 	credits       []models.OrderCreditLine
 	creditErr     error
 	cancels       []models.OrderLineCancellation
@@ -126,6 +129,14 @@ func (f *fakeOrders) CancelOrder(_ context.Context, orderID, reason string) erro
 // Timeline returns the scripted timeline.
 func (f *fakeOrders) Timeline(_ context.Context, _ string) ([]service.TimelineEntry, error) {
 	return f.timeline, f.timelineErr
+}
+
+// OrderAsOf returns the scripted reading and keeps the moment it was asked at.
+func (f *fakeOrders) OrderAsOf(_ context.Context, orderID string, at time.Time) (models.OrderAsOf, error) {
+	f.calls = append(f.calls, "OrderAsOf")
+	f.gotOrderID, f.gotAsOfAt = orderID, at
+
+	return f.asOf, f.asOfErr
 }
 
 // AttachClaimEvidence records the scripted evidence.
