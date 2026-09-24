@@ -834,17 +834,6 @@ func (f *fakeStore) StoreCreditBalance(
 	return balance, nil
 }
 
-// LockStoreCreditEntries kilidi SIRAYA yazar; gerçek kilidin kendisi
-// veritabanının işi, burada alınıp alınmadığı okunabilir olsun diye kaydediliyor.
-func (f *fakeStore) LockStoreCreditEntries(_ context.Context, _, _ string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	f.kilitler = append(f.kilitler, "store_credit")
-
-	return nil
-}
-
 // ListStoreCreditEntries geçmişi yeniden eskiye döner.
 func (f *fakeStore) ListStoreCreditEntries(
 	_ context.Context, customerID, currencyCode string, limit, offset int64,
@@ -902,13 +891,41 @@ func (f *fakeStore) LoyaltyPointsForReference(_ context.Context, reference strin
 	for key := range f.loyalty {
 		entries := f.loyalty[key]
 		for i := range entries {
-			if entries[i].Reference == reference {
+			// Yalnızca kazanım satırları, gerçek sorgunun kind süzgeci gibi: bir
+			// harcama satırı koleksiyona referans verse bile hedefe girmez.
+			if entries[i].Reference == reference &&
+				(entries[i].Kind == models.LoyaltyEarn || entries[i].Kind == models.LoyaltyReverse) {
 				points += entries[i].Points
 			}
 		}
 	}
 
 	return points, nil
+}
+
+// CollectionNetCapturedExcludingProvider gerçek sorgunun yaptığını yapar:
+// koleksiyonun tahsilatlarını oturumlarının sağlayıcısına göre süzüp
+// (tutar − iade) toplamını döner. Kazanım tabanı budur; koleksiyon satırının
+// kendi toplamları DEĞİL, çünkü onlar sağlayıcıyı bilmez (ADR 0165).
+func (f *fakeStore) CollectionNetCapturedExcludingProvider(
+	_ context.Context, collectionID, excludedProviderID string,
+) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var net int64
+	for id := range f.payments {
+		payment := f.payments[id]
+		if payment.PaymentCollectionID != collectionID {
+			continue
+		}
+		if f.sessions[payment.PaymentSessionID].ProviderID == excludedProviderID {
+			continue
+		}
+		net += payment.Amount - payment.RefundedAmount
+	}
+
+	return net, nil
 }
 
 // LoyaltyBalance satırların toplamını döner.

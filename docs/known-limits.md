@@ -566,13 +566,16 @@ past and is not corrected retroactively.
   shopper ever seeing the total — but a shop whose callers cannot open a link is
   not served by this.
 
-- **A customer cannot see their own store credit.** Since
+- **A customer cannot see their own store credit or their own points.** Since
   [ADR 0152](adr/0152-a-shop-can-hold-money-for-a-customer.md) a shop can hold
-  money for a customer and the customer can spend it at checkout, but the only
-  way to READ a balance is an admin endpoint: a storefront read needs the
-  customer claim in the request proven, and the payment module is not wired to
-  the surface that proves it. A shopper learns what they have when an operator
-  tells them, or when the total drops.
+  money for a customer, since
+  [ADR 0164](adr/0164-a-capture-earns-the-customer-points.md) it can hold
+  points for them, and since
+  [ADR 0165](adr/0165-a-customer-can-pay-with-their-points.md) the customer can
+  spend either at checkout — but the only way to READ a balance is an admin
+  endpoint: a storefront read needs the customer claim in the request proven,
+  and the payment module is not wired to the surface that proves it. A shopper
+  learns what they have when an operator tells them, or when the total drops.
 
 - **Store credit does not expire and names no cause.** A credit issued today is
   spendable forever, and `reference` is free text, so "this is the compensation
@@ -580,12 +583,40 @@ past and is not corrected retroactively.
   writing negative rows, and what it must not do is race a checkout holding the
   same money.
 
-- **An installation that trusts an unproven customer claim has no store credit
-  at all.** With `STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM` on, the cart's
-  customer is not proven, so the provider is not registered
-  ([ADR 0152](adr/0152-a-shop-can-hold-money-for-a-customer.md)): the tender
-  disappears rather than becoming a way to spend somebody else's balance. A shop
-  that needs both has no answer here.
+- **An installation that trusts an unproven customer claim has neither store
+  credit nor loyalty points as a tender.** With
+  `STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM` on, the cart's customer is not
+  proven, so neither person-bound provider is registered
+  ([ADR 0152](adr/0152-a-shop-can-hold-money-for-a-customer.md),
+  [ADR 0165](adr/0165-a-customer-can-pay-with-their-points.md)): the two
+  tenders disappear rather than becoming a way to spend somebody else's balance.
+  They are one option, `PersonBoundTenders`, because the argument is about the
+  person and not about credit or points. A shop that needs both has no answer
+  here.
+
+- **At the storefront a person-bound tender pays for the whole order or for
+  none of it.** The checkout opens ONE session for the collection's whole
+  remaining amount and fails the step when the hold falls short, and the store
+  session endpoint deliberately carries no amount — a client-chosen amount was
+  a 1-unit session on a 50,000 order. So store credit and loyalty points pay for
+  an order the balance covers entirely, and a shortfall is a decline the
+  customer answers with another tender for the same cart. The payment module
+  itself splits a collection across sessions and the admin surface exposes it
+  (`POST /admin/v1/payment-collections/{id}/payment-sessions` takes an amount);
+  "part in points, the rest by card" at the storefront is a checkout decision
+  no record has made
+  ([ADR 0165](adr/0165-a-customer-can-pay-with-their-points.md),
+  [measurement 0165](measurements/0165-what-a-point-buys.md)).
+
+- **A balance of points can be negative.** A refund reverses the points the
+  refunded capture earned, and the customer may have spent them already; the
+  refund is not refused for that — money goes back before points do — so the
+  ledger records a debt of points, the next earn fills the hole first, and the
+  `loyalty_points` tender declines against it until it is filled. The balance
+  endpoint reports it as a negative number, and that is the decision rather
+  than a defect ([ADR 0165](adr/0165-a-customer-can-pay-with-their-points.md)).
+  Store credit has no analogue: an issue is never reversed, and its only
+  negative row is written under the lock that read the balance.
 
 - **A missed cart event leaves the funnel one short, forever.** Since
   [ADR 0153](adr/0153-a-shop-can-see-where-its-carts-go.md) the cart publishes

@@ -208,6 +208,16 @@ func TestB2BEndToEndInARealProcess(t *testing.T) {
 
 	token, _, storefrontKey := setUpAdminHarness(t, s, "Smoke B2B Channel")
 
+	t.Run("the person-bound tenders are not offered", func(t *testing.T) {
+		tenders := storefrontTenders(t, s, storefrontKey)
+		require.NotEmpty(t, tenders, "the provider list read nothing, so it proves nothing")
+		assert.NotContains(t, tenders, "store_credit",
+			"an installation that trusts an unproven customer claim must not offer a "+
+				"tender that spends that customer's balance (ADR 0152)")
+		assert.NotContains(t, tenders, "loyalty_points",
+			"nor the one that spends their points (ADR 0165)")
+	})
+
 	customerID := b2bOpenCustomer(t, s, token, "smoke-b2b@example.test")
 	companyID := b2bOpenCompany(t, s, token,
 		"Smoke B2B Inc.", "smoke-b2b-company@example.test", "monthly")
@@ -357,6 +367,15 @@ func TestTheB2BStorefrontRefusesAnUnverifiedClaimInARealProcess(t *testing.T) {
 	token, _, storefrontKey := setUpAdminHarness(t, s, "Smoke B2B Default Channel")
 	customerID := b2bOpenCustomer(t, s, token, "smoke-b2b-default@example.test")
 
+	t.Run("the person-bound tenders are offered", func(t *testing.T) {
+		tenders := storefrontTenders(t, s, storefrontKey)
+		assert.Contains(t, tenders, "store_credit",
+			"an installation that proves the customer claim offers store credit; its "+
+				"absence here means the setting never reached the payment module, and "+
+				"the scenario above would then pass for the wrong reason")
+		assert.Contains(t, tenders, "loyalty_points")
+	})
+
 	for _, path := range []string{"/company", "/employee"} {
 		t.Run(path, func(t *testing.T) {
 			code, body := s.storefrontRequest(http.MethodGet,
@@ -372,4 +391,22 @@ func TestTheB2BStorefrontRefusesAnUnverifiedClaimInARealProcess(t *testing.T) {
 					"only pointer to what they have to bind; body: %s", body)
 		})
 	}
+}
+
+// storefrontTenders reads the provider list a shopper chooses a tender from.
+//
+// It is the witness of one hop no other lane holds: the composition root
+// turning STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM into the payment module's
+// PersonBoundTenders, INVERTED. The module's tests hand the option in
+// themselves and the e2e harness builds its own root, so a dropped negation
+// would register the balance tenders exactly where anybody can name a
+// customer, with every other lane green. The two processes of this file hold
+// the two settings, and each reads the list.
+func storefrontTenders(t *testing.T, s *proc, key string) []string {
+	t.Helper()
+
+	code, body := s.storefrontRequest(http.MethodGet, "/store/v1/payment-providers", key, nil)
+	require.Equal(t, http.StatusOK, code, "the provider list must answer; body: %s", body)
+
+	return zarfVerisi[[]string](t, body)
 }

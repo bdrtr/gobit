@@ -1,9 +1,14 @@
 package models_test
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 )
@@ -234,14 +239,33 @@ func TestRemainingAmountComputations(t *testing.T) {
 
 // TestIdentifierPrefixesAndOrdering verifies that the identifiers are
 // prefixed, unique and sortable by time.
+//
+// # The population is READ from ids.go, not typed here
+//
+// The map below held five generators while ids.go declared eight prefixes: the
+// store-credit pair (ADR 0152) and the point ledger's (ADR 0164) were added to
+// the file and never to this test, and a ninth would have gone the same way
+// (D112). So the test now counts the IDPrefix constants in the source and
+// refuses a map that is shorter — the shape every hand-listed population in
+// this repository has needed sooner or later.
 func TestIdentifierPrefixesAndOrdering(t *testing.T) {
 	generators := map[string]func() string{
-		models.PaymentCollectionIDPrefix: models.NewPaymentCollectionID,
-		models.PaymentSessionIDPrefix:    models.NewPaymentSessionID,
-		models.PaymentIDPrefix:           models.NewPaymentID,
-		models.RefundIDPrefix:            models.NewRefundID,
-		models.ManualSessionIDPrefix:     models.NewManualSessionID,
+		models.PaymentCollectionIDPrefix:  models.NewPaymentCollectionID,
+		models.PaymentSessionIDPrefix:     models.NewPaymentSessionID,
+		models.PaymentIDPrefix:            models.NewPaymentID,
+		models.RefundIDPrefix:             models.NewRefundID,
+		models.ManualSessionIDPrefix:      models.NewManualSessionID,
+		models.StoreCreditEntryIDPrefix:   models.NewStoreCreditEntryID,
+		models.StoreCreditSessionIDPrefix: models.NewStoreCreditSessionID,
+		models.LoyaltyEntryIDPrefix:       models.NewLoyaltyEntryID,
+		models.LoyaltySessionIDPrefix:     models.NewLoyaltySessionID,
 	}
+
+	declared := declaredIDPrefixes(t)
+	require.Len(t, generators, len(declared),
+		"ids.go declares %d IDPrefix constants (%v) and this test covers %d; a prefix "+
+			"added to the file has to be added here, or its generator goes unaudited",
+		len(declared), declared, len(generators))
 
 	for prefix, generate := range generators {
 		t.Run(prefix, func(t *testing.T) {
@@ -252,6 +276,37 @@ func TestIdentifierPrefixesAndOrdering(t *testing.T) {
 			assert.NotEqual(t, first, second, "two identifiers must not be the same")
 		})
 	}
+}
+
+// declaredIDPrefixes reads the names of the IDPrefix constants out of ids.go.
+func declaredIDPrefixes(t *testing.T) []string {
+	t.Helper()
+
+	file, err := parser.ParseFile(token.NewFileSet(), "ids.go", nil, parser.SkipObjectResolution)
+	require.NoError(t, err)
+
+	var names []string
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			value, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for _, name := range value.Names {
+				if strings.HasSuffix(name.Name, "IDPrefix") {
+					names = append(names, name.Name)
+				}
+			}
+		}
+	}
+
+	require.NotEmpty(t, names, "ids.go declares no IDPrefix constant, so this audit read nothing")
+
+	return names
 }
 
 // TestCollectionStatusValidity tells defined and undefined statuses apart.

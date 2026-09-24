@@ -2,9 +2,9 @@ package models
 
 import "time"
 
-// This file carries the two records store credit is made of (ADR 0152): the
-// LEDGER, which is the shop's money owed to a customer, and the provider's own
-// SESSION, which is how that money is spent.
+// This file carries the store credit LEDGER (ADR 0152): the shop's money owed
+// to a customer. The provider's own session, which is how that money is spent,
+// is [TenderSession], the record every balance tender of this module keeps.
 
 // StoreCreditKind says what happened to a customer's credit.
 //
@@ -69,39 +69,4 @@ type StoreCreditEntry struct {
 	Reason string
 	// CreatedAt is when it happened (UTC).
 	CreatedAt time.Time
-}
-
-// StoreCreditSession is the store-credit PROVIDER's own view of a payment
-// session.
-//
-// It mirrors [ManualSession] because the state machine belongs to the core
-// contract rather than to either provider, and it is a separate table from the
-// module's payment_sessions for the same reason the manual provider's is: the
-// module reaches a provider only through the contract.
-type StoreCreditSession struct {
-	// ID is the "scrses_" prefixed PROVIDER identifier; it sits on the module's
-	// session record as ExternalID.
-	ID string
-	// IdempotencyKey prevents the same session from being opened twice.
-	IdempotencyKey string
-	// Reference is the payment collection's identifier.
-	Reference string
-	// CustomerID is whose credit this session spends.
-	CustomerID string
-	// Amount is the session's amount (minor unit) and CurrencyCode its currency.
-	Amount       int64
-	CurrencyCode string
-	// Status is the session's status on the provider side.
-	Status SessionStatus
-	// AuthorizedAmount, CapturedAmount and RefundedAmount are the provider's own
-	// amounts (minor unit).
-	AuthorizedAmount int64
-	CapturedAmount   int64
-	RefundedAmount   int64
-	// DeclineReason is why the provider refused; it is for diagnosis and is not
-	// shown to a customer.
-	DeclineReason string
-	// CreatedAt and UpdatedAt are UTC.
-	CreatedAt time.Time
-	UpdatedAt time.Time
 }

@@ -95,10 +95,10 @@ type PaymentCollection struct {
 	// leave it empty.
 	//
 	// A guest paying by card names nobody. The field exists for the tenders whose
-	// funds belong to a PERSON — store credit today, loyalty points tomorrow:
-	// without it such a provider would have to take the owner from data the CLIENT
-	// sent, which is a shopper spending somebody else's balance by naming them
-	// (ADR 0152).
+	// funds belong to a PERSON — store credit (ADR 0152) and loyalty points
+	// (ADR 0165): without it such a provider would have to take the owner from
+	// data the CLIENT sent, which is a shopper spending somebody else's balance by
+	// naming them.
 	CustomerID string
 	// Status is the derived status; see [CollectionStatusFor].
 	Status CollectionStatus

@@ -3,8 +3,8 @@ package models
 import "time"
 
 // This file carries the loyalty point ledger (ADR 0164): the record of what a
-// customer earned from the money that actually moved, and of what a refund took
-// back again.
+// customer earned from the money that actually moved, of what a refund took
+// back again, and — since ADR 0165 — of what they spent.
 
 // LoyaltyKind says why a customer's point total changed.
 //
@@ -14,7 +14,10 @@ import "time"
 // for.
 type LoyaltyKind string
 
-// The two things that can happen to a customer's points.
+// The five things that can happen to a customer's points. The first two are
+// EARNING and are written by the function that moves a collection's totals; the
+// other three are SPENDING and are written by the loyalty-points provider, which
+// runs the store-credit state machine on this ledger (ADR 0165).
 const (
 	// LoyaltyEarn is a collection's earned target rising because money was
 	// taken; the points are positive.
@@ -26,12 +29,20 @@ const (
 	// earned and what they gave back are two facts, and a ledger that erased the
 	// first could not explain the second.
 	LoyaltyReverse LoyaltyKind = "reverse"
+	// LoyaltyHold is a payment session putting points aside; NEGATIVE. From the
+	// moment it is written the points are not spendable by anything else, which
+	// is what makes the balance safe to read.
+	LoyaltyHold LoyaltyKind = "hold"
+	// LoyaltyRelease is a canceled session's hold coming back; positive.
+	LoyaltyRelease LoyaltyKind = "release"
+	// LoyaltyRefund is a captured payment repaid into the points; positive.
+	LoyaltyRefund LoyaltyKind = "refund"
 )
 
-// Valid reports whether the kind is one of the two.
+// Valid reports whether the kind is one of the five.
 func (k LoyaltyKind) Valid() bool {
 	switch k {
-	case LoyaltyEarn, LoyaltyReverse:
+	case LoyaltyEarn, LoyaltyReverse, LoyaltyHold, LoyaltyRelease, LoyaltyRefund:
 		return true
 	default:
 		return false
@@ -43,9 +54,10 @@ func (k LoyaltyKind) String() string { return string(k) }
 
 // LoyaltyEntry is ONE change to a customer's point total.
 //
-// There is no "balance" record anywhere: the balance is the sum of these rows,
-// and every row is the DIFFERENCE between what its collection should have earned
-// and what it had already been written.
+// There is no "balance" record anywhere: the balance is the sum of these rows.
+// An earn row is the DIFFERENCE between what its collection should have earned
+// and what it had already been written; a spend row is one step of a session's
+// state machine.
 type LoyaltyEntry struct {
 	// ID is the "lpoint_" prefixed identifier.
 	ID string
@@ -61,9 +73,10 @@ type LoyaltyEntry struct {
 	Points int64
 	// Kind is what happened.
 	Kind LoyaltyKind
-	// Reference is the payment collection the row was earned against. Every row
-	// has one: the target is recomputed per collection, and this is what makes
-	// that sum possible.
+	// Reference is the payment collection an earn row was earned against, and
+	// the provider's OWN session for a spend row — never a collection, so the
+	// earn target, which is recomputed per collection, cannot mistake a hold for
+	// points already written (ADR 0165).
 	Reference string
 	// CreatedAt is when it happened (UTC).
 	CreatedAt time.Time

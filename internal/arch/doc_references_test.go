@@ -1575,9 +1575,13 @@ var markdownTestNameReference = regexp.MustCompile("`(Test[A-Z_][A-Za-z0-9_]*)`"
 // NOT resolve, with the reason. Shape and price are [pathReferenceExemptions]': the
 // day the name exists the test fails and asks for the line to come off.
 //
-// Both are the same shape and it is worth naming: a document that QUOTES a dead
-// name as the defect it is reporting. Rewriting those to a live name would
-// destroy the report.
+// Two of them — ADR 0012's example and the replaced credit gate — are one shape
+// and it is worth naming: a document that QUOTES a dead name as the defect it is
+// reporting. Rewriting those to a live name would destroy the report. The third
+// is a second shape: a DATED measurement naming a gate as it was called on its
+// date, before a later record renamed it. Moving that name would make the
+// measurement describe a gate that did not exist yet; the renamed gate's own
+// source is where the new name lives.
 //
 // A third case of that shape exists and is NOT here, because the audit does not
 // see it: the CHANGELOG entry that reports the same load-test defect writes the
@@ -1595,6 +1599,15 @@ var testNameReferenceExemptions = []pathReferenceExemption{
 			"letter-based scan, and it has to SHOW a Turkish identifier written without " +
 			"Turkish letters to make the point. The name is an example of the naming " +
 			"habit, not a claim that this test exists.",
+	},
+	{
+		file: "docs/measurements/0164-a-name-that-was-already-taken.md",
+		path: "TestEveryLoyaltyPointWriteGoesThroughTheCollectionTotals",
+		reason: "The report is dated 2026-09-13 and names the gate as it was written that " +
+			"day, with ONE door. ADR 0165 gave the ledger a second door and the gate a " +
+			"name that says so (TestEveryPaymentLedgerWriteEntersThroughANamedDoor); the " +
+			"old name is what the report's mutations were run against, and rewriting it " +
+			"would make a dated measurement describe a gate that did not exist yet.",
 	},
 	{
 		file: "docs/measurements/0164-a-name-that-was-already-taken.md",

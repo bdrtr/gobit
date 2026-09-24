@@ -920,6 +920,12 @@ type Config struct {
 	// dollar. The arithmetic truncates, so a rate of 100 earns nothing on a
 	// purchase under one unit. The ceiling is 10000, one point per minor unit;
 	// above it the value is refused rather than quietly reduced.
+	//
+	// A point is worth ONE MINOR UNIT of the currency it was earned in when it is
+	// spent (ADR 0165), so the rate reads as the cashback in basis points: 100 is
+	// one per cent back, spendable through the loyalty_points tender. Money paid
+	// with points earns nothing — at the ceiling a point would otherwise earn
+	// itself back forever.
 	LoyaltyEarnBasisPoints int64 `env:"PAYMENT_LOYALTY_EARN_BASIS_POINTS" envDefault:"0"`
 
 	// GraphQLMaxFieldRepetition is the upper bound on how many times the same field

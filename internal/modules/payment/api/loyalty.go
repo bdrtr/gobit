@@ -10,7 +10,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/service"
 )
 
-// The admin endpoints for loyalty points (ADR 0164).
+// The admin endpoints for loyalty points (ADR 0164, ADR 0165).
 //
 // Two endpoints, two questions: how many points a customer holds, and why. The
 // balance did not go inside the list for the store-credit endpoints' reason —
@@ -18,11 +18,12 @@ import (
 // would make every client that reads that envelope write a branch specific to
 // this one endpoint.
 //
-// There is NO write endpoint. What writes this ledger is money moving, and the
-// one function that moves a collection's totals is where it happens; an
-// operator-facing adjustment would be a second writer for a number that is
-// derived, and it would make the module's own sentence about what a payment
-// write means — that it is a MONEY MOVEMENT — false.
+// There is NO write endpoint. What writes this ledger is money moving: the one
+// function that moves a collection's totals writes what the collection earned,
+// and the loyalty_points tender writes what a session holds and gives back
+// (ADR 0165). An operator-facing adjustment would be a third writer for a
+// number that is derived, and it would make the module's own sentence about
+// what a payment write means — that it is a MONEY MOVEMENT — false.
 //
 // There is no storefront endpoint either, and that is this slice's boundary
 // rather than an oversight: a customer reading their own balance needs the
@@ -35,12 +36,14 @@ type loyaltyEntryDTO struct {
 	ID           string `json:"id"`
 	CustomerID   string `json:"customer_id"`
 	CurrencyCode string `json:"currency_code"`
-	// Points is SIGNED: an earn is positive, a reverse is negative. The balance
-	// is the sum of these fields and a client can read it the same way.
+	// Points is SIGNED: an earn, a release and a refund are positive, a reverse
+	// and a hold are negative. The balance is the sum of these fields and a
+	// client can read it the same way.
 	//
-	// It is NOT money and is not named as if it were: a point is a count the
-	// shop decides the worth of, and a field called "balance" here would be read
-	// as minor units by everything that reads this module's other answers.
+	// The field is named for what the ledger counts. What a point is WORTH is
+	// ADR 0165's: one minor unit of the currency it was earned in, which the
+	// endpoints' descriptions state, where every amount of this module states
+	// its unit.
 	Points    int64     `json:"points"`
 	Kind      string    `json:"kind"`
 	Reference string    `json:"reference"`
@@ -51,7 +54,9 @@ type loyaltyEntryDTO struct {
 type loyaltyBalanceDTO struct {
 	CustomerID   string `json:"customer_id"`
 	CurrencyCode string `json:"currency_code"`
-	// Points is the ledger's sum: what was earned less what refunds took back.
+	// Points is the ledger's sum over every kind: what was earned less what
+	// refunds reversed, less what the tender holds or spent, plus what it gave
+	// back. It can be NEGATIVE (ADR 0165).
 	Points int64 `json:"points"`
 }
 

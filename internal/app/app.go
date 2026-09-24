@@ -554,13 +554,14 @@ func registerModules(registry *module.Registry, cfg config.Config, log *slog.Log
 	}))
 	// Phase 6: payment and order
 	registry.Add(payment.New(payment.Options{
-		// Store credit is turned on for the installations where the customer
-		// claim is PROVEN (ADR 0152). On one that has gone back to the legacy
-		// behavior — the cart body's customer_id is not questioned — this
-		// provider would mean anybody who types a customer's name can spend
-		// their balance; so the combination is not configurable, the provider
-		// is simply never registered.
-		StoreCredit: !cfg.StorefrontTrustsUnverifiedCustomerClaim,
+		// The tenders that spend a PERSON's balance — store credit (ADR 0152)
+		// and loyalty points (ADR 0165) — are turned on for the installations
+		// where the customer claim is PROVEN. On one that has gone back to the
+		// legacy behavior — the cart body's customer_id is not questioned —
+		// either provider would mean anybody who types a customer's name can
+		// spend their balance; so the combination is not configurable, the
+		// providers are simply never registered.
+		PersonBoundTenders: !cfg.StorefrontTrustsUnverifiedCustomerClaim,
 		// The loyalty earn rate is read here rather than by the module, for
 		// Principle 2.4's reason: a module does not read configuration. Zero —
 		// the default — means the ledger is there and nothing is written into

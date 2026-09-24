@@ -300,9 +300,10 @@
 // # Idempotency
 //
 // The execution is bound to a key derived from the cart id
-// ([IdempotencyKeyPrefix] + cart_id). A second call made for the same cart DOES
-// NOT RE-RUN the steps: if one is in flight or has failed it returns
-// errors.Conflict (see [workflow.Executor]).
+// ([IdempotencyKeyPrefix] + cart_id). A second call made for the same cart
+// while one is in flight, or after one whose compensation did not finish
+// ([workflow.StatusCompensationFailed], which keeps its key for a human), DOES
+// NOT RE-RUN the steps: it returns errors.Conflict (see [workflow.Executor]).
 //
 // The engine's "return the output of the completed execution" path (replay) is
 // in practice UNREACHABLE in this workflow: the preparation runs BEFORE the
@@ -314,11 +315,13 @@
 // warning). It is a deviation in the harmless direction — both guards prevent
 // the same thing: no second order is born from the same cart.
 //
-// That the SAME cart cannot be retried after a failed attempt is the accepted
-// cost: the engine defines the key as "the result of one attempt", not as a
-// right to endless repetition. Starting a fresh attempt after a declined
-// payment (producing a new key) is not this workflow's decision but that of the
-// endpoint calling it, and it belongs to plan Phase 7+.
+// The SAME cart CAN be retried after a failed attempt: an execution that ends in
+// [workflow.StatusFailed] releases its key, so a customer whose payment was
+// declined completes the same cart again with another tender — which for a
+// balance tender is the ordinary path, "not enough points, pay by card". This
+// paragraph said the opposite until 2026-09-13 while the engine, its test and
+// docs/known-limits.md said this; the copy that describes a decision has to be
+// the one the engine keeps (D114).
 //
 // The protection is not single-layered either: a successful execution stamps
 // the cart completed, no calculation can be made on a completed cart, and

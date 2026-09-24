@@ -232,47 +232,6 @@ func (q *Queries) ListStoreCreditEntries(ctx context.Context, arg ListStoreCredi
 	return items, nil
 }
 
-const lockStoreCreditEntries = `-- name: LockStoreCreditEntries :many
-SELECT id FROM payment_store_credit_entries
-WHERE customer_id = $1 AND currency_code = $2
-FOR UPDATE
-`
-
-type LockStoreCreditEntriesParams struct {
-	CustomerID   string
-	CurrencyCode string
-}
-
-// LockStoreCreditEntries takes the customer's rows for the length of the
-// transaction, and it is what makes the balance check safe to act on.
-//
-// Two authorizations running at once would otherwise both read a sufficient
-// balance and both write a hold, and the customer would spend money twice. The
-// lock serializes them: the second waits, and the SUM it takes afterwards — a
-// fresh statement, a fresh snapshot — sees the hold the first one wrote.
-//
-// A customer with NO entries locks nothing, and that is not a hole: their balance
-// is zero, so no authorization can succeed whatever order the two take.
-func (q *Queries) LockStoreCreditEntries(ctx context.Context, arg LockStoreCreditEntriesParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, lockStoreCreditEntries, arg.CustomerID, arg.CurrencyCode)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []string{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const lockStoreCreditSession = `-- name: LockStoreCreditSession :one
 SELECT id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at FROM payment_store_credit_sessions
 WHERE id = $1
@@ -319,6 +278,10 @@ type StoreCreditBalanceParams struct {
 // COALESCE because a customer with no entries has no rows, and "no rows" is a
 // balance of zero rather than an absence: a shop that has never given somebody
 // credit and a shop that gave and took it back are the same amount of money.
+//
+// The lock that makes this sum safe to act on is not a query in this file. A sum
+// has no row to lock, so the tender takes an advisory lock keyed on the customer
+// and the currency before reading it (repository/ledgerlock.go, D118).
 func (q *Queries) StoreCreditBalance(ctx context.Context, arg StoreCreditBalanceParams) (int64, error) {
 	row := q.db.QueryRow(ctx, storeCreditBalance, arg.CustomerID, arg.CurrencyCode)
 	var balance int64

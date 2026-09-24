@@ -20,6 +20,94 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Düzeltmeler
 
+- **Satırı olmayan bir müşterinin bakiyesi iki kez harcanabiliyordu** (D118).
+  İki bakiye defteri de bakiyeyi toplamadan önce müşterinin SATIRLARINI
+  kilitliyordu ve satırı olmayan müşteri hiçbir şey kilitlemiyordu; kilit ile
+  toplam arasında commit olan para kimsenin tutmadığı bir satırdı, ikinci
+  yetkilendirme onu beklemeden kilitledi ve ikisi de harcadı — sonda 100 puanlık
+  bakiyeyi −100'e indirdi. ADR 0152 bunu "delik değil" diye yazmıştı; ADR 0165'te
+  araya giren yazıcı her adlı tahsilatta koşan otomatik kazanım. Kilit artık
+  BAKİYEDE: müşteri ve para birimine bağlı işlem ömürlü bir danışma kilidi,
+  sipariş modülünün harcama kilidinin argümanıyla. Ağaçtaki her kilit testi
+  müşteriyi rakip kilitlemeden ÖNCE fonluyordu; yeni test paranın kilit
+  tutulurken geldiği şekli de koşuyor ve rakibi kilidin SQL kopyasıyla değil
+  deponun kendi fonksiyonuyla kuruyor.
+
+- **Bakiye kilidinin dayandığı yalıtım düzeyi hiçbir yerde adlandırılmamıştı**
+  (D119). Bekleyen yetkilendirmenin toplamı ancak READ COMMITTED'da taze bir
+  anlık görüntüdür; ödeme deposu her işlemi sunucunun varsayılanında açıyordu
+  ve bir rol ya da veritabanı onu REPEATABLE READ yapabilir — orada kilit
+  yerindeyken bakiye ikinci kez harcanıyor. `WithTx` artık düzeyi adıyla açıyor
+  ve tanık, bağlantıları REPEATABLE READ'de başlayan bir havuz. Aynı adlandırılmamış
+  düzey diğer modüllerin kilitlerinin de altında; ölçüm 0165 bunu adlandırıyor.
+
+- **Kişiye bağlı tender'ları kaydeden ayar telinin hiçbir tanığı yoktu** (D120).
+  Kurulum kökü `STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM`'i ödeme modülüne
+  TERSİNE çevirerek veriyor; olumsuzlama düşseydi bakiye tender'ları herkesin
+  müşteri adı yazabildiği kurulumda kaydedilirdi ve her şerit yeşil kalırdı.
+  İki smoke süreci artık vitrinin sağlayıcı listesini okuyor: ayarı açık olan
+  kredi ve puan sunmamalı, stok kurulum ikisini de sunmalı.
+
+- **Saatlik mutabakat mağaza kredisinin oturumlarını "sorulamaz", defterini
+  "hiçbir şeyin doğrulamadığı" diye raporluyordu** (D117). Sağlayıcı
+  `SessionInspector`'ı gerçeklemiyordu; aynı şekildeki manuel sağlayıcı
+  gerçekliyordu — iki emsal birbiriyle çelişiyordu ve puan tender'ı birini seçmek
+  zorundaydı. Aynı işlemde yazan bir defter için "doğrulanmamış" cümlesi yanlış:
+  mutabakatın kapattığı delik (sağlayıcı parayı aldı, modülün commit'i düştü)
+  burada oluşamaz, blokaj modülle birlikte geri alınır. Ortak makine artık her
+  iki tender için `InspectSession`'ı kendi oturum tablosundan cevaplıyor ve
+  rapor bu oturumlar için "ikisi uyuşuyor" diyor.
+
+- **Kredi defterinin iki yazıcısı vardı ve çifti hiçbir kapı tutmuyordu**
+  (D116). `IssueCredit` ve mağaza kredisi sağlayıcısı aynı
+  `payment_store_credit_entries` tablosuna yazıyor ve altıncı bir yazıcıyı
+  hiçbir test yakalamazdı; puan defterinin kapısı ise TEK yazıcı kabul ediyordu,
+  yani ikinci yazıcılı bir defter için araç yoktu. Artık
+  `TestEveryPaymentLedgerWriteEntersThroughANamedDoor` iki deftere birden
+  bakıyor ve ikinci kapıyı bir fonksiyon adı listesinden değil tender'ın
+  `ID()` metodunun döndürdüğü kimlikten TÜRETİYOR — adlarla yazılsaydı manuel ve
+  PayTR sağlayıcılarının aynı adlı metotları da içeri girerdi. Yeniden
+  adlandırılan ya da silinen bir tender kapıyı kimseye açmak yerine denetimi
+  kırmızı yapıyor, ve her kapının — adlandırılan fonksiyonun da tender'ın da —
+  gerçekten YAZDIĞI görülmek zorunda.
+
+- **Üç sayım bayatlamıştı** (D115). Ödeme modülünün paket godoc'u "kutudan
+  çıkan tek sağlayıcı manuel" diyordu (ADR 0152'den beri yanlış, puanla iki
+  eksik); sağlayıcı uyum kapısının godoc'u "on iki sağlayıcı" diyordu (on üç
+  paket vardı, tender'la on dört); `api/describe.go` "sorgu dizesini okuyan TEK
+  uç" diyordu (beş okuyucu var). Hiçbirini kapı fiyatlamıyor — satırda nüfusun
+  yolu yok. Üç cümle de artık sayıyı değil MEKANİZMAYI adlandırıyor: kayıt
+  sırasında kaydedilenler, tabanın üstünde kalan bir nüfus, kendi dosyasında
+  anlatılan okuyucular — D102/D110/D111'in sınıfı, aynı onarım.
+
+- **checkout godoc'u aynı sepetin başarısız bir denemeden sonra yeniden
+  denenemeyeceğini söylüyordu** (D114). `internal/workflows/checkout/doc.go`'nun
+  "# Idempotency" bölümü bunu "kabul edilen bedel" diye yazıyordu; oysa motor
+  (`workflow.StatusFailed` anahtarı SERBEST BIRAKIR), onun testi ve
+  `docs/known-limits.md` tam tersini söylüyor, pgstore de anahtarı aynı UPDATE'te
+  boşaltıyor. Altı kopya, hiçbiri kapılı, üçü yanlış ve üçü de kararı anlatan
+  pakette. Üçü de yeniden yazıldı — kararı anlatan kopya, motorun tuttuğu kopya
+  olmak zorunda — ve e2e artık
+  reddedilen bir sepeti AYNI sepetle başka bir tender üzerinden tamamlıyor: puan
+  için "puan yetmedi, kartla öde" sıradan yol, ve hiçbir şerit onu yürümüyordu.
+
+- **Vitrinde kişiye bağlı bir tender seçen misafir 500 alıyordu** (D113).
+  Mağaza kredisi sağlayıcısı sahipsiz oturumu İÇ HATA ile reddediyordu —
+  gerekçesi çağıranın modül olması ("kimse için koleksiyon açıp birine ait
+  tender seçti") — ama vitrinde seçen, o tender'ı içeren bir listeyi okuyan
+  alışverişçi, ve `core/http` iç hatayı 500'e çeviriyor. Puan tender'ı aynı
+  hatayı miras alacaktı. Artık ikisinin ortak makinesi ÇATIŞMA (409) döndürüyor:
+  istek iyi biçimli, onu reddeden karşılaştığı durum. Eski test HTTP durumunu
+  değil yalnız hata kodunu iğneliyordu.
+
+- **Kimlik öneklerinin testi sekiz önekin beşini tutuyordu** (D112).
+  `TestIdentifierPrefixesAndOrdering` elle yazılmış bir map'ti: mağaza
+  kredisinin iki öneki (ADR 0152) ve puan defterininki (ADR 0164) `ids.go`'ya
+  eklendi, teste eklenmedi, ve dokuzuncusu da aynı yoldan görünmez olacaktı.
+  Nüfus artık `ids.go`'daki `IDPrefix` sabitlerinden OKUNUYOR ve daha kısa bir
+  map'i test reddediyor — bu depodaki her elle listelenmiş nüfusun er geç
+  ihtiyaç duyduğu şekil.
+
 - **Beş cümle modül nüfusunu on yedi diye fiyatlıyordu, ağaç on sekiz tutuyor**
   (D110). Sayım kapısı bir iddiayı ancak nüfusun YOLU sayıyla aynı satırdaysa
   denetime alıyor ve bu ölçülmüş bir karar: çıplak "sayı + çoğul isim" şekli alt
@@ -216,6 +304,35 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
   "sagalar/çekirdek için" olduğu (oysa modüller birbirininkini çözüyor).
 
 ### Kararlar
+
+- **Bir müşteri artık PUANIYLA ödeyebiliyor** (ADR 0165). Puan, mağaza
+  kredisinin geçtiği yuvadan — bu modülde bir sağlayıcı, `loyalty_points` —
+  harcanıyor ve BİR PUAN, kazanıldığı para biriminin BİR minor unit'i ediyor:
+  sözleşmenin tutarıyla defterin puanı tek sayı, sınırda hiçbir şey
+  çevrilmiyor ve kazanım oranı baz puan cinsinden geri ödeme diye okunuyor.
+  Puanla ödenen tahsilat puan KAZANDIRMIYOR — tavan oranda bir puan kendini
+  geri kazanırdı, altında da dükkân sönen bir borca geri ödeme yapardı; kazanım
+  hedefi artık koleksiyonun yalnız BAŞKA sağlayıcılardan tahsil edilmiş net
+  parasından hesaplanıyor, harcanan kredi ise kazanmaya devam ediyor, çünkü o
+  nominal değerde borç olan paradır. İki tender TEK durum makinesi: mağaza
+  kredisi ve puan sağlayıcıları elle yazılmış iki kopya değil, `balancetender`
+  paketindeki tek makinenin kendi defteri üstünde koşan iki kaydı —
+  yetkilendirme EKSİ blokaj, iptal serbest bırakma, iade iade satırı yazıyor,
+  tahsilat harcama yazmıyor (yalnız almadığı kısmı serbest bırakıyor), ve her
+  harcama satırı koleksiyonu değil sağlayıcının KENDİ oturumunu referans alıyor.
+  Bakiye toplanmadan önce satırlar değil BAKİYE kilitleniyor — müşteri ve para
+  birimine bağlı bir danışma kilidi (D118) — ve işlem READ COMMITTED'ı adıyla
+  açıyor (D119); ADR 0152'nin kilidi de bu. Defter kapısı ikinci kapıyı bir
+  ad listesinden değil tender'ın KİMLİĞİNDEN türetiyor ve artık kredi defterine
+  de bakıyor. Bakiye SIFIRIN ALTINA düşebilir: bir iade, müşterinin çoktan
+  harcadığı puanı geri alır, bunun için reddedilmez, açığı bir sonraki kazanım
+  önce kapatır ve tender ona karşı ret verir. Her iki tender artık saatlik
+  mutabakata cevap veriyor (kredi "sorulamaz" sayılıyordu); ikisinden birini
+  seçen misafir sunucu hatası yerine 409 alıyor; ikisi TEK seçenek altında
+  kayıtlı — `StoreCredit` adı gitti, gerekçesinin adıyla
+  `Options.PersonBoundTenders` geldi, müşteri iddiasının kanıtlandığı kurulumda.
+  Vitrinde puan siparişin tamamını ya karşılıyor ya hiç — bölmek yönetim
+  yüzeyinin işi; müşteri kendi bakiyesini hâlâ okuyamıyor.
 
 - **Bir tahsilat artık müşteriye PUAN kazandırıyor** (ADR 0164). Yalnızca eklenen
   `payment_loyalty_entries` defteri ödeme modülünde duruyor ve satırı yazan tek

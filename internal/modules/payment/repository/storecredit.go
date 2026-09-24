@@ -61,27 +61,6 @@ func (r *Repository) StoreCreditBalance(
 	return balance, nil
 }
 
-// LockStoreCreditEntries locks the customer's rows for the transaction.
-//
-// Every write that reads the balance and acts on it calls this FIRST: without it
-// two concurrent authorizations both see enough money and both write a hold, which
-// is the customer spending the same money twice. The lock puts them in a queue.
-//
-// A customer with no rows locks nothing, and that is not a hole: their balance is
-// zero, so no authorization passes whatever order they run in.
-func (r *Repository) LockStoreCreditEntries(
-	ctx context.Context, customerID, currencyCode string,
-) error {
-	if _, err := r.queries(ctx).LockStoreCreditEntries(ctx, paymentdb.LockStoreCreditEntriesParams{
-		CustomerID:   customerID,
-		CurrencyCode: currencyCode,
-	}); err != nil {
-		return classify(err, codeQueryFailed, "the store credit entries could not be locked")
-	}
-
-	return nil
-}
-
 // ListStoreCreditEntries returns a customer's history, newest first.
 func (r *Repository) ListStoreCreditEntries(
 	ctx context.Context, customerID, currencyCode string, limit, offset int64,
@@ -118,8 +97,8 @@ func (r *Repository) ListStoreCreditEntries(
 // idempotency key is NOT YET IN USE; on a clash no row comes back (pgx.ErrNoRows)
 // and the caller reads the existing session instead.
 func (r *Repository) InsertStoreCreditSessionIfAbsent(
-	ctx context.Context, session models.StoreCreditSession,
-) (models.StoreCreditSession, bool, error) {
+	ctx context.Context, session models.TenderSession,
+) (models.TenderSession, bool, error) {
 	row, err := r.queries(ctx).InsertStoreCreditSessionIfAbsent(ctx,
 		paymentdb.InsertStoreCreditSessionIfAbsentParams{
 			ID:             session.ID,
@@ -131,10 +110,10 @@ func (r *Repository) InsertStoreCreditSessionIfAbsent(
 			Status:         session.Status.String(),
 		})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return models.StoreCreditSession{}, false, nil
+		return models.TenderSession{}, false, nil
 	}
 	if err != nil {
-		return models.StoreCreditSession{}, false, classify(err, codeQueryFailed,
+		return models.TenderSession{}, false, classify(err, codeQueryFailed,
 			"the store credit session could not be written")
 	}
 
@@ -144,14 +123,14 @@ func (r *Repository) InsertStoreCreditSessionIfAbsent(
 // StoreCreditSession returns the session by its id, or NotFound.
 func (r *Repository) StoreCreditSession(
 	ctx context.Context, id string,
-) (models.StoreCreditSession, error) {
+) (models.TenderSession, error) {
 	row, err := r.queries(ctx).GetStoreCreditSession(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return models.StoreCreditSession{}, errors.NotFound(codeStoreCreditSessionNotFound,
+		return models.TenderSession{}, errors.NotFound(codeStoreCreditSessionNotFound,
 			"no such store credit session: %s", id)
 	}
 	if err != nil {
-		return models.StoreCreditSession{}, classify(err, codeQueryFailed,
+		return models.TenderSession{}, classify(err, codeQueryFailed,
 			"the store credit session could not be read")
 	}
 
@@ -161,14 +140,14 @@ func (r *Repository) StoreCreditSession(
 // StoreCreditSessionByIdempotencyKey returns the session by its key, or NotFound.
 func (r *Repository) StoreCreditSessionByIdempotencyKey(
 	ctx context.Context, key string,
-) (models.StoreCreditSession, error) {
+) (models.TenderSession, error) {
 	row, err := r.queries(ctx).GetStoreCreditSessionByIdempotencyKey(ctx, key)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return models.StoreCreditSession{}, errors.NotFound(codeStoreCreditSessionNotFound,
+		return models.TenderSession{}, errors.NotFound(codeStoreCreditSessionNotFound,
 			"no store credit session was opened with this key: %s", key)
 	}
 	if err != nil {
-		return models.StoreCreditSession{}, classify(err, codeQueryFailed,
+		return models.TenderSession{}, classify(err, codeQueryFailed,
 			"the store credit session could not be read")
 	}
 
@@ -179,14 +158,14 @@ func (r *Repository) StoreCreditSessionByIdempotencyKey(
 // state it is in at that moment.
 func (r *Repository) LockStoreCreditSession(
 	ctx context.Context, id string,
-) (models.StoreCreditSession, error) {
+) (models.TenderSession, error) {
 	row, err := r.queries(ctx).LockStoreCreditSession(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return models.StoreCreditSession{}, errors.NotFound(codeStoreCreditSessionNotFound,
+		return models.TenderSession{}, errors.NotFound(codeStoreCreditSessionNotFound,
 			"no such store credit session: %s", id)
 	}
 	if err != nil {
-		return models.StoreCreditSession{}, classify(err, codeQueryFailed,
+		return models.TenderSession{}, classify(err, codeQueryFailed,
 			"the store credit session could not be locked")
 	}
 
@@ -201,7 +180,7 @@ func (r *Repository) UpdateStoreCreditSessionState(
 	status models.SessionStatus,
 	authorized, captured, refunded int64,
 	declineReason string,
-) (models.StoreCreditSession, error) {
+) (models.TenderSession, error) {
 	row, err := r.queries(ctx).UpdateStoreCreditSessionState(ctx,
 		paymentdb.UpdateStoreCreditSessionStateParams{
 			ID:               id,
@@ -212,7 +191,7 @@ func (r *Repository) UpdateStoreCreditSessionState(
 			DeclineReason:    nullText(declineReason),
 		})
 	if err != nil {
-		return models.StoreCreditSession{}, classify(err, codeQueryFailed,
+		return models.TenderSession{}, classify(err, codeQueryFailed,
 			"the store credit session could not be updated")
 	}
 
@@ -234,8 +213,8 @@ func toStoreCreditEntry(row paymentdb.PaymentStoreCreditEntry) models.StoreCredi
 }
 
 // toStoreCreditSession turns a database row into the domain model.
-func toStoreCreditSession(row paymentdb.PaymentStoreCreditSession) models.StoreCreditSession {
-	return models.StoreCreditSession{
+func toStoreCreditSession(row paymentdb.PaymentStoreCreditSession) models.TenderSession {
+	return models.TenderSession{
 		ID:               row.ID,
 		IdempotencyKey:   row.IdempotencyKey,
 		Reference:        row.Reference,

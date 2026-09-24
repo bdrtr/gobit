@@ -18,10 +18,12 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,6 +41,7 @@ import (
 	coreprovider "github.com/bdrtr/gobit/core/provider"
 	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/modules/payment"
+	"github.com/bdrtr/gobit/internal/modules/payment/loyaltypoints"
 	"github.com/bdrtr/gobit/internal/modules/payment/manual"
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 	"github.com/bdrtr/gobit/internal/modules/payment/repository"
@@ -56,8 +59,10 @@ var modulTablolari = []string{
 	// Mağaza kredisinin iki tablosu (ADR 0152): defter modülün, oturumlar
 	// sağlayıcının.
 	"payment_store_credit_entries", "payment_store_credit_sessions",
-	// Sadakat puanı defteri (ADR 0164).
-	"payment_loyalty_entries",
+	// Sadakat puanı defteri (ADR 0164) ve puanı harcayan sağlayıcının kendi
+	// oturumları (ADR 0165): kredideki ayrımın aynısı, defter modülün, oturumlar
+	// sağlayıcının.
+	"payment_loyalty_entries", "payment_loyalty_sessions",
 }
 
 // Test verisinde kullanılan sabitler. Referans BAŞKA bir modüle (sepet ya da
@@ -1184,10 +1189,12 @@ func TestEszamanliIkiCaptureTekTahsilatUretir(t *testing.T) {
 //
 // Eşlik eden çift budur. [TestModulContainerdaAdlariKaydeder] varsayılan
 // kurulumda kayıtta YALNIZCA manuel sağlayıcının olduğunu çiviliyor; tek başına
-// o iddia, sağlayıcı hiç kaydedilmiyor olsa da geçerdi. İkisi birlikte reddin
+// o iddia, sağlayıcılar hiç kaydedilmiyor olsa da geçerdi. İkisi birlikte reddin
 // AYARIN kararı olduğunu söylüyor — ki o ayar bir güvenlik kararı: müşteri
-// iddiasına kanıtsız güvenen bir kurulumda mağaza kredisi, birinin adını yazan
-// herkesin onun bakiyesini harcaması demek olurdu (ADR 0152).
+// iddiasına kanıtsız güvenen bir kurulumda kişiye bağlı bir tender, birinin
+// adını yazan herkesin onun bakiyesini harcaması demek olurdu (ADR 0152). Ayar
+// TEK ve iki tender'ı birden açıyor (ADR 0165): kredi kayıtlıyken puanın
+// kayıtsız olduğu bir kurulum yok.
 func TestModulAyarAcikkenKrediSaglayicisiniKaydeder(t *testing.T) {
 	ctx := context.Background()
 	c := container.New(nil)
@@ -1195,155 +1202,303 @@ func TestModulAyarAcikkenKrediSaglayicisiniKaydeder(t *testing.T) {
 	require.NoError(t, c.Provide("core.link", link.New(testPool, slog.New(slog.DiscardHandler))))
 	require.NoError(t, c.Provide("core.eventbus", eventbus.NewInMemory(nil)))
 
-	mod := payment.New(payment.Options{StoreCredit: true})
+	mod := payment.New(payment.Options{PersonBoundTenders: true})
 	require.NoError(t, mod.Register(ctx, c))
 
 	registry, err := container.Resolve[*service.ProviderRegistry](c, payment.ProvidersName)
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{manual.ID, storecredit.ID}, registry.IDs(),
-		"ayar açıkken mağaza kredisi de seçilebilir bir ödeme yöntemi olmalı")
+	assert.ElementsMatch(t, []string{manual.ID, storecredit.ID, loyaltypoints.ID}, registry.IDs(),
+		"ayar açıkken mağaza kredisi de sadakat puanı da seçilebilir birer ödeme yöntemi olmalı")
 }
 
-// yeniKrediServisi mağaza kredisi sağlayıcısı KAYITLI bir servis kurar.
+// lockWaiters counts the requests WAITING on a lock the given backend holds.
 //
-// Modül kurulumunun yaptığının aynısı (bkz. module.go): depo hem servisin hem
-// sağlayıcının deposu, çünkü ikisi de aynı işlemde yazıyor — blokaj satırı ile
-// oturum durumu birlikte ya yazılır ya yazılmaz.
-func yeniKrediServisi(t *testing.T) *service.Service {
+// Narrowing the waiters to a known blocker is what makes the count mean
+// anything: "somebody in this database waits on a lock" is also true of another
+// test's session, and then the assertion would hold before the request under
+// test had run a single statement — green, and measuring nothing.
+//
+// It returns its error instead of asserting it, because it is polled: the
+// condition of require.Eventually runs on a goroutine of its own, where a
+// failed require is a runtime.Goexit of the wrong goroutine rather than a
+// failed test.
+func lockWaiters(ctx context.Context, blockerPID int32) (int64, error) {
+	var waiters int64
+	err := testPool.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM pg_stat_activity
+         WHERE datname = current_database()
+           AND wait_event_type = 'Lock'
+           AND $1 = ANY(pg_blocking_pids(pid))`, blockerPID).Scan(&waiters)
+
+	return waiters, err
+}
+
+// singleConnectionRepository is a repository on a pool of exactly ONE
+// connection, and the backend that connection runs on.
+//
+// It is how a competing transaction goes through the repository's own code and
+// still has a backend the test knows before the transaction begins. The earlier
+// competitors took the lock with a copy of its SQL, and a copy is what would
+// have gone on proving the old lock's shape after the lock itself had changed.
+func singleConnectionRepository(
+	ctx context.Context, t *testing.T,
+) (repo *repository.Repository, backendPID int32) {
 	t.Helper()
 
-	repo := repository.New(testPool.Pool())
+	cfg := db.DefaultConfig(testDSN)
+	cfg.MaxConns, cfg.MinConns = 1, 1
+	pool, err := db.New(ctx, cfg, nil)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&backendPID))
+
+	return repository.New(pool.Pool()), backendPID
+}
+
+// balanceTenderService builds a real-repository service with both balance
+// tenders and the manual provider registered, earning at the ceiling rate, on a
+// pool whose connections start with the given default isolation level — empty
+// being the server's own.
+func balanceTenderService(t *testing.T, defaultIsolation string) *service.Service {
+	t.Helper()
+
+	pool := testPool.Pool()
+	if defaultIsolation != "" {
+		dsn := testDSN + "&default_transaction_isolation=" + url.QueryEscape(defaultIsolation)
+		own, err := db.New(context.Background(), db.DefaultConfig(dsn), nil)
+		require.NoError(t, err)
+		t.Cleanup(own.Close)
+
+		var level string
+		require.NoError(t, own.Pool().QueryRow(context.Background(),
+			`SHOW default_transaction_isolation`).Scan(&level))
+		require.Equal(t, defaultIsolation, level,
+			"the pool's connections have to start at the level under test, or the case "+
+				"proves the server's default again")
+		pool = own.Pool()
+	}
+
+	repo := repository.New(pool)
 	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(manual.New(repo, nil)))
 	require.NoError(t, registry.Register(storecredit.New(repo, nil)))
+	require.NoError(t, registry.Register(loyaltypoints.New(repo, nil)))
 
 	svc, err := service.New(service.Options{
 		Store: repo, Providers: registry, Events: eventbus.NewInMemory(nil),
+		LoyaltyEarnBasisPoints: service.MaxLoyaltyEarnBasisPoints,
 	})
 	require.NoError(t, err)
 
 	return svc
 }
 
-// bekleyenIstekSayisi verilen arka uç sürecinin KİLİDİNDE bekleyen istek
-// sayısını döner.
-//
-// Bekleyeni bilinen bir engelleyiciye daraltmak, iddiayı anlamlı kılan şeydir:
-// "bu veritabanında biri bir kilit bekliyor" cümlesini başka bir testin oturumu
-// da doğrular ve o hâlde iddia, sınanan istek tek bir ifade bile koşmadan önce
-// geçerdi — test yeşil olur, hiçbir şey ölçmezdi.
-func bekleyenIstekSayisi(ctx context.Context, t *testing.T, engelleyiciPID int32) int64 {
-	t.Helper()
-
-	var sayi int64
-	err := testPool.Pool().QueryRow(ctx,
-		`SELECT count(*) FROM pg_stat_activity
-         WHERE datname = current_database()
-           AND wait_event_type = 'Lock'
-           AND $1 = ANY(pg_blocking_pids(pid))`, engelleyiciPID).Scan(&sayi)
-	require.NoError(t, err)
-
-	return sayi
+// balanceTender is what the lock test needs to know about one tender.
+type balanceTender struct {
+	name       string
+	providerID string
+	// fund puts testAmount on the balance the only way the module has: an
+	// operator's issue for credit, a capture's earn for points.
+	fund func(ctx context.Context, t *testing.T, svc *service.Service, customer string)
+	// balance reads it.
+	balance func(ctx context.Context, t *testing.T, svc *service.Service, customer string) int64
+	// lock and spend are the competitor's two steps, through the repository.
+	lock  func(ctx context.Context, repo *repository.Repository, customer string) error
+	spend func(ctx context.Context, repo *repository.Repository, customer string) error
 }
 
-// TestKrediAuthorizeDefterKilidindeBekler kararın KORREKTLİK argümanını gerçek
-// satır kilitleri üzerinde sınar.
+// balanceTenders are the two tenders the shared machine runs.
+func balanceTenders() []balanceTender {
+	return []balanceTender{
+		{
+			name:       "store credit",
+			providerID: storecredit.ID,
+			fund: func(ctx context.Context, t *testing.T, svc *service.Service, customer string) {
+				t.Helper()
+				_, err := svc.IssueCredit(ctx, service.IssueCreditInput{
+					CustomerID: customer, CurrencyCode: testCurrency, Amount: testAmount,
+					Reason: "lock test",
+				})
+				require.NoError(t, err)
+			},
+			balance: func(ctx context.Context, t *testing.T, svc *service.Service, customer string) int64 {
+				t.Helper()
+				balance, err := svc.StoreCreditBalance(ctx, customer, testCurrency)
+				require.NoError(t, err)
+
+				return balance
+			},
+			lock: func(ctx context.Context, repo *repository.Repository, customer string) error {
+				return repo.LockStoreCreditBalance(ctx, customer, testCurrency)
+			},
+			spend: func(ctx context.Context, repo *repository.Repository, customer string) error {
+				_, err := repo.AppendStoreCreditEntry(ctx, models.StoreCreditEntry{
+					ID: models.NewStoreCreditEntryID(), CustomerID: customer,
+					CurrencyCode: testCurrency, Amount: -testAmount,
+					Kind: models.StoreCreditHold, Reference: "the competitor",
+				})
+
+				return err
+			},
+		},
+		{
+			name:       "loyalty points",
+			providerID: loyaltypoints.ID,
+			fund: func(ctx context.Context, t *testing.T, svc *service.Service, customer string) {
+				t.Helper()
+				earnPoints(ctx, t, svc, customer)
+			},
+			balance: pointBalance,
+			lock: func(ctx context.Context, repo *repository.Repository, customer string) error {
+				return repo.LockLoyaltyBalance(ctx, customer, testCurrency)
+			},
+			spend: func(ctx context.Context, repo *repository.Repository, customer string) error {
+				_, err := repo.AppendLoyaltyEntry(ctx, models.LoyaltyEntry{
+					ID: models.NewLoyaltyEntryID(), CustomerID: customer,
+					CurrencyCode: testCurrency, Points: -testAmount,
+					Kind: models.LoyaltyHold, Reference: "the competitor",
+				})
+
+				return err
+			},
+		},
+	}
+}
+
+// TestAnAuthorizationWaitsOnTheBalanceLock proves the correctness argument of
+// both balance tenders against a real server: the balance is read and acted on,
+// so two authorizations of one customer must not both see the same money.
 //
-// Sağlayıcı bakiyeyi OKUYUP ona göre davranıyor: yeterliyse eksi bir blokaj
-// yazıyor. Defter kilitlenmezse aynı müşterinin iki eşzamanlı yetkilendirmesi
-// aynı bakiyeyi okur, ikisi de yeterli bulur, ikisi de blokaj yazar — müşteri
-// aynı parayı iki kez harcar ve bakiye EKSİYE düşer.
+// The interleaving is FORCED, not hoped for. A competitor takes the balance
+// lock through the repository's own function; that the authorization under test
+// WAITS on it is seen through pg_blocking_pids; the competitor spends the whole
+// balance and commits; only then does the authorization go on, and it has to
+// read the fresh balance and decline. The balance covers ONE spend, so a lock
+// that lets the two through together ends below zero.
 //
-// Çakışma UMULMUYOR, ÜRETİLİYOR. Rakip bir işlem defteri kilitler, sınanan
-// yetkilendirmenin o kilitte BEKLEDİĞİ pg_blocking_pids ile görülür, rakip
-// bakiyeyi harcayıp commit eder ve ancak ondan sonra yetkilendirme devam eder.
-// Kilit alınmasaydı bekleyen olmaz ve yetkilendirme bayat bakiyeyi okurdu.
+// Three shapes, and each one is a way the lock was, or could be, not a lock:
 //
-// Birim testi yalnızca kilidin ÇAĞRILDIĞINI görebiliyor (sahte depo çağrı
-// sırasını kaydediyor); çağrının gerçekten SIRAYA SOKTUĞU yalnızca burada
-// görülebilir.
-func TestKrediAuthorizeDefterKilidindeBekler(t *testing.T) {
-	ctx := context.Background()
-	svc := yeniKrediServisi(t)
-
-	musteri := "cus_" + models.NewPaymentCollectionID()
-	// Bakiye TEK bir harcamayı karşılıyor: ikisini birden karşılasaydı test
-	// hiçbir şey ayırt etmezdi — kilitli de kilitsiz de ikisi geçerdi.
-	_, err := svc.IssueCredit(ctx, service.IssueCreditInput{
-		CustomerID:   musteri,
-		CurrencyCode: testCurrency,
-		Amount:       testAmount,
-		Reason:       "kilit testi",
-	})
-	require.NoError(t, err)
-
-	col, err := svc.CreatePaymentCollection(ctx, service.CreateCollectionInput{
-		Reference:    testReference + "-credit-lock",
-		CustomerID:   musteri,
-		Amount:       testAmount,
-		CurrencyCode: testCurrency,
-	})
-	require.NoError(t, err)
-	ses, err := svc.CreateSession(ctx, col.ID, storecredit.ID,
-		service.CreateSessionInput{IdempotencyKey: "credit-lock-" + col.ID})
-	require.NoError(t, err)
-
-	// --- rakip işlem: defteri kilitler ve tutar ---
-
-	conn, err := testPool.Pool().Acquire(ctx)
-	require.NoError(t, err)
-	defer conn.Release()
-
-	rakip, err := conn.Begin(ctx)
-	require.NoError(t, err)
-	defer func() { _ = rakip.Rollback(ctx) }()
-
-	var rakipPID int32
-	require.NoError(t, rakip.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&rakipPID))
-
-	_, err = rakip.Exec(ctx,
-		`SELECT id FROM payment_store_credit_entries
-          WHERE customer_id = $1 AND currency_code = $2 FOR UPDATE`,
-		musteri, testCurrency)
-	require.NoError(t, err)
-
-	// --- sınanan yetkilendirme: kilitte BEKLEMELİ ---
-
-	bitti := make(chan error, 1)
-	go func() { _, authErr := svc.AuthorizePayment(ctx, ses.ID); bitti <- authErr }()
-
-	require.Eventually(t, func() bool {
-		return bekleyenIstekSayisi(ctx, t, rakipPID) > 0
-	}, 10*time.Second, 10*time.Millisecond,
-		"yetkilendirme rakip işlemin kilidinde BEKLEMELİ; beklemiyorsa defteri "+
-			"okumadan önce kilitlemiyor demektir ve bayat bir bakiye üzerinde karar veriyordur")
-
-	// Rakip parayı harcar ve commit eder. Bundan sonra bakiye sıfır.
-	_, err = rakip.Exec(ctx,
-		`INSERT INTO payment_store_credit_entries
-             (id, customer_id, currency_code, amount, kind, reference, reason)
-         VALUES ($1, $2, $3, $4, 'hold', 'rakip', '')`,
-		"screntry_"+col.ID, musteri, testCurrency, -testAmount)
-	require.NoError(t, err)
-	require.NoError(t, rakip.Commit(ctx))
-
-	// --- ve TAZE bakiyeyi okuyup reddetmeli ---
-
-	select {
-	case authErr := <-bitti:
-		require.Error(t, authErr,
-			"rakip parayı harcadıktan sonra yetkilendirme GEÇMEMELİ: geçtiyse kilit "+
-				"serbest kaldıktan sonra bile eski bakiye okunmuş demektir")
-		assert.True(t, errors.IsConflict(authErr),
-			"yetersiz bakiye bir REDDİR, sunucu hatası değil: %v", authErr)
-	case <-time.After(10 * time.Second):
-		t.Fatal("yetkilendirme rakip commit ettikten sonra da bitmedi")
+//   - the customer had rows when the competitor locked: the shape ADR 0152 and
+//     the first draft of ADR 0165 proved, and the only one a row lock passes;
+//   - the customer had NO rows until the competitor held the lock, and the
+//     money arrived while it did: a row lock took nothing from a customer with
+//     none, the authorization locked the new row without waiting, and both
+//     spent it (D118);
+//   - the pool's connections default to REPEATABLE READ: the sum after the wait
+//     then reads the snapshot taken before it, and the lock serializes two
+//     authorizations that both decide on the balance before either hold (D119).
+func TestAnAuthorizationWaitsOnTheBalanceLock(t *testing.T) {
+	shapes := []struct {
+		name                string
+		fundedBeforeTheLock bool
+		defaultIsolation    string
+	}{
+		{name: "the customer had rows", fundedBeforeTheLock: true},
+		{name: "the customer had no rows until the lock was held"},
+		{
+			name:                "the server defaults to repeatable read",
+			fundedBeforeTheLock: true,
+			defaultIsolation:    "repeatable read",
+		},
 	}
 
-	bakiye, err := svc.StoreCreditBalance(ctx, musteri, testCurrency)
-	require.NoError(t, err)
-	assert.Zero(t, bakiye,
-		"defter sıfırda kalmalı; eksi bir bakiye müşterinin sahip olmadığı parayı "+
-			"harcadığı anlamına gelirdi")
+	for _, tender := range balanceTenders() {
+		for _, shape := range shapes {
+			t.Run(tender.name+"/"+shape.name, func(t *testing.T) {
+				ctx := context.Background()
+				svc := balanceTenderService(t, shape.defaultIsolation)
+
+				customer := "cus_" + models.NewPaymentCollectionID()
+				if shape.fundedBeforeTheLock {
+					tender.fund(ctx, t, svc, customer)
+				}
+
+				col := customerCollection(ctx, t, svc, customer, testAmount)
+				ses, err := svc.CreateSession(ctx, col.ID, tender.providerID,
+					service.CreateSessionInput{IdempotencyKey: tender.providerID + "-lock-" + col.ID})
+				require.NoError(t, err)
+
+				// --- the competitor: takes the balance and holds it ---
+
+				rival, rivalPID := singleConnectionRepository(ctx, t)
+				locked, spend := make(chan struct{}), make(chan struct{})
+				rivalDone := make(chan error, 1)
+				go func() {
+					rivalDone <- rival.WithTx(ctx, func(ctx context.Context) error {
+						if err := tender.lock(ctx, rival, customer); err != nil {
+							return err
+						}
+						close(locked)
+						<-spend
+
+						return tender.spend(ctx, rival, customer)
+					})
+				}()
+				select {
+				case <-locked:
+				case err := <-rivalDone:
+					t.Fatalf("the competitor could not take the balance lock: %v", err)
+				}
+
+				if !shape.fundedBeforeTheLock {
+					// The money a row lock could not see: committed while the
+					// competitor holds the balance of a customer who had no row
+					// for it to take.
+					tender.fund(ctx, t, svc, customer)
+				}
+				require.Equal(t, testAmount, tender.balance(ctx, t, svc, customer),
+					"the balance covers exactly ONE spend; covering both would let the "+
+						"test tell nothing apart")
+
+				// --- the authorization under test: it has to WAIT ---
+
+				done := make(chan error, 1)
+				go func() { _, authErr := svc.AuthorizePayment(ctx, ses.ID); done <- authErr }()
+
+				var lastPollErr atomic.Value
+				waited := assert.Eventually(t, func() bool {
+					waiters, err := lockWaiters(ctx, rivalPID)
+					if err != nil {
+						lastPollErr.Store(err.Error())
+
+						return false
+					}
+
+					return waiters > 0
+				}, 10*time.Second, 10*time.Millisecond)
+
+				// The competitor spends the balance and commits, whatever the poll
+				// saw, so that nothing below waits on a transaction left open.
+				close(spend)
+				require.NoError(t, <-rivalDone)
+
+				if !waited {
+					pollErr, _ := lastPollErr.Load().(string)
+					t.Fatalf("the authorization never waited on the competitor's balance lock, "+
+						"so it decided on a balance somebody else was spending (last poll "+
+						"error: %q)", pollErr)
+				}
+
+				// --- and it has to read the FRESH balance and decline ---
+
+				select {
+				case authErr := <-done:
+					require.Error(t, authErr,
+						"the authorization must NOT pass after the competitor spent the "+
+							"balance: if it did, it read the balance from before the spend")
+					assert.True(t, errors.IsConflict(authErr),
+						"an insufficient balance is a DECLINE, not a server error: %v", authErr)
+				case <-time.After(10 * time.Second):
+					t.Fatal("the authorization did not finish after the competitor committed")
+				}
+
+				assert.Zero(t, tender.balance(ctx, t, svc, customer),
+					"the balance has to stay at zero; below it the customer spent money "+
+						"they did not hold twice over")
+			})
+		}
+	}
 }
 
 // Defterin yalnızca EKLENEN bir kayıt olduğunu okuyan kapı buradan TAŞINDI:
@@ -1431,6 +1586,13 @@ func TestACaptureWritesARealPointRow(t *testing.T) {
 // customer points for taking their money back — cannot enter the table. No Go
 // code checks it, and none should: a check in the service is a check one caller
 // can go around.
+//
+// The three spending kinds (ADR 0165) are in the table too, each with the sign
+// its meaning forbids: a hold that ADDED points would let a checkout pay the
+// customer for buying, and a release or a refund that took points away would
+// charge them twice for a session that gave up or a payment they got back.
+// Migration 000006 re-creates the pair under the same names; this is what says
+// the re-created pair still binds.
 func TestTheLedgerRefusesASignThatContradictsItsKind(t *testing.T) {
 	ctx := context.Background()
 	repo := repository.New(testPool.Pool())
@@ -1452,6 +1614,27 @@ func TestTheLedgerRefusesASignThatContradictsItsKind(t *testing.T) {
 			entry: models.LoyaltyEntry{
 				CustomerID: customer, CurrencyCode: testCurrency,
 				Points: -10, Kind: models.LoyaltyEarn, Reference: "paycol_x",
+			},
+		},
+		{
+			name: "a hold written positive",
+			entry: models.LoyaltyEntry{
+				CustomerID: customer, CurrencyCode: testCurrency,
+				Points: 10, Kind: models.LoyaltyHold, Reference: "lpses_x",
+			},
+		},
+		{
+			name: "a release written negative",
+			entry: models.LoyaltyEntry{
+				CustomerID: customer, CurrencyCode: testCurrency,
+				Points: -10, Kind: models.LoyaltyRelease, Reference: "lpses_x",
+			},
+		},
+		{
+			name: "a refund written negative",
+			entry: models.LoyaltyEntry{
+				CustomerID: customer, CurrencyCode: testCurrency,
+				Points: -10, Kind: models.LoyaltyRefund, Reference: "lpses_x",
 			},
 		},
 		{
@@ -1563,4 +1746,459 @@ func TestTwoConcurrentCapturesEarnTheTargetOnce(t *testing.T) {
 		"the points are the target the whole captured amount implies, whatever order "+
 			"the two captures ran in; a balance of twice this would mean each capture "+
 			"read a ledger the other had not written to yet")
+}
+
+// --- the loyalty-points tender (ADR 0165) -------------------------------------
+
+// pointsService builds a real-repository service with BOTH the manual provider
+// and the loyalty-points tender registered, earning at the ceiling rate.
+//
+// The ceiling — one point per minor unit — is chosen so that ONE manual capture
+// of testAmount leaves the customer holding exactly testAmount points, which is
+// what a spend of testAmount needs and not a point more. Points are only ever
+// EARNED: the ledger has no issue endpoint, so every balance below starts as a
+// capture through the manual provider. The repository is shared between the
+// service and the tender for yeniKrediServisi's reason: the hold and the session
+// state are written in one transaction, or not at all.
+func pointsService(t *testing.T) *service.Service {
+	t.Helper()
+
+	repo := repository.New(testPool.Pool())
+	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(manual.New(repo, nil)))
+	require.NoError(t, registry.Register(loyaltypoints.New(repo, nil)))
+
+	svc, err := service.New(service.Options{
+		Store: repo, Providers: registry, Events: eventbus.NewInMemory(nil),
+		LoyaltyEarnBasisPoints: service.MaxLoyaltyEarnBasisPoints,
+	})
+	require.NoError(t, err)
+
+	return svc
+}
+
+// customerCollection opens a collection of the given amount that NAMES the
+// customer, so the tender has an owner and the earn path a recipient.
+func customerCollection(
+	ctx context.Context, t *testing.T, svc *service.Service, customer string, amount int64,
+) models.PaymentCollection {
+	t.Helper()
+
+	col, err := svc.CreatePaymentCollection(ctx, service.CreateCollectionInput{
+		Reference:    testReference + "-points",
+		CustomerID:   customer,
+		Amount:       amount,
+		CurrencyCode: testCurrency,
+	})
+	require.NoError(t, err)
+
+	return col
+}
+
+// payThrough opens a session at the given provider for the given amount — zero
+// being the collection's remainder — authorizes it and captures it. It returns
+// the module's session, whose ExternalID is the provider's own, and the capture.
+func payThrough(
+	ctx context.Context, t *testing.T, svc *service.Service,
+	col models.PaymentCollection, providerID string, amount int64,
+) (models.PaymentSession, models.Payment) {
+	t.Helper()
+
+	ses, err := svc.CreateSession(ctx, col.ID, providerID, service.CreateSessionInput{
+		IdempotencyKey: fmt.Sprintf("%s-%s-%d", providerID, col.ID, amount),
+		Amount:         amount,
+	})
+	require.NoError(t, err)
+	_, err = svc.AuthorizePayment(ctx, ses.ID)
+	require.NoError(t, err)
+	capture, err := svc.CapturePayment(ctx, ses.ID, 0)
+	require.NoError(t, err)
+
+	return ses, capture
+}
+
+// earnPoints gives the customer testAmount points the only way there is: a
+// manual capture of testAmount at the ceiling rate. It returns the collection
+// that earned them and the capture, so a test can refund it.
+func earnPoints(
+	ctx context.Context, t *testing.T, svc *service.Service, customer string,
+) (models.PaymentCollection, models.Payment) {
+	t.Helper()
+
+	col := customerCollection(ctx, t, svc, customer, testAmount)
+	_, capture := payThrough(ctx, t, svc, col, manual.ID, 0)
+
+	return col, capture
+}
+
+// pointBalance reads the customer's points in the test currency.
+func pointBalance(ctx context.Context, t *testing.T, svc *service.Service, customer string) int64 {
+	t.Helper()
+
+	balance, err := svc.LoyaltyBalance(ctx, customer, testCurrency)
+	require.NoError(t, err)
+
+	return balance
+}
+
+// pointRows reads the customer's whole point history in the test currency.
+func pointRows(ctx context.Context, t *testing.T, svc *service.Service, customer string) []models.LoyaltyEntry {
+	t.Helper()
+
+	rows, total, err := svc.ListLoyalty(ctx, service.ListLoyaltyInput{
+		CustomerID: customer, CurrencyCode: testCurrency,
+	})
+	require.NoError(t, err)
+	require.Len(t, rows, int(total), "the whole history fits in one page")
+
+	return rows
+}
+
+// rowsReferencing keeps the rows whose reference is the given identifier.
+func rowsReferencing(rows []models.LoyaltyEntry, reference string) []models.LoyaltyEntry {
+	var out []models.LoyaltyEntry
+	for _, row := range rows {
+		if row.Reference == reference {
+			out = append(out, row)
+		}
+	}
+
+	return out
+}
+
+// rowsOfKind keeps the rows of the given kind.
+func rowsOfKind(rows []models.LoyaltyEntry, kind models.LoyaltyKind) []models.LoyaltyEntry {
+	var out []models.LoyaltyEntry
+	for _, row := range rows {
+		if row.Kind == kind {
+			out = append(out, row)
+		}
+	}
+
+	return out
+}
+
+// TestACapturePaidWithPointsEarnsNothing proves the exclusion the earn rule
+// gained in ADR 0165, against the real query that joins captures to sessions.
+//
+// At the ceiling rate a capture paid with points would earn itself back: the
+// customer spends testAmount points, the capture earns testAmount points, and
+// one point buys unbounded goods. The earn target is therefore the net of the
+// collection's captures whose session is at ANOTHER provider, and this test
+// reads it two ways: an order paid entirely with points earns nothing at all,
+// and an order split between points and the manual provider earns on the
+// manual half only. The split is the module's, not the storefront's — the
+// storefront pays an order with one tender — and the module has to get it
+// right for the admin surface that can split.
+func TestACapturePaidWithPointsEarnsNothing(t *testing.T) {
+	ctx := context.Background()
+	svc := pointsService(t)
+	customer := "cus_" + models.NewPaymentCollectionID()
+	earning, _ := earnPoints(ctx, t, svc, customer)
+
+	// --- an order paid entirely with points ---
+
+	paid := customerCollection(ctx, t, svc, customer, testAmount)
+	ses, _ := payThrough(ctx, t, svc, paid, loyaltypoints.ID, 0)
+
+	assert.Zero(t, pointBalance(ctx, t, svc, customer),
+		"the points were spent and the spend earned none back")
+
+	rows := pointRows(ctx, t, svc, customer)
+	assert.Empty(t, rowsReferencing(rows, paid.ID),
+		"no row may reference the collection paid with points: nothing was earned on it")
+	require.Len(t, rows, 2, "one earn and one hold, and nothing else")
+
+	holds := rowsReferencing(rows, ses.ExternalID)
+	require.Len(t, holds, 1, "the hold references the provider's OWN session")
+	assert.Equal(t, models.LoyaltyHold, holds[0].Kind)
+	assert.Equal(t, -testAmount, holds[0].Points)
+
+	earns := rowsReferencing(rows, earning.ID)
+	require.Len(t, earns, 1)
+	assert.Equal(t, models.LoyaltyEarn, earns[0].Kind)
+
+	// --- an order split between points and the manual provider ---
+
+	earnPoints(ctx, t, svc, customer)
+	require.Equal(t, testAmount, pointBalance(ctx, t, svc, customer))
+
+	half := testAmount / 2
+	split := customerCollection(ctx, t, svc, customer, testAmount)
+	payThrough(ctx, t, svc, split, loyaltypoints.ID, half)
+	payThrough(ctx, t, svc, split, manual.ID, 0)
+
+	var earnedOnSplit int64
+	for _, row := range rowsReferencing(pointRows(ctx, t, svc, customer), split.ID) {
+		assert.Contains(t, []models.LoyaltyKind{models.LoyaltyEarn, models.LoyaltyReverse}, row.Kind,
+			"a row referencing a collection is an earn or a reverse, never a spend")
+		earnedOnSplit += row.Points
+	}
+	manualHalfEarns := half * service.MaxLoyaltyEarnBasisPoints / 10_000
+	assert.Equal(t, manualHalfEarns, earnedOnSplit,
+		"only the half that came through the manual provider earns; the half that came "+
+			"out of the point ledger is a liability being extinguished, not revenue")
+	assert.Equal(t, testAmount-half+manualHalfEarns, pointBalance(ctx, t, svc, customer))
+}
+
+// TestCreditThatIsSpentStillEarns is the other half of the exclusion, against
+// the real query: only the POINTS tender is left out of the earn base.
+//
+// Store credit is money the shop owes at face value — a refund that stayed in
+// the shop — and an order paid with it is revenue the day the credit is spent;
+// points are the programme's own currency and earning on them would let a point
+// earn itself back. An exclusion that grew to "every balance tender" would
+// answer both with nothing, and no other test would notice, because every other
+// earn in this file is a manual capture.
+func TestCreditThatIsSpentStillEarns(t *testing.T) {
+	ctx := context.Background()
+	svc := balanceTenderService(t, "")
+
+	customer := "cus_" + models.NewPaymentCollectionID()
+	_, err := svc.IssueCredit(ctx, service.IssueCreditInput{
+		CustomerID: customer, CurrencyCode: testCurrency, Amount: testAmount,
+		Reason: "a late delivery",
+	})
+	require.NoError(t, err)
+
+	col := customerCollection(ctx, t, svc, customer, testAmount)
+	payThrough(ctx, t, svc, col, storecredit.ID, 0)
+
+	credit, err := svc.StoreCreditBalance(ctx, customer, testCurrency)
+	require.NoError(t, err)
+	require.Zero(t, credit, "the order spent the whole credit")
+
+	earned := rowsReferencing(pointRows(ctx, t, svc, customer), col.ID)
+	require.Len(t, earned, 1, "the credit-paid capture earned, once")
+	assert.Equal(t, models.LoyaltyEarn, earned[0].Kind)
+	assert.Equal(t, testAmount*service.MaxLoyaltyEarnBasisPoints/10_000, earned[0].Points,
+		"credit earns like the money it stands for")
+}
+
+// TestARefundOfAPointsPaidOrderGivesThePointsBack proves the refund half of the
+// state machine on the real ledger.
+//
+// A points tender holds no card and no account, so a refund has one destination:
+// a positive row in the customer's own balance, at FACE VALUE — a point is worth
+// one minor unit in both directions. The row references the provider's own
+// session and not the collection, because the earn target is recomputed per
+// collection from the rows that reference it, and a refund row carrying the
+// collection id would read as points the collection had been written. And no
+// reverse appears: the collection earned nothing, so there is nothing to
+// reverse.
+func TestARefundOfAPointsPaidOrderGivesThePointsBack(t *testing.T) {
+	ctx := context.Background()
+	svc := pointsService(t)
+	customer := "cus_" + models.NewPaymentCollectionID()
+	earnPoints(ctx, t, svc, customer)
+
+	paid := customerCollection(ctx, t, svc, customer, testAmount)
+	ses, capture := payThrough(ctx, t, svc, paid, loyaltypoints.ID, 0)
+	require.Zero(t, pointBalance(ctx, t, svc, customer))
+
+	_, err := svc.RefundPayment(ctx, capture.ID, testAmount/2, "half back")
+	require.NoError(t, err)
+
+	assert.Equal(t, testAmount/2, pointBalance(ctx, t, svc, customer),
+		"half the money back is half the points back, at face value and not at the earn rate")
+
+	rows := pointRows(ctx, t, svc, customer)
+	require.Len(t, rows, 3, "an earn, a hold and a refund")
+
+	refunds := rowsOfKind(rows, models.LoyaltyRefund)
+	require.Len(t, refunds, 1, "the row a refund writes is a REFUND, not a release")
+	assert.Equal(t, testAmount/2, refunds[0].Points)
+	assert.Equal(t, ses.ExternalID, refunds[0].Reference,
+		"the refund references the PROVIDER's session, the one the hold references")
+	assert.True(t, strings.HasPrefix(refunds[0].Reference, models.LoyaltySessionIDPrefix),
+		"the reference is the tender's own identifier: %s", refunds[0].Reference)
+	assert.NotEqual(t, paid.ID, refunds[0].Reference,
+		"a spend row never references a collection")
+
+	assert.Empty(t, rowsOfKind(rows, models.LoyaltyReverse),
+		"nothing was earned on this collection, so nothing is reversed")
+	assert.Empty(t, rowsReferencing(rows, paid.ID))
+}
+
+// TestABalanceBelowZeroIsAState proves the sentence ADR 0165 wrote about the
+// hole: a balance can fall below zero, the refund that makes it fall is never
+// refused, the tender declines against it and the next earn fills it first.
+//
+// The points a capture earned may already be spent when that capture is
+// refunded. The reverse is written all the same — a refund is money going back
+// and the ledger records what happened — so the balance goes negative. That is a
+// STATE, not a fault: nothing repairs it, the tender simply reads a balance that
+// covers nothing, and the next capture's earn is where the hole closes.
+//
+// No mutation is needed for the refund half: the assertion that it is not
+// refused is a require.NoError on the real path, and Service.RefundPayment reads
+// no balance anywhere between its lock and its ledger write.
+func TestABalanceBelowZeroIsAState(t *testing.T) {
+	ctx := context.Background()
+	svc := pointsService(t)
+	customer := "cus_" + models.NewPaymentCollectionID()
+
+	earning, earningCapture := earnPoints(ctx, t, svc, customer)
+	spent := customerCollection(ctx, t, svc, customer, testAmount)
+	payThrough(ctx, t, svc, spent, loyaltypoints.ID, 0)
+	require.Zero(t, pointBalance(ctx, t, svc, customer), "everything earned is spent")
+
+	// --- the capture that earned is refunded in full ---
+
+	_, err := svc.RefundPayment(ctx, earningCapture.ID, 0, "everything back")
+	require.NoError(t, err,
+		"a refund is never refused because the points it reverses were spent already")
+
+	assert.Equal(t, -testAmount, pointBalance(ctx, t, svc, customer),
+		"the reverse takes back what was earned, and what was earned is gone: the hole")
+
+	reverses := rowsOfKind(pointRows(ctx, t, svc, customer), models.LoyaltyReverse)
+	require.Len(t, reverses, 1)
+	assert.Equal(t, -testAmount, reverses[0].Points)
+	assert.Equal(t, earning.ID, reverses[0].Reference,
+		"the reverse references the collection whose earn it undoes")
+
+	// --- the tender declines against the hole ---
+
+	tiny := customerCollection(ctx, t, svc, customer, 1)
+	tinySes, err := svc.CreateSession(ctx, tiny.ID, loyaltypoints.ID,
+		service.CreateSessionInput{IdempotencyKey: "points-hole-" + tiny.ID})
+	require.NoError(t, err)
+
+	_, err = svc.AuthorizePayment(ctx, tinySes.ID)
+	require.Error(t, err, "one minor unit is more than a negative balance covers")
+	assert.True(t, errors.IsConflict(err),
+		"a balance that does not cover the payment is a DECLINE, not a server error: %v", err)
+	assert.Equal(t, -testAmount, pointBalance(ctx, t, svc, customer),
+		"a declined authorization writes no hold")
+
+	// --- the next earn fills the hole first ---
+
+	filling := customerCollection(ctx, t, svc, customer, testAmount+1)
+	payThrough(ctx, t, svc, filling, manual.ID, 0)
+
+	assert.Equal(t, int64(1), pointBalance(ctx, t, svc, customer),
+		"the earn lands on the negative balance: what is left to spend is one point")
+}
+
+// TestBothTendersAnswerReconciliation proves that the hourly reconciliation can
+// ASK both balance tenders about real sessions.
+//
+// Service.reconcileOne reaches a provider only through the contract and asks it
+// with a TYPE ASSERTION to [coreprovider.SessionInspector]; a provider that does
+// not satisfy the interface is counted as unaskable, and nothing goes red. Store
+// credit was that provider until ADR 0165, the same shape as the manual provider
+// that did answer. The compile-time pins in the two tender packages say the TYPE
+// satisfies the interface; what this test adds is that the answer is RIGHT: an
+// authorized session reports authorized with the amount held and nothing
+// captured, and a session the tender never opened is disowned with NotFound
+// rather than answered with zeros — which the reconciler counts as unknown, its
+// one finding about an installation.
+func TestBothTendersAnswerReconciliation(t *testing.T) {
+	ctx := context.Background()
+	repo := repository.New(testPool.Pool())
+	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(manual.New(repo, nil)))
+	require.NoError(t, registry.Register(storecredit.New(repo, nil)))
+	require.NoError(t, registry.Register(loyaltypoints.New(repo, nil)))
+
+	svc, err := service.New(service.Options{
+		Store: repo, Providers: registry, Events: eventbus.NewInMemory(nil),
+		LoyaltyEarnBasisPoints: service.MaxLoyaltyEarnBasisPoints,
+	})
+	require.NoError(t, err)
+
+	customer := "cus_" + models.NewPaymentCollectionID()
+	// Both balances are funded the way each is: credit is issued, points are
+	// earned.
+	_, err = svc.IssueCredit(ctx, service.IssueCreditInput{
+		CustomerID: customer, CurrencyCode: testCurrency,
+		Amount: testAmount, Reason: "reconciliation",
+	})
+	require.NoError(t, err)
+	earnPoints(ctx, t, svc, customer)
+
+	for _, tender := range []struct {
+		id      string
+		unknown string
+	}{
+		{id: storecredit.ID, unknown: models.StoreCreditSessionIDPrefix + "NOBODYOPENEDTHIS"},
+		{id: loyaltypoints.ID, unknown: models.LoyaltySessionIDPrefix + "NOBODYOPENEDTHIS"},
+	} {
+		t.Run(tender.id, func(t *testing.T) {
+			prov, err := registry.Get(tender.id)
+			require.NoError(t, err)
+
+			// The same assertion the reconciler makes, on the same static type.
+			inspector, ok := prov.(coreprovider.SessionInspector)
+			require.True(t, ok,
+				"the reconciler would count every %s session as unaskable", tender.id)
+
+			col := customerCollection(ctx, t, svc, customer, testAmount)
+			ses, err := svc.CreateSession(ctx, col.ID, tender.id,
+				service.CreateSessionInput{IdempotencyKey: "reconcile-" + col.ID})
+			require.NoError(t, err)
+			_, err = svc.AuthorizePayment(ctx, ses.ID)
+			require.NoError(t, err)
+
+			inspection, err := inspector.InspectSession(ctx, ses.ExternalID)
+			require.NoError(t, err)
+			assert.Equal(t, coreprovider.SessionAuthorized, inspection.Status)
+			assert.Equal(t, testAmount, inspection.AuthorizedAmount,
+				"the tender reports the amount it holds")
+			assert.Zero(t, inspection.CapturedAmount)
+			assert.Zero(t, inspection.RefundedAmount)
+
+			_, err = inspector.InspectSession(ctx, tender.unknown)
+			assert.True(t, errors.IsNotFound(err),
+				"a session the tender never opened is disowned, not answered with zeros: %v", err)
+		})
+	}
+}
+
+// TestTheEarnTargetSumsOnlyWhatACollectionEarned pins the SUBJECT of the query
+// the earn target is computed from.
+//
+// LoyaltyPointsForReference sums the two earning kinds and nothing else. Every
+// spend row the tender writes references its own session, so the filter changes
+// no sum the system produces today — which is exactly why it needs a witness of
+// its own: a mutation that dropped it would leave every other test green. The
+// row planted here is one nothing in the tree writes, a hold carrying a
+// collection id, and it is planted straight into the repository because the
+// point is what the QUERY does with such a row, not how it got there. Without
+// the filter the target would read the hold as points already written and the
+// next capture would earn them back (ADR 0165).
+func TestTheEarnTargetSumsOnlyWhatACollectionEarned(t *testing.T) {
+	ctx := context.Background()
+	repo := repository.New(testPool.Pool())
+	customer := "cus_" + models.NewPaymentCollectionID()
+	collection := models.NewPaymentCollectionID()
+
+	for _, entry := range []models.LoyaltyEntry{
+		{Points: 300, Kind: models.LoyaltyEarn},
+		{Points: -100, Kind: models.LoyaltyReverse},
+		// The three spend rows deliberately do NOT net to zero: a fixture whose
+		// spend rows canceled out would read the same with and without the
+		// filter, and the mutation would survive it.
+		{Points: -50, Kind: models.LoyaltyHold},
+		{Points: 20, Kind: models.LoyaltyRelease},
+		{Points: 10, Kind: models.LoyaltyRefund},
+	} {
+		entry.ID = models.NewLoyaltyEntryID()
+		entry.CustomerID = customer
+		entry.CurrencyCode = testCurrency
+		entry.Reference = collection
+		_, err := repo.AppendLoyaltyEntry(ctx, entry)
+		require.NoError(t, err)
+	}
+
+	earned, err := repo.LoyaltyPointsForReference(ctx, collection)
+	require.NoError(t, err)
+	assert.Equal(t, int64(200), earned,
+		"300 earned - 100 reversed; the hold, the release and the refund are not what the collection EARNED")
+
+	balance, err := repo.LoyaltyBalance(ctx, customer, testCurrency)
+	require.NoError(t, err)
+	assert.Equal(t, int64(180), balance,
+		"the balance, unlike the target, is every row: 300 - 100 - 50 + 20 + 10")
 }

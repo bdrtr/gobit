@@ -175,10 +175,10 @@ type Store interface {
 	// StoreCreditBalance sums one customer's entries in one currency; a customer
 	// with no entries is zero rather than an absence.
 	StoreCreditBalance(ctx context.Context, customerID, currencyCode string) (int64, error)
-	// LockStoreCreditEntries locks that customer's rows for the length of the
-	// transaction, so a balance read may be acted on. It may only be called inside
-	// [Store.WithTx].
-	LockStoreCreditEntries(ctx context.Context, customerID, currencyCode string) error
+	// The balance LOCKS are not here. The service never reads a balance to act
+	// on it — the tenders do, through their own narrow stores — and a method the
+	// service declares and never calls is a door it holds open for nobody.
+
 	// ListStoreCreditEntries pages a customer's history, newest first.
 	ListStoreCreditEntries(
 		ctx context.Context, customerID, currencyCode string, limit, offset int64,
@@ -191,6 +191,12 @@ type Store interface {
 	// is what makes the write a target instead of an increment, so it is read
 	// inside the collection's own lock and never on its own.
 	LoyaltyPointsForReference(ctx context.Context, reference string) (int64, error)
+	// CollectionNetCapturedExcludingProvider sums what ONE collection has
+	// captured and not refunded through every tender but the named one. It is the
+	// earn target's base (ADR 0165) and is read under the same lock.
+	CollectionNetCapturedExcludingProvider(
+		ctx context.Context, collectionID, excludedProviderID string,
+	) (int64, error)
 	// LoyaltyBalance sums one customer's points in one currency; a customer with
 	// no entries is zero rather than an absence.
 	LoyaltyBalance(ctx context.Context, customerID, currencyCode string) (int64, error)
@@ -305,6 +311,10 @@ type Options struct {
 	// written into it, and the read answers zero. That is the safe side, because
 	// a points program nobody asked for is a promise to customers the shop did
 	// not make.
+	//
+	// A point is worth one minor unit when it is spent (ADR 0165), so the rate
+	// is the cashback in basis points, and money captured through the points
+	// tender earns nothing.
 	//
 	// The ceiling is one point per minor unit. Above it the rate would be a
 	// program this record has not thought about, and the multiplication it
@@ -452,10 +462,12 @@ func (s *Service) writeCollectionTotals(
 	// The points are carried to their target here and NOWHERE ELSE (ADR 0164).
 	//
 	// This is the one function every write of a collection's captured or
-	// refunded total goes through, and the earn rule is derived from exactly
-	// those two numbers. The alternative — each flow appending its own row — is
-	// the same rule written in six places, which is what the status derivation
-	// above already refused.
+	// refunded total goes through, and the earn rule is derived from the
+	// collection's captures. The alternative — each flow appending its own row —
+	// is the same rule written in six places, which is what the status
+	// derivation above already refused. The tender that SPENDS points is the
+	// ledger's other writer and does not pass through here: a hold is a step of
+	// a session's state machine, not a target (ADR 0165).
 	//
 	// It runs AFTER the totals are written so that the row the target is
 	// computed from is the one the database now holds: a refund larger than the

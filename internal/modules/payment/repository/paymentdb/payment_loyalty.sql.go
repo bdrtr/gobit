@@ -27,6 +27,58 @@ func (q *Queries) CountLoyaltyEntries(ctx context.Context, arg CountLoyaltyEntri
 	return count, err
 }
 
+const getLoyaltySession = `-- name: GetLoyaltySession :one
+SELECT id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at FROM payment_loyalty_sessions
+WHERE id = $1
+`
+
+func (q *Queries) GetLoyaltySession(ctx context.Context, id string) (PaymentLoyaltySession, error) {
+	row := q.db.QueryRow(ctx, getLoyaltySession, id)
+	var i PaymentLoyaltySession
+	err := row.Scan(
+		&i.ID,
+		&i.IdempotencyKey,
+		&i.Reference,
+		&i.CustomerID,
+		&i.Amount,
+		&i.CurrencyCode,
+		&i.Status,
+		&i.AuthorizedAmount,
+		&i.CapturedAmount,
+		&i.RefundedAmount,
+		&i.DeclineReason,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getLoyaltySessionByIdempotencyKey = `-- name: GetLoyaltySessionByIdempotencyKey :one
+SELECT id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at FROM payment_loyalty_sessions
+WHERE idempotency_key = $1
+`
+
+func (q *Queries) GetLoyaltySessionByIdempotencyKey(ctx context.Context, idempotencyKey string) (PaymentLoyaltySession, error) {
+	row := q.db.QueryRow(ctx, getLoyaltySessionByIdempotencyKey, idempotencyKey)
+	var i PaymentLoyaltySession
+	err := row.Scan(
+		&i.ID,
+		&i.IdempotencyKey,
+		&i.Reference,
+		&i.CustomerID,
+		&i.Amount,
+		&i.CurrencyCode,
+		&i.Status,
+		&i.AuthorizedAmount,
+		&i.CapturedAmount,
+		&i.RefundedAmount,
+		&i.DeclineReason,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const insertLoyaltyEntry = `-- name: InsertLoyaltyEntry :one
 
 INSERT INTO payment_loyalty_entries (
@@ -44,16 +96,21 @@ type InsertLoyaltyEntryParams struct {
 	Reference    string
 }
 
-// payment_loyalty queries — one table, one writer and two readers.
+// payment_loyalty queries — the point ledger and the tender's own sessions.
 //
-// There is no update and no delete anywhere in this file, and that is the
-// table's whole design: a balance is the sum of what happened to it, so a
-// correction is a NEW ROW rather than an edited one (ADR 0164, and the module's
-// own rule since its 000003 — "a money record is kept").
+// The LEDGER has two writers and an arch gate holds the pair: the service's
+// earn path writes an earn or a reverse, and the loyalty-points provider writes
+// a hold, a release or a refund (ADR 0165). There is no UPDATE and no DELETE
+// against the ledger anywhere in this file, and that is the table's whole
+// design: a balance is the sum of what happened to it, so a correction is a NEW
+// ROW rather than an edited one (ADR 0164, and the module's own rule since its
+// 000003 — "a money record is kept"). The SESSIONS belong to the provider, the
+// way payment_store_credit_sessions belong to the store-credit one.
 // InsertLoyaltyEntry appends one row to a customer's point ledger.
 //
-// The only caller is the service's earn path, which is reached from the one
-// function that moves a collection's totals. Nothing else may write here.
+// Two callers and no third: the service's earn path, reached from the one
+// function that moves a collection's totals, and the loyalty-points provider's
+// package. The arch gate derives the second from the provider's identity.
 func (q *Queries) InsertLoyaltyEntry(ctx context.Context, arg InsertLoyaltyEntryParams) (PaymentLoyaltyEntry, error) {
 	row := q.db.QueryRow(ctx, insertLoyaltyEntry,
 		arg.ID,
@@ -72,6 +129,56 @@ func (q *Queries) InsertLoyaltyEntry(ctx context.Context, arg InsertLoyaltyEntry
 		&i.Kind,
 		&i.Reference,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertLoyaltySessionIfAbsent = `-- name: InsertLoyaltySessionIfAbsent :one
+INSERT INTO payment_loyalty_sessions (
+    id, idempotency_key, reference, customer_id, amount, currency_code, status
+) VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (idempotency_key) DO NOTHING
+RETURNING id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at
+`
+
+type InsertLoyaltySessionIfAbsentParams struct {
+	ID             string
+	IdempotencyKey string
+	Reference      string
+	CustomerID     string
+	Amount         int64
+	CurrencyCode   string
+	Status         string
+}
+
+// InsertLoyaltySessionIfAbsent writes the provider's session only if that
+// idempotency key has not been used yet; see InsertManualSessionIfAbsent for why
+// the conflict is handled in one statement.
+func (q *Queries) InsertLoyaltySessionIfAbsent(ctx context.Context, arg InsertLoyaltySessionIfAbsentParams) (PaymentLoyaltySession, error) {
+	row := q.db.QueryRow(ctx, insertLoyaltySessionIfAbsent,
+		arg.ID,
+		arg.IdempotencyKey,
+		arg.Reference,
+		arg.CustomerID,
+		arg.Amount,
+		arg.CurrencyCode,
+		arg.Status,
+	)
+	var i PaymentLoyaltySession
+	err := row.Scan(
+		&i.ID,
+		&i.IdempotencyKey,
+		&i.Reference,
+		&i.CustomerID,
+		&i.Amount,
+		&i.CurrencyCode,
+		&i.Status,
+		&i.AuthorizedAmount,
+		&i.CapturedAmount,
+		&i.RefundedAmount,
+		&i.DeclineReason,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -124,6 +231,36 @@ func (q *Queries) ListLoyaltyEntries(ctx context.Context, arg ListLoyaltyEntries
 	return items, nil
 }
 
+const lockLoyaltySession = `-- name: LockLoyaltySession :one
+SELECT id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at FROM payment_loyalty_sessions
+WHERE id = $1
+FOR UPDATE
+`
+
+// LockLoyaltySession locks the session for the length of the transaction; every
+// status transition is made under it, which is what makes a repeated Authorize
+// see what the first one wrote instead of holding the points twice.
+func (q *Queries) LockLoyaltySession(ctx context.Context, id string) (PaymentLoyaltySession, error) {
+	row := q.db.QueryRow(ctx, lockLoyaltySession, id)
+	var i PaymentLoyaltySession
+	err := row.Scan(
+		&i.ID,
+		&i.IdempotencyKey,
+		&i.Reference,
+		&i.CustomerID,
+		&i.Amount,
+		&i.CurrencyCode,
+		&i.Status,
+		&i.AuthorizedAmount,
+		&i.CapturedAmount,
+		&i.RefundedAmount,
+		&i.DeclineReason,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const loyaltyBalance = `-- name: LoyaltyBalance :one
 SELECT COALESCE(SUM(points), 0)::bigint AS points
 FROM payment_loyalty_entries
@@ -139,6 +276,10 @@ type LoyaltyBalanceParams struct {
 //
 // COALESCE for StoreCreditBalance's reason: a customer who has never earned and
 // a customer whose points were all reversed hold the same number of points.
+//
+// The lock that makes this sum safe to act on is not a query in this file. A sum
+// has no row to lock, so the tender takes an advisory lock keyed on the customer
+// and the currency before reading it (repository/ledgerlock.go, D118).
 func (q *Queries) LoyaltyBalance(ctx context.Context, arg LoyaltyBalanceParams) (int64, error) {
 	row := q.db.QueryRow(ctx, loyaltyBalance, arg.CustomerID, arg.CurrencyCode)
 	var points int64
@@ -149,14 +290,19 @@ func (q *Queries) LoyaltyBalance(ctx context.Context, arg LoyaltyBalanceParams) 
 const loyaltyPointsForReference = `-- name: LoyaltyPointsForReference :one
 SELECT COALESCE(SUM(points), 0)::bigint AS points
 FROM payment_loyalty_entries
-WHERE reference = $1
+WHERE reference = $1 AND kind IN ('earn', 'reverse')
 `
 
-// LoyaltyPointsForReference sums what ONE collection has already been written.
+// LoyaltyPointsForReference sums what ONE collection has already been EARNED.
 //
 // It is the read that makes the write a target rather than an increment: the
 // earn path computes where this collection's points should be and appends the
 // difference, so a second write for the same totals appends nothing.
+//
+// Only the two earning kinds are summed. A spend row references the provider's
+// own session and never a collection, so the filter changes no sum today; it is
+// here so that the arithmetic states its subject — what this collection EARNED
+// — instead of resting on a convention kept in another package (ADR 0165).
 //
 // COALESCE because a collection with no rows has earned zero, which is a number
 // rather than an absence.
@@ -165,4 +311,56 @@ func (q *Queries) LoyaltyPointsForReference(ctx context.Context, reference strin
 	var points int64
 	err := row.Scan(&points)
 	return points, err
+}
+
+const updateLoyaltySessionState = `-- name: UpdateLoyaltySessionState :one
+UPDATE payment_loyalty_sessions
+SET status            = $2,
+    authorized_amount = $3,
+    captured_amount   = $4,
+    refunded_amount   = $5,
+    decline_reason    = $6,
+    updated_at        = now()
+WHERE id = $1
+RETURNING id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at
+`
+
+type UpdateLoyaltySessionStateParams struct {
+	ID               string
+	Status           string
+	AuthorizedAmount int64
+	CapturedAmount   int64
+	RefundedAmount   int64
+	DeclineReason    *string
+}
+
+// UpdateLoyaltySessionState writes the status and the three amounts as ABSOLUTE
+// values; an incremental update would pull the value the deciding code saw
+// apart from the value that gets written.
+func (q *Queries) UpdateLoyaltySessionState(ctx context.Context, arg UpdateLoyaltySessionStateParams) (PaymentLoyaltySession, error) {
+	row := q.db.QueryRow(ctx, updateLoyaltySessionState,
+		arg.ID,
+		arg.Status,
+		arg.AuthorizedAmount,
+		arg.CapturedAmount,
+		arg.RefundedAmount,
+		arg.DeclineReason,
+	)
+	var i PaymentLoyaltySession
+	err := row.Scan(
+		&i.ID,
+		&i.IdempotencyKey,
+		&i.Reference,
+		&i.CustomerID,
+		&i.Amount,
+		&i.CurrencyCode,
+		&i.Status,
+		&i.AuthorizedAmount,
+		&i.CapturedAmount,
+		&i.RefundedAmount,
+		&i.DeclineReason,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

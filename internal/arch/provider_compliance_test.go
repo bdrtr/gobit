@@ -16,10 +16,12 @@ import (
 
 // providerComplianceFloor is the smallest population that could be the real one.
 //
-// Twelve providers ship in this tree today and the floor is well under it, for
-// the reason every floor in this package is: a number that tracks the surface
-// has to be edited on every ordinary change, and a floor edited that often
-// stops being read. What it catches is the reader having stopped working.
+// The tree ships more providers than this and the floor stays well under
+// them, for the reason every floor in this package is: a number that tracks the
+// surface has to be edited on every ordinary change, and a floor edited that
+// often stops being read. (This sentence used to carry the count, and the count
+// went stale twice without anything noticing — the shape D102 and D110 record.)
+// What it catches is the reader having stopped working.
 const providerComplianceFloor = 8
 
 // providersOutsideTheSuite are the types that satisfy provider.Provider and
@@ -40,8 +42,8 @@ var providersOutsideTheSuite = map[string]string{}
 // `core/providertest` is published so that somebody writing a provider outside
 // this repository can check it (ADR 0025). A suite the in-tree providers do not
 // themselves run is a suite nobody maintains: it goes stale, and the first
-// person to find out is the embedder who trusted it. This is what keeps the
-// twelve providers that ship here on the same suite an embedder gets.
+// person to find out is the embedder who trusted it. This is what keeps every
+// provider that ships here on the same suite an embedder gets.
 //
 // # The population is walked, not listed
 //
@@ -53,8 +55,8 @@ var providersOutsideTheSuite = map[string]string{}
 //
 // # Coverage is per PACKAGE, and that is exact TODAY
 //
-// The check is "this package's tests call providertest". Twelve packages hold
-// one provider each, so package granularity and type granularity are the same
+// The check is "this package's tests call providertest". Every package found
+// holds one provider, so package granularity and type granularity are the same
 // set — and the second assertion below is what keeps them the same: a package
 // growing a second provider fails, because one call would then cover two types
 // and the gate would be claiming more than it checks.

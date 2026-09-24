@@ -690,7 +690,13 @@ func semaTutarTasiyor(t *testing.T, bilesenler, sema map[string]any) bool {
 // tam sayı. Nüfusu yalnızca "amount" üzerinden kuran hâl, mağaza kredisinin
 // bakiye ucunu sessizce dışarıda bıraktı; bu, kapının söylediği cümleden DAR
 // olduğu hâlin bir örneğiydi, muafiyet değil.
+//
+// "points" joined for the same reason on 2026-09-24. ADR 0165 made a point ONE
+// MINOR UNIT of the currency it was earned in, so the loyalty endpoints carry
+// an amount under a name this function did not know, and their descriptions had
+// said "minor unit" in lower case without the word a client developer knows.
 func tutarAlani(ad string) bool {
 	return ad == "amount" || strings.HasSuffix(ad, "_amount") ||
-		ad == "balance" || strings.HasSuffix(ad, "_balance")
+		ad == "balance" || strings.HasSuffix(ad, "_balance") ||
+		ad == "points"
 }

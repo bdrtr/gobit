@@ -413,11 +413,13 @@ var storefrontStoredClaims = map[string]claimVerdict{
 	"payment.payment_loyalty_entries.customer_id": {
 		limb: limbConfined,
 		why: "whose points the ledger row moves, and it is never a value a request carried: " +
-			"the row is written by the function that moves the collection's totals, from the " +
-			"COLLECTION it is acting on. The owner it copies is " +
-			"payment_collections.customer_id, judged above, and a collection with no customer " +
-			"writes no row at all — a guest earns nothing rather than earning under an empty " +
-			"name (ADR 0164)",
+			"an earn row is written by the function that moves the collection's totals, from " +
+			"the COLLECTION it is acting on, and a spend row by the loyalty-points tender, " +
+			"from ITS session, which copied the owner from that same collection. The owner " +
+			"is payment_collections.customer_id, judged above, and a collection with no " +
+			"customer writes no row at all — a guest earns nothing rather than earning under " +
+			"an empty name, and cannot open a session on a balance that is nobody's " +
+			"(ADR 0164, ADR 0165)",
 	},
 	"payment.payment_store_credit_sessions.customer_id": {
 		limb: limbConfined,
@@ -425,6 +427,12 @@ var storefrontStoredClaims = map[string]claimVerdict{
 			"same party under the same judgement (see payment.payment_collections.customer_id). " +
 			"It is copied rather than joined because the provider may not read the module's " +
 			"own tables — the separation every provider in this tree keeps",
+	},
+	"payment.payment_loyalty_sessions.customer_id": {
+		limb: limbConfined,
+		why: "the same record as payment_store_credit_sessions.customer_id for the tender " +
+			"that spends points: the owner copied from the collection when the session is " +
+			"opened, under the same judgement, by the same state machine (ADR 0165)",
 	},
 	"order.order_returns.order_id": {
 		limb: limbInert,

@@ -22,25 +22,14 @@ RETURNING *;
 -- COALESCE because a customer with no entries has no rows, and "no rows" is a
 -- balance of zero rather than an absence: a shop that has never given somebody
 -- credit and a shop that gave and took it back are the same amount of money.
+--
+-- The lock that makes this sum safe to act on is not a query in this file. A sum
+-- has no row to lock, so the tender takes an advisory lock keyed on the customer
+-- and the currency before reading it (repository/ledgerlock.go, D118).
 -- name: StoreCreditBalance :one
 SELECT COALESCE(SUM(amount), 0)::bigint AS balance
 FROM payment_store_credit_entries
 WHERE customer_id = $1 AND currency_code = $2;
-
--- LockStoreCreditEntries takes the customer's rows for the length of the
--- transaction, and it is what makes the balance check safe to act on.
---
--- Two authorizations running at once would otherwise both read a sufficient
--- balance and both write a hold, and the customer would spend money twice. The
--- lock serializes them: the second waits, and the SUM it takes afterwards — a
--- fresh statement, a fresh snapshot — sees the hold the first one wrote.
---
--- A customer with NO entries locks nothing, and that is not a hole: their balance
--- is zero, so no authorization can succeed whatever order the two take.
--- name: LockStoreCreditEntries :many
-SELECT id FROM payment_store_credit_entries
-WHERE customer_id = $1 AND currency_code = $2
-FOR UPDATE;
 
 -- ListStoreCreditEntries returns one customer's history, newest first.
 -- name: ListStoreCreditEntries :many

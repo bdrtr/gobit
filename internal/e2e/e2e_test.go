@@ -201,6 +201,10 @@ const (
 	// the middle of a scenario and take unrelated tests down. The limit's OWN
 	// behavior is exercised on its own router (see hardening_test.go).
 	testRateLimit = 1_000_000
+
+	// loyaltyEarnBasisPoints is the payment module's earn rate in the harness:
+	// the ceiling, one point per minor unit.
+	loyaltyEarnBasisPoints = paymentsvc.MaxLoyaltyEarnBasisPoints
 )
 
 // The fixture constants of the region whose tax is applied automatically.
@@ -618,11 +622,22 @@ func setUpHarness(ctx context.Context) error {
 	registry.Add(regionmod.New(nil))
 	registry.Add(customermod.New(nil))
 	registry.Add(cartmod.New(cartmod.Options{}))
-	// Store credit is registered exactly as production registers it: `app.go` turns
-	// it on unless the installation trusts an unproven customer claim, and the
-	// default configuration does not (ADR 0152). Leaving it off here would mean the
-	// harness ran a payment module production never ships.
-	registry.Add(paymentmod.New(paymentmod.Options{StoreCredit: true}))
+	// The person-bound tenders are registered exactly as production registers
+	// them: `app.go` turns them on unless the installation trusts an unproven
+	// customer claim, and the default configuration does not (ADR 0152, 0165).
+	// Leaving them off here would mean the harness ran a payment module
+	// production never ships.
+	//
+	// The earn rate is the CEILING — one point per minor unit — so that one paid
+	// order earns enough to pay for the next one entirely, which is what a
+	// spend scenario needs at a storefront that takes one tender for the whole
+	// order. It is also the rate at which a points-paid capture that earned
+	// would earn itself back forever, so the scenario that proves it earns
+	// nothing runs at the rate where it matters most (ADR 0165).
+	registry.Add(paymentmod.New(paymentmod.Options{
+		PersonBoundTenders:     true,
+		LoyaltyEarnBasisPoints: loyaltyEarnBasisPoints,
+	}))
 	registry.Add(ordermod.New())
 	// Phase 7: fulfillment, promotion, tax. All three are added in the ORDER of
 	// main.go.

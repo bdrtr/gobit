@@ -45,6 +45,22 @@ type PaymentLoyaltyEntry struct {
 	CreatedAt    pgtype.Timestamptz
 }
 
+type PaymentLoyaltySession struct {
+	ID               string
+	IdempotencyKey   string
+	Reference        string
+	CustomerID       string
+	Amount           int64
+	CurrencyCode     string
+	Status           string
+	AuthorizedAmount int64
+	CapturedAmount   int64
+	RefundedAmount   int64
+	DeclineReason    *string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type PaymentManualSession struct {
 	ID               string
 	IdempotencyKey   string

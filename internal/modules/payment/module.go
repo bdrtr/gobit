@@ -10,10 +10,12 @@
 // Ödeme kuruluşuyla konuşan taraf modül değil, core/provider'daki
 // PaymentProvider sözleşmesini karşılayan bir SAĞLAYICIDIR. Modül sağlayıcıları
 // kimlikleriyle bir kayıtta tutar ([service.ProviderRegistry]) ve akış sırasında
-// ADLA çözer. Kutudan çıkan tek sağlayıcı manuel/test sağlayıcısıdır
-// (internal/modules/payment/manual); eklenti sistemi, çekirdeğe ve bu modüle
-// dokunmadan container'daki kayda kendi sağlayıcısını ekler — plugins/paymentpaytr
-// tam olarak bunu yapar.
+// ADLA çözer. Kutudan çıkan sağlayıcılar [Module.Register]'ın kaydettikleridir:
+// manuel/test sağlayıcısı (internal/modules/payment/manual) her kurulumda, bir
+// müşterinin kendi bakiyesini harcayan iki tender (storecredit, loyaltypoints)
+// yalnızca müşteri iddiasının kanıtlandığı kurulumda ([Options.PersonBoundTenders]).
+// Eklenti sistemi, çekirdeğe ve bu modüle dokunmadan container'daki kayda kendi
+// sağlayıcısını ekler — plugins/paymentpaytr tam olarak bunu yapar.
 //
 // # Saga telafisi
 //
@@ -66,6 +68,7 @@ import (
 	"github.com/bdrtr/gobit/core/openapi"
 	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/modules/payment/api"
+	"github.com/bdrtr/gobit/internal/modules/payment/loyaltypoints"
 	"github.com/bdrtr/gobit/internal/modules/payment/manual"
 	"github.com/bdrtr/gobit/internal/modules/payment/repository"
 	"github.com/bdrtr/gobit/internal/modules/payment/service"
@@ -159,27 +162,29 @@ func New(opts ...Options) *Module {
 
 // Options modülün kurulum tarafından verilen ayarlarıdır.
 //
-// Sıfır değeri GÜVENLİ tarafı seçiyor: mağaza kredisi kayıtlı DEĞİL. Modülü elle
-// kuran bir gömen, ayarı hiç duymamış olsa bile müşterinin parasını harcayan bir
-// ödeme yöntemi açmış olmuyor.
+// Sıfır değeri GÜVENLİ tarafı seçiyor: kişiye bağlı tender'lar kayıtlı DEĞİL.
+// Modülü elle kuran bir gömen, ayarı hiç duymamış olsa bile müşterinin parasını
+// ya da puanını harcayan bir ödeme yöntemi açmış olmuyor.
 type Options struct {
-	// StoreCredit mağaza kredisi sağlayıcısının kaydedilip kaydedilmeyeceğidir
-	// (ADR 0152).
+	// PersonBoundTenders bir KİŞİNİN bakiyesini harcayan iki sağlayıcının —
+	// mağaza kredisi (ADR 0152) ve sadakat puanı (ADR 0165) — kaydedilip
+	// kaydedilmeyeceğidir.
 	//
-	// # Neden kapatılabilir bir şey
+	// # Neden kapatılabilir bir şey, ve neden TEK ayar
 	//
-	// Çünkü harcanan para BİR KİŞİNİN ve o kişinin kimliği sepetin müşteri
+	// Çünkü harcanan bakiye BİR KİŞİNİN ve o kişinin kimliği sepetin müşteri
 	// alanından geliyor. ADR 0125'ten beri müşteri adlandıran bir sepet gövdesi
 	// KANITLANMAK zorunda — ama bir kurulum eski davranışa
 	// (STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM) dönebiliyor ve orada iddia
-	// sorgulanmıyor. O kurulumda mağaza kredisi, bir müşterinin adını yazan
+	// sorgulanmıyor. O kurulumda bu tender'lar, bir müşterinin adını yazan
 	// herkesin onun bakiyesini harcaması demek olurdu.
 	//
 	// Bu yüzden birleşim YAPILANDIRILAMIYOR: kurulum kök, iddiaya güvenen bir
-	// kurulumda sağlayıcıyı HİÇ KAYDETMİYOR. Ayarı burada tutmak, modülün
-	// yapılandırmayı okumasını gerektirmeden (İlke 2.4) o kararı tek bir yerde
-	// bırakıyor.
-	StoreCredit bool
+	// kurulumda ikisini de HİÇ KAYDETMİYOR. Gerekçe krediye ya da puana değil
+	// KİŞİYE ait olduğu için ayar tektir; iki ayar, aynı güvenlik kararının iki
+	// kopyası olurdu. Ayarı burada tutmak, modülün yapılandırmayı okumasını
+	// gerektirmeden (İlke 2.4) o kararı tek bir yerde bırakıyor.
+	PersonBoundTenders bool
 
 	// LoyaltyEarnBasisPoints tahsil edilen paranın her minor unit'inin kaç puan
 	// kazandırdığıdır, on binde olarak (ADR 0164).
@@ -259,18 +264,24 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		return errors.Wrap(err, errors.KindOf(err), codeProviderRegister,
 			"%s modülü varsayılan sağlayıcıyı kaydedemedi", ModuleName)
 	}
-	// Mağaza kredisi de bir ödeme yöntemi ve kutudan çıkıyor (ADR 0152): bir
-	// eklenti gerektirmiyor, çünkü harcadığı para bu modülün kendi defterinde.
-	// Kredisi olmayan bir kurulumda hiçbir şey değişmiyor — sağlayıcı kayıtlı ama
-	// bakiyesi sıfır olan kimse onunla ödeyemiyor.
+	// Mağaza kredisi ve sadakat puanı da birer ödeme yöntemi ve kutudan çıkıyor
+	// (ADR 0152, ADR 0165): eklenti gerektirmiyorlar, çünkü harcadıkları bakiye
+	// bu modülün kendi defterlerinde. Kredisi ya da puanı olmayan bir kurulumda
+	// hiçbir şey değişmiyor — sağlayıcı kayıtlı ama bakiyesi sıfır olan kimse
+	// onunla ödeyemiyor.
 	//
-	// KAYDEDİLMEDİĞİ hâl ise bir güvenlik kararı ve gerekçesi [Options.StoreCredit]
-	// üzerinde: müşteri iddiasına kanıtsız güvenen bir kurulumda bu sağlayıcı
-	// başkasının bakiyesini harcatırdı, o yüzden birleşim yapılandırılamıyor.
-	if m.opts.StoreCredit {
+	// KAYDEDİLMEDİKLERİ hâl ise bir güvenlik kararı ve gerekçesi
+	// [Options.PersonBoundTenders] üzerinde: müşteri iddiasına kanıtsız güvenen
+	// bir kurulumda bu sağlayıcılar başkasının bakiyesini harcatırdı, o yüzden
+	// birleşim yapılandırılamıyor.
+	if m.opts.PersonBoundTenders {
 		if err := providers.Register(storecredit.New(repo, log)); err != nil {
 			return errors.Wrap(err, errors.KindOf(err), codeProviderRegister,
 				"%s modülü mağaza kredisi sağlayıcısını kaydedemedi", ModuleName)
+		}
+		if err := providers.Register(loyaltypoints.New(repo, log)); err != nil {
+			return errors.Wrap(err, errors.KindOf(err), codeProviderRegister,
+				"%s modülü sadakat puanı sağlayıcısını kaydedemedi", ModuleName)
 		}
 	}
 

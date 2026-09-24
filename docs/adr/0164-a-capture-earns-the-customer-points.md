@@ -4,7 +4,7 @@
 them and loses them when it is refunded; the append-only ledger lives in the
 payment module and only the function that moves a collection's totals writes it.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0165](0165-a-customer-can-pay-with-their-points.md) for one clause — the totals writer writes every EARN row, and the tender that spends them is the ledger's second writer. The earn rule, the target arithmetic, the guest and zero-rate rules all stand.
 - **Date:** 2026-09-13
 
 Measurement: [measurements/0164](../measurements/0164-a-name-that-was-already-taken.md)

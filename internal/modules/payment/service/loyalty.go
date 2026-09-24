@@ -8,19 +8,26 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 )
 
-// The loyalty point ledger (ADR 0164).
+// The loyalty point ledger (ADR 0164, ADR 0165).
 //
-// The write half is [Service.earnLoyaltyPoints] and it has exactly one caller:
+// The EARN half is [Service.earnLoyaltyPoints] and it has exactly one caller:
 // [Service.writeCollectionTotals], the function every change to a collection's
 // captured or refunded total goes through. The module subscribes to no event to
 // do this — it publishes and does not subscribe — so the points move inside the
-// same transaction as the money they are derived from.
+// same transaction as the money they are derived from. The SPEND half is the
+// loyalty-points provider, which runs the store-credit state machine on this
+// ledger and is the ledger's other writer; the service never spends.
 //
 // The read half is two operator questions: how many points a customer holds, and
 // why. A customer cannot read their own balance, for the reason ADR 0152 already
 // recorded for store credit: there is no proven customer identity at the
 // storefront, and an endpoint that took the customer's word for who they are
 // would be answering about somebody else's account.
+//
+// A balance can be NEGATIVE. A refund reverses the points a capture earned, and
+// the customer may have spent them already; the refund is never refused for
+// that, the next earn fills the hole first, and the tender declines against it
+// (ADR 0165).
 
 // CodeLoyaltyInvalidInput reports a point-ledger read that makes no sense.
 //
@@ -52,15 +59,22 @@ const basisPointDivisor int64 = 10_000
 //
 // The target is what the collection should have earned by now:
 //
-//	(captured - refunded) * rate / 10000
+//	net * rate / 10000
 //
-// and the row it writes is that target minus what the collection has already
-// been written. Computing a target rather than an increment is what makes the
-// write safe to repeat: a second call with unchanged totals appends nothing, and
-// a refund lowers the target so the difference comes out negative. It is the
-// same discipline the module's own events already state — carry an identifier,
-// read the record — and the reason the inventory ledger dropped its uniqueness
-// index (ADR 0162's rule, one module over).
+// where net is what the collection has captured and not refunded through every
+// tender BUT the points tender. The collection row's own totals are not used
+// because they are provider-blind, and money that came out of the points ledger
+// earns nothing: at the ceiling rate a point would earn itself back, and below
+// it the shop would pay cashback on a liability being extinguished (ADR 0165).
+// Credit that is spent still counts — it is money the shop owes at face value.
+//
+// The row it writes is that target minus what the collection has already been
+// EARNED. Computing a target rather than an increment is what makes the write
+// safe to repeat: a second call with unchanged totals appends nothing, and a
+// refund lowers the target so the difference comes out negative. It is the same
+// discipline the module's own events already state — carry an identifier, read
+// the record — and the reason the inventory ledger dropped its uniqueness index
+// (ADR 0162's rule, one module over).
 //
 // A collection with no customer earns nothing. Most collections have none: a
 // guest pays with a card and nobody is named, and a points row keyed on an empty
@@ -80,7 +94,10 @@ func (s *Service) earnLoyaltyPoints(ctx context.Context, col models.PaymentColle
 		return nil
 	}
 
-	net := col.CapturedAmount - col.RefundedAmount
+	net, err := s.store.CollectionNetCapturedExcludingProvider(ctx, col.ID, models.LoyaltyTenderID)
+	if err != nil {
+		return err
+	}
 	if net <= 0 {
 		net = 0
 	}

@@ -5,7 +5,7 @@
 money is being collected. It costs one more table pair and a tender that a guest
 cannot use, and it gives a shop something to offer instead of a refund.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0165](0165-a-customer-can-pay-with-their-points.md) for one clause — the lock taken before the balance is read is an advisory lock on the customer's balance, not `FOR UPDATE` on their rows, which took nothing from a customer who had none yet (D118). The ledger, the provider and the registration guard all stand.
 - **Date:** 2026-09-12
 
 ## Context

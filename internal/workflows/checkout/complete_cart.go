@@ -236,8 +236,11 @@ type CompleteCartResult struct {
 // are in the package comment.
 //
 // The execution is bound to an idempotency key derived from the cart id: a
-// second call for the same cart does NOT RUN the steps again. If one is still
-// running, or has been compensated, it returns errors.Conflict.
+// second call for the same cart does NOT RUN the steps again while one is still
+// running or after one whose compensation did not finish — it returns
+// errors.Conflict. One that failed and was compensated has released its key,
+// and the same cart is completed again, with another tender if the first was
+// declined (D114).
 //
 // # A second call stops at the preparation in a REAL installation
 //

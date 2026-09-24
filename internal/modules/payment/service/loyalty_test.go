@@ -336,3 +336,74 @@ func TestACustomerWithNoPointsReadsZero(t *testing.T) {
 	assert.Zero(t, balance,
 		"somebody who never earned and somebody whose points were all reversed hold the same number")
 }
+
+// TestMoneyCapturedThroughThePointsTenderEarnsNothing holds the exclusion ADR
+// 0165 added to the earn rule, at the service, and the refunds that follow it.
+//
+// The target is the collection's net captured through every provider BUT the
+// points tender. The fake store answers that sum the way the real query does,
+// by the session's provider; what the service contributes, and what this test
+// pins, is the provider it asks the store to exclude and the fact that it asks
+// at all — a service that took the collection's own totals would earn on the
+// points half, and at the ceiling a point would earn itself back.
+//
+// The split is the admin surface's, and the refunds are per payment so that
+// which half comes back is the test's choice rather than the capture order's:
+// a refund of the points half moves no target (those captures never counted),
+// and a refund of the money half takes back exactly what it earned.
+func TestMoneyCapturedThroughThePointsTenderEarnsNothing(t *testing.T) {
+	ctx := context.Background()
+
+	store := newFakeStore()
+	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(newFakeProvider(loyaltyProvider)))
+	require.NoError(t, registry.Register(newFakeProvider(models.LoyaltyTenderID)))
+	svc, err := service.New(service.Options{
+		Store: store, Providers: registry, Events: newFakeBus(),
+		LoyaltyEarnBasisPoints: 100,
+	})
+	require.NoError(t, err)
+
+	col, err := svc.CreatePaymentCollection(ctx, service.CreateCollectionInput{
+		Reference: loyaltyReference, Amount: loyaltyAmount, CurrencyCode: loyaltyCurrency,
+		CustomerID: loyaltyCustomer,
+	})
+	require.NoError(t, err)
+
+	pay := func(providerID, key string, amount int64) models.Payment {
+		t.Helper()
+		ses, err := svc.CreateSession(ctx, col.ID, providerID,
+			service.CreateSessionInput{IdempotencyKey: key, Amount: amount})
+		require.NoError(t, err)
+		_, err = svc.AuthorizePayment(ctx, ses.ID)
+		require.NoError(t, err)
+		capture, err := svc.CapturePayment(ctx, ses.ID, 0)
+		require.NoError(t, err)
+
+		return capture
+	}
+	earned := func() int64 {
+		t.Helper()
+		var sum int64
+		for _, row := range pointRows(t, store, loyaltyCustomer) {
+			sum += row.Points
+		}
+
+		return sum
+	}
+
+	byPoints := pay(models.LoyaltyTenderID, "key-points-half", 4_000)
+	assert.Zero(t, earned(), "4 000 captured through the points tender earns nothing")
+
+	byMoney := pay(loyaltyProvider, "key-money-half", 0)
+	assert.Equal(t, int64(60), earned(), "1% of the 6 000 that did not come out of the ledger")
+
+	_, err = svc.RefundPayment(ctx, byPoints.ID, 4_000, "points half")
+	require.NoError(t, err)
+	assert.Equal(t, int64(60), earned(),
+		"a refund of the points half moves no target: those captures never counted")
+
+	_, err = svc.RefundPayment(ctx, byMoney.ID, 3_000, "money half")
+	require.NoError(t, err)
+	assert.Equal(t, int64(30), earned(), "half the money came back, so half its points go")
+}

@@ -31,6 +31,10 @@ const (
 	StoreCreditSessionIDPrefix = "scrses_"
 	// LoyaltyEntryIDPrefix is the prefix of loyalty point ledger entries.
 	LoyaltyEntryIDPrefix = "lpoint_"
+	// LoyaltySessionIDPrefix is the prefix of the loyalty-points provider's own
+	// session identifiers; like the store-credit provider's, it sits on the
+	// module's session record as external_id.
+	LoyaltySessionIDPrefix = "lpses_"
 )
 
 // idEncoding is padding-free encoding over the Crockford Base32 alphabet. A
@@ -54,6 +58,9 @@ func NewStoreCreditSessionID() string { return newID(StoreCreditSessionIDPrefix,
 
 // NewLoyaltyEntryID produces a new loyalty point ledger entry identifier.
 func NewLoyaltyEntryID() string { return newID(LoyaltyEntryIDPrefix, time.Now()) }
+
+// NewLoyaltySessionID produces a new loyalty-points provider session identifier.
+func NewLoyaltySessionID() string { return newID(LoyaltySessionIDPrefix, time.Now()) }
 
 // NewPaymentID produces a new capture identifier.
 func NewPaymentID() string { return newID(PaymentIDPrefix, time.Now()) }

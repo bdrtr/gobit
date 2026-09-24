@@ -29,20 +29,23 @@ const (
 	// defterinde bulunmayan oturum içindir; modülün oturumundan AYRI bir kayıttır
 	// ve karışmaları hangi defterin konuştuğunu belirsizleştirirdi (ADR 0152).
 	codeStoreCreditSessionNotFound = "payment_store_credit_session_not_found"
-	codePaymentNotFound            = "payment_not_found"
-	codeManualSessionNotFound      = "payment_manual_session_not_found"
-	codeSessionExists              = "payment_session_idempotency_key_exists"
-	codePaymentExists              = "payment_session_already_captured"
-	codeAmountOutOfRange           = "payment_amount_out_of_range"
-	codeInconsistentAmounts        = "payment_amounts_inconsistent"
-	codeStatusInvalid              = "payment_status_invalid"
-	codeCurrencyInvalid            = "payment_currency_invalid"
-	codeDataInvalid                = "payment_json_invalid"
-	codeTxRequired                 = "payment_tx_required"
-	codeTxBeginFailed              = "payment_tx_begin_failed"
-	codeTxCommitFailed             = "payment_tx_commit_failed"
-	codeQueryFailed                = "payment_query_failed"
-	codeConcurrentUpdate           = "payment_concurrent_update"
+	// codeLoyaltySessionNotFound is the same distinction for the loyalty-points
+	// provider's own sessions (ADR 0165).
+	codeLoyaltySessionNotFound = "payment_loyalty_session_not_found"
+	codePaymentNotFound        = "payment_not_found"
+	codeManualSessionNotFound  = "payment_manual_session_not_found"
+	codeSessionExists          = "payment_session_idempotency_key_exists"
+	codePaymentExists          = "payment_session_already_captured"
+	codeAmountOutOfRange       = "payment_amount_out_of_range"
+	codeInconsistentAmounts    = "payment_amounts_inconsistent"
+	codeStatusInvalid          = "payment_status_invalid"
+	codeCurrencyInvalid        = "payment_currency_invalid"
+	codeDataInvalid            = "payment_json_invalid"
+	codeTxRequired             = "payment_tx_required"
+	codeTxBeginFailed          = "payment_tx_begin_failed"
+	codeTxCommitFailed         = "payment_tx_commit_failed"
+	codeQueryFailed            = "payment_query_failed"
+	codeConcurrentUpdate       = "payment_concurrent_update"
 )
 
 // Kısıt ve indeks adları; sürücü hatasını anlamlı bir tipli hataya çevirmek

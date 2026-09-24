@@ -75,13 +75,13 @@ const amountNote = "Tutarlar MINOR UNIT tam sayıdır (kuruş/cent): " +
 //
 // # Sorgu parametresi YOKTUR
 //
-// Anlatılan uçların hiçbiri sorgu dizesini okumaz: oturum, tahsilat ve iade
-// listeleri sayfalanmaz ([writeList] tüm kayıtları yazar) ve sağlayıcı listesi
-// süzülmez. Sorgu dizesini okuyan TEK uç GET /admin/v1/payment-collections'tır
-// ([parsePage] ile) ve o uç yukarıdaki çakışma yüzünden zaten anlatılmadı.
-// Şemaya yine de bir parametre yazmak, istemciye ÇALIŞMAYAN bir özellik vaat
-// etmek olurdu: istemci üreteci metoda bir argüman koyar, çağıran onu doldurur
-// ve sunucu sessizce yok sayar.
+// BU DOSYADA anlatılan uçların hiçbiri sorgu dizesini okumaz: oturum, tahsilat
+// ve iade listeleri sayfalanmaz ([writeList] tüm kayıtları yazar) ve sağlayıcı
+// listesi süzülmez. Sorgu dizesini okuyan uçlar — koleksiyon listesi de dahil —
+// kendi dosyalarında anlatılıyor (describe_collection.go,
+// describe_storecredit.go, describe_loyalty.go). Şemaya yine de bir parametre
+// yazmak, istemciye ÇALIŞMAYAN bir özellik vaat etmek olurdu: istemci üreteci
+// metoda bir argüman koyar, çağıran onu doldurur ve sunucu sessizce yok sayar.
 //
 // # Bilinen sınır: istek gövdelerinin "required" kümesi GENİŞTİR
 //

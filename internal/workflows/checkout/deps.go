@@ -434,8 +434,8 @@ type Payments interface {
 	//
 	// customerID is whose money is being collected and may be EMPTY for a guest.
 	// It is carried because a tender whose funds belong to a person — store credit
-	// — cannot take the owner from anywhere else without letting a shopper name
-	// somebody else (ADR 0152).
+	// (ADR 0152), loyalty points (ADR 0165) — cannot take the owner from anywhere
+	// else without letting a shopper name somebody else.
 	CreateCollection(
 		ctx context.Context, reference, customerID, currencyCode string, amount int64,
 	) (collectionID string, err error)

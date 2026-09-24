@@ -80,12 +80,24 @@ func New(pool *pgxpool.Pool) *Repository {
 // Çağrı iç içe gelirse yeni bir işlem AÇILMAZ, var olan kullanılır: iç içe
 // işlem açmak PostgreSQL'de savepoint demektir ve dıştaki işlemin atomikliği
 // konusunda yanıltıcı bir güven verirdi.
+//
+// # The isolation level is named, not inherited
+//
+// The balance tenders lock a balance and then sum it, and the sum is safe only
+// because it is a fresh statement with a fresh snapshot: the authorization that
+// waited on the lock reads the hold the first one wrote. That is READ
+// COMMITTED. Under REPEATABLE READ the snapshot is taken at the transaction's
+// first statement — the session lock, before the wait — and the sum after the
+// wait reads the balance as it was before the other hold; both authorizations
+// pass. A plain BEGIN runs at the server's default, which a role or a database
+// can set to anything, so the level this module's locks rest on is written here
+// (D119).
 func (r *Repository) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
 	if _, ok := txFromContext(ctx); ok {
 		return fn(ctx)
 	}
 
-	tx, err := r.pool.Begin(ctx)
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return classify(err, codeTxBeginFailed, "işlem başlatılamadı")
 	}
@@ -154,7 +166,7 @@ func (r *Repository) queries(ctx context.Context) *paymentdb.Queries {
 func requireTx(ctx context.Context, op string) error {
 	if _, ok := txFromContext(ctx); !ok {
 		return errors.Internal(codeTxRequired,
-			"%s işlem (transaction) içinde çağrılmalı; işlemsiz bir FOR UPDATE kilidi hiçbir şeyi korumaz", op)
+			"%s işlem (transaction) içinde çağrılmalı; işlemsiz alınan bir kilit hiçbir şeyi korumaz", op)
 	}
 	return nil
 }

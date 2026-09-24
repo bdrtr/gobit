@@ -240,6 +240,9 @@ func TestASessionWithNoCustomerIsRefused(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Equal(t, storecredit.CodeNoCustomer, coreerrors.CodeOf(err))
+	assert.True(t, coreerrors.IsConflict(err),
+		"the refusal is a CONFLICT, which core/http answers with 409: the code alone "+
+			"was pinned while it traveled as a 500 (D113): %v", err)
 	assert.Empty(t, store.kinds(), "nothing may be written for a session with no owner")
 }
 
@@ -271,9 +274,11 @@ func TestTheLedgerIsLockedBeforeItIsRead(t *testing.T) {
 	_, err := provider.Authorize(context.Background(), session.ID)
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"session", "ledger"}, store.locks,
-		"the session is locked first and the ledger second; the reverse order would "+
-			"let two transactions hold each other's next lock")
+	assert.Equal(t, []string{"session", "balance lock", "balance read"}, store.sequence,
+		"the session is locked first and the balance second, and the balance is read "+
+			"only under its lock: the two locks swapped let two transactions hold each "+
+			"other's next lock, and a read before the lock decides on money another "+
+			"authorization is spending")
 }
 
 // TestAFailedWriteLeavesTheLedgerUntouched is the transaction boundary.
