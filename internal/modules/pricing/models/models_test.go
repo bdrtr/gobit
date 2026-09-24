@@ -1,6 +1,7 @@
 package models_test
 
 import (
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -14,18 +15,37 @@ import (
 
 // TestIDsArePrefixedAndFixedLength proves that ids are prefixed and of fixed
 // length (plan Section 8).
+//
+// The population is COUNTED from ids.go and the map below may not be shorter,
+// for D112's reason: a prefix added to the source and not to a hand-typed map
+// is a generator nothing audits, and the payment module's copy of this test
+// fell three prefixes behind that way.
 func TestIDsArePrefixedAndFixedLength(t *testing.T) {
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 
-	for name, tc := range map[string]struct {
+	cases := map[string]struct {
 		id     string
 		prefix string
 	}{
-		"price set":  {models.NewPriceSetID(now), models.PriceSetIDPrefix},
-		"price":      {models.NewPriceID(now), models.PriceIDPrefix},
-		"price list": {models.NewPriceListID(now), models.PriceListIDPrefix},
-		"price rule": {models.NewPriceRuleID(now), models.PriceRuleIDPrefix},
-	} {
+		"price set":          {models.NewPriceSetID(now), models.PriceSetIDPrefix},
+		"price":              {models.NewPriceID(now), models.PriceIDPrefix},
+		"price list":         {models.NewPriceListID(now), models.PriceListIDPrefix},
+		"price rule":         {models.NewPriceRuleID(now), models.PriceRuleIDPrefix},
+		"price set snapshot": {models.NewPriceSetHistoryID(now), models.PriceSetHistoryIDPrefix},
+		"price list snapshot": {
+			models.NewPriceListHistoryID(now), models.PriceListHistoryIDPrefix,
+		},
+	}
+
+	source, err := os.ReadFile("ids.go")
+	require.NoError(t, err)
+	declared := strings.Count(string(source), `IDPrefix = "`)
+	require.Positive(t, declared, "no prefix constant was found in ids.go; the count reads nothing")
+	require.Len(t, cases, declared,
+		"ids.go declares %d prefixes and this test checks %d; a prefix the map does not "+
+			"name is a generator nothing audits", declared, len(cases))
+
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			assert.True(t, strings.HasPrefix(tc.id, tc.prefix), "id must start with the %q prefix", tc.prefix)
 			assert.Len(t, strings.TrimPrefix(tc.id, tc.prefix), models.IDBodyLength())

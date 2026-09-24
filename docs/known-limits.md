@@ -509,6 +509,18 @@ past and is not corrected retroactively.
 - **Deleting the last region binding does not hide the location, it opens it to
   ALL regions** — the same as the sales channel rule, with one difference: there
   the price is visibility, here it is a dropped order.
+- **A reduction's reference price is known only from the day the price history
+  began.** Since [ADR 0167](adr/0167-a-price-keeps-its-history.md) every price
+  write keeps a snapshot, and a storefront sale price carries the lowest price
+  of the thirty days before its reduction began — but the history starts at the
+  upgrade, and nothing before it was kept (ADR 0047 deleted it). For thirty
+  days after upgrading, and for any sale already running then, the storefront
+  carries no `lowest_prior_amount`; it is absent rather than approximated, and
+  an installation that has to announce a reduction in that time needs the
+  number from somewhere else. The reference is also the storefront's price only
+  — quantity one, no customer group or region rule — and it is computed from
+  every snapshot of the set, so a set edited thousands of times makes its
+  storefront read heavier ([measurement 0167](measurements/0167-what-a-price-was.md)).
 
 ## The limit of the invariants
 

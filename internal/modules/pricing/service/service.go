@@ -105,6 +105,11 @@ type Repository interface {
 	ListPriceLists(ctx context.Context, limit, offset int32) ([]models.PriceList, int64, error)
 	UpdatePriceList(ctx context.Context, list models.PriceList, now time.Time) (models.PriceList, error)
 	DeletePriceList(ctx context.Context, id string, now time.Time) error
+
+	// PriceSetHistory and PriceListHistory return every snapshot of the given
+	// sets and lists, oldest first (ADR 0167).
+	PriceSetHistory(ctx context.Context, priceSetIDs []string) ([]models.PriceSetSnapshot, error)
+	PriceListHistory(ctx context.Context, priceListIDs []string) (map[string][]models.PriceListSnapshot, error)
 }
 
 // Options are the service's setup settings.
@@ -304,7 +309,7 @@ func (s *Service) SetPrices(ctx context.Context, priceSetID string, prices []Pri
 //
 // The admin surface keeps using ListPrices; the operator MUST SEE draft
 // campaigns and rule conditions.
-func (s *Service) ListStorePrices(ctx context.Context, priceSetID string) ([]models.Price, error) {
+func (s *Service) ListStorePrices(ctx context.Context, priceSetID string) ([]models.StorePrice, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
@@ -320,14 +325,14 @@ func (s *Service) ListStorePrices(ctx context.Context, priceSetID string) ([]mod
 		return nil, err
 	}
 
-	// The SAME filter as the Query provider's is used; the two customer surfaces
+	// The SAME path as the Query provider's is used; the two customer surfaces
 	// drifting apart would mean a price that leaks in one is not visible in the
-	// other.
-	prices := listablePrices(candidates, s.clock())
-	for i := range prices {
-		prices[i].Rules = nil
+	// other, or reads as a reduction in one and not the other (ADR 0167).
+	prices, err := s.storePrices(ctx, map[string][]models.PriceCandidate{priceSetID: candidates}, s.clock())
+	if err != nil {
+		return nil, err
 	}
-	return prices, nil
+	return prices[priceSetID], nil
 }
 
 // ListPrices returns a price set's prices together with their rules.

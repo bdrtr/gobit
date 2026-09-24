@@ -35,6 +35,18 @@ type PriceList struct {
 	Metadata    []byte
 }
 
+type PriceListHistory struct {
+	ID          string
+	Seq         int64
+	PriceListID string
+	RecordedAt  pgtype.Timestamptz
+	Type        string
+	Status      string
+	StartsAt    pgtype.Timestamptz
+	EndsAt      pgtype.Timestamptz
+	Deleted     bool
+}
+
 type PriceRule struct {
 	ID         string
 	PriceID    string
@@ -51,4 +63,12 @@ type PriceSet struct {
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
 	DeletedAt pgtype.Timestamptz
+}
+
+type PriceSetHistory struct {
+	ID         string
+	Seq        int64
+	PriceSetID string
+	RecordedAt pgtype.Timestamptz
+	Prices     []byte
 }

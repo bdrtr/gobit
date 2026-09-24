@@ -19,19 +19,28 @@ func (r *Repo) CreatePriceList(ctx context.Context, list models.PriceList, now t
 		return models.PriceList{}, err
 	}
 
-	row, err := r.q.InsertPriceList(ctx, pricingdb.InsertPriceListParams{
-		ID:          list.ID,
-		Title:       list.Title,
-		Description: list.Description,
-		Type:        string(list.Type),
-		Status:      string(list.Status),
-		StartsAt:    fromTimePtr(list.StartsAt),
-		EndsAt:      fromTimePtr(list.EndsAt),
-		Metadata:    meta,
-		CreatedAt:   fromTime(now),
+	var row pricingdb.PriceList
+	err = r.inTx(ctx, func(q *pricingdb.Queries) error {
+		var err error
+		row, err = q.InsertPriceList(ctx, pricingdb.InsertPriceListParams{
+			ID:          list.ID,
+			Title:       list.Title,
+			Description: list.Description,
+			Type:        string(list.Type),
+			Status:      string(list.Status),
+			StartsAt:    fromTimePtr(list.StartsAt),
+			EndsAt:      fromTimePtr(list.EndsAt),
+			Metadata:    meta,
+			CreatedAt:   fromTime(now),
+		})
+		if err != nil {
+			return wrapDB(err, "fiyat listesi oluşturulamadı")
+		}
+
+		return recordListHistory(ctx, q, row, false, now)
 	})
 	if err != nil {
-		return models.PriceList{}, wrapDB(err, "fiyat listesi oluşturulamadı")
+		return models.PriceList{}, err
 	}
 	return toPriceList(row)
 }
@@ -88,20 +97,30 @@ func (r *Repo) UpdatePriceList(ctx context.Context, list models.PriceList, now t
 		return models.PriceList{}, err
 	}
 
-	row, err := r.q.UpdatePriceList(ctx, pricingdb.UpdatePriceListParams{
-		ID:          list.ID,
-		Title:       list.Title,
-		Description: list.Description,
-		Type:        string(list.Type),
-		Status:      string(list.Status),
-		StartsAt:    fromTimePtr(list.StartsAt),
-		EndsAt:      fromTimePtr(list.EndsAt),
-		Metadata:    meta,
-		UpdatedAt:   fromTime(now),
+	var row pricingdb.PriceList
+	err = r.inTx(ctx, func(q *pricingdb.Queries) error {
+		var err error
+		row, err = q.UpdatePriceList(ctx, pricingdb.UpdatePriceListParams{
+			ID:          list.ID,
+			Title:       list.Title,
+			Description: list.Description,
+			Type:        string(list.Type),
+			Status:      string(list.Status),
+			StartsAt:    fromTimePtr(list.StartsAt),
+			EndsAt:      fromTimePtr(list.EndsAt),
+			Metadata:    meta,
+			UpdatedAt:   fromTime(now),
+		})
+		if err != nil {
+			return notFoundOr(err, CodePriceListNotFound, "fiyat listesi bulunamadı: %s", list.ID)
+		}
+
+		// Status and window are what the ladder reads of a list; a sale that
+		// opens is this snapshot's next reader (ADR 0167).
+		return recordListHistory(ctx, q, row, false, now)
 	})
 	if err != nil {
-		return models.PriceList{}, notFoundOr(err, CodePriceListNotFound,
-			"fiyat listesi bulunamadı: %s", list.ID)
+		return models.PriceList{}, err
 	}
 	return toPriceList(row)
 }
@@ -117,13 +136,22 @@ func (r *Repo) DeletePriceList(ctx context.Context, id string, now time.Time) er
 		return err
 	}
 
-	if _, err := r.q.SoftDeletePriceList(ctx, pricingdb.SoftDeletePriceListParams{
-		ID:        id,
-		DeletedAt: fromTime(now),
-	}); err != nil {
-		return notFoundOr(err, CodePriceListNotFound, "fiyat listesi bulunamadı: %s", id)
-	}
-	return nil
+	return r.inTx(ctx, func(q *pricingdb.Queries) error {
+		list, err := q.GetPriceList(ctx, id)
+		if err != nil {
+			return notFoundOr(err, CodePriceListNotFound, "fiyat listesi bulunamadı: %s", id)
+		}
+
+		if _, err := q.SoftDeletePriceList(ctx, pricingdb.SoftDeletePriceListParams{
+			ID:        id,
+			DeletedAt: fromTime(now),
+		}); err != nil {
+			return notFoundOr(err, CodePriceListNotFound, "fiyat listesi bulunamadı: %s", id)
+		}
+
+		// Its prices stay, and stop competing; the snapshot says why (ADR 0167).
+		return recordListHistory(ctx, q, list, true, now)
+	})
 }
 
 // toPriceList üretilen satırı domain modeline çevirir.

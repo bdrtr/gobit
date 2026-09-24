@@ -37,8 +37,12 @@ func (r *Repo) CreatePriceSet(
 
 		// Kap bu işlemde yaratıldığı için başkası ona henüz erişemez; yerine
 		// koymadaki satır kilidine burada gerek yoktur.
-		_, err = insertPrices(ctx, q, id, prices, now)
-		return err
+		if _, err = insertPrices(ctx, q, id, prices, now); err != nil {
+			return err
+		}
+
+		// The set's first snapshot: its history starts with it (ADR 0167).
+		return recordSetHistory(ctx, q, id, now)
 	})
 	if err != nil {
 		return models.PriceSet{}, err
@@ -136,7 +140,10 @@ func (r *Repo) DeletePriceSet(ctx context.Context, id string, now time.Time) err
 		}); err != nil {
 			return wrapDB(err, "price set fiyatları silinemedi: %s", id)
 		}
-		return nil
+
+		// A deleted set offers no price from now on, and its history says so
+		// with an empty snapshot (ADR 0167).
+		return recordSetHistory(ctx, q, id, now)
 	})
 }
 

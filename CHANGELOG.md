@@ -331,6 +331,19 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **A price keeps its history** (ADR 0167). Every write to a price, a rule, a
+  set or a list appends a snapshot of what the price ladder reads, in the same
+  transaction, and the unchanged ladder run over those snapshots says what a
+  set charged at any past moment — a sale window that opened with no write
+  included. A storefront price names its list's type, and the sale price
+  charged now carries `reduced_since` and `lowest_prior_amount`, the lowest
+  price of the thirty days before the reduction, on the product listing and the
+  price set endpoint alike; each is absent when the history cannot state it. A
+  new admin endpoint, `GET /admin/v1/price-sets/{id}/price-history`, answers
+  what a set charged over a window and which price and list each stretch came
+  from. ADR 0047 is amended: a replaced price is still deleted, and what it was
+  is kept in the snapshot before. The history starts at the upgrade.
+
 - **READ COMMITTED'da başlamayan bir bağlantı reddediliyor** (ADR 0166).
   `core/db`'nin kurduğu havuz her yeni oturumun varsayılan yalıtım düzeyini
   okuyor ve READ COMMITTED değilse bağlantıyı reddediyor — açılışta ve süreç

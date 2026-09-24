@@ -99,3 +99,4 @@ truth: a report says what was true on the day it was taken.
 | [A name that was already taken — measured 2026-09-13](0164-a-name-that-was-already-taken.md) | 246 |
 | [What a point buys — measured 2026-09-13](0165-what-a-point-buys.md) | 494 |
 | [What another isolation level breaks — measured 2026-09-24](0166-what-another-isolation-level-breaks.md) | 154 |
+| [What a price was — measured 2026-09-24](0167-what-a-price-was.md) | 165 |

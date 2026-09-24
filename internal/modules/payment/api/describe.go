@@ -77,11 +77,14 @@ const amountNote = "Tutarlar MINOR UNIT tam sayıdır (kuruş/cent): " +
 //
 // BU DOSYADA anlatılan uçların hiçbiri sorgu dizesini okumaz: oturum, tahsilat
 // ve iade listeleri sayfalanmaz ([writeList] tüm kayıtları yazar) ve sağlayıcı
-// listesi süzülmez. Sorgu dizesini okuyan uçlar — koleksiyon listesi de dahil —
-// kendi dosyalarında anlatılıyor (describe_collection.go,
-// describe_storecredit.go, describe_loyalty.go). Şemaya yine de bir parametre
-// yazmak, istemciye ÇALIŞMAYAN bir özellik vaat etmek olurdu: istemci üreteci
-// metoda bir argüman koyar, çağıran onu doldurur ve sunucu sessizce yok sayar.
+// listesi süzülmez.
+//
+// Writing a parameter into the schema anyway would promise the client a feature
+// that does NOT work: a client generator puts an argument on the method, the
+// caller fills it, and the server ignores it in silence. The endpoints that do
+// read the query string — the collection listing among them — are described in
+// their own files (describe_collection.go, describe_storecredit.go,
+// describe_loyalty.go).
 //
 // # Bilinen sınır: istek gövdelerinin "required" kümesi GENİŞTİR
 //

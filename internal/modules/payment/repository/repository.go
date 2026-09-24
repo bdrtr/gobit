@@ -166,7 +166,7 @@ func (r *Repository) queries(ctx context.Context) *paymentdb.Queries {
 func requireTx(ctx context.Context, op string) error {
 	if _, ok := txFromContext(ctx); !ok {
 		return errors.Internal(codeTxRequired,
-			"%s işlem (transaction) içinde çağrılmalı; işlemsiz alınan bir kilit hiçbir şeyi korumaz", op)
+			"%s has to be called inside a transaction; a lock taken outside one protects nothing", op)
 	}
 	return nil
 }

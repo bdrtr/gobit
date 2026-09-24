@@ -129,7 +129,10 @@ func TestMigrationsAreReversible(t *testing.T) {
 	dsn := parsed.String()
 
 	src := pricing.New(nil).Migrations()
-	tables := []string{"price_set", "price", "price_list", "price_rule"}
+	tables := []string{
+		"price_set", "price", "price_list", "price_rule",
+		"price_set_history", "price_list_history",
+	}
 
 	require.NoError(t, db.Migrate(ctx, dsn, src, pricing.Name))
 	for _, table := range tables {
@@ -813,9 +816,9 @@ func TestStorePricesHideDraftListsAndRules(t *testing.T) {
 	storePrices, err := svc.ListStorePrices(ctx, set.ID)
 	require.NoError(t, err)
 	require.Len(t, storePrices, 1, "müşteriye yalnızca gösterilebilir fiyat çıkmalı: %+v", storePrices)
-	assert.Equal(t, int64(10000), storePrices[0].Amount)
-	assert.Nil(t, storePrices[0].PriceListID, "taslak kampanya fiyatı sızdı")
-	assert.Empty(t, storePrices[0].Rules, "kural koşulları müşteriye çıkmamalı")
+	assert.Equal(t, int64(10000), storePrices[0].Price.Amount)
+	assert.Nil(t, storePrices[0].Price.PriceListID, "taslak kampanya fiyatı sızdı")
+	assert.Empty(t, storePrices[0].Price.Rules, "kural koşulları müşteriye çıkmamalı")
 
 	// Kampanya yayına alınınca müşteri yüzeyinde GÖRÜNMELİ — süzgeç kalıcı
 	// olarak gizlemiyor, yalnızca yayında olmayanı eliyor.

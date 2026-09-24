@@ -19,6 +19,11 @@ const (
 	PriceListIDPrefix = "plist_"
 	// PriceRuleIDPrefix is the prefix of price rule ids.
 	PriceRuleIDPrefix = "prule_"
+	// PriceSetHistoryIDPrefix is the prefix of a price set snapshot's id
+	// (ADR 0167).
+	PriceSetHistoryIDPrefix = "psethist_"
+	// PriceListHistoryIDPrefix is the prefix of a price list snapshot's id.
+	PriceListHistoryIDPrefix = "plisthist_"
 )
 
 // idBodyLen is the number of characters in the body excluding the prefix: 16
@@ -78,6 +83,12 @@ func NewPriceListID(t time.Time) string { return NewID(PriceListIDPrefix, t) }
 
 // NewPriceRuleID produces a new price rule id.
 func NewPriceRuleID(t time.Time) string { return NewID(PriceRuleIDPrefix, t) }
+
+// NewPriceSetHistoryID produces a new price set snapshot id.
+func NewPriceSetHistoryID(t time.Time) string { return NewID(PriceSetHistoryIDPrefix, t) }
+
+// NewPriceListHistoryID produces a new price list snapshot id.
+func NewPriceListHistoryID(t time.Time) string { return NewID(PriceListHistoryIDPrefix, t) }
 
 // IDBodyLength returns the length of the body excluding the prefix; it is the
 // single source of truth for tests and for validation.

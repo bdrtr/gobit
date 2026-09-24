@@ -44,6 +44,10 @@ const (
 	CodeCanceled = "pricing_canceled"
 	// CodeTxFailed işlem (transaction) yönetiminin başarısızlığını bildirir.
 	CodeTxFailed = "pricing_tx_failed"
+	// CodeHistoryUnreadable reports a price history snapshot that could not be
+	// encoded or decoded (ADR 0167). The writer and the migration's seed share one
+	// JSON shape, so this is a broken contract rather than bad input.
+	CodeHistoryUnreadable = "pricing_history_unreadable"
 )
 
 // PostgreSQL SQLSTATE kodları (ihtiyaç duyulanlar).

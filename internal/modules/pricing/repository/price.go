@@ -180,7 +180,14 @@ func (r *Repo) ReplacePrices(
 
 		var err error
 		written, err = insertPrices(ctx, q, priceSetID, prices, now)
-		return err
+		if err != nil {
+			return err
+		}
+
+		// The replaced prices are deleted above, as ADR 0047 decided; what they
+		// were is kept in the snapshot before this one, and what replaced them
+		// in this one (ADR 0167).
+		return recordSetHistory(ctx, q, priceSetID, now)
 	})
 	if err != nil {
 		return nil, err

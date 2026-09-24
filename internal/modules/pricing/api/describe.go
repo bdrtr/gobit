@@ -6,294 +6,299 @@ import (
 	"github.com/bdrtr/gobit/core/openapi"
 )
 
-// Parametre şemalarında geçen JSON Schema adları.
+// The JSON Schema names parameter schemas use.
 //
-// Çekirdeğin karşılıkları dışa kapalıdır ve burada tekrarlanmalarının sebebi
-// maliyet değil SESSİZLİK: "strig" yazılmış bir tip adı derlenir, belge
-// üretilir ve yalnızca şemayı okuyan istemci parametreyi yanlış tiple
-// ürettiğinde ortaya çıkar.
+// The core's own constants are unexported, and the reason they are repeated
+// here is not cost but SILENCE: a type name spelled "strig" compiles, the
+// document is built, and it surfaces only when a client generated from the
+// schema types the parameter wrong.
 const (
-	semaTip        = "type"
-	semaBicim      = "format"
-	tipDize        = "string"
-	tipTamSayi     = "integer"
-	bicimTarihSaat = "date-time"
+	schemaType         = "type"
+	schemaFormat       = "format"
+	typeString         = "string"
+	typeInteger        = "integer"
+	formatDateTimeName = "date-time"
 )
 
-// Describe pricing'in TÜM uçlarını OpenAPI belgesine işler.
+// Describe writes EVERY endpoint of pricing into the OpenAPI document.
 //
-// # Neden bu pakette
+// # Why in this package
 //
-// Anlatılan gövdeler bu paketin DIŞA KAPALI DTO'larıdır (priceSetDTO,
-// priceListRequest …) ve şema onlardan yansımayla türetilir. Tipleri
-// anlatabilmek için dışa açmak, yalnızca belge üretmek uğruna modülün
-// yüzeyini genişletmek olurdu: dışa açık bir tip sözleşmedir ve dışarıdan
-// kurulabilir hâle gelirdi. Sorgu parametreleri de handler'ın GERÇEKTEN
-// okuduklarıdır ve o okuma bu paketin api.go dosyasındadır ([pageParams],
-// [calculateQuery]); anlatım başka bir pakette dursaydı ikisi sessizce
-// ayrışırdı. Modülün [openapi.Describer] uygulaması bu yüzden buraya delege
-// eder.
+// The bodies described are this package's UNEXPORTED DTOs (priceSetDTO,
+// priceListRequest …) and the schema is derived from them by reflection.
+// Exporting the types just to describe them would widen the module's surface
+// for the sake of a document: an exported type is a contract, and it could be
+// built from outside. The query parameters are what the handlers REALLY read,
+// and that reading lives in this package's api.go ([pageParams],
+// [calculateQuery], [timelineQuery]); a description kept in another package
+// would drift from it in silence. The module's [openapi.Describer] therefore
+// delegates here.
 //
-// # Neden paket düzeyinde bir fonksiyon
+// # Why a package-level function
 //
-// Anlatım hiçbir çalışma zamanı durumuna bakmaz — şema TİPLERDEN gelir.
-// Metodu [API]'ye bağlamak, belgenin servis kurulmuş olmasına bağlı OLDUĞUNU
-// söylerdi; oysa Routes hiç çalışmamışken de belge üretilebilir ve
-// üretilmelidir.
+// The description looks at no runtime state — the schema comes from TYPES.
+// Binding it to [API] would say the document depends on a built service, while
+// the document can and must be built before Routes has ever run.
 //
-// # Neden yönetim yüzeyi de anlatılıyor
+// # Why the admin surface is described too
 //
-// pricing'in on altı ucundan on beşi /admin/v1'dedir ve fiyat YAZMANIN tek
-// yolu orasıdır. Yalnızca vitrini anlatmak, üretilen istemcide fiyat yazma
-// metotlarını gövdesiz ve dönüşsüz bırakırdı: o istemciyle fiyat
-// KURULAMAZDI. Anlatılmamış bir uç geçerli bir modeldir ama işe yaramaz bir
-// kütüktür de; burada bırakılmıyor.
+// All of pricing's endpoints but one live under /admin/v1, and it is the only
+// way to WRITE a price. Describing only the storefront would leave the write
+// methods of a generated client without bodies or returns: a client that
+// cannot SET a price. An undescribed endpoint is a valid model and a useless
+// stub; none is left here.
 //
-// # Bilinen sınır: istek gövdelerinin "required" kümesi GENİŞTİR
+// # Known limit: the "required" set of request bodies is WIDE
 //
-// Çekirdek "required"ı encoding/json'un HER ZAMAN yazdığı alanlardan türetir
-// ([openapi.Doc.SchemaOf]) ve bu, YANIT gövdeleri için doğru cevaptır. İstek
-// gövdesinde ise "required" istemcinin GÖNDERMEK ZORUNDA olduğu alan demektir
-// ve bunu tip bilemez: bu paketin istek DTO'ları omitempty taşımadığı için
-// hepsi zorunlu görünür — örneğin PUT /admin/v1/price-lists/{id} boş
-// bırakılabilen description ve status alanlarını da ister. Alan ADLARI ve
-// TİPLERİ doğrudur, yani şema yanlış bir alan uydurmaz; yalnızca fazla şey
-// ister. Doğru çözüm ÇEKİRDEKTEDİR (istek gövdeleri için ayrı bir "required"
-// politikası); tag'lere omitempty serpiştirmek zorunluluğu servisin
-// doğrulamasından json etiketine taşır ve ikisi sessizce ayrışırdı.
+// The core derives "required" from the fields encoding/json ALWAYS writes
+// ([openapi.Doc.SchemaOf]), which is the right answer for RESPONSE bodies. In a
+// request body "required" means a field the client MUST SEND, which a type
+// cannot know: this package's request DTOs carry no omitempty, so every field
+// looks required — PUT /admin/v1/price-lists/{id}, for instance, asks for the
+// description and status that may be left empty. Field NAMES and TYPES are
+// right, so the schema invents no field; it only asks for too much. The right
+// fix is in the CORE (a separate "required" policy for request bodies);
+// sprinkling omitempty on tags would move the obligation from the service's
+// validation to a json tag, and the two would drift in silence.
 func Describe(d *openapi.Doc) {
 	describePriceSets(d)
 	describePrices(d)
 	describePriceLists(d)
 	describePriceRules(d)
 	describeStore(d)
+	describePriceHistory(d)
 }
 
-// describePriceSets fiyat kabı uçlarını anlatır.
+// describePriceSets describes the price set endpoints.
 func describePriceSets(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/price-sets", openapi.Operation{
-		Summary:     "Yeni bir fiyat kabı oluşturur ve gövdedeki fiyatları yazar.",
+		Summary:     "Creates a price set and writes the prices in the body.",
 		RequestBody: d.RequestBody(createPriceSetRequest{}),
 		Responses: map[string]any{
-			// 201, handler'ın GERÇEKTEN yazdığı koddur (bkz.
-			// [API.createPriceSet]); yanıt kap ile birlikte az önce yazılmış
-			// fiyatları da taşır.
-			"201": openapi.Response("Oluşturulan fiyat kabı", d.Item(priceSetDTO{})),
+			// 201 is the code the handler REALLY writes (see
+			// [API.createPriceSet]); the response carries the set together with
+			// the prices just written.
+			"201": openapi.Response("The price set created", d.Item(priceSetDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/price-sets", openapi.Operation{
-		Summary: "Fiyat kaplarını sayfalayarak listeler.",
-		// [API.listPriceSets] sorgu dizesinden YALNIZCA bu ikisini okur
-		// ([pageParams]); başka bir parametre yazmak istemciye çalışmayan bir
-		// süzgeç vaat etmek olurdu.
-		Parameters: sayfalamaParametreleri(),
+		Summary: "Lists price sets a page at a time.",
+		// [API.listPriceSets] reads ONLY these two from the query string
+		// ([pageParams]); writing another would promise the client a filter that
+		// does not work.
+		Parameters: pageParameters(),
 		Responses: map[string]any{
-			// Liste yanıtında fiyat YOKTUR (bkz. [toPriceSetSummaryDTO]) ama
-			// şema aynı tipten türer: "prices" omitempty taşır, dolayısıyla
-			// zorunlu değildir ve istemci onu isteğe bağlı görür.
-			"200": openapi.Response("Fiyat kabı sayfası", d.List(priceSetDTO{})),
+			// The list response carries NO prices (see [toPriceSetSummaryDTO])
+			// but the schema comes from the same type: "prices" is omitempty, so
+			// it is not required and a client sees it as optional.
+			"200": openapi.Response("A page of price sets", d.List(priceSetDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/price-sets/{id}", openapi.Operation{
-		Summary: "Tek bir fiyat kabını fiyatlarıyla döner.",
+		Summary: "Returns one price set with its prices.",
 		Responses: map[string]any{
-			"200": openapi.Response("Fiyat kabı ve fiyatları", d.Item(priceSetDTO{})),
+			"200": openapi.Response("The price set and its prices", d.Item(priceSetDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/price-sets/{id}", openapi.Operation{
-		Summary: "Fiyat kabını ve fiyatlarını siler.",
+		Summary: "Deletes a price set and its prices.",
 		Responses: map[string]any{
-			"204": bosYanit("Fiyat kabı silindi"),
+			"204": emptyResponse("The price set was deleted"),
 		},
 	})
 }
 
-// describePrices bir kabın fiyatlarını okuyan ve yazan uçları anlatır.
+// describePrices describes the endpoints that read and write a set's prices.
 func describePrices(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/admin/v1/price-sets/{id}/prices", openapi.Operation{
-		Summary: "Bir kabın bütün fiyatlarını kurallarıyla döner.",
-		// Uç SAYFALANMAZ ([API.listPrices] sorgu dizesini hiç okumaz) ama
-		// zarfı yine liste zarfıdır: istemcinin gördüğü şekil uç noktaya göre
-		// değişmez (bkz. [writeItems]).
+		Summary: "Returns every price of a set with its rules.",
+		// The endpoint is NOT paged ([API.listPrices] reads no query string) but
+		// its envelope is still the list envelope: the shape a client sees does
+		// not change from endpoint to endpoint (see [writeItems]).
 		Responses: map[string]any{
-			"200": openapi.Response("Kabın fiyatları", d.List(priceDTO{})),
+			"200": openapi.Response("The set's prices", d.List(priceDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPost, "/admin/v1/price-sets/{id}/prices", openapi.Operation{
-		Summary:     "Bir kabın fiyat kümesini topluca değiştirir.",
+		Summary:     "Replaces a set's prices as a whole.",
 		RequestBody: d.RequestBody(setPricesRequest{}),
 		Responses: map[string]any{
-			// 200'dür, 201 DEĞİL: uç yeni bir kaynak yaratmaz, var olan kabın
-			// fiyat kümesini yerine koyar ve yazdığı kümeyi LİSTE zarfıyla
-			// döner ([API.setPrices] → [writeItems]). 201 yazmak, istemci
-			// üretecinde "oluşturuldu" dalına düşen bir metot üretirdi.
-			"200": openapi.Response("Kabın yeni fiyat kümesi", d.List(priceDTO{})),
+			// 200, NOT 201: the endpoint creates no resource, it replaces the
+			// existing set's prices and returns what it wrote in the LIST
+			// envelope ([API.setPrices] → [writeItems]). Writing 201 would
+			// generate a client method that falls into a "created" branch.
+			"200": openapi.Response("The set's new prices", d.List(priceDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/price-sets/{id}/calculate", openapi.Operation{
-		Summary: "Verilen bağlamda kabın geçerli fiyatını seçer ve tutarı hesaplar.",
-		// Kural bağlamı "attr_" ÖNEKLİ parametrelerle taşınır ve bu, şemada
-		// bir parametre olarak YAZILAMAZ: OpenAPI parametreyi ADIYLA tanımlar,
-		// önekle değil. Uydurma bir "attr_*" girdisi yazmak, istemci
-		// üretecinde tam olarak o adı taşıyan çalışmayan bir argüman üretirdi.
-		// Doğrusu, adı olan üç parametreyi anlatmak ve öneki açıklamada
-		// söylemektir: istemci geliştiricisi okur, üreteç yalan üretmez.
-		Description: "Kural bağlamı `" + paramAttrPrefix + "` önekli sorgu " +
-			"parametreleriyle verilir (örn. `" + paramAttrPrefix + "region_id=reg_1`); " +
-			"önek soyulur ve kalan ad kuralın baktığı alan adı olur. " +
-			"Tanınmayan (öneksiz ve ayrılmış olmayan) bir parametre hatadır.",
+		Summary: "Picks the set's valid price in the given context and computes the amount.",
+		// The rule context travels in PREFIXED parameters, and that cannot be
+		// WRITTEN as a parameter in the schema: OpenAPI names a parameter, not
+		// a prefix. An invented "attr_*" entry would generate a client argument
+		// carrying exactly that name, which does not work. The honest answer is
+		// to describe the three named parameters and say the prefix in the
+		// description: a client developer reads it, and the generator produces
+		// no lie.
+		Description: "The rule context is given in query parameters prefixed `" + paramAttrPrefix +
+			"` (for example `" + paramAttrPrefix + "region_id=reg_1`); the prefix is stripped and " +
+			"the rest is the field name the rule looks at. An unknown parameter (unprefixed " +
+			"and not reserved) is an error.",
 		Parameters: []openapi.Parameter{
-			sorguParametresi(paramCurrencyCode, tipDize,
-				"İstenen para birimi (ISO 4217); verilmezse servisin varsayılanı uygulanır."),
-			sorguParametresi(paramQuantity, tipTamSayi,
-				"Hesaplamanın yapılacağı adet; verilmezse servisin varsayılanı uygulanır."),
-			zamanParametresi(paramAt,
-				"Hesaplama anı (RFC 3339); verilmezse şimdi. Saat dilimi "+
-					"ofsetindeki \"+\" karakteri yüzde kodlanmalıdır."),
+			queryParameter(paramCurrencyCode, typeString,
+				"The currency asked for (ISO 4217); the service's default when absent."),
+			queryParameter(paramQuantity, typeInteger,
+				"The quantity to price; the service's default when absent."),
+			timeParameter(paramAt,
+				"The moment to price at (RFC 3339); now when absent. A \"+\" in the "+
+					"time zone offset has to be percent-encoded."),
 		},
 		Responses: map[string]any{
-			"200": openapi.Response("Seçilen fiyat ve hesaplanan tutar",
+			"200": openapi.Response("The price picked and the amount computed",
 				d.Item(calculatedPriceDTO{})),
 		},
 	})
 }
 
-// describePriceLists fiyat listesi uçlarını anlatır.
+// describePriceLists describes the price list endpoints.
 //
-// Oluşturma ve güncelleme AYNI gövdeyi ([priceListRequest]) taşır; ayıran tek
-// şey metottur. PUT kısmi güncelleme DEĞİLDİR: gövdede olmayan alanlar
-// sıfırlanır (bkz. [API.updatePriceList]).
+// Create and update carry the SAME body ([priceListRequest]); only the method
+// tells them apart. PUT is NOT a partial update: a field missing from the body
+// is reset (see [API.updatePriceList]).
 func describePriceLists(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/price-lists", openapi.Operation{
-		Summary:     "Yeni bir fiyat listesi oluşturur.",
+		Summary:     "Creates a price list.",
 		RequestBody: d.RequestBody(priceListRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan fiyat listesi", d.Item(priceListDTO{})),
+			"201": openapi.Response("The price list created", d.Item(priceListDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/price-lists", openapi.Operation{
-		Summary:    "Fiyat listelerini sayfalayarak listeler.",
-		Parameters: sayfalamaParametreleri(),
+		Summary:    "Lists price lists a page at a time.",
+		Parameters: pageParameters(),
 		Responses: map[string]any{
-			"200": openapi.Response("Fiyat listesi sayfası", d.List(priceListDTO{})),
+			"200": openapi.Response("A page of price lists", d.List(priceListDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/price-lists/{id}", openapi.Operation{
-		Summary: "Tek bir fiyat listesini döner.",
+		Summary: "Returns one price list.",
 		Responses: map[string]any{
-			"200": openapi.Response("Fiyat listesi", d.Item(priceListDTO{})),
+			"200": openapi.Response("The price list", d.Item(priceListDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPut, "/admin/v1/price-lists/{id}", openapi.Operation{
-		Summary:     "Fiyat listesinin TÜM alanlarını yazar; gövdede olmayanlar sıfırlanır.",
+		Summary:     "Writes EVERY field of a price list; a field missing from the body is reset.",
 		RequestBody: d.RequestBody(priceListRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Güncellenen fiyat listesi", d.Item(priceListDTO{})),
+			"200": openapi.Response("The price list updated", d.Item(priceListDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/price-lists/{id}", openapi.Operation{
-		Summary: "Fiyat listesini siler.",
+		Summary: "Deletes a price list.",
 		Responses: map[string]any{
-			"204": bosYanit("Fiyat listesi silindi"),
+			"204": emptyResponse("The price list was deleted"),
 		},
 	})
 }
 
-// describePriceRules fiyat kuralı uçlarını anlatır.
+// describePriceRules describes the price rule endpoints.
 func describePriceRules(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/admin/v1/prices/{price_id}/rules", openapi.Operation{
-		Summary: "Bir fiyatın geçerlilik kurallarını döner.",
+		Summary: "Returns a price's validity rules.",
 		Responses: map[string]any{
-			"200": openapi.Response("Fiyatın kuralları", d.List(priceRuleDTO{})),
+			"200": openapi.Response("The price's rules", d.List(priceRuleDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPost, "/admin/v1/prices/{price_id}/rules", openapi.Operation{
-		Summary: "Bir fiyata geçerlilik kuralı ekler.",
-		// Gövde TEK bir kuraldır, kural listesi değil: handler gelen gövdeyi
-		// tek elemanlı bir dilime sarar (bkz. [API.createPriceRule]). Liste
-		// anlatmak, istemcinin gönderdiği ikinci kuralın sessizce
-		// kaybolmasına yol açardı.
+		Summary: "Adds a validity rule to a price.",
+		// The body is ONE rule, not a list: the handler wraps it in a
+		// one-element slice (see [API.createPriceRule]). Describing a list would
+		// let a client's second rule disappear in silence.
 		RequestBody: d.RequestBody(ruleRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Eklenen kural", d.Item(priceRuleDTO{})),
+			"201": openapi.Response("The rule added", d.Item(priceRuleDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/price-rules/{id}", openapi.Operation{
-		Summary: "Fiyat kuralını siler.",
+		Summary: "Deletes a price rule.",
 		Responses: map[string]any{
-			"204": bosYanit("Kural silindi"),
+			"204": emptyResponse("The rule was deleted"),
 		},
 	})
 }
 
-// describeStore modülün TEK vitrin ucunu anlatır.
+// describeStore describes the module's ONE storefront endpoint.
 //
-// Yanıt tipi yönetim ucuyla aynıdır ([priceSetDTO]) ama İÇERİĞİ dardır:
-// vitrin yalnızca gösterilebilir fiyatları görür (bkz. [API.storeGetPriceSet]).
-// Ayrı bir DTO açmak şemaya yeni bir bileşen eklerdi ve alan kümesi
-// birebir aynı olurdu; fark verinin kendisindedir, şeklinde değil.
+// Its body shared the admin one until ADR 0167, because the fields were the same
+// and only the prices differed. They are no longer the same: see
+// [storePriceSetDTO].
 func describeStore(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/store/v1/price-sets/{id}", openapi.Operation{
-		Summary: "Bir fiyat kabını mağazada gösterilebilir fiyatlarıyla döner.",
+		Summary: "Returns a price set with the prices a storefront may show.",
+		Description: "Only the prices a storefront may show: no draft or ended list, no price " +
+			"that carries a rule. A price from a list names the list's type. The sale price a " +
+			"shopper is charged now carries `reduced_since` — when the reduction began — and " +
+			"`lowest_prior_amount`, the lowest price that applied in the thirty days before " +
+			"it, which is the price a shop announcing a reduction shows. Each is ABSENT when " +
+			"the price history cannot state it: a reduction that began before the history " +
+			"did, or thirty days the history does not reach. Amounts are in minor units.",
 		Responses: map[string]any{
-			"200": openapi.Response("Fiyat kabı ve vitrin fiyatları", d.Item(priceSetDTO{})),
+			"200": openapi.Response("The price set and its storefront prices",
+				d.Item(storePriceSetDTO{})),
 		},
 	})
 }
 
-// sayfalamaParametreleri [pageParams]'ın okuduğu sorgu parametrelerini döner.
+// pageParameters are the query parameters [pageParams] reads.
 //
-// İkisi de zorunlu DEĞİLDİR: verilmediklerinde servis kendi varsayılanını
-// uygular.
-func sayfalamaParametreleri() []openapi.Parameter {
+// Neither is REQUIRED: when absent the service applies its own default.
+func pageParameters() []openapi.Parameter {
 	return []openapi.Parameter{
-		sorguParametresi("limit", tipTamSayi,
-			"Sayfa boyutu; verilmezse servisin varsayılanı uygulanır."),
-		sorguParametresi("offset", tipTamSayi, "Atlanacak kayıt sayısı."),
+		queryParameter("limit", typeInteger, "The page size; the service's default when absent."),
+		queryParameter("offset", typeInteger, "How many records to skip."),
 	}
 }
 
-// sorguParametresi sorgu dizesinden okunan bir parametreyi tanımlar.
-func sorguParametresi(ad, tip, aciklama string) openapi.Parameter {
+// queryParameter describes a parameter read from the query string.
+func queryParameter(name, kind, description string) openapi.Parameter {
 	return openapi.Parameter{
-		Name:        ad,
+		Name:        name,
 		In:          "query",
-		Schema:      map[string]any{semaTip: tip},
-		Description: aciklama,
+		Schema:      map[string]any{schemaType: kind},
+		Description: description,
 	}
 }
 
-// zamanParametresi RFC 3339 damgası taşıyan bir sorgu parametresi tanımlar.
+// timeParameter describes a query parameter that carries an RFC 3339 stamp.
 //
-// Biçim şemada AÇIKÇA yazılır: düz "string" demek, istemci üretecinin alanı
-// serbest metin yapması ve çağıranın kendi biçimini uydurması demekti — oysa
-// [timeParam] RFC 3339 dışındaki her değeri reddeder.
-func zamanParametresi(ad, aciklama string) openapi.Parameter {
+// The format is written OUT in the schema: a plain "string" would let a client
+// generator make the field free text and the caller invent its own format,
+// while [timeParam] refuses anything that is not RFC 3339.
+func timeParameter(name, description string) openapi.Parameter {
 	return openapi.Parameter{
-		Name:        ad,
+		Name:        name,
 		In:          "query",
-		Schema:      map[string]any{semaTip: tipDize, semaBicim: bicimTarihSaat},
-		Description: aciklama,
+		Schema:      map[string]any{schemaType: typeString, schemaFormat: formatDateTimeName},
+		Description: description,
 	}
 }
 
-// bosYanit GÖVDESİZ bir yanıt tanımı üretir.
+// emptyResponse builds a response definition with NO body.
 //
-// [openapi.Response] her zaman bir gövde şeması yazar; 204'ün gövdesi ise
-// YOKTUR (bkz. admin.go, corehttp.WriteJSON'a nil verilen çağrılar). Boş bir
-// şema yazmak "bir şey dönüyor ama şekli bilinmiyor" demek olurdu ve istemci
-// üreteci okunacak bir gövde bekleyen bir metot üretirdi.
-func bosYanit(aciklama string) map[string]any {
-	return map[string]any{"description": aciklama}
+// [openapi.Response] always writes a body schema, and a 204 has NO body (see
+// admin.go, the calls that hand corehttp.WriteJSON nil). An empty schema would
+// say "something comes back and its shape is unknown", and a client generator
+// would produce a method waiting for a body to read.
+func emptyResponse(description string) map[string]any {
+	return map[string]any{"description": description}
 }

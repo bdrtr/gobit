@@ -29,18 +29,30 @@ func (r *Repo) CreatePriceRule(ctx context.Context, rule models.PriceRule, now t
 		return models.PriceRule{}, err
 	}
 
-	row, err := r.q.InsertPriceRule(ctx, pricingdb.InsertPriceRuleParams{
-		ID:         rule.ID,
-		PriceID:    rule.PriceID,
-		Attribute:  rule.Attribute,
-		Operator:   string(rule.Operator),
-		RuleValues: rule.Values,
-		CreatedAt:  fromTime(now),
+	var created models.PriceRule
+	err := r.inTx(ctx, func(q *pricingdb.Queries) error {
+		row, err := q.InsertPriceRule(ctx, pricingdb.InsertPriceRuleParams{
+			ID:         rule.ID,
+			PriceID:    rule.PriceID,
+			Attribute:  rule.Attribute,
+			Operator:   string(rule.Operator),
+			RuleValues: rule.Values,
+			CreatedAt:  fromTime(now),
+		})
+		if err != nil {
+			return wrapDB(err, "fiyat kuralı eklenemedi: %s", rule.PriceID)
+		}
+		created = toPriceRule(row)
+
+		// A rule takes its price out of every context that does not satisfy it,
+		// the storefront's among them, so the set's history records the change
+		// (ADR 0167).
+		return recordSetOfPrice(ctx, q, rule.PriceID, now)
 	})
 	if err != nil {
-		return models.PriceRule{}, wrapDB(err, "fiyat kuralı eklenemedi: %s", rule.PriceID)
+		return models.PriceRule{}, err
 	}
-	return toPriceRule(row), nil
+	return created, nil
 }
 
 // GetPriceRule kimliğe göre kuralı döner; yoksa errors.NotFound.
@@ -80,13 +92,22 @@ func (r *Repo) DeletePriceRule(ctx context.Context, id string, now time.Time) er
 		return err
 	}
 
-	if _, err := r.q.SoftDeletePriceRule(ctx, pricingdb.SoftDeletePriceRuleParams{
-		ID:        id,
-		DeletedAt: fromTime(now),
-	}); err != nil {
-		return notFoundOr(err, CodePriceRuleNotFound, "fiyat kuralı bulunamadı: %s", id)
-	}
-	return nil
+	return r.inTx(ctx, func(q *pricingdb.Queries) error {
+		rule, err := q.GetPriceRule(ctx, id)
+		if err != nil {
+			return notFoundOr(err, CodePriceRuleNotFound, "fiyat kuralı bulunamadı: %s", id)
+		}
+
+		if _, err := q.SoftDeletePriceRule(ctx, pricingdb.SoftDeletePriceRuleParams{
+			ID:        id,
+			DeletedAt: fromTime(now),
+		}); err != nil {
+			return notFoundOr(err, CodePriceRuleNotFound, "fiyat kuralı bulunamadı: %s", id)
+		}
+
+		// The price the rule held back competes again (ADR 0167).
+		return recordSetOfPrice(ctx, q, rule.PriceID, now)
+	})
 }
 
 // toPriceRule üretilen satırı domain modeline çevirir.

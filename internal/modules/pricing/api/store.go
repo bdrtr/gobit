@@ -35,5 +35,5 @@ func (a *API) storeGetPriceSet(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
-	writeItem(w, r, http.StatusOK, toPriceSetDTO(set, prices))
+	writeItem(w, r, http.StatusOK, toStorePriceSetDTO(set, prices))
 }

@@ -30,6 +30,12 @@ const (
 	fieldMinQuantity  = "min_quantity"
 	fieldMaxQuantity  = "max_quantity"
 	fieldPriceListID  = "price_list_id"
+	// The three fields ADR 0167 added. A list price says what kind of list it
+	// comes from, and the sale price a shopper is charged now says since when
+	// and what the lowest price was in the reference days before.
+	fieldPriceListType     = "price_list_type"
+	fieldReducedSince      = "reduced_since"
+	fieldLowestPriorAmount = "lowest_prior_amount"
 )
 
 // supportedFields are the fields the provider recognizes; if another field is
@@ -153,7 +159,7 @@ func (p *QueryProvider) records(
 		return records, nil
 	}
 
-	pricesBySet := map[string][]models.Price{}
+	pricesBySet := map[string][]models.StorePrice{}
 	if slices.Contains(fields, fieldPrices) {
 		setIDs := make([]string, 0, len(sets))
 		for _, set := range sets {
@@ -165,9 +171,9 @@ func (p *QueryProvider) records(
 			return nil, err
 		}
 
-		at := p.svc.clock()
-		for setID, candidates := range candidatesBySet {
-			pricesBySet[setID] = listablePrices(candidates, at)
+		pricesBySet, err = p.svc.storePrices(ctx, candidatesBySet, p.svc.clock())
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -204,26 +210,45 @@ func (p *QueryProvider) records(
 //     group …); the provider does not carry that context and cannot evaluate the
 //     rule here. Ignoring a condition that cannot be evaluated would open the
 //     segment price to everyone — the very same rationale as in matchRule.
-func listablePrices(candidates []models.PriceCandidate, at time.Time) []models.Price {
-	prices := make([]models.Price, 0, len(candidates))
+func listablePrices(candidates []models.PriceCandidate, at time.Time) []models.PriceCandidate {
+	prices := make([]models.PriceCandidate, 0, len(candidates))
 	for i := range candidates {
 		candidate := candidates[i]
 		if len(candidate.Price.Rules) > 0 || !listAvailable(candidate, at) {
 			continue
 		}
-		prices = append(prices, candidate.Price)
+		prices = append(prices, candidate)
 	}
 	return prices
+}
+
+// currenciesOf returns the currencies the candidates are priced in, sorted.
+func currenciesOf(candidates []models.PriceCandidate) []string {
+	var currencies []string
+	for i := range candidates {
+		if code := candidates[i].Price.CurrencyCode; !slices.Contains(currencies, code) {
+			currencies = append(currencies, code)
+		}
+	}
+	slices.Sort(currencies)
+
+	return currencies
 }
 
 // priceRecords converts prices into sub-records.
 //
 // For a container with no id an empty (non-nil) slice is returned; seeing []
 // instead of null in JSON is a uniform surface for the consumer.
-func priceRecords(prices []models.Price) []map[string]any {
+//
+// A price from a list says which kind of list: without it a sale price and the
+// base price it reduces were two unlabeled amounts, and a client had to guess
+// which one to strike through. The sale price a shopper is charged now carries
+// its reduction — since when, and the lowest price in the reference days before
+// — each field present only when the history can state it (ADR 0167).
+func priceRecords(prices []models.StorePrice) []map[string]any {
 	out := make([]map[string]any, 0, len(prices))
 	for i := range prices {
-		price := &prices[i]
+		price := &prices[i].Price
 		record := map[string]any{
 			fieldID:           price.ID,
 			fieldCurrencyCode: price.CurrencyCode,
@@ -231,6 +256,17 @@ func priceRecords(prices []models.Price) []map[string]any {
 			fieldMinQuantity:  price.MinQuantity,
 			fieldMaxQuantity:  price.MaxQuantity,
 			fieldPriceListID:  price.PriceListID,
+		}
+		if prices[i].ListType != "" {
+			record[fieldPriceListType] = string(prices[i].ListType)
+		}
+		if reduction := prices[i].Reduction; reduction != nil {
+			if reduction.ReducedSince != nil {
+				record[fieldReducedSince] = *reduction.ReducedSince
+			}
+			if reduction.LowestPrior != nil {
+				record[fieldLowestPriorAmount] = *reduction.LowestPrior
+			}
 		}
 		out = append(out, record)
 	}

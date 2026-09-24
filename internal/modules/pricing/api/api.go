@@ -130,6 +130,8 @@ func (a *API) Routes(r chi.Router) {
 	// açıldığında bir ucun neyi açtığını anlamak için handler'ı okumak
 	// gerekirdi. Uç metoduyla niyetini söyleyecek biçimde taşındı.
 	okuma.Get("/admin/v1/price-sets/{id}/calculate", a.calculatePrice)
+	// What the set charged over a window, from the price history (ADR 0167).
+	okuma.Get(pathAdminPriceHistory, a.priceHistory)
 
 	yazma.Post("/admin/v1/price-lists", a.createPriceList)
 	okuma.Get("/admin/v1/price-lists", a.listPriceLists)

@@ -33,6 +33,8 @@ type stubRepo struct {
 	listPriceListsFn       func(ctx context.Context, limit, offset int32) ([]models.PriceList, int64, error)
 	updatePriceListFn      func(ctx context.Context, list models.PriceList, now time.Time) (models.PriceList, error)
 	deletePriceListFn      func(ctx context.Context, id string, now time.Time) error
+	priceSetHistoryFn      func(ctx context.Context, ids []string) ([]models.PriceSetSnapshot, error)
+	priceListHistoryFn     func(ctx context.Context, ids []string) (map[string][]models.PriceListSnapshot, error)
 
 	// calls metot adı -> çağrı sayısıdır; toplu (batch) davranışın kanıtı budur.
 	calls map[string]int
@@ -221,6 +223,24 @@ func (s *stubRepo) DeletePriceList(ctx context.Context, id string, now time.Time
 		return unset("DeletePriceList")
 	}
 	return s.deletePriceListFn(ctx, id, now)
+}
+
+func (s *stubRepo) PriceSetHistory(ctx context.Context, ids []string) ([]models.PriceSetSnapshot, error) {
+	s.record("PriceSetHistory")
+	if s.priceSetHistoryFn == nil {
+		return nil, unset("PriceSetHistory")
+	}
+	return s.priceSetHistoryFn(ctx, ids)
+}
+
+func (s *stubRepo) PriceListHistory(
+	ctx context.Context, ids []string,
+) (map[string][]models.PriceListSnapshot, error) {
+	s.record("PriceListHistory")
+	if s.priceListHistoryFn == nil {
+		return nil, unset("PriceListHistory")
+	}
+	return s.priceListHistoryFn(ctx, ids)
 }
 
 // --- test yardımcıları ------------------------------------------------------

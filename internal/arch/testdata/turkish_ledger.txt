@@ -93,8 +93,6 @@ internal/modules/payment/service/validate.go
 internal/modules/pricing/api/admin.go
 internal/modules/pricing/api/api.go
 internal/modules/pricing/api/api_test.go
-internal/modules/pricing/api/describe.go
-internal/modules/pricing/api/describe_internal_test.go
 internal/modules/pricing/api/fakes_test.go
 internal/modules/pricing/api/store.go
 internal/modules/pricing/api/yetki_test.go

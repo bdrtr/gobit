@@ -284,6 +284,16 @@ func TestProviderExcludesConditionalPrices(t *testing.T) {
 		return out, nil
 	}
 
+	// The active sale makes the provider ask for the set's history (ADR 0167);
+	// this test is about which prices are LISTED, and an empty history
+	// announces no reduction.
+	repo.priceSetHistoryFn = func(context.Context, []string) ([]models.PriceSetSnapshot, error) {
+		return nil, nil
+	}
+	repo.priceListHistoryFn = func(context.Context, []string) (map[string][]models.PriceListSnapshot, error) {
+		return nil, nil
+	}
+
 	provider := NewQueryProvider(newTestService(repo))
 	records, err := provider.FetchByIDs(context.Background(), []string{"pset_1"}, nil)
 

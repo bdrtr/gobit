@@ -21,6 +21,12 @@ type memRepo struct {
 	prices map[string][]models.Price
 	lists  map[string]models.PriceList
 	rules  map[string][]models.PriceRule
+
+	// setHistory and listHistory are the snapshots a test plants; this fake
+	// records none on its own, because what the repository records is proven
+	// against the real one (ADR 0167).
+	setHistory  []models.PriceSetSnapshot
+	listHistory map[string][]models.PriceListSnapshot
 }
 
 var _ service.Repository = (*memRepo)(nil)
@@ -266,4 +272,26 @@ func (m *memRepo) DeletePriceList(_ context.Context, id string, _ time.Time) err
 	}
 	delete(m.lists, id)
 	return nil
+}
+
+func (m *memRepo) PriceSetHistory(_ context.Context, ids []string) ([]models.PriceSetSnapshot, error) {
+	out := []models.PriceSetSnapshot{}
+	for _, snapshot := range m.setHistory {
+		if slices.Contains(ids, snapshot.PriceSetID) {
+			out = append(out, snapshot)
+		}
+	}
+	return out, nil
+}
+
+func (m *memRepo) PriceListHistory(
+	_ context.Context, ids []string,
+) (map[string][]models.PriceListSnapshot, error) {
+	out := map[string][]models.PriceListSnapshot{}
+	for _, id := range ids {
+		if snapshots, ok := m.listHistory[id]; ok {
+			out[id] = snapshots
+		}
+	}
+	return out, nil
 }
