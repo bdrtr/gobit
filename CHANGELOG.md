@@ -20,6 +20,14 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Düzeltmeler
 
+- **Kilitlerin dayandığı yalıtım düzeyine veritabanını hiçbir şey bağlamıyordu**
+  (D123). Bir toplamı koruyan her kilit ancak READ COMMITTED'da doğru; sunucu,
+  veritabanı ya da rol REPEATABLE READ'e ayarlıyken entegrasyon şeridi on beş
+  pakette kırk test düşürdü, beşi sessizce: bir siparişi karşılayan harcama
+  sınırından sekiz sipariş, üç birimlik satırda on altı iptal, 6.100'lük
+  siparişe 10.000 kredi, bir kategori halkası, kapanan konuma stok yazımı.
+  Kapatan ADR 0166.
+
 - **S3 testleri yine yalnız CI'da kırmızıydı, D80'in sebebiyle** (D121). D80'in
   taşındığı kayıt defteri (`quay.io/minio/minio`) sabitlenmiş etiketi de
   `latest`'i de artık sunmuyor ve bu makine bir yıllık kopyayı tutuyordu. MinIO
@@ -322,6 +330,14 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
   "sagalar/çekirdek için" olduğu (oysa modüller birbirininkini çözüyor).
 
 ### Kararlar
+
+- **READ COMMITTED'da başlamayan bir bağlantı reddediliyor** (ADR 0166).
+  `core/db`'nin kurduğu havuz her yeni oturumun varsayılan yalıtım düzeyini
+  okuyor ve READ COMMITTED değilse bağlantıyı reddediyor — açılışta ve süreç
+  çalışırken açtığı her bağlantıda. **Operatör için kırıcı:** ADR 0015'in küme
+  sözleşmesine bir satır ekleniyor; varsayılanı REPEATABLE READ ya da
+  SERIALIZABLE olan bir kurulum artık açılmıyor ve hata bulduğu düzeyi ve onu
+  geri alan ifadeyi söylüyor.
 
 - **Bir müşteri artık PUANIYLA ödeyebiliyor** (ADR 0165). Puan, mağaza
   kredisinin geçtiği yuvadan — bu modülde bir sağlayıcı, `loyalty_points` —

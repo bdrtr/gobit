@@ -296,6 +296,19 @@ past and is not corrected retroactively.
   `--locale=C` takes a dump/restore. If you bring your own Postgres, the
   cluster's CTYPE has to be a UTF-8 aware locale; an ICU provider is NOT
   ENOUGH — it fixes `ILIKE` and leaves the search index broken.
+- **The database has to start transactions at READ COMMITTED, and the process
+  refuses one that does not.** Every lock in gobit that guards a total — a
+  balance, a spending limit, a stock level, a budget — is taken first and the
+  total read after, and that read is fresh only at READ COMMITTED. A database or
+  role whose `default_transaction_isolation` is REPEATABLE READ or SERIALIZABLE
+  therefore stops the process at startup, and a default changed while it runs
+  refuses the next connection the pool opens, with the level named and the
+  statement that sets it back
+  ([ADR 0166](adr/0166-a-connection-at-another-isolation-level-is-refused.md)).
+  A managed provider whose default you cannot change leaves only the role or the
+  connection's `options` to set it on. What it prevents was measured: at
+  REPEATABLE READ a spending limit that covers one order let eight through, and
+  every call answered with success.
 - **Search scores EVERY matching document; the cost grows linearly with the
   catalog.** A GIN index cannot satisfy the `ORDER BY`, so returning a single
   page reads and scores ALL of the matching rows. Measured (52,000-document

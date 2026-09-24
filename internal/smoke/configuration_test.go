@@ -3,10 +3,14 @@
 package smoke
 
 import (
+	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/plugins/paymentstripe"
 )
@@ -140,4 +144,36 @@ func TestBadConfigurationStopsAtStartup(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAProcessRefusesADatabaseThatStartsTransactionsAtAnotherLevel is ADR 0166
+// through the real binary: an operator whose database defaults to REPEATABLE
+// READ gets a process that does not come up, and a line saying why.
+//
+// The level is set on the DATABASE, the way an operator's configuration would
+// set it, rather than in the DSN this harness writes: what is under test is the
+// installation meeting a database it did not configure. The alternative — a
+// process that comes up and serves — was measured before the guard existed:
+// every lock that reads a total after waiting reads it from before the wait,
+// and a spending limit that covers one order let eight through.
+func TestAProcessRefusesADatabaseThatStartsTransactionsAtAnotherLevel(t *testing.T) {
+	dsn := scenarioDatabase(t)
+
+	addr, err := url.Parse(dsn)
+	require.NoError(t, err)
+	database := strings.TrimPrefix(addr.Path, "/")
+	_, err = maintenancePool.Pool().Exec(t.Context(),
+		"ALTER DATABASE "+pgx.Identifier{database}.Sanitize()+
+			" SET default_transaction_isolation = 'repeatable read'")
+	require.NoError(t, err)
+
+	code, stderr := mustStopAtStartup(t, baseSettings(dsn, freePort(t)), startupTimeout)
+
+	assert.NotZero(t, code, "the process must not start; stderr:\n%s", stderr)
+	assert.Contains(t, stderr, "db_isolation_unsupported",
+		"the refusal must carry its own code rather than read as an unreachable database; "+
+			"stderr:\n%s", stderr)
+	assert.Contains(t, stderr, "repeatable read",
+		"and name the level it found, which is the operator's pointer to where it was set; "+
+			"stderr:\n%s", stderr)
 }

@@ -98,3 +98,4 @@ truth: a report says what was true on the day it was taken.
 | [What the lanes were handing tests — measured 2026-09-12](0163-what-the-lanes-were-handing-tests.md) | 89 |
 | [A name that was already taken — measured 2026-09-13](0164-a-name-that-was-already-taken.md) | 246 |
 | [What a point buys — measured 2026-09-13](0165-what-a-point-buys.md) | 494 |
+| [What another isolation level breaks — measured 2026-09-24](0166-what-another-isolation-level-breaks.md) | 154 |

@@ -151,6 +151,9 @@ func New(ctx context.Context, cfg Config, log *slog.Logger) (*Pool, error) {
 	pgCfg.MaxConnLifetime = cfg.MaxConnLifetime
 	pgCfg.MaxConnIdleTime = cfg.MaxConnIdleTime
 	pgCfg.ConnConfig.ConnectTimeout = cfg.ConnectTimeout
+	// Every session the pool opens is checked for the isolation level the
+	// repository's locks are written for; see isolation.go (ADR 0166).
+	pgCfg.AfterConnect = requireReadCommitted
 
 	pool, err := pgxpool.NewWithConfig(ctx, pgCfg)
 	if err != nil {
@@ -164,6 +167,11 @@ func New(ctx context.Context, cfg Config, log *slog.Logger) (*Pool, error) {
 	defer cancel()
 	if err := pool.Ping(pingCtx); err != nil {
 		pool.Close()
+		if errors.CodeOf(err) == codeIsolationUnsupported {
+			// The database answered; it answered at the wrong level. Saying
+			// "unreachable" would send the operator to the network.
+			return nil, err
+		}
 		return nil, errors.Wrap(err, errors.KindUnavailable, "db_unreachable",
 			"the database is unreachable (target: %s)", target)
 	}

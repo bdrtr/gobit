@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -1260,23 +1261,28 @@ func singleConnectionRepository(
 // tenders and the manual provider registered, earning at the ceiling rate, on a
 // pool whose connections start with the given default isolation level — empty
 // being the server's own.
+//
+// A pool at another level is built with pgxpool directly, because core/db
+// refuses to build one (ADR 0166). That refusal is the installation's guard;
+// this case proves the payment repository's own, which names READ COMMITTED on
+// every transaction it begins and so holds on a pool nobody guarded (D119).
 func balanceTenderService(t *testing.T, defaultIsolation string) *service.Service {
 	t.Helper()
 
 	pool := testPool.Pool()
 	if defaultIsolation != "" {
 		dsn := testDSN + "&default_transaction_isolation=" + url.QueryEscape(defaultIsolation)
-		own, err := db.New(context.Background(), db.DefaultConfig(dsn), nil)
+		own, err := pgxpool.New(context.Background(), dsn)
 		require.NoError(t, err)
 		t.Cleanup(own.Close)
 
 		var level string
-		require.NoError(t, own.Pool().QueryRow(context.Background(),
+		require.NoError(t, own.QueryRow(context.Background(),
 			`SHOW default_transaction_isolation`).Scan(&level))
 		require.Equal(t, defaultIsolation, level,
 			"the pool's connections have to start at the level under test, or the case "+
 				"proves the server's default again")
-		pool = own.Pool()
+		pool = own
 	}
 
 	repo := repository.New(pool)
