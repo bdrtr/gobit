@@ -221,6 +221,9 @@ type Store interface {
 	// PaymentMomentsByCollectionIDs reads WHEN the money moved, separately
 	// from the amounts and only when the caller asks.
 	PaymentMomentsByCollectionIDs(ctx context.Context, ids []string) ([]models.PaymentMoments, error)
+	// PaymentMovementsByCollectionIDs reads every capture and refund, each
+	// with its own amount and moment (ADR 0170).
+	PaymentMovementsByCollectionIDs(ctx context.Context, ids []string) ([]models.PaymentMovement, error)
 	// UpdatePaymentCollectionTotals writes the amounts and the derived status
 	// with ABSOLUTE values.
 	UpdatePaymentCollectionTotals(

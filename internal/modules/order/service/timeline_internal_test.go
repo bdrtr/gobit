@@ -200,6 +200,8 @@ func TestTheCustomerSeesEverythingAboutTheGoods(t *testing.T) {
 		KindReturnOpened, KindReturnReceived, KindReturnCanceled,
 		KindClaimOpened, KindClaimCompleted, KindClaimCanceled,
 		KindExchangeOpened, KindExchangeCompleted, KindExchangeCanceled,
+		KindOrderLineCanceled,
+		KindReplacementOpened, KindReplacementDispatched, KindReplacementCanceled,
 	}
 
 	entries := make([]TimelineEntry, 0, len(goods))

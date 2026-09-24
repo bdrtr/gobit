@@ -249,6 +249,9 @@ type Store interface {
 	CancelReplacement(ctx context.Context, id string) (models.Replacement, error)
 	// ListReplacementsByExchange returns an exchange's replacements, newest first.
 	ListReplacementsByExchange(ctx context.Context, exchangeID string) ([]models.Replacement, error)
+	// ListReplacementsByOrder returns every replacement the order's claims and
+	// exchanges promised, oldest first, at most limit of them (ADR 0170).
+	ListReplacementsByOrder(ctx context.Context, orderID string, limit int64) ([]models.Replacement, error)
 	// ListReplacementsByClaim returns a claim's replacements, newest first.
 	ListReplacementsByClaim(ctx context.Context, claimID string) ([]models.Replacement, error)
 	// DispatchReplacement records that the goods left, in the parcel named.

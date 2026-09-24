@@ -220,9 +220,12 @@ type timelineEntryDTO struct {
 	Clock string `json:"clock"`
 	// Detail is a short extra: a status, a tracking number.
 	Detail string `json:"detail,omitempty"`
-	// Amount and Currency are set on the money entries only.
+	// Amount and Currency are set on the money entries only, and an amount is
+	// what moved at that moment, not a running total (ADR 0170).
 	Amount   int64  `json:"amount,omitempty"`
 	Currency string `json:"currency_code,omitempty"`
+	// Quantity is the units a goods entry moved; set on a line cancellation.
+	Quantity int64 `json:"quantity,omitempty"`
 }
 
 // adminGetOrderTimeline returns everything that happened to the order.
@@ -253,6 +256,7 @@ func (h *Handler) adminGetOrderTimeline(w http.ResponseWriter, r *http.Request) 
 			Detail:   entry.Detail,
 			Amount:   entry.Amount,
 			Currency: entry.Currency,
+			Quantity: entry.Quantity,
 		})
 	}
 

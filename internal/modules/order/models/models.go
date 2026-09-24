@@ -181,6 +181,10 @@ type Order struct {
 	// The database allows exactly that disagreement and no other: the
 	// constraint holds a stamp to the status, not the status to a stamp.
 	ArchivedAt *time.Time
+	// PersonalDataErasedAt is the FIRST moment the order's contact and
+	// addresses were erased; nil while they are held. A repeated erasure keeps
+	// the first moment (ADR 0033).
+	PersonalDataErasedAt *time.Time
 	// CancelReason is the cancellation rationale; it is empty on an order that
 	// was not canceled.
 	CancelReason string

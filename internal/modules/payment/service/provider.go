@@ -42,10 +42,35 @@ const (
 	// zero time on a timeline reads as 1 January year one.
 	FieldFirstCapturedAt = "first_captured_at"
 	FieldLastRefundedAt  = "last_refunded_at"
+	// FieldMovements is every capture and every refund, oldest first, each
+	// with its own amount (ADR 0170): a list of records keyed by the
+	// Movement* names below, empty when no money moved.
+	//
+	// It costs a third query and only when asked for, like the two moments.
+	FieldMovements = "movements"
 	// FieldCreatedAt is the creation time.
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt is the last update time.
 	FieldUpdatedAt = "updated_at"
+)
+
+// The keys of one entry of [FieldMovements].
+//
+// Another module reads them by name without importing this one, so they are
+// part of the entity's contract exactly as its field names are.
+const (
+	// MovementID is the movement's own record: the payment for a capture, the
+	// refund for a refund.
+	MovementID = "id"
+	// MovementPaymentID is the payment the money moved through.
+	MovementPaymentID = "payment_id"
+	// MovementKind is "capture" or "refund".
+	MovementKind = "kind"
+	// MovementAmount is what the movement moved, never a running total.
+	MovementAmount = "amount"
+	// MovementAt is when it moved (time.Time): a capture's moment is stamped by
+	// the process that captured, a refund's by the database.
+	MovementAt = "at"
 )
 
 // collectionFieldGetters are the extractors of the offered fields.
@@ -147,12 +172,80 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 		return nil, err
 	}
 
-	moments, err := p.moments(ctx, collections, opts.Fields)
+	extra, err := p.extras(ctx, collections, opts.Fields)
 	if err != nil {
 		return nil, err
 	}
 
-	return records(collections, opts.Fields, moments), nil
+	return records(collections, opts.Fields, extra), nil
+}
+
+// collectionExtras are the fields that do not come off the collection row, read
+// only when one of them was asked for.
+type collectionExtras struct {
+	moments   map[string]models.PaymentMoments
+	movements map[string][]models.PaymentMovement
+}
+
+// extras reads the moments and the movements, each only when asked for.
+func (p *QueryProvider) extras(
+	ctx context.Context, collections []models.PaymentCollection, fields []string,
+) (collectionExtras, error) {
+	moments, err := p.moments(ctx, collections, fields)
+	if err != nil {
+		return collectionExtras{}, err
+	}
+	movements, err := p.movements(ctx, collections, fields)
+	if err != nil {
+		return collectionExtras{}, err
+	}
+
+	return collectionExtras{moments: moments, movements: movements}, nil
+}
+
+// movements reads every capture and refund, and ONLY when [FieldMovements] was
+// asked for, for the moments' reason.
+func (p *QueryProvider) movements(
+	ctx context.Context, collections []models.PaymentCollection, fields []string,
+) (map[string][]models.PaymentMovement, error) {
+	if len(collections) == 0 || !wants(fields, FieldMovements) {
+		return nil, nil
+	}
+
+	ids := make([]string, 0, len(collections))
+	for i := range collections {
+		ids = append(ids, collections[i].ID)
+	}
+
+	list, err := p.svc.ListPaymentMovementsByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[string][]models.PaymentMovement, len(collections))
+	for i := range list {
+		out[list[i].CollectionID] = append(out[list[i].CollectionID], list[i])
+	}
+
+	return out, nil
+}
+
+// movementRecords turns one collection's movements into the field's value. It
+// is never nil: an empty list says no money moved, where a missing value would
+// read as a field the provider forgot.
+func movementRecords(list []models.PaymentMovement) []map[string]any {
+	out := make([]map[string]any, 0, len(list))
+	for i := range list {
+		out = append(out, map[string]any{
+			MovementID:        list[i].ID,
+			MovementPaymentID: list[i].PaymentID,
+			MovementKind:      list[i].Kind,
+			MovementAmount:    list[i].Amount,
+			MovementAt:        list[i].At,
+		})
+	}
+
+	return out
 }
 
 // moments reads the money moments, and ONLY when a moment field was asked for.
@@ -193,11 +286,17 @@ func (p *QueryProvider) moments(
 // two of its declared fields would be this provider lying about its own
 // contract.
 func wantsMoments(fields []string) bool {
+	return wants(fields, FieldFirstCapturedAt, FieldLastRefundedAt)
+}
+
+// wants reports whether any of the names was requested; an empty field list
+// requests every field, for the reason [wantsMoments] gives.
+func wants(fields []string, names ...string) bool {
 	if len(fields) == 0 {
 		return true
 	}
 	for _, name := range fields {
-		if name == FieldFirstCapturedAt || name == FieldLastRefundedAt {
+		if slices.Contains(names, name) {
 			return true
 		}
 	}
@@ -221,12 +320,12 @@ func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([
 		return nil, err
 	}
 
-	moments, err := p.moments(ctx, collections, fields)
+	extra, err := p.extras(ctx, collections, fields)
 	if err != nil {
 		return nil, err
 	}
 
-	return records(collections, fields, moments), nil
+	return records(collections, fields, extra), nil
 }
 
 // records turns the collections into records with the requested fields.
@@ -234,7 +333,7 @@ func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([
 func records(
 	collections []models.PaymentCollection,
 	fields []string,
-	moments map[string]models.PaymentMoments,
+	extra collectionExtras,
 ) []query.Record {
 	selected := fields
 	if len(selected) == 0 {
@@ -247,13 +346,15 @@ func records(
 	// record count rises.
 	for i := range collections {
 		record := make(query.Record, len(selected))
-		moment := moments[collections[i].ID]
+		moment := extra.moments[collections[i].ID]
 		for _, name := range selected {
 			switch name {
 			case FieldFirstCapturedAt:
 				record[name] = moment.FirstCapturedAt
 			case FieldLastRefundedAt:
 				record[name] = moment.LastRefundedAt
+			case FieldMovements:
+				record[name] = movementRecords(extra.movements[collections[i].ID])
 			default:
 				record[name] = collectionFieldGetters[name](collections[i])
 			}
@@ -265,15 +366,15 @@ func records(
 
 // offeredFields is every field this entity offers, sorted.
 //
-// It is the getters PLUS the two moment fields, which have no getter because
-// they do not come off the collection row. Building the default list from the
-// getters alone would mean a caller that named no field got a record missing
-// two of the fields the provider declares — the provider contradicting its own
-// contract, silently.
+// It is the getters PLUS the two moment fields and the movements, which have no
+// getter because they do not come off the collection row. Building the default
+// list from the getters alone would mean a caller that named no field got a
+// record missing three of the fields the provider declares — the provider
+// contradicting its own contract, silently.
 func offeredFields() []string {
 	names := slices.Sorted(maps.Keys(collectionFieldGetters))
 
-	return slices.Sorted(slices.Values(append(names, FieldFirstCapturedAt, FieldLastRefundedAt)))
+	return slices.Sorted(slices.Values(append(names, FieldFirstCapturedAt, FieldLastRefundedAt, FieldMovements)))
 }
 
 // providerLimit clamps the core's limit value to the provider's page ceiling.
@@ -296,10 +397,11 @@ func providerLimit(limit int) int64 {
 // validateFields verifies that all of the requested fields are offered.
 func validateFields(fields []string) error {
 	for _, name := range fields {
-		if name == FieldFirstCapturedAt || name == FieldLastRefundedAt {
-			// The two moment fields have no getter: they do not come off the
-			// collection row. They are still offered fields, and refusing them
-			// here would make the provider reject its own contract.
+		if name == FieldFirstCapturedAt || name == FieldLastRefundedAt || name == FieldMovements {
+			// The two moment fields and the movements have no getter: they do
+			// not come off the collection row. They are still offered fields,
+			// and refusing them here would make the provider reject its own
+			// contract.
 			continue
 		}
 		if _, ok := collectionFieldGetters[name]; !ok {

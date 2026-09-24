@@ -57,6 +57,30 @@ const (
 	KindExchangeOpened    = "exchange.opened"
 	KindExchangeCompleted = "exchange.completed"
 	KindExchangeCanceled  = "exchange.canceled"
+
+	// The kinds ADR 0170 added: facts every one of which was a dated row
+	// before, and none of which the timeline showed.
+	KindOrderLineCanceled     = "order.line_canceled"
+	KindOrderCredited         = "order.credited"
+	KindOrderDataErased       = "order.personal_data_erased"
+	KindReplacementOpened     = "replacement.opened"
+	KindReplacementDispatched = "replacement.dispatched"
+	KindReplacementCanceled   = "replacement.canceled"
+	KindExchangeFunded        = "exchange.funded"
+)
+
+// The payment collection's movements, read through the Query layer (ADR 0170).
+//
+// The payment module declares them; the names are repeated here as literals for
+// the reason [LinkOrderPayment] is.
+const (
+	fieldPaymentMovements = "movements"
+	movementID            = "id"
+	movementKind          = "kind"
+	movementAmount        = "amount"
+	movementAt            = "at"
+	movementCapture       = "capture"
+	movementRefund        = "refund"
 )
 
 // The clock that stamped a moment.
@@ -96,9 +120,13 @@ type TimelineEntry struct {
 	// Detail is a short human-facing extra — a status, a tracking number. It is
 	// empty when there is nothing to add.
 	Detail string
-	// Amount and Currency are filled in on the money entries only.
+	// Amount and Currency are filled in on the money entries only. An amount
+	// is what moved AT that moment, never a running total (ADR 0170).
 	Amount   int64
 	Currency string
+	// Quantity is the number of units a goods entry moved; it is set on a line
+	// cancellation, and zero elsewhere.
+	Quantity int64
 }
 
 // Timeline is everything that happened to an order, newest first.
@@ -166,6 +194,12 @@ func (s *Service) Timeline(ctx context.Context, orderID string) ([]TimelineEntry
 	}
 	entries = append(entries, afterSales...)
 
+	facts, err := s.orderFactEntries(ctx, order)
+	if err != nil {
+		return nil, err
+	}
+	entries = append(entries, facts...)
+
 	sortTimeline(entries)
 
 	return entries, nil
@@ -201,6 +235,15 @@ func orderEntries(order models.OrderDetail) []TimelineEntry {
 	if order.ArchivedAt != nil {
 		entries = append(entries, TimelineEntry{
 			At: order.ArchivedAt, Kind: KindOrderArchived, RefID: order.ID,
+			Clock: ClockDatabase,
+		})
+	}
+	// The erasure is dated because what the order held before it is not what
+	// it holds after: a reading of the order as it stood at an earlier moment
+	// has to know the contact it shows was not the contact then.
+	if order.PersonalDataErasedAt != nil {
+		entries = append(entries, TimelineEntry{
+			At: order.PersonalDataErasedAt, Kind: KindOrderDataErased, RefID: order.ID,
 			Clock: ClockDatabase,
 		})
 	}
@@ -246,13 +289,9 @@ func (s *Service) timelineGraph(
 		Limit:   1,
 		Expand: []query.Expansion{
 			{
-				Link: LinkOrderPayment,
-				As:   EntityPaymentCollection,
-				Fields: []string{
-					query.IDField, fieldPaymentCurrency,
-					fieldPaymentCaptured, fieldPaymentRefunded,
-					fieldPaymentFirstCaptured, fieldPaymentLastRefunded,
-				},
+				Link:   LinkOrderPayment,
+				As:     EntityPaymentCollection,
+				Fields: []string{query.IDField, fieldPaymentCurrency, fieldPaymentMovements},
 			},
 			{
 				Link: LinkOrderFulfillment,
@@ -275,38 +314,81 @@ func (s *Service) timelineGraph(
 	}
 
 	if collection, ok := firstExpanded(records[0][EntityPaymentCollection]); ok {
-		money = moneyEntries(collection)
+		if money, err = moneyEntries(collection); err != nil {
+			return nil, nil, err
+		}
 	}
 
 	return money, shipmentEntries(records[0][EntityFulfillment]), nil
 }
 
-// moneyEntries are the two money moments, when they happened.
-func moneyEntries(collection query.Record) []TimelineEntry {
+// moneyEntries are every capture and every refund of the collection, each
+// with what it moved (ADR 0170).
+//
+// They used to be two entries: the FIRST capture and the LAST refund, each
+// carrying the collection's lifetime total. A refund of 1,000 on Monday and one
+// of 500 on Friday read as a single refund of 1,500 on Friday, and Monday's did
+// not exist. The movements are the payment module's own rows, so a history
+// needs nothing this module does not already reach.
+//
+// A movement this module cannot read is an error, not a skipped entry: a
+// timeline shorter than the truth is the failure this file exists to avoid.
+func moneyEntries(collection query.Record) ([]TimelineEntry, error) {
 	collectionID := recordText(collection, query.IDField)
 	currency := recordText(collection, fieldPaymentCurrency)
 
-	var entries []TimelineEntry
-	if at := recordTime(collection, fieldPaymentFirstCaptured); at != nil {
-		entries = append(entries, TimelineEntry{
-			At: at, Kind: KindPaymentCaptured, RefID: collectionID,
-			// The capture's moment is stamped by the process that captured, not
-			// by the database — see the Clock constants.
-			Clock:    ClockApplication,
-			Amount:   recordInt(collection, fieldPaymentCaptured),
-			Currency: currency,
-		})
-	}
-	if at := recordTime(collection, fieldPaymentLastRefunded); at != nil {
-		entries = append(entries, TimelineEntry{
-			At: at, Kind: KindPaymentRefunded, RefID: collectionID,
-			Clock:    ClockDatabase,
-			Amount:   recordInt(collection, fieldPaymentRefunded),
-			Currency: currency,
-		})
+	movements, ok := movementList(collection[fieldPaymentMovements])
+	if !ok {
+		return nil, errors.Internal(CodeCatalogReadFailed,
+			"payment collection %s answered its movements as %T", collectionID,
+			collection[fieldPaymentMovements])
 	}
 
-	return entries
+	entries := make([]TimelineEntry, 0, len(movements))
+	for _, movement := range movements {
+		id := recordText(movement, movementID)
+		at := recordTime(movement, movementAt)
+		amount := recordInt(movement, movementAmount)
+		if id == "" || at == nil || amount <= 0 {
+			return nil, errors.Internal(CodeCatalogReadFailed,
+				"payment collection %s answered a movement with no id, moment or amount", collectionID)
+		}
+
+		entry := TimelineEntry{At: at, RefID: id, Amount: amount, Currency: currency}
+		switch recordText(movement, movementKind) {
+		case movementCapture:
+			// A capture's moment is stamped by the process that captured, not
+			// by the database — see the Clock constants.
+			entry.Kind, entry.Clock = KindPaymentCaptured, ClockApplication
+		case movementRefund:
+			entry.Kind, entry.Clock = KindPaymentRefunded, ClockDatabase
+		default:
+			return nil, errors.Internal(CodeCatalogReadFailed,
+				"payment collection %s answered a movement of kind %q",
+				collectionID, recordText(movement, movementKind))
+		}
+		entries = append(entries, entry)
+	}
+
+	return entries, nil
+}
+
+// movementList reads the movements field: a list of records, which the
+// provider hands over as either map type.
+func movementList(raw any) ([]query.Record, bool) {
+	switch value := raw.(type) {
+	case []map[string]any:
+		out := make([]query.Record, 0, len(value))
+		for _, movement := range value {
+			out = append(out, movement)
+		}
+
+		return out, true
+	case []query.Record:
+		return value, true
+	default:
+		return nil, false
+	}
 }
 
 // shipmentEntries are every moment of every parcel.
@@ -421,10 +503,77 @@ func exchangeEntries(exchanges []models.Exchange) []TimelineEntry {
 			At: &exchanges[i].CreatedAt, Kind: KindExchangeOpened, RefID: exchanges[i].ID,
 			Clock: ClockDatabase, Detail: exchanges[i].Status.String(),
 		})
+		// The funding is money: the difference the exchange collected, taken on
+		// its own collection and not on the order's, so it is not also among
+		// the order's captures.
+		if exchanges[i].FundedAt != nil {
+			entries = append(entries, TimelineEntry{
+				At: exchanges[i].FundedAt, Kind: KindExchangeFunded, RefID: exchanges[i].ID,
+				Clock: ClockDatabase, Detail: exchanges[i].PaymentCollectionID,
+				Amount: exchanges[i].DifferenceDue,
+			})
+		}
 		entries = appendMoment(entries, exchanges[i].CompletedAt,
 			KindExchangeCompleted, exchanges[i].ID)
 		entries = appendMoment(entries, exchanges[i].CanceledAt,
 			KindExchangeCanceled, exchanges[i].ID)
+	}
+
+	return entries
+}
+
+// orderFactEntries are the order's own dated facts outside its row and its
+// after-sales records: the lines canceled, the credits given and the goods a
+// claim or an exchange promised to send (ADR 0170).
+func (s *Service) orderFactEntries(ctx context.Context, order models.OrderDetail) ([]TimelineEntry, error) {
+	cancellations, err := s.ListLineCancellations(ctx, order.ID)
+	if err != nil {
+		return nil, err
+	}
+	credits, err := s.ListCreditLines(ctx, order.ID)
+	if err != nil {
+		return nil, err
+	}
+	replacements, err := s.store.ListReplacementsByOrder(ctx, order.ID, timelinePageLimit)
+	if err != nil {
+		return nil, err
+	}
+
+	return factEntries(order.CurrencyCode, cancellations, credits, replacements), nil
+}
+
+// factEntries maps the facts, split out of [Service.orderFactEntries] for the
+// reason [exchangeEntries] is.
+func factEntries(
+	currency string,
+	cancellations []models.OrderLineCancellation,
+	credits []models.OrderCreditLine,
+	replacements []models.Replacement,
+) []TimelineEntry {
+	entries := make([]TimelineEntry, 0, len(cancellations)+len(credits)+len(replacements))
+
+	for i := range cancellations {
+		entries = append(entries, TimelineEntry{
+			At: &cancellations[i].CreatedAt, Kind: KindOrderLineCanceled,
+			RefID: cancellations[i].ID, Clock: ClockDatabase,
+			Detail: cancellations[i].OrderLineItemID, Quantity: cancellations[i].Quantity,
+		})
+	}
+	for i := range credits {
+		entries = append(entries, TimelineEntry{
+			At: &credits[i].CreatedAt, Kind: KindOrderCredited, RefID: credits[i].ID,
+			Clock: ClockDatabase, Amount: credits[i].Amount, Currency: currency,
+		})
+	}
+	for i := range replacements {
+		entries = append(entries, TimelineEntry{
+			At: &replacements[i].CreatedAt, Kind: KindReplacementOpened,
+			RefID: replacements[i].ID, Clock: ClockDatabase,
+		})
+		entries = appendMoment(entries, replacements[i].DispatchedAt,
+			KindReplacementDispatched, replacements[i].ID)
+		entries = appendMoment(entries, replacements[i].CanceledAt,
+			KindReplacementCanceled, replacements[i].ID)
 	}
 
 	return entries
@@ -484,6 +633,13 @@ var customerVisibleKinds = map[string]bool{
 	KindExchangeOpened:    true,
 	KindExchangeCompleted: true,
 	KindExchangeCanceled:  true,
+	// ADR 0170: a canceled line and a replacement are about the goods. The
+	// credit and the exchange's funding are money, and the erasure is the
+	// shop's act on its records; those three stay on the support desk's side.
+	KindOrderLineCanceled:     true,
+	KindReplacementOpened:     true,
+	KindReplacementDispatched: true,
+	KindReplacementCanceled:   true,
 }
 
 // StorefrontTimeline is the timeline a customer may see on their own order.

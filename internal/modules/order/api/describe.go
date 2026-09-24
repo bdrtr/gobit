@@ -782,23 +782,30 @@ func describeTimeline(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/timeline", openapi.Operation{
 		Summary: "Everything that happened to the order, newest first.",
 		Description: "It is COMPOSED from records that already exist — the order's own " +
-			"stamps, its returns, claims and exchanges, the payment collection's capture " +
-			"and refund moments, and every parcel's five moments — rather than read from a " +
-			"log. Nothing is duplicated, so nothing can drift from the record it mirrors. " +
+			"stamps and its erasure, every line cancellation (with its \"quantity\"), every " +
+			"credit, its returns, claims, exchanges (with the exchange's funding) and the " +
+			"replacements they promised, every capture and every refund of the payment " +
+			"collection, and every parcel's five moments — rather than read from a log. " +
+			"Nothing is duplicated, so nothing can drift from the record it mirrors. " +
+			"\n\n" +
+			"AN AMOUNT IS WHAT MOVED AT THAT MOMENT. Each capture and each refund is its own " +
+			"entry with its own amount; two partial refunds are two entries, not one entry " +
+			"carrying their sum (ADR 0170). " +
 			"\n\n" +
 			"THE MOMENTS DO NOT SHARE ONE CLOCK, and each entry says which one stamped it. " +
 			"\"database\" means the moment came from the database's now(); \"application\" " +
-			"means it came from whichever process wrote the row. The capture and a parcel's " +
+			"means it came from whichever process wrote the row. A capture and a parcel's " +
 			"shipped/delivered/canceled/returned moments are on the application clock; everything " +
-			"else is on the database's. On one machine they agree. Across machines they can " +
+			"else, refunds included, is on the database's. On one machine they agree. Across machines they can " +
 			"disagree by more than the gap between two events, and then two lines look out " +
 			"of order — the \"clock\" field is what explains it. " +
 			"\n\n" +
-			"An entry whose \"at\" is NULL is a fact that really happened and whose moment " +
-			"was never recorded: an exchange that was completed or canceled, whose columns " +
-			"exist and which nothing writes. Those come LAST, and they are reported rather " +
-			"than dropped — a timeline shorter than the truth hides the gap instead of " +
-			"showing it.",
+			"The \"at\" field is nullable for a fact that really happened and whose moment " +
+			"was never recorded; such an entry would come LAST rather than be dropped, " +
+			"because a timeline shorter than the truth hides the gap instead of showing it. " +
+			"No record produces one today: every fact listed above carries its moment. An " +
+			"order archived before its archiving was dated has no archiving entry at all, " +
+			"and its status still says it.",
 		Responses: map[string]any{
 			// The record is an ARRAY inside the plain envelope: the timeline is
 			// bounded by its order and has no page to ask for, so it carries no
@@ -812,13 +819,16 @@ func describeTimeline(d *openapi.Doc) {
 		Summary: "What happened to the order, as the customer may see it.",
 		Description: "It is the same composition the admin timeline returns, narrowed to the " +
 			"moments about the ORDER and the GOODS: placed, completed, canceled, every " +
-			"parcel's five moments, and the returns, claims and exchanges. " +
+			"line cancellation with its quantity, every parcel's five moments, the returns, " +
+			"claims and exchanges, and the replacements they promised. " +
 			"\n\n" +
-			"THE MONEY MOMENTS ARE NOT HERE, and neither is \"order.archived\". A capture " +
+			"THE MONEY MOMENTS ARE NOT HERE — captures, refunds, credits and an exchange's " +
+			"funding — and neither are \"order.archived\" and the erasure. A capture " +
 			"or a refund recorded on this side is the merchant's ledger view — a partial " +
 			"capture is a fact about a hold, and the figure a customer will reconcile " +
 			"against is the one their bank shows on the day it lands. Archiving is the " +
-			"merchant filing the order away; nothing happened to the goods or the money. " +
+			"merchant filing the order away, and the erasure is the shop acting on its " +
+			"records; nothing happened to the goods or the money. " +
 			"The response has NO amount field at all, so a moment carrying one could not " +
 			"be published here even by mistake. " +
 			"\n\n" +

@@ -310,6 +310,75 @@ func (q *Queries) PaymentMomentsByCollectionIDs(ctx context.Context, ids []strin
 	return items, nil
 }
 
+const paymentMovementsByCollectionIDs = `-- name: PaymentMovementsByCollectionIDs :many
+SELECT p.payment_collection_id,
+       p.id           AS movement_id,
+       p.id           AS payment_id,
+       'capture'::text AS kind,
+       p.amount,
+       p.captured_at  AS moved_at
+  FROM payments p
+ WHERE p.payment_collection_id = ANY ($1::text[])
+UNION ALL
+SELECT p.payment_collection_id,
+       r.id,
+       r.payment_id,
+       'refund'::text,
+       r.amount,
+       r.created_at
+  FROM refunds r
+  JOIN payments p ON p.id = r.payment_id
+ WHERE p.payment_collection_id = ANY ($1::text[])
+ORDER BY payment_collection_id, moved_at, movement_id
+`
+
+type PaymentMovementsByCollectionIDsRow struct {
+	PaymentCollectionID string
+	MovementID          string
+	PaymentID           string
+	Kind                string
+	Amount              int64
+	MovedAt             pgtype.Timestamptz
+}
+
+// PaymentMovementsByCollectionIDs is every capture and every refund of the
+// given collections, each with its own amount and moment (ADR 0170).
+//
+// The moments above answer "when did money first move" and "when did it last
+// go back"; a history needs each movement, because a collection is captured by
+// more than one tender and refunded in parts. A capture's moment is its
+// captured_at, stamped by the process that captured; a refund's is its row's
+// created_at, stamped by the database, since refunds has no refunded_at.
+//
+// A refund is reported with the payment it went back through, which is how
+// the admin surface finds it (/admin/v1/payments/{id}/refunds).
+func (q *Queries) PaymentMovementsByCollectionIDs(ctx context.Context, ids []string) ([]PaymentMovementsByCollectionIDsRow, error) {
+	rows, err := q.db.Query(ctx, paymentMovementsByCollectionIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PaymentMovementsByCollectionIDsRow{}
+	for rows.Next() {
+		var i PaymentMovementsByCollectionIDsRow
+		if err := rows.Scan(
+			&i.PaymentCollectionID,
+			&i.MovementID,
+			&i.PaymentID,
+			&i.Kind,
+			&i.Amount,
+			&i.MovedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updatePaymentCollectionTotals = `-- name: UpdatePaymentCollectionTotals :one
 UPDATE payment_collections
 SET status            = $2,

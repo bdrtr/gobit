@@ -301,6 +301,36 @@ func (r *Repository) PaymentMomentsByCollectionIDs(
 	return out, nil
 }
 
+// PaymentMovementsByCollectionIDs returns every capture and refund of the
+// collections, in one query, ordered by collection and then by moment.
+func (r *Repository) PaymentMovementsByCollectionIDs(
+	ctx context.Context,
+	ids []string,
+) ([]models.PaymentMovement, error) {
+	if len(ids) == 0 {
+		return []models.PaymentMovement{}, nil
+	}
+
+	rows, err := r.queries(ctx).PaymentMovementsByCollectionIDs(ctx, ids)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "the payment movements could not be read")
+	}
+
+	out := make([]models.PaymentMovement, 0, len(rows))
+	for i := range rows {
+		out = append(out, models.PaymentMovement{
+			CollectionID: rows[i].PaymentCollectionID,
+			ID:           rows[i].MovementID,
+			PaymentID:    rows[i].PaymentID,
+			Kind:         rows[i].Kind,
+			Amount:       rows[i].Amount,
+			At:           toTime(rows[i].MovedAt),
+		})
+	}
+
+	return out, nil
+}
+
 // PaymentCollectionsByIDs verilen kimliklerin koleksiyonlarını TEK sorguda
 // döner. Bulunamayan kimlik için satır dönmez; bu bir hata değildir.
 func (r *Repository) PaymentCollectionsByIDs(

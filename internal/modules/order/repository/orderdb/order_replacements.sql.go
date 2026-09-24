@@ -265,3 +265,54 @@ func (q *Queries) ListOrderReplacementsByExchange(ctx context.Context, orderExch
 	}
 	return items, nil
 }
+
+const listOrderReplacementsByOrder = `-- name: ListOrderReplacementsByOrder :many
+SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id FROM order_replacements
+WHERE order_claim_id IN (SELECT id FROM order_claims WHERE order_id = $1::text)
+   OR order_exchange_id IN (SELECT id FROM order_exchanges WHERE order_id = $1::text)
+ORDER BY created_at, id
+LIMIT $2::bigint
+`
+
+type ListOrderReplacementsByOrderParams struct {
+	OrderID  string
+	RowLimit int64
+}
+
+// ListOrderReplacementsByOrder returns every replacement an order's claims and
+// exchanges promised, oldest first, for the order's timeline (ADR 0170).
+//
+// The row names its source, not its order; the order is reached through the
+// claim or the exchange, and both are this module's own tables.
+func (q *Queries) ListOrderReplacementsByOrder(ctx context.Context, arg ListOrderReplacementsByOrderParams) ([]OrderReplacement, error) {
+	rows, err := q.db.Query(ctx, listOrderReplacementsByOrder, arg.OrderID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrderReplacement{}
+	for rows.Next() {
+		var i OrderReplacement
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderClaimID,
+			&i.Status,
+			&i.ShippingOptionID,
+			&i.LocationID,
+			&i.Note,
+			&i.CanceledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DispatchedAt,
+			&i.FulfillmentID,
+			&i.OrderExchangeID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

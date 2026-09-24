@@ -331,6 +331,18 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **An order's timeline tells every movement** (ADR 0170). Each capture and
+  each refund is its own entry with the amount it moved; before, the timeline
+  showed only the first capture and the last refund, each carrying the
+  lifetime total, so two partial refunds read as one refund of their sum.
+  Line cancellations (with a new `quantity` field), credits, replacements,
+  an exchange's funding and the erasure of the order's personal data are new
+  entry kinds. The storefront timeline gains the line cancellations and the
+  replacements; the money and the erasure stay admin-only. **For API
+  consumers:** a money entry's `ref_id` now names the payment or the refund
+  it came from, not the payment collection. The payment collection's query
+  entity offers a new `movements` field.
+
 - **A CHECK constraint answers true or false** (ADR 0169). An integration test
   applies every migrations directory in the tree — core, modules, plugins and
   contrib — and evaluates each of the 349 CHECK constraints over NULL, the

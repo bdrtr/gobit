@@ -60,3 +60,15 @@ SET status = 'dispatched',
     updated_at = now()
 WHERE id = sqlc.arg('id')::text
 RETURNING *;
+
+-- ListOrderReplacementsByOrder returns every replacement an order's claims and
+-- exchanges promised, oldest first, for the order's timeline (ADR 0170).
+--
+-- The row names its source, not its order; the order is reached through the
+-- claim or the exchange, and both are this module's own tables.
+-- name: ListOrderReplacementsByOrder :many
+SELECT * FROM order_replacements
+WHERE order_claim_id IN (SELECT id FROM order_claims WHERE order_id = sqlc.arg('order_id')::text)
+   OR order_exchange_id IN (SELECT id FROM order_exchanges WHERE order_id = sqlc.arg('order_id')::text)
+ORDER BY created_at, id
+LIMIT sqlc.arg('row_limit')::bigint;

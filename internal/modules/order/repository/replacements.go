@@ -111,6 +111,22 @@ func (r *Repository) ListReplacementsByClaim(
 	return toReplacements(rows), nil
 }
 
+// ListReplacementsByOrder returns every replacement the order's claims and
+// exchanges promised, oldest first, at most limit of them.
+func (r *Repository) ListReplacementsByOrder(
+	ctx context.Context, orderID string, limit int64,
+) ([]models.Replacement, error) {
+	rows, err := r.queries(ctx).ListOrderReplacementsByOrder(ctx, orderdb.ListOrderReplacementsByOrderParams{
+		OrderID: orderID, RowLimit: limit,
+	})
+	if err != nil {
+		return nil, classify(err, codeQueryFailed,
+			"could not list the replacements of order %s", orderID)
+	}
+
+	return toReplacements(rows), nil
+}
+
 // ListReplacementsByExchange returns an exchange's replacements, newest first.
 func (r *Repository) ListReplacementsByExchange(
 	ctx context.Context, exchangeID string,

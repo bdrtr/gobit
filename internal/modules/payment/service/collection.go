@@ -138,6 +138,19 @@ func (s *Service) ListPaymentMomentsByIDs(
 	return s.store.PaymentMomentsByCollectionIDs(ctx, ids)
 }
 
+// ListPaymentMovementsByIDs returns every capture and refund of the
+// collections, oldest first within each (ADR 0170).
+func (s *Service) ListPaymentMovementsByIDs(
+	ctx context.Context,
+	ids []string,
+) ([]models.PaymentMovement, error) {
+	if len(ids) == 0 {
+		return []models.PaymentMovement{}, nil
+	}
+
+	return s.store.PaymentMovementsByCollectionIDs(ctx, ids)
+}
+
 // ListPaymentSessions koleksiyonun oturumlarını döner.
 //
 // Koleksiyonun varlığı önce doğrulanır: olmayan bir koleksiyon için "oturum

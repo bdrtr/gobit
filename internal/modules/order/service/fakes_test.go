@@ -1444,6 +1444,36 @@ func (f *fakeStore) FundExchange(
 	return exchange, nil
 }
 
+// ListReplacementsByOrder returns the replacements of the order's claims and
+// exchanges, oldest first, as the real query orders them.
+func (f *fakeStore) ListReplacementsByOrder(
+	ctx context.Context, orderID string, limit int64,
+) ([]models.Replacement, error) {
+	snapshot := f.view(ctx)
+
+	out := make([]models.Replacement, 0)
+	for id := range snapshot.replaces {
+		replacement := snapshot.replaces[id]
+		claim, byClaim := snapshot.claims[replacement.ClaimID]
+		exchange, byExchange := snapshot.exchanges[replacement.ExchangeID]
+		if (byClaim && claim.OrderID == orderID) || (byExchange && exchange.OrderID == orderID) {
+			out = append(out, replacement)
+		}
+	}
+	slices.SortFunc(out, func(a, b models.Replacement) int {
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.Compare(b.CreatedAt)
+		}
+
+		return strings.Compare(a.ID, b.ID)
+	})
+	if int64(len(out)) > limit {
+		out = out[:limit]
+	}
+
+	return out, nil
+}
+
 // ListReplacementsByExchange returns an exchange's replacements, newest first.
 func (f *fakeStore) ListReplacementsByExchange(
 	ctx context.Context, exchangeID string,

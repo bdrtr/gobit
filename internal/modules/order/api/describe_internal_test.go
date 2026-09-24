@@ -444,6 +444,7 @@ func describedEndpoints() []endpointExpectation {
 			response: timelineEntryDTO{
 				At: &describeSampleTime, Kind: "payment.captured", RefID: "paycol_1",
 				Clock: "application", Detail: "captured", Amount: 1000, Currency: "TRY",
+				Quantity: 2,
 			},
 		},
 		{
@@ -494,7 +495,7 @@ func describedEndpoints() []endpointExpectation {
 			shape: unpagedList,
 			response: storeTimelineEntryDTO{
 				At: &describeSampleTime, Kind: "shipment.shipped", RefID: "ful_1",
-				Clock: "application", Detail: "TRK123",
+				Clock: "application", Detail: "TRK123", Quantity: 2,
 			},
 		},
 		// The five after-sales endpoints. They were bound long before they were

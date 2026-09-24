@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -291,6 +292,48 @@ func (f *fakeStore) PaymentMomentsByCollectionIDs(
 		}
 		out = append(out, moment)
 	}
+
+	return out, nil
+}
+
+// PaymentMovementsByCollectionIDs reports every capture and refund, ordered as
+// the real query orders them: by collection, then by moment, then by id.
+func (f *fakeStore) PaymentMovementsByCollectionIDs(
+	_ context.Context, ids []string,
+) ([]models.PaymentMovement, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var out []models.PaymentMovement
+	for paymentID := range f.payments {
+		payment := f.payments[paymentID]
+		if !slices.Contains(ids, payment.PaymentCollectionID) {
+			continue
+		}
+		out = append(out, models.PaymentMovement{
+			CollectionID: payment.PaymentCollectionID, ID: paymentID, PaymentID: paymentID,
+			Kind: models.MovementCapture, Amount: payment.Amount, At: payment.CapturedAt,
+		})
+		for refundID := range f.refunds {
+			refund := f.refunds[refundID]
+			if refund.PaymentID != paymentID {
+				continue
+			}
+			out = append(out, models.PaymentMovement{
+				CollectionID: payment.PaymentCollectionID, ID: refundID, PaymentID: paymentID,
+				Kind: models.MovementRefund, Amount: refund.Amount, At: refund.CreatedAt,
+			})
+		}
+	}
+	slices.SortFunc(out, func(a, b models.PaymentMovement) int {
+		if c := strings.Compare(a.CollectionID, b.CollectionID); c != 0 {
+			return c
+		}
+		if c := a.At.Compare(b.At); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
 
 	return out, nil
 }

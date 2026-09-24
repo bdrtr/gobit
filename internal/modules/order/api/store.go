@@ -163,6 +163,9 @@ type storeTimelineEntryDTO struct {
 	Clock string `json:"clock"`
 	// Detail is a short extra: a status, a tracking number.
 	Detail string `json:"detail,omitempty"`
+	// Quantity is the units a goods entry moved; set on a line cancellation.
+	// It is a count of goods, not a figure of money.
+	Quantity int64 `json:"quantity,omitempty"`
 }
 
 // storeGetOrderTimeline returns what happened to the order, as the customer may
@@ -192,11 +195,12 @@ func (h *Handler) storeGetOrderTimeline(w http.ResponseWriter, r *http.Request) 
 	out := make([]storeTimelineEntryDTO, 0, len(entries))
 	for _, entry := range entries {
 		out = append(out, storeTimelineEntryDTO{
-			At:     entry.At,
-			Kind:   entry.Kind,
-			RefID:  entry.RefID,
-			Clock:  entry.Clock,
-			Detail: entry.Detail,
+			At:       entry.At,
+			Kind:     entry.Kind,
+			RefID:    entry.RefID,
+			Clock:    entry.Clock,
+			Detail:   entry.Detail,
+			Quantity: entry.Quantity,
 		})
 	}
 

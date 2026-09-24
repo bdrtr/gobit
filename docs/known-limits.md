@@ -529,6 +529,17 @@ past and is not corrected retroactively.
   rather than guess. Which promotion reduced a line is not kept at all: the
   promotion engine reports discounts per line and per promotion, never one
   promotion's share of one line.
+- **An order's timeline is its history, not the order as it stood at a
+  moment.** Since [ADR 0170](adr/0170-an-orders-timeline-tells-every-movement.md)
+  it has an entry for every dated row the order reaches, each money movement
+  with the amount it moved. It does not answer "what did this order look like
+  on the 3rd": the status shown on an opening entry is today's, a claim
+  evidence that was removed leaves no row, the money the order itself records
+  keeps only its last value, and after erasure the contact and addresses from
+  before it are gone. A cart keeps no history at all. Nothing records what a
+  dispute would ask for beyond that either, such as the buyer's IP, the
+  carrier's checkpoints or what the customer was sent
+  ([measurement 0170](measurements/0170-what-the-timeline-left-out.md)).
 
 ## The limit of the invariants
 

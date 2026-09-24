@@ -65,6 +65,39 @@ type PaymentMoments struct {
 	LastRefundedAt *time.Time
 }
 
+// The kinds of a [PaymentMovement].
+const (
+	// MovementCapture is money taken: one payment row.
+	MovementCapture = "capture"
+	// MovementRefund is money given back: one refund row.
+	MovementRefund = "refund"
+)
+
+// PaymentMovement is one capture or one refund of a collection, with its own
+// amount and moment (ADR 0170).
+//
+// [PaymentMoments] answers the two questions a support desk asks first; a
+// history needs every movement, because a collection is captured by more than
+// one tender and refunded in parts, and a lifetime total dated at one of them
+// is a figure that never moved at that moment.
+type PaymentMovement struct {
+	// CollectionID is the collection the movement belongs to.
+	CollectionID string
+	// ID is the movement's own record: the payment for a capture, the refund
+	// for a refund.
+	ID string
+	// PaymentID is the payment the money moved through; for a capture it is
+	// the ID itself.
+	PaymentID string
+	// Kind is [MovementCapture] or [MovementRefund].
+	Kind string
+	// Amount is what this movement moved (minor unit), never a running total.
+	Amount int64
+	// At is when it moved: the capture's captured_at, stamped by the process
+	// that captured, or the refund row's created_at, stamped by the database.
+	At time.Time
+}
+
 // PaymentCollection is the container of the payments collected for a cart or
 // an order.
 //

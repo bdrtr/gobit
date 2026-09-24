@@ -179,3 +179,35 @@ func TestATimelineThatCouldNotBeBuiltIsNotAnsweredAsAnEmptyOne(t *testing.T) {
 	require.True(t, ok, rec.Body.String())
 	assert.Equal(t, "order_timeline_failed", failure["code"])
 }
+
+// TestALineCancellationCarriesItsQuantityOnBothViews is the one goods figure
+// the timeline publishes (ADR 0170): how many units a canceled line lost. The
+// customer's view carries it too, because it is a count of goods and not an
+// amount of money.
+func TestALineCancellationCarriesItsQuantityOnBothViews(t *testing.T) {
+	canceled := time.Date(2026, 9, 5, 11, 0, 0, 0, time.UTC)
+	svc := &fakeOrders{timeline: []service.TimelineEntry{{
+		At: &canceled, Kind: service.KindOrderLineCanceled, RefID: "olc_1",
+		Clock: service.ClockDatabase, Detail: "oli_1", Quantity: 2,
+	}}}
+
+	for _, path := range []string{timelinePath, "/store/v1/orders/order_1/timeline"} {
+		t.Run(path, func(t *testing.T) {
+			rec := doRequest(t, newRouter(svc), http.MethodGet, path, "")
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+			var body struct {
+				Data []struct {
+					Kind     string `json:"kind"`
+					Detail   string `json:"detail"`
+					Quantity int64  `json:"quantity"`
+				} `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+			require.Len(t, body.Data, 1)
+			assert.Equal(t, service.KindOrderLineCanceled, body.Data[0].Kind)
+			assert.Equal(t, "oli_1", body.Data[0].Detail)
+			assert.Equal(t, int64(2), body.Data[0].Quantity)
+		})
+	}
+}
