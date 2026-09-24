@@ -72,22 +72,32 @@ func TestAGeneratedProjectCompilesAndRuns(t *testing.T) {
 		require.NoError(t, statErr, "%s was not written", name)
 	}
 
-	// go.sum is copied rather than produced: `go mod tidy` would need the
-	// network, and this lane runs in CI's Test job beside the offline ones. The
-	// replace makes every gobit dependency resolvable from this checkout's own
-	// sums.
+	// go.sum is copied from the checkout, so every module the checkout already
+	// verified is held to the same sums; the tidy below adds only what the
+	// generated module's graph needs beyond them.
 	sum, err := os.ReadFile(filepath.Join(root, "go.sum"))
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.sum"), sum, 0o600))
 
 	// `go mod tidy` is run because that is what a user does: the generated go.mod
 	// names the library and nothing else, so the indirect requirements are
-	// resolved once, on the user's machine. It runs OFFLINE here — the replace
-	// above makes every gobit dependency resolvable from this checkout's module
-	// cache — so this lane stays beside the other offline ones.
+	// resolved once, on the user's machine — through the module proxy, as the
+	// user's are.
+	//
+	// It ran OFFLINE until 2026-09-24, on the premise that the replace above made
+	// every requirement resolvable from this checkout's module cache. The premise
+	// was false and had been since the test was written. A generated module's
+	// graph is not the checkout's: its tidy asks for the test-only dependencies
+	// of the checkout's dependencies — ginkgo and gomega, dktest, go-cmp, goleak
+	// — and a cache filled by this checkout's own `go mod download`, measured
+	// from empty, holds none of them. The lane was green only on caches a
+	// networked tidy had warmed. CI's went cold the day go.sum changed its key,
+	// and the test failed there on a go.mod its cache had never fetched while
+	// every local run passed. The BUILD below stays offline, which is what still
+	// proves the tidy fetched everything the program needs.
 	tidy := exec.CommandContext(t.Context(), goTool, "mod", "tidy")
 	tidy.Dir = dir
-	tidy.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GOPROXY=off")
+	tidy.Env = append(os.Environ(), "GOFLAGS=-mod=mod")
 	tidyOut, tidyErr := tidy.CombinedOutput()
 	require.NoError(t, tidyErr,
 		"the go.mod `gobit new` writes cannot be tidied:\n%s\n"+

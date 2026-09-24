@@ -31,7 +31,7 @@ import (
 // is never mistaken for a stored object.
 //
 // The signature's CORRECTNESS is proved in s3_integration_test.go, against a
-// real MinIO that validates SigV4 the way S3 does. That is the only proof worth
+// real S3 server that validates SigV4 the way S3 does. That is the only proof worth
 // having, and it needs Docker, which is why it sits behind the integration tag.
 
 // fixedTime is the signing instant the tests use, so a signature is

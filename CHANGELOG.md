@@ -20,6 +20,24 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Düzeltmeler
 
+- **S3 testleri yine yalnız CI'da kırmızıydı, D80'in sebebiyle** (D121). D80'in
+  taşındığı kayıt defteri (`quay.io/minio/minio`) sabitlenmiş etiketi de
+  `latest`'i de artık sunmuyor ve bu makine bir yıllık kopyayı tutuyordu. MinIO
+  topluluk sunucusunu kimliksiz çekilebilen hiçbir yerde imaj olarak
+  dağıtmıyor; D80 aynı satıcının ikinci adresine taşınarak aynı açıklığı bir ana
+  bilgisayar adı öteye koymuştu. Testler artık RustFS 1.0.0'a karşı koşuyor ve
+  ona güvenilmeden önce iki özelliği ölçüldü: kanonik başlık bloğunun satır
+  sonunu düşürmek imza testlerini, bucket politikasını atlamak anonim okumayı
+  kırmızı yapıyor. Düzenek artık hiçbir satıcının adını taşımıyor.
+
+- **scaffold testinin çevrimdışı tidy öncülü baştan yanlıştı** (D122). Üretilen
+  projenin grafiği checkout'unkinden farklı: bağımlılıkların yalnız-test
+  bağımlılıklarını istiyor ve checkout'un kendi `go mod download`'u onları
+  hiç getirmiyor. Test yalnız ağlı bir tidy'nin ısıttığı önbelleklerde yeşildi;
+  go.sum CI'nın önbellek anahtarını değiştirince soğuk başladı ve düştü. Tidy
+  artık kullanıcınınki gibi modül vekilinden geçiyor, derleme çevrimdışı
+  kalıyor.
+
 - **Satırı olmayan bir müşterinin bakiyesi iki kez harcanabiliyordu** (D118).
   İki bakiye defteri de bakiyeyi toplamadan önce müşterinin SATIRLARINI
   kilitliyordu ve satırı olmayan müşteri hiçbir şey kilitlemiyordu; kilit ile

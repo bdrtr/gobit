@@ -28,78 +28,78 @@ import (
 // signature is the one S3 expects, because the only expected value available to
 // them would be one produced by reading this same code.
 //
-// MinIO validates SigV4 the way S3 does. If the canonical form is wrong by a
-// single newline, if the S3 path-encoding exception is missed, or if a header
+// The server validates SigV4 the way S3 does. If the canonical form is wrong by
+// a single newline, if the S3 path-encoding exception is missed, or if a header
 // is signed but not declared, every test below fails with 403
 // SignatureDoesNotMatch. That is the check that has to exist somewhere, and
 // nothing smaller than a real implementation can perform it.
 
-// minioImage is PINNED, following the repository's rule for the postgres and
-// redis containers. An unpinned tag means the day MinIO changes its
-// validation is a day this suite fails for reasons unrelated to the change
-// being tested.
+// s3Image is PINNED, following the repository's rule for the postgres and redis
+// containers: an unpinned tag means the day the server changes its validation
+// is a day this suite fails for reasons unrelated to the change being tested.
 //
-// # Why quay.io and not Docker Hub
+// # Why RustFS and no longer MinIO
 //
-// `minio/minio` on Docker Hub answers an anonymous pull with "denied: requested
-// access to the resource is denied" — the pinned tag AND `latest`, so it is the
-// repository and not the tag. MinIO publishes to its own registry, which serves
-// the SAME tag without credentials, and that is where this now points.
+// The pin was never the problem; the access under it was, twice. On 2026-09-11
+// `minio/minio` on Docker Hub began refusing anonymous pulls of every tag, and
+// the suite moved to MinIO's own registry (D80). On 2026-09-24 that registry
+// answered "no such manifest" for the pinned tag and for `latest` alike: MinIO
+// no longer distributes the community server as an image anywhere this lane can
+// pull without credentials. Both times CI went red while every local run stayed
+// green on a year-old cached image, which is the whole of D80's lesson and the
+// reason it happened again — a cache is not a registry.
 //
-// It was found by CI going red while every local run was green, and the reason
-// is worth keeping: this machine had the Docker Hub image cached from a year
-// ago, so the lane never had to pull it. A green that rests on a local artifact
-// is not a green — the same shape as a gitignored build output making a lane
-// pass (D80).
-//
-// postgres:16-alpine and redis:7-alpine were checked at the same time and both
-// answer an anonymous pull. Those two are Docker Official Images; this one was a
-// vendor repository, which is the class where access can change under a pin.
-const minioImage = "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"
+// RustFS is an independent S3 server under Apache-2.0, published on Docker Hub,
+// and it holds the two properties this suite depends on, measured rather than
+// assumed: a canonical header block without its trailing newline is refused
+// (the signature tests go red), and an object is served anonymously only after
+// the bucket policy grants it (the read-back test goes red without the policy).
+// It is still a vendor repository, the class where access can change under a
+// pin; what changed is that the suite no longer rests on one vendor's name.
+const s3Image = "rustfs/rustfs:1.0.0"
 
 // The container's root credentials. They are the test's own and reach nothing
 // outside the container's lifetime.
 const (
-	minioUser = "gobit-test-key"
-	minioPass = "gobit-test-secret"
-	// MinIO answers for any region when the bucket was created without one;
-	// the value still has to match between signing and verification.
-	minioRegion = "us-east-1"
-	testBucket  = "gobit-uploads"
+	s3AccessKey = "gobit-test-key"
+	s3SecretKey = "gobit-test-secret"
+	// The server answers for any region when the bucket was created without
+	// one; the value still has to match between signing and verification.
+	s3Region   = "us-east-1"
+	testBucket = "gobit-uploads"
 )
 
-// startMinIO brings up a MinIO and returns its endpoint.
-func startMinIO(t *testing.T) *url.URL {
+// startS3 brings up an S3 server and returns its endpoint.
+func startS3(t *testing.T) *url.URL {
 	t.Helper()
 
 	ctx := t.Context()
 
 	ctr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
-			Image:        minioImage,
+			Image:        s3Image,
 			ExposedPorts: []string{"9000/tcp"},
 			Env: map[string]string{
-				"MINIO_ROOT_USER":     minioUser,
-				"MINIO_ROOT_PASSWORD": minioPass,
+				"RUSTFS_ACCESS_KEY": s3AccessKey,
+				"RUSTFS_SECRET_KEY": s3SecretKey,
 			},
-			Cmd: []string{"server", "/data"},
-			// The probe is MinIO's CLUSTER health rather than its liveness
-			// endpoint, and the difference is not pedantic: /health/live answers
-			// as soon as the process is up, while the S3 API keeps replying 503
-			// XMinioServerNotInitialized for a moment after that. Probing
-			// liveness makes the first request of the suite fail at random —
-			// measured, not guessed.
-			WaitingFor: wait.ForHTTP("/minio/health/cluster").
+			// The probe is READINESS rather than liveness, and the difference is
+			// not pedantic: /health answers 200 as soon as the process is up,
+			// while /health/ready answers 503 until the storage behind the S3
+			// API is initialized — measured on 1.0.0 in the first second after
+			// start. Probing liveness makes the first request of the suite fail
+			// at random; MinIO had the same gap under other names.
+			WaitingFor: wait.ForHTTP("/health/ready").
 				WithPort("9000/tcp").
 				WithStartupTimeout(90 * time.Second),
 		},
 		Started: true,
 	})
-	require.NoError(t, err, "MinIO could not be started; this suite needs Docker")
+	require.NoError(t, err, "the S3 server could not be started; this suite needs Docker")
 
 	t.Cleanup(func() {
 		if err := testcontainers.TerminateContainer(ctr); err != nil {
-			t.Logf("the MinIO container could not be terminated: %v", err)
+			t.Logf("the S3 container could not be terminated: %v", err)
 		}
 	})
 
@@ -122,15 +122,15 @@ func newLiveProvider(t *testing.T, endpoint *url.URL) *provider {
 	t.Helper()
 
 	creds := credentials{
-		accessKeyID:     minioUser,
-		secretAccessKey: minioPass,
-		region:          minioRegion,
+		accessKeyID:     s3AccessKey,
+		secretAccessKey: s3SecretKey,
+		region:          s3Region,
 	}
 
 	p := &provider{
 		bucket:    testBucket,
 		endpoint:  endpoint,
-		pathStyle: true, // MinIO's default addressing.
+		pathStyle: true, // what self-hosted S3 servers address by default
 		baseURL:   endpoint.String() + "/" + testBucket,
 		creds:     creds,
 		client:    &http.Client{},
@@ -142,11 +142,11 @@ func newLiveProvider(t *testing.T, endpoint *url.URL) *provider {
 	return p
 }
 
-// createBucketWhenReady retries past MinIO's initialization window.
+// createBucketWhenReady retries past the server's initialization window.
 //
-// The cluster health probe closes most of the race, but not all of it: MinIO
-// can answer that probe and still return 503 XMinioServerNotInitialized to the
-// next S3 call. The retry is bounded and only covers 503 — a 403 is returned at
+// The readiness probe closes most of the race, but a server can answer it and
+// still return 503 to the next S3 call — MinIO did, measured, and the retry is
+// kept for any server that does. The retry is bounded and only covers 503 — a 403 is returned at
 // once, because a signature fault must not be hidden behind a retry loop that
 // eventually reports a timeout instead of the real cause.
 func createBucketWhenReady(t *testing.T, p *provider) {
@@ -211,7 +211,7 @@ func get(t *testing.T, rawURL string) (status int, body []byte) {
 // A 403 here means the canonical request this code builds is not the one the
 // server rebuilds, and the unit tests cannot tell the difference.
 func TestARealS3AcceptsTheSignature(t *testing.T) {
-	p := newLiveProvider(t, startMinIO(t))
+	p := newLiveProvider(t, startS3(t))
 
 	const payload = "the bytes that were signed"
 
@@ -234,7 +234,7 @@ func TestARealS3AcceptsTheSignature(t *testing.T) {
 // rewind, say — is rejected, so a passing upload is evidence that what was
 // hashed and what was sent are the same thing.
 func TestTheStoredObjectIsTheOneThatWasSigned(t *testing.T) {
-	endpoint := startMinIO(t)
+	endpoint := startS3(t)
 	p := newLiveProvider(t, endpoint)
 
 	const payload = "content integrity is what the payload hash buys"
@@ -263,7 +263,7 @@ func TestTheStoredObjectIsTheOneThatWasSigned(t *testing.T) {
 // Without this the suite could pass against a store that ignores signatures
 // entirely, and every other test here would be worthless.
 func TestAWrongSecretIsRefusedByTheServer(t *testing.T) {
-	endpoint := startMinIO(t)
+	endpoint := startS3(t)
 	p := newLiveProvider(t, endpoint)
 
 	p.creds.secretAccessKey = "not the secret this server knows"
@@ -281,7 +281,7 @@ func TestAWrongSecretIsRefusedByTheServer(t *testing.T) {
 // TestDeleteRemovesTheObjectAndIsIdempotent proves the second call of the
 // contract against a real store.
 func TestDeleteRemovesTheObjectAndIsIdempotent(t *testing.T) {
-	endpoint := startMinIO(t)
+	endpoint := startS3(t)
 	p := newLiveProvider(t, endpoint)
 	makeBucketPublic(t, p)
 
@@ -313,7 +313,7 @@ func TestDeleteRemovesTheObjectAndIsIdempotent(t *testing.T) {
 // succeeds, the record is written, and the address points at an object that
 // lives one path segment away.
 func TestAKeyPrefixKeepsTwoInstallationsApart(t *testing.T) {
-	endpoint := startMinIO(t)
+	endpoint := startS3(t)
 	p := newLiveProvider(t, endpoint)
 	p.prefix = "tenant-a"
 	makeBucketPublic(t, p)
