@@ -453,8 +453,8 @@ func recordOf[T any](
 func holdingsOf(table string) []personaldata.Holding {
 	out := make([]personaldata.Holding, 0, len(personalColumns))
 	for i := range personalColumns {
-		if personalColumns[i].holding.Table == table {
-			out = append(out, personalColumns[i].holding)
+		if personalColumns[i].Table == table {
+			out = append(out, personalColumns[i])
 		}
 	}
 
@@ -472,8 +472,8 @@ func holdingsOf(table string) []personaldata.Holding {
 // none of it was typed holds nothing about anybody; twenty such records would
 // bury the one that has a note in it.
 func rowIsDisclosed(table string) bool {
-	return slices.ContainsFunc(personalColumns, func(c personalColumn) bool {
-		return c.holding.Table == table && c.holding.Kind == personaldata.Named
+	return slices.ContainsFunc(personalColumns, func(c personaldata.Holding) bool {
+		return c.Table == table && c.Kind == personaldata.Named
 	})
 }
 

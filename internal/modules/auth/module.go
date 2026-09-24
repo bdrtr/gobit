@@ -416,47 +416,58 @@ func (m *Module) PersonalData() personaldata.Declaration {
 		Holdings: []personaldata.Holding{
 			{
 				Table: tableUser, Column: "email", Kind: personaldata.Named,
-				Why: "the work address of a staff member with access to the administration panel; it is also the name they log in with",
+				Why:       "the work address of a staff member with access to the administration panel; it is also the name they log in with",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableUser, Column: "first_name", Kind: personaldata.Named,
-				Why: "the staff member's first name as it was entered when their account was opened",
+				Why:       "the staff member's first name as it was entered when their account was opened",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableUser, Column: "last_name", Kind: personaldata.Named,
-				Why: "the staff member's last name as it was entered when their account was opened",
+				Why:       "the staff member's last name as it was entered when their account was opened",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableUser, Column: "avatar_url", Kind: personaldata.Named,
-				Why: "a link to the staff member's profile picture, which is an image of them and may in itself spell out their name or address",
+				Why:       "a link to the staff member's profile picture, which is an image of them and may in itself spell out their name or address",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableUser, Column: columnMetadata, Kind: personaldata.Open,
-				Why: "free-form context the shop keeps about a staff member; gobit writes nothing into it and never rewrites it, so whether it holds personal data is the controller's judgement",
+				Why:       "free-form context the shop keeps about a staff member; gobit writes nothing into it and never rewrites it, so whether it holds personal data is the controller's judgement",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableIdentity, Column: "provider_identity", Kind: personaldata.Named,
-				Why: "the staff member's identity at one login provider, and the column name understates it: on the built-in 'emailpass' provider this value IS their e-mail address, and on an external provider it is the account identifier that provider knows them by",
+				Why:       "the staff member's identity at one login provider, and the column name understates it: on the built-in 'emailpass' provider this value IS their e-mail address, and on an external provider it is the account identifier that provider knows them by",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableIdentity, Column: "password_hash", Kind: personaldata.Named,
-				Why: "a bcrypt hash of the password this staff member chose; it cannot be read back, but it is derived from a secret of theirs and people reuse passwords, so it is pseudonymised personal data rather than none",
+				Why:       "a bcrypt hash of the password this staff member chose; it cannot be read back, but it is derived from a secret of theirs and people reuse passwords, so it is pseudonymised personal data rather than none",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableIdentity, Column: "failed_attempts", Kind: personaldata.Named,
-				Why: "how many times in a row this staff member failed to sign in, which is a record of what they did and not a property of the account",
+				Why:       "how many times in a row this staff member failed to sign in, which is a record of what they did and not a property of the account",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableIdentity, Column: "locked_until", Kind: personaldata.Named,
-				Why: "the moment this staff member's sign-in lock expires, which says that their account was locked out and roughly when",
+				Why:       "the moment this staff member's sign-in lock expires, which says that their account was locked out and roughly when",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableIdentity, Column: "last_login_at", Kind: personaldata.Named,
-				Why: "when this staff member last signed in, which places a named person at work at a given moment",
+				Why:       "when this staff member last signed in, which places a named person at work at a given moment",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableIdentity, Column: columnMetadata, Kind: personaldata.Open,
-				Why: "free-form context the shop keeps about one login method; gobit writes nothing into it and never rewrites it, so whether it holds personal data is the controller's judgement",
+				Why:       "free-form context the shop keeps about one login method; gobit writes nothing into it and never rewrites it, so whether it holds personal data is the controller's judgement",
+				OnErasure: personaldata.Kept,
 			},
 			// The invitation table's identifiers are NOT declared, and the choice is
 			// this module's own rather than a fresh one: auth_identity.user_id is
@@ -468,27 +479,33 @@ func (m *Module) PersonalData() personaldata.Declaration {
 			// and not yet claimed, on a date.
 			{
 				Table: tableInvitation, Column: "created_at", Kind: personaldata.Named,
-				Why: "when an invitation was sent to this staff member; the row's existence is the fact rather than any column of it — an account was opened for a named person and, while the row is here, not yet claimed",
+				Why:       "when an invitation was sent to this staff member; the row's existence is the fact rather than any column of it — an account was opened for a named person and, while the row is here, not yet claimed",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableMFA, Column: "confirmed_at", Kind: personaldata.Named,
-				Why: "when this staff member proved a second factor, which is a fact about how they sign in; the secret beside it is a random seed that describes nobody, and the row's absence is itself the answer for somebody who never enrolled",
+				Why:       "when this staff member proved a second factor, which is a fact about how they sign in; the secret beside it is a random seed that describes nobody, and the row's absence is itself the answer for somebody who never enrolled",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableSalesChannel, Column: "name", Kind: personaldata.Open,
-				Why: "the name an operator gives a sales channel; it is usually a route to market such as 'Web', but a channel opened for a single dealer carries that dealer's name or their trading name",
+				Why:       "the name an operator gives a sales channel; it is usually a route to market such as 'Web', but a channel opened for a single dealer carries that dealer's name or their trading name",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableSalesChannel, Column: "description", Kind: personaldata.Open,
-				Why: "free text an operator types about a sales channel, which is as likely to hold a contact person and their phone number as anything else",
+				Why:       "free text an operator types about a sales channel, which is as likely to hold a contact person and their phone number as anything else",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableSalesChannel, Column: columnMetadata, Kind: personaldata.Open,
-				Why: "free-form context the shop keeps about a sales channel; gobit writes nothing into it and never rewrites it, so whether it holds personal data is the controller's judgement",
+				Why:       "free-form context the shop keeps about a sales channel; gobit writes nothing into it and never rewrites it, so whether it holds personal data is the controller's judgement",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableAPIKey, Column: "title", Kind: personaldata.Open,
-				Why: "the label an operator types on an API key, which is commonly the name of the colleague or the partner the key was issued to",
+				Why:       "the label an operator types on an API key, which is commonly the name of the colleague or the partner the key was issued to",
+				OnErasure: personaldata.Kept,
 			},
 		},
 	}

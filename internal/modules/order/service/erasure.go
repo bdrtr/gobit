@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/bdrtr/gobit/core/errors"
@@ -86,27 +87,18 @@ const (
 	columnReason   = "reason"
 )
 
-// personalColumn is one declared place this module keeps personal data, plus
-// whether the erasure rewrites it.
+// Where this module keeps personal data, and whether an erasure rewrites each
+// place, sit in ONE list: [personalColumns], whose [personaldata.Holding]
+// carries both since ADR 0172. The module's PersonalData answers "where could
+// this person be" and [personaldata.Result.Kept] answers "where could they still
+// be afterwards"; kept as separate lists they would agree on the day they were
+// written and diverge on the day a column was added to one of them — and the
+// failure would be silent, because the report would still look complete.
 //
-// The two facts sit in one row on purpose. The module's PersonalData answers "where
-// could this person be" and [personaldata.Result.Kept] answers "where could they
-// still be afterwards"; the second is the first minus the columns the
-// anonymizing statements null. Kept as separate lists they would agree on the
-// day they were written and diverge on the day a column was added to one of
-// them — and the failure would be silent, because the report would still look
-// complete.
-//
-// What this table CANNOT prove is that the erased flags match the SQL in
+// What the list CANNOT prove is that its OnErasure values match the SQL in
 // queries/erasure.sql. Nothing in Go can: the statements are text. That gap is
 // closed by the integration test, which re-reads every declared column that is
-// not in the kept list and fails if the database still holds a value.
-type personalColumn struct {
-	// holding is what the declaration says about the column.
-	holding personaldata.Holding
-	// erased reports that the anonymizing statements set the column to NULL.
-	erased bool
-}
+// not kept and fails if the database still holds a value.
 
 // personalColumns is every place the order module keeps personal data.
 //
@@ -130,44 +122,34 @@ type personalColumn struct {
 // The order of the entries is the order they appear in the report, so it is
 // stable and readable: table by table, in the order the migrations created the
 // tables.
-var personalColumns = []personalColumn{
+var personalColumns = []personaldata.Holding{
 	{
-		holding: personaldata.Holding{
-			Table: tableOrders, Column: "customer_id", Kind: personaldata.Named,
-			Why: "the customer module's identifier for the buyer; a guest order has none",
-		},
+		Table: tableOrders, Column: "customer_id", Kind: personaldata.Named,
+		Why: "the customer module's identifier for the buyer; a guest order has none",
 		// It is the ONLY indexed handle this module has (orders_customer_idx).
 		// Nulling it would leave the second sweep — the one idempotence
 		// requires to answer the same thing — unable to find the rows it
 		// already erased.
-		erased: false,
+		OnErasure: personaldata.Kept,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrders, Column: "email", Kind: personaldata.Named,
-			Why: "the address the buyer gave; on a guest order it is the only handle to them",
-		},
-		erased: true,
+		Table: tableOrders, Column: "email", Kind: personaldata.Named,
+		Why:       "the address the buyer gave; on a guest order it is the only handle to them",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrders, Column: "cancel_reason", Kind: personaldata.Open,
-			Why: "free text written when the order was canceled; it may quote or name the buyer",
-		},
-		erased: false,
+		Table: tableOrders, Column: "cancel_reason", Kind: personaldata.Open,
+		Why:       "free text written when the order was canceled; it may quote or name the buyer",
+		OnErasure: personaldata.Kept,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrders, Column: columnMetadata, Kind: personaldata.Open,
-			Why: "the caller's own data on the order; gobit does not look inside it",
-		},
-		erased: false,
+		Table: tableOrders, Column: columnMetadata, Kind: personaldata.Open,
+		Why:       "the caller's own data on the order; gobit does not look inside it",
+		OnErasure: personaldata.Kept,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrders, Column: "idempotency_key", Kind: personaldata.Open,
-			Why: "the caller's own replay handle for the order; gobit neither builds it nor reads what is in it",
-		},
+		Table: tableOrders, Column: "idempotency_key", Kind: personaldata.Open,
+		Why: "the caller's own replay handle for the order; gobit neither builds it nor reads what is in it",
 		// It is declared Open rather than left out because the value is the
 		// CALLER'S text and not this module's: the workflow that places the
 		// order chooses it, [normalizeCreateOrder] only checks that it is
@@ -183,158 +165,116 @@ var personalColumns = []personalColumn{
 		// and a NULL there is outside the partial index — a retry arriving after
 		// the erasure would open a SECOND order for a person who asked to be
 		// forgotten.
-		erased: false,
+		OnErasure: personaldata.Kept,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderLineItems, Column: columnMetadata, Kind: personaldata.Open,
-			Why: "the caller's own data on a line — a personalisation, an engraving, a gift note",
-		},
-		erased: false,
+		Table: tableOrderLineItems, Column: columnMetadata, Kind: personaldata.Open,
+		Why:       "the caller's own data on a line — a personalisation, an engraving, a gift note",
+		OnErasure: personaldata.Kept,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderAddresses, Column: "source_address_id", Kind: personaldata.Named,
-			Why: "which entry of the buyer's address book this copy was taken from",
-		},
-		erased: true,
+		Table: tableOrderAddresses, Column: "source_address_id", Kind: personaldata.Named,
+		Why:       "which entry of the buyer's address book this copy was taken from",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderAddresses, Column: "first_name", Kind: personaldata.Named,
-			Why: "the buyer's given name as it was written on the order",
-		},
-		erased: true,
+		Table: tableOrderAddresses, Column: "first_name", Kind: personaldata.Named,
+		Why:       "the buyer's given name as it was written on the order",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderAddresses, Column: "last_name", Kind: personaldata.Named,
-			Why: "the buyer's family name as it was written on the order",
-		},
-		erased: true,
+		Table: tableOrderAddresses, Column: "last_name", Kind: personaldata.Named,
+		Why:       "the buyer's family name as it was written on the order",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderAddresses, Column: "company", Kind: personaldata.Named,
-			Why: "the company on the address; a one-person business is a person",
-		},
-		erased: true,
+		Table: tableOrderAddresses, Column: "company", Kind: personaldata.Named,
+		Why:       "the company on the address; a one-person business is a person",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderAddresses, Column: "address_1", Kind: personaldata.Named,
-			Why: "the street the order was shipped to or billed to",
-		},
-		erased: true,
+		Table: tableOrderAddresses, Column: "address_1", Kind: personaldata.Named,
+		Why:       "the street the order was shipped to or billed to",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderAddresses, Column: "address_2", Kind: personaldata.Named,
-			Why: "the rest of the street address — the building, the floor, the flat",
-		},
-		erased: true,
+		Table: tableOrderAddresses, Column: "address_2", Kind: personaldata.Named,
+		Why:       "the rest of the street address — the building, the floor, the flat",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderAddresses, Column: "city", Kind: personaldata.Named,
-			Why: "the city of the address",
-		},
-		erased: true,
+		Table: tableOrderAddresses, Column: "city", Kind: personaldata.Named,
+		Why:       "the city of the address",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderAddresses, Column: "province", Kind: personaldata.Named,
-			Why: "the province or district of the address",
-		},
-		erased: true,
+		Table: tableOrderAddresses, Column: "province", Kind: personaldata.Named,
+		Why:       "the province or district of the address",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderAddresses, Column: "postal_code", Kind: personaldata.Named,
-			Why: "the postal code, which in a small district reaches a household on its own",
-		},
-		erased: true,
+		Table: tableOrderAddresses, Column: "postal_code", Kind: personaldata.Named,
+		Why:       "the postal code, which in a small district reaches a household on its own",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderAddresses, Column: "country_code", Kind: personaldata.Named,
-			Why: "the country the order went to; it is the one address column the erasure keeps",
-		},
+		Table: tableOrderAddresses, Column: "country_code", Kind: personaldata.Named,
+		Why: "the country the order went to; it is the one address column the erasure keeps",
 		// The row itself has to survive — an absent address row already means
 		// "this order never had one", and a shop selling a download writes
 		// none — so what is left has to stay readable AS an address. A country
 		// on its own does not reach a person.
-		erased: false,
+		OnErasure: personaldata.Kept,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderAddresses, Column: "phone", Kind: personaldata.Named,
-			Why: "the number given for the delivery",
-		},
-		erased: true,
+		Table: tableOrderAddresses, Column: "phone", Kind: personaldata.Named,
+		Why:       "the number given for the delivery",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderAddresses, Column: columnMetadata, Kind: personaldata.Open,
-			Why: "the caller's own data on the address — delivery instructions are typed here",
-		},
-		erased: false,
+		Table: tableOrderAddresses, Column: columnMetadata, Kind: personaldata.Open,
+		Why:       "the caller's own data on the address — delivery instructions are typed here",
+		OnErasure: personaldata.Kept,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderReturns, Column: columnReason, Kind: personaldata.Open,
-			Why: "why the goods came back, in whoever's words opened the record",
-		},
-		erased: false,
+		Table: tableOrderReturns, Column: columnReason, Kind: personaldata.Open,
+		Why:       "why the goods came back, in whoever's words opened the record",
+		OnErasure: personaldata.Kept,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderReturns, Column: columnNote, Kind: personaldata.Open,
-			Why: "a free note on the return; an operator writes what the customer said here",
-		},
-		erased: false,
+		Table: tableOrderReturns, Column: columnNote, Kind: personaldata.Open,
+		Why:       "a free note on the return; an operator writes what the customer said here",
+		OnErasure: personaldata.Kept,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderReturns, Column: columnMetadata, Kind: personaldata.Open,
-			Why: "the caller's own data on the return",
-		},
-		erased: false,
+		Table: tableOrderReturns, Column: columnMetadata, Kind: personaldata.Open,
+		Why:       "the caller's own data on the return",
+		OnErasure: personaldata.Kept,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderExchanges, Column: columnNote, Kind: personaldata.Open,
-			Why: "a free note on the exchange request",
-		},
-		erased: false,
+		Table: tableOrderExchanges, Column: columnNote, Kind: personaldata.Open,
+		Why:       "a free note on the exchange request",
+		OnErasure: personaldata.Kept,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderExchanges, Column: columnMetadata, Kind: personaldata.Open,
-			Why: "the caller's own data on the exchange",
-		},
-		erased: false,
+		Table: tableOrderExchanges, Column: columnMetadata, Kind: personaldata.Open,
+		Why:       "the caller's own data on the exchange",
+		OnErasure: personaldata.Kept,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderClaims, Column: columnReason, Kind: personaldata.Open,
-			Why: "what the claim is about — damage or shortage — in free text",
-		},
-		erased: false,
+		Table: tableOrderClaims, Column: columnReason, Kind: personaldata.Open,
+		Why:       "what the claim is about — damage or shortage — in free text",
+		OnErasure: personaldata.Kept,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderClaims, Column: columnNote, Kind: personaldata.Open,
-			Why: "a free note on the claim",
-		},
-		erased: false,
+		Table: tableOrderClaims, Column: columnNote, Kind: personaldata.Open,
+		Why:       "a free note on the claim",
+		OnErasure: personaldata.Kept,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableOrderClaims, Column: columnMetadata, Kind: personaldata.Open,
-			Why: "the caller's own data on the claim",
-		},
-		erased: false,
+		Table: tableOrderClaims, Column: columnMetadata, Kind: personaldata.Open,
+		Why:       "the caller's own data on the claim",
+		OnErasure: personaldata.Kept,
 	},
 }
 
@@ -349,41 +289,20 @@ var personalColumns = []personalColumn{
 // that has no reason to be careful with it, and handing out the package's own
 // slice would let one caller's append reach every later one.
 func PersonalDataHoldings() []personaldata.Holding {
-	out := make([]personaldata.Holding, 0, len(personalColumns))
-	for i := range personalColumns {
-		out = append(out, personalColumns[i].holding)
-	}
-
-	return out
+	return slices.Clone(personalColumns)
 }
 
 // keptAfterAnonymize lists the "table.column" entries an anonymized order still
 // holds.
 func keptAfterAnonymize() []string {
-	out := make([]string, 0, len(personalColumns))
-	for i := range personalColumns {
-		if personalColumns[i].erased {
-			continue
-		}
-		out = append(out, columnPath(personalColumns[i].holding))
-	}
-
-	return out
+	return personaldata.Declaration{Holdings: personalColumns}.KeptOnErasure()
 }
 
 // keptWhenRetained lists every declared column, which is what a retained order
 // still holds: nothing was rewritten on it.
 func keptWhenRetained() []string {
-	out := make([]string, 0, len(personalColumns))
-	for i := range personalColumns {
-		out = append(out, columnPath(personalColumns[i].holding))
-	}
-
-	return out
+	return personaldata.Declaration{Holdings: personalColumns}.Paths()
 }
-
-// columnPath spells one holding the way [personaldata.Result.Kept] wants it.
-func columnPath(h personaldata.Holding) string { return h.Table + "." + h.Column }
 
 // whyAnonymized explains the kept list of an anonymized answer.
 //

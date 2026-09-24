@@ -329,39 +329,48 @@ func (m *Module) PersonalData() personaldata.Declaration {
 		Holdings: []personaldata.Holding{
 			{
 				Table: tableCompany, Column: "name", Kind: personaldata.Named,
-				Why: "the company's name, which for a sole trader is that person's own name",
+				Why:       "the company's name, which for a sole trader is that person's own name",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableCompany, Column: "email", Kind: personaldata.Named,
-				Why: "the e-mail address the company account is reached at, which for a one-person company is that person's own address",
+				Why:       "the e-mail address the company account is reached at, which for a one-person company is that person's own address",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableCompany, Column: "phone", Kind: personaldata.Named,
-				Why: "the telephone number left for the company, which for a one-person company is that person's own number",
+				Why:       "the telephone number left for the company, which for a one-person company is that person's own number",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableCompany, Column: "address", Kind: personaldata.Named,
-				Why: "the street line of the company's billing address, which is a person's home address whenever they trade from where they live",
+				Why:       "the street line of the company's billing address, which is a person's home address whenever they trade from where they live",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableCompany, Column: "city", Kind: personaldata.Named,
-				Why: "the city of the company's billing address",
+				Why:       "the city of the company's billing address",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableCompany, Column: "postal_code", Kind: personaldata.Named,
-				Why: "the postal code of the company's billing address, which in some countries reaches a single building",
+				Why:       "the postal code of the company's billing address, which in some countries reaches a single building",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableCompany, Column: "country_code", Kind: personaldata.Named,
-				Why: "the country of the company's billing address, which is also the jurisdiction whose tax and retention rules apply",
+				Why:       "the country of the company's billing address, which is also the jurisdiction whose tax and retention rules apply",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableEmployee, Column: "spending_limit", Kind: personaldata.Named,
-				Why: "how much one employee may spend on their employer's account, a fact about that person although this table records no name, no address and no identifier of theirs",
+				Why:       "how much one employee may spend on their employer's account, a fact about that person although this table records no name, no address and no identifier of theirs",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableEmployee, Column: "is_company_admin", Kind: personaldata.Named,
-				Why: "whether that same employee may administer their company's account, which describes the person's authority rather than the company",
+				Why:       "whether that same employee may administer their company's account, which describes the person's authority rather than the company",
+				OnErasure: personaldata.Kept,
 			},
 		},
 	}

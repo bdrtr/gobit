@@ -59,7 +59,7 @@ func TestTheDisclosureCanReadEveryDeclaredColumn(t *testing.T) {
 
 	declared := make(map[string][]string)
 	for i := range personalColumns {
-		holding := personalColumns[i].holding
+		holding := personalColumns[i]
 		declared[holding.Table] = append(declared[holding.Table], holding.Column)
 	}
 	require.NotEmpty(t, declared, "the declaration is empty and this test approves anything")
@@ -106,8 +106,8 @@ func TestARecordCarriesTheDeclaredColumnsInDeclarationOrder(t *testing.T) {
 
 	expected := make([]string, 0, len(columns))
 	for i := range personalColumns {
-		if personalColumns[i].holding.Table == tableOrders {
-			expected = append(expected, personalColumns[i].holding.Column)
+		if personalColumns[i].Table == tableOrders {
+			expected = append(expected, personalColumns[i].Column)
 		}
 	}
 

@@ -116,12 +116,14 @@ func (m *Module) PersonalData() personaldata.Declaration {
 				Kind: personaldata.Named,
 				Why: "the shop's own identifier for the person these credentials sign in, and " +
 					"the handle every session cookie this module issues carries",
+				OnErasure: personaldata.Emptied,
 			},
 			{
 				Table: tableCustomerCredentials, Column: columnEmail,
 				Kind: personaldata.Named,
 				Why: "the address the person signs in with, folded to lower case; it is their " +
 					"e-mail address and it is also the name they log in under",
+				OnErasure: personaldata.Emptied,
 			},
 			{
 				Table: tableCustomerCredentials, Column: columnPasswordHash,
@@ -129,17 +131,20 @@ func (m *Module) PersonalData() personaldata.Declaration {
 				Why: "an argon2id hash of the password this person chose; it cannot be read " +
 					"back, but it is derived from a secret of theirs and people reuse " +
 					"passwords, so it is pseudonymised personal data rather than none",
+				OnErasure: personaldata.Emptied,
 			},
 			{
 				Table: tableCustomerCredentials, Column: columnCreatedAt,
 				Kind: personaldata.Named,
 				Why: "when this person first set a password here, which is a record of " +
 					"something they did at a moment rather than a property of the account",
+				OnErasure: personaldata.Emptied,
 			},
 			{
 				Table: tableCustomerCredentials, Column: columnUpdatedAt,
-				Kind: personaldata.Named,
-				Why:  "when they last changed it, which says they were here and roughly when",
+				Kind:      personaldata.Named,
+				Why:       "when they last changed it, which says they were here and roughly when",
+				OnErasure: personaldata.Emptied,
 			},
 			// The pending-registration table is declared too, and it was NOT until
 			// the personal-data audit failed on it. A row there is not an account —
@@ -152,6 +157,7 @@ func (m *Module) PersonalData() personaldata.Declaration {
 				Why: "an address somebody typed into the sign-up form and has not yet " +
 					"proven; it is a claim rather than an account, and it is still their " +
 					"address sitting in this shop's database",
+				OnErasure: personaldata.Emptied,
 			},
 			{
 				Table: tableCustomerRegistrations, Column: columnPasswordHash,
@@ -159,6 +165,7 @@ func (m *Module) PersonalData() personaldata.Declaration {
 				Why: "an argon2id hash of the password chosen during a registration that was " +
 					"never completed; hashed the moment it arrived, so the plaintext never " +
 					"outlived that request",
+				OnErasure: personaldata.Emptied,
 			},
 			{
 				Table: tableCustomerRegistrations, Column: columnTokenHash,
@@ -166,18 +173,21 @@ func (m *Module) PersonalData() personaldata.Declaration {
 				Why: "the SHA-256 of the link that was sent to that address; it identifies " +
 					"the registration rather than the person, and it is declared because a " +
 					"controller asked to erase somebody has to know this row is here",
+				OnErasure: personaldata.Emptied,
 			},
 			{
 				Table: tableCustomerRegistrations, Column: columnCreatedAt,
 				Kind: personaldata.Named,
 				Why: "when that registration was started, which is a record of something " +
 					"the person did at a moment",
+				OnErasure: personaldata.Emptied,
 			},
 			{
 				Table: tableCustomerRegistrations, Column: columnExpiresAt,
 				Kind: personaldata.Named,
 				Why: "when the link stops working; declared beside the moment above so that " +
 					"a controller reading this list sees the whole row rather than part of it",
+				OnErasure: personaldata.Emptied,
 			},
 		},
 	}
@@ -358,14 +368,9 @@ func subjectHandles(s personaldata.Subject) (customerID, email string, err error
 // What is kept is listed from the DECLARATION rather than from a second list, so
 // a column added to one is never missing from the other.
 func (m *Module) retained(why string) personaldata.Result {
-	declared := m.PersonalData().Holdings
-	kept := make([]string, 0, len(declared))
-	for _, holding := range declared {
-		kept = append(kept, holding.Table+"."+holding.Column)
-	}
-
 	return personaldata.Result{
-		Holder: ErasureHolder, Outcome: personaldata.Retained, Kept: kept, Why: why,
+		Holder: ErasureHolder, Outcome: personaldata.Retained,
+		Kept: m.PersonalData().Paths(), Why: why,
 	}
 }
 

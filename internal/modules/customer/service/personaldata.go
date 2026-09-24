@@ -88,63 +88,78 @@ const (
 var personalDataHoldings = []personaldata.Holding{
 	{
 		Table: TableCustomer, Column: columnEmail, Kind: personaldata.Named,
-		Why: "the address the person gave; it is also how a guest checkout is recognized",
+		Why:       "the address the person gave; it is also how a guest checkout is recognized",
+		OnErasure: personaldata.Emptied,
 	},
 	{
 		Table: TableCustomer, Column: columnFirstName, Kind: personaldata.Named,
-		Why: "the person's first name as they typed it",
+		Why:       "the person's first name as they typed it",
+		OnErasure: personaldata.Emptied,
 	},
 	{
 		Table: TableCustomer, Column: columnLastName, Kind: personaldata.Named,
-		Why: "the person's last name as they typed it",
+		Why:       "the person's last name as they typed it",
+		OnErasure: personaldata.Emptied,
 	},
 	{
 		Table: TableCustomer, Column: columnPhone, Kind: personaldata.Named,
-		Why: "the person's phone number, used to reach them about an order",
+		Why:       "the person's phone number, used to reach them about an order",
+		OnErasure: personaldata.Emptied,
 	},
 	{
 		Table: TableCustomer, Column: columnMetadata, Kind: personaldata.Open,
-		Why: "free-form context the shop writes about the customer; gobit puts nothing in it and never rewrites it, so whether it holds personal data is the controller's judgement",
+		Why:       "free-form context the shop writes about the customer; gobit puts nothing in it and never rewrites it, so whether it holds personal data is the controller's judgement",
+		OnErasure: personaldata.Kept,
 	},
 	{
 		Table: TableGroup, Column: columnMetadata, Kind: personaldata.Open,
-		Why: "free-form context the shop writes about a customer segment; the group is not a person, but the blob is the shop's to fill and gobit never looks inside it, so whether it names anybody is the controller's judgement",
+		Why:       "free-form context the shop writes about a customer segment; the group is not a person, but the blob is the shop's to fill and gobit never looks inside it, so whether it names anybody is the controller's judgement",
+		OnErasure: personaldata.Kept,
 	},
 	{
 		Table: TableAddress, Column: columnFirstName, Kind: personaldata.Named,
-		Why: "the first name on a saved address, which may be the customer's or a recipient's",
+		Why:       "the first name on a saved address, which may be the customer's or a recipient's",
+		OnErasure: personaldata.Emptied,
 	},
 	{
 		Table: TableAddress, Column: columnLastName, Kind: personaldata.Named,
-		Why: "the last name on a saved address, which may be the customer's or a recipient's",
+		Why:       "the last name on a saved address, which may be the customer's or a recipient's",
+		OnErasure: personaldata.Emptied,
 	},
 	{
 		Table: TableAddress, Column: columnCompany, Kind: personaldata.Named,
-		Why: "the company the address is delivered to; for a sole trader it names the person",
+		Why:       "the company the address is delivered to; for a sole trader it names the person",
+		OnErasure: personaldata.Emptied,
 	},
 	{
 		Table: TableAddress, Column: columnAddress1, Kind: personaldata.Named,
-		Why: "the street line of a saved address — where the person lives or takes deliveries",
+		Why:       "the street line of a saved address — where the person lives or takes deliveries",
+		OnErasure: personaldata.Emptied,
 	},
 	{
 		Table: TableAddress, Column: columnAddress2, Kind: personaldata.Named,
-		Why: "the second address line: flat, floor or door, which narrows the street line to a household",
+		Why:       "the second address line: flat, floor or door, which narrows the street line to a household",
+		OnErasure: personaldata.Emptied,
 	},
 	{
 		Table: TableAddress, Column: columnCity, Kind: personaldata.Named,
-		Why: "the city of a saved address",
+		Why:       "the city of a saved address",
+		OnErasure: personaldata.Emptied,
 	},
 	{
 		Table: TableAddress, Column: columnPostalCode, Kind: personaldata.Named,
-		Why: "the postal code of a saved address; in some countries it reaches a single building",
+		Why:       "the postal code of a saved address; in some countries it reaches a single building",
+		OnErasure: personaldata.Emptied,
 	},
 	{
 		Table: TableAddress, Column: columnPhone, Kind: personaldata.Named,
-		Why: "the contact phone left on a saved address for the courier",
+		Why:       "the contact phone left on a saved address for the courier",
+		OnErasure: personaldata.Emptied,
 	},
 	{
 		Table: TableAddress, Column: columnCountryCode, Kind: personaldata.Named,
-		Why: "the country of a saved address; it is declared but deliberately NOT erased, because it names the jurisdiction whose tax and retention rules apply, a two-letter code points at tens of millions of people, and the column's CHECK constraint refuses an empty value",
+		Why:       "the country of a saved address; it is declared but deliberately NOT erased, because it names the jurisdiction whose tax and retention rules apply, a two-letter code points at tens of millions of people, and the column's CHECK constraint refuses an empty value",
+		OnErasure: personaldata.Kept,
 	},
 }
 

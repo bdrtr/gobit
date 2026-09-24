@@ -250,23 +250,28 @@ func (m *Module) PersonalData() personaldata.Declaration {
 		Holdings: []personaldata.Holding{
 			{
 				Table: tableReviews, Column: "author_name", Kind: personaldata.Named,
-				Why: "the byline a member of the public typed in order to have it printed under their review, and the only identifying thing stored about them; gobit cannot find this person's reviews from a customer id or an e-mail address, so acting on them is the embedder's decision with information gobit does not have",
+				Why:       "the byline a member of the public typed in order to have it printed under their review, and the only identifying thing stored about them; gobit cannot find this person's reviews from a customer id or an e-mail address, so acting on them is the embedder's decision with information gobit does not have",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableReviews, Column: "title", Kind: personaldata.Open,
-				Why: "the headline the author typed; it is free text nobody validates and gobit does not read it, so it can carry a name, an address or a third party",
+				Why:       "the headline the author typed; it is free text nobody validates and gobit does not read it, so it can carry a name, an address or a third party",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableReviews, Column: "body", Kind: personaldata.Open,
-				Why: "the review itself, written by a member of the public about a product; it is their own words about their own purchase and gobit does not inspect them",
+				Why:       "the review itself, written by a member of the public about a product; it is their own words about their own purchase and gobit does not inspect them",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableReviews, Column: "moderation_note", Kind: personaldata.Open,
-				Why: "free text an operator typed when approving or rejecting the review, which may quote or describe the author; gobit does not read it",
+				Why:       "free text an operator typed when approving or rejecting the review, which may quote or describe the author; gobit does not read it",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableReviews, Column: "suggestion_note", Kind: personaldata.Open,
-				Why: "free text a language model produced as its reason for proposing that the review be approved or rejected, which routinely quotes the review it is about and can therefore carry anything the author wrote; gobit does not read it",
+				Why:       "free text a language model produced as its reason for proposing that the review be approved or rejected, which routinely quotes the review it is about and can therefore carry anything the author wrote; gobit does not read it",
+				OnErasure: personaldata.Kept,
 			},
 		},
 	}

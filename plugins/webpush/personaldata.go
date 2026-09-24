@@ -68,19 +68,23 @@ func (m *webpushModule) PersonalData() personaldata.Declaration {
 				Table: tableSubscription, Column: "endpoint", Kind: personaldata.Named,
 				Why: "the push service URL of one browser on one device. It names nobody and " +
 					"REACHES somebody, which is the same thing for the purpose of a disclosure",
+				OnErasure: personaldata.Emptied,
 			},
 			{
 				Table: tableSubscription, Column: "p256dh", Kind: personaldata.Named,
-				Why: "the device's public key, held about the person the device belongs to",
+				Why:       "the device's public key, held about the person the device belongs to",
+				OnErasure: personaldata.Emptied,
 			},
 			{
 				Table: tableSubscription, Column: "auth", Kind: personaldata.Named,
-				Why: "the device's secret, held about the person the device belongs to",
+				Why:       "the device's secret, held about the person the device belongs to",
+				OnErasure: personaldata.Emptied,
 			},
 			{
 				Table: tableSubscription, Column: "customer_id", Kind: personaldata.Named,
 				Why: "the customer this device was bound to when it subscribed, empty for a " +
 					"device that subscribed before signing in",
+				OnErasure: personaldata.Emptied,
 			},
 		},
 	}

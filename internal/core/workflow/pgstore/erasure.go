@@ -160,10 +160,7 @@ const whyKept = "the execution record keeps what the saga DID — the identifier
 // person. The two `failure` columns ARE here, because an error string is free
 // text and commonly quotes the input that produced it.
 func keptAfterErasure() []string {
-	return []string{
-		tableExecutions + ".failure",
-		tableSteps + ".failure",
-	}
+	return storeDeclaration().KeptOnErasure()
 }
 
 // PersonalData declares what this store keeps about people.
@@ -173,6 +170,12 @@ func keptAfterErasure() []string {
 // version listed both `output` columns as possibly personal because nobody had
 // looked at what goes into them. They hold identifiers and amounts.
 func (s *store) PersonalData() personaldata.Declaration {
+	return storeDeclaration()
+}
+
+// storeDeclaration is the store's declaration; it reads nothing, so the erasure
+// derives what it keeps from it (ADR 0172).
+func storeDeclaration() personaldata.Declaration {
 	return personaldata.Declaration{
 		Holdings: []personaldata.Holding{
 			{
@@ -181,14 +184,17 @@ func (s *store) PersonalData() personaldata.Declaration {
 					"plan, which carries the shopper's e-mail address and the shipping and billing " +
 					"addresses in full. An erasure empties exactly those three and leaves the rest, " +
 					"because the rest is what an abandoned saga is recovered from",
+				OnErasure: personaldata.Emptied,
 			},
 			{
 				Table: tableExecutions, Column: "failure", Kind: personaldata.Open,
-				Why: "the error text of a failed run, which commonly echoes the input that caused it",
+				Why:       "the error text of a failed run, which commonly echoes the input that caused it",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableSteps, Column: "failure", Kind: personaldata.Open,
-				Why: "one step's error text, with the same echo problem as the execution's",
+				Why:       "one step's error text, with the same echo problem as the execution's",
+				OnErasure: personaldata.Kept,
 			},
 		},
 	}

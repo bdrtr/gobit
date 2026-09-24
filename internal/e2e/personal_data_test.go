@@ -155,6 +155,7 @@ func TestOneSweepForgetsAPersonAcrossEveryHolderAndTheInvoiceSaysWhyItCannot(t *
 	assert.False(t, report.At.IsZero(), "the report has to say when the sweep ran")
 
 	answers := erasureAnswers(t, report)
+	assertKeptIsDeclared(t, co, report)
 
 	// --- the sale: anonymized, and it says what it left ---
 	sale := requireAnswer(t, answers, "order")

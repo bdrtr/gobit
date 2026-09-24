@@ -385,6 +385,8 @@ core/openapi Version
 core/openapi WithCursor
 core/personaldata Anonymized
 core/personaldata Declaration
+core/personaldata Declaration.KeptOnErasure
+core/personaldata Declaration.Paths
 core/personaldata Declarer
 core/personaldata Declarer.PersonalData
 core/personaldata Deleted
@@ -393,13 +395,17 @@ core/personaldata Discloser
 core/personaldata Discloser.PersonalDataOf
 core/personaldata Disclosure
 core/personaldata Dossier
+core/personaldata Emptied
 core/personaldata Eraser
 core/personaldata Eraser.Erase
 core/personaldata Field
 core/personaldata Holding
+core/personaldata Holding.Path
+core/personaldata Kept
 core/personaldata Kind
 core/personaldata Named
 core/personaldata Nothing
+core/personaldata OnErasure
 core/personaldata Open
 core/personaldata Outcome
 core/personaldata Record

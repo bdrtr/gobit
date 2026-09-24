@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"log/slog"
-	"slices"
 	"strings"
 
 	"github.com/bdrtr/gobit/core/errors"
@@ -34,10 +33,9 @@ const ErasureHolder = "customer"
 // CodeErasureSubjectEmpty reports an erasure request that named nobody.
 const CodeErasureSubjectEmpty = "customer_erasure_subject_empty"
 
-// erasureKept names what stays behind after this module anonymizes a person,
-// as "table.column" entries for [personaldata.Result.Kept].
-//
-// Every entry is a deliberate refusal rather than an oversight:
+// erasureKept names what stays behind after this module anonymizes a person:
+// the declaration's Kept holdings ([personalDataHoldings], ADR 0172). Each one
+// is a deliberate refusal rather than an oversight:
 //
 //   - customer.metadata is a free-form jsonb the embedding application writes.
 //     gobit never rewrites such a column, because ADR 0029 leaves the judgement
@@ -62,10 +60,8 @@ const CodeErasureSubjectEmpty = "customer_erasure_subject_empty"
 // Kept describes what this holder refuses to touch, which is a property of the
 // module and not of one person's data; making it conditional would mean two
 // runs of the same sweep produced two different descriptions of gobit.
-var erasureKept = []string{
-	"customer.metadata",
-	"customer_group.metadata",
-	"customer_address.country_code",
+func erasureKept() []string {
+	return personaldata.Declaration{Holdings: personalDataHoldings}.KeptOnErasure()
 }
 
 // erasureWhy is the sentence a controller repeats to the data subject about
@@ -179,7 +175,7 @@ func (s *Service) Erase(ctx context.Context, subject personaldata.Subject) (pers
 		// out is read by whoever answers the data subject, and a caller sorting
 		// or appending to it would edit this module's declaration of what it
 		// refuses to touch.
-		Kept: slices.Clone(erasureKept),
+		Kept: erasureKept(),
 		Why:  erasureWhy,
 	}, nil
 }

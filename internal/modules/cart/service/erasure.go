@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"slices"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/personaldata"
@@ -142,32 +143,18 @@ const (
 	columnPhone           = "phone"
 )
 
-// personalColumn is one declared place this module keeps personal data, plus
-// whether the erasure rewrites it.
+// Where this module keeps personal data, and whether an erasure rewrites each
+// place, sit in ONE list: [personalColumns], whose [personaldata.Holding]
+// carries both since ADR 0172. The module's PersonalData answers "where could
+// this person be" and [personaldata.Result.Kept] answers "where could they still
+// be afterwards"; kept as separate lists they would agree on the day they were
+// written and diverge on the day a column was added to one of them — and the
+// failure would be silent, because the report would still look complete.
 //
-// The two facts sit in one row on purpose. The module's PersonalData answers
-// "where could this person be" and [personaldata.Result.Kept] answers "where could
-// they still be afterwards"; the second is the first minus the columns the
-// anonymizing statements null. Kept as separate lists they would agree on the
-// day they were written and diverge on the day a column was added to one of
-// them — and the failure would be silent, because the report would still look
-// complete.
-//
-// What this table cannot prove BY ITSELF is that the erased flags match the SQL
-// in queries/erasure.sql: the statements are text and a Go value cannot run
-// them. Two tests take that as far as it goes without a database —
-// erasure_internal_test.go reads the statements and requires the columns they
-// set to NULL to be exactly the ones flagged erased here, and
-// internal/modules/cart/erasure_test.go requires this table to cover every
-// column the migration creates. What neither can see is the WHERE clause,
-// because a statement that finds no rows passes both; that is what the
-// integration test is for.
-type personalColumn struct {
-	// holding is what the declaration says about the column.
-	holding personaldata.Holding
-	// erased reports that the anonymizing statements set the column to NULL.
-	erased bool
-}
+// What the list CANNOT prove is that its OnErasure values match the SQL in
+// queries/erasure.sql. Nothing in Go can: the statements are text. That gap is
+// closed by the integration test, which re-reads every declared column that is
+// not kept and fails if the database still holds a value.
 
 // personalColumns is every place the cart module keeps personal data.
 //
@@ -191,133 +178,99 @@ type personalColumn struct {
 // The order of the entries is the order they appear in the report, so it is
 // stable and readable: table by table, in the order the migration creates the
 // tables, and within a table in the order the columns are declared.
-var personalColumns = []personalColumn{
+var personalColumns = []personaldata.Holding{
 	{
-		holding: personaldata.Holding{
-			Table: tableCarts, Column: columnCustomerID, Kind: personaldata.Named,
-			Why: "the customer module's identifier for the shopper; a guest cart has none",
-		},
+		Table: tableCarts, Column: columnCustomerID, Kind: personaldata.Named,
+		Why: "the customer module's identifier for the shopper; a guest cart has none",
 		// It is the handle a repeated sweep finds these rows by
 		// (carts_customer_idx). Nulling it would leave the second sweep — the
 		// one idempotence requires to answer the same thing — unable to find
 		// the rows it already erased.
-		erased: false,
+		OnErasure: personaldata.Kept,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableCarts, Column: columnEmail, Kind: personaldata.Named,
-			Why: "the address the shopper gave; on a guest cart it is the only handle to them",
-		},
-		erased: true,
+		Table: tableCarts, Column: columnEmail, Kind: personaldata.Named,
+		Why:       "the address the shopper gave; on a guest cart it is the only handle to them",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableCarts, Column: columnMetadata, Kind: personaldata.Open,
-			Why: "the caller's own data on the cart; gobit does not look inside it",
-		},
-		erased: false,
+		Table: tableCarts, Column: columnMetadata, Kind: personaldata.Open,
+		Why:       "the caller's own data on the cart; gobit does not look inside it",
+		OnErasure: personaldata.Kept,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableCartLineItems, Column: columnMetadata, Kind: personaldata.Open,
-			Why: "the caller's own data on a line — a personalisation, an engraving, a gift note",
-		},
-		erased: false,
+		Table: tableCartLineItems, Column: columnMetadata, Kind: personaldata.Open,
+		Why:       "the caller's own data on a line — a personalisation, an engraving, a gift note",
+		OnErasure: personaldata.Kept,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: columnSourceAddressID, Kind: personaldata.Named,
-			Why: "which entry of the shopper's address book this copy was taken from",
-		},
-		erased: true,
+		Table: tableCartAddresses, Column: columnSourceAddressID, Kind: personaldata.Named,
+		Why:       "which entry of the shopper's address book this copy was taken from",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: columnFirstName, Kind: personaldata.Named,
-			Why: "the shopper's given name as it was written on the cart",
-		},
-		erased: true,
+		Table: tableCartAddresses, Column: columnFirstName, Kind: personaldata.Named,
+		Why:       "the shopper's given name as it was written on the cart",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: columnLastName, Kind: personaldata.Named,
-			Why: "the shopper's family name as it was written on the cart",
-		},
-		erased: true,
+		Table: tableCartAddresses, Column: columnLastName, Kind: personaldata.Named,
+		Why:       "the shopper's family name as it was written on the cart",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: columnCompany, Kind: personaldata.Named,
-			Why: "the company on the address; a one-person business is a person",
-		},
-		erased: true,
+		Table: tableCartAddresses, Column: columnCompany, Kind: personaldata.Named,
+		Why:       "the company on the address; a one-person business is a person",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: columnAddress1, Kind: personaldata.Named,
-			Why: "the street the cart would have been shipped to or billed to",
-		},
-		erased: true,
+		Table: tableCartAddresses, Column: columnAddress1, Kind: personaldata.Named,
+		Why:       "the street the cart would have been shipped to or billed to",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: columnAddress2, Kind: personaldata.Named,
-			Why: "the rest of the street address — the building, the floor, the flat",
-		},
-		erased: true,
+		Table: tableCartAddresses, Column: columnAddress2, Kind: personaldata.Named,
+		Why:       "the rest of the street address — the building, the floor, the flat",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: columnCity, Kind: personaldata.Named,
-			Why: "the city of the address",
-		},
-		erased: true,
+		Table: tableCartAddresses, Column: columnCity, Kind: personaldata.Named,
+		Why:       "the city of the address",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: columnProvince, Kind: personaldata.Named,
-			Why: "the province or district of the address",
-		},
-		erased: true,
+		Table: tableCartAddresses, Column: columnProvince, Kind: personaldata.Named,
+		Why:       "the province or district of the address",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: columnPostalCode, Kind: personaldata.Named,
-			Why: "the postal code, which in a small district reaches a household on its own",
-		},
-		erased: true,
+		Table: tableCartAddresses, Column: columnPostalCode, Kind: personaldata.Named,
+		Why:       "the postal code, which in a small district reaches a household on its own",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: columnCountryCode, Kind: personaldata.Named,
-			Why: "the country the cart was addressed to; it is the one address column the erasure keeps",
-		},
+		Table: tableCartAddresses, Column: columnCountryCode, Kind: personaldata.Named,
+		Why: "the country the cart was addressed to; it is the one address column the erasure keeps",
 		// The row itself has to survive — an absent address row already means
 		// "this cart never reached the address step" — so what is left has to
 		// stay readable AS an address. A country is jurisdiction rather than
 		// identity and does not reach a person on its own.
-		erased: false,
+		OnErasure: personaldata.Kept,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: columnPhone, Kind: personaldata.Named,
-			Why: "the number given for the delivery",
-		},
-		erased: true,
+		Table: tableCartAddresses, Column: columnPhone, Kind: personaldata.Named,
+		Why:       "the number given for the delivery",
+		OnErasure: personaldata.Emptied,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableCartAddresses, Column: columnMetadata, Kind: personaldata.Open,
-			Why: "the caller's own data on the address — delivery instructions are typed here",
-		},
-		erased: false,
+		Table: tableCartAddresses, Column: columnMetadata, Kind: personaldata.Open,
+		Why:       "the caller's own data on the address — delivery instructions are typed here",
+		OnErasure: personaldata.Kept,
 	},
 	{
-		holding: personaldata.Holding{
-			Table: tableCartShippingMethods, Column: columnShippingData, Kind: personaldata.Open,
-			Why: "the delivery provider's own data on the chosen method — a pickup branch or a locker is typed here",
-		},
-		erased: false,
+		Table: tableCartShippingMethods, Column: columnShippingData, Kind: personaldata.Open,
+		Why:       "the delivery provider's own data on the chosen method — a pickup branch or a locker is typed here",
+		OnErasure: personaldata.Kept,
 	},
 }
 
@@ -332,30 +285,14 @@ var personalColumns = []personalColumn{
 // that has no reason to be careful with it, and handing out the package's own
 // slice would let one caller's append reach every later one.
 func PersonalDataHoldings() []personaldata.Holding {
-	out := make([]personaldata.Holding, 0, len(personalColumns))
-	for i := range personalColumns {
-		out = append(out, personalColumns[i].holding)
-	}
-
-	return out
+	return slices.Clone(personalColumns)
 }
 
 // keptAfterAnonymize lists the "table.column" entries an anonymized cart still
 // holds.
 func keptAfterAnonymize() []string {
-	out := make([]string, 0, len(personalColumns))
-	for i := range personalColumns {
-		if personalColumns[i].erased {
-			continue
-		}
-		out = append(out, columnPath(personalColumns[i].holding))
-	}
-
-	return out
+	return personaldata.Declaration{Holdings: personalColumns}.KeptOnErasure()
 }
-
-// columnPath spells one holding the way [personaldata.Result.Kept] wants it.
-func columnPath(h personaldata.Holding) string { return h.Table + "." + h.Column }
 
 // whyAnonymized explains the kept list of an anonymized answer.
 //

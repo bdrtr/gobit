@@ -314,63 +314,78 @@ func (m *Module) PersonalData() personaldata.Declaration {
 		Holdings: []personaldata.Holding{
 			{
 				Table: tableInvoices, Column: "buyer_name", Kind: personaldata.Named,
-				Why: "the name of the person or company the document was issued to, as it is printed on it",
+				Why:       "the name of the person or company the document was issued to, as it is printed on it",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableInvoices, Column: "buyer_tax_number", Kind: personaldata.Named,
-				Why: "the buyer's tax or national identification number, when the document carries one",
+				Why:       "the buyer's tax or national identification number, when the document carries one",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableInvoices, Column: "buyer_tax_office", Kind: personaldata.Named,
-				Why: "the tax office the buyer is registered with, which locates them administratively",
+				Why:       "the tax office the buyer is registered with, which locates them administratively",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableInvoices, Column: "buyer_email", Kind: personaldata.Named,
-				Why: "the buyer's e-mail address; that address is also the ONLY handle by which this module can find a person at all, though the column a search matches is its folded copy in buyer_email_folded, which migration 000003 added and this declaration does not name (ADR 0038)",
+				Why:       "the buyer's e-mail address; that address is also the ONLY handle by which this module can find a person at all, though the column a search matches is its folded copy in buyer_email_folded, which migration 000003 added and this declaration does not name (ADR 0038)",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableInvoices, Column: "buyer_address", Kind: personaldata.Named,
-				Why: "the buyer's postal address as printed on the document",
+				Why:       "the buyer's postal address as printed on the document",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableInvoices, Column: "buyer_country_code", Kind: personaldata.Named,
-				Why: "the buyer's country, which is part of the address and decides how the sale was taxed",
+				Why:       "the buyer's country, which is part of the address and decides how the sale was taxed",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableInvoices, Column: "seller_name", Kind: personaldata.Named,
-				Why: "the name of the party that ISSUED the document; for a sole trader that is a person's name. Erase never searches this column and never lists it as kept: a subject is resolved through the buyer address alone, so reaching a seller here is the controller's own job",
+				Why:       "the name of the party that ISSUED the document; for a sole trader that is a person's name. Erase never searches this column and never lists it as kept: a subject is resolved through the buyer address alone, so reaching a seller here is the controller's own job",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableInvoices, Column: "seller_tax_number", Kind: personaldata.Named,
-				Why: "the seller's tax or national identification number, which for a sole trader identifies a person. Erase never searches this column and never lists it as kept; it identifies the issuer of the document",
+				Why:       "the seller's tax or national identification number, which for a sole trader identifies a person. Erase never searches this column and never lists it as kept; it identifies the issuer of the document",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableInvoices, Column: "seller_tax_office", Kind: personaldata.Named,
-				Why: "the tax office the seller is registered with, which locates the issuer administratively. Erase never searches this column and never lists it as kept",
+				Why:       "the tax office the seller is registered with, which locates the issuer administratively. Erase never searches this column and never lists it as kept",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableInvoices, Column: "seller_email", Kind: personaldata.Named,
-				Why: "the seller's e-mail address as printed on the document. Erase never searches this column and never lists it as kept: an erasure request naming this very address counts ZERO invoices, because only the buyer's folded address is matched",
+				Why:       "the seller's e-mail address as printed on the document. Erase never searches this column and never lists it as kept: an erasure request naming this very address counts ZERO invoices, because only the buyer's folded address is matched",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableInvoices, Column: "seller_address", Kind: personaldata.Named,
-				Why: "the seller's postal address, which for a sole trader is frequently a home address. Erase never searches this column and never lists it as kept, so an audit of a sole trader's own data starts here rather than from an erasure report",
+				Why:       "the seller's postal address, which for a sole trader is frequently a home address. Erase never searches this column and never lists it as kept, so an audit of a sole trader's own data starts here rather than from an erasure report",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableInvoices, Column: "seller_country_code", Kind: personaldata.Named,
-				Why: "the seller's country, part of the printed address. Erase never searches this column and never lists it as kept",
+				Why:       "the seller's country, part of the printed address. Erase never searches this column and never lists it as kept",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableInvoices, Column: "status_reason", Kind: personaldata.Open,
-				Why: "free text an operator typed when the document was canceled or re-sent; it may name or describe anyone, and gobit does not read it",
+				Why:       "free text an operator typed when the document was canceled or re-sent; it may name or describe anyone, and gobit does not read it",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableInvoices, Column: "metadata", Kind: personaldata.Open,
-				Why: "a jsonb the caller fills and nothing validates; whatever the embedder put there about the buyer is here and gobit does not inspect it",
+				Why:       "a jsonb the caller fills and nothing validates; whatever the embedder put there about the buyer is here and gobit does not inspect it",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableInvoiceLines, Column: "description", Kind: personaldata.Open,
-				Why: "the printed text of a line, supplied by the caller; an engraving, a delivery note or a customer's own words can be in it",
+				Why:       "the printed text of a line, supplied by the caller; an engraving, a delivery note or a customer's own words can be in it",
+				OnErasure: personaldata.Kept,
 			},
 		},
 	}

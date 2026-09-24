@@ -109,6 +109,10 @@ type holdingDTO struct {
 	Kind string `json:"kind"`
 	// Why says what it holds about the person.
 	Why string `json:"why"`
+	// OnErasure is what a successful erasure does to it: "emptied" or "kept"
+	// (ADR 0172). A privacy notice can say which data goes on request and
+	// which stays, from the same list the erasure reports what it kept from.
+	OnErasure string `json:"on_erasure"`
 }
 
 // declarationsDTO is the whole declaration, and it is NOT a page.
@@ -329,10 +333,11 @@ func personalDataHandler(co *datasubject.Coordinator) http.HandlerFunc {
 			holdings := make([]holdingDTO, 0, len(d.Holdings))
 			for _, h := range d.Holdings {
 				holdings = append(holdings, holdingDTO{
-					Table:  h.Table,
-					Column: h.Column,
-					Kind:   string(h.Kind),
-					Why:    h.Why,
+					Table:     h.Table,
+					Column:    h.Column,
+					Kind:      string(h.Kind),
+					Why:       h.Why,
+					OnErasure: string(h.OnErasure),
 				})
 			}
 
@@ -412,7 +417,9 @@ func describePersonalData(d *openapi.Doc) {
 		Summary: "Lists what personal data this installation holds.",
 		Description: "The DECLARATION: every holder's tables and columns, with what each one keeps " +
 			"about a person and whether gobit wrote it there itself (kind \"named\") or the content " +
-			"is the embedder's (kind \"open\"). It is about NOBODY in particular — the answer is the " +
+			"is the embedder's (kind \"open\"), and what a successful erasure does to it: " +
+			"\"on_erasure\" is \"emptied\" or \"kept\", and an erasure's report of what it kept is " +
+			"read off this same list (ADR 0172). It is about NOBODY in particular — the answer is the " +
 			"same on an empty installation, which is what makes it usable for a privacy notice " +
 			"before the first order. Scope: " + ScopePersonalDataRead + ".",
 		Responses: map[string]any{

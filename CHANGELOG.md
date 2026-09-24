@@ -331,6 +331,15 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **A holding says what erasure does to it** (ADR 0172). `personaldata.Holding`
+  gains `OnErasure` — `Emptied` or `Kept` — and every holder declares it for
+  every column; `Declaration.KeptOnErasure` and `Declaration.Paths` read what an
+  erasure keeps off the declaration, and the holders that kept a second list
+  now derive it. `GET /admin/v1/personal-data` publishes `on_erasure` on every
+  holding, so a privacy notice can say which data goes on request and which
+  stays. **For embedders with their own holders:** a `Holding` that does not
+  set `OnErasure` declares neither, and the repository's own gate refuses one.
+
 - **An order can be read as it stood** (ADR 0171). A new admin endpoint,
   `GET /admin/v1/orders/{id}/as-of?at=<RFC 3339>`, answers an order at a past
   moment: its status, its money (total, credited, captured, refunded and

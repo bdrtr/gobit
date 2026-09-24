@@ -187,6 +187,26 @@ const (
 	Open Kind = "open"
 )
 
+// OnErasure is what a successful erasure does to a declared column (ADR 0172).
+//
+// It is part of the declaration rather than of each holder's erasure code, so
+// that the answer an erasure gives — what it kept — is read off the same list a
+// controller publishes a privacy notice from, and the two cannot drift.
+type OnErasure string
+
+const (
+	// Emptied means the column no longer holds the person once an erasure has
+	// succeeded: it was set to NULL, overwritten, or its row was removed.
+	Emptied OnErasure = "emptied"
+	// Kept means the column survives a successful erasure. The holder's
+	// [Result.Why] says why, in the words a controller repeats to the person.
+	//
+	// Every [Open] column is Kept: gobit never rewrites free-form content,
+	// because whether it holds personal data is the controller's judgement
+	// (ADR 0029).
+	Kept OnErasure = "kept"
+)
+
 // Holding is one declared place a holder keeps personal data.
 type Holding struct {
 	// Table is the table the column lives in.
@@ -199,7 +219,13 @@ type Holding struct {
 	// Why says what the column holds about the person, in the words somebody
 	// answering a data-subject request would use.
 	Why string
+	// OnErasure is what a successful erasure does to the column. A holder with
+	// no [Eraser] keeps everything it declares, and says so here.
+	OnErasure OnErasure
 }
+
+// Path is the holding as a [Result.Kept] entry names it: "table.column".
+func (h Holding) Path() string { return h.Table + "." + h.Column }
 
 // Declaration is what one holder says it keeps about people.
 //
@@ -220,6 +246,31 @@ type Declaration struct {
 	// delivery log deliberately has no recipient column, and saying so is worth
 	// more than saying nothing.
 	Holdings []Holding
+}
+
+// KeptOnErasure is every holding a successful erasure keeps, as [Result.Kept]
+// names them, in declaration order (ADR 0172). It is what an [Anonymized]
+// result reports as kept.
+func (d Declaration) KeptOnErasure() []string {
+	var out []string
+	for i := range d.Holdings {
+		if d.Holdings[i].OnErasure == Kept {
+			out = append(out, d.Holdings[i].Path())
+		}
+	}
+
+	return out
+}
+
+// Paths is every holding, as [Result.Kept] names them, in declaration order. It
+// is what a [Retained] result reports as kept: nothing was rewritten.
+func (d Declaration) Paths() []string {
+	out := make([]string, 0, len(d.Holdings))
+	for i := range d.Holdings {
+		out = append(out, d.Holdings[i].Path())
+	}
+
+	return out
 }
 
 // Eraser is the optional capability of answering an erasure request.

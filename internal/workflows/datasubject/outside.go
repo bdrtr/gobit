@@ -47,12 +47,12 @@ func outsideTheModuleTree(c *container.Container) []holder {
 		sagaStoreHolder(c),
 		{
 			name:     auditHolder,
-			eraser:   staticHolder{name: auditHolder, why: auditWhy, kept: auditColumns()},
+			eraser:   staticHolder{name: auditHolder, why: auditWhy, holdings: auditHoldings()},
 			declarer: staticHolder{name: auditHolder, why: auditWhy, holdings: auditHoldings()},
 		},
 		{
 			name:     linkHolder,
-			eraser:   staticHolder{name: linkHolder, why: linkWhy, kept: linkColumns()},
+			eraser:   staticHolder{name: linkHolder, why: linkWhy, holdings: linkHoldings()},
 			declarer: staticHolder{name: linkHolder, why: linkWhy, holdings: linkHoldings()},
 		},
 	}
@@ -87,7 +87,7 @@ func sagaStoreHolder(c *container.Container) holder {
 	}
 
 	if h.eraser == nil && h.declarer == nil {
-		h.eraser = staticHolder{name: workflowStoreHolder, why: workflowStoreWhy, kept: workflowStoreColumns()}
+		h.eraser = staticHolder{name: workflowStoreHolder, why: workflowStoreWhy, holdings: workflowStoreHoldings()}
 		h.declarer = staticHolder{name: workflowStoreHolder, why: workflowStoreWhy, holdings: workflowStoreHoldings()}
 	}
 
@@ -121,10 +121,13 @@ const (
 // It cannot count rows and does not pretend to: Rows stays zero, and
 // [personaldata.Result.Rows] is documented as informational precisely so that a
 // holder which cannot count is not forced to invent a number.
+//
+// What it reports as kept is its declaration, every holding of it: nothing was
+// searched or emptied. The two are one list since ADR 0172; before that the link
+// holder's kept list named from_id, a column its declaration never did (D128).
 type staticHolder struct {
 	name     string
 	why      string
-	kept     []string
 	holdings []personaldata.Holding
 }
 
@@ -133,7 +136,7 @@ func (s staticHolder) Erase(_ context.Context, _ personaldata.Subject) (personal
 	return personaldata.Result{
 		Holder:  s.name,
 		Outcome: personaldata.Retained,
-		Kept:    s.kept,
+		Kept:    personaldata.Declaration{Holdings: s.holdings}.Paths(),
 		Why:     s.why,
 	}, nil
 }
@@ -158,7 +161,7 @@ const workflowStoreWhy = "the saga store could not be reached from the container
 	"holds and what an erasure does to it are the store's own answer to give; this entry exists so that " +
 	"a coordinator built without it cannot pass over the store in silence."
 
-// workflowStoreColumns names what the fallback reports as kept.
+// workflowStoreHoldings is what the fallback declares and reports as kept.
 //
 // The two `output` columns are deliberately absent and their removal is a
 // measurement rather than a tidy-up: the execution's output and every step's
@@ -167,28 +170,23 @@ const workflowStoreWhy = "the saga store could not be reached from the container
 // wrong place. The store's own declaration says the same three things, and the
 // two agreeing is not an accident to be relied on — see the note on
 // [workflowStoreWhy] about why this stand-in stays minimal.
-func workflowStoreColumns() []string {
-	return []string{
-		tableWorkflowExecutions + ".input",
-		tableWorkflowExecutions + ".failure",
-		tableWorkflowSteps + ".failure",
-	}
-}
-
 func workflowStoreHoldings() []personaldata.Holding {
 	return []personaldata.Holding{
 		{
 			Table: tableWorkflowExecutions, Column: "input", Kind: personaldata.Named,
 			Why: "the workflow's arguments; for checkout this is the cart, including the shopper's " +
 				"e-mail address and the shipping and billing addresses in full",
+			OnErasure: personaldata.Kept,
 		},
 		{
 			Table: tableWorkflowExecutions, Column: "failure", Kind: personaldata.Open,
-			Why: "the error text of a failed run, which commonly echoes the input that caused it",
+			Why:       "the error text of a failed run, which commonly echoes the input that caused it",
+			OnErasure: personaldata.Kept,
 		},
 		{
 			Table: tableWorkflowSteps, Column: "failure", Kind: personaldata.Open,
-			Why: "one step's error text, with the same echo problem as the execution's",
+			Why:       "one step's error text, with the same echo problem as the execution's",
+			OnErasure: personaldata.Kept,
 		},
 	}
 }
@@ -198,23 +196,22 @@ const auditWhy = "the audit log records WHICH staff member touched WHICH admin p
 	"record\". Erasing it would destroy the evidence that the erasure itself was carried out, which is the " +
 	"one record a controller is most likely to be asked for."
 
-func auditColumns() []string {
-	return []string{tableAuditLog + ".actor_id", tableAuditLog + ".path", tableAuditLog + ".request_id"}
-}
-
 func auditHoldings() []personaldata.Holding {
 	return []personaldata.Holding{
 		{
 			Table: tableAuditLog, Column: "actor_id", Kind: personaldata.Named,
-			Why: "the identifier of the staff member or API key that made the request",
+			Why:       "the identifier of the staff member or API key that made the request",
+			OnErasure: personaldata.Kept,
 		},
 		{
 			Table: tableAuditLog, Column: "path", Kind: personaldata.Named,
-			Why: "the request path, and an admin path carries the identifier of the record it acted on",
+			Why:       "the request path, and an admin path carries the identifier of the record it acted on",
+			OnErasure: personaldata.Kept,
 		},
 		{
 			Table: tableAuditLog, Column: "request_id", Kind: personaldata.Open,
-			Why: "joins the row to the process log lines of the same request, whatever those contain",
+			Why:       "joins the row to the process log lines of the same request, whatever those contain",
+			OnErasure: personaldata.Kept,
 		},
 	}
 }
@@ -225,10 +222,6 @@ const linkWhy = "a link table binds one module's record to another's by bare ide
 	"identifier alone does not describe the person: it stops meaning anything once the customer record it " +
 	"points at has been anonymized."
 
-func linkColumns() []string {
-	return []string{tableLink + ".from_id", tableLink + ".to_id"}
-}
-
 func linkHoldings() []personaldata.Holding {
 	return []personaldata.Holding{
 		{
@@ -236,6 +229,7 @@ func linkHoldings() []personaldata.Holding {
 			Why: "the identifier of the record on the far side of a link; for b2b_employee_customer " +
 				"that is a customer id. The table name is chosen by whoever declares the link, so " +
 				"there is no fixed name to give here",
+			OnErasure: personaldata.Kept,
 		},
 	}
 }

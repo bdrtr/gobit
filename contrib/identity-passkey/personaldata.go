@@ -110,6 +110,7 @@ func (m *Module) PersonalData() personaldata.Declaration {
 				Why: "the shop's own identifier for the person this passkey signs in; it is " +
 					"the only handle this module keys on, and it is what makes every other " +
 					"column in the row a fact about somebody",
+				OnErasure: personaldata.Emptied,
 			},
 			{
 				Table: tablePasskeyCredentials, Column: columnCredentialID,
@@ -117,6 +118,7 @@ func (m *Module) PersonalData() personaldata.Declaration {
 				Why: "the identifier the person's authenticator minted for this shop; it is " +
 					"unique to them and to this site, so it identifies the device as well as " +
 					"the account and is pseudonymised personal data rather than none",
+				OnErasure: personaldata.Emptied,
 			},
 			{
 				Table: tablePasskeyCredentials, Column: columnCredential,
@@ -125,18 +127,21 @@ func (m *Module) PersonalData() personaldata.Declaration {
 					"derived from a secret held on the person's own device, the AAGUID naming " +
 					"the model of authenticator they use, the signature counter and the " +
 					"transports it can be reached over",
+				OnErasure: personaldata.Emptied,
 			},
 			{
 				Table: tablePasskeyCredentials, Column: columnCreatedAt,
 				Kind: personaldata.Named,
 				Why: "when this person registered this device, which is a record of something " +
 					"they did at a moment rather than a property of the account",
+				OnErasure: personaldata.Emptied,
 			},
 			{
 				Table: tablePasskeyCredentials, Column: columnLastUsedAt,
 				Kind: personaldata.Named,
 				Why: "the last sign-in with this device that this module managed to record; it " +
 					"says roughly when the person was last here and from which of their devices",
+				OnErasure: personaldata.Emptied,
 			},
 		},
 	}
@@ -248,14 +253,9 @@ func (m *Module) PersonalDataOf(
 // It lists what is kept from the DECLARATION rather than from a second list, so
 // a column added to one is never missing from the other.
 func (m *Module) retained(why string) personaldata.Result {
-	declared := m.PersonalData().Holdings
-	kept := make([]string, 0, len(declared))
-	for _, holding := range declared {
-		kept = append(kept, holding.Table+"."+holding.Column)
-	}
-
 	return personaldata.Result{
-		Holder: ErasureHolder, Outcome: personaldata.Retained, Kept: kept, Why: why,
+		Holder: ErasureHolder, Outcome: personaldata.Retained,
+		Kept: m.PersonalData().Paths(), Why: why,
 	}
 }
 

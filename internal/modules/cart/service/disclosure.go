@@ -316,7 +316,7 @@ func groupByCart[T any](rows []T, cartID func(T) string) map[string][]T {
 func declaredFields(table string, value func(column string) (any, bool, error)) ([]personaldata.Field, error) {
 	fields := make([]personaldata.Field, 0, len(personalColumns))
 	for i := range personalColumns {
-		holding := personalColumns[i].holding
+		holding := personalColumns[i]
 		if holding.Table != table {
 			continue
 		}

@@ -75,7 +75,7 @@ func TestTheStatementsSelectExactlyTheDeclaredColumns(t *testing.T) {
 
 			declared := map[string]map[string]bool{}
 			for i := range personalColumns {
-				holding := personalColumns[i].holding
+				holding := personalColumns[i]
 				if declared[holding.Table] == nil {
 					declared[holding.Table] = map[string]bool{}
 				}
@@ -84,7 +84,7 @@ func TestTheStatementsSelectExactlyTheDeclaredColumns(t *testing.T) {
 				assert.True(t, selected[holding.Table][holding.Column],
 					"%s is declared and %s does not select it; the person would be handed a "+
 						"document short of what the declaration promised",
-					columnPath(holding), disclosureStatements[holding.Table])
+					holding.Path(), disclosureStatements[holding.Table])
 			}
 
 			for table, columns := range selected {
@@ -187,8 +187,8 @@ func assertCoversTable(t *testing.T, table string, produced []string) {
 
 	expected := make([]string, 0, len(personalColumns))
 	for i := range personalColumns {
-		if personalColumns[i].holding.Table == table {
-			expected = append(expected, personalColumns[i].holding.Column)
+		if personalColumns[i].Table == table {
+			expected = append(expected, personalColumns[i].Column)
 		}
 	}
 	assert.Equal(t, expected, produced,

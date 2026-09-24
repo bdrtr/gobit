@@ -7,10 +7,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/bdrtr/gobit/core/personaldata"
 )
 
 // This file audits the pair the declaration cannot check for itself: whether
-// [personalColumns]'s erased flags describe what the SQL actually does.
+// [personalColumns]'s OnErasure values describe what the SQL actually does.
 //
 // The service file says nothing in Go can prove it, because the statements are
 // text — and that is exactly why the audit reads the text. A flag and a
@@ -54,11 +56,11 @@ func TestTheStatementsNullExactlyTheColumnsDeclaredErased(t *testing.T) {
 			}
 
 			for i := range personalColumns {
-				holding := personalColumns[i].holding
-				key := columnPath(holding)
+				holding := personalColumns[i]
+				key := holding.Path()
 				columns, hasStatement := nulled[holding.Table]
 
-				if !personalColumns[i].erased {
+				if personalColumns[i].OnErasure != personaldata.Emptied {
 					assert.False(t, columns[holding.Column],
 						"%s is declared as KEPT and the statement nulls it: the report would "+
 							"name a column as still holding the person after it had been emptied", key)
@@ -80,8 +82,8 @@ func TestTheStatementsNullExactlyTheColumnsDeclaredErased(t *testing.T) {
 			// where it went.
 			declared := map[string]bool{}
 			for i := range personalColumns {
-				if personalColumns[i].erased {
-					declared[columnPath(personalColumns[i].holding)] = true
+				if personalColumns[i].OnErasure == personaldata.Emptied {
+					declared[personalColumns[i].Path()] = true
 				}
 			}
 			for table, columns := range nulled {
@@ -104,12 +106,12 @@ func TestTheStatementsNullExactlyTheColumnsDeclaredErased(t *testing.T) {
 // would be a promise no statement keeps.
 func TestNoStatementTouchesATableWithoutOne(t *testing.T) {
 	for i := range personalColumns {
-		if _, ok := erasureStatements[personalColumns[i].holding.Table]; ok {
+		if _, ok := erasureStatements[personalColumns[i].Table]; ok {
 			continue
 		}
-		assert.False(t, personalColumns[i].erased,
+		assert.False(t, personalColumns[i].OnErasure == personaldata.Emptied,
 			"%s is flagged erased and its table has no anonymizing statement",
-			columnPath(personalColumns[i].holding))
+			personalColumns[i].Path())
 	}
 }
 

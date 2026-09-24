@@ -272,43 +272,53 @@ func (m *Module) PersonalData() personaldata.Declaration {
 		Holdings: []personaldata.Holding{
 			{
 				Table: tableStockLocations, Column: "name", Kind: personaldata.Named,
-				Why: "the operator's own premises rather than a shopper's — the warehouse or shop name, which in a one-person business is frequently the trader's own name",
+				Why:       "the operator's own premises rather than a shopper's — the warehouse or shop name, which in a one-person business is frequently the trader's own name",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableStockLocations, Column: "address_1", Kind: personaldata.Named,
-				Why: "the operator's own premises rather than a shopper's — the street line the goods sit at, which for a sole trader is frequently a home address",
+				Why:       "the operator's own premises rather than a shopper's — the street line the goods sit at, which for a sole trader is frequently a home address",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableStockLocations, Column: "address_2", Kind: personaldata.Named,
-				Why: "the operator's own premises rather than a shopper's — flat, floor or door, which narrows the street line to a single household",
+				Why:       "the operator's own premises rather than a shopper's — flat, floor or door, which narrows the street line to a single household",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableStockLocations, Column: "city", Kind: personaldata.Named,
-				Why: "the operator's own premises rather than a shopper's — the town the warehouse is in",
+				Why:       "the operator's own premises rather than a shopper's — the town the warehouse is in",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableStockLocations, Column: "province", Kind: personaldata.Named,
-				Why: "the operator's own premises rather than a shopper's — the province or state of the warehouse address",
+				Why:       "the operator's own premises rather than a shopper's — the province or state of the warehouse address",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableStockLocations, Column: "postal_code", Kind: personaldata.Named,
-				Why: "the operator's own premises rather than a shopper's — the postal code of the warehouse, which in some countries reaches one building",
+				Why:       "the operator's own premises rather than a shopper's — the postal code of the warehouse, which in some countries reaches one building",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableStockLocations, Column: "country_code", Kind: personaldata.Named,
-				Why: "the operator's own premises rather than a shopper's — the country of the warehouse address, the least identifying part of it and declared because it is part of it",
+				Why:       "the operator's own premises rather than a shopper's — the country of the warehouse address, the least identifying part of it and declared because it is part of it",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableInventoryItems, Column: "title", Kind: personaldata.Open,
-				Why: "free text the shop types to name a stock item; it names goods rather than people, but a made-to-order item is routinely titled after the person it is being made for and gobit does not read it",
+				Why:       "free text the shop types to name a stock item; it names goods rather than people, but a made-to-order item is routinely titled after the person it is being made for and gobit does not read it",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableInventoryItems, Column: "description", Kind: personaldata.Open,
-				Why: "free text the shop types about a stock item; gobit puts nothing in it and never reads it, so whether a person is described there is the controller's judgement",
+				Why:       "free text the shop types about a stock item; gobit puts nothing in it and never reads it, so whether a person is described there is the controller's judgement",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: tableReservations, Column: "description", Kind: personaldata.Open,
-				Why: "free text on a reservation, and the only column in this module on a row born of one shopper's checkout, so a note naming that shopper lands here; gobit writes nothing into it",
+				Why:       "free text on a reservation, and the only column in this module on a row born of one shopper's checkout, so a note naming that shopper lands here; gobit writes nothing into it",
+				OnErasure: personaldata.Kept,
 			},
 		},
 	}

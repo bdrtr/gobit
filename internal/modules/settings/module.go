@@ -188,23 +188,28 @@ func (m *Module) PersonalData() personaldata.Declaration {
 		Holdings: []personaldata.Holding{
 			{
 				Table: table, Column: "legal_name", Kind: personaldata.Named,
-				Why: "the name the shop issues documents under; for a sole trader that is a person's name. No erasure searches it: it identifies the controller rather than a subject",
+				Why:       "the name the shop issues documents under; for a sole trader that is a person's name. No erasure searches it: it identifies the controller rather than a subject",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: table, Column: "tax_number", Kind: personaldata.Named,
-				Why: "the shop's tax or national identification number, which for a sole trader identifies a person. No erasure searches it",
+				Why:       "the shop's tax or national identification number, which for a sole trader identifies a person. No erasure searches it",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: table, Column: "tax_office", Kind: personaldata.Named,
-				Why: "the tax office the shop is registered with, which locates the controller administratively. No erasure searches it",
+				Why:       "the tax office the shop is registered with, which locates the controller administratively. No erasure searches it",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: table, Column: "email", Kind: personaldata.Named,
-				Why: "the shop's own address as printed on its documents. It is NOT folded and nothing compares it, because nothing looks a shop up by it — the address is printed, not matched (see emailFoldExemptions)",
+				Why:       "the shop's own address as printed on its documents. It is NOT folded and nothing compares it, because nothing looks a shop up by it — the address is printed, not matched (see emailFoldExemptions)",
+				OnErasure: personaldata.Kept,
 			},
 			{
 				Table: table, Column: "address", Kind: personaldata.Named,
-				Why: "the shop's postal address as printed; for a sole trader working from home that is a person's home address",
+				Why:       "the shop's postal address as printed; for a sole trader working from home that is a person's home address",
+				OnErasure: personaldata.Kept,
 			},
 		},
 	}
