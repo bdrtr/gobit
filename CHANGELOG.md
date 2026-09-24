@@ -331,6 +331,17 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **A CHECK constraint answers true or false** (ADR 0169). An integration test
+  applies every migrations directory in the tree — core, modules, plugins and
+  contrib — and evaluates each of the 349 CHECK constraints over NULL, the
+  literals it names and sample values of its columns; a constraint that
+  answers NULL for some row lets that row through, and fails the test. The
+  first run found the promotion rules' `promotion_rule_values_check` written
+  with `array_length`, which passes an empty array: a new promotion migration
+  replaces it with `cardinality`. **For operators:** that migration fails on
+  an installation that already holds a promotion rule with no values, which
+  the service never wrote; it names the constraint.
+
 - **An order line remembers the price it was charged** (ADR 0168). Pricing's
   bulk answer names the price row its ladder picked and, for a list price, the
   list and its type; the cart's totals round and the checkout's plan carry them

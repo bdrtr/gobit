@@ -41,9 +41,9 @@ import (
 
 const postgresImage = "postgres:16-alpine"
 
-// modulTablolari modülün sahip olduğu tablolardır; migration testleri bu
-// listeyi kullanır.
-var modulTablolari = []string{
+// moduleTables are the tables the module owns; the migration tests use this
+// list.
+var moduleTables = []string{
 	"campaign", "promotion", "promotion_application_method",
 	"promotion_rule", "promotion_redemption",
 }
@@ -143,8 +143,8 @@ func activePromotion(ctx context.Context, t *testing.T, svc *service.Service, in
 	return promo
 }
 
-// tabloVar tablonun veritabanında olup olmadığını bildirir.
-func tabloVar(ctx context.Context, t *testing.T, table string) bool {
+// tableExists reports whether the table exists in the database.
+func tableExists(ctx context.Context, t *testing.T, table string) bool {
 	t.Helper()
 
 	var exists bool
@@ -158,37 +158,37 @@ func tabloVar(ctx context.Context, t *testing.T, table string) bool {
 	return exists
 }
 
-// TestMigrationlarGercektenGeriAlinabilir migration'ın uygulanıp geri
-// alınabildiğini ve YENİDEN uygulanabildiğini doğrular (plan Bölüm 8).
+// TestTheMigrationsReallyRollBack proves the migrations apply, roll back and
+// apply AGAIN (plan Section 8).
 //
-// up->down->up döngüsü şarttır: yalnızca "down dosyası var mı" diye bakan bir
-// test, DROP sırası bağımlılığı yüzünden patlayan bir down'ı yakalayamaz.
-func TestMigrationlarGercektenGeriAlinabilir(t *testing.T) {
+// The up->down->up cycle is required: a test that only checks "is there a down
+// file" cannot catch a down that fails on the order its DROPs depend on.
+func TestTheMigrationsReallyRollBack(t *testing.T) {
 	ctx := context.Background()
 	src := promotion.New(nil).Migrations()
 
-	for _, table := range modulTablolari {
-		require.True(t, tabloVar(ctx, t, table), "%s başlangıçta var olmalı", table)
+	for _, table := range moduleTables {
+		require.True(t, tableExists(ctx, t, table), "%s has to exist at the start", table)
 	}
 
 	require.NoError(t, db.MigrateDown(ctx, testDSN, src, promotion.ModuleName, 0))
-	for _, table := range modulTablolari {
-		assert.False(t, tabloVar(ctx, t, table), "%s geri alma sonrası kalmamalı", table)
+	for _, table := range moduleTables {
+		assert.False(t, tableExists(ctx, t, table), "%s must be gone after the rollback", table)
 	}
 
 	require.NoError(t, db.Migrate(ctx, testDSN, src, promotion.ModuleName))
-	for _, table := range modulTablolari {
-		assert.True(t, tabloVar(ctx, t, table), "%s yeniden uygulanmalı", table)
+	for _, table := range moduleTables {
+		assert.True(t, tableExists(ctx, t, table), "%s has to be applied again", table)
 	}
 
 	version, dirty, err := db.Version(ctx, testDSN, promotion.ModuleName)
 	require.NoError(t, err)
-	assert.False(t, dirty, "yarıda kalmış migration olmamalı")
-	// Sayı ELLE yazılır ve gömülü dosyalardan TÜRETİLMEZ: türetilmiş bir sayı
-	// ne olursa olsun kendisiyle uyuşurdu, oysa bu satırın işi bir migration'ın
-	// EKLENDİĞİNİ fark ettirmektir. Aynı gerekçe product modülünün aynı
-	// satırının yanında da yazılıdır.
-	assert.Equal(t, uint(3), version)
+	assert.False(t, dirty, "no migration may be left half applied")
+	// The number is written BY HAND and not derived from the embedded files: a
+	// derived number would agree with itself whatever it was, and this line's
+	// job is to make an ADDED migration noticed. The same reason is written
+	// beside the same line in the product module.
+	assert.Equal(t, uint(4), version)
 }
 
 // TestCrossModuleForeignKeyYok modülün tablolarındaki TÜM foreign key'lerin
@@ -204,12 +204,12 @@ func TestCrossModuleForeignKeyYok(t *testing.T) {
          FROM pg_constraint c
          JOIN pg_class src ON src.oid = c.conrelid
          JOIN pg_class tgt ON tgt.oid = c.confrelid
-         WHERE c.contype = 'f' AND src.relname = ANY($1)`, modulTablolari)
+         WHERE c.contype = 'f' AND src.relname = ANY($1)`, moduleTables)
 	require.NoError(t, err)
 	defer rows.Close()
 
-	sahipli := make(map[string]struct{}, len(modulTablolari))
-	for _, table := range modulTablolari {
+	sahipli := make(map[string]struct{}, len(moduleTables))
+	for _, table := range moduleTables {
 		sahipli[table] = struct{}{}
 	}
 
