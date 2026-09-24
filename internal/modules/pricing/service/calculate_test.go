@@ -722,12 +722,12 @@ func TestCalculateAmountsJSONReadsClockOnce(t *testing.T) {
 	assert.Equal(t, 1, reads, "saat kalem başına değil istek başına okunur")
 }
 
-// TestCalculateAmountsJSONPreservesOrder yanıtın istekle KONUM üzerinden
-// hizalandığını kanıtlar.
+// TestCalculateAmountsJSONPreservesOrder proves the response lines up with the
+// request BY POSITION.
 //
-// Tüketici yanıtları sepet satırlarına indeksle eşler; sırası bozulmuş bir
-// yanıt her satıra komşu varyantın fiyatını yazardı ve aşağıdaki hiçbir denetim
-// bunu yakalamazdı.
+// The consumer matches the answers to the cart's lines by index; an answer out
+// of order would write the neighboring variant's price onto every line, and no
+// other check here would catch it.
 func TestCalculateAmountsJSONPreservesOrder(t *testing.T) {
 	fixture := batchFixture()
 	svc := newTestService(batchRepo(fixture))
@@ -736,12 +736,14 @@ func TestCalculateAmountsJSONPreservesOrder(t *testing.T) {
 		{"pset_sale", 1}, {"pset_empty", 1}, {"pset_base", 1}, {"pset_tier", 10},
 	})
 
+	// Each priced item also names the row the ladder picked and its list, and
+	// an unpriced one names nothing (ADR 0168).
 	require.Len(t, resp.Items, 4)
 	assert.Equal(t, []calculatedAmount{
-		{Amount: 9000, Priced: true},
+		{Amount: 9000, Priced: true, PriceID: "price_sale", PriceListID: ptr("plist_sale"), PriceListType: "sale"},
 		{Amount: 0, Priced: false},
-		{Amount: 1000, Priced: true},
-		{Amount: 800, Priced: true},
+		{Amount: 1000, Priced: true, PriceID: "price_base"},
+		{Amount: 800, Priced: true, PriceID: "price_tier"},
 	}, resp.Items)
 }
 

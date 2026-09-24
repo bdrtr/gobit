@@ -25,7 +25,8 @@ func requireIdentity(t *testing.T, totals Totals) {
 	assert.LessOrEqual(t, totals.DiscountTotal, totals.Subtotal, "the discount cannot exceed the subtotal")
 
 	var lineSum int64
-	for _, line := range totals.Lines {
+	for i := range totals.Lines {
+		line := &totals.Lines[i]
 		assert.Equal(t, line.Subtotal-line.DiscountTotal+line.TaxTotal, line.Total,
 			"line identity: total = subtotal - discount + tax (%s)", line.LineItemID)
 		lineSum += line.Subtotal
@@ -76,13 +77,16 @@ func TestCalculateTotalsSingleLine(t *testing.T) {
 	//
 	// The RATE is asserted next to the amount because the amount alone cannot
 	// carry it: rounding down per line maps a range of rates onto one figure,
-	// and an invoice has to print the rate that was charged.
+	// and an invoice has to print the rate that was charged. The PRICE ROW is
+	// asserted for the same reason in the other direction: the amount cannot
+	// say which of a set's prices produced it (ADR 0168).
 	require.Len(t, totals.Lines, 1)
 	assert.Equal(t, LineTotals{
 		LineItemID: testLineA,
 		UnitPrice:  1000,
 		Subtotal:   2000,
 		TaxTotal:   400,
+		PriceID:    "price_of_" + testPriceSetA,
 		TaxRateBps: 2000,
 		Total:      2400,
 	}, totals.Lines[0])
@@ -296,6 +300,66 @@ func TestCalculateTotalsMisalignedPriceResponseRejected(t *testing.T) {
 			assert.Empty(t, h.carts.written, "a misaligned response must not be written to the cart")
 		})
 	}
+}
+
+// TestCalculateTotalsRefusesAPriceThatNamesNoOrigin holds the boundary the
+// price origin crosses first (ADR 0168).
+//
+// A priced item that does not say which price it is — or says it
+// incoherently — fails the round rather than reaching the order as an empty
+// column, because an order line that does not know its price would be recorded
+// as if that were an answer. The checks are at every boundary the origin
+// crosses, for ADR 0096's reason: two of them drop what they do not know.
+func TestCalculateTotalsRefusesAPriceThatNamesNoOrigin(t *testing.T) {
+	list := "plist_spring"
+	for name, item := range map[string]priceResponseItem{
+		"no price id":         {Amount: 100, Priced: true},
+		"a list with no type": {Amount: 100, Priced: true, PriceID: "price_1", PriceListID: &list},
+		"a type with no list": {Amount: 100, Priced: true, PriceID: "price_1", PriceListType: "sale"},
+		"a type that is not one": {
+			Amount: 100, Priced: true, PriceID: "price_1", PriceListID: &list, PriceListType: "bargain",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			serveSnapshot(h.carts, snapshotOf(1,
+				[]SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 1}}, nil))
+			h.prices.batchFn = func(_ priceRequest) (priceResponse, error) {
+				return priceResponse{Items: []priceResponseItem{item}}, nil
+			}
+
+			_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+
+			require.Error(t, err)
+			assert.Equal(t, CodePriceResponseInvalid, errors.CodeOf(err), "%v", err)
+			assert.Equal(t, errors.KindInternal, errors.KindOf(err))
+			assert.Empty(t, h.carts.written, "an origin-less price must not be written to the cart")
+		})
+	}
+}
+
+// TestCalculateTotalsCarriesAListPricesOrigin is the list half of the origin:
+// the single-line test's base price has no list, so a round that dropped the
+// list and its type passed it.
+func TestCalculateTotalsCarriesAListPricesOrigin(t *testing.T) {
+	h := newHarness(t)
+	serveSnapshot(h.carts, snapshotOf(1,
+		[]SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 1}}, nil))
+	list := "plist_spring"
+	h.prices.batchFn = func(_ priceRequest) (priceResponse, error) {
+		return priceResponse{Items: []priceResponseItem{{
+			Amount: 800, Priced: true, PriceID: "price_sale", PriceListID: &list, PriceListType: "sale",
+		}}}, nil
+	}
+
+	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	require.Len(t, totals.Lines, 1)
+	assert.Equal(t, "price_sale", totals.Lines[0].PriceID)
+	require.NotNil(t, totals.Lines[0].PriceListID)
+	assert.Equal(t, list, *totals.Lines[0].PriceListID)
+	assert.Equal(t, "sale", totals.Lines[0].PriceListType)
 }
 
 // TestCalculateTotalsUnpricedLineRejectedByFlag verifies that the batch path turns the

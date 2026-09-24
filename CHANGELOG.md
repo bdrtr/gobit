@@ -331,6 +331,15 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **An order line remembers the price it was charged** (ADR 0168). Pricing's
+  bulk answer names the price row its ladder picked and, for a list price, the
+  list and its type; the cart's totals round and the checkout's plan carry them
+  into the order, and each line keeps them. Both order views publish them as
+  `price_origin`, absent when unknown — every line sold before the upgrade, and
+  a line placed from a plan written before it. The price id stays readable in
+  pricing's history after the row is replaced (ADR 0167). An incoherent origin
+  is refused as a 400 and by a CHECK constraint.
+
 - **A price keeps its history** (ADR 0167). Every write to a price, a rule, a
   set or a list appends a snapshot of what the price ladder reads, in the same
   transaction, and the unchanged ladder run over those snapshots says what a

@@ -34,6 +34,7 @@ const (
 	testItemB        = "inv_b"
 	testPriceSetA    = "pset_a"
 	testPriceSetB    = "pset_b"
+	testSaleListID   = "plist_sale"
 	testTitleA       = "Red T-Shirt"
 	testTitleB       = "Blue Hat"
 	testOrderID      = "order_1"

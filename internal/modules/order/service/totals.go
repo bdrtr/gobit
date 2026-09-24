@@ -203,7 +203,47 @@ func validateOrderItem(index int, item CreateOrderItemInput) error {
 			index, item.VariantID, item.Total, item.Subtotal, item.DiscountTotal, item.TaxTotal, expectedTotal)
 	}
 
+	if err := validateLinePriceOrigin(index, item); err != nil {
+		return err
+	}
+
 	return validateLineTaxComponents(index, item)
+}
+
+// validateLinePriceOrigin holds a line's price origin together (ADR 0168).
+//
+// All three empty is unknown, and accepted. Otherwise the line names its price
+// row, and a list price names its list and a type the ladder has — the same
+// three shapes the column's CHECK allows, refused here as a 400 before the
+// database would refuse them as a server error.
+func validateLinePriceOrigin(index int, item CreateOrderItemInput) error {
+	if item.PriceID == "" {
+		if item.PriceListID != "" || item.PriceListType != "" {
+			return errors.Invalid(CodeInvalidInput,
+				"a line that names a price list has to name the price too (line %d, %s)",
+				index, item.VariantID)
+		}
+
+		return nil
+	}
+
+	switch item.PriceListType {
+	case "":
+		if item.PriceListID != "" {
+			return errors.Invalid(CodeInvalidInput,
+				"a price from a list has to say the list's type (line %d, %s)", index, item.VariantID)
+		}
+	case "sale", "override":
+		if item.PriceListID == "" {
+			return errors.Invalid(CodeInvalidInput,
+				"a %s price has to name its list (line %d, %s)", item.PriceListType, index, item.VariantID)
+		}
+	default:
+		return errors.Invalid(CodeInvalidInput,
+			"%q is not a price list type (line %d, %s)", item.PriceListType, index, item.VariantID)
+	}
+
+	return nil
 }
 
 // maxLineTaxComponents is the most components one line's tax may be split into.

@@ -409,8 +409,23 @@ type lineItemDTO struct {
 	TaxComponents []lineTaxDTO   `json:"tax_components,omitempty"`
 	Total         int64          `json:"total"`
 	Metadata      map[string]any `json:"metadata,omitempty"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
+	// PriceOrigin is the price the line was charged — the price row and, for a
+	// list price, the list and its type (ADR 0168). It is absent when unknown:
+	// every line sold before the order kept it.
+	PriceOrigin *linePriceOriginDTO `json:"price_origin,omitempty"`
+	CreatedAt   time.Time           `json:"created_at"`
+	UpdatedAt   time.Time           `json:"updated_at"`
+}
+
+// linePriceOriginDTO is which of a variant's prices a line was charged.
+type linePriceOriginDTO struct {
+	// PriceID is pricing's price row; pricing's price history reads it back
+	// after the row itself is replaced.
+	PriceID string `json:"price_id"`
+	// PriceListID and PriceListType name its list — "sale" or "override" — and
+	// are null for a base price.
+	PriceListID   *string `json:"price_list_id"`
+	PriceListType *string `json:"price_list_type"`
 }
 
 // lineTaxDTO is the external representation of one rate inside a line's tax
@@ -567,9 +582,24 @@ func toLineItemDTO(item models.OrderLineItem) lineItemDTO {
 		TaxComponents: toLineTaxDTOs(item.TaxComponents),
 		Total:         item.Total,
 		Metadata:      item.Metadata,
+		PriceOrigin:   toLinePriceOriginDTO(item.PriceOrigin),
 		CreatedAt:     item.CreatedAt,
 		UpdatedAt:     item.UpdatedAt,
 	}
+}
+
+// toLinePriceOriginDTO converts a line's price origin; nil when unknown.
+func toLinePriceOriginDTO(origin *models.LinePriceOrigin) *linePriceOriginDTO {
+	if origin == nil {
+		return nil
+	}
+	out := &linePriceOriginDTO{PriceID: origin.PriceID}
+	if origin.PriceListID != "" {
+		listID, listType := origin.PriceListID, origin.PriceListType
+		out.PriceListID, out.PriceListType = &listID, &listType
+	}
+
+	return out
 }
 
 // toLineTaxDTOs converts a line's tax breakdown to the external representation.

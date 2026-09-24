@@ -521,6 +521,14 @@ past and is not corrected retroactively.
   — quantity one, no customer group or region rule — and it is computed from
   every snapshot of the set, so a set edited thousands of times makes its
   storefront read heavier ([measurement 0167](measurements/0167-what-a-price-was.md)).
+- **An order line's price origin is known only from the upgrade, and it does
+  not name a promotion.** Since [ADR 0168](adr/0168-an-order-line-remembers-the-price-it-was-charged.md)
+  a line keeps the price row it was charged and that row's list, but a line
+  sold before the upgrade has none, and neither does one placed by a saga
+  recovered from a plan written before it; the API leaves `price_origin` out
+  rather than guess. Which promotion reduced a line is not kept at all: the
+  promotion engine reports discounts per line and per promotion, never one
+  promotion's share of one line.
 
 ## The limit of the invariants
 

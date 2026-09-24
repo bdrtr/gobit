@@ -187,6 +187,17 @@ type calculatedAmount struct {
 	// "amount 0" cannot be told apart from "no price" by the amount itself. Without
 	// the flag a variant with no price would enter the cart FOR FREE.
 	Priced bool `json:"priced"`
+	// PriceID is the price row the ladder picked, and PriceListID and
+	// PriceListType name its list; all three are absent when Priced is false,
+	// and the list pair is absent for a base price.
+	//
+	// They are what the ladder already knew and used to throw away. An order line
+	// keeps them (ADR 0168), so "which price was this line charged" is answered
+	// by the line — and, with the price history (ADR 0167), "what did that
+	// price row say".
+	PriceID       string  `json:"price_id,omitempty"`
+	PriceListID   *string `json:"price_list_id,omitempty"`
+	PriceListType string  `json:"price_list_type,omitempty"`
 }
 
 // CalculateAmountsJSON returns the unit amounts of several containers in a
@@ -296,7 +307,13 @@ func (s *Service) CalculateAmountsJSON(ctx context.Context, request json.RawMess
 			out.Items = append(out.Items, calculatedAmount{})
 			continue
 		}
-		out.Items = append(out.Items, calculatedAmount{Amount: selected.Amount, Priced: true})
+		out.Items = append(out.Items, calculatedAmount{
+			Amount:        selected.Amount,
+			Priced:        true,
+			PriceID:       selected.PriceID,
+			PriceListID:   selected.PriceListID,
+			PriceListType: string(selected.PriceListType),
+		})
 	}
 
 	payload, err := json.Marshal(out)

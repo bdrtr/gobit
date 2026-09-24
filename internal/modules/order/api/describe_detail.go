@@ -49,7 +49,10 @@ func describeOrderDetail(d *openapi.Doc) {
 			"add up to the line's \"tax_total\". The field is ABSENT when a single rate " +
 			"applied, and \"tax_rate_bps\" then says it all; on a stacked line that field " +
 			"carries the stack's BASE rate, which is a rate really applied on an amount " +
-			"really recorded, not the whole story.",
+			"really recorded, not the whole story.\n\n" +
+			"A line also carries \"price_origin\": the price row it was charged and, for a " +
+			"list price, the list and its type (\"sale\" or \"override\"). It is ABSENT " +
+			"when unknown — every line sold before the order kept it (ADR 0168).",
 		Responses: map[string]any{
 			"200": openapi.Response("The order with its lines", d.Item(orderDetailDTO{})),
 		},

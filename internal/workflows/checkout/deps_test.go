@@ -64,8 +64,11 @@ func (s stubPricing) CalculateAmountsJSON(
 	}
 
 	type item struct {
-		Amount int64 `json:"amount"`
-		Priced bool  `json:"priced"`
+		Amount        int64   `json:"amount"`
+		Priced        bool    `json:"priced"`
+		PriceID       string  `json:"price_id,omitempty"`
+		PriceListID   *string `json:"price_list_id,omitempty"`
+		PriceListType string  `json:"price_list_type,omitempty"`
 	}
 	out := struct {
 		Items []item `json:"items"`
@@ -77,7 +80,13 @@ func (s stubPricing) CalculateAmountsJSON(
 			out.Items = append(out.Items, item{})
 			continue
 		}
-		out.Items = append(out.Items, item{Amount: amount, Priced: true})
+		priced := item{Amount: amount, Priced: true, PriceID: "price_of_" + req.Items[i].PriceSetID}
+		// Set B is on sale, so a plan carries both shapes of origin (ADR 0168).
+		if req.Items[i].PriceSetID == testPriceSetB {
+			list := testSaleListID
+			priced.PriceListID, priced.PriceListType = &list, "sale"
+		}
+		out.Items = append(out.Items, priced)
 	}
 	return json.Marshal(out)
 }

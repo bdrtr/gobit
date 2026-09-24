@@ -212,9 +212,10 @@ func (s *stubPrices) CalculateAmount(
 // schema-conforming response.
 //
 // The fake imitates the RESPONSE INVARIANTS of the real pricing module: one
-// record IN THE SAME ORDER for every item in the request, and a flag rather
-// than an error for an item that has no price. Otherwise the tests would pass
-// with a body that never comes about in production.
+// record IN THE SAME ORDER for every item in the request, a flag rather than an
+// error for an item that has no price, and a priced item that names the price
+// row it came from (ADR 0168). Otherwise the tests would pass with a body that
+// never comes about in production.
 func (s *stubPrices) CalculateAmountsJSON(_ context.Context, request json.RawMessage) (json.RawMessage, error) {
 	var req priceRequest
 	if err := json.Unmarshal(request, &req); err != nil {
@@ -240,7 +241,7 @@ func (s *stubPrices) CalculateAmountsJSON(_ context.Context, request json.RawMes
 			resp.Items = append(resp.Items, priceResponseItem{})
 			continue
 		}
-		resp.Items = append(resp.Items, priceResponseItem{Amount: amount, Priced: true})
+		resp.Items = append(resp.Items, pricedItem(req.Items[i].PriceSetID, amount))
 	}
 	return json.Marshal(resp)
 }
@@ -807,4 +808,11 @@ func (s *stubCarts) RemoveCartPromotionCode(ctx context.Context, cartID, code st
 
 	return errors.NotFound("cart_promotion_code_not_found",
 		"the cart is not holding that coupon code: %s", code)
+}
+
+// pricedItem is a priced bulk response item the way pricing writes one: the
+// amount, and the base price row it came from, named after its set so a test
+// can tell two lines' origins apart.
+func pricedItem(priceSetID string, amount int64) priceResponseItem {
+	return priceResponseItem{Amount: amount, Priced: true, PriceID: "price_of_" + priceSetID}
 }

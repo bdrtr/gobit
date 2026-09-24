@@ -52,6 +52,13 @@ type CreateOrderItemInput struct {
 	Total int64
 	// Metadata is the caller's free extra data.
 	Metadata map[string]any
+	// PriceID is the price row the line was charged, and PriceListID and
+	// PriceListType name its list — both empty for a base price (ADR 0168).
+	// All three empty is UNKNOWN, which is accepted: a recovered saga may place
+	// an order from a plan written before the origin traveled.
+	PriceID       string
+	PriceListID   string
+	PriceListType string
 }
 
 // CreateOrderLineTaxInput is one rate applied inside a line's tax stack.
@@ -340,6 +347,7 @@ func (s *Service) writeOrder(ctx context.Context, in CreateOrderInput, rule spen
 				TaxRateBps:    in.Items[i].TaxRateBps,
 				Total:         in.Items[i].Total,
 				Metadata:      in.Items[i].Metadata,
+				PriceOrigin:   priceOriginOf(in.Items[i]),
 			})
 			if err != nil {
 				return err
@@ -872,4 +880,17 @@ func splitAddresses(addresses []models.OrderAddress) (shipping, billing *models.
 	}
 
 	return shipping, billing
+}
+
+// priceOriginOf reads a line input's price origin; nil when it names none.
+func priceOriginOf(item CreateOrderItemInput) *models.LinePriceOrigin {
+	if item.PriceID == "" {
+		return nil
+	}
+
+	return &models.LinePriceOrigin{
+		PriceID:       item.PriceID,
+		PriceListID:   item.PriceListID,
+		PriceListType: item.PriceListType,
+	}
 }

@@ -208,6 +208,12 @@ type interopOrderItem struct {
 	// the breakdown SILENTLY DROPPED, and the order would have recorded a line
 	// taxed at the stack's base rate with nothing left to say otherwise.
 	TaxComponents []interopLineTax `json:"tax_components"`
+	// PriceID, PriceListID and PriceListType are the price row the line was
+	// charged and its list (ADR 0168). They changed TOGETHER with the sender,
+	// for TaxComponents' reason above.
+	PriceID       string  `json:"price_id"`
+	PriceListID   *string `json:"price_list_id"`
+	PriceListType string  `json:"price_list_type"`
 }
 
 // interopLineTax is one rate inside a stacked line's tax, on the wire.
@@ -248,6 +254,9 @@ func (i *Interop) PlaceOrderJSON(ctx context.Context, snapshot json.RawMessage) 
 			Total:         incoming.Items[k].Total,
 			Metadata:      incoming.Items[k].Metadata,
 			TaxComponents: lineTaxInputsOf(incoming.Items[k].TaxComponents),
+			PriceID:       incoming.Items[k].PriceID,
+			PriceListID:   derefString(incoming.Items[k].PriceListID),
+			PriceListType: incoming.Items[k].PriceListType,
 		})
 	}
 
@@ -822,4 +831,13 @@ func (i *Interop) DispatchableLinesJSON(ctx context.Context, orderID string) (js
 	}
 
 	return json.Marshal(lines)
+}
+
+// derefString reads an optional string from the wire; nil is empty.
+func derefString(value *string) string {
+	if value == nil {
+		return ""
+	}
+
+	return *value
 }

@@ -374,9 +374,40 @@ func toLineItem(row orderdb.OrderLineItem) (models.OrderLineItem, error) {
 		TaxRateBps:    row.TaxRateBps,
 		Total:         row.Total,
 		Metadata:      meta,
+		PriceOrigin:   toPriceOrigin(row.PriceID, row.PriceListID, row.PriceListType),
 		CreatedAt:     toTime(row.CreatedAt),
 		UpdatedAt:     toTime(row.UpdatedAt),
 	}, nil
+}
+
+// toPriceOrigin reads a line's price origin; nil when the line has none.
+func toPriceOrigin(priceID, listID, listType *string) *models.LinePriceOrigin {
+	if priceID == nil {
+		return nil
+	}
+	origin := models.LinePriceOrigin{PriceID: *priceID}
+	if listID != nil {
+		origin.PriceListID = *listID
+	}
+	if listType != nil {
+		origin.PriceListType = *listType
+	}
+
+	return &origin
+}
+
+// priceOriginPart is one column of a line's price origin; NULL when the origin
+// is unknown or the part is empty (a base price has no list).
+func priceOriginPart(origin *models.LinePriceOrigin, part func(models.LinePriceOrigin) string) *string {
+	if origin == nil {
+		return nil
+	}
+	value := part(*origin)
+	if value == "" {
+		return nil
+	}
+
+	return &value
 }
 
 // toClaimEvidence converts a database row into the domain model.

@@ -65,11 +65,12 @@ type Totals struct {
 	// Applied names the promotions that produced the discount and how much each
 	// one gave, in the order the round applied them.
 	//
-	// It travels in the body written to the cart because the CART has to
-	// remember it: the redemption when the cart becomes an order is addressed
-	// per promotion and takes an amount, and that amount has to be the one the
-	// customer was shown (ADR 0109). Recomputing it at order time would write a
-	// figure into a campaign's budget that nobody ever saw.
+	// It travels with the totals to the checkout, which copies it onto the plan
+	// its recovery path replays: the redemption when the cart becomes an order
+	// is addressed per promotion and takes an amount, and that amount has to be
+	// the one the customer was shown (ADR 0109). The cart does NOT keep it —
+	// ADR 0109 rejected a stored copy as a second source of truth, and the body
+	// written to the cart has no field for it, so there it is dropped (D124).
 	Applied []AppliedPromotion `json:"applied"`
 }
 
@@ -127,6 +128,17 @@ type LineTotals struct {
 	TaxComponents []LineTaxComponent `json:"tax_components,omitempty"`
 	// Total is the line's total: Subtotal - DiscountTotal + TaxTotal.
 	Total int64 `json:"total"`
+	// PriceID is the price row pricing picked for the line, and PriceListID and
+	// PriceListType name its list; the list pair is absent for a base price
+	// (ADR 0168).
+	//
+	// The checkout copies them into the order line, which is where "which price
+	// was this line charged" is answered for good. The cart does not keep them,
+	// for ADR 0109's reason about the applied promotions: every round recomputes
+	// them, and the checkout takes them from the round it runs itself.
+	PriceID       string  `json:"price_id,omitempty"`
+	PriceListID   *string `json:"price_list_id,omitempty"`
+	PriceListType string  `json:"price_list_type,omitempty"`
 }
 
 // LineTaxComponent is one rate applied inside a line's tax stack.
@@ -339,15 +351,18 @@ func (w *Workflows) lineSubtotals(ctx context.Context, snap Snapshot) ([]LineTot
 	for i := range snap.Items {
 		item := snap.Items[i]
 
-		subtotal, mulErr := mulAmount(unitPrices[i], item.Quantity)
+		subtotal, mulErr := mulAmount(unitPrices[i].Amount, item.Quantity)
 		if mulErr != nil {
 			return nil, mulErr
 		}
 
 		lines = append(lines, LineTotals{
-			LineItemID: item.ID,
-			UnitPrice:  unitPrices[i],
-			Subtotal:   subtotal,
+			LineItemID:    item.ID,
+			UnitPrice:     unitPrices[i].Amount,
+			Subtotal:      subtotal,
+			PriceID:       unitPrices[i].PriceID,
+			PriceListID:   unitPrices[i].PriceListID,
+			PriceListType: unitPrices[i].PriceListType,
 		})
 	}
 	return lines, nil
@@ -483,6 +498,19 @@ type priceResponseItem struct {
 	// amount itself. Without the flag a variant that has no price would enter
 	// the cart FOR FREE.
 	Priced bool `json:"priced"`
+	// PriceID, PriceListID and PriceListType are the price row the ladder
+	// picked and its list (ADR 0168).
+	PriceID       string  `json:"price_id"`
+	PriceListID   *string `json:"price_list_id"`
+	PriceListType string  `json:"price_list_type"`
+}
+
+// linePrice is a line's unit price and the price row it came from.
+type linePrice struct {
+	Amount        int64
+	PriceID       string
+	PriceListID   *string
+	PriceListType string
 }
 
 // unitPrices fetches the unit price of ALL the cart's lines in a SINGLE round.
@@ -553,7 +581,9 @@ type priceResponseItem struct {
 // back the "single moment" guarantee above: every part reads the clock again and
 // a campaign ending at exactly that moment would price the cart's first part
 // from one world and its second part from another.
-func (w *Workflows) unitPrices(ctx context.Context, snap Snapshot, priceSets map[string]string) ([]int64, error) {
+func (w *Workflows) unitPrices(
+	ctx context.Context, snap Snapshot, priceSets map[string]string,
+) ([]linePrice, error) {
 	if len(snap.Items) == 0 {
 		return nil, nil
 	}
@@ -620,14 +650,53 @@ func (w *Workflows) unitPrices(ctx context.Context, snap Snapshot, priceSets map
 		return nil, priceUnavailable(snap, unpriced)
 	}
 
-	out := make([]int64, 0, len(resp.Items))
+	out := make([]linePrice, 0, len(resp.Items))
 	for i := range resp.Items {
-		if err := checkAmount("unit_price", resp.Items[i].Amount, MaxAmount); err != nil {
+		item := resp.Items[i]
+		if err := checkAmount("unit_price", item.Amount, MaxAmount); err != nil {
 			return nil, err
 		}
-		out = append(out, resp.Items[i].Amount)
+		if err := checkPriceOrigin(item); err != nil {
+			return nil, errors.Wrap(err, errors.KindInternal, CodePriceResponseInvalid,
+				"the bulk price result's line %d names no coherent price (%s)", i, snap.ID)
+		}
+		out = append(out, linePrice{
+			Amount:        item.Amount,
+			PriceID:       item.PriceID,
+			PriceListID:   item.PriceListID,
+			PriceListType: item.PriceListType,
+		})
 	}
 	return out, nil
+}
+
+// checkPriceOrigin refuses a priced item that does not say which price it is.
+//
+// ADR 0096's lesson, kept at this boundary as at every other one the origin
+// crosses: a field one side stopped sending would otherwise reach the order as
+// an empty column, and "we do not know which price this line was charged" would
+// be recorded as if it were an answer.
+func checkPriceOrigin(item priceResponseItem) error {
+	if item.PriceID == "" {
+		return errors.Invalid(CodePriceResponseInvalid, "a priced line carries no price id")
+	}
+	switch item.PriceListType {
+	case "":
+		if item.PriceListID != nil {
+			return errors.Invalid(CodePriceResponseInvalid,
+				"a price from list %s carries no list type", *item.PriceListID)
+		}
+	case "sale", "override":
+		if item.PriceListID == nil {
+			return errors.Invalid(CodePriceResponseInvalid,
+				"a %s price carries no list id", item.PriceListType)
+		}
+	default:
+		return errors.Invalid(CodePriceResponseInvalid,
+			"%q is not a price list type", item.PriceListType)
+	}
+
+	return nil
 }
 
 // priceUnavailable reports ALL the lines with no price in a single error.

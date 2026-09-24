@@ -256,6 +256,15 @@ type planLine struct {
 	// written before the field existed, and the direction that does not promise
 	// goods the shop cannot show it has.
 	AllowBackorder bool `json:"allow_backorder"`
+	// PriceID, PriceListID and PriceListType are the price row the line was
+	// charged and its list, from the totals round this plan ran (ADR 0168).
+	//
+	// A plan written before the fields existed decodes them empty, and so does
+	// a recovery of one; the order records an empty origin as UNKNOWN rather
+	// than refusing the order, because the money was taken either way.
+	PriceID       string  `json:"price_id,omitempty"`
+	PriceListID   *string `json:"price_list_id,omitempty"`
+	PriceListType string  `json:"price_list_type,omitempty"`
 }
 
 // prepare builds the input of the saga and leaves NO reversible side effect.
@@ -441,6 +450,9 @@ func (w *Workflows) planLines(ctx context.Context, snap Snapshot, totals cartwf.
 			Total:           amounts.Total,
 			Unmanaged:       facts[item.VariantID].Unmanaged,
 			AllowBackorder:  facts[item.VariantID].AllowBackorder,
+			PriceID:         amounts.PriceID,
+			PriceListID:     amounts.PriceListID,
+			PriceListType:   amounts.PriceListType,
 		})
 	}
 	return lines, nil
@@ -832,6 +844,13 @@ type orderSnapshotItem struct {
 	// it in the same change. That is why the two land together and not in two
 	// steps: between the steps the breakdown would be dropped in silence.
 	TaxComponents []orderSnapshotTaxComponent `json:"tax_components,omitempty"`
+	// PriceID, PriceListID and PriceListType are the price row the line was
+	// charged and its list (ADR 0168). They land in the same change the order
+	// learns them, for TaxComponents' reason: the order drops a field it does
+	// not know.
+	PriceID       string  `json:"price_id,omitempty"`
+	PriceListID   *string `json:"price_list_id,omitempty"`
+	PriceListType string  `json:"price_list_type,omitempty"`
 }
 
 // orderSnapshotTaxComponent is one rate inside a stacked line's tax, on the wire
@@ -864,6 +883,9 @@ func (p *checkoutPlan) orderSnapshotJSON(idempotencyKey string) (json.RawMessage
 			TaxRateBps:    p.Lines[i].TaxRateBps,
 			Total:         p.Lines[i].Total,
 			TaxComponents: snapshotComponentsOf(p.Lines[i].TaxComponents),
+			PriceID:       p.Lines[i].PriceID,
+			PriceListID:   p.Lines[i].PriceListID,
+			PriceListType: p.Lines[i].PriceListType,
 		})
 	}
 

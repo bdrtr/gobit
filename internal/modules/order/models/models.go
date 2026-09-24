@@ -319,9 +319,29 @@ type OrderLineItem struct {
 	Total int64
 	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
+	// PriceOrigin is the price row the line was charged and its list (ADR
+	// 0168); nil is UNKNOWN — every line written before the column existed, and
+	// a line a recovered saga placed from a plan that carried none.
+	PriceOrigin *LinePriceOrigin
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// LinePriceOrigin is which of a variant's prices a line was charged.
+//
+// Pricing's ladder picks one price row among a set's base prices, sale and
+// override lists, quantity tiers and rules. The row's id is pricing's and it is
+// deleted when the set is replaced (ADR 0047); pricing's history keeps what it
+// said (ADR 0167), so the id is enough to read it back, and the list pair is
+// kept beside it so the common question — "was this sold on sale" — needs no
+// second module.
+type LinePriceOrigin struct {
+	// PriceID is the price row.
+	PriceID string
+	// PriceListID and PriceListType name its list; both empty for a base price.
+	PriceListID   string
+	PriceListType string
 }
 
 // OrderLineTax is one rate applied inside a line's tax stack.

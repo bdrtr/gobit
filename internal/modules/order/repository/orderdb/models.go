@@ -128,6 +128,9 @@ type OrderLineItem struct {
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
 	TaxRateBps    int32
+	PriceID       *string
+	PriceListID   *string
+	PriceListType *string
 }
 
 type OrderLineTax struct {
