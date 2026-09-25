@@ -19,6 +19,15 @@ type Catalog interface {
 	ListProducts(ctx context.Context, opts service.ListProductsOptions) (service.ListResult[models.Product], error)
 	UpdateProduct(ctx context.Context, id string, in service.UpdateProductInput) (models.Product, error)
 	DeleteProduct(ctx context.Context, id string) error
+	// ProductRelations, SetProductRelations and StoreRelatedProducts are a
+	// product's relations (ADR 0180).
+	ProductRelations(ctx context.Context, id string) (map[models.RelationType][]string, error)
+	SetProductRelations(
+		ctx context.Context, id string, kind models.RelationType, relatedIDs []string,
+	) (map[models.RelationType][]string, error)
+	StoreRelatedProducts(
+		ctx context.Context, idOrHandle string, kind models.RelationType, salesChannelIDs []string,
+	) ([]service.StoreProduct, error)
 	// SetSchedule and ClearSchedule replace and take off a product's schedule
 	// (ADR 0177, ADR 0179).
 	SetSchedule(ctx context.Context, id string, schedule service.Schedule) (models.Product, error)

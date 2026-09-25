@@ -89,6 +89,8 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get(pathStoreProducts, h.storeListProducts)
 	r.Get(pathStoreProduct, h.storeGetProduct)
 	r.Get(pathStoreOptionValues, h.storeListOptionValues)
+	// A product's neighbors, under the same channel segment (ADR 0180).
+	r.Get(pathStoreRelated, h.storeRelatedProducts)
 
 	// The vocabulary a storefront needs to use the catalog filters: it has the
 	// word a shopper clicked, and the listing takes an id.
@@ -118,6 +120,9 @@ func (h *Handler) Routes(r chi.Router) {
 	// PATCH above cannot set a field back to empty.
 	write.Put(pathProductSchedule, h.adminScheduleProduct)
 	write.Delete(pathProductSchedule, h.adminCancelSchedule)
+	// A product's relations (ADR 0180): read them all, replace one kind.
+	read.Get(pathProductRelations, h.adminListRelations)
+	write.Put(pathProductRelationsOfType, h.adminSetRelations)
 
 	// --- Admin API: variants ---
 	write.Post("/admin/v1/products/{id}/variants", h.adminCreateVariant)

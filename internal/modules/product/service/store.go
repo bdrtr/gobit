@@ -670,8 +670,30 @@ func (s *Service) GetStoreProduct(
 	idOrHandle string,
 	salesChannelIDs []string,
 ) (StoreProduct, error) {
-	if _, err := requireID("id", idOrHandle); err != nil {
+	product, err := s.visibleStoreProduct(ctx, idOrHandle, salesChannelIDs)
+	if err != nil {
 		return StoreProduct{}, err
+	}
+
+	items, err := s.toStoreProducts(ctx, []models.Product{product}, salesChannelIDs)
+	if err != nil {
+		return StoreProduct{}, err
+	}
+	return items[0], nil
+}
+
+// visibleStoreProduct resolves a product by id or handle and answers NotFound
+// unless the storefront may show it: published, and visible in the request's
+// channels.
+//
+// It is the single endpoint's rule, taken out so the related-products endpoint
+// asks the same question about the product it starts from (ADR 0180) rather than
+// a second copy of it.
+func (s *Service) visibleStoreProduct(
+	ctx context.Context, idOrHandle string, salesChannelIDs []string,
+) (models.Product, error) {
+	if _, err := requireID("id", idOrHandle); err != nil {
+		return models.Product{}, err
 	}
 
 	var (
@@ -684,10 +706,10 @@ func (s *Service) GetStoreProduct(
 		product, err = s.GetProductByHandle(ctx, idOrHandle)
 	}
 	if err != nil {
-		return StoreProduct{}, err
+		return models.Product{}, err
 	}
 	if product.Status != models.StatusPublished {
-		return StoreProduct{}, errors.NotFound(codeNotFound, "the product was not found: %s", idOrHandle)
+		return models.Product{}, errors.NotFound(codeNotFound, "the product was not found: %s", idOrHandle)
 	}
 
 	// nil means "the request carries no channel id"; in that case the query
@@ -695,18 +717,14 @@ func (s *Service) GetStoreProduct(
 	if salesChannelIDs != nil {
 		visible, err := s.repo.ProductVisibleInSalesChannels(ctx, product.ID, salesChannelIDs)
 		if err != nil {
-			return StoreProduct{}, err
+			return models.Product{}, err
 		}
 		if !visible {
-			return StoreProduct{}, errors.NotFound(codeNotFound, "the product was not found: %s", idOrHandle)
+			return models.Product{}, errors.NotFound(codeNotFound, "the product was not found: %s", idOrHandle)
 		}
 	}
 
-	items, err := s.toStoreProducts(ctx, []models.Product{product}, salesChannelIDs)
-	if err != nil {
-		return StoreProduct{}, err
-	}
-	return items[0], nil
+	return product, nil
 }
 
 // StoreProductsByIDs returns the storefront products BY ID, IN THE REQUESTED

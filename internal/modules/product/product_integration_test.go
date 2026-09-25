@@ -239,7 +239,7 @@ func TestMigrationUpDownIsReversible(t *testing.T) {
 		"product", "product_variant", "product_option", "product_option_value",
 		"product_variant_option_value", "product_category", "product_collection",
 		"product_tag", "product_image", "product_tag_map", "product_category_map",
-		"product_type",
+		"product_type", "product_relation",
 	}
 	for _, table := range tables {
 		assert.True(t, tableExists(ctx, t, dsn, table), "the %s table must be created", table)
@@ -252,7 +252,7 @@ func TestMigrationUpDownIsReversible(t *testing.T) {
 	// written out rather than derived on purpose: a count taken from the
 	// embedded files would agree with itself whatever happened, and what this
 	// line is for is noticing that a migration was added.
-	assert.Equal(t, uint(8), version)
+	assert.Equal(t, uint(9), version)
 
 	// 000004 adds no table, so the table list above cannot notice it. What it
 	// adds is the index the catalog's option-value filter reads through, and an

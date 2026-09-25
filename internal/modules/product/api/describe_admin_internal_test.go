@@ -247,6 +247,14 @@ func adminEndpoints() []adminEndpoint {
 			record: filledAdminProduct(),
 		},
 		{
+			method: http.MethodGet, path: pathProductRelations, status: "200",
+			record: filledRelations(),
+		},
+		{
+			method: http.MethodPut, path: pathProductRelationsOfType, status: "200",
+			request: setRelationsRequest{}, record: filledRelations(),
+		},
+		{
 			method: http.MethodPost, path: "/admin/v1/products/{id}/variants", status: "201",
 			request: createVariantRequest{}, record: filledAdminVariant(),
 		},
@@ -733,4 +741,9 @@ func adminParameterNames(t *testing.T, op map[string]any, location string) []str
 	}
 
 	return names
+}
+
+// filledRelations is a relations body with every kind holding an id.
+func filledRelations() relationsDTO {
+	return relationsDTO{CrossSell: []string{"prod_2"}, UpSell: []string{"prod_3"}, Substitute: []string{"prod_4"}}
 }

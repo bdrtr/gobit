@@ -260,6 +260,12 @@ func (r *Repo) SoftDeleteProductChildren(ctx context.Context, productID string) 
 	if err := r.q.DeleteImagesByProduct(ctx, productID); err != nil {
 		return wrapDB(err, "could not delete the product's images: %s", productID)
 	}
+	// Relations from AND to the product go with it (ADR 0180): a list that
+	// named a deleted product would show the storefront a gap and the operator a
+	// product they cannot open.
+	if err := r.q.DeleteProductRelationsTouching(ctx, productID); err != nil {
+		return wrapDB(err, "could not delete the product's relations: %s", productID)
+	}
 	return nil
 }
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/bdrtr/gobit/core/openapi"
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
@@ -22,6 +23,12 @@ const (
 	typeBoolean = "boolean"
 	typeObject  = "object"
 	typeArray   = "array"
+)
+
+// The parameter location and the tag more than one description spells.
+const (
+	inPath      = "path"
+	tagProducts = "products"
 )
 
 // Describe writes product's endpoints into the OpenAPI document.
@@ -62,7 +69,7 @@ func Describe(d *openapi.Doc) {
 		// after their scoping segment and would land in the same generated
 		// client class as auth's /admin/v1/sales-channels endpoints, which are a
 		// different module's surface entirely.
-		Tags: []string{"products"},
+		Tags: []string{tagProducts},
 		// The QUERY parameters are the ones the handler READS, not the ones we
 		// might wish for: the list below is exactly what
 		// [Handler.storeListProducts] takes off the query string, and nothing
@@ -220,7 +227,7 @@ func Describe(d *openapi.Doc) {
 
 	d.Describe(http.MethodGet, pathStoreProduct, openapi.Operation{
 		Summary: "Returns a single storefront product by id or by handle.",
-		Tags:    []string{"products"},
+		Tags:    []string{tagProducts},
 		// Both path parameters are derived from the pattern by the core as well;
 		// the only reason they are written BY HAND here is their description.
 		// The second is named "id" but the value may also be a handle, and only
@@ -230,7 +237,7 @@ func Describe(d *openapi.Doc) {
 			salesChannelPathParameter(),
 			{
 				Name:        "id",
-				In:          "path",
+				In:          inPath,
 				Required:    true,
 				Schema:      map[string]any{schemaType: typeString},
 				Description: "Product id (prod_…) or the handle in the storefront address.",
@@ -242,6 +249,7 @@ func Describe(d *openapi.Doc) {
 		},
 	})
 
+	describeStorefrontRelated(d)
 	describeStorefrontVocabulary(d)
 	describeStorefrontGraphQL(d)
 	describeAdminProducts(d)
@@ -509,6 +517,107 @@ func describeAdminProducts(d *openapi.Doc) {
 	})
 
 	describeAdminSchedule(d)
+	describeAdminRelations(d)
+}
+
+// describeStorefrontRelated describes the storefront read of a product's
+// relations (ADR 0180).
+func describeStorefrontRelated(d *openapi.Doc) {
+	d.Describe(http.MethodGet, pathStoreRelated, openapi.Operation{
+		Summary: "Lists one kind of a product's related products, as the storefront shows them.",
+		// Written by hand for the reason the product listing's is.
+		Tags: []string{tagProducts},
+		Description: "The products the operator related to this one, in the operator's order, " +
+			"each enriched the way the single product endpoint enriches it. " +
+			"The product named in the path has to be one the storefront may show — published " +
+			"and visible in the channel — or the answer is 404, exactly as the single product " +
+			"endpoint answers. A related product that is not published or not visible in the " +
+			"channel is LEFT OUT without a gap, so the list may be shorter than the operator's; " +
+			"a draft lined up before its launch appears once it is published. " +
+			"The body is a function of the URL alone and may be cached.",
+		Parameters: []openapi.Parameter{
+			salesChannelPathParameter(),
+			{
+				Name:        "id",
+				In:          inPath,
+				Required:    true,
+				Schema:      map[string]any{schemaType: typeString},
+				Description: "Product id (prod_…) or the handle in the storefront address.",
+			},
+			relationTypeParameter(),
+		},
+		Responses: map[string]any{
+			"200": openapi.Response("The related products", d.Item([]service.StoreProduct{})),
+			"403": channelRefusedResponse(),
+		},
+	})
+}
+
+// relationTypeParameter is the storefront's required choice of kind.
+//
+// It is the one required query parameter of the catalog reads, and it is
+// required because each kind is a widget of its own on a product page: the
+// three at once would enrich three lists for a page that shows one.
+func relationTypeParameter() openapi.Parameter {
+	return openapi.Parameter{
+		Name:     "type",
+		In:       "query",
+		Required: true,
+		Schema: map[string]any{
+			schemaType: typeString,
+			"enum":     relationTypeNames(),
+		},
+		Description: "The kind of relation: cross_sell (goes with it), up_sell (the better one) " +
+			"or substitute (to buy instead). Anything else is refused with 422.",
+	}
+}
+
+// relationTypeNames is the closed set as the document spells it.
+func relationTypeNames() []string {
+	kinds := models.RelationTypes()
+	out := make([]string, len(kinds))
+	for i, kind := range kinds {
+		out[i] = string(kind)
+	}
+	return out
+}
+
+// describeAdminRelations describes a product's relations on the admin surface
+// (ADR 0180).
+func describeAdminRelations(d *openapi.Doc) {
+	d.Describe(http.MethodGet, pathProductRelations, openapi.Operation{
+		Summary: "Returns a product's relations: every kind, each in the operator's order.",
+		Description: "Every kind is present, an empty list included. The ids are what the operator " +
+			"wrote: a related product that is a draft or bound to another channel is listed " +
+			"here and left out on the storefront.",
+		Responses: map[string]any{
+			"200": openapi.Response("The product's relations", d.Item(relationsDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodPut, pathProductRelationsOfType, openapi.Operation{
+		Summary: "Replaces one kind of a product's relations.",
+		Description: "The body is the kind's WHOLE list, in the order the storefront shows it; an " +
+			"empty list takes the kind off and the other kinds are left alone. Every id has to " +
+			"name a product that exists and is not deleted, at most once, and not the product " +
+			"itself; a list breaking any of that is refused with 422, naming what it refused, and " +
+			"nothing is written. A kind holds at most " + strconv.Itoa(service.MaxRelations) + ". " +
+			"A related product does NOT have to be published: whether the storefront shows it is decided when it is read. Deleting a " +
+			"product takes it off every list naming it.",
+		Parameters: []openapi.Parameter{
+			{
+				Name:        "type",
+				In:          inPath,
+				Required:    true,
+				Schema:      map[string]any{schemaType: typeString, "enum": relationTypeNames()},
+				Description: "The kind of relation replaced.",
+			},
+		},
+		RequestBody: d.RequestBody(setRelationsRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("The product's relations after the write", d.Item(relationsDTO{})),
+		},
+	})
 }
 
 // describeAdminSchedule describes a product's schedule (ADR 0177, ADR 0179).
@@ -942,7 +1051,7 @@ func pagingParameters() []openapi.Parameter {
 func salesChannelPathParameter() openapi.Parameter {
 	return openapi.Parameter{
 		Name:     paramSalesChannelID,
-		In:       "path",
+		In:       inPath,
 		Required: true,
 		Schema:   map[string]any{schemaType: typeString},
 		Description: "The sales channel this catalog read is scoped to (sc_...). " +

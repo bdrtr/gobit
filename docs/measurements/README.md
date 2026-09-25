@@ -110,3 +110,4 @@ truth: a report says what was true on the day it was taken.
 | [An order announced and canceled — measured 2026-09-25](0175-an-order-announced-and-canceled.md) | 66 |
 | [A campaign before it runs — measured 2026-09-25](0176-a-campaign-before-it-runs.md) | 76 |
 | [A launch at nine — measured 2026-09-25](0177-a-launch-at-nine.md) | 96 |
+| [A product page and its neighbors — measured 2026-09-25](0180-a-product-page-and-its-neighbors.md) | 96 |

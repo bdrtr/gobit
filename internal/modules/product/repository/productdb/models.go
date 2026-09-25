@@ -98,6 +98,14 @@ type ProductOptionValue struct {
 	ValueFolded string
 }
 
+type ProductRelation struct {
+	ProductID        string
+	Type             string
+	RelatedProductID string
+	Rank             int32
+	CreatedAt        pgtype.Timestamptz
+}
+
 type ProductTag struct {
 	ID        string
 	Value     string

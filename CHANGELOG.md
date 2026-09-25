@@ -331,6 +331,19 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **A product names its neighbors** (ADR 0180). A product holds an ordered
+  list of up to 50 other products for each of `cross_sell`, `up_sell` and
+  `substitute`. **For API consumers:** `GET /admin/v1/products/{id}/relations`
+  reads every kind, and `PUT /admin/v1/products/{id}/relations/{type}` replaces
+  one kind with `{"product_ids": [...]}`. A list naming a missing or deleted
+  product, the product itself, a duplicate or more than 50 entries is refused
+  whole. The storefront reads one kind at
+  `GET /store/v1/sales-channels/{sales_channel_id}/products/{id}/related?type=`.
+  It answers 404 for a product it may not show, and it leaves out a related
+  product that is a draft or bound to another channel, so a launch can be
+  lined up before it happens. Deleting a product takes it off every list.
+  **For operators:** migration 000009 adds the `product_relation` table.
+
 - **A product can be scheduled to leave** (ADR 0179). A draft or a published
   product takes an `archive_at` beside `publish_at`; the `scheduled-publish`
   job archives what is due after publishing what is due, and each change gets

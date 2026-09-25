@@ -74,6 +74,28 @@ func (f *scopeCatalog) UpdateProduct(
 	return models.Product{}, nil
 }
 
+// ProductRelations counts the call.
+func (f *scopeCatalog) ProductRelations(context.Context, string) (map[models.RelationType][]string, error) {
+	f.count()
+	return map[models.RelationType][]string{}, nil
+}
+
+// SetProductRelations counts the call.
+func (f *scopeCatalog) SetProductRelations(
+	context.Context, string, models.RelationType, []string,
+) (map[models.RelationType][]string, error) {
+	f.count()
+	return map[models.RelationType][]string{}, nil
+}
+
+// StoreRelatedProducts counts the call.
+func (f *scopeCatalog) StoreRelatedProducts(
+	context.Context, string, models.RelationType, []string,
+) ([]service.StoreProduct, error) {
+	f.count()
+	return nil, nil
+}
+
 // SetSchedule counts the call.
 func (f *scopeCatalog) SetSchedule(context.Context, string, service.Schedule) (models.Product, error) {
 	f.count()

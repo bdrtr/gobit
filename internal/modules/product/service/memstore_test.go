@@ -46,6 +46,8 @@ type memStore struct {
 	variantValues map[string]map[string]string
 	productTags   map[string][]string
 	productCats   map[string][]string
+	// relations is the product -> kind -> related ids mapping, in rank order.
+	relations map[string]map[models.RelationType][]string
 
 	// links is the fake link service the sales channel links are read from.
 	//
@@ -85,6 +87,7 @@ func newMemStore() *memStore {
 		variantValues: map[string]map[string]string{},
 		productTags:   map[string][]string{},
 		productCats:   map[string][]string{},
+		relations:     map[string]map[models.RelationType][]string{},
 		calls:         map[string]int{},
 		failOn:        map[string]error{},
 	}
@@ -607,6 +610,15 @@ func (m *memStore) SoftDeleteProductChildren(_ context.Context, productID string
 			m.variants[id] = v
 		}
 	}
+	// The relations go in both directions, as DeleteProductRelationsTouching
+	// takes them.
+	delete(m.relations, productID)
+	for owner, kinds := range m.relations {
+		for kind, ids := range kinds {
+			kinds[kind] = slices.DeleteFunc(ids, func(id string) bool { return id == productID })
+		}
+		m.relations[owner] = kinds
+	}
 	for id := range m.options {
 		if o := m.options[id]; o.ProductID == productID && o.DeletedAt == nil {
 			o.DeletedAt = &deletionTime
@@ -619,6 +631,50 @@ func (m *memStore) SoftDeleteProductChildren(_ context.Context, productID string
 			}
 		}
 	}
+	return nil
+}
+
+func (m *memStore) ListProductRelations(
+	_ context.Context, productID string,
+) (map[models.RelationType][]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ListProductRelations"); err != nil {
+		return nil, err
+	}
+
+	out := map[models.RelationType][]string{}
+	for kind, ids := range m.relations[productID] {
+		if len(ids) > 0 {
+			out[kind] = slices.Clone(ids)
+		}
+	}
+	return out, nil
+}
+
+func (m *memStore) ListProductRelationsOfType(
+	_ context.Context, productID string, kind models.RelationType,
+) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ListProductRelationsOfType"); err != nil {
+		return nil, err
+	}
+	return slices.Clone(m.relations[productID][kind]), nil
+}
+
+func (m *memStore) ReplaceProductRelations(
+	_ context.Context, productID string, kind models.RelationType, relatedIDs []string,
+) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ReplaceProductRelations"); err != nil {
+		return err
+	}
+	if m.relations[productID] == nil {
+		m.relations[productID] = map[models.RelationType][]string{}
+	}
+	m.relations[productID][kind] = slices.Clone(relatedIDs)
 	return nil
 }
 

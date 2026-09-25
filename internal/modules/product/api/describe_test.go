@@ -35,6 +35,8 @@ const (
 	describedProductPath = "/store/v1/sales-channels/{sales_channel_id}/products/{id}"
 	// describedOptionValuesPath is the pattern of the option vocabulary.
 	describedOptionValuesPath = "/store/v1/sales-channels/{sales_channel_id}/option-values"
+	// describedRelatedPath is the pattern of a product's related products.
+	describedRelatedPath = "/store/v1/sales-channels/{sales_channel_id}/products/{id}/related"
 )
 
 // storefrontDoc produces Describe's output against the REAL route tree and
@@ -326,6 +328,48 @@ func assertProductSchema(t *testing.T, components, schema map[string]any) {
 		"required has to be the same as the keys encoding/json ALWAYS writes")
 }
 
+// TestTheRelatedReadDescribesItsBodyAndKind verifies the storefront read of a
+// product's relations (ADR 0180): a single envelope around a LIST of storefront
+// products, and the kind as a required query parameter whose values are the
+// closed set the service accepts.
+func TestTheRelatedReadDescribesItsBodyAndKind(t *testing.T) {
+	t.Parallel()
+
+	paths, components := storefrontDoc(t)
+	op := storefrontOperation(t, paths, http.MethodGet, describedRelatedPath)
+
+	responses, ok := op["responses"].(map[string]any)
+	require.True(t, ok)
+	definition, ok := responses["200"].(map[string]any)
+	require.True(t, ok)
+	envelope := responseSchema(t, definition)
+	assert.ElementsMatch(t, []string{"data"}, storefrontFields(t, components, envelope),
+		"the list is not paged, so it has no count, offset or limit to describe")
+	data := property(t, components, envelope, "data")
+	assert.Equal(t, "array", data["type"])
+	item, ok := data["items"].(map[string]any)
+	require.True(t, ok)
+	assertProductSchema(t, components, item)
+
+	assert.Equal(t, []string{"type"}, parameterNames(t, op, "query"))
+	params, _ := op["parameters"].([]any)
+	var kind map[string]any
+	for _, raw := range params {
+		if p, ok := raw.(map[string]any); ok && p["name"] == "type" {
+			kind = p
+		}
+	}
+	require.NotNil(t, kind)
+	assert.Equal(t, true, kind["required"], "the handler refuses a request without it")
+	schema, ok := kind["schema"].(map[string]any)
+	require.True(t, ok)
+	want := make([]any, 0, len(models.RelationTypes()))
+	for _, relation := range models.RelationTypes() {
+		want = append(want, string(relation))
+	}
+	assert.Equal(t, want, schema["enum"], "the values are the closed set the service accepts")
+}
+
 // TestStoreVariantsDescribeEnrichedType verifies that the shadowed field appears
 // in the schema with the RIGHT type.
 //
@@ -562,7 +606,9 @@ func TestTheChannelScopedReadsDescribeTheirSegment(t *testing.T) {
 
 	paths, _ := storefrontDoc(t)
 
-	for _, path := range []string{describedProductsPath, describedProductPath, describedOptionValuesPath} {
+	for _, path := range []string{
+		describedProductsPath, describedProductPath, describedOptionValuesPath, describedRelatedPath,
+	} {
 		t.Run(path, func(t *testing.T) {
 			op := storefrontOperation(t, paths, http.MethodGet, path)
 
@@ -610,6 +656,7 @@ func TestTheChannelScopedReadsKeepTheirOwnTag(t *testing.T) {
 		describedProductsPath:     "products",
 		describedProductPath:      "products",
 		describedOptionValuesPath: "option-values",
+		describedRelatedPath:      "products",
 	} {
 		t.Run(path, func(t *testing.T) {
 			op := storefrontOperation(t, paths, http.MethodGet, path)
@@ -686,6 +733,9 @@ func TestEveryStoreEndpointIsDescribed(t *testing.T) {
 		"GET " + describedProductsPath,
 		"GET " + describedProductPath,
 		"GET " + describedOptionValuesPath,
+		// A product's related products (ADR 0180), under the product they
+		// start from and scoped the same way.
+		"GET " + describedRelatedPath,
 		// The GraphQL endpoint is part of the storefront too and it is
 		// described; OpenAPI cannot describe its SCHEMA but it does describe its
 		// path, its body and where the contract is (see

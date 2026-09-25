@@ -119,6 +119,12 @@ type Store interface {
 	ClearProductSchedule(ctx context.Context, id string) (models.Product, error)
 	PublishDueProducts(ctx context.Context, due time.Time, limit int64) ([]string, error)
 	ArchiveDueProducts(ctx context.Context, due time.Time, limit int64) ([]string, error)
+	// ListProductRelations, ListProductRelationsOfType and
+	// ReplaceProductRelations are a product's relations (ADR 0180); see
+	// relation.go.
+	ListProductRelations(ctx context.Context, productID string) (map[models.RelationType][]string, error)
+	ListProductRelationsOfType(ctx context.Context, productID string, kind models.RelationType) ([]string, error)
+	ReplaceProductRelations(ctx context.Context, productID string, kind models.RelationType, relatedIDs []string) error
 	SoftDeleteProduct(ctx context.Context, id string) error
 	SoftDeleteProductChildren(ctx context.Context, productID string) error
 	ListVariantIDsByProduct(ctx context.Context, productID string) ([]string, error)
