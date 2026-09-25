@@ -48,17 +48,24 @@ func TestTheChangelogNamesEveryUnreleasedDecision(t *testing.T) {
 		})
 	}
 
-	population, unnamed := unnamedDecisions(records,
-		newestReleaseDate(t, released), released, unreleased)
+	cut := newestReleaseDate(t, released)
+	_, unnamed := unnamedDecisions(records, cut, released, unreleased)
 
-	// A population that comes back empty would make every assertion above
-	// vacuous, and the parse is the part most likely to break: one heading
-	// rewritten and the section boundary moves. Twenty is far below the count
-	// on the day this was written and far above anything a broken parse
-	// produces.
-	require.Greater(t, len(population), 20,
-		"only %d records were found unreleased; the changelog parse has gone BLIND",
-		len(population))
+	// The parse is the part most likely to break — one heading rewritten and
+	// the section boundary moves — and a boundary that moved UP hands the
+	// unreleased entries to the released part, where they count as shipped and
+	// the assertion below passes over nothing.
+	//
+	// It used to be guarded by a floor: more than twenty records unreleased.
+	// The day after a release the population is legitimately EMPTY, so the floor
+	// would have failed the first release this gate saw, calling a correct parse
+	// blind (D132). The boundary is the first version heading, so the one way it
+	// moves up is a version heading above the Unreleased one — and that is what
+	// is asked, on the day of a release as on any other. The Unreleased heading
+	// is found by its shape, a bracketed heading that is not a version, rather
+	// than by its Turkish name.
+	require.Regexp(t, regexp.MustCompile(`(?m)^## \[\D`), unreleased,
+		"the Unreleased heading is not above the newest release; the changelog parse has gone BLIND")
 
 	assert.Empty(t, unnamed,
 		"these decisions are not named in the Unreleased section of CHANGELOG.md: %s\n"+
