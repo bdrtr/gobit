@@ -41,12 +41,13 @@
 //     writes to cart.
 //
 // If the single write fails there is nothing to roll back; the step never happened.
-// The only path that does two writes is adding/updating a line (first the line, then
-// the totals) and a failure of the second write NEEDS NO COMPENSATION: the state
+// The paths that do two writes change the cart first and reprice it second — a
+// line, a coupon, a shipping method, and every write [Interop.RepriceAfter] runs
+// (ADR 0173) — and a failure of the second write NEEDS NO COMPENSATION: the state
 // that remains is the STALE TOTALS state that the cart model explicitly recognizes,
 // and such a cart is already refused from becoming an order (see MarkCompleted in
-// the cart module). Rolling the line back would mean DELETING the customer's intent
-// because of a transient pricing failure.
+// the cart module). Rolling the change back would mean DELETING the customer's
+// intent because of a transient pricing failure.
 //
 // This is why the internal/core/workflow Executor is NOT USED in this round and the
 // "core.workflow" name is not resolved. Wrapping a single-step job that has no

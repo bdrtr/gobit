@@ -234,15 +234,19 @@ func (h *Handler) storeUpdateCart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cart, err := h.svc.UpdateCart(ctx, cartID(r), service.UpdateCartInput{
-		Email:      body.Email,
-		CustomerID: customerID,
+	id := cartID(r)
+	err = h.repriced(ctx, id, func() error {
+		_, err := h.svc.UpdateCart(ctx, id, service.UpdateCartInput{
+			Email:      body.Email,
+			CustomerID: customerID,
+		})
+		return err
 	})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
-	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toCartDTO(cart)})
+	h.writeRepricedCart(ctx, w, id)
 }
 
 // mergeCartRequest is the body of POST /store/v1/carts/{id}/merge.
@@ -273,12 +277,16 @@ func (h *Handler) storeMergeCart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cart, err := h.svc.MergeCart(ctx, body.SourceCartID, cartID(r))
+	id := cartID(r)
+	err := h.repriced(ctx, id, func() error {
+		_, err := h.svc.MergeCart(ctx, body.SourceCartID, id)
+		return err
+	})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
-	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toCartDTO(cart)})
+	h.writeRepricedCart(ctx, w, id)
 }
 
 // applyPromotionCodeRequest is the body of POST /store/v1/carts/{id}/promotions.
@@ -595,7 +603,11 @@ func encodeMetadata(metadata map[string]any) (json.RawMessage, error) {
 func (h *Handler) storeRemoveLineItem(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	if err := h.svc.RemoveLineItem(ctx, cartID(r), chi.URLParam(r, paramLineItemID)); err != nil {
+	id := cartID(r)
+	err := h.repriced(ctx, id, func() error {
+		return h.svc.RemoveLineItem(ctx, id, chi.URLParam(r, paramLineItemID))
+	})
+	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
@@ -813,7 +825,13 @@ func (h *Handler) storeSetShippingAddress(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	addr, err := h.svc.SetShippingAddress(ctx, cartID(r), body.toInput())
+	id := cartID(r)
+	var addr models.CartAddress
+	err := h.repriced(ctx, id, func() error {
+		var err error
+		addr, err = h.svc.SetShippingAddress(ctx, id, body.toInput())
+		return err
+	})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
@@ -831,7 +849,13 @@ func (h *Handler) storeSetBillingAddress(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	addr, err := h.svc.SetBillingAddress(ctx, cartID(r), body.toInput())
+	id := cartID(r)
+	var addr models.CartAddress
+	err := h.repriced(ctx, id, func() error {
+		var err error
+		addr, err = h.svc.SetBillingAddress(ctx, id, body.toInput())
+		return err
+	})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
@@ -898,9 +922,44 @@ func (h *Handler) storeAddShippingMethod(w http.ResponseWriter, r *http.Request)
 func (h *Handler) storeRemoveShippingMethod(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	if err := h.svc.RemoveShippingMethod(ctx, cartID(r), chi.URLParam(r, paramMethodID)); err != nil {
+	id := cartID(r)
+	err := h.repriced(ctx, id, func() error {
+		return h.svc.RemoveShippingMethod(ctx, id, chi.URLParam(r, paramMethodID))
+	})
+	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
+}
+
+// repriced hands a write the cart module makes on its own to the flow that
+// reprices the cart after it (ADR 0173).
+//
+// A flow that is missing refuses and the write never runs ([Handler.repricing]).
+// A repricing that fails AFTER the write does not take the write back — the
+// line-item flow makes the same choice — and the error says the totals are
+// stale, which the cart then reports too.
+func (h *Handler) repriced(ctx context.Context, id string, write func() error) error {
+	flow, err := h.repricing()
+	if err != nil {
+		return err
+	}
+
+	return flow.RepriceAfter(ctx, id, write)
+}
+
+// writeRepricedCart answers with the cart record as it is AFTER the repricing.
+//
+// The service returns the cart it wrote, and that copy carries the totals from
+// before the repricing; answering with it would show the stale figure this path
+// exists to replace. The body stays the plain cart record these two endpoints
+// describe, which is what separates it from [Handler.writeCart].
+func (h *Handler) writeRepricedCart(ctx context.Context, w http.ResponseWriter, id string) {
+	detail, err := h.svc.GetCart(ctx, id)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toCartDTO(detail.Cart)})
 }

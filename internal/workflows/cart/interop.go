@@ -36,10 +36,10 @@ const InteropName = "workflows.cart.interop"
 // # Why not ALL of the workflows
 //
 // The surface carries the workflows that ARE the storefront's HTTP endpoints and
-// no others. [Workflows.CalculateTotals] is NOT here and will not be: it is not a
-// capability that gets exposed over HTTP — running the computation at the moment
-// the client asks for it would tie the amount to the client's timing. Writing an
-// unused method here would mean producing a contract with no consumer.
+// no others. [Workflows.CalculateTotals] is here ONLY inside [Interop.RepriceAfter],
+// the step a write takes after itself (ADR 0173); it is still not a capability a
+// client can ask for, because running the computation at the moment the client
+// asks would tie the amount to the client's timing rather than to a change.
 //
 // The rule cuts both ways and the second direction went wrong for a while. The
 // cart module's two coupon endpoints resolve the cart API's CartPromotions from this
@@ -189,4 +189,28 @@ func (i *Interop) ApplyPromotionCode(ctx context.Context, cartID, code string) e
 // and not this surface's.
 func (i *Interop) RemovePromotionCode(ctx context.Context, cartID, code string) error {
 	return i.w.RemovePromotionCode(ctx, cartID, code)
+}
+
+// RepriceAfter runs a write the cart module makes on its own and then recomputes
+// the cart's totals.
+//
+// Six storefront writes change the cart through the module's service rather than
+// through a flow — the e-mail and the customer, the two addresses, removing a line
+// or a shipping method, and a merge — and each of them leaves the totals stale.
+// The write is handed IN rather than made before the call, so the pairing is this
+// method's and not the caller's discipline: a caller that reaches the flow gets
+// the repricing, and one that cannot reach it never writes (ADR 0173).
+//
+// A repricing that fails after the write does not take the write back, which is
+// [Workflows.AddLineItem]'s choice; the error says the totals are stale. It is not
+// an endpoint: a client cannot reprice a cart it has not changed.
+func (i *Interop) RepriceAfter(ctx context.Context, cartID string, change func() error) error {
+	if err := change(); err != nil {
+		return err
+	}
+	if _, err := i.w.CalculateTotals(ctx, cartID); err != nil {
+		return totalsAfterChange(err, cartID, "the cart was changed")
+	}
+
+	return nil
 }

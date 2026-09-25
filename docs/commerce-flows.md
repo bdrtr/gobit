@@ -195,7 +195,9 @@ has been left inconsistent.
   The calculation is refreshed at the start of completion; a divergence produces
   a `409` and NO SIDE EFFECT is applied (the check runs before the saga's first
   step). Had it been optional, every client that forgot the field would have
-  switched the protection off silently.
+  switched the protection off silently. The figure to approve is the cart's own
+  `total`: every storefront write that changes the cart reprices it before it
+  answers (ADR 0173), so what a storefront reads is what the completion compares.
 - `email` IS NOT THERE: the cart's contact address is already on the cart and the
   handler reads it from its own service; opening it to the body would let the
   order be bound to an address other than the one visible on the cart.

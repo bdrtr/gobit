@@ -36,8 +36,10 @@ const (
 	// The tax module's default rate for the country, 2000 basis points. NOT the
 	// region's own rate — a region that resolves to one country is taxed by the
 	// tax module and its answer is taken as it is.
-	firstRunTax   = firstRunSubtotal * 2_000 / 10_000
-	firstRunTotal = firstRunSubtotal + firstRunTax
+	firstRunTax = firstRunSubtotal * 2_000 / 10_000
+	// The flat option the block creates. Shipping does not enter the tax base.
+	firstRunShipping int64 = 4_900
+	firstRunTotal          = firstRunSubtotal + firstRunTax + firstRunShipping
 )
 
 // TestTheDocumentedFirstRunReachesAnOrder executes the document instead of
@@ -45,8 +47,8 @@ const (
 //
 // # Why this scenario exists
 //
-// The path from an empty database to a shopper's order is fifteen calls and
-// eleven of them were written down nowhere: they lived inside this package's own
+// Most of the calls on the path from an empty database to a shopper's order were
+// written down nowhere: they lived inside this package's own
 // storefront helper and inside internal/e2e's harness, each of which creates its
 // own region, price binding and stock. Every lane was green and an operator
 // reading the tree had no way to learn the sequence — the gap was invisible
@@ -97,11 +99,11 @@ func TestTheDocumentedFirstRunReachesAnOrder(t *testing.T) {
 	out := runDocumentedScript(t, script)
 	printed := nonEmptyLines(out)
 
-	// Eight lines: six statuses, the cart's total and the order. A different count
+	// Ten lines: eight statuses, the cart's total and the order. A different count
 	// means the block changed shape and the positions below are reading the wrong
 	// lines — which would make every assertion meaningless while looking fine.
-	require.Lenf(t, printed, 8,
-		"the block printed %d lines and eight were expected.\n--- output ---\n%s",
+	require.Lenf(t, printed, 10,
+		"the block printed %d lines and ten were expected.\n--- output ---\n%s",
 		len(printed), out)
 
 	for name, step := range map[string]struct {
@@ -127,6 +129,11 @@ func TestTheDocumentedFirstRunReachesAnOrder(t *testing.T) {
 		"the line added to the cart": {at: 5, status: "201",
 			why: "this is the first step that can only succeed if all four bindings above " +
 				"were made"},
+		"the shipping address": {at: 6, status: "200",
+			why: "an order that is paid for has to have somewhere to go"},
+		"the shipping method": {at: 7, status: "201",
+			why: "the option is quoted for the cart's region, so without the option the " +
+				"block creates there is nothing to choose"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			assert.Equalf(t, step.status, strings.TrimSpace(printed[step.at]),
@@ -136,20 +143,22 @@ func TestTheDocumentedFirstRunReachesAnOrder(t *testing.T) {
 	}
 
 	t.Run("the total is the one the document's numbers produce", func(t *testing.T) {
-		total, err := strconv.ParseInt(strings.TrimSpace(printed[6]), 10, 64)
+		total, err := strconv.ParseInt(strings.TrimSpace(printed[8]), 10, 64)
 		require.NoErrorf(t, err, "the cart's total did not come back as a number: %q\n"+
 			"A jq path that no longer resolves prints \"null\", which is what a reader "+
-			"pasting this document would see", strings.TrimSpace(printed[6]))
+			"pasting this document would see", strings.TrimSpace(printed[8]))
 
 		assert.Equalf(t, firstRunTotal, total,
 			"the cart's total is %d and the document's own numbers give %d (%d x %d plus "+
-				"the tax module's 20%% default rate for the country). A reader who follows "+
-				"the block and gets another figure cannot tell which of the two is wrong",
-			total, firstRunTotal, firstRunUnitPrice, firstRunQuantity)
+				"the tax module's 20%% default rate for the country, plus %d untaxed "+
+				"shipping). A reader who follows the block and gets another figure cannot "+
+				"tell which of the two is wrong — and the figure without the shipping is "+
+				"the stale total a cart kept after its delivery was chosen (D129)",
+			total, firstRunTotal, firstRunUnitPrice, firstRunQuantity, firstRunShipping)
 	})
 
 	t.Run("the cart became an order", func(t *testing.T) {
-		line := strings.TrimSpace(printed[7])
+		line := strings.TrimSpace(printed[9])
 		require.True(t, strings.HasPrefix(line, "order "),
 			"the last line was %q and the block ends by echoing the order", line)
 

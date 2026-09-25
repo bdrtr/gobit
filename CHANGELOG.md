@@ -331,6 +331,18 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **A storefront write leaves the cart priced** (ADR 0173, D129). Adding or
+  removing a shipping method, removing a line, writing either address, the
+  e-mail or the customer, and a merge now recompute the cart's totals before
+  they answer; before, each left `totals_stale` true and nothing on the store
+  surface could refresh it, so a shopper who chose a delivery was shown a total
+  without it and the completion refused the `expected_total` they approved.
+  `POST /store/v1/carts/{id}` and `POST /store/v1/carts/{id}/merge` answer with
+  the repriced cart. `docs/first-run.md` now creates a shipping option and
+  ships its order, so its total is 81700. **For embedders wiring the cart
+  module by hand:** `api.Flows` gains `Repricing`, and the six writes refuse
+  without it.
+
 - **A holding says what erasure does to it** (ADR 0172). `personaldata.Holding`
   gains `OnErasure` — `Emptied` or `Kept` — and every holder declares it for
   every column; `Declaration.KeptOnErasure` and `Declaration.Paths` read what an

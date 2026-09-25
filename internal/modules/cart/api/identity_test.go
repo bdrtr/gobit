@@ -166,7 +166,8 @@ func TestABodyNamingACustomerIsStillServedWhenNothingIsBound(t *testing.T) {
 				cart:   models.Cart{ID: "cart_1"},
 				detail: models.CartDetail{Cart: models.Cart{ID: "cart_1"}},
 			}
-			h := mountCartWithPolicy(svc, api.Flows{Opening: opening}, nil, true)
+			h := mountCartWithPolicy(svc,
+				api.Flows{Opening: opening, Repricing: &fakeRepricing{}}, nil, true)
 
 			rec := doRequest(t, h, tc.method, tc.path, tc.body(theClaimed))
 
@@ -295,8 +296,9 @@ func TestAGuestBodyIsNeverAskedForAProof(t *testing.T) {
 func TestAnEmailOnlyHandoverIsNeverAskedForAProof(t *testing.T) {
 	t.Parallel()
 
-	svc := &fakeCarts{cart: models.Cart{ID: "cart_1", Email: "guest@example.com"}}
-	h := mountCart(svc, api.Flows{}, nil)
+	stored := models.Cart{ID: "cart_1", Email: "guest@example.com"}
+	svc := &fakeCarts{cart: stored, detail: models.CartDetail{Cart: stored}}
+	h := mountCart(svc, api.Flows{Repricing: &fakeRepricing{}}, nil)
 
 	rec := doRequest(t, h, http.MethodPost, "/store/v1/carts/cart_1",
 		`{"email":"guest@example.com"}`)

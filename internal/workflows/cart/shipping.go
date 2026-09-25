@@ -128,7 +128,20 @@ func (w *Workflows) AddQuotedShippingMethod(
 			shippingOptionID, option.CurrencyCode, snap.CurrencyCode)
 	}
 
-	return w.carts.AddShippingMethod(ctx, cartID, option.Name, option.ID, option.Amount, data)
+	methodID, err := w.carts.AddShippingMethod(ctx, cartID, option.Name, option.ID, option.Amount, data)
+	if err != nil {
+		return "", err
+	}
+
+	// The method is priced, and the cart it went onto is repriced before the
+	// answer goes back (ADR 0173). Without this round the storefront reads a
+	// total that leaves the delivery out, sends it as expected_total, and the
+	// completion refuses a cart whose price the shopper was never shown.
+	if _, err := w.CalculateTotals(ctx, cartID); err != nil {
+		return "", totalsAfterChange(err, cartID, "shipping method added")
+	}
+
+	return methodID, nil
 }
 
 // quoteOption asks the fulfillment module to price the cart's options and

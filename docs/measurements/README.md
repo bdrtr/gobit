@@ -105,3 +105,4 @@ truth: a report says what was true on the day it was taken.
 | [What the timeline left out — measured 2026-09-25](0170-what-the-timeline-left-out.md) | 128 |
 | [An order then — measured 2026-09-25](0171-an-order-then.md) | 81 |
 | [What an erasure keeps — measured 2026-09-25](0172-what-an-erasure-keeps.md) | 90 |
+| [What a checkout could not approve — measured 2026-09-25](0173-what-a-checkout-could-not-approve.md) | 91 |

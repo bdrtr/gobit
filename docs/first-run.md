@@ -6,8 +6,8 @@ every status it prints — so a step that moved, a field that was renamed or a j
 path that no longer resolves fails a lane rather than a reader.
 
 It answers one question: what does an operator have to create before a shopper
-can buy something? The answer used to live in two test harnesses. It is fifteen
-calls, and eleven of them were written down nowhere.
+can buy something? The answer used to live in two test harnesses, and most of
+its calls were written down nowhere else.
 
 The security document walks the same first four steps and stops at reading the
 catalog — which, on an empty database, is an empty list. This document continues
@@ -160,7 +160,19 @@ curl -s -o /dev/null -w '%{http_code}\n' \
   -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
   -d "{\"location_id\":\"$LOCATION\",\"stocked_quantity\":5}"
 
-# 9) The shopper: a guest cart from the country, then a line -> 201
+# 9) Shipping: a profile, and a flat-rate option in the region's currency.
+#    Without an option a cart can be paid for and never delivered.
+PROFILE=$(curl -s localhost:9000/admin/v1/shipping-profiles \
+  -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"name":"Default","type":"default"}' | jq -r .data.id)
+
+OPTION=$(curl -s localhost:9000/admin/v1/shipping-options \
+  -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d "{\"name\":\"Standard\",\"provider_id\":\"manual\",\"shipping_profile_id\":\"$PROFILE\",\"price_type\":\"flat\",\"amount\":4900,\"currency_code\":\"TRY\",\"region_id\":\"$REGION\"}" \
+  | jq -r .data.id)
+
+# 10) The shopper: a guest cart from the country, a line -> 201, where to ship
+#     it -> 200, and how -> 201
 CART=$(curl -s localhost:9000/store/v1/carts \
   -H "x-publishable-api-key: $PK" -H 'content-type: application/json' \
   -d '{"country_code":"TR","email":"shopper@example.com"}' | jq -r .data.id)
@@ -169,16 +181,26 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost:9000/store/v1/carts/$CART/lin
   -H "x-publishable-api-key: $PK" -H 'content-type: application/json' \
   -d "{\"variant_id\":\"$VARIANT\",\"quantity\":2}"
 
-# 10) The cart's total, computed by the server: 2 x 32000 plus 20% tax
+curl -s -o /dev/null -w '%{http_code}\n' -X PUT \
+  localhost:9000/store/v1/carts/$CART/shipping-address \
+  -H "x-publishable-api-key: $PK" -H 'content-type: application/json' \
+  -d '{"first_name":"First","last_name":"Shopper","address_1":"1 Example Street","city":"Ankara","postal_code":"06000","country_code":"TR"}'
+
+curl -s -o /dev/null -w '%{http_code}\n' localhost:9000/store/v1/carts/$CART/shipping-methods \
+  -H "x-publishable-api-key: $PK" -H 'content-type: application/json' \
+  -d "{\"shipping_option_id\":\"$OPTION\"}"
+
+# 11) The cart's total, computed by the server: 2 x 32000 plus 20% tax, plus
+#     4900 shipping, which is not taxed
 curl -s localhost:9000/store/v1/carts/$CART \
   -H "x-publishable-api-key: $PK" | jq -r .data.total
 
-# 11) Pay and become an order. expected_total is MANDATORY: the amount the
+# 12) Pay and become an order. expected_total is MANDATORY: the amount the
 #     customer approved is declared, and a cart whose total has moved since is
 #     refused with 409 rather than charged.
 ORDER=$(curl -s localhost:9000/store/v1/carts/$CART/complete \
   -H "x-publishable-api-key: $PK" -H 'content-type: application/json' \
-  -d '{"payment_provider_id":"manual","payment_data":{"manual_outcome":"authorize"},"expected_total":76800}' \
+  -d '{"payment_provider_id":"manual","payment_data":{"manual_outcome":"authorize"},"expected_total":81700}' \
   | jq -r .data.order_id)
 
 echo "order $ORDER"

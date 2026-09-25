@@ -296,6 +296,30 @@ func (f *fakeCheckout) CompleteCartJSON(_ context.Context, request json.RawMessa
 	return f.response, f.err
 }
 
+// fakeRepricing is the fake of the flow that runs a write and reprices after it.
+//
+// It RUNS the write it is handed, because the handler's side of the contract is
+// that the write happens inside the flow; a fake that dropped it would make every
+// endpoint look repriced and written when it was neither.
+type fakeRepricing struct {
+	// repriced lists the carts repriced, in call order.
+	repriced []string
+	err      error
+}
+
+// The fake satisfying the surface the handler expects is verified at compile time.
+var _ api.CartRepricing = (*fakeRepricing)(nil)
+
+// RepriceAfter runs the write and records the cart.
+func (f *fakeRepricing) RepriceAfter(_ context.Context, cartID string, change func() error) error {
+	if err := change(); err != nil {
+		return err
+	}
+	f.repriced = append(f.repriced, cartID)
+
+	return f.err
+}
+
 // defaultCurrency is the currency the fakes put on the cart.
 //
 // No currency travels in the cart bodies any more and the code therefore only
@@ -316,6 +340,7 @@ func newServer(t *testing.T, svc *fakeCarts) http.Handler {
 		Checkout:   &fakeCheckout{},
 		Shipping:   &fakeShipping{methodID: "csm_1"},
 		Promotions: &fakePromotions{},
+		Repricing:  &fakeRepricing{},
 	})
 }
 
@@ -600,9 +625,12 @@ func TestCreateCartCarriesMetadataToTheFlow(t *testing.T) {
 // preserved; if the body has an empty string, the intent to clear it reaches the
 // service.
 func TestUpdateCartPassesTheFieldsToTheService(t *testing.T) {
-	svc := &fakeCarts{cart: models.Cart{
+	stored := models.Cart{
 		ID: "cart_1", RegionID: "reg_1", CurrencyCode: "TRY", CustomerID: "cust_1",
-	}}
+	}
+	// The answer is the cart READ after the repricing (ADR 0173), so the read is
+	// where the fake keeps it.
+	svc := &fakeCarts{cart: stored, detail: models.CartDetail{Cart: stored}}
 	h := newServer(t, svc)
 
 	rec := doRequest(t, h, http.MethodPost, "/store/v1/carts/cart_1",
@@ -987,6 +1015,61 @@ func TestRemoveLineItemReturns204(t *testing.T) {
 	assert.Equal(t, "li_1", svc.gotLineID)
 }
 
+// TestEveryWriteTheServiceMakesAloneIsRepriced verifies that the storefront
+// writes no other flow prices hand their write to the repricing flow (ADR 0173).
+//
+// Each is asserted both ways. With the flow, the write reaches the service and
+// the cart is repriced; without it, the answer is a refusal AND the service was
+// never called — a status code alone cannot tell a refusal from a write that
+// happened and then failed, and the second leaves a stale cart behind.
+func TestEveryWriteTheServiceMakesAloneIsRepriced(t *testing.T) {
+	for name, tc := range map[string]struct {
+		method, path, body string
+		wrote              func(svc *fakeCarts) bool
+	}{
+		"the e-mail": {http.MethodPost, "/store/v1/carts/cart_1", `{"email":"a@b.test"}`,
+			func(svc *fakeCarts) bool { return svc.updateCalls > 0 }},
+		"the shipping address": {http.MethodPut, "/store/v1/carts/cart_1/shipping-address",
+			`{"city":"Istanbul"}`, func(svc *fakeCarts) bool { return svc.addressInput.City != "" }},
+		"the billing address": {http.MethodPut, "/store/v1/carts/cart_1/billing-address",
+			`{"city":"Ankara"}`, func(svc *fakeCarts) bool { return svc.addressInput.City != "" }},
+		"removing a line": {http.MethodDelete, "/store/v1/carts/cart_1/line-items/li_1", "",
+			func(svc *fakeCarts) bool { return svc.gotLineID != "" }},
+		"removing a shipping method": {http.MethodDelete,
+			"/store/v1/carts/cart_1/shipping-methods/csm_1", "",
+			func(svc *fakeCarts) bool { return svc.gotMethodID != "" }},
+		"a merge": {http.MethodPost, "/store/v1/carts/cart_1/merge", `{"source_cart_id":"cart_2"}`,
+			func(svc *fakeCarts) bool { return svc.gotMergeTarget != "" }},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Run("repriced", func(t *testing.T) {
+				svc := &fakeCarts{detail: models.CartDetail{Cart: models.Cart{ID: "cart_1"}}}
+				flow := &fakeRepricing{}
+				h := newServerWithFlows(t, svc, api.Flows{Repricing: flow})
+
+				rec := doRequest(t, h, tc.method, tc.path, tc.body)
+
+				require.Less(t, rec.Code, http.StatusMultipleChoices, rec.Body.String())
+				assert.True(t, tc.wrote(svc), "the write never reached the service")
+				assert.Equal(t, []string{"cart_1"}, flow.repriced,
+					"the write went through and the cart was not repriced; its totals are "+
+						"stale and the storefront reads a figure the completion refuses")
+			})
+
+			t.Run("refused without the flow", func(t *testing.T) {
+				svc := &fakeCarts{}
+				h := newServerWithFlows(t, svc, api.Flows{})
+
+				rec := doRequest(t, h, tc.method, tc.path, tc.body)
+
+				assert.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+				assert.False(t, tc.wrote(svc),
+					"the write happened although nothing could reprice the cart after it")
+			})
+		})
+	}
+}
+
 // TestAddressEndpointsLandOnSeparateMethods verifies that the shipping and
 // billing endpoints go to SEPARATE service methods.
 //
@@ -1020,10 +1103,11 @@ func shippingServer(t *testing.T, flow *fakeShipping) (http.Handler, *fakeCarts)
 	}}
 
 	return newServerWithFlows(t, svc, api.Flows{
-		Opening:  &fakeOpening{cartID: "cart_1"},
-		Pricing:  &fakePricing{},
-		Checkout: &fakeCheckout{},
-		Shipping: flow,
+		Opening:   &fakeOpening{cartID: "cart_1"},
+		Pricing:   &fakePricing{},
+		Checkout:  &fakeCheckout{},
+		Shipping:  flow,
+		Repricing: &fakeRepricing{},
 	}), svc
 }
 
@@ -1374,7 +1458,10 @@ func TestStoreEndpointsRequireNoScope(t *testing.T) {
 // Reading them the other way round would delete the basket the shopper is
 // looking at, and the response — a cart, with lines — would look right.
 func TestTheMergeEndpointNamesWhichCartSurvives(t *testing.T) {
-	svc := &fakeCarts{cart: models.Cart{ID: "cart_TARGET"}}
+	svc := &fakeCarts{
+		cart:   models.Cart{ID: "cart_TARGET"},
+		detail: models.CartDetail{Cart: models.Cart{ID: "cart_TARGET"}},
+	}
 	h := newServer(t, svc)
 
 	rec := doRequest(t, h, http.MethodPost, "/store/v1/carts/cart_TARGET/merge",

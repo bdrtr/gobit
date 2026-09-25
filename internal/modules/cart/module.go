@@ -304,8 +304,8 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// it is born after the WHOLE Register loop has finished. The handler, on the
 	// other hand, needs the flow. The dependency circle is broken by deferring
 	// the resolution to REQUEST TIME (see [cartOpening], [linePricing],
-	// [shippingPricing] and [cartCompletion]); the order module applies the same
-	// pattern for its spending limit rule.
+	// [shippingPricing], [cartRepricing] and [cartCompletion]); the order module
+	// applies the same pattern for its spending limit rule.
 	//
 	m.handler = api.New(svc, api.Flows{
 		Opening:    &cartOpening{c: c, log: log},
@@ -313,6 +313,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		Checkout:   &cartCompletion{c: c, log: log},
 		Shipping:   &shippingPricing{c: c, log: log},
 		Promotions: &cartPromotions{c: c, log: log},
+		Repricing:  &cartRepricing{c: c, log: log},
 	},
 		// The customer identity is resolved the same way and for the same
 		// reason, one layer further out: it comes from the EMBEDDER's module,
@@ -659,6 +660,48 @@ func (p *shippingPricing) resolve(ctx context.Context) {
 	}
 	p.svc = svc
 	p.log.InfoContext(ctx, "shipping pricing flow bound", "flow", CartFlowsName)
+}
+
+// cartRepricing is the wrapper that resolves the repricing flow ON FIRST USE.
+//
+// The laziness and the failing closed are [linePricing]'s. The write it is given
+// runs only once the flow is resolved, so a flow that cannot be found leaves the
+// cart as it was instead of written and never repriced (ADR 0173).
+type cartRepricing struct {
+	c    *container.Container
+	log  *slog.Logger
+	once sync.Once
+	svc  api.CartRepricing
+	err  error
+}
+
+// That the wrapper satisfies the surface the handler expects is pinned down at
+// compile time.
+var _ api.CartRepricing = (*cartRepricing)(nil)
+
+// RepriceAfter runs the write and reprices the cart.
+func (p *cartRepricing) RepriceAfter(ctx context.Context, cartID string, change func() error) error {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return p.err
+	}
+
+	return p.svc.RepriceAfter(ctx, cartID, change)
+}
+
+// resolve looks the flow up in the container and remembers the outcome.
+func (p *cartRepricing) resolve(ctx context.Context) {
+	svc, err := container.Resolve[api.CartRepricing](p.c, CartFlowsName)
+	if err != nil {
+		p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
+			"the %s module could not resolve the repricing flow (%q); the cart "+
+				"cannot be changed without its totals being recomputed",
+			ModuleName, CartFlowsName)
+
+		return
+	}
+	p.svc = svc
+	p.log.InfoContext(ctx, "repricing flow bound", "flow", CartFlowsName)
 }
 
 // cartCompletion is the wrapper that resolves the cart completion flow ON FIRST

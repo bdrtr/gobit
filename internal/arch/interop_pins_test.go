@@ -79,6 +79,7 @@ var (
 	_ cartapi.LinePricing     = (*cartwf.Interop)(nil)
 	_ cartapi.CartPromotions  = (*cartwf.Interop)(nil)
 	_ cartapi.ShippingPricing = (*cartwf.Interop)(nil)
+	_ cartapi.CartRepricing   = (*cartwf.Interop)(nil)
 	_ cartapi.CartOpening     = (*cartwf.Interop)(nil)
 	_ cartapi.CartCompletion  = (*checkoutwf.Interop)(nil)
 

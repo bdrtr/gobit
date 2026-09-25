@@ -422,6 +422,30 @@ type ShippingPricing interface {
 	) (shippingMethodID string, err error)
 }
 
+// CartRepricing is the surface used by this package of the flow that recomputes
+// the cart's totals after a write this module made on its own (ADR 0173).
+//
+// # Why the handler calls it, and not the service
+//
+// Six storefront writes go straight to the service: the e-mail and the customer,
+// the two addresses, removing a line or a shipping method, and a merge. The
+// service stamps each of them as making the totals stale and cannot compute new
+// ones, because the prices, the discounts and the tax are other modules' (ADR
+// 0006). Until this surface existed nothing on the storefront recomputed them, so
+// a shopper who chose a delivery was shown a total without it and the completion
+// refused the total they approved.
+//
+// # Why the write is handed IN
+//
+// The flow runs the write and then reprices, so the two cannot be separated by a
+// handler that forgets the second half, and a flow that cannot be reached is
+// found before anything is written.
+type CartRepricing interface {
+	// RepriceAfter runs change and then recomputes and writes the cart's totals.
+	// An error from change is returned as it is and nothing is repriced.
+	RepriceAfter(ctx context.Context, cartID string, change func() error) error
+}
+
 // CartCompletion is the surface used by this package of the flow that turns the
 // cart into an order (ADR 0001/0006).
 //
@@ -437,10 +461,10 @@ type CartCompletion interface {
 
 // Flows is the set of surfaces the handler needs from the flows.
 //
-// All three are MANDATORY and their absence produces an error at run time
-// (see [Handler.opening], [Handler.pricing] and [Handler.checkout]); not binding
-// the routes at all was not an option, because the flows are set up AFTER the
-// modules and may not be registered yet when Routes is called.
+// Every one is MANDATORY and its absence produces an error at run time: each has
+// a resolver that refuses, [Handler.pricing] being the first. Not binding the
+// routes at all was not an option, because the flows are set up AFTER the modules
+// and may not be registered yet when Routes is called.
 type Flows struct {
 	// Opening is the cart-opening flow.
 	Opening CartOpening
@@ -452,6 +476,8 @@ type Flows struct {
 	Shipping ShippingPricing
 	// Promotions is the coupon-code flow.
 	Promotions CartPromotions
+	// Repricing recomputes the totals after the writes no other flow prices.
+	Repricing CartRepricing
 }
 
 // IdentityLookup hands back the customer identity the installation bound, a NIL
@@ -637,6 +663,24 @@ func (h *Handler) shipping() (ShippingPricing, error) {
 				"the server deciding the price")
 	}
 	return h.flows.Shipping, nil
+}
+
+// repricing returns the flow that recomputes the totals; if it is not bound it
+// returns an ERROR.
+//
+// # Why it fails CLOSED
+//
+// A write the cart could not be repriced after is the defect ADR 0173 closed: the
+// cart would carry a total that is not what the completion charges, and the
+// storefront would show it. The write runs INSIDE the flow, so a missing flow
+// leaves the cart as it was rather than stale.
+func (h *Handler) repricing() (CartRepricing, error) {
+	if h.flows.Repricing == nil {
+		return nil, coreerrors.Internal(codeFlowUnavailable,
+			"the repricing flow is not bound; the cart cannot be changed without its totals being recomputed")
+	}
+
+	return h.flows.Repricing, nil
 }
 
 // checkout returns the cart-completion flow; if it is not bound it returns an
