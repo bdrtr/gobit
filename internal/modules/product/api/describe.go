@@ -107,6 +107,7 @@ func Describe(d *openapi.Doc) {
 					"finds nothing, which is a miss rather than a wrong answer. "+
 					"The option TITLE is not part of it: this asks \"offers the value red on any "+
 					"axis\"."),
+			variantIDsParameter(),
 			queryParameter("in_stock", typeBoolean,
 				"Restricts the products by availability. A VARIANT is in stock when it is not "+
 					"counted (manage_inventory false), OR it may be sold past zero "+
@@ -1097,4 +1098,24 @@ func queryParameter(name, valueType, description string) openapi.Parameter {
 		Schema:      map[string]any{schemaType: valueType},
 		Description: description,
 	}
+}
+
+// variantIDsParameter describes the repeated variant_id filter (ADR 0191).
+//
+// It is built by [queryParameter] and then made a list, rather than spelled out
+// as a literal of its own, because the query-parameter audit finds a
+// description by a builder called with the parameter's name.
+func variantIDsParameter() openapi.Parameter {
+	parameter := queryParameter("variant_id", "array",
+		"Restricts the products to the ones OWNING one of these variants; repeat the "+
+			"parameter for each (variant_id=a&variant_id=b). It is how a list of variants "+
+			"kept elsewhere, such as a customer's wishlist, is shown in one read. A product "+
+			"comes back whole, with all its variants, and once however many of its variants "+
+			"were named. A variant that was deleted, or whose product is not published or not "+
+			"in this channel, names nothing, and no error says so. At most as many ids as a "+
+			"page holds are taken, so one page answers them all.")
+	parameter.Schema["items"] = map[string]any{schemaType: typeString}
+	parameter.Schema["maxItems"] = service.MaxLimit
+
+	return parameter
 }

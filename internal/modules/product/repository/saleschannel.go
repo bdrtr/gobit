@@ -482,6 +482,24 @@ const (
       AND pov.deleted_at IS NULL
       AND pov.value_folded = %s::text
   )`
+
+	// variantFilterSQL keeps the products that own one of a list of variants
+	// (ADR 0191).
+	//
+	// It is an EXISTS like its neighbors, and for their reason: a product two
+	// of whose variants are named comes back once. With no OR beside it the
+	// planner turns it into a semi-join that resolves the named variants by
+	// their key and reads their products by key, so the listing touches the
+	// products the list names rather than the catalog in page order. An ARRAY
+	// subquery and an IN list were measured beside it on 52,004 products and
+	// planned the same (ADR 0191's measurement).
+	variantFilterSQL = `
+  AND EXISTS (
+    SELECT 1 FROM product_variant pv
+    WHERE pv.product_id = product.id
+      AND pv.id = ANY (%s::text[])
+      AND pv.deleted_at IS NULL
+  )`
 )
 
 // productFilterSQL builds the SHARED filter body of the product listing and
@@ -544,6 +562,9 @@ func productFilterSQL(f ProductFilter) (body string, args []any) {
 	}
 	if f.OptionValueFolded != nil {
 		fmt.Fprintf(&clauses, optionValueFilterSQL, param(f.OptionValueFolded))
+	}
+	if f.VariantIDs != nil {
+		fmt.Fprintf(&clauses, variantFilterSQL, param(f.VariantIDs))
 	}
 	if f.SalesChannelIDs != nil {
 		clauses.WriteString("\n  AND " + salesChannelAssigned("product.id", param(f.SalesChannelIDs)))

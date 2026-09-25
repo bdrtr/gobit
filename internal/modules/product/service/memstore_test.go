@@ -252,6 +252,8 @@ func (m *memStore) matches(p *models.Product, f repository.ProductFilter) bool {
 		return false
 	case f.OptionValueFolded != nil && !m.offersOptionValue(p.ID, *f.OptionValueFolded):
 		return false
+	case f.VariantIDs != nil && !m.ownsOneOf(p.ID, f.VariantIDs):
+		return false
 	default:
 		return m.visibleIn(p.ID, f.SalesChannelIDs)
 	}
@@ -287,6 +289,19 @@ func (m *memStore) offersOptionValue(productID, folded string) bool {
 			continue
 		}
 		if m.valuesFolded[value.ID] == folded {
+			return true
+		}
+	}
+
+	return false
+}
+
+// ownsOneOf is the fake counterpart of the variant filter (ADR 0191): the
+// product owns a live variant among the named ones.
+func (m *memStore) ownsOneOf(productID string, variantIDs []string) bool {
+	for _, id := range variantIDs {
+		variant, ok := m.variants[id]
+		if ok && variant.DeletedAt == nil && variant.ProductID == productID {
 			return true
 		}
 	}

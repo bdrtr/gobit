@@ -53,6 +53,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **The catalog reads a list of variants** (ADR 0191). **For API consumers:**
+  the storefront product listing takes a repeated `variant_id` query parameter
+  and GraphQL's `products` a `variantIds` argument, up to 100 ids, and returns
+  the products that own them, once each and whole, under the listing's other
+  rules. It is how a wishlist is shown in one read.
+
 - **A customer keeps a wishlist** (ADR 0190). **For API consumers:**
   `GET /store/v1/customers/{id}/wishlist`, and `PUT` / `DELETE
   /store/v1/customers/{id}/wishlist/{variant_id}`, both repeatable, reached by

@@ -114,6 +114,18 @@ type Query {
     """
     optionValue: String
     """
+    Narrows the listing to the products that OWN one of these variants
+    (ADR 0191).
+
+    It is how a list of variants kept elsewhere, such as a customer's wishlist,
+    is shown in one read. A product comes back whole, with all its variants,
+    and once however many of its variants were named. A variant that was
+    deleted, or whose product is not published or not in the request's
+    channels, names nothing, and no error says so. At most as many ids as a
+    page holds are taken, so one page answers them all.
+    """
+    variantIds: [ID!]
+    """
     Narrows the listing by availability (ADR 0040).
 
     A VARIANT is in stock when it is not counted (manageInventory false), OR it

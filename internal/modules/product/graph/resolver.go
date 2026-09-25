@@ -115,6 +115,7 @@ func (r *queryResolver) Products(
 	after, q *string,
 	sort *models.ProductOrder,
 	collectionID, categoryID, tagID, optionValue *string,
+	variantIDs []string,
 	inStock *bool,
 	price *service.PriceBracket,
 ) (*ProductList, error) {
@@ -152,6 +153,7 @@ func (r *queryResolver) Products(
 		CategoryID:      trimmedPointer(categoryID),
 		TagID:           trimmedPointer(tagID),
 		OptionValue:     trimmedPointer(optionValue),
+		VariantIDs:      variantIDs,
 		Search:          trimmedPointer(q),
 		InStock:         inStock,
 		Price:           price,

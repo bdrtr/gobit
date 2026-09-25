@@ -128,6 +128,16 @@ type StoreListOptions struct {
 	// and ADR 0039 folds the VALUE and nothing else.
 	OptionValue *string
 	Search      *string
+	// VariantIDs narrows the catalog to the products that own one of these
+	// variants, so a list of variants kept elsewhere -- a customer's wishlist
+	// (ADR 0190) -- is shown in one read (ADR 0191). nil applies no filter.
+	//
+	// A product comes back whole, with all its variants, and once however
+	// many of its variants were named. A variant that was deleted, or whose
+	// product is not published or not in the channel, names nothing, and its
+	// product is left out as any other product would be. At most [MaxLimit]
+	// ids are taken, so one page holds every product they name.
+	VariantIDs []string
 	// InStock narrows the catalog by ADR 0040's definition: true keeps the
 	// products with at least one sellable variant, false keeps the ones with
 	// none.
@@ -404,6 +414,7 @@ func (s *Service) ListStoreProducts(ctx context.Context, opts StoreListOptions) 
 		CategoryID:      opts.CategoryID,
 		TagID:           opts.TagID,
 		OptionValue:     opts.OptionValue,
+		VariantIDs:      opts.VariantIDs,
 		Search:          opts.Search,
 		SalesChannelIDs: opts.SalesChannelIDs,
 		Limit:           opts.Limit,
@@ -578,6 +589,7 @@ func (s *Service) scanStoreProducts(
 			CategoryID:      opts.CategoryID,
 			TagID:           opts.TagID,
 			OptionValue:     opts.OptionValue,
+			VariantIDs:      opts.VariantIDs,
 			Search:          opts.Search,
 			SalesChannelIDs: opts.SalesChannelIDs,
 			Limit:           chunk,

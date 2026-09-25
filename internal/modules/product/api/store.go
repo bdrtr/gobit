@@ -121,6 +121,17 @@ func priceBracketParam(r *http.Request) (*service.PriceBracket, error) {
 	return &service.PriceBracket{CurrencyCode: currency, Min: minPrice, Max: maxPrice}, nil
 }
 
+// variantIDsParam reads the repeated variant_id parameter (ADR 0191). An
+// absent one is nil and filters nothing; what is given is judged by the
+// service, so the GraphQL argument meets the same bound.
+func variantIDsParam(r *http.Request) []string {
+	values, ok := r.URL.Query()["variant_id"]
+	if !ok {
+		return nil
+	}
+	return values
+}
+
 // storeListProducts GET /store/v1/sales-channels/{sales_channel_id}/products
 //
 // This is the heart of Phase 4: the storefront listing returns products
@@ -231,6 +242,7 @@ func (h *Handler) storeListProducts(w http.ResponseWriter, r *http.Request) {
 		CategoryID:      stringParam(r, "category_id"),
 		TagID:           stringParam(r, "tag_id"),
 		OptionValue:     stringParam(r, "option_value"),
+		VariantIDs:      variantIDsParam(r),
 		Search:          stringParam(r, "q"),
 		InStock:         inStock,
 		Price:           bracket,

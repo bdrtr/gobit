@@ -41,6 +41,10 @@ type ProductFilter struct {
 	// names exactly ONE product and filtering a catalog by one would return at
 	// most one product.
 	OptionValueFolded *string
+	// VariantIDs narrows the listing to the products that own one of these
+	// variants (ADR 0191). nil applies no filter, and an empty slice matches
+	// nothing: it is a list of wanted variants that names none.
+	VariantIDs []string
 	// SalesChannelIDs are the sales channels the request is bound to.
 	//
 	// Here nil and an EMPTY BUT NON-nil slice say DIFFERENT things, and the

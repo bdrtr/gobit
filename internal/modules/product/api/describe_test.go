@@ -430,7 +430,7 @@ func TestStoreListDescribesOnlyParametersItReads(t *testing.T) {
 
 	names := parameterNames(t, op, "query")
 	assert.ElementsMatch(t, []string{
-		"collection_id", "category_id", "tag_id", "option_value", "in_stock",
+		"collection_id", "category_id", "tag_id", "option_value", "variant_id", "in_stock",
 		"currency_code", "min_price", "max_price",
 		"q", "sort", "limit", "offset", "after", "with_count",
 	}, names,

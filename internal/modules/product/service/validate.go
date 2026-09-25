@@ -328,3 +328,21 @@ func uniqueIDs(field string, ids []string) ([]string, error) {
 	}
 	return out, nil
 }
+
+// checkVariantIDs judges a variant filter (ADR 0191): at most [MaxLimit] ids,
+// each one well formed. nil is no filter and passes.
+//
+// The bound is a page: a product owns at least one of the variants named, so
+// at most as many products as a page holds can match, and one read answers the
+// whole list.
+func checkVariantIDs(ids []string) error {
+	if len(ids) > MaxLimit {
+		return invalid("variant_id can be given at most %d times, %d given", MaxLimit, len(ids))
+	}
+	for _, id := range ids {
+		if _, err := requireID("variant_id", id); err != nil {
+			return err
+		}
+	}
+	return nil
+}

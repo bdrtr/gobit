@@ -54,6 +54,7 @@ var allCriteria = []struct {
 		func(f *ProductFilter) { v := "kirmizi"; f.OptionValueFolded = &v },
 		"FROM product_option_value pov",
 	},
+	{"variant", func(f *ProductFilter) { f.VariantIDs = []string{"variant_1"} }, "FROM product_variant pv"},
 	{"sales channel", func(f *ProductFilter) { f.SalesChannelIDs = []string{"sc_1"} }, "SELECT bool_or(scl.to_id"},
 }
 

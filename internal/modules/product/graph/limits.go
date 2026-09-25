@@ -1006,7 +1006,7 @@ func fieldKey(field *ast.Field) string {
 // selected.
 func complexityCosts(costs *ComplexityRoot) {
 	// The signature is the schema's argument list and it grows with it. The
-	// three filters ADR 0039, 0040 and 0041 added do not change the price of
+	// filters ADR 0039, 0040, 0041 and 0191 added do not change the price of
 	// the call: complexity is charged for the RECORDS a query can return, and a
 	// filter narrows that set rather than widening it. inStock and price do
 	// make the SERVER walk more rows than it returns (see
@@ -1020,6 +1020,7 @@ func complexityCosts(costs *ComplexityRoot) {
 		_, _ *string,
 		_ *models.ProductOrder,
 		_, _, _, _ *string,
+		_ []string,
 		_ *bool,
 		_ *service.PriceBracket,
 	) int {

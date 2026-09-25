@@ -153,6 +153,9 @@ type ListProductsOptions struct {
 	// the step would be writing an unfolded string into a field called
 	// OptionValueFolded (ADR 0039).
 	OptionValue *string
+	// VariantIDs narrows the listing to the products that own one of these
+	// variants; see [StoreListOptions.VariantIDs].
+	VariantIDs []string
 	// SalesChannelIDs is the sales channel filter; for its meaning and the
 	// nil/empty distinction see [StoreListOptions.SalesChannelIDs].
 	//
@@ -427,12 +430,17 @@ func (s *Service) ListProducts(ctx context.Context, opts ListProductsOptions) (L
 		return ListResult[models.Product]{}, err
 	}
 
+	if err := checkVariantIDs(opts.VariantIDs); err != nil {
+		return ListResult[models.Product]{}, err
+	}
+
 	filter := repository.ProductFilter{
 		CollectionID:    opts.CollectionID,
 		Handle:          opts.Handle,
 		Search:          opts.Search,
 		CategoryID:      opts.CategoryID,
 		TagID:           opts.TagID,
+		VariantIDs:      opts.VariantIDs,
 		SalesChannelIDs: opts.SalesChannelIDs,
 		Limit:           limit,
 		Offset:          offset,
