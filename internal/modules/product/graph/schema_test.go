@@ -61,6 +61,12 @@ type binding struct {
 	// "we forgot to add it" and "we decided not to add it" can only be
 	// preserved that way.
 	leftOut map[string]string
+	// readBy holds the schema fields the record does not carry, each with the
+	// Storefront method that reads it. A field with no counterpart on the Go
+	// type is allowed ONLY here, and only by naming a method the REST
+	// storefront calls too: the field is then a second door onto an existing
+	// read, not a feature invented in a resolver (ADR 0184).
+	readBy map[string]string
 }
 
 // bindings is the mapping between the schema types and the module's types.
@@ -93,6 +99,7 @@ func bindings() []binding {
 				"ArchiveAt": "the date a product will be gone is the merchant's, not the " +
 					"shopper's (ADR 0179)",
 			},
+			readBy: map[string]string{"related": "StoreRelatedProducts"},
 		},
 		{
 			schemaType: "Variant",
@@ -137,13 +144,32 @@ func TestSchemaFieldsExistOnTheServiceType(t *testing.T) {
 					continue
 				}
 
-				_, ok := goField(b.goType, field.Name)
-				assert.True(t, ok, "the field %s.%s has no counterpart on the type %s",
-					b.schemaType, field.Name, b.goType)
+				_, onRecord := goField(b.goType, field.Name)
+				method, read := b.readBy[field.Name]
+				switch {
+				case onRecord:
+					assert.False(t, read, "%s.%s is on %s and also listed in readBy; the "+
+						"record answers it, so the entry is stale", b.schemaType, field.Name, b.goType)
+				case read:
+					_, exists := storefrontType.MethodByName(method)
+					assert.True(t, exists, "%s.%s is read by %q, and graph.Storefront has no such "+
+						"method", b.schemaType, field.Name, method)
+				default:
+					assert.Fail(t, "a schema field with no counterpart",
+						"the field %s.%s has no counterpart on the type %s, and readBy names no "+
+							"storefront method for it", b.schemaType, field.Name, b.goType)
+				}
+			}
+			for name := range b.readBy {
+				assert.NotNil(t, typeDef(t, b.schemaType).Fields.ForName(name),
+					"readBy names %s.%s, which the schema does not have", b.schemaType, name)
 			}
 		})
 	}
 }
+
+// storefrontType is the port the resolvers read through.
+var storefrontType = reflect.TypeFor[graph.Storefront]()
 
 // TestServiceFieldsAreInTheSchemaOrDeliberatelyLeftOut verifies that every
 // field the service returns is either in the schema or deliberately left out.

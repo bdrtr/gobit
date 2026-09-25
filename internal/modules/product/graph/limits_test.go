@@ -2,6 +2,7 @@ package graph_test
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -12,22 +13,32 @@ import (
 	"github.com/99designs/gqlgen/graphql/introspection"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/vektah/gqlparser/v2"
+	"github.com/vektah/gqlparser/v2/ast"
 
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
+	"github.com/bdrtr/gobit/internal/modules/product/models"
+	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
 // allProductFields is the selection set that asks for every field in the
-// schema's PRODUCT tree.
+// schema's PRODUCT tree, except the one that leads back into it.
 //
 // The calibration of the cost ceiling rests on it: the most expensive thing a
 // client can legitimately ask for is all of the fields (code generators produce
-// "select everything" documents). When a field is added to the schema it must
-// be added here too; if it is not, the calibration test keeps passing but is no
-// longer measuring the real heaviest document.
+// "select everything" documents). A field added to the schema has to be added
+// here too, or the calibration keeps passing while it no longer measures the
+// heaviest document; that used to be this sentence alone, and
+// TestAllProductFieldsSelectsTheWholeTree now holds it.
+//
+// Product.related is the exception, because it is cyclic (ADR 0184): "every
+// field" of a tree that contains itself has no end. A product page's related
+// lists are calibrated as a document of their own, with the card a listing
+// shows ([relatedCard]).
 const allProductFields = `
   id handle title subtitle description thumbnail isGiftcard discountable
-  weight length height width material originCountry collectionId metadata
+  weight length height width material originCountry collectionId typeId metadata
   createdAt updatedAt inStock
   variants {
     id productId title sku barcode ean upc manageInventory allowBackorder
@@ -35,13 +46,107 @@ const allProductFields = `
     optionValues { id optionId value rank optionTitle }
   }
   options { id productId title rank values { id optionId value rank optionTitle } }
-  images { id productId url rank metadata }
+  images { id productId url altText rank metadata }
   tags { id value }
   categories { id name handle description parentId isActive isInternal rank }
 `
 
-// deepestDataQuery is the deepest DATA path the schema allows (5 levels).
+// deepestDataQuery is the deepest DATA path the schema allows without the
+// cyclic related field (5 levels).
 const deepestDataQuery = `{ products { items { variants { optionValues { optionTitle } } } } }`
+
+// acyclicLeftOut are the fields allProductFields deliberately does not select.
+var acyclicLeftOut = map[string]string{
+	"Product.related": "it leads back into Product, so selecting everything under it has no end",
+}
+
+// relatedCard is what a product page asks of each related product: the card a
+// category listing shows.
+const relatedCard = `{ id handle title thumbnail inStock variants { id priceSet inventoryItem } }`
+
+// relatedChain builds a product query with n related fields nested inside each
+// other, so its depth is n+2: the product, n related levels and the id.
+func relatedChain(n int) string {
+	return `{ product(handle: "t-shirt") { ` +
+		strings.Repeat(`related(type: up_sell) { `, n) + `id` + strings.Repeat(` }`, n) + ` } }`
+}
+
+// TestAllProductFieldsSelectsTheWholeTree holds the calibration's premise.
+//
+// The document is parsed against the generated schema and every object type it
+// reaches is compared with what it selects: a field of such a type that is not
+// selected, and not in acyclicLeftOut with a reason, fails. The population comes
+// from the schema, so a field added tomorrow is inside the rule.
+func TestAllProductFieldsSelectsTheWholeTree(t *testing.T) {
+	t.Parallel()
+
+	schema := graph.NewExecutableSchema(graph.Config{}).Schema()
+	// Nil rules are the validator's default rules.
+	document, errs := gqlparser.LoadQueryWithRules(schema,
+		`{ product(handle: "t-shirt") {`+allProductFields+`} }`, nil)
+	require.Empty(t, errs, "allProductFields is not a valid selection of Product")
+
+	selected := map[string]map[string]bool{}
+	var walk func(ast.SelectionSet)
+	walk = func(set ast.SelectionSet) {
+		for _, selection := range set {
+			field, ok := selection.(*ast.Field)
+			require.True(t, ok, "allProductFields is written without fragments")
+			if field.ObjectDefinition.Name != "Query" {
+				if selected[field.ObjectDefinition.Name] == nil {
+					selected[field.ObjectDefinition.Name] = map[string]bool{}
+				}
+				selected[field.ObjectDefinition.Name][field.Name] = true
+			}
+			walk(field.SelectionSet)
+		}
+	}
+	walk(document.Operations[0].SelectionSet)
+	require.Contains(t, selected, "Product", "the walk reached no Product field")
+
+	for typeName, fields := range selected {
+		for _, field := range schema.Types[typeName].Fields {
+			key := typeName + "." + field.Name
+			if strings.HasPrefix(field.Name, "__") || fields[field.Name] {
+				continue
+			}
+			reason, left := acyclicLeftOut[key]
+			assert.True(t, left, "allProductFields does not select %s, so the calibration no "+
+				"longer measures the heaviest document; select it, or write why into acyclicLeftOut", key)
+			assert.NotEmpty(t, reason)
+		}
+	}
+	for key := range acyclicLeftOut {
+		typeName, fieldName, _ := strings.Cut(key, ".")
+		assert.False(t, selected[typeName][fieldName], "%s is selected and also left out", key)
+	}
+}
+
+// TestTheDefaultDepthStopsARelatedChain is the day the depth limit was waiting
+// for (ADR 0184).
+//
+// Until related, the schema was not cyclic and no valid document could reach
+// the default depth; the limit existed for the day a field referred back. A
+// chain of related fields is that document. Complexity is moved out of the way
+// here so the depth gate is the one measured; with the defaults a chain of three
+// is already refused by complexity (TestBothSidesOfTheCalibrationAreSeparated).
+func TestTheDefaultDepthStopsARelatedChain(t *testing.T) {
+	t.Parallel()
+
+	noCeiling := graph.Options{MaxComplexity: math.MaxInt}
+	atLimit := relatedChain(graph.DefaultMaxDepth - 2)
+	beyond := relatedChain(graph.DefaultMaxDepth - 1)
+
+	svc := &fakeStorefront{single: service.StoreProduct{Product: models.Product{ID: "prod_1"}}}
+	response, _ := runQueryWithOptions(t, identityWith([]string{"sc_1"}), svc, atLimit, noCeiling)
+	require.Empty(t, response.Errors, "a chain exactly at the default depth must pass the depth gate")
+
+	svc = &fakeStorefront{}
+	response, _ = runQueryWithOptions(t, identityWith([]string{"sc_1"}), svc, beyond, noCeiling)
+	require.NotEmpty(t, response.Errors)
+	assert.Equal(t, "DEPTH_LIMIT_EXCEEDED", response.Errors[0].Extensions["code"])
+	assert.Empty(t, svc.singleSelectors, "a document beyond the depth must not reach the service")
+}
 
 // aliasedStacking builds the document that repeats the same root query n times
 // with aliases.
@@ -104,12 +209,10 @@ func repeatedDescription(repeat, page int) string {
 // TestDepthLimitRejectsAnExceedingDocument verifies that a query exceeding the
 // limit is never executed.
 //
-// The limit is lowered FOR THE TEST (3) because the schema is NOT CYCLIC today:
-// the deepest legitimate path is 5 levels and exceeding the default limit with
-// a valid document is impossible. The reason the limit exists is not today's
-// schema anyway but the day a field refers back (variant -> product -> variants
-// -> …); when that day comes the mechanism this test measures will already be
-// in place.
+// The limit is lowered FOR THE TEST (3) so the counting is measured on the
+// acyclic data path. The day a field referred back came with ADR 0184 —
+// Product.related — and TestTheDefaultDepthStopsARelatedChain measures the
+// default against it.
 func TestDepthLimitRejectsAnExceedingDocument(t *testing.T) {
 	t.Parallel()
 
@@ -760,7 +863,22 @@ var calibrationDocuments = map[string]struct {
 }{
 	"product page (PDP, everything included)": {
 		document:   `{ product(handle: "t-shirt") {` + allProductFields + `} }`,
-		complexity: 2379,
+		complexity: 2390,
+	},
+	"product page with its three related lists": {
+		document: `{ product(handle: "t-shirt") {` + allProductFields +
+			` crossSell: related(type: cross_sell) ` + relatedCard +
+			` upSell: related(type: up_sell) ` + relatedCard +
+			` substitutes: related(type: substitute) ` + relatedCard + ` } }`,
+		complexity: 6440,
+	},
+	"related on every product of a page of 50": {
+		document:   `{ products(limit: 50) { items { id related(type: cross_sell) { id } } } }`,
+		complexity: 51600,
+	},
+	"a chain of three related lists": {
+		document:   relatedChain(3),
+		complexity: 113000,
 	},
 	"category list (24 products, card fields + price)": {
 		document: `{ products(limit: 24) { count items { id handle title thumbnail ` +
@@ -769,11 +887,11 @@ var calibrationDocuments = map[string]struct {
 	},
 	"ALL fields on the default page (20 products x whole tree)": {
 		document:   `{ products { count offset limit items {` + allProductFields + `} } }`,
-		complexity: 28660,
+		complexity: 28880,
 	},
 	"ALL fields with limit=100": {
 		document:   `{ products(limit: 100) { count offset limit items {` + allProductFields + `} } }`,
-		complexity: 139300,
+		complexity: 140400,
 	},
 	"products { count } with 400 aliases": {
 		document:   aliasedStacking(400),
@@ -857,6 +975,7 @@ func TestBothSidesOfTheCalibrationAreSeparated(t *testing.T) {
 
 	passing := []string{
 		"product page (PDP, everything included)",
+		"product page with its three related lists",
 		"category list (24 products, card fields + price)",
 		"ALL fields on the default page (20 products x whole tree)",
 	}
@@ -876,6 +995,8 @@ func TestBothSidesOfTheCalibrationAreSeparated(t *testing.T) {
 
 	failing := []string{
 		"ALL fields with limit=100",
+		"related on every product of a page of 50",
+		"a chain of three related lists",
 		"products { count } with 400 aliases",
 		"description with 489 aliases (limit=100)",
 		"description with 1500 aliases (default page)",

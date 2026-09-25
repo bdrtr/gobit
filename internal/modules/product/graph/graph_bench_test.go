@@ -62,6 +62,13 @@ func (s *benchStorefront) GetStoreProduct(
 	return s.list.Items[0], nil
 }
 
+// StoreRelatedProducts returns the prepared page as the related products.
+func (s *benchStorefront) StoreRelatedProducts(
+	_ context.Context, _ string, _ models.RelationType, _ []string,
+) ([]service.StoreProduct, error) {
+	return s.list.Items, nil
+}
+
 // benchCatalogue builds the page the benchmark serves.
 func benchCatalogue() *benchStorefront {
 	at := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)

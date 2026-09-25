@@ -31,6 +31,7 @@ func NewExecutableSchema(cfg Config) graphql.ExecutableSchema {
 type Config = graphql.Config[ResolverRoot, DirectiveRoot, ComplexityRoot]
 
 type ResolverRoot interface {
+	Product() ProductResolver
 	Query() QueryResolver
 	Variant() VariantResolver
 }
@@ -92,6 +93,7 @@ type ComplexityRoot struct {
 		Metadata      func(childComplexity int) int
 		Options       func(childComplexity int) int
 		OriginCountry func(childComplexity int) int
+		Related       func(childComplexity int, typeArg models.RelationType) int
 		Subtitle      func(childComplexity int) int
 		Tags          func(childComplexity int) int
 		Thumbnail     func(childComplexity int) int
@@ -147,6 +149,9 @@ type ComplexityRoot struct {
 
 // region    ************************** generated!.gotpl **************************
 
+type ProductResolver interface {
+	Related(ctx context.Context, obj *service.StoreProduct, typeArg models.RelationType) ([]service.StoreProduct, error)
+}
 type QueryResolver interface {
 	Products(ctx context.Context, limit *int, offset *int, after *string, q *string, sort *models.ProductOrder, collectionID *string, categoryID *string, tagID *string, optionValue *string, inStock *bool, price *service.PriceBracket) (*service.ListResult[service.StoreProduct], error)
 	Product(ctx context.Context, id *string, handle *string) (*service.StoreProduct, error)
@@ -418,6 +423,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Product.OriginCountry(childComplexity), true
+	case "Product.related":
+		if e.ComplexityRoot.Product.Related == nil {
+			break
+		}
+
+		args, err := ec.field_Product_related_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Product.Related(childComplexity, args["type"].(models.RelationType)), true
 	case "Product.subtitle":
 		if e.ComplexityRoot.Product.Subtitle == nil {
 			break
@@ -861,6 +877,8 @@ func (ec *executionContext) childFields_Product(ctx context.Context, field graph
 		return ec.fieldContext_Product_tags(ctx, field)
 	case "categories":
 		return ec.fieldContext_Product_categories(ctx, field)
+	case "related":
+		return ec.fieldContext_Product_related(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type Product", field.Name)
 }
@@ -1048,6 +1066,20 @@ func (ec *executionContext) childFields___Type(ctx context.Context, field graphq
 // endregion ************************** internal!.gotpl ***************************
 
 // region    ***************************** args.gotpl *****************************
+
+func (ec *executionContext) field_Product_related_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "type",
+		func(ctx context.Context, v any) (models.RelationType, error) {
+			return ec.unmarshalNRelationType2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐRelationType(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["type"] = arg0
+	return args, nil
+}
 
 func (ec *executionContext) field_Query___type_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
@@ -2416,6 +2448,50 @@ func (ec *executionContext) fieldContext_Product_categories(_ context.Context, f
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_Category(ctx, field)
 		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Product_related(ctx context.Context, field graphql.CollectedField, obj *service.StoreProduct) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Product_related(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Product().Related(ctx, obj, fc.Args["type"].(models.RelationType))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []service.StoreProduct) graphql.Marshaler {
+			return ec.marshalNProduct2ᚕgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐStoreProductᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Product_related(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Product",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Product(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Product_related_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
 	}
 	return fc, nil
 }
@@ -4555,128 +4631,166 @@ func (ec *executionContext) _Product(ctx context.Context, sel ast.SelectionSet, 
 		case "id":
 			out.Values[i] = ec._Product_id(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "handle":
 			out.Values[i] = ec._Product_handle(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "title":
 			out.Values[i] = ec._Product_title(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "subtitle":
 			out.Values[i] = ec._Product_subtitle(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "description":
 			out.Values[i] = ec._Product_description(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "thumbnail":
 			out.Values[i] = ec._Product_thumbnail(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "isGiftcard":
 			out.Values[i] = ec._Product_isGiftcard(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "discountable":
 			out.Values[i] = ec._Product_discountable(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "weight":
 			out.Values[i] = ec._Product_weight(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "length":
 			out.Values[i] = ec._Product_length(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "height":
 			out.Values[i] = ec._Product_height(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "width":
 			out.Values[i] = ec._Product_width(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "material":
 			out.Values[i] = ec._Product_material(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "originCountry":
 			out.Values[i] = ec._Product_originCountry(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "collectionId":
 			out.Values[i] = ec._Product_collectionId(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "typeId":
 			out.Values[i] = ec._Product_typeId(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "metadata":
 			out.Values[i] = ec._Product_metadata(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "createdAt":
 			out.Values[i] = ec._Product_createdAt(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "updatedAt":
 			out.Values[i] = ec._Product_updatedAt(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "inStock":
 			out.Values[i] = ec._Product_inStock(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "variants":
 			out.Values[i] = ec._Product_variants(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "options":
 			out.Values[i] = ec._Product_options(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "images":
 			out.Values[i] = ec._Product_images(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "tags":
 			out.Values[i] = ec._Product_tags(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "categories":
 			out.Values[i] = ec._Product_categories(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
+		case "related":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Product_related(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.IsDeferred() {
+				deferredFieldSet.AddField(field)
+				fieldIndex := len(deferredFieldSet.Values) - 1
+				deferredFieldSet.Concurrently(fieldIndex, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, deferredFieldSet)
+				})
+
+				for _, deferrable := range field.Deferrables {
+					view, ok := deferLabelToView[deferrable.Label]
+					if !ok {
+						view = deferredFieldSet.NewView()
+						deferLabelToView[deferrable.Label] = view
+					}
+					view.AddIndices(fieldIndex)
+				}
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -5677,6 +5791,23 @@ func (ec *executionContext) marshalNProductList2ᚖgithubᚗcomᚋbdrtrᚋgobit�
 		return graphql.Null
 	}
 	return ec._ProductList(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNRelationType2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐRelationType(ctx context.Context, v any) (models.RelationType, error) {
+	tmp, err := graphql.UnmarshalString(v)
+	res := models.RelationType(tmp)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNRelationType2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐRelationType(ctx context.Context, sel ast.SelectionSet, v models.RelationType) graphql.Marshaler {
+	_ = sel
+	res := graphql.MarshalString(string(v))
+	if res == graphql.Null {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+	}
+	return res
 }
 
 func (ec *executionContext) unmarshalNString2string(ctx context.Context, v any) (string, error) {

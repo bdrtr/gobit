@@ -44,6 +44,7 @@ import (
 	"context"
 
 	corehttp "github.com/bdrtr/gobit/core/http"
+	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
@@ -61,8 +62,10 @@ const Path = "/store/v1/graphql"
 //
 // The reason an interface is used instead of the concrete service is testing:
 // verifying that the channel filter is really passed through must not require a
-// database. The surface is deliberately TWO methods; growing it would mean
-// GraphQL spilling out of the storefront service.
+// database. Every method is one the REST storefront calls too, and that is the
+// rule the surface grows by: a method only GraphQL needed would be GraphQL
+// spilling out of the storefront service, and a second place the visibility rule
+// could drift.
 type Storefront interface {
 	ListStoreProducts(
 		ctx context.Context,
@@ -74,6 +77,13 @@ type Storefront interface {
 		idOrHandle string,
 		salesChannelIDs []string,
 	) (service.StoreProduct, error)
+
+	StoreRelatedProducts(
+		ctx context.Context,
+		idOrHandle string,
+		kind models.RelationType,
+		salesChannelIDs []string,
+	) ([]service.StoreProduct, error)
 }
 
 // ProductList is the GraphQL counterpart of the storefront list.

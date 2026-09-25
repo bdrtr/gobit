@@ -273,6 +273,20 @@ type Product {
   images: [Image!]!
   tags: [Tag!]!
   categories: [Category!]!
+  """
+  The products the operator related to this one under one kind, in the
+  operator's order, as the storefront shows them (ADR 0180, ADR 0184).
+
+  A related product that is not published, or not visible in the request's
+  sales channels, is left out without saying so, so the list can be shorter
+  than the one the operator wrote. The rule is the single product query's.
+
+  Each product that selects it costs a database round trip, and the complexity
+  model prices it as one. Under a page of products it is the expensive query
+  the ceiling exists for, and the field makes the schema cyclic, so the depth
+  limit is what stops a chain of it.
+  """
+  related(type: RelationType!): [Product!]!
 }
 
 "The sellable unit: the thing that enters the cart, is kept in stock and is priced is the variant."
@@ -409,4 +423,19 @@ avoid.
 enum ProductOrder {
   newest
   oldest
+}
+
+"""
+The kind of a product relation (ADR 0180).
+
+Spelled in lower case, as the REST surface spells it, for the reason
+ProductOrder gives: the enum is bound to the module's own type.
+"""
+enum RelationType {
+  "What goes with the product: bought together, an accessory, a refill."
+  cross_sell
+  "The better one: a higher model, a larger size."
+  up_sell
+  "What to buy instead of the product."
+  substitute
 }

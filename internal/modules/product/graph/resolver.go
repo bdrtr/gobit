@@ -45,11 +45,17 @@ func (r *Resolver) Query() QueryResolver { return &queryResolver{r} }
 // Variant returns the variant resolver the generated code expects.
 func (r *Resolver) Variant() VariantResolver { return &variantResolver{r} }
 
+// Product returns the product resolver the generated code expects.
+func (r *Resolver) Product() ProductResolver { return &productResolver{r} }
+
 // queryResolver serves the root queries.
 type queryResolver struct{ *Resolver }
 
 // variantResolver serves the field resolutions of the variant.
 type variantResolver struct{ *Resolver }
+
+// productResolver serves the one product field the record does not carry.
+type productResolver struct{ *Resolver }
 
 // Products lists the published products.
 //
@@ -190,6 +196,21 @@ func (r *queryResolver) Product(ctx context.Context, id, handle *string) (*servi
 	}
 
 	return &product, nil
+}
+
+// Related returns one kind of the product's relations as the storefront shows
+// them (ADR 0184).
+//
+// It is the REST address's service call, [service.Service.StoreRelatedProducts],
+// with the product this field hangs off: the product is read again as the single
+// product query reads it, and the related ones are filtered by the channels of
+// the request's VERIFIED identity — never by anything in the document, for the
+// reason [queryResolver.Products] gives. The parent already passed that rule to
+// get here; asking again costs one read by id and keeps one rule in one place.
+func (r *productResolver) Related(
+	ctx context.Context, obj *service.StoreProduct, kind models.RelationType,
+) ([]service.StoreProduct, error) {
+	return r.svc.StoreRelatedProducts(ctx, obj.ID, kind, SalesChannelIDsFromContext(ctx))
 }
 
 // PriceSet returns the variant's price set (the pricing module's record).

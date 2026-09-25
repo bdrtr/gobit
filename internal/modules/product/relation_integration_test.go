@@ -3,14 +3,18 @@
 package product_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	corehttp "github.com/bdrtr/gobit/core/http"
+	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
@@ -143,6 +147,94 @@ func TestTheStorefrontReadsOnlyWhatItMayShow(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, code, "an unknown kind is refused")
 	code, _ = fx.related(t, fx.channelA, shirt, "")
 	assert.Equal(t, http.StatusUnprocessableEntity, code, "and so is none")
+}
+
+// graphQLRelated reads one kind of a product's relations through the GraphQL
+// storefront, with an identity bound to one channel, and returns the handles —
+// or the first error code when the document was answered with an error.
+func (f channelFixture) graphQLRelated(t *testing.T, channel, handle, kind string) (handles []string, code string) {
+	t.Helper()
+
+	document := `{ product(handle: "` + handle + `") { related(type: ` + kind + `) { handle } } }`
+	body, err := json.Marshal(map[string]string{"query": document})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, graph.Path, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
+		ID: "apk_test", Kind: "api_key", SalesChannelIDs: []string{channel},
+	}))
+	rec := httptest.NewRecorder()
+	f.sys.router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	var response struct {
+		Data struct {
+			Product *struct {
+				Related []struct {
+					Handle string `json:"handle"`
+				} `json:"related"`
+			} `json:"product"`
+		} `json:"data"`
+		Errors []struct {
+			Extensions map[string]any `json:"extensions"`
+		} `json:"errors"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response), "body: %s", rec.Body.String())
+	if len(response.Errors) > 0 {
+		code, _ = response.Errors[0].Extensions["code"].(string)
+		return nil, code
+	}
+	require.NotNil(t, response.Data.Product, "body: %s", rec.Body.String())
+	handles = []string{}
+	for _, related := range response.Data.Product.Related {
+		handles = append(handles, related.Handle)
+	}
+	return handles, ""
+}
+
+// TestGraphQLReadsTheNeighborsRESTReads is ADR 0184's claim on the real
+// statements: the related field of a GraphQL product answers exactly what the
+// REST address answers for the same product, kind and channel — the draft and
+// the other channel's product left out in the same places, the order kept.
+func TestGraphQLReadsTheNeighborsRESTReads(t *testing.T) {
+	fx := newChannelFixture(t)
+	shirtHandle := uniqueHandle("gql-rel-shirt")
+	shirt := fx.seedPublished(t, shirtHandle)
+	socks := fx.seedPublished(t, uniqueHandle("gql-rel-socks"))
+	belt := fx.seedPublished(t, uniqueHandle("gql-rel-belt"))
+	elsewhereHandle := uniqueHandle("gql-rel-elsewhere")
+	elsewhere := fx.seedPublished(t, elsewhereHandle)
+	fx.assign(t, elsewhere, fx.channelB)
+
+	draftHandle := uniqueHandle("gql-rel-draft")
+	rec := fx.sys.request(t, http.MethodPost, "/admin/v1/products", `{
+		"handle": "`+draftHandle+`", "title": "Upcoming", "status": "draft"
+	}`)
+	require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
+	draft, ok := itemData(t, rec)["id"].(string)
+	require.True(t, ok)
+
+	fx.setRelations(t, shirt, "cross_sell", socks, draft, elsewhere, belt)
+	fx.setRelations(t, shirt, "up_sell", belt)
+
+	for _, channel := range []string{fx.channelA, fx.channelB} {
+		for _, kind := range []string{"cross_sell", "up_sell", "substitute"} {
+			code, rest := fx.related(t, channel, shirtHandle, kind)
+			require.Equal(t, http.StatusOK, code)
+			graphQL, errorCode := fx.graphQLRelated(t, channel, shirtHandle, kind)
+			require.Empty(t, errorCode)
+			assert.Equal(t, rest, graphQL, "%s in %s: GraphQL must answer what REST answers", kind, channel)
+		}
+	}
+	graphQL, _ := fx.graphQLRelated(t, fx.channelA, shirtHandle, "cross_sell")
+	require.Len(t, graphQL, 2, "the fixture must leave something out, or the comparison proves nothing")
+
+	fx.setRelations(t, elsewhere, "cross_sell", socks)
+	_, errorCode := fx.graphQLRelated(t, fx.channelA, elsewhereHandle, "cross_sell")
+	assert.NotEmpty(t, errorCode, "a list is not read off another channel's product")
+	fx.setRelations(t, draft, "cross_sell", socks)
+	_, errorCode = fx.graphQLRelated(t, fx.channelA, draftHandle, "cross_sell")
+	assert.NotEmpty(t, errorCode, "nor off a draft")
 }
 
 // TestADeletedProductLeavesEveryListInTheRealSchema verifies both directions of

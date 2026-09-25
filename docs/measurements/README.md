@@ -114,3 +114,4 @@ truth: a report says what was true on the day it was taken.
 | [A list an operator can type — measured 2026-09-25](0181-a-list-an-operator-can-type.md) | 88 |
 | [The binary knew its version — measured 2026-09-25](0182-the-binary-knew-its-version.md) | 89 |
 | [The first command — measured 2026-09-25](0183-the-first-command.md) | 77 |
+| [A cycle with a price — measured 2026-09-25](0184-a-cycle-with-a-price.md) | 89 |

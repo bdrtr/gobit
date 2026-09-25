@@ -34,10 +34,19 @@ type fakeStorefront struct {
 	listOptions     []service.StoreListOptions
 	singleSelectors []string
 	singleChannels  [][]string
+	relatedCalls    []relatedCall
 
-	list   service.ListResult[service.StoreProduct]
-	single service.StoreProduct
-	err    error
+	list    service.ListResult[service.StoreProduct]
+	single  service.StoreProduct
+	related []service.StoreProduct
+	err     error
+}
+
+// relatedCall is one recorded StoreRelatedProducts call.
+type relatedCall struct {
+	parent   string
+	kind     models.RelationType
+	channels []string
 }
 
 // ListStoreProducts records the options of the call and returns the prepared
@@ -99,6 +108,26 @@ func (s *fakeStorefront) GetStoreProduct(
 	}
 
 	return s.single, nil
+}
+
+// StoreRelatedProducts records the parent, the kind and the channels of the
+// call and returns the prepared related products.
+func (s *fakeStorefront) StoreRelatedProducts(
+	_ context.Context,
+	idOrHandle string,
+	kind models.RelationType,
+	salesChannelIDs []string,
+) ([]service.StoreProduct, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.relatedCalls = append(s.relatedCalls, relatedCall{idOrHandle, kind, salesChannelIDs})
+
+	if s.err != nil {
+		return nil, s.err
+	}
+
+	return s.related, nil
 }
 
 // lastList returns the last recorded listing options.
@@ -265,6 +294,49 @@ func TestSingleEndpointPassesTheChannels(t *testing.T) {
 	require.Empty(t, response.Errors)
 	assert.Equal(t, []string{"t-shirt"}, svc.singleSelectors)
 	assert.Equal(t, [][]string{{"sc_1"}}, svc.singleChannels)
+}
+
+// TestRelatedAsksForItsProductWithTheIdentitysChannels holds the related field
+// to the rule of the query it hangs off (ADR 0184).
+//
+// The field reaches the storefront service with the product it belongs to, the
+// kind the document named and the channels of the VERIFIED identity; the
+// document has no way to name a channel (TestSchemaHasNoSalesChannelArgument).
+// The related products come back in the order the service gave them.
+func TestRelatedAsksForItsProductWithTheIdentitysChannels(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeStorefront{
+		single: service.StoreProduct{Product: models.Product{ID: "prod_1", Handle: "t-shirt"}},
+		related: []service.StoreProduct{
+			{Product: models.Product{ID: "prod_3", Handle: "socks"}},
+			{Product: models.Product{ID: "prod_2", Handle: "cap"}},
+		},
+	}
+
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
+		`{ product(handle: "t-shirt") { related(type: up_sell) { handle } } }`)
+
+	require.Empty(t, response.Errors)
+	assert.Equal(t, []relatedCall{{"prod_1", models.RelationUpSell, []string{"sc_1"}}}, svc.relatedCalls,
+		"the related field must ask for the product it hangs off, by id, with the identity's channels")
+	data, err := json.Marshal(response.Data)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"product":{"related":[{"handle":"socks"},{"handle":"cap"}]}}`, string(data))
+}
+
+// TestRelatedRefusesAKindOutsideTheSet is the enum doing the service's check
+// first: a kind the schema does not list never reaches the service.
+func TestRelatedRefusesAKindOutsideTheSet(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeStorefront{single: service.StoreProduct{Product: models.Product{ID: "prod_1"}}}
+
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
+		`{ product(handle: "t-shirt") { related(type: bundle) { id } } }`)
+
+	require.NotEmpty(t, response.Errors)
+	assert.Empty(t, svc.relatedCalls, "a kind outside the enum must be refused before the service")
 }
 
 // TestQueryCannotAskForASalesChannel verifies that an argument that is not in

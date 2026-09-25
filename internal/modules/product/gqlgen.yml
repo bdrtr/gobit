@@ -70,6 +70,11 @@ models:
   # field name changes, the generation DOES NOT COMPILE.
   Product:
     model: github.com/bdrtr/gobit/internal/modules/product/service.StoreProduct
+    # related is the one field the record does not carry: it is a read of its
+    # own, per product, through the storefront service (ADR 0184).
+    fields:
+      related:
+        resolver: true
   Variant:
     model: github.com/bdrtr/gobit/internal/modules/product/service.StoreVariant
   ProductList:
@@ -94,6 +99,8 @@ models:
     model: github.com/bdrtr/gobit/internal/modules/product/models.Category
   ProductOrder:
     model: github.com/bdrtr/gobit/internal/modules/product/models.ProductOrder
+  RelationType:
+    model: github.com/bdrtr/gobit/internal/modules/product/models.RelationType
 
   # JSON is gqlgen's ready-made scalar carrying map[string]any; the name was
   # changed because in the schema it tells the client more ("Map" is the name of

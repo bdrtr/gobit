@@ -108,13 +108,15 @@ const (
 	// DefaultMaxDepth is the default upper limit on the number of fields that
 	// may be nested in a single document.
 	//
-	// The deepest LEGITIMATE path in today's schema is 5
+	// The deepest path without a cycle is 5
 	// (products -> items -> variants -> optionValues -> optionTitle), so 10
-	// leaves twice as much room. A more generous default was not chosen: the
-	// reason the limit exists is not today's schema but TOMORROW's — the moment
-	// a field refers back (variant -> product -> variants -> …) a query
-	// descends not as far as the schema allows but as far as the client writes,
-	// and every level multiplies the cost.
+	// leaves twice as much room. The limit was set for the day a field referred
+	// back, and ADR 0184's Product.related is that field: a query now descends
+	// not as far as the schema allows but as far as the client writes. At the
+	// default ceilings complexity refuses a chain of related at its third level,
+	// because every level is priced as a round trip; this limit is what still
+	// stops the chain for a deployment that raised the complexity ceiling
+	// (TestTheDefaultDepthStopsARelatedChain).
 	//
 	// The limit applies only to the DATA tree; introspection has its own
 	// ceiling ([DefaultMaxIntrospectionDepth]).
@@ -133,10 +135,13 @@ const (
 	// description):
 	//
 	//	document                                       request   complexity   response
-	//	product page (PDP, everything included)          659 B        2,379    6.8 KiB
+	//	product page (PDP, everything included)          675 B        2,390    6.9 KiB
+	//	product page with its three related lists      1,014 B        6,440   13.2 KiB
 	//	category list (24 products, card + price)        118 B        2,344   15.1 KiB
-	//	ALL fields on the default page (20 products)     671 B       28,660    137 KiB
-	//	ALL fields with limit=100                        683 B      139,300    686 KiB
+	//	ALL fields on the default page (20 products)     686 B       28,880    137 KiB
+	//	ALL fields with limit=100                        698 B      140,400    685 KiB
+	//	related on every product of a page of 50          73 B       51,600    4.6 KiB
+	//	a chain of three related lists                   118 B      113,000    1.3 KiB
 	//	products { count } with 400 aliases            9.7 KiB      408,000    8.5 KiB
 	//	description with 489 aliases (limit=100)       8.5 KiB       50,000  204.9 MiB
 	//	description with 1500 aliases (20 products)   26.8 KiB       31,020  125.7 MiB
@@ -149,11 +154,12 @@ const (
 	// record.
 	//
 	// 50,000 leaves comfortable room above the heaviest legitimate document
-	// (28,660): when a field is added to the schema that query does not press
+	// (28,880): when a field is added to the schema that query does not press
 	// against the limit. That is not a hope either -- adding ADR 0040's
 	// "inStock" to the Product and Variant types on 2026-09-08 moved the row
-	// from 28,440 to 28,660, which is the size of the step this margin is meant
-	// to absorb. A narrower ceiling would save today and force whoever
+	// from 28,440 to 28,660, and selecting typeId and altText, which the
+	// calibration had missed until ADR 0184 made it check (D134), moved it to
+	// 28,880: the size of step this margin is meant to absorb. A narrower ceiling would save today and force whoever
 	// adds a field tomorrow into a configuration change.
 	//
 	// The last two rows of the table show what the ceiling DOES NOT MEASURE and
@@ -1024,6 +1030,14 @@ func complexityCosts(costs *ComplexityRoot) {
 		return rootQueryCost + child
 	}
 
+	// A product's related products are a READ of their own — a round trip per
+	// product that selects them, not a list the record already carries — so
+	// they are priced as a root query is. Under a page of products the
+	// multiplier of Query.products then counts one round trip per product, and
+	// a chain of related fields multiplies by the estimate at every level.
+	costs.Product.Related = func(child int, _ models.RelationType) int {
+		return rootQueryCost + collectionCost(child)
+	}
 	costs.Product.Variants = collectionCost
 	costs.Product.Options = collectionCost
 	costs.Product.Images = collectionCost

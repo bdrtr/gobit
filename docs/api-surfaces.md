@@ -121,6 +121,7 @@ The decisions and their rationale:
 | **POST only** (GET gets 405) | Since the response varies with the sales channel, GET has no caching gain; it does have costs (the query lands in logs and browser history, a long query dies with a 414) |
 | The endpoint is **exempt from idempotency** (`Idempotency-Key` is ignored) | Being a POST does not make it a write: there is no side effect for a record to protect, and what it stored would only be a stale catalog. The real rationale is this: by the GraphQL contract an internal error also returns **200**, so the "a 5xx is not recorded" protection never engages on this surface and a transient fault would be replayed for the whole `IDEMPOTENCY_TTL` — the client would keep receiving the same error body even after the fault was fixed. The exemption also ends the fingerprinting of a 900 KiB query into memory **before** the 64 KiB body gate |
 | `priceSet` / `inventoryItem` are **JSON scalars** | Typing them would mean copying the pricing/inventory schema into `product`; the record already arrives at this module loosely typed. The price was accepted: the field names cannot be learned from the schema, they are read from the owning module's documentation. In return the field may be `null` — if the provider is not installed we do not have to invent a "product with a price of zero" |
+| A product's related products are a **field of `Product`**, `related(type:)`, priced as a **database round trip** | A product page reads its related lists in the same document as the product. The field is the REST address's service call, with the same visibility rule. Each product that selects it costs a read, so the complexity model prices it as a root query: three lists on a product page pass, the field under a page of 50 products does not, and a chain of it is refused at its third level (ADR 0184) |
 | **Seven gate families** on a single document: fragment expansion, depth, complexity, field repetition, introspection, parsing and **response bytes** | On this endpoint the cost is decided by whoever **writes** the query; the rate limiter, meanwhile, counts a document carrying hundreds of root queries under aliases as **one** request. The detail and the measurements are below |
 | **Introspection is on** (`GRAPHQL_INTROSPECTION=false` turns it off), but behind gates of its own | The schema is a file that sits inside this repository: turning it off hides nothing from an attacker and blinds code generators. For a deployment that adds its own fields to the schema the calculation changes, which is why the switch exists. The switch is no longer an emergency valve: the root count and the depth of introspection are limited separately |
 | The error body goes through the core's `WriteError`; the distinction looks not at the error's **type** but at its **source** | A second implementation of the rule "which error is handed to the client as-is" would leak server-internal detail the day it drifted — and it did leak: the old type-based distinction was passing an unclassified driver error (the connection string, the password, the SQL text) through unmasked and unlogged. The codes are the same as REST's (`extensions.code`) |
@@ -136,7 +137,7 @@ one catches the document the others cannot see:
 | Gate | Default | What it counts | What it catches |
 |---|---|---|---|
 | Expansion | `GRAPHQL_MAX_SELECTIONS=10000` | selections after the fragments have been expanded | **The fragment bomb.** An `f(k) = ...f(k-1) ...f(k-1)` chain writes **1,127 bytes** at 26 levels and expands to 2^26 selections; every calculation that walks the tree (depth, repetition, gqlgen's complexity) would hang there. It runs first and protects the others; when the budget runs out the traversal is cut short |
-| Depth | `GRAPHQL_MAX_DEPTH=10` | levels | The nested query. The schema is not cyclic today (the deepest legitimate path is 5), but the day a field refers back the query descends as far as the client writes, not as far as the schema goes |
+| Depth | `GRAPHQL_MAX_DEPTH=10` | levels | The nested query. The product's `related` field makes the schema cyclic (ADR 0184), so a query descends as far as the client writes, not as far as the schema goes. At the default ceilings complexity refuses a chain of `related` at its third level; depth stops it for a deployment that raised the complexity ceiling. The deepest path without a cycle is 5 |
 | Complexity | `GRAPHQL_MAX_COMPLEXITY=50000` | fields x elements | The shallow but expensive query: the whole tree of a hundred products with `limit=100`, or hundreds of root queries stacked under aliases |
 | Field repetition | `GRAPHQL_MAX_FIELD_REPETITION=20` | the same `(type, field)` in the same set | **The stacking of the same field under aliases.** Complexity prices the *number* of fields, not the bytes: a `description` requested 489 times sits exactly on the ceiling of 50,000 and would produce a 204.9 MiB response |
 | Introspection roots | `GRAPHQL_MAX_INTROSPECTION_ROOTS=2` | `__schema` / `__type` in the document | Introspection stacked in a single document. The roots are *shallow*, which means the depth gate cannot see them at any setting |
@@ -158,10 +159,13 @@ price and stock records):
 
 | document | request | complexity | response | outcome |
 |---|---:|---:|---:|---|
-| product page (PDP, everything included) | 659 B | 2,379 | 6.8 KiB | passes |
+| product page (PDP, everything included) | 675 B | 2,390 | 6.9 KiB | passes |
+| product page with its three `related` lists (four cards each) | 1,014 B | 6,440 | 13.2 KiB | passes |
 | category list (24 products, card + price) | 118 B | 2,344 | 15.1 KiB | passes |
-| ALL fields on the default page (20 products x whole tree) | 671 B | 28,660 | 137 KiB | passes |
-| ALL fields with `limit=100` | 683 B | 139,300 | 686 KiB | complexity |
+| ALL fields on the default page (20 products x whole tree) | 686 B | 28,880 | 137 KiB | passes |
+| ALL fields with `limit=100` | 698 B | 140,400 | 685 KiB | complexity |
+| `related` on every product of a page of 50 | 73 B | 51,600 | 4.6 KiB | complexity |
+| a chain of three `related` lists | 118 B | 113,000 | 1.3 KiB | complexity |
 | `products { count }` with 400 aliases | 9.7 KiB | 408,000 | 8.5 KiB | field repetition |
 | **`description` with 489 aliases, `limit=100`** | 8.5 KiB | **50,000** | **204.9 MiB** | field repetition |
 | **`description` with 1500 aliases, default page** | 26.8 KiB | 31,020 | **125.7 MiB** | field repetition |

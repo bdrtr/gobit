@@ -12,11 +12,23 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The GraphQL cost ceiling was calibrated two fields light** (D134). The
+  "every field" document had not selected the product's `typeId` since ADR 0101
+  nor the image's `altText` since ADR 0104; a sentence asked for it and nothing checked.
+  A gate now compares the document with the generated schema.
+
 - **ADR 0182 said `go run` stamps no version** (D133). Only `go run .` in a
   checkout does; `go run` of a module at a version stamps that version. The
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **The GraphQL product names its neighbors** (ADR 0184). **For API
+  consumers:** `Product.related(type: cross_sell | up_sell | substitute)` returns
+  what `GET …/products/{id}/related?type=` returns, in the same order and with
+  the same products left out. Each product that selects it counts as a database
+  round trip against `GRAPHQL_MAX_COMPLEXITY`: a product page with all three
+  lists passes, the field under a page of 50 products does not.
 
 - **A stranger starts with one command** (ADR 0183). The README opens with
   `go run github.com/bdrtr/gobit/cmd/server@latest new shop`, and a gate holds

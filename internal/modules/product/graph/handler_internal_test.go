@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
@@ -57,6 +58,16 @@ func (silentStorefront) GetStoreProduct(
 	_ []string,
 ) (service.StoreProduct, error) {
 	return service.StoreProduct{}, nil
+}
+
+// StoreRelatedProducts returns no related products.
+func (silentStorefront) StoreRelatedProducts(
+	_ context.Context,
+	_ string,
+	_ models.RelationType,
+	_ []string,
+) ([]service.StoreProduct, error) {
+	return nil, nil
 }
 
 // postToServer POSTs the document to the gqlgen server and returns the response
