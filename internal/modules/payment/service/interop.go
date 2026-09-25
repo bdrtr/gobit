@@ -203,10 +203,13 @@ func (i *Interop) Refund(ctx context.Context, paymentID string, amount int64, re
 // order module writes it into the order's summary — and it is returned rather
 // than assumed, because a refund can legitimately be capped by what the
 // collection still holds.
+//
+// The reference is the caller's id for the record that caused the refund, and
+// every refund row carries it (ADR 0187; [Service.RefundCollection]).
 func (i *Interop) RefundCollection(
-	ctx context.Context, collectionID string, amount int64, reason string,
+	ctx context.Context, collectionID string, amount int64, reason, reference string,
 ) (int64, error) {
-	refunds, err := i.svc.RefundCollection(ctx, collectionID, amount, reason)
+	refunds, err := i.svc.RefundCollection(ctx, collectionID, amount, reason, reference)
 
 	var total int64
 	for idx := range refunds {

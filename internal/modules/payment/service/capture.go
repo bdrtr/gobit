@@ -170,6 +170,18 @@ func (s *Service) RefundPayment(
 	amount int64,
 	reason string,
 ) (models.Refund, error) {
+	return s.refundPayment(ctx, paymentID, amount, reason, "")
+}
+
+// refundPayment is [Service.RefundPayment] with the reference of the record
+// that caused the refund, which is written on the refund row in the same
+// transaction (ADR 0187). An operator's refund has none.
+func (s *Service) refundPayment(
+	ctx context.Context,
+	paymentID string,
+	amount int64,
+	reason, reference string,
+) (models.Refund, error) {
 	if err := requireText("payment_id", paymentID); err != nil {
 		return models.Refund{}, err
 	}
@@ -177,6 +189,9 @@ func (s *Service) RefundPayment(
 		return models.Refund{}, err
 	}
 	if err := checkTextLen("reason", reason); err != nil {
+		return models.Refund{}, err
+	}
+	if err := checkReference(reference); err != nil {
 		return models.Refund{}, err
 	}
 
@@ -230,6 +245,7 @@ func (s *Service) RefundPayment(
 			PaymentID: payment.ID,
 			Amount:    refund,
 			Reason:    strings.TrimSpace(reason),
+			Reference: reference,
 		})
 		if err != nil {
 			return err

@@ -6,8 +6,8 @@
 
 -- name: CreateRefund :one
 INSERT INTO refunds (
-    id, payment_id, amount, reason
-) VALUES ($1, $2, $3, $4)
+    id, payment_id, amount, reason, reference
+) VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: GetRefund :one

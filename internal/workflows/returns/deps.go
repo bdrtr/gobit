@@ -134,8 +134,12 @@ type Orders interface {
 // Payments is the surface of the payment module used by this flow.
 type Payments interface {
 	// RefundCollection refunds an amount against a collection and returns what
-	// actually went back. A zero amount refunds everything left.
-	RefundCollection(ctx context.Context, collectionID string, amount int64, reason string) (int64, error)
+	// actually went back. A zero amount refunds everything left. Every refund
+	// row it writes carries reference: the id of the return, claim or exchange
+	// that caused it, so the order's books can tell them apart (ADR 0187).
+	RefundCollection(
+		ctx context.Context, collectionID string, amount int64, reason, reference string,
+	) (int64, error)
 	// Collection returns the collection's status and amounts.
 	Collection(ctx context.Context, collectionID string) (
 		status string,

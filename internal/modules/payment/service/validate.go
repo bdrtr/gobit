@@ -98,3 +98,17 @@ func requireOptionalAmount(label string, amount int64) error {
 	}
 	return requireAmount(label, amount)
 }
+
+// checkReference validates a refund's cause reference (ADR 0187): optional,
+// bounded like the free-text fields, and without surrounding space, because it
+// is a key the caller reads back rather than prose.
+func checkReference(reference string) error {
+	if err := checkTextLen("reference", reference); err != nil {
+		return err
+	}
+	if reference != strings.TrimSpace(reference) {
+		return errors.Invalid(CodeInvalidInput,
+			"the refund reference is an id and cannot carry surrounding space: %q", reference)
+	}
+	return nil
+}

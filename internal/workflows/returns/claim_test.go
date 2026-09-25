@@ -43,6 +43,8 @@ func TestSettlingAClaimRefundsAndStampsIt(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, h.payments.refundCalls, 1)
+	assert.Equal(t, testClaimID, h.payments.refundCalls[0].reference,
+		"the refund names the claim that caused it (ADR 0187)")
 	assert.Equal(t, int64(800), h.payments.refundCalls[0].amount,
 		"a zero amount means the CLAIM's own figure, not the whole collection")
 	assert.Equal(t, int64(800), out.RefundedAmount)

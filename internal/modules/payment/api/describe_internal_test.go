@@ -371,7 +371,7 @@ func doluTahsilat() paymentDTO {
 
 // doluIade omitempty alanları da yazılan bir iade kaydı üretir.
 func doluIade() refundDTO {
-	return refundDTO{Reason: "müşteri iadesi"}
+	return refundDTO{Reason: "müşteri iadesi", Reference: "ret_1"}
 }
 
 // TestAnlatilanUclarGovdeleriniAnlatir her ucun ne ALDIĞINI ve ne DÖNDÜĞÜNÜ

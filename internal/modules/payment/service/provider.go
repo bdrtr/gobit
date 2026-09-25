@@ -71,6 +71,9 @@ const (
 	// MovementAt is when it moved (time.Time): a capture's moment is stamped by
 	// the process that captured, a refund's by the database.
 	MovementAt = "at"
+	// MovementReference is a refund's cause: the caller's id for the record
+	// that caused it, or "" (ADR 0187). A capture's is always "".
+	MovementReference = "reference"
 )
 
 // collectionFieldGetters are the extractors of the offered fields.
@@ -242,6 +245,7 @@ func movementRecords(list []models.PaymentMovement) []map[string]any {
 			MovementKind:      list[i].Kind,
 			MovementAmount:    list[i].Amount,
 			MovementAt:        list[i].At,
+			MovementReference: list[i].Reference,
 		})
 	}
 

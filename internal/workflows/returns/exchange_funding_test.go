@@ -149,6 +149,8 @@ func TestTheExitSendsTheMoneyBackBeforeItWithdraws(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, h.payments.refundCalls, 1, "everything held goes back")
 	assert.Equal(t, int64(1000), h.payments.refundCalls[0].amount)
+	assert.Equal(t, "exch_1", h.payments.refundCalls[0].reference,
+		"the refund names the exchange that caused it (ADR 0187)")
 	assert.Equal(t, 1, h.orders.withdrawCalls)
 	assert.Equal(t, "exch_1", h.orders.withdrawnExchange)
 }

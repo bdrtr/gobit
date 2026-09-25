@@ -98,7 +98,7 @@ func (w *Workflows) SettleClaim(
 			claimID)
 	}
 
-	refunded, err := w.payments.RefundCollection(ctx, collectionID, amount, reason)
+	refunded, err := w.payments.RefundCollection(ctx, collectionID, amount, reason, claimID)
 	if err != nil && refunded == 0 {
 		return SettleClaimResult{}, errors.Wrap(err, errors.KindOf(err), CodeRefundFailed,
 			"the refund for claim %s could not be made", claimID)

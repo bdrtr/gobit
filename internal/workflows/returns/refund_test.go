@@ -42,8 +42,9 @@ func TestRefundingSendsTheMoneyBackAndTellsTheOrder(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, h.payments.refundCalls, 1)
-	assert.Equal(t, refundCall{collectionID: testCollectionID, amount: 1200, reason: "damaged"},
-		h.payments.refundCalls[0])
+	assert.Equal(t, refundCall{collectionID: testCollectionID, amount: 1200, reason: "damaged",
+		reference: testReturnID}, h.payments.refundCalls[0],
+		"the refund names the return that caused it (ADR 0187)")
 
 	assert.Equal(t, int64(1200), out.RefundedAmount)
 	assert.True(t, out.SummaryRecorded)

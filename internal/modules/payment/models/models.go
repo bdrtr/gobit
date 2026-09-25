@@ -96,6 +96,8 @@ type PaymentMovement struct {
 	// At is when it moved: the capture's captured_at, stamped by the process
 	// that captured, or the refund row's created_at, stamped by the database.
 	At time.Time
+	// Reference is a refund's cause, as [Refund.Reference]; "" for a capture.
+	Reference string
 }
 
 // PaymentCollection is the container of the payments collected for a cart or
@@ -250,6 +252,10 @@ type Refund struct {
 	Amount int64
 	// Reason is the free-text reason of the refund; it is optional.
 	Reason string
+	// Reference is the caller's id for the record that caused the refund — a
+	// return, a claim, an exchange — or "" for a refund nobody attributed
+	// (ADR 0187). This module writes it and never reads it.
+	Reference string
 	// CreatedAt and UpdatedAt are UTC.
 	//
 	// A refund row is never updated — this module holds no UPDATE against the

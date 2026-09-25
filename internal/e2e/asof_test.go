@@ -45,9 +45,9 @@ func TestAnOrderReadNowIsTheLiveOrder(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	first, err := paymentSvc.RefundCollection(ctx, placed.PaymentCollectionID, 1_000, "first part")
+	first, err := paymentSvc.RefundCollection(ctx, placed.PaymentCollectionID, 1_000, "first part", "")
 	require.NoError(t, err)
-	second, err := paymentSvc.RefundCollection(ctx, placed.PaymentCollectionID, 500, "second part")
+	second, err := paymentSvc.RefundCollection(ctx, placed.PaymentCollectionID, 500, "second part", "")
 	require.NoError(t, err)
 
 	detail, err := orderSvc.GetOrder(ctx, placed.OrderID)

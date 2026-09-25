@@ -242,7 +242,7 @@ func (w *Workflows) RefundExchangeDifference(ctx context.Context, exchangeID, re
 	}
 
 	if held := captured - refunded; held > 0 {
-		if _, err := w.payments.RefundCollection(ctx, detail.PaymentCollectionID, held, reason); err != nil {
+		if _, err := w.payments.RefundCollection(ctx, detail.PaymentCollectionID, held, reason, exchangeID); err != nil {
 			return errors.Wrap(err, errors.KindOf(err), CodeRefundFailed,
 				"the difference of exchange %s could not be sent back", exchangeID)
 		}

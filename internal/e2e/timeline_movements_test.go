@@ -41,9 +41,9 @@ func TestTheTimelineTellsEveryMovement(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	first, err := paymentSvc.RefundCollection(ctx, placed.PaymentCollectionID, 1_000, "first part")
+	first, err := paymentSvc.RefundCollection(ctx, placed.PaymentCollectionID, 1_000, "first part", "")
 	require.NoError(t, err)
-	second, err := paymentSvc.RefundCollection(ctx, placed.PaymentCollectionID, 500, "second part")
+	second, err := paymentSvc.RefundCollection(ctx, placed.PaymentCollectionID, 500, "second part", "")
 	require.NoError(t, err)
 	require.Len(t, first, 1)
 	require.Len(t, second, 1)

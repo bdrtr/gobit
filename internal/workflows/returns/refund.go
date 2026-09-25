@@ -75,7 +75,7 @@ func (w *Workflows) RefundReturn(
 		return RefundResult{}, err
 	}
 
-	refunded, err := w.payments.RefundCollection(ctx, collectionID, amount, reason)
+	refunded, err := w.payments.RefundCollection(ctx, collectionID, amount, reason, returnID)
 	if err != nil && refunded == 0 {
 		return RefundResult{}, errors.Wrap(err, errors.KindOf(err), CodeRefundFailed,
 			"the refund for return %s could not be made", returnID)

@@ -86,7 +86,7 @@ func TestACollectionCanBeRefundedWithoutNamingACapture(t *testing.T) {
 	ctx := t.Context()
 	collectionID := capturedCollection(t, svc, "refund-collection")
 
-	refunds, err := svc.RefundCollection(ctx, collectionID, 1_000, "returned")
+	refunds, err := svc.RefundCollection(ctx, collectionID, 1_000, "returned", "")
 	require.NoError(t, err)
 
 	require.Len(t, refunds, 1)
@@ -104,7 +104,7 @@ func TestAZeroAmountRefundsEverythingLeft(t *testing.T) {
 	ctx := t.Context()
 	collectionID := capturedCollection(t, svc, "refund-all")
 
-	refunds, err := svc.RefundCollection(ctx, collectionID, 0, "")
+	refunds, err := svc.RefundCollection(ctx, collectionID, 0, "", "")
 	require.NoError(t, err)
 
 	var total int64
@@ -127,7 +127,7 @@ func TestMoreCannotBeRefundedThanTheCollectionHolds(t *testing.T) {
 
 	before := prov.refundCalls
 
-	_, err := svc.RefundCollection(ctx, collectionID, refundAmount+1, "")
+	_, err := svc.RefundCollection(ctx, collectionID, refundAmount+1, "", "")
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
@@ -141,7 +141,7 @@ func TestACollectionWithNoCaptureHasNothingToRefund(t *testing.T) {
 	svc, _ := newRefundService(t)
 	collectionID := emptyCollection(t, svc)
 
-	_, err := svc.RefundCollection(t.Context(), collectionID, 0, "")
+	_, err := svc.RefundCollection(t.Context(), collectionID, 0, "", "")
 
 	require.Error(t, err)
 	assert.Equal(t, service.CodeCollectionNothingToRefund, errors.CodeOf(err))
@@ -154,13 +154,13 @@ func TestASecondRefundComesOutOfWhatIsLeft(t *testing.T) {
 	ctx := t.Context()
 	collectionID := capturedCollection(t, svc, "refund-twice")
 
-	_, err := svc.RefundCollection(ctx, collectionID, 4_000, "first")
+	_, err := svc.RefundCollection(ctx, collectionID, 4_000, "first", "")
 	require.NoError(t, err)
 
-	_, err = svc.RefundCollection(ctx, collectionID, refundAmount-4_000+1, "second")
+	_, err = svc.RefundCollection(ctx, collectionID, refundAmount-4_000+1, "second", "")
 	require.Error(t, err, "the second refund may not exceed what is left")
 
-	_, err = svc.RefundCollection(ctx, collectionID, refundAmount-4_000, "second")
+	_, err = svc.RefundCollection(ctx, collectionID, refundAmount-4_000, "second", "")
 	require.NoError(t, err)
 
 	current, err := svc.GetPaymentCollection(ctx, collectionID)

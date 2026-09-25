@@ -50,8 +50,16 @@ const CodeCollectionNothingToRefund = "payment_collection_nothing_to_refund"
 // ten units are a real refund of twenty, and the record must show two lines.
 // The caller is responsible for calling it once — in the return flow that
 // guarantee comes from a return being refundable only once.
+//
+// # The reference names the cause
+//
+// Every refund row it writes carries the reference, in the transaction that
+// writes the row (ADR 0187). The caller passes the id of its own record that
+// caused the refund — a return, a claim, an exchange — so the order's books can
+// tell a return's money from a claim's; "" leaves the refund unattributed. The
+// reference is the caller's and this module never reads it.
 func (s *Service) RefundCollection(
-	ctx context.Context, collectionID string, amount int64, reason string,
+	ctx context.Context, collectionID string, amount int64, reason, reference string,
 ) ([]models.Refund, error) {
 	if err := requireText("collection_id", collectionID); err != nil {
 		return nil, err
@@ -60,6 +68,9 @@ func (s *Service) RefundCollection(
 		return nil, err
 	}
 	if err := checkTextLen("reason", reason); err != nil {
+		return nil, err
+	}
+	if err := checkReference(reference); err != nil {
 		return nil, err
 	}
 
@@ -81,7 +92,7 @@ func (s *Service) RefundCollection(
 	// money really did go back.
 	made := make([]models.Refund, 0, len(plan))
 	for _, part := range plan {
-		refund, refundErr := s.RefundPayment(ctx, part.paymentID, part.amount, reason)
+		refund, refundErr := s.refundPayment(ctx, part.paymentID, part.amount, reason, reference)
 		if refundErr != nil {
 			if len(made) == 0 {
 				return nil, refundErr

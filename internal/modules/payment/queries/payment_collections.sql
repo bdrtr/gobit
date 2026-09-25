@@ -113,7 +113,8 @@ SELECT p.payment_collection_id,
        p.id           AS payment_id,
        'capture'::text AS kind,
        p.amount,
-       p.captured_at  AS moved_at
+       p.captured_at  AS moved_at,
+       ''::text       AS reference
   FROM payments p
  WHERE p.payment_collection_id = ANY (sqlc.arg('ids')::text[])
 UNION ALL
@@ -122,7 +123,8 @@ SELECT p.payment_collection_id,
        r.payment_id,
        'refund'::text,
        r.amount,
-       r.created_at
+       r.created_at,
+       r.reference
   FROM refunds r
   JOIN payments p ON p.id = r.payment_id
  WHERE p.payment_collection_id = ANY (sqlc.arg('ids')::text[])

@@ -354,10 +354,13 @@ type paymentDTO struct {
 
 // refundDTO iadenin dış gösterimidir.
 type refundDTO struct {
-	ID        string    `json:"id"`
-	PaymentID string    `json:"payment_id"`
-	Amount    int64     `json:"amount"`
-	Reason    string    `json:"reason,omitempty"`
+	ID        string `json:"id"`
+	PaymentID string `json:"payment_id"`
+	Amount    int64  `json:"amount"`
+	Reason    string `json:"reason,omitempty"`
+	// Reference names the record that caused the refund — a return, a claim,
+	// an exchange — and is absent for one an operator made here (ADR 0187).
+	Reference string    `json:"reference,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -419,6 +422,7 @@ func toRefundDTO(ref models.Refund) refundDTO {
 		PaymentID: ref.PaymentID,
 		Amount:    ref.Amount,
 		Reason:    ref.Reason,
+		Reference: ref.Reference,
 		CreatedAt: ref.CreatedAt,
 		UpdatedAt: ref.UpdatedAt,
 	}

@@ -68,9 +68,9 @@ func TestTheProviderReportsEveryMovementWithItsOwnAmount(t *testing.T) {
 	ctx := t.Context()
 	collectionID := capturedCollection(t, svc, "movements")
 
-	first, err := svc.RefundCollection(ctx, collectionID, 3_000, "first part")
+	first, err := svc.RefundCollection(ctx, collectionID, 3_000, "first part", "")
 	require.NoError(t, err)
-	second, err := svc.RefundCollection(ctx, collectionID, 2_000, "second part")
+	second, err := svc.RefundCollection(ctx, collectionID, 2_000, "second part", "")
 	require.NoError(t, err)
 	require.Len(t, first, 1)
 	require.Len(t, second, 1)

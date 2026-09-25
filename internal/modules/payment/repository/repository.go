@@ -325,6 +325,7 @@ func (r *Repository) PaymentMovementsByCollectionIDs(
 			Kind:         rows[i].Kind,
 			Amount:       rows[i].Amount,
 			At:           toTime(rows[i].MovedAt),
+			Reference:    rows[i].Reference,
 		})
 	}
 
@@ -637,6 +638,7 @@ func (r *Repository) CreateRefund(ctx context.Context, ref models.Refund) (model
 		PaymentID: ref.PaymentID,
 		Amount:    ref.Amount,
 		Reason:    nullString(ref.Reason),
+		Reference: ref.Reference,
 	})
 	if err != nil {
 		return models.Refund{}, classify(err, codeQueryFailed, "iade oluşturulamadı")

@@ -127,4 +127,5 @@ type Refund struct {
 	Reason    *string
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+	Reference string
 }

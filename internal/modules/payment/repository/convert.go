@@ -359,6 +359,7 @@ func toRefund(row paymentdb.Refund) models.Refund {
 		PaymentID: row.PaymentID,
 		Amount:    row.Amount,
 		Reason:    stringValue(row.Reason),
+		Reference: row.Reference,
 		CreatedAt: toTime(row.CreatedAt),
 		UpdatedAt: toTime(row.UpdatedAt),
 	}

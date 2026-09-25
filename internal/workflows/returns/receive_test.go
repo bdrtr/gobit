@@ -343,6 +343,8 @@ type refundCall struct {
 	collectionID string
 	amount       int64
 	reason       string
+	// reference is the cause the flow named on the refund (ADR 0187).
+	reference string
 }
 
 // stubPayments is the scriptable payment surface.
@@ -364,10 +366,10 @@ type stubPayments struct {
 
 // RefundCollection records the call and returns the scripted outcome.
 func (s *stubPayments) RefundCollection(
-	_ context.Context, collectionID string, amount int64, reason string,
+	_ context.Context, collectionID string, amount int64, reason, reference string,
 ) (int64, error) {
 	s.refundCalls = append(s.refundCalls,
-		refundCall{collectionID: collectionID, amount: amount, reason: reason})
+		refundCall{collectionID: collectionID, amount: amount, reason: reason, reference: reference})
 
 	return s.refunded, s.refundErr
 }

@@ -327,6 +327,7 @@ func (f *fakeStore) PaymentMovementsByCollectionIDs(
 			out = append(out, models.PaymentMovement{
 				CollectionID: payment.PaymentCollectionID, ID: refundID, PaymentID: paymentID,
 				Kind: models.MovementRefund, Amount: refund.Amount, At: refund.CreatedAt,
+				Reference: refund.Reference,
 			})
 		}
 	}

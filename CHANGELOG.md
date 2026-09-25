@@ -29,6 +29,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **A refund names its cause** (ADR 0187). Every refund row the returns
+  workflow makes carries the id of the return, claim or exchange that caused
+  it, in the transaction that writes the row. **For API consumers:** the admin
+  refund listing's `reference`; the order module's payment movements carry it
+  as `reference`. **For embedders:** the payment interop's `RefundCollection`
+  takes a fifth argument, the cause's id, and a port declaring it must add it.
+  **For operators:** payment migration 000008 adds `refunds.reference`.
+
 - **The payment module keeps derived books** (ADR 0186). **For operators and
   accountants:** `GET /admin/v1/payment-journal?from=&to=[&currency_code=]`
   (`payment:read`) returns every capture, refund, store credit grant and loyalty
