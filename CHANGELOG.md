@@ -10,6 +10,23 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+### Düzeltmeler
+
+- **ADR 0182 said `go run` stamps no version** (D133). Only `go run .` in a
+  checkout does; `go run` of a module at a version stamps that version. The
+  refusal of `gobit new` now names `go run` inside a checkout.
+
+### Kararlar
+
+- **A stranger starts with one command** (ADR 0183). The README opens with
+  `go run github.com/bdrtr/gobit/cmd/server@latest new shop`, and a gate holds
+  its package path and verb to the tree. **For operators:** a binary built
+  without `-ldflags` reports the version the Go toolchain stamped — its tag, its
+  pseudo-version, `+dirty` for a tree with changes — in the startup log, the
+  OpenAPI document and on every trace, instead of `dev`. **For embedders:**
+  `Version("")` now means that stamp; the generated `main.go` and the starter
+  leave `version` empty, and a project that passes `"dev"` keeps printing it.
+
 ## [0.9.0] — 2026-09-25
 
 Her madde **bir satırdır ve kararını adlandırır**. Gerekçe, ölçüm ve karşı

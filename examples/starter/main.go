@@ -35,8 +35,9 @@ import (
 )
 
 // version is filled in at build time with -ldflags, the same way gobit's own
-// binary does it.
-var version = "dev"
+// binary does it. Left empty, the binary calls itself by the version the Go
+// toolchain stamped into it.
+var version string
 
 func main() {
 	// The accounts adapter is a module AND a seam: it is added so that gobit hands

@@ -98,7 +98,8 @@ const (
 // "which tables does gobit have" an unanswerable question.
 type Options struct {
 	// Version is reported in the startup log, in the OpenAPI document and as
-	// the service version on every trace. Empty means "dev".
+	// the service version on every trace. Empty means the version the Go
+	// toolchain stamped into the binary, or "dev" when it stamped none.
 	Version string
 	// Modules are the caller's own commerce modules. They are registered after
 	// the ones in the box, and the registry rejects a name that already exists.
@@ -109,13 +110,28 @@ type Options struct {
 }
 
 // version reports what to call this build.
+//
+// A version the caller set answers first, because it is what `make build` puts
+// there. Without one, the program's own module version from the toolchain's
+// stamp answers (ADR 0183): the tag or pseudo-version of a clean build, the same
+// with "+dirty" for a tree with changes — which is what an operator asking
+// "which build is this" wants to see — and the version `go install` or `go run`
+// fetched. Only a build that stamped nothing, `go run .` in a checkout or a test
+// binary, is "dev".
 func (o Options) version() string {
-	if o.Version == "" {
-		return "dev"
+	if o.Version != "" {
+		return o.Version
+	}
+	if info, ok := readBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != develVersion {
+		return info.Main.Version
 	}
 
-	return o.Version
+	return "dev"
 }
+
+// develVersion is what the toolchain stamps for a main module it did not fetch
+// and could not read from version control.
+const develVersion = "(devel)"
 
 // Main picks what this invocation does and is the ONLY place that can pick
 // [serve].

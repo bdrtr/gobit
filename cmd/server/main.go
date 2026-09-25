@@ -14,8 +14,9 @@ import (
 	"github.com/bdrtr/gobit"
 )
 
-// version is filled in at build time with -ldflags (see the Makefile).
-var version = "dev"
+// version is filled in at build time with -ldflags (see the Makefile). Left
+// empty, the binary calls itself by the version the Go toolchain stamped into it.
+var version string
 
 func main() {
 	if err := gobit.New().Version(version).Main(os.Args[1:], os.Stdout); err != nil {

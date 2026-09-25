@@ -4,15 +4,58 @@ import (
 	"context"
 	"io/fs"
 	"log/slog"
+	"runtime/debug"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/module"
 	"github.com/bdrtr/gobit/internal/core/config"
 )
+
+// TestAnUnnamedBuildCallsItselfByItsStamp is what an operator reads in the
+// startup log, the OpenAPI document and every trace (ADR 0183).
+//
+// The stamps are the measured ones: `go run github.com/bdrtr/gobit/cmd/server@v0.9.0`
+// and `go install` stamp the version they fetched, `go build` of a checkout
+// stamps its tag or pseudo-version with "+dirty" for a tree with changes, and
+// `go run .` and `go test` stamp "(devel)", and `go build main.go` stamps an
+// empty version. Not asserting against the real
+// build here is deliberate: under `go test` it is "(devel)" and would prove only
+// the last row.
+func TestAnUnnamedBuildCallsItselfByItsStamp(t *testing.T) {
+	stamped := readBuildInfo
+	t.Cleanup(func() { readBuildInfo = stamped })
+
+	cases := []struct {
+		name  string
+		given string
+		stamp string
+		found bool
+		want  string
+	}{
+		{"a version the build set answers first", "v0.9.0-rc", "v0.9.0", true, "v0.9.0-rc"},
+		{"a release run or installed by version", "", "v0.9.0", true, "v0.9.0"},
+		{"a checkout with changes says so", "", "v0.9.1-0.20260925150141-dc7fc4a60ec1+dirty", true,
+			"v0.9.1-0.20260925150141-dc7fc4a60ec1+dirty"},
+		{"go run in a checkout stamps nothing", "", "(devel)", true, "dev"},
+		{"go build of a file list stamps an empty version", "", "", true, "dev"},
+		{"a binary without build information", "", "", false, "dev"},
+	}
+	for _, c := range cases {
+		readBuildInfo = func() (*debug.BuildInfo, bool) {
+			if !c.found {
+				return nil, false
+			}
+
+			return &debug.BuildInfo{Main: debug.Module{Path: "example.com/shop", Version: c.stamp}}, true
+		}
+		assert.Equal(t, c.want, Options{Version: c.given}.version(), c.name)
+	}
+}
 
 // TestTheCallersModulesReachTheRegistry closes the other half of the silent
 // failure the facade's own test names.

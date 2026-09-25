@@ -49,9 +49,13 @@ orchestrator, which makes that line the ONLY alarm channel for the degradation.
 
 The `version` field is embedded at build time from the output of
 `git describe --tags --always --dirty`, so the value in your own working tree
-will differ (a dirty working tree gets `-dirty` appended). `dev` is only the
-answer of a binary built without ldflags — a plain `go run ./cmd/server`, for
-instance; `make run` and `make build` always embed the version.
+will differ (a dirty working tree gets `-dirty` appended); `make run` and
+`make build` always embed it. A binary built without ldflags reports the version
+the Go toolchain stamped into it instead: its tag, its pseudo-version, `+dirty`
+for a tree with changes, or the version `go install` and `go run` fetched
+([ADR 0183](adr/0183-a-stranger-starts-with-one-command.md)). `dev` is only the
+answer of a build that stamped none — `go run .` inside a checkout, for
+instance.
 
 ## Configuration
 

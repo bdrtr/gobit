@@ -80,13 +80,13 @@ type newFlags struct {
 }
 
 // runNew parses the flags and writes the project.
-func runNew(args []string, out io.Writer, _ Options) error {
+func runNew(args []string, out io.Writer, opts Options) error {
 	parsed, err := parseNewFlags(args)
 	switch {
 	case errors.Is(err, flag.ErrHelp):
 		// The flag set's output is discarded, so the caller is told what the
 		// command takes rather than left with nothing.
-		return writeReport(out, usageText("dev"))
+		return writeReport(out, usageText(opts.version()))
 	case err != nil:
 		return err
 	}
@@ -161,10 +161,10 @@ func requiredVersion(replace string) (string, error) {
 	if version == "" {
 		return "", coreerrors.Invalid(codeNewInvalidInput,
 			"this binary does not know which %s version a generated project should require, "+
-				"so it will not write one that cannot build. It was built by `go run`, from a "+
-				"tree with uncommitted changes, or against a replaced library. Install a release "+
-				"(`go install %s/cmd/server@<version>`), build a clean checkout, or generate "+
-				"against a checkout with -%s <path-to-gobit>",
+				"so it will not write one that cannot build. It was run with `go run` inside a "+
+				"checkout, built from a tree with uncommitted changes, or built against a replaced "+
+				"library. Run a release (`go run %s/cmd/server@latest new <dir>`), build a clean "+
+				"checkout, or generate against a checkout with -%s <path-to-gobit>",
 			scaffold.GobitModule, scaffold.GobitModule, flagReplace)
 	}
 

@@ -21,6 +21,18 @@ gobit.New().Version(version).Add(myModule).Use(myPlugin).Main(os.Args[1:], os.St
 
 **Why** the architecture is built this way: [`docs/mimari.md`](./docs/mimari.md).
 
+## Start a project
+
+```bash
+go run github.com/bdrtr/gobit/cmd/server@latest new shop
+```
+
+That writes `shop/`, a program that embeds gobit and requires the version the
+command ran — `@latest` is the newest release, and a version such as `@v0.9.0`
+pins another. The command prints what to run next, and the project's own README
+keeps it: the services come up with Docker Compose and `go run .` starts the
+shop.
+
 ## Quick start
 
 ```bash
@@ -238,7 +250,7 @@ on a list; it is that.
 
 | Document | What it answers |
 |---|---|
-| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 181 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
+| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 182 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
 | [`docs/mimari.md`](./docs/mimari.md) | The architecture narrative: layers, the life cycle of a request and of a module, data, sagas, the core packages |
 | [`docs/gaps.md`](./docs/gaps.md) | The defect ledger: every fault this repository found in itself, one sentence and the ADR that closed it |
 | [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: fifty-eight items in six groups — identity and authorization, sales channel scope, the category tree, tax, installation and operation, the limit of the invariants |

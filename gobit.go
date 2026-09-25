@@ -61,9 +61,10 @@ func New() *App { return &App{} }
 // Version sets what this build is called.
 //
 // It is reported in the startup log, in the generated OpenAPI document and as
-// the service version on every trace, so it is worth filling in from the
-// linker rather than leaving at "dev": those three are where an operator looks
-// to answer "which build is this".
+// the service version on every trace: those three are where an operator looks
+// to answer "which build is this". Left empty, it is the version the Go
+// toolchain stamped into the binary — the tag or pseudo-version of the commit it
+// was built from — and "dev" only for a build that stamped none.
 func (a *App) Version(v string) *App {
 	a.opts.Version = v
 
