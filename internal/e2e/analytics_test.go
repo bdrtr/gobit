@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	cartsvc "github.com/bdrtr/gobit/internal/modules/cart/service"
+	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
 	paymentmanual "github.com/bdrtr/gobit/internal/modules/payment/manual"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 	"github.com/bdrtr/gobit/plugins/analytics"
@@ -58,6 +60,31 @@ func readFunnel(t *testing.T) funnelResponse {
 	return out
 }
 
+// awaitRecorded waits until the analytics plugin has written the events with
+// these ids, and fails if it has not within ten seconds.
+//
+// The in-memory bus runs every handler on a goroutine of its own
+// (core/eventbus, inMemoryBus.Publish), so the funnel read the moment a cart
+// is completed can come before the plugin's row. It did on CI once: the
+// completion landed after the funnel test had read it, and inside the next
+// test's window, and both went red (D139). The ids are the publishers'
+// derivation, topic and record id, which is what makes the two delivery paths
+// one event.
+func awaitRecorded(t *testing.T, ids ...string) {
+	t.Helper()
+
+	var recorded int
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+		require.NoError(t, testPool.Pool().QueryRow(t.Context(),
+			`SELECT count(*) FROM analytics_events WHERE id = ANY($1)`, ids).Scan(&recorded))
+		if recorded == len(ids) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("%d of the events %v reached the analytics table within ten seconds", recorded, ids)
+}
+
 // regionCounts picks the taxed region's row out of the answer.
 func regionCounts(t *testing.T, answer funnelResponse) (created, completed, placed int64) {
 	t.Helper()
@@ -90,6 +117,7 @@ func TestTheFunnelSeesACartOpenAndBecomeAnOrder(t *testing.T) {
 		map[string]int64{taxedCurrency: 30_000}, 5)
 
 	cartID, _ := prepareCart(ctx, t, customerID, variantID, 1)
+	awaitRecorded(t, cartsvc.EventCartCreated+":"+cartID)
 
 	afterOpen := readFunnel(t)
 	createdAfterOpen, _, _ := regionCounts(t, afterOpen)
@@ -108,6 +136,7 @@ func TestTheFunnelSeesACartOpenAndBecomeAnOrder(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, result.OrderID)
+	awaitRecorded(t, cartsvc.EventCartCompleted+":"+cartID, ordersvc.EventOrderPlaced+":"+result.OrderID)
 
 	afterOrder := readFunnel(t)
 	createdAfter, completedAfter, placedAfter := regionCounts(t, afterOrder)
@@ -141,7 +170,8 @@ func TestAnAbandonedCartIsAnOpeningWithNoCompletion(t *testing.T) {
 	customerID, _ := newCustomer(ctx, t)
 	variantID, _ := newStockedVariant(ctx, t, "E2E Abandoned Product",
 		map[string]int64{taxedCurrency: 30_000}, 5)
-	_, _ = prepareCart(ctx, t, customerID, variantID, 1)
+	cartID, _ := prepareCart(ctx, t, customerID, variantID, 1)
+	awaitRecorded(t, cartsvc.EventCartCreated+":"+cartID)
 
 	createdAfter, completedAfter, _ := regionCounts(t, readFunnel(t))
 

@@ -12,6 +12,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **Two analytics tests raced the event bus** (D139). They read the funnel
+  as soon as a cart was completed, while the plugin's row was still being
+  written on another goroutine, and failed on CI once. They now wait for their
+  own events.
+
 - **The lanes ran whatever Go the machine had** (D138). An allocation budget
   failed locally and passed on CI for the same commit, because the machine had
   moved to go1.27.1 and CI runs go1.26.6. **For contributors:** every make lane
