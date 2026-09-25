@@ -511,17 +511,21 @@ func describeAdminProducts(d *openapi.Doc) {
 	describeAdminSchedule(d)
 }
 
-// describeAdminSchedule describes the moment a draft is published (ADR 0177).
+// describeAdminSchedule describes a product's schedule (ADR 0177, ADR 0179).
 func describeAdminSchedule(d *openapi.Doc) {
 	d.Describe(http.MethodPut, pathProductSchedule, openapi.Operation{
-		Summary: "Schedules a draft to be published at a moment.",
-		Description: "The product STAYS A DRAFT until then: the storefront, the search index and " +
-			"the webhooks see nothing new. At the moment, a job publishes it within a minute " +
-			"and it gets the same product.updated event a publication by hand gets. \n\n" +
-			"Only a draft can be scheduled (409 otherwise), the moment has to be in the future " +
-			"(422 otherwise; to publish now, set the status), and a second call moves the " +
-			"moment. Publishing or archiving the draft by hand takes the schedule off. The " +
-			"moment is published on the admin surface alone, as \"publish_at\".",
+		Summary: "Replaces a product's schedule: when it is published, when it is archived.",
+		Description: "The product KEEPS ITS STATUS until a moment comes: the storefront, the search " +
+			"index and the webhooks see nothing new. At the moment, a job changes the status " +
+			"within a minute and it gets the same product.updated event the change by hand " +
+			"gets. \n\n" +
+			"\"publish_at\" belongs to a draft (409 otherwise); \"archive_at\" to a draft or " +
+			"a published product (409 on an archived one). Every moment has to be in the future " +
+			"and a product given both leaves after it arrives (422 otherwise). The body " +
+			"REPLACES the schedule: a moment left out is taken off, and at least one is " +
+			"required — taking both off is the DELETE. Publishing a draft by hand spends its " +
+			"publication moment; archiving a product by hand spends both. The moments are " +
+			"published on the admin surface alone.",
 		RequestBody: d.RequestBody(scheduleRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("The scheduled product", d.Item(adminProduct{})),
@@ -529,7 +533,7 @@ func describeAdminSchedule(d *openapi.Doc) {
 	})
 
 	d.Describe(http.MethodDelete, pathProductSchedule, openapi.Operation{
-		Summary:     "Takes the schedule off a product; it stays what it is.",
+		Summary:     "Takes the whole schedule off a product; it stays what it is.",
 		Description: "A product with no schedule is answered as it is.",
 		Responses: map[string]any{
 			"200": openapi.Response("The product", d.Item(adminProduct{})),

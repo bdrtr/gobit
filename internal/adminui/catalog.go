@@ -137,7 +137,9 @@ const (
 	fieldThumbnail = "thumbnail"
 	fieldUpdatedAt = "updated_at"
 	// fieldPublishAt is a draft's scheduled moment (ADR 0177, ADR 0178).
-	fieldPublishAt   = "publish_at"
+	fieldPublishAt = "publish_at"
+	// fieldArchiveAt is a product\'s scheduled moment to leave (ADR 0179).
+	fieldArchiveAt   = "archive_at"
 	fieldSKU         = "sku"
 	fieldPrices      = "prices"
 	fieldAmount      = "amount"
@@ -312,29 +314,45 @@ type productRow struct {
 	// PublishAtTyped is what the operator typed into the form, when the form
 	// comes back refused; it wins over the stored moment so the mistake shows.
 	PublishAtTyped *string
+	// ArchiveAt is the moment the product is scheduled to be archived, or nil.
+	ArchiveAt *time.Time
+	// ArchiveAtTyped is PublishAtTyped's counterpart.
+	ArchiveAtTyped *string
+}
+
+// ArchiveAtUTC is the moment to leave as the product page prints it, or empty.
+func (p productRow) ArchiveAtUTC() string { return momentUTC(p.ArchiveAt) }
+
+// ArchiveAtInput is the edit form's value for the moment to leave.
+func (p productRow) ArchiveAtInput() string { return momentInput(p.ArchiveAtTyped, p.ArchiveAt) }
+
+// momentUTC prints a moment for the product page, or empty.
+func momentUTC(at *time.Time) string {
+	if at == nil {
+		return ""
+	}
+
+	return at.UTC().Format("2006-01-02 15:04") + " UTC"
+}
+
+// momentInput is a form value: what was typed on a refused form, else the
+// stored moment in the input's zone-less layout.
+func momentInput(typed *string, stored *time.Time) string {
+	if typed != nil {
+		return *typed
+	}
+	if stored == nil {
+		return ""
+	}
+
+	return stored.UTC().Format(publishAtLayout)
 }
 
 // PublishAtUTC is the scheduled moment as the product page prints it, or empty.
-func (p productRow) PublishAtUTC() string {
-	if p.PublishAt == nil {
-		return ""
-	}
+func (p productRow) PublishAtUTC() string { return momentUTC(p.PublishAt) }
 
-	return p.PublishAt.UTC().Format("2006-01-02 15:04") + " UTC"
-}
-
-// PublishAtInput is the edit form's value for the moment: what was typed on a
-// refused form, else the stored moment, in the input's zone-less layout.
-func (p productRow) PublishAtInput() string {
-	if p.PublishAtTyped != nil {
-		return *p.PublishAtTyped
-	}
-	if p.PublishAt == nil {
-		return ""
-	}
-
-	return p.PublishAt.UTC().Format(publishAtLayout)
-}
+// PublishAtInput is the edit form's value for the publication moment.
+func (p productRow) PublishAtInput() string { return momentInput(p.PublishAtTyped, p.PublishAt) }
 
 // listProducts renders the product list, optionally narrowed by a category, by
 // a search, or by both.

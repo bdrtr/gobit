@@ -14,8 +14,8 @@ import (
 	"github.com/bdrtr/gobit/internal/jobs/scheduledpublish"
 )
 
-// TestAScheduledDraftGoesLiveWhenTheJobFindsItDue is the gate ADR 0177 rests on,
-// through the production endpoints and the job the binary registers.
+// TestAScheduledDraftGoesLiveWhenTheJobFindsItDue is the gate ADRs 0177 and 0179
+// rest on, through the production endpoints and the job the binary registers.
 //
 // A draft is scheduled over the admin API; until its moment the storefront does
 // not have it, and the admin surface shows the moment. When the moment has come,
@@ -65,4 +65,28 @@ func TestAScheduledDraftGoesLiveWhenTheJobFindsItDue(t *testing.T) {
 	record = storefrontData(t, read)
 	assert.Equal(t, "published", record["status"])
 	assert.NotContains(t, record, "publish_at", "the moment is spent")
+
+	// And it leaves (ADR 0179): the live product is scheduled to be archived,
+	// the moment passes, and one pass takes it off the storefront.
+	leave := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
+	scheduled, err = adminRequestWithBody(http.MethodPut, "/admin/v1/products/"+productID+"/schedule",
+		map[string]any{"archive_at": leave.Format(time.RFC3339)})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, scheduled.Code, "body: %s", scheduled.Body.String())
+	assert.Equal(t, leave.Format(time.RFC3339), storefrontData(t, scheduled)["archive_at"])
+
+	still := storefrontRequest(t, http.MethodGet, storePath, "")
+	require.Equal(t, http.StatusOK, still.Code, "until its moment it stays on the storefront")
+	assert.NotContains(t, still.Body.String(), "archive_at", "a storefront body never says when a product goes")
+
+	_, err = testPool.Pool().Exec(ctx,
+		`UPDATE product SET archive_at = now() - interval '1 second' WHERE id = $1`, productID)
+	require.NoError(t, err)
+	require.NoError(t, scheduledpublish.Definition(productSvc, nil).Run(ctx))
+
+	gone := storefrontRequest(t, http.MethodGet, storePath, "")
+	assert.Equal(t, http.StatusNotFound, gone.Code, "the pass archived it; body: %s", gone.Body.String())
+	read, err = adminRequestWithBody(http.MethodGet, "/admin/v1/products/"+productID, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "archived", storefrontData(t, read)["status"])
 }

@@ -87,6 +87,10 @@ UPDATE product SET
     -- SET expressions read the OLD row, so the resulting status is spelled out.
     publish_at     = CASE WHEN COALESCE(sqlc.narg('status')::text, status) = 'draft'
                           THEN publish_at ELSE NULL END,
+    -- The moment to leave survives a draft being published and nothing else
+    -- (ADR 0179): archiving the product by hand spends it.
+    archive_at     = CASE WHEN COALESCE(sqlc.narg('status')::text, status) IN ('draft', 'published')
+                          THEN archive_at ELSE NULL END,
     updated_at     = now()
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING *;
@@ -167,17 +171,18 @@ RETURNING *;
 UPDATE product_image SET deleted_at = now(), updated_at = now()
 WHERE id = $1 AND product_id = $2 AND deleted_at IS NULL;
 
--- name: ScheduleProductPublication :one
--- Sets the moment a DRAFT is to be published (ADR 0177). A product that is not
--- a draft matches no row; the service reads the product first and says which of
--- the two it was.
-UPDATE product SET publish_at = sqlc.arg('publish_at'), updated_at = now()
-WHERE id = sqlc.arg('id') AND deleted_at IS NULL AND status = 'draft'
+-- name: SetProductSchedule :one
+-- Replaces a product's schedule: both moments, either of which may be NULL
+-- (ADR 0177, ADR 0179). The service checks which product may carry which moment
+-- before it writes; the constraints hold the pair to the same rules.
+UPDATE product SET publish_at = sqlc.narg('publish_at'), archive_at = sqlc.narg('archive_at'),
+    updated_at = now()
+WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING *;
 
 -- name: CancelProductPublication :one
--- Takes the schedule off a product; it stays whatever it is.
-UPDATE product SET publish_at = NULL, updated_at = now()
+-- Takes the whole schedule off a product; it stays whatever it is.
+UPDATE product SET publish_at = NULL, archive_at = NULL, updated_at = now()
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING *;
 
@@ -199,4 +204,20 @@ WHERE id IN (
     FOR UPDATE SKIP LOCKED
 )
   AND status = 'draft' AND publish_at <= sqlc.arg('due')::timestamptz
+RETURNING id;
+
+-- name: ArchiveDueProducts :many
+-- Archives the products whose moment to leave has come, oldest moment first, at
+-- most row_limit of them, and returns their ids (ADR 0179). The choosing and the
+-- locking are PublishDueProducts's, for its reasons.
+UPDATE product SET status = 'archived', publish_at = NULL, archive_at = NULL, updated_at = now()
+WHERE id IN (
+    SELECT id FROM product
+    WHERE status IN ('draft', 'published') AND archive_at <= sqlc.arg('due')::timestamptz
+      AND deleted_at IS NULL
+    ORDER BY archive_at, id
+    LIMIT sqlc.arg('row_limit')::bigint
+    FOR UPDATE SKIP LOCKED
+)
+  AND status IN ('draft', 'published') AND archive_at <= sqlc.arg('due')::timestamptz
 RETURNING id;

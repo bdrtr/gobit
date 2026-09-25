@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"time"
 
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
@@ -20,10 +19,10 @@ type Catalog interface {
 	ListProducts(ctx context.Context, opts service.ListProductsOptions) (service.ListResult[models.Product], error)
 	UpdateProduct(ctx context.Context, id string, in service.UpdateProductInput) (models.Product, error)
 	DeleteProduct(ctx context.Context, id string) error
-	// SchedulePublication and CancelPublication set and take off the moment a
-	// draft is published (ADR 0177).
-	SchedulePublication(ctx context.Context, id string, at time.Time) (models.Product, error)
-	CancelPublication(ctx context.Context, id string) (models.Product, error)
+	// SetSchedule and ClearSchedule replace and take off a product's schedule
+	// (ADR 0177, ADR 0179).
+	SetSchedule(ctx context.Context, id string, schedule service.Schedule) (models.Product, error)
+	ClearSchedule(ctx context.Context, id string) (models.Product, error)
 	// The image writes: one image at a time, each addressed by BOTH the
 	// product's id and the image's (ADR 0108).
 	AddProductImage(ctx context.Context, productID string, in service.CreateImageInput) (models.Image, error)

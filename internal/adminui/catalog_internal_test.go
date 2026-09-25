@@ -1277,7 +1277,7 @@ type fakeProductWriter struct {
 
 	// scheduled and unscheduled record the schedule calls; scheduleErr is what
 	// ScheduleProduct answers.
-	scheduled   []time.Time
+	scheduled   []scheduledCall
 	unscheduled int
 	scheduleErr error
 }
@@ -1289,11 +1289,17 @@ func (f *fakeProductWriter) UpdateProductBasics(_ context.Context, id, title, ha
 	return f.err
 }
 
-// ScheduleProduct records the moment.
-func (f *fakeProductWriter) ScheduleProduct(_ context.Context, _ string, at time.Time) error {
-	f.scheduled = append(f.scheduled, at)
+// ScheduleProduct records the moments.
+func (f *fakeProductWriter) ScheduleProduct(_ context.Context, _ string, publishAt, archiveAt *time.Time) error {
+	f.scheduled = append(f.scheduled, scheduledCall{publishAt: publishAt, archiveAt: archiveAt})
 
 	return f.scheduleErr
+}
+
+// scheduledCall is one ScheduleProduct call.
+type scheduledCall struct {
+	publishAt *time.Time
+	archiveAt *time.Time
 }
 
 // UnscheduleProduct records that the schedule was taken off.

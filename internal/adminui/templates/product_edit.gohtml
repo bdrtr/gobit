@@ -42,8 +42,12 @@ label says UTC because the panel reads it as UTC (ADR 0178).
   <label>Publish at (UTC)
     <input type="datetime-local" name="publish_at" value="{{ .Product.PublishAtInput }}">
   </label>
-  <p>A draft with a moment goes live within a minute of it. Leave it empty for no
-  schedule; only a draft can be scheduled.</p>
+  <label>Archive at (UTC)
+    <input type="datetime-local" name="archive_at" value="{{ .Product.ArchiveAtInput }}">
+  </label>
+  <p>A product goes live, or is archived, within a minute of its moment. Only a
+  draft can be scheduled to be published; a draft or a published product can be
+  scheduled to be archived. Leave both empty for no schedule.</p>
   <button type="submit">Save</button>
   <a href="{{ .CancelPath }}">Cancel</a>
 </form>

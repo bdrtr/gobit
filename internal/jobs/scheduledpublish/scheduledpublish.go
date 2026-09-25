@@ -1,4 +1,5 @@
-// Package scheduledpublish publishes the drafts whose moment has come (ADR 0177).
+// Package scheduledpublish publishes the drafts whose moment has come and
+// archives the products whose moment to leave has come (ADR 0177, ADR 0179).
 //
 // # Why a job, and why this one is allowed to change what a shopper sees
 //
@@ -53,7 +54,7 @@ const codePublishFailed = "scheduledpublish_failed"
 
 // publisher is the product service as this job needs it.
 type publisher interface {
-	PublishDue(ctx context.Context, limit int64) ([]string, error)
+	ApplyDueSchedules(ctx context.Context, limit int64) (published, archived []string, err error)
 }
 
 // Definition returns the job.
@@ -70,32 +71,38 @@ func Definition(p publisher, log *slog.Logger) job.Definition {
 	}
 }
 
-// run makes one pass.
+// run makes one pass: the drafts due to go live, then the products due to leave
+// (ADR 0177, ADR 0179).
 func run(ctx context.Context, p publisher, log *slog.Logger) error {
-	ids, err := p.PublishDue(ctx, limit)
+	published, archived, err := p.ApplyDueSchedules(ctx, limit)
+	// What was published before a failure is reported all the same: those
+	// products went live, and an operator asked "when?" needs the line.
+	for _, id := range published {
+		// INFO, one line per product: a product going live or leaving is a
+		// business event an operator may be asked about, and the answer is this
+		// line.
+		log.InfoContext(ctx, "a scheduled product was published", "product_id", id)
+	}
+	for _, id := range archived {
+		log.InfoContext(ctx, "a scheduled product was archived", "product_id", id)
+	}
 	if err != nil {
 		return coreerrors.Wrap(err, coreerrors.KindOf(err), codePublishFailed,
-			"the scheduled products could not be published")
+			"the scheduled products could not be published or archived")
 	}
 
-	jobreport.Report(ctx, fmt.Sprintf("published %d scheduled products", len(ids)))
-	if len(ids) == 0 {
+	jobreport.Report(ctx, fmt.Sprintf("published %d and archived %d scheduled products",
+		len(published), len(archived)))
+	if len(published) == 0 && len(archived) == 0 {
 		// DEBUG: an installation with nothing scheduled runs this every minute
 		// forever, and a line that never changes is a line nobody reads.
 		log.DebugContext(ctx, "no scheduled product was due")
 
 		return nil
 	}
-
-	// INFO, one line per product: a product going live is a business event an
-	// operator may be asked about ("when did it appear?"), and the answer is
-	// this line.
-	for _, id := range ids {
-		log.InfoContext(ctx, "a scheduled product was published", "product_id", id)
-	}
-	if len(ids) == limit {
+	if len(published) == limit || len(archived) == limit {
 		log.InfoContext(ctx, "more scheduled products may be due; the next pass continues",
-			"published", len(ids))
+			"published", len(published), "archived", len(archived))
 	}
 
 	return nil

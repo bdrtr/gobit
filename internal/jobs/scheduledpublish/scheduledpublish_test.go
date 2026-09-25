@@ -13,14 +13,15 @@ import (
 // fakePublisher answers a pass with scripted ids or an error.
 type fakePublisher struct {
 	ids      []string
+	archived []string
 	err      error
 	gotLimit int64
 }
 
-// PublishDue records the limit and answers as scripted.
-func (f *fakePublisher) PublishDue(_ context.Context, limit int64) ([]string, error) {
+// ApplyDueSchedules records the limit and answers as scripted.
+func (f *fakePublisher) ApplyDueSchedules(_ context.Context, limit int64) (published, archived []string, err error) {
 	f.gotLimit = limit
-	return f.ids, f.err
+	return f.ids, f.archived, f.err
 }
 
 // TestAPassPublishesWhatIsDueUnderTheBound verifies the pass asks with its

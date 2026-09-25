@@ -112,12 +112,13 @@ type Store interface {
 	VisibleProductIDs(ctx context.Context, productIDs []string, salesChannelIDs []string) (map[string]struct{}, error)
 	ListProductsByIDs(ctx context.Context, ids []string) ([]models.Product, error)
 	UpdateProduct(ctx context.Context, id string, patch ProductPatch) (models.Product, error)
-	// ScheduleProductPublication, CancelProductPublication and
-	// PublishDueProducts are the scheduled publication (ADR 0177); see
+	// SetProductSchedule, ClearProductSchedule, PublishDueProducts and
+	// ArchiveDueProducts are a product's schedule (ADR 0177, ADR 0179); see
 	// schedule.go.
-	ScheduleProductPublication(ctx context.Context, id string, at time.Time) (models.Product, error)
-	CancelProductPublication(ctx context.Context, id string) (models.Product, error)
+	SetProductSchedule(ctx context.Context, id string, publishAt, archiveAt *time.Time) (models.Product, error)
+	ClearProductSchedule(ctx context.Context, id string) (models.Product, error)
 	PublishDueProducts(ctx context.Context, due time.Time, limit int64) ([]string, error)
+	ArchiveDueProducts(ctx context.Context, due time.Time, limit int64) ([]string, error)
 	SoftDeleteProduct(ctx context.Context, id string) error
 	SoftDeleteProductChildren(ctx context.Context, productID string) error
 	ListVariantIDsByProduct(ctx context.Context, productID string) ([]string, error)

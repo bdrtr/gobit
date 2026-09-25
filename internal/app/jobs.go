@@ -50,7 +50,7 @@ type paymentReconciler interface {
 
 // productPublisher is the product service as the scheduled publisher needs it.
 type productPublisher interface {
-	PublishDue(ctx context.Context, limit int64) ([]string, error)
+	ApplyDueSchedules(ctx context.Context, limit int64) (published, archived []string, err error)
 }
 
 // jobsCommand is the subcommand that prints the job listing.

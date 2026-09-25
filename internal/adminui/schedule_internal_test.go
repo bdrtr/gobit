@@ -13,103 +13,118 @@ import (
 	"github.com/bdrtr/gobit/core/query"
 )
 
-// scheduledCatalog is a read layer holding one scheduled draft.
-func scheduledCatalog(at time.Time) *fakeCatalog {
+// scheduledCatalog is a read layer holding one draft with both moments.
+func scheduledCatalog(publishAt, archiveAt time.Time) *fakeCatalog {
 	return &fakeCatalog{byEntity: map[string][]query.Record{
 		EntityProduct: {{
 			"id": "prod_1", "title": "Coffee", "handle": "coffee", "status": "draft",
-			fieldPublishAt: at,
+			fieldPublishAt: publishAt, fieldArchiveAt: archiveAt,
 		}},
 	}}
 }
 
-// TestAScheduledDraftShowsItsMoment verifies the product page and the form show
-// the stored moment in UTC (ADR 0178).
-func TestAScheduledDraftShowsItsMoment(t *testing.T) {
+// scheduleForm is the edit form for prod_1 with the given status and moments.
+func scheduleForm(status, publishAt, archiveAt string) url.Values {
+	return url.Values{
+		"title": {"Coffee"}, "handle": {"coffee"}, "status": {status},
+		"publish_at": {publishAt}, "archive_at": {archiveAt},
+	}
+}
+
+// TestAScheduledDraftShowsItsMoments verifies the product page and the form
+// show the stored moments in UTC (ADR 0178, ADR 0179).
+func TestAScheduledDraftShowsItsMoments(t *testing.T) {
 	t.Parallel()
 
-	at := time.Date(2099, 1, 2, 9, 30, 0, 0, time.FixedZone("TRT", 3*3600))
-	panel := newEditPanel(t, scheduledCatalog(at), &fakeProductWriter{})
+	trt := time.FixedZone("TRT", 3*3600)
+	arrive := time.Date(2099, 1, 2, 9, 30, 0, 0, trt)
+	leave := time.Date(2099, 2, 2, 9, 30, 0, 0, trt)
+	panel := newEditPanel(t, scheduledCatalog(arrive, leave), &fakeProductWriter{})
 
 	page := httptest.NewRecorder()
 	editRouter(panel).ServeHTTP(page, httptest.NewRequest(http.MethodGet, ProductsPath+"/prod_1", http.NoBody))
 	require.Equal(t, http.StatusOK, page.Code)
 	assert.Contains(t, page.Body.String(), "2099-01-02 06:30 UTC",
 		"the page prints the moment in the zone the form reads it in")
+	assert.Contains(t, page.Body.String(), "2099-02-02 06:30 UTC")
 
 	form := httptest.NewRecorder()
 	editRouter(panel).ServeHTTP(form, httptest.NewRequest(http.MethodGet, ProductsPath+"/prod_1/edit", http.NoBody))
 	require.Equal(t, http.StatusOK, form.Code)
 	assert.Contains(t, form.Body.String(), `name="publish_at" value="2099-01-02T06:30"`)
+	assert.Contains(t, form.Body.String(), `name="archive_at" value="2099-02-02T06:30"`)
 }
 
-// TestTheFormSchedulesAndUnschedulesADraft verifies the two outcomes of a saved
-// draft: a moment schedules it, an empty field takes a schedule off.
-func TestTheFormSchedulesAndUnschedulesADraft(t *testing.T) {
+// TestTheFormSchedulesAndUnschedules verifies what a saved form asks for: the
+// moments typed, read as UTC, or no schedule when both are empty.
+func TestTheFormSchedulesAndUnschedules(t *testing.T) {
 	t.Parallel()
 
 	writer := &fakeProductWriter{}
 	panel := newEditPanel(t, editCatalog(), writer)
 
-	rec := postEdit(panel, "prod_1", url.Values{
-		"title": {"Coffee"}, "handle": {"coffee"}, "status": {"draft"},
-		"publish_at": {"2099-01-02T09:30"},
-	})
+	rec := postEdit(panel, "prod_1", scheduleForm("draft", "2099-01-02T09:30", "2099-02-02T09:30"))
 	require.Equal(t, http.StatusSeeOther, rec.Code, rec.Body.String())
 	require.Len(t, writer.scheduled, 1)
-	assert.True(t, writer.scheduled[0].Equal(time.Date(2099, 1, 2, 9, 30, 0, 0, time.UTC)),
+	call := writer.scheduled[0]
+	require.NotNil(t, call.publishAt)
+	require.NotNil(t, call.archiveAt)
+	assert.True(t, call.publishAt.Equal(time.Date(2099, 1, 2, 9, 30, 0, 0, time.UTC)),
 		"the form's moment is read as UTC, as its label says")
+	assert.True(t, call.archiveAt.Equal(time.Date(2099, 2, 2, 9, 30, 0, 0, time.UTC)))
 
-	rec = postEdit(panel, "prod_1", url.Values{
-		"title": {"Coffee"}, "handle": {"coffee"}, "status": {"draft"}, "publish_at": {""},
-	})
+	rec = postEdit(panel, "prod_1", scheduleForm("published", "", "2099-02-02T09:30"))
 	require.Equal(t, http.StatusSeeOther, rec.Code, rec.Body.String())
-	assert.Equal(t, 1, writer.unscheduled, "an empty moment takes the schedule off")
+	require.Len(t, writer.scheduled, 2)
+	assert.Nil(t, writer.scheduled[1].publishAt, "a published product is scheduled to leave only")
+	assert.NotNil(t, writer.scheduled[1].archiveAt)
+
+	rec = postEdit(panel, "prod_1", scheduleForm("draft", "", ""))
+	require.Equal(t, http.StatusSeeOther, rec.Code, rec.Body.String())
+	assert.Equal(t, 1, writer.unscheduled, "two empty moments take the schedule off")
 }
 
 // TestAScheduleThatCannotBeKeptWritesNothing verifies the checks made before
-// any write: an edit refused for its moment does not leave the basics saved.
+// any write: an edit refused for its moments does not leave the basics saved.
 func TestAScheduleThatCannotBeKeptWritesNothing(t *testing.T) {
 	t.Parallel()
 
 	for name, form := range map[string]url.Values{
-		"a malformed moment":   {"status": {"draft"}, "publish_at": {"next tuesday"}},
-		"a moment in the past": {"status": {"draft"}, "publish_at": {"2001-01-01T00:00"}},
-		"a moment on a product that will be published": {
-			"status": {"published"}, "publish_at": {"2099-01-02T09:30"},
-		},
+		"a malformed moment":                       scheduleForm("draft", "next tuesday", ""),
+		"a moment in the past":                     scheduleForm("draft", "", "2001-01-01T00:00"),
+		"a publication on a live product":          scheduleForm("published", "2099-01-02T09:30", ""),
+		"a moment to leave on an archived product": scheduleForm("archived", "", "2099-01-02T09:30"),
+		"leaving before arriving":                  scheduleForm("draft", "2099-02-02T09:30", "2099-01-02T09:30"),
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			writer := &fakeProductWriter{}
 			panel := newEditPanel(t, editCatalog(), writer)
-			form.Set("title", "Coffee")
-			form.Set("handle", "coffee")
 
 			rec := postEdit(panel, "prod_1", form)
 
 			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 			assert.Zero(t, writer.calls, "the basics were saved although the edit was refused")
 			assert.Empty(t, writer.scheduled)
-			assert.Contains(t, rec.Body.String(), `value="`+form.Get("publish_at")+`"`,
-				"the typed moment comes back so the mistake is visible")
+			for _, field := range []string{"publish_at", "archive_at"} {
+				assert.Contains(t, rec.Body.String(), `name="`+field+`" value="`+form.Get(field)+`"`,
+					"the typed moments come back so the mistake is visible")
+			}
 		})
 	}
 }
 
-// TestPublishingByHandTouchesNoSchedule verifies that a product saved as
-// published or archived is not asked about a schedule: the status change took
-// it off in the module's own statement.
-func TestPublishingByHandTouchesNoSchedule(t *testing.T) {
+// TestArchivingByHandTouchesNoSchedule verifies that a product saved as
+// archived is not asked about a schedule: the status change took it off in the
+// module's own statement.
+func TestArchivingByHandTouchesNoSchedule(t *testing.T) {
 	t.Parallel()
 
 	writer := &fakeProductWriter{}
 	panel := newEditPanel(t, editCatalog(), writer)
 
-	rec := postEdit(panel, "prod_1", url.Values{
-		"title": {"Coffee"}, "handle": {"coffee"}, "status": {"published"}, "publish_at": {""},
-	})
+	rec := postEdit(panel, "prod_1", scheduleForm("archived", "", ""))
 
 	require.Equal(t, http.StatusSeeOther, rec.Code, rec.Body.String())
 	assert.Equal(t, 1, writer.calls)

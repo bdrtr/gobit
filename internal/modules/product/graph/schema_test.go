@@ -90,6 +90,8 @@ func bindings() []binding {
 				"DeletedAt": "a deleted product is never returned from the storefront anyway",
 				"PublishAt": "a schedule belongs to a draft, and the storefront returns only " +
 					"published products; a launch date is the merchant's (ADR 0177)",
+				"ArchiveAt": "the date a product will be gone is the merchant's, not the " +
+					"shopper's (ADR 0179)",
 			},
 		},
 		{

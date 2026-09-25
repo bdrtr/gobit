@@ -54,10 +54,11 @@ func ProductStatuses() []string { return slices.Clone(productStatuses) }
 type ProductWriter interface {
 	// UpdateProductBasics updates a product's title, handle and status.
 	UpdateProductBasics(ctx context.Context, id, title, handle, status string) error
-	// ScheduleProduct sets the moment a draft is published (ADR 0177).
-	ScheduleProduct(ctx context.Context, id string, at time.Time) error
-	// UnscheduleProduct takes a schedule off; a product with none is left as
-	// it is.
+	// ScheduleProduct replaces a product's schedule: when it is published and
+	// when it is archived, either of which may be nil (ADR 0177, ADR 0179).
+	ScheduleProduct(ctx context.Context, id string, publishAt, archiveAt *time.Time) error
+	// UnscheduleProduct takes the whole schedule off; a product with none is
+	// left as it is.
 	UnscheduleProduct(ctx context.Context, id string) error
 }
 
@@ -67,8 +68,13 @@ type ProductWriter interface {
 // would publish at an hour nobody chose.
 const publishAtLayout = "2006-01-02T15:04"
 
-// statusDraft is the one status a schedule belongs to.
-const statusDraft = "draft"
+// The statuses a schedule is judged against.
+const (
+	// statusDraft is the one status a publication moment belongs to.
+	statusDraft = "draft"
+	// statusArchived is the one status no moment belongs to.
+	statusArchived = "archived"
+)
 
 // editProduct renders the edit form.
 func (u *UI) editProduct(w http.ResponseWriter, r *http.Request) {
@@ -113,23 +119,29 @@ func (u *UI) submitProductEdit(w http.ResponseWriter, r *http.Request) {
 	title := r.PostFormValue("title")
 	handle := r.PostFormValue("handle")
 	status := r.PostFormValue("status")
-	publishAt := strings.TrimSpace(r.PostFormValue("publish_at"))
+	typed := typedSchedule{
+		publishAt: strings.TrimSpace(r.PostFormValue("publish_at")),
+		archiveAt: strings.TrimSpace(r.PostFormValue("archive_at")),
+	}
 
 	// The schedule is checked BEFORE anything is written, so a moment that
 	// cannot be kept does not leave the basics saved and the form saying it
 	// failed. The product module still decides; this only spares a half-edit.
-	moment, problem := readPublishAt(publishAt, status, time.Now())
+	publishAt, archiveAt, problem := readSchedule(typed, status, time.Now())
 	if problem != "" {
-		u.rerenderEdit(w, r, id, title, handle, status, publishAt, problem)
+		u.rerenderEdit(w, r, id, title, handle, status, typed, problem)
 		return
 	}
 
 	err := u.products.UpdateProductBasics(r.Context(), id, title, handle, status)
-	if err == nil && status == statusDraft {
-		if moment.IsZero() {
+	// An archived product carries no schedule; the module's status write took
+	// it off. Anything else is scheduled as typed, or unscheduled when both
+	// fields were left empty.
+	if err == nil && status != statusArchived {
+		if publishAt == nil && archiveAt == nil {
 			err = u.products.UnscheduleProduct(r.Context(), id)
 		} else {
-			err = u.products.ScheduleProduct(r.Context(), id, moment)
+			err = u.products.ScheduleProduct(r.Context(), id, publishAt, archiveAt)
 		}
 	}
 	if err == nil {
@@ -145,13 +157,13 @@ func (u *UI) submitProductEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u.rerenderEdit(w, r, id, title, handle, status, publishAt, messageFor(err))
+	u.rerenderEdit(w, r, id, title, handle, status, typed, messageFor(err))
 }
 
 // rerenderEdit shows the form again with what the operator typed and why it
 // was refused.
 func (u *UI) rerenderEdit(
-	w http.ResponseWriter, r *http.Request, id, title, handle, status, publishAt, message string,
+	w http.ResponseWriter, r *http.Request, id, title, handle, status string, typed typedSchedule, message string,
 ) {
 	product, ok := u.loadProduct(w, r, id)
 	if !ok {
@@ -160,29 +172,55 @@ func (u *UI) rerenderEdit(
 	// What the operator typed is shown back, not what is stored: the form must
 	// return the values that were rejected so the mistake is visible.
 	product.Title, product.Handle, product.Status = title, handle, status
-	product.PublishAtTyped = &publishAt
+	product.PublishAtTyped, product.ArchiveAtTyped = &typed.publishAt, &typed.archiveAt
 
 	u.renderEditForm(w, r, http.StatusUnprocessableEntity, product, message)
 }
 
-// readPublishAt reads the form's moment and says, in the form's own words, why
-// it cannot be kept. An empty field is no schedule.
-func readPublishAt(value, status string, now time.Time) (moment time.Time, problem string) {
-	if value == "" {
-		return time.Time{}, ""
+// typedSchedule is the schedule as the form sent it.
+type typedSchedule struct {
+	publishAt string
+	archiveAt string
+}
+
+// readSchedule reads the form's two moments and says, in the form's own words,
+// why they cannot be kept. An empty field is no moment.
+func readSchedule(typed typedSchedule, status string, now time.Time) (publishAt, archiveAt *time.Time, problem string) {
+	publishAt, problem = readMoment(typed.publishAt, "publication", now)
+	if problem != "" {
+		return nil, nil, problem
 	}
-	moment, err := time.ParseInLocation(publishAtLayout, value, time.UTC)
-	if err != nil {
-		return time.Time{}, "The publication moment could not be read; use the date and time picker."
-	}
-	if status != statusDraft {
-		return time.Time{}, "Only a draft can be scheduled. Set the status to draft, or clear the moment."
-	}
-	if !moment.After(now) {
-		return time.Time{}, "The publication moment has to be in the future. To publish now, set the status."
+	archiveAt, problem = readMoment(typed.archiveAt, "archiving", now)
+	if problem != "" {
+		return nil, nil, problem
 	}
 
-	return moment, ""
+	switch {
+	case publishAt != nil && status != statusDraft:
+		return nil, nil, "Only a draft can be scheduled to be published. Set the status to draft, or clear the moment."
+	case archiveAt != nil && status == statusArchived:
+		return nil, nil, "An archived product cannot be scheduled to be archived. Clear the moment."
+	case publishAt != nil && archiveAt != nil && !archiveAt.After(*publishAt):
+		return nil, nil, "The product would be archived before it is published. Move the archiving moment after the publication."
+	}
+
+	return publishAt, archiveAt, ""
+}
+
+// readMoment reads one moment in UTC; nil for an empty field.
+func readMoment(value, name string, now time.Time) (moment *time.Time, problem string) {
+	if value == "" {
+		return nil, ""
+	}
+	at, err := time.ParseInLocation(publishAtLayout, value, time.UTC)
+	if err != nil {
+		return nil, "The " + name + " moment could not be read; use the date and time picker."
+	}
+	if !at.After(now) {
+		return nil, "The " + name + " moment has to be in the future. To act now, set the status."
+	}
+
+	return &at, ""
 }
 
 // loadProduct reads one product for the form, answering on the way when it

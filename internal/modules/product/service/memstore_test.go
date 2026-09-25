@@ -470,9 +470,13 @@ func (m *memStore) UpdateProduct(_ context.Context, id string, patch repository.
 	}
 	if patch.Status != nil {
 		p.Status = models.Status(*patch.Status)
-		// The SQL clears a schedule when the status leaves the draft state.
+		// The SQL clears a publication moment when the status leaves the draft
+		// state, and a moment to leave when the product is archived.
 		if p.Status != models.StatusDraft {
 			p.PublishAt = nil
+		}
+		if p.Status == models.StatusArchived {
+			p.ArchiveAt = nil
 		}
 	}
 	if patch.Subtitle != nil {
@@ -485,35 +489,73 @@ func (m *memStore) UpdateProduct(_ context.Context, id string, patch repository.
 	return p, nil
 }
 
-func (m *memStore) ScheduleProductPublication(_ context.Context, id string, at time.Time) (models.Product, error) {
+func (m *memStore) SetProductSchedule(
+	_ context.Context, id string, publishAt, archiveAt *time.Time,
+) (models.Product, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.track("ScheduleProductPublication"); err != nil {
-		return models.Product{}, err
-	}
-	p, ok := m.products[id]
-	if !ok || p.DeletedAt != nil || p.Status != models.StatusDraft {
-		return models.Product{}, errors.NotFound("product_not_found", "no draft to schedule: %s", id)
-	}
-	moment := at.UTC()
-	p.PublishAt = &moment
-	m.products[id] = p
-	return p, nil
-}
-
-func (m *memStore) CancelProductPublication(_ context.Context, id string) (models.Product, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if err := m.track("CancelProductPublication"); err != nil {
+	if err := m.track("SetProductSchedule"); err != nil {
 		return models.Product{}, err
 	}
 	p, ok := m.products[id]
 	if !ok || p.DeletedAt != nil {
 		return models.Product{}, errors.NotFound("product_not_found", "the product was not found: %s", id)
 	}
-	p.PublishAt = nil
+	// The table's constraints, as the SQL would enforce them.
+	if (publishAt != nil && p.Status != models.StatusDraft) ||
+		(archiveAt != nil && p.Status == models.StatusArchived) {
+		return models.Product{}, errors.Invalid("product_check_failed", "the schedule does not fit: %s", id)
+	}
+	p.PublishAt, p.ArchiveAt = utcOrNil(publishAt), utcOrNil(archiveAt)
 	m.products[id] = p
 	return p, nil
+}
+
+func (m *memStore) ClearProductSchedule(_ context.Context, id string) (models.Product, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ClearProductSchedule"); err != nil {
+		return models.Product{}, err
+	}
+	p, ok := m.products[id]
+	if !ok || p.DeletedAt != nil {
+		return models.Product{}, errors.NotFound("product_not_found", "the product was not found: %s", id)
+	}
+	p.PublishAt, p.ArchiveAt = nil, nil
+	m.products[id] = p
+	return p, nil
+}
+
+func (m *memStore) ArchiveDueProducts(_ context.Context, due time.Time, limit int64) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ArchiveDueProducts"); err != nil {
+		return nil, err
+	}
+	var ids []string
+	for id := range m.products {
+		if int64(len(ids)) == limit {
+			break
+		}
+		p := m.products[id]
+		live := p.Status == models.StatusDraft || p.Status == models.StatusPublished
+		if p.DeletedAt == nil && live && p.ArchiveAt != nil && !p.ArchiveAt.After(due) {
+			p.Status, p.PublishAt, p.ArchiveAt = models.StatusArchived, nil, nil
+			m.products[id] = p
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids, nil
+}
+
+// utcOrNil copies an optional moment in UTC, as the column stores it.
+func utcOrNil(at *time.Time) *time.Time {
+	if at == nil {
+		return nil
+	}
+	moment := at.UTC()
+	return &moment
 }
 
 func (m *memStore) PublishDueProducts(_ context.Context, due time.Time, limit int64) ([]string, error) {

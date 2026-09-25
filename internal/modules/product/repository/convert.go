@@ -130,6 +130,7 @@ func toProduct(row productdb.Product) (models.Product, error) {
 		TypeID:        row.TypeID,
 		Metadata:      meta,
 		PublishAt:     toTimePtr(row.PublishAt),
+		ArchiveAt:     toTimePtr(row.ArchiveAt),
 		CreatedAt:     toTime(row.CreatedAt),
 		UpdatedAt:     toTime(row.UpdatedAt),
 		DeletedAt:     toTimePtr(row.DeletedAt),

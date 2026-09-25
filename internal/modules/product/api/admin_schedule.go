@@ -23,11 +23,14 @@ type adminProduct struct {
 	models.Product
 	// PublishAt is the moment the draft is published; absent when it has none.
 	PublishAt *time.Time `json:"publish_at,omitempty"`
+	// ArchiveAt is the moment the product is archived; absent when it has none
+	// (ADR 0179).
+	ArchiveAt *time.Time `json:"archive_at,omitempty"`
 }
 
 // toAdminProduct adds the schedule to the product.
 func toAdminProduct(product models.Product) adminProduct {
-	return adminProduct{Product: product, PublishAt: product.PublishAt}
+	return adminProduct{Product: product, PublishAt: product.PublishAt, ArchiveAt: product.ArchiveAt}
 }
 
 // toAdminProducts does the same to a page.
@@ -47,17 +50,22 @@ func toAdminProducts(page service.ListResult[models.Product]) service.ListResult
 }
 
 // scheduleRequest is the body of PUT /admin/v1/products/{id}/schedule.
+//
+// It REPLACES the product's schedule: a moment left out is taken off. At least
+// one is required; taking both off is the DELETE (ADR 0179).
 type scheduleRequest struct {
-	// PublishAt is the moment the draft is published: RFC 3339 with a zone, in
-	// the future.
-	PublishAt time.Time `json:"publish_at"`
+	// PublishAt is when a draft goes live: RFC 3339 with a zone, in the future.
+	PublishAt *time.Time `json:"publish_at"`
+	// ArchiveAt is when a draft or published product is archived: RFC 3339
+	// with a zone, in the future, and after PublishAt when both are given.
+	ArchiveAt *time.Time `json:"archive_at"`
 }
 
-// adminScheduleProduct sets the moment a draft is published
+// adminScheduleProduct replaces a product's schedule
 // (PUT /admin/v1/products/{id}/schedule).
 //
-// It is PUT because it replaces the schedule: a second call moves the moment
-// rather than adding one.
+// It is PUT because it replaces the schedule: a second call moves the moments
+// rather than adding to them.
 func (h *Handler) adminScheduleProduct(w http.ResponseWriter, r *http.Request) {
 	id, err := pathParam(r, "id")
 	if err != nil {
@@ -70,7 +78,10 @@ func (h *Handler) adminScheduleProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	product, err := h.svc.SchedulePublication(r.Context(), id, req.PublishAt)
+	product, err := h.svc.SetSchedule(r.Context(), id, service.Schedule{
+		PublishAt: req.PublishAt,
+		ArchiveAt: req.ArchiveAt,
+	})
 	if err != nil {
 		corehttp.WriteError(r.Context(), w, err)
 		return
@@ -78,12 +89,12 @@ func (h *Handler) adminScheduleProduct(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toAdminProduct(product))
 }
 
-// adminCancelSchedule takes the schedule off a product
+// adminCancelSchedule takes the whole schedule off a product
 // (DELETE /admin/v1/products/{id}/schedule).
 //
 // It answers with the product rather than an empty 204, because what the
-// operator wants to see next is the product as it now stands — still a draft,
-// with no moment.
+// operator wants to see next is the product as it now stands — its status
+// unchanged, with no moment.
 func (h *Handler) adminCancelSchedule(w http.ResponseWriter, r *http.Request) {
 	id, err := pathParam(r, "id")
 	if err != nil {
@@ -91,7 +102,7 @@ func (h *Handler) adminCancelSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	product, err := h.svc.CancelPublication(r.Context(), id)
+	product, err := h.svc.ClearSchedule(r.Context(), id)
 	if err != nil {
 		corehttp.WriteError(r.Context(), w, err)
 		return

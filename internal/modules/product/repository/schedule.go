@@ -10,13 +10,17 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/repository/productdb"
 )
 
-// ScheduleProductPublication sets the moment a DRAFT is to be published (ADR
-// 0177). A product that is missing or is not a draft matches no row and comes
-// back as not found; the service reads the product first and tells the two apart.
-func (r *Repo) ScheduleProductPublication(ctx context.Context, id string, at time.Time) (models.Product, error) {
-	row, err := r.q.ScheduleProductPublication(ctx, productdb.ScheduleProductPublicationParams{
+// SetProductSchedule replaces a product's schedule: the moment it is published
+// and the moment it is archived, either of which may be nil (ADR 0177, ADR 0179).
+// The service decides which product may carry which moment; the constraints
+// refuse a pair that breaks the same rules.
+func (r *Repo) SetProductSchedule(
+	ctx context.Context, id string, publishAt, archiveAt *time.Time,
+) (models.Product, error) {
+	row, err := r.q.SetProductSchedule(ctx, productdb.SetProductScheduleParams{
 		ID:        id,
-		PublishAt: pgtype.Timestamptz{Time: at, Valid: true},
+		PublishAt: moment(publishAt),
+		ArchiveAt: moment(archiveAt),
 	})
 	if err != nil {
 		return models.Product{}, wrapDB(err, "could not schedule the product: %s", id)
@@ -25,8 +29,8 @@ func (r *Repo) ScheduleProductPublication(ctx context.Context, id string, at tim
 	return toProduct(row)
 }
 
-// CancelProductPublication takes the schedule off a product.
-func (r *Repo) CancelProductPublication(ctx context.Context, id string) (models.Product, error) {
+// ClearProductSchedule takes the whole schedule off a product.
+func (r *Repo) ClearProductSchedule(ctx context.Context, id string) (models.Product, error) {
 	row, err := r.q.CancelProductPublication(ctx, id)
 	if err != nil {
 		return models.Product{}, wrapDB(err, "could not take the schedule off the product: %s", id)
@@ -47,4 +51,27 @@ func (r *Repo) PublishDueProducts(ctx context.Context, due time.Time, limit int6
 	}
 
 	return ids, nil
+}
+
+// ArchiveDueProducts archives at most limit products whose moment to leave is at
+// or before due, and returns their ids.
+func (r *Repo) ArchiveDueProducts(ctx context.Context, due time.Time, limit int64) ([]string, error) {
+	ids, err := r.q.ArchiveDueProducts(ctx, productdb.ArchiveDueProductsParams{
+		Due:      pgtype.Timestamptz{Time: due, Valid: true},
+		RowLimit: limit,
+	})
+	if err != nil {
+		return nil, wrapDB(err, "could not archive the scheduled products")
+	}
+
+	return ids, nil
+}
+
+// moment turns an optional moment into the column's value.
+func moment(at *time.Time) pgtype.Timestamptz {
+	if at == nil {
+		return pgtype.Timestamptz{}
+	}
+
+	return pgtype.Timestamptz{Time: *at, Valid: true}
 }

@@ -583,11 +583,12 @@ func productFilterSQL(f ProductFilter) (body string, args []any) {
 // one column fewer than the struct has fields and every storefront read answers
 // 500. It was forgotten once, on 2026-09-09, and ten end-to-end tests said so;
 // it was forgotten again for publish_at (migration 000007, ADR 0177), and the
-// catalog tests and the smoke lane's GraphQL query said so.
+// catalog tests and the smoke lane's GraphQL query said so. archive_at
+// (migration 000008, ADR 0179) was added here with its column.
 const productColumns = `id, handle, title, subtitle, description, thumbnail,
 	status, is_giftcard, discountable, weight, length, height, width,
 	material, origin_country, collection_id, metadata,
-	created_at, updated_at, deleted_at, type_id, publish_at`
+	created_at, updated_at, deleted_at, type_id, publish_at, archive_at`
 
 // keysetSeek is the ordering half of the listing: the comparison the cursor
 // rides and the ORDER BY it has to agree with.

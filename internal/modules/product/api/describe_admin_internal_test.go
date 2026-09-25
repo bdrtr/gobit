@@ -407,6 +407,7 @@ func filledAdminProduct() adminProduct {
 
 	return toAdminProduct(models.Product{
 		PublishAt:     &now,
+		ArchiveAt:     &now,
 		Subtitle:      &text,
 		Description:   &text,
 		Thumbnail:     &text,

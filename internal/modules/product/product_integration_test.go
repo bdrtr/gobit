@@ -252,7 +252,7 @@ func TestMigrationUpDownIsReversible(t *testing.T) {
 	// written out rather than derived on purpose: a count taken from the
 	// embedded files would agree with itself whatever happened, and what this
 	// line is for is noticing that a migration was added.
-	assert.Equal(t, uint(7), version)
+	assert.Equal(t, uint(8), version)
 
 	// 000004 adds no table, so the table list above cannot notice it. What it
 	// adds is the index the catalog's option-value filter reads through, and an
@@ -265,6 +265,8 @@ func TestMigrationUpDownIsReversible(t *testing.T) {
 	// index once a minute (ADR 0177).
 	assert.True(t, indexExists(ctx, t, dsn, "product_publish_due_idx"),
 		"migration 000007 must create the index the scheduled publisher reads")
+	assert.True(t, indexExists(ctx, t, dsn, "product_archive_due_idx"),
+		"migration 000008 must create the index the same pass reads to archive")
 
 	require.NoError(t, db.MigrateDown(ctx, dsn, mod.Migrations(), mod.Name(), 0),
 		"the schema must be reversible")
@@ -275,6 +277,8 @@ func TestMigrationUpDownIsReversible(t *testing.T) {
 		"the down migration must take its index with it")
 	assert.False(t, indexExists(ctx, t, dsn, "product_publish_due_idx"),
 		"migration 000007's down must take its index with it")
+	assert.False(t, indexExists(ctx, t, dsn, "product_archive_due_idx"),
+		"migration 000008's down must take its index with it")
 
 	// A rolled back schema must be applicable again: a rollback must not block
 	// the next deployment.

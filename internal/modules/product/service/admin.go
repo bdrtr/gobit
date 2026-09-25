@@ -43,27 +43,28 @@ type AdminSurface struct{ svc *Service }
 // NewAdminSurface builds the admin surface over the given service.
 func NewAdminSurface(svc *Service) *AdminSurface { return &AdminSurface{svc: svc} }
 
-// ScheduleProduct sets the moment a draft is published (ADR 0177, ADR 0178).
+// ScheduleProduct replaces a product's schedule with the given moments, either
+// of which may be nil (ADR 0177, ADR 0178, ADR 0179).
 //
-// The rules are the service's: a draft only, a moment in the future. The panel
-// checks both before it writes anything, so an edit is not half-saved, but this
-// is where they are decided.
-func (a *AdminSurface) ScheduleProduct(ctx context.Context, id string, at time.Time) error {
+// The rules are the service's. The panel checks what it can see before it
+// writes anything, so an edit is not half-saved, but this is where they are
+// decided.
+func (a *AdminSurface) ScheduleProduct(ctx context.Context, id string, publishAt, archiveAt *time.Time) error {
 	if a == nil || a.svc == nil {
 		return errors.Unavailable(codeNotReady, "the product service is not set up")
 	}
-	_, err := a.svc.SchedulePublication(ctx, id, at)
+	_, err := a.svc.SetSchedule(ctx, id, Schedule{PublishAt: publishAt, ArchiveAt: archiveAt})
 
 	return err
 }
 
-// UnscheduleProduct takes the schedule off a product; a product with none is
-// left as it is.
+// UnscheduleProduct takes the whole schedule off a product; a product with none
+// is left as it is.
 func (a *AdminSurface) UnscheduleProduct(ctx context.Context, id string) error {
 	if a == nil || a.svc == nil {
 		return errors.Unavailable(codeNotReady, "the product service is not set up")
 	}
-	_, err := a.svc.CancelPublication(ctx, id)
+	_, err := a.svc.ClearSchedule(ctx, id)
 
 	return err
 }

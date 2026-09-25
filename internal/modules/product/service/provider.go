@@ -763,6 +763,7 @@ func productRecord(p models.Product) query.Record {
 		"origin_country": deref(p.OriginCountry),
 		"metadata":       p.Metadata,
 		fieldPublishAt:   momentOrNil(p.PublishAt),
+		fieldArchiveAt:   momentOrNil(p.ArchiveAt),
 		fieldCreatedAt:   p.CreatedAt,
 		fieldUpdatedAt:   p.UpdatedAt,
 	}
@@ -774,6 +775,10 @@ func productRecord(p models.Product) query.Record {
 // the read layer is the operator's side — the admin panel reads the product
 // through it — and nothing on the storefront reads a product from here.
 const fieldPublishAt = "publish_at"
+
+// fieldArchiveAt is the moment a product is to be archived (ADR 0179), offered
+// for fieldPublishAt's reason.
+const fieldArchiveAt = "archive_at"
 
 // momentOrNil is the moment, or nil when there is none; the record holds the
 // value rather than a pointer, as every other moment in it does.

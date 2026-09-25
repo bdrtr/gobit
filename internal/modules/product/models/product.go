@@ -114,6 +114,10 @@ type Product struct {
 	// "-" hide an embedded one — so the only way to keep a launch date out of the
 	// storefront is to leave it out here and let the admin surface add it.
 	PublishAt *time.Time `json:"-"`
+	// ArchiveAt is the moment a draft or published product is to be archived,
+	// or nil (ADR 0179). It is kept out of this type's JSON for PublishAt's
+	// reason: a storefront body must not say when a product will be gone.
+	ArchiveAt *time.Time `json:"-"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`

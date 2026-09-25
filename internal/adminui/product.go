@@ -120,6 +120,7 @@ func productRowOf(rec query.Record) productRow {
 		Thumbnail: recordString(rec, fieldThumbnail),
 		UpdatedAt: recordTime(rec, fieldUpdatedAt),
 		PublishAt: recordMoment(rec, fieldPublishAt),
+		ArchiveAt: recordMoment(rec, fieldArchiveAt),
 	}
 }
 

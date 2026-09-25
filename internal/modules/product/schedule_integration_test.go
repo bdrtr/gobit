@@ -37,7 +37,8 @@ func scheduledDraft(t *testing.T, svc *service.Service) models.Product {
 		Handle: uniqueHandle("scheduled"), Title: "Scheduled", Status: models.StatusDraft,
 	})
 	require.NoError(t, err)
-	scheduled, err := svc.SchedulePublication(context.Background(), draft.ID, time.Now().Add(time.Hour))
+	at := time.Now().Add(time.Hour)
+	scheduled, err := svc.SetSchedule(context.Background(), draft.ID, service.Schedule{PublishAt: &at})
 	require.NoError(t, err)
 
 	return scheduled
@@ -55,11 +56,11 @@ func TestAScheduleComesDueInTheRealSchema(t *testing.T) {
 	t.Run("the pass publishes what is due and nothing else", func(t *testing.T) {
 		due := scheduledDraft(t, now)
 
-		early, err := now.PublishDue(ctx, 500)
+		early, _, err := now.ApplyDueSchedules(ctx, 500)
 		require.NoError(t, err)
 		assert.NotContains(t, early, due.ID, "an hour early, the draft is not due")
 
-		published, err := later.PublishDue(ctx, 500)
+		published, _, err := later.ApplyDueSchedules(ctx, 500)
 		require.NoError(t, err)
 		assert.Contains(t, published, due.ID)
 
@@ -68,7 +69,7 @@ func TestAScheduleComesDueInTheRealSchema(t *testing.T) {
 		assert.Equal(t, models.StatusPublished, read.Status)
 		assert.Nil(t, read.PublishAt, "the moment is spent")
 
-		again, err := later.PublishDue(ctx, 500)
+		again, _, err := later.ApplyDueSchedules(ctx, 500)
 		require.NoError(t, err)
 		assert.NotContains(t, again, due.ID, "a product is published once")
 	})
@@ -95,11 +96,57 @@ func TestAScheduleComesDueInTheRealSchema(t *testing.T) {
 		assert.Contains(t, err.Error(), "product_publish_at_draft_only")
 	})
 
+	t.Run("a live product leaves at its moment, and archiving by hand spends it", func(t *testing.T) {
+		live, err := now.CreateProduct(ctx, service.CreateProductInput{
+			Handle: uniqueHandle("seasonal"), Title: "Seasonal", Status: models.StatusPublished,
+		})
+		require.NoError(t, err)
+		leave := time.Now().Add(time.Hour)
+		_, err = now.SetSchedule(ctx, live.ID, service.Schedule{ArchiveAt: &leave})
+		require.NoError(t, err)
+
+		_, archived, err := later.ApplyDueSchedules(ctx, 500)
+		require.NoError(t, err)
+		assert.Contains(t, archived, live.ID)
+		read, err := now.GetProduct(ctx, live.ID)
+		require.NoError(t, err)
+		assert.Equal(t, models.StatusArchived, read.Status)
+		assert.Nil(t, read.ArchiveAt, "the moment is spent")
+
+		byHand, err := now.CreateProduct(ctx, service.CreateProductInput{
+			Handle: uniqueHandle("by-hand"), Title: "By hand", Status: models.StatusPublished,
+		})
+		require.NoError(t, err)
+		_, err = now.SetSchedule(ctx, byHand.ID, service.Schedule{ArchiveAt: &leave})
+		require.NoError(t, err)
+		archivedStatus := models.StatusArchived
+		updated, err := now.UpdateProduct(ctx, byHand.ID, service.UpdateProductInput{Status: &archivedStatus})
+		require.NoError(t, err, "the constraint would refuse an archived product with a moment; the update clears it")
+		assert.Nil(t, updated.ArchiveAt)
+	})
+
+	t.Run("the constraints refuse a pair out of order and a moment on an archived product", func(t *testing.T) {
+		draft := scheduledDraft(t, now)
+		_, err := testPool.Pool().Exec(ctx,
+			`UPDATE product SET archive_at = publish_at - interval '1 minute' WHERE id = $1`, draft.ID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "product_archive_after_publish")
+
+		gone, err := now.CreateProduct(ctx, service.CreateProductInput{
+			Handle: uniqueHandle("gone"), Title: "Gone", Status: models.StatusArchived,
+		})
+		require.NoError(t, err)
+		_, err = testPool.Pool().Exec(ctx,
+			`UPDATE product SET archive_at = now() + interval '1 hour' WHERE id = $1`, gone.ID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "product_archive_at_live_only")
+	})
+
 	t.Run("a deleted draft is not published", func(t *testing.T) {
 		draft := scheduledDraft(t, now)
 		require.NoError(t, now.DeleteProduct(ctx, draft.ID))
 
-		published, err := later.PublishDue(ctx, 500)
+		published, _, err := later.ApplyDueSchedules(ctx, 500)
 		require.NoError(t, err)
 		assert.NotContains(t, published, draft.ID)
 	})
@@ -121,13 +168,13 @@ func TestAScheduleComesDueInTheRealSchema(t *testing.T) {
 		// failure.
 		bounded, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		skipped, err := later.PublishDue(bounded, 500)
+		skipped, _, err := later.ApplyDueSchedules(bounded, 500)
 		require.NoError(t, err, "the pass waited on a locked row instead of leaving it")
 		assert.NotContains(t, skipped, draft.ID,
 			"the pass does not publish a draft someone holds")
 		require.NoError(t, tx.Rollback(ctx))
 
-		published, err := later.PublishDue(ctx, 500)
+		published, _, err := later.ApplyDueSchedules(ctx, 500)
 		require.NoError(t, err)
 		assert.Contains(t, published, draft.ID, "the next pass takes it")
 	})
@@ -146,6 +193,10 @@ func TestTheScheduleColumnIsReadInItsPlace(t *testing.T) {
 	svc := serviceAt(t, time.Now())
 	draft := scheduledDraft(t, svc)
 	handle := draft.Handle
+	// Both moments, and different ones, so neither can stand in for the other.
+	leave := draft.PublishAt.Add(24 * time.Hour)
+	_, err := svc.SetSchedule(ctx, draft.ID, service.Schedule{PublishAt: draft.PublishAt, ArchiveAt: &leave})
+	require.NoError(t, err)
 
 	page, err := svc.ListProducts(ctx, service.ListProductsOptions{Handle: &handle, Limit: 10})
 	require.NoError(t, err)
@@ -155,6 +206,8 @@ func TestTheScheduleColumnIsReadInItsPlace(t *testing.T) {
 	require.NotNil(t, read.PublishAt, "the moment has to be read")
 	assert.True(t, read.PublishAt.Equal(*draft.PublishAt),
 		"publish_at came back as %s and %s was written: the column has moved", read.PublishAt, draft.PublishAt)
-	assert.Nil(t, read.DeletedAt, "deleted_at and publish_at may have traded places")
+	require.NotNil(t, read.ArchiveAt)
+	assert.True(t, read.ArchiveAt.Equal(leave), "archive_at came back as %s and %s was written", read.ArchiveAt, leave)
+	assert.Nil(t, read.DeletedAt, "deleted_at and a schedule moment may have traded places")
 	assert.False(t, read.CreatedAt.Equal(*draft.PublishAt), "created_at and publish_at may have traded places")
 }

@@ -331,6 +331,16 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **A product can be scheduled to leave** (ADR 0179). A draft or a published
+  product takes an `archive_at` beside `publish_at`; the `scheduled-publish`
+  job archives what is due after publishing what is due, and each change gets
+  the `product.updated` event the same change by hand gets. **For API
+  consumers:** `PUT /admin/v1/products/{id}/schedule` now REPLACES the whole
+  schedule — `publish_at` and `archive_at` are both optional, one left out is
+  taken off, and an empty body is refused. The panel's form gains "Archive at
+  (UTC)". **For operators:** migration 000008 adds the column and two
+  constraints.
+
 - **The panel schedules a draft** (ADR 0178). The admin panel's product form
   has a "Publish at (UTC)" field and the product page shows the moment; saving
   a draft with a moment schedules it and saving it with none takes the
