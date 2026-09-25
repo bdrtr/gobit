@@ -129,13 +129,15 @@ const paramSearch = "search"
 
 // The record fields the catalog reads.
 const (
-	fieldID          = "id"
-	fieldName        = "name"
-	fieldTitle       = "title"
-	fieldHandle      = "handle"
-	fieldStatus      = "status"
-	fieldThumbnail   = "thumbnail"
-	fieldUpdatedAt   = "updated_at"
+	fieldID        = "id"
+	fieldName      = "name"
+	fieldTitle     = "title"
+	fieldHandle    = "handle"
+	fieldStatus    = "status"
+	fieldThumbnail = "thumbnail"
+	fieldUpdatedAt = "updated_at"
+	// fieldPublishAt is a draft's scheduled moment (ADR 0177, ADR 0178).
+	fieldPublishAt   = "publish_at"
 	fieldSKU         = "sku"
 	fieldPrices      = "prices"
 	fieldAmount      = "amount"
@@ -305,6 +307,33 @@ type productRow struct {
 	Status    string
 	Thumbnail string
 	UpdatedAt time.Time
+	// PublishAt is the moment a draft is scheduled for, or nil.
+	PublishAt *time.Time
+	// PublishAtTyped is what the operator typed into the form, when the form
+	// comes back refused; it wins over the stored moment so the mistake shows.
+	PublishAtTyped *string
+}
+
+// PublishAtUTC is the scheduled moment as the product page prints it, or empty.
+func (p productRow) PublishAtUTC() string {
+	if p.PublishAt == nil {
+		return ""
+	}
+
+	return p.PublishAt.UTC().Format("2006-01-02 15:04") + " UTC"
+}
+
+// PublishAtInput is the edit form's value for the moment: what was typed on a
+// refused form, else the stored moment, in the input's zone-less layout.
+func (p productRow) PublishAtInput() string {
+	if p.PublishAtTyped != nil {
+		return *p.PublishAtTyped
+	}
+	if p.PublishAt == nil {
+		return ""
+	}
+
+	return p.PublishAt.UTC().Format(publishAtLayout)
 }
 
 // listProducts renders the product list, optionally narrowed by a category, by

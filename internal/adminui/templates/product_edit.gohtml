@@ -14,6 +14,9 @@ Two things about it are load-bearing:
 The status is a <select> over the values the module accepts. A free text field
 would send the operator's typo to the module and answer with a rejection they
 could have been spared.
+
+The publication moment is a datetime-local input, which carries no zone; the
+label says UTC because the panel reads it as UTC (ADR 0178).
 */ -}}
 {{ define "body" }}
 <p><a href="{{ .CancelPath }}">← Back to the product</a></p>
@@ -36,6 +39,11 @@ could have been spared.
       {{ end }}
     </select>
   </label>
+  <label>Publish at (UTC)
+    <input type="datetime-local" name="publish_at" value="{{ .Product.PublishAtInput }}">
+  </label>
+  <p>A draft with a moment goes live within a minute of it. Leave it empty for no
+  schedule; only a draft can be scheduled.</p>
   <button type="submit">Save</button>
   <a href="{{ .CancelPath }}">Cancel</a>
 </form>

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -118,7 +119,19 @@ func productRowOf(rec query.Record) productRow {
 		Status:    recordString(rec, fieldStatus),
 		Thumbnail: recordString(rec, fieldThumbnail),
 		UpdatedAt: recordTime(rec, fieldUpdatedAt),
+		PublishAt: recordMoment(rec, fieldPublishAt),
 	}
+}
+
+// recordMoment reads a moment that may be absent, as nil rather than as the
+// zero time, so a page never prints the year one.
+func recordMoment(rec query.Record, field string) *time.Time {
+	t := recordTime(rec, field)
+	if t.IsZero() {
+		return nil
+	}
+
+	return &t
 }
 
 // stockOf reads the sellable quantity out of the inventory expansion.

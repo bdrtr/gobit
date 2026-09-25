@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
@@ -130,4 +131,29 @@ func TestLeavingTheDraftStateTakesTheScheduleWithIt(t *testing.T) {
 func withPublishAt(product models.Product, at time.Time) models.Product {
 	product.PublishAt = &at
 	return product
+}
+
+// TestTheReadLayerCarriesTheSchedule verifies that the product record the admin
+// panel reads carries a draft's moment, and nil for a product without one
+// (ADR 0178).
+func TestTheReadLayerCarriesTheSchedule(t *testing.T) {
+	svc, store, _ := newScheduleService(t)
+	ctx := context.Background()
+	draft := seedDraft(t, svc, "launch-read")
+	moment := scheduleClock.Add(time.Hour)
+	_, err := svc.SchedulePublication(ctx, draft.ID, moment)
+	require.NoError(t, err)
+	live := seedProduct(t, svc, "live-read", "Live")
+
+	provider := service.NewProductProvider(store)
+	records, err := provider.List(ctx, query.ListOptions{Fields: []string{"id", "publish_at"}})
+	require.NoError(t, err)
+
+	byID := map[string]any{}
+	for _, record := range records {
+		id, _ := record["id"].(string)
+		byID[id] = record["publish_at"]
+	}
+	assert.Equal(t, moment, byID[draft.ID], "the scheduled draft's moment is on its record")
+	assert.Nil(t, byID[live.ID], "a product with no schedule carries nil, not the zero time")
 }

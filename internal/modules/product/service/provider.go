@@ -5,6 +5,7 @@ import (
 	"math"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/query"
@@ -761,9 +762,27 @@ func productRecord(p models.Product) query.Record {
 		"material":       deref(p.Material),
 		"origin_country": deref(p.OriginCountry),
 		"metadata":       p.Metadata,
+		fieldPublishAt:   momentOrNil(p.PublishAt),
 		fieldCreatedAt:   p.CreatedAt,
 		fieldUpdatedAt:   p.UpdatedAt,
 	}
+}
+
+// fieldPublishAt is the moment a draft is to be published (ADR 0177, ADR 0178).
+//
+// It is offered to the read layer although the storefront's JSON leaves it out:
+// the read layer is the operator's side — the admin panel reads the product
+// through it — and nothing on the storefront reads a product from here.
+const fieldPublishAt = "publish_at"
+
+// momentOrNil is the moment, or nil when there is none; the record holds the
+// value rather than a pointer, as every other moment in it does.
+func momentOrNil(at *time.Time) any {
+	if at == nil {
+		return nil
+	}
+
+	return *at
 }
 
 // variantRecord turns a variant into a Query record.

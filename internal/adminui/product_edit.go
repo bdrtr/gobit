@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -42,16 +43,32 @@ func ProductStatuses() []string { return slices.Clone(productStatuses) }
 // ProductWriter is the narrow write surface the panel needs, declared on the
 // CONSUMER side (ADR 0001).
 //
-// One method. The panel edits a product's basics and does nothing else, and an
-// interface that offered more would let a future screen delete a product
-// without that decision being made anywhere.
+// The panel edits a product's basics and a draft's schedule, and nothing else.
+// Each method is a decision someone made: an interface that offered more would
+// let a future screen delete a product without that decision being made
+// anywhere. The schedule joined in ADR 0178.
 //
-// The signature speaks only in primitives because this package cannot import
-// the product module; see the module's admin surface for the full reason.
+// The signatures speak only in primitives and stdlib types because this package
+// cannot import the product module; see the module's admin surface for the full
+// reason.
 type ProductWriter interface {
 	// UpdateProductBasics updates a product's title, handle and status.
 	UpdateProductBasics(ctx context.Context, id, title, handle, status string) error
+	// ScheduleProduct sets the moment a draft is published (ADR 0177).
+	ScheduleProduct(ctx context.Context, id string, at time.Time) error
+	// UnscheduleProduct takes a schedule off; a product with none is left as
+	// it is.
+	UnscheduleProduct(ctx context.Context, id string) error
 }
+
+// publishAtLayout is how the form's moment is written and read: the value of
+// an HTML datetime-local input, which carries no zone. The panel reads it as
+// UTC and says so on the label, because a moment in the operator's unknown zone
+// would publish at an hour nobody chose.
+const publishAtLayout = "2006-01-02T15:04"
+
+// statusDraft is the one status a schedule belongs to.
+const statusDraft = "draft"
 
 // editProduct renders the edit form.
 func (u *UI) editProduct(w http.ResponseWriter, r *http.Request) {
@@ -96,8 +113,25 @@ func (u *UI) submitProductEdit(w http.ResponseWriter, r *http.Request) {
 	title := r.PostFormValue("title")
 	handle := r.PostFormValue("handle")
 	status := r.PostFormValue("status")
+	publishAt := strings.TrimSpace(r.PostFormValue("publish_at"))
+
+	// The schedule is checked BEFORE anything is written, so a moment that
+	// cannot be kept does not leave the basics saved and the form saying it
+	// failed. The product module still decides; this only spares a half-edit.
+	moment, problem := readPublishAt(publishAt, status, time.Now())
+	if problem != "" {
+		u.rerenderEdit(w, r, id, title, handle, status, publishAt, problem)
+		return
+	}
 
 	err := u.products.UpdateProductBasics(r.Context(), id, title, handle, status)
+	if err == nil && status == statusDraft {
+		if moment.IsZero() {
+			err = u.products.UnscheduleProduct(r.Context(), id)
+		} else {
+			err = u.products.ScheduleProduct(r.Context(), id, moment)
+		}
+	}
 	if err == nil {
 		corehttp.WriteRedirect(r.Context(), w, ProductsPath+"/"+id)
 		return
@@ -111,6 +145,14 @@ func (u *UI) submitProductEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	u.rerenderEdit(w, r, id, title, handle, status, publishAt, messageFor(err))
+}
+
+// rerenderEdit shows the form again with what the operator typed and why it
+// was refused.
+func (u *UI) rerenderEdit(
+	w http.ResponseWriter, r *http.Request, id, title, handle, status, publishAt, message string,
+) {
 	product, ok := u.loadProduct(w, r, id)
 	if !ok {
 		return
@@ -118,8 +160,29 @@ func (u *UI) submitProductEdit(w http.ResponseWriter, r *http.Request) {
 	// What the operator typed is shown back, not what is stored: the form must
 	// return the values that were rejected so the mistake is visible.
 	product.Title, product.Handle, product.Status = title, handle, status
+	product.PublishAtTyped = &publishAt
 
-	u.renderEditForm(w, r, http.StatusUnprocessableEntity, product, messageFor(err))
+	u.renderEditForm(w, r, http.StatusUnprocessableEntity, product, message)
+}
+
+// readPublishAt reads the form's moment and says, in the form's own words, why
+// it cannot be kept. An empty field is no schedule.
+func readPublishAt(value, status string, now time.Time) (moment time.Time, problem string) {
+	if value == "" {
+		return time.Time{}, ""
+	}
+	moment, err := time.ParseInLocation(publishAtLayout, value, time.UTC)
+	if err != nil {
+		return time.Time{}, "The publication moment could not be read; use the date and time picker."
+	}
+	if status != statusDraft {
+		return time.Time{}, "Only a draft can be scheduled. Set the status to draft, or clear the moment."
+	}
+	if !moment.After(now) {
+		return time.Time{}, "The publication moment has to be in the future. To publish now, set the status."
+	}
+
+	return moment, ""
 }
 
 // loadProduct reads one product for the form, answering on the way when it

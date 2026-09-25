@@ -1274,6 +1274,12 @@ type fakeProductWriter struct {
 	// reach the surface unchanged.
 	handle string
 	status string
+
+	// scheduled and unscheduled record the schedule calls; scheduleErr is what
+	// ScheduleProduct answers.
+	scheduled   []time.Time
+	unscheduled int
+	scheduleErr error
 }
 
 func (f *fakeProductWriter) UpdateProductBasics(_ context.Context, id, title, handle, status string) error {
@@ -1281,6 +1287,20 @@ func (f *fakeProductWriter) UpdateProductBasics(_ context.Context, id, title, ha
 	f.id, f.title, f.handle, f.status = id, title, handle, status
 
 	return f.err
+}
+
+// ScheduleProduct records the moment.
+func (f *fakeProductWriter) ScheduleProduct(_ context.Context, _ string, at time.Time) error {
+	f.scheduled = append(f.scheduled, at)
+
+	return f.scheduleErr
+}
+
+// UnscheduleProduct records that the schedule was taken off.
+func (f *fakeProductWriter) UnscheduleProduct(context.Context, string) error {
+	f.unscheduled++
+
+	return nil
 }
 
 // newEditPanel builds a panel with both a read layer and a write surface.

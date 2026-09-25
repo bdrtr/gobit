@@ -331,6 +331,13 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **The panel schedules a draft** (ADR 0178). The admin panel's product form
+  has a "Publish at (UTC)" field and the product page shows the moment; saving
+  a draft with a moment schedules it and saving it with none takes the
+  schedule off. A moment that is malformed, past, or set on a product not saved
+  as a draft is refused before anything is written. The product record in the
+  read layer carries `publish_at`.
+
 - **A draft can be scheduled** (ADR 0177). `PUT /admin/v1/products/{id}/schedule`
   with a `publish_at` in the future gives a draft its launch moment, and
   `DELETE` on the same address takes it off; a new job, `scheduled-publish`,
