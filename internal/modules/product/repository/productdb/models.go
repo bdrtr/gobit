@@ -30,6 +30,7 @@ type Product struct {
 	UpdatedAt     pgtype.Timestamptz
 	DeletedAt     pgtype.Timestamptz
 	TypeID        *string
+	PublishAt     pgtype.Timestamptz
 }
 
 type ProductCategory struct {

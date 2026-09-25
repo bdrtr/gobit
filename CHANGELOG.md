@@ -331,6 +331,15 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **A draft can be scheduled** (ADR 0177). `PUT /admin/v1/products/{id}/schedule`
+  with a `publish_at` in the future gives a draft its launch moment, and
+  `DELETE` on the same address takes it off; a new job, `scheduled-publish`,
+  publishes the due drafts every minute and each gets the `product.updated`
+  event a publication by hand gets. Admin product bodies gain `publish_at`;
+  storefront bodies never carry it. **For operators:** migration 000007 adds
+  the column and a constraint that only a draft may carry a moment; publishing
+  or archiving a scheduled draft by hand clears it.
+
 - **A promotion can be tried on past orders** (ADR 0176). A new admin endpoint,
   `GET /admin/v1/promotions/{id}/trial?from=&to=`, prices a promotion —
   typically a draft — against the orders placed in a period as if it had been

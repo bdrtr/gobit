@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
@@ -70,6 +71,18 @@ func (f *scopeCatalog) ListProducts(
 func (f *scopeCatalog) UpdateProduct(
 	context.Context, string, service.UpdateProductInput,
 ) (models.Product, error) {
+	f.count()
+	return models.Product{}, nil
+}
+
+// SchedulePublication counts the call.
+func (f *scopeCatalog) SchedulePublication(context.Context, string, time.Time) (models.Product, error) {
+	f.count()
+	return models.Product{}, nil
+}
+
+// CancelPublication counts the call.
+func (f *scopeCatalog) CancelPublication(context.Context, string) (models.Product, error) {
 	f.count()
 	return models.Product{}, nil
 }

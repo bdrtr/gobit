@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/eventbus"
@@ -117,6 +118,10 @@ type Options struct {
 	Events EventPublisher
 	// Logger, if nil is given, means the logs are discarded.
 	Logger *slog.Logger
+	// Now is the clock a publication schedule is judged against (ADR 0177); if
+	// nil, time.Now. Tests fix it so "in the future" does not depend on when
+	// they run.
+	Now func() time.Time
 }
 
 // Service is the public service of the product module.
@@ -130,6 +135,7 @@ type Service struct {
 	uploads UploadReader
 	events  EventPublisher
 	log     *slog.Logger
+	now     func() time.Time
 }
 
 // New builds the service with the given dependencies.
@@ -145,6 +151,10 @@ func New(opts Options) (*Service, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
 	return &Service{
 		repo:    opts.Repo,
 		links:   opts.Links,
@@ -152,6 +162,7 @@ func New(opts Options) (*Service, error) {
 		uploads: opts.Uploads,
 		events:  opts.Events,
 		log:     log,
+		now:     now,
 	}, nil
 }
 

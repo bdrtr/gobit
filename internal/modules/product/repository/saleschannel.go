@@ -573,17 +573,21 @@ func productFilterSQL(f ProductFilter) (body string, args []any) {
 //
 // The single remaining risk is the field order sqlc generates drifting from
 // this list; the product package's integration test pins that down by writing a
-// DISTINGUISHABLE value into every field and reading it back.
+// DISTINGUISHABLE value into every field and reading it back. That test reads a
+// published product, whose publish_at is always NULL, so the schedule has a pin
+// of its own that reads a scheduled draft (TestTheScheduleColumnIsReadInItsPlace).
 // type_id is LAST because that is where it is: it arrived by ALTER TABLE in
 // migration 000005, so PostgreSQL appended it and sqlc generates the field in
 // the same place. A column added to the END is the one case this named list
 // still has to be edited for, and forgetting it is not silent — the scan finds
 // one column fewer than the struct has fields and every storefront read answers
-// 500. It was forgotten once, on 2026-09-09, and ten end-to-end tests said so.
+// 500. It was forgotten once, on 2026-09-09, and ten end-to-end tests said so;
+// it was forgotten again for publish_at (migration 000007, ADR 0177), and the
+// catalog tests and the smoke lane's GraphQL query said so.
 const productColumns = `id, handle, title, subtitle, description, thumbnail,
 	status, is_giftcard, discountable, weight, length, height, width,
 	material, origin_country, collection_id, metadata,
-	created_at, updated_at, deleted_at, type_id`
+	created_at, updated_at, deleted_at, type_id, publish_at`
 
 // keysetSeek is the ordering half of the listing: the comparison the cursor
 // rides and the ORDER BY it has to agree with.

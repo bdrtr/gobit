@@ -104,11 +104,19 @@ type Product struct {
 	// TypeID is the product's shape, and it is what a tax rate rule matches on
 	// when the rule is written for a KIND of product rather than for one
 	// product (see the tax module's ReferenceProductType).
-	TypeID    *string        `json:"type_id,omitempty"`
-	Metadata  map[string]any `json:"metadata,omitempty"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt *time.Time     `json:"deleted_at,omitempty"`
+	TypeID   *string        `json:"type_id,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+	// PublishAt is the moment a DRAFT is to be published, or nil (ADR 0177).
+	// Only a draft carries one; publishing or archiving it clears it.
+	//
+	// It is NOT written by this type's JSON. The storefront answers with a type
+	// that embeds this one, and encoding/json does not let an outer field tagged
+	// "-" hide an embedded one — so the only way to keep a launch date out of the
+	// storefront is to leave it out here and let the admin surface add it.
+	PublishAt *time.Time `json:"-"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 
 	// The fields below are related records; they are filled only when the caller
 	// asks for them and are never written to JSON while empty. They are filled

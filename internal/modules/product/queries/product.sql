@@ -81,6 +81,12 @@ UPDATE product SET
     collection_id  = COALESCE(sqlc.narg('collection_id')::text, collection_id),
     type_id        = COALESCE(sqlc.narg('type_id')::text, type_id),
     metadata       = COALESCE(sqlc.narg('metadata')::jsonb, metadata),
+    -- A schedule belongs to a draft (ADR 0177): a status change that leaves the
+    -- draft state takes the schedule with it, in this statement, so publishing
+    -- or archiving a scheduled draft by hand does not trip the constraint. The
+    -- SET expressions read the OLD row, so the resulting status is spelled out.
+    publish_at     = CASE WHEN COALESCE(sqlc.narg('status')::text, status) = 'draft'
+                          THEN publish_at ELSE NULL END,
     updated_at     = now()
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING *;
@@ -160,3 +166,37 @@ RETURNING *;
 -- name: SoftDeleteImage :execrows
 UPDATE product_image SET deleted_at = now(), updated_at = now()
 WHERE id = $1 AND product_id = $2 AND deleted_at IS NULL;
+
+-- name: ScheduleProductPublication :one
+-- Sets the moment a DRAFT is to be published (ADR 0177). A product that is not
+-- a draft matches no row; the service reads the product first and says which of
+-- the two it was.
+UPDATE product SET publish_at = sqlc.arg('publish_at'), updated_at = now()
+WHERE id = sqlc.arg('id') AND deleted_at IS NULL AND status = 'draft'
+RETURNING *;
+
+-- name: CancelProductPublication :one
+-- Takes the schedule off a product; it stays whatever it is.
+UPDATE product SET publish_at = NULL, updated_at = now()
+WHERE id = sqlc.arg('id') AND deleted_at IS NULL
+RETURNING *;
+
+-- name: PublishDueProducts :many
+-- Publishes the drafts whose moment has come, oldest moment first, at most
+-- row_limit of them, and returns their ids.
+--
+-- The rows are chosen and locked in one statement and SKIP LOCKED: a product an
+-- operator is editing right now is left for the next pass rather than waited on,
+-- and two passes that overlapped could never publish one product twice. The
+-- status and moment are checked again by the UPDATE's own WHERE, on the locked
+-- row, so a draft archived since the choice is not published.
+UPDATE product SET status = 'published', publish_at = NULL, updated_at = now()
+WHERE id IN (
+    SELECT id FROM product
+    WHERE status = 'draft' AND publish_at <= sqlc.arg('due')::timestamptz AND deleted_at IS NULL
+    ORDER BY publish_at, id
+    LIMIT sqlc.arg('row_limit')::bigint
+    FOR UPDATE SKIP LOCKED
+)
+  AND status = 'draft' AND publish_at <= sqlc.arg('due')::timestamptz
+RETURNING id;

@@ -239,6 +239,14 @@ func adminEndpoints() []adminEndpoint {
 			record: deleted{},
 		},
 		{
+			method: http.MethodPut, path: pathProductSchedule, status: "200",
+			request: scheduleRequest{}, record: filledAdminProduct(),
+		},
+		{
+			method: http.MethodDelete, path: pathProductSchedule, status: "200",
+			record: filledAdminProduct(),
+		},
+		{
 			method: http.MethodPost, path: "/admin/v1/products/{id}/variants", status: "201",
 			request: createVariantRequest{}, record: filledAdminVariant(),
 		},
@@ -392,12 +400,13 @@ func adminEndpoints() []adminEndpoint {
 // Unlike the storefront product, the related records are NOT SHADOWED: the admin
 // response is [models.Product] itself and its "variants" field carries the
 // unenriched [models.Variant].
-func filledAdminProduct() models.Product {
+func filledAdminProduct() adminProduct {
 	text := "x"
 	number := int32(1)
 	now := time.Now().UTC()
 
-	return models.Product{
+	return toAdminProduct(models.Product{
+		PublishAt:     &now,
 		Subtitle:      &text,
 		Description:   &text,
 		Thumbnail:     &text,
@@ -416,7 +425,7 @@ func filledAdminProduct() models.Product {
 		Images:        []models.Image{{}},
 		Tags:          []models.Tag{{}},
 		Categories:    []models.Category{{}},
-	}
+	})
 }
 
 // filledAdminVariant produces a variant whose omitempty fields are written too.

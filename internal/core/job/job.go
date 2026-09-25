@@ -20,8 +20,9 @@
 // So: no job here ever undoes anything. That is narrower than "no job writes",
 // and the narrower line is the true one — internal/jobs/outboxrelay publishes
 // and marks rows, because sending a message a committed transaction already
-// promised to send is not a compensation. The two watchers
-// (internal/jobs/sagawatch, internal/jobs/paymentrecon) only read.
+// promised to send is not a compensation, and internal/jobs/scheduledpublish
+// publishes a draft at the moment an operator scheduled (ADR 0177). The two
+// watchers (internal/jobs/sagawatch, internal/jobs/paymentrecon) only read.
 //
 // # Election and liveness are two different questions
 //

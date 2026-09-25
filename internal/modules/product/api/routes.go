@@ -114,6 +114,10 @@ func (h *Handler) Routes(r chi.Router) {
 	read.Get("/admin/v1/products/{id}", h.adminGetProduct)
 	write.Patch("/admin/v1/products/{id}", h.adminUpdateProduct)
 	write.Delete("/admin/v1/products/{id}", h.adminDeleteProduct)
+	// The moment a draft is published (ADR 0177); a sub-resource because the
+	// PATCH above cannot set a field back to empty.
+	write.Put(pathProductSchedule, h.adminScheduleProduct)
+	write.Delete(pathProductSchedule, h.adminCancelSchedule)
 
 	// --- Admin API: variants ---
 	write.Post("/admin/v1/products/{id}/variants", h.adminCreateVariant)

@@ -88,6 +88,8 @@ func bindings() []binding {
 			leftOut: map[string]string{
 				"Status":    "the storefront returns only published products; the field would always be \"published\"",
 				"DeletedAt": "a deleted product is never returned from the storefront anyway",
+				"PublishAt": "a schedule belongs to a draft, and the storefront returns only " +
+					"published products; a launch date is the merchant's (ADR 0177)",
 			},
 		},
 		{

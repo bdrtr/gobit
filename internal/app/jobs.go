@@ -27,8 +27,10 @@ import (
 	"github.com/bdrtr/gobit/internal/jobs/paymentrecon"
 	"github.com/bdrtr/gobit/internal/jobs/reviewsuggest"
 	"github.com/bdrtr/gobit/internal/jobs/sagawatch"
+	"github.com/bdrtr/gobit/internal/jobs/scheduledpublish"
 	"github.com/bdrtr/gobit/internal/modules/payment"
 	paymentsvc "github.com/bdrtr/gobit/internal/modules/payment/service"
+	"github.com/bdrtr/gobit/internal/modules/product"
 	"github.com/bdrtr/gobit/internal/modules/review"
 	reviewmodels "github.com/bdrtr/gobit/internal/modules/review/models"
 	reviewservice "github.com/bdrtr/gobit/internal/modules/review/service"
@@ -44,6 +46,11 @@ type paymentReconciler interface {
 	Reconcile(
 		ctx context.Context, unchangedFor time.Duration, limit int,
 	) (paymentsvc.ReconciliationReport, error)
+}
+
+// productPublisher is the product service as the scheduled publisher needs it.
+type productPublisher interface {
+	PublishDue(ctx context.Context, limit int64) ([]string, error)
 }
 
 // jobsCommand is the subcommand that prints the job listing.
@@ -90,6 +97,11 @@ type reviewSuggester interface {
 // It falls on the same side of the line for a different reason — a proposal has
 // no effect at all. The review does not move, the storefront cannot see the
 // columns it fills, and an operator still decides (ADR 0072).
+//
+// The scheduled publisher writes too, and it is the first job whose write a
+// shopper sees: a draft goes live. It falls on the permitted side because it
+// does what an operator scheduled at the moment they named — nothing is undone,
+// and nothing is decided that a person did not decide (ADR 0177).
 func registerJobs(
 	c *container.Container, host *coreplugin.Host, log *slog.Logger,
 ) (*job.Registry, error) {
@@ -131,6 +143,19 @@ func registerJobs(
 	}
 
 	if err := registry.Add(outboxrelay.Definition(outbox.NewStore(pool.Pool()), bus, log)); err != nil {
+		return nil, err
+	}
+
+	// The scheduled publisher does what an operator scheduled, at the moment
+	// they named (ADR 0177). It is registered unconditionally for the
+	// reconciler's reason: a missing one looks exactly like a quiet catalog, and
+	// the product that should have gone live at nine simply does not.
+	products, err := container.Resolve[productPublisher](c, product.ServiceName)
+	if err != nil {
+		return nil, coreerrors.Wrap(err, coreerrors.KindOf(err), job.CodeInvalidDefinition,
+			"the job runner could not resolve the product service (%q)", product.ServiceName)
+	}
+	if err := registry.Add(scheduledpublish.Definition(products, log)); err != nil {
 		return nil, err
 	}
 

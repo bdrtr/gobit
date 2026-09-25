@@ -440,7 +440,7 @@ func describeAdminProducts(d *openapi.Doc) {
 		Summary:     "Creates a new product with its options, variants and images.",
 		RequestBody: d.RequestBody(createProductRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("The created product", d.Item(models.Product{})),
+			"201": openapi.Response("The created product", d.Item(adminProduct{})),
 		},
 	})
 
@@ -482,14 +482,14 @@ func describeAdminProducts(d *openapi.Doc) {
 		},
 		Responses: map[string]any{
 			"200": openapi.Response("A page of products",
-				d.List(models.Product{}, openapi.WithCursor())),
+				d.List(adminProduct{}, openapi.WithCursor())),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/products/{id}", openapi.Operation{
 		Summary: "Returns a single product by its id.",
 		Responses: map[string]any{
-			"200": openapi.Response("Product", d.Item(models.Product{})),
+			"200": openapi.Response("Product", d.Item(adminProduct{})),
 		},
 	})
 
@@ -497,7 +497,7 @@ func describeAdminProducts(d *openapi.Doc) {
 		Summary:     "Updates only the given fields of the product.",
 		RequestBody: d.RequestBody(updateProductRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("The updated product", d.Item(models.Product{})),
+			"200": openapi.Response("The updated product", d.Item(adminProduct{})),
 		},
 	})
 
@@ -505,6 +505,34 @@ func describeAdminProducts(d *openapi.Doc) {
 		Summary: "Deletes the product.",
 		Responses: map[string]any{
 			"200": openapi.Response("Deletion record", d.Item(deleted{})),
+		},
+	})
+
+	describeAdminSchedule(d)
+}
+
+// describeAdminSchedule describes the moment a draft is published (ADR 0177).
+func describeAdminSchedule(d *openapi.Doc) {
+	d.Describe(http.MethodPut, pathProductSchedule, openapi.Operation{
+		Summary: "Schedules a draft to be published at a moment.",
+		Description: "The product STAYS A DRAFT until then: the storefront, the search index and " +
+			"the webhooks see nothing new. At the moment, a job publishes it within a minute " +
+			"and it gets the same product.updated event a publication by hand gets. \n\n" +
+			"Only a draft can be scheduled (409 otherwise), the moment has to be in the future " +
+			"(422 otherwise; to publish now, set the status), and a second call moves the " +
+			"moment. Publishing or archiving the draft by hand takes the schedule off. The " +
+			"moment is published on the admin surface alone, as \"publish_at\".",
+		RequestBody: d.RequestBody(scheduleRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("The scheduled product", d.Item(adminProduct{})),
+		},
+	})
+
+	d.Describe(http.MethodDelete, pathProductSchedule, openapi.Operation{
+		Summary:     "Takes the schedule off a product; it stays what it is.",
+		Description: "A product with no schedule is answered as it is.",
+		Responses: map[string]any{
+			"200": openapi.Response("The product", d.Item(adminProduct{})),
 		},
 	})
 }

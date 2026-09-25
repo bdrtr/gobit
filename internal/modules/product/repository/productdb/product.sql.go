@@ -7,7 +7,46 @@ package productdb
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const cancelProductPublication = `-- name: CancelProductPublication :one
+UPDATE product SET publish_at = NULL, updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at
+`
+
+// Takes the schedule off a product; it stays whatever it is.
+func (q *Queries) CancelProductPublication(ctx context.Context, id string) (Product, error) {
+	row := q.db.QueryRow(ctx, cancelProductPublication, id)
+	var i Product
+	err := row.Scan(
+		&i.ID,
+		&i.Handle,
+		&i.Title,
+		&i.Subtitle,
+		&i.Description,
+		&i.Thumbnail,
+		&i.Status,
+		&i.IsGiftcard,
+		&i.Discountable,
+		&i.Weight,
+		&i.Length,
+		&i.Height,
+		&i.Width,
+		&i.Material,
+		&i.OriginCountry,
+		&i.CollectionID,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.TypeID,
+		&i.PublishAt,
+	)
+	return i, err
+}
 
 const createImage = `-- name: CreateImage :one
 INSERT INTO product_image (id, product_id, url, rank, metadata, upload_id, alt_text)
@@ -65,7 +104,7 @@ INSERT INTO product (
     $8, $9, $10, $11, $12, $13,
     $14, $15, $16, $17, $18
 )
-RETURNING id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id
+RETURNING id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at
 `
 
 type CreateProductParams struct {
@@ -143,6 +182,7 @@ func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (P
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.TypeID,
+		&i.PublishAt,
 	)
 	return i, err
 }
@@ -189,7 +229,7 @@ func (q *Queries) GetImageOfProduct(ctx context.Context, arg GetImageOfProductPa
 }
 
 const getProduct = `-- name: GetProduct :one
-SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id FROM product
+SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at FROM product
 WHERE id = $1 AND deleted_at IS NULL
 `
 
@@ -218,12 +258,13 @@ func (q *Queries) GetProduct(ctx context.Context, id string) (Product, error) {
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.TypeID,
+		&i.PublishAt,
 	)
 	return i, err
 }
 
 const getProductByHandle = `-- name: GetProductByHandle :one
-SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id FROM product
+SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at FROM product
 WHERE handle = $1 AND deleted_at IS NULL
 `
 
@@ -252,12 +293,13 @@ func (q *Queries) GetProductByHandle(ctx context.Context, handle string) (Produc
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.TypeID,
+		&i.PublishAt,
 	)
 	return i, err
 }
 
 const getProductForUpdate = `-- name: GetProductForUpdate :one
-SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id FROM product
+SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at FROM product
 WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE
 `
@@ -296,6 +338,7 @@ func (q *Queries) GetProductForUpdate(ctx context.Context, id string) (Product, 
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.TypeID,
+		&i.PublishAt,
 	)
 	return i, err
 }
@@ -384,7 +427,7 @@ func (q *Queries) ListImagesByProductIDs(ctx context.Context, dollar_1 []string)
 
 const listProductsByIDs = `-- name: ListProductsByIDs :many
 
-SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id FROM product
+SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at FROM product
 WHERE id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY created_at DESC, id DESC
 `
@@ -430,6 +473,7 @@ func (q *Queries) ListProductsByIDs(ctx context.Context, dollar_1 []string) ([]P
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.TypeID,
+			&i.PublishAt,
 		); err != nil {
 			return nil, err
 		}
@@ -467,6 +511,96 @@ func (q *Queries) ListVariantIDsByProduct(ctx context.Context, productID string)
 		return nil, err
 	}
 	return items, nil
+}
+
+const publishDueProducts = `-- name: PublishDueProducts :many
+UPDATE product SET status = 'published', publish_at = NULL, updated_at = now()
+WHERE id IN (
+    SELECT id FROM product
+    WHERE status = 'draft' AND publish_at <= $1::timestamptz AND deleted_at IS NULL
+    ORDER BY publish_at, id
+    LIMIT $2::bigint
+    FOR UPDATE SKIP LOCKED
+)
+  AND status = 'draft' AND publish_at <= $1::timestamptz
+RETURNING id
+`
+
+type PublishDueProductsParams struct {
+	Due      pgtype.Timestamptz
+	RowLimit int64
+}
+
+// Publishes the drafts whose moment has come, oldest moment first, at most
+// row_limit of them, and returns their ids.
+//
+// The rows are chosen and locked in one statement and SKIP LOCKED: a product an
+// operator is editing right now is left for the next pass rather than waited on,
+// and two passes that overlapped could never publish one product twice. The
+// status and moment are checked again by the UPDATE's own WHERE, on the locked
+// row, so a draft archived since the choice is not published.
+func (q *Queries) PublishDueProducts(ctx context.Context, arg PublishDueProductsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, publishDueProducts, arg.Due, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const scheduleProductPublication = `-- name: ScheduleProductPublication :one
+UPDATE product SET publish_at = $1, updated_at = now()
+WHERE id = $2 AND deleted_at IS NULL AND status = 'draft'
+RETURNING id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at
+`
+
+type ScheduleProductPublicationParams struct {
+	PublishAt pgtype.Timestamptz
+	ID        string
+}
+
+// Sets the moment a DRAFT is to be published (ADR 0177). A product that is not
+// a draft matches no row; the service reads the product first and says which of
+// the two it was.
+func (q *Queries) ScheduleProductPublication(ctx context.Context, arg ScheduleProductPublicationParams) (Product, error) {
+	row := q.db.QueryRow(ctx, scheduleProductPublication, arg.PublishAt, arg.ID)
+	var i Product
+	err := row.Scan(
+		&i.ID,
+		&i.Handle,
+		&i.Title,
+		&i.Subtitle,
+		&i.Description,
+		&i.Thumbnail,
+		&i.Status,
+		&i.IsGiftcard,
+		&i.Discountable,
+		&i.Weight,
+		&i.Length,
+		&i.Height,
+		&i.Width,
+		&i.Material,
+		&i.OriginCountry,
+		&i.CollectionID,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.TypeID,
+		&i.PublishAt,
+	)
+	return i, err
 }
 
 const softDeleteImage = `-- name: SoftDeleteImage :execrows
@@ -593,9 +727,15 @@ UPDATE product SET
     collection_id  = COALESCE($14::text, collection_id),
     type_id        = COALESCE($15::text, type_id),
     metadata       = COALESCE($16::jsonb, metadata),
+    -- A schedule belongs to a draft (ADR 0177): a status change that leaves the
+    -- draft state takes the schedule with it, in this statement, so publishing
+    -- or archiving a scheduled draft by hand does not trip the constraint. The
+    -- SET expressions read the OLD row, so the resulting status is spelled out.
+    publish_at     = CASE WHEN COALESCE($6::text, status) = 'draft'
+                          THEN publish_at ELSE NULL END,
     updated_at     = now()
 WHERE id = $17 AND deleted_at IS NULL
-RETURNING id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id
+RETURNING id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at
 `
 
 type UpdateProductParams struct {
@@ -665,6 +805,7 @@ func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) (P
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.TypeID,
+		&i.PublishAt,
 	)
 	return i, err
 }

@@ -175,7 +175,7 @@ func (h *Handler) adminCreateProduct(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(r.Context(), w, err)
 		return
 	}
-	writeItem(w, r, http.StatusCreated, product)
+	writeItem(w, r, http.StatusCreated, toAdminProduct(product))
 }
 
 // adminListProducts GET /admin/v1/products
@@ -215,7 +215,7 @@ func (h *Handler) adminListProducts(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(r.Context(), w, err)
 		return
 	}
-	writeList(w, r, result)
+	writeList(w, r, toAdminProducts(result))
 }
 
 // adminGetProduct GET /admin/v1/products/{id}
@@ -231,7 +231,7 @@ func (h *Handler) adminGetProduct(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(r.Context(), w, err)
 		return
 	}
-	writeItem(w, r, http.StatusOK, product)
+	writeItem(w, r, http.StatusOK, toAdminProduct(product))
 }
 
 // adminUpdateProduct PATCH /admin/v1/products/{id}
@@ -252,7 +252,7 @@ func (h *Handler) adminUpdateProduct(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(r.Context(), w, err)
 		return
 	}
-	writeItem(w, r, http.StatusOK, product)
+	writeItem(w, r, http.StatusOK, toAdminProduct(product))
 }
 
 // updateImageRequest is the body of PATCH /admin/v1/products/{id}/images/{imageId}.
