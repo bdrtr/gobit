@@ -2,6 +2,8 @@ package service_test
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 
@@ -21,6 +23,30 @@ func (f *fakeStore) JournalFacts(
 	defer f.mu.Unlock()
 
 	return f.journal, nil
+}
+
+// JournalCauses returns the scripted causes among the ids asked for.
+func (f *fakeStore) JournalCauses(_ context.Context, ids []string) ([]models.JournalCause, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := []models.JournalCause{}
+	for _, cause := range f.causes {
+		if slices.Contains(ids, cause.ID) {
+			out = append(out, cause)
+		}
+	}
+	return out, nil
+}
+
+// scriptedRefunds is the payment module's caused refunds, as a JSON answer.
+type scriptedRefunds struct{ body string }
+
+// CausedRefundsJSON returns the scripted answer.
+func (s scriptedRefunds) CausedRefundsJSON(
+	_ context.Context, _, _ time.Time, _ string,
+) (json.RawMessage, error) {
+	return json.RawMessage(s.body), nil
 }
 
 var orderJournalStart = time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)
@@ -150,4 +176,63 @@ func TestAFreeOrderIsNotAnEntry(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Empty(t, journal.Entries)
+}
+
+// TestARefundIsBookedAgainstItsCause is ADR 0189's reading: a refund naming a
+// return gives back revenue, one naming a claim is an allowance, and one naming
+// anything else — an exchange, or no record of this module — is not an entry.
+func TestARefundIsBookedAgainstItsCause(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeStore()
+	store.causes = []models.JournalCause{
+		{ID: "ret_1", Kind: "return", OrderID: "order_1", CurrencyCode: "TRY"},
+		{ID: "claim_1", Kind: "claim", OrderID: "order_2", CurrencyCode: "TRY"},
+	}
+	svc, err := service.New(service.Options{Repo: store, Events: newFakeBus(), Refunds: scriptedRefunds{body: `[
+		{"id":"refund_a","reference":"ret_1","amount":1200,"currency_code":"TRY","refunded_at":"2026-09-02T10:00:00Z"},
+		{"id":"refund_b","reference":"claim_1","amount":300,"currency_code":"TRY","refunded_at":"2026-09-03T10:00:00Z"},
+		{"id":"refund_c","reference":"oexc_1","amount":900,"currency_code":"TRY","refunded_at":"2026-09-04T10:00:00Z"}
+	]`}})
+	require.NoError(t, err)
+
+	journal, err := svc.Journal(t.Context(), service.JournalQuery{
+		From: orderJournalStart, To: orderJournalStart.AddDate(0, 1, 0),
+	})
+	require.NoError(t, err)
+
+	require.Len(t, journal.Entries, 2, "the exchange's refund is not an entry")
+	assert.Equal(t, models.JournalEntry{
+		ID: "refund_a", Kind: models.JournalReturnRefunded, OrderID: "order_1",
+		OccurredAt: time.Date(2026, time.September, 2, 10, 0, 0, 0, time.UTC), CurrencyCode: "TRY",
+		Lines: []models.JournalLine{
+			{Account: models.AccountSalesReturns, Debit: 1200},
+			{Account: models.AccountReceivable, Credit: 1200},
+		},
+	}, journal.Entries[0])
+	assert.Equal(t, []models.JournalLine{
+		{Account: models.AccountClaimAllowances, Debit: 300},
+		{Account: models.AccountReceivable, Credit: 300},
+	}, journal.Entries[1].Lines)
+	assert.Equal(t, "order_2", journal.Entries[1].OrderID)
+}
+
+// TestARefundInAnotherCurrencyThanItsOrderIsAnError: the reference would name
+// the wrong order, and books built on it would move money between currencies.
+func TestARefundInAnotherCurrencyThanItsOrderIsAnError(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeStore()
+	store.causes = []models.JournalCause{{ID: "ret_1", Kind: "return", OrderID: "order_1", CurrencyCode: "TRY"}}
+	svc, err := service.New(service.Options{Repo: store, Events: newFakeBus(), Refunds: scriptedRefunds{body: `[
+		{"id":"refund_a","reference":"ret_1","amount":1200,"currency_code":"EUR","refunded_at":"2026-09-02T10:00:00Z"}
+	]`}})
+	require.NoError(t, err)
+
+	_, err = svc.Journal(t.Context(), service.JournalQuery{
+		From: orderJournalStart, To: orderJournalStart.AddDate(0, 1, 0),
+	})
+
+	require.Error(t, err)
+	assert.True(t, errors.HasKind(err, errors.KindInternal), "%v", err)
 }

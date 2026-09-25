@@ -3,6 +3,7 @@ package service
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"slices"
 	"time"
 
@@ -68,6 +69,11 @@ func (s *Service) Journal(ctx context.Context, q JournalQuery) (Journal, error) 
 	if err != nil {
 		return Journal{}, err
 	}
+	refunded, err := s.refundFacts(ctx, from, to, currency)
+	if err != nil {
+		return Journal{}, err
+	}
+	facts = append(facts, refunded...)
 	if len(facts) > MaxJournalEntries {
 		return Journal{}, errors.Invalid(CodeInvalidInput,
 			"the window holds more than %d facts; ask for a narrower one", MaxJournalEntries)
@@ -126,6 +132,8 @@ func kindOrder(kind models.JournalKind) int {
 //	                Cr sales (subtotal), tax_payable (tax), shipping (shipping)
 //	order canceled  the same lines, the other way
 //	credit line     Dr credit_allowances   Cr receivable
+//	return refunded Dr sales_returns       Cr receivable
+//	claim refunded  Dr claim_allowances    Cr receivable
 //
 // An order balances because its table holds it to
 // total = subtotal - discount_total + tax_total + shipping_total; the entry is
@@ -165,13 +173,13 @@ func journalEntry(f *models.JournalFact) (models.JournalEntry, error) {
 			}
 			entry.Lines = append(entry.Lines, line)
 		}
-	case models.JournalCreditLine:
+	case models.JournalCreditLine, models.JournalReturnRefunded, models.JournalClaimRefunded:
 		if f.Amount <= 0 {
 			return models.JournalEntry{}, errors.Internal(CodeInvalidInput,
-				"the journal read credit line %s of %d; a credit line is positive", f.ID, f.Amount)
+				"the journal read %s %s of %d; it moves a positive amount", f.Kind, f.ID, f.Amount)
 		}
 		entry.Lines = []models.JournalLine{
-			{Account: models.AccountCreditAllowances, Debit: f.Amount},
+			{Account: givenBackTo[f.Kind], Debit: f.Amount},
 			{Account: models.AccountReceivable, Credit: f.Amount},
 		}
 	default:
@@ -212,4 +220,95 @@ func trialBalance(entries []models.JournalEntry) []models.JournalBalance {
 	})
 
 	return out
+}
+
+// givenBackTo is the account each kind of amount given back is debited to.
+var givenBackTo = map[models.JournalKind]models.JournalAccount{
+	models.JournalCreditLine:     models.AccountCreditAllowances,
+	models.JournalReturnRefunded: models.AccountSalesReturns,
+	models.JournalClaimRefunded:  models.AccountClaimAllowances,
+}
+
+// CausedRefunds is the surface of the payment module ("payment.interop") the
+// journal reads (ADR 0189): the refunds inside [from, to) that name their
+// cause, as a JSON array of {id, reference, amount, currency_code,
+// collection_id, refunded_at}.
+type CausedRefunds interface {
+	CausedRefundsJSON(ctx context.Context, from, to time.Time, currencyCode string) (json.RawMessage, error)
+}
+
+// causedRefund is one element of [CausedRefunds.CausedRefundsJSON]'s answer.
+// The field names are the payment module's and are written here on purpose:
+// this module cannot import that one, and the e2e closure test is what holds
+// the two spellings together (ADR 0189).
+type causedRefund struct {
+	ID           string    `json:"id"`
+	Reference    string    `json:"reference"`
+	Amount       int64     `json:"amount"`
+	CurrencyCode string    `json:"currency_code"`
+	RefundedAt   time.Time `json:"refunded_at"`
+}
+
+// refundFacts reads the refunds in the window that name one of this module's
+// returns or claims, as facts on the order they belong to (ADR 0189).
+//
+// A refund whose reference is an exchange's, or nothing of this module's, is
+// not a fact here: an exchange's difference is outside these books (ADR 0188).
+// A refund in another currency than its order's is an error rather than an
+// entry, because the reference would then name the wrong order.
+func (s *Service) refundFacts(
+	ctx context.Context, from, to time.Time, currency string,
+) ([]models.JournalFact, error) {
+	if s.refunds == nil {
+		return nil, nil
+	}
+	raw, err := s.refunds.CausedRefundsJSON(ctx, from, to, currency)
+	if err != nil {
+		return nil, err
+	}
+	var refunds []causedRefund
+	if err := json.Unmarshal(raw, &refunds); err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, CodeInvalidInput,
+			"the payment module's refunds could not be read")
+	}
+	if len(refunds) == 0 {
+		return nil, nil
+	}
+
+	references := make([]string, 0, len(refunds))
+	for i := range refunds {
+		references = append(references, refunds[i].Reference)
+	}
+	causes, err := s.store.JournalCauses(ctx, references)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]models.JournalCause, len(causes))
+	for i := range causes {
+		byID[causes[i].ID] = causes[i]
+	}
+
+	facts := make([]models.JournalFact, 0, len(refunds))
+	for i := range refunds {
+		refund := &refunds[i]
+		cause, ok := byID[refund.Reference]
+		if !ok {
+			continue
+		}
+		if cause.CurrencyCode != refund.CurrencyCode {
+			return nil, errors.Internal(CodeInvalidInput,
+				"refund %s names %s %s in %s, and the order is in %s",
+				refund.ID, cause.Kind, cause.ID, refund.CurrencyCode, cause.CurrencyCode)
+		}
+		kind := models.JournalReturnRefunded
+		if cause.Kind == "claim" {
+			kind = models.JournalClaimRefunded
+		}
+		facts = append(facts, models.JournalFact{
+			ID: refund.ID, Kind: kind, OrderID: cause.OrderID,
+			OccurredAt: refund.RefundedAt, CurrencyCode: refund.CurrencyCode, Amount: refund.Amount,
+		})
+	}
+
+	return facts, nil
 }

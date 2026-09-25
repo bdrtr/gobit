@@ -68,6 +68,8 @@ type fakeStore struct {
 	// was asked (ADR 0186).
 	journal      []models.JournalMovement
 	journalCalls []journalCall
+	// caused is what CausedRefunds returns (ADR 0189).
+	caused []models.CausedRefund
 }
 
 // newFakeStore boş bir sahte depo üretir.

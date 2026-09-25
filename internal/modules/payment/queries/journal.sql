@@ -46,3 +46,15 @@ WHERE kind IN ('earn', 'reverse')
   AND (sqlc.narg('currency_code')::text IS NULL OR currency_code = sqlc.narg('currency_code')::text)
 ORDER BY created_at, id
 LIMIT sqlc.arg('row_limit');
+
+-- The refunds that name a cause inside a window (ADR 0189): what the order
+-- module reads back into the revenue a return or a claim gave back.
+-- name: CausedRefunds :many
+SELECT r.id, r.reference, r.amount, r.created_at, p.currency_code, p.payment_collection_id
+FROM refunds r
+JOIN payments p ON p.id = r.payment_id
+WHERE r.reference <> ''
+  AND r.created_at >= sqlc.arg('from_at') AND r.created_at < sqlc.arg('to_at')
+  AND (sqlc.narg('currency_code')::text IS NULL OR p.currency_code = sqlc.narg('currency_code')::text)
+ORDER BY r.created_at, r.id
+LIMIT sqlc.arg('row_limit');

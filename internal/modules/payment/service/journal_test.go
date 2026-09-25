@@ -31,6 +31,16 @@ func (f *fakeStore) JournalMovements(
 	return f.journal, nil
 }
 
+// CausedRefunds returns the scripted refunds that name a cause.
+func (f *fakeStore) CausedRefunds(
+	_ context.Context, _, _ time.Time, _ string, _ int32,
+) ([]models.CausedRefund, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.caused, nil
+}
+
 // journalService builds a service over a fake store scripted with movements.
 func journalService(t *testing.T, movements ...models.JournalMovement) (*service.Service, *fakeStore) {
 	t.Helper()
@@ -228,4 +238,20 @@ func TestAMovementTheChartDoesNotKnowIsAnError(t *testing.T) {
 
 		assert.Error(t, err, name)
 	}
+}
+
+// TestCausedRefundsAreReadOverACheckedWindow refuses the windows the journal
+// refuses, and hands back what the store read.
+func TestCausedRefundsAreReadOverACheckedWindow(t *testing.T) {
+	t.Parallel()
+
+	svc, store := journalService(t)
+	store.caused = []models.CausedRefund{{ID: "refund_1", Reference: "ret_1", Amount: 500, CurrencyCode: "TRY"}}
+
+	_, err := svc.CausedRefunds(t.Context(), service.JournalQuery{From: journalStart, To: journalStart})
+	assert.True(t, errors.IsInvalid(err), "an empty window: %v", err)
+
+	refunds, err := svc.CausedRefunds(t.Context(), journalQuery())
+	require.NoError(t, err)
+	assert.Equal(t, store.caused, refunds)
 }

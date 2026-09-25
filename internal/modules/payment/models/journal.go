@@ -113,3 +113,14 @@ type JournalMovement struct {
 	// ledger's customer on a grant; empty for a collection that names nobody.
 	CustomerID string
 }
+
+// CausedRefund is a refund that names the record that caused it (ADR 0187),
+// as the order module reads it back into its books (ADR 0189).
+type CausedRefund struct {
+	ID           string
+	Reference    string
+	Amount       int64
+	CurrencyCode string
+	CollectionID string
+	RefundedAt   time.Time
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 )
@@ -309,4 +310,42 @@ func decodeInteropData(raw json.RawMessage) (map[string]any, error) {
 			"the session data could not be decoded; it must be a JSON object")
 	}
 	return out, nil
+}
+
+// causedRefundJSON is one refund of [Interop.CausedRefundsJSON].
+type causedRefundJSON struct {
+	ID           string    `json:"id"`
+	Reference    string    `json:"reference"`
+	Amount       int64     `json:"amount"`
+	CurrencyCode string    `json:"currency_code"`
+	CollectionID string    `json:"collection_id"`
+	RefundedAt   time.Time `json:"refunded_at"`
+}
+
+// CausedRefundsJSON returns the refunds inside [from, to) that name the record
+// that caused them, as a JSON array (ADR 0189).
+//
+// The order module reads it to put the revenue a return or a claim gave back
+// on its books: the reference is its own record's id, and the amount and the
+// moment are the refund row's. A refund an operator made names nothing and is
+// not in the answer.
+func (i *Interop) CausedRefundsJSON(
+	ctx context.Context, from, to time.Time, currencyCode string,
+) (json.RawMessage, error) {
+	refunds, err := i.svc.CausedRefunds(ctx, JournalQuery{From: from, To: to, CurrencyCode: currencyCode})
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]causedRefundJSON, 0, len(refunds))
+	for idx := range refunds {
+		refund := &refunds[idx]
+		out = append(out, causedRefundJSON{
+			ID: refund.ID, Reference: refund.Reference, Amount: refund.Amount,
+			CurrencyCode: refund.CurrencyCode, CollectionID: refund.CollectionID,
+			RefundedAt: refund.RefundedAt.UTC(),
+		})
+	}
+
+	return json.Marshal(out)
 }

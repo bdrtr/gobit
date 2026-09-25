@@ -101,6 +101,7 @@ var (
 var (
 	_ productsvc.UploadReader     = (*filesvc.Interop)(nil)
 	_ ordersvc.SpendingPolicy     = (*b2bsvc.Interop)(nil)
+	_ ordersvc.CausedRefunds      = (*paymentsvc.Interop)(nil)
 	_ notifsvc.OrderContactReader = (*ordersvc.Interop)(nil)
 )
 

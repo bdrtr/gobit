@@ -11,6 +11,67 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const causedRefunds = `-- name: CausedRefunds :many
+SELECT r.id, r.reference, r.amount, r.created_at, p.currency_code, p.payment_collection_id
+FROM refunds r
+JOIN payments p ON p.id = r.payment_id
+WHERE r.reference <> ''
+  AND r.created_at >= $1 AND r.created_at < $2
+  AND ($3::text IS NULL OR p.currency_code = $3::text)
+ORDER BY r.created_at, r.id
+LIMIT $4
+`
+
+type CausedRefundsParams struct {
+	FromAt       pgtype.Timestamptz
+	ToAt         pgtype.Timestamptz
+	CurrencyCode *string
+	RowLimit     int32
+}
+
+type CausedRefundsRow struct {
+	ID                  string
+	Reference           string
+	Amount              int64
+	CreatedAt           pgtype.Timestamptz
+	CurrencyCode        string
+	PaymentCollectionID string
+}
+
+// The refunds that name a cause inside a window (ADR 0189): what the order
+// module reads back into the revenue a return or a claim gave back.
+func (q *Queries) CausedRefunds(ctx context.Context, arg CausedRefundsParams) ([]CausedRefundsRow, error) {
+	rows, err := q.db.Query(ctx, causedRefunds,
+		arg.FromAt,
+		arg.ToAt,
+		arg.CurrencyCode,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CausedRefundsRow{}
+	for rows.Next() {
+		var i CausedRefundsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Reference,
+			&i.Amount,
+			&i.CreatedAt,
+			&i.CurrencyCode,
+			&i.PaymentCollectionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const journalCaptures = `-- name: JournalCaptures :many
 
 SELECT p.id, p.amount, p.currency_code, p.captured_at, p.payment_collection_id,

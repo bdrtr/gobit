@@ -231,6 +231,12 @@ type Store interface {
 	JournalMovements(
 		ctx context.Context, from, to time.Time, currencyCode string, limit int32,
 	) ([]models.JournalMovement, error)
+
+	// CausedRefunds reads the refunds that name a cause inside [from, to), at
+	// most limit+1 of them (ADR 0189).
+	CausedRefunds(
+		ctx context.Context, from, to time.Time, currencyCode string, limit int32,
+	) ([]models.CausedRefund, error)
 	// UpdatePaymentCollectionTotals writes the amounts and the derived status
 	// with ABSOLUTE values.
 	UpdatePaymentCollectionTotals(

@@ -198,6 +198,7 @@ type Service struct {
 	store    Store
 	events   EventPublisher
 	spending SpendingPolicy
+	refunds  CausedRefunds
 	catalog  Catalog
 	log      *slog.Logger
 	now      func() time.Time
@@ -218,6 +219,13 @@ type Options struct {
 	// limit", so that is the right default; the side that fills the field is
 	// the module's wiring (see module.go).
 	Spending SpendingPolicy
+	// Refunds is the payment module's refunds that name a cause; it is
+	// OPTIONAL (ADR 0189).
+	//
+	// The journal reads it to book the revenue a return or a claim gave back.
+	// When nil the journal books none, and a returned order's receivable
+	// stays open by its refund — as it did before ADR 0189.
+	Refunds CausedRefunds
 	// Catalog is the Query-layer surface; it is OPTIONAL.
 	//
 	// It is only used to read an order's payment through the "order_payment"
@@ -266,6 +274,7 @@ func New(opts Options) (*Service, error) {
 		store:    opts.Repo,
 		events:   opts.Events,
 		spending: opts.Spending,
+		refunds:  opts.Refunds,
 		catalog:  opts.Catalog,
 		log:      log,
 		now:      now,

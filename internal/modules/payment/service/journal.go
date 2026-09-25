@@ -212,3 +212,34 @@ func trialBalance(entries []models.JournalEntry) []models.JournalBalance {
 
 	return out
 }
+
+// CausedRefunds returns the refunds inside a window that name the record that
+// caused them (ADR 0189), for the order module to read back into the revenue
+// a return or a claim gave back. The window is checked as the journal's is,
+// and a window holding more than [MaxJournalEntries] of them is refused.
+func (s *Service) CausedRefunds(ctx context.Context, q JournalQuery) ([]models.CausedRefund, error) {
+	if q.From.IsZero() || q.To.IsZero() || !q.From.Before(q.To) || q.To.Sub(q.From) > MaxJournalWindow {
+		return nil, errors.Invalid(CodeInvalidInput,
+			"the caused refunds are read over a window of at most %d days that ends after it begins",
+			int(MaxJournalWindow/(24*time.Hour)))
+	}
+	currency := ""
+	if q.CurrencyCode != "" {
+		normalized, err := normalizeCurrency(q.CurrencyCode)
+		if err != nil {
+			return nil, err
+		}
+		currency = normalized
+	}
+
+	refunds, err := s.store.CausedRefunds(ctx, q.From.UTC(), q.To.UTC(), currency, MaxJournalEntries)
+	if err != nil {
+		return nil, err
+	}
+	if len(refunds) > MaxJournalEntries {
+		return nil, errors.Invalid(CodeInvalidInput,
+			"the window holds more than %d refunds that name a cause; ask for a narrower one", MaxJournalEntries)
+	}
+
+	return refunds, nil
+}

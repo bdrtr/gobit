@@ -89,3 +89,27 @@ func (r *Repository) JournalMovements(
 
 	return out, nil
 }
+
+// CausedRefunds reads the refunds that name a cause inside [from, to), in one
+// currency when currencyCode is set, at most limit+1 of them (ADR 0189).
+func (r *Repository) CausedRefunds(
+	ctx context.Context, from, to time.Time, currencyCode string, limit int32,
+) ([]models.CausedRefund, error) {
+	rows, err := r.queries(ctx).CausedRefunds(ctx, paymentdb.CausedRefundsParams{
+		FromAt: fromTime(from), ToAt: fromTime(to), CurrencyCode: nullString(currencyCode), RowLimit: limit + 1,
+	})
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "the refunds that name a cause could not be read")
+	}
+
+	out := make([]models.CausedRefund, 0, len(rows))
+	for i := range rows {
+		out = append(out, models.CausedRefund{
+			ID: rows[i].ID, Reference: rows[i].Reference, Amount: rows[i].Amount,
+			CurrencyCode: rows[i].CurrencyCode, CollectionID: rows[i].PaymentCollectionID,
+			RefundedAt: toTime(rows[i].CreatedAt),
+		})
+	}
+
+	return out, nil
+}

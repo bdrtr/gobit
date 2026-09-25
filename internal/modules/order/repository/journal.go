@@ -71,3 +71,25 @@ func (r *Repository) JournalFacts(
 
 	return out, nil
 }
+
+// JournalCauses reads which order each of the given returns and claims belongs
+// to (ADR 0189). An id that is neither — an exchange's, or nothing of this
+// module's — has no row.
+func (r *Repository) JournalCauses(ctx context.Context, ids []string) ([]models.JournalCause, error) {
+	if len(ids) == 0 {
+		return []models.JournalCause{}, nil
+	}
+	rows, err := r.queries(ctx).JournalCauses(ctx, ids)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "the causes of the journal's refunds could not be read")
+	}
+
+	out := make([]models.JournalCause, 0, len(rows))
+	for i := range rows {
+		out = append(out, models.JournalCause{
+			ID: rows[i].ID, Kind: rows[i].Kind, OrderID: rows[i].OrderID, CurrencyCode: rows[i].CurrencyCode,
+		})
+	}
+
+	return out, nil
+}

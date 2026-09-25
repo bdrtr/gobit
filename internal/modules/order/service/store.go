@@ -333,6 +333,9 @@ type Store interface {
 	JournalFacts(
 		ctx context.Context, from, to time.Time, currencyCode string, limit int32,
 	) ([]models.JournalFact, error)
+	// JournalCauses reads which order each return or claim id belongs to
+	// (ADR 0189); an id that is neither has no row.
+	JournalCauses(ctx context.Context, ids []string) ([]models.JournalCause, error)
 }
 
 // EventPublisher is the NARROW surface the service needs from the event bus.

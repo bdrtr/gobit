@@ -78,6 +78,8 @@ type fakeStore struct {
 	mu sync.Mutex
 	// journal is what JournalFacts returns (ADR 0188).
 	journal []models.JournalFact
+	// causes are the returns and claims JournalCauses knows (ADR 0189).
+	causes []models.JournalCause
 
 	orders    map[string]models.Order
 	items     map[string]models.OrderLineItem

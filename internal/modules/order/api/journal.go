@@ -92,13 +92,17 @@ func describeOrderJournal(d *openapi.Doc) {
 			"An order placed debits receivable with its total and sales_discounts with its " +
 			"discount, and credits sales with its subtotal, tax_payable with its tax and " +
 			"shipping with its shipping; an order canceled is the same lines the other way; a " +
-			"credit line debits credit_allowances and credits receivable. A zero amount writes " +
-			"no line, and an order of nothing is no entry. " +
+			"credit line debits credit_allowances and credits receivable. A refund that names " +
+			"one of the order's returns debits sales_returns, and one that names a claim " +
+			"debits claim_allowances, each against receivable, at the refund's amount and " +
+			"moment. A zero amount writes no line, and an order of nothing is no entry. " +
 			"\n\n" +
 			"receivable is the payment module's account too (GET /admin/v1/payment-journal): " +
-			"a capture credits it and a refund debits it, so the two journals together are " +
-			"the order's books. A line cancellation is not an entry, because it records a " +
-			"quantity and no amount; its money arrives as a credit line or a refund. " +
+			"a capture credits it and a refund debits it, so the two journals together close " +
+			"an order that was paid, returned, canceled or written off. A line cancellation is " +
+			"not an entry, because it records a quantity and no amount; its money arrives as a " +
+			"credit line or a refund. An exchange's difference lives on a collection of its " +
+			"own and is outside these books. " +
 			"\n\n" +
 			"Amounts are integers in the currency's minor unit. A window wider than 93 days, " +
 			"or holding more than 10000 facts, is refused rather than cut.",

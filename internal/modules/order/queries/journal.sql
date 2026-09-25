@@ -29,3 +29,16 @@ WHERE cl.created_at >= sqlc.arg('from_at') AND cl.created_at < sqlc.arg('to_at')
   AND (sqlc.narg('currency_code')::text IS NULL OR o.currency_code = sqlc.narg('currency_code')::text)
 ORDER BY cl.created_at, cl.id
 LIMIT sqlc.arg('row_limit');
+
+-- The order records a refund can name as its cause (ADR 0189): which order a
+-- return or a claim belongs to, and that order's currency.
+-- name: JournalCauses :many
+SELECT r.id, 'return'::text AS kind, r.order_id, o.currency_code
+FROM order_returns r
+JOIN orders o ON o.id = r.order_id
+WHERE r.id = ANY (sqlc.arg('ids')::text[])
+UNION ALL
+SELECT c.id, 'claim'::text, c.order_id, o.currency_code
+FROM order_claims c
+JOIN orders o ON o.id = c.order_id
+WHERE c.id = ANY (sqlc.arg('ids')::text[]);

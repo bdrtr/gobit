@@ -11,6 +11,52 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const journalCauses = `-- name: JournalCauses :many
+SELECT r.id, 'return'::text AS kind, r.order_id, o.currency_code
+FROM order_returns r
+JOIN orders o ON o.id = r.order_id
+WHERE r.id = ANY ($1::text[])
+UNION ALL
+SELECT c.id, 'claim'::text, c.order_id, o.currency_code
+FROM order_claims c
+JOIN orders o ON o.id = c.order_id
+WHERE c.id = ANY ($1::text[])
+`
+
+type JournalCausesRow struct {
+	ID           string
+	Kind         string
+	OrderID      string
+	CurrencyCode string
+}
+
+// The order records a refund can name as its cause (ADR 0189): which order a
+// return or a claim belongs to, and that order's currency.
+func (q *Queries) JournalCauses(ctx context.Context, ids []string) ([]JournalCausesRow, error) {
+	rows, err := q.db.Query(ctx, journalCauses, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []JournalCausesRow{}
+	for rows.Next() {
+		var i JournalCausesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.OrderID,
+			&i.CurrencyCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const journalCreditLines = `-- name: JournalCreditLines :many
 SELECT cl.id, cl.order_id, cl.amount, cl.created_at, o.currency_code
 FROM order_credit_lines cl

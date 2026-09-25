@@ -97,6 +97,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -177,6 +178,11 @@ const (
 // branch in the [spendingPolicy] documentation would fire wrongly. The single
 // source of truth for the name is the b2b module's InteropName constant.
 const SpendingPolicyName = "b2b.interop"
+
+// CausedRefundsName is the container name the order journal reads the payment
+// module's caused refunds under (ADR 0189). As [SpendingPolicyName], it is the
+// other module's name repeated as a string.
+const CausedRefundsName = "payment.interop"
 
 // codeSetupFailed is the error code reporting that the module could not be
 // wired.
@@ -289,6 +295,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		// registered yet at this stage; the resolution is deferred to first use
 		// (see [spendingPolicy] and the module.Module documentation).
 		Spending: &spendingPolicy{c: c, log: log},
+		Refunds:  &causedRefunds{c: c, log: log},
 		// The Query layer is a CORE service, so it can be resolved right here:
 		// the deferral the spending rule needs is about another MODULE not
 		// being registered yet, and that does not apply to core.
@@ -647,6 +654,53 @@ func (p *spendingPolicy) resolve(ctx context.Context) {
 		p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
 			"the %s module could not resolve the spending rule provider (%q)", ModuleName, SpendingPolicyName)
 	}
+}
+
+// causedRefunds is the wrapper that resolves the payment module's caused
+// refunds ON FIRST USE (ADR 0189), the way [spendingPolicy] resolves the
+// spending rule.
+//
+// Without the payment module no money moved, so no refund gave anything back
+// and the answer is an empty list. A registration that does not satisfy the
+// surface is a wiring error and is returned: books that silently leave out
+// every return would balance and be wrong.
+type causedRefunds struct {
+	c    *container.Container
+	log  *slog.Logger
+	once sync.Once
+	svc  service.CausedRefunds
+	err  error
+}
+
+var _ service.CausedRefunds = (*causedRefunds)(nil)
+
+// noCausedRefunds is the answer of an installation without the payment module.
+var noCausedRefunds = json.RawMessage(`[]`)
+
+// CausedRefundsJSON returns the payment module's refunds that name a cause.
+func (p *causedRefunds) CausedRefundsJSON(
+	ctx context.Context, from, to time.Time, currencyCode string,
+) (json.RawMessage, error) {
+	p.once.Do(func() {
+		svc, err := container.Resolve[service.CausedRefunds](p.c, CausedRefundsName)
+		switch {
+		case err == nil:
+			p.svc = svc
+		case errors.IsNotFound(err):
+			p.log.DebugContext(ctx, "the payment module is not registered; the order journal books no refunds",
+				"provider", CausedRefundsName)
+		default:
+			p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
+				"the %s module could not resolve the caused refunds (%q)", ModuleName, CausedRefundsName)
+		}
+	})
+	if p.err != nil {
+		return nil, p.err
+	}
+	if p.svc == nil {
+		return noCausedRefunds, nil
+	}
+	return p.svc.CausedRefundsJSON(ctx, from, to, currencyCode)
 }
 
 // invoicingFlow is the wrapper that resolves the invoicing flow ON FIRST USE.

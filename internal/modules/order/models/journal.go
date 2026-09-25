@@ -30,6 +30,12 @@ const (
 	// AccountCreditAllowances is what the shop wrote off an order's amount
 	// after it was placed: a credit line.
 	AccountCreditAllowances JournalAccount = "credit_allowances"
+	// AccountSalesReturns is the revenue given back for goods returned: what a
+	// return's refunds sent back (ADR 0189).
+	AccountSalesReturns JournalAccount = "sales_returns"
+	// AccountClaimAllowances is what a claim's refunds sent back for goods that
+	// arrived wrong or damaged and were not returned (ADR 0189).
+	AccountClaimAllowances JournalAccount = "claim_allowances"
 )
 
 // JournalKind is the fact an entry is read from.
@@ -43,6 +49,12 @@ const (
 	JournalOrderCanceled JournalKind = "order_canceled"
 	// JournalCreditLine is a row of order_credit_lines.
 	JournalCreditLine JournalKind = "credit_line"
+	// JournalReturnRefunded is a refund whose cause is one of the order's
+	// returns (ADR 0189).
+	JournalReturnRefunded JournalKind = "return_refunded"
+	// JournalClaimRefunded is a refund whose cause is one of the order's claims
+	// (ADR 0189).
+	JournalClaimRefunded JournalKind = "claim_refunded"
 )
 
 // JournalLine is one side of an entry: exactly one of Debit and Credit is
@@ -56,7 +68,8 @@ type JournalLine struct {
 // JournalEntry is one balanced fact: its lines' debits equal their credits.
 type JournalEntry struct {
 	// ID is the id of the record the entry is read from: the order for a
-	// placement or a cancellation, the credit line for a credit line.
+	// placement or a cancellation, the credit line for a credit line, the
+	// payment module's refund for a refund.
 	ID           string        `json:"id"`
 	Kind         JournalKind   `json:"kind"`
 	OrderID      string        `json:"order_id"`
@@ -86,4 +99,15 @@ type JournalFact struct {
 	Subtotal, DiscountTotal, TaxTotal, ShippingTotal, Total int64
 
 	Amount int64
+}
+
+// JournalCause is an order record a refund can name as its cause (ADR 0189).
+type JournalCause struct {
+	// ID is the return's or the claim's id, which the refund carries as its
+	// reference (ADR 0187).
+	ID string
+	// Kind is "return" or "claim".
+	Kind         string
+	OrderID      string
+	CurrencyCode string
 }

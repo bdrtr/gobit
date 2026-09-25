@@ -35,6 +35,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **A refund's cause gives back revenue** (ADR 0189). The order journal books a
+  refund that names one of the order's returns as `sales_returns`, and one that
+  names a claim as `claim_allowances`, each against `receivable` at the refund's
+  amount and moment, so the payment and order journals together close a returned
+  order. A refund naming an exchange or nothing is not an entry. **For
+  embedders:** the payment interop gains `CausedRefundsJSON`, and the order
+  module resolves it from `payment.interop` when it is registered.
+
 - **The order module keeps derived books** (ADR 0188). **For operators and
   accountants:** `GET /admin/v1/order-journal?from=&to=[&currency_code=]`
   (`order:read`) returns each order placed, order canceled and credit line in the
