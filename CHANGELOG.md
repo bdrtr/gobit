@@ -331,6 +331,14 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **An installed binary starts a project** (ADR 0182). `gobit new` in a binary
+  built without the Makefile's build facts requires the library at the version
+  the Go toolchain stamped into it, so `go install
+  github.com/bdrtr/gobit/cmd/server@v0.9.0` gives a binary whose projects
+  require v0.9.0; it refuses only for `go run`, a tree with uncommitted changes
+  or a replaced library. **For embedders:** `golang.org/x/mod`, already in the
+  graph, is now a direct require.
+
 - **The panel edits a product's neighbors** (ADR 0181). The admin panel's
   product page lists the related products, each in the operator's order, and
   marks one the storefront leaves out. "Edit related products" opens a form

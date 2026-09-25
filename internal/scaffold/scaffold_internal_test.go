@@ -3,6 +3,7 @@ package scaffold
 import (
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"testing"
 	"time"
 
@@ -155,5 +156,49 @@ func TestAPrereleaseBaseTagIsNotBumped(t *testing.T) {
 		version := Build{BaseTag: tag, Commit: "abcdefabcdef", CommitTime: when}.Version()
 		assert.Equal(t, "v0.0.0-20260912094500-abcdefabcdef", version,
 			"%q is not a plain vX.Y.Z and must not be bumped", tag)
+	}
+}
+
+// TestTheToolchainStampIsUsedOnlyWhenTheProxyServesIt is the fallback's whole
+// decision (ADR 0182).
+//
+// The stamps are the ones measured on 2026-09-25 with Go 1.26: `go build` at a
+// tag, at an untagged commit and in a tree with changes, and `go run`/`go test`.
+// An embedding project's binary records gobit as a dependency, so the library is
+// found by its path, and a replaced one is refused because its version names
+// what was required rather than what was compiled.
+func TestTheToolchainStampIsUsedOnlyWhenTheProxyServesIt(t *testing.T) {
+	const pseudo = "v0.9.1-0.20260925143814-885adefab01b"
+	gobit := func(version string) debug.Module {
+		return debug.Module{Path: GobitModule, Version: version}
+	}
+	embedding := func(deps ...*debug.Module) *debug.BuildInfo {
+		return &debug.BuildInfo{
+			Main: debug.Module{Path: "example.com/shop", Version: "(devel)"},
+			Deps: deps,
+		}
+	}
+	replaced := gobit("v0.9.0")
+	replaced.Replace = &debug.Module{Path: "../gobit"}
+	other := debug.Module{Path: "example.com/other", Version: "v1.0.0"}
+	release := gobit("v0.9.0")
+
+	cases := []struct {
+		name string
+		info *debug.BuildInfo
+		want string
+	}{
+		{"built at a tag", &debug.BuildInfo{Main: gobit("v0.9.0")}, "v0.9.0"},
+		{"built at an untagged commit", &debug.BuildInfo{Main: gobit(pseudo)}, pseudo},
+		{"built from a tree with changes", &debug.BuildInfo{Main: gobit("v0.9.0+dirty")}, ""},
+		{"built by go run or go test", &debug.BuildInfo{Main: gobit("(devel)")}, ""},
+		{"a shorthand no toolchain writes", &debug.BuildInfo{Main: gobit("v0.9")}, ""},
+		{"embedded at a release", embedding(&other, &release), "v0.9.0"},
+		{"embedded through a replace", embedding(&replaced), ""},
+		{"a binary without gobit in it", embedding(&other), ""},
+		{"no build information", nil, ""},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, Stamped(c.info), c.name)
 	}
 }

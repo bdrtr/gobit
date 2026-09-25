@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -54,15 +55,19 @@ func TestNewReadsNoConfiguration(t *testing.T) {
 // TestNewRefusesWhenTheBuildCannotNameAVersion is the refusal that keeps a
 // broken project from being written.
 //
-// A plain `go build ./...` injects none of the build facts, so the binary cannot
-// say which library version a generated project should require. The measured
-// alternatives are all worse: `@latest` and the newest tag resolve to a release
-// that does not contain the published surface, so the project fails at `go mod
-// tidy` — with nothing telling the user why.
+// `go test` injects none of the build facts and the toolchain stamps it
+// "(devel)", so the binary cannot say which library version a generated project
+// should require. The measured alternatives are all worse: `@latest` and the
+// newest tag resolve to a release that does not contain the published surface,
+// so the project fails at `go mod tidy` — with nothing telling the user why.
 func TestNewRefusesWhenTheBuildCannotNameAVersion(t *testing.T) {
 	require.Empty(t, buildRelease,
 		"this test runs under `go test`, which injects no build facts; if that changed "+
 			"the refusal below is no longer the case being exercised")
+	info, _ := readBuildInfo()
+	require.Empty(t, scaffold.Stamped(info),
+		"`go test` stamps no servable version; if that changed the refusal below is no "+
+			"longer the case being exercised")
 
 	dir := filepath.Join(t.TempDir(), "shop")
 	var out bytes.Buffer
@@ -77,6 +82,33 @@ func TestNewRefusesWhenTheBuildCannotNameAVersion(t *testing.T) {
 
 	_, statErr := os.Stat(dir)
 	assert.Error(t, statErr, "nothing may be written when the version cannot be named")
+}
+
+// TestNewRequiresTheVersionTheToolchainStamped is the route no Makefile runs.
+//
+// `go install github.com/bdrtr/gobit/cmd/server@v0.9.0` builds a binary with no
+// build facts, and the toolchain records v0.9.0 in it. Before ADR 0182 that
+// binary refused to generate anything, although it knew its own version; the
+// generated go.mod must require exactly the stamped one.
+func TestNewRequiresTheVersionTheToolchainStamped(t *testing.T) {
+	require.Empty(t, buildRelease,
+		"the stamp is the fallback; a build fact would answer first and this test would "+
+			"not reach it")
+	stamped := readBuildInfo
+	t.Cleanup(func() { readBuildInfo = stamped })
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Main: debug.Module{Path: scaffold.GobitModule, Version: "v0.9.0"}}, true
+	}
+
+	dir := filepath.Join(t.TempDir(), "shop")
+	var out bytes.Buffer
+
+	require.NoError(t, runNew([]string{dir}, &out, Options{}))
+
+	goMod, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+	require.NoError(t, err)
+	assert.Contains(t, string(goMod), "require "+scaffold.GobitModule+" v0.9.0\n",
+		"the generated project must require the version the binary was installed at")
 }
 
 // TestNewNeedsTheDirectoryFirst pins the argument shape to the repository's.

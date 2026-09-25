@@ -88,6 +88,9 @@ var directDependencyReasons = map[string]string{
 		"the scrape endpoint's body (ADR 0046)",
 	"golang.org/x/crypto": "bcrypt for the admin password hash; the standard library has " +
 		"no password hash",
+	"golang.org/x/mod": "semver, to tell whether the version the toolchain stamped into " +
+		"a binary is one the module proxy serves (ADR 0182); it was already in the graph " +
+		"indirectly, so requiring it directly adds no module",
 }
 
 // indirectDependencyFile lists the modules MVS pulls in behind the direct ones.

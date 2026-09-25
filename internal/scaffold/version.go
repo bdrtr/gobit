@@ -2,9 +2,12 @@ package scaffold
 
 import (
 	"fmt"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/mod/semver"
 )
 
 // The version a generated go.mod can require, and why it is usually not a tag.
@@ -24,6 +27,10 @@ import (
 //
 // The fix is a release, not a generator: the day a tag contains the facade, the
 // build injects that tag and [Version] returns it unchanged.
+//
+// A binary nobody's Makefile built carries no build facts, and the Go toolchain
+// answers for it: [Stamped] reads the version `go build` and `go install` record
+// in the binary itself (ADR 0182).
 
 // Build is what the build injects about the binary that is generating.
 //
@@ -113,4 +120,52 @@ func parseSemver(tag string) (major, minor, patch int, ok bool) {
 	}
 
 	return numbers[0], numbers[1], numbers[2], true
+}
+
+// Stamped returns the library version the Go toolchain recorded in a binary's
+// build information, or "" when that version is not one the module proxy serves.
+//
+// Since Go 1.24 `go build` stamps the main module's version from version control
+// — the tag when the commit carries one, the pseudo-version of the commit
+// otherwise — and `go install <path>@<version>` stamps the version it fetched.
+// That second route is the one no Makefile runs, so it is the one that injects
+// no build facts. The library is looked up by its own path, whether this binary
+// IS gobit (the main module) or embeds it (a dependency); in the second case the
+// dependency's version is exactly the library the embedded templates came from.
+//
+// Three stamps are refused rather than used, and each was measured:
+//   - "(devel)", which `go run` and `go test` write: no version at all;
+//   - a version with build metadata, "+dirty" for a tree with uncommitted
+//     changes: the proxy serves no such version, and the templates are not
+//     those of any commit;
+//   - a dependency a `replace` points elsewhere: its version names what was
+//     required, not the code that was compiled.
+func Stamped(info *debug.BuildInfo) string {
+	if info == nil {
+		return ""
+	}
+
+	library := &info.Main
+	if library.Path != GobitModule {
+		library = nil
+		for _, dep := range info.Deps {
+			if dep.Path == GobitModule {
+				library = dep
+
+				break
+			}
+		}
+	}
+	if library == nil || library.Replace != nil {
+		return ""
+	}
+
+	// Canonical drops build metadata and completes a shorthand, so a version
+	// that survives it unchanged is one the proxy can be asked for.
+	version := library.Version
+	if version == "" || semver.Canonical(version) != version {
+		return ""
+	}
+
+	return version
 }
