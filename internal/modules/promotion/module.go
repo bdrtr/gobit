@@ -170,7 +170,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	}
 
 	m.svc = svc
-	m.handler = api.New(svc)
+	m.handler = api.New(svc).WithTrial(&promotionTrial{c: c, log: m.log})
 
 	m.log.InfoContext(ctx, "promotion modülü kaydedildi",
 		slog.String("servis", ServiceName),

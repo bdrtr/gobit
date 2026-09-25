@@ -427,6 +427,27 @@ func appliedPromotionsOf(resp discountResponse) []AppliedPromotion {
 func (w *Workflows) discountRequestFor(
 	ctx context.Context, snap Snapshot, lines []LineTotals, flags map[string]productFacts,
 ) discountRequest {
+	attributes, lists, groupErr := w.ruleContext(ctx, snap)
+	if groupErr != nil {
+		w.log.WarnContext(ctx, "the customer's groups could not be read; discounting without a segment",
+			"error", groupErr, "customer_id", snap.CustomerID)
+	}
+
+	return discountRequestWith(snap, lines, flags, attributes, lists)
+}
+
+// discountRequestWith builds the request from a rule context already resolved.
+//
+// It is [Workflows.discountRequestFor] without the context read, and it exists for
+// the promotion trial (ADR 0176): a trial prices hundreds of past purchases, most
+// of them sharing a region and many a customer, and it resolves each context once.
+// The request itself — the line attributes, the lists, the codes — has one
+// builder, so a purchase reaches a trial in exactly the shape a cart reaches the
+// engine.
+func discountRequestWith(
+	snap Snapshot, lines []LineTotals, flags map[string]productFacts,
+	attributes map[string]string, lists map[string][]string,
+) discountRequest {
 	items := make([]discountRequestItem, 0, len(lines))
 	for i := range lines {
 		items = append(items, discountRequestItem{
@@ -437,12 +458,6 @@ func (w *Workflows) discountRequestFor(
 			Attributes: lineAttributes(snap.Items[i].VariantID, flags),
 			Lists:      lineLists(snap.Items[i].VariantID, flags),
 		})
-	}
-
-	attributes, lists, groupErr := w.ruleContext(ctx, snap)
-	if groupErr != nil {
-		w.log.WarnContext(ctx, "the customer's groups could not be read; discounting without a segment",
-			"error", groupErr, "customer_id", snap.CustomerID)
 	}
 
 	return discountRequest{

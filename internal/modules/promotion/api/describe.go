@@ -62,6 +62,7 @@ func Describe(d *openapi.Doc) {
 	describePromosyonlar(d)
 	describeYontemVeKurallar(d)
 	describeKullanimlar(d)
+	describeTrial(d)
 
 	d.Describe(http.MethodPost, "/admin/v1/promotions/compute", openapi.Operation{
 		Summary: "Verilen sepet bağlamı için indirimleri hesaplar ve neyin " +

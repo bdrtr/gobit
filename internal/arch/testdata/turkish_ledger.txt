@@ -113,7 +113,6 @@ internal/modules/promotion/api/admin.go
 internal/modules/promotion/api/api.go
 internal/modules/promotion/api/api_test.go
 internal/modules/promotion/api/describe.go
-internal/modules/promotion/api/describe_internal_test.go
 internal/modules/promotion/api/fakes_test.go
 internal/modules/promotion/api/store.go
 internal/modules/promotion/module.go

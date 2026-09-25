@@ -3,6 +3,7 @@ package cart
 import (
 	"context"
 	"encoding/json"
+	"time"
 )
 
 // InteropName is the name of the cart workflows in the container (ADR 0001/0006).
@@ -35,11 +36,13 @@ const InteropName = "workflows.cart.interop"
 //
 // # Why not ALL of the workflows
 //
-// The surface carries the workflows that ARE the storefront's HTTP endpoints and
-// no others. [Workflows.CalculateTotals] is here ONLY inside [Interop.RepriceAfter],
-// the step a write takes after itself (ADR 0173); it is still not a capability a
-// client can ask for, because running the computation at the moment the client
-// asks would tie the amount to the client's timing rather than to a change.
+// The surface carries the workflows that ARE another module's HTTP endpoints —
+// the storefront's cart writes, and the promotion trial the promotion module's
+// admin endpoint asks for (ADR 0176) — and no others. [Workflows.CalculateTotals]
+// is here ONLY inside [Interop.RepriceAfter], the step a write takes after itself
+// (ADR 0173); it is still not a capability a client can ask for, because running
+// the computation at the moment the client asks would tie the amount to the
+// client's timing rather than to a change.
 //
 // The rule cuts both ways and the second direction went wrong for a while. The
 // cart module's two coupon endpoints resolve the cart API's CartPromotions from this
@@ -189,6 +192,26 @@ func (i *Interop) ApplyPromotionCode(ctx context.Context, cartID, code string) e
 // and not this surface's.
 func (i *Interop) RemovePromotionCode(ctx context.Context, cartID, code string) error {
 	return i.w.RemovePromotionCode(ctx, cartID, code)
+}
+
+// TrialPromotionJSON prices a promotion against the orders placed in [from, to) as
+// if it had been published then, and returns the [TrialReport] as JSON; it writes
+// nothing (ADR 0176).
+//
+// Its consumer is the promotion module's admin endpoint, which owns the question
+// but cannot read an order or build a purchase the way a cart is built; both are
+// this package's. The report is JSON because it is composite and the promotion
+// module cannot name its type (ADR 0006); the schema is the json tags of
+// [TrialReport].
+func (i *Interop) TrialPromotionJSON(
+	ctx context.Context, promotionID string, from, to time.Time,
+) (json.RawMessage, error) {
+	report, err := i.w.TrialPromotion(ctx, promotionID, from, to)
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(report)
 }
 
 // RepriceAfter runs a write the cart module makes on its own and then recomputes

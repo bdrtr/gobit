@@ -3,6 +3,7 @@ package cart
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -307,10 +308,16 @@ type stubCustomers struct {
 	// by pricing without a segment rather than by failing the cart.
 	groupErr error
 	calls    int
+	// groupsHook, when set, runs on every group read; a test counting reads
+	// uses it.
+	groupsHook func()
 }
 
 // CustomerGroupIDs returns the scripted groups in the order they were given.
 func (s *stubCustomers) CustomerGroupIDs(_ context.Context, customerID string) ([]string, error) {
+	if s.groupsHook != nil {
+		s.groupsHook()
+	}
 	if s.groupErr != nil {
 		return nil, s.groupErr
 	}
@@ -400,6 +407,9 @@ type stubCatalog struct {
 	products map[string]string
 	// countries is a region -> country codes mapping.
 	countries map[string][]string
+	// entities scripts whole entities the trial reads (the order and its
+	// lines), served a page at a time or by an "id" filter.
+	entities map[string][]query.Record
 	// scopedOut holds the variants for which NO RECORD IS RETURNED on a query
 	// that CARRIES the channel filter.
 	//
@@ -421,6 +431,9 @@ func (s *stubCatalog) Graph(_ context.Context, spec query.GraphSpec) ([]query.Re
 	s.specs = append(s.specs, spec)
 	if spec.Entity == EntityRegion {
 		return s.regionRecords(spec)
+	}
+	if records, scripted := s.entities[spec.Entity]; scripted {
+		return entityPage(records, spec), nil
 	}
 	if s.err != nil {
 		return nil, s.err
@@ -631,6 +644,44 @@ type stubDiscounts struct {
 	usableCodes map[string]bool
 	// couponChecks records the codes CouponApplies was asked about, in order.
 	couponChecks []string
+
+	// trialFn scripts the promotion trial's answer; nil answers with the
+	// per-line discounts of perLine for every purchase.
+	trialFn func(promotionID string, req trialRequest) (trialResponse, error)
+	// trials holds, in order, the decoded trial requests.
+	trials []trialRequest
+}
+
+// TrialDiscountsJSON records the request and answers with the scripted trial.
+func (s *stubDiscounts) TrialDiscountsJSON(
+	_ context.Context, promotionID string, request json.RawMessage,
+) (json.RawMessage, error) {
+	var req trialRequest
+	if err := json.Unmarshal(request, &req); err != nil {
+		return nil, err
+	}
+	s.trials = append(s.trials, req)
+
+	if s.trialFn != nil {
+		resp, err := s.trialFn(promotionID, req)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(resp)
+	}
+
+	resp := trialResponse{Assumptions: []string{"active"}}
+	for i := range req.Entries {
+		answer := trialResponseEntry{Reference: req.Entries[i].Reference, Items: []discountLine{}}
+		for _, item := range req.Entries[i].Request.Items {
+			amount := s.perLine[item.ID]
+			answer.Items = append(answer.Items, discountLine{ID: item.ID, Amount: amount})
+			answer.ItemsDiscountTotal += amount
+		}
+		resp.Entries = append(resp.Entries, answer)
+	}
+
+	return json.Marshal(resp)
 }
 
 // CouponApplies answers whether the code names a usable promotion.
@@ -815,4 +866,23 @@ func (s *stubCarts) RemoveCartPromotionCode(ctx context.Context, cartID, code st
 // can tell two lines' origins apart.
 func pricedItem(priceSetID string, amount int64) priceResponseItem {
 	return priceResponseItem{Amount: amount, Priced: true, PriceID: "price_of_" + priceSetID}
+}
+
+// entityPage serves a scripted entity the way a provider does: an "id" filter
+// picks those records, otherwise the limit and offset page through the list.
+func entityPage(records []query.Record, spec query.GraphSpec) []query.Record {
+	if ids, ok := spec.Filters["id"].([]string); ok {
+		out := []query.Record{}
+		for _, record := range records {
+			if id, _ := record["id"].(string); slices.Contains(ids, id) {
+				out = append(out, record)
+			}
+		}
+		return out
+	}
+	if spec.Offset >= len(records) {
+		return []query.Record{}
+	}
+
+	return records[spec.Offset:min(spec.Offset+spec.Limit, len(records))]
 }

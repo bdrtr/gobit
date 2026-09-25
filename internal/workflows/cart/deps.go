@@ -396,6 +396,14 @@ type Discounts interface {
 	// whose target matches no line is not an invalid code, only one that did
 	// nothing today.
 	CouponApplies(ctx context.Context, code string) error
+
+	// TrialDiscountsJSON prices ONE promotion against past purchases as if it
+	// were published; IT WRITES NOTHING (ADR 0176).
+	//
+	// Each purchase in the request is the same body ComputeDiscountsJSON takes,
+	// beside the reference its promotions were redeemed under; the schema is in
+	// the [trialRequest] and [trialResponse] types.
+	TrialDiscountsJSON(ctx context.Context, promotionID string, request json.RawMessage) (json.RawMessage, error)
 }
 
 // Taxes is the surface of the tax module ("tax.interop") that this package

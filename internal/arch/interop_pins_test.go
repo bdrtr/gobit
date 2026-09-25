@@ -57,6 +57,7 @@ import (
 	paymentsvc "github.com/bdrtr/gobit/internal/modules/payment/service"
 	pricingsvc "github.com/bdrtr/gobit/internal/modules/pricing/service"
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
+	promotionapi "github.com/bdrtr/gobit/internal/modules/promotion/api"
 	promotionsvc "github.com/bdrtr/gobit/internal/modules/promotion/service"
 	regionsvc "github.com/bdrtr/gobit/internal/modules/region/service"
 	settingssvc "github.com/bdrtr/gobit/internal/modules/settings/service"
@@ -80,8 +81,10 @@ var (
 	_ cartapi.CartPromotions  = (*cartwf.Interop)(nil)
 	_ cartapi.ShippingPricing = (*cartwf.Interop)(nil)
 	_ cartapi.CartRepricing   = (*cartwf.Interop)(nil)
-	_ cartapi.CartOpening     = (*cartwf.Interop)(nil)
-	_ cartapi.CartCompletion  = (*checkoutwf.Interop)(nil)
+
+	_ promotionapi.PromotionTrial = (*cartwf.Interop)(nil)
+	_ cartapi.CartOpening         = (*cartwf.Interop)(nil)
+	_ cartapi.CartCompletion      = (*checkoutwf.Interop)(nil)
 
 	_ orderapi.ReturnReceiving = (*returnswf.Interop)(nil)
 	_ orderapi.Invoicing       = (*invoicingwf.Interop)(nil)
@@ -200,7 +203,7 @@ var _ returnswf.Shipping = (*fulfillingwf.Interop)(nil)
 // module list, the personal-data audit's trees: four of them, all closed the same
 // way).
 var pinnedNames = map[string]string{
-	"workflows.cart.interop":       "cart module's four storefront endpoints",
+	"workflows.cart.interop":       "the cart module's storefront endpoints and the promotion trial",
 	"workflows.checkout.interop":   "the cart module's completion endpoint",
 	"workflows.returns.interop":    "the order module's receive endpoint",
 	"workflows.invoicing.interop":  "the order module's invoice endpoint",

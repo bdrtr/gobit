@@ -331,6 +331,16 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **A promotion can be tried on past orders** (ADR 0176). A new admin endpoint,
+  `GET /admin/v1/promotions/{id}/trial?from=&to=`, prices a promotion —
+  typically a draft — against the orders placed in a period as if it had been
+  published, and reports per currency what it would have added to the
+  discounts those orders actually got, with the orders it would have
+  discounted most. It writes nothing, lists what it had to assume (today's
+  catalog and customer groups, no cart metadata, no usage limit or campaign),
+  and needs `order:read` beside `promotion:read`. A period is at most 93 days
+  and 5000 orders.
+
 - **A payment that can never be made opens no order** (ADR 0175, D130). The
   checkout now asks the payment module before the saga whether the chosen
   provider is registered and, for store credit and loyalty points, whether the

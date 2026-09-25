@@ -61,6 +61,8 @@ const codeInvalidBody = "promotion_invalid_body"
 // API promotion'ın HTTP handler'larını barındırır.
 type API struct {
 	svc *service.Service
+	// trial is the flow the trial endpoint runs on; see [API.WithTrial].
+	trial PromotionTrial
 }
 
 // New verilen servis üzerinde çalışan bir API üretir.
@@ -136,6 +138,9 @@ func (a *API) Routes(r chi.Router) {
 	yazma.Post("/admin/v1/promotions/{id}/release", a.releasePromotion)
 
 	yazma.Post("/admin/v1/promotions/compute", a.computeDiscounts)
+	// The trial's report is orders, so it asks for the order module's read
+	// privilege too (ADR 0176).
+	okuma.With(corehttp.RequireScope(orderReadScope)).Get(pathTrial, a.trialPromotion)
 
 	// Mağaza ucu DEĞİŞMEZ: publishable anahtar yetki taşımaz.
 	r.Get("/store/v1/promotions/{code}", a.storeGetPromotion)
