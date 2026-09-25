@@ -360,10 +360,10 @@ func (w *Workflows) trialAnswer(
 		key := order.regionID + "\x00" + order.customerID
 		resolved, seen := contexts[key]
 		if !seen {
-			attributes, lists, groupErr := w.ruleContext(ctx, snap)
-			if groupErr != nil {
-				w.log.WarnContext(ctx, "the customer's groups could not be read; trying without a segment",
-					"error", groupErr, "customer_id", order.customerID)
+			attributes, lists, contextErr := w.ruleContext(ctx, snap)
+			if contextErr != nil {
+				w.log.WarnContext(ctx, "the customer's groups or company could not be read; trying without them",
+					"error", contextErr, "customer_id", order.customerID)
 			}
 			resolved = ruleContext{attributes: attributes, lists: lists}
 			contexts[key] = resolved

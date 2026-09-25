@@ -592,10 +592,10 @@ func (w *Workflows) unitPrices(
 	// is chosen by the merchant-ranked head alone (ADR 0049). "Any of my groups"
 	// is a discount question — two price sets both matching would be two prices
 	// with nothing deciding between them.
-	attributes, _, groupErr := w.ruleContext(ctx, snap)
-	if groupErr != nil {
-		w.log.WarnContext(ctx, "the customer's groups could not be read; pricing without a segment",
-			"error", groupErr, "customer_id", snap.CustomerID)
+	attributes, _, contextErr := w.ruleContext(ctx, snap)
+	if contextErr != nil {
+		w.log.WarnContext(ctx, "the customer's groups or company could not be read; pricing without them",
+			"error", contextErr, "customer_id", snap.CustomerID)
 	}
 
 	req := priceRequest{

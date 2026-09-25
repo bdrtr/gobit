@@ -26,6 +26,9 @@ import (
 //	    SpendingLimitJSON(ctx context.Context, customerID string) (json.RawMessage, error)
 //	}
 //
+// The cart workflows read one more thing, the company a customer buys for, to
+// price a company's contract (ADR 0185; [Interop.CompanyOfCustomer]).
+//
 // The composite data travels as JSON. The field names are declared EXPLICITLY
 // below; they MUST be exactly the same as the schema on the consumer side and
 // the agreement can only be proven with an integration test — because this
@@ -154,4 +157,24 @@ func (i *Interop) SpendingLimitJSON(ctx context.Context, customerID string) (jso
 		rule.WindowStart = membership.SpendingWindowStart.UTC().Format(time.RFC3339)
 	}
 	return json.Marshal(rule)
+}
+
+// CompanyOfCustomer returns the id of the company the customer buys for, or ""
+// when the customer is nobody's employee (ADR 0185).
+//
+// The cart puts it into the rule context its prices and discounts are computed
+// in, so a price ruled on the company is the company's contract price. Not being
+// an employee is an answer rather than a failure: NotFound and Invalid come back
+// as "", for the reason [Interop.SpendingLimitJSON] gives. Every other error is
+// returned, and what an unreadable membership costs is the consumer's decision.
+func (i *Interop) CompanyOfCustomer(ctx context.Context, customerID string) (string, error) {
+	membership, err := i.svc.MembershipOfCustomer(ctx, customerID)
+	switch {
+	case err == nil:
+		return membership.Company.ID, nil
+	case errors.IsNotFound(err), errors.IsInvalid(err):
+		return "", nil
+	default:
+		return "", err
+	}
 }

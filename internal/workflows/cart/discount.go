@@ -427,10 +427,10 @@ func appliedPromotionsOf(resp discountResponse) []AppliedPromotion {
 func (w *Workflows) discountRequestFor(
 	ctx context.Context, snap Snapshot, lines []LineTotals, flags map[string]productFacts,
 ) discountRequest {
-	attributes, lists, groupErr := w.ruleContext(ctx, snap)
-	if groupErr != nil {
-		w.log.WarnContext(ctx, "the customer's groups could not be read; discounting without a segment",
-			"error", groupErr, "customer_id", snap.CustomerID)
+	attributes, lists, contextErr := w.ruleContext(ctx, snap)
+	if contextErr != nil {
+		w.log.WarnContext(ctx, "the customer's groups or company could not be read; discounting without them",
+			"error", contextErr, "customer_id", snap.CustomerID)
 	}
 
 	return discountRequestWith(snap, lines, flags, attributes, lists)

@@ -37,9 +37,10 @@ func TestTheRuleContextCarriesTheHighestRankedGroup(t *testing.T) {
 		"the HEAD of the ordered slice is the group the merchant ranked first")
 	assert.Equal(t, "reg_1", attributes[attrRegionID],
 		"the region the context already carried must survive")
-	assert.Len(t, attributes, 2,
-		"one group and one region in the SINGLE-VALUED context; the set lives beside it "+
-			"since ADR 0144 and is asserted in its own test")
+	assert.Len(t, attributes, 3,
+		"one group, one region and the customer in the SINGLE-VALUED context, and no "+
+			"company without the b2b surface; the set lives beside it since ADR 0144 and is "+
+			"asserted in its own test")
 }
 
 // TestAGuestCartOmitsTheGroupAttributeEntirely is the default direction.
@@ -140,4 +141,103 @@ func TestACustomerWithNoGroupsSendsNoList(t *testing.T) {
 
 	assert.NotContains(t, attributes, attrCustomerGroupID)
 	assert.Empty(t, lists)
+}
+
+// stubCompanies scripts the b2b surface: the company each customer buys for.
+type stubCompanies struct {
+	companies map[string]string
+	err       error
+	calls     int
+}
+
+// CompanyOfCustomer returns the scripted company, "" for nobody's employee.
+func (s *stubCompanies) CompanyOfCustomer(_ context.Context, customerID string) (string, error) {
+	s.calls++
+	if s.err != nil {
+		return "", s.err
+	}
+
+	return s.companies[customerID], nil
+}
+
+// TestTheRuleContextNamesTheBuyer is ADR 0185's half in the cart: the customer's
+// own id and the company they buy for go into the context, so a price ruled on
+// either can match.
+func TestTheRuleContextNamesTheBuyer(t *testing.T) {
+	t.Parallel()
+
+	flows := &Workflows{
+		customers: &stubCustomers{},
+		companies: &stubCompanies{companies: map[string]string{"cus_1": "comp_1"}},
+		log:       slog.New(slog.DiscardHandler),
+	}
+
+	attributes, _, err := flows.ruleContext(context.Background(),
+		Snapshot{CustomerID: "cus_1", RegionID: "reg_1"})
+
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{attrRegionID: "reg_1", AttrCustomerID: "cus_1", AttrCompanyID: "comp_1"},
+		attributes)
+}
+
+// TestOnlyAnEmployeeCarriesACompany omits the company for a customer who is no
+// company's employee and for an installation without the b2b surface, for the
+// reason a guest omits the group: a missing attribute keeps a company price
+// closed, and an empty one would ask every rule whether it lists "".
+func TestOnlyAnEmployeeCarriesACompany(t *testing.T) {
+	t.Parallel()
+
+	for name, companies := range map[string]Companies{
+		"nobody's employee": &stubCompanies{companies: map[string]string{}},
+		"no b2b surface":    nil,
+	} {
+		flows := &Workflows{customers: &stubCustomers{}, companies: companies,
+			log: slog.New(slog.DiscardHandler)}
+
+		attributes, _, err := flows.ruleContext(context.Background(),
+			Snapshot{CustomerID: "cus_1", RegionID: "reg_1"})
+
+		require.NoError(t, err, name)
+		assert.NotContains(t, attributes, AttrCompanyID, name)
+		assert.Equal(t, "cus_1", attributes[AttrCustomerID], name)
+	}
+}
+
+// TestAGuestNamesNobody keeps a contract price closed to a cart with no
+// customer, and does not ask the b2b module about nobody.
+func TestAGuestNamesNobody(t *testing.T) {
+	t.Parallel()
+
+	companies := &stubCompanies{companies: map[string]string{"": "comp_1"}}
+	flows := &Workflows{customers: &stubCustomers{}, companies: companies,
+		log: slog.New(slog.DiscardHandler)}
+
+	attributes, _, err := flows.ruleContext(context.Background(), Snapshot{RegionID: "reg_1"})
+
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{attrRegionID: "reg_1"}, attributes)
+	assert.Zero(t, companies.calls, "a guest has no company to look up")
+}
+
+// TestAnUnreadableCompanyStillPricesTheCart is the availability decision for the
+// company: the error comes back for the caller to log, and everything that WAS
+// read — the customer and the groups — is still in the context.
+func TestAnUnreadableCompanyStillPricesTheCart(t *testing.T) {
+	t.Parallel()
+
+	failure := errors.New("b2b is down")
+	flows := &Workflows{
+		customers: &stubCustomers{groups: map[string][]string{"cus_1": {"wholesale"}}},
+		companies: &stubCompanies{err: failure},
+		log:       slog.New(slog.DiscardHandler),
+	}
+
+	attributes, lists, err := flows.ruleContext(context.Background(),
+		Snapshot{CustomerID: "cus_1", RegionID: "reg_1"})
+
+	require.ErrorIs(t, err, failure)
+	assert.NotContains(t, attributes, AttrCompanyID)
+	assert.Equal(t, "cus_1", attributes[AttrCustomerID])
+	assert.Equal(t, "wholesale", attributes[attrCustomerGroupID], "the groups were read and stay")
+	assert.Equal(t, []string{"wholesale"}, lists[attrCustomerGroupID])
 }

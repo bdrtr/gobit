@@ -34,11 +34,13 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment"
 	paymentservice "github.com/bdrtr/gobit/internal/modules/payment/service"
 	"github.com/bdrtr/gobit/internal/modules/pricing"
+	pricingmodels "github.com/bdrtr/gobit/internal/modules/pricing/models"
 	"github.com/bdrtr/gobit/internal/modules/product"
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	productmodels "github.com/bdrtr/gobit/internal/modules/product/models"
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
 	regionsvc "github.com/bdrtr/gobit/internal/modules/region/service"
+	cartflow "github.com/bdrtr/gobit/internal/workflows/cart"
 )
 
 // TestTheProviderRegistryNamesAgree verifies that the plugin package and the
@@ -204,6 +206,23 @@ func TestTheLoyaltyEarnCeilingAgreesWithThePaymentService(t *testing.T) {
 
 	assert.Equal(t, paymentservice.MaxLoyaltyEarnBasisPoints, config.MaxLoyaltyEarnBasisPoints,
 		"the config's loyalty earn ceiling must match the payment service's")
+}
+
+// TestTheBuyerAttributeNamesAgree binds the two spellings of the attributes that
+// name the buyer (ADR 0185).
+//
+// The cart writes them into the rule context and the pricing ladder ranks a
+// price that names them above one that does not. Neither package can import the
+// other, and a drift is silent in the worst direction: the cart would send an
+// attribute no contract price's rule asks for, so every contract would stop
+// matching and the customer would be charged the segment or base price.
+func TestTheBuyerAttributeNamesAgree(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, pricingmodels.AttrCustomerID, cartflow.AttrCustomerID,
+		"the cart and the pricing ladder must spell the customer attribute alike")
+	assert.Equal(t, pricingmodels.AttrCompanyID, cartflow.AttrCompanyID,
+		"the cart and the pricing ladder must spell the company attribute alike")
 }
 
 // TestTheGraphQLLimitDefaultsAgreeWithTheConfig verifies that the GraphQL

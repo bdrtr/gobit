@@ -11,55 +11,68 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/models"
 )
 
-// CalculateParams bir fiyat hesaplamasının bağlamıdır.
+// CalculateParams is the context of a price calculation.
 type CalculateParams struct {
-	// CurrencyCode istenen para birimidir (ISO 4217); zorunludur.
+	// CurrencyCode is the requested currency (ISO 4217); it is required.
 	CurrencyCode string
-	// Quantity satın alınmak istenen adettir; 0 verilirse 1 kabul edilir.
+	// Quantity is the quantity to be bought; 0 is taken as 1.
 	Quantity int32
-	// Attributes kural bağlamıdır (örn. {"region_id": "reg_1"}).
-	// Kuralın baktığı alan burada YOKSA kural eşleşmez.
+	// Attributes is the rule context (e.g. {"region_id": "reg_1"}).
+	// A rule whose field is NOT here does not match.
 	Attributes map[string]string
-	// At hesaplamanın yapıldığı andır; sıfırsa "şimdi" kullanılır. Fiyat
-	// listelerinin tarih penceresi bu ana göre değerlendirilir.
+	// At is the moment of the calculation; zero means "now". The date window
+	// of the price lists is evaluated against this moment.
 	At time.Time
 }
 
-// CalculatePrice bir price set'in verilen bağlamdaki GEÇERLİ fiyatını seçer.
+// CalculatePrice selects the price of a price set that is VALID in the given
+// context.
 //
-// Bu fonksiyon Faz 5'te sepet toplamının dayanacağı seçim noktasıdır; kuralı
-// bu yüzden burada, tek yerde ve açıkça tanımlıdır.
+// This function is the selection point the cart total rests on, which is why
+// the rule is defined here, in one place, and explicitly.
 //
-// # 1. Eleme
+// # 1. Elimination
 //
-// Bir fiyat şu koşulların HEPSİNİ sağlamıyorsa yarışa hiç girmez:
+// A price does not enter the race at all unless it satisfies ALL of these:
 //
-//   - Para birimi istenenle birebir aynıdır (karşılaştırma BÜYÜK harf üzerinden).
-//   - Adet, fiyatın [MinQuantity, MaxQuantity] aralığındadır (üst sınır nil ise sınırsız).
-//   - Fiyat bir listeye bağlıysa liste KULLANILABİLİR olmalıdır: durumu active
-//     ve an, listenin tarih penceresindedir. Listesi silinmiş bir fiyat da elenir.
-//   - Fiyatın TÜM kuralları bağlamla eşleşir. Kuralın baktığı alan bağlamda yoksa
-//     kural eşleşmez, dolayısıyla fiyat elenir.
+//   - Its currency is exactly the one asked for (compared in UPPER case).
+//   - The quantity is inside the price's [MinQuantity, MaxQuantity] range (a nil
+//     upper bound is unbounded).
+//   - If the price belongs to a list, the list must be USABLE: its status is
+//     active and the moment is inside the list's date window. A price whose
+//     list was deleted is eliminated too.
+//   - ALL of the price's rules match the context. A rule whose field is not in
+//     the context does not match, so the price is eliminated.
 //
-// # 2. Sıralama
+// # 2. Ranking
 //
-// Ayakta kalanlar arasında sırasıyla şu ölçütlere bakılır; ilk FARK kazananı
-// belirler:
+// Among the survivors these criteria are looked at in order; the first
+// DIFFERENCE decides the winner:
 //
-//  1. Liste önceliği (büyük kazanır): override (2) > sale (1) > taban fiyat (0).
-//     Sözleşmeli/B2B fiyat kampanyayı, kampanya da taban fiyatı ezer.
-//  2. Eşleşen kural sayısı (çok kazanır): daha çok koşul sağlayan fiyat daha
-//     BELİRGİNDİR; "TR bölgesi + VIP grubu" fiyatı yalnızca "TR bölgesi"
-//     fiyatını yener.
-//  3. Adet aralığı genişliği (dar kazanır): 10-20 aralığı, 1-sınırsız aralığını
-//     yener. Toptan kademesi bu sayede çalışır.
-//  4. Tutar (küçük kazanır): eşdeğer belirginlikte MÜŞTERİ LEHİNE karar verilir.
-//  5. Kimlik (küçük kazanır): kalan her durumda sonuç BELİRLENİMCİDİR. Kimlikler
-//     zaman sıralı olduğu için bu, "önce yazılan kazanır" demektir.
+//  1. List priority (larger wins): override (2) > sale (1) > base price (0). A
+//     contract/B2B price overrides the campaign, and the campaign overrides the
+//     base price.
+//  2. The buyer (narrower wins): a price whose rule names the customer beats one
+//     that names their company, and that beats one that names neither
+//     ([models.PriceRule.BuyerRank], ADR 0185). A contract is the merchant's
+//     decision for that buyer, and a segment price the amount rung below finds
+//     cheaper must not undo it — the reason ADR 0049 gave for ranking groups
+//     rather than letting the cheapest one win.
+//  3. The number of matched rules (more wins): a price satisfying more
+//     conditions is more SPECIFIC; a "TR region + VIP group" price beats a "TR
+//     region" price.
+//  4. The width of the quantity range (narrower wins): a 10-20 range beats a
+//     1-unbounded range. This is what makes wholesale tiers work.
+//  5. The amount (smaller wins): at equal specificity the decision goes IN THE
+//     CUSTOMER'S FAVOR.
+//  6. The id (smaller wins): in every remaining case the result is
+//     DETERMINISTIC. Ids are time ordered, so this means "the one written first
+//     wins".
 //
-// Hiçbir aday kalmazsa errors.NotFound (kod: [CodeNotCalculable]) döner; bu,
-// "bu para biriminde/adette fiyat yok" demektir ve price set'in yokluğundan
-// AYRI bir durumdur (o da NotFound'dur ama kodu farklıdır).
+// If no candidate is left, errors.NotFound (code [CodeNotCalculable]) is
+// returned; it means "there is no price in this currency/quantity" and it is a
+// DIFFERENT case from the price set not existing (that is NotFound too, with a
+// different code).
 func (s *Service) CalculatePrice(
 	ctx context.Context,
 	priceSetID string,
@@ -93,9 +106,10 @@ func (s *Service) CalculatePrice(
 		return models.CalculatedPrice{}, err
 	}
 	if len(candidates) == 0 {
-		// Kabın hiç fiyatı yoksa iki durum ayırt edilir: kap yok (404,
-		// price_set_not_found) ya da kap var ama boş (404, price_not_calculable).
-		// Ek sorgu YALNIZCA bu yolda yapılır; mutlu yol tek gidiş dönüştür.
+		// A set with no prices is told apart in two cases: the set does not
+		// exist (404, price_set_not_found) or it exists and is empty (404,
+		// price_not_calculable). The extra query is made ONLY on this path; the
+		// happy path is a single round trip.
 		if _, err := s.repo.GetPriceSet(ctx, priceSetID); err != nil {
 			return models.CalculatedPrice{}, err
 		}
@@ -104,7 +118,7 @@ func (s *Service) CalculatePrice(
 	selected, ok := selectPrice(candidates, currency, quantity, params.Attributes, at)
 	if !ok {
 		return models.CalculatedPrice{}, errors.NotFound(CodeNotCalculable,
-			"%s için %s para biriminde ve %d adette geçerli fiyat yok",
+			"%s has no valid price in %s for a quantity of %d",
 			priceSetID, currency, quantity).
 			WithDetails(map[string]any{
 				"price_set_id":  priceSetID,
@@ -115,41 +129,45 @@ func (s *Service) CalculatePrice(
 	return selected, nil
 }
 
-// normalizeQuantity adet parametresini doğrular ve varsayılanı uygular.
+// normalizeQuantity validates the quantity parameter and applies the default.
 func normalizeQuantity(quantity int32) (int32, error) {
 	if quantity == 0 {
 		return models.MinQuantity, nil
 	}
 	if quantity < models.MinQuantity {
 		return 0, errors.Invalid(CodeInvalidInput,
-			"adet en az %d olmalı, %d verildi", models.MinQuantity, quantity)
+			"the quantity has to be at least %d, %d given", models.MinQuantity, quantity)
 	}
 	if quantity > models.MaxQuantity {
 		return 0, errors.Invalid(CodeInvalidInput,
-			"adet en fazla %d olabilir, %d verildi", models.MaxQuantity, quantity)
+			"the quantity can be at most %d, %d given", models.MaxQuantity, quantity)
 	}
 	return quantity, nil
 }
 
-// scored sıralamaya giren tek bir adayın ölçütleridir.
+// scored is the criteria of one candidate in the ranking.
 //
-// Ölçütler adaydan BİR KEZ türetilir; karşılaştırma sırasında yeniden
-// hesaplanmaz. Bu, sıralama kuralının tek bir yerde okunabilir kalmasını sağlar.
+// The criteria are derived from the candidate ONCE and not recomputed during
+// the comparison. This keeps the ranking rule readable in one place.
 type scored struct {
 	candidate models.PriceCandidate
-	// tier liste önceliğidir (override 2 > sale 1 > taban 0).
+	// tier is the list priority (override 2 > sale 1 > base 0).
 	tier int
-	// rules eşleşen kural sayısıdır; belirginlik ölçüsüdür.
+	// buyer is how narrowly the price names the buyer (customer 2 > company 1
+	// > nobody 0).
+	buyer int
+	// rules is the number of matched rules; it measures specificity.
 	rules int
-	// span adet aralığının genişliğidir; üst sınırsız aralık için azami değer.
+	// span is the width of the quantity range; the maximum for an unbounded one.
 	span int64
 }
 
-// selectPrice uygun adaylar arasından kazananı seçer.
+// selectPrice selects the winner among the eligible candidates.
 //
-// SAF fonksiyondur: veritabanına, saate ve loglamaya dokunmaz. Seçim kuralının
-// her dalı bu yüzden veritabanı olmadan birim testiyle kanıtlanabilir.
-// İkinci dönüş değeri false ise hiçbir aday uygun değildir.
+// It is a PURE function: it touches neither the database, the clock nor the
+// logger. Every branch of the selection rule can therefore be proven by a unit
+// test without a database. The second return value is false when no candidate
+// is eligible.
 func selectPrice(
 	candidates []models.PriceCandidate,
 	currency string,
@@ -176,8 +194,8 @@ func selectPrice(
 	return result(best, quantity), true
 }
 
-// eligible bir adayın yarışa girip giremeyeceğini bildirir (bkz. CalculatePrice
-// godoc'undaki "Eleme").
+// eligible reports whether a candidate can enter the race (see "Elimination"
+// in the CalculatePrice godoc).
 func eligible(
 	candidate models.PriceCandidate,
 	currency string,
@@ -201,15 +219,15 @@ func eligible(
 	return matchRules(price.Rules, attributes)
 }
 
-// listAvailable adayın bağlı olduğu listenin verilen anda fiyat sunabildiğini
-// bildirir; listesiz (taban) fiyat daima uygundur.
+// listAvailable reports whether the list the candidate belongs to can offer a
+// price at the given moment; a price with no list (the base price) always can.
 //
-// Liste kimliği dolu ama üstverisi yoksa liste SİLİNMİŞTİR; fiyat sahipsiz
-// kalır ve hesaba katılmaz.
+// If the list id is set but its record is missing, the list was DELETED; the
+// price is orphaned and not counted.
 //
-// Ayrı bir fonksiyon olması bilinçlidir: aynı süzgeci [QueryProvider] de
-// uygular. Kural tek yerde kalmazsa modülün hesapladığı fiyat ile vitrine
-// gösterdiği fiyat ayrışır.
+// It is a separate function on purpose: [QueryProvider] applies the same
+// filter. If the rule did not stay in one place, the price the module computes
+// and the price it shows the storefront would drift apart.
 func listAvailable(candidate models.PriceCandidate, at time.Time) bool {
 	if candidate.Price.PriceListID == nil {
 		return true
@@ -217,24 +235,30 @@ func listAvailable(candidate models.PriceCandidate, at time.Time) bool {
 	return candidate.List != nil && candidate.List.Usable(at)
 }
 
-// score adayın sıralama ölçütlerini türetir.
+// score derives the candidate's ranking criteria.
 func score(candidate models.PriceCandidate) scored {
 	tier := 0
 	if candidate.Price.PriceListID != nil && candidate.List != nil {
 		tier = candidate.List.Type.Priority()
 	}
+	buyer := 0
+	for i := range candidate.Price.Rules {
+		buyer = max(buyer, candidate.Price.Rules[i].BuyerRank())
+	}
 	return scored{
 		candidate: candidate,
 		tier:      tier,
+		buyer:     buyer,
 		rules:     len(candidate.Price.Rules),
 		span:      quantitySpan(candidate.Price),
 	}
 }
 
-// quantitySpan adet aralığının genişliğidir; üst sınır yoksa azami değer.
+// quantitySpan is the width of the quantity range; the maximum when there is no
+// upper bound.
 //
-// Sınırsız aralığın azami genişlik sayılması, "dar olan kazanır" kuralının
-// doğal sonucudur: sınırsız aralık her zaman en genel adaydır.
+// Counting an unbounded range as the widest follows from the "narrower wins"
+// rule: an unbounded range is always the most general candidate.
 func quantitySpan(price models.Price) int64 {
 	if price.MaxQuantity == nil {
 		return math.MaxInt64
@@ -242,14 +266,18 @@ func quantitySpan(price models.Price) int64 {
 	return int64(*price.MaxQuantity) - int64(price.MinQuantity)
 }
 
-// better a'nın b'yi yenip yenmediğini bildirir.
+// better reports whether a beats b.
 //
-// Ölçüt sırası CalculatePrice godoc'unda tanımlıdır; ilk FARK kazananı belirler.
-// Son ölçüt kimliktir ve asla eşit çıkmaz (birincil anahtar), yani sıralama
-// TAMDIR: sonuç adayların geliş sırasından bağımsızdır.
+// The order of the criteria is defined in the CalculatePrice godoc; the first
+// DIFFERENCE decides. The last criterion is the id, which is never equal (a
+// primary key), so the ordering is TOTAL: the result does not depend on the
+// order the candidates arrive in.
 func better(a, b scored) bool {
 	if a.tier != b.tier {
 		return a.tier > b.tier
+	}
+	if a.buyer != b.buyer {
+		return a.buyer > b.buyer
 	}
 	if a.rules != b.rules {
 		return a.rules > b.rules
@@ -263,7 +291,7 @@ func better(a, b scored) bool {
 	return a.candidate.Price.ID < b.candidate.Price.ID
 }
 
-// result kazanan adayı sonuç modeline çevirir.
+// result turns the winning candidate into the result model.
 func result(best scored, quantity int32) models.CalculatedPrice {
 	price := best.candidate.Price
 
@@ -293,8 +321,8 @@ func result(best scored, quantity int32) models.CalculatedPrice {
 	}
 }
 
-// matchRules fiyatın TÜM kurallarının bağlamla eşleştiğini bildirir.
-// Kuralsız fiyat koşulsuzdur ve daima eşleşir.
+// matchRules reports whether ALL of the price's rules match the context.
+// A price with no rules is unconditional and always matches.
 func matchRules(rules []models.PriceRule, attributes map[string]string) bool {
 	for i := range rules {
 		if !matchRule(rules[i], attributes) {
@@ -304,18 +332,19 @@ func matchRules(rules []models.PriceRule, attributes map[string]string) bool {
 	return true
 }
 
-// matchRule tek bir kuralın bağlamla eşleştiğini bildirir.
+// matchRule reports whether a single rule matches the context.
 //
-// Kuralın baktığı alan bağlamda YOKSA kural eşleşmez — "ne" (eşit değil) gibi
-// olumsuz işleçlerde bile. Aksi hâlde bağlamı boş bir istek, tüm olumsuz
-// kuralları sağlayarak segment fiyatlarını herkese açardı.
+// If the field the rule looks at is NOT in the context, the rule does not
+// match — even for negative operators such as "ne" (not equal). Otherwise a
+// request with an empty context would satisfy every negative rule and open the
+// segment prices to everybody.
 //
-// DEĞERSİZ kural da eşleşmez ve PANİK ÜRETMEZ. Böyle bir kaydı servis
-// doğrulaması üretmez, ama hesaplama veritabanından okuduğu her satıra
-// dayanıklı olmalıdır: doğrudan SQL çalıştıran bir bakım betiği ya da kısmi
-// bir geri yükleme değerleri boş bırakabilir. Gerekçe tanınmayan işleçtekiyle
-// aynıdır — okunamayan bir koşul, kuralı sessizce devre dışı bırakıp fiyatı
-// herkese AÇMAMALIDIR.
+// A rule with NO VALUES does not match either, and it DOES NOT PANIC. Service
+// validation never produces such a record, but the calculation has to survive
+// every row it reads from the database: a maintenance script running raw SQL or
+// a partial restore can leave the values empty. The reason is the same as for
+// an unknown operator — a condition that cannot be read must not silently
+// disable the rule and OPEN the price to everybody.
 func matchRule(rule models.PriceRule, attributes map[string]string) bool {
 	if len(rule.Values) == 0 {
 		return false
@@ -338,21 +367,22 @@ func matchRule(rule models.PriceRule, attributes map[string]string) bool {
 	case models.OpGt, models.OpGte, models.OpLt, models.OpLte:
 		return matchNumeric(rule, value)
 	default:
-		// Tanınmayan işleç EŞLEŞMEZ: veritabanına sonradan sızmış bir değer,
-		// kuralı sessizce devre dışı bırakıp fiyatı herkese açık hâle
-		// getirmemelidir.
+		// An unknown operator DOES NOT MATCH: a value that later leaked into the
+		// database must not silently disable the rule and open the price to
+		// everybody.
 		return false
 	}
 }
 
-// matchNumeric sayısal işleçleri değerlendirir.
+// matchNumeric evaluates the numeric operators.
 //
-// İki taraf da tam sayıya çevrilebilmelidir; çevrilemeyen bir bağlam değeri
-// kuralı eşleşmez yapar (hata üretmez): bağlam dışarıdan gelir ve tek bir bozuk
-// alan tüm fiyat hesabını düşürmemelidir.
+// Both sides have to convert to an integer; a context value that does not
+// convert makes the rule not match (it produces no error): the context comes
+// from outside, and a single broken field must not bring down the whole price
+// calculation.
 //
-// YALNIZCA matchRule'dan çağrılır ve kuralın en az bir değeri olduğu orada
-// güvence altına alınmıştır; ilk değer bu yüzden doğrudan okunur.
+// It is called ONLY from matchRule, where the rule is guaranteed at least one
+// value, which is why the first value is read directly.
 func matchNumeric(rule models.PriceRule, value string) bool {
 	left, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {

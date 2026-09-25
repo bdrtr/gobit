@@ -101,7 +101,6 @@ internal/modules/pricing/repository/price_list.go
 internal/modules/pricing/repository/price_rule.go
 internal/modules/pricing/repository/price_set.go
 internal/modules/pricing/repository/repository.go
-internal/modules/pricing/service/calculate.go
 internal/modules/pricing/service/calculate_test.go
 internal/modules/pricing/service/fakes_test.go
 internal/modules/pricing/service/price_list.go

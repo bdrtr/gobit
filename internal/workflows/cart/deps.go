@@ -21,6 +21,11 @@ const (
 	ServiceRegion = "region.service"
 	// ServiceCustomer is the customer module's service.
 	ServiceCustomer = "customer.service"
+	// ServiceB2B is the b2b module's cross-module surface.
+	//
+	// IT IS OPTIONAL: if it is not registered no cart carries a company (see
+	// [Companies]).
+	ServiceB2B = "b2b.interop"
 	// ServicePromotion is the promotion module's cross-module surface.
 	//
 	// IT IS OPTIONAL: if it is not registered the discount stays zero (see
@@ -361,6 +366,15 @@ type Customers interface {
 	CustomerGroupIDs(ctx context.Context, customerID string) ([]string, error)
 }
 
+// Companies is the surface of the b2b module ("b2b.interop") that this package
+// uses.
+//
+// One question, the company a customer buys for, so a company's contract price
+// can match (ADR 0185). "" means the customer is no company's employee.
+type Companies interface {
+	CompanyOfCustomer(ctx context.Context, customerID string) (string, error)
+}
+
 // Discounts is the surface of the promotion module ("promotion.interop") that
 // this package uses.
 //
@@ -479,6 +493,12 @@ type Deps struct {
 	// error that blows up on the first request of a registered customer's cart,
 	// and that error must be seen at startup.
 	Customers Customers
+	// Companies is the b2b surface; IT IS OPTIONAL.
+	//
+	// If it is nil no cart carries a company, and a price ruled on a company
+	// never matches: an installation without the b2b module has no companies to
+	// price for.
+	Companies Companies
 	// Discounts is the promotion surface; IT IS OPTIONAL.
 	//
 	// If it is nil the discount stays zero and the storefront keeps working; the
@@ -514,6 +534,7 @@ type Workflows struct {
 	prices    Prices
 	regions   Regions
 	customers Customers
+	companies Companies
 	discounts Discounts
 	taxes     Taxes
 	shipping  Shipping
@@ -561,6 +582,7 @@ func New(deps Deps) (*Workflows, error) {
 		prices:    deps.Prices,
 		regions:   deps.Regions,
 		customers: deps.Customers,
+		companies: deps.Companies,
 		discounts: deps.Discounts,
 		taxes:     deps.Taxes,
 		shipping:  deps.Shipping,
@@ -607,6 +629,10 @@ func FromContainer(c *container.Container) (*Workflows, error) {
 	if err != nil {
 		return nil, err
 	}
+	companies, err := resolveOptional[Companies](c, ServiceB2B)
+	if err != nil {
+		return nil, err
+	}
 	discounts, err := resolveOptional[Discounts](c, ServicePromotion)
 	if err != nil {
 		return nil, err
@@ -648,6 +674,7 @@ func FromContainer(c *container.Container) (*Workflows, error) {
 		Prices:    prices,
 		Regions:   regions,
 		Customers: customers,
+		Companies: companies,
 		Discounts: discounts,
 		Taxes:     taxes,
 		Shipping:  shipping,

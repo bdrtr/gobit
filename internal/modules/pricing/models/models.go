@@ -152,6 +152,39 @@ type PriceRule struct {
 	UpdatedAt time.Time
 }
 
+// The attributes that name the BUYER (ADR 0185).
+//
+// A price whose rule names the buyer is a contract price, and the selection
+// ladder ranks it above every price of the same list priority that does not: a
+// customer's own contract above their company's, and their company's above a
+// segment or a region. The cart writes these attributes, and internal/arch binds
+// the two spellings, since neither package can import the other.
+const (
+	// AttrCustomerID carries the customer's own id.
+	AttrCustomerID = "customer_id"
+	// AttrCompanyID carries the id of the company the customer buys for.
+	AttrCompanyID = "company_id"
+)
+
+// BuyerRank reports how narrowly the rule names the buyer: 2 for the customer,
+// 1 for their company, 0 for anything else.
+//
+// Only a rule that INCLUDES somebody names them. eq and in do; ne and nin
+// describe everybody except somebody, which is not a contract with anyone.
+func (r PriceRule) BuyerRank() int {
+	if r.Operator != OpEq && r.Operator != OpIn {
+		return 0
+	}
+	switch r.Attribute {
+	case AttrCustomerID:
+		return 2
+	case AttrCompanyID:
+		return 1
+	default:
+		return 0
+	}
+}
+
 // PriceListType is the type of a price list.
 type PriceListType string
 

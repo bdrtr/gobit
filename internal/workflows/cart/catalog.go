@@ -28,6 +28,23 @@ const attrRegionID = "region_id"
 // the head of the customer's ordered groups.
 const attrCustomerGroupID = "customer_group_id"
 
+// AttrCustomerID is the name of the attribute that carries the customer's own id
+// in the rule context (ADR 0185).
+//
+// A price ruled on it is that customer's contract price, and the pricing ladder
+// ranks a price that names the buyer above one that does not. That makes the
+// spelling a contract with pricing, which this package cannot import and which
+// cannot import it, so the names are exported on both sides and internal/arch
+// binds them.
+const AttrCustomerID = "customer_id"
+
+// AttrCompanyID is the name of the attribute that carries the company the
+// customer buys for, when the customer is a company's employee (ADR 0185).
+//
+// A price ruled on it is the company's contract price, for every employee who
+// buys for it. The spelling is bound to pricing's the way [AttrCustomerID] is.
+const AttrCompanyID = "company_id"
+
 // priceSetsFor resolves the price sets of the given variants with a SINGLE link
 // query.
 //
@@ -231,28 +248,51 @@ func (w *Workflows) productIDsFor(ctx context.Context, variantIDs []string) (map
 // value a merchant could accidentally configure. The default direction is that a
 // segment price stays CLOSED rather than opening to everybody.
 //
-// # Why a failure to read the groups is NOT fatal
+// # Why the customer and the company go in by id
 //
-// A cart total that cannot be computed because the customer module is briefly
-// unavailable is worse than a cart total computed at the base price: the first
-// stops the shop, the second charges the ordinary price. The error is returned so
-// the caller can log it, and the context comes back with the region alone.
+// A contract price is written for one buyer: a customer, or a company whose
+// employees all buy at it (ADR 0185). The customer's id is on the cart, and the
+// company comes from the b2b module, which answers "" for somebody who is no
+// company's employee — and then the attribute is omitted, for the reason a guest
+// omits the group below. Without the b2b surface the company is never there, and
+// a company price never matches.
+//
+// # Why a failure to read the groups or the company is NOT fatal
+//
+// A cart total that cannot be computed because the customer or b2b module is
+// briefly unavailable is worse than a cart total computed without what could not
+// be read: the first stops the shop, the second charges the ordinary price. The
+// error is returned so the caller can log it, and the context comes back with
+// everything that WAS read.
 func (w *Workflows) ruleContext(
 	ctx context.Context, snap Snapshot,
 ) (attributes map[string]string, lists map[string][]string, err error) {
 	attributes = map[string]string{attrRegionID: snap.RegionID}
 	addCartMetadata(attributes, snap.Metadata)
 
-	if snap.CustomerID == "" || w.customers == nil {
+	if snap.CustomerID == "" {
 		return attributes, nil, nil
+	}
+	attributes[AttrCustomerID] = snap.CustomerID
+
+	var companyErr error
+	if w.companies != nil {
+		var company string
+		company, companyErr = w.companies.CompanyOfCustomer(ctx, snap.CustomerID)
+		if companyErr == nil && company != "" {
+			attributes[AttrCompanyID] = company
+		}
+	}
+	if w.customers == nil {
+		return attributes, nil, companyErr
 	}
 
 	groups, groupErr := w.customers.CustomerGroupIDs(ctx, snap.CustomerID)
 	if groupErr != nil {
-		return attributes, nil, groupErr
+		return attributes, nil, errors.Join(companyErr, groupErr)
 	}
 	if len(groups) == 0 {
-		return attributes, nil, nil
+		return attributes, nil, companyErr
 	}
 
 	// The groups go out TWICE, and the two answer different questions.
@@ -268,7 +308,7 @@ func (w *Workflows) ruleContext(
 	attributes[attrCustomerGroupID] = groups[0]
 	lists = map[string][]string{attrCustomerGroupID: groups}
 
-	return attributes, lists, nil
+	return attributes, lists, companyErr
 }
 
 // CartAttributePrefix is what every attribute taken from the cart's metadata is

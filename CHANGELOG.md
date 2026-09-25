@@ -23,6 +23,18 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **A contract price names its buyer** (ADR 0185). **For merchants:** an
+  override price list whose price carries the rule `customer_id eq …` is that
+  customer's contract, and one ruled on `company_id` is the contract of every
+  employee of that b2b company; a contract outranks the buyer's segment price
+  at the same list priority, even when the segment price is cheaper, and a
+  customer's own contract outranks their company's. **For embedders:** the
+  cart's rule context carries `customer_id` for a cart with a customer and
+  `company_id` for a company's employee, so promotions can be written for them
+  too; the b2b interop gains `CompanyOfCustomer`. **For API consumers:**
+  `GET /admin/v1/price-sets/{id}/calculate` given `attr_customer_id` or
+  `attr_company_id` ranks as a cart does.
+
 - **The GraphQL product names its neighbors** (ADR 0184). **For API
   consumers:** `Product.related(type: cross_sell | up_sell | substitute)` returns
   what `GET …/products/{id}/related?type=` returns, in the same order and with
