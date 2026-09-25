@@ -70,3 +70,20 @@ Requiring `golang.org/x/mod` directly turned
 `TestEveryDependencyAnEmbedderInheritsIsWrittenDown` red twice: the module was
 missing from the direct reasons, and still listed in
 `testdata/indirect-dependencies.txt`. `go.sum` did not change.
+
+## 6. After the tag, through the proxy
+
+v0.9.0 was pushed at 1187fcb once CI was green there. From a scratch directory
+outside the repository, with `GOPROXY=https://proxy.golang.org`:
+
+| Step | Result |
+|---|---|
+| `go list -m github.com/bdrtr/gobit@v0.9.0` | `v0.9.0`, time `2026-09-25T15:19:24Z` |
+| `go list -m github.com/bdrtr/gobit@latest` | `v0.9.0` |
+| `go install github.com/bdrtr/gobit/cmd/server@v0.9.0` | exit 0; the binary is stamped `v0.9.0` |
+| that binary's `new shop` | `require github.com/bdrtr/gobit v0.9.0` |
+| `go mod tidy`, then `go build ./...`, in `shop` | exit 0, exit 0 |
+
+The route section 1 found refusing now starts a project that builds against
+the published module. `make build` at the tag names itself `v0.9.0` and writes
+the same `require` line through the build facts.

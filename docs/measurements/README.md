@@ -112,4 +112,4 @@ truth: a report says what was true on the day it was taken.
 | [A launch at nine — measured 2026-09-25](0177-a-launch-at-nine.md) | 96 |
 | [A product page and its neighbors — measured 2026-09-25](0180-a-product-page-and-its-neighbors.md) | 96 |
 | [A list an operator can type — measured 2026-09-25](0181-a-list-an-operator-can-type.md) | 88 |
-| [The binary knew its version — measured 2026-09-25](0182-the-binary-knew-its-version.md) | 72 |
+| [The binary knew its version — measured 2026-09-25](0182-the-binary-knew-its-version.md) | 89 |
