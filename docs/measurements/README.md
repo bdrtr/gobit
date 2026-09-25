@@ -116,3 +116,4 @@ truth: a report says what was true on the day it was taken.
 | [The first command — measured 2026-09-25](0183-the-first-command.md) | 77 |
 | [A cycle with a price — measured 2026-09-25](0184-a-cycle-with-a-price.md) | 89 |
 | [Whose price it is — measured 2026-09-25](0185-whose-price-it-is.md) | 81 |
+| [Books read from the rows — measured 2026-09-25](0186-books-read-from-the-rows.md) | 80 |

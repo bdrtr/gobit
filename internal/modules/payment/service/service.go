@@ -224,6 +224,13 @@ type Store interface {
 	// PaymentMovementsByCollectionIDs reads every capture and refund, each
 	// with its own amount and moment (ADR 0170).
 	PaymentMovementsByCollectionIDs(ctx context.Context, ids []string) ([]models.PaymentMovement, error)
+
+	// JournalMovements reads the rows the journal is derived from inside
+	// [from, to), in one currency when one is given, at most limit+1 of each
+	// kind so a cut window can be told from a whole one (ADR 0186).
+	JournalMovements(
+		ctx context.Context, from, to time.Time, currencyCode string, limit int32,
+	) ([]models.JournalMovement, error)
 	// UpdatePaymentCollectionTotals writes the amounts and the derived status
 	// with ABSOLUTE values.
 	UpdatePaymentCollectionTotals(

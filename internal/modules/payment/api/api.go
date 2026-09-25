@@ -137,6 +137,9 @@ type Payments interface {
 
 	// LoyaltyBalance müşterinin tek bir para birimindeki puanını döner.
 	LoyaltyBalance(ctx context.Context, customerID, currencyCode string) (int64, error)
+
+	// Journal derives the module's books over a window (ADR 0186).
+	Journal(ctx context.Context, q service.JournalQuery) (service.Journal, error)
 	// ListLoyalty müşterinin puan geçmişini sayfalar.
 	ListLoyalty(
 		ctx context.Context, in service.ListLoyaltyInput,
@@ -253,6 +256,8 @@ func (h *Handler) Routes(r chi.Router) {
 	// (ADR 0164).
 	okuma.Get(pathAdminLoyaltyPoints, h.listLoyaltyPoints)
 	okuma.Get(pathAdminLoyaltyPointsBalance, h.loyaltyPointBalance)
+
+	okuma.Get(pathAdminPaymentJournal, h.paymentJournal)
 
 	yazma.Post(pathAdminCollections, h.createCollection)
 	okuma.Get(pathAdminCollections, h.listCollections)

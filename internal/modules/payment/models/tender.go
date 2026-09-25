@@ -14,6 +14,13 @@ import "time"
 // point would earn itself back at the ceiling rate (ADR 0165).
 const LoyaltyTenderID = "loyalty_points"
 
+// StoreCreditTenderID is the identity of the provider that spends store credit.
+//
+// It lives here for the reason [LoyaltyTenderID] does: the provider answers to
+// it, and the payment journal books a capture through it against the store
+// credit the shop owes rather than against a provider's clearing (ADR 0186).
+const StoreCreditTenderID = "store_credit"
+
 // TenderSession is a balance tender's OWN view of a payment session.
 //
 // Store credit and loyalty points are one state machine over two ledgers

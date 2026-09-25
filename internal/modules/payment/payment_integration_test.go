@@ -252,18 +252,57 @@ func yeniKoleksiyon(ctx context.Context, t *testing.T, svc *service.Service) mod
 	return col
 }
 
-// tabloVar tablonun veritabanında olup olmadığını bildirir.
-func tabloVar(ctx context.Context, t *testing.T, table string) bool {
+// isolatedDatabase creates a database of the test's own, applies the module's
+// and the outbox's migrations to it, and returns its address and a pool on it.
+//
+// A test that drops the schema has to run here: in the shared database it
+// would rewind the rows of every test before it and depend on which ones had
+// run (D135).
+func isolatedDatabase(ctx context.Context, t *testing.T, prefix string) (string, *db.Pool) {
+	t.Helper()
+
+	name := prefix + "_" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	_, err := testPool.Pool().Exec(ctx, "CREATE DATABASE "+name)
+	require.NoError(t, err)
+
+	parsed, err := url.Parse(testDSN)
+	require.NoError(t, err)
+	parsed.Path = "/" + name
+	dsn := parsed.String()
+
+	require.NoError(t, db.Migrate(ctx, dsn, payment.New().Migrations(), payment.ModuleName))
+	require.NoError(t, db.Migrate(ctx, dsn, outbox.Migrations(), outbox.MigrationOwner))
+	pool, err := db.New(ctx, db.DefaultConfig(dsn), nil)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+
+	return dsn, pool
+}
+
+// serviceOnPool is newService on another database's pool.
+func serviceOnPool(t *testing.T, pool *db.Pool) *service.Service {
+	t.Helper()
+
+	repo := repository.New(pool.Pool())
+	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(manual.New(repo, nil)))
+	svc, err := service.New(service.Options{Store: repo, Providers: registry, Events: eventbus.NewInMemory(nil)})
+	require.NoError(t, err)
+
+	return svc
+}
+
+// tableExistsIn reports whether the table exists in the pool's database.
+func tableExistsIn(ctx context.Context, t *testing.T, pool *db.Pool, table string) bool {
 	t.Helper()
 
 	var exists bool
-	err := testPool.Pool().QueryRow(ctx,
+	require.NoError(t, pool.Pool().QueryRow(ctx,
 		`SELECT EXISTS (
              SELECT 1 FROM pg_class c
              JOIN pg_namespace n ON n.oid = c.relnamespace
              WHERE c.relname = $1 AND c.relkind = 'r' AND n.nspname = current_schema()
-         )`, table).Scan(&exists)
-	require.NoError(t, err)
+         )`, table).Scan(&exists))
 	return exists
 }
 
@@ -278,7 +317,17 @@ func tabloVar(ctx context.Context, t *testing.T, table string) bool {
 func TestMigrationVeriVarkenGeriAlinabilir(t *testing.T) {
 	ctx := context.Background()
 	src := payment.New().Migrations()
-	svc, _ := newService(t)
+	// The test drops and re-creates the module's schema, so it runs in a
+	// database of its own (D135). In the shared one it rewound every row the
+	// tests before it wrote, and 000006's down refuses a point ledger holding a
+	// spend row: it passed only while it ran before every test that spends
+	// points, which file order happened to arrange.
+	dsn, pool := isolatedDatabase(ctx, t, "payment_migration")
+	svc := serviceOnPool(t, pool)
+	tabloVar := func(ctx context.Context, t *testing.T, table string) bool {
+		t.Helper()
+		return tableExistsIn(ctx, t, pool, table)
+	}
 
 	col := yeniKoleksiyon(ctx, t, svc)
 	ses, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
@@ -296,18 +345,18 @@ func TestMigrationVeriVarkenGeriAlinabilir(t *testing.T) {
 		require.True(t, tabloVar(ctx, t, table), "%s başlangıçta var olmalı", table)
 	}
 
-	require.NoError(t, db.MigrateDown(ctx, testDSN, src, payment.ModuleName, 0),
+	require.NoError(t, db.MigrateDown(ctx, dsn, src, payment.ModuleName, 0),
 		"down başarısız — bu, modülün bir daha migrate EDİLEMEMESİ demektir")
 	for _, table := range modulTablolari {
 		assert.False(t, tabloVar(ctx, t, table), "%s geri alma sonrası kalmamalı", table)
 	}
 
-	require.NoError(t, db.Migrate(ctx, testDSN, src, payment.ModuleName))
+	require.NoError(t, db.Migrate(ctx, dsn, src, payment.ModuleName))
 	for _, table := range modulTablolari {
 		assert.True(t, tabloVar(ctx, t, table), "%s yeniden uygulanmalı", table)
 	}
 
-	version, dirty, err := db.Version(ctx, testDSN, payment.ModuleName)
+	version, dirty, err := db.Version(ctx, dsn, payment.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "yarıda kalmış migration olmamalı")
 	assert.Equal(t, enYuksekSurum(t, src), version,

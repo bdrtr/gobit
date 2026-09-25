@@ -12,6 +12,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The payment module's migration test passed by file order** (D135). It
+  rolled the schema back in the database every test shares, and 000006 refuses
+  to roll back a point ledger holding a spend row; it ran before every test that
+  spends points only because of its file name. It runs in a database of its own
+  now, as pricing's does.
+
 - **The GraphQL cost ceiling was calibrated two fields light** (D134). The
   "every field" document had not selected the product's `typeId` since ADR 0101
   nor the image's `altText` since ADR 0104; a sentence asked for it and nothing checked.
@@ -22,6 +28,16 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **The payment module keeps derived books** (ADR 0186). **For operators and
+  accountants:** `GET /admin/v1/payment-journal?from=&to=[&currency_code=]`
+  (`payment:read`) returns every capture, refund, store credit grant and loyalty
+  grant in the window as a balanced debit/credit entry over six accounts —
+  `receivable`, `provider_clearing` (per provider), `store_credit`,
+  `store_credit_granted`, `loyalty`, `loyalty_granted` — and a trial balance per
+  currency. Nothing is written; holds and releases are not entries. A window over
+  93 days or 10,000 movements is refused. **For operators:** payment migration
+  000007 adds four time indexes.
 
 - **A contract price names its buyer** (ADR 0185). **For merchants:** an
   override price list whose price carries the rule `customer_id eq …` is that

@@ -120,6 +120,7 @@ func Describe(d *openapi.Doc) {
 	// Sadakat puanının iki okuma ucu; ayrı dosya olma gerekçesi aynı
 	// (ADR 0164).
 	describeLoyaltyPoints(d)
+	describeJournal(d)
 
 	describeOturumlar(d)
 	describeTahsilatlar(d)

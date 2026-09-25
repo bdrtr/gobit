@@ -28,7 +28,7 @@ import (
 //
 // A storefront asks for it by this string in the completion body's
 // payment_provider_id, exactly as it asks for "manual".
-const ID = "store_credit"
+const ID = models.StoreCreditTenderID
 
 // The provider's error codes; what each one means is written on
 // [balancetender.Codes].

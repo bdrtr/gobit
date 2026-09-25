@@ -323,6 +323,11 @@ func anlatilanUclar() []ucBeklentisi {
 			metod: http.MethodGet, yol: pathAdminLoyaltyPointsBalance, durum: "200",
 			yanit: loyaltyBalanceDTO{},
 		},
+		// The payment journal (ADR 0186).
+		{
+			metod: http.MethodGet, yol: pathAdminPaymentJournal, durum: "200",
+			yanit: fullJournal(),
+		},
 	}
 }
 

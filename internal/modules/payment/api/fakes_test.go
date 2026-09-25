@@ -46,6 +46,10 @@ type fakePayments struct {
 	loyaltyHistory []models.LoyaltyEntry
 	// lastLoyaltyQuery puanın hangi müşteri ve para birimi için sorulduğudur.
 	lastLoyaltyQuery [2]string
+
+	// journal is the scripted journal and journalQueries how it was asked.
+	journal        service.Journal
+	journalQueries []service.JournalQuery
 	// lastLoyaltyPage listeleme ucunun servise ilettiği sayfalamadır.
 	lastLoyaltyPage service.Page
 

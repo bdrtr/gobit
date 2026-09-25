@@ -63,6 +63,11 @@ type fakeStore struct {
 
 	// loyalty puan defteridir ve müşteri+para birimi başına tutuluyor (ADR 0164).
 	loyalty map[string][]models.LoyaltyEntry
+
+	// journal is what JournalMovements returns, and journalCalls records how it
+	// was asked (ADR 0186).
+	journal      []models.JournalMovement
+	journalCalls []journalCall
 }
 
 // newFakeStore boş bir sahte depo üretir.
