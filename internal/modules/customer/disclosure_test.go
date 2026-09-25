@@ -140,7 +140,7 @@ func TestTheModuleIsFoundAsADiscloser(t *testing.T) {
 // misspelled name in the other two produces a file that names a table nobody can
 // find, which sends an auditor looking for data that does not exist.
 func TestTheDisclosedTablesAreRealTables(t *testing.T) {
-	tables := tablesOf(t, readMigration(t))
+	tables := tablesOf(t, readMigrations(t))
 
 	for _, name := range []string{service.TableCustomer, service.TableAddress, service.TableGroup} {
 		assert.Contains(t, tables, name, "%s is not created by the migration", name)

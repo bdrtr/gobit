@@ -19,9 +19,11 @@ import (
 // is why [personaldata.Declarer] takes no context and returns no error, and why the
 // audit of it belongs in a plain unit test that an auditor can run anywhere.
 
-// migrationFile is the module's only migration; the declaration is checked
-// against it because that file, not this package, decides what columns exist.
-const migrationFile = "000001_cart_init.up.sql"
+// The declaration is checked against EVERY up migration the module ships,
+// because those files, not this package, decide what columns exist (D137).
+//
+// It read 000001 alone, as the customer module's audit did, and 000002 created
+// a whole table, cart_promotion_code, that no audit looked at.
 
 // notPersonalColumns are the columns that hold nothing about the person, table
 // by table.
@@ -40,6 +42,10 @@ const migrationFile = "000001_cart_init.up.sql"
 //
 // The reasons, per table:
 //
+//   - cart_promotion_code is exempt as a whole row (D137). A code names a
+//     promotion the shop wrote, not the shopper — the promotion module, which
+//     owns the codes, declares none of them — and the cart id beside it resolves
+//     to the cart the erasure already handles.
 //   - The identifiers are here on purpose. A synthetic key names a row, not a
 //     person, and after the columns beside it are anonymized it resolves to
 //     nobody; that is exactly the fact the anonymization rests on. region_id,
@@ -80,6 +86,9 @@ var notPersonalColumns = map[string][]string{
 		"id", "cart_id", "name", "shipping_option_id", "amount",
 		"created_at", "updated_at", "deleted_at",
 	},
+	"cart_promotion_code": {
+		"cart_id", "code", "created_at",
+	},
 }
 
 // TestPersonalDataCoversEveryPersonalColumn proves the declaration is
@@ -110,7 +119,7 @@ func TestPersonalDataCoversEveryPersonalColumn(t *testing.T) {
 			"%s: a column named without a reason cannot be repeated to a data subject", key)
 	}
 
-	schema := readMigration(t)
+	schema := readMigrations(t)
 	tables := tablesOf(t, schema)
 	require.Len(t, tables, len(notPersonalColumns),
 		"the audit reads %v; the migration creates %v. A table the map does not name "+
@@ -124,7 +133,7 @@ func TestPersonalDataCoversEveryPersonalColumn(t *testing.T) {
 			"%s is created by the migration and is not in notPersonalColumns; every "+
 				"table has to be looked at, even one whose columns all turn out to be "+
 				"exempt — that is what the next column added to it will be measured against", table)
-		columns := columnsOf(t, schema, table)
+		columns := append(columnsOf(t, schema, table), addedColumnsOf(schema, table)...)
 		require.NotEmpty(t, columns, "no column was read out of %s; the scanner has gone blind", table)
 
 		for _, column := range columns {
@@ -176,16 +185,53 @@ func TestTheHolderIsTheModuleName(t *testing.T) {
 	assert.Equal(t, cart.ModuleName, service.ErasureHolder)
 }
 
-// readMigration reads the module's migration through the same embedded file
-// system the migrator uses, so this test cannot pass against a file the module
-// does not actually ship.
-func readMigration(t *testing.T) string {
+// readMigrations reads every up migration the module ships, in the order the
+// migrator applies them, through the same embedded file system it uses, so this
+// test cannot pass against a file the module does not actually ship.
+func readMigrations(t *testing.T) string {
 	t.Helper()
 
-	raw, err := fs.ReadFile(cart.New(cart.Options{}).Migrations(), migrationFile)
+	migrations := cart.New(cart.Options{}).Migrations()
+	names, err := fs.Glob(migrations, "*.up.sql")
 	require.NoError(t, err)
+	require.NotEmpty(t, names, "no up migration was found; the reader has gone blind")
+	sort.Strings(names)
 
-	return string(raw)
+	var schema strings.Builder
+	for _, name := range names {
+		raw, err := fs.ReadFile(migrations, name)
+		require.NoError(t, err)
+		schema.Write(raw)
+		schema.WriteString("\n")
+	}
+	return schema.String()
+}
+
+// addedColumnsOf returns the columns later migrations add to a table with
+// ALTER TABLE ... ADD COLUMN, the statement a CREATE TABLE block cannot show.
+func addedColumnsOf(schema, table string) []string {
+	var columns []string
+	for _, statement := range strings.Split(schema, ";") {
+		fields := strings.Fields(statement)
+		for i := 0; i+2 < len(fields); i++ {
+			if fields[i] != "ALTER" || fields[i+1] != "TABLE" || fields[i+2] != table {
+				continue
+			}
+			for j := i + 3; j+1 < len(fields); j++ {
+				if fields[j] != "ADD" || fields[j+1] != "COLUMN" {
+					continue
+				}
+				k := j + 2
+				if k+2 < len(fields) && fields[k] == "IF" && fields[k+1] == "NOT" && fields[k+2] == "EXISTS" {
+					k += 3
+				}
+				if k < len(fields) {
+					columns = append(columns, fields[k])
+				}
+			}
+		}
+	}
+	return columns
 }
 
 // tableHeader is what a table's creation looks like in this repository's

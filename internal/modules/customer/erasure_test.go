@@ -19,9 +19,14 @@ import (
 // is why [personaldata.Declarer] takes no context and returns no error, and why the
 // audit of it belongs in a plain unit test that an auditor can run anywhere.
 
-// migrationFile is the module's only migration; the declaration is checked
-// against it because that file, not this package, decides what columns exist.
-const migrationFile = "000001_customer_init.up.sql"
+// The declaration is checked against EVERY up migration the module ships,
+// because those files, not this package, decide what columns exist (D137).
+//
+// It read one file, 000001, whose name it kept as a constant described as "the
+// module's only migration". 000002 added customer_group.rank and nothing looked
+// at it, and a personal column added by a later migration would have passed the
+// same way: measured by appending a date_of_birth column to 000002, which left
+// this test green.
 
 // notPersonalColumns are the columns that hold nothing about the person, table
 // by table.
@@ -51,7 +56,8 @@ const migrationFile = "000001_customer_init.up.sql"
 //     some row belongs to some segment, and once the customer row is anonymous
 //     it no longer says that about anybody.
 //   - customer_group.name is the segment's own label ("wholesalers"), written
-//     by the shop about a category rather than about a customer. Its metadata
+//     by the shop about a category rather than about a customer, and its rank
+//     is the shop's ordering of its segments (ADR 0049). Its metadata
 //     is NOT exempt and is declared Open, because it is the same free-form
 //     jsonb as customer.metadata and gobit refuses to look inside either one.
 //   - The timestamps and the flags (has_account, is_default_shipping,
@@ -66,7 +72,7 @@ var notPersonalColumns = map[string][]string{
 		"created_at", "updated_at", "deleted_at",
 	},
 	"customer_group": {
-		"id", "name", "created_at", "updated_at", "deleted_at",
+		"id", "name", "rank", "created_at", "updated_at", "deleted_at",
 	},
 	"customer_group_customer": {
 		"customer_id", "customer_group_id", "created_at",
@@ -99,7 +105,7 @@ func TestPersonalDataCoversEveryPersonalColumn(t *testing.T) {
 			"%s: a column named without a reason cannot be repeated to a data subject", key)
 	}
 
-	schema := readMigration(t)
+	schema := readMigrations(t)
 	tables := tablesOf(t, schema)
 	require.Len(t, tables, len(notPersonalColumns),
 		"the audit reads %v; the migration creates %v. A table the map does not name "+
@@ -113,7 +119,7 @@ func TestPersonalDataCoversEveryPersonalColumn(t *testing.T) {
 			"%s is created by the migration and is not in notPersonalColumns; every "+
 				"table has to be looked at, even one whose columns all turn out to be "+
 				"exempt — that is what the next column added to it will be measured against", table)
-		columns := columnsOf(t, schema, table)
+		columns := append(columnsOf(t, schema, table), addedColumnsOf(schema, table)...)
 		require.NotEmpty(t, columns, "no column was read out of %s; the scanner has gone blind", table)
 
 		for _, column := range columns {
@@ -151,15 +157,56 @@ func TestTheHolderIsTheModuleName(t *testing.T) {
 	assert.Equal(t, customer.ModuleName, service.ErasureHolder)
 }
 
-// readMigration reads the module's migration through the same embedded file
-// system the migrator uses, so this test cannot pass against a file the module
-// does not actually ship.
-func readMigration(t *testing.T) string {
+// readMigrations reads every up migration the module ships, in the order the
+// migrator applies them, through the same embedded file system it uses, so this
+// test cannot pass against a file the module does not actually ship.
+func readMigrations(t *testing.T) string {
 	t.Helper()
 
-	raw, err := fs.ReadFile(customer.New(nil).Migrations(), migrationFile)
+	migrations := customer.New(nil).Migrations()
+	names, err := fs.Glob(migrations, "*.up.sql")
 	require.NoError(t, err)
-	return string(raw)
+	require.NotEmpty(t, names, "no up migration was found; the reader has gone blind")
+	sort.Strings(names)
+
+	var schema strings.Builder
+	for _, name := range names {
+		raw, err := fs.ReadFile(migrations, name)
+		require.NoError(t, err)
+		schema.Write(raw)
+		schema.WriteString("\n")
+	}
+	return schema.String()
+}
+
+// addedColumnsOf returns the columns later migrations add to a table with
+// ALTER TABLE ... ADD COLUMN, the statement a CREATE TABLE block cannot show.
+//
+// The statement is read up to its semicolon, so an ADD COLUMN written on the
+// line after the ALTER TABLE, as this repository writes it, is found.
+func addedColumnsOf(schema, table string) []string {
+	var columns []string
+	for _, statement := range strings.Split(schema, ";") {
+		fields := strings.Fields(statement)
+		for i := 0; i+2 < len(fields); i++ {
+			if fields[i] != "ALTER" || fields[i+1] != "TABLE" || fields[i+2] != table {
+				continue
+			}
+			for j := i + 3; j+1 < len(fields); j++ {
+				if fields[j] != "ADD" || fields[j+1] != "COLUMN" {
+					continue
+				}
+				k := j + 2
+				if k+2 < len(fields) && fields[k] == "IF" && fields[k+1] == "NOT" && fields[k+2] == "EXISTS" {
+					k += 3
+				}
+				if k < len(fields) {
+					columns = append(columns, fields[k])
+				}
+			}
+		}
+	}
+	return columns
 }
 
 // tablesOf returns the name of every table the migration creates, in the order

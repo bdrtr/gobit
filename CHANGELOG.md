@@ -12,6 +12,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **Two personal data audits read only their module's first migration** (D137).
+  The customer and cart modules check their declaration against the schema, and
+  both read `000001` alone: a personal column added by a later migration passed,
+  `customer_group.rank` was never looked at, and the cart's whole
+  `cart_promotion_code` table was invisible. Both now read every up migration,
+  including `ALTER TABLE … ADD COLUMN`.
+
 - **`errors.HasKind(nil, errors.KindInternal)` was true** (D136). `KindOf`
   reads an unclassified error as internal and read nil the same way, so a test
   asserting an internal failure passed when nothing failed; the b2b service's
