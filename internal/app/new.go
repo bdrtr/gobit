@@ -123,11 +123,13 @@ func runNew(args []string, out io.Writer, _ Options) error {
 //
 // # Why an unknown version is a REFUSAL and not a guess
 //
-// The alternatives were measured. Writing `@latest` or the newest tag resolves
-// to a release that does not contain the published surface, so the generated
-// project fails at `go mod tidy` — a project the user cannot build and cannot
-// diagnose. Writing nothing produces a go.mod that requires no version at all.
-// Refusing says which build produced this binary and what to do about it.
+// The alternatives were measured. Writing `@latest` or the newest tag names a
+// release older than the template this binary carries — until v0.9.0 no tag
+// contained the published surface at all, and a binary built after a tag can
+// use what that tag lacks — so the generated project fails at `go mod tidy`, a
+// project the user cannot build and cannot diagnose. Writing nothing produces a
+// go.mod that requires no version at all. Refusing says which build produced
+// this binary and what to do about it.
 func requiredVersion(replace string) (string, error) {
 	if replace != "" {
 		// A checkout answers the question completely; asking the build for a

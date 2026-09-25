@@ -27,9 +27,9 @@ gobit.New().Version(version).Add(myModule).Use(myPlugin).Main(os.Args[1:], os.St
 make up      # Postgres 16 + Redis 7 (waits until they are healthy)
 make run     # starts the server on :9000
 curl -s localhost:9000/health
-# {"status":"ok","version":"v0.8.0"}
+# {"status":"ok","version":"v0.9.0"}
 curl -s localhost:9000/ready
-# {"status":"ok","version":"v0.8.0","checks":{"postgres":{"status":"ok"}}}
+# {"status":"ok","version":"v0.9.0","checks":{"postgres":{"status":"ok"}}}
 ```
 
 `/health` reports only that the process is alive; `/ready` tests the
@@ -241,7 +241,7 @@ on a list; it is that.
 | [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 181 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
 | [`docs/mimari.md`](./docs/mimari.md) | The architecture narrative: layers, the life cycle of a request and of a module, data, sagas, the core packages |
 | [`docs/gaps.md`](./docs/gaps.md) | The defect ledger: every fault this repository found in itself, one sentence and the ADR that closed it |
-| [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: fifty-nine items in six groups — identity and authorization, sales channel scope, the category tree, tax, installation and operation, the limit of the invariants |
+| [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: fifty-eight items in six groups — identity and authorization, sales channel scope, the category tree, tax, installation and operation, the limit of the invariants |
 | [`docs/first-run.md`](./docs/first-run.md) | From an empty database to a paid order: the fifteen calls, what each binding is for, and the tax trap. The block is EXECUTED by the smoke lane |
 | [`docs/security.md`](./docs/security.md) | Identity and authorization: the two surfaces, the scope dictionary, the hardening rings, an end-to-end curl walkthrough |
 | [`docs/commerce-flows.md`](./docs/commerce-flows.md) | From cart to order: who owns a flow, who decides the price, which warehouse it ships from |
@@ -255,6 +255,6 @@ on a list; it is that.
 
 **All ten phases** of the roadmap are complete, from the project skeleton to the
 GraphQL storefront surface and B2B; what was found after the roadmap ended is
-tracked in the releases. The current version is **v0.8.0**, and throughout `0.x`
+tracked in the releases. The current version is **v0.9.0**, and throughout `0.x`
 **breaking changes may arrive in minor versions** — the surface freezes with
 `1.0.0`.

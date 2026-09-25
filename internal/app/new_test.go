@@ -58,8 +58,9 @@ func TestNewReadsNoConfiguration(t *testing.T) {
 // `go test` injects none of the build facts and the toolchain stamps it
 // "(devel)", so the binary cannot say which library version a generated project
 // should require. The measured alternatives are all worse: `@latest` and the
-// newest tag resolve to a release that does not contain the published surface,
-// so the project fails at `go mod tidy` — with nothing telling the user why.
+// newest tag name a release older than the template — until v0.9.0 none
+// contained the published surface — so the project fails at `go mod tidy`, with
+// nothing telling the user why.
 func TestNewRefusesWhenTheBuildCannotNameAVersion(t *testing.T) {
 	require.Empty(t, buildRelease,
 		"this test runs under `go test`, which injects no build facts; if that changed "+

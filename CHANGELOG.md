@@ -10,6 +10,8 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+## [0.9.0] — 2026-09-25
+
 Her madde **bir satırdır ve kararını adlandırır**. Gerekçe, ölçüm ve karşı
 okuma burada değil: karar `docs/adr/` içindeki kayıtta, kararı üreten tartışma
 onu getiren commit mesajında, sayılar `docs/measurements/` altında durur. Bu
@@ -17,6 +19,76 @@ bölüm 2026-09-09'da 4.604 satırdan bu listeye indirildi — anlatının tamam
 geçmişinde duruyor. Elli iki karar 2026-09-09'da toplu olarak eklendi: hepsi
 verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 `TestTheChangelogNamesEveryUnreleasedDecision` artık soruyor (ADR 0098).
+
+### Kırıcı değişiklikler
+
+Legitimate in a minor version throughout `0.x` (see the head of this file).
+Collected on the day of the cut by diffing v0.8.0 against this tree: the
+OpenAPI documents of both binaries, `gorelease` over the importable packages,
+the `env:` tags, the scope bindings and the event payloads. Each item names what
+a v0.8.0 user has to change.
+
+**HTTP clients**
+
+- **The storefront catalog reads moved under the sales channel** (ADR 0044):
+  `/store/v1/sales-channels/{sales_channel_id}/products[/{id}]`, and the search
+  plugin's `/store/v1/sales-channels/{sales_channel_id}/search`. A channel the
+  key does not hold is 403, and so is a key bound to no channel.
+- **`POST /store/v1/carts/{id}/shipping-methods` refuses `amount` and `name`**
+  (ADR 0021): the server prices the option, and unknown fields are refused.
+- **The storefront `GET /store/v1/price-sets/{id}` has a body of its own**
+  (ADR 0167): `prices[].rules` is gone.
+- **The customer profile and address book need a bound identity** (ADR 0043):
+  without a verifier (`contrib/identity-session` or your own) they answer
+  `401 identity_not_bound`. A storefront request that names a customer —
+  `customer_id` on a cart, the B2B reads — answers the same unless
+  `STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM=true` (ADR 0125). Guest carts are
+  unaffected.
+- **`POST /admin/v1/promotions/compute` requires `unit_amount` on every item**,
+  with `unit_amount × quantity = amount` (ADR 0112).
+- **Schema component names carry their module** (ADR 0036): a generated
+  client's type names change and the client must be regenerated.
+- **A panel screen requires its module's privilege** (ADR 0156): an operator
+  holding neither it nor `admin` gets 403 where v0.8.0 let them in.
+- **Error MESSAGES are English**; codes and JSON keys are unchanged.
+
+**Operators**
+
+- **The pool refuses a session that is not READ COMMITTED** (ADR 0166, D123):
+  a database or role defaulting to REPEATABLE READ or SERIALIZABLE no longer
+  starts.
+- **`JWT_TTL` above 24h is refused outside `APP_ENV=development`** (ADR 0031).
+- **`METRIC_EXPORT_INTERVAL` is gone and metrics are no longer pushed over
+  OTLP** (ADR 0046): set `METRICS_ADDR` and scrape `/metrics`. Traces still use
+  OTLP.
+- **Some migrations fail on data v0.8.0 allowed:** a promotion rule with no
+  values (ADR 0169), two option values of one option that fold alike
+  (ADR 0039), and a hand-stamped duplicate where the order, payment,
+  fulfillment, inventory and region tables drop `deleted_at` and rebuild their
+  unique indexes over every row (ADR 0054). Rows hidden by hand come back.
+- **Drain checkouts before upgrading** (ADR 0109): the checkout saga gained a
+  step, and a record the old binary left half-way needs manual recovery; check
+  `gobit stuck` first.
+
+**Embedders and plugin authors**
+
+- **`plugins/errorsentry`, `plugins/paymentstripe` and `plugins/searchpg`:**
+  `Setup` takes `*core/plugin.Host`, whose v0.8.0 counterpart lived under
+  `internal/` and could not be built outside the tree; `searchpg.SearchPath` has
+  the channel segment. Everything else importable today was not importable in v0.8.0.
+- **A plugin's inbound callback is registered with a verifier** (ADR 0028), and
+  no plugin route may sit under the panel's address (ADR 0157); both are
+  startup refusals.
+
+**Behavior a client may notice**
+
+- An event can arrive twice with the same id (the outbox, ADR 0023); dedupe on
+  the id. The Redis bus redelivers a message a dead consumer held (ADR 0162).
+- A storefront cart write reprices the cart, so its total includes shipping and
+  `expected_total` has to match it (ADR 0173).
+- `discountable=false` is no longer discounted (ADR 0048), customer-group
+  prices reach storefront carts (ADR 0049), `paid_total` is filled (ADR 0022),
+  and a mixed-rate cart is taxed per line.
 
 ### Düzeltmeler
 
@@ -4836,7 +4908,8 @@ yalnızca test koşarak görünmeyen üç arıza:
   yoktur; geri alma elle yapılır. İleri yön açılışta otomatiktir.
 - Yük testi süreç içidir; kapasite planı üretmez.
 
-[Yayımlanmamış]: https://github.com/bdrtr/gobit/compare/v0.8.0...HEAD
+[Yayımlanmamış]: https://github.com/bdrtr/gobit/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/bdrtr/gobit/releases/tag/v0.9.0
 [0.8.0]: https://github.com/bdrtr/gobit/releases/tag/v0.8.0
 [0.7.0]: https://github.com/bdrtr/gobit/releases/tag/v0.7.0
 [0.6.0]: https://github.com/bdrtr/gobit/releases/tag/v0.6.0

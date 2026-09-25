@@ -237,7 +237,7 @@ make rename-module MODULE=github.com/kullanici/repo
 
 ## Version
 
-Current version: **v0.8.0**. For the changes, see
+Current version: **v0.9.0**. For the changes, see
 [`CHANGELOG.md`](../CHANGELOG.md). Which roadmap phase covers what is in the
 README's phase-status table.
 
@@ -320,6 +320,22 @@ README's phase-status table.
   `cart/service.Store.SetLineItemTotals`, the English error messages of the
   engine and of pgstore (the CODES did not change), and the `Step` contract now
   saying that `Compensate` can be called concurrently.
+- **v0.9.0** — gobit became a library: a project imports it, `core/` is the
+  published surface and the composition root is part of it
+  ([ADR 0025](adr/0025-gobit-is-a-library-not-a-template.md)), and it is the
+  first tag that contains that surface — `gobit new` can pin it, including from
+  a binary installed with `go install …/cmd/server@v0.9.0`
+  ([ADR 0182](adr/0182-an-installed-binary-starts-a-project.md)). Around that
+  turn, 164 decisions: the sales channel moved into the catalog path, the admin
+  panel became a client of `/admin/v1` and gained plugin screens, privileges
+  and a second factor, events leave through an outbox, the gap inventory closed
+  on 2026-09-08, and the commerce surface grew — store credit, exchanges,
+  replacements, partial cancellation, carrier tracking, scheduled publication
+  and product relations among it. **There are breaking changes**, and the
+  CHANGELOG lists them by audience: the catalog and search addresses, the
+  shipping method body, a bound identity for the address book, READ COMMITTED
+  required of the pool, metrics by scrape, and migrations that refuse data
+  v0.8.0 allowed. Drain checkouts before upgrading.
 
 Throughout `0.x`, **breaking changes may arrive in minor versions**: the API
 surface is not frozen yet. It freezes with `1.0.0`.

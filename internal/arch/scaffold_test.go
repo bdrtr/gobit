@@ -30,7 +30,8 @@ import (
 // `replace`, exactly as the out-of-tree examples do. So the lane compiles the
 // template against HEAD and cannot tell "the template works at the version it
 // pins" from "the template works at the tip of this tree" — and on 2026-09-12
-// those differ absolutely: the newest tag does not contain the facade at all.
+// those differed absolutely: no tag contained the facade until v0.9.0. They
+// still differ for any binary built after the tag it would pin.
 // Closing that needs a release, not a test, and it is written down as a known
 // limit rather than implied away.
 

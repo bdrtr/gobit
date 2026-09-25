@@ -16,17 +16,17 @@ import (
 //
 // A generated project requires the library by VERSION, and the version has to be
 // one the module proxy can serve with the published surface in it. Measured on
-// 2026-09-12: the newest tag of this module is v0.8.0, `@latest` resolves to it,
-// and it does NOT contain the root package — the facade landed after it, so
+// 2026-09-12: the newest tag of this module was v0.8.0, `@latest` resolved to
+// it, and it did NOT contain the root package — the facade landed after it, so
 // `require github.com/bdrtr/gobit v0.8.0` plus `import "github.com/bdrtr/gobit"`
-// fails at `go mod tidy` with "does not contain package".
+// failed at `go mod tidy` with "does not contain package". v0.9.0 is the first
+// tag that contains it.
 //
-// So the one thing a generated go.mod cannot write today is a semantic version.
-// What the proxy does serve for any pushed commit is a PSEUDO-VERSION, and that
-// is what this file composes.
-//
-// The fix is a release, not a generator: the day a tag contains the facade, the
-// build injects that tag and [Version] returns it unchanged.
+// A binary built from a tag requires that tag, unchanged ([Build.Release]). A
+// binary built from a commit after the newest tag carries a template written
+// against that commit, which the tag may not contain, so it requires a
+// PSEUDO-VERSION of its own commit — which the proxy serves for any pushed
+// commit — and that is what this file composes.
 //
 // A binary nobody's Makefile built carries no build facts, and the Go toolchain
 // answers for it: [Stamped] reads the version `go build` and `go install` record
