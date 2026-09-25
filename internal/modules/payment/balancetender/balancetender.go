@@ -173,6 +173,23 @@ func New(store Store, id Identity, log *slog.Logger) *Machine {
 	return &Machine{store: store, id: id, log: log}
 }
 
+// CheckOwner refuses a payment that names nobody.
+//
+// A balance belongs to one person, so a session without a customer can never be
+// authorized. [Machine.CreateSession] asks this first, and the checkout asks it
+// BEFORE the order is opened (ADR 0175): the answer does not depend on the
+// balance, the amount or the moment, so there is no reason to learn it after an
+// order was placed and announced.
+func (m *Machine) CheckOwner(customerID string) error {
+	if strings.TrimSpace(customerID) == "" {
+		return errors.Conflict(m.id.Codes.NoCustomer,
+			"a balance of %s belongs to one person and this payment names nobody: the "+
+				"cart has no customer", m.id.Unit)
+	}
+
+	return nil
+}
+
 // CreateSession opens a session against the customer's balance.
 //
 // It takes NOTHING: the balance is not even read here. A session is the
@@ -183,12 +200,10 @@ func New(store Store, id Identity, log *slog.Logger) *Machine {
 func (m *Machine) CreateSession(
 	ctx context.Context, in coreprovider.CreateSessionInput,
 ) (coreprovider.Session, error) {
-	customerID := strings.TrimSpace(in.CustomerID)
-	if customerID == "" {
-		return coreprovider.Session{}, errors.Conflict(m.id.Codes.NoCustomer,
-			"a balance of %s belongs to one person and this session names nobody: the "+
-				"payment collection was opened without a customer", m.id.Unit)
+	if err := m.CheckOwner(in.CustomerID); err != nil {
+		return coreprovider.Session{}, err
 	}
+	customerID := strings.TrimSpace(in.CustomerID)
 	if in.Amount <= 0 {
 		return coreprovider.Session{}, errors.Invalid(m.id.Codes.InvalidInput,
 			"the session amount has to be positive, %d given", in.Amount)

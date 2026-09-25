@@ -189,7 +189,10 @@ has been left inconsistent.
 ### Every field in the completion body is a question of authority
 
 - `payment_provider_id` IS THERE: which provider the payment is made with is the
-  customer's choice. The name must be registered on the server.
+  customer's choice. The name must be registered on the server, and a provider
+  that spends a person's balance needs a cart that names one; both are checked
+  before the order is opened, so a refusal known in advance places no order
+  (ADR 0175).
 - `payment_data` IS THERE: free-form data passed to the provider as it comes.
 - `expected_total` IS THERE AND IS MANDATORY: the total the customer approved.
   The calculation is refreshed at the start of completion; a divergence produces

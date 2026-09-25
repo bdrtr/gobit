@@ -623,8 +623,8 @@ func (h *Handler) storeRemoveLineItem(w http.ResponseWriter, r *http.Request) {
 //
 //   - payment_provider_id IS THERE. Which provider the payment is made with is
 //     the customer's choice and the server cannot have a default for it. It
-//     raises no authority problem: an unknown name opens no capture, it brings
-//     the flow down.
+//     raises no authority problem: an unknown name, or a person's balance for a
+//     cart that names nobody, is refused before the order is opened (ADR 0175).
 //   - payment_data IS THERE. It is free-form data passed to the provider as it
 //     is (card token, return address); by definition it is the client's
 //     information.

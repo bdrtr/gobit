@@ -84,8 +84,6 @@ internal/modules/payment/service/collection.go
 internal/modules/payment/service/fakes_test.go
 internal/modules/payment/service/interop_test.go
 internal/modules/payment/service/provider_test.go
-internal/modules/payment/service/registry.go
-internal/modules/payment/service/registry_test.go
 internal/modules/payment/service/service_test.go
 internal/modules/payment/service/session.go
 internal/modules/payment/service/session_test.go

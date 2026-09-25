@@ -280,7 +280,10 @@ type planLine struct {
 //     sides are compared. If they are not equal the cart changed in between and
 //     the totals no longer belong to that cart; the call stops with
 //     errors.Conflict.
-//  3. Titles and inventory items are read IN BULK (there is no N+1).
+//  3. The payment is checked for the refusals that are known in advance — an
+//     unregistered provider, a person's balance for a cart that names nobody —
+//     so that neither opens an order (ADR 0175).
+//  4. Titles and inventory items are read IN BULK (there is no N+1).
 //
 // The only operation that could count as a write is writing the totals to the
 // cart, and that one needs NO compensation: writing totals is idempotent,
@@ -308,6 +311,12 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 		return nil, errors.Conflict(CodeCartChanged,
 			"cart changed between the totals and the read: %s (totals %d, cart %d); the request must be resent",
 			in.CartID, totals.Revision, snap.Revision)
+	}
+	// A payment that can never be made is refused HERE, with the payment
+	// module's own code, rather than at the payment step: by then the order is
+	// placed and order.placed is out (ADR 0175).
+	if err := w.payments.CheckTender(ctx, in.PaymentProviderID, snap.CustomerID); err != nil {
+		return nil, err
 	}
 
 	lines, err := w.planLines(ctx, snap, totals)

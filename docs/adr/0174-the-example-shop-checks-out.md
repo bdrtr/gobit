@@ -7,6 +7,7 @@ binds.
 
 - **Status:** Accepted
 - **Date:** 2026-09-25
+- **Amended by:** [0175](0175-a-payment-that-can-never-be-made-opens-no-order.md) for the provider paragraph alone: a guest's person-bound tender is now refused before the order opens, and nothing is placed or announced.
 
 Measurement: [measurements/0174](../measurements/0174-a-shop-that-reaches-an-order.md)
 

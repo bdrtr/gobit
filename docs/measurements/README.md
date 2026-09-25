@@ -107,3 +107,4 @@ truth: a report says what was true on the day it was taken.
 | [What an erasure keeps — measured 2026-09-25](0172-what-an-erasure-keeps.md) | 90 |
 | [What a checkout could not approve — measured 2026-09-25](0173-what-a-checkout-could-not-approve.md) | 91 |
 | [A shop that reaches an order — measured 2026-09-25](0174-a-shop-that-reaches-an-order.md) | 104 |
+| [An order announced and canceled — measured 2026-09-25](0175-an-order-announced-and-canceled.md) | 66 |

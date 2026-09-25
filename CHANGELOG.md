@@ -331,6 +331,14 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **A payment that can never be made opens no order** (ADR 0175, D130). The
+  checkout now asks the payment module before the saga whether the chosen
+  provider is registered and, for store credit and loyalty points, whether the
+  cart names a customer. Before, both refusals came at the payment step, after
+  the order was placed and `order.placed` published, and the compensation
+  canceled it. The status codes and error codes are unchanged; the refusal
+  message is now the payment module's own.
+
 - **The example shop checks out** (ADR 0174). `examples/storefront` gains a
   fourth page, `/shop/checkout`: an e-mail and a shipping address, the options
   the cart's region serves, a payment provider, and the completion with the

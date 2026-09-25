@@ -511,11 +511,27 @@ type stubPayments struct {
 	captureFn              func(ctx context.Context, sessionID string, amount int64) (string, error)
 	cancelFn               func(ctx context.Context, sessionID string) error
 	collectionFn           func(ctx context.Context, collectionID string) (string, int64, int64, int64, int64, error)
+	// checkTenderFn scripts the refusal known before the saga; nil accepts.
+	checkTenderFn func(ctx context.Context, providerID, customerID string) error
 
+	// checkedTenders keeps, in order, the provider and customer each check was
+	// asked about. It is kept apart from the recorder: the check is a read made
+	// before the saga, and the recorder's sequences are the saga's.
+	checkedTenders [][2]string
 	// captureAmounts keeps, in order, the amounts passed to Capture.
 	captureAmounts []int64
 	// sessionData keeps, in order, the bodies passed to OpenSessionWithData.
 	sessionData []string
+}
+
+// CheckTender records the question and applies the scripted answer.
+func (s *stubPayments) CheckTender(ctx context.Context, providerID, customerID string) error {
+	s.checkedTenders = append(s.checkedTenders, [2]string{providerID, customerID})
+	if s.checkTenderFn == nil {
+		return nil
+	}
+
+	return s.checkTenderFn(ctx, providerID, customerID)
 }
 
 // CreateCollection applies the scripted collection-opening behavior.

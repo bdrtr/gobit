@@ -24,8 +24,8 @@ import (
 // interface.
 //
 // The surface is DELIBERATELY narrow and was picked according to the saga's
-// need: open a collection, open a session, authorize, capture, cancel
-// (compensate), refund and read the status. Every method added here raises the
+// need: check that a payment can be made at all, open a collection, open a
+// session, authorize, capture, cancel (compensate), refund and read the status. Every method added here raises the
 // cost of pulling payment out into a separate service.
 //
 // # The surface carries the AMOUNT
@@ -48,6 +48,16 @@ type Interop struct {
 
 // NewInterop sets up the cross-module surface for the given service.
 func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
+
+// CheckTender refuses a payment that can never be made: a provider that is not
+// registered, or a person's balance for a cart that names nobody.
+//
+// The checkout asks it before the order is opened, so a refusal known in advance
+// does not first place an order and announce it (ADR 0175). customerID may be
+// EMPTY for a guest.
+func (i *Interop) CheckTender(ctx context.Context, providerID, customerID string) error {
+	return i.svc.CheckTender(ctx, providerID, customerID)
+}
 
 // CreateCollection opens a payment collection for a reference and returns its
 // identifier.

@@ -338,16 +338,15 @@ func TestPointsDeclineThenTheSameCartPaysByCard(t *testing.T) {
 //
 // # What arrives
 //
-// The tender refuses at CreateSession with errors.Conflict carrying its own
-// NoCustomer code. The payment service returns that error unchanged, the
-// checkout's authorize step returns it to the engine, and the engine's wrap
-// keeps the step error's kind and code (workflow's stepFailureCode) while the
-// compensation cancels the order and releases the stock. core/http turns the
-// conflict into 409 with the tender's code in the body — so the body's code is
-// loyaltypoints.CodeNoCustomer or storecredit.CodeNoCustomer itself, with
-// nothing in between. Before ADR 0165 the store-credit tender answered this
-// case with errors.Internal, which the transport masked into a 500 whose body
-// told the storefront nothing.
+// The tender's CheckOwner refuses with errors.Conflict carrying its own
+// NoCustomer code, and since ADR 0175 the checkout asks it BEFORE the saga, so no
+// order is opened and no stock is reserved; before that the same refusal came
+// from CreateSession at the payment step, after the order was placed, and the
+// compensation undid it (D130). core/http turns the conflict into 409 with the
+// tender's code in the body — so the body's code is loyaltypoints.CodeNoCustomer
+// or storecredit.CodeNoCustomer itself, with nothing in between. Before ADR 0165
+// the store-credit tender answered this case with errors.Internal, which the
+// transport masked into a 500 whose body told the storefront nothing.
 //
 // # Why 409 and not 500 matters
 //
@@ -402,6 +401,6 @@ func TestAGuestChoosingPointsGetsAConflictOverHTTP(t *testing.T) {
 	}
 
 	assert.Equal(t, pointsInitialStock, sellableQuantity(ctx, t, inventoryItemID),
-		"the stock has to be where it started: whatever either refusal reserved came "+
-			"back, and neither left a unit on an order that was never paid")
+		"the stock has to be where it started: neither refusal may leave a unit on an "+
+			"order that was never paid")
 }

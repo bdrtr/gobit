@@ -62,8 +62,8 @@ it rather than charging two deliveries.
   provider's, not the shop's.
 - **The provider list is not the guest's.** `GET /store/v1/payment-providers`
   lists every provider, including the two that belong to a person — store credit
-  and loyalty points. A guest who picks one is refused at the payment step, after
-  the order was opened and canceled, and the page shows the refusal.
+  and loyalty points. A guest who picks one is refused before any order is
+  opened (ADR 0175), and the page shows the refusal.
 
 ## Two costs worth knowing
 

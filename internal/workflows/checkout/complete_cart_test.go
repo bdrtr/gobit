@@ -759,6 +759,34 @@ func TestAChangedApprovedTotalIsRejected(t *testing.T) {
 	assert.Equal(t, 0, h.rec.count("inventory:reserve:"+testLineA))
 }
 
+// TestAPaymentThatCanNeverBeMadeOpensNothing verifies that a refusal the
+// payment module can give in advance stops the completion before the saga
+// (ADR 0175).
+//
+// The payment step is the third: had the check waited for it, the order would
+// already be placed and order.placed out, and the refusal would reach the
+// shopper after the shop announced their order.
+func TestAPaymentThatCanNeverBeMadeOpensNothing(t *testing.T) {
+	h := newHarness(t)
+	refusal := errors.Conflict("payment_loyalty_points_no_customer", "a balance belongs to one person")
+	h.payments.checkTenderFn = func(context.Context, string, string) error { return refusal }
+
+	_, err := h.wf.CompleteCart(context.Background(), h.input())
+
+	require.Error(t, err)
+	assert.Equal(t, "payment_loyalty_points_no_customer", errors.CodeOf(err),
+		"the payment module's own code has to reach the caller; it is what tells a "+
+			"storefront to ask for another way to pay")
+	for _, step := range []string{"order:place", "payment:collection", "inventory:reserve:" + testLineA} {
+		assert.Zerof(t, h.rec.count(step),
+			"%s ran although the payment could never be made", step)
+	}
+	require.Len(t, h.payments.checkedTenders, 1)
+	assert.Equal(t, [2]string{h.input().PaymentProviderID, testCustomerID}, h.payments.checkedTenders[0],
+		"the check has to be asked about the CART's customer: a guest's cart names nobody, "+
+			"and that is the whole question for a person's balance")
+}
+
 // TestAVariantWithoutAnInventoryItemIsRejected verifies that a variant not
 // linked to an inventory item is NOT SILENTLY SKIPPED.
 func TestAVariantWithoutAnInventoryItemIsRejected(t *testing.T) {

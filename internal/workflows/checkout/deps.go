@@ -429,6 +429,15 @@ type Orders interface {
 // return"). SessionStatus is absent too; the saga does NOT ASK for the status
 // of the session, it looks at the amounts (see [Payments.Collection]).
 type Payments interface {
+	// CheckTender refuses a payment that can never be made — a provider that is
+	// not registered, or a person's balance for a cart that names nobody — and
+	// returns nil for every other.
+	//
+	// [Workflows.prepare] asks it before the saga, so a refusal known in advance
+	// opens no order and publishes no order.placed (ADR 0175). customerID may be
+	// EMPTY for a guest.
+	CheckTender(ctx context.Context, providerID, customerID string) error
+
 	// CreateCollection opens a payment collection for a reference and returns its
 	// identifier. The amount must be POSITIVE.
 	//
