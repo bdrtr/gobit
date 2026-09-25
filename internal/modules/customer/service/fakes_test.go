@@ -25,6 +25,8 @@ type memRepo struct {
 	groups    map[string]models.CustomerGroup
 	members   map[string]map[string]bool // customerID -> groupID -> üye mi
 	addresses map[string]models.CustomerAddress
+	// wishlist is customerID -> saved items, filled by wishlist_test.go.
+	wishlist map[string][]models.WishlistItem
 
 	// calls metot adı -> çağrı sayısıdır; toplu (batch) davranışın kanıtı budur.
 	calls map[string]int

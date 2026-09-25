@@ -299,7 +299,7 @@ a plugin's job (`Host.RegisterNotificationProvider`).
 This is the one entry in this document that is **not optional**. Since
 [ADR 0043](adr/0043-gobit-requires-an-identity-it-still-does-not-issue.md) and
 [ADR 0057](adr/0057-one-comparison-holds-the-storefront-customer-claim.md),
-twelve storefront routes ask whether the caller is the customer the request
+fifteen storefront routes ask whether the caller is the customer the request
 names:
 
 | Route | |
@@ -309,6 +309,8 @@ names:
 | `PUT` / `DELETE /store/v1/customers/{id}/addresses/{address_id}` | |
 | `POST /store/v1/customers/{id}/addresses/{address_id}/default-shipping` | |
 | `POST /store/v1/customers/{id}/addresses/{address_id}/default-billing` | |
+| `GET /store/v1/customers/{id}/wishlist` | the wishlist |
+| `PUT` / `DELETE /store/v1/customers/{id}/wishlist/{variant_id}` | |
 | `GET /store/v1/b2b/customers/{customer_id}/company` | the employer |
 | `GET /store/v1/b2b/customers/{customer_id}/employee` | the spending limit |
 | `POST /store/v1/carts` | only when the body carries a `customer_id` |
@@ -320,7 +322,7 @@ installation that has bound an identity or one that has not — the guest path i
 what the storefront is for. Naming a customer is what puts the burden of proof
 on the claim.
 
-All twelve refuse when you have bound nothing, and four of them did not until
+All fifteen refuse when you have bound nothing, and four of them did not until
 ADR 0125: b2b's two reads and the two cart bodies served the claim unchecked, so
 an installation that bound no verifier kept them working with the claim in them
 BELIEVED. That is a setting now rather than a default —

@@ -72,7 +72,8 @@ type ErasureCount struct {
 	// different answers, and a single counter would report both as zero.
 	Matched int
 	// Rewritten is the number of rows this pass actually overwrote, across the
-	// customer and customer_address tables together.
+	// customer and customer_address tables together, and the wishlist rows it
+	// deleted.
 	//
 	// It is a receipt for THIS call and not a description of what the person
 	// left behind: a second erasure of the same subject finds every row already

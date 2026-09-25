@@ -47,7 +47,7 @@ import (
 //
 // The reasons, per table:
 //
-//   - The identifiers are here on purpose, in all four tables. A synthetic key
+//   - The identifiers are here on purpose, in all five tables. A synthetic key
 //     names a row, not a person, and after the row beside it is anonymized it
 //     resolves to nobody; that is exactly the fact the anonymization rests on.
 //     Declaring one would also drag in every foreign id in the deployment.
@@ -76,6 +76,11 @@ var notPersonalColumns = map[string][]string{
 	},
 	"customer_group_customer": {
 		"customer_id", "customer_group_id", "created_at",
+	},
+	// The wishlist's variant id is declared and its row deleted by an erasure
+	// (ADR 0190); what is left is the owner's id and the moment it was saved.
+	"customer_wishlist_item": {
+		"customer_id", "created_at",
 	},
 }
 

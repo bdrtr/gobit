@@ -79,6 +79,7 @@ func Describe(d *openapi.Doc) {
 	// The twelve address endpoints; see describe_address.go for why they are in
 	// a file of their own and why they were undescribed until ADR 0036.
 	describeAddresses(d)
+	describeWishlist(d)
 }
 
 // describeMusteriler müşterinin yönetim uçlarını anlatır.

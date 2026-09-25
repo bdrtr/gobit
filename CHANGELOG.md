@@ -42,6 +42,16 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **A customer keeps a wishlist** (ADR 0190). **For API consumers:**
+  `GET /store/v1/customers/{id}/wishlist`, and `PUT` / `DELETE
+  /store/v1/customers/{id}/wishlist/{variant_id}`, both repeatable, reached by
+  the proven customer alone; up to 200 variants, and a new one past that is
+  `409 customer_wishlist_full`. The operator reads it at
+  `GET /admin/v1/customers/{id}/wishlist` (`customer:read`). **For controllers:**
+  the saved variant ids are declared personal data; a disclosure lists them and
+  an erasure deletes them. **For operators:** customer migration 000003 adds
+  `customer_wishlist_item`.
+
 - **A refund's cause gives back revenue** (ADR 0189). The order journal books a
   refund that names one of the order's returns as `sales_returns`, and one that
   names a claim as `claim_allowances`, each against `receivable` at the refund's

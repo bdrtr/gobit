@@ -81,6 +81,7 @@ func TestEveryDeclaredTableIsDisclosedOrExempt(t *testing.T) {
 	disclosed := map[string]bool{
 		service.TableCustomer: true,
 		service.TableAddress:  true,
+		service.TableWishlist: true,
 	}
 
 	declared := map[string]bool{}

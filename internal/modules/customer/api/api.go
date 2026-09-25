@@ -131,6 +131,13 @@ type Customer interface {
 	SetDefaultShippingAddress(ctx context.Context, customerID, addressID string) (models.CustomerAddress, error)
 	// SetDefaultBillingAddress adresi varsayılan fatura adresi yapar.
 	SetDefaultBillingAddress(ctx context.Context, customerID, addressID string) (models.CustomerAddress, error)
+
+	// SaveToWishlist puts a variant on the customer's wishlist (ADR 0190).
+	SaveToWishlist(ctx context.Context, customerID, variantID string) (models.WishlistItem, error)
+	// ListWishlist returns the customer's wishlist, newest first.
+	ListWishlist(ctx context.Context, customerID string) ([]models.WishlistItem, error)
+	// RemoveFromWishlist takes a variant off the customer's wishlist.
+	RemoveFromWishlist(ctx context.Context, customerID, variantID string) error
 }
 
 // Handler customer modülünün HTTP handler kümesidir.
@@ -225,6 +232,7 @@ func (h *Handler) Routes(r chi.Router) {
 
 	okuma.Get("/admin/v1/customers/{id}/groups", h.adminListGroupsOfCustomer)
 	okuma.Get("/admin/v1/customers/{id}/addresses", h.adminListAddresses)
+	okuma.Get("/admin/v1/customers/{id}/wishlist", h.adminListWishlist)
 	yazma.Post("/admin/v1/customers/{id}/addresses", h.adminCreateAddress)
 	yazma.Put("/admin/v1/customers/{id}/addresses/{address_id}", h.adminUpdateAddress)
 	yazma.Delete("/admin/v1/customers/{id}/addresses/{address_id}", h.adminDeleteAddress)
@@ -241,7 +249,7 @@ func (h *Handler) Routes(r chi.Router) {
 
 	// --- vitrin ---
 	//
-	// The eight routes carrying {id} require the claim to be BACKED; the guest
+	// The eleven routes carrying {id} require the claim to be BACKED; the guest
 	// registration below is the one that cannot, because it is what creates the
 	// customer (see the package doc).
 	r.Post("/store/v1/customers", h.storeRegisterGuest)
@@ -253,6 +261,9 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Delete("/store/v1/customers/{id}/addresses/{address_id}", h.storeDeleteAddress)
 	r.Post("/store/v1/customers/{id}/addresses/{address_id}/default-shipping", h.storeSetDefaultShipping)
 	r.Post("/store/v1/customers/{id}/addresses/{address_id}/default-billing", h.storeSetDefaultBilling)
+	r.Get("/store/v1/customers/{id}/wishlist", h.storeListWishlist)
+	r.Put("/store/v1/customers/{id}/wishlist/{variant_id}", h.storeSaveToWishlist)
+	r.Delete("/store/v1/customers/{id}/wishlist/{variant_id}", h.storeRemoveFromWishlist)
 }
 
 // itemEnvelope tekil yanıtların zarfıdır (plan Bölüm 8).

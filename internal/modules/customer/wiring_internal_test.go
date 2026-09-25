@@ -208,6 +208,7 @@ func storefrontRoutesNamingACustomer(t *testing.T, r chi.Router) []customerRoute
 		path := strings.NewReplacer(
 			"{id}", strangerID,
 			"{address_id}", "addr_1",
+			"{variant_id}", "variant_1",
 		).Replace(strings.TrimSuffix(route, "/"))
 		routes = append(routes, customerRoute{method: method, pattern: route, path: path})
 

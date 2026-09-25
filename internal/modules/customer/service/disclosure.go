@@ -21,7 +21,8 @@ const CodeDisclosureSubjectEmpty = "customer_disclosure_subject_empty"
 // about what was looked at while both were true of themselves — and the reader
 // comparing them would have no way to tell which one had gone stale.
 const disclosureSearched = "the customer records this person resolves to, by customer id and by e-mail " +
-	"address, together with every address saved on them, soft-deleted rows included"
+	"address, together with every address saved on them, soft-deleted rows included, and every " +
+	"variant on their wishlists"
 
 // disclosureWhyNothing is the sentence that goes with [personaldata.Nothing].
 //
@@ -191,7 +192,18 @@ func (s *Service) PersonalDataOf(ctx context.Context, subject personaldata.Subje
 		byCustomer[owner] = append(byCustomer[owner], addresses[i])
 	}
 
-	records := make([]personaldata.Record, 0, len(customers)+len(addresses))
+	wishlist, err := s.repo.WishlistForDisclosure(ctx, ids)
+	if err != nil {
+		return personaldata.Disclosure{}, err
+	}
+
+	wishedBy := make(map[string][]models.WishlistItem, len(ids))
+	for i := range wishlist {
+		owner := wishlist[i].CustomerID
+		wishedBy[owner] = append(wishedBy[owner], wishlist[i])
+	}
+
+	records := make([]personaldata.Record, 0, len(customers)+len(addresses)+len(wishlist))
 	for i := range customers {
 		records = append(records,
 			recordOf(TableCustomer, customers[i].ID, customerValues(customers[i])))
@@ -200,6 +212,14 @@ func (s *Service) PersonalDataOf(ctx context.Context, subject personaldata.Subje
 		for j := range owned {
 			records = append(records,
 				recordOf(TableAddress, owned[j].ID, addressValues(owned[j])))
+		}
+
+		// A wishlist row has no id of its own; its key is the customer and the
+		// variant, so the record follows its customer's and carries no ID.
+		wished := wishedBy[customers[i].ID]
+		for j := range wished {
+			records = append(records,
+				recordOf(TableWishlist, "", wishlistValues(wished[j])))
 		}
 	}
 
@@ -213,6 +233,7 @@ func (s *Service) PersonalDataOf(ctx context.Context, subject personaldata.Subje
 		slog.Bool("by_email", email != ""),
 		slog.Int("customers", len(customers)),
 		slog.Int("addresses", len(addresses)),
+		slog.Int("wishlist_items", len(wishlist)),
 	)
 
 	return personaldata.Disclosure{
@@ -296,5 +317,12 @@ func addressValues(a models.CustomerAddress) map[string]any {
 		columnPostalCode:  a.PostalCode,
 		columnPhone:       a.Phone,
 		columnCountryCode: a.CountryCode,
+	}
+}
+
+// wishlistValues is what a wishlist row holds, keyed by declared column.
+func wishlistValues(w models.WishlistItem) map[string]any {
+	return map[string]any{
+		columnVariantID: w.VariantID,
 	}
 }

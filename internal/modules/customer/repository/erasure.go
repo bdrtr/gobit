@@ -12,8 +12,8 @@ import (
 )
 
 // AnonymizeCustomers overwrites the named personal columns of every customer
-// the subject resolves to, together with the customer's addresses, in ONE
-// transaction.
+// the subject resolves to, together with the customer's addresses, and deletes
+// the customer's wishlist, in ONE transaction.
 //
 // # Why a transaction and not two updates
 //
@@ -94,6 +94,16 @@ func (r *Repo) AnonymizeCustomers(
 			})
 			if addrErr != nil {
 				return wrapDB(addrErr, "customer addresses could not be anonymized: %s", id)
+			}
+			count.Rewritten += int(written)
+
+			// The wishlist is deleted rather than rewritten: a row is a variant
+			// the person chose and nothing else, and no other record refers to
+			// it (ADR 0190). A save after the erasure is found by the next pass
+			// the same way an address is.
+			written, wishErr := q.DeleteWishlistOfCustomer(ctx, id)
+			if wishErr != nil {
+				return wrapDB(wishErr, "customer wishlist could not be erased: %s", id)
 			}
 			count.Rewritten += int(written)
 		}

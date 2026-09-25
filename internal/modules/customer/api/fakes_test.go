@@ -41,6 +41,11 @@ type stubCustomer struct {
 	setDefaultShipFn  func(ctx context.Context, customerID, addressID string) (models.CustomerAddress, error)
 	setDefaultBillFn  func(ctx context.Context, customerID, addressID string) (models.CustomerAddress, error)
 
+	// The wishlist's methods are in wishlist_test.go.
+	saveToWishlistFn     func(ctx context.Context, customerID, variantID string) (models.WishlistItem, error)
+	listWishlistFn       func(ctx context.Context, customerID string) ([]models.WishlistItem, error)
+	removeFromWishlistFn func(ctx context.Context, customerID, variantID string) error
+
 	// son çağrının argümanları; handler'ın doğru değerleri ilettiğini kanıtlar.
 	sonCustomerID string
 	sonGroupID    string

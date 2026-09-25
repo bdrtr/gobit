@@ -392,6 +392,13 @@ var storefrontStoredClaims = map[string]claimVerdict{
 		why: "the contact for a delivery to this address, on the writer's own address book " +
 			"entry; as cart_addresses.phone",
 	},
+	"customer.customer_wishlist_item.customer_id": {
+		limb: limbConfined,
+		why: "the owner of the wishlist row, and it arrives in the PATH " +
+			"(/store/v1/customers/{id}/wishlist/{variant_id}), which the handler compares with " +
+			"the customer the bound identity proves before the service is asked (ADR 0190). " +
+			"The two routes carry no body, so the client names no party anywhere else",
+	},
 	"payment.payment_collections.customer_id": {
 		limb: limbConfined,
 		why: "the customer of the CART being completed, carried by the checkout flow rather " +

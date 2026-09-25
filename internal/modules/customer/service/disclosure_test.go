@@ -148,6 +148,7 @@ func TestEveryDeclaredColumnHasAValue(t *testing.T) {
 	sources := map[string]map[string]any{
 		TableCustomer: customerValues(models.Customer{}),
 		TableAddress:  addressValues(models.CustomerAddress{}),
+		TableWishlist: wishlistValues(models.WishlistItem{}),
 	}
 
 	for table, values := range sources {
@@ -476,8 +477,8 @@ func TestDisclosureWritesNothing(t *testing.T) {
 	}
 	slices.Sort(called)
 
-	assert.Equal(t, []string{"AddressesForDisclosure", "CustomersForDisclosure"}, called,
-		"a disclosure reads two things and does nothing else; any other method here is "+
+	assert.Equal(t, []string{"AddressesForDisclosure", "CustomersForDisclosure", "WishlistForDisclosure"}, called,
+		"a disclosure reads three things and does nothing else; any other method here is "+
 			"either a write or a second resolution of the same person")
 }
 

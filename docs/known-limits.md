@@ -30,15 +30,15 @@ past and is not corrected retroactively.
   [ADR 0057](adr/0057-one-comparison-holds-the-storefront-customer-claim.md)
   yours decides every storefront request that names a customer.** This is the
   one limit in this file that an embedder has to act on rather than merely
-  accept. Twelve routes ask: the profile and the six of the address book, b2b's
-  company and employee reads, and the two cart bodies — cart creation and the
-  guest-to-registered handover, the last two only when the body carries a
-  `customer_id`. The answer comes from `corehttp.Identity`, a one-method
+  accept. Fifteen routes ask: the profile, the six of the address book and the
+  three of the wishlist, b2b's company and employee reads, and the two cart
+  bodies — cart creation and the guest-to-registered handover, the last two only
+  when the body carries a `customer_id`. The answer comes from `corehttp.Identity`, a one-method
   interface the framework publishes and does not implement; the embedding
   application registers its own from an ordinary module, in the container, under
   the name `corehttp.IdentityName` (`"core.identity"`). Bound, it decides all
-  twelve: a request naming somebody else gets `403 identity_mismatch`.
-- **With NO identity bound all twelve refuse, and until ADR 0125 four of them
+  fifteen: a request naming somebody else gets `403 identity_mismatch`.
+- **With NO identity bound all fifteen refuse, and until ADR 0125 four of them
   did not.** Every one of them answers `401 identity_not_bound` — closed rather
   than open, which is
   [ADR 0007](adr/0007-sertlestirme-arizada-davranis.md)'s row for an unconfigured
@@ -77,7 +77,7 @@ past and is not corrected retroactively.
   `core/identitytest.Contract`, which holds the shape and opens no signature. Its
   limits:
     - **A signed cookie cannot be revoked before it expires.** That is the price of
-      keeping the identity off the read path of twelve storefront routes, and it is
+      keeping the identity off the read path of fifteen storefront routes, and it is
       the same wholesale-only shape the admin side has one bullet down. Rotating the
       signing key does NOT log anybody out (`RetiredSecrets`, ADR 0129) — which is
       the point, and therefore not a revocation either. A key that LEAKED is dropped

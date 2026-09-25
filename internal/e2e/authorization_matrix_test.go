@@ -113,6 +113,8 @@ var customerRoutes = map[string]struct{}{
 	"/store/v1/customers/{id}/addresses/{address_id}":                  {},
 	"/store/v1/customers/{id}/addresses/{address_id}/default-billing":  {},
 	"/store/v1/customers/{id}/addresses/{address_id}/default-shipping": {},
+	"/store/v1/customers/{id}/wishlist":                                {},
+	"/store/v1/customers/{id}/wishlist/{variant_id}":                   {},
 	"/store/v1/b2b/customers/{customer_id}/company":                    {},
 	"/store/v1/b2b/customers/{customer_id}/employee":                   {},
 }
@@ -199,7 +201,7 @@ func TestTheAuthorizationMatrixHoldsForEveryEndpoint(t *testing.T) {
 	routes := matrixRoutes(t)
 
 	// The declared lists hold PATTERNS and the walk returns (method, pattern)
-	// pairs — seven customer patterns are ten routes. Counting the pairs
+	// pairs — nine customer patterns are thirteen routes. Counting the pairs
 	// against a list of patterns would compare two different things, and the
 	// number it produced would be wrong in a way that looked like a finding.
 	var admin, store int

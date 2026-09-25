@@ -305,6 +305,26 @@ func anlatilanUclar() []ucBeklentisi {
 		)
 	}
 
+	// The wishlist (ADR 0190): the operator reads it, the storefront also
+	// saves and removes. The PUT has no body; the path names the variant.
+	uclar = append(uclar,
+		ucBeklentisi{
+			metod: http.MethodGet, yol: "/admin/v1/customers/{id}/wishlist", durum: "200",
+			yanit: wishlistItemDTO{}, liste: true,
+		},
+		ucBeklentisi{
+			metod: http.MethodGet, yol: "/store/v1/customers/{id}/wishlist", durum: "200",
+			yanit: wishlistItemDTO{}, liste: true,
+		},
+		ucBeklentisi{
+			metod: http.MethodPut, yol: "/store/v1/customers/{id}/wishlist/{variant_id}", durum: "200",
+			yanit: wishlistItemDTO{},
+		},
+		ucBeklentisi{
+			metod: http.MethodDelete, yol: "/store/v1/customers/{id}/wishlist/{variant_id}", durum: "204",
+		},
+	)
+
 	return uclar
 }
 

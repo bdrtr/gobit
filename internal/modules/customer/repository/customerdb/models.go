@@ -55,3 +55,9 @@ type CustomerGroupCustomer struct {
 	CustomerGroupID string
 	CreatedAt       pgtype.Timestamptz
 }
+
+type CustomerWishlistItem struct {
+	CustomerID string
+	VariantID  string
+	CreatedAt  pgtype.Timestamptz
+}

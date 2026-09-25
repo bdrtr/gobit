@@ -21,7 +21,10 @@ package customer_test
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -53,6 +56,7 @@ const nonASCIIName = "Ay\u015fe"
 // list.
 var moduleTables = []string{
 	"customer", "customer_group", "customer_group_customer", "customer_address",
+	"customer_wishlist_item",
 }
 
 var (
@@ -194,7 +198,36 @@ func TestTheMigrationCanBeRolledBack(t *testing.T) {
 	version, dirty, err := db.Version(ctx, testDSN, customer.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "no migration may be left half-applied")
-	assert.Equal(t, uint(2), version)
+	assert.Equal(t, highestMigrationVersion(t, src), version,
+		"re-applying has to run EVERY migration, not only the first")
+}
+
+// highestMigrationVersion returns the largest version in the embedded set.
+//
+// It is read from the set rather than written out, as the order module's test
+// reads it: a literal is the count of today's migrations and goes stale with
+// the next one, while the claim is that everything was applied again.
+func highestMigrationVersion(t *testing.T, src fs.FS) uint {
+	t.Helper()
+
+	entries, err := fs.ReadDir(src, ".")
+	require.NoError(t, err)
+
+	var highest uint
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".up.sql") {
+			continue
+		}
+
+		digits, _, _ := strings.Cut(name, "_")
+		n, convErr := strconv.ParseUint(digits, 10, 32)
+		require.NoError(t, convErr, "%s does not start with a version number", name)
+		highest = max(highest, uint(n))
+	}
+
+	require.Positive(t, highest, "the embedded migration set looks empty")
+	return highest
 }
 
 // TestNoForeignKeyLeavesTheModule checks that EVERY foreign key on the module's

@@ -148,6 +148,7 @@ func storefrontRoutesNamingACustomer(t *testing.T, r chi.Router) []customerRoute
 		path := strings.NewReplacer(
 			"{id}", claimedByAnother,
 			"{address_id}", "addr_1",
+			"{variant_id}", "variant_1",
 		).Replace(strings.TrimSuffix(route, "/"))
 		routes = append(routes, customerRoute{method: method, pattern: route, path: path})
 
@@ -215,6 +216,21 @@ func refusingService(t *testing.T) *stubCustomer {
 			fail("SetDefaultBillingAddress")
 
 			return models.CustomerAddress{}, nil
+		},
+		listWishlistFn: func(context.Context, string) ([]models.WishlistItem, error) {
+			fail("ListWishlist")
+
+			return nil, nil
+		},
+		saveToWishlistFn: func(context.Context, string, string) (models.WishlistItem, error) {
+			fail("SaveToWishlist")
+
+			return models.WishlistItem{}, nil
+		},
+		removeFromWishlistFn: func(context.Context, string, string) error {
+			fail("RemoveFromWishlist")
+
+			return nil
 		},
 	}
 }

@@ -132,6 +132,13 @@ type Repository interface {
 	UpdateAddress(ctx context.Context, customerID, addressID string, patch models.AddressPatch, now time.Time) (models.CustomerAddress, error)
 	DeleteAddress(ctx context.Context, customerID, addressID string, now time.Time) error
 	SetDefaultAddress(ctx context.Context, customerID, addressID string, kind models.DefaultKind, now time.Time) (models.CustomerAddress, error)
+
+	// The wishlist (ADR 0190). WishlistForDisclosure is AddressesForDisclosure's
+	// twin and is read on the same terms.
+	SaveToWishlist(ctx context.Context, customerID, variantID string, limit int64, now time.Time) (models.WishlistItem, error)
+	ListWishlist(ctx context.Context, customerID string) ([]models.WishlistItem, error)
+	RemoveFromWishlist(ctx context.Context, customerID, variantID string) error
+	WishlistForDisclosure(ctx context.Context, customerIDs []string) ([]models.WishlistItem, error)
 }
 
 // Options are the service's setup settings.

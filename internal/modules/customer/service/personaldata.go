@@ -21,6 +21,8 @@ const (
 	TableAddress = "customer_address"
 	// TableGroup is the table holding customer segments.
 	TableGroup = "customer_group"
+	// TableWishlist is the table holding the variants a customer saved.
+	TableWishlist = "customer_wishlist_item"
 )
 
 // The names of the declared columns.
@@ -51,6 +53,7 @@ const (
 	columnCity        = "city"
 	columnPostalCode  = "postal_code"
 	columnCountryCode = "country_code"
+	columnVariantID   = "variant_id"
 )
 
 // personalDataHoldings is every place this module keeps personal data.
@@ -160,6 +163,15 @@ var personalDataHoldings = []personaldata.Holding{
 		Table: TableAddress, Column: columnCountryCode, Kind: personaldata.Named,
 		Why:       "the country of a saved address; it is declared but deliberately NOT erased, because it names the jurisdiction whose tax and retention rules apply, a two-letter code points at tens of millions of people, and the column's CHECK constraint refuses an empty value",
 		OnErasure: personaldata.Kept,
+	},
+	{
+		// A variant id elsewhere names a thing (cart/service, personalColumns).
+		// Here the row exists only because the person chose the variant, so
+		// beside their customer id it is a preference they stated, and an
+		// erasure deletes the row (ADR 0190).
+		Table: TableWishlist, Column: columnVariantID, Kind: personaldata.Named,
+		Why:       "a product variant the person saved to their wishlist; beside their customer id it says what they wanted",
+		OnErasure: personaldata.Emptied,
 	},
 }
 
