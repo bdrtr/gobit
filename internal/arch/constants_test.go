@@ -833,6 +833,23 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 	assert.Equal(t, inventorysvc.FieldAvailableQuantity, adminui.FieldAvailableQuantity,
 		"the panel's available quantity field name must match the inventory module")
 
+	// A product's related products (ADR 0181): the three fields the product page
+	// reads its lists from, the kinds its form sends, and the limit it prints.
+	assert.Equal(t, productsvc.FieldCrossSellIDs, adminui.FieldCrossSellIDs,
+		"the panel's cross-sell field name must match the product module")
+	assert.Equal(t, productsvc.FieldUpSellIDs, adminui.FieldUpSellIDs,
+		"the panel's up-sell field name must match the product module")
+	assert.Equal(t, productsvc.FieldSubstituteIDs, adminui.FieldSubstituteIDs,
+		"the panel's substitute field name must match the product module")
+	assert.Equal(t, productsvc.MaxRelations, adminui.RelationLimit,
+		"the limit the panel prints must be the one the product module keeps")
+	moduleKinds := make([]string, 0, len(productmodels.RelationTypes()))
+	for _, kind := range productmodels.RelationTypes() {
+		moduleKinds = append(moduleKinds, string(kind))
+	}
+	assert.Equal(t, moduleKinds, adminui.RelationKinds(),
+		"the panel must offer every kind of relation the product module keeps, in its order")
+
 	assert.Equal(t, product.AdminName, adminui.ServiceProductAdmin,
 		"the panel's product write surface name must match the product module")
 	assert.Equal(t, pricing.AdminName, adminui.ServicePricingAdmin,

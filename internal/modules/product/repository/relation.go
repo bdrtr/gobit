@@ -24,6 +24,34 @@ func (r *Repo) ListProductRelations(ctx context.Context, productID string) (map[
 	return out, nil
 }
 
+// ListProductRelationsOfProducts returns the relations of every given product
+// in one statement: product id, then kind, then the related ids in the
+// operator's order. A product with none is absent from the map.
+func (r *Repo) ListProductRelationsOfProducts(
+	ctx context.Context, productIDs []string,
+) (map[string]map[models.RelationType][]string, error) {
+	out := make(map[string]map[models.RelationType][]string)
+	if len(productIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.q.ListProductRelationsOfProducts(ctx, productIDs)
+	if err != nil {
+		return nil, wrapDB(err, "could not read the relations of %d products", len(productIDs))
+	}
+
+	for _, row := range rows {
+		kinds := out[row.ProductID]
+		if kinds == nil {
+			kinds = make(map[models.RelationType][]string)
+			out[row.ProductID] = kinds
+		}
+		kind := models.RelationType(row.Type)
+		kinds[kind] = append(kinds[kind], row.RelatedProductID)
+	}
+
+	return out, nil
+}
+
 // ListProductRelationsOfType returns one kind of a product's relations in the
 // operator's order.
 func (r *Repo) ListProductRelationsOfType(

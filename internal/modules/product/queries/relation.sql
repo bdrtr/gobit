@@ -4,6 +4,13 @@ SELECT type, related_product_id FROM product_relation
 WHERE product_id = $1
 ORDER BY type, rank;
 
+-- name: ListProductRelationsOfProducts :many
+-- Every relation of the given products in one statement, for the read layer's
+-- batch (ADR 0181).
+SELECT product_id, type, related_product_id FROM product_relation
+WHERE product_id = ANY(sqlc.arg('product_ids')::text[])
+ORDER BY product_id, type, rank;
+
 -- name: ListProductRelationsOfType :many
 -- One kind of a product's relations, in the operator's order.
 SELECT related_product_id FROM product_relation

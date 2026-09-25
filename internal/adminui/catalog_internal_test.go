@@ -1280,6 +1280,17 @@ type fakeProductWriter struct {
 	scheduled   []scheduledCall
 	unscheduled int
 	scheduleErr error
+
+	// related records the relation saves; relatedErr is what they answer.
+	related    []map[string][]string
+	relatedErr error
+}
+
+// SetProductRelations records the lists.
+func (f *fakeProductWriter) SetProductRelations(_ context.Context, _ string, lists map[string][]string) error {
+	f.related = append(f.related, lists)
+
+	return f.relatedErr
 }
 
 func (f *fakeProductWriter) UpdateProductBasics(_ context.Context, id, title, handle, status string) error {

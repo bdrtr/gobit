@@ -416,13 +416,22 @@ func (p *productProvider) recordsWithMembership(
 	if err != nil {
 		return nil, err
 	}
-	if len(products) == 0 || !wantsMembership(fields) {
+	if len(products) == 0 {
 		return built, nil
 	}
 
 	ids := make([]string, 0, len(products))
 	for i := range products {
 		ids = append(ids, products[i].ID)
+	}
+
+	if wantsRelations(fields) {
+		if err := p.fillRelations(ctx, ids, built); err != nil {
+			return nil, err
+		}
+	}
+	if !wantsMembership(fields) {
+		return built, nil
 	}
 
 	categories, err := p.repo.ListCategoriesByProductIDs(ctx, ids)
@@ -444,6 +453,45 @@ func (p *productProvider) recordsWithMembership(
 	}
 
 	return built, nil
+}
+
+// fillRelations fills the relation fields the caller asked for, with one batch
+// read for every product in the page (ADR 0181). The records are in the
+// products' order, so built[i] is ids[i]'s.
+func (p *productProvider) fillRelations(ctx context.Context, ids []string, built []query.Record) error {
+	relations, err := p.repo.ListProductRelationsOfProducts(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for i := range built {
+		for kind, field := range RelationFields() {
+			if _, asked := built[i][field]; !asked {
+				continue
+			}
+			related := relations[ids[i]][kind]
+			if related == nil {
+				related = []string{}
+			}
+			built[i][field] = related
+		}
+	}
+
+	return nil
+}
+
+// wantsRelations reports whether the field selection includes a relation list;
+// an empty selection is the whole record, which includes all three.
+func wantsRelations(fields []string) bool {
+	if len(fields) == 0 {
+		return true
+	}
+	for _, field := range RelationFields() {
+		if slices.Contains(fields, field) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // wantsMembership reports whether the field selection includes a membership list.
@@ -731,6 +779,28 @@ const (
 	fieldTagIDs      = "tag_ids"
 )
 
+// The fields carrying a product's relations (ADR 0181), one per kind: the
+// related ids in the operator's order, an empty list for a kind with none.
+//
+// They are published for the admin panel, which reads a product only through
+// this layer and edits its relations. They are exported, unlike the membership
+// fields, because the panel spells them and internal/arch binds its spelling to
+// these at compile time.
+const (
+	FieldCrossSellIDs  = "cross_sell_ids"
+	FieldUpSellIDs     = "up_sell_ids"
+	FieldSubstituteIDs = "substitute_ids"
+)
+
+// RelationFields is the read layer's field for every kind of relation.
+func RelationFields() map[models.RelationType]string {
+	return map[models.RelationType]string{
+		models.RelationCrossSell:  FieldCrossSellIDs,
+		models.RelationUpSell:     FieldUpSellIDs,
+		models.RelationSubstitute: FieldSubstituteIDs,
+	}
+}
+
 // productRecord turns a product into a Query record.
 //
 // The keys are the same as the JSON field names: if the same data appeared under
@@ -745,27 +815,30 @@ const (
 // path and a known one on another.
 func productRecord(p models.Product) query.Record {
 	return query.Record{
-		fieldCategoryIDs: []string{},
-		fieldTagIDs:      []string{},
-		"id":             p.ID,
-		"handle":         p.Handle,
-		"title":          p.Title,
-		"subtitle":       deref(p.Subtitle),
-		"description":    deref(p.Description),
-		"thumbnail":      deref(p.Thumbnail),
-		"status":         p.Status.String(),
-		"is_giftcard":    p.IsGiftcard,
-		"discountable":   p.Discountable,
-		"weight":         derefInt32(p.Weight),
-		"collection_id":  deref(p.CollectionID),
-		"type_id":        deref(p.TypeID),
-		"material":       deref(p.Material),
-		"origin_country": deref(p.OriginCountry),
-		"metadata":       p.Metadata,
-		fieldPublishAt:   momentOrNil(p.PublishAt),
-		fieldArchiveAt:   momentOrNil(p.ArchiveAt),
-		fieldCreatedAt:   p.CreatedAt,
-		fieldUpdatedAt:   p.UpdatedAt,
+		fieldCategoryIDs:   []string{},
+		fieldTagIDs:        []string{},
+		FieldCrossSellIDs:  []string{},
+		FieldUpSellIDs:     []string{},
+		FieldSubstituteIDs: []string{},
+		"id":               p.ID,
+		"handle":           p.Handle,
+		"title":            p.Title,
+		"subtitle":         deref(p.Subtitle),
+		"description":      deref(p.Description),
+		"thumbnail":        deref(p.Thumbnail),
+		"status":           p.Status.String(),
+		"is_giftcard":      p.IsGiftcard,
+		"discountable":     p.Discountable,
+		"weight":           derefInt32(p.Weight),
+		"collection_id":    deref(p.CollectionID),
+		"type_id":          deref(p.TypeID),
+		"material":         deref(p.Material),
+		"origin_country":   deref(p.OriginCountry),
+		"metadata":         p.Metadata,
+		fieldPublishAt:     momentOrNil(p.PublishAt),
+		fieldArchiveAt:     momentOrNil(p.ArchiveAt),
+		fieldCreatedAt:     p.CreatedAt,
+		fieldUpdatedAt:     p.UpdatedAt,
 	}
 }
 

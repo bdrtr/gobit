@@ -63,14 +63,16 @@ const (
 // screen with no check at all.
 func builtInScopes() map[string]string {
 	return map[string]string{
-		ProductsPath:     scopeProductRead,
-		ProductPath:      scopeProductRead,
-		VariantPath:      scopeProductRead,
-		ProductEditPath:  scopeProductWrite,
-		VariantPricePath: scopePricingWrite,
-		VariantStockPath: scopeInventoryWrite,
-		OrdersPath:       scopeOrderRead,
-		OrderPath:        scopeOrderRead,
+		ProductsPath:    scopeProductRead,
+		ProductPath:     scopeProductRead,
+		VariantPath:     scopeProductRead,
+		ProductEditPath: scopeProductWrite,
+		// Editing the related products is a product write like any other.
+		ProductRelationsPath: scopeProductWrite,
+		VariantPricePath:     scopePricingWrite,
+		VariantStockPath:     scopeInventoryWrite,
+		OrdersPath:           scopeOrderRead,
+		OrderPath:            scopeOrderRead,
 		// The sales report is made of order lines and shows what they sold for.
 		// It names no scope of its own because it holds no data of its own: an
 		// operator who may read the orders may read their total.

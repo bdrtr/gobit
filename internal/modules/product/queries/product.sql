@@ -59,6 +59,13 @@ SELECT * FROM product
 WHERE id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY created_at DESC, id DESC;
 
+-- name: ListProductsByHandles :many
+-- The live products carrying the given handles; the admin panel names a
+-- product by its handle (ADR 0181). A handle is unique among live products, so
+-- a handle matches at most one row.
+SELECT * FROM product
+WHERE handle = ANY(sqlc.arg('handles')::text[]) AND deleted_at IS NULL;
+
 -- name: UpdateProduct :one
 -- The COALESCE pattern: a field passed as NULL DOES NOT CHANGE. Its known limit
 -- is that setting a field back to NULL (clearing the subtitle, say) cannot be

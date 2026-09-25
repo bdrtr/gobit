@@ -138,7 +138,7 @@ const (
 	fieldUpdatedAt = "updated_at"
 	// fieldPublishAt is a draft's scheduled moment (ADR 0177, ADR 0178).
 	fieldPublishAt = "publish_at"
-	// fieldArchiveAt is a product\'s scheduled moment to leave (ADR 0179).
+	// fieldArchiveAt is a product's scheduled moment to leave (ADR 0179).
 	fieldArchiveAt   = "archive_at"
 	fieldSKU         = "sku"
 	fieldPrices      = "prices"

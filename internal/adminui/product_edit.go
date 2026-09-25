@@ -43,10 +43,11 @@ func ProductStatuses() []string { return slices.Clone(productStatuses) }
 // ProductWriter is the narrow write surface the panel needs, declared on the
 // CONSUMER side (ADR 0001).
 //
-// The panel edits a product's basics and a draft's schedule, and nothing else.
-// Each method is a decision someone made: an interface that offered more would
-// let a future screen delete a product without that decision being made
-// anywhere. The schedule joined in ADR 0178.
+// The panel edits a product's basics, its schedule and its related products,
+// and nothing else. Each method is a decision someone made: an interface that
+// offered more would let a future screen delete a product without that decision
+// being made anywhere. The schedule joined in ADR 0178, the related products in
+// ADR 0181.
 //
 // The signatures speak only in primitives and stdlib types because this package
 // cannot import the product module; see the module's admin surface for the full
@@ -60,6 +61,10 @@ type ProductWriter interface {
 	// UnscheduleProduct takes the whole schedule off; a product with none is
 	// left as it is.
 	UnscheduleProduct(ctx context.Context, id string) error
+	// SetProductRelations replaces the given kinds of a product's related
+	// products, all of them or none; each list is handles or ids in the
+	// storefront's order (ADR 0181).
+	SetProductRelations(ctx context.Context, id string, lists map[string][]string) error
 }
 
 // publishAtLayout is how the form's moment is written and read: the value of
@@ -74,6 +79,8 @@ const (
 	statusDraft = "draft"
 	// statusArchived is the one status no moment belongs to.
 	statusArchived = "archived"
+	// statusPublished is the one status the storefront shows (ADR 0181).
+	statusPublished = "published"
 )
 
 // editProduct renders the edit form.
@@ -250,7 +257,7 @@ func (u *UI) renderEditForm(
 ) {
 	u.templates.render(w, r, status, "product_edit.gohtml", map[string]any{
 		titleKey:     "Edit " + product.Title,
-		"Product":    product,
+		productKey:   product,
 		"Statuses":   productStatuses,
 		errorKey:     message,
 		"ActionPath": ProductsPath + "/" + product.ID + "/edit",

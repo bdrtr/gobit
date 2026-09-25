@@ -38,6 +38,13 @@ const titleKey = "Title"
 // operator why their edit was refused.
 const errorKey = "Error"
 
+// productKey is the template key carrying the product a page is about.
+//
+// It is a constant for errorKey's reason: the product page, the edit form and
+// the related-products form fill it, and a typo in one would render that page
+// with a blank product rather than fail.
+const productKey = "Product"
+
 // pages lists the panel pages that are looked up BY NAME at runtime.
 //
 // The list is maintained by hand, deliberately. A page name is a STRING: a typo
@@ -54,6 +61,7 @@ var pages = []string{
 	"products.gohtml",
 	"product.gohtml",
 	"product_edit.gohtml",
+	"product_relations.gohtml",
 	"variant.gohtml",
 	"orders.gohtml",
 	"order.gohtml",

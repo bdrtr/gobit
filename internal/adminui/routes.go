@@ -58,6 +58,8 @@ func (u *UI) routes(r chi.Router) {
 	r.Get(ProductPath, u.needs(ProductPath, u.showProduct))
 	r.Get(ProductEditPath, u.needs(ProductEditPath, u.editProduct))
 	r.Post(ProductEditPath, u.needs(ProductEditPath, u.submitProductEdit))
+	r.Get(ProductRelationsPath, u.needs(ProductRelationsPath, u.editRelations))
+	r.Post(ProductRelationsPath, u.needs(ProductRelationsPath, u.submitRelations))
 	r.Get(VariantPath, u.needs(VariantPath, u.showVariant))
 	r.Post(VariantPricePath, u.needs(VariantPricePath, u.submitVariantPrice))
 	r.Post(VariantStockPath, u.needs(VariantStockPath, u.submitVariantStock))

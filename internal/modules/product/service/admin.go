@@ -69,6 +69,42 @@ func (a *AdminSurface) UnscheduleProduct(ctx context.Context, id string) error {
 	return err
 }
 
+// SetProductRelations replaces the given kinds of a product's relations, all of
+// them or none (ADR 0181); a kind absent from the map is left as it is.
+//
+// Each list holds references in the storefront's order, and a reference is a
+// product id or a handle: an operator knows the handle, and the panel should not
+// have to look every one up before it can save. The kinds are the strings the
+// API's paths use. The rules are the service's, and a refusal names what it
+// refused as the operator typed it.
+func (a *AdminSurface) SetProductRelations(ctx context.Context, id string, lists map[string][]string) error {
+	if a == nil || a.svc == nil {
+		return errors.Unavailable(codeNotReady, "the product service is not set up")
+	}
+
+	// The references of every list are resolved in one read, then cut back into
+	// their lists by length.
+	kinds := make([]models.RelationType, 0, len(lists))
+	var refs []string
+	for kind, list := range lists {
+		kinds = append(kinds, models.RelationType(kind))
+		refs = append(refs, list...)
+	}
+	ids, err := a.svc.ResolveProductRefs(ctx, refs)
+	if err != nil {
+		return err
+	}
+
+	resolved := make(map[models.RelationType][]string, len(kinds))
+	for _, kind := range kinds {
+		n := len(lists[string(kind)])
+		resolved[kind], ids = ids[:n:n], ids[n:]
+	}
+	_, err = a.svc.SetRelationLists(ctx, id, resolved)
+
+	return err
+}
+
 // UpdateProductBasics updates a product's title, handle and status.
 //
 // # Why these three and not a patch document

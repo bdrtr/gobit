@@ -4,13 +4,16 @@ product.gohtml shows one product with its variants, prices and stock.
 The three come from three different modules and are joined by the read layer in
 two calls; the screen itself performs no join and knows no module.
 
-Two printing decisions are visible here and both are about not lying:
+Three printing decisions are visible here and all are about not lying:
 
   - An amount marked as minor units is printed with that label. The currency's
     scale is not two for every currency, and a screen that guessed would show a
     wrong price confidently.
   - A variant with no inventory item shows an em dash, not 0. Zero means "sold
     out"; nothing tracking the variant is a different fact.
+  - A related product the storefront leaves out, a draft or an archived one,
+    says so beside its name (ADR 0181): the list reads as the operator wrote
+    it, and a shopper sees a shorter one.
 */ -}}
 {{ define "body" }}
 <p><a href="{{ .ProductsPath }}">← Products</a></p>
@@ -52,5 +55,20 @@ Two printing decisions are visible here and both are about not lying:
 </table>
 {{ else }}
 <p>This product has no variants.</p>
+{{ end }}
+
+<h2>Related products</h2>
+<p><a href="{{ .RelationsPath }}">Edit related products</a></p>
+{{ range .Relations }}
+<h3>{{ .Label }}</h3>
+{{ if .Products }}
+<ol>
+  {{ range .Products }}
+  <li><a href="{{ $.ProductsPath }}/{{ .ID }}">{{ .Title }}</a> ({{ .Handle }}){{ if .Hidden }} — {{ .Status }}; the storefront leaves it out{{ end }}</li>
+  {{ end }}
+</ol>
+{{ else }}
+<p>None.</p>
+{{ end }}
 {{ end }}
 {{ end }}

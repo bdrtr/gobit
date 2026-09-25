@@ -60,18 +60,80 @@ func (s *Service) ProductRelations(ctx context.Context, id string) (map[models.R
 func (s *Service) SetProductRelations(
 	ctx context.Context, id string, kind models.RelationType, relatedIDs []string,
 ) (map[models.RelationType][]string, error) {
+	return s.SetRelationLists(ctx, id, map[models.RelationType][]string{kind: relatedIDs})
+}
+
+// SetRelationLists replaces every given kind of a product's relations in one
+// transaction (ADR 0181), and returns all of the product's relations; a kind
+// absent from the map is left as it is.
+//
+// Every list is checked, and every id in them looked up, before anything is
+// written, so a form that saves three lists at once saves all three or none.
+func (s *Service) SetRelationLists(
+	ctx context.Context, id string, lists map[models.RelationType][]string,
+) (map[models.RelationType][]string, error) {
 	if _, err := requireID("id", id); err != nil {
 		return nil, err
 	}
-	if !kind.Valid() {
-		return nil, relationTypeUnknown(kind)
+
+	// The kinds are walked in their fixed order, so a request breaking two
+	// rules is refused by the same one on every run.
+	wanted := make(map[models.RelationType][]string, len(lists))
+	var every []string
+	for kind := range lists {
+		if !kind.Valid() {
+			return nil, relationTypeUnknown(kind)
+		}
 	}
+	for _, kind := range models.RelationTypes() {
+		relatedIDs, given := lists[kind]
+		if !given {
+			continue
+		}
+		ids, err := checkRelationList(id, kind, relatedIDs)
+		if err != nil {
+			return nil, err
+		}
+		wanted[kind] = ids
+		every = append(every, ids...)
+	}
+
+	if _, err := s.GetProduct(ctx, id); err != nil {
+		return nil, err
+	}
+	if err := s.requireProducts(ctx, every); err != nil {
+		return nil, err
+	}
+
+	if err := s.repo.InTx(ctx, func(ctx context.Context, tx repository.Store) error {
+		for _, kind := range models.RelationTypes() {
+			ids, given := wanted[kind]
+			if !given {
+				continue
+			}
+			if err := tx.ReplaceProductRelations(ctx, id, kind, ids); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return s.ProductRelations(ctx, id)
+}
+
+// checkRelationList applies the rules a list can be judged by without reading
+// anything: ids present, none twice, at most MaxRelations, not the product
+// itself.
+func checkRelationList(id string, kind models.RelationType, relatedIDs []string) ([]string, error) {
 	wanted, err := uniqueIDs("product_ids", relatedIDs)
 	if err != nil {
 		return nil, err
 	}
 	if len(wanted) != len(relatedIDs) {
-		return nil, invalid("product_ids names a product more than once")
+		return nil, invalid("the %s list names a product more than once", kind)
 	}
 	if len(wanted) > MaxRelations {
 		return nil, invalid("a product holds at most %d %s relations, %d given", MaxRelations, kind, len(wanted))
@@ -80,36 +142,83 @@ func (s *Service) SetProductRelations(
 		return nil, invalid("a product cannot be related to itself: %s", id)
 	}
 
-	if _, err := s.GetProduct(ctx, id); err != nil {
-		return nil, err
+	return wanted, nil
+}
+
+// requireProducts refuses, naming them, the ids no live product carries.
+func (s *Service) requireProducts(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
 	}
-	if len(wanted) > 0 {
-		found, err := s.repo.ListProductsByIDs(ctx, wanted)
+	found, err := s.repo.ListProductsByIDs(ctx, ids)
+	if err != nil {
+		return err
+	}
+	known := make(map[string]struct{}, len(found))
+	for i := range found {
+		known[found[i].ID] = struct{}{}
+	}
+	var missing []string
+	for _, related := range ids {
+		if _, ok := known[related]; !ok && !slices.Contains(missing, related) {
+			missing = append(missing, related)
+		}
+	}
+	if len(missing) > 0 {
+		return invalid("no such product: %s", strings.Join(missing, ", "))
+	}
+
+	return nil
+}
+
+// ResolveProductRefs turns references an operator typed — a product id, or a
+// handle — into product ids, in the given order (ADR 0181).
+//
+// A reference starting with the product id prefix is an id, as on the
+// storefront's single product address; anything else is a handle. A reference
+// that names no live product is refused, naming it as it was typed, and so is
+// an empty one.
+func (s *Service) ResolveProductRefs(ctx context.Context, refs []string) ([]string, error) {
+	var handles []string
+	for _, ref := range refs {
+		if _, err := requireID("product", ref); err != nil {
+			return nil, err
+		}
+		if !strings.HasPrefix(ref, prefixProduct) {
+			handles = append(handles, ref)
+		}
+	}
+
+	byHandle := make(map[string]string, len(handles))
+	if len(handles) > 0 {
+		found, err := s.repo.ListProductsByHandles(ctx, handles)
 		if err != nil {
 			return nil, err
 		}
-		known := make(map[string]struct{}, len(found))
 		for i := range found {
-			known[found[i].ID] = struct{}{}
-		}
-		var missing []string
-		for _, related := range wanted {
-			if _, ok := known[related]; !ok {
-				missing = append(missing, related)
-			}
-		}
-		if len(missing) > 0 {
-			return nil, invalid("no such product: %s", strings.Join(missing, ", "))
+			byHandle[found[i].Handle] = found[i].ID
 		}
 	}
 
-	if err := s.repo.InTx(ctx, func(ctx context.Context, tx repository.Store) error {
-		return tx.ReplaceProductRelations(ctx, id, kind, wanted)
-	}); err != nil {
-		return nil, err
+	out := make([]string, 0, len(refs))
+	var missing []string
+	for _, ref := range refs {
+		if strings.HasPrefix(ref, prefixProduct) {
+			out = append(out, ref)
+			continue
+		}
+		id, ok := byHandle[ref]
+		if !ok {
+			missing = append(missing, ref)
+			continue
+		}
+		out = append(out, id)
+	}
+	if len(missing) > 0 {
+		return nil, invalid("no such product: %s", strings.Join(missing, ", "))
 	}
 
-	return s.ProductRelations(ctx, id)
+	return out, nil
 }
 
 // StoreRelatedProducts returns one kind of a product's relations as the

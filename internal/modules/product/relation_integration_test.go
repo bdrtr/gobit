@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
 // relationsPath is the admin address of a product's relations.
@@ -213,4 +215,41 @@ func TestTheSchemaRefusesWhatTheServiceRefuses(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.want)
 		})
 	}
+}
+
+// TestAHandleResolvesToTheLiveProductOnly verifies the panel's handle lookup on
+// the real schema (ADR 0181): a handle is unique among LIVE products only, so a
+// deleted product and its successor can share one, and the lookup must answer
+// with the successor.
+func TestAHandleResolvesToTheLiveProductOnly(t *testing.T) {
+	ctx := context.Background()
+	fx := newChannelFixture(t)
+	shirt := fx.seedPublished(t, uniqueHandle("rel-shirt"))
+	handle := uniqueHandle("rel-reused")
+	first := fx.seedPublished(t, handle)
+	rec := fx.sys.request(t, http.MethodDelete, "/admin/v1/products/"+first, "")
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	second := fx.seedPublished(t, handle)
+	require.NotEqual(t, first, second)
+
+	svc := newService(t, nil, nil)
+	admin := service.NewAdminSurface(svc)
+	require.NoError(t, admin.SetProductRelations(ctx, shirt, map[string][]string{"cross_sell": {handle}}))
+	assert.Equal(t, []any{second}, fx.relations(t, shirt)["cross_sell"],
+		"the handle named the live product, not the deleted one")
+
+	err := admin.SetProductRelations(ctx, shirt, map[string][]string{"up_sell": {"rel-nobody-has-this"}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no such product: rel-nobody-has-this")
+
+	// A handle only a DELETED product carries is refused as the operator typed
+	// it. Were the deleted row found, the refusal would come one step later and
+	// name an id the operator never saw.
+	orphan := uniqueHandle("rel-orphan")
+	gone := fx.seedPublished(t, orphan)
+	rec = fx.sys.request(t, http.MethodDelete, "/admin/v1/products/"+gone, "")
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	err = admin.SetProductRelations(ctx, shirt, map[string][]string{"up_sell": {orphan}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no such product: "+orphan)
 }

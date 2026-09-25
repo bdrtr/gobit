@@ -454,6 +454,22 @@ func (m *memStore) ListProductsByIDs(_ context.Context, ids []string) ([]models.
 	return out, nil
 }
 
+func (m *memStore) ListProductsByHandles(_ context.Context, handles []string) ([]models.Product, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ListProductsByHandles"); err != nil {
+		return nil, err
+	}
+
+	out := []models.Product{}
+	for id := range m.products {
+		if p := m.products[id]; p.DeletedAt == nil && slices.Contains(handles, p.Handle) {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
 func (m *memStore) UpdateProduct(_ context.Context, id string, patch repository.ProductPatch) (models.Product, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -647,6 +663,30 @@ func (m *memStore) ListProductRelations(
 	for kind, ids := range m.relations[productID] {
 		if len(ids) > 0 {
 			out[kind] = slices.Clone(ids)
+		}
+	}
+	return out, nil
+}
+
+func (m *memStore) ListProductRelationsOfProducts(
+	_ context.Context, productIDs []string,
+) (map[string]map[models.RelationType][]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ListProductRelationsOfProducts"); err != nil {
+		return nil, err
+	}
+
+	out := map[string]map[models.RelationType][]string{}
+	for _, id := range productIDs {
+		for kind, ids := range m.relations[id] {
+			if len(ids) == 0 {
+				continue
+			}
+			if out[id] == nil {
+				out[id] = map[models.RelationType][]string{}
+			}
+			out[id][kind] = slices.Clone(ids)
 		}
 	}
 	return out, nil

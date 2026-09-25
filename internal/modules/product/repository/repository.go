@@ -111,6 +111,9 @@ type Store interface {
 	// rule is single.
 	VisibleProductIDs(ctx context.Context, productIDs []string, salesChannelIDs []string) (map[string]struct{}, error)
 	ListProductsByIDs(ctx context.Context, ids []string) ([]models.Product, error)
+	// ListProductsByHandles reads the live products carrying the given handles,
+	// in no promised order (ADR 0181).
+	ListProductsByHandles(ctx context.Context, handles []string) ([]models.Product, error)
 	UpdateProduct(ctx context.Context, id string, patch ProductPatch) (models.Product, error)
 	// SetProductSchedule, ClearProductSchedule, PublishDueProducts and
 	// ArchiveDueProducts are a product's schedule (ADR 0177, ADR 0179); see
@@ -120,9 +123,13 @@ type Store interface {
 	PublishDueProducts(ctx context.Context, due time.Time, limit int64) ([]string, error)
 	ArchiveDueProducts(ctx context.Context, due time.Time, limit int64) ([]string, error)
 	// ListProductRelations, ListProductRelationsOfType and
-	// ReplaceProductRelations are a product's relations (ADR 0180); see
-	// relation.go.
+	// ReplaceProductRelations are a product's relations (ADR 0180), and
+	// ListProductRelationsOfProducts is the read layer's batch of them
+	// (ADR 0181); see relation.go.
 	ListProductRelations(ctx context.Context, productID string) (map[models.RelationType][]string, error)
+	ListProductRelationsOfProducts(
+		ctx context.Context, productIDs []string,
+	) (map[string]map[models.RelationType][]string, error)
 	ListProductRelationsOfType(ctx context.Context, productID string, kind models.RelationType) ([]string, error)
 	ReplaceProductRelations(ctx context.Context, productID string, kind models.RelationType, relatedIDs []string) error
 	SoftDeleteProduct(ctx context.Context, id string) error

@@ -10,7 +10,6 @@ package adminui
 import (
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -34,7 +33,10 @@ type variantRow struct {
 // Two Graph calls are made, not one, and that is a property of the data rather
 // than a shortcut: variants live in the SAME module as products, so there is no
 // link between them and the read layer joins only across links. Asking for
-// variants is therefore a root query of its own, filtered by product_id.
+// variants is therefore a root query of its own, filtered by product_id. A
+// product with related products costs a third, for the same reason: the related
+// products are products of the same module, read in one call for all three
+// lists (ADR 0181, [UI.loadRelations]).
 //
 // The prices and the stock DO come through links, in the same call: one
 // expansion each, both batched by the read layer. A screen that fetched them
@@ -42,19 +44,8 @@ type variantRow struct {
 // layer's no-N+1 rule exists to prevent.
 func (u *UI) showProduct(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if strings.TrimSpace(id) == "" {
-		u.errorPage(w, r, http.StatusNotFound, "Not found", "No product was named.")
-		return
-	}
-
-	products, err := u.catalog.Graph(r.Context(), productByID(id))
-	if err != nil {
-		u.catalogFailure(w, r, err, "The product could not be read.")
-		return
-	}
-	if len(products) == 0 {
-		u.errorPage(w, r, http.StatusNotFound, "Not found",
-			"There is no product with that id.")
+	product, relations, ok := u.loadRelations(w, r, id)
+	if !ok {
 		return
 	}
 
@@ -84,13 +75,14 @@ func (u *UI) showProduct(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	product := productRowOf(products[0])
 	u.templates.render(w, r, http.StatusOK, "product.gohtml", map[string]any{
-		titleKey:       product.Title,
-		"Product":      product,
-		"Variants":     rows,
-		"ProductsPath": ProductsPath,
-		"EditPath":     ProductsPath + "/" + product.ID + "/edit",
+		titleKey:        product.Title,
+		productKey:      product,
+		"Variants":      rows,
+		"Relations":     relations,
+		"ProductsPath":  ProductsPath,
+		"EditPath":      ProductsPath + "/" + product.ID + "/edit",
+		"RelationsPath": ProductsPath + "/" + product.ID + "/relations",
 	})
 }
 

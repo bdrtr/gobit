@@ -331,6 +331,15 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **The panel edits a product's neighbors** (ADR 0181). The admin panel's
+  product page lists the related products, each in the operator's order, and
+  marks one the storefront leaves out. "Edit related products" opens a form
+  with one handle (or id) per line for each kind, and saves all three lists or
+  none. **For read-layer consumers:** the `product` record carries
+  `cross_sell_ids`, `up_sell_ids` and `substitute_ids`, filled only when asked
+  for or when the whole record is read. **For embedders:** the product module's
+  admin surface gains `SetProductRelations(ctx, id, map[kind][]ref)`.
+
 - **A product names its neighbors** (ADR 0180). A product holds an ordered
   list of up to 50 other products for each of `cross_sell`, `up_sell` and
   `substitute`. **For API consumers:** `GET /admin/v1/products/{id}/relations`

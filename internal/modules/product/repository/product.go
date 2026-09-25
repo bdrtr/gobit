@@ -185,6 +185,19 @@ func (r *Repo) ListProductsByIDs(ctx context.Context, ids []string) ([]models.Pr
 	return toProducts(rows)
 }
 
+// ListProductsByHandles reads the live products carrying the given handles; a
+// handle no live product carries matches nothing.
+func (r *Repo) ListProductsByHandles(ctx context.Context, handles []string) ([]models.Product, error) {
+	if len(handles) == 0 {
+		return []models.Product{}, nil
+	}
+	rows, err := r.q.ListProductsByHandles(ctx, handles)
+	if err != nil {
+		return nil, wrapDB(err, "could not read products by handle (%d handles)", len(handles))
+	}
+	return toProducts(rows)
+}
+
 // UpdateProduct updates the product partially and returns its current state.
 func (r *Repo) UpdateProduct(ctx context.Context, id string, patch ProductPatch) (models.Product, error) {
 	meta, err := patchMetadata(patch.Metadata)

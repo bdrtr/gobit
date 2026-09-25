@@ -83,6 +83,40 @@ func (q *Queries) ListProductRelations(ctx context.Context, productID string) ([
 	return items, nil
 }
 
+const listProductRelationsOfProducts = `-- name: ListProductRelationsOfProducts :many
+SELECT product_id, type, related_product_id FROM product_relation
+WHERE product_id = ANY($1::text[])
+ORDER BY product_id, type, rank
+`
+
+type ListProductRelationsOfProductsRow struct {
+	ProductID        string
+	Type             string
+	RelatedProductID string
+}
+
+// Every relation of the given products in one statement, for the read layer's
+// batch (ADR 0181).
+func (q *Queries) ListProductRelationsOfProducts(ctx context.Context, productIds []string) ([]ListProductRelationsOfProductsRow, error) {
+	rows, err := q.db.Query(ctx, listProductRelationsOfProducts, productIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListProductRelationsOfProductsRow{}
+	for rows.Next() {
+		var i ListProductRelationsOfProductsRow
+		if err := rows.Scan(&i.ProductID, &i.Type, &i.RelatedProductID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProductRelationsOfType = `-- name: ListProductRelationsOfType :many
 SELECT related_product_id FROM product_relation
 WHERE product_id = $1 AND type = $2

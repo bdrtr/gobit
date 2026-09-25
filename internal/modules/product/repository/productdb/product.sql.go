@@ -472,6 +472,58 @@ func (q *Queries) ListImagesByProductIDs(ctx context.Context, dollar_1 []string)
 	return items, nil
 }
 
+const listProductsByHandles = `-- name: ListProductsByHandles :many
+SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at FROM product
+WHERE handle = ANY($1::text[]) AND deleted_at IS NULL
+`
+
+// The live products carrying the given handles; the admin panel names a
+// product by its handle (ADR 0181). A handle is unique among live products, so
+// a handle matches at most one row.
+func (q *Queries) ListProductsByHandles(ctx context.Context, handles []string) ([]Product, error) {
+	rows, err := q.db.Query(ctx, listProductsByHandles, handles)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Product{}
+	for rows.Next() {
+		var i Product
+		if err := rows.Scan(
+			&i.ID,
+			&i.Handle,
+			&i.Title,
+			&i.Subtitle,
+			&i.Description,
+			&i.Thumbnail,
+			&i.Status,
+			&i.IsGiftcard,
+			&i.Discountable,
+			&i.Weight,
+			&i.Length,
+			&i.Height,
+			&i.Width,
+			&i.Material,
+			&i.OriginCountry,
+			&i.CollectionID,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.TypeID,
+			&i.PublishAt,
+			&i.ArchiveAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProductsByIDs = `-- name: ListProductsByIDs :many
 
 SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at FROM product

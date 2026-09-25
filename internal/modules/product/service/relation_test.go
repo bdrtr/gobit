@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
@@ -210,4 +211,119 @@ func TestAFullListFitsTheStorefrontRead(t *testing.T) {
 	related, err := fx.svc.StoreRelatedProducts(ctx, shirt.ID, models.RelationUpSell, nil)
 	require.NoError(t, err)
 	assert.Len(t, related, service.MaxRelations)
+}
+
+// TestTheReadLayerCarriesTheRelations verifies the product record the admin
+// panel reads (ADR 0181): each kind's ids in the operator's order, an empty list
+// for a kind with none, and the whole record including them.
+func TestTheReadLayerCarriesTheRelations(t *testing.T) {
+	fx := newChannelFixture(t)
+	ctx := context.Background()
+	shirt := seedProduct(t, fx.svc, "shirt", "Shirt")
+	belt := seedProduct(t, fx.svc, "belt", "Belt")
+	socks := seedProduct(t, fx.svc, "socks", "Socks")
+	_, err := fx.svc.SetProductRelations(ctx, shirt.ID, models.RelationCrossSell, []string{socks.ID, belt.ID})
+	require.NoError(t, err)
+
+	provider := service.NewProductProvider(fx.store)
+	records, err := provider.List(ctx, query.ListOptions{
+		Fields:  []string{"id", service.FieldCrossSellIDs, service.FieldUpSellIDs, service.FieldSubstituteIDs},
+		Filters: map[string]any{"ids": []string{shirt.ID, belt.ID}},
+	})
+	require.NoError(t, err)
+	byID := map[string]query.Record{}
+	for _, record := range records {
+		id, _ := record["id"].(string)
+		byID[id] = record
+	}
+	assert.Equal(t, []string{socks.ID, belt.ID}, byID[shirt.ID][service.FieldCrossSellIDs])
+	assert.Equal(t, []string{}, byID[shirt.ID][service.FieldUpSellIDs], "an empty list, not a nil")
+	assert.Equal(t, []string{}, byID[belt.ID][service.FieldCrossSellIDs],
+		"a relation is read from the product it belongs to")
+
+	whole, err := provider.FetchByIDs(ctx, []string{shirt.ID}, nil)
+	require.NoError(t, err)
+	require.Len(t, whole, 1)
+	assert.Equal(t, []string{socks.ID, belt.ID}, whole[0][service.FieldCrossSellIDs],
+		"asking for everything includes the relations")
+
+	for _, kind := range models.RelationTypes() {
+		assert.NotEmpty(t, service.RelationFields()[kind], "every kind has a field: %s", kind)
+	}
+}
+
+// TestTheRelationsAreReadOnlyWhenAskedFor is the cost half: one batch read for
+// a page of products when a relation field is named, and none otherwise.
+func TestTheRelationsAreReadOnlyWhenAskedFor(t *testing.T) {
+	fx := newChannelFixture(t)
+	ctx := context.Background()
+	for _, handle := range []string{"one", "two", "three"} {
+		seedProduct(t, fx.svc, handle, handle)
+	}
+	provider := service.NewProductProvider(fx.store)
+
+	before := fx.store.callCount("ListProductRelationsOfProducts")
+	_, err := provider.List(ctx, query.ListOptions{Fields: []string{"id", "title"}})
+	require.NoError(t, err)
+	assert.Equal(t, before, fx.store.callCount("ListProductRelationsOfProducts"),
+		"a read that named no relation must not pay for one")
+
+	categories := fx.store.callCount("ListCategoriesByProductIDs")
+	records, err := provider.List(ctx, query.ListOptions{Fields: []string{"id", service.FieldUpSellIDs}})
+	require.NoError(t, err)
+	require.Len(t, records, 3)
+	assert.Equal(t, before+1, fx.store.callCount("ListProductRelationsOfProducts"),
+		"one read for the whole page, not one per product")
+	assert.Equal(t, categories, fx.store.callCount("ListCategoriesByProductIDs"),
+		"and the memberships, not asked for, are not read")
+}
+
+// TestTheAdminSurfaceSavesEveryListOrNone verifies the panel's write (ADR
+// 0181): references by handle or id resolved in one read, three lists saved
+// together, and a list that cannot be kept leaving every list as it was.
+func TestTheAdminSurfaceSavesEveryListOrNone(t *testing.T) {
+	fx := newChannelFixture(t)
+	ctx := context.Background()
+	shirt := seedProduct(t, fx.svc, "shirt", "Shirt")
+	belt := seedProduct(t, fx.svc, "belt", "Belt")
+	socks := seedProduct(t, fx.svc, "socks", "Socks")
+	admin := service.NewAdminSurface(fx.svc)
+
+	require.NoError(t, admin.SetProductRelations(ctx, shirt.ID, map[string][]string{
+		"cross_sell": {"socks", belt.ID},
+		"up_sell":    {"belt"},
+		"substitute": {},
+	}))
+	relations, err := fx.svc.ProductRelations(ctx, shirt.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{socks.ID, belt.ID}, relations[models.RelationCrossSell],
+		"a handle and an id side by side, in the order given")
+	assert.Equal(t, []string{belt.ID}, relations[models.RelationUpSell])
+	assert.Equal(t, 1, fx.store.callCount("ListProductsByHandles"), "the handles are resolved in one read")
+
+	for name, tc := range map[string]struct {
+		lists map[string][]string
+		names string
+	}{
+		"a handle nobody carries": {map[string][]string{
+			"cross_sell": {"belt"}, "up_sell": {"sokcs"},
+		}, "no such product: sokcs"},
+		"the product itself by its handle": {map[string][]string{
+			"cross_sell": {"belt"}, "substitute": {"shirt"},
+		}, "itself"},
+		"an unknown kind": {map[string][]string{
+			"cross_sell": {"belt"}, "accessory": {"socks"},
+		}, "accessory"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := admin.SetProductRelations(ctx, shirt.ID, tc.lists)
+			require.Error(t, err)
+			assert.True(t, errors.IsInvalid(err), "error: %v", err)
+			assert.Contains(t, err.Error(), tc.names)
+
+			after, err := fx.svc.ProductRelations(ctx, shirt.ID)
+			require.NoError(t, err)
+			assert.Equal(t, relations, after, "the valid list beside it was not written either")
+		})
+	}
 }

@@ -1,0 +1,32 @@
+{{- /*
+product_relations.gohtml edits a product's related products (ADR 0181).
+
+Each kind is a textarea holding one handle per line, in the order the storefront
+shows them. A handle is what an operator knows; a picker over the whole catalog
+would not fit a catalog of fifty thousand products. The form is POSTed inside
+the panel tree for the reason product_edit.gohtml's is.
+
+All three lists are saved together, and a list the module refuses leaves all
+three as they were: the form comes back with what was typed and the module's
+sentence naming the line to fix.
+*/ -}}
+{{ define "body" }}
+<p><a href="{{ .CancelPath }}">← Back to the product</a></p>
+
+<h1>Related products of {{ .Product.Title }}</h1>
+{{ if .Error }}<p role="alert">{{ .Error }}</p>{{ end }}
+
+<form method="post" action="{{ .ActionPath }}">
+  {{ range .Lists }}
+  <label>{{ .Label }} ({{ .Kind }})
+    <textarea name="{{ .Kind }}" rows="6">{{ .Text }}</textarea>
+  </label>
+  {{ end }}
+  <p>One product per line, by its handle or its id, in the order the storefront
+  shows them; at most {{ .Limit }} in each list. A draft, or a product sold in
+  another channel, can be listed: the storefront leaves it out until it can
+  show it. An empty list takes that kind off.</p>
+  <button type="submit">Save</button>
+  <a href="{{ .CancelPath }}">Cancel</a>
+</form>
+{{ end }}
