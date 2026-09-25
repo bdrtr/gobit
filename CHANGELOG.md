@@ -12,6 +12,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **`errors.HasKind(nil, errors.KindInternal)` was true** (D136). `KindOf`
+  reads an unclassified error as internal and read nil the same way, so a test
+  asserting an internal failure passed when nothing failed; the b2b service's
+  constructor test passed with both of its refusals removed. **For embedders:**
+  `HasKind(nil, kind)` is now false for every kind; `KindOf(nil)` is unchanged.
+
 - **The payment module's migration test passed by file order** (D135). It
   rolled the schema back in the database every test shares, and 000006 refuses
   to roll back a point ledger holding a spend row; it ran before every test that
@@ -28,6 +34,16 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **The order module keeps derived books** (ADR 0188). **For operators and
+  accountants:** `GET /admin/v1/order-journal?from=&to=[&currency_code=]`
+  (`order:read`) returns each order placed, order canceled and credit line in the
+  window as a balanced entry over `receivable`, `sales`, `sales_discounts`,
+  `tax_payable`, `shipping` and `credit_allowances`, and a trial balance.
+  `receivable` is the payment journal's account, so the two together close an
+  order that was paid, canceled or written off; a returned order's receivable
+  stays open by its refund until the revenue it gave back is read. **For
+  operators:** order migration 000021 adds three time indexes.
 
 - **A refund names its cause** (ADR 0187). Every refund row the returns
   workflow makes carries the id of the return, claim or exchange that caused

@@ -212,7 +212,15 @@ func CodeOf(err error) string {
 
 // HasKind reports whether the error is of the given class (along the chain).
 // It is named separately so it is not confused with the stdlib Is.
+//
+// No error is of no class: HasKind(nil, kind) is false for every kind (D136).
+// [KindOf] answers KindInternal for an error it cannot classify, and it used
+// to answer the same for nil, so HasKind(nil, KindInternal) was true and an
+// assertion that something failed internally passed when nothing failed.
 func HasKind(err error, kind Kind) bool {
+	if err == nil {
+		return false
+	}
 	return KindOf(err) == kind
 }
 

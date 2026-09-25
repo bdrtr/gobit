@@ -30,8 +30,10 @@ import (
 	inventorysvc "github.com/bdrtr/gobit/internal/modules/inventory/service"
 	"github.com/bdrtr/gobit/internal/modules/notification"
 	"github.com/bdrtr/gobit/internal/modules/notification/logonly"
+	ordermodels "github.com/bdrtr/gobit/internal/modules/order/models"
 	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
 	"github.com/bdrtr/gobit/internal/modules/payment"
+	paymentmodels "github.com/bdrtr/gobit/internal/modules/payment/models"
 	paymentservice "github.com/bdrtr/gobit/internal/modules/payment/service"
 	"github.com/bdrtr/gobit/internal/modules/pricing"
 	pricingmodels "github.com/bdrtr/gobit/internal/modules/pricing/models"
@@ -206,6 +208,21 @@ func TestTheLoyaltyEarnCeilingAgreesWithThePaymentService(t *testing.T) {
 
 	assert.Equal(t, paymentservice.MaxLoyaltyEarnBasisPoints, config.MaxLoyaltyEarnBasisPoints,
 		"the config's loyalty earn ceiling must match the payment service's")
+}
+
+// TestTheReceivableAccountAgrees binds the one account the payment and the order
+// journals share (ADR 0186, ADR 0188).
+//
+// A capture credits receivable on the payment module's books and the order it
+// pays for debits it on the order module's. The books close only if both name
+// the account alike; a drift would leave every paid order owing its total on
+// one side and the money received as a separate, unmatched account on the
+// other, and both journals would still balance on their own.
+func TestTheReceivableAccountAgrees(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, string(paymentmodels.AccountReceivable), string(ordermodels.AccountReceivable),
+		"the payment and order journals must spell receivable alike")
 }
 
 // TestTheBuyerAttributeNamesAgree binds the two spellings of the attributes that

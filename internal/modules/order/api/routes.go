@@ -208,4 +208,5 @@ func (h *Handler) Routes(r chi.Router) {
 	// The order as it stood at a moment: the timeline folded to that moment
 	// (ADR 0171).
 	read.Get("/admin/v1/orders/{id}/as-of", h.adminGetOrderAsOf)
+	read.Get(pathAdminOrderJournal, h.adminOrderJournal)
 }

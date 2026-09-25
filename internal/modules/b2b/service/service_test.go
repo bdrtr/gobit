@@ -55,10 +55,14 @@ func yeniSirket(t *testing.T, svc *Service) models.Company {
 // Çalışma zamanına ertelenseydi modül açılır, çalışan kayıtları yazılır ve
 // hiçbiri bir müşteriye bağlanmazdı; eksiklik ancak vitrinde görünürdü.
 func TestServisBagimlilikOlmadanKurulamaz(t *testing.T) {
+	// The refusal is required before its class (D136): this test used to pass
+	// with the checks removed, because HasKind(nil, KindInternal) was true.
 	_, err := New(Options{Links: newMemLinker()})
+	require.Error(t, err, "depo olmadan kurulmamalı")
 	assert.True(t, errors.HasKind(err, errors.KindInternal), "depo olmadan kurulmamalı")
 
 	_, err = New(Options{Repo: newMemRepo()})
+	require.Error(t, err, "link servisi olmadan kurulmamalı")
 	assert.True(t, errors.HasKind(err, errors.KindInternal), "link servisi olmadan kurulmamalı")
 }
 

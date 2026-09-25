@@ -448,6 +448,11 @@ func describedEndpoints() []endpointExpectation {
 			},
 		},
 		{
+			// The order journal (ADR 0188).
+			method: http.MethodGet, path: pathAdminOrderJournal, status: "200",
+			response: fullOrderJournal(),
+		},
+		{
 			// Every field is filled in, for the timeline's reason: an empty list
 			// or a null status would drop nothing, but a zero-value sample says
 			// less than the schema does.

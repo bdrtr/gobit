@@ -46,6 +46,11 @@ type fakeOrders struct {
 	// exercise the error mapping.
 	err error
 
+	// journal is the scripted journal and journalQueries how it was asked
+	// (ADR 0188).
+	journal        service.Journal
+	journalQueries []service.JournalQuery
+
 	// The arguments of the last call.
 	listInput     service.ListOrdersInput
 	returnInput   service.CreateReturnInput

@@ -118,3 +118,4 @@ truth: a report says what was true on the day it was taken.
 | [Whose price it is — measured 2026-09-25](0185-whose-price-it-is.md) | 81 |
 | [Books read from the rows — measured 2026-09-25](0186-books-read-from-the-rows.md) | 80 |
 | [Why the money went back — measured 2026-09-25](0187-why-the-money-went-back.md) | 50 |
+| [What the buyer owes — measured 2026-09-25](0188-what-the-buyer-owes.md) | 59 |

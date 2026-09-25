@@ -165,3 +165,23 @@ func TestStdlibHelpersReExported(t *testing.T) {
 		t.Error("As did not find the typed error")
 	}
 }
+
+// TestNoErrorIsOfAnyKind is D136: HasKind(nil, KindInternal) was true, because
+// KindOf reads an unclassified error as internal and nil went the same way, so
+// a test asserting an internal failure passed when nothing failed at all.
+func TestNoErrorIsOfAnyKind(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []errors.Kind{
+		errors.KindInternal, errors.KindNotFound, errors.KindInvalid, errors.KindConflict,
+		errors.KindUnauthorized, errors.KindForbidden, errors.KindUnavailable,
+		errors.KindTooManyRequests,
+	} {
+		if errors.HasKind(nil, kind) {
+			t.Errorf("HasKind(nil, %v) is true; no error is of any kind", kind)
+		}
+	}
+	if errors.IsNotFound(nil) || errors.IsInvalid(nil) {
+		t.Error("the Is helpers must be false for no error")
+	}
+}

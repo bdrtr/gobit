@@ -75,7 +75,10 @@ type fakeSnapshot struct {
 // were deleted from the service — what the test proved would be the behavior of
 // the fake.
 type fakeStore struct {
-	mu        sync.Mutex
+	mu sync.Mutex
+	// journal is what JournalFacts returns (ADR 0188).
+	journal []models.JournalFact
+
 	orders    map[string]models.Order
 	items     map[string]models.OrderLineItem
 	summaries map[string]models.OrderSummary

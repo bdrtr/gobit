@@ -326,6 +326,13 @@ type Store interface {
 	GetClaim(ctx context.Context, id string) (models.Claim, error)
 	// ListClaims pages the claim records of the order.
 	ListClaims(ctx context.Context, filter models.ChildFilter) ([]models.Claim, int64, error)
+
+	// JournalFacts reads the records the journal is derived from inside
+	// [from, to), in one currency when one is given, at most limit+1 of each
+	// kind so a cut window can be told from a whole one (ADR 0188).
+	JournalFacts(
+		ctx context.Context, from, to time.Time, currencyCode string, limit int32,
+	) ([]models.JournalFact, error)
 }
 
 // EventPublisher is the NARROW surface the service needs from the event bus.

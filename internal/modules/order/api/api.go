@@ -114,6 +114,8 @@ type Orders interface {
 	StorefrontTimeline(ctx context.Context, orderID string) ([]service.TimelineEntry, error)
 	// OrderAsOf reads the order as it stood at a past moment (ADR 0171).
 	OrderAsOf(ctx context.Context, orderID string, at time.Time) (models.OrderAsOf, error)
+	// Journal derives the module's books over a window (ADR 0188).
+	Journal(ctx context.Context, q service.JournalQuery) (service.Journal, error)
 	// AttachClaimEvidence binds a file to the claim.
 	AttachClaimEvidence(ctx context.Context, claimID string, in service.AttachClaimEvidenceInput) (models.ClaimEvidence, error)
 	// ListClaimEvidence returns the claim's evidence, oldest first.
