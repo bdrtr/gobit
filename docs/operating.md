@@ -205,6 +205,12 @@ make logs              # follow the logs of the compose services
 make down              # stop the infrastructure
 ```
 
+**Every make lane runs the Go release go.mod names**, the one CI installs, by
+exporting `GOTOOLCHAIN` (D138). A newer local Go compiles the same code, but the
+allocation budgets are counts taken under one release, and they refuse to be
+judged under another: run `go test` directly with `GOTOOLCHAIN` set to the same
+release, or through make.
+
 **Smoke tests** (`internal/smoke`) go one step further: they compile the server
 binary and run it **as a process**. The end-to-end tests drive the router with
 `httptest`, which means they SKIP `main.go`'s wiring, the migrations at start-up,

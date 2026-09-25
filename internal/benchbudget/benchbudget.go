@@ -18,8 +18,13 @@
 // timing threshold measures the machine — a shared runner, a thermal throttle, a
 // noisy neighbor — and would have to be set loose enough to pass on the worst
 // of them, which is loose enough to miss the regression. Allocations per
-// operation are a property of the CODE: the same figure on a laptop, on a CI
-// runner and under `-race`, which is why this can be a gate at all.
+// operation are a property of the code and of the Go release that compiled it:
+// the same figure on a laptop and on a CI runner under one release, which is
+// why this can be a gate at all. The race detector moves one of them (see
+// [Budget.AllocsUnderRace]) and so does another release (D138): the HTTP
+// surface's benchmark allocates 8,430 per request under go1.26.6 and 8,665
+// under go1.27.1 from the same source. [Check] therefore judges a budget only
+// under the release go.mod names, which is the one CI installs.
 //
 // What it therefore does NOT catch is a change that gets slower without
 // allocating: a sort that becomes quadratic over the same buffers is invisible
@@ -27,7 +32,11 @@
 package benchbudget
 
 import (
+	"errors"
 	"flag"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
@@ -77,6 +86,7 @@ func Check(t *testing.T, budgets []Budget) {
 	t.Helper()
 
 	refuseIterationBenchtime(t)
+	refuseAnotherRelease(t)
 
 	if len(budgets) == 0 {
 		t.Fatal("no allocation budgets were given: an empty table passes without measuring anything")
@@ -151,4 +161,73 @@ func refuseIterationBenchtime(t *testing.T) {
 		t.Fatalf("-benchtime=%s fixes the iteration count, and an allocation budget is a per-operation figure. "+
 			"Re-run these tests without it; `make bench` is the lane for a fixed count.", value)
 	}
+}
+
+// refuseAnotherRelease stops a run compiled by another Go release than the one
+// go.mod names (D138).
+//
+// The ceilings are counts taken under that release. Judged under another, a
+// budget either fails for a reason that is not in the code or passes a
+// regression the other release happens to absorb, and neither is an answer
+// about the code. Every make lane sets GOTOOLCHAIN to go.mod's release.
+func refuseAnotherRelease(t *testing.T) {
+	t.Helper()
+
+	want, err := moduleRelease()
+	if err != nil {
+		t.Fatalf("the Go release the budgets were measured under could not be read: %v", err)
+	}
+
+	if got := releaseOf(runtime.Version()); got != want {
+		t.Fatalf("these allocation ceilings were measured under %s, the release go.mod names and CI "+
+			"installs, and this test binary was built by %s. A count belongs to the code and the "+
+			"release together; re-run with GOTOOLCHAIN=%s, which every make lane sets.",
+			want, runtime.Version(), want)
+	}
+}
+
+// releaseOf is the release in a runtime version: "go1.27.1" out of
+// "go1.27.1 X:nodwarf5" or "go1.27.1-X:nodwarf5".
+func releaseOf(version string) string {
+	release, _, _ := strings.Cut(version, " ")
+	release, _, _ = strings.Cut(release, "-")
+
+	return release
+}
+
+// moduleRelease reads the go directive of the nearest go.mod at or above the
+// working directory, which is the test's package directory, and returns it as
+// a release name: "go1.26.6" for "go 1.26.6".
+func moduleRelease() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+
+	for {
+		data, readErr := fs.ReadFile(os.DirFS(dir), "go.mod")
+		if readErr == nil {
+			return goDirective(string(data))
+		}
+		if !errors.Is(readErr, fs.ErrNotExist) {
+			return "", readErr
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", errors.New("no go.mod at or above the working directory")
+		}
+		dir = parent
+	}
+}
+
+// goDirective returns the release a go.mod's go directive names.
+func goDirective(gomod string) (string, error) {
+	for _, line := range strings.Split(gomod, "\n") {
+		if version, found := strings.CutPrefix(strings.TrimSpace(line), "go "); found {
+			return "go" + strings.TrimSpace(version), nil
+		}
+	}
+
+	return "", errors.New("go.mod has no go directive")
 }

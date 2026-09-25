@@ -12,6 +12,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The lanes ran whatever Go the machine had** (D138). An allocation budget
+  failed locally and passed on CI for the same commit, because the machine had
+  moved to go1.27.1 and CI runs go1.26.6. **For contributors:** every make lane
+  now runs the release go.mod names, and a budget run under another release
+  refuses and says which.
+
 - **Two personal data audits read only their module's first migration** (D137).
   The customer and cart modules check their declaration against the schema, and
   both read `000001` alone: a personal column added by a later migration passed,

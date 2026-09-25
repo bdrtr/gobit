@@ -5,6 +5,13 @@ BIN_DIR     := $(CURDIR)/bin
 COMPOSE     := docker compose -f deploy/docker-compose.yml
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
+# Every lane runs the Go release go.mod names, which is the one CI installs
+# (D138). A newer local release builds the same code, but an allocation count
+# measured under one release is not the count of another, and a lane that ran
+# whatever Go the machine had last been upgraded to judged the budgets against
+# numbers CI never produces.
+export GOTOOLCHAIN := go$(shell sed -n 's/^go //p' go.mod)
+
 # `gobit new`'in üretilen go.mod'a yazacağı sürümü belirleyen DERLEME OLGULARI
 # (ADR 0154). Üçü de git'ten OLDUĞU GİBİ alınır; aritmetiği (yamanın bir
 # artırılması, damganın biçimi, hash'in kısaltılması) Go tarafında ve TESTLİ.
