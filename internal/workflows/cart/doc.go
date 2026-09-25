@@ -149,13 +149,16 @@
 //
 // # Customer segment prices
 //
-// The customer group is NOT put into the price context (beyond "region_id").
-// pricing's rule context carries a SINGLE value per attribute; for a customer who is
-// a member of more than one group it is ambiguous which group would be written, and
-// silently picking one would tie the price to map iteration order. The selection rule
-// ("the best price the customer is entitled to") is pricing's decision. The same gap
-// exists in the discount context as well and is left unfilled for the same reason
-// (see [Workflows.discountRequestFor]).
+// The customer's groups go into both contexts, the price's and the discount's,
+// and they go in twice (see [Workflows.ruleContext]). The HEAD of the merchant's
+// ranking is the single value `eq` and `in` read, so one group decides a price
+// and nothing depends on map order (ADR 0049); the whole list is what `any_in`
+// reads, so a segment rule applies to everybody in the segment (ADR 0144).
+//
+// This paragraph said the opposite until D131 — that the group was not put
+// into the price context, and that the discount context had the same gap — for
+// two records after both had been closed. The discount flow's godoc had already
+// corrected its own copy and says so (see [Workflows.discountRequestFor]).
 //
 // # Who satisfies the [Carts] surface
 //
