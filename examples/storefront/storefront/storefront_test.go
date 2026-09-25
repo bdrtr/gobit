@@ -93,6 +93,7 @@ func TestEveryPageCarriesWhatTheScriptNeeds(t *testing.T) {
 		"the catalog": storefront.ListPath,
 		"one product": storefront.ListPath + "/products/a-handle",
 		"the cart":    storefront.CartPath,
+		"checkout":    storefront.CheckoutPath,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -106,6 +107,7 @@ func TestEveryPageCarriesWhatTheScriptNeeds(t *testing.T) {
 			for _, want := range []string{
 				`data-key="` + testKey + `"`,
 				`data-channel="` + testChannel + `"`,
+				`data-checkout-path="` + storefront.CheckoutPath + `"`,
 				`<script src="` + storefront.ScriptPath,
 				"<noscript>",
 			} {
@@ -175,6 +177,7 @@ func TestEveryPageCarriesTheShopsPolicy(t *testing.T) {
 		storefront.ListPath,
 		storefront.ListPath + "/products/a-handle",
 		storefront.CartPath,
+		storefront.CheckoutPath,
 		storefront.ScriptPath,
 	} {
 		rec := get(t, r, path)

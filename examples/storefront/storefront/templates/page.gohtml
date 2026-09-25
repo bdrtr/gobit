@@ -1,7 +1,7 @@
 {{- /*
 page.gohtml is the shop's one shell.
 
-Three pages render it and differ only in the mount's id, which is what the script
+Four pages render it and differ only in the mount's id, which is what the script
 branches on. The values the script needs — the publishable key, the sales channel
 and the product handle — travel as DATA ATTRIBUTES rather than inside the script,
 so the script stays one file with one stamp for every installation.
@@ -44,6 +44,7 @@ indistinguishable from a broken one.
       data-key="{{ .Key }}"
       data-channel="{{ .Channel }}"
       data-cart-path="{{ .Paths.Cart }}"
+      data-checkout-path="{{ .Paths.Checkout }}"
       data-list-path="{{ .Paths.List }}">
   <p class="muted">Loading…</p>
 </main>

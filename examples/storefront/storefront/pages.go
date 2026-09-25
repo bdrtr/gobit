@@ -32,9 +32,9 @@ const (
 //go:embed templates/page.gohtml assets/storefront.js
 var files embed.FS
 
-// page is the one template all three pages render.
+// page is the one template all four pages render.
 //
-// One shell, three mounts. The pages differ in what the script does with them,
+// One shell, four mounts. The pages differ in what the script does with them,
 // not in their markup, and a second template would be a second place to change
 // the header.
 var page = template.Must(template.ParseFS(files, "templates/page.gohtml"))
@@ -95,7 +95,7 @@ type view struct {
 	Script  string
 	Key     string
 	Channel string
-	Paths   struct{ List, Cart string }
+	Paths   struct{ List, Cart, Checkout string }
 }
 
 // render writes one page.
@@ -110,6 +110,7 @@ func (m *Module) render(w http.ResponseWriter, r *http.Request, mount, title, ha
 	}
 	data.Paths.List = ListPath
 	data.Paths.Cart = CartPath
+	data.Paths.Checkout = CheckoutPath
 
 	var body bytes.Buffer
 	if err := page.Execute(&body, data); err != nil {
@@ -152,6 +153,11 @@ func (m *Module) showProduct(w http.ResponseWriter, r *http.Request) {
 // showCart renders the shopper's cart.
 func (m *Module) showCart(w http.ResponseWriter, r *http.Request) {
 	m.render(w, r, "cart", "Cart", "")
+}
+
+// showCheckout renders the checkout: address, shipping, payment, order.
+func (m *Module) showCheckout(w http.ResponseWriter, r *http.Request) {
+	m.render(w, r, "checkout", "Checkout", "")
 }
 
 // serveScript writes the shop's client.

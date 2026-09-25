@@ -1,8 +1,8 @@
 # A guest storefront, in gobit's own process
 
-Three pages — a catalog, a product, a cart — served by a module this example
-wrote, filled by a script this example wrote, reading `/store/v1` with the shop's
-publishable key. No framework, no build step, no second process.
+Four pages — a catalog, a product, a cart and a checkout — served by a module
+this example wrote, filled by a script this example wrote, reading `/store/v1`
+with the shop's publishable key. No framework, no build step, no second process.
 
 ## What it proves
 
@@ -34,14 +34,36 @@ answer 401 to every request the page makes and look like an empty catalog, which
 is the failure this repository keeps naming: a screen that shows nothing and does
 not say why.
 
+## The checkout
+
+The checkout takes an e-mail and a shipping address, lists the shipping options
+the cart's region serves, puts the chosen one on the cart, and shows the total
+with the delivery and the tax in it. The shopper picks a payment provider and the
+page completes the cart, sending that total back as `expected_total`: a price
+that moved while the page was open refuses the order rather than charging a
+figure nobody saw (ADR 0174).
+
+Every figure on it is the cart's own. The page never adds a delivery to a total;
+it reads the total after the delivery was added, which the server reprices on
+every write (ADR 0173).
+
+A shopper who comes back — after a refused payment, or to change the delivery —
+finds the cart still holding the method they chose, and choosing again replaces
+it rather than charging two deliveries.
+
 ## What it does not do
 
-- **No payment.** The cart page shows the totals and stops. `docs/first-run.md`
-  completes a cart with the `manual` provider, which is one more call.
 - **No customer.** The cart is a guest's, which is the storefront's default path;
   gobit issues no customer identity of its own. `examples/starter` is where
   sign-in lives.
-- **No address, no shipping.** Both are endpoints this example does not call.
+- **No real payment.** Every provider the installation registers is listed. A
+  stock installation registers `manual`, which authorizes whatever it is given,
+  and the two tenders below; a real provider's card form or redirect is the
+  provider's, not the shop's.
+- **The provider list is not the guest's.** `GET /store/v1/payment-providers`
+  lists every provider, including the two that belong to a person — store credit
+  and loyalty points. A guest who picks one is refused at the payment step, after
+  the order was opened and canceled, and the page shows the refusal.
 
 ## Two costs worth knowing
 

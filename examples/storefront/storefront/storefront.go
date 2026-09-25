@@ -17,13 +17,13 @@
 // different lesson; it would begin with a configuration step that has nothing to
 // do with shopping.
 //
-// # What it deliberately does not do
+// # What it does, and what it deliberately does not
 //
-// It shows a catalog, opens a cart and adds a line. It does not take payment,
-// does not ask for an address and does not sign anybody in: gobit issues no
-// customer identity (ADR 0008), and a guest cart is the storefront's own default
-// path. `docs/first-run.md` carries the whole sequence, payment included, as
-// commands.
+// It shows a catalog, opens a cart, adds a line and checks the cart out: an
+// e-mail and a shipping address, a shipping option, a payment provider, and the
+// completion with the total the shopper approved (ADR 0174). It does not sign
+// anybody in: gobit issues no customer identity (ADR 0008), and a guest cart is
+// the storefront's own default path.
 package storefront
 
 import (
@@ -49,7 +49,9 @@ const (
 	ProductPath = ListPath + "/products/{handle}"
 	// CartPath is the shopper's cart.
 	CartPath = ListPath + "/cart"
-	// ScriptPath serves the one script these three pages run.
+	// CheckoutPath takes the cart to an order.
+	CheckoutPath = ListPath + "/checkout"
+	// ScriptPath serves the one script these four pages run.
 	ScriptPath = ListPath + "/storefront.js"
 )
 
@@ -106,7 +108,7 @@ func (m *Module) Register(_ context.Context, _ *container.Container) error { ret
 // Migrations returns nil; the shop owns no table.
 func (m *Module) Migrations() fs.FS { return nil }
 
-// Routes binds the three pages and the script they run.
+// Routes binds the four pages and the script they run.
 //
 // They go inside one chi group so the content policy is installed ONCE, which is
 // the shape ADR 0157 settled for the admin panel after installing it per handler
@@ -118,6 +120,7 @@ func (m *Module) Routes(r chi.Router) {
 		g.Get(ListPath, m.showList)
 		g.Get(ProductPath, m.showProduct)
 		g.Get(CartPath, m.showCart)
+		g.Get(CheckoutPath, m.showCheckout)
 		g.Get(ScriptPath, m.serveScript)
 	})
 }

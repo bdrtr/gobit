@@ -331,6 +331,14 @@ verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
 
 ### Kararlar
 
+- **The example shop checks out** (ADR 0174). `examples/storefront` gains a
+  fourth page, `/shop/checkout`: an e-mail and a shipping address, the options
+  the cart's region serves, a payment provider, and the completion with the
+  cart's own total as `expected_total`. A shopper who comes back replaces the
+  delivery rather than adding a second. Every store call the script makes is
+  written once as a verb and the template the route is bound under, and
+  `TestTheShopCallsOnlyBoundRoutes` refuses one the tree does not bind.
+
 - **A storefront write leaves the cart priced** (ADR 0173, D129). Adding or
   removing a shipping method, removing a line, writing either address, the
   e-mail or the customer, and a merge now recompute the cart's totals before
