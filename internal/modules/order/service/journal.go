@@ -128,12 +128,13 @@ func kindOrder(kind models.JournalKind) int {
 
 // journalEntry is the chart of accounts, in one place.
 //
-//	order placed    Dr receivable (total), sales_discounts (discount)
-//	                Cr sales (subtotal), tax_payable (tax), shipping (shipping)
-//	order canceled  the same lines, the other way
-//	credit line     Dr credit_allowances   Cr receivable
-//	return refunded Dr sales_returns       Cr receivable
-//	claim refunded  Dr claim_allowances    Cr receivable
+//	order placed     Dr receivable (total), sales_discounts (discount)
+//	                 Cr sales (subtotal), tax_payable (tax), shipping (shipping)
+//	order canceled   the same lines, the other way
+//	credit line      Dr credit_allowances   Cr receivable
+//	return refunded  Dr sales_returns       Cr receivable
+//	claim refunded   Dr claim_allowances    Cr receivable
+//	delivery changed Dr shipping            Cr receivable
 //
 // An order balances because its table holds it to
 // total = subtotal - discount_total + tax_total + shipping_total; the entry is
@@ -173,7 +174,8 @@ func journalEntry(f *models.JournalFact) (models.JournalEntry, error) {
 			}
 			entry.Lines = append(entry.Lines, line)
 		}
-	case models.JournalCreditLine, models.JournalReturnRefunded, models.JournalClaimRefunded:
+	case models.JournalCreditLine, models.JournalReturnRefunded, models.JournalClaimRefunded,
+		models.JournalDeliveryChanged:
 		if f.Amount <= 0 {
 			return models.JournalEntry{}, errors.Internal(CodeInvalidInput,
 				"the journal read %s %s of %d; it moves a positive amount", f.Kind, f.ID, f.Amount)
@@ -227,6 +229,9 @@ var givenBackTo = map[models.JournalKind]models.JournalAccount{
 	models.JournalCreditLine:     models.AccountCreditAllowances,
 	models.JournalReturnRefunded: models.AccountSalesReturns,
 	models.JournalClaimRefunded:  models.AccountClaimAllowances,
+	// A cheaper delivery gives back shipping the order charged, not a
+	// concession (ADR 0199).
+	models.JournalDeliveryChanged: models.AccountShipping,
 }
 
 // CausedRefunds is the surface of the payment module ("payment.interop") the

@@ -40,6 +40,9 @@ type fakeFulfilling struct {
 	correctCalls int
 	joinCalls    int
 	gotParcelID  string
+	changeCalls  int
+	gotMethodID  string
+	gotOptionID  string
 }
 
 // That the fake satisfies the surface the handler expects is verified at
@@ -97,6 +100,18 @@ func (f *fakeFulfilling) ShipInParcel(_ context.Context, orderID, fulfillmentID 
 	f.gotParcelID = fulfillmentID
 
 	return f.err
+}
+
+// ChangeDelivery records the call.
+func (f *fakeFulfilling) ChangeDelivery(
+	_ context.Context, orderID, shippingMethodID, shippingOptionID string,
+) (json.RawMessage, error) {
+	f.changeCalls++
+	f.gotOrderID = orderID
+	f.gotMethodID = shippingMethodID
+	f.gotOptionID = shippingOptionID
+
+	return json.RawMessage("null"), f.err
 }
 
 // newRouterWithFulfilling wires a router with the given fulfilling flow.
@@ -392,5 +407,58 @@ func TestTheJoinEndpointNamesBothRecordsInThePath(t *testing.T) {
 
 	flow.err = errors.Conflict("fulfilling_parcel_not_waiting", "shipped")
 	rec = doRequest(t, r, http.MethodPut, "/admin/v1/orders/order_1/fulfillments/ful_parent", "")
+	assert.Equal(t, http.StatusConflict, rec.Code)
+}
+
+// TestTheDeliveryChangeEndpointNamesTheMethodInThePath hands the flow the
+// method and the option, and nothing about a price (ADR 0199).
+func TestTheDeliveryChangeEndpointNamesTheMethodInThePath(t *testing.T) {
+	detail := sampleDetail()
+	detail.ShippingMethods = []models.OrderShippingMethod{
+		{ID: "oship_1", ShippingOptionID: "so_standard", Name: "Standard", Amount: 2500},
+		{ID: "oship_2", ShippingOptionID: "so_bulky", Name: "Freight", Amount: 0},
+	}
+	detail.DeliveryChanges = []models.DeliveryChange{{
+		ID: "odchg_1", ShippingMethodID: "oship_1", ShippingOptionID: "so_pickup",
+		Name: "Pickup", Amount: 0, Difference: -2500, CreditLineID: "ocl_1",
+	}}
+	flow := &fakeFulfilling{}
+	r := newRouterWithFulfilling(&fakeOrders{detail: detail}, flow)
+	const path = "/admin/v1/orders/order_1/shipping-methods/oship_1"
+
+	rec := doRequest(t, r, http.MethodPut, path, `{"shipping_option_id":"so_pickup"}`)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, 1, flow.changeCalls)
+	assert.Equal(t, "order_1", flow.gotOrderID)
+	assert.Equal(t, "oship_1", flow.gotMethodID)
+	assert.Equal(t, "so_pickup", flow.gotOptionID)
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
+	require.True(t, ok)
+	methods, ok := data["shipping_methods"].([]any)
+	require.True(t, ok)
+	require.Len(t, methods, 2)
+	other, ok := methods[1].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, []any{}, other["changes"], "a change is listed under its own method only")
+	method, ok := methods[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "oship_1", method["id"])
+	assert.Equal(t, "Standard", method["name"], "the method keeps what the order was sold")
+	changes, ok := method["changes"].([]any)
+	require.True(t, ok)
+	require.Len(t, changes, 1)
+	change, ok := changes[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "so_pickup", change["shipping_option_id"])
+	assert.InDelta(t, -2500, change["difference"], 0)
+	assert.Equal(t, "ocl_1", change["credit_line_id"])
+
+	rec = doRequest(t, r, http.MethodPut, path, `{"shipping_option_id":"so_pickup","amount":0}`)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "a price is not the caller's to send")
+	assert.Equal(t, 1, flow.changeCalls)
+
+	flow.err = errors.Conflict("order_delivery_costs_more", "dearer")
+	rec = doRequest(t, r, http.MethodPut, path, `{"shipping_option_id":"so_express"}`)
 	assert.Equal(t, http.StatusConflict, rec.Code)
 }

@@ -58,9 +58,11 @@ func (q *Queries) JournalCauses(ctx context.Context, ids []string) ([]JournalCau
 }
 
 const journalCreditLines = `-- name: JournalCreditLines :many
-SELECT cl.id, cl.order_id, cl.amount, cl.created_at, o.currency_code
+SELECT cl.id, cl.order_id, cl.amount, cl.created_at, o.currency_code,
+       dc.id AS delivery_change_id
 FROM order_credit_lines cl
 JOIN orders o ON o.id = cl.order_id
+LEFT JOIN order_delivery_changes dc ON dc.credit_line_id = cl.id
 WHERE cl.created_at >= $1 AND cl.created_at < $2
   AND ($3::text IS NULL OR o.currency_code = $3::text)
 ORDER BY cl.created_at, cl.id
@@ -75,13 +77,16 @@ type JournalCreditLinesParams struct {
 }
 
 type JournalCreditLinesRow struct {
-	ID           string
-	OrderID      string
-	Amount       int64
-	CreatedAt    pgtype.Timestamptz
-	CurrencyCode string
+	ID               string
+	OrderID          string
+	Amount           int64
+	CreatedAt        pgtype.Timestamptz
+	CurrencyCode     string
+	DeliveryChangeID *string
 }
 
+// A credit line a delivery change wrote names the change (ADR 0199): the
+// journal books it against shipping rather than as a concession.
 func (q *Queries) JournalCreditLines(ctx context.Context, arg JournalCreditLinesParams) ([]JournalCreditLinesRow, error) {
 	rows, err := q.db.Query(ctx, journalCreditLines,
 		arg.FromAt,
@@ -102,6 +107,7 @@ func (q *Queries) JournalCreditLines(ctx context.Context, arg JournalCreditLines
 			&i.Amount,
 			&i.CreatedAt,
 			&i.CurrencyCode,
+			&i.DeliveryChangeID,
 		); err != nil {
 			return nil, err
 		}

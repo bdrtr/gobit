@@ -55,6 +55,9 @@ const (
 	// JournalClaimRefunded is a refund whose cause is one of the order's claims
 	// (ADR 0189).
 	JournalClaimRefunded JournalKind = "claim_refunded"
+	// JournalDeliveryChanged is a delivery changed to a cheaper service, read
+	// from the credit line the change wrote; its id is the change's (ADR 0199).
+	JournalDeliveryChanged JournalKind = "delivery_changed"
 )
 
 // JournalLine is one side of an entry: exactly one of Debit and Credit is
@@ -69,7 +72,8 @@ type JournalLine struct {
 type JournalEntry struct {
 	// ID is the id of the record the entry is read from: the order for a
 	// placement or a cancellation, the credit line for a credit line, the
-	// payment module's refund for a refund.
+	// delivery change for a cheaper delivery, the payment module's refund for
+	// a refund.
 	ID           string        `json:"id"`
 	Kind         JournalKind   `json:"kind"`
 	OrderID      string        `json:"order_id"`

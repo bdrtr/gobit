@@ -204,6 +204,9 @@ func (h *Handler) Routes(r chi.Router) {
 	write.Put("/admin/v1/orders/{id}/fulfillments/{fulfillmentId}", h.adminShipInParcel)
 	// Where the order ships, corrected while nothing is on its way (ADR 0195).
 	write.Put("/admin/v1/orders/{id}/shipping-address", h.adminCorrectShippingAddress)
+	// Which service a delivery goes on, changed while nothing is on its way
+	// (ADR 0199).
+	write.Put("/admin/v1/orders/{id}/shipping-methods/{shippingMethodId}", h.adminChangeDelivery)
 	read.Get("/admin/v1/orders/{id}/fulfillments", h.adminListShipments)
 
 	// The timeline. It is the support desk's view and it composes what the

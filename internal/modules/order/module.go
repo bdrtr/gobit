@@ -829,6 +829,19 @@ func (p *fulfillingFlow) ShipInParcel(ctx context.Context, orderID, fulfillmentI
 	return p.svc.ShipInParcel(ctx, orderID, fulfillmentID)
 }
 
+// ChangeDelivery puts one of the order's deliveries on another option.
+func (p *fulfillingFlow) ChangeDelivery(
+	ctx context.Context, orderID, shippingMethodID, shippingOptionID string,
+) (json.RawMessage, error) {
+	p.once.Do(func() { p.resolve(ctx) })
+
+	if p.err != nil {
+		return nil, p.err
+	}
+
+	return p.svc.ChangeDelivery(ctx, orderID, shippingMethodID, shippingOptionID)
+}
+
 // resolve looks the flow up in the container and remembers the outcome.
 func (p *fulfillingFlow) resolve(ctx context.Context) {
 	svc, err := container.Resolve[api.Fulfilling](p.c, fulfillingFlowName)

@@ -667,6 +667,56 @@ func (r *Repository) OrderShippingMethodsByOrderIDs(
 	return out, nil
 }
 
+// CreateDeliveryChange writes a change to one of the order's deliveries; it
+// runs inside the transaction that holds the order's lock (ADR 0199).
+func (r *Repository) CreateDeliveryChange(
+	ctx context.Context, change models.DeliveryChange,
+) (models.DeliveryChange, error) {
+	if err := requireTx(ctx, "CreateDeliveryChange"); err != nil {
+		return models.DeliveryChange{}, err
+	}
+
+	row, err := r.queries(ctx).CreateDeliveryChange(ctx, orderdb.CreateDeliveryChangeParams{
+		ID:               change.ID,
+		OrderID:          change.OrderID,
+		ShippingMethodID: change.ShippingMethodID,
+		ShippingOptionID: change.ShippingOptionID,
+		Name:             change.Name,
+		Amount:           change.Amount,
+		Difference:       change.Difference,
+		CreditLineID:     nullString(change.CreditLineID),
+	})
+	if err != nil {
+		return models.DeliveryChange{}, classify(err, codeQueryFailed,
+			"could not write the order's delivery change")
+	}
+
+	return toDeliveryChange(row), nil
+}
+
+// DeliveryChangesByOrderIDs reads the delivery changes of several orders in
+// ONE query, oldest first within an order.
+func (r *Repository) DeliveryChangesByOrderIDs(
+	ctx context.Context, orderIDs []string,
+) (map[string][]models.DeliveryChange, error) {
+	if len(orderIDs) == 0 {
+		return map[string][]models.DeliveryChange{}, nil
+	}
+
+	rows, err := r.queries(ctx).ListDeliveryChanges(ctx, orderIDs)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "could not read the order's delivery changes")
+	}
+
+	out := make(map[string][]models.DeliveryChange, len(orderIDs))
+	for i := range rows {
+		change := toDeliveryChange(rows[i])
+		out[change.OrderID] = append(out[change.OrderID], change)
+	}
+
+	return out, nil
+}
+
 // SupersedeOrderAddress closes the order's current address of the type and
 // reports how many rows it closed: one, or none when the order had none.
 func (r *Repository) SupersedeOrderAddress(

@@ -319,3 +319,23 @@ func TestACorrectionIsDatedByTheAddressItClosed(t *testing.T) {
 	assert.Empty(t, entries[0].Detail, "the entry names the row and says nothing of the address")
 	assert.Len(t, customerVisible(entries), 1, "the customer who rang sees that it was done")
 }
+
+// TestADeliveryChangeIsOnTheTimeline dates each change by its row, names the
+// new service and its price, and shows it to the customer (ADR 0199).
+func TestADeliveryChangeIsOnTheTimeline(t *testing.T) {
+	at := time.Date(2026, 9, 26, 11, 0, 0, 0, time.UTC)
+
+	entries := deliveryChangeEntries("TRY", []models.DeliveryChange{{
+		ID: "odchg_1", ShippingMethodID: "oship_1", ShippingOptionID: "so_pickup",
+		Name: "Pickup", Amount: 500, Difference: -2000, CreditLineID: "ocl_1", CreatedAt: at,
+	}})
+
+	require.Len(t, entries, 1)
+	assert.Equal(t, KindDeliveryChanged, entries[0].Kind)
+	assert.Equal(t, "odchg_1", entries[0].RefID)
+	assert.Equal(t, at, *entries[0].At)
+	assert.Equal(t, "Pickup", entries[0].Detail)
+	assert.Equal(t, int64(500), entries[0].Amount)
+	assert.Equal(t, "TRY", entries[0].Currency)
+	assert.Len(t, customerVisible(entries), 1)
+}

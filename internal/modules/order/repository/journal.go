@@ -63,10 +63,15 @@ func (r *Repository) JournalFacts(
 	}
 	for i := range credits {
 		row := &credits[i]
-		out = append(out, models.JournalFact{
+		fact := models.JournalFact{
 			ID: row.ID, Kind: models.JournalCreditLine, OrderID: row.OrderID,
 			OccurredAt: toTime(row.CreatedAt), CurrencyCode: row.CurrencyCode, Amount: row.Amount,
-		})
+		}
+		// A credit a delivery change wrote is the change's entry (ADR 0199).
+		if row.DeliveryChangeID != nil {
+			fact.ID, fact.Kind = *row.DeliveryChangeID, models.JournalDeliveryChanged
+		}
+		out = append(out, fact)
 	}
 
 	return out, nil

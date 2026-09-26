@@ -899,22 +899,137 @@ func incomingShippingMethods(methods []interopShippingMethod) []CreateShippingMe
 	return out
 }
 
-// SoldShippingOptionOf returns the shipping option the order was sold, when it
-// was sold exactly one; "" otherwise (ADR 0198).
+// ShippingOptionOf returns the shipping option the order's delivery is on,
+// when it has exactly one; "" otherwise (ADR 0198, 0199).
 //
 // It is how a parcel opened without an option goes on the service the shopper
-// paid for. An order sold none has nothing to default to, and one sold two
-// leaves the choice to whoever opens the parcel.
-func (i *Interop) SoldShippingOptionOf(ctx context.Context, orderID string) (string, error) {
+// paid for, or the one it was changed to since. An order sold none has
+// nothing to default to, and one sold two leaves the choice to whoever opens
+// the parcel.
+func (i *Interop) ShippingOptionOf(ctx context.Context, orderID string) (string, error) {
 	detail, err := i.svc.GetOrder(ctx, orderID)
 	if err != nil {
 		return "", err
 	}
-	if len(detail.ShippingMethods) != 1 {
+	deliveries := models.CurrentDeliveries(detail.ShippingMethods, detail.DeliveryChanges)
+	if len(deliveries) != 1 {
 		return "", nil
 	}
 
-	return detail.ShippingMethods[0].ShippingOptionID, nil
+	return deliveries[0].ShippingOptionID, nil
+}
+
+// interopDeliveryFacts is the JSON schema of [Interop.DeliveryFactsJSON]'s
+// answer: what a delivery for the order is priced on (ADR 0199).
+//
+//	{
+//	  "region_id":     "reg_...",
+//	  "currency_code": "TRY",
+//	  "country_code":  "TR",     // the current shipping address's; "" when none
+//	  "subtotal":      50000,    // the goods after discount, minor unit
+//	  "item_count":    3
+//	}
+type interopDeliveryFacts struct {
+	RegionID     string `json:"region_id"`
+	CurrencyCode string `json:"currency_code"`
+	CountryCode  string `json:"country_code"`
+	Subtotal     int64  `json:"subtotal"`
+	ItemCount    int64  `json:"item_count"`
+}
+
+// DeliveryFactsJSON returns the facts a new delivery for the order is quoted
+// on, in the schema of [interopDeliveryFacts] (ADR 0199).
+//
+// They are the sale's, as the cart's quote read them: the goods after discount
+// and the units sold. The country is the current shipping address's rather
+// than the region's, since it is where the parcel goes, and ADR 0195 holds it
+// to the country the order was placed in.
+func (i *Interop) DeliveryFactsJSON(ctx context.Context, orderID string) (json.RawMessage, error) {
+	detail, err := i.svc.GetOrder(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+
+	var units int64
+	for j := range detail.Items {
+		units, err = addAmount(units, detail.Items[j].Quantity)
+		if err != nil {
+			return nil, err
+		}
+	}
+	facts := interopDeliveryFacts{
+		RegionID:     detail.RegionID,
+		CurrencyCode: detail.CurrencyCode,
+		Subtotal:     detail.Subtotal - detail.DiscountTotal,
+		ItemCount:    units,
+	}
+	if detail.ShippingAddress != nil {
+		facts.CountryCode = detail.ShippingAddress.CountryCode
+	}
+
+	return json.Marshal(facts)
+}
+
+// interopDeliveryChangeRequest is the JSON schema of
+// [Interop.ChangeDeliveryJSON]'s request.
+//
+//	{
+//	  "shipping_method_id": "oship_...",
+//	  "shipping_option_id": "sopt_...",
+//	  "name":               "Express",
+//	  "amount":             1500           // as the fulfillment module quoted it
+//	}
+type interopDeliveryChangeRequest struct {
+	ShippingMethodID string `json:"shipping_method_id"`
+	ShippingOptionID string `json:"shipping_option_id"`
+	Name             string `json:"name"`
+	Amount           int64  `json:"amount"`
+}
+
+// interopDeliveryChange is the JSON schema of [Interop.ChangeDeliveryJSON]'s
+// answer: the change written, or JSON null when the method was already on the
+// option.
+type interopDeliveryChange struct {
+	ID               string `json:"id"`
+	ShippingMethodID string `json:"shipping_method_id"`
+	ShippingOptionID string `json:"shipping_option_id"`
+	Name             string `json:"name"`
+	Amount           int64  `json:"amount"`
+	Difference       int64  `json:"difference"`
+	CreditLineID     string `json:"credit_line_id,omitempty"`
+}
+
+// ChangeDeliveryJSON changes one of the order's deliveries to a quoted service
+// (ADR 0199). The rules are [Service.ChangeDelivery]'s; the quote is the
+// caller's, which is the one that can ask the fulfillment module.
+func (i *Interop) ChangeDeliveryJSON(
+	ctx context.Context, orderID string, request json.RawMessage,
+) (json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(request))
+	decoder.DisallowUnknownFields()
+	var in interopDeliveryChangeRequest
+	if err := decoder.Decode(&in); err != nil {
+		return nil, errors.Wrap(err, errors.KindInvalid, CodeInvalidInput,
+			"the delivery change could not be read")
+	}
+
+	written, err := i.svc.ChangeDelivery(ctx, orderID, ChangeDeliveryInput(in))
+	if err != nil {
+		return nil, err
+	}
+	if written == nil {
+		return json.RawMessage("null"), nil
+	}
+
+	return json.Marshal(interopDeliveryChange{
+		ID:               written.ID,
+		ShippingMethodID: written.ShippingMethodID,
+		ShippingOptionID: written.ShippingOptionID,
+		Name:             written.Name,
+		Amount:           written.Amount,
+		Difference:       written.Difference,
+		CreditLineID:     written.CreditLineID,
+	})
 }
 
 // incomingAddresses turns the snapshot's two optional addresses into the list

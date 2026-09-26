@@ -93,6 +93,8 @@ const (
 	paramEvidenceID = "evidenceId"
 	// paramFulfillmentID is the parcel an addition joins (ADR 0197).
 	paramFulfillmentID = "fulfillmentId"
+	// paramShippingMethodID is the delivery a change applies to (ADR 0199).
+	paramShippingMethodID = "shippingMethodId"
 )
 
 // Orders is the surface the handlers need from the service.
@@ -396,11 +398,28 @@ type orderDetailDTO struct {
 	ShippingMethods []shippingMethodDTO `json:"shipping_methods"`
 }
 
-// shippingMethodDTO is one delivery the order was sold.
+// shippingMethodDTO is one delivery the order was sold, and what it was
+// changed to since.
 type shippingMethodDTO struct {
+	// ID names the method a delivery change applies to (ADR 0199).
+	ID               string `json:"id"`
 	ShippingOptionID string `json:"shipping_option_id,omitempty"`
 	Name             string `json:"name"`
 	Amount           int64  `json:"amount"`
+	// Changes are the services the delivery was put on after the sale, oldest
+	// first; the last one is the delivery the order is on now (ADR 0199).
+	Changes []deliveryChangeDTO `json:"changes"`
+}
+
+// deliveryChangeDTO is one change to a delivery.
+type deliveryChangeDTO struct {
+	ID               string    `json:"id"`
+	ShippingOptionID string    `json:"shipping_option_id"`
+	Name             string    `json:"name"`
+	Amount           int64     `json:"amount"`
+	Difference       int64     `json:"difference"`
+	CreditLineID     string    `json:"credit_line_id,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 // adminOrderDetailDTO is the order as the operator reads it: the storefront's
@@ -615,9 +634,22 @@ func toOrderDetailDTO(detail models.OrderDetail) orderDetailDTO {
 		ShippingMethods: make([]shippingMethodDTO, 0, len(detail.ShippingMethods)),
 	}
 	for _, method := range detail.ShippingMethods {
-		out.ShippingMethods = append(out.ShippingMethods, shippingMethodDTO{
-			ShippingOptionID: method.ShippingOptionID, Name: method.Name, Amount: method.Amount,
-		})
+		dto := shippingMethodDTO{
+			ID: method.ID, ShippingOptionID: method.ShippingOptionID, Name: method.Name,
+			Amount: method.Amount, Changes: []deliveryChangeDTO{},
+		}
+		for i := range detail.DeliveryChanges {
+			change := &detail.DeliveryChanges[i]
+			if change.ShippingMethodID != method.ID {
+				continue
+			}
+			dto.Changes = append(dto.Changes, deliveryChangeDTO{
+				ID: change.ID, ShippingOptionID: change.ShippingOptionID, Name: change.Name,
+				Amount: change.Amount, Difference: change.Difference,
+				CreditLineID: change.CreditLineID, CreatedAt: change.CreatedAt,
+			})
+		}
+		out.ShippingMethods = append(out.ShippingMethods, dto)
 	}
 	// The loop is walked by index: the line item struct is large and copying it
 	// by value would carry a few hundred bytes for nothing on every turn.

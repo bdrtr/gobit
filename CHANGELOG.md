@@ -63,6 +63,21 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **A delivery can be changed before it ships** (ADR 0199). **For API
+  consumers:** `PUT /admin/v1/orders/{id}/shipping-methods/{shippingMethodId}`
+  with `{"shipping_option_id": …}` puts the delivery on another option at the
+  fulfillment module's price for the order, while no parcel of the order is
+  pending, shipped or delivered, and answers with the admin order record. A
+  cheaper option writes the difference off as a credit line with the reason
+  `delivery_change`; a dearer one is refused with `order_delivery_costs_more`.
+  Each shipping method in both order reads now carries its `id` and its
+  `changes`; the timeline gains `order.delivery_changed`, and the order journal
+  books a cheaper delivery as a `delivery_changed` entry that debits
+  `shipping`. **For operators:** order migration 000025 adds
+  `order_delivery_changes`. **For embedders:** the order interop's
+  `ShippingOptionOf` answers the delivery's current option, and gains
+  `DeliveryFactsJSON` and `ChangeDeliveryJSON`.
+
 - **An order remembers the delivery it was sold** (ADR 0198). **For API
   consumers:** both order reads carry `shipping_methods` (`shipping_option_id`,
   `name`, `amount`), the cart's methods as the checkout priced them, adding up
@@ -71,7 +86,7 @@ Sabitlenme `1.0.0` ile olur.
   the order was sold exactly one method. **For operators:** order migration
   000024 adds `order_shipping_methods`. **For embedders:** the cart's snapshot
   carries each method's `shipping_option_id` and `name`, and the order interop
-  gains `SoldShippingOptionOf`.
+  gains `ShippingOptionOf`.
 
 - **An addition travels in its parent's parcel** (ADR 0197). **For API
   consumers:** `PUT /admin/v1/orders/{id}/fulfillments/{fulfillmentId}` binds an

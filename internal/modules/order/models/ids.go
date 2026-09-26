@@ -25,6 +25,8 @@ const (
 	OrderAddressIDPrefix = "oaddr_"
 	// ShippingMethodIDPrefix prefixes an order shipping method identifier.
 	ShippingMethodIDPrefix = "oship_"
+	// DeliveryChangeIDPrefix prefixes an order delivery change identifier.
+	DeliveryChangeIDPrefix = "odchg_"
 	// ReturnIDPrefix is the prefix of return identifiers.
 	ReturnIDPrefix = "ret_"
 	// ReturnItemIDPrefix is the prefix of a return line identifier.
@@ -87,6 +89,9 @@ func NewOrderAddressID() string { return newID(OrderAddressIDPrefix, time.Now())
 
 // NewShippingMethodID produces a new order shipping method identifier.
 func NewShippingMethodID() string { return newID(ShippingMethodIDPrefix, time.Now()) }
+
+// NewDeliveryChangeID produces a new order delivery change identifier.
+func NewDeliveryChangeID() string { return newID(DeliveryChangeIDPrefix, time.Now()) }
 
 // NewReturnItemID produces a new return line identifier.
 func NewReturnItemID() string { return newID(ReturnItemIDPrefix, time.Now()) }

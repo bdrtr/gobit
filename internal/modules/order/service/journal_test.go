@@ -83,9 +83,11 @@ func TestTheOrderChartOfAccounts(t *testing.T) {
 		placedOrder(models.JournalOrderCanceled, 2),
 		models.JournalFact{ID: "ocl_1", Kind: models.JournalCreditLine, OrderID: "order_1",
 			OccurredAt: orderJournalStart.Add(3 * time.Minute), CurrencyCode: "TRY", Amount: 700},
+		models.JournalFact{ID: "odchg_1", Kind: models.JournalDeliveryChanged, OrderID: "order_1",
+			OccurredAt: orderJournalStart.Add(4 * time.Minute), CurrencyCode: "TRY", Amount: 200},
 	)
 	require.NoError(t, err)
-	require.Len(t, journal.Entries, 3)
+	require.Len(t, journal.Entries, 4)
 
 	placed := []models.JournalLine{
 		{Account: models.AccountReceivable, Debit: 11_300},
@@ -106,6 +108,11 @@ func TestTheOrderChartOfAccounts(t *testing.T) {
 		{Account: models.AccountCreditAllowances, Debit: 700},
 		{Account: models.AccountReceivable, Credit: 700},
 	}, journal.Entries[2].Lines)
+
+	assert.Equal(t, []models.JournalLine{
+		{Account: models.AccountShipping, Debit: 200},
+		{Account: models.AccountReceivable, Credit: 200},
+	}, journal.Entries[3].Lines, "a cheaper delivery gives back shipping (ADR 0199)")
 }
 
 // TestTheOrderJournalBalances holds every entry and the trial balance to

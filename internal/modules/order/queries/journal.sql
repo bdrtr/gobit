@@ -21,10 +21,14 @@ WHERE canceled_at >= sqlc.arg('from_at') AND canceled_at < sqlc.arg('to_at')
 ORDER BY canceled_at, id
 LIMIT sqlc.arg('row_limit');
 
+-- A credit line a delivery change wrote names the change (ADR 0199): the
+-- journal books it against shipping rather than as a concession.
 -- name: JournalCreditLines :many
-SELECT cl.id, cl.order_id, cl.amount, cl.created_at, o.currency_code
+SELECT cl.id, cl.order_id, cl.amount, cl.created_at, o.currency_code,
+       dc.id AS delivery_change_id
 FROM order_credit_lines cl
 JOIN orders o ON o.id = cl.order_id
+LEFT JOIN order_delivery_changes dc ON dc.credit_line_id = cl.id
 WHERE cl.created_at >= sqlc.arg('from_at') AND cl.created_at < sqlc.arg('to_at')
   AND (sqlc.narg('currency_code')::text IS NULL OR o.currency_code = sqlc.narg('currency_code')::text)
 ORDER BY cl.created_at, cl.id

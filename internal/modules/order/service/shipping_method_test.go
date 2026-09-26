@@ -109,7 +109,7 @@ func TestTheSnapshotCarriesTheDeliveriesByTheirWireNames(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, detail.ShippingMethods, 1)
 	assert.Equal(t, "so_express", detail.ShippingMethods[0].ShippingOptionID)
-	sold, err := interop.SoldShippingOptionOf(ctx, one)
+	sold, err := interop.ShippingOptionOf(ctx, one)
 	require.NoError(t, err)
 	assert.Equal(t, "so_express", sold)
 
@@ -117,12 +117,12 @@ func TestTheSnapshotCarriesTheDeliveriesByTheirWireNames(t *testing.T) {
 		{"shipping_option_id": "so_a", "name": "Part one", "amount": 1000},
 		{"shipping_option_id": "so_b", "name": "Part two", "amount": 1500},
 	})
-	sold, err = interop.SoldShippingOptionOf(ctx, two)
+	sold, err = interop.ShippingOptionOf(ctx, two)
 	require.NoError(t, err)
 	assert.Empty(t, sold, "two deliveries leave the choice to whoever opens the parcel")
 
 	none := place("wf_NONE", nil)
-	sold, err = interop.SoldShippingOptionOf(ctx, none)
+	sold, err = interop.ShippingOptionOf(ctx, none)
 	require.NoError(t, err)
 	assert.Empty(t, sold)
 }

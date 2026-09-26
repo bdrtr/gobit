@@ -55,7 +55,9 @@ func describeOrderDetail(d *openapi.Doc) {
 			"when unknown — every line sold before the order kept it (ADR 0168).\n\n" +
 			"\"shipping_methods\" are the deliveries the order was sold, the option, its " +
 			"name and what the checkout charged, adding up to \"shipping_total\"; an " +
-			"empty array for an order placed before they were kept (ADR 0198).\n\n" +
+			"empty array for an order placed before they were kept (ADR 0198). Each lists " +
+			"in \"changes\" the options it was put on since, oldest first, and the last one " +
+			"is the delivery the order is on (ADR 0199).\n\n" +
 			"The record carries \"shipping_address\" and \"billing_address\", the two " +
 			"addresses the cart carried into the order, each ABSENT when the order " +
 			"recorded none. After an erasure they hold what the erasure keeps: the country " +
@@ -134,6 +136,35 @@ func describeOrderDetail(d *openapi.Doc) {
 					"that recorded no shipping address, and \"order_address_country_changed\"."),
 			"422": openapi.ErrorResponse("The body is empty, unreadable, or names a field the " +
 				"address does not have."),
+		},
+	})
+
+	d.Describe(http.MethodPut, "/admin/v1/orders/{id}/shipping-methods/{shippingMethodId}", openapi.Operation{
+		Summary: "Changes which service a delivery goes on, while nothing is on its way.",
+		Description: "The option is priced by the fulfillment module on the order's own facts " +
+			"— its region, currency, the country of its shipping address, the goods after " +
+			"discount and the units sold — and has to be among the options it lists for them, " +
+			"admin-only ones included. The method keeps what the order was sold; the change is " +
+			"added to its \"changes\", and the last change is the delivery the order is on. The " +
+			"timeline dates it with an \"order.delivery_changed\" entry (ADR 0199).\n\n" +
+			"A change that costs less writes the difference off as a credit line with the " +
+			"reason \"delivery_change\", which the order journal books against shipping. A " +
+			"change that costs the same writes no credit. Putting the delivery on the option it " +
+			"is already on writes nothing. " + detailNote,
+		RequestBody: d.RequestBody(changeDeliveryRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("The order with its changed delivery",
+				d.Item(adminOrderDetailDTO{})),
+			"404": openapi.ErrorResponse("No such order, or no such shipping method on it."),
+			"409": openapi.ErrorResponse(
+				"The change is refused: \"fulfilling_parcel_underway\" while a parcel is " +
+					"pending, shipped or delivered, \"fulfilling_option_unavailable\" for an " +
+					"option not listed for the order, a return option or one priced in another " +
+					"currency, \"order_delivery_not_changeable\" for an order that is not " +
+					"pending, and \"order_delivery_costs_more\" for a change that would cost " +
+					"more than the delivery it replaces."),
+			"422": openapi.ErrorResponse("The body is empty, unreadable, names an unknown " +
+				"field, or names no option."),
 		},
 	})
 

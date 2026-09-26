@@ -599,6 +599,11 @@ func describedEndpoints() []endpointExpectation {
 			request:  *filledAdminOrderDetail().ShippingAddress,
 			response: filledAdminOrderDetail(),
 		},
+		{
+			method: http.MethodPut, path: "/admin/v1/orders/{id}/shipping-methods/{shippingMethodId}",
+			status: "200", request: changeDeliveryRequest{ShippingOptionID: "so_2"},
+			response: filledAdminOrderDetail(),
+		},
 	}
 }
 
@@ -614,7 +619,11 @@ func filledOrderDetail() orderDetailDTO {
 		Items:    []lineItemDTO{{Metadata: map[string]any{"k": "v"}}},
 		Summary:  summaryDTO{},
 		ShippingMethods: []shippingMethodDTO{
-			{ShippingOptionID: "so_1", Name: "Standard", Amount: 2500},
+			{ID: "oship_1", ShippingOptionID: "so_1", Name: "Standard", Amount: 2500,
+				Changes: []deliveryChangeDTO{{
+					ID: "odchg_1", ShippingOptionID: "so_2", Name: "Pickup",
+					Difference: -2500, CreditLineID: "ocl_1",
+				}}},
 		},
 	}
 }

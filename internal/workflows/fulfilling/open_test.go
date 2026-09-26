@@ -135,8 +135,14 @@ type fakeOrders struct {
 	// parent and parentErr are ShippingParentOf's answer.
 	parent    string
 	parentErr error
-	// sold is SoldShippingOptionOf's answer.
+	// sold is ShippingOptionOf's answer.
 	sold string
+	// facts is DeliveryFactsJSON's answer.
+	facts map[string]any
+	// changed counts the delivery changes that reached the order module, and
+	// changedWith is the last request.
+	changed     int
+	changedWith json.RawMessage
 }
 
 // testLine is the order module's answer as a CONSUMER writes it.
@@ -162,8 +168,8 @@ func (f *fakeOrders) ShippingAddressJSON(context.Context, string) (json.RawMessa
 	return json.Marshal(f.destination)
 }
 
-// SoldShippingOptionOf answers the scripted option.
-func (f *fakeOrders) SoldShippingOptionOf(context.Context, string) (string, error) {
+// ShippingOptionOf answers the scripted option.
+func (f *fakeOrders) ShippingOptionOf(context.Context, string) (string, error) {
 	return f.sold, nil
 }
 
@@ -184,6 +190,25 @@ func (f *fakeOrders) CorrectShippingAddressJSON(
 	f.correctedWith = address
 
 	return address, nil
+}
+
+// DeliveryFactsJSON answers the scripted facts.
+func (f *fakeOrders) DeliveryFactsJSON(context.Context, string) (json.RawMessage, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+
+	return json.Marshal(f.facts)
+}
+
+// ChangeDeliveryJSON records the change and echoes the request.
+func (f *fakeOrders) ChangeDeliveryJSON(
+	_ context.Context, _ string, request json.RawMessage,
+) (json.RawMessage, error) {
+	f.changed++
+	f.changedWith = request
+
+	return request, nil
 }
 
 // DispatchableLinesJSON answers what the order sold and what was written off.
@@ -221,6 +246,23 @@ type fakeFulfillments struct {
 	destination json.RawMessage
 	// option is the last shipping option the flow opened a parcel on.
 	option string
+	// options is what ListOptionsJSON answers, and quoteErr its fault;
+	// quotedWith is the last request.
+	options    []map[string]any
+	quoteErr   error
+	quotedWith json.RawMessage
+}
+
+// ListOptionsJSON records the request and answers the scripted options.
+func (f *fakeFulfillments) ListOptionsJSON(
+	_ context.Context, request json.RawMessage,
+) (json.RawMessage, error) {
+	f.quotedWith = request
+	if f.quoteErr != nil {
+		return nil, f.quoteErr
+	}
+
+	return json.Marshal(map[string]any{"options": f.options})
 }
 
 // CommittedQuantities answers what the live parcels hold.

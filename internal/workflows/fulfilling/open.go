@@ -61,10 +61,11 @@ func (w *Workflows) OpenForOrder(
 	}
 
 	// A parcel opened without an option goes on the service the order was
-	// sold, when it was sold exactly one (ADR 0198). The operator no longer
-	// has to know which that was; naming another is still theirs to do.
+	// sold, when it was sold exactly one, or on the one it was changed to
+	// since (ADR 0198, 0199). The operator no longer has to know which that
+	// is; naming another is still theirs to do.
 	if strings.TrimSpace(optionID) == "" {
-		sold, err := w.orders.SoldShippingOptionOf(ctx, orderID)
+		sold, err := w.orders.ShippingOptionOf(ctx, orderID)
 		if err != nil {
 			return OpenResult{}, errors.Wrap(err, errors.KindOf(err), CodeOrderUnreadable,
 				"the delivery order %s was sold could not be read", orderID)

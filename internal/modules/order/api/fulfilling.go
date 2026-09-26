@@ -51,6 +51,19 @@ type Fulfilling interface {
 	// ShipInParcel lets the order's goods travel in a parcel of the order it
 	// adds to (ADR 0197).
 	ShipInParcel(ctx context.Context, orderID, fulfillmentID string) error
+
+	// ChangeDelivery puts one of the order's deliveries on another shipping
+	// option at the price the fulfillment module quotes for the order
+	// (ADR 0199). It lives on the flow because the quote and the parcels are
+	// the flow's to read.
+	ChangeDelivery(ctx context.Context, orderID, shippingMethodID, shippingOptionID string) (json.RawMessage, error)
+}
+
+// changeDeliveryRequest is the body of the delivery change endpoint.
+type changeDeliveryRequest struct {
+	// ShippingOptionID is the option the delivery goes on. Its price is the
+	// fulfillment module's quote for the order, not the caller's.
+	ShippingOptionID string `json:"shipping_option_id"`
 }
 
 // openShipmentRequest is the body of the open endpoint.
@@ -59,7 +72,8 @@ type Fulfilling interface {
 // passed to the flow as raw JSON: this module does not interpret it.
 type openShipmentRequest struct {
 	// ShippingOptionID is the option the parcel ships on. Left empty, it is the
-	// one delivery the order was sold, when it was sold exactly one (ADR 0198).
+	// option of the one delivery the order was sold, as it stands after its
+	// changes (ADR 0198, 0199).
 	ShippingOptionID string `json:"shipping_option_id"`
 	// IdempotencyKey is required. Without one a retried request opens a SECOND
 	// parcel for the same order.
@@ -189,6 +203,38 @@ func (h *Handler) adminShipInParcel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.adminListShipments(w, r)
+}
+
+// adminChangeDelivery PUT /admin/v1/orders/{id}/shipping-methods/{shippingMethodId}
+//
+// It puts the delivery on the option in the body and answers with the admin
+// order record, whose shipping method now lists the change. Putting it on the
+// option it is already on writes nothing (ADR 0199).
+func (h *Handler) adminChangeDelivery(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var body changeDeliveryRequest
+	if err := decodeBody(w, r, &body); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	flow, err := h.fulfillingFlow()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	if _, err := flow.ChangeDelivery(ctx, orderID(r), chi.URLParam(r, paramShippingMethodID),
+		body.ShippingOptionID); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	h.writeCurrentOrder(w, r)
 }
 
 // adminListShipments GET /admin/v1/orders/{id}/fulfillments

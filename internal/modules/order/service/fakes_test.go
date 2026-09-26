@@ -120,6 +120,9 @@ type fakeStore struct {
 	// shippingMethods are the orders' deliveries (ADR 0198), outside the
 	// snapshot: they are written once with the order and never change.
 	shippingMethods map[string][]models.OrderShippingMethod
+	// deliveryChanges are the orders' delivery changes (ADR 0199), undone
+	// with their transaction.
+	deliveryChanges map[string][]models.DeliveryChange
 	// lockedReturns records the return rows that were locked, in order.
 	lockedReturns []string
 	// lockedClaims records the claim rows that were locked, in order.
@@ -174,6 +177,7 @@ func newFakeStore() *fakeStore {
 		summaries:       map[string]models.OrderSummary{},
 		addresses:       map[string][]models.OrderAddress{},
 		shippingMethods: map[string][]models.OrderShippingMethod{},
+		deliveryChanges: map[string][]models.DeliveryChange{},
 		returns:         map[string]models.Return{},
 		outbox:          map[string]outboxRow{},
 		retItems:        map[string]models.ReturnItem{},
@@ -943,6 +947,47 @@ func (f *fakeStore) OrderShippingMethodsByOrderIDs(
 	for _, id := range orderIDs {
 		if methods := f.shippingMethods[id]; len(methods) > 0 {
 			out[id] = slices.Clone(methods)
+		}
+	}
+
+	return out, nil
+}
+
+// CreateDeliveryChange records a delivery change, holding the two CHECKs of
+// migration 000025 the way the table does.
+func (f *fakeStore) CreateDeliveryChange(
+	ctx context.Context, change models.DeliveryChange,
+) (models.DeliveryChange, error) {
+	if err := requireTx(ctx, "CreateDeliveryChange"); err != nil {
+		return models.DeliveryChange{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if change.Difference > 0 || (change.Difference < 0) != (change.CreditLineID != "") {
+		return models.DeliveryChange{}, errors.Internal("order_delivery_change_check",
+			"a delivery change of %d with credit line %q breaks the table's CHECK",
+			change.Difference, change.CreditLineID)
+	}
+
+	change.CreatedAt = f.nextStamp()
+	f.recordUndo(ctx, undoEntry(f.deliveryChanges, change.OrderID))
+	f.deliveryChanges[change.OrderID] = append(slices.Clone(f.deliveryChanges[change.OrderID]), change)
+
+	return change, nil
+}
+
+// DeliveryChangesByOrderIDs reads the delivery changes of several orders.
+func (f *fakeStore) DeliveryChangesByOrderIDs(
+	_ context.Context, orderIDs []string,
+) (map[string][]models.DeliveryChange, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := map[string][]models.DeliveryChange{}
+	for _, id := range orderIDs {
+		if changes := f.deliveryChanges[id]; len(changes) > 0 {
+			out[id] = slices.Clone(changes)
 		}
 	}
 

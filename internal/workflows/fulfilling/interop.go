@@ -75,6 +75,14 @@ func (i *Interop) CorrectShippingAddress(
 	return i.w.CorrectShippingAddress(ctx, orderID, address)
 }
 
+// ChangeDelivery puts one of an order's deliveries on another option; the
+// rules are [Workflows.ChangeDelivery]'s.
+func (i *Interop) ChangeDelivery(
+	ctx context.Context, orderID, shippingMethodID, shippingOptionID string,
+) (json.RawMessage, error) {
+	return i.w.ChangeDelivery(ctx, orderID, shippingMethodID, shippingOptionID)
+}
+
 // ShipmentsOfOrderJSON lists the shipments bound to an order.
 //
 // It answers with identities and statuses rather than with the shipments: a

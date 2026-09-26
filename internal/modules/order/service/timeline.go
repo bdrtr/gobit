@@ -72,6 +72,11 @@ const (
 	// (ADR 0195), dated by the moment the address it replaced was closed. It
 	// names the replaced row and carries no address.
 	KindShippingAddressCorrected = "order.shipping_address_corrected"
+
+	// KindDeliveryChanged is a delivery put on another service (ADR 0199). Its
+	// detail is the new service's name and its amount the new service's price;
+	// a difference written off is the credit entry beside it.
+	KindDeliveryChanged = "order.delivery_changed"
 )
 
 // The payment collection's movements, read through the Query layer (ADR 0170).
@@ -593,8 +598,23 @@ func (s *Service) orderFactEntries(ctx context.Context, order models.OrderDetail
 	}
 
 	entries := factEntries(order.CurrencyCode, cancellations, credits, replacements)
+	entries = append(entries, correctionEntries(addresses[order.ID])...)
 
-	return append(entries, correctionEntries(addresses[order.ID])...), nil
+	return append(entries, deliveryChangeEntries(order.CurrencyCode, order.DeliveryChanges)...), nil
+}
+
+// deliveryChangeEntries dates each delivery change (ADR 0199).
+func deliveryChangeEntries(currency string, changes []models.DeliveryChange) []TimelineEntry {
+	entries := make([]TimelineEntry, 0, len(changes))
+	for i := range changes {
+		entries = append(entries, TimelineEntry{
+			At: &changes[i].CreatedAt, Kind: KindDeliveryChanged, RefID: changes[i].ID,
+			Clock: ClockDatabase, Detail: changes[i].Name,
+			Amount: changes[i].Amount, Currency: currency,
+		})
+	}
+
+	return entries
 }
 
 // correctionEntries dates each shipping address a correction closed (ADR 0195).
@@ -718,6 +738,9 @@ var customerVisibleKinds = map[string]bool{
 	// ADR 0195: where the goods go is about the goods, and the customer who
 	// rang to correct it sees that it was done. The entry carries no address.
 	KindShippingAddressCorrected: true,
+	// ADR 0199: which service carries the goods is about the goods. The
+	// storefront's shape carries no amount, and the credit stays the desk's.
+	KindDeliveryChanged: true,
 }
 
 // StorefrontTimeline is the timeline a customer may see on their own order.

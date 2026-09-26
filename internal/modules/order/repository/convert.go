@@ -665,6 +665,21 @@ func toOrderShippingMethod(row orderdb.OrderShippingMethod) models.OrderShipping
 	}
 }
 
+// toDeliveryChange converts a delivery change row.
+func toDeliveryChange(row orderdb.OrderDeliveryChange) models.DeliveryChange {
+	return models.DeliveryChange{
+		ID:               row.ID,
+		OrderID:          row.OrderID,
+		ShippingMethodID: row.ShippingMethodID,
+		ShippingOptionID: row.ShippingOptionID,
+		Name:             row.Name,
+		Amount:           row.Amount,
+		Difference:       row.Difference,
+		CreditLineID:     textValue(row.CreditLineID),
+		CreatedAt:        toTime(row.CreatedAt),
+	}
+}
+
 // textValue reads a nullable text column; a null is the empty string.
 //
 // Every one of these fields is optional and the module never distinguishes "not

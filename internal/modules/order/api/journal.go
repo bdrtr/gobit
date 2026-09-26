@@ -92,7 +92,9 @@ func describeOrderJournal(d *openapi.Doc) {
 			"An order placed debits receivable with its total and sales_discounts with its " +
 			"discount, and credits sales with its subtotal, tax_payable with its tax and " +
 			"shipping with its shipping; an order canceled is the same lines the other way; a " +
-			"credit line debits credit_allowances and credits receivable. A refund that names " +
+			"credit line debits credit_allowances and credits receivable, except one a delivery " +
+			"change wrote, which is a \"delivery_changed\" entry under the change's id that " +
+			"debits shipping instead. A refund that names " +
 			"one of the order's returns debits sales_returns, and one that names a claim " +
 			"debits claim_allowances, each against receivable, at the refund's amount and " +
 			"moment. A zero amount writes no line, and an order of nothing is no entry. " +

@@ -8,7 +8,8 @@ import (
 	"github.com/bdrtr/gobit/core/errors"
 )
 
-// CodeParcelUnderway refuses an address correction while a parcel is on its way.
+// CodeParcelUnderway refuses an address correction or a delivery change while
+// a parcel is on its way.
 const CodeParcelUnderway = "fulfilling_parcel_underway"
 
 // statusReturned is the fulfillment module's word for a parcel that came back.
@@ -39,24 +40,35 @@ func (w *Workflows) CorrectShippingAddress(
 		return nil, errors.Invalid(CodeInvalidInput, "the order id is required")
 	}
 
+	if err := w.refuseWhileUnderway(ctx, orderID, "the address it was opened with", "correcting the address"); err != nil {
+		return nil, err
+	}
+
+	return w.orders.CorrectShippingAddressJSON(ctx, orderID, address)
+}
+
+// refuseWhileUnderway refuses while any parcel of the order is pending,
+// shipped or delivered: its carrier holds what the parcel was opened with.
+// held names what that is, and act what is being refused.
+func (w *Workflows) refuseWhileUnderway(ctx context.Context, orderID, held, act string) error {
 	bound, err := w.boundFulfillments(ctx, orderID)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for fulfillmentID := range bound {
 		status, err := w.fulfillments.FulfillmentStatus(ctx, fulfillmentID)
 		if err != nil {
-			return nil, errors.Wrap(err, errors.KindOf(err), CodeLinkUnreadable,
-				"the status of shipment %s could not be read, so order %s's address was not corrected",
+			return errors.Wrap(err, errors.KindOf(err), CodeLinkUnreadable,
+				"the status of shipment %s could not be read, so order %s was not changed",
 				fulfillmentID, orderID)
 		}
 		if status != statusCanceled && status != statusReturned {
-			return nil, errors.Conflict(CodeParcelUnderway,
-				"shipment %s of order %s is %s and its carrier has the address it was opened with; "+
-					"cancel it or wait for it to come back before correcting the address",
-				fulfillmentID, orderID, status)
+			return errors.Conflict(CodeParcelUnderway,
+				"shipment %s of order %s is %s and its carrier has %s; "+
+					"cancel it or wait for it to come back before %s",
+				fulfillmentID, orderID, status, held, act)
 		}
 	}
 
-	return w.orders.CorrectShippingAddressJSON(ctx, orderID, address)
+	return nil
 }

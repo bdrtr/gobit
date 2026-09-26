@@ -207,6 +207,12 @@ type Store interface {
 	// OrderShippingMethodsByOrderIDs reads the shipping methods of several
 	// orders in one query.
 	OrderShippingMethodsByOrderIDs(ctx context.Context, orderIDs []string) (map[string][]models.OrderShippingMethod, error)
+	// CreateDeliveryChange writes a change to one of the order's deliveries,
+	// inside the transaction that holds the order's lock (ADR 0199).
+	CreateDeliveryChange(ctx context.Context, change models.DeliveryChange) (models.DeliveryChange, error)
+	// DeliveryChangesByOrderIDs reads the delivery changes of several orders,
+	// oldest first within an order.
+	DeliveryChangesByOrderIDs(ctx context.Context, orderIDs []string) (map[string][]models.DeliveryChange, error)
 	// SupersedeOrderAddress closes the order's current address of the type,
 	// inside the caller's transaction, and reports how many rows it closed.
 	SupersedeOrderAddress(ctx context.Context, orderID string, kind models.AddressType) (int64, error)

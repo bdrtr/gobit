@@ -585,9 +585,15 @@ func (s *Service) loadDetail(ctx context.Context, find func(ctx context.Context)
 			return err
 		}
 
+		// A SEVENTH: what those deliveries were changed to (ADR 0199).
+		changes, err := s.store.DeliveryChangesByOrderIDs(ctx, []string{order.ID})
+		if err != nil {
+			return err
+		}
+
 		detail = models.OrderDetail{
 			Order: order, Items: items, Summary: summary, CreditedTotal: credited,
-			ShippingMethods: methods[order.ID],
+			ShippingMethods: methods[order.ID], DeliveryChanges: changes[order.ID],
 		}
 		detail.ShippingAddress, detail.BillingAddress = splitAddresses(addresses[order.ID])
 

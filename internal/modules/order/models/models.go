@@ -262,6 +262,10 @@ type OrderDetail struct {
 	// cart held them; empty for an order placed before they were kept, and for
 	// one that ships nothing (ADR 0198).
 	ShippingMethods []OrderShippingMethod
+	// DeliveryChanges are the changes to those deliveries, oldest first; a
+	// method's current delivery is its latest change, and the method itself
+	// while it has none (ADR 0199).
+	DeliveryChanges []DeliveryChange
 	// Summary is the order's payment/refund summary. Because the summary is
 	// born together with the order it is always populated here.
 	Summary OrderSummary
@@ -947,6 +951,57 @@ type OrderShippingMethod struct {
 	Amount int64
 	// CreatedAt is UTC.
 	CreatedAt time.Time
+}
+
+// DeliveryChange is a service a shipping method was changed to after the
+// order was placed (ADR 0199).
+//
+// It does not edit the method. The method keeps what the order was sold, and
+// its current delivery is its latest change.
+type DeliveryChange struct {
+	// ID is the "odchg_" prefixed identifier.
+	ID string
+	// OrderID is the order the change belongs to.
+	OrderID string
+	// ShippingMethodID is the method whose delivery changed.
+	ShippingMethodID string
+	// ShippingOptionID is the fulfillment module's option the method changed
+	// to; like the method's, it is not a foreign key.
+	ShippingOptionID string
+	// Name is the new service's label as the fulfillment module quoted it.
+	Name string
+	// Amount is what the fulfillment module quoted for it (minor unit).
+	Amount int64
+	// Difference is Amount less the amount of the delivery it replaced. It is
+	// never positive: a change that costs more is not written (ADR 0199).
+	Difference int64
+	// CreditLineID is the credit line that wrote the difference off; set
+	// exactly when Difference is negative.
+	CreditLineID string
+	// CreatedAt is UTC.
+	CreatedAt time.Time
+}
+
+// CurrentDeliveries returns the methods as they stand after their changes:
+// each with the option, name and amount of its latest change, and as it was
+// sold while it has none. The ID stays the method's (ADR 0199).
+//
+// changes are read oldest first, as the store returns them.
+func CurrentDeliveries(methods []OrderShippingMethod, changes []DeliveryChange) []OrderShippingMethod {
+	out := make([]OrderShippingMethod, 0, len(methods))
+	for _, method := range methods {
+		for i := range changes {
+			if changes[i].ShippingMethodID != method.ID {
+				continue
+			}
+			method.ShippingOptionID = changes[i].ShippingOptionID
+			method.Name = changes[i].Name
+			method.Amount = changes[i].Amount
+		}
+		out = append(out, method)
+	}
+
+	return out
 }
 
 // Current reports whether the address is the order's current one of its type.

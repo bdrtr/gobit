@@ -102,9 +102,18 @@ type Orders interface {
 	// module holds the rules it can check; whether a parcel is underway is this
 	// flow's.
 	CorrectShippingAddressJSON(ctx context.Context, orderID string, address json.RawMessage) (json.RawMessage, error)
-	// SoldShippingOptionOf returns the shipping option the order was sold when
-	// it was sold exactly one, and "" otherwise (ADR 0198).
-	SoldShippingOptionOf(ctx context.Context, orderID string) (string, error)
+	// ShippingOptionOf returns the shipping option the order's delivery is on
+	// when it has exactly one, and "" otherwise (ADR 0198, 0199).
+	ShippingOptionOf(ctx context.Context, orderID string) (string, error)
+	// DeliveryFactsJSON returns what a delivery for the order is quoted on:
+	// its region, currency, destination country, goods after discount and
+	// units (ADR 0199).
+	DeliveryFactsJSON(ctx context.Context, orderID string) (json.RawMessage, error)
+	// ChangeDeliveryJSON changes one of the order's deliveries to a quoted
+	// service and returns the change, or JSON null when it was already on it
+	// (ADR 0199). The order module holds what it can check; the quote and the
+	// parcels are this flow's.
+	ChangeDeliveryJSON(ctx context.Context, orderID string, request json.RawMessage) (json.RawMessage, error)
 	// ShippingParentOf returns the order in whose parcels orderID's goods may
 	// travel, or the order module's refusal (ADR 0197).
 	ShippingParentOf(ctx context.Context, orderID string) (string, error)
@@ -141,6 +150,9 @@ type Fulfillments interface {
 	// binding between an order and its shipments is the "order_fulfillment" LINK
 	// and the fulfillment module does not read another module's links.
 	CommittedQuantities(ctx context.Context, fulfillmentIDs []string) (map[string]int64, error)
+	// ListOptionsJSON prices the shipping options eligible for the facts in
+	// the request (ADR 0199 reads it for an order's delivery change).
+	ListOptionsJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
 }
 
 // statusCanceled is the fulfillment module's word for a shipment that was

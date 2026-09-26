@@ -280,8 +280,8 @@ func describeFulfilling(d *openapi.Doc) {
 			"the fulfillment module never validates the reference it is handed, so this is the " +
 			"only place that can refuse. " +
 			"\"shipping_option_id\" may be left out when the order was sold exactly one " +
-			"delivery: the parcel then goes on that option (ADR 0198). An order sold none or " +
-			"several has to be told which. " +
+			"delivery: the parcel then goes on its option, or on the one it was changed to " +
+			"since (ADR 0198, 0199). An order sold none or several has to be told which. " +
 			"The order may have SEVERAL shipments, and since ADR 0197 a parcel may also carry " +
 			"an addition that joined it.",
 		RequestBody: d.RequestBody(openShipmentRequest{}),

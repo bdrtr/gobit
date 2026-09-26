@@ -129,3 +129,4 @@ truth: a report says what was true on the day it was taken.
 | [A screen that showed amounts — measured 2026-09-26](0196-a-screen-that-showed-amounts.md) | 61 |
 | [One box, two orders — measured 2026-09-26](0197-one-box-two-orders.md) | 74 |
 | [A total without a service — measured 2026-09-26](0198-a-total-without-a-service.md) | 59 |
+| [A cheaper courier — measured 2026-09-26](0199-a-cheaper-courier.md) | 117 |
