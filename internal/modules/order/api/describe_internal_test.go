@@ -432,6 +432,10 @@ func describedEndpoints() []endpointExpectation {
 			response: orderShipmentDTO{FulfillmentID: "ful_1", Status: "pending"},
 		},
 		{
+			method: http.MethodPut, path: "/admin/v1/orders/{id}/fulfillments/{fulfillmentId}",
+			status: "200", response: orderShipmentDTO{FulfillmentID: "ful_1", Status: "pending"},
+		},
+		{
 			// The timeline is an unpaged list: the handler writes the plain
 			// envelope with an ARRAY in it, and it was described as a single
 			// record until this table gained a word for the shape.

@@ -85,3 +85,63 @@ func additionRefusal(parent models.Order, customerID, currencyCode string) error
 	}
 	return nil
 }
+
+// The refusals of an addition asking to travel in its parent's parcel
+// (ADR 0197).
+const (
+	// CodeShipsAlone refuses an order that adds to no order: it ships in its
+	// own parcels.
+	CodeShipsAlone = "order_ships_alone"
+	// CodeShipsElsewhere refuses an addition whose shipping address is not its
+	// parent's: one parcel goes to one address.
+	CodeShipsElsewhere = "order_ships_elsewhere"
+)
+
+// ShippingParentOf returns the order in whose parcels orderID's goods may
+// travel: the order it adds to (ADR 0197).
+//
+// It is refused for an order that adds to nothing, for an order or a parent
+// that is not pending, and for an addition going to another address than its
+// parent. An addition that recorded no shipping address may travel with its
+// parent — the parcel's address is the one it has. The addresses are compared
+// field by field, metadata included, because a gate code on one is a
+// delivery the other's does not describe.
+//
+// The answer is the order module's half. Whether the parcel is its parent's
+// and still waiting is the fulfilling flow's, which can read parcels.
+func (s *Service) ShippingParentOf(ctx context.Context, orderID string) (string, error) {
+	if err := requireID("order_id", orderID); err != nil {
+		return "", err
+	}
+
+	addition, err := s.GetOrder(ctx, orderID)
+	if err != nil {
+		return "", err
+	}
+	if addition.AddsToOrderID == "" {
+		return "", errors.Conflict(CodeShipsAlone,
+			"order %s adds to no order, so it ships in parcels of its own", orderID)
+	}
+	if addition.Status != models.OrderPending {
+		return "", errors.Conflict(CodeNotPending,
+			"order %s is %s; only a pending order's goods can join a parcel", orderID, addition.Status)
+	}
+
+	parent, err := s.GetOrder(ctx, addition.AddsToOrderID)
+	if err != nil {
+		return "", err
+	}
+	if parent.Status != models.OrderPending {
+		return "", errors.Conflict(CodeAdditionParentNotPending,
+			"order %s is %s; its parcels take no more goods", parent.ID, parent.Status)
+	}
+
+	if addition.ShippingAddress != nil &&
+		(parent.ShippingAddress == nil || !sameAddress(*parent.ShippingAddress, *addition.ShippingAddress)) {
+		return "", errors.Conflict(CodeShipsElsewhere,
+			"order %s ships to another address than order %s; one parcel goes to one address",
+			orderID, parent.ID)
+	}
+
+	return parent.ID, nil
+}

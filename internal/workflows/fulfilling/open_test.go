@@ -132,6 +132,9 @@ type fakeOrders struct {
 	// correctedWith is the last body.
 	corrected     int
 	correctedWith json.RawMessage
+	// parent and parentErr are ShippingParentOf's answer.
+	parent    string
+	parentErr error
 }
 
 // testLine is the order module's answer as a CONSUMER writes it.
@@ -155,6 +158,15 @@ func (f *fakeOrders) ShippingAddressJSON(context.Context, string) (json.RawMessa
 	}
 
 	return json.Marshal(f.destination)
+}
+
+// ShippingParentOf answers the scripted parent, or the scripted refusal.
+func (f *fakeOrders) ShippingParentOf(context.Context, string) (string, error) {
+	if f.parentErr != nil {
+		return "", f.parentErr
+	}
+
+	return f.parent, nil
 }
 
 // CorrectShippingAddressJSON records the correction and echoes the body.

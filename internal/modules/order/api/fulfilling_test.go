@@ -38,6 +38,8 @@ type fakeFulfilling struct {
 	openCalls    int
 	listCalls    int
 	correctCalls int
+	joinCalls    int
+	gotParcelID  string
 }
 
 // That the fake satisfies the surface the handler expects is verified at
@@ -86,6 +88,15 @@ func (f *fakeFulfilling) CorrectShippingAddress(
 	}
 
 	return address, nil
+}
+
+// ShipInParcel records the call.
+func (f *fakeFulfilling) ShipInParcel(_ context.Context, orderID, fulfillmentID string) error {
+	f.joinCalls++
+	f.gotOrderID = orderID
+	f.gotParcelID = fulfillmentID
+
+	return f.err
 }
 
 // newRouterWithFulfilling wires a router with the given fulfilling flow.
@@ -362,5 +373,24 @@ func TestTheCorrectionEndpointPassesTheAddressThrough(t *testing.T) {
 
 	flow.err = errors.Conflict("fulfilling_parcel_underway", "a parcel is pending")
 	rec = doRequest(t, r, http.MethodPut, "/admin/v1/orders/order_1/shipping-address", body)
+	assert.Equal(t, http.StatusConflict, rec.Code)
+}
+
+// TestTheJoinEndpointNamesBothRecordsInThePath binds through the flow and
+// answers with the order's shipments (ADR 0197).
+func TestTheJoinEndpointNamesBothRecordsInThePath(t *testing.T) {
+	flow := &fakeFulfilling{shipments: json.RawMessage(`[{"fulfillment_id":"ful_parent","status":"pending"}]`)}
+	r := newRouterWithFulfilling(&fakeOrders{detail: sampleDetail()}, flow)
+
+	rec := doRequest(t, r, http.MethodPut, "/admin/v1/orders/order_1/fulfillments/ful_parent", "")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, 1, flow.joinCalls)
+	assert.Equal(t, "order_1", flow.gotOrderID)
+	assert.Equal(t, "ful_parent", flow.gotParcelID)
+	assert.Contains(t, rec.Body.String(), "ful_parent", "the answer is the order's shipments")
+
+	flow.err = errors.Conflict("fulfilling_parcel_not_waiting", "shipped")
+	rec = doRequest(t, r, http.MethodPut, "/admin/v1/orders/order_1/fulfillments/ful_parent", "")
 	assert.Equal(t, http.StatusConflict, rec.Code)
 }

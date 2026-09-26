@@ -91,6 +91,8 @@ const (
 	paramClaimID = "claimId"
 	// paramEvidenceID is the claim evidence in the path.
 	paramEvidenceID = "evidenceId"
+	// paramFulfillmentID is the parcel an addition joins (ADR 0197).
+	paramFulfillmentID = "fulfillmentId"
 )
 
 // Orders is the surface the handlers need from the service.

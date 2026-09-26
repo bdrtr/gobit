@@ -407,3 +407,29 @@ func TestTheOrderSchemaIsTheONEThisFlowDecodes(t *testing.T) {
 			"the flow reads %q off the order module's answer", field)
 	}
 }
+
+// TestAParcelBoundToAnAdditionPutsBackAgainstTheOrderThatHasTheLine is ADR
+// 0197's case: the parcel is bound to its order and to an addition that joined
+// it, and the link answers the addition FIRST. The line the parcel held is the
+// order's, so its written-off units go back against the order — reading the
+// first bound order would have found no such line and put nothing back.
+func TestAParcelBoundToAnAdditionPutsBackAgainstTheOrderThatHasTheLine(t *testing.T) {
+	t.Parallel()
+
+	const addition = "order_00ADDITIONJOINED00" // sorts before testOrderID
+	h := newHarness(t)
+	h.links[linkOrderFulfillment] = map[string][]string{
+		testOrderID: {testFulfillmentID},
+		addition:    {testFulfillmentID},
+	}
+	h.held = map[string]int64{testLineItemID: 3}
+	h.linesByOrder = map[string]string{
+		addition:    `[{"line_item_id":"oli_ADDITION","bought":1,"canceled":0,"variant_id":"variant_OTHER"}]`,
+		testOrderID: orderLinesJSON(5, 3),
+	}
+
+	require.NoError(t, h.handleParcel(t, parcelEvent(testFulfillmentID)))
+
+	assert.Equal(t, int64(3), h.inventory.returned,
+		"the three written-off units the parcel held go back against the order that sold them")
+}

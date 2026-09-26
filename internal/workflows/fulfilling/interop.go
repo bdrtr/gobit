@@ -60,6 +60,12 @@ func (i *Interop) OpenForOrder(
 	return out.FulfillmentID, out.AlreadyOpen, nil
 }
 
+// ShipInParcel lets an order's goods travel in its parent's parcel; the rules
+// are [Workflows.ShipInParcel]'s.
+func (i *Interop) ShipInParcel(ctx context.Context, orderID, fulfillmentID string) error {
+	return i.w.ShipInParcel(ctx, orderID, fulfillmentID)
+}
+
 // CorrectShippingAddress corrects where an order ships; the rules are
 // [Workflows.CorrectShippingAddress]'s. The address travels as the order
 // module's JSON both ways.

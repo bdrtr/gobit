@@ -58,12 +58,17 @@ func (w *Workflow) HandleFulfillmentCanceled(ctx context.Context, e eventbus.Eve
 			"the cancellation flow is not wired, so a canceled parcel cannot be acted on")
 	}
 
-	// The order is read from the LINK rather than from the event's reference
+	// The orders are read from the LINK rather than from the event's reference
 	// field. The fulfillment module never validates that field and says so in its
 	// own record, so reading it as an order identifier would be reading a
 	// convention; the link is the binding this repository trusts (ADR 0134).
-	orderID, found, err := w.orderOfParcel(ctx, fulfillmentID)
-	if err != nil || !found {
+	//
+	// A parcel is bound to MORE than one order since ADR 0197: the order it was
+	// opened for and the additions that joined it. Its items are the first
+	// order's lines, but the link does not say which order that is, so each
+	// line is put back against the bound order that HAS it.
+	orderIDs, err := w.ordersOfParcel(ctx, fulfillmentID)
+	if err != nil || len(orderIDs) == 0 {
 		return err
 	}
 
@@ -78,32 +83,33 @@ func (w *Workflow) HandleFulfillmentCanceled(ctx context.Context, e eventbus.Eve
 		return nil
 	}
 
-	lines, err := w.orderLines(ctx, orderID)
-	if err != nil {
-		return err
-	}
-
-	// The live parcels AFTER this one was canceled. The canceled parcel is
-	// already excluded by the module's own answer, which is what makes the
-	// arithmetic below a difference between two states rather than a subtraction
-	// this flow has to remember.
-	committedAfter, err := w.committedQuantities(ctx, orderID)
+	owners, err := w.lineOwners(ctx, orderIDs)
 	if err != nil {
 		return err
 	}
 
 	for lineItemID, releasedByParcel := range held {
-		line, onTheOrder := lines[lineItemID]
-		if !onTheOrder {
+		owner, onAnOrder := owners[lineItemID]
+		if !onAnOrder {
 			// A parcel holding a line the order does not have is a state ADR 0135
 			// now refuses to create. An older one can exist, and nothing here can
 			// decide what it means.
 			w.log.WarnContext(ctx,
-				"a canceled parcel held a line the order does not have, so nothing was put back",
-				"fulfillment_id", fulfillmentID, "order_id", orderID,
+				"a canceled parcel held a line no bound order has, so nothing was put back",
+				"fulfillment_id", fulfillmentID, "order_ids", orderIDs,
 				"order_line_item_id", lineItemID)
 
 			continue
+		}
+		orderID, line := owner.orderID, owner.line
+
+		// The live parcels AFTER this one was canceled. The canceled parcel is
+		// already excluded by the module's own answer, which is what makes the
+		// arithmetic below a difference between two states rather than a
+		// subtraction this flow has to remember.
+		committedAfter, err := owner.committed(ctx)
+		if err != nil {
+			return err
 		}
 
 		// The SAME invariant the write-off computes, from the state this act
@@ -178,30 +184,73 @@ func (w *Workflow) orderLines(ctx context.Context, orderID string) (map[string]o
 	return out, nil
 }
 
-// orderOfParcel answers which order a parcel was opened for.
+// ordersOfParcel answers which orders a parcel is bound to: the one it was
+// opened for and the additions that joined it (ADR 0197).
 //
-// found is false for a parcel bound to no order. That is not a fault: the binding
-// is a Module Link written by the flow that opens the parcel, and one opened
-// straight through the admin endpoint has none — there is nothing to put back
-// against, because nothing wrote the units off.
-func (w *Workflow) orderOfParcel(
-	ctx context.Context, fulfillmentID string,
-) (orderID string, found bool, err error) {
+// None is not a fault: a parcel bound to no order has nothing to put back
+// against, because nothing wrote its units off.
+func (w *Workflow) ordersOfParcel(ctx context.Context, fulfillmentID string) ([]string, error) {
 	byParcel, err := w.links.ListManyByTo(ctx, linkOrderFulfillment, []string{fulfillmentID})
 	if err != nil {
-		return "", false, errors.Wrap(err, errors.KindOf(err), CodeEventUnusable,
-			"the order of parcel %s could not be read", fulfillmentID)
+		return nil, errors.Wrap(err, errors.KindOf(err), CodeEventUnusable,
+			"the orders of parcel %s could not be read", fulfillmentID)
 	}
 
 	orders := byParcel[fulfillmentID]
 	if len(orders) == 0 {
 		w.log.DebugContext(ctx, "a canceled parcel is bound to no order",
 			"fulfillment_id", fulfillmentID)
-
-		return "", false, nil
 	}
 
-	return orders[0], true, nil
+	return orders, nil
+}
+
+// lineOwner is the bound order a parcel's line belongs to, with the line.
+type lineOwner struct {
+	orderID string
+	line    orderLine
+	// committed reads the order's live parcels once and remembers them, so a
+	// parcel of many lines of one order costs one read of them.
+	committed func(ctx context.Context) (map[string]int64, error)
+}
+
+// lineOwners maps every line of the bound orders to the order that has it.
+//
+// A line id belongs to one order, so the first order that has it is the one.
+// Each order's live parcels are read lazily and once.
+func (w *Workflow) lineOwners(ctx context.Context, orderIDs []string) (map[string]lineOwner, error) {
+	owners := map[string]lineOwner{}
+	for _, orderID := range orderIDs {
+		lines, err := w.orderLines(ctx, orderID)
+		if err != nil {
+			return nil, err
+		}
+
+		var (
+			cached map[string]int64
+			read   bool
+		)
+		committed := func(ctx context.Context) (map[string]int64, error) {
+			if read {
+				return cached, nil
+			}
+			out, err := w.committedQuantities(ctx, orderID)
+			if err != nil {
+				return nil, err
+			}
+			cached, read = out, true
+
+			return cached, nil
+		}
+
+		for lineItemID, line := range lines {
+			if _, taken := owners[lineItemID]; !taken {
+				owners[lineItemID] = lineOwner{orderID: orderID, line: line, committed: committed}
+			}
+		}
+	}
+
+	return owners, nil
 }
 
 // committedQuantities sums, per line, the units the order's LIVE parcels hold.

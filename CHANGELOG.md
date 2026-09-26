@@ -63,6 +63,19 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **An addition travels in its parent's parcel** (ADR 0197). **For API
+  consumers:** `PUT /admin/v1/orders/{id}/fulfillments/{fulfillmentId}` binds an
+  addition to a pending parcel of the order it adds to and answers with its
+  shipments; `409 order_ships_alone`, `order_not_pending`,
+  `order_addition_parent_not_pending`, `order_ships_elsewhere`,
+  `fulfilling_parcel_not_parents` or `fulfilling_parcel_not_waiting` refuse it.
+  Nothing is sent to the carrier. **For operators:** the `order_fulfillment`
+  link is widened from one-to-many to many-to-many at startup; the previous
+  release then refuses to start against the same database (ADR 0116). **For
+  embedders:** the order interop gains `ShippingParentOf`, the fulfilling
+  interop `ShipInParcel`, and a canceled parcel's units go back against the
+  bound order whose line they are.
+
 - **The panel shows where an order goes** (ADR 0196). **For operators:** the
   panel's order page shows the shipping and billing addresses, when the
   shipping address was last corrected, the order an addition adds to and the

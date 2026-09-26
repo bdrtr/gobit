@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
+
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
 )
@@ -45,6 +47,10 @@ type Fulfilling interface {
 	// because the one question this module cannot answer — is a parcel already
 	// on its way — is the flow's.
 	CorrectShippingAddress(ctx context.Context, orderID string, address json.RawMessage) (json.RawMessage, error)
+
+	// ShipInParcel lets the order's goods travel in a parcel of the order it
+	// adds to (ADR 0197).
+	ShipInParcel(ctx context.Context, orderID, fulfillmentID string) error
 }
 
 // openShipmentRequest is the body of the open endpoint.
@@ -158,6 +164,30 @@ func (h *Handler) adminCorrectShippingAddress(w http.ResponseWriter, r *http.Req
 	}
 
 	h.writeCurrentOrder(w, r)
+}
+
+// adminShipInParcel PUT /admin/v1/orders/{id}/fulfillments/{fulfillmentId}
+//
+// It binds the order, an addition, to a pending parcel of the order it adds to,
+// and answers with the order's shipments — the parcel among them. It takes no
+// body: the path names both records, and the call can be repeated (ADR 0197).
+func (h *Handler) adminShipInParcel(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	flow, err := h.fulfillingFlow()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	if err := flow.ShipInParcel(ctx, orderID(r), chi.URLParam(r, paramFulfillmentID)); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	h.adminListShipments(w, r)
 }
 
 // adminListShipments GET /admin/v1/orders/{id}/fulfillments

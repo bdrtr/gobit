@@ -102,6 +102,9 @@ type Orders interface {
 	// module holds the rules it can check; whether a parcel is underway is this
 	// flow's.
 	CorrectShippingAddressJSON(ctx context.Context, orderID string, address json.RawMessage) (json.RawMessage, error)
+	// ShippingParentOf returns the order in whose parcels orderID's goods may
+	// travel, or the order module's refusal (ADR 0197).
+	ShippingParentOf(ctx context.Context, orderID string) (string, error)
 	// DispatchableLinesJSON returns, per line, how many units were sold and how
 	// many of them were written off.
 	//

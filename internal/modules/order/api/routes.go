@@ -200,6 +200,8 @@ func (h *Handler) Routes(r chi.Router) {
 	// order" is asked about an order, and until the binding existed nothing
 	// could answer which order a parcel belonged to.
 	write.Post("/admin/v1/orders/{id}/fulfillments", h.adminOpenShipment)
+	// An addition travels in its parent's parcel (ADR 0197).
+	write.Put("/admin/v1/orders/{id}/fulfillments/{fulfillmentId}", h.adminShipInParcel)
 	// Where the order ships, corrected while nothing is on its way (ADR 0195).
 	write.Put("/admin/v1/orders/{id}/shipping-address", h.adminCorrectShippingAddress)
 	read.Get("/admin/v1/orders/{id}/fulfillments", h.adminListShipments)

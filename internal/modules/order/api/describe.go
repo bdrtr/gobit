@@ -300,6 +300,29 @@ func describeFulfilling(d *openapi.Doc) {
 			"200": openapi.Response("The order's shipments", d.Item(orderShipmentDTO{})),
 		},
 	})
+
+	d.Describe(http.MethodPut, "/admin/v1/orders/{id}/fulfillments/{fulfillmentId}", openapi.Operation{
+		Summary: "Lets an addition travel in a parcel of the order it adds to.",
+		Description: "The order in the path has to add to another order (ADR 0192), and the parcel " +
+			"has to be one of that order's and still pending. The addition joins it beside " +
+			"the order it was opened for: nothing is sent to the carrier, because the " +
+			"parcel's destination is the parent's address and the addition's has to be " +
+			"the same, or absent. The parcel's items stay the parent's lines. The call " +
+			"takes no body and can be repeated, and the answer is the order's shipments " +
+			"(ADR 0197).",
+		Responses: map[string]any{
+			"200": openapi.Response("The order's shipments, the parcel among them",
+				d.Item(orderShipmentDTO{})),
+			"404": openapi.ErrorResponse("No such order."),
+			"409": openapi.ErrorResponse(
+				"Refused: \"order_ships_alone\" for an order that adds to nothing, " +
+					"\"order_not_pending\" or \"order_addition_parent_not_pending\" when either " +
+					"order is no longer pending, \"order_ships_elsewhere\" for an addition " +
+					"going to another address, \"fulfilling_parcel_not_parents\" for a parcel " +
+					"that is not the parent's, and \"fulfilling_parcel_not_waiting\" for one " +
+					"that is no longer pending."),
+		},
+	})
 }
 
 // orderShipmentDTO is one shipment as the order's endpoint reports it.

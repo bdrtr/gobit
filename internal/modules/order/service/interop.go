@@ -286,6 +286,12 @@ func (i *Interop) PlaceOrderJSON(ctx context.Context, snapshot json.RawMessage) 
 	return order.ID, nil
 }
 
+// ShippingParentOf returns the order in whose parcels orderID's goods may
+// travel; the rules are [Service.ShippingParentOf]'s (ADR 0197).
+func (i *Interop) ShippingParentOf(ctx context.Context, orderID string) (string, error) {
+	return i.svc.ShippingParentOf(ctx, orderID)
+}
+
 // CheckAddition answers whether an order of customerID in currencyCode may add
 // to orderID now; nil means it may (ADR 0192).
 //

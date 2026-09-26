@@ -266,3 +266,74 @@ func TestPlaceOrderJSONReadsTheOrderItAddsTo(t *testing.T) {
 	assert.Equal(t, service.CodeAdditionParentIsAddition, errors.CodeOf(err),
 		"the interop answers with the service's rule")
 }
+
+// shipsTo is a shipping address for the parcel tests.
+func shipsTo(street string) models.OrderAddress {
+	return models.OrderAddress{Type: models.AddressShipping, Address1: street, CountryCode: "TR"}
+}
+
+// TestAnAdditionShipsWithItsParent answers the parent for an addition going to
+// the parent's address or to none, and refuses every other case (ADR 0197).
+func TestAnAdditionShipsWithItsParent(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		parentTo []models.OrderAddress
+		ownTo    []models.OrderAddress
+		prepare  func(t *testing.T, e env, parentID, additionID string)
+		orphan   bool
+		code     string
+	}{
+		{name: "no address of its own", parentTo: []models.OrderAddress{shipsTo("12 Main St")}},
+		{name: "the same address", parentTo: []models.OrderAddress{shipsTo("12 Main St")},
+			ownTo: []models.OrderAddress{shipsTo("12 Main St")}},
+		{name: "another address", parentTo: []models.OrderAddress{shipsTo("12 Main St")},
+			ownTo: []models.OrderAddress{shipsTo("9 Far Road")}, code: service.CodeShipsElsewhere},
+		{name: "an address where the parent has none",
+			ownTo: []models.OrderAddress{shipsTo("9 Far Road")}, code: service.CodeShipsElsewhere},
+		{name: "the same street with other delivery notes", parentTo: []models.OrderAddress{shipsTo("12 Main St")},
+			ownTo: func() []models.OrderAddress {
+				a := shipsTo("12 Main St")
+				a.Metadata = map[string]any{"gate_code": "4411"}
+				return []models.OrderAddress{a}
+			}(), code: service.CodeShipsElsewhere},
+		{name: "an order that adds to nothing", orphan: true, code: service.CodeShipsAlone},
+		{name: "a canceled addition", prepare: func(t *testing.T, e env, _, additionID string) {
+			require.NoError(t, e.svc.CancelOrder(context.Background(), additionID, "test"))
+		}, code: service.CodeNotPending},
+		{name: "a completed parent", prepare: func(t *testing.T, e env, parentID, _ string) {
+			_, err := e.svc.CompleteOrder(context.Background(), parentID)
+			require.NoError(t, err)
+		}, code: service.CodeAdditionParentNotPending},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			e := newEnv(t)
+			parentIn := validInput()
+			parentIn.Addresses = tc.parentTo
+			parent, err := e.svc.CreateOrder(ctx, parentIn)
+			require.NoError(t, err)
+
+			in := additionOf(parent.ID)
+			if tc.orphan {
+				in.AddsToOrderID = ""
+			}
+			in.Addresses = tc.ownTo
+			addition, err := e.svc.CreateOrder(ctx, in)
+			require.NoError(t, err)
+			if tc.prepare != nil {
+				tc.prepare(t, e, parent.ID, addition.ID)
+			}
+
+			got, err := e.svc.ShippingParentOf(ctx, addition.ID)
+
+			if tc.code == "" {
+				require.NoError(t, err)
+				assert.Equal(t, parent.ID, got)
+				return
+			}
+			require.Error(t, err)
+			assert.Equal(t, errors.KindConflict, errors.KindOf(err))
+			assert.Equal(t, tc.code, errors.CodeOf(err))
+		})
+	}
+}

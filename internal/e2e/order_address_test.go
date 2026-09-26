@@ -27,13 +27,24 @@ import (
 func addressedOrder(t *testing.T) string {
 	t.Helper()
 
+	_, orderID := addressedParent(t)
+
+	return orderID
+}
+
+// addressedParent is addressedOrder with the fixture it was placed from, so a
+// test can place additions to it for the same customer.
+func addressedParent(t *testing.T) (fixture additionFixture, orderID string) {
+	t.Helper()
+
 	ctx := t.Context()
 	customerID, email := newCustomer(ctx, t)
-	variantID, _ := newStockedVariant(ctx, t, "E2E Addressed", map[string]int64{
+	variantID, stockItemID := newStockedVariant(ctx, t, "E2E Addressed", map[string]int64{
 		taxedCurrency: additionUnitPrice,
 	}, additionStock)
+	fixture = additionFixture{customerID: customerID, email: email, variantID: variantID, stockItemID: stockItemID}
 
-	cartID := additionFixture{customerID: customerID, email: email, variantID: variantID}.openCart(t, "")
+	cartID := fixture.openCart(t, "")
 
 	shipping := fmt.Sprintf(`{"first_name":"Gift","last_name":"Recipient","address_1":"9 Far Road",`+
 		`"city":"Elsewhere","postal_code":"11111","country_code":%q,"metadata":{"gate_code":"4411"}}`,
@@ -46,7 +57,10 @@ func addressedOrder(t *testing.T) string {
 		require.Equal(t, http.StatusOK, rec.Code, "%s: %s", path, rec.Body.String())
 	}
 
-	return additionFixture{}.checkout(t, cartID)
+	orderID = fixture.checkout(t, cartID)
+	fixture.parentID = orderID
+
+	return fixture, orderID
 }
 
 // TestTheOperatorReadsWhereAnOrderWent reads the two addresses back on the

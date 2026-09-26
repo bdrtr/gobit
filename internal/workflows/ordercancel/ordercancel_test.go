@@ -282,6 +282,9 @@ type harness struct {
 	// the same decoding production does.
 	lines    string
 	linesErr error
+	// linesByOrder, when set, answers each order's lines apart, for a parcel
+	// bound to more than one order (ADR 0197).
+	linesByOrder map[string]string
 }
 
 // newHarness wires a flow whose every seam answers the ordinary thing.
@@ -356,14 +359,23 @@ func (h *harness) ListManyByTo(
 			}
 		}
 	}
+	// Sorted, so a parcel bound to two orders answers them in one order every
+	// run: map order would make a test of "the first bound order is not the
+	// one that has the line" pass or fail by chance.
+	for to := range out {
+		slices.Sort(out[to])
+	}
 
 	return out, nil
 }
 
 // DispatchableLinesJSON answers what the order sold and wrote off.
-func (h *harness) DispatchableLinesJSON(context.Context, string) (json.RawMessage, error) {
+func (h *harness) DispatchableLinesJSON(_ context.Context, orderID string) (json.RawMessage, error) {
 	if h.linesErr != nil {
 		return nil, h.linesErr
+	}
+	if lines, ok := h.linesByOrder[orderID]; ok {
+		return json.RawMessage(lines), nil
 	}
 
 	return json.RawMessage(h.lines), nil

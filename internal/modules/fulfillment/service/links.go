@@ -17,17 +17,22 @@ import "github.com/bdrtr/gobit/core/link"
 // are not owned by that module either. Nothing declared it, so the name was a
 // promise with neither a producer nor a consumer. This is the producer.
 //
-// # Why ONE TO MANY and not one to one
+// # Why MANY TO MANY
 //
 // An order can ship in several parcels — that is what the fulfillment items
 // are for, and the admin API's create endpoint has always accepted a subset of
-// the lines. A shipment, on the other hand, belongs to exactly one order; the
-// reverse would mean one parcel settling two orders, which no flow here can
-// produce and no operator could unpick.
+// the lines. Until ADR 0197 a shipment belonged to exactly one order, and the
+// declaration was ONE TO MANY because that was the strictest constraint that
+// was true.
 //
-// The constraint is therefore the strictest one that is TRUE, which is this
-// repository's rule for cardinality: a looser declaration cannot be tightened
-// later without data already violating it.
+// An addition can now travel in its parent's parcel (ADR 0197), so a parcel is
+// bound to the order it was opened for and to the additions that joined it.
+// The declaration was widened rather than replaced, the one change a link
+// allows (ADR 0116), and what the unique index on the parcel side used to hold
+// is held by the one flow that writes a second binding: it binds only an
+// addition of the parcel's own order, going to the same address. The parcel's
+// ITEMS are still the lines of the order it was opened for, the one its
+// reference names.
 const LinkOrderFulfillment = "order_fulfillment"
 
 // FulfillmentEntity is the name of the shipment record on the link's far side.
@@ -61,7 +66,7 @@ func Definitions() []link.LinkDefinition {
 				Entity: FulfillmentEntity,
 				Field:  "fulfillment_id",
 			},
-			Cardinality: link.OneToMany,
+			Cardinality: link.ManyToMany,
 		},
 	}
 }

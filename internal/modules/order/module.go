@@ -818,6 +818,17 @@ func (p *fulfillingFlow) CorrectShippingAddress(
 	return p.svc.CorrectShippingAddress(ctx, orderID, address)
 }
 
+// ShipInParcel lets the order travel in its parent's parcel.
+func (p *fulfillingFlow) ShipInParcel(ctx context.Context, orderID, fulfillmentID string) error {
+	p.once.Do(func() { p.resolve(ctx) })
+
+	if p.err != nil {
+		return p.err
+	}
+
+	return p.svc.ShipInParcel(ctx, orderID, fulfillmentID)
+}
+
 // resolve looks the flow up in the container and remembers the outcome.
 func (p *fulfillingFlow) resolve(ctx context.Context) {
 	svc, err := container.Resolve[api.Fulfilling](p.c, fulfillingFlowName)
