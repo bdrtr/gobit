@@ -143,6 +143,34 @@ func (q *Queries) CreateOrderExchange(ctx context.Context, arg CreateOrderExchan
 	return i, err
 }
 
+const exchangeFundedBy = `-- name: ExchangeFundedBy :many
+SELECT id FROM order_exchanges
+WHERE payment_collection_id = $1
+LIMIT 1
+`
+
+// ExchangeFundedBy names the exchange a collection funded, if any (ADR 0200):
+// a delivery change refuses a collection an exchange already took.
+func (q *Queries) ExchangeFundedBy(ctx context.Context, paymentCollectionID *string) ([]string, error) {
+	rows, err := q.db.Query(ctx, exchangeFundedBy, paymentCollectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const fundOrderExchange = `-- name: FundOrderExchange :one
 UPDATE order_exchanges
 SET status                = 'funded',

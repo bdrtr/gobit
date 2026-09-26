@@ -54,9 +54,12 @@ type Fulfilling interface {
 
 	// ChangeDelivery puts one of the order's deliveries on another shipping
 	// option at the price the fulfillment module quotes for the order
-	// (ADR 0199). It lives on the flow because the quote and the parcels are
+	// (ADR 0199), a dearer one paid by the named collection (ADR 0200). It
+	// lives on the flow because the quote, the parcels and the collection are
 	// the flow's to read.
-	ChangeDelivery(ctx context.Context, orderID, shippingMethodID, shippingOptionID string) (json.RawMessage, error)
+	ChangeDelivery(
+		ctx context.Context, orderID, shippingMethodID, shippingOptionID, collectionID string,
+	) (json.RawMessage, error)
 }
 
 // changeDeliveryRequest is the body of the delivery change endpoint.
@@ -64,6 +67,10 @@ type changeDeliveryRequest struct {
 	// ShippingOptionID is the option the delivery goes on. Its price is the
 	// fulfillment module's quote for the order, not the caller's.
 	ShippingOptionID string `json:"shipping_option_id"`
+	// PaymentCollectionID is the collection that took the difference of a
+	// dearer option: opened for the order, for exactly the difference, and
+	// captured (ADR 0200). A change that costs no more names none.
+	PaymentCollectionID string `json:"payment_collection_id,omitempty"`
 }
 
 // openShipmentRequest is the body of the open endpoint.
@@ -228,7 +235,7 @@ func (h *Handler) adminChangeDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := flow.ChangeDelivery(ctx, orderID(r), chi.URLParam(r, paramShippingMethodID),
-		body.ShippingOptionID); err != nil {
+		body.ShippingOptionID, body.PaymentCollectionID); err != nil {
 		corehttp.WriteError(ctx, w, err)
 
 		return

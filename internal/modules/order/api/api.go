@@ -420,6 +420,9 @@ type deliveryChangeDTO struct {
 	Difference       int64     `json:"difference"`
 	CreditLineID     string    `json:"credit_line_id,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
+	// PaymentCollectionID is the collection that paid a dearer change
+	// (ADR 0200).
+	PaymentCollectionID string `json:"payment_collection_id,omitempty"`
 }
 
 // adminOrderDetailDTO is the order as the operator reads it: the storefront's
@@ -647,6 +650,7 @@ func toOrderDetailDTO(detail models.OrderDetail) orderDetailDTO {
 				ID: change.ID, ShippingOptionID: change.ShippingOptionID, Name: change.Name,
 				Amount: change.Amount, Difference: change.Difference,
 				CreditLineID: change.CreditLineID, CreatedAt: change.CreatedAt,
+				PaymentCollectionID: change.PaymentCollectionID,
 			})
 		}
 		out.ShippingMethods = append(out.ShippingMethods, dto)

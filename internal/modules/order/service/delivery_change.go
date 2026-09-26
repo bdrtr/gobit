@@ -17,8 +17,18 @@ const (
 	// order does not have.
 	CodeDeliveryMissing = "order_delivery_missing"
 	// CodeDeliveryCostsMore refuses a change that costs more than the delivery
-	// it replaces: nothing can take the difference yet.
+	// it replaces and names no payment for the difference. Its details say
+	// what to collect (ADR 0200).
 	CodeDeliveryCostsMore = "order_delivery_costs_more"
+	// CodeDeliveryPaymentMismatch refuses a payment that does not hold exactly
+	// the difference.
+	CodeDeliveryPaymentMismatch = "order_delivery_payment_mismatch"
+	// CodeDeliveryTakesNoPayment refuses a payment named for a change that
+	// costs no more: the money would pay for nothing.
+	CodeDeliveryTakesNoPayment = "order_delivery_takes_no_payment"
+	// CodeCollectionTaken refuses a payment collection that already paid for a
+	// delivery change or funded an exchange (ADR 0200, D142).
+	CodeCollectionTaken = "order_payment_collection_taken"
 )
 
 // CreditReasonDeliveryChange is the reason on the credit line a cheaper
@@ -36,6 +46,12 @@ type ChangeDeliveryInput struct {
 	ShippingOptionID string
 	Name             string
 	Amount           int64
+	// PaymentCollectionID and Paid are the payment collection that took the
+	// difference of a dearer change and what it holds, as the caller read it
+	// from the payment module (ADR 0200). A change that costs no more names
+	// neither.
+	PaymentCollectionID string
+	Paid                int64
 }
 
 // ChangeDelivery changes one of the order's deliveries and returns the change
@@ -49,8 +65,10 @@ type ChangeDeliveryInput struct {
 //   - A difference of zero writes the change and nothing else.
 //   - A negative one also writes a credit line for the difference in the same
 //     transaction (ADR 0105), and the change names it.
-//   - A positive one is refused: the customer would owe more, and no record
-//     can take the money yet.
+//   - A positive one is written only with a payment collection that holds
+//     exactly the difference and paid for nothing else, and the change names
+//     it (ADR 0200). Without one it is refused, and the refusal's details say
+//     what to collect.
 //
 // A change is refused on an order that is not pending, and on a method the
 // order does not have. Whether a parcel is already on its way is not this
@@ -73,6 +91,14 @@ func (s *Service) ChangeDelivery(
 		return nil, err
 	}
 	if err := checkAmount("amount", in.Amount, models.MaxTotal); err != nil {
+		return nil, err
+	}
+	if in.PaymentCollectionID != "" {
+		if err := requireID("payment_collection_id", in.PaymentCollectionID); err != nil {
+			return nil, err
+		}
+	}
+	if err := checkAmount("paid", in.Paid, models.MaxTotal); err != nil {
 		return nil, err
 	}
 
@@ -101,6 +127,15 @@ func (s *Service) ChangeDelivery(
 			return err
 		}
 		if current.ShippingOptionID == in.ShippingOptionID {
+			// A repeated request writes nothing. A payment named with it has
+			// to be the one the change already took, or it paid for nothing.
+			if in.PaymentCollectionID != "" &&
+				latestPayment(changes[orderID], current.ID) != in.PaymentCollectionID {
+				return errors.Conflict(CodeDeliveryTakesNoPayment,
+					"order %s's delivery is already on %s; collection %s pays for no change",
+					orderID, in.ShippingOptionID, in.PaymentCollectionID)
+			}
+
 			return nil
 		}
 
@@ -113,12 +148,10 @@ func (s *Service) ChangeDelivery(
 			Amount:           in.Amount,
 			Difference:       in.Amount - current.Amount,
 		}
-		if change.Difference > 0 {
-			return errors.Conflict(CodeDeliveryCostsMore,
-				"%s costs %d and order %s's %s costs %d; a change that costs more is not taken "+
-					"until the difference can be charged",
-				in.Name, in.Amount, orderID, current.Name, current.Amount)
+		if err := s.checkDeliveryPayment(ctx, order, current, in, change.Difference); err != nil {
+			return err
 		}
+		change.PaymentCollectionID = in.PaymentCollectionID
 		if change.Difference < 0 {
 			credit, err := s.CreateCreditLine(ctx, orderID, CreateCreditLineInput{
 				Amount: -change.Difference,
@@ -164,4 +197,64 @@ func deliveryToChange(
 
 	return models.OrderShippingMethod{}, errors.NotFound(CodeDeliveryMissing,
 		"order %s has no shipping method %s", orderID, methodID)
+}
+
+// checkDeliveryPayment holds a change's payment to its difference: a dearer
+// change names a collection that holds exactly the difference and paid for
+// nothing else, and a change that costs no more names none (ADR 0200).
+func (s *Service) checkDeliveryPayment(
+	ctx context.Context, order models.Order, current models.OrderShippingMethod,
+	in ChangeDeliveryInput, difference int64,
+) error {
+	if difference <= 0 {
+		if in.PaymentCollectionID != "" {
+			return errors.Conflict(CodeDeliveryTakesNoPayment,
+				"%s costs %d against %s's %d, so collection %s would pay for nothing; send "+
+					"its money back", in.Name, in.Amount, current.Name, current.Amount,
+				in.PaymentCollectionID)
+		}
+
+		return nil
+	}
+
+	details := map[string]any{
+		"shipping_option_id": in.ShippingOptionID,
+		"amount":             in.Amount,
+		"difference":         difference,
+		"currency_code":      order.CurrencyCode,
+	}
+	if in.PaymentCollectionID == "" {
+		return errors.Conflict(CodeDeliveryCostsMore,
+			"%s costs %d and order %s's %s costs %d; collect the difference of %d on a "+
+				"payment collection opened for the order and name it",
+			in.Name, in.Amount, order.ID, current.Name, current.Amount, difference).
+			WithDetails(details)
+	}
+	if in.Paid != difference {
+		return errors.Conflict(CodeDeliveryPaymentMismatch,
+			"collection %s holds %d and the change costs %d more",
+			in.PaymentCollectionID, in.Paid, difference).WithDetails(details)
+	}
+	taken, err := s.store.CollectionTakenBy(ctx, in.PaymentCollectionID)
+	if err != nil {
+		return err
+	}
+	if taken != "" {
+		return errors.Conflict(CodeCollectionTaken,
+			"collection %s already paid for %s", in.PaymentCollectionID, taken)
+	}
+
+	return nil
+}
+
+// latestPayment is the collection the method's latest change took, or "".
+func latestPayment(changes []models.DeliveryChange, methodID string) string {
+	paid := ""
+	for i := range changes {
+		if changes[i].ShippingMethodID == methodID {
+			paid = changes[i].PaymentCollectionID
+		}
+	}
+
+	return paid
 }

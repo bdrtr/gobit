@@ -672,8 +672,9 @@ const (
 	// ExchangeRequested means the exchange was requested.
 	ExchangeRequested ExchangeStatus = "requested"
 	// ExchangeFunded means the customer's side of the difference is in: a
-	// payment collection opened for exactly this exchange has been named on the
-	// record, and the request can no longer simply be withdrawn.
+	// payment collection opened for the order, for exactly this exchange's
+	// difference, has been named on the record (D142), and the request can no
+	// longer simply be withdrawn.
 	ExchangeFunded ExchangeStatus = "funded"
 	// ExchangeCompleted means the exchange was settled: its goods left and it
 	// owed nothing, or what it owed was funded.
@@ -972,12 +973,15 @@ type DeliveryChange struct {
 	Name string
 	// Amount is what the fulfillment module quoted for it (minor unit).
 	Amount int64
-	// Difference is Amount less the amount of the delivery it replaced. It is
-	// never positive: a change that costs more is not written (ADR 0199).
+	// Difference is Amount less the amount of the delivery it replaced.
 	Difference int64
 	// CreditLineID is the credit line that wrote the difference off; set
 	// exactly when Difference is negative.
 	CreditLineID string
+	// PaymentCollectionID is the payment collection that took the difference;
+	// set exactly when Difference is positive (ADR 0200). Like an exchange's,
+	// it is an identifier and not an amount (ADR 0119).
+	PaymentCollectionID string
 	// CreatedAt is UTC.
 	CreatedAt time.Time
 }

@@ -456,12 +456,14 @@ func describeExchangeMoney(d *openapi.Doc) {
 		openapi.Operation{
 			Summary: "Names the payment collection that answers the difference.",
 			Description: "The money is collected FIRST, through this API's own " +
-				"payment-collection endpoints: open a collection for exactly the " +
-				"difference in the order's currency, put a session on it, " +
-				"authorize and capture. This endpoint then records which " +
-				"collection answered, and refuses unless that collection was " +
-				"opened for exactly the difference, is in the order's currency, " +
-				"and holds it now — captured less refunded. The record keeps the " +
+				"payment-collection endpoints: open a collection with the order's " +
+				"id as its reference, for exactly the difference in the order's " +
+				"currency, put a session on it, authorize and capture. This " +
+				"endpoint then records which collection answered, and refuses " +
+				"unless that collection names the order, was opened for exactly " +
+				"the difference, is in the order's currency, and holds it now — " +
+				"captured less refunded — and unless no delivery change took it " +
+				"(\"order_payment_collection_taken\", D142). The record keeps the " +
 				"collection's IDENTIFIER and the moment, never the amount: the " +
 				"figure belongs to the payment module and a copy of it here " +
 				"would go stale in silence. A repeat naming the same collection " +

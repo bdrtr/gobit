@@ -17,7 +17,9 @@ import (
 func newFlow(t *testing.T, orders *fakeOrders, ful *fakeFulfillments, links *fakeLinks) *fulfilling.Workflows {
 	t.Helper()
 
-	flow, err := fulfilling.New(fulfilling.Deps{Orders: orders, Fulfillments: ful, Links: links})
+	flow, err := fulfilling.New(fulfilling.Deps{
+		Orders: orders, Fulfillments: ful, Links: links, Payments: &fakePayments{},
+	})
 	require.NoError(t, err)
 
 	return flow

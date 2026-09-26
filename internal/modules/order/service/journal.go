@@ -128,13 +128,14 @@ func kindOrder(kind models.JournalKind) int {
 
 // journalEntry is the chart of accounts, in one place.
 //
-//	order placed     Dr receivable (total), sales_discounts (discount)
-//	                 Cr sales (subtotal), tax_payable (tax), shipping (shipping)
-//	order canceled   the same lines, the other way
-//	credit line      Dr credit_allowances   Cr receivable
-//	return refunded  Dr sales_returns       Cr receivable
-//	claim refunded   Dr claim_allowances    Cr receivable
-//	delivery changed Dr shipping            Cr receivable
+//	order placed      Dr receivable (total), sales_discounts (discount)
+//	                  Cr sales (subtotal), tax_payable (tax), shipping (shipping)
+//	order canceled    the same lines, the other way
+//	credit line       Dr credit_allowances   Cr receivable
+//	return refunded   Dr sales_returns       Cr receivable
+//	claim refunded    Dr claim_allowances    Cr receivable
+//	delivery changed  Dr shipping            Cr receivable
+//	delivery upgraded Dr receivable          Cr shipping
 //
 // An order balances because its table holds it to
 // total = subtotal - discount_total + tax_total + shipping_total; the entry is
@@ -183,6 +184,18 @@ func journalEntry(f *models.JournalFact) (models.JournalEntry, error) {
 		entry.Lines = []models.JournalLine{
 			{Account: givenBackTo[f.Kind], Debit: f.Amount},
 			{Account: models.AccountReceivable, Credit: f.Amount},
+		}
+	case models.JournalDeliveryUpgraded:
+		// A dearer delivery adds to what the order owes and to the shipping
+		// it charged; the payment module's capture of it credits receivable
+		// (ADR 0200).
+		if f.Amount <= 0 {
+			return models.JournalEntry{}, errors.Internal(CodeInvalidInput,
+				"the journal read %s %s of %d; it moves a positive amount", f.Kind, f.ID, f.Amount)
+		}
+		entry.Lines = []models.JournalLine{
+			{Account: models.AccountReceivable, Debit: f.Amount},
+			{Account: models.AccountShipping, Credit: f.Amount},
 		}
 	default:
 		return models.JournalEntry{}, errors.Internal(CodeInvalidInput,

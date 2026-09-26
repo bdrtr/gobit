@@ -55,6 +55,9 @@ const (
 	ServiceFulfillment = "fulfillment.interop"
 	// ServiceLink is the core's Module Links service.
 	ServiceLink = "core.link"
+	// ServicePayment is the payment module's cross-module surface, read for
+	// the collection a dearer delivery change names (ADR 0200).
+	ServicePayment = "payment.interop"
 )
 
 // Error codes.
@@ -165,6 +168,18 @@ type Fulfillments interface {
 // and what stands in for it is a test that drives the real module.
 const statusCanceled = "canceled"
 
+// Payments is the part of the payment module this flow reads (ADR 0200).
+type Payments interface {
+	// Collection returns the collection's status and its amounts.
+	Collection(ctx context.Context, collectionID string) (
+		status string, amount, authorized, captured, refunded int64, err error,
+	)
+	// CollectionCurrency returns the collection's currency.
+	CollectionCurrency(ctx context.Context, collectionID string) (string, error)
+	// CollectionReference returns the record the collection was opened for.
+	CollectionReference(ctx context.Context, collectionID string) (string, error)
+}
+
 // Links is the part of the core's link service this flow uses.
 type Links interface {
 	// Create binds the two records to each other. Binding the same pair twice
@@ -182,6 +197,8 @@ type Deps struct {
 	Fulfillments Fulfillments
 	// Links is the core's Module Links service.
 	Links Links
+	// Payments is the payment module's primitive surface.
+	Payments Payments
 	// Logger falls back to slog.Default when nil.
 	Logger *slog.Logger
 }
@@ -191,6 +208,7 @@ type Workflows struct {
 	orders       Orders
 	fulfillments Fulfillments
 	links        Links
+	payments     Payments
 	log          *slog.Logger
 }
 
@@ -208,6 +226,8 @@ func New(deps Deps) (*Workflows, error) {
 			"the fulfilling flow needs the fulfillment surface")
 	case deps.Links == nil:
 		return nil, errors.Internal(CodeSetupFailed, "the fulfilling flow needs the link service")
+	case deps.Payments == nil:
+		return nil, errors.Internal(CodeSetupFailed, "the fulfilling flow needs the payment surface")
 	}
 
 	if deps.Logger == nil {
@@ -218,6 +238,7 @@ func New(deps Deps) (*Workflows, error) {
 		orders:       deps.Orders,
 		fulfillments: deps.Fulfillments,
 		links:        deps.Links,
+		payments:     deps.Payments,
 		log:          deps.Logger,
 	}, nil
 }
@@ -245,5 +266,11 @@ func FromContainer(c *container.Container) (*Workflows, error) {
 			"the fulfilling flow could not resolve %q", ServiceLink)
 	}
 
-	return New(Deps{Orders: orders, Fulfillments: fulfillments, Links: links})
+	payments, err := container.Resolve[Payments](c, ServicePayment)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindOf(err), CodeSetupFailed,
+			"the fulfilling flow could not resolve %q", ServicePayment)
+	}
+
+	return New(Deps{Orders: orders, Fulfillments: fulfillments, Links: links, Payments: payments})
 }

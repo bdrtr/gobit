@@ -953,8 +953,9 @@ func (f *fakeStore) OrderShippingMethodsByOrderIDs(
 	return out, nil
 }
 
-// CreateDeliveryChange records a delivery change, holding the two CHECKs of
-// migration 000025 the way the table does.
+// CreateDeliveryChange records a delivery change, holding the CHECKs and the
+// collection's unique index of migrations 000025 and 000026 the way the table
+// does.
 func (f *fakeStore) CreateDeliveryChange(
 	ctx context.Context, change models.DeliveryChange,
 ) (models.DeliveryChange, error) {
@@ -964,10 +965,19 @@ func (f *fakeStore) CreateDeliveryChange(
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if change.Difference > 0 || (change.Difference < 0) != (change.CreditLineID != "") {
+	if (change.Difference > 0) != (change.PaymentCollectionID != "") ||
+		(change.Difference < 0) != (change.CreditLineID != "") {
 		return models.DeliveryChange{}, errors.Internal("order_delivery_change_check",
-			"a delivery change of %d with credit line %q breaks the table's CHECK",
-			change.Difference, change.CreditLineID)
+			"a delivery change of %d with credit line %q and collection %q breaks the table's CHECK",
+			change.Difference, change.CreditLineID, change.PaymentCollectionID)
+	}
+	for _, changes := range f.deliveryChanges {
+		for i := range changes {
+			if change.PaymentCollectionID != "" && changes[i].PaymentCollectionID == change.PaymentCollectionID {
+				return models.DeliveryChange{}, errors.Conflict("order_delivery_change_unique",
+					"collection %s already paid for %s", change.PaymentCollectionID, changes[i].ID)
+			}
+		}
 	}
 
 	change.CreatedAt = f.nextStamp()
@@ -975,6 +985,27 @@ func (f *fakeStore) CreateDeliveryChange(
 	f.deliveryChanges[change.OrderID] = append(slices.Clone(f.deliveryChanges[change.OrderID]), change)
 
 	return change, nil
+}
+
+// CollectionTakenBy names the change or the exchange a collection paid for.
+func (f *fakeStore) CollectionTakenBy(_ context.Context, collectionID string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	for _, changes := range f.deliveryChanges {
+		for i := range changes {
+			if changes[i].PaymentCollectionID == collectionID {
+				return changes[i].ID, nil
+			}
+		}
+	}
+	for id := range f.exchanges {
+		if f.exchanges[id].PaymentCollectionID == collectionID {
+			return id, nil
+		}
+	}
+
+	return "", nil
 }
 
 // DeliveryChangesByOrderIDs reads the delivery changes of several orders.

@@ -207,6 +207,12 @@ func (s *Service) WithdrawFundedExchange(ctx context.Context, exchangeID string)
 // answer, and leave money in a collection nothing on this side names — money
 // the customer can still be charged through the payment module's own published
 // endpoints.
+//
+// # One collection pays for one thing (D142)
+//
+// A collection that paid for a delivery change is refused (ADR 0200), and the
+// order is locked before the exchange so a delivery change naming the same
+// collection runs before or after this one and not beside it.
 func (s *Service) FundExchange(
 	ctx context.Context, exchangeID, collectionID string,
 ) (models.Exchange, error) {
@@ -219,6 +225,13 @@ func (s *Service) FundExchange(
 
 	var out models.Exchange
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
+		exchange, err := s.store.GetExchange(ctx, exchangeID)
+		if err != nil {
+			return err
+		}
+		if _, err := s.store.LockOrder(ctx, exchange.OrderID); err != nil {
+			return err
+		}
 		current, err := s.store.LockExchange(ctx, exchangeID)
 		if err != nil {
 			return err
@@ -246,6 +259,15 @@ func (s *Service) FundExchange(
 				"exchange %s owes nothing to collect (difference %d); money owed TO the "+
 					"customer leaves by a refund, which is a different act",
 				exchangeID, current.DifferenceDue)
+		}
+
+		taken, err := s.store.CollectionTakenBy(ctx, collectionID)
+		if err != nil {
+			return err
+		}
+		if taken != "" {
+			return errors.Conflict(CodeCollectionTaken,
+				"collection %s already paid for %s", collectionID, taken)
 		}
 
 		out, err = s.store.FundExchange(ctx, exchangeID, collectionID)

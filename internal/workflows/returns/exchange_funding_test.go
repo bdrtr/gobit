@@ -192,3 +192,22 @@ func TestARepeatedExitIsSafe(t *testing.T) {
 	assert.Empty(t, h.payments.refundCalls, "there was nothing left to send back")
 	assert.Equal(t, 1, h.orders.withdrawCalls, "the record still follows the money")
 }
+
+// TestACollectionOpenedForAnotherRecordDoesNotFund refuses money collected for
+// another order, or the checkout's own collection, which names the cart, even
+// when it holds exactly the difference (D142).
+func TestACollectionOpenedForAnotherRecordDoesNotFund(t *testing.T) {
+	for _, reference := range []string{"order_other", "cart_1"} {
+		h := newHarness(t)
+		h.orders.funding = fundingOf(1000, "TRY", "")
+		h.payments.amount = 1000
+		h.payments.captured = 1000
+		h.payments.reference = reference
+
+		err := h.wf.FundExchangeDifference(context.Background(), "exch_1", "paycol_1")
+
+		require.Error(t, err, reference)
+		assert.Equal(t, CodeDifferenceNotHeld, coreerrors.CodeOf(err), reference)
+		assert.Equal(t, 0, h.orders.fundCalls, reference)
+	}
+}

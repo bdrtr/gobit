@@ -677,6 +677,8 @@ func toDeliveryChange(row orderdb.OrderDeliveryChange) models.DeliveryChange {
 		Difference:       row.Difference,
 		CreditLineID:     textValue(row.CreditLineID),
 		CreatedAt:        toTime(row.CreatedAt),
+
+		PaymentCollectionID: textValue(row.PaymentCollectionID),
 	}
 }
 

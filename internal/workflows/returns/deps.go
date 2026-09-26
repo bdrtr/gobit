@@ -151,6 +151,9 @@ type Payments interface {
 	// It is a separate method because widening [Payments.Collection] would break
 	// every other consumer that declares it, the checkout saga included.
 	CollectionCurrency(ctx context.Context, collectionID string) (string, error)
+	// CollectionReference returns the record the collection was opened for
+	// (D142).
+	CollectionReference(ctx context.Context, collectionID string) (string, error)
 }
 
 // Inventory is the surface of the inventory module used by this flow.

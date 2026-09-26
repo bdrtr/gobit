@@ -150,7 +150,13 @@ func describeOrderDetail(d *openapi.Doc) {
 			"A change that costs less writes the difference off as a credit line with the " +
 			"reason \"delivery_change\", which the order journal books against shipping. A " +
 			"change that costs the same writes no credit. Putting the delivery on the option it " +
-			"is already on writes nothing. " + detailNote,
+			"is already on writes nothing.\n\n" +
+			"A change that costs more is refused with \"order_delivery_costs_more\", whose " +
+			"details say the option, its amount, the difference and the currency. Collect the " +
+			"difference on a payment collection opened with the order's id as its reference, " +
+			"for exactly the difference, and captured; then name it in " +
+			"\"payment_collection_id\". The change records the collection, and the order " +
+			"journal books the difference as receivable against shipping (ADR 0200). " + detailNote,
 		RequestBody: d.RequestBody(changeDeliveryRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("The order with its changed delivery",
@@ -161,8 +167,14 @@ func describeOrderDetail(d *openapi.Doc) {
 					"pending, shipped or delivered, \"fulfilling_option_unavailable\" for an " +
 					"option not listed for the order, a return option or one priced in another " +
 					"currency, \"order_delivery_not_changeable\" for an order that is not " +
-					"pending, and \"order_delivery_costs_more\" for a change that would cost " +
-					"more than the delivery it replaces."),
+					"pending, \"order_delivery_costs_more\" for a dearer change naming no " +
+					"collection, \"fulfilling_collection_not_the_orders\" for a collection " +
+					"opened for another record or in another currency, " +
+					"\"fulfilling_collection_not_settled\" for one not holding all it was " +
+					"opened for, \"order_delivery_payment_mismatch\" for one not holding the " +
+					"difference, \"order_delivery_takes_no_payment\" for a collection named on a " +
+					"change that costs no more, and \"order_payment_collection_taken\" for one " +
+					"that already paid for a change or an exchange."),
 			"422": openapi.ErrorResponse("The body is empty, unreadable, names an unknown " +
 				"field, or names no option."),
 		},

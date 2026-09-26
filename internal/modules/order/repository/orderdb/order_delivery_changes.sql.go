@@ -12,20 +12,22 @@ import (
 const createDeliveryChange = `-- name: CreateDeliveryChange :one
 
 INSERT INTO order_delivery_changes (
-    id, order_id, shipping_method_id, shipping_option_id, name, amount, difference, credit_line_id
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, order_id, shipping_method_id, shipping_option_id, name, amount, difference, credit_line_id, created_at
+    id, order_id, shipping_method_id, shipping_option_id, name, amount, difference,
+    credit_line_id, payment_collection_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, order_id, shipping_method_id, shipping_option_id, name, amount, difference, credit_line_id, created_at, payment_collection_id
 `
 
 type CreateDeliveryChangeParams struct {
-	ID               string
-	OrderID          string
-	ShippingMethodID string
-	ShippingOptionID string
-	Name             string
-	Amount           int64
-	Difference       int64
-	CreditLineID     *string
+	ID                  string
+	OrderID             string
+	ShippingMethodID    string
+	ShippingOptionID    string
+	Name                string
+	Amount              int64
+	Difference          int64
+	CreditLineID        *string
+	PaymentCollectionID *string
 }
 
 // order_delivery_changes queries (ADR 0199).
@@ -42,6 +44,7 @@ func (q *Queries) CreateDeliveryChange(ctx context.Context, arg CreateDeliveryCh
 		arg.Amount,
 		arg.Difference,
 		arg.CreditLineID,
+		arg.PaymentCollectionID,
 	)
 	var i OrderDeliveryChange
 	err := row.Scan(
@@ -54,12 +57,41 @@ func (q *Queries) CreateDeliveryChange(ctx context.Context, arg CreateDeliveryCh
 		&i.Difference,
 		&i.CreditLineID,
 		&i.CreatedAt,
+		&i.PaymentCollectionID,
 	)
 	return i, err
 }
 
+const deliveryChangePaidBy = `-- name: DeliveryChangePaidBy :many
+SELECT id FROM order_delivery_changes
+WHERE payment_collection_id = $1
+LIMIT 1
+`
+
+// DeliveryChangePaidBy names the change a collection paid for, if any
+// (ADR 0200).
+func (q *Queries) DeliveryChangePaidBy(ctx context.Context, paymentCollectionID *string) ([]string, error) {
+	rows, err := q.db.Query(ctx, deliveryChangePaidBy, paymentCollectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDeliveryChanges = `-- name: ListDeliveryChanges :many
-SELECT id, order_id, shipping_method_id, shipping_option_id, name, amount, difference, credit_line_id, created_at FROM order_delivery_changes
+SELECT id, order_id, shipping_method_id, shipping_option_id, name, amount, difference, credit_line_id, created_at, payment_collection_id FROM order_delivery_changes
 WHERE order_id = ANY ($1::text[])
 ORDER BY order_id, created_at, id
 `
@@ -85,6 +117,7 @@ func (q *Queries) ListDeliveryChanges(ctx context.Context, orderIds []string) ([
 			&i.Difference,
 			&i.CreditLineID,
 			&i.CreatedAt,
+			&i.PaymentCollectionID,
 		); err != nil {
 			return nil, err
 		}

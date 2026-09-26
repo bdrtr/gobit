@@ -12,6 +12,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An exchange could be funded with anybody's money** (D142). The funding
+  accepted any payment collection holding the difference, including one opened
+  for another order or the checkout's own. **For API consumers:** the
+  collection named in `POST /admin/v1/orders/{id}/exchanges/{exchangeId}/funding`
+  must now be opened with the order's id as its `reference`, and one that paid
+  for a delivery change is refused with `order_payment_collection_taken`.
+
 - **The order module's migration test rewound other tests' rows** (D141). It
   dropped the shared schema believing it ran first, and seven files ran before
   it. It runs in a database of its own now.
@@ -62,6 +69,19 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **A dearer delivery is paid before it changes** (ADR 0200). **For API
+  consumers:** `PUT /admin/v1/orders/{id}/shipping-methods/{shippingMethodId}`
+  takes `payment_collection_id`: a collection opened with the order's id as its
+  reference, in the order's currency, for exactly the difference and captured.
+  Without one a dearer option is still refused with
+  `order_delivery_costs_more`, whose `details` now carry the option, its
+  amount, the difference and the currency. A delivery change carries its
+  `payment_collection_id`, and the order journal books a paid change as a
+  `delivery_upgraded` entry that debits `receivable` and credits `shipping`.
+  **For operators:** order migration 000026; its rollback refuses a database
+  holding a paid change. **For embedders:** the payment interop gains
+  `CollectionReference`, and the fulfilling flow resolves `payment.interop`.
 
 - **A delivery can be changed before it ships** (ADR 0199). **For API
   consumers:** `PUT /admin/v1/orders/{id}/shipping-methods/{shippingMethodId}`

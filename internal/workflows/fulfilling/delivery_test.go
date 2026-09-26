@@ -37,7 +37,7 @@ func TestADeliveryIsChangedAtTheQuotedPrice(t *testing.T) {
 	}}
 	flow := newFlow(t, orders, ful, newFakeLinks())
 
-	_, err := flow.ChangeDelivery(context.Background(), "order_1", "oship_1", " sopt_pickup ")
+	_, err := flow.ChangeDelivery(context.Background(), "order_1", "oship_1", " sopt_pickup ", "")
 	require.NoError(t, err)
 
 	assert.JSONEq(t, `{"region_id":"reg_tr","currency_code":"TRY","country_code":"TR",
@@ -45,7 +45,7 @@ func TestADeliveryIsChangedAtTheQuotedPrice(t *testing.T) {
 		string(ful.quotedWith), "the quote is asked on the order's facts, for the operator")
 	require.Equal(t, 1, orders.changed)
 	assert.JSONEq(t, `{"shipping_method_id":"oship_1","shipping_option_id":"sopt_pickup",
-		"name":"Pickup","amount":900}`, string(orders.changedWith))
+		"name":"Pickup","amount":900,"payment_collection_id":"","paid":0}`, string(orders.changedWith))
 }
 
 // TestAnOptionTheOrderCannotGoOnIsRefused refuses an option the listing did not
@@ -66,7 +66,7 @@ func TestAnOptionTheOrderCannotGoOnIsRefused(t *testing.T) {
 			orders := &fakeOrders{facts: orderFacts}
 			flow := newFlow(t, orders, &fakeFulfillments{options: options}, newFakeLinks())
 
-			_, err := flow.ChangeDelivery(context.Background(), "order_1", "", "sopt_back")
+			_, err := flow.ChangeDelivery(context.Background(), "order_1", "", "sopt_back", "")
 
 			require.Error(t, err)
 			assert.True(t, coreerrors.IsConflict(err), "%v", err)
@@ -96,7 +96,7 @@ func TestAParcelOnItsWayStopsTheDeliveryChange(t *testing.T) {
 				options: []map[string]any{quoted("sopt_pickup", "Pickup", 0, "TRY")}}
 			flow := newFlow(t, orders, ful, links)
 
-			_, err := flow.ChangeDelivery(context.Background(), "order_1", "", "sopt_pickup")
+			_, err := flow.ChangeDelivery(context.Background(), "order_1", "", "sopt_pickup", "")
 
 			if allowed {
 				require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestAFailedQuoteChangesNothing(t *testing.T) {
 	ful := &fakeFulfillments{quoteErr: coreerrors.Unavailable("x", "the carrier is down")}
 	flow := newFlow(t, orders, ful, newFakeLinks())
 
-	_, err := flow.ChangeDelivery(context.Background(), "order_1", "", "sopt_pickup")
+	_, err := flow.ChangeDelivery(context.Background(), "order_1", "", "sopt_pickup", "")
 
 	require.Error(t, err)
 	assert.Equal(t, fulfilling.CodeQuoteFailed, coreerrors.CodeOf(err))
@@ -137,10 +137,121 @@ func TestADeliveryChangeNeedsAnOrderAndAnOption(t *testing.T) {
 	flow := newFlow(t, orders, ful, newFakeLinks())
 
 	for _, ids := range [][2]string{{"", "sopt_pickup"}, {"order_1", " "}} {
-		_, err := flow.ChangeDelivery(context.Background(), ids[0], "", ids[1])
+		_, err := flow.ChangeDelivery(context.Background(), ids[0], "", ids[1], "")
 		require.Error(t, err)
 		assert.True(t, coreerrors.IsInvalid(err), "%v", err)
 	}
 	assert.Nil(t, ful.quotedWith)
+	assert.Zero(t, orders.changed)
+}
+
+// fakePayments stands in for the payment module's surface.
+type fakePayments struct {
+	reference, currency        string
+	amount, captured, refunded int64
+	err                        error
+}
+
+// Collection answers the scripted amounts.
+//
+//nolint:gocritic // The shape is the cross-module contract's, not a choice made here.
+func (f *fakePayments) Collection(context.Context, string) (
+	status string, amount, authorized, captured, refunded int64, err error,
+) {
+	return "", f.amount, f.amount, f.captured, f.refunded, f.err
+}
+
+// CollectionCurrency answers the scripted currency.
+func (f *fakePayments) CollectionCurrency(context.Context, string) (string, error) {
+	return f.currency, f.err
+}
+
+// CollectionReference answers the scripted reference.
+func (f *fakePayments) CollectionReference(context.Context, string) (string, error) {
+	return f.reference, f.err
+}
+
+// payingFlow is a flow whose order is quoted an express service of 4,000,
+// reading collections from the given payment surface.
+func payingFlow(t *testing.T, payments *fakePayments) (*fulfilling.Workflows, *fakeOrders) {
+	t.Helper()
+
+	orders := &fakeOrders{facts: orderFacts}
+	ful := &fakeFulfillments{options: []map[string]any{quoted("sopt_express", "Express", 4000, "TRY")}}
+	flow, err := fulfilling.New(fulfilling.Deps{
+		Orders: orders, Fulfillments: ful, Links: newFakeLinks(), Payments: payments,
+	})
+	require.NoError(t, err)
+
+	return flow, orders
+}
+
+// TestADearerDeliveryNamesWhatItsCollectionHolds hands the order module the
+// collection and what it holds; the order module holds that to the
+// difference (ADR 0200).
+func TestADearerDeliveryNamesWhatItsCollectionHolds(t *testing.T) {
+	t.Parallel()
+
+	flow, orders := payingFlow(t, &fakePayments{
+		reference: "order_1", currency: "TRY", amount: 1500, captured: 1500,
+	})
+
+	_, err := flow.ChangeDelivery(context.Background(), "order_1", "oship_1", "sopt_express", " pay_col_1 ")
+	require.NoError(t, err)
+
+	require.Equal(t, 1, orders.changed)
+	assert.JSONEq(t, `{"shipping_method_id":"oship_1","shipping_option_id":"sopt_express",
+		"name":"Express","amount":4000,"payment_collection_id":"pay_col_1","paid":1500}`,
+		string(orders.changedWith))
+}
+
+// TestACollectionThatIsNotTheOrdersPaysForNothing refuses a collection opened
+// for another record, in another currency, or not holding all it was opened
+// for, before the order module is asked.
+func TestACollectionThatIsNotTheOrdersPaysForNothing(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		payments fakePayments
+		code     string
+	}{
+		"another order's": {fakePayments{reference: "order_2", currency: "TRY", amount: 1500, captured: 1500},
+			fulfilling.CodeCollectionNotTheOrders},
+		"the checkout's cart": {fakePayments{reference: "cart_1", currency: "TRY", amount: 1500, captured: 1500},
+			fulfilling.CodeCollectionNotTheOrders},
+		"another currency": {fakePayments{reference: "order_1", currency: "EUR", amount: 1500, captured: 1500},
+			fulfilling.CodeCollectionNotTheOrders},
+		"not captured in full": {fakePayments{reference: "order_1", currency: "TRY", amount: 1500, captured: 1000},
+			fulfilling.CodeCollectionNotSettled},
+		"given back": {fakePayments{reference: "order_1", currency: "TRY", amount: 1500, captured: 1500, refunded: 1500},
+			fulfilling.CodeCollectionNotSettled},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			payments := tc.payments
+			flow, orders := payingFlow(t, &payments)
+
+			_, err := flow.ChangeDelivery(context.Background(), "order_1", "oship_1", "sopt_express", "pay_col_1")
+
+			require.Error(t, err)
+			assert.True(t, coreerrors.IsConflict(err), "%v", err)
+			assert.Equal(t, tc.code, coreerrors.CodeOf(err))
+			assert.Zero(t, orders.changed)
+		})
+	}
+}
+
+// TestAnUnreadableCollectionChangesNothing keeps the payment module's fault
+// its own.
+func TestAnUnreadableCollectionChangesNothing(t *testing.T) {
+	t.Parallel()
+
+	flow, orders := payingFlow(t, &fakePayments{err: coreerrors.NotFound("x", "no such collection")})
+
+	_, err := flow.ChangeDelivery(context.Background(), "order_1", "oship_1", "sopt_express", "pay_col_1")
+
+	require.Error(t, err)
+	assert.True(t, coreerrors.IsNotFound(err), "%v", err)
 	assert.Zero(t, orders.changed)
 }

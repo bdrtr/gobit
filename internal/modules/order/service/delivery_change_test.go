@@ -264,3 +264,112 @@ func TestTheDeliverySurfaceSpeaksItsWireNames(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `null`, string(raw), "nothing changed")
 }
+
+// paidQuote is a quote paid on the given collection holding paid.
+func paidQuote(methodID, optionID string, amount int64, collectionID string, paid int64) service.ChangeDeliveryInput {
+	in := quote(methodID, optionID, amount)
+	in.PaymentCollectionID, in.Paid = collectionID, paid
+
+	return in
+}
+
+// TestADearerDeliveryIsPaidFirst writes a dearer change once a collection
+// holding exactly the difference is named, and names the collection on it
+// (ADR 0200).
+func TestADearerDeliveryIsPaidFirst(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	order, methodID := soldDelivery(t, e)
+
+	_, err := e.svc.ChangeDelivery(ctx, order.ID, quote(methodID, "so_same_day", 4000))
+	require.Error(t, err)
+	assert.Equal(t, service.CodeDeliveryCostsMore, errors.CodeOf(err))
+	var typed *errors.Error
+	require.ErrorAs(t, err, &typed)
+	assert.Equal(t, map[string]any{
+		"shipping_option_id": "so_same_day", "amount": int64(4000),
+		"difference": int64(1500), "currency_code": "TRY",
+	}, typed.Details, "the refusal says what to collect")
+
+	change, err := e.svc.ChangeDelivery(ctx, order.ID, paidQuote(methodID, "so_same_day", 4000, "pay_col_1", 1500))
+	require.NoError(t, err)
+	require.NotNil(t, change)
+	assert.Equal(t, int64(1500), change.Difference)
+	assert.Equal(t, "pay_col_1", change.PaymentCollectionID)
+	assert.Empty(t, change.CreditLineID)
+
+	credits, err := e.svc.ListCreditLines(ctx, order.ID)
+	require.NoError(t, err)
+	assert.Empty(t, credits, "a paid change writes nothing off")
+
+	again, err := e.svc.ChangeDelivery(ctx, order.ID, paidQuote(methodID, "so_same_day", 4000, "pay_col_1", 1500))
+	require.NoError(t, err)
+	assert.Nil(t, again, "a retry with the same collection writes nothing")
+
+	_, err = e.svc.ChangeDelivery(ctx, order.ID, paidQuote(methodID, "so_same_day", 4000, "pay_col_2", 1500))
+	require.Error(t, err)
+	assert.Equal(t, service.CodeDeliveryTakesNoPayment, errors.CodeOf(err),
+		"a second collection for the same state pays for nothing")
+}
+
+// TestAPaymentHoldsExactlyTheDifference refuses a collection holding more or
+// less than the change costs.
+func TestAPaymentHoldsExactlyTheDifference(t *testing.T) {
+	ctx := context.Background()
+	for _, paid := range []int64{1499, 1501} {
+		e := newEnv(t)
+		order, methodID := soldDelivery(t, e)
+
+		_, err := e.svc.ChangeDelivery(ctx, order.ID, paidQuote(methodID, "so_same_day", 4000, "pay_col_1", paid))
+
+		require.Error(t, err)
+		assert.Equal(t, service.CodeDeliveryPaymentMismatch, errors.CodeOf(err), "paid %d", paid)
+		detail, err := e.svc.GetOrder(ctx, order.ID)
+		require.NoError(t, err)
+		assert.Empty(t, detail.DeliveryChanges)
+	}
+}
+
+// TestACheaperDeliveryTakesNoPayment refuses a collection named for a change
+// that costs the same or less.
+func TestACheaperDeliveryTakesNoPayment(t *testing.T) {
+	ctx := context.Background()
+	for _, amount := range []int64{2500, 1000} {
+		e := newEnv(t)
+		order, methodID := soldDelivery(t, e)
+
+		_, err := e.svc.ChangeDelivery(ctx, order.ID, paidQuote(methodID, "so_other", amount, "pay_col_1", 0))
+
+		require.Error(t, err)
+		assert.Equal(t, service.CodeDeliveryTakesNoPayment, errors.CodeOf(err), "amount %d", amount)
+	}
+}
+
+// TestACollectionPaysForOneThing refuses a collection a change already took,
+// for a change of another order, and for an exchange; and an exchange refuses
+// one a change took (ADR 0200, D142).
+func TestACollectionPaysForOneThing(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	order, methodID := soldDelivery(t, e)
+	other, otherMethod := soldDelivery(t, e)
+
+	_, err := e.svc.ChangeDelivery(ctx, order.ID, paidQuote(methodID, "so_same_day", 4000, "pay_col_1", 1500))
+	require.NoError(t, err)
+
+	_, err = e.svc.ChangeDelivery(ctx, other.ID, paidQuote(otherMethod, "so_same_day", 4000, "pay_col_1", 1500))
+	require.Error(t, err)
+	assert.Equal(t, service.CodeCollectionTaken, errors.CodeOf(err))
+
+	exchange, err := e.svc.CreateExchange(ctx, service.CreateExchangeInput{OrderID: order.ID, DifferenceDue: 1500})
+	require.NoError(t, err)
+	_, err = e.svc.FundExchange(ctx, exchange.ID, "pay_col_1")
+	require.Error(t, err)
+	assert.Equal(t, service.CodeCollectionTaken, errors.CodeOf(err), "an exchange refuses a change's collection")
+
+	_, err = e.svc.FundExchange(ctx, exchange.ID, "pay_col_2")
+	require.NoError(t, err)
+	_, err = e.svc.ChangeDelivery(ctx, other.ID, paidQuote(otherMethod, "so_same_day", 4000, "pay_col_2", 1500))
+	require.Error(t, err)
+	assert.Equal(t, service.CodeCollectionTaken, errors.CodeOf(err), "a change refuses an exchange's collection")
+}

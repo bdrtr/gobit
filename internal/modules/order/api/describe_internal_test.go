@@ -601,7 +601,7 @@ func describedEndpoints() []endpointExpectation {
 		},
 		{
 			method: http.MethodPut, path: "/admin/v1/orders/{id}/shipping-methods/{shippingMethodId}",
-			status: "200", request: changeDeliveryRequest{ShippingOptionID: "so_2"},
+			status: "200", request: changeDeliveryRequest{ShippingOptionID: "so_2", PaymentCollectionID: "pay_col_1"},
 			response: filledAdminOrderDetail(),
 		},
 	}
@@ -622,7 +622,7 @@ func filledOrderDetail() orderDetailDTO {
 			{ID: "oship_1", ShippingOptionID: "so_1", Name: "Standard", Amount: 2500,
 				Changes: []deliveryChangeDTO{{
 					ID: "odchg_1", ShippingOptionID: "so_2", Name: "Pickup",
-					Difference: -2500, CreditLineID: "ocl_1",
+					Difference: -2500, CreditLineID: "ocl_1", PaymentCollectionID: "pay_col_1",
 				}}},
 		},
 	}

@@ -25,7 +25,8 @@ type receiveReturnRequest struct {
 // fundExchangeRequest names the collection that answers the difference.
 type fundExchangeRequest struct {
 	// PaymentCollectionID is the collection the operator already collected the
-	// difference into; it is REQUIRED.
+	// difference into, opened with the order's id as its reference (D142); it
+	// is REQUIRED.
 	//
 	// The amount is deliberately absent: the figure belongs to the payment
 	// module, this module records the SUBJECT of the answer and never its

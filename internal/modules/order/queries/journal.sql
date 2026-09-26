@@ -34,6 +34,18 @@ WHERE cl.created_at >= sqlc.arg('from_at') AND cl.created_at < sqlc.arg('to_at')
 ORDER BY cl.created_at, cl.id
 LIMIT sqlc.arg('row_limit');
 
+-- A dearer delivery change and what it added to what the order owes
+-- (ADR 0200). A cheaper one is read through its credit line above.
+-- name: JournalDeliveryUpgrades :many
+SELECT dc.id, dc.order_id, dc.difference, dc.created_at, o.currency_code
+FROM order_delivery_changes dc
+JOIN orders o ON o.id = dc.order_id
+WHERE dc.difference > 0
+  AND dc.created_at >= sqlc.arg('from_at') AND dc.created_at < sqlc.arg('to_at')
+  AND (sqlc.narg('currency_code')::text IS NULL OR o.currency_code = sqlc.narg('currency_code')::text)
+ORDER BY dc.created_at, dc.id
+LIMIT sqlc.arg('row_limit');
+
 -- The order records a refund can name as its cause (ADR 0189): which order a
 -- return or a claim belongs to, and that order's currency.
 -- name: JournalCauses :many

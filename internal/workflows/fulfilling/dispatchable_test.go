@@ -173,6 +173,7 @@ func newDispatchHarnessWithLines(
 		Orders:       orders,
 		Fulfillments: fulfillments,
 		Links:        links,
+		Payments:     &fakePayments{},
 		Logger:       slog.New(slog.DiscardHandler),
 	})
 	require.NoError(t, err)

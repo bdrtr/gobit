@@ -4,6 +4,7 @@ package order_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -11,6 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bdrtr/gobit/core/db"
+	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/internal/modules/order"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 	"github.com/bdrtr/gobit/internal/modules/order/repository"
 	"github.com/bdrtr/gobit/internal/modules/order/service"
@@ -18,20 +22,20 @@ import (
 
 // soldExpressOn places an order sold one delivery of 2,500 and returns it with
 // the method's id.
-func soldExpressOn(ctx context.Context, t *testing.T, svc *service.Service) (order models.Order, methodID string) {
+func soldExpressOn(ctx context.Context, t *testing.T, svc *service.Service) (placed models.Order, methodID string) {
 	t.Helper()
 
 	in := validInput()
 	in.ShippingMethods = []service.CreateShippingMethodInput{
 		{ShippingOptionID: "so_express", Name: "Express", Amount: in.ShippingTotal},
 	}
-	order, err := svc.CreateOrder(ctx, in)
+	placed, err := svc.CreateOrder(ctx, in)
 	require.NoError(t, err)
-	detail, err := svc.GetOrder(ctx, order.ID)
+	detail, err := svc.GetOrder(ctx, placed.ID)
 	require.NoError(t, err)
 	require.Len(t, detail.ShippingMethods, 1)
 
-	return order, detail.ShippingMethods[0].ID
+	return placed, detail.ShippingMethods[0].ID
 }
 
 // changeTo is a quote for the given option.
@@ -48,9 +52,9 @@ func TestACheaperDeliveryIsBookedAgainstShipping(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newService(t)
 	from := time.Now().UTC().Add(-time.Second)
-	order, methodID := soldExpressOn(ctx, t, svc)
+	placed, methodID := soldExpressOn(ctx, t, svc)
 
-	change, err := svc.ChangeDelivery(ctx, order.ID, changeTo(methodID, "so_pickup", 1000))
+	change, err := svc.ChangeDelivery(ctx, placed.ID, changeTo(methodID, "so_pickup", 1000))
 	require.NoError(t, err)
 	require.NotNil(t, change)
 
@@ -62,7 +66,7 @@ func TestACheaperDeliveryIsBookedAgainstShipping(t *testing.T) {
 	var kinds []models.JournalKind
 	var receivable int64
 	for _, entry := range journal.Entries {
-		if entry.OrderID != order.ID {
+		if entry.OrderID != placed.ID {
 			continue
 		}
 		kinds = append(kinds, entry.Kind)
@@ -81,7 +85,7 @@ func TestACheaperDeliveryIsBookedAgainstShipping(t *testing.T) {
 	}
 	assert.Equal(t, []models.JournalKind{models.JournalOrderPlaced, models.JournalDeliveryChanged}, kinds,
 		"the credit line is booked once, as the change")
-	assert.Equal(t, order.Total-1500, receivable)
+	assert.Equal(t, placed.Total-1500, receivable)
 }
 
 // TestTheDeliveryChangeConstraintsAreTheLastDefence writes past the service,
@@ -90,16 +94,17 @@ func TestACheaperDeliveryIsBookedAgainstShipping(t *testing.T) {
 func TestTheDeliveryChangeConstraintsAreTheLastDefence(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newService(t)
-	order, methodID := soldExpressOn(ctx, t, svc)
-	credit, err := svc.CreateCreditLine(ctx, order.ID, service.CreateCreditLineInput{Amount: 100, Reason: "test"})
+	placed, methodID := soldExpressOn(ctx, t, svc)
+	credit, err := svc.CreateCreditLine(ctx, placed.ID, service.CreateCreditLineInput{Amount: 100, Reason: "test"})
 	require.NoError(t, err)
 
-	insert := func(id string, difference int64, creditLineID *string) error {
+	insert := func(id string, difference int64, creditLineID, collectionID *string) error {
 		_, err := testPool.Pool().Exec(ctx,
 			`INSERT INTO order_delivery_changes
-			     (id, order_id, shipping_method_id, shipping_option_id, name, amount, difference, credit_line_id)
-			 VALUES ($1, $2, $3, 'so_x', 'X', 0, $4, $5)`,
-			id, order.ID, methodID, difference, creditLineID)
+			     (id, order_id, shipping_method_id, shipping_option_id, name, amount, difference,
+			      credit_line_id, payment_collection_id)
+			 VALUES ($1, $2, $3, 'so_x', 'X', 0, $4, $5, $6)`,
+			id, placed.ID, methodID, difference, creditLineID, collectionID)
 
 		return err
 	}
@@ -110,11 +115,15 @@ func TestTheDeliveryChangeConstraintsAreTheLastDefence(t *testing.T) {
 		assert.Equal(t, constraint, pgErr.ConstraintName)
 	}
 
-	violation(insert("odchg_dearer", 1, nil), "order_delivery_changes_costs_no_more")
-	violation(insert("odchg_uncredited", -100, nil), "order_delivery_changes_credit_when_cheaper")
-	violation(insert("odchg_free_credit", 0, &credit.ID), "order_delivery_changes_credit_when_cheaper")
-	require.NoError(t, insert("odchg_first", -100, &credit.ID))
-	violation(insert("odchg_second", -100, &credit.ID), "order_delivery_changes_credit_line_uniq")
+	violation(insert("odchg_dearer", 1, nil, nil), "order_delivery_changes_paid_when_dearer")
+	violation(insert("odchg_uncredited", -100, nil, nil), "order_delivery_changes_credit_when_cheaper")
+	violation(insert("odchg_free_credit", 0, &credit.ID, nil), "order_delivery_changes_credit_when_cheaper")
+	collection := "pay_col_constraint"
+	violation(insert("odchg_paid_for_nothing", 0, nil, &collection), "order_delivery_changes_paid_when_dearer")
+	require.NoError(t, insert("odchg_first", -100, &credit.ID, nil))
+	violation(insert("odchg_second", -100, &credit.ID, nil), "order_delivery_changes_credit_line_uniq")
+	require.NoError(t, insert("odchg_paid", 1, nil, &collection))
+	violation(insert("odchg_paid_twice", 1, nil, &collection), "order_delivery_changes_payment_collection_uniq")
 }
 
 // changeBarrierStore holds a delivery change after it has LOCKED the order and
@@ -143,7 +152,7 @@ func (s *changeBarrierStore) CreateDeliveryChange(
 func TestTwoChangesAreEachPricedAgainstTheOneBefore(t *testing.T) {
 	ctx := context.Background()
 	plain, _ := newService(t)
-	order, methodID := soldExpressOn(ctx, t, plain)
+	placed, methodID := soldExpressOn(ctx, t, plain)
 
 	pool, firstPID := singleConnection(ctx, t)
 	barrier := &changeBarrierStore{
@@ -155,7 +164,7 @@ func TestTwoChangesAreEachPricedAgainstTheOneBefore(t *testing.T) {
 
 	firstDone := make(chan error, 1)
 	go func() {
-		_, err := first.ChangeDelivery(ctx, order.ID, changeTo(methodID, "so_economy", 1000))
+		_, err := first.ChangeDelivery(ctx, placed.ID, changeTo(methodID, "so_economy", 1000))
 		firstDone <- err
 	}()
 	select {
@@ -170,7 +179,7 @@ func TestTwoChangesAreEachPricedAgainstTheOneBefore(t *testing.T) {
 	}
 	secondDone := make(chan outcome, 1)
 	go func() {
-		change, err := plain.ChangeDelivery(ctx, order.ID, changeTo(methodID, "so_pickup", 400))
+		change, err := plain.ChangeDelivery(ctx, placed.ID, changeTo(methodID, "so_pickup", 400))
 		secondDone <- outcome{change, err}
 	}()
 
@@ -186,7 +195,153 @@ func TestTwoChangesAreEachPricedAgainstTheOneBefore(t *testing.T) {
 	require.NotNil(t, second.change)
 	assert.Equal(t, int64(-600), second.change.Difference, "priced against 1,000, not against 2,500")
 
-	detail, err := plain.GetOrder(ctx, order.ID)
+	detail, err := plain.GetOrder(ctx, placed.ID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2100), detail.CreditedTotal, "2,500 sold less 400 now")
+}
+
+// paidChangeTo is a quote for the option paid on the collection.
+func paidChangeTo(methodID, optionID string, amount int64, collectionID string, paid int64) service.ChangeDeliveryInput {
+	in := changeTo(methodID, optionID, amount)
+	in.PaymentCollectionID, in.Paid = collectionID, paid
+
+	return in
+}
+
+// TestADearerDeliveryIsBookedAsShippingOwed is ADR 0200 on the real schema: the
+// paid change names its collection, and the journal books the difference as
+// receivable against shipping, which the payment journal's capture credits.
+func TestADearerDeliveryIsBookedAsShippingOwed(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	from := time.Now().UTC().Add(-time.Second)
+	placed, methodID := soldExpressOn(ctx, t, svc)
+	collectionID := fmt.Sprintf("pay_col_booked_%d", time.Now().UnixNano())
+
+	change, err := svc.ChangeDelivery(ctx, placed.ID, paidChangeTo(methodID, "so_same_day", 4000, collectionID, 1500))
+	require.NoError(t, err)
+	require.NotNil(t, change)
+	assert.Equal(t, collectionID, change.PaymentCollectionID)
+
+	journal, err := svc.Journal(ctx, service.JournalQuery{
+		From: from, To: time.Now().UTC().Add(time.Minute), CurrencyCode: testCurrency,
+	})
+	require.NoError(t, err)
+	var kinds []models.JournalKind
+	for _, entry := range journal.Entries {
+		if entry.OrderID != placed.ID {
+			continue
+		}
+		kinds = append(kinds, entry.Kind)
+		if entry.Kind == models.JournalDeliveryUpgraded {
+			assert.Equal(t, change.ID, entry.ID)
+			assert.Equal(t, []models.JournalLine{
+				{Account: models.AccountReceivable, Debit: 1500},
+				{Account: models.AccountShipping, Credit: 1500},
+			}, entry.Lines)
+		}
+	}
+	assert.Equal(t, []models.JournalKind{models.JournalOrderPlaced, models.JournalDeliveryUpgraded}, kinds)
+}
+
+// deliveryBarrierStore holds a delivery change after it has locked the order
+// and found its collection free, and before it writes the change.
+type deliveryBarrierStore struct {
+	*repository.Repository
+	locked  chan struct{}
+	release chan struct{}
+}
+
+// CreateDeliveryChange announces the lock and waits.
+func (s *deliveryBarrierStore) CreateDeliveryChange(
+	ctx context.Context, change models.DeliveryChange,
+) (models.DeliveryChange, error) {
+	close(s.locked)
+	<-s.release
+
+	return s.Repository.CreateDeliveryChange(ctx, change)
+}
+
+// TestAnExchangeWaitsForAChangeTakingItsCollection is D142's race. A delivery
+// change holds the order's lock with a collection it found free; an exchange
+// of the same order naming that collection has to WAIT on the order's lock,
+// and then find the collection taken. Locking the exchange alone, it would
+// read the collection free before the change commits and fund itself with
+// money the change took.
+func TestAnExchangeWaitsForAChangeTakingItsCollection(t *testing.T) {
+	ctx := context.Background()
+	plain, _ := newService(t)
+	placed, methodID := soldExpressOn(ctx, t, plain)
+	exchange, err := plain.CreateExchange(ctx, service.CreateExchangeInput{OrderID: placed.ID, DifferenceDue: 1500})
+	require.NoError(t, err)
+	collectionID := fmt.Sprintf("pay_col_race_%d", time.Now().UnixNano())
+
+	pool, changerPID := singleConnection(ctx, t)
+	barrier := &deliveryBarrierStore{
+		Repository: repository.New(pool.Pool()),
+		locked:     make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+	changer, _ := newServiceWithStore(t, barrier)
+
+	changed := make(chan error, 1)
+	go func() {
+		_, err := changer.ChangeDelivery(ctx, placed.ID, paidChangeTo(methodID, "so_same_day", 4000, collectionID, 1500))
+		changed <- err
+	}()
+	select {
+	case <-barrier.locked:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the delivery change never locked the order")
+	}
+
+	funded := make(chan error, 1)
+	go func() {
+		_, err := plain.FundExchange(ctx, exchange.ID, collectionID)
+		funded <- err
+	}()
+	require.Eventually(t, func() bool {
+		waiters, err := lockWaiters(ctx, changerPID)
+		return err == nil && waiters == 1
+	}, 10*time.Second, 20*time.Millisecond, "the exchange's funding has to WAIT on the order's lock")
+
+	close(barrier.release)
+	require.NoError(t, <-changed)
+	err = <-funded
+	require.Error(t, err, "the exchange was funded with the money a delivery change took")
+	assert.Equal(t, service.CodeCollectionTaken, errors.CodeOf(err))
+}
+
+// TestARollbackRefusesADatabaseHoldingAPaidDelivery keeps 000026's down
+// migration from dropping which collection paid for a change.
+func TestARollbackRefusesADatabaseHoldingAPaidDelivery(t *testing.T) {
+	ctx := context.Background()
+	dsn, pool := isolatedDatabase(ctx, t, "order_paid_delivery_rollback")
+	svc, _ := newServiceWithStore(t, repository.New(pool.Pool()))
+	placed, methodID := soldExpressOn(ctx, t, svc)
+	_, err := svc.ChangeDelivery(ctx, placed.ID, paidChangeTo(methodID, "so_same_day", 4000, "pay_col_rollback", 1500))
+	require.NoError(t, err)
+
+	err = db.MigrateDown(ctx, dsn, order.New().Migrations(), order.ModuleName, 25)
+
+	require.Error(t, err, "the rollback dropped the collection a change was paid with")
+	assert.Contains(t, err.Error(), "order_delivery_changes_costs_no_more")
+}
+
+// TestAChangeRefusesACollectionAnExchangeTook reads the exchanges' column on
+// the real schema: money that funded an exchange pays for no delivery.
+func TestAChangeRefusesACollectionAnExchangeTook(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	placed, methodID := soldExpressOn(ctx, t, svc)
+	exchange, err := svc.CreateExchange(ctx, service.CreateExchangeInput{OrderID: placed.ID, DifferenceDue: 1500})
+	require.NoError(t, err)
+	collectionID := fmt.Sprintf("pay_col_exchange_%d", time.Now().UnixNano())
+	_, err = svc.FundExchange(ctx, exchange.ID, collectionID)
+	require.NoError(t, err)
+
+	_, err = svc.ChangeDelivery(ctx, placed.ID, paidChangeTo(methodID, "so_same_day", 4000, collectionID, 1500))
+
+	require.Error(t, err)
+	assert.Equal(t, service.CodeCollectionTaken, errors.CodeOf(err))
 }

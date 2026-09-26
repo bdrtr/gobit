@@ -46,7 +46,7 @@ type exchangeFunding struct {
 // IDENTIFIER and the moment — neither can rot — and every question about the
 // money is asked here, live, at the moment it decides something.
 //
-// # The three things checked, and why each one
+// # The four things checked, and why each one
 //
 // The collection must be opened for EXACTLY the difference. A larger one would
 // let a later capture take more than the exchange ever owed, and the ceiling
@@ -58,6 +58,11 @@ type exchangeFunding struct {
 // own, the order's is the one the difference is denominated in, and a
 // collection in another currency would satisfy every number here while holding
 // the wrong money.
+//
+// It must be opened for the ORDER (D142): its reference names the order the
+// exchange belongs to. A collection opened for another order, or the
+// checkout's own, which names the cart, would hold money that is already
+// something else's.
 //
 // What it holds must EQUAL the difference — captured less refunded, not
 // captured alone. A collection captured in full and refunded in full holds
@@ -101,6 +106,16 @@ func (w *Workflows) FundExchangeDifference(ctx context.Context, exchangeID, coll
 			"collection %s was opened for %d and exchange %s owes %d; the collection has to be "+
 				"opened for exactly the difference, because its amount is what caps every capture on it",
 			collectionID, amount, exchangeID, detail.DifferenceDue)
+	}
+
+	reference, err := w.payments.CollectionReference(ctx, collectionID)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), CodeNoPayment,
+			"collection %s could not be read", collectionID)
+	}
+	if reference != detail.OrderID {
+		return errors.Conflict(CodeDifferenceNotHeld,
+			"collection %s was opened for %q, not for order %s", collectionID, reference, detail.OrderID)
 	}
 
 	if currency != detail.CurrencyCode {

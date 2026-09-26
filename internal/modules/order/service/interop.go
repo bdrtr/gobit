@@ -974,16 +974,20 @@ func (i *Interop) DeliveryFactsJSON(ctx context.Context, orderID string) (json.R
 // [Interop.ChangeDeliveryJSON]'s request.
 //
 //	{
-//	  "shipping_method_id": "oship_...",
-//	  "shipping_option_id": "sopt_...",
-//	  "name":               "Express",
-//	  "amount":             1500           // as the fulfillment module quoted it
+//	  "shipping_method_id":    "oship_...",
+//	  "shipping_option_id":    "sopt_...",
+//	  "name":                  "Express",
+//	  "amount":                1500,        // as the fulfillment module quoted it
+//	  "payment_collection_id": "pay_col_...", // a dearer change's payment; may be empty
+//	  "paid":                  500          // what that collection holds
 //	}
 type interopDeliveryChangeRequest struct {
-	ShippingMethodID string `json:"shipping_method_id"`
-	ShippingOptionID string `json:"shipping_option_id"`
-	Name             string `json:"name"`
-	Amount           int64  `json:"amount"`
+	ShippingMethodID    string `json:"shipping_method_id"`
+	ShippingOptionID    string `json:"shipping_option_id"`
+	Name                string `json:"name"`
+	Amount              int64  `json:"amount"`
+	PaymentCollectionID string `json:"payment_collection_id"`
+	Paid                int64  `json:"paid"`
 }
 
 // interopDeliveryChange is the JSON schema of [Interop.ChangeDeliveryJSON]'s
@@ -997,6 +1001,8 @@ type interopDeliveryChange struct {
 	Amount           int64  `json:"amount"`
 	Difference       int64  `json:"difference"`
 	CreditLineID     string `json:"credit_line_id,omitempty"`
+
+	PaymentCollectionID string `json:"payment_collection_id,omitempty"`
 }
 
 // ChangeDeliveryJSON changes one of the order's deliveries to a quoted service
@@ -1029,6 +1035,8 @@ func (i *Interop) ChangeDeliveryJSON(
 		Amount:           written.Amount,
 		Difference:       written.Difference,
 		CreditLineID:     written.CreditLineID,
+
+		PaymentCollectionID: written.PaymentCollectionID,
 	})
 }
 

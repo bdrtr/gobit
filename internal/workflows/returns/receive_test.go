@@ -360,6 +360,9 @@ type stubPayments struct {
 	// scripting one number.
 	amount   int64
 	currency string
+	// reference is the record the collection was opened for; it defaults to
+	// the test order (D142).
+	reference string
 
 	refundCalls []refundCall
 }
@@ -392,6 +395,18 @@ func (s *stubPayments) Collection(_ context.Context, _ string) (string, int64, i
 	}
 
 	return "captured", amount, 0, s.captured, s.totalRefund, nil
+}
+
+// CollectionReference answers the record the collection was opened for.
+func (s *stubPayments) CollectionReference(_ context.Context, _ string) (string, error) {
+	if s.readErr != nil {
+		return "", s.readErr
+	}
+	if s.reference == "" {
+		return testOrderID, nil
+	}
+
+	return s.reference, nil
 }
 
 // CollectionCurrency answers the collection's code.

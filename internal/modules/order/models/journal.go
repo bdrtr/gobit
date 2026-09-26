@@ -58,6 +58,9 @@ const (
 	// JournalDeliveryChanged is a delivery changed to a cheaper service, read
 	// from the credit line the change wrote; its id is the change's (ADR 0199).
 	JournalDeliveryChanged JournalKind = "delivery_changed"
+	// JournalDeliveryUpgraded is a delivery changed to a dearer service and
+	// paid for (ADR 0200); its id is the change's.
+	JournalDeliveryUpgraded JournalKind = "delivery_upgraded"
 )
 
 // JournalLine is one side of an entry: exactly one of Debit and Credit is
@@ -72,7 +75,7 @@ type JournalLine struct {
 type JournalEntry struct {
 	// ID is the id of the record the entry is read from: the order for a
 	// placement or a cancellation, the credit line for a credit line, the
-	// delivery change for a cheaper delivery, the payment module's refund for
+	// delivery change for a changed delivery, the payment module's refund for
 	// a refund.
 	ID           string        `json:"id"`
 	Kind         JournalKind   `json:"kind"`
@@ -92,7 +95,7 @@ type JournalBalance struct {
 
 // JournalFact is one record the journal is derived from, before any account is
 // named. An order's amounts are set for a placement and a cancellation;
-// Amount is set for a credit line.
+// Amount is set for the others.
 type JournalFact struct {
 	ID           string
 	Kind         JournalKind

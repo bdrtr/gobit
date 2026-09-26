@@ -43,6 +43,8 @@ type fakeFulfilling struct {
 	changeCalls  int
 	gotMethodID  string
 	gotOptionID  string
+
+	gotCollection string
 }
 
 // That the fake satisfies the surface the handler expects is verified at
@@ -104,12 +106,13 @@ func (f *fakeFulfilling) ShipInParcel(_ context.Context, orderID, fulfillmentID 
 
 // ChangeDelivery records the call.
 func (f *fakeFulfilling) ChangeDelivery(
-	_ context.Context, orderID, shippingMethodID, shippingOptionID string,
+	_ context.Context, orderID, shippingMethodID, shippingOptionID, collectionID string,
 ) (json.RawMessage, error) {
 	f.changeCalls++
 	f.gotOrderID = orderID
 	f.gotMethodID = shippingMethodID
 	f.gotOptionID = shippingOptionID
+	f.gotCollection = collectionID
 
 	return json.RawMessage("null"), f.err
 }
@@ -454,9 +457,15 @@ func TestTheDeliveryChangeEndpointNamesTheMethodInThePath(t *testing.T) {
 	assert.InDelta(t, -2500, change["difference"], 0)
 	assert.Equal(t, "ocl_1", change["credit_line_id"])
 
+	assert.Empty(t, flow.gotCollection)
+	rec = doRequest(t, r, http.MethodPut, path,
+		`{"shipping_option_id":"so_express","payment_collection_id":"pay_col_1"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "pay_col_1", flow.gotCollection, "the collection reaches the flow")
+
 	rec = doRequest(t, r, http.MethodPut, path, `{"shipping_option_id":"so_pickup","amount":0}`)
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "a price is not the caller's to send")
-	assert.Equal(t, 1, flow.changeCalls)
+	assert.Equal(t, 2, flow.changeCalls)
 
 	flow.err = errors.Conflict("order_delivery_costs_more", "dearer")
 	rec = doRequest(t, r, http.MethodPut, path, `{"shipping_option_id":"so_express"}`)

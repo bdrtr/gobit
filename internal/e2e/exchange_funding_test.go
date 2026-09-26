@@ -69,8 +69,9 @@ type exchangeResponse struct {
 	} `json:"data"`
 }
 
-// collectDifference opens a collection for openFor, takes `take` of it and
-// returns the collection's id.
+// collectDifference opens a collection for openFor against the order, takes
+// `take` of it and returns the collection's id. The collection names the order
+// as its reference, which is what a funding holds it to (D142).
 //
 // The two amounts are separate on purpose. A collection's amount caps every
 // capture on it but does not have to equal what was taken, and the flow judges
@@ -81,12 +82,20 @@ type exchangeResponse struct {
 // This is the half an operator does through the PAYMENT module's own published
 // endpoints before naming the collection on the order; it is fixture here, and
 // the subject of the test is what the ORDER does with it afterwards.
-func collectDifference(t *testing.T, openFor, take int64) string {
+func collectDifference(t *testing.T, orderID string, openFor, take int64) string {
+	t.Helper()
+
+	return collectFor(t, orderID, openFor, take)
+}
+
+// collectFor opens a collection for openFor with the given reference, takes
+// `take` of it and returns the collection's id.
+func collectFor(t *testing.T, reference string, openFor, take int64) string {
 	t.Helper()
 
 	ctx := t.Context()
 	collection, err := paymentSvc.CreatePaymentCollection(ctx, paymentsvc.CreateCollectionInput{
-		Reference:    "exchange difference",
+		Reference:    reference,
 		Amount:       openFor,
 		CurrencyCode: taxedCurrency,
 	})
@@ -156,7 +165,7 @@ func TestAnExchangeCollectsItsDifferenceAndCanSendItBack(t *testing.T) {
 	// nothing on the order would object.
 	wrong, err := adminRequestWithBody(http.MethodPost, fundingPath,
 		map[string]any{
-			"payment_collection_id": collectDifference(t, exchangeOverOpened, exchangeDifference),
+			"payment_collection_id": collectDifference(t, placed.OrderID, exchangeOverOpened, exchangeDifference),
 		})
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusConflict, wrong.Code,
@@ -170,7 +179,7 @@ func TestAnExchangeCollectsItsDifferenceAndCanSendItBack(t *testing.T) {
 	// an equality on `captured - refunded` for. Nothing else in this test can
 	// tell the two readings apart: measured, both the held rule and the
 	// subtraction survive every other case here untouched.
-	emptied := collectDifference(t, exchangeDifference, exchangeDifference)
+	emptied := collectDifference(t, placed.OrderID, exchangeDifference, exchangeDifference)
 	_, err = paymentSvc.RefundCollection(t.Context(), emptied, exchangeDifference, "sent back again", "")
 	require.NoError(t, err, "the difference could not be sent back")
 
@@ -181,7 +190,18 @@ func TestAnExchangeCollectsItsDifferenceAndCanSendItBack(t *testing.T) {
 		"a collection that holds NOTHING must be refused; its capture is right and its "+
 			"amount is right, and the money is gone; body: %s", drained.Body.String())
 
-	collectionID := collectDifference(t, exchangeDifference, exchangeDifference)
+	// A collection opened for another record is refused though it holds the
+	// difference: money collected for something else is not this exchange's
+	// (D142).
+	elsewhere, err := adminRequestWithBody(http.MethodPost, fundingPath,
+		map[string]any{
+			"payment_collection_id": collectFor(t, "exchange difference", exchangeDifference, exchangeDifference),
+		})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusConflict, elsewhere.Code,
+		"a collection opened for another record must be REFUSED; body: %s", elsewhere.Body.String())
+
+	collectionID := collectDifference(t, placed.OrderID, exchangeDifference, exchangeDifference)
 	funded, err := adminRequestWithBody(http.MethodPost, fundingPath,
 		map[string]any{"payment_collection_id": collectionID})
 	require.NoError(t, err)
@@ -322,7 +342,7 @@ func TestAFundedExchangeIsClosedByItsGoods(t *testing.T) {
 
 	funded, err := adminRequestWithBody(http.MethodPost, base+"/funding",
 		map[string]any{
-			"payment_collection_id": collectDifference(t, exchangeDifference, exchangeDifference),
+			"payment_collection_id": collectDifference(t, placed.OrderID, exchangeDifference, exchangeDifference),
 		})
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, funded.Code,
@@ -434,7 +454,7 @@ func TestAnExchangeWhoseMoneyWENTBACKDoesNotShip(t *testing.T) {
 	var replacement replacementResponseBody
 	require.NoError(t, json.Unmarshal(recorded.Body.Bytes(), &replacement))
 
-	collectionID := collectDifference(t, exchangeDifference, exchangeDifference)
+	collectionID := collectDifference(t, placed.OrderID, exchangeDifference, exchangeDifference)
 	funded, err := adminRequestWithBody(http.MethodPost, base+"/funding",
 		map[string]any{"payment_collection_id": collectionID})
 	require.NoError(t, err)

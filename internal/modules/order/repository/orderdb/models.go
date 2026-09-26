@@ -91,15 +91,16 @@ type OrderCreditLine struct {
 }
 
 type OrderDeliveryChange struct {
-	ID               string
-	OrderID          string
-	ShippingMethodID string
-	ShippingOptionID string
-	Name             string
-	Amount           int64
-	Difference       int64
-	CreditLineID     *string
-	CreatedAt        pgtype.Timestamptz
+	ID                  string
+	OrderID             string
+	ShippingMethodID    string
+	ShippingOptionID    string
+	Name                string
+	Amount              int64
+	Difference          int64
+	CreditLineID        *string
+	CreatedAt           pgtype.Timestamptz
+	PaymentCollectionID *string
 }
 
 type OrderExchange struct {

@@ -685,6 +685,8 @@ func (r *Repository) CreateDeliveryChange(
 		Amount:           change.Amount,
 		Difference:       change.Difference,
 		CreditLineID:     nullString(change.CreditLineID),
+
+		PaymentCollectionID: nullString(change.PaymentCollectionID),
 	})
 	if err != nil {
 		return models.DeliveryChange{}, classify(err, codeQueryFailed,
@@ -692,6 +694,29 @@ func (r *Repository) CreateDeliveryChange(
 	}
 
 	return toDeliveryChange(row), nil
+}
+
+// CollectionTakenBy names the delivery change or the exchange a payment
+// collection already paid for, and "" when neither did (ADR 0200).
+func (r *Repository) CollectionTakenBy(ctx context.Context, collectionID string) (string, error) {
+	q := r.queries(ctx)
+
+	changes, err := q.DeliveryChangePaidBy(ctx, &collectionID)
+	if err != nil {
+		return "", classify(err, codeQueryFailed, "could not read which change a collection paid for")
+	}
+	if len(changes) > 0 {
+		return changes[0], nil
+	}
+	exchanges, err := q.ExchangeFundedBy(ctx, &collectionID)
+	if err != nil {
+		return "", classify(err, codeQueryFailed, "could not read which exchange a collection funded")
+	}
+	if len(exchanges) > 0 {
+		return exchanges[0], nil
+	}
+
+	return "", nil
 }
 
 // DeliveryChangesByOrderIDs reads the delivery changes of several orders in

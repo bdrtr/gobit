@@ -94,7 +94,10 @@ func describeOrderJournal(d *openapi.Doc) {
 			"shipping with its shipping; an order canceled is the same lines the other way; a " +
 			"credit line debits credit_allowances and credits receivable, except one a delivery " +
 			"change wrote, which is a \"delivery_changed\" entry under the change's id that " +
-			"debits shipping instead. A refund that names " +
+			"debits shipping instead; a dearer delivery change, paid for on a collection of " +
+			"its own, is a \"delivery_upgraded\" entry that debits receivable and credits " +
+			"shipping, and the payment journal's capture of it credits receivable. A refund " +
+			"that names " +
 			"one of the order's returns debits sales_returns, and one that names a claim " +
 			"debits claim_allowances, each against receivable, at the refund's amount and " +
 			"moment. A zero amount writes no line, and an order of nothing is no entry. " +

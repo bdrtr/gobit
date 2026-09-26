@@ -213,6 +213,9 @@ type Store interface {
 	// DeliveryChangesByOrderIDs reads the delivery changes of several orders,
 	// oldest first within an order.
 	DeliveryChangesByOrderIDs(ctx context.Context, orderIDs []string) (map[string][]models.DeliveryChange, error)
+	// CollectionTakenBy names the delivery change or the exchange a payment
+	// collection already paid for, and "" when neither did (ADR 0200).
+	CollectionTakenBy(ctx context.Context, collectionID string) (string, error)
 	// SupersedeOrderAddress closes the order's current address of the type,
 	// inside the caller's transaction, and reports how many rows it closed.
 	SupersedeOrderAddress(ctx context.Context, orderID string, kind models.AddressType) (int64, error)

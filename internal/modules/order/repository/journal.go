@@ -12,8 +12,8 @@ import (
 // half-open window [from, to) and in one currency when currencyCode is set
 // (ADR 0188).
 //
-// Each of the three kinds is read with a limit of limit+1, so a caller that
-// gets more than limit facts back knows the window was cut. The facts come
+// Each kind is read with a limit of limit+1, so a caller that gets more than
+// limit facts back knows the window was cut. The facts come
 // back grouped by kind; ordering the whole is the caller's.
 func (r *Repository) JournalFacts(
 	ctx context.Context, from, to time.Time, currencyCode string, limit int32,
@@ -42,7 +42,14 @@ func (r *Repository) JournalFacts(
 		return nil, classify(err, codeQueryFailed, "the credit lines of the journal could not be read")
 	}
 
-	out := make([]models.JournalFact, 0, len(placed)+len(canceled)+len(credits))
+	upgrades, err := q.JournalDeliveryUpgrades(ctx, orderdb.JournalDeliveryUpgradesParams{
+		FromAt: fromAt, ToAt: toAt, CurrencyCode: currency, RowLimit: rowLimit,
+	})
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "the dearer deliveries of the journal could not be read")
+	}
+
+	out := make([]models.JournalFact, 0, len(placed)+len(canceled)+len(credits)+len(upgrades))
 	for i := range placed {
 		row := &placed[i]
 		out = append(out, models.JournalFact{
@@ -72,6 +79,13 @@ func (r *Repository) JournalFacts(
 			fact.ID, fact.Kind = *row.DeliveryChangeID, models.JournalDeliveryChanged
 		}
 		out = append(out, fact)
+	}
+	for i := range upgrades {
+		row := &upgrades[i]
+		out = append(out, models.JournalFact{
+			ID: row.ID, Kind: models.JournalDeliveryUpgraded, OrderID: row.OrderID,
+			OccurredAt: toTime(row.CreatedAt), CurrencyCode: row.CurrencyCode, Amount: row.Difference,
+		})
 	}
 
 	return out, nil

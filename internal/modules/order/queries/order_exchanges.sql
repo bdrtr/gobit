@@ -107,3 +107,10 @@ SET status                = 'funded',
     updated_at            = now()
 WHERE id = $1 AND status = 'requested'
 RETURNING *;
+
+-- ExchangeFundedBy names the exchange a collection funded, if any (ADR 0200):
+-- a delivery change refuses a collection an exchange already took.
+-- name: ExchangeFundedBy :many
+SELECT id FROM order_exchanges
+WHERE payment_collection_id = sqlc.arg('payment_collection_id')
+LIMIT 1;

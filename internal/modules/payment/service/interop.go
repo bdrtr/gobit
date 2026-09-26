@@ -259,6 +259,21 @@ func (i *Interop) Collection(ctx context.Context, collectionID string) (
 	return col.Status.String(), col.Amount, col.AuthorizedAmount, col.CapturedAmount, col.RefundedAmount, nil
 }
 
+// CollectionReference returns the identifier of the record the collection
+// was opened for: the cart for the checkout's own, and the order for money a
+// placed order takes afterwards (ADR 0200).
+//
+// It is a method of its own for the reason [Interop.CollectionCurrency] is,
+// and it cannot go stale for the same one: no statement updates the column.
+func (i *Interop) CollectionReference(ctx context.Context, collectionID string) (string, error) {
+	col, err := i.svc.GetPaymentCollection(ctx, collectionID)
+	if err != nil {
+		return "", err
+	}
+
+	return col.Reference, nil
+}
+
 // CollectionCurrency returns the collection's ISO 4217 code.
 //
 // It is a SECOND method rather than a sixth return on [Interop.Collection], and

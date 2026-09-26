@@ -119,6 +119,65 @@ func (q *Queries) JournalCreditLines(ctx context.Context, arg JournalCreditLines
 	return items, nil
 }
 
+const journalDeliveryUpgrades = `-- name: JournalDeliveryUpgrades :many
+SELECT dc.id, dc.order_id, dc.difference, dc.created_at, o.currency_code
+FROM order_delivery_changes dc
+JOIN orders o ON o.id = dc.order_id
+WHERE dc.difference > 0
+  AND dc.created_at >= $1 AND dc.created_at < $2
+  AND ($3::text IS NULL OR o.currency_code = $3::text)
+ORDER BY dc.created_at, dc.id
+LIMIT $4
+`
+
+type JournalDeliveryUpgradesParams struct {
+	FromAt       pgtype.Timestamptz
+	ToAt         pgtype.Timestamptz
+	CurrencyCode *string
+	RowLimit     int32
+}
+
+type JournalDeliveryUpgradesRow struct {
+	ID           string
+	OrderID      string
+	Difference   int64
+	CreatedAt    pgtype.Timestamptz
+	CurrencyCode string
+}
+
+// A dearer delivery change and what it added to what the order owes
+// (ADR 0200). A cheaper one is read through its credit line above.
+func (q *Queries) JournalDeliveryUpgrades(ctx context.Context, arg JournalDeliveryUpgradesParams) ([]JournalDeliveryUpgradesRow, error) {
+	rows, err := q.db.Query(ctx, journalDeliveryUpgrades,
+		arg.FromAt,
+		arg.ToAt,
+		arg.CurrencyCode,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []JournalDeliveryUpgradesRow{}
+	for rows.Next() {
+		var i JournalDeliveryUpgradesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderID,
+			&i.Difference,
+			&i.CreatedAt,
+			&i.CurrencyCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const journalOrdersCanceled = `-- name: JournalOrdersCanceled :many
 SELECT id, currency_code, subtotal, discount_total, tax_total, shipping_total, total,
        canceled_at::timestamptz AS canceled_at
