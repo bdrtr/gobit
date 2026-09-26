@@ -34,6 +34,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/region/models"
 	"github.com/bdrtr/gobit/internal/modules/region/repository"
 	"github.com/bdrtr/gobit/internal/modules/region/service"
+	"github.com/bdrtr/gobit/internal/testdb"
 )
 
 const postgresImage = "postgres:16-alpine"
@@ -130,21 +131,6 @@ func yeniBolge(ctx context.Context, t *testing.T, svc *service.Service, currency
 	return bolge
 }
 
-// tabloVar tablonun veritabanında olup olmadığını bildirir.
-func tabloVar(ctx context.Context, t *testing.T, table string) bool {
-	t.Helper()
-
-	var exists bool
-	err := testPool.Pool().QueryRow(ctx,
-		`SELECT EXISTS (
-             SELECT 1 FROM pg_class c
-             JOIN pg_namespace n ON n.oid = c.relnamespace
-             WHERE c.relname = $1 AND c.relkind = 'r' AND n.nspname = current_schema()
-         )`, table).Scan(&exists)
-	require.NoError(t, err)
-	return exists
-}
-
 // sayim tek sütunlu bir sayım sorgusunu çalıştırır.
 func sayim(ctx context.Context, t *testing.T, sql string, args ...any) int64 {
 	t.Helper()
@@ -154,86 +140,112 @@ func sayim(ctx context.Context, t *testing.T, sql string, args ...any) int64 {
 	return count
 }
 
-// TestMigrationGeriAlinabilir migration'ın uygulanıp geri alınabildiğini ve
-// tohumun yeniden yüklendiğini doğrular (plan Bölüm 8).
+// TestTheMigrationCanBeRolledBack verifies that the migrations can be applied
+// and rolled back and that the seed loads again (plan Section 8).
 //
-// Geri alma, modülün GERÇEK durumu üzerinde koşar: bölge satırları YERİNDE
-// bırakılır. Bu şart bilinçlidir — modülün tek silme yolu SOFT delete'tir,
-// yani operatör API'den her bölgeyi silse bile satır tabloda kalır ve tohum
-// para birimine giden foreign key'i tutmaya devam eder. Satırları ham SQL ile
-// süpürmek (DELETE FROM region) modülün API'siyle ULAŞILAMAZ bir ön koşul
-// kurardı ve tam da hatanın tetikleyicisini testten çıkarırdı: tohumun down'ı
-// kullanımdaki para birimlerini atlamasa bile test sessizce yeşil kalırdı.
+// The rollback runs on the module's REAL state: region rows are left WHERE
+// THEY ARE. The condition is deliberate: the module deletes only softly, so
+// even an operator who deleted every region through the API leaves the row in
+// the table, and it keeps holding the foreign key to the seeded currency.
+// Sweeping the rows with raw SQL (DELETE FROM region) would set up a state the
+// module's API cannot reach and take out exactly the trigger of the fault: the
+// test would stay green even if the seed's down did not skip the currencies in
+// use.
 //
-// İki durum AYRI AYRI sınanır: canlı bir bölge ve yumuşak silinmiş bir bölge.
-// İkincisi ayrıdır çünkü "silinmiş" bölge şemada hâlâ bir satırdır ve foreign
-// key'i canlısı kadar sıkı tutar; ikisini tek koşuda birleştirmek hangisinin
-// down'ı ayakta tuttuğunu belirsiz bırakırdı.
-func TestMigrationGeriAlinabilir(t *testing.T) {
+// The two states are tried SEPARATELY: a live region and a soft-deleted one.
+// The second is its own case because a "deleted" region is still a row and
+// holds the foreign key as tightly as a live one; one run for both would leave
+// unclear which kept the down standing.
+//
+// Each runs in a database of its own. In the one this package shares the
+// rollback would drop every other test's regions with the schema (D141).
+func TestTheMigrationCanBeRolledBack(t *testing.T) {
 	ctx := context.Background()
 
-	for _, table := range modulTablolari {
-		require.True(t, tabloVar(ctx, t, table), "%s başlangıçta var olmalı", table)
-	}
-
-	t.Run("canlı bölge yerinde dururken", func(t *testing.T) {
-		svc := yeniServis(t)
-		bolge := yeniBolge(ctx, t, svc, "TRY")
-		_, err := svc.AddCountryToRegion(ctx, bolge.ID, "TR")
+	t.Run("with a live region in place", func(t *testing.T) {
+		dsn, pool := migratedDatabase(ctx, t)
+		svc := service.New(repository.New(pool.Pool()), service.Options{})
+		created := yeniBolge(ctx, t, svc, "TRY")
+		_, err := svc.AddCountryToRegion(ctx, created.ID, "TR")
 		require.NoError(t, err)
-		require.Equal(t, int64(1), sayim(ctx, t,
-			`SELECT count(*) FROM region WHERE id = $1 AND deleted_at IS NULL`, bolge.ID),
-			"geri alma CANLI bir bölge dururken koşmalı")
+		require.Equal(t, int64(1), countIn(ctx, t, pool,
+			`SELECT count(*) FROM region WHERE id = $1 AND deleted_at IS NULL`, created.ID),
+			"the rollback has to run while a LIVE region is in place")
 
-		geriAlVeYenidenUygula(ctx, t)
+		rollBackAndReapply(ctx, t, dsn, pool)
 	})
 
-	t.Run("yumuşak silinmiş bölge yerinde dururken", func(t *testing.T) {
-		svc := yeniServis(t)
-		bolge := yeniBolge(ctx, t, svc, "USD")
-		require.NoError(t, svc.DeleteRegion(ctx, bolge.ID))
-		require.Equal(t, int64(1), sayim(ctx, t,
-			`SELECT count(*) FROM region WHERE id = $1 AND deleted_at IS NOT NULL`, bolge.ID),
-			"yumuşak silme satırı tabloda BIRAKIR; foreign key bu yüzden hâlâ tutar")
+	t.Run("with a soft-deleted region in place", func(t *testing.T) {
+		dsn, pool := migratedDatabase(ctx, t)
+		svc := service.New(repository.New(pool.Pool()), service.Options{})
+		created := yeniBolge(ctx, t, svc, "USD")
+		require.NoError(t, svc.DeleteRegion(ctx, created.ID))
+		require.Equal(t, int64(1), countIn(ctx, t, pool,
+			`SELECT count(*) FROM region WHERE id = $1 AND deleted_at IS NOT NULL`, created.ID),
+			"a soft delete LEAVES the row in the table, so the foreign key still holds")
 
-		geriAlVeYenidenUygula(ctx, t)
+		rollBackAndReapply(ctx, t, dsn, pool)
 	})
 }
 
-// geriAlVeYenidenUygula modülün migration'larını sıfıra indirir, yeniden
-// uygular ve sürüm defterinin temiz kaldığını doğrular.
+// migratedDatabase is a database of the test's own with the module's
+// migrations applied, and a pool on it.
+func migratedDatabase(ctx context.Context, t *testing.T) (string, *db.Pool) {
+	t.Helper()
+
+	dsn := testdb.New(t, testDSN, "region_migration")
+	require.NoError(t, db.Migrate(ctx, dsn, region.New(nil).Migrations(), region.ModuleName))
+	pool, err := db.New(ctx, db.DefaultConfig(dsn), nil)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+
+	return dsn, pool
+}
+
+// countIn runs a count query on the given database.
+func countIn(ctx context.Context, t *testing.T, pool *db.Pool, sql string, args ...any) int64 {
+	t.Helper()
+
+	var count int64
+	require.NoError(t, pool.Pool().QueryRow(ctx, sql, args...).Scan(&count))
+
+	return count
+}
+
+// rollBackAndReapply takes the module's migrations down to zero, applies them
+// again and checks that the version ledger stayed clean.
 //
-// Asıl iddia dirty=false'tur: patlayan bir down, golang-migrate'in defterini
-// "dirty" bırakır ve cmd/server her açılışta modül başına Migrate çağırdığı
-// için modül bir daha AÇILAMAZ. Tablo ve tohum sayımları down'ın işini
-// gerçekten yaptığını, sessizce atlamadığını gösterir.
-func geriAlVeYenidenUygula(ctx context.Context, t *testing.T) {
+// The claim that matters is dirty=false: a down that fails leaves
+// golang-migrate's ledger "dirty", and since cmd/server migrates each module at
+// every start, the module would never come up again. The table and seed counts
+// show the down really did its work rather than skipping it.
+func rollBackAndReapply(ctx context.Context, t *testing.T, dsn string, pool *db.Pool) {
 	t.Helper()
 
 	src := region.New(nil).Migrations()
 
-	require.NoError(t, db.MigrateDown(ctx, testDSN, src, region.ModuleName, 0))
+	require.NoError(t, db.MigrateDown(ctx, dsn, src, region.ModuleName, 0))
 	for _, table := range modulTablolari {
-		assert.False(t, tabloVar(ctx, t, table), "%s geri alma sonrası kalmamalı", table)
+		assert.False(t, testdb.TableExists(t, dsn, table), "%s must not remain after the rollback", table)
 	}
 
-	require.NoError(t, db.Migrate(ctx, testDSN, src, region.ModuleName))
+	require.NoError(t, db.Migrate(ctx, dsn, src, region.ModuleName))
 	for _, table := range modulTablolari {
-		assert.True(t, tabloVar(ctx, t, table), "%s yeniden uygulanmalı", table)
+		assert.True(t, testdb.TableExists(t, dsn, table), "%s must be applied again", table)
 	}
 
-	version, dirty, err := db.Version(ctx, testDSN, region.ModuleName)
+	version, dirty, err := db.Version(ctx, dsn, region.ModuleName)
 	require.NoError(t, err)
-	assert.False(t, dirty, "yarıda kalmış migration olmamalı")
+	assert.False(t, dirty, "no migration may be left half-applied")
 	assert.Equal(t, uint(3), version,
-		"şema (1), tohum (2) ve referans tablolarından deleted_at'ın düşürülmesi (3) ayrı sürümlerdir")
+		"the schema (1), the seed (2) and dropping deleted_at from the reference tables (3) are separate versions")
 
-	assert.Equal(t, int64(tohumdakiUlkeSayisi), sayim(ctx, t, `SELECT count(*) FROM country`),
-		"ülke tohumu yeniden uygulanmalı")
-	assert.Equal(t, int64(tohumdakiParaBirimiSayisi), sayim(ctx, t, `SELECT count(*) FROM currency`),
-		"para birimi tohumu yeniden uygulanmalı")
-	assert.Zero(t, sayim(ctx, t, `SELECT count(*) FROM region`),
-		"şema düşüp yeniden kurulduğu için hiçbir bölge kalmamalı")
+	assert.Equal(t, int64(tohumdakiUlkeSayisi), countIn(ctx, t, pool, `SELECT count(*) FROM country`),
+		"the country seed has to be applied again")
+	assert.Equal(t, int64(tohumdakiParaBirimiSayisi), countIn(ctx, t, pool, `SELECT count(*) FROM currency`),
+		"the currency seed has to be applied again")
+	assert.Zero(t, countIn(ctx, t, pool, `SELECT count(*) FROM region`),
+		"the schema was dropped and rebuilt, so no region may remain")
 }
 
 // TestTohumVerisiYuklendi referans verisinin migration ile geldiğini doğrular.

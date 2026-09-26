@@ -24,6 +24,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/db"
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/internal/testdb"
 )
 
 // alphaMigrations and betaMigrations are the migrations of the two fake
@@ -93,14 +94,19 @@ func runWithPostgres(m *testing.M) int {
 // inherits the state the previous one left behind.
 func TestMigrateIsolatesOwners(t *testing.T) {
 	ctx := context.Background()
-	pool := openPool(ctx, t)
+	// The owners are rolled back in a database of the test's own, the rule
+	// every rollback in this repository follows (D141).
+	dsn := testdb.New(t, testDSN, "db_owners")
+	pool, err := db.New(ctx, db.DefaultConfig(dsn), nil)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
 
 	alphaSrc := migrationsFor(t, alphaMigrations, "alpha")
 	betaSrc := migrationsFor(t, betaMigrations, "beta")
 
 	t.Run("each module creates its own version table", func(t *testing.T) {
-		require.NoError(t, db.Migrate(ctx, testDSN, alphaSrc, "alpha"))
-		require.NoError(t, db.Migrate(ctx, testDSN, betaSrc, "beta"))
+		require.NoError(t, db.Migrate(ctx, dsn, alphaSrc, "alpha"))
+		require.NoError(t, db.Migrate(ctx, dsn, betaSrc, "beta"))
 
 		assert.True(t, tableExists(ctx, t, pool, migrationsTable(t, "alpha")),
 			"alpha_schema_migrations must be created")
@@ -114,12 +120,12 @@ func TestMigrateIsolatesOwners(t *testing.T) {
 	})
 
 	t.Run("the versions advance independently", func(t *testing.T) {
-		alphaVersion, dirty, err := db.Version(ctx, testDSN, "alpha")
+		alphaVersion, dirty, err := db.Version(ctx, dsn, "alpha")
 		require.NoError(t, err)
 		assert.Equal(t, uint(2), alphaVersion, "alpha has two migrations")
 		assert.False(t, dirty)
 
-		betaVersion, dirty, err := db.Version(ctx, testDSN, "beta")
+		betaVersion, dirty, err := db.Version(ctx, dsn, "beta")
 		require.NoError(t, err)
 		assert.Equal(t, uint(1), betaVersion, "beta has a single migration")
 		assert.False(t, dirty)
@@ -128,18 +134,18 @@ func TestMigrateIsolatesOwners(t *testing.T) {
 	t.Run("running it again returns no error", func(t *testing.T) {
 		// migrate.ErrNoChange must be swallowed: an idempotent startup flow
 		// requires it.
-		require.NoError(t, db.Migrate(ctx, testDSN, alphaSrc, "alpha"))
-		require.NoError(t, db.Migrate(ctx, testDSN, betaSrc, "beta"))
+		require.NoError(t, db.Migrate(ctx, dsn, alphaSrc, "alpha"))
+		require.NoError(t, db.Migrate(ctx, dsn, betaSrc, "beta"))
 
-		alphaVersion, _, err := db.Version(ctx, testDSN, "alpha")
+		alphaVersion, _, err := db.Version(ctx, dsn, "alpha")
 		require.NoError(t, err)
 		assert.Equal(t, uint(2), alphaVersion)
 	})
 
 	t.Run("a single-step rollback affects only its owner", func(t *testing.T) {
-		require.NoError(t, db.MigrateDown(ctx, testDSN, alphaSrc, "alpha", 1))
+		require.NoError(t, db.MigrateDown(ctx, dsn, alphaSrc, "alpha", 1))
 
-		alphaVersion, dirty, err := db.Version(ctx, testDSN, "alpha")
+		alphaVersion, dirty, err := db.Version(ctx, dsn, "alpha")
 		require.NoError(t, err)
 		assert.Equal(t, uint(1), alphaVersion)
 		assert.False(t, dirty)
@@ -149,35 +155,35 @@ func TestMigrateIsolatesOwners(t *testing.T) {
 		assert.True(t, tableExists(ctx, t, pool, "alpha_items"),
 			"the first migration must still be applied")
 
-		betaVersion, _, err := db.Version(ctx, testDSN, "beta")
+		betaVersion, _, err := db.Version(ctx, dsn, "beta")
 		require.NoError(t, err)
 		assert.Equal(t, uint(1), betaVersion, "beta must not be affected by alpha's rollback")
 		assert.True(t, tableExists(ctx, t, pool, "beta_items"))
 	})
 
 	t.Run("rolling everything back does not touch the other module's tables", func(t *testing.T) {
-		require.NoError(t, db.MigrateDown(ctx, testDSN, alphaSrc, "alpha", 0))
+		require.NoError(t, db.MigrateDown(ctx, dsn, alphaSrc, "alpha", 0))
 
-		alphaVersion, dirty, err := db.Version(ctx, testDSN, "alpha")
+		alphaVersion, dirty, err := db.Version(ctx, dsn, "alpha")
 		require.NoError(t, err)
 		assert.Equal(t, uint(0), alphaVersion)
 		assert.False(t, dirty)
 		assert.False(t, tableExists(ctx, t, pool, "alpha_items"))
 
 		assert.True(t, tableExists(ctx, t, pool, "beta_items"), "beta's data must survive")
-		betaVersion, _, err := db.Version(ctx, testDSN, "beta")
+		betaVersion, _, err := db.Version(ctx, dsn, "beta")
 		require.NoError(t, err)
 		assert.Equal(t, uint(1), betaVersion)
 	})
 
 	t.Run("it returns no error when there is nothing left to roll back", func(t *testing.T) {
-		require.NoError(t, db.MigrateDown(ctx, testDSN, alphaSrc, "alpha", 0))
+		require.NoError(t, db.MigrateDown(ctx, dsn, alphaSrc, "alpha", 0))
 	})
 
 	t.Run("it can be applied again", func(t *testing.T) {
-		require.NoError(t, db.Migrate(ctx, testDSN, alphaSrc, "alpha"))
+		require.NoError(t, db.Migrate(ctx, dsn, alphaSrc, "alpha"))
 
-		alphaVersion, _, err := db.Version(ctx, testDSN, "alpha")
+		alphaVersion, _, err := db.Version(ctx, dsn, "alpha")
 		require.NoError(t, err)
 		assert.Equal(t, uint(2), alphaVersion)
 		assert.True(t, columnExists(ctx, t, pool, "alpha_items", "label"))
@@ -345,22 +351,25 @@ func TestMigrateReportsFailedMigration(t *testing.T) {
 // os.ErrNotExist and ErrShortLimit, NOT with ErrNoChange.
 func TestMigrateDownWithNothingToRollBack(t *testing.T) {
 	ctx := context.Background()
+	// Rolled back in a database of the test's own, the rule every rollback in
+	// this repository follows (D141).
+	dsn := testdb.New(t, testDSN, "db_rollback")
 	src := migrationsFor(t, rollbackMigrations, "rollback")
 
 	t.Run("a module with no migration ever applied", func(t *testing.T) {
-		require.NoError(t, db.MigrateDown(ctx, testDSN, src, "rollbackfresh", 1))
+		require.NoError(t, db.MigrateDown(ctx, dsn, src, "rollbackfresh", 1))
 
-		version, dirty, err := db.Version(ctx, testDSN, "rollbackfresh")
+		version, dirty, err := db.Version(ctx, dsn, "rollbackfresh")
 		require.NoError(t, err)
 		assert.Equal(t, uint(0), version)
 		assert.False(t, dirty)
 	})
 
 	t.Run("more steps than exist", func(t *testing.T) {
-		require.NoError(t, db.Migrate(ctx, testDSN, src, "rollbacksteps"))
-		require.NoError(t, db.MigrateDown(ctx, testDSN, src, "rollbacksteps", 5))
+		require.NoError(t, db.Migrate(ctx, dsn, src, "rollbacksteps"))
+		require.NoError(t, db.MigrateDown(ctx, dsn, src, "rollbacksteps", 5))
 
-		version, dirty, err := db.Version(ctx, testDSN, "rollbacksteps")
+		version, dirty, err := db.Version(ctx, dsn, "rollbacksteps")
 		require.NoError(t, err)
 		assert.Equal(t, uint(0), version, "every migration on hand must be rolled back")
 		assert.False(t, dirty)

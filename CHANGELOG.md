@@ -12,6 +12,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **Eleven migration tests rolled back the database their package shares**
+  (D141, ADR 0201). Three of them asserted afterwards that a module table held
+  no rows: every other test's rows in it had just been dropped with the schema.
+  **For contributors:** a test that rolls a migration back takes its database
+  from `internal/testdb`, and an architecture gate refuses a `MigrateDown`
+  against a package's shared address.
+
 - **An exchange could be funded with anybody's money** (D142). The funding
   accepted any payment collection holding the difference, including one opened
   for another order or the checkout's own. **For API consumers:** the

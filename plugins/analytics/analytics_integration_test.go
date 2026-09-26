@@ -27,6 +27,7 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/bdrtr/gobit/core/db"
+	"github.com/bdrtr/gobit/internal/testdb"
 )
 
 const postgresImage = "postgres:16-alpine"
@@ -255,33 +256,24 @@ func TestAnUnknownTopicIsRefusedByTheSchema(t *testing.T) {
 // rid of, which is the opposite of what the boundary promises.
 func TestTheMigrationIsReversible(t *testing.T) {
 	ctx := t.Context()
-	store := realStore(t)
-	require.NoError(t, store.Record(ctx, eventRow{
+	// The rollback runs in a database of its own. In the one this package
+	// shares it would drop every other test's events with the schema (D141).
+	dsn := testdb.New(t, testDSN, "analytics_migration")
+	require.NoError(t, db.Migrate(ctx, dsn, migrationsRoot, ModuleName))
+	pool, err := db.New(ctx, db.DefaultConfig(dsn), nil)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+
+	require.NoError(t, newEventStore(pool.Pool()).Record(ctx, eventRow{
 		ID: "x", Topic: "cart.created", RegionID: "reg_1",
 		OccurredAt: day(2026, time.September, 12),
 	}))
 
-	require.NoError(t, db.MigrateDown(ctx, testDSN, migrationsRoot, ModuleName, 0),
+	require.NoError(t, db.MigrateDown(ctx, dsn, migrationsRoot, ModuleName, 0),
 		"down must work with DATA in the table; a down that only works on an empty "+
 			"schema is a down nobody can run")
-	assert.False(t, tableExists(t, "analytics_events"))
+	assert.False(t, testdb.TableExists(t, dsn, "analytics_events"))
 
-	require.NoError(t, db.Migrate(ctx, testDSN, migrationsRoot, ModuleName))
-	assert.True(t, tableExists(t, "analytics_events"))
-}
-
-// tableExists reports whether the table is in the database.
-func tableExists(t *testing.T, table string) bool {
-	t.Helper()
-
-	var exists bool
-	err := testPool.Pool().QueryRow(t.Context(),
-		`SELECT EXISTS (
-             SELECT 1 FROM pg_class c
-             JOIN pg_namespace n ON n.oid = c.relnamespace
-             WHERE c.relname = $1 AND c.relkind = 'r' AND n.nspname = current_schema()
-         )`, table).Scan(&exists)
-	require.NoError(t, err)
-
-	return exists
+	require.NoError(t, db.Migrate(ctx, dsn, migrationsRoot, ModuleName))
+	assert.True(t, testdb.TableExists(t, dsn, "analytics_events"))
 }

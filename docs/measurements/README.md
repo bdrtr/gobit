@@ -131,3 +131,4 @@ truth: a report says what was true on the day it was taken.
 | [A total without a service — measured 2026-09-26](0198-a-total-without-a-service.md) | 59 |
 | [A cheaper courier — measured 2026-09-26](0199-a-cheaper-courier.md) | 117 |
 | [Money for a faster courier — measured 2026-09-26](0200-money-for-a-faster-courier.md) | 109 |
+| [Eleven shared rollbacks — measured 2026-09-26](0201-eleven-shared-rollbacks.md) | 65 |

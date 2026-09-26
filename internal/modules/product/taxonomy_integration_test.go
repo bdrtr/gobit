@@ -32,6 +32,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/repository"
 	"github.com/bdrtr/gobit/internal/modules/product/repository/productdb"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
+	"github.com/bdrtr/gobit/internal/testdb"
 )
 
 // newIsolatedService builds a service on a database of ITS OWN.
@@ -46,7 +47,7 @@ import (
 func newIsolatedService(ctx context.Context, t *testing.T) *service.Service {
 	t.Helper()
 
-	dsn := newDatabase(ctx, t)
+	dsn := testdb.New(t, testDSN, "gobit_product")
 	mod := product.New(product.Options{})
 	require.NoError(t, db.Migrate(ctx, dsn, mod.Migrations(), mod.Name()),
 		"the product schema has to be applied to the test's own database")

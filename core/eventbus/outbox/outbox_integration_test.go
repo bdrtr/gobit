@@ -26,7 +26,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -39,6 +38,7 @@ import (
 	"github.com/bdrtr/gobit/core/db"
 	"github.com/bdrtr/gobit/core/eventbus"
 	"github.com/bdrtr/gobit/core/eventbus/outbox"
+	"github.com/bdrtr/gobit/internal/testdb"
 )
 
 const postgresImage = "postgres:16-alpine"
@@ -183,7 +183,7 @@ func readRow(t *testing.T, id string) row {
 // stopped this repository's server from coming up at all.
 func TestTheMigrationIsReallyReversible(t *testing.T) {
 	ctx := t.Context()
-	dsn := freshDatabase(t)
+	dsn := testdb.New(t, testDSN, "outbox_migration")
 
 	require.NoError(t, db.Migrate(ctx, dsn, outbox.Migrations(), outbox.MigrationOwner))
 
@@ -653,29 +653,6 @@ func makeDue(t *testing.T, id string) {
 	_, err := testPool.Pool().Exec(t.Context(),
 		`UPDATE event_outbox SET next_attempt_at = now() - interval '1 second' WHERE id = $1`, id)
 	require.NoError(t, err)
-}
-
-// freshDatabase creates a throwaway database and returns its DSN.
-func freshDatabase(t *testing.T) string {
-	t.Helper()
-
-	name := fmt.Sprintf("outbox_migration_%d", time.Now().UnixNano())
-	_, err := testPool.Pool().Exec(t.Context(), `CREATE DATABASE `+name)
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if _, err := testPool.Pool().Exec(ctx, `DROP DATABASE IF EXISTS `+name+` WITH (FORCE)`); err != nil {
-			t.Logf("the temporary database %s could not be dropped: %v", name, err)
-		}
-	})
-
-	u, err := url.Parse(testDSN)
-	require.NoError(t, err)
-	u.Path = "/" + name
-
-	return u.String()
 }
 
 // poolFor opens a pool against one of the temporary databases.

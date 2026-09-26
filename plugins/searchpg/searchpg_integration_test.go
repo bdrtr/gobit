@@ -36,6 +36,7 @@ import (
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/link"
 	"github.com/bdrtr/gobit/core/query"
+	"github.com/bdrtr/gobit/internal/testdb"
 )
 
 const postgresImage = "postgres:16-alpine"
@@ -565,18 +566,21 @@ func TestRegisterResolvesFromTheCore(t *testing.T) {
 // running after it would start with an empty table.
 func TestTheMigrationCanBeRolledBackAndReapplied(t *testing.T) {
 	ctx := t.Context()
+	// The rollback runs in a database of its own. In the one this package
+	// shares it would drop every other test's index with the schema (D141).
+	dsn := testdb.New(t, testDSN, "searchpg_migration")
+	require.NoError(t, db.Migrate(ctx, dsn, migrationsRoot, ModuleName))
 
-	require.NoError(t, db.MigrateDown(ctx, testDSN, migrationsRoot, ModuleName, 0),
+	require.NoError(t, db.MigrateDown(ctx, dsn, migrationsRoot, ModuleName, 0),
 		"the schema has to be reversible")
+	assert.False(t, testdb.TableExists(t, dsn, "searchpg_product"), "the rollback has to drop the table")
 
-	var remaining int
-	require.NoError(t, testPool.Pool().QueryRow(ctx, `
-		SELECT count(*) FROM pg_tables WHERE tablename = 'searchpg_product'`).Scan(&remaining))
-	assert.Zero(t, remaining, "the rollback has to drop the table")
-
-	require.NoError(t, db.Migrate(ctx, testDSN, migrationsRoot, ModuleName),
+	require.NoError(t, db.Migrate(ctx, dsn, migrationsRoot, ModuleName),
 		"the schema has to be reappliable")
 
-	_, err := newIndex(testPool.Pool()).Search(ctx, "shirt", 10, 0)
+	pool, err := db.New(ctx, db.DefaultConfig(dsn), nil)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	_, err = newIndex(pool.Pool()).Search(ctx, "shirt", 10, 0)
 	assert.NoError(t, err, "the reapplied schema has to be usable")
 }

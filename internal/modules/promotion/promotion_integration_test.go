@@ -37,6 +37,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/models"
 	"github.com/bdrtr/gobit/internal/modules/promotion/repository"
 	"github.com/bdrtr/gobit/internal/modules/promotion/service"
+	"github.com/bdrtr/gobit/internal/testdb"
 )
 
 const postgresImage = "postgres:16-alpine"
@@ -143,21 +144,6 @@ func activePromotion(ctx context.Context, t *testing.T, svc *service.Service, in
 	return promo
 }
 
-// tableExists reports whether the table exists in the database.
-func tableExists(ctx context.Context, t *testing.T, table string) bool {
-	t.Helper()
-
-	var exists bool
-	err := testPool.Pool().QueryRow(ctx,
-		`SELECT EXISTS (
-             SELECT 1 FROM pg_class c
-             JOIN pg_namespace n ON n.oid = c.relnamespace
-             WHERE c.relname = $1 AND c.relkind = 'r' AND n.nspname = current_schema()
-         )`, table).Scan(&exists)
-	require.NoError(t, err)
-	return exists
-}
-
 // TestTheMigrationsReallyRollBack proves the migrations apply, roll back and
 // apply AGAIN (plan Section 8).
 //
@@ -166,22 +152,26 @@ func tableExists(ctx context.Context, t *testing.T, table string) bool {
 func TestTheMigrationsReallyRollBack(t *testing.T) {
 	ctx := context.Background()
 	src := promotion.New(nil).Migrations()
+	// The rollback runs in a database of its own. In the one this package
+	// shares it would drop every other test's promotions with the schema (D141).
+	dsn := testdb.New(t, testDSN, "promotion_migration")
+	require.NoError(t, db.Migrate(ctx, dsn, src, promotion.ModuleName))
 
 	for _, table := range moduleTables {
-		require.True(t, tableExists(ctx, t, table), "%s has to exist at the start", table)
+		require.True(t, testdb.TableExists(t, dsn, table), "%s has to exist at the start", table)
 	}
 
-	require.NoError(t, db.MigrateDown(ctx, testDSN, src, promotion.ModuleName, 0))
+	require.NoError(t, db.MigrateDown(ctx, dsn, src, promotion.ModuleName, 0))
 	for _, table := range moduleTables {
-		assert.False(t, tableExists(ctx, t, table), "%s must be gone after the rollback", table)
+		assert.False(t, testdb.TableExists(t, dsn, table), "%s must be gone after the rollback", table)
 	}
 
-	require.NoError(t, db.Migrate(ctx, testDSN, src, promotion.ModuleName))
+	require.NoError(t, db.Migrate(ctx, dsn, src, promotion.ModuleName))
 	for _, table := range moduleTables {
-		assert.True(t, tableExists(ctx, t, table), "%s has to be applied again", table)
+		assert.True(t, testdb.TableExists(t, dsn, table), "%s has to be applied again", table)
 	}
 
-	version, dirty, err := db.Version(ctx, testDSN, promotion.ModuleName)
+	version, dirty, err := db.Version(ctx, dsn, promotion.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "no migration may be left half applied")
 	// The number is written BY HAND and not derived from the embedded files: a

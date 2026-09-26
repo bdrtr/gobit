@@ -40,6 +40,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
 	"github.com/bdrtr/gobit/internal/modules/tax/repository"
 	"github.com/bdrtr/gobit/internal/modules/tax/service"
+	"github.com/bdrtr/gobit/internal/testdb"
 )
 
 const postgresImage = "postgres:16-alpine"
@@ -118,7 +119,12 @@ func runWithPostgres(m *testing.M) int {
 func newService(t *testing.T) *service.Service {
 	t.Helper()
 
-	return service.New(repository.New(testPool.Pool()), service.Options{})
+	return newServiceOn(testPool)
+}
+
+// newServiceOn is [newService] on the given database.
+func newServiceOn(pool *db.Pool) *service.Service {
+	return service.New(repository.New(pool.Pool()), service.Options{})
 }
 
 // uniqueCountry produces a country code no other test in this run uses.
@@ -147,27 +153,19 @@ func newRootRegion(ctx context.Context, t *testing.T, svc *service.Service) mode
 	return region
 }
 
-// tableExists reports whether the table is present in the database.
-func tableExists(ctx context.Context, t *testing.T, table string) bool {
-	t.Helper()
-
-	var exists bool
-	err := testPool.Pool().QueryRow(ctx,
-		`SELECT EXISTS (
-             SELECT 1 FROM pg_class c
-             JOIN pg_namespace n ON n.oid = c.relnamespace
-             WHERE c.relname = $1 AND c.relkind = 'r' AND n.nspname = current_schema()
-         )`, table).Scan(&exists)
-	require.NoError(t, err)
-	return exists
-}
-
 // countOf runs a single-column counting query.
 func countOf(ctx context.Context, t *testing.T, sql string, args ...any) int64 {
 	t.Helper()
 
+	return countIn(ctx, t, testPool, sql, args...)
+}
+
+// countIn is [countOf] on the given database.
+func countIn(ctx context.Context, t *testing.T, pool *db.Pool, sql string, args ...any) int64 {
+	t.Helper()
+
 	var count int64
-	require.NoError(t, testPool.Pool().QueryRow(ctx, sql, args...).Scan(&count))
+	require.NoError(t, pool.Pool().QueryRow(ctx, sql, args...).Scan(&count))
 	return count
 }
 
@@ -186,12 +184,20 @@ func countOf(ctx context.Context, t *testing.T, sql string, args ...any) int64 {
 // on an EMPTY schema; a data-dependent rollback failure is caught only here.
 func TestMigrationsRollBackWithDataInPlace(t *testing.T) {
 	ctx := context.Background()
+	src := tax.New(nil).Migrations()
+	// The rollback runs in a database of its own. In the one this package
+	// shares it would drop every other test's regions with the schema (D141).
+	dsn := testdb.New(t, testDSN, "tax_migration")
+	require.NoError(t, db.Migrate(ctx, dsn, src, tax.ModuleName))
+	pool, err := db.New(ctx, db.DefaultConfig(dsn), nil)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
 
 	for _, table := range moduleTables {
-		require.True(t, tableExists(ctx, t, table), "%s must exist to begin with", table)
+		require.True(t, testdb.TableExists(t, dsn, table), "%s must exist to begin with", table)
 	}
 
-	svc := newService(t)
+	svc := newServiceOn(pool)
 	root := newRootRegion(ctx, t, svc)
 	province, err := svc.CreateTaxRegion(ctx, service.CreateTaxRegionInput{
 		CountryCode: root.CountryCode, ProvinceCode: "34", ParentID: root.ID,
@@ -214,31 +220,29 @@ func TestMigrationsRollBackWithDataInPlace(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, svc.DeleteTaxRate(ctx, doomed.ID))
-	require.Equal(t, int64(1), countOf(ctx, t,
+	require.Equal(t, int64(1), countIn(ctx, t, pool,
 		`SELECT count(*) FROM tax_rate WHERE id = $1 AND deleted_at IS NOT NULL`, doomed.ID),
 		"a soft delete LEAVES the row in the table")
 
-	src := tax.New(nil).Migrations()
-
-	require.NoError(t, db.MigrateDown(ctx, testDSN, src, tax.ModuleName, 0),
+	require.NoError(t, db.MigrateDown(ctx, dsn, src, tax.ModuleName, 0),
 		"down failed — which means the module can never be migrated again")
 	for _, table := range moduleTables {
-		assert.False(t, tableExists(ctx, t, table), "%s must not survive the rollback", table)
+		assert.False(t, testdb.TableExists(t, dsn, table), "%s must not survive the rollback", table)
 	}
 
-	require.NoError(t, db.Migrate(ctx, testDSN, src, tax.ModuleName))
+	require.NoError(t, db.Migrate(ctx, dsn, src, tax.ModuleName))
 	for _, table := range moduleTables {
-		assert.True(t, tableExists(ctx, t, table), "%s must be applied again", table)
+		assert.True(t, testdb.TableExists(t, dsn, table), "%s must be applied again", table)
 	}
 
-	version, dirty, err := db.Version(ctx, testDSN, tax.ModuleName)
+	version, dirty, err := db.Version(ctx, dsn, tax.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "no migration may be left half-applied")
 	// The head version is raised BY HAND when a migration joins the module. It
 	// is not derived from the files: derived, it would agree with itself and
 	// the sentence "the head was applied" would stop saying anything.
 	assert.Equal(t, uint(4), version)
-	assert.Zero(t, countOf(ctx, t, `SELECT count(*) FROM tax_region`),
+	assert.Zero(t, countIn(ctx, t, pool, `SELECT count(*) FROM tax_region`),
 		"the schema was dropped and rebuilt, so no region may remain")
 }
 

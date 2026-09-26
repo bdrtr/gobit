@@ -19,7 +19,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -33,6 +32,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/db"
 	"github.com/bdrtr/gobit/internal/core/job"
+	"github.com/bdrtr/gobit/internal/testdb"
 )
 
 const postgresImage = "postgres:16-alpine"
@@ -106,7 +106,7 @@ func freshStore(t *testing.T) *Store {
 // TestTheMigrationIsReallyReversible certifies the up/down pair.
 func TestTheMigrationIsReallyReversible(t *testing.T) {
 	ctx := t.Context()
-	dsn := freshDatabase(t)
+	dsn := testdb.New(t, testDSN, "job_migration")
 
 	require.NoError(t, db.Migrate(ctx, dsn, Migrations(), MigrationOwner))
 
@@ -398,29 +398,6 @@ func TestTheLockSurvivesAFailingFunction(t *testing.T) {
 }
 
 // --- helpers ----------------------------------------------------------------
-
-// freshDatabase creates an empty database for the migration test.
-func freshDatabase(t *testing.T) string {
-	t.Helper()
-
-	name := fmt.Sprintf("job_migration_%d", time.Now().UnixNano())
-	_, err := testPool.Pool().Exec(t.Context(), `CREATE DATABASE `+name)
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if _, err := testPool.Pool().Exec(ctx, `DROP DATABASE IF EXISTS `+name+` WITH (FORCE)`); err != nil {
-			t.Logf("the temporary database %s could not be dropped: %v", name, err)
-		}
-	})
-
-	u, err := url.Parse(testDSN)
-	require.NoError(t, err)
-	u.Path = "/" + name
-
-	return u.String()
-}
 
 // poolFor opens a pool against one of the temporary databases.
 func poolFor(t *testing.T, dsn string) *db.Pool {

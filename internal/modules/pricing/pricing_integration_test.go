@@ -14,7 +14,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"sync/atomic"
 	"testing"
@@ -34,6 +33,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/models"
 	"github.com/bdrtr/gobit/internal/modules/pricing/repository"
 	"github.com/bdrtr/gobit/internal/modules/pricing/service"
+	"github.com/bdrtr/gobit/internal/testdb"
 )
 
 const postgresImage = "postgres:16-alpine"
@@ -111,22 +111,14 @@ func tableExists(ctx context.Context, t *testing.T, dsn, table string) bool {
 	return regclass != nil
 }
 
-// TestMigrationsAreReversible şemanın uygulanıp GERİ ALINABİLDİĞİNİ kanıtlar
-// (plan Bölüm 8: up/down çiftleri geri alınabilir olmalıdır).
+// TestMigrationsAreReversible proves the schema can be applied and ROLLED BACK
+// (plan Section 8: up/down pairs have to be reversible).
 //
-// Test AYRI bir veritabanında çalışır: paylaşılan şemayı düşürmek diğer
-// testleri sırasına bağımlı hâle getirirdi.
+// It runs in a database of its own: dropping the shared schema would make the
+// other tests depend on the order they ran in.
 func TestMigrationsAreReversible(t *testing.T) {
 	ctx := context.Background()
-
-	const dbName = "pricing_migration_test"
-	_, err := testPool.Pool().Exec(ctx, "CREATE DATABASE "+dbName)
-	require.NoError(t, err)
-
-	parsed, err := url.Parse(testDSN)
-	require.NoError(t, err)
-	parsed.Path = "/" + dbName
-	dsn := parsed.String()
+	dsn := testdb.New(t, testDSN, "pricing_migration")
 
 	src := pricing.New(nil).Migrations()
 	tables := []string{

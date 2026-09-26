@@ -4,8 +4,6 @@ package order_test
 
 import (
 	"context"
-	"net/url"
-	"strconv"
 	"testing"
 	"time"
 
@@ -19,6 +17,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 	"github.com/bdrtr/gobit/internal/modules/order/repository"
 	"github.com/bdrtr/gobit/internal/modules/order/service"
+	"github.com/bdrtr/gobit/internal/testdb"
 )
 
 // cancelBarrierStore holds a cancellation after it has LOCKED the order and
@@ -181,8 +180,9 @@ func TestTheAdditionConstraintsAreTheLastDefence(t *testing.T) {
 	assert.Contains(t, err.Error(), "orders_adds_to_order_id_fkey")
 }
 
-// isolatedDatabase creates a database of the test's own, applies the module's
-// and the outbox's migrations to it, and returns its address and a pool on it.
+// isolatedDatabase creates a database of the test's own (internal/testdb),
+// applies the module's and the outbox's migrations to it, and returns its
+// address and a pool on it.
 //
 // A test that drops the schema has to run here: in the shared database it
 // would rewind the rows of every test before it and depend on which ones had
@@ -190,14 +190,7 @@ func TestTheAdditionConstraintsAreTheLastDefence(t *testing.T) {
 func isolatedDatabase(ctx context.Context, t *testing.T, prefix string) (string, *db.Pool) {
 	t.Helper()
 
-	name := prefix + "_" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	_, err := testPool.Pool().Exec(ctx, "CREATE DATABASE "+name)
-	require.NoError(t, err)
-
-	parsed, err := url.Parse(testDSN)
-	require.NoError(t, err)
-	parsed.Path = "/" + name
-	dsn := parsed.String()
+	dsn := testdb.New(t, testDSN, prefix)
 
 	require.NoError(t, db.Migrate(ctx, dsn, order.New().Migrations(), order.ModuleName))
 	require.NoError(t, db.Migrate(ctx, dsn, outbox.Migrations(), outbox.MigrationOwner))

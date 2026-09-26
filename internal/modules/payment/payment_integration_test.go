@@ -48,6 +48,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/repository"
 	"github.com/bdrtr/gobit/internal/modules/payment/service"
 	"github.com/bdrtr/gobit/internal/modules/payment/storecredit"
+	"github.com/bdrtr/gobit/internal/testdb"
 )
 
 const postgresImage = "postgres:16-alpine"
@@ -252,8 +253,9 @@ func yeniKoleksiyon(ctx context.Context, t *testing.T, svc *service.Service) mod
 	return col
 }
 
-// isolatedDatabase creates a database of the test's own, applies the module's
-// and the outbox's migrations to it, and returns its address and a pool on it.
+// isolatedDatabase creates a database of the test's own (internal/testdb),
+// applies the module's and the outbox's migrations to it, and returns its
+// address and a pool on it.
 //
 // A test that drops the schema has to run here: in the shared database it
 // would rewind the rows of every test before it and depend on which ones had
@@ -261,14 +263,7 @@ func yeniKoleksiyon(ctx context.Context, t *testing.T, svc *service.Service) mod
 func isolatedDatabase(ctx context.Context, t *testing.T, prefix string) (string, *db.Pool) {
 	t.Helper()
 
-	name := prefix + "_" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	_, err := testPool.Pool().Exec(ctx, "CREATE DATABASE "+name)
-	require.NoError(t, err)
-
-	parsed, err := url.Parse(testDSN)
-	require.NoError(t, err)
-	parsed.Path = "/" + name
-	dsn := parsed.String()
+	dsn := testdb.New(t, testDSN, prefix)
 
 	require.NoError(t, db.Migrate(ctx, dsn, payment.New().Migrations(), payment.ModuleName))
 	require.NoError(t, db.Migrate(ctx, dsn, outbox.Migrations(), outbox.MigrationOwner))

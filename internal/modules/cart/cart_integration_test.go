@@ -38,6 +38,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart/models"
 	"github.com/bdrtr/gobit/internal/modules/cart/repository"
 	"github.com/bdrtr/gobit/internal/modules/cart/service"
+	"github.com/bdrtr/gobit/internal/testdb"
 )
 
 const postgresImage = "postgres:16-alpine"
@@ -158,42 +159,31 @@ func newCart(ctx context.Context, t *testing.T, svc *service.Service) models.Car
 	return cart
 }
 
-// tableExists reports whether the table is present in the database.
-func tableExists(ctx context.Context, t *testing.T, table string) bool {
-	t.Helper()
-
-	var exists bool
-	err := testPool.Pool().QueryRow(ctx,
-		`SELECT EXISTS (
-             SELECT 1 FROM pg_class c
-             JOIN pg_namespace n ON n.oid = c.relnamespace
-             WHERE c.relname = $1 AND c.relkind = 'r' AND n.nspname = current_schema()
-         )`, table).Scan(&exists)
-	require.NoError(t, err)
-	return exists
-}
-
 // TestMigrationCanBeRolledBack verifies that the migration can be applied and
 // rolled back (plan Section 8: up/down pairs, reversible).
 func TestMigrationCanBeRolledBack(t *testing.T) {
 	ctx := context.Background()
 	src := cartmod.New(cartmod.Options{}).Migrations()
+	// The rollback runs in a database of its own. In the one this package
+	// shares it would drop every other test's carts with the schema (D141).
+	dsn := testdb.New(t, testDSN, "cart_migration")
+	require.NoError(t, db.Migrate(ctx, dsn, src, cartmod.ModuleName))
 
 	for _, table := range moduleTables {
-		require.True(t, tableExists(ctx, t, table), "%s must exist at the start", table)
+		require.True(t, testdb.TableExists(t, dsn, table), "%s must exist at the start", table)
 	}
 
-	require.NoError(t, db.MigrateDown(ctx, testDSN, src, cartmod.ModuleName, 0))
+	require.NoError(t, db.MigrateDown(ctx, dsn, src, cartmod.ModuleName, 0))
 	for _, table := range moduleTables {
-		assert.False(t, tableExists(ctx, t, table), "%s must not remain after the rollback", table)
+		assert.False(t, testdb.TableExists(t, dsn, table), "%s must not remain after the rollback", table)
 	}
 
-	require.NoError(t, db.Migrate(ctx, testDSN, src, cartmod.ModuleName))
+	require.NoError(t, db.Migrate(ctx, dsn, src, cartmod.ModuleName))
 	for _, table := range moduleTables {
-		assert.True(t, tableExists(ctx, t, table), "%s must be applied again", table)
+		assert.True(t, testdb.TableExists(t, dsn, table), "%s must be applied again", table)
 	}
 
-	version, dirty, err := db.Version(ctx, testDSN, cartmod.ModuleName)
+	version, dirty, err := db.Version(ctx, dsn, cartmod.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "there must be no half-finished migration")
 	assert.Equal(t, highestMigrationVersion(t, src), version,

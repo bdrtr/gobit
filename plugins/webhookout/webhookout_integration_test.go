@@ -39,7 +39,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -54,6 +53,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/db"
 	"github.com/bdrtr/gobit/core/eventbus"
+	"github.com/bdrtr/gobit/internal/testdb"
 )
 
 const postgresImage = "postgres:16-alpine"
@@ -280,7 +280,7 @@ func runPass(t *testing.T, m *webhookModule) error {
 func TestTheMigrationIsReallyReversible(t *testing.T) {
 	ctx := t.Context()
 
-	dsn := freshDatabase(t)
+	dsn := testdb.New(t, testDSN, "webhookout_migration")
 
 	require.NoError(t, db.Migrate(ctx, dsn, migrationsRoot, ModuleName),
 		"the up migration has to apply")
@@ -316,7 +316,7 @@ func TestTheMigrationIsReallyReversible(t *testing.T) {
 func TestTheMigrationIsReversibleWithDataInIt(t *testing.T) {
 	ctx := t.Context()
 
-	dsn := freshDatabase(t)
+	dsn := testdb.New(t, testDSN, "webhookout_migration")
 	require.NoError(t, db.Migrate(ctx, dsn, migrationsRoot, ModuleName))
 
 	st := newStore(testPoolFor(t, dsn).Pool())
@@ -814,42 +814,6 @@ func deliveryState(t *testing.T) (attempts int64, nextAt time.Time) {
 		Scan(&attempts, &nextAt))
 
 	return attempts, nextAt
-}
-
-// freshDatabase creates a database of its own for a migration test.
-//
-// The rollback tests cannot run on the shared schema: rolling it back would
-// pull both tables out from under every other test in the file.
-func freshDatabase(t *testing.T) string {
-	t.Helper()
-
-	name := fmt.Sprintf("webhookout_migration_%d", time.Now().UnixNano())
-	_, err := testPool.Pool().Exec(t.Context(), `CREATE DATABASE `+name)
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		// The drop runs on a context detached from the test's, which is already
-		// canceled by the time cleanup runs.
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if _, err := testPool.Pool().Exec(ctx,
-			`DROP DATABASE IF EXISTS `+name+` WITH (FORCE)`); err != nil {
-			t.Logf("the temporary database %s could not be dropped: %v", name, err)
-		}
-	})
-
-	return replaceDatabase(testDSN, name)
-}
-
-// replaceDatabase swaps the database name in a DSN.
-func replaceDatabase(dsn, name string) string {
-	parsed, err := url.Parse(dsn)
-	if err != nil {
-		return dsn
-	}
-	parsed.Path = "/" + name
-
-	return parsed.String()
 }
 
 // testPoolFor opens a pool on another database and closes it with the test.

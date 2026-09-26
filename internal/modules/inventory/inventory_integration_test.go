@@ -38,6 +38,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/inventory/models"
 	"github.com/bdrtr/gobit/internal/modules/inventory/repository"
 	"github.com/bdrtr/gobit/internal/modules/inventory/service"
+	"github.com/bdrtr/gobit/internal/testdb"
 )
 
 const postgresImage = "postgres:16-alpine"
@@ -149,44 +150,33 @@ func stoklu(ctx context.Context, t *testing.T, svc *service.Service, adet int64)
 	return item, loc
 }
 
-// tabloVar tablonun veritabanında olup olmadığını bildirir.
-func tabloVar(ctx context.Context, t *testing.T, table string) bool {
-	t.Helper()
-
-	var exists bool
-	err := testPool.Pool().QueryRow(ctx,
-		`SELECT EXISTS (
-             SELECT 1 FROM pg_class c
-             JOIN pg_namespace n ON n.oid = c.relnamespace
-             WHERE c.relname = $1 AND c.relkind = 'r' AND n.nspname = current_schema()
-         )`, table).Scan(&exists)
-	require.NoError(t, err)
-	return exists
-}
-
-// TestMigrationGeriAlinabilir migration'ın uygulanıp geri alınabildiğini
-// doğrular (plan Bölüm 8: up/down çiftleri, geri alınabilir).
-func TestMigrationGeriAlinabilir(t *testing.T) {
+// TestTheMigrationCanBeRolledBack verifies that the migrations can be applied
+// and rolled back (plan Section 8: up/down pairs, reversible).
+func TestTheMigrationCanBeRolledBack(t *testing.T) {
 	ctx := context.Background()
 	src := inventory.New().Migrations()
+	// The rollback runs in a database of its own. In the one this package
+	// shares it would drop every other test's stock with the schema (D141).
+	dsn := testdb.New(t, testDSN, "inventory_migration")
+	require.NoError(t, db.Migrate(ctx, dsn, src, inventory.ModuleName))
 
 	for _, table := range modulTablolari {
-		require.True(t, tabloVar(ctx, t, table), "%s başlangıçta var olmalı", table)
+		require.True(t, testdb.TableExists(t, dsn, table), "%s must exist at the start", table)
 	}
 
-	require.NoError(t, db.MigrateDown(ctx, testDSN, src, inventory.ModuleName, 0))
+	require.NoError(t, db.MigrateDown(ctx, dsn, src, inventory.ModuleName, 0))
 	for _, table := range modulTablolari {
-		assert.False(t, tabloVar(ctx, t, table), "%s geri alma sonrası kalmamalı", table)
+		assert.False(t, testdb.TableExists(t, dsn, table), "%s must not remain after the rollback", table)
 	}
 
-	require.NoError(t, db.Migrate(ctx, testDSN, src, inventory.ModuleName))
+	require.NoError(t, db.Migrate(ctx, dsn, src, inventory.ModuleName))
 	for _, table := range modulTablolari {
-		assert.True(t, tabloVar(ctx, t, table), "%s yeniden uygulanmalı", table)
+		assert.True(t, testdb.TableExists(t, dsn, table), "%s must be applied again", table)
 	}
 
-	version, dirty, err := db.Version(ctx, testDSN, inventory.ModuleName)
+	version, dirty, err := db.Version(ctx, dsn, inventory.ModuleName)
 	require.NoError(t, err)
-	assert.False(t, dirty, "yarıda kalmış migration olmamalı")
+	assert.False(t, dirty, "no migration may be left half-applied")
 	assert.Equal(t, enYuksekMigrationSurumu(t, src), version)
 }
 

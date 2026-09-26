@@ -4,7 +4,6 @@ package pricing_test
 
 import (
 	"context"
-	"net/url"
 	"testing"
 	"time"
 
@@ -16,6 +15,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/models"
 	"github.com/bdrtr/gobit/internal/modules/pricing/repository"
 	"github.com/bdrtr/gobit/internal/modules/pricing/service"
+	"github.com/bdrtr/gobit/internal/testdb"
 )
 
 // The price history against a real server (ADR 0167).
@@ -190,16 +190,7 @@ func ruledPrice(t *testing.T, snapshot models.PriceSetSnapshot, id string) model
 func TestTheSeedIsReadAsTheWriterWrites(t *testing.T) {
 	ctx := context.Background()
 
-	const database = "pricing_history_seed"
-	_, err := testPool.Pool().Exec(ctx, "DROP DATABASE IF EXISTS "+database)
-	require.NoError(t, err)
-	_, err = testPool.Pool().Exec(ctx, "CREATE DATABASE "+database)
-	require.NoError(t, err)
-
-	target, err := url.Parse(testDSN)
-	require.NoError(t, err)
-	target.Path = "/" + database
-	dsn := target.String()
+	dsn := testdb.New(t, testDSN, "pricing_history_seed")
 
 	src := pricing.New(nil).Migrations()
 	require.NoError(t, db.Migrate(ctx, dsn, src, pricing.Name))

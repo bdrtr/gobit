@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -37,6 +36,7 @@ import (
 	"github.com/bdrtr/gobit/core/db"
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/core/workflow"
+	"github.com/bdrtr/gobit/internal/testdb"
 )
 
 const postgresImage = "postgres:16-alpine"
@@ -133,7 +133,7 @@ func openedExecution(ctx context.Context, t *testing.T, store workflow.Store) *w
 // schema would affect them.
 func TestMigrationUpDown(t *testing.T) {
 	ctx := context.Background()
-	dsn := newDatabase(ctx, t)
+	dsn := testdb.New(t, adminDSN, "gobit_wf")
 
 	version, dirty, err := db.Version(ctx, dsn, MigrationOwner)
 	require.NoError(t, err)
@@ -1170,39 +1170,6 @@ func relationExists(ctx context.Context, t *testing.T, dsn, name string) bool {
 			WHERE relname = $1 AND relnamespace = current_schema()::regnamespace
 		)`, name).Scan(&exists))
 	return exists
-}
-
-// newDatabase opens an empty database specific to the test and returns its
-// address. The database is dropped when the test ends.
-func newDatabase(ctx context.Context, t *testing.T) string {
-	t.Helper()
-
-	name := fmt.Sprintf("gobit_wf_%d", time.Now().UnixNano())
-
-	conn, err := pgx.Connect(ctx, adminDSN)
-	require.NoError(t, err)
-	defer func() { _ = conn.Close(ctx) }()
-
-	// A database name cannot be parameterized; name is in the fixed shape the
-	// test produces (letters, underscores and digits only) and takes no data
-	// from outside.
-	_, err = conn.Exec(ctx, `CREATE DATABASE `+name)
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		cleanup := context.Background()
-		c, cErr := pgx.Connect(cleanup, adminDSN)
-		if cErr != nil {
-			return
-		}
-		defer func() { _ = c.Close(cleanup) }()
-		_, _ = c.Exec(cleanup, `DROP DATABASE IF EXISTS `+name+` WITH (FORCE)`)
-	})
-
-	u, err := url.Parse(adminDSN)
-	require.NoError(t, err)
-	u.Path = "/" + name
-	return u.String()
 }
 
 // buildAbandonedExecution builds an execution that did work but is stale, and

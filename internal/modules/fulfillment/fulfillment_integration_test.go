@@ -39,6 +39,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/repository"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/service"
+	"github.com/bdrtr/gobit/internal/testdb"
 )
 
 const postgresImage = "postgres:16-alpine"
@@ -121,7 +122,14 @@ func runWithPostgres(m *testing.M) int {
 func newService(t *testing.T) (*service.Service, *manual.Provider) {
 	t.Helper()
 
-	repo := repository.New(testPool.Pool())
+	return newServiceOn(t, testPool)
+}
+
+// newServiceOn is [newService] on the given database.
+func newServiceOn(t *testing.T, pool *db.Pool) (*service.Service, *manual.Provider) {
+	t.Helper()
+
+	repo := repository.New(pool.Pool())
 	prov := manual.New(repo, nil)
 	registry := service.NewProviderRegistry()
 	require.NoError(t, registry.Register(prov))
@@ -250,21 +258,6 @@ func newOption(
 	return option
 }
 
-// tableExists reports whether the table is present in the database.
-func tableExists(ctx context.Context, t *testing.T, table string) bool {
-	t.Helper()
-
-	var exists bool
-	err := testPool.Pool().QueryRow(ctx,
-		`SELECT EXISTS (
-             SELECT 1 FROM pg_class c
-             JOIN pg_namespace n ON n.oid = c.relnamespace
-             WHERE c.relname = $1 AND c.relkind = 'r' AND n.nspname = current_schema()
-         )`, table).Scan(&exists)
-	require.NoError(t, err)
-	return exists
-}
-
 // TestMigrationRollsBackWithDataPresent verifies that the migration can be
 // applied to and rolled back from a FULL schema.
 //
@@ -276,11 +269,18 @@ func tableExists(ctx context.Context, t *testing.T, table string) bool {
 func TestMigrationRollsBackWithDataPresent(t *testing.T) {
 	ctx := context.Background()
 	src := fulfillment.New().Migrations()
-	svc, _ := newService(t)
+	// The rollback runs in a database of its own. In the one this package
+	// shares it would drop every other test's parcels with the schema (D141).
+	dsn := testdb.New(t, testDSN, "fulfillment_migration")
+	require.NoError(t, db.Migrate(ctx, dsn, src, fulfillment.ModuleName))
+	pool, err := db.New(ctx, db.DefaultConfig(dsn), nil)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	svc, _ := newServiceOn(t, pool)
 
 	profile := newProfile(ctx, t, svc)
 	option := newOption(ctx, t, svc, profile.ID, 2_500)
-	_, err := svc.CreateShippingOptionRule(ctx, option.ID, service.CreateRuleInput{
+	_, err = svc.CreateShippingOptionRule(ctx, option.ID, service.CreateRuleInput{
 		Attribute: service.AttrSubtotal,
 		Operator:  "gte",
 		Values:    []string{"50000"},
@@ -308,21 +308,21 @@ func TestMigrationRollsBackWithDataPresent(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, table := range moduleTables {
-		require.True(t, tableExists(ctx, t, table), "%s must exist at the start", table)
+		require.True(t, testdb.TableExists(t, dsn, table), "%s must exist at the start", table)
 	}
 
-	require.NoError(t, db.MigrateDown(ctx, testDSN, src, fulfillment.ModuleName, 0),
+	require.NoError(t, db.MigrateDown(ctx, dsn, src, fulfillment.ModuleName, 0),
 		"down failed — this means the module can NEVER be migrated again")
 	for _, table := range moduleTables {
-		assert.False(t, tableExists(ctx, t, table), "%s must not remain after the rollback", table)
+		assert.False(t, testdb.TableExists(t, dsn, table), "%s must not remain after the rollback", table)
 	}
 
-	require.NoError(t, db.Migrate(ctx, testDSN, src, fulfillment.ModuleName))
+	require.NoError(t, db.Migrate(ctx, dsn, src, fulfillment.ModuleName))
 	for _, table := range moduleTables {
-		assert.True(t, tableExists(ctx, t, table), "%s must be applied again", table)
+		assert.True(t, testdb.TableExists(t, dsn, table), "%s must be applied again", table)
 	}
 
-	version, dirty, err := db.Version(ctx, testDSN, fulfillment.ModuleName)
+	version, dirty, err := db.Version(ctx, dsn, fulfillment.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "there must be no half-finished migration")
 	assert.Equal(t, uint(4), version,

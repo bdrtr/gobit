@@ -14,7 +14,6 @@ package product_test
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -36,6 +35,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/repository"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
+	"github.com/bdrtr/gobit/internal/testdb"
 )
 
 const postgresImage = "postgres:16-alpine"
@@ -153,42 +153,6 @@ func uniqueHandle(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 }
 
-// newDatabase opens the test's own database and drops it at the end.
-//
-// If the test that rolls the migration back dropped the shared schema, the
-// other tests could not run; that is why only that test runs on a database of
-// its own.
-func newDatabase(ctx context.Context, t *testing.T) string {
-	t.Helper()
-
-	name := fmt.Sprintf("gobit_product_%d", time.Now().UnixNano())
-
-	conn, err := pgx.Connect(ctx, testDSN)
-	require.NoError(t, err)
-	defer func() { _ = conn.Close(ctx) }()
-
-	// A database name cannot be parameterized in SQL; the name has the fixed
-	// shape the test produces (letters, underscore, digits) and takes no data
-	// from the outside.
-	_, err = conn.Exec(ctx, `CREATE DATABASE `+name)
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		cleanup := context.Background()
-		c, cErr := pgx.Connect(cleanup, testDSN)
-		if cErr != nil {
-			return
-		}
-		defer func() { _ = c.Close(cleanup) }()
-		_, _ = c.Exec(cleanup, `DROP DATABASE IF EXISTS `+name+` WITH (FORCE)`)
-	})
-
-	u, err := url.Parse(testDSN)
-	require.NoError(t, err)
-	u.Path = "/" + name
-	return u.String()
-}
-
 // tableExists reports whether the table is present in the current schema.
 func tableExists(ctx context.Context, t *testing.T, dsn, table string) bool {
 	t.Helper()
@@ -230,7 +194,7 @@ func indexExists(ctx context.Context, t *testing.T, dsn, name string) bool {
 // ROLLED BACK (Section 8 of the plan).
 func TestMigrationUpDownIsReversible(t *testing.T) {
 	ctx := context.Background()
-	dsn := newDatabase(ctx, t)
+	dsn := testdb.New(t, testDSN, "gobit_product")
 	mod := product.New(product.Options{})
 
 	require.NoError(t, db.Migrate(ctx, dsn, mod.Migrations(), mod.Name()))
