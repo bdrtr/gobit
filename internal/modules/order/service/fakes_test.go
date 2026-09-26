@@ -115,6 +115,8 @@ type fakeStore struct {
 	lockedOrders []string
 	// sharedOrders records the orders read under a share lock, in order.
 	sharedOrders []string
+	// addressReads counts the batch reads of addresses.
+	addressReads int
 	// lockedReturns records the return rows that were locked, in order.
 	lockedReturns []string
 	// lockedClaims records the claim rows that were locked, in order.
@@ -948,6 +950,9 @@ func (f *fakeStore) OrderAddressesByOrderIDs(
 	// caller a detail whose header and addresses came from two different
 	// instants — the thing the read transaction exists to prevent.
 	stored := f.view(ctx).addresses
+	f.mu.Lock()
+	f.addressReads++
+	f.mu.Unlock()
 
 	out := make(map[string][]models.OrderAddress, len(orderIDs))
 	for _, id := range orderIDs {

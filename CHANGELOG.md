@@ -63,6 +63,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **The panel shows where an order goes** (ADR 0196). **For operators:** the
+  panel's order page shows the shipping and billing addresses, when the
+  shipping address was last corrected, the order an addition adds to and the
+  additions of an order. **For embedders:** the order read-layer entity offers
+  `adds_to_order_id` (also a filter), `shipping_address`, `billing_address` and
+  `shipping_address_corrected_at`; the three address fields are read in one
+  batch per page, only when asked for.
+
 - **A shipping address can be corrected before it ships** (ADR 0195). **For API
   consumers:** `PUT /admin/v1/orders/{id}/shipping-address` (`order:write`)
   takes the whole corrected address and answers with the admin order record.

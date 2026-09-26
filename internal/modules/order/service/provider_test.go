@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -263,4 +264,91 @@ func TestQueryProviderRefusesAnIDFilterBesideAnother(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
+}
+
+// TestTheReadLayerCarriesWhereAnOrderGoes holds the address fields the panel
+// reads (ADR 0196): the current addresses by the API's names, the moment of the
+// latest correction, the order an addition adds to — and one address read for
+// the whole page, made only when an address field is asked for.
+func TestTheReadLayerCarriesWhereAnOrderGoes(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	p := service.NewQueryProvider(e.svc)
+
+	in := validInput()
+	in.Addresses = []models.OrderAddress{
+		{Type: models.AddressShipping, FirstName: "Ada", Address1: "12 Wrong St", CountryCode: "TR"},
+		{Type: models.AddressBilling, Company: "Engines Ltd", CountryCode: "TR",
+			Metadata: map[string]any{"tax_office": "Central"}},
+	}
+	parent, err := e.svc.CreateOrder(ctx, in)
+	require.NoError(t, err)
+	addition, err := e.svc.CreateOrder(ctx, additionOf(parent.ID))
+	require.NoError(t, err)
+
+	reads := e.store.addressReads
+	records, err := p.List(ctx, query.ListOptions{
+		Fields: []string{service.FieldID, service.FieldAddsToOrderID},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, reads, e.store.addressReads, "no address field was asked for, so none was read")
+	byID := map[string]query.Record{}
+	for _, record := range records {
+		id, ok := record[service.FieldID].(string)
+		require.True(t, ok)
+		byID[id] = record
+	}
+	assert.Equal(t, parent.ID, byID[addition.ID][service.FieldAddsToOrderID])
+	assert.Empty(t, byID[parent.ID][service.FieldAddsToOrderID])
+
+	additions, err := p.List(ctx, query.ListOptions{
+		Fields:  []string{service.FieldID},
+		Filters: map[string]any{service.FieldAddsToOrderID: parent.ID},
+	})
+	require.NoError(t, err)
+	require.Len(t, additions, 1)
+	assert.Equal(t, addition.ID, additions[0][service.FieldID])
+
+	_, err = e.svc.CorrectShippingAddress(ctx, parent.ID, models.OrderAddress{
+		FirstName: "Ada", Address1: "12 Almost St",
+	})
+	require.NoError(t, err)
+	_, err = e.svc.CorrectShippingAddress(ctx, parent.ID, models.OrderAddress{
+		FirstName: "Ada", Address1: "12 Right St",
+	})
+	require.NoError(t, err)
+	held, err := e.store.OrderAddressesByOrderIDs(ctx, []string{parent.ID})
+	require.NoError(t, err)
+	var latest time.Time
+	for _, address := range held[parent.ID] {
+		if address.SupersededAt != nil && address.SupersededAt.After(latest) {
+			latest = *address.SupersededAt
+		}
+	}
+
+	reads = e.store.addressReads
+	page, err := p.List(ctx, query.ListOptions{Fields: []string{
+		service.FieldID, service.FieldShippingAddress, service.FieldBillingAddress,
+		service.FieldShippingAddressCorrectedAt,
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, reads+1, e.store.addressReads, "one address read for the whole page")
+
+	for _, record := range page {
+		switch record[service.FieldID] {
+		case parent.ID:
+			assert.Equal(t, map[string]any{
+				"first_name": "Ada", "address_1": "12 Right St", "country_code": "TR",
+			}, record[service.FieldShippingAddress], "the current address, empty fields left out")
+			assert.Equal(t, map[string]any{
+				"company": "Engines Ltd", "country_code": "TR",
+				"metadata": map[string]any{"tax_office": "Central"},
+			}, record[service.FieldBillingAddress])
+			assert.Equal(t, latest, record[service.FieldShippingAddressCorrectedAt],
+				"after two corrections the page reads the LATER one")
+		case addition.ID:
+			assert.Nil(t, record[service.FieldShippingAddress], "an order with no address reads nil")
+			assert.Nil(t, record[service.FieldShippingAddressCorrectedAt], "never corrected")
+		}
+	}
 }

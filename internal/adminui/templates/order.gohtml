@@ -24,7 +24,35 @@ be read says it is in minor units instead of being divided by a guessed hundred.
   <p>
     {{ if .Order.Email }}{{ .Order.Email }}{{ else }}<span class="muted">no address on this order</span>{{ end }}
   </p>
+  {{ with .Order.Parent }}
+  <p>Adds to <a href="{{ $.OrdersPath }}/{{ .ID }}">{{ if .DisplayID }}#{{ .DisplayID }}{{ else }}{{ .ID }}{{ end }}</a></p>
+  {{ end }}
 </div>
+
+{{/*
+The addresses are the order's CURRENT ones (ADR 0196). A corrected shipping
+address says when it was corrected; the address it replaced is on the order's
+timeline and in the person's file, not here.
+*/}}
+<h2>Addresses</h2>
+
+<table>
+  <tbody>
+    <tr>
+      <th>Ship to</th>
+      <td>
+        {{ range .Order.ShipTo }}{{ . }}<br>{{ else }}<span class="muted">no shipping address</span>{{ end }}
+        {{ if not .Order.CorrectedAt.IsZero }}
+        <span class="muted">corrected {{ .Order.CorrectedAt.Format "2006-01-02 15:04" }} UTC</span>
+        {{ end }}
+      </td>
+    </tr>
+    <tr>
+      <th>Bill to</th>
+      <td>{{ range .Order.BillTo }}{{ . }}<br>{{ else }}<span class="muted">no billing address</span>{{ end }}</td>
+    </tr>
+  </tbody>
+</table>
 
 <h2>Amounts</h2>
 
@@ -43,6 +71,27 @@ be read says it is in minor units instead of being divided by a guessed hundred.
     </tr>
   </tbody>
 </table>
+
+<h2>Additions</h2>
+
+{{ if .Order.AdditionsUnread }}
+<p class="muted">The additions to this order could not be read.</p>
+{{ else if .Order.Additions }}
+<table>
+  <thead><tr><th>Order</th><th>Status</th><th class="num">Total</th></tr></thead>
+  <tbody>
+    {{ range .Order.Additions }}
+    <tr>
+      <td><a href="{{ $.OrdersPath }}/{{ .ID }}">#{{ .DisplayID }}</a></td>
+      <td><span class="pill">{{ .Status }}</span></td>
+      <td class="num">{{ .Total }} {{ .Currency }}{{ if .Minor }} <span class="muted">(minor units)</span>{{ end }}</td>
+    </tr>
+    {{ end }}
+  </tbody>
+</table>
+{{ else }}
+<p class="muted">Nothing has been added to this order.</p>
+{{ end }}
 
 <p><a href="{{ .OrdersPath }}">Back to orders</a></p>
 {{ end }}

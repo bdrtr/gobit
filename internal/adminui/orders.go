@@ -33,7 +33,18 @@ const (
 	fieldShipping  = "shipping_total"
 	fieldTotal     = "total"
 	fieldPlacedAt  = "placed_at"
+
+	// The fields ADR 0196 reads: the order an addition adds to, the two
+	// current addresses, and the moment of the latest address correction.
+	fieldAddsToOrderID              = "adds_to_order_id"
+	fieldShippingAddress            = "shipping_address"
+	fieldBillingAddress             = "billing_address"
+	fieldShippingAddressCorrectedAt = "shipping_address_corrected_at"
 )
+
+// additionsPerOrder is how many additions the order page lists. An order with
+// more has been added to more often than a screen should have to show.
+const additionsPerOrder = 25
 
 // ordersLabel is what the section is called on screen.
 //
@@ -70,6 +81,60 @@ type orderDetail struct {
 	Discount string
 	Tax      string
 	Shipping string
+
+	// ShipTo and BillTo are the current addresses as printed lines; nil when
+	// the order recorded none (ADR 0196).
+	ShipTo []string
+	BillTo []string
+	// CorrectedAt is the latest correction of the shipping address; the zero
+	// time when it was never corrected (ADR 0195).
+	CorrectedAt time.Time
+	// Parent is the order this one adds to; nil when it adds to nothing, and
+	// its ID alone when the parent could not be read.
+	Parent *orderRow
+	// Additions are the orders that add to this one (ADR 0192).
+	Additions []orderRow
+	// AdditionsUnread says the additions could not be read. The page still
+	// shows the order: a secondary read failing is not the order failing.
+	AdditionsUnread bool
+}
+
+// addressLines lays an address record out the way a label reads: the name, the
+// company, the street lines, then postal code, city and province on one line,
+// the country and the phone. Empty parts are left out.
+func addressLines(value any) []string {
+	address, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	text := func(name string) string { return strings.TrimSpace(stringValue(address[name])) }
+	joined := func(parts ...string) string {
+		kept := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if part != "" {
+				kept = append(kept, part)
+			}
+		}
+
+		return strings.Join(kept, " ")
+	}
+
+	var lines []string
+	for _, line := range []string{
+		joined(text("first_name"), text("last_name")),
+		text("company"),
+		text("address_1"),
+		text("address_2"),
+		joined(text("postal_code"), text("city"), text("province")),
+		text("country_code"),
+		text("phone"),
+	} {
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+
+	return lines
 }
 
 // listOrders renders the order list.
@@ -149,7 +214,8 @@ func (u *UI) showOrder(w http.ResponseWriter, r *http.Request) {
 		Fields: []string{
 			fieldID, fieldDisplayID, fieldStatus, fieldEmail, fieldCurrencyCod,
 			fieldSubtotal, fieldDiscount, fieldTax, fieldShipping, fieldTotal,
-			fieldPlacedAt,
+			fieldPlacedAt, fieldAddsToOrderID, fieldShippingAddress,
+			fieldBillingAddress, fieldShippingAddressCorrectedAt,
 		},
 		Filters: map[string]any{filterID: []string{id}},
 		Limit:   1,
@@ -174,12 +240,63 @@ func (u *UI) showOrder(w http.ResponseWriter, r *http.Request) {
 	detail.Discount, _ = amountField(record, fieldDiscount, detail.Currency, scales)
 	detail.Tax, _ = amountField(record, fieldTax, detail.Currency, scales)
 	detail.Shipping, _ = amountField(record, fieldShipping, detail.Currency, scales)
+	detail.ShipTo = addressLines(record[fieldShippingAddress])
+	detail.BillTo = addressLines(record[fieldBillingAddress])
+	detail.CorrectedAt = recordTime(record, fieldShippingAddressCorrectedAt)
+	detail.Parent = u.parentOrder(r, recordString(record, fieldAddsToOrderID))
+	detail.Additions, detail.AdditionsUnread = u.additionsOf(r, detail.ID, scales)
 
 	u.templates.render(w, r, http.StatusOK, "order.gohtml", map[string]any{
 		titleKey:     "Order " + detail.DisplayID,
 		"Order":      detail,
 		"OrdersPath": OrdersPath,
 	})
+}
+
+// parentOrder reads the order an addition adds to; nil when it adds to nothing.
+//
+// A parent that cannot be read is still named by its id: the link is the fact
+// the operator needs, and its number is only the label.
+func (u *UI) parentOrder(r *http.Request, parentID string) *orderRow {
+	if parentID == "" {
+		return nil
+	}
+
+	records, err := u.catalog.Graph(r.Context(), query.GraphSpec{
+		Entity:  EntityOrder,
+		Fields:  []string{fieldID, fieldDisplayID},
+		Filters: map[string]any{filterID: []string{parentID}},
+		Limit:   1,
+	})
+	if err != nil || len(records) == 0 {
+		return &orderRow{ID: parentID}
+	}
+	parent := orderRowOf(records[0], nil)
+
+	return &parent
+}
+
+// additionsOf reads the orders that add to the given one, newest first; the
+// second value reports a read that failed.
+func (u *UI) additionsOf(r *http.Request, orderID string, scales map[string]int) ([]orderRow, bool) {
+	records, err := u.catalog.Graph(r.Context(), query.GraphSpec{
+		Entity: EntityOrder,
+		Fields: []string{
+			fieldID, fieldDisplayID, fieldStatus, fieldCurrencyCod, fieldTotal, fieldPlacedAt,
+		},
+		Filters: map[string]any{fieldAddsToOrderID: orderID},
+		Limit:   additionsPerOrder,
+	})
+	if err != nil {
+		return nil, true
+	}
+
+	rows := make([]orderRow, 0, len(records))
+	for _, record := range records {
+		rows = append(rows, orderRowOf(record, scales))
+	}
+
+	return rows, false
 }
 
 // orderRowOf turns an order record into a row.

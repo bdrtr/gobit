@@ -178,47 +178,47 @@ var personalColumns = []personaldata.Holding{
 		OnErasure: personaldata.Emptied,
 	},
 	{
-		Table: tableOrderAddresses, Column: "first_name", Kind: personaldata.Named,
+		Table: tableOrderAddresses, Column: columnFirstName, Kind: personaldata.Named,
 		Why:       "the buyer's given name as it was written on the order",
 		OnErasure: personaldata.Emptied,
 	},
 	{
-		Table: tableOrderAddresses, Column: "last_name", Kind: personaldata.Named,
+		Table: tableOrderAddresses, Column: columnLastName, Kind: personaldata.Named,
 		Why:       "the buyer's family name as it was written on the order",
 		OnErasure: personaldata.Emptied,
 	},
 	{
-		Table: tableOrderAddresses, Column: "company", Kind: personaldata.Named,
+		Table: tableOrderAddresses, Column: columnCompany, Kind: personaldata.Named,
 		Why:       "the company on the address; a one-person business is a person",
 		OnErasure: personaldata.Emptied,
 	},
 	{
-		Table: tableOrderAddresses, Column: "address_1", Kind: personaldata.Named,
+		Table: tableOrderAddresses, Column: columnAddress1, Kind: personaldata.Named,
 		Why:       "the street the order was shipped to or billed to",
 		OnErasure: personaldata.Emptied,
 	},
 	{
-		Table: tableOrderAddresses, Column: "address_2", Kind: personaldata.Named,
+		Table: tableOrderAddresses, Column: columnAddress2, Kind: personaldata.Named,
 		Why:       "the rest of the street address — the building, the floor, the flat",
 		OnErasure: personaldata.Emptied,
 	},
 	{
-		Table: tableOrderAddresses, Column: "city", Kind: personaldata.Named,
+		Table: tableOrderAddresses, Column: columnCity, Kind: personaldata.Named,
 		Why:       "the city of the address",
 		OnErasure: personaldata.Emptied,
 	},
 	{
-		Table: tableOrderAddresses, Column: "province", Kind: personaldata.Named,
+		Table: tableOrderAddresses, Column: columnProvince, Kind: personaldata.Named,
 		Why:       "the province or district of the address",
 		OnErasure: personaldata.Emptied,
 	},
 	{
-		Table: tableOrderAddresses, Column: "postal_code", Kind: personaldata.Named,
+		Table: tableOrderAddresses, Column: columnPostalCode, Kind: personaldata.Named,
 		Why:       "the postal code, which in a small district reaches a household on its own",
 		OnErasure: personaldata.Emptied,
 	},
 	{
-		Table: tableOrderAddresses, Column: "country_code", Kind: personaldata.Named,
+		Table: tableOrderAddresses, Column: columnCountryCode, Kind: personaldata.Named,
 		Why: "the country the order went to; it is the one address column the erasure keeps",
 		// The row itself has to survive — an absent address row already means
 		// "this order never had one", and a shop selling a download writes
@@ -227,7 +227,7 @@ var personalColumns = []personaldata.Holding{
 		OnErasure: personaldata.Kept,
 	},
 	{
-		Table: tableOrderAddresses, Column: "phone", Kind: personaldata.Named,
+		Table: tableOrderAddresses, Column: columnPhone, Kind: personaldata.Named,
 		Why:       "the number given for the delivery",
 		OnErasure: personaldata.Emptied,
 	},

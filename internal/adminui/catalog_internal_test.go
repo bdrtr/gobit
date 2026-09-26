@@ -35,6 +35,11 @@ type fakeCatalog struct {
 	// state the panel has to survive, and a fake that could only fail
 	// everything at once could not produce it.
 	errByEntity map[string]error
+	// answer, when set, answers a read by what it ASKS: a screen that reads one
+	// entity three ways (an order, its parent, its additions) needs three
+	// answers, and a fake keyed by entity alone would hand the order back as
+	// its own addition. handled false falls through to byEntity.
+	answer func(spec query.GraphSpec) (records []query.Record, err error, handled bool)
 
 	specs []query.GraphSpec
 }
@@ -49,6 +54,11 @@ func (f *fakeCatalog) Graph(_ context.Context, spec query.GraphSpec) ([]query.Re
 	}
 	if err := f.errByEntity[spec.Entity]; err != nil {
 		return nil, err
+	}
+	if f.answer != nil {
+		if records, err, handled := f.answer(spec); handled {
+			return records, err
+		}
 	}
 
 	return f.byEntity[spec.Entity], nil

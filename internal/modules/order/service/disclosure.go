@@ -118,16 +118,16 @@ var (
 
 	addressValues = disclosureValues[models.OrderAddress]{
 		"source_address_id": func(a models.OrderAddress) any { return textValue(a.SourceAddressID) },
-		"first_name":        func(a models.OrderAddress) any { return textValue(a.FirstName) },
-		"last_name":         func(a models.OrderAddress) any { return textValue(a.LastName) },
-		"company":           func(a models.OrderAddress) any { return textValue(a.Company) },
-		"address_1":         func(a models.OrderAddress) any { return textValue(a.Address1) },
-		"address_2":         func(a models.OrderAddress) any { return textValue(a.Address2) },
-		"city":              func(a models.OrderAddress) any { return textValue(a.City) },
-		"province":          func(a models.OrderAddress) any { return textValue(a.Province) },
-		"postal_code":       func(a models.OrderAddress) any { return textValue(a.PostalCode) },
-		"country_code":      func(a models.OrderAddress) any { return textValue(a.CountryCode) },
-		"phone":             func(a models.OrderAddress) any { return textValue(a.Phone) },
+		columnFirstName:     func(a models.OrderAddress) any { return textValue(a.FirstName) },
+		columnLastName:      func(a models.OrderAddress) any { return textValue(a.LastName) },
+		columnCompany:       func(a models.OrderAddress) any { return textValue(a.Company) },
+		columnAddress1:      func(a models.OrderAddress) any { return textValue(a.Address1) },
+		columnAddress2:      func(a models.OrderAddress) any { return textValue(a.Address2) },
+		columnCity:          func(a models.OrderAddress) any { return textValue(a.City) },
+		columnProvince:      func(a models.OrderAddress) any { return textValue(a.Province) },
+		columnPostalCode:    func(a models.OrderAddress) any { return textValue(a.PostalCode) },
+		columnCountryCode:   func(a models.OrderAddress) any { return textValue(a.CountryCode) },
+		columnPhone:         func(a models.OrderAddress) any { return textValue(a.Phone) },
 		columnMetadata:      func(a models.OrderAddress) any { return jsonValue(a.Metadata) },
 	}
 

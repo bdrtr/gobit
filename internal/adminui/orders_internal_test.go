@@ -1,6 +1,7 @@
 package adminui
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -230,4 +231,116 @@ func TestTheStylesheetOpensWithoutAnIdentity(t *testing.T) {
 	assert.Contains(t, ExemptPaths(), StylesheetPath)
 	assert.Contains(t, ExemptPaths(), LoginPath)
 	assert.Len(t, ExemptPaths(), 2, "nothing else in the panel opens without an identity")
+}
+
+// addressedOrderCatalog answers the order page's three reads apart: the order
+// with its addresses, its parent by id, and its additions by filter.
+func addressedOrderCatalog(additionsErr error) *fakeCatalog {
+	order := orderRecord()
+	order["adds_to_order_id"] = "order_parent"
+	order["shipping_address"] = map[string]any{
+		"first_name": "Ada", "last_name": "Lovelace", "address_1": "12 Right St",
+		"postal_code": "62701", "city": "Springfield", "country_code": "TR", "phone": "555 0100",
+	}
+	order["billing_address"] = map[string]any{"company": "Engines Ltd", "country_code": "TR"}
+	order["shipping_address_corrected_at"] = time.Date(2026, 9, 26, 10, 30, 0, 0, time.UTC)
+
+	return &fakeCatalog{
+		byEntity: map[string][]query.Record{EntityRegion: {currencyRecord("TRY", 2)}},
+		answer: func(spec query.GraphSpec) ([]query.Record, error, bool) {
+			if spec.Entity != EntityOrder {
+				return nil, nil, false
+			}
+			if _, ok := spec.Filters["adds_to_order_id"]; ok {
+				if additionsErr != nil {
+					return nil, additionsErr, true
+				}
+				return []query.Record{{
+					"id": "order_addition", "display_id": int64(1057), "status": "pending",
+					"currency_code": "TRY", "total": int64(12_000),
+				}}, nil, true
+			}
+			ids, _ := spec.Filters["id"].([]string)
+			if len(ids) == 1 && ids[0] == "order_parent" {
+				return []query.Record{{"id": "order_parent", "display_id": int64(1000)}}, nil, true
+			}
+			return []query.Record{order}, nil, true
+		},
+	}
+}
+
+// TestTheOrderPageShowsWhereItGoes renders the addresses, the correction, the
+// parent and the additions (ADR 0196).
+func TestTheOrderPageShowsWhereItGoes(t *testing.T) {
+	t.Parallel()
+
+	catalog := addressedOrderCatalog(nil)
+	rec := getOrderPage(newCatalogPanel(t, catalog), OrdersPath+"/order_1")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Ada Lovelace", "12 Right St", "62701 Springfield", "555 0100",
+		"Engines Ltd",
+		"corrected 2026-09-26 10:30 UTC",
+		`href="` + OrdersPath + `/order_parent">#1000</a>`,
+		`href="` + OrdersPath + `/order_addition">#1057</a>`,
+		"120.00 TRY",
+	} {
+		assert.Contains(t, body, want)
+	}
+
+	spec, ok := catalog.specFor(EntityOrder)
+	require.True(t, ok)
+	for _, field := range []string{
+		fieldShippingAddress, fieldBillingAddress, fieldShippingAddressCorrectedAt, fieldAddsToOrderID,
+	} {
+		assert.Contains(t, spec.Fields, field, "the order read did not ask for %s", field)
+	}
+	var additions query.GraphSpec
+	for _, recorded := range catalog.specs {
+		if _, ok := recorded.Filters[fieldAddsToOrderID]; ok {
+			additions = recorded
+		}
+	}
+	assert.Equal(t, "order_1", additions.Filters[fieldAddsToOrderID],
+		"the additions are read by the order's own id")
+}
+
+// TestAnOrderPageSurvivesItsAdditionsFailing keeps the order on screen when
+// the secondary read fails, and says what is missing.
+func TestAnOrderPageSurvivesItsAdditionsFailing(t *testing.T) {
+	t.Parallel()
+
+	rec := getOrderPage(newCatalogPanel(t, addressedOrderCatalog(errors.New("read layer down"))),
+		OrdersPath+"/order_1")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "12 Right St")
+	assert.Contains(t, rec.Body.String(), "The additions to this order could not be read.")
+}
+
+// TestAnOrderWithNoAddressesSaysSo prints the absence rather than an empty box.
+func TestAnOrderWithNoAddressesSaysSo(t *testing.T) {
+	t.Parallel()
+
+	catalog := &fakeCatalog{byEntity: map[string][]query.Record{
+		EntityRegion: {currencyRecord("TRY", 2)},
+	}, answer: func(spec query.GraphSpec) ([]query.Record, error, bool) {
+		if _, ok := spec.Filters[fieldAddsToOrderID]; ok {
+			return nil, nil, true
+		}
+		if spec.Entity == EntityOrder {
+			return []query.Record{orderRecord()}, nil, true
+		}
+		return nil, nil, false
+	}}
+	rec := getOrderPage(newCatalogPanel(t, catalog), OrdersPath+"/order_1")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	assert.Contains(t, body, "no shipping address")
+	assert.Contains(t, body, "no billing address")
+	assert.Contains(t, body, "Nothing has been added to this order.")
+	assert.NotContains(t, body, "Adds to")
 }
