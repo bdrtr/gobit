@@ -21,6 +21,11 @@ SELECT c.id, 'claim'::text, c.order_id, o.currency_code
 FROM order_claims c
 JOIN orders o ON o.id = c.order_id
 WHERE c.id = ANY ($1::text[])
+UNION ALL
+SELECT x.id, 'exchange'::text, x.order_id, o.currency_code
+FROM order_exchanges x
+JOIN orders o ON o.id = x.order_id
+WHERE x.id = ANY ($1::text[])
 `
 
 type JournalCausesRow struct {
@@ -166,6 +171,65 @@ func (q *Queries) JournalDeliveryUpgrades(ctx context.Context, arg JournalDelive
 			&i.OrderID,
 			&i.Difference,
 			&i.CreatedAt,
+			&i.CurrencyCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const journalExchangesFunded = `-- name: JournalExchangesFunded :many
+SELECT x.id, x.order_id, x.difference_due, x.funded_at::timestamptz AS funded_at, o.currency_code
+FROM order_exchanges x
+JOIN orders o ON o.id = x.order_id
+WHERE x.funded_at >= $1 AND x.funded_at < $2
+  AND ($3::text IS NULL OR o.currency_code = $3::text)
+ORDER BY x.funded_at, x.id
+LIMIT $4
+`
+
+type JournalExchangesFundedParams struct {
+	FromAt       pgtype.Timestamptz
+	ToAt         pgtype.Timestamptz
+	CurrencyCode *string
+	RowLimit     int32
+}
+
+type JournalExchangesFundedRow struct {
+	ID            string
+	OrderID       string
+	DifferenceDue int64
+	FundedAt      pgtype.Timestamptz
+	CurrencyCode  string
+}
+
+// An exchange whose difference was collected, at the moment it was funded
+// (ADR 0203). funded_at survives the withdrawal that sends the money back, so
+// the entry stays where it was and the refund reverses it.
+func (q *Queries) JournalExchangesFunded(ctx context.Context, arg JournalExchangesFundedParams) ([]JournalExchangesFundedRow, error) {
+	rows, err := q.db.Query(ctx, journalExchangesFunded,
+		arg.FromAt,
+		arg.ToAt,
+		arg.CurrencyCode,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []JournalExchangesFundedRow{}
+	for rows.Next() {
+		var i JournalExchangesFundedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderID,
+			&i.DifferenceDue,
+			&i.FundedAt,
 			&i.CurrencyCode,
 		); err != nil {
 			return nil, err

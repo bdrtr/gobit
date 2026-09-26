@@ -77,6 +77,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **An exchange's difference is on the books** (ADR 0203). **For API
+  consumers:** `GET /admin/v1/order-journal` gains two kinds: a funded exchange
+  is an `exchange_funded` entry at its funding that debits `receivable` and
+  credits `sales`, and a refund naming an exchange is an `exchange_refunded`
+  entry the other way. Over the two journals an exchanged order now closes.
+  **For operators:** order migration 000027 adds an index.
+
 - **The conformance kit checks a shipping provider** (ADR 0202). **For
   embedders:** `core/providertest.Fulfillment(t, p, in)` opens a shipment
   through the provider with a destination made of markers, repeats it and

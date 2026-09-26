@@ -136,6 +136,8 @@ func kindOrder(kind models.JournalKind) int {
 //	claim refunded    Dr claim_allowances    Cr receivable
 //	delivery changed  Dr shipping            Cr receivable
 //	delivery upgraded Dr receivable          Cr shipping
+//	exchange funded   Dr receivable          Cr sales
+//	exchange refunded Dr sales               Cr receivable
 //
 // An order balances because its table holds it to
 // total = subtotal - discount_total + tax_total + shipping_total; the entry is
@@ -176,7 +178,7 @@ func journalEntry(f *models.JournalFact) (models.JournalEntry, error) {
 			entry.Lines = append(entry.Lines, line)
 		}
 	case models.JournalCreditLine, models.JournalReturnRefunded, models.JournalClaimRefunded,
-		models.JournalDeliveryChanged:
+		models.JournalDeliveryChanged, models.JournalExchangeRefunded:
 		if f.Amount <= 0 {
 			return models.JournalEntry{}, errors.Internal(CodeInvalidInput,
 				"the journal read %s %s of %d; it moves a positive amount", f.Kind, f.ID, f.Amount)
@@ -185,17 +187,17 @@ func journalEntry(f *models.JournalFact) (models.JournalEntry, error) {
 			{Account: givenBackTo[f.Kind], Debit: f.Amount},
 			{Account: models.AccountReceivable, Credit: f.Amount},
 		}
-	case models.JournalDeliveryUpgraded:
-		// A dearer delivery adds to what the order owes and to the shipping
-		// it charged; the payment module's capture of it credits receivable
-		// (ADR 0200).
+	case models.JournalDeliveryUpgraded, models.JournalExchangeFunded:
+		// A dearer delivery or an exchange's difference adds to what the
+		// order owes and to what it charged; the payment module's capture of
+		// it credits receivable (ADR 0200, 0203).
 		if f.Amount <= 0 {
 			return models.JournalEntry{}, errors.Internal(CodeInvalidInput,
 				"the journal read %s %s of %d; it moves a positive amount", f.Kind, f.ID, f.Amount)
 		}
 		entry.Lines = []models.JournalLine{
 			{Account: models.AccountReceivable, Debit: f.Amount},
-			{Account: models.AccountShipping, Credit: f.Amount},
+			{Account: chargedTo[f.Kind], Credit: f.Amount},
 		}
 	default:
 		return models.JournalEntry{}, errors.Internal(CodeInvalidInput,
@@ -245,6 +247,18 @@ var givenBackTo = map[models.JournalKind]models.JournalAccount{
 	// A cheaper delivery gives back shipping the order charged, not a
 	// concession (ADR 0199).
 	models.JournalDeliveryChanged: models.AccountShipping,
+	// A refund of an exchange's difference reverses the sale its funding
+	// booked (ADR 0203).
+	models.JournalExchangeRefunded: models.AccountSales,
+}
+
+// chargedTo is the account each kind of amount added to what the order owes
+// is credited to.
+var chargedTo = map[models.JournalKind]models.JournalAccount{
+	models.JournalDeliveryUpgraded: models.AccountShipping,
+	// An exchange's positive difference is goods sold for more than the goods
+	// they replace (ADR 0203).
+	models.JournalExchangeFunded: models.AccountSales,
 }
 
 // CausedRefunds is the surface of the payment module ("payment.interop") the
@@ -319,8 +333,11 @@ func (s *Service) refundFacts(
 				refund.ID, cause.Kind, cause.ID, refund.CurrencyCode, cause.CurrencyCode)
 		}
 		kind := models.JournalReturnRefunded
-		if cause.Kind == "claim" {
+		switch cause.Kind {
+		case "claim":
 			kind = models.JournalClaimRefunded
+		case "exchange":
+			kind = models.JournalExchangeRefunded
 		}
 		facts = append(facts, models.JournalFact{
 			ID: refund.ID, Kind: kind, OrderID: cause.OrderID,

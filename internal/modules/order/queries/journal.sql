@@ -46,6 +46,18 @@ WHERE dc.difference > 0
 ORDER BY dc.created_at, dc.id
 LIMIT sqlc.arg('row_limit');
 
+-- An exchange whose difference was collected, at the moment it was funded
+-- (ADR 0203). funded_at survives the withdrawal that sends the money back, so
+-- the entry stays where it was and the refund reverses it.
+-- name: JournalExchangesFunded :many
+SELECT x.id, x.order_id, x.difference_due, x.funded_at::timestamptz AS funded_at, o.currency_code
+FROM order_exchanges x
+JOIN orders o ON o.id = x.order_id
+WHERE x.funded_at >= sqlc.arg('from_at') AND x.funded_at < sqlc.arg('to_at')
+  AND (sqlc.narg('currency_code')::text IS NULL OR o.currency_code = sqlc.narg('currency_code')::text)
+ORDER BY x.funded_at, x.id
+LIMIT sqlc.arg('row_limit');
+
 -- The order records a refund can name as its cause (ADR 0189): which order a
 -- return or a claim belongs to, and that order's currency.
 -- name: JournalCauses :many
@@ -57,4 +69,9 @@ UNION ALL
 SELECT c.id, 'claim'::text, c.order_id, o.currency_code
 FROM order_claims c
 JOIN orders o ON o.id = c.order_id
-WHERE c.id = ANY (sqlc.arg('ids')::text[]);
+WHERE c.id = ANY (sqlc.arg('ids')::text[])
+UNION ALL
+SELECT x.id, 'exchange'::text, x.order_id, o.currency_code
+FROM order_exchanges x
+JOIN orders o ON o.id = x.order_id
+WHERE x.id = ANY (sqlc.arg('ids')::text[]);

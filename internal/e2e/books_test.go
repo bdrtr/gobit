@@ -5,6 +5,7 @@ package e2e
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -109,4 +110,103 @@ func TestTheBooksCloseForAReturnedOrder(t *testing.T) {
 	assert.Zero(t, receivable, "the order owes nothing on the two journals together")
 	assert.Equal(t, returnRefundAmount, givenBack, "the return gave back exactly what its refund sent")
 	assert.Equal(t, order.Subtotal, sales)
+}
+
+// exchangeBooks is what the two journals say about one order and the
+// collections that paid for it.
+type exchangeBooks struct {
+	receivable, sales int64
+	kinds             []ordermodels.JournalKind
+}
+
+// readExchangeBooks sums receivable over the order's entries and the
+// collections' captures and refunds, and sales over the order's entries.
+func readExchangeBooks(t *testing.T, from time.Time, orderID string, collections ...string) exchangeBooks {
+	t.Helper()
+
+	window := time.Now().UTC().Add(time.Minute)
+	payments, err := paymentSvc.Journal(t.Context(), paymentsvc.JournalQuery{From: from, To: window})
+	require.NoError(t, err)
+	orders, err := orderSvc.Journal(t.Context(), ordersvc.JournalQuery{From: from, To: window})
+	require.NoError(t, err)
+
+	var books exchangeBooks
+	for _, entry := range orders.Entries {
+		if entry.OrderID != orderID {
+			continue
+		}
+		books.kinds = append(books.kinds, entry.Kind)
+		for _, line := range entry.Lines {
+			switch line.Account {
+			case ordermodels.AccountReceivable:
+				books.receivable += line.Debit - line.Credit
+			case ordermodels.AccountSales:
+				books.sales += line.Credit - line.Debit
+			}
+		}
+	}
+	for _, entry := range payments.Entries {
+		if !slices.Contains(collections, entry.CollectionID) {
+			continue
+		}
+		for _, line := range entry.Lines {
+			if line.Account == paymentmodels.AccountReceivable {
+				books.receivable += line.Debit - line.Credit
+			}
+		}
+	}
+
+	return books
+}
+
+// TestTheBooksCloseForAnExchange is ADR 0203's claim on the production wiring:
+// an exchange's difference, collected and then sent back, leaves the order
+// owing nothing on the two journals at every step, and its sales where they
+// were.
+func TestTheBooksCloseForAnExchange(t *testing.T) {
+	ctx := t.Context()
+	from := time.Now().UTC().Add(-time.Second)
+
+	customerID, email := newCustomer(ctx, t)
+	variantID, _ := newStockedVariant(ctx, t, "E2E Exchange Books", map[string]int64{
+		taxedCurrency: happyUnitPrice,
+	}, happyInitialStock)
+	cartID, _ := prepareCart(ctx, t, customerID, variantID, happyQuantity)
+	placed, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID: cartID, LocationID: stockLocationID, PaymentProviderID: paymentmanual.ID,
+		PaymentData: paymentBehavior(t, paymentmanual.OutcomeAuthorize), Email: email,
+		ExpectedTotal: happyTotal,
+	})
+	require.NoError(t, err)
+	order, err := orderSvc.GetOrder(ctx, placed.OrderID)
+	require.NoError(t, err)
+
+	opened, err := adminRequestWithBody(http.MethodPost, "/admin/v1/orders/"+placed.OrderID+"/exchanges",
+		map[string]any{"difference_due": exchangeDifference, "note": "books"})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, opened.Code, opened.Body.String())
+	var exchange exchangeResponse
+	require.NoError(t, json.Unmarshal(opened.Body.Bytes(), &exchange))
+	base := "/admin/v1/orders/" + placed.OrderID + "/exchanges/" + exchange.Data.ID
+
+	collectionID := collectDifference(t, placed.OrderID, exchangeDifference, exchangeDifference)
+	funded, err := adminRequestWithBody(http.MethodPost, base+"/funding",
+		map[string]any{"payment_collection_id": collectionID})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, funded.Code, funded.Body.String())
+
+	books := readExchangeBooks(t, from, placed.OrderID, placed.PaymentCollectionID, collectionID)
+	assert.Zero(t, books.receivable, "funded, the order owes nothing on the two journals")
+	assert.Equal(t, order.Subtotal+exchangeDifference, books.sales, "the difference is sold")
+
+	sentBack, err := adminRequestWithBody(http.MethodPost, base+"/refund", map[string]any{"reason": "books"})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, sentBack.Code, sentBack.Body.String())
+
+	books = readExchangeBooks(t, from, placed.OrderID, placed.PaymentCollectionID, collectionID)
+	assert.Equal(t, []ordermodels.JournalKind{
+		ordermodels.JournalOrderPlaced, ordermodels.JournalExchangeFunded, ordermodels.JournalExchangeRefunded,
+	}, books.kinds)
+	assert.Zero(t, books.receivable, "sent back, the order still owes nothing")
+	assert.Equal(t, order.Subtotal, books.sales, "and the difference is no longer sold")
 }

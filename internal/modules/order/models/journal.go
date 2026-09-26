@@ -61,6 +61,12 @@ const (
 	// JournalDeliveryUpgraded is a delivery changed to a dearer service and
 	// paid for (ADR 0200); its id is the change's.
 	JournalDeliveryUpgraded JournalKind = "delivery_upgraded"
+	// JournalExchangeFunded is an exchange whose positive difference was
+	// collected, at its funded_at (ADR 0203).
+	JournalExchangeFunded JournalKind = "exchange_funded"
+	// JournalExchangeRefunded is a refund whose cause is one of the order's
+	// exchanges: the difference sent back (ADR 0203).
+	JournalExchangeRefunded JournalKind = "exchange_refunded"
 )
 
 // JournalLine is one side of an entry: exactly one of Debit and Credit is
@@ -110,10 +116,10 @@ type JournalFact struct {
 
 // JournalCause is an order record a refund can name as its cause (ADR 0189).
 type JournalCause struct {
-	// ID is the return's or the claim's id, which the refund carries as its
-	// reference (ADR 0187).
+	// ID is the return's, the claim's or the exchange's id, which the refund
+	// carries as its reference (ADR 0187).
 	ID string
-	// Kind is "return" or "claim".
+	// Kind is "return", "claim" or "exchange".
 	Kind         string
 	OrderID      string
 	CurrencyCode string

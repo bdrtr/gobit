@@ -49,7 +49,15 @@ func (r *Repository) JournalFacts(
 		return nil, classify(err, codeQueryFailed, "the dearer deliveries of the journal could not be read")
 	}
 
-	out := make([]models.JournalFact, 0, len(placed)+len(canceled)+len(credits)+len(upgrades))
+	exchanges, err := q.JournalExchangesFunded(ctx, orderdb.JournalExchangesFundedParams{
+		FromAt: fromAt, ToAt: toAt, CurrencyCode: currency, RowLimit: rowLimit,
+	})
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "the funded exchanges of the journal could not be read")
+	}
+
+	out := make([]models.JournalFact, 0,
+		len(placed)+len(canceled)+len(credits)+len(upgrades)+len(exchanges))
 	for i := range placed {
 		row := &placed[i]
 		out = append(out, models.JournalFact{
@@ -87,13 +95,20 @@ func (r *Repository) JournalFacts(
 			OccurredAt: toTime(row.CreatedAt), CurrencyCode: row.CurrencyCode, Amount: row.Difference,
 		})
 	}
+	for i := range exchanges {
+		row := &exchanges[i]
+		out = append(out, models.JournalFact{
+			ID: row.ID, Kind: models.JournalExchangeFunded, OrderID: row.OrderID,
+			OccurredAt: toTime(row.FundedAt), CurrencyCode: row.CurrencyCode, Amount: row.DifferenceDue,
+		})
+	}
 
 	return out, nil
 }
 
-// JournalCauses reads which order each of the given returns and claims belongs
-// to (ADR 0189). An id that is neither — an exchange's, or nothing of this
-// module's — has no row.
+// JournalCauses reads which order each of the given returns, claims and
+// exchanges belongs to (ADR 0189, 0203). An id that is none of them has no
+// row.
 func (r *Repository) JournalCauses(ctx context.Context, ids []string) ([]models.JournalCause, error) {
 	if len(ids) == 0 {
 		return []models.JournalCause{}, nil

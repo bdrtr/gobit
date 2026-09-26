@@ -87,9 +87,11 @@ func TestTheOrderChartOfAccounts(t *testing.T) {
 			OccurredAt: orderJournalStart.Add(4 * time.Minute), CurrencyCode: "TRY", Amount: 200},
 		models.JournalFact{ID: "odchg_2", Kind: models.JournalDeliveryUpgraded, OrderID: "order_1",
 			OccurredAt: orderJournalStart.Add(5 * time.Minute), CurrencyCode: "TRY", Amount: 300},
+		models.JournalFact{ID: "exch_1", Kind: models.JournalExchangeFunded, OrderID: "order_1",
+			OccurredAt: orderJournalStart.Add(6 * time.Minute), CurrencyCode: "TRY", Amount: 400},
 	)
 	require.NoError(t, err)
-	require.Len(t, journal.Entries, 5)
+	require.Len(t, journal.Entries, 6)
 
 	placed := []models.JournalLine{
 		{Account: models.AccountReceivable, Debit: 11_300},
@@ -120,6 +122,11 @@ func TestTheOrderChartOfAccounts(t *testing.T) {
 		{Account: models.AccountReceivable, Debit: 300},
 		{Account: models.AccountShipping, Credit: 300},
 	}, journal.Entries[4].Lines, "a dearer delivery is owed and charged as shipping (ADR 0200)")
+
+	assert.Equal(t, []models.JournalLine{
+		{Account: models.AccountReceivable, Debit: 400},
+		{Account: models.AccountSales, Credit: 400},
+	}, journal.Entries[5].Lines, "an exchange's collected difference is owed and sold (ADR 0203)")
 }
 
 // TestTheOrderJournalBalances holds every entry and the trial balance to
@@ -192,9 +199,10 @@ func TestAFreeOrderIsNotAnEntry(t *testing.T) {
 	assert.Empty(t, journal.Entries)
 }
 
-// TestARefundIsBookedAgainstItsCause is ADR 0189's reading: a refund naming a
-// return gives back revenue, one naming a claim is an allowance, and one naming
-// anything else — an exchange, or no record of this module — is not an entry.
+// TestARefundIsBookedAgainstItsCause is ADR 0189's reading and 0203's: a refund
+// naming a return gives back revenue, one naming a claim is an allowance, one
+// naming an exchange reverses the sale its funding booked, and one naming no
+// record of this module is not an entry.
 func TestARefundIsBookedAgainstItsCause(t *testing.T) {
 	t.Parallel()
 
@@ -202,11 +210,13 @@ func TestARefundIsBookedAgainstItsCause(t *testing.T) {
 	store.causes = []models.JournalCause{
 		{ID: "ret_1", Kind: "return", OrderID: "order_1", CurrencyCode: "TRY"},
 		{ID: "claim_1", Kind: "claim", OrderID: "order_2", CurrencyCode: "TRY"},
+		{ID: "exch_1", Kind: "exchange", OrderID: "order_3", CurrencyCode: "TRY"},
 	}
 	svc, err := service.New(service.Options{Repo: store, Events: newFakeBus(), Refunds: scriptedRefunds{body: `[
 		{"id":"refund_a","reference":"ret_1","amount":1200,"currency_code":"TRY","refunded_at":"2026-09-02T10:00:00Z"},
 		{"id":"refund_b","reference":"claim_1","amount":300,"currency_code":"TRY","refunded_at":"2026-09-03T10:00:00Z"},
-		{"id":"refund_c","reference":"oexc_1","amount":900,"currency_code":"TRY","refunded_at":"2026-09-04T10:00:00Z"}
+		{"id":"refund_c","reference":"exch_1","amount":900,"currency_code":"TRY","refunded_at":"2026-09-04T10:00:00Z"},
+		{"id":"refund_d","reference":"nothing_1","amount":50,"currency_code":"TRY","refunded_at":"2026-09-05T10:00:00Z"}
 	]`}})
 	require.NoError(t, err)
 
@@ -215,7 +225,7 @@ func TestARefundIsBookedAgainstItsCause(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.Len(t, journal.Entries, 2, "the exchange's refund is not an entry")
+	require.Len(t, journal.Entries, 3, "a refund naming no record of the module is not an entry")
 	assert.Equal(t, models.JournalEntry{
 		ID: "refund_a", Kind: models.JournalReturnRefunded, OrderID: "order_1",
 		OccurredAt: time.Date(2026, time.September, 2, 10, 0, 0, 0, time.UTC), CurrencyCode: "TRY",
@@ -229,6 +239,12 @@ func TestARefundIsBookedAgainstItsCause(t *testing.T) {
 		{Account: models.AccountReceivable, Credit: 300},
 	}, journal.Entries[1].Lines)
 	assert.Equal(t, "order_2", journal.Entries[1].OrderID)
+	assert.Equal(t, models.JournalExchangeRefunded, journal.Entries[2].Kind)
+	assert.Equal(t, "order_3", journal.Entries[2].OrderID)
+	assert.Equal(t, []models.JournalLine{
+		{Account: models.AccountSales, Debit: 900},
+		{Account: models.AccountReceivable, Credit: 900},
+	}, journal.Entries[2].Lines, "an exchange's refund reverses the sale its funding booked")
 }
 
 // TestARefundInAnotherCurrencyThanItsOrderIsAnError: the reference would name

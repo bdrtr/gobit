@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/internal/modules/order/models"
+	"github.com/bdrtr/gobit/internal/modules/order/repository"
 	"github.com/bdrtr/gobit/internal/modules/order/service"
 )
 
@@ -64,4 +65,43 @@ func TestTheOrderJournalReadsTheRealRecords(t *testing.T) {
 	assert.Equal(t, []models.JournalKind{models.JournalOrderPlaced, models.JournalOrderCanceled}, kinds[canceled.ID])
 	assert.Equal(t, credited.Total-400, receivable[credited.ID], "the total less what was written off")
 	assert.Zero(t, receivable[canceled.ID], "a canceled order owes nothing")
+}
+
+// TestAnExchangesDifferenceIsOnTheRealBooks is ADR 0203 on the real schema:
+// a funded exchange is an entry at its funding, and the exchange is a cause a
+// refund can name.
+func TestAnExchangesDifferenceIsOnTheRealBooks(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	from := time.Now().UTC().Add(-time.Second)
+
+	placed, err := svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+	exchange, err := svc.CreateExchange(ctx, service.CreateExchangeInput{OrderID: placed.ID, DifferenceDue: 700})
+	require.NoError(t, err)
+	_, err = svc.FundExchange(ctx, exchange.ID, "pay_col_books_"+exchange.ID)
+	require.NoError(t, err)
+
+	journal, err := svc.Journal(ctx, service.JournalQuery{
+		From: from, To: time.Now().UTC().Add(time.Minute), CurrencyCode: testCurrency,
+	})
+	require.NoError(t, err)
+	var funded []models.JournalEntry
+	for _, entry := range journal.Entries {
+		if entry.OrderID == placed.ID && entry.Kind == models.JournalExchangeFunded {
+			funded = append(funded, entry)
+		}
+	}
+	require.Len(t, funded, 1)
+	assert.Equal(t, exchange.ID, funded[0].ID)
+	assert.Equal(t, []models.JournalLine{
+		{Account: models.AccountReceivable, Debit: 700},
+		{Account: models.AccountSales, Credit: 700},
+	}, funded[0].Lines)
+
+	causes, err := repository.New(testPool.Pool()).JournalCauses(ctx, []string{exchange.ID})
+	require.NoError(t, err)
+	require.Len(t, causes, 1)
+	assert.Equal(t, "exchange", causes[0].Kind)
+	assert.Equal(t, placed.ID, causes[0].OrderID)
 }
