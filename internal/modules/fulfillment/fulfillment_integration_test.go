@@ -723,9 +723,9 @@ func TestInteropSurfaceWorksEndToEnd(t *testing.T) {
 	assert.Contains(t, string(response), option.ID)
 	assert.Contains(t, string(response), `"amount":2500`)
 
-	first, err := interop.CreateFulfillment(ctx, testReference, option.ID, "interop-"+option.ID)
+	first, err := interop.CreateFulfillment(ctx, testReference, option.ID, "interop-"+option.ID, nil)
 	require.NoError(t, err)
-	second, err := interop.CreateFulfillment(ctx, testReference, option.ID, "interop-"+option.ID)
+	second, err := interop.CreateFulfillment(ctx, testReference, option.ID, "interop-"+option.ID, nil)
 	require.NoError(t, err)
 	assert.Equal(t, first, second, "the same key must produce a single shipment")
 

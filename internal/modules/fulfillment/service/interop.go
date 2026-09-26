@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 
 	"github.com/bdrtr/gobit/core/errors"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 )
 
 // This file is the fulfillment module's CROSS-MODULE surface (ADR 0001,
@@ -305,24 +306,88 @@ func (i *Interop) RankLocations(
 // to open a single fulfillment for the whole order, and per-item partial
 // shipment is the admin API's subject.
 //
+// destination is the order's shipping address as JSON, in the schema of
+// [interopDestination], or empty / "null" when the order has none. It is handed
+// to the provider and not stored here (ADR 0194).
+//
 // The counterpart on the consumer side:
 //
 //	type FulfillmentCreator interface {
-//	    CreateFulfillment(ctx context.Context, reference, optionID, idempotencyKey string) (string, error)
+//	    CreateFulfillment(ctx context.Context, reference, optionID, idempotencyKey string,
+//	        destination json.RawMessage) (string, error)
 //	}
 func (i *Interop) CreateFulfillment(
 	ctx context.Context,
 	reference, optionID, idempotencyKey string,
+	destination json.RawMessage,
 ) (string, error) {
+	address, err := decodeDestination(destination)
+	if err != nil {
+		return "", err
+	}
+
 	ful, err := i.svc.CreateFulfillment(ctx, CreateFulfillmentInput{
 		Reference:        reference,
 		ShippingOptionID: optionID,
 		IdempotencyKey:   idempotencyKey,
+		Destination:      address,
 	})
 	if err != nil {
 		return "", err
 	}
 	return ful.ID, nil
+}
+
+// interopDestination is the schema of a parcel's destination on the wire; the
+// names are the order module's, which sends it.
+type interopDestination struct {
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Company   string `json:"company"`
+	Address1  string `json:"address_1"`
+	Address2  string `json:"address_2"`
+	City      string `json:"city"`
+	// Province is the unit under the country, an il in Turkey, not the
+	// district (ADR 0067).
+	Province    string         `json:"province"`
+	PostalCode  string         `json:"postal_code"`
+	CountryCode string         `json:"country_code"`
+	Phone       string         `json:"phone"`
+	Metadata    map[string]any `json:"metadata"`
+}
+
+// decodeDestination reads the destination; nil when there is none.
+//
+// Unknown fields are refused rather than dropped: a field the sender added and
+// this side does not know would otherwise leave the carrier's label without
+// it, and nobody would see that happen.
+func decodeDestination(raw json.RawMessage) (*coreprovider.Address, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil, nil
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	decoder.DisallowUnknownFields()
+	var in interopDestination
+	if err := decoder.Decode(&in); err != nil {
+		return nil, errors.Wrap(err, errors.KindInvalid, CodeInteropRequestInvalid,
+			"the parcel's destination could not be read")
+	}
+
+	return &coreprovider.Address{
+		FirstName:   in.FirstName,
+		LastName:    in.LastName,
+		Company:     in.Company,
+		Address1:    in.Address1,
+		Address2:    in.Address2,
+		City:        in.City,
+		Province:    in.Province,
+		PostalCode:  in.PostalCode,
+		CountryCode: in.CountryCode,
+		Phone:       in.Phone,
+		Metadata:    in.Metadata,
+	}, nil
 }
 
 // CancelFulfillment cancels the fulfillment; this IS THE SAGA COMPENSATION and

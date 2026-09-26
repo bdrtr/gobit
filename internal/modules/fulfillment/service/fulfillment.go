@@ -39,8 +39,12 @@ type CreateFulfillmentInput struct {
 	// shipping-free fulfillment of a digital product, or a bulk shipment with no
 	// item breakdown).
 	Items []FulfillmentItemInput
-	// Data is the free-form data to be handed to the provider (address, branch
-	// and so on).
+	// Destination is where the parcel goes, handed to the provider as it is;
+	// nil when the caller has none (ADR 0194). This module does not store it:
+	// the order is the one holder of the address.
+	Destination *coreprovider.Address
+	// Data is the free-form data to be handed to the provider (a branch, a
+	// service level and so on); the address is Destination.
 	Data map[string]any
 	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
@@ -179,6 +183,7 @@ func (s *Service) CreateFulfillment(
 			Reference:      created.ID,
 			OptionID:       option.ID,
 			IdempotencyKey: key,
+			Destination:    in.Destination,
 			Data:           mergeProviderData(option.Data, in.Data),
 		})
 		if err != nil {

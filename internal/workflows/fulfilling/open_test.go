@@ -122,6 +122,9 @@ func TestAnUnreadableStatusStillReportsTheShipment(t *testing.T) {
 // fakeOrders stands in for the order module's surface.
 type fakeOrders struct {
 	err error
+	// destination is what ShippingAddressJSON answers; nil answers JSON null,
+	// an order with no shipping address.
+	destination map[string]any
 	// lines is what DispatchableLinesJSON answers; nil means an empty order.
 	lines    []testLine
 	linesErr error
@@ -138,13 +141,16 @@ type testLine struct {
 	Canceled   int64  `json:"canceled"`
 }
 
-// OrderContactJSON reports whether the order exists.
-func (f *fakeOrders) OrderContactJSON(context.Context, string) (json.RawMessage, error) {
+// ShippingAddressJSON reports whether the order exists, and where it goes.
+func (f *fakeOrders) ShippingAddressJSON(context.Context, string) (json.RawMessage, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
+	if f.destination == nil {
+		return json.RawMessage("null"), nil
+	}
 
-	return json.RawMessage(`{}`), nil
+	return json.Marshal(f.destination)
 }
 
 // DispatchableLinesJSON answers what the order sold and what was written off.
@@ -178,6 +184,8 @@ type fakeFulfillments struct {
 	// repeat as a fresh parcel. That is exactly what happened when the write
 	// moved, and the test caught it.
 	links *fakeLinks
+	// destination is the last destination the flow handed on.
+	destination json.RawMessage
 }
 
 // CommittedQuantities answers what the live parcels hold.
@@ -195,9 +203,10 @@ func (f *fakeFulfillments) CommittedQuantities(
 // CreateFulfillment returns the same id whatever the key, the way an idempotent
 // provider does for a repeated key.
 func (f *fakeFulfillments) CreateFulfillment(
-	ctx context.Context, reference, _, _ string,
+	ctx context.Context, reference, _, _ string, destination json.RawMessage,
 ) (string, error) {
 	f.calls++
+	f.destination = destination
 
 	if f.links != nil {
 		if err := f.links.Create(ctx, "order_fulfillment", reference, f.id); err != nil {
@@ -331,4 +340,28 @@ func TestAStatusThatCannotBeReadDoesNotPassAsOpen(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ful_1", "the opened shipment has to be named")
+}
+
+// TestTheParcelGoesWhereTheOrderWent hands the order's shipping address to the
+// carrier as the order module sent it, and hands nothing on for an order that
+// recorded none (ADR 0194).
+func TestTheParcelGoesWhereTheOrderWent(t *testing.T) {
+	t.Parallel()
+
+	orders := &fakeOrders{destination: map[string]any{
+		"first_name": "Ada", "address_1": "12 Main St", "country_code": "US",
+	}}
+	ful := &fakeFulfillments{id: "ful_1", links: newFakeLinks()}
+	flow := newFlow(t, orders, ful, ful.links)
+
+	_, err := flow.OpenForOrder(context.Background(), "order_1", "so_1", "key-1")
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"first_name":"Ada","address_1":"12 Main St","country_code":"US"}`,
+		string(ful.destination))
+
+	none := &fakeFulfillments{id: "ful_2", links: newFakeLinks()}
+	_, err = newFlow(t, &fakeOrders{}, none, none.links).
+		OpenForOrder(context.Background(), "order_2", "so_1", "key-2")
+	require.NoError(t, err)
+	assert.JSONEq(t, `null`, string(none.destination), "an order with no address hands on none")
 }

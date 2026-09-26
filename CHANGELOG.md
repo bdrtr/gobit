@@ -16,7 +16,7 @@ Sabitlenme `1.0.0` ile olur.
   order stores the shipping and billing addresses its cart carried, so that it
   could say where it went and an invoice could print a buyer; no API field
   returned them and the invoicing flow never read them. Closed for both by
-  ADR 0193; a carrier's label still gets no destination.
+  ADR 0193, and for a carrier's label by ADR 0194.
 
 - **Two analytics tests raced the event bus** (D139). They read the funnel
   as soon as a cart was completed, while the plugin's row was still being
@@ -58,6 +58,17 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **A carrier is told where a parcel goes** (ADR 0194). **For plugin
+  authors:** `core/provider.CreateFulfillmentInput` carries `Destination
+  *provider.Address`, the shipping address of the parcel's order, for every
+  parcel opened through an order (the admin order endpoint and a claim's or
+  exchange's replacement); nil when the order has none. A provider hands it to
+  the carrier and must not return it in `Fulfillment.Data`, which the parcel
+  stores and no erasure empties. `Data` no longer claims to carry the address.
+  **For embedders:** the order interop gains `ShippingAddressJSON`, and the
+  fulfillment interop's `CreateFulfillment` takes the destination as a fifth
+  argument.
 
 - **An order says where it went** (ADR 0193). **For API consumers:**
   `GET /admin/v1/orders/{id}`, and the cancel, complete and archive answers,

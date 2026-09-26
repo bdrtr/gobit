@@ -87,13 +87,16 @@ const (
 // JSON so that resolving it by name needs no import of the order module
 // (ADR 0001/0006).
 type Orders interface {
-	// OrderContactJSON returns the order's contact block.
+	// ShippingAddressJSON returns where the order's parcels go, or JSON null
+	// when the order recorded no shipping address.
 	//
-	// The flow does not need the contact; it needs the REFUSAL. An unknown id
-	// comes back as a not-found, and that is what keeps a typo from opening a
-	// parcel bound to an order that does not exist — an orphan the operator
-	// would find only when the customer asked where it was.
-	OrderContactJSON(ctx context.Context, orderID string) (json.RawMessage, error)
+	// It does two jobs. The address is the destination the carrier is handed
+	// (ADR 0194). And an unknown id comes back as a not-found, which is what
+	// keeps a typo from opening a parcel bound to an order that does not exist —
+	// an orphan the operator would find only when the customer asked where it
+	// was. The flow read the order's contact for that refusal alone until the
+	// destination gave the read a use.
+	ShippingAddressJSON(ctx context.Context, orderID string) (json.RawMessage, error)
 	// DispatchableLinesJSON returns, per line, how many units were sold and how
 	// many of them were written off.
 	//
@@ -112,7 +115,12 @@ type Fulfillments interface {
 	// A second call with the same idempotency key returns the EXISTING
 	// shipment rather than opening a second one; that is what keeps a retry
 	// from printing a second label.
-	CreateFulfillment(ctx context.Context, reference, optionID, idempotencyKey string) (string, error)
+	//
+	// destination is the order's shipping address, handed to the carrier as it
+	// is and stored by neither module but the order's (ADR 0194).
+	CreateFulfillment(
+		ctx context.Context, reference, optionID, idempotencyKey string, destination json.RawMessage,
+	) (string, error)
 	// FulfillmentStatus returns the shipment's status.
 	FulfillmentStatus(ctx context.Context, fulfillmentID string) (string, error)
 	// CommittedQuantities sums, per order line, the units a LIVE parcel holds.

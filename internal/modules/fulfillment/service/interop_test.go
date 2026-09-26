@@ -214,11 +214,11 @@ func TestInteropCreateAndCancelFulfillment(t *testing.T) {
 	interop := service.NewInterop(setup.svc)
 	optionID := readyOption(t, setup)
 
-	first, err := interop.CreateFulfillment(context.Background(), "order_1", optionID, "key-1")
+	first, err := interop.CreateFulfillment(context.Background(), "order_1", optionID, "key-1", nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, first)
 
-	second, err := interop.CreateFulfillment(context.Background(), "order_1", optionID, "key-1")
+	second, err := interop.CreateFulfillment(context.Background(), "order_1", optionID, "key-1", nil)
 	require.NoError(t, err)
 	assert.Equal(t, first, second, "the same key has to produce a single fulfillment")
 

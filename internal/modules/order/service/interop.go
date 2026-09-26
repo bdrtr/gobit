@@ -737,6 +737,63 @@ func (i *Interop) OrderInvoiceJSON(ctx context.Context, orderID string) (json.Ra
 	})
 }
 
+// interopDestination is where an order's parcels go, as the fulfilling flow
+// hands it on to the carrier (ADR 0194).
+//
+// It is the shipping address and nothing else: the parcel's destination is
+// the one fact about the person a carrier needs, and this surface is as narrow
+// as [interopContact] for that reason. The metadata travels because it is the
+// address's own, as the shopper's cart carried it.
+type interopDestination struct {
+	FirstName string `json:"first_name,omitempty"`
+	LastName  string `json:"last_name,omitempty"`
+	Company   string `json:"company,omitempty"`
+	Address1  string `json:"address_1,omitempty"`
+	Address2  string `json:"address_2,omitempty"`
+	City      string `json:"city,omitempty"`
+	// Province is the unit under the country, an il in Turkey, not the
+	// district (ADR 0067).
+	Province    string         `json:"province,omitempty"`
+	PostalCode  string         `json:"postal_code,omitempty"`
+	CountryCode string         `json:"country_code,omitempty"`
+	Phone       string         `json:"phone,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+}
+
+// ShippingAddressJSON returns where the order's parcels go, in the schema of
+// [interopDestination], or JSON null when the order recorded no shipping
+// address (ADR 0194).
+//
+// A missing order is errors.NotFound, which is what lets the fulfilling flow
+// use this read as its check that the order exists before anything is opened.
+// After an erasure the address holds only its country and metadata, and that
+// is what is returned.
+func (i *Interop) ShippingAddressJSON(ctx context.Context, orderID string) (json.RawMessage, error) {
+	detail, err := i.svc.GetOrder(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+
+	address := detail.ShippingAddress
+	if address == nil {
+		return json.RawMessage("null"), nil
+	}
+
+	return json.Marshal(interopDestination{
+		FirstName:   address.FirstName,
+		LastName:    address.LastName,
+		Company:     address.Company,
+		Address1:    address.Address1,
+		Address2:    address.Address2,
+		City:        address.City,
+		Province:    address.Province,
+		PostalCode:  address.PostalCode,
+		CountryCode: address.CountryCode,
+		Phone:       address.Phone,
+		Metadata:    address.Metadata,
+	})
+}
+
 // interopInvoiceAddressOf converts the billing address; nil when there is none.
 func interopInvoiceAddressOf(address *models.OrderAddress) *interopInvoiceAddress {
 	if address == nil {

@@ -380,8 +380,11 @@ type shippingSurface interface {
 	// ListOptionsJSON returns the options eligible for a cart context together
 	// with their prices.
 	ListOptionsJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
-	// CreateFulfillment opens a shipment for an order and returns ITS ID.
-	CreateFulfillment(ctx context.Context, reference, optionID, idempotencyKey string) (string, error)
+	// CreateFulfillment opens a shipment for an order and returns ITS ID;
+	// destination is the order's shipping address as JSON, or nil (ADR 0194).
+	CreateFulfillment(
+		ctx context.Context, reference, optionID, idempotencyKey string, destination json.RawMessage,
+	) (string, error)
 	// CancelFulfillment cancels the shipment; this is the saga compensation.
 	CancelFulfillment(ctx context.Context, fulfillmentID string) error
 	// FulfillmentStatus returns the shipment's current status.

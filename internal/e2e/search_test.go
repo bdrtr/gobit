@@ -137,6 +137,12 @@ func setUpPlugins(ctx context.Context, modules *module.Registry, bus eventbus.Ev
 	// the cart module's real events meet a real consumer. It costs the other
 	// scenarios nothing — it writes a row per cart and reads none of them unless
 	// analytics_test.go asks.
+	//
+	// The spy carrier stands where a carrier plugin would (carrier_test.go): the
+	// destination a parcel is handed is stored nowhere, so the provider is the
+	// one place it can be read. It costs the other scenarios nothing — only an
+	// option naming it reaches it.
+	pluginRegistry.Add(carrierSpyPlugin{})
 
 	pluginHost = coreplugin.NewHost(ctr, modules, bus, nil, nil)
 

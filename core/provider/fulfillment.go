@@ -64,9 +64,49 @@ type CreateFulfillmentInput struct {
 	// A saga may retry a step (plan Section 2.6); without the key a retry
 	// would mean a SECOND SHIPPING LABEL.
 	IdempotencyKey string
-	// Data is provider-specific free-form data (the address, the item list and
-	// so on).
+	// Destination is where the shipment goes: the shipping address the
+	// parcel's order was placed with (ADR 0194).
+	//
+	// It is nil when the order recorded no shipping address, as a download
+	// has none, and when the parcel was opened without an order. After the
+	// person's data was erased it carries only the country and the address's
+	// free metadata, which is all the order keeps.
+	//
+	// A provider hands it to the carrier and does NOT return it in
+	// [Fulfillment.Data]. This repository stores that data on the parcel, and
+	// the parcel is not erased with the person: the order is the one holder of
+	// the address, and the erasure empties it there.
+	Destination *Address
+	// Data is provider-specific free-form data: the option's configuration
+	// merged with what the caller sent. The address is not here; it is
+	// [CreateFulfillmentInput.Destination].
 	Data map[string]any
+}
+
+// Address is a postal address as the order recorded it.
+//
+// Every field is optional, because a guest checkout may carry very little and
+// the framework does not decide what a shop may ship on. How the address is
+// laid out on a label is the carrier's.
+type Address struct {
+	FirstName string
+	LastName  string
+	Company   string
+	Address1  string
+	Address2  string
+	// City is the town, and in Turkey the district a domestic carrier prices
+	// on, which has no field of its own (ADR 0067).
+	City string
+	// Province is the unit under the country — an il in Turkey, a state in the
+	// US — and not the district (ADR 0067).
+	Province   string
+	PostalCode string
+	// CountryCode is the ISO 3166-1 alpha-2 code, upper case.
+	CountryCode string
+	Phone       string
+	// Metadata is the address's own free data, as the shopper's cart carried
+	// it.
+	Metadata map[string]any
 }
 
 // Fulfillment is a shipment created at the provider.

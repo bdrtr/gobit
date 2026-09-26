@@ -199,7 +199,7 @@ func TestFulfillmentIsCreatedForOrder(t *testing.T) {
 	// --- 2) fulfillment for the order ---
 
 	key := "e2e-fulfillment-" + orderResult.OrderID
-	fulfillmentID, err := shippingInterop.CreateFulfillment(ctx, orderResult.OrderID, optionID, key)
+	fulfillmentID, err := shippingInterop.CreateFulfillment(ctx, orderResult.OrderID, optionID, key, nil)
 	require.NoError(t, err, "a fulfillment must be openable for the order")
 	require.NotEmpty(t, fulfillmentID, "a fulfillment identity must come back")
 
@@ -230,7 +230,7 @@ func TestFulfillmentIsCreatedForOrder(t *testing.T) {
 
 	// --- 3) is fulfillment creation IDEMPOTENT ---
 
-	repeatID, err := shippingInterop.CreateFulfillment(ctx, orderResult.OrderID, optionID, key)
+	repeatID, err := shippingInterop.CreateFulfillment(ctx, orderResult.OrderID, optionID, key, nil)
 	require.NoError(t, err, "a second call with the same key must NOT return an error")
 	require.Equal(t, fulfillmentID, repeatID,
 		"the same idempotency key must return the EXISTING fulfillment. A new identity "+

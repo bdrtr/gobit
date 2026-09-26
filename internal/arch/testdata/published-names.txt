@@ -454,6 +454,7 @@ core/plugin Registry.Install
 core/plugin Registry.MountRoutes
 core/plugin Registry.Plugins
 core/plugin Registry.Start
+core/provider Address
 core/provider AuthResult
 core/provider ChannelEmail
 core/provider ChannelSMS

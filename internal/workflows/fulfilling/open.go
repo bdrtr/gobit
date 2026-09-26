@@ -56,7 +56,8 @@ func (w *Workflows) OpenForOrder(
 				"parcel for the same order and the shop finds out at the carrier")
 	}
 
-	if _, err := w.orders.OrderContactJSON(ctx, orderID); err != nil {
+	destination, err := w.orders.ShippingAddressJSON(ctx, orderID)
+	if err != nil {
 		return OpenResult{}, errors.Wrap(err, errors.KindOf(err), CodeOrderUnreadable,
 			"order %s could not be read, so no shipment was opened for it", orderID)
 	}
@@ -69,7 +70,7 @@ func (w *Workflows) OpenForOrder(
 		return OpenResult{}, err
 	}
 
-	fulfillmentID, err := w.fulfillments.CreateFulfillment(ctx, orderID, optionID, idempotencyKey)
+	fulfillmentID, err := w.fulfillments.CreateFulfillment(ctx, orderID, optionID, idempotencyKey, destination)
 	if err != nil {
 		return OpenResult{}, errors.Wrap(err, errors.KindOf(err), CodeCreateFailed,
 			"a shipment could not be opened for order %s", orderID)

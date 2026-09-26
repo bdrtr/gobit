@@ -370,3 +370,39 @@ func TestTheInvoiceSurfaceCarriesTheBillingAddress(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &body))
 	assert.NotContains(t, body, "billing_address", "an order billed to nobody sends no address")
 }
+
+// TestTheDestinationIsTheShippingAddressAlone holds the narrow read the
+// fulfilling flow hands to a carrier, by its wire names (ADR 0194): the shipping
+// address and nothing of the billing one, JSON null for an order with no
+// shipping address, and not-found for an order that does not exist.
+func TestTheDestinationIsTheShippingAddressAlone(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	interop := service.NewInterop(e.svc)
+
+	in := validInput()
+	in.Addresses = []models.OrderAddress{
+		{Type: models.AddressShipping, FirstName: "Gift", LastName: "Recipient", Address1: "9 Far Road",
+			City: "Elsewhere", Province: "IL", PostalCode: "11111", CountryCode: "US", Phone: "+1 555",
+			Metadata: map[string]any{"gate_code": "4411"}},
+		{Type: models.AddressBilling, Company: "Engines Ltd", CountryCode: "US"},
+	}
+	order, err := e.svc.CreateOrder(ctx, in)
+	require.NoError(t, err)
+
+	raw, err := interop.ShippingAddressJSON(ctx, order.ID)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"first_name":"Gift","last_name":"Recipient","address_1":"9 Far Road",`+
+		`"city":"Elsewhere","province":"IL","postal_code":"11111","country_code":"US",`+
+		`"phone":"+1 555","metadata":{"gate_code":"4411"}}`, string(raw))
+
+	plain, err := e.svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+	raw, err = interop.ShippingAddressJSON(ctx, plain.ID)
+	require.NoError(t, err)
+	assert.JSONEq(t, `null`, string(raw))
+
+	_, err = interop.ShippingAddressJSON(ctx, "order_MISSING")
+	require.Error(t, err)
+	assert.True(t, errors.IsNotFound(err), "the flow relies on this refusal: %v", err)
+}

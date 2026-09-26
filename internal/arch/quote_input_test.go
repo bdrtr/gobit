@@ -50,12 +50,31 @@ import (
 // walk of the production trees. Neither is derived from the other and neither
 // is a hand-written list, so a field added without a writer, and a writer
 // deleted from under a field, are both findings rather than silence.
+//
+// # The second struct
+//
+// [coreprovider.CreateFulfillmentInput] is held to the same rule since ADR
+// 0194 gave it a Destination. Its reader is a carrier plugin too, and the box
+// provider reads none of the address, so a reader-side audit would say nothing;
+// what can be held is that the tree hands every field on. The destination is
+// the order's shipping address and the field arrives with the code that fills
+// it, which is the order ADR 0065 asks of the quote input.
 
 // quoteInputPackage is the import path the composite literals are qualified by.
 const quoteInputPackage = modulePath + "/core/provider"
 
-// quoteInputTypeName is the struct the audit walks.
+// quoteInputTypeName is the first struct the audit walks.
 const quoteInputTypeName = "QuoteInput"
+
+// providerInputs are the published provider inputs the audit walks: the type's
+// name as a literal spells it, and a value reflection reads the fields from.
+var providerInputs = []struct {
+	name   string
+	sample any
+}{
+	{quoteInputTypeName, coreprovider.QuoteInput{}},
+	{"CreateFulfillmentInput", coreprovider.CreateFulfillmentInput{}},
+}
 
 // TestEveryQuoteInputFieldIsFilledByTheTree refuses a quote-input field that no
 // production file writes.
@@ -72,18 +91,30 @@ const quoteInputTypeName = "QuoteInput"
 func TestEveryQuoteInputFieldIsFilledByTheTree(t *testing.T) {
 	t.Parallel()
 
-	declared := quoteInputFields()
+	for _, input := range providerInputs {
+		t.Run(input.name, func(t *testing.T) {
+			t.Parallel()
+			auditProviderInput(t, input.name, input.sample)
+		})
+	}
+}
+
+// auditProviderInput is the rule for one published input struct.
+func auditProviderInput(t *testing.T, typeName string, sample any) {
+	t.Helper()
+
+	declared := quoteInputFields(sample)
 	require.NotEmpty(t, declared,
 		"reflection found NO field on %s; the type has moved or emptied and this "+
-			"audit is reading nothing.", quoteInputTypeName)
+			"audit is reading nothing.", typeName)
 
-	filled, sites := quoteInputAssignments(t)
+	filled, sites := quoteInputAssignments(t, typeName)
 	require.NotEmpty(t, sites,
 		"NOT ONE production file builds a %s with named fields.\n"+
 			"The walk has gone BLIND: with no literal found, every field below counts "+
 			"as unwritten and the audit would fail for the wrong reason — or, if the "+
 			"struct were emptied too, pass having looked at nothing.",
-		quoteInputTypeName)
+		typeName)
 
 	for _, field := range declared {
 		assert.Contains(t, filled, field,
@@ -92,7 +123,7 @@ func TestEveryQuoteInputFieldIsFilledByTheTree(t *testing.T) {
 				"every embedder as a promise and reaches every provider as a zero — and "+
 				"a provider cannot tell that zero from a real one. Ship the field with "+
 				"the code that produces it, or do not ship it (ADR 0065).",
-			quoteInputTypeName, field, strings.Join(sites, ", "))
+			typeName, field, strings.Join(sites, ", "))
 	}
 }
 
@@ -101,8 +132,8 @@ func TestEveryQuoteInputFieldIsFilledByTheTree(t *testing.T) {
 // Reflection rather than a parse of the declaration: the compiler is the only
 // reader that cannot be wrong about which fields the type has, and an embedded
 // or renamed field cannot slip past it.
-func quoteInputFields() []string {
-	structType := reflect.TypeOf(coreprovider.QuoteInput{})
+func quoteInputFields(sample any) []string {
+	structType := reflect.TypeOf(sample)
 
 	out := make([]string, 0, structType.NumField())
 	for i := range structType.NumField() {
@@ -120,12 +151,12 @@ func quoteInputFields() []string {
 // A POSITIONAL literal is reported as a finding rather than counted. It would
 // assign every field without naming one, so it would satisfy this audit while
 // being the one spelling that breaks on the next field the struct gains.
-func quoteInputAssignments(t *testing.T) (filled, sites []string) {
+func quoteInputAssignments(t *testing.T, typeName string) (filled, sites []string) {
 	t.Helper()
 
 	for _, tree := range productionTrees {
 		for _, path := range treeProductionFiles(t, tree) {
-			names, keyed := quoteInputFileAssignments(t, path)
+			names, keyed := quoteInputFileAssignments(t, path, typeName)
 			if !keyed {
 				continue
 			}
@@ -143,7 +174,7 @@ func quoteInputAssignments(t *testing.T) (filled, sites []string) {
 
 // quoteInputFileAssignments reads one file; keyed reports whether it holds a
 // quote-input literal that names at least one field.
-func quoteInputFileAssignments(t *testing.T, path string) (names []string, keyed bool) {
+func quoteInputFileAssignments(t *testing.T, path, typeName string) (names []string, keyed bool) {
 	t.Helper()
 
 	fset := token.NewFileSet()
@@ -157,7 +188,7 @@ func quoteInputFileAssignments(t *testing.T, path string) (names []string, keyed
 
 	ast.Inspect(tree, func(node ast.Node) bool {
 		lit, ok := node.(*ast.CompositeLit)
-		if !ok || !isQuoteInputType(lit.Type, local) {
+		if !ok || !isQuoteInputType(lit.Type, local, typeName) {
 			return true
 		}
 		for _, element := range lit.Elts {
@@ -169,7 +200,7 @@ func quoteInputFileAssignments(t *testing.T, path string) (names []string, keyed
 				t.Errorf("%s builds a %s with POSITIONAL fields.\n"+
 					"On a published struct that is the one spelling that breaks when a "+
 					"field is added, and it hides the addition from this audit: write "+
-					"the field names.", short(path), quoteInputTypeName)
+					"the field names.", short(path), typeName)
 				break
 			}
 			key, ok := pair.Key.(*ast.Ident)
@@ -203,11 +234,11 @@ func quoteInputLocalName(tree *ast.File) string {
 	return ""
 }
 
-// isQuoteInputType reports whether a composite literal's type is the quote
-// input qualified by the given local package name.
-func isQuoteInputType(expr ast.Expr, local string) bool {
+// isQuoteInputType reports whether a composite literal's type is the named
+// provider input qualified by the given local package name.
+func isQuoteInputType(expr ast.Expr, local, typeName string) bool {
 	selector, ok := expr.(*ast.SelectorExpr)
-	if !ok || selector.Sel.Name != quoteInputTypeName {
+	if !ok || selector.Sel.Name != typeName {
 		return false
 	}
 	qualifier, ok := selector.X.(*ast.Ident)

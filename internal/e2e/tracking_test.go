@@ -98,7 +98,7 @@ func TestTheCarrierIsAskedWhereTheParcelIs(t *testing.T) {
 	optionID := newShippingOption(ctx, t, profileID, "E2E Tracked Shipping", shippingOptionFee, false)
 
 	fulfillmentID, err := shippingInterop.CreateFulfillment(ctx, order.OrderID, optionID,
-		"e2e-tracking-"+order.OrderID)
+		"e2e-tracking-"+order.OrderID, nil)
 	require.NoError(t, err, "the parcel must be openable")
 
 	// The operator hands the parcel over and types the number from the label they
