@@ -53,6 +53,9 @@ func describeOrderDetail(d *openapi.Doc) {
 			"A line also carries \"price_origin\": the price row it was charged and, for a " +
 			"list price, the list and its type (\"sale\" or \"override\"). It is ABSENT " +
 			"when unknown — every line sold before the order kept it (ADR 0168).\n\n" +
+			"\"shipping_methods\" are the deliveries the order was sold, the option, its " +
+			"name and what the checkout charged, adding up to \"shipping_total\"; an " +
+			"empty array for an order placed before they were kept (ADR 0198).\n\n" +
 			"The record carries \"shipping_address\" and \"billing_address\", the two " +
 			"addresses the cart carried into the order, each ABSENT when the order " +
 			"recorded none. After an erasure they hold what the erasure keeps: the country " +

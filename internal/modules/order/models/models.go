@@ -258,6 +258,10 @@ type OrderDetail struct {
 	ShippingAddress *OrderAddress
 	// BillingAddress is who it was billed to; nil when none was recorded.
 	BillingAddress *OrderAddress
+	// ShippingMethods are the deliveries the order was sold, in the order the
+	// cart held them; empty for an order placed before they were kept, and for
+	// one that ships nothing (ADR 0198).
+	ShippingMethods []OrderShippingMethod
 	// Summary is the order's payment/refund summary. Because the summary is
 	// born together with the order it is always populated here.
 	Summary OrderSummary
@@ -922,6 +926,27 @@ type OrderAddress struct {
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// OrderShippingMethod is one delivery an order was sold: the service the
+// shopper chose and what the checkout charged for it (ADR 0198).
+//
+// It is written with the order and never changed, as the order's lines are.
+// When an order records any, their amounts add up to its ShippingTotal.
+type OrderShippingMethod struct {
+	// ID is the "oship_" prefixed identifier.
+	ID string
+	// OrderID is the order the method belongs to.
+	OrderID string
+	// ShippingOptionID is the fulfillment module's shipping option; it is NOT
+	// a foreign key, and empty where the cart's method named none.
+	ShippingOptionID string
+	// Name is the service's label as the shopper saw it ("Standard").
+	Name string
+	// Amount is what the checkout charged for it (minor unit).
+	Amount int64
+	// CreatedAt is UTC.
+	CreatedAt time.Time
 }
 
 // Current reports whether the address is the order's current one of its type.

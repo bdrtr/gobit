@@ -135,6 +135,8 @@ type fakeOrders struct {
 	// parent and parentErr are ShippingParentOf's answer.
 	parent    string
 	parentErr error
+	// sold is SoldShippingOptionOf's answer.
+	sold string
 }
 
 // testLine is the order module's answer as a CONSUMER writes it.
@@ -158,6 +160,11 @@ func (f *fakeOrders) ShippingAddressJSON(context.Context, string) (json.RawMessa
 	}
 
 	return json.Marshal(f.destination)
+}
+
+// SoldShippingOptionOf answers the scripted option.
+func (f *fakeOrders) SoldShippingOptionOf(context.Context, string) (string, error) {
+	return f.sold, nil
 }
 
 // ShippingParentOf answers the scripted parent, or the scripted refusal.
@@ -212,6 +219,8 @@ type fakeFulfillments struct {
 	links *fakeLinks
 	// destination is the last destination the flow handed on.
 	destination json.RawMessage
+	// option is the last shipping option the flow opened a parcel on.
+	option string
 }
 
 // CommittedQuantities answers what the live parcels hold.
@@ -229,10 +238,11 @@ func (f *fakeFulfillments) CommittedQuantities(
 // CreateFulfillment returns the same id whatever the key, the way an idempotent
 // provider does for a repeated key.
 func (f *fakeFulfillments) CreateFulfillment(
-	ctx context.Context, reference, _, _ string, destination json.RawMessage,
+	ctx context.Context, reference, optionID, _ string, destination json.RawMessage,
 ) (string, error) {
 	f.calls++
 	f.destination = destination
+	f.option = optionID
 
 	if f.links != nil {
 		if err := f.links.Create(ctx, "order_fulfillment", reference, f.id); err != nil {
@@ -390,4 +400,30 @@ func TestTheParcelGoesWhereTheOrderWent(t *testing.T) {
 		OpenForOrder(context.Background(), "order_2", "so_1", "key-2")
 	require.NoError(t, err)
 	assert.JSONEq(t, `null`, string(none.destination), "an order with no address hands on none")
+}
+
+// TestAParcelGoesOnTheServiceTheOrderWasSold opens a parcel with no option
+// named on the one the order was sold, keeps a named one, and refuses when
+// there is nothing to default to (ADR 0198).
+func TestAParcelGoesOnTheServiceTheOrderWasSold(t *testing.T) {
+	t.Parallel()
+
+	sold := &fakeFulfillments{id: "ful_1", links: newFakeLinks()}
+	_, err := newFlow(t, &fakeOrders{sold: "so_express"}, sold, sold.links).
+		OpenForOrder(context.Background(), "order_1", "", "key-1")
+	require.NoError(t, err)
+	assert.Equal(t, "so_express", sold.option, "the parcel goes on the service the shopper paid for")
+
+	named := &fakeFulfillments{id: "ful_2", links: newFakeLinks()}
+	_, err = newFlow(t, &fakeOrders{sold: "so_express"}, named, named.links).
+		OpenForOrder(context.Background(), "order_1", "so_standard", "key-2")
+	require.NoError(t, err)
+	assert.Equal(t, "so_standard", named.option, "an option the operator names is kept")
+
+	none := &fakeFulfillments{id: "ful_3", links: newFakeLinks()}
+	_, err = newFlow(t, &fakeOrders{}, none, none.links).
+		OpenForOrder(context.Background(), "order_1", " ", "key-3")
+	require.Error(t, err)
+	assert.True(t, coreerrors.IsInvalid(err), "%v", err)
+	assert.Zero(t, none.calls, "nothing to default to opens nothing")
 }

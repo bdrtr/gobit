@@ -63,6 +63,16 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **An order remembers the delivery it was sold** (ADR 0198). **For API
+  consumers:** both order reads carry `shipping_methods` (`shipping_option_id`,
+  `name`, `amount`), the cart's methods as the checkout priced them, adding up
+  to `shipping_total`; empty for an order placed before. `POST
+  /admin/v1/orders/{id}/fulfillments` may leave out `shipping_option_id` when
+  the order was sold exactly one method. **For operators:** order migration
+  000024 adds `order_shipping_methods`. **For embedders:** the cart's snapshot
+  carries each method's `shipping_option_id` and `name`, and the order interop
+  gains `SoldShippingOptionOf`.
+
 - **An addition travels in its parent's parcel** (ADR 0197). **For API
   consumers:** `PUT /admin/v1/orders/{id}/fulfillments/{fulfillmentId}` binds an
   addition to a pending parcel of the order it adds to and answers with its

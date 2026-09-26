@@ -117,6 +117,9 @@ type fakeStore struct {
 	sharedOrders []string
 	// addressReads counts the batch reads of addresses.
 	addressReads int
+	// shippingMethods are the orders' deliveries (ADR 0198), outside the
+	// snapshot: they are written once with the order and never change.
+	shippingMethods map[string][]models.OrderShippingMethod
 	// lockedReturns records the return rows that were locked, in order.
 	lockedReturns []string
 	// lockedClaims records the claim rows that were locked, in order.
@@ -166,21 +169,22 @@ type fakeStore struct {
 // newFakeStore produces an empty fake store.
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		orders:    map[string]models.Order{},
-		items:     map[string]models.OrderLineItem{},
-		summaries: map[string]models.OrderSummary{},
-		addresses: map[string][]models.OrderAddress{},
-		returns:   map[string]models.Return{},
-		outbox:    map[string]outboxRow{},
-		retItems:  map[string]models.ReturnItem{},
-		exchanges: map[string]models.Exchange{},
-		claims:    map[string]models.Claim{},
-		credits:   map[string]models.OrderCreditLine{},
-		evidence:  map[string]models.ClaimEvidence{},
-		replaces:  map[string]models.Replacement{},
-		replItems: map[string]models.ReplacementItem{},
-		cancels:   map[string]models.OrderLineCancellation{},
-		erased:    map[string]time.Time{},
+		orders:          map[string]models.Order{},
+		items:           map[string]models.OrderLineItem{},
+		summaries:       map[string]models.OrderSummary{},
+		addresses:       map[string][]models.OrderAddress{},
+		shippingMethods: map[string][]models.OrderShippingMethod{},
+		returns:         map[string]models.Return{},
+		outbox:          map[string]outboxRow{},
+		retItems:        map[string]models.ReturnItem{},
+		exchanges:       map[string]models.Exchange{},
+		claims:          map[string]models.Claim{},
+		credits:         map[string]models.OrderCreditLine{},
+		evidence:        map[string]models.ClaimEvidence{},
+		replaces:        map[string]models.Replacement{},
+		replItems:       map[string]models.ReplacementItem{},
+		cancels:         map[string]models.OrderLineCancellation{},
+		erased:          map[string]time.Time{},
 	}
 }
 
@@ -912,6 +916,37 @@ func (f *fakeStore) CreateOrderAddress(
 	f.addresses[address.OrderID] = append(existing, address)
 
 	return address, nil
+}
+
+// CreateOrderShippingMethod records a delivery, undone with its transaction.
+func (f *fakeStore) CreateOrderShippingMethod(
+	ctx context.Context, method models.OrderShippingMethod,
+) (models.OrderShippingMethod, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	method.CreatedAt = f.nextStamp()
+	f.recordUndo(ctx, undoEntry(f.shippingMethods, method.OrderID))
+	f.shippingMethods[method.OrderID] = append(slices.Clone(f.shippingMethods[method.OrderID]), method)
+
+	return method, nil
+}
+
+// OrderShippingMethodsByOrderIDs reads the deliveries of several orders.
+func (f *fakeStore) OrderShippingMethodsByOrderIDs(
+	_ context.Context, orderIDs []string,
+) (map[string][]models.OrderShippingMethod, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := map[string][]models.OrderShippingMethod{}
+	for _, id := range orderIDs {
+		if methods := f.shippingMethods[id]; len(methods) > 0 {
+			out[id] = slices.Clone(methods)
+		}
+	}
+
+	return out, nil
 }
 
 // SupersedeOrderAddress closes the order's current address of the type, the way

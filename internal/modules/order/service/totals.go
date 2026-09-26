@@ -1,6 +1,8 @@
 package service
 
 import (
+	"strings"
+
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 )
@@ -54,7 +56,57 @@ func normalizeCreateOrder(in CreateOrderInput) (CreateOrderInput, error) {
 	if err := validateOrderItems(in); err != nil {
 		return CreateOrderInput{}, err
 	}
+	methods, err := validateShippingMethods(in)
+	if err != nil {
+		return CreateOrderInput{}, err
+	}
+	in.ShippingMethods = methods
 	return in, nil
+}
+
+// validateShippingMethods checks the deliveries against the shipping total and
+// returns them trimmed (ADR 0198).
+//
+// None is accepted: a download ships nothing, and an order placed through a
+// path that did not carry them records none. Any at all have to add up to the
+// shipping total — the cart computes that total as their sum, so a difference
+// is a snapshot and a total from two different moments, and the order would
+// say it charged for a service at a price it did not charge.
+func validateShippingMethods(in CreateOrderInput) ([]CreateShippingMethodInput, error) {
+	if len(in.ShippingMethods) == 0 {
+		return nil, nil
+	}
+
+	out := make([]CreateShippingMethodInput, 0, len(in.ShippingMethods))
+	var sum int64
+	for i, method := range in.ShippingMethods {
+		name := strings.TrimSpace(method.Name)
+		if name == "" {
+			return nil, errors.Invalid(CodeInvalidInput, "shipping method %d has no name", i+1)
+		}
+		if err := checkTextLen("shipping method name", name); err != nil {
+			return nil, err
+		}
+		if err := optionalID("shipping_option_id", method.ShippingOptionID); err != nil {
+			return nil, err
+		}
+		if err := checkAmount("shipping method amount", method.Amount, models.MaxTotal); err != nil {
+			return nil, err
+		}
+		sum += method.Amount
+		if sum > models.MaxTotal {
+			return nil, errors.Invalid(CodeTotalsInconsistent, "the shipping methods add up past the limit")
+		}
+		out = append(out, CreateShippingMethodInput{
+			ShippingOptionID: method.ShippingOptionID, Name: name, Amount: method.Amount,
+		})
+	}
+	if sum != in.ShippingTotal {
+		return nil, errors.Invalid(CodeTotalsInconsistent,
+			"the shipping methods add up to %d and the shipping total is %d", sum, in.ShippingTotal)
+	}
+
+	return out, nil
 }
 
 // validateOrderTotals validates the range and the identity of the amounts at

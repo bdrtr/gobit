@@ -279,7 +279,11 @@ func describeFulfilling(d *openapi.Doc) {
 			"An unknown order id is REFUSED rather than opening a parcel bound to nothing — " +
 			"the fulfillment module never validates the reference it is handed, so this is the " +
 			"only place that can refuse. " +
-			"The order may have SEVERAL shipments; the binding is one to many.",
+			"\"shipping_option_id\" may be left out when the order was sold exactly one " +
+			"delivery: the parcel then goes on that option (ADR 0198). An order sold none or " +
+			"several has to be told which. " +
+			"The order may have SEVERAL shipments, and since ADR 0197 a parcel may also carry " +
+			"an addition that joined it.",
 		RequestBody: d.RequestBody(openShipmentRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("The shipment that was already open",

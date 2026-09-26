@@ -58,7 +58,8 @@ type Fulfilling interface {
 // It exists so the OpenAPI document can describe the body. The body itself is
 // passed to the flow as raw JSON: this module does not interpret it.
 type openShipmentRequest struct {
-	// ShippingOptionID is the option the parcel ships on.
+	// ShippingOptionID is the option the parcel ships on. Left empty, it is the
+	// one delivery the order was sold, when it was sold exactly one (ADR 0198).
 	ShippingOptionID string `json:"shipping_option_id"`
 	// IdempotencyKey is required. Without one a retried request opens a SECOND
 	// parcel for the same order.

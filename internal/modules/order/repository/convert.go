@@ -653,6 +653,18 @@ func toOrderAddress(row orderdb.OrderAddress) (models.OrderAddress, error) {
 	}, nil
 }
 
+// toOrderShippingMethod converts a shipping method row.
+func toOrderShippingMethod(row orderdb.OrderShippingMethod) models.OrderShippingMethod {
+	return models.OrderShippingMethod{
+		ID:               row.ID,
+		OrderID:          row.OrderID,
+		ShippingOptionID: textValue(row.ShippingOptionID),
+		Name:             row.Name,
+		Amount:           row.Amount,
+		CreatedAt:        toTime(row.CreatedAt),
+	}
+}
+
 // textValue reads a nullable text column; a null is the empty string.
 //
 // Every one of these fields is optional and the module never distinguishes "not

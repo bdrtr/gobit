@@ -201,6 +201,12 @@ type Store interface {
 	// CreateOrderAddress writes one address of the order, inside the order's
 	// own transaction.
 	CreateOrderAddress(ctx context.Context, address models.OrderAddress) (models.OrderAddress, error)
+	// CreateOrderShippingMethod writes one of the order's shipping methods,
+	// inside the order's transaction (ADR 0198).
+	CreateOrderShippingMethod(ctx context.Context, method models.OrderShippingMethod) (models.OrderShippingMethod, error)
+	// OrderShippingMethodsByOrderIDs reads the shipping methods of several
+	// orders in one query.
+	OrderShippingMethodsByOrderIDs(ctx context.Context, orderIDs []string) (map[string][]models.OrderShippingMethod, error)
 	// SupersedeOrderAddress closes the order's current address of the type,
 	// inside the caller's transaction, and reports how many rows it closed.
 	SupersedeOrderAddress(ctx context.Context, orderID string, kind models.AddressType) (int64, error)

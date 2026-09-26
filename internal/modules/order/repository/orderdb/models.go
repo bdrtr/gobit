@@ -199,6 +199,15 @@ type OrderReturnItem struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+type OrderShippingMethod struct {
+	ID               string
+	OrderID          string
+	ShippingOptionID *string
+	Name             string
+	Amount           int64
+	CreatedAt        pgtype.Timestamptz
+}
+
 type OrderSummary struct {
 	ID            string
 	OrderID       string

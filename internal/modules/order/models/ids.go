@@ -23,6 +23,8 @@ const (
 	SummaryIDPrefix = "osum_"
 	// OrderAddressIDPrefix prefixes an order address identifier.
 	OrderAddressIDPrefix = "oaddr_"
+	// ShippingMethodIDPrefix prefixes an order shipping method identifier.
+	ShippingMethodIDPrefix = "oship_"
 	// ReturnIDPrefix is the prefix of return identifiers.
 	ReturnIDPrefix = "ret_"
 	// ReturnItemIDPrefix is the prefix of a return line identifier.
@@ -82,6 +84,9 @@ func NewSummaryID() string { return newID(SummaryIDPrefix, time.Now()) }
 
 // NewOrderAddressID produces a new order address identifier.
 func NewOrderAddressID() string { return newID(OrderAddressIDPrefix, time.Now()) }
+
+// NewShippingMethodID produces a new order shipping method identifier.
+func NewShippingMethodID() string { return newID(ShippingMethodIDPrefix, time.Now()) }
 
 // NewReturnItemID produces a new return line identifier.
 func NewReturnItemID() string { return newID(ReturnItemIDPrefix, time.Now()) }

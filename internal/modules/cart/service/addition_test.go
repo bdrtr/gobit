@@ -104,3 +104,28 @@ func TestCartsThatDoNotAddToTheSameOrderDoNotMerge(t *testing.T) {
 		assert.Equal(t, map[string]int64{variantA: 1}, quantities(ctx, t, svc, target))
 	})
 }
+
+// TestTheSnapshotSaysWhichDeliveryWasChosen carries a shipping method's option
+// and name to the checkout, so the order can keep the delivery it was sold
+// (ADR 0198).
+func TestTheSnapshotSaysWhichDeliveryWasChosen(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	cart := newCart(ctx, t, svc)
+
+	_, err := svc.AddShippingMethod(ctx, cart.ID, service.AddShippingMethodInput{
+		Name: "Next day", ShippingOptionID: "so_express", Amount: 2500,
+	})
+	require.NoError(t, err)
+
+	raw, err := service.NewInterop(svc).CartSnapshotJSON(ctx, cart.ID)
+	require.NoError(t, err)
+	var snapshot struct {
+		ShippingMethods []map[string]any `json:"shipping_methods"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &snapshot))
+	require.Len(t, snapshot.ShippingMethods, 1)
+	assert.Equal(t, "so_express", snapshot.ShippingMethods[0]["shipping_option_id"])
+	assert.Equal(t, "Next day", snapshot.ShippingMethods[0]["name"])
+	assert.InDelta(t, 2500, snapshot.ShippingMethods[0]["amount"], 0)
+}

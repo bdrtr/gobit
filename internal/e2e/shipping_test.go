@@ -577,7 +577,7 @@ func TestAShipmentOpenedThroughTheFlowIsBoundToItsOrder(t *testing.T) {
 	// and a FetchByIDs that read only the first id would still look correct.
 	secondOpened, err := flow.OpenForOrder(ctx, orderResult.OrderID, optionID, key+"-2")
 	require.NoError(t, err,
-		"a second parcel could not be opened for the order; the link declares one to many")
+		"a second parcel could not be opened for the order; an order ships in several")
 	require.NotEqual(t, opened.FulfillmentID, secondOpened.FulfillmentID)
 	assert.False(t, secondOpened.AlreadyOpen, "a different key is not a repeat")
 

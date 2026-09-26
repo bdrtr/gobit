@@ -8,6 +8,16 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 )
 
+// CreateShippingMethodInput is one delivery an order is sold (ADR 0198).
+type CreateShippingMethodInput struct {
+	// ShippingOptionID is the fulfillment module's option; it may be empty.
+	ShippingOptionID string
+	// Name is the service's label; it is required.
+	Name string
+	// Amount is what the checkout charged for it (minor unit).
+	Amount int64
+}
+
 // CreateOrderItemInput is the snapshot of an order line.
 //
 // All the amounts are INTEGER minor units (plan Section 8) and they arrive
@@ -143,6 +153,10 @@ type CreateOrderInput struct {
 	// download has neither and refusing the order over it would be the
 	// framework deciding what may be sold.
 	Addresses []models.OrderAddress
+	// ShippingMethods are the deliveries the order is sold, as the cart's
+	// checkout priced them (ADR 0198). Empty is accepted — a download ships
+	// nothing — and when any are given their amounts add up to ShippingTotal.
+	ShippingMethods []CreateShippingMethodInput
 	// Metadata is the caller's free extra data.
 	Metadata map[string]any
 }
@@ -385,6 +399,21 @@ func (s *Service) writeOrder(ctx context.Context, in CreateOrderInput, rule spen
 			}
 		}
 
+		// The deliveries go in the SAME transaction for the lines' reason: an
+		// order that says it charged for shipping and not for which service is
+		// the gap ADR 0198 closed.
+		for i := range in.ShippingMethods {
+			if _, err := s.store.CreateOrderShippingMethod(ctx, models.OrderShippingMethod{
+				ID:               models.NewShippingMethodID(),
+				OrderID:          order.ID,
+				ShippingOptionID: in.ShippingMethods[i].ShippingOptionID,
+				Name:             in.ShippingMethods[i].Name,
+				Amount:           in.ShippingMethods[i].Amount,
+			}); err != nil {
+				return err
+			}
+		}
+
 		// The addresses go in the SAME transaction, for the same reason the
 		// lines do: an order that exists without the address it was placed with
 		// is an order nobody can ship or invoice, and writing them afterwards is
@@ -550,8 +579,15 @@ func (s *Service) loadDetail(ctx context.Context, find func(ctx context.Context)
 			return err
 		}
 
+		// A SIXTH: the deliveries the order was sold (ADR 0198).
+		methods, err := s.store.OrderShippingMethodsByOrderIDs(ctx, []string{order.ID})
+		if err != nil {
+			return err
+		}
+
 		detail = models.OrderDetail{
 			Order: order, Items: items, Summary: summary, CreditedTotal: credited,
+			ShippingMethods: methods[order.ID],
 		}
 		detail.ShippingAddress, detail.BillingAddress = splitAddresses(addresses[order.ID])
 

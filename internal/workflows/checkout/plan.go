@@ -14,8 +14,9 @@ import (
 // The type is the schema of the [Carts.CartSnapshotJSON] body: the cart module
 // produces these fields, this package reads them. The schema is DELIBERATELY
 // narrow — it is whatever enters the order and nothing more. Unrecognized
-// fields (shipping methods, for one) are silently skipped so that this package
-// need not be updated when the cart module grows the schema.
+// fields are silently skipped so that this package need not be updated when
+// the cart module grows the schema. The shipping methods entered the order with
+// ADR 0198 and are read here since.
 //
 // The AMOUNTS of the lines are not here and must not be; the totals produce
 // them (see [CartTotals]). That the two sources belong to the same instant is
@@ -44,6 +45,17 @@ type Snapshot struct {
 	// shipped, invoiced or disputed.
 	ShippingAddress *SnapshotAddress `json:"shipping_address,omitempty"`
 	BillingAddress  *SnapshotAddress `json:"billing_address,omitempty"`
+	// ShippingMethods are the deliveries the cart holds; their amounts are the
+	// shipping total of the same revision (ADR 0198).
+	ShippingMethods []SnapshotShippingMethod `json:"shipping_methods"`
+}
+
+// SnapshotShippingMethod is one delivery as it crosses from the cart to the
+// order: which service, and what the checkout charged for it.
+type SnapshotShippingMethod struct {
+	ShippingOptionID string `json:"shipping_option_id,omitempty"`
+	Name             string `json:"name"`
+	Amount           int64  `json:"amount"`
 }
 
 // SnapshotAddress is one address as it crosses from the cart to the order.
@@ -177,6 +189,9 @@ type checkoutPlan struct {
 	// address is what the shop already prints on a label.
 	ShippingAddress *SnapshotAddress `json:"shipping_address,omitempty"`
 	BillingAddress  *SnapshotAddress `json:"billing_address,omitempty"`
+	// ShippingMethods travel to the order untouched, as the addresses do
+	// (ADR 0198).
+	ShippingMethods []SnapshotShippingMethod `json:"shipping_methods,omitempty"`
 
 	// PaymentData is the free-form data passed to the provider and it is NOT
 	// WRITTEN TO THE RECORD.
@@ -353,6 +368,7 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 		PaymentData:       in.PaymentData,
 		ShippingAddress:   snap.ShippingAddress,
 		BillingAddress:    snap.BillingAddress,
+		ShippingMethods:   snap.ShippingMethods,
 	}
 	if err := plan.validate(); err != nil {
 		return nil, err
@@ -842,6 +858,10 @@ type orderSnapshot struct {
 	// download has neither, and an order for one is not incomplete.
 	ShippingAddress *SnapshotAddress `json:"shipping_address,omitempty"`
 	BillingAddress  *SnapshotAddress `json:"billing_address,omitempty"`
+	// ShippingMethods land with the order in the same change the order learns
+	// them, for TaxComponents' reason: the order drops a field it does not
+	// know (ADR 0198).
+	ShippingMethods []SnapshotShippingMethod `json:"shipping_methods,omitempty"`
 }
 
 // orderSnapshotItem is the JSON schema of an order line.
@@ -928,6 +948,7 @@ func (p *checkoutPlan) orderSnapshotJSON(idempotencyKey string) (json.RawMessage
 		// without the address it was placed with.
 		ShippingAddress: p.ShippingAddress,
 		BillingAddress:  p.BillingAddress,
+		ShippingMethods: p.ShippingMethods,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, CodeSnapshotInvalid,

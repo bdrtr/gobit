@@ -48,8 +48,6 @@ func (w *Workflows) OpenForOrder(
 	switch {
 	case strings.TrimSpace(orderID) == "":
 		return OpenResult{}, errors.Invalid(CodeInvalidInput, "the order id is required")
-	case strings.TrimSpace(optionID) == "":
-		return OpenResult{}, errors.Invalid(CodeInvalidInput, "the shipping option id is required")
 	case strings.TrimSpace(idempotencyKey) == "":
 		return OpenResult{}, errors.Invalid(CodeInvalidInput,
 			"an idempotency key is required; without one a retried request opens a SECOND "+
@@ -60,6 +58,23 @@ func (w *Workflows) OpenForOrder(
 	if err != nil {
 		return OpenResult{}, errors.Wrap(err, errors.KindOf(err), CodeOrderUnreadable,
 			"order %s could not be read, so no shipment was opened for it", orderID)
+	}
+
+	// A parcel opened without an option goes on the service the order was
+	// sold, when it was sold exactly one (ADR 0198). The operator no longer
+	// has to know which that was; naming another is still theirs to do.
+	if strings.TrimSpace(optionID) == "" {
+		sold, err := w.orders.SoldShippingOptionOf(ctx, orderID)
+		if err != nil {
+			return OpenResult{}, errors.Wrap(err, errors.KindOf(err), CodeOrderUnreadable,
+				"the delivery order %s was sold could not be read", orderID)
+		}
+		if sold == "" {
+			return OpenResult{}, errors.Invalid(CodeInvalidInput,
+				"no shipping option was named, and order %s was not sold exactly one to default to",
+				orderID)
+		}
+		optionID = sold
 	}
 
 	// What is bound before the call is what tells an "already open" apart from

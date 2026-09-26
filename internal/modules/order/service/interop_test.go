@@ -105,7 +105,7 @@ func TestPlaceOrderJSONIgnoresUnknownFields(t *testing.T) {
 	wide := `{
       "region_id": "reg_TEST", "currency_code": "TRY",
       "revision": 7, "completed": true,
-      "shipping_methods": [{"id": "csm_1", "amount": 2500}],
+      "promotion_codes": ["SAVE10"],
       "subtotal": 1000, "tax_total": 0, "shipping_total": 0, "total": 1000,
       "items": [{"variant_id": "v1", "title": "T", "quantity": 1,
                  "unit_price": 1000, "subtotal": 1000, "total": 1000,

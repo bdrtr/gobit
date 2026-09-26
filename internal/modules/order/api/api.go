@@ -389,6 +389,18 @@ type orderDetailDTO struct {
 	orderDTO
 	Items   []lineItemDTO `json:"items"`
 	Summary summaryDTO    `json:"summary"`
+	// ShippingMethods are the deliveries the order was sold (ADR 0198); an
+	// empty array for an order placed before they were kept or shipping
+	// nothing. A service's name is not about the person, so both surfaces
+	// carry it.
+	ShippingMethods []shippingMethodDTO `json:"shipping_methods"`
+}
+
+// shippingMethodDTO is one delivery the order was sold.
+type shippingMethodDTO struct {
+	ShippingOptionID string `json:"shipping_option_id,omitempty"`
+	Name             string `json:"name"`
+	Amount           int64  `json:"amount"`
 }
 
 // adminOrderDetailDTO is the order as the operator reads it: the storefront's
@@ -597,9 +609,15 @@ func toOrderDTO(order models.Order) orderDTO {
 // external representation.
 func toOrderDetailDTO(detail models.OrderDetail) orderDetailDTO {
 	out := orderDetailDTO{
-		orderDTO: toOrderDTO(detail.Order),
-		Items:    make([]lineItemDTO, 0, len(detail.Items)),
-		Summary:  toSummaryDTO(detail.Summary, detail.Total, detail.CreditedTotal),
+		orderDTO:        toOrderDTO(detail.Order),
+		Items:           make([]lineItemDTO, 0, len(detail.Items)),
+		Summary:         toSummaryDTO(detail.Summary, detail.Total, detail.CreditedTotal),
+		ShippingMethods: make([]shippingMethodDTO, 0, len(detail.ShippingMethods)),
+	}
+	for _, method := range detail.ShippingMethods {
+		out.ShippingMethods = append(out.ShippingMethods, shippingMethodDTO{
+			ShippingOptionID: method.ShippingOptionID, Name: method.Name, Amount: method.Amount,
+		})
 	}
 	// The loop is walked by index: the line item struct is large and copying it
 	// by value would carry a few hundred bytes for nothing on every turn.

@@ -93,15 +93,23 @@ func (carrierSpyPlugin) Setup(_ context.Context, h *coreplugin.Host) error {
 func spyOption(t *testing.T) string {
 	t.Helper()
 
+	return spyOptionPriced(t, 0, true)
+}
+
+// spyOptionPriced creates a flat-rate option on the spy carrier; one that is
+// not admin-only is one a shopper can choose on the storefront.
+func spyOptionPriced(t *testing.T, amount int64, adminOnly bool) string {
+	t.Helper()
+
 	ctx := t.Context()
 	option, err := shippingSvc.CreateShippingOption(ctx, fulfillmentsvc.CreateOptionInput{
 		Name:              fmt.Sprintf("Spy carrier %d", fixtureCounter.Add(1)),
 		ProviderID:        carrierSpyID,
 		ShippingProfileID: newShippingProfile(ctx, t, "Spy"),
-		Amount:            0,
+		Amount:            amount,
 		CurrencyCode:      taxedCurrency,
 		RegionID:          taxedRegionID,
-		AdminOnly:         true,
+		AdminOnly:         adminOnly,
 	})
 	require.NoError(t, err)
 

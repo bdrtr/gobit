@@ -156,6 +156,11 @@ type interopItem struct {
 type interopShippingMethod struct {
 	ID     string `json:"id"`
 	Amount int64  `json:"amount"`
+	// ShippingOptionID and Name say which service the method is, so the order
+	// can keep the delivery it was sold (ADR 0198). The option is empty where
+	// the method named none.
+	ShippingOptionID string `json:"shipping_option_id,omitempty"`
+	Name             string `json:"name"`
 }
 
 // interopTotals is the JSON schema of the computed cart totals.
@@ -256,8 +261,10 @@ func (i *Interop) CartSnapshotJSON(ctx context.Context, cartID string) (json.Raw
 	}
 	for i := range detail.ShippingMethods {
 		snapshot.ShippingMethods = append(snapshot.ShippingMethods, interopShippingMethod{
-			ID:     detail.ShippingMethods[i].ID,
-			Amount: detail.ShippingMethods[i].Amount,
+			ID:               detail.ShippingMethods[i].ID,
+			Amount:           detail.ShippingMethods[i].Amount,
+			ShippingOptionID: detail.ShippingMethods[i].ShippingOptionID,
+			Name:             detail.ShippingMethods[i].Name,
 		})
 	}
 

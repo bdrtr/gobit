@@ -613,6 +613,9 @@ func filledOrderDetail() orderDetailDTO {
 		orderDTO: filledOrder(),
 		Items:    []lineItemDTO{{Metadata: map[string]any{"k": "v"}}},
 		Summary:  summaryDTO{},
+		ShippingMethods: []shippingMethodDTO{
+			{ShippingOptionID: "so_1", Name: "Standard", Amount: 2500},
+		},
 	}
 }
 

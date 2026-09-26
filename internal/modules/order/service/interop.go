@@ -115,8 +115,9 @@ func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
 //
 // The parsing DOES NOT USE DisallowUnknownFields. The reason is deliberate: the
 // consumer must be able to pass through a wider snapshot it holds (e.g. the
-// cart's revision, the shipping methods) as it is, and those fields are of no
-// use to the order. Strict parsing would make changing this module mandatory
+// cart's revision) as it is, and such fields are of no use to the order. The
+// shipping methods were one of them until ADR 0198 gave the order a reader for
+// them. Strict parsing would make changing this module mandatory
 // whenever a new field is added on the consumer side and would lock the two
 // packages to each other without a compile-time dependency. MISSING fields, on
 // the other hand, are not ignored: the absence of the required fields returns
@@ -141,6 +142,17 @@ type interopSnapshot struct {
 	// placed with is an order nobody can ship or invoice.
 	ShippingAddress *interopAddress `json:"shipping_address,omitempty"`
 	BillingAddress  *interopAddress `json:"billing_address,omitempty"`
+	// ShippingMethods are the deliveries the cart's checkout priced, written
+	// in the same transaction as the order (ADR 0198). Their amounts add up to
+	// shipping_total.
+	ShippingMethods []interopShippingMethod `json:"shipping_methods,omitempty"`
+}
+
+// interopShippingMethod is one delivery as it crosses the surface.
+type interopShippingMethod struct {
+	ShippingOptionID string `json:"shipping_option_id"`
+	Name             string `json:"name"`
+	Amount           int64  `json:"amount"`
 }
 
 // interopAddress is one address as it crosses the surface.
@@ -264,21 +276,22 @@ func (i *Interop) PlaceOrderJSON(ctx context.Context, snapshot json.RawMessage) 
 	}
 
 	order, err := i.svc.CreateOrder(ctx, CreateOrderInput{
-		RegionID:       incoming.RegionID,
-		CustomerID:     incoming.CustomerID,
-		Email:          incoming.Email,
-		CurrencyCode:   incoming.CurrencyCode,
-		CartID:         incoming.CartID,
-		IdempotencyKey: incoming.IdempotencyKey,
-		AddsToOrderID:  incoming.AddsToOrderID,
-		Subtotal:       incoming.Subtotal,
-		DiscountTotal:  incoming.DiscountTotal,
-		TaxTotal:       incoming.TaxTotal,
-		ShippingTotal:  incoming.ShippingTotal,
-		Total:          incoming.Total,
-		Items:          items,
-		Metadata:       incoming.Metadata,
-		Addresses:      incomingAddresses(incoming),
+		RegionID:        incoming.RegionID,
+		CustomerID:      incoming.CustomerID,
+		Email:           incoming.Email,
+		CurrencyCode:    incoming.CurrencyCode,
+		CartID:          incoming.CartID,
+		IdempotencyKey:  incoming.IdempotencyKey,
+		AddsToOrderID:   incoming.AddsToOrderID,
+		Subtotal:        incoming.Subtotal,
+		DiscountTotal:   incoming.DiscountTotal,
+		TaxTotal:        incoming.TaxTotal,
+		ShippingTotal:   incoming.ShippingTotal,
+		Total:           incoming.Total,
+		Items:           items,
+		Metadata:        incoming.Metadata,
+		Addresses:       incomingAddresses(incoming),
+		ShippingMethods: incomingShippingMethods(incoming.ShippingMethods),
 	})
 	if err != nil {
 		return "", err
@@ -870,6 +883,38 @@ func interopInvoiceAddressOf(address *models.OrderAddress) *interopInvoiceAddres
 		PostalCode:  address.PostalCode,
 		CountryCode: address.CountryCode,
 	}
+}
+
+// incomingShippingMethods turns the snapshot's deliveries into the input.
+func incomingShippingMethods(methods []interopShippingMethod) []CreateShippingMethodInput {
+	if len(methods) == 0 {
+		return nil
+	}
+
+	out := make([]CreateShippingMethodInput, 0, len(methods))
+	for _, method := range methods {
+		out = append(out, CreateShippingMethodInput(method))
+	}
+
+	return out
+}
+
+// SoldShippingOptionOf returns the shipping option the order was sold, when it
+// was sold exactly one; "" otherwise (ADR 0198).
+//
+// It is how a parcel opened without an option goes on the service the shopper
+// paid for. An order sold none has nothing to default to, and one sold two
+// leaves the choice to whoever opens the parcel.
+func (i *Interop) SoldShippingOptionOf(ctx context.Context, orderID string) (string, error) {
+	detail, err := i.svc.GetOrder(ctx, orderID)
+	if err != nil {
+		return "", err
+	}
+	if len(detail.ShippingMethods) != 1 {
+		return "", nil
+	}
+
+	return detail.ShippingMethods[0].ShippingOptionID, nil
 }
 
 // incomingAddresses turns the snapshot's two optional addresses into the list

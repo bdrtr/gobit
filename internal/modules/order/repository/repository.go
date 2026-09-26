@@ -624,6 +624,49 @@ func (r *Repository) CreateOrderAddress(
 	return toOrderAddress(row)
 }
 
+// CreateOrderShippingMethod writes one of the order's shipping methods; it
+// runs inside the order's transaction (ADR 0198).
+func (r *Repository) CreateOrderShippingMethod(
+	ctx context.Context, method models.OrderShippingMethod,
+) (models.OrderShippingMethod, error) {
+	row, err := r.queries(ctx).CreateOrderShippingMethod(ctx, orderdb.CreateOrderShippingMethodParams{
+		ID:               method.ID,
+		OrderID:          method.OrderID,
+		ShippingOptionID: nullString(method.ShippingOptionID),
+		Name:             method.Name,
+		Amount:           method.Amount,
+	})
+	if err != nil {
+		return models.OrderShippingMethod{}, classify(err, codeQueryFailed,
+			"could not write the order's shipping method")
+	}
+
+	return toOrderShippingMethod(row), nil
+}
+
+// OrderShippingMethodsByOrderIDs reads the shipping methods of several orders
+// in ONE query.
+func (r *Repository) OrderShippingMethodsByOrderIDs(
+	ctx context.Context, orderIDs []string,
+) (map[string][]models.OrderShippingMethod, error) {
+	if len(orderIDs) == 0 {
+		return map[string][]models.OrderShippingMethod{}, nil
+	}
+
+	rows, err := r.queries(ctx).ListOrderShippingMethods(ctx, orderIDs)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "could not read the order shipping methods")
+	}
+
+	out := make(map[string][]models.OrderShippingMethod, len(orderIDs))
+	for i := range rows {
+		method := toOrderShippingMethod(rows[i])
+		out[method.OrderID] = append(out[method.OrderID], method)
+	}
+
+	return out, nil
+}
+
 // SupersedeOrderAddress closes the order's current address of the type and
 // reports how many rows it closed: one, or none when the order had none.
 func (r *Repository) SupersedeOrderAddress(
