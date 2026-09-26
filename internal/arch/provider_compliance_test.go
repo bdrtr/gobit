@@ -200,3 +200,88 @@ func packageRunsTheSuite(t *testing.T, pkg string) bool {
 
 	return false
 }
+
+// contractSuites maps an input type a contract's method takes to the suite
+// that checks that contract (ADR 0202).
+//
+// It is keyed by the INPUT rather than by an interface name, because an input
+// type belongs to one contract and a method taking it is how a package declares
+// that it implements the contract, whatever it calls its types.
+var contractSuites = map[string]string{
+	"CreateFulfillmentInput": "Fulfillment",
+	"ClassifyInput":          "Classifier",
+}
+
+// TestAProviderRunsItsContractsSuite holds a provider to the suite of its own
+// contract, not only to the identity check every provider passes.
+//
+// [TestEveryProviderRunsTheComplianceSuite] is satisfied by any call into the
+// kit, and providertest.Identity is one. A shipping provider running only that
+// would pass it while the kit's shipment rules — the destination kept out of
+// the returned data, the repeated create, the repeated cancel — went unrun, which
+// is the state the box provider was in until ADR 0202.
+func TestAProviderRunsItsContractsSuite(t *testing.T) {
+	t.Parallel()
+
+	matched := map[string]int{}
+	for _, found := range providerImplementations(t) {
+		for input, suite := range contractSuites {
+			if !packageTakes(t, found.pkg, input) {
+				continue
+			}
+			matched[input]++
+			assert.True(t, packageCalls(t, found.pkg, "providertest."+suite+"("),
+				"%s implements the contract whose methods take %s, and its tests never call "+
+					"providertest.%s.\nThe identity check alone leaves that contract's rules "+
+					"unrun on the provider the tree ships.", found.pkg, input, suite)
+		}
+	}
+
+	for input := range contractSuites {
+		assert.Positive(t, matched[input],
+			"no provider package takes %s; the reader has gone blind, or the contract "+
+				"lost its last in-tree provider and this entry is stale", input)
+	}
+}
+
+// packageTakes reports whether a production method of the package takes the
+// named input type, however the provider package is imported.
+func packageTakes(t *testing.T, pkg, input string) bool {
+	t.Helper()
+
+	for _, file := range parseDir(t, token.NewFileSet(), filepath.Join(repoRoot, pkg), false) {
+		for _, decl := range file.tree.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv == nil {
+				continue
+			}
+			for _, param := range fn.Type.Params.List {
+				if selector, ok := param.Type.(*ast.SelectorExpr); ok && selector.Sel.Name == input {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// packageCalls reports whether the package's tests contain the call.
+func packageCalls(t *testing.T, pkg, call string) bool {
+	t.Helper()
+
+	entries, err := os.ReadDir(filepath.Join(repoRoot, pkg))
+	require.NoError(t, err, "%s could not be read", pkg)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		body, readErr := os.ReadFile(filepath.Join(repoRoot, pkg, entry.Name()))
+		require.NoError(t, readErr)
+		if strings.Contains(string(body), call) {
+			return true
+		}
+	}
+
+	return false
+}

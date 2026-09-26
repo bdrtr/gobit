@@ -188,6 +188,26 @@ Meilisearch/OpenSearch later changes nothing anywhere else.
 
 ---
 
+### A shipping carrier
+
+A carrier plugin implements `provider.FulfillmentProvider`. It is handed the
+order's shipping address in `CreateFulfillmentInput.Destination` for the label
+([ADR 0194](adr/0194-a-carrier-is-told-where-a-parcel-goes.md)), and must not
+return it in `Fulfillment.Data`: the parcel stores that data and is not erased
+with the person. Check it with `core/providertest`, against a stub of the
+carrier's API or its sandbox, since the rules are read off a shipment it opens
+([ADR 0202](adr/0202-the-kit-checks-a-shipping-provider.md)):
+
+```go
+func TestCompliance(t *testing.T) {
+	providertest.Fulfillment(t, newCarrier(stub.URL),
+		provider.CreateFulfillmentInput{Reference: "ful_1", OptionID: "so_1"})
+}
+```
+
+It reports the destination found in the returned data, a second shipment for a
+repeated idempotency key, and a second cancel that fails.
+
 ## File upload
 
 `POST /admin/v1/uploads` (multipart) takes an image and returns an address that

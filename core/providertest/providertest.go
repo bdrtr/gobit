@@ -22,6 +22,11 @@
 // service correctly — nothing here can, and a suite that pretended to would be
 // worse than none, because a green run would read as "the integration works".
 //
+// The shipment rules are the one exception, and [Fulfillment] says so: what a
+// provider returns when it opens a shipment can be read only by opening one, so
+// that suite needs the provider to reach a stub of its service or a sandbox.
+// It still checks what the provider hands back, not what it sent.
+//
 // # Why it takes an interface rather than *testing.T
 //
 // This package is part of the published surface (ADR 0026), and a published

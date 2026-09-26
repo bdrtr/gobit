@@ -515,6 +515,7 @@ core/provider ShippingQuote
 core/provider TrackingUpdate
 core/provider UploadInput
 core/providertest Classifier
+core/providertest Fulfillment
 core/providertest Identity
 core/providertest T
 core/providertest T.Errorf

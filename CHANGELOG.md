@@ -77,6 +77,15 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **The conformance kit checks a shipping provider** (ADR 0202). **For
+  embedders:** `core/providertest.Fulfillment(t, p, in)` opens a shipment
+  through the provider with a destination made of markers, repeats it and
+  cancels it twice, and reports a provider that returns the destination in its
+  data, opens a second shipment for a repeated idempotency key, or fails a
+  second cancel. It needs the provider to reach a stub of its carrier or a
+  sandbox. **For contributors:** an in-tree provider has to run the suite of
+  its own contract, not the identity check alone.
+
 - **A dearer delivery is paid before it changes** (ADR 0200). **For API
   consumers:** `PUT /admin/v1/orders/{id}/shipping-methods/{shippingMethodId}`
   takes `payment_collection_id`: a collection opened with the order's id as its
