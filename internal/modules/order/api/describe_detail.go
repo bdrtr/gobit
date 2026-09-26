@@ -52,9 +52,13 @@ func describeOrderDetail(d *openapi.Doc) {
 			"really recorded, not the whole story.\n\n" +
 			"A line also carries \"price_origin\": the price row it was charged and, for a " +
 			"list price, the list and its type (\"sale\" or \"override\"). It is ABSENT " +
-			"when unknown — every line sold before the order kept it (ADR 0168).",
+			"when unknown — every line sold before the order kept it (ADR 0168).\n\n" +
+			"The record carries \"shipping_address\" and \"billing_address\", the two " +
+			"addresses the cart carried into the order, each ABSENT when the order " +
+			"recorded none. After an erasure they hold what the erasure keeps: the country " +
+			"and the free metadata (ADR 0193).",
 		Responses: map[string]any{
-			"200": openapi.Response("The order with its lines", d.Item(orderDetailDTO{})),
+			"200": openapi.Response("The order with its lines", d.Item(adminOrderDetailDTO{})),
 		},
 	})
 
@@ -62,11 +66,12 @@ func describeOrderDetail(d *openapi.Doc) {
 		Summary: "Reads one order from the storefront.",
 		Description: detailNote +
 			"\n\n" +
-			"It is the SAME record the admin surface returns. The storefront reaches it " +
-			"with the publishable key, which identifies the shop rather than the shopper, " +
-			"so the order id in the path is the only thing naming whose order this is — " +
-			"treat it as a capability and keep it out of anywhere it can be guessed or " +
-			"shared.",
+			"It is the record the admin surface returns WITHOUT the two addresses. The " +
+			"storefront reaches it with the publishable key, which identifies the shop " +
+			"rather than the shopper, so the order id in the path is the only thing naming " +
+			"whose order this is — treat it as a capability and keep it out of anywhere it " +
+			"can be guessed or shared. That is also why the addresses are not in it " +
+			"(ADR 0193).",
 		Responses: map[string]any{
 			"200": openapi.Response("The order with its lines", d.Item(orderDetailDTO{})),
 		},
@@ -87,7 +92,7 @@ func describeOrderDetail(d *openapi.Doc) {
 			"reads it later. " + detailNote,
 		RequestBody: d.RequestBody(cancelOrderRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("The order, now canceled", d.Item(orderDetailDTO{})),
+			"200": openapi.Response("The order, now canceled", d.Item(adminOrderDetailDTO{})),
 		},
 	})
 
@@ -98,7 +103,7 @@ func describeOrderDetail(d *openapi.Doc) {
 			"invite somebody to pass the completion moment or the amounts from the client. " +
 			detailNote,
 		Responses: map[string]any{
-			"200": openapi.Response("The order, now complete", d.Item(orderDetailDTO{})),
+			"200": openapi.Response("The order, now complete", d.Item(adminOrderDetailDTO{})),
 		},
 	})
 
@@ -110,7 +115,7 @@ func describeOrderDetail(d *openapi.Doc) {
 			"would hide work that is not done. It takes no body for the same reason " +
 			"completion does not. " + detailNote,
 		Responses: map[string]any{
-			"200": openapi.Response("The order, now archived", d.Item(orderDetailDTO{})),
+			"200": openapi.Response("The order, now archived", d.Item(adminOrderDetailDTO{})),
 		},
 	})
 }

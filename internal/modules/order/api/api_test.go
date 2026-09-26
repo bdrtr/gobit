@@ -1875,3 +1875,52 @@ func TestAnOpenExchangePublishesNeitherMoment(t *testing.T) {
 	assert.NotContains(t, data, "completed_at")
 	assert.NotContains(t, data, "canceled_at")
 }
+
+// TestTheOperatorReadsWhereTheOrderWent holds the two addresses on the admin
+// record, and off the storefront's (ADR 0193).
+//
+// The storefront reads an order by an id anyone holding it can send, with a
+// key that names the shop; the operator reads it under order:read. The same
+// detail feeds both, so the test reads both.
+func TestTheOperatorReadsWhereTheOrderWent(t *testing.T) {
+	detail := sampleDetail()
+	detail.ShippingAddress = &models.OrderAddress{
+		Type: models.AddressShipping, FirstName: "Ada", LastName: "Lovelace",
+		Address1: "12 Main St", City: "Springfield", PostalCode: "62701", CountryCode: "US",
+		Metadata: map[string]any{"gate_code": "4411"},
+	}
+	detail.BillingAddress = &models.OrderAddress{
+		Type: models.AddressBilling, Company: "Analytical Engines Ltd", CountryCode: "US",
+	}
+
+	rec := doRequest(t, newRouter(&fakeOrders{detail: detail}), http.MethodGet, "/admin/v1/orders/order_1", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
+	require.True(t, ok)
+
+	shipping, ok := data["shipping_address"].(map[string]any)
+	require.True(t, ok, "the admin record carries where the order went; body: %s", rec.Body.String())
+	assert.Equal(t, "Ada", shipping["first_name"])
+	assert.Equal(t, "12 Main St", shipping["address_1"])
+	assert.Equal(t, "62701", shipping["postal_code"])
+	assert.Equal(t, "US", shipping["country_code"])
+	assert.Equal(t, map[string]any{"gate_code": "4411"}, shipping["metadata"])
+	billing, ok := data["billing_address"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "Analytical Engines Ltd", billing["company"])
+
+	for _, path := range []string{"/admin/v1/orders/order_1/complete", "/admin/v1/orders/order_1/archive"} {
+		rec = doRequest(t, newRouter(&fakeOrders{detail: detail}), http.MethodPost, path, "")
+		require.Equal(t, http.StatusOK, rec.Code, path)
+		data, ok = decodeResponse(t, rec)["data"].(map[string]any)
+		require.True(t, ok)
+		assert.Contains(t, data, "shipping_address", "%s answers with the same admin record", path)
+	}
+
+	rec = doRequest(t, newRouter(&fakeOrders{detail: detail}), http.MethodGet, "/store/v1/orders/order_1", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	data, ok = decodeResponse(t, rec)["data"].(map[string]any)
+	require.True(t, ok)
+	assert.NotContains(t, data, "shipping_address", "the storefront read carries no address")
+	assert.NotContains(t, data, "billing_address")
+}

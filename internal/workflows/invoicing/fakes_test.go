@@ -30,6 +30,10 @@ type fakeOrder struct {
 	ShippingTotal int64      `json:"shipping_total"`
 	Total         int64      `json:"total"`
 	Items         []fakeItem `json:"items"`
+	// BillingAddress is keyed by the PRODUCER's field names, written out as
+	// strings: a map is what lets a misspelled tag on the flow's side read as
+	// an absent field instead of agreeing with it (ADR 0193).
+	BillingAddress map[string]any `json:"billing_address,omitempty"`
 }
 
 // fakeItem is one line of that order.

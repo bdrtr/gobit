@@ -637,10 +637,16 @@ type interopInvoiceItem struct {
 // restated — every field here is printed on the document, and a document
 // missing a line or a rate is not a narrower document, it is a wrong one.
 //
-// What it still leaves out is as deliberate: no customer id, no addresses, no
-// payment state. The buyer's legal identity on an invoice — the VKN or TCKN and
-// the tax office — is not in this repository's customer model at all, so the
-// caller supplies the two parties and this surface supplies what was sold.
+// What it still leaves out is as deliberate: no customer id, no shipping
+// address, no payment state. The buyer's legal identity on an invoice — the VKN
+// or TCKN and the tax office — is not in this repository's customer model at
+// all, so the caller supplies it and this surface supplies what was sold.
+//
+// The BILLING address is in it (ADR 0193). This surface was written the
+// morning before the order kept an address at all (B11), and "no addresses"
+// was true then; the address arrived that afternoon naming the invoice as one
+// of its readers, and this surface was not told (D140). The shipping address
+// stays out: it may name a gift's recipient, who is not the buyer.
 type interopInvoiceOrder struct {
 	// OrderID and DisplayID identify the sale on the document.
 	OrderID   string `json:"order_id"`
@@ -661,6 +667,26 @@ type interopInvoiceOrder struct {
 	Total         int64 `json:"total"`
 	// Items are the lines, in the order they were written.
 	Items []interopInvoiceItem `json:"items"`
+	// BillingAddress is whom the order was billed to; absent when the order
+	// recorded none. After an erasure it holds only the country, the one field
+	// of it the erasure keeps.
+	BillingAddress *interopInvoiceAddress `json:"billing_address,omitempty"`
+}
+
+// interopInvoiceAddress is the billing address as the invoice surface carries
+// it, field by field: how an address is printed is the document's decision.
+type interopInvoiceAddress struct {
+	FirstName string `json:"first_name,omitempty"`
+	LastName  string `json:"last_name,omitempty"`
+	Company   string `json:"company,omitempty"`
+	Address1  string `json:"address_1,omitempty"`
+	Address2  string `json:"address_2,omitempty"`
+	City      string `json:"city,omitempty"`
+	// Province is the unit under the country, an il in Turkey, not the
+	// district (ADR 0067).
+	Province    string `json:"province,omitempty"`
+	PostalCode  string `json:"postal_code,omitempty"`
+	CountryCode string `json:"country_code,omitempty"`
 }
 
 // OrderInvoiceJSON returns everything a document has to print about the order.
@@ -696,18 +722,38 @@ func (i *Interop) OrderInvoiceJSON(ctx context.Context, orderID string) (json.Ra
 	}
 
 	return json.Marshal(interopInvoiceOrder{
-		OrderID:       detail.ID,
-		DisplayID:     detail.DisplayID,
-		CurrencyCode:  detail.CurrencyCode,
-		Email:         detail.Email,
-		Status:        detail.Status.String(),
-		Subtotal:      detail.Subtotal,
-		DiscountTotal: detail.DiscountTotal,
-		TaxTotal:      detail.TaxTotal,
-		ShippingTotal: detail.ShippingTotal,
-		Total:         detail.Total,
-		Items:         items,
+		OrderID:        detail.ID,
+		DisplayID:      detail.DisplayID,
+		CurrencyCode:   detail.CurrencyCode,
+		Email:          detail.Email,
+		Status:         detail.Status.String(),
+		Subtotal:       detail.Subtotal,
+		DiscountTotal:  detail.DiscountTotal,
+		TaxTotal:       detail.TaxTotal,
+		ShippingTotal:  detail.ShippingTotal,
+		Total:          detail.Total,
+		Items:          items,
+		BillingAddress: interopInvoiceAddressOf(detail.BillingAddress),
 	})
+}
+
+// interopInvoiceAddressOf converts the billing address; nil when there is none.
+func interopInvoiceAddressOf(address *models.OrderAddress) *interopInvoiceAddress {
+	if address == nil {
+		return nil
+	}
+
+	return &interopInvoiceAddress{
+		FirstName:   address.FirstName,
+		LastName:    address.LastName,
+		Company:     address.Company,
+		Address1:    address.Address1,
+		Address2:    address.Address2,
+		City:        address.City,
+		Province:    address.Province,
+		PostalCode:  address.PostalCode,
+		CountryCode: address.CountryCode,
+	}
 }
 
 // incomingAddresses turns the snapshot's two optional addresses into the list

@@ -572,7 +572,7 @@ func describedEndpoints() []endpointExpectation {
 		// namespace instead of renaming either type.
 		{
 			method: http.MethodGet, path: "/admin/v1/orders/{id}", status: "200",
-			response: filledOrderDetail(),
+			response: filledAdminOrderDetail(),
 		},
 		{
 			method: http.MethodGet, path: "/store/v1/orders/{id}", status: "200",
@@ -580,15 +580,15 @@ func describedEndpoints() []endpointExpectation {
 		},
 		{
 			method: http.MethodPost, path: "/admin/v1/orders/{id}/cancel", status: "200",
-			request: cancelOrderRequest{}, response: filledOrderDetail(),
+			request: cancelOrderRequest{}, response: filledAdminOrderDetail(),
 		},
 		{
 			method: http.MethodPost, path: "/admin/v1/orders/{id}/complete", status: "200",
-			response: filledOrderDetail(),
+			response: filledAdminOrderDetail(),
 		},
 		{
 			method: http.MethodPost, path: "/admin/v1/orders/{id}/archive", status: "200",
-			response: filledOrderDetail(),
+			response: filledAdminOrderDetail(),
 		},
 	}
 }
@@ -604,6 +604,22 @@ func filledOrderDetail() orderDetailDTO {
 		orderDTO: filledOrder(),
 		Items:    []lineItemDTO{{Metadata: map[string]any{"k": "v"}}},
 		Summary:  summaryDTO{},
+	}
+}
+
+// filledAdminOrderDetail is [filledOrderDetail] with both addresses, every
+// field written.
+func filledAdminOrderDetail() adminOrderDetailDTO {
+	address := &orderAddressDTO{
+		FirstName: "A", LastName: "B", Company: "C", Address1: "1", Address2: "2",
+		City: "Springfield", Province: "IL", PostalCode: "62701", CountryCode: "US",
+		Phone: "+90", Metadata: map[string]any{"k": "v"},
+	}
+
+	return adminOrderDetailDTO{
+		orderDetailDTO:  filledOrderDetail(),
+		ShippingAddress: address,
+		BillingAddress:  address,
 	}
 }
 

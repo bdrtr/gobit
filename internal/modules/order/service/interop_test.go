@@ -330,3 +330,43 @@ func TestOrderContactJSONRejectsAnEmptyID(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
+
+// TestTheInvoiceSurfaceCarriesTheBillingAddress holds the address the invoice
+// surface now sends, by its wire names, and the one it still does not
+// (ADR 0193, D140).
+func TestTheInvoiceSurfaceCarriesTheBillingAddress(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+
+	in := validInput()
+	in.Addresses = []models.OrderAddress{
+		{Type: models.AddressShipping, FirstName: "Gift", LastName: "Recipient", City: "Elsewhere", CountryCode: "US"},
+		{Type: models.AddressBilling, FirstName: "Ada", LastName: "Lovelace", Company: "Engines Ltd",
+			Address1: "12 Main St", City: "Springfield", Province: "IL", PostalCode: "62701", CountryCode: "US"},
+	}
+	order, err := e.svc.CreateOrder(ctx, in)
+	require.NoError(t, err)
+
+	raw, err := service.NewInterop(e.svc).OrderInvoiceJSON(ctx, order.ID)
+	require.NoError(t, err)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(raw, &body))
+	billing, ok := body["billing_address"].(map[string]any)
+	require.True(t, ok, "the invoice surface carries whom the order was billed to: %s", raw)
+	assert.Equal(t, map[string]any{
+		"first_name": "Ada", "last_name": "Lovelace", "company": "Engines Ltd",
+		"address_1": "12 Main St", "city": "Springfield", "province": "IL",
+		"postal_code": "62701", "country_code": "US",
+	}, billing)
+	assert.NotContains(t, body, "shipping_address",
+		"the shipping address may name a gift's recipient, who is not the buyer")
+
+	plain, err := e.svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+	raw, err = service.NewInterop(e.svc).OrderInvoiceJSON(ctx, plain.ID)
+	require.NoError(t, err)
+	body = map[string]any{}
+	require.NoError(t, json.Unmarshal(raw, &body))
+	assert.NotContains(t, body, "billing_address", "an order billed to nobody sends no address")
+}

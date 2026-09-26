@@ -389,6 +389,39 @@ type orderDetailDTO struct {
 	Summary summaryDTO    `json:"summary"`
 }
 
+// adminOrderDetailDTO is the order as the operator reads it: the storefront's
+// record and where it went and whom it was billed to (ADR 0193).
+//
+// The addresses are the admin surface's alone. The storefront reads an order
+// by its id with a key that names the shop rather than the shopper (ADR 0008),
+// and a home address is more than that read should hand anyone holding the id.
+type adminOrderDetailDTO struct {
+	orderDetailDTO
+	// ShippingAddress and BillingAddress are absent when the order recorded
+	// none, as a download has neither. After an erasure they hold what the
+	// erasure kept: the country and the free metadata.
+	ShippingAddress *orderAddressDTO `json:"shipping_address,omitempty"`
+	BillingAddress  *orderAddressDTO `json:"billing_address,omitempty"`
+}
+
+// orderAddressDTO is one address the order was placed with, as the cart
+// carried it into the order.
+type orderAddressDTO struct {
+	FirstName string `json:"first_name,omitempty"`
+	LastName  string `json:"last_name,omitempty"`
+	Company   string `json:"company,omitempty"`
+	Address1  string `json:"address_1,omitempty"`
+	Address2  string `json:"address_2,omitempty"`
+	City      string `json:"city,omitempty"`
+	// Province is the unit under the country, an il in Turkey. The district a
+	// domestic carrier prices on has no field of its own (ADR 0067).
+	Province    string         `json:"province,omitempty"`
+	PostalCode  string         `json:"postal_code,omitempty"`
+	CountryCode string         `json:"country_code,omitempty"`
+	Phone       string         `json:"phone,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+}
+
 // lineItemDTO is the external representation of an order line item.
 type lineItemDTO struct {
 	ID            string `json:"id"`
@@ -572,6 +605,36 @@ func toOrderDetailDTO(detail models.OrderDetail) orderDetailDTO {
 		out.Items = append(out.Items, toLineItemDTO(detail.Items[i]))
 	}
 	return out
+}
+
+// toAdminOrderDetailDTO is [toOrderDetailDTO] with the order's addresses.
+func toAdminOrderDetailDTO(detail models.OrderDetail) adminOrderDetailDTO {
+	return adminOrderDetailDTO{
+		orderDetailDTO:  toOrderDetailDTO(detail),
+		ShippingAddress: toOrderAddressDTO(detail.ShippingAddress),
+		BillingAddress:  toOrderAddressDTO(detail.BillingAddress),
+	}
+}
+
+// toOrderAddressDTO converts one address; nil when the order recorded none.
+func toOrderAddressDTO(address *models.OrderAddress) *orderAddressDTO {
+	if address == nil {
+		return nil
+	}
+
+	return &orderAddressDTO{
+		FirstName:   address.FirstName,
+		LastName:    address.LastName,
+		Company:     address.Company,
+		Address1:    address.Address1,
+		Address2:    address.Address2,
+		City:        address.City,
+		Province:    address.Province,
+		PostalCode:  address.PostalCode,
+		CountryCode: address.CountryCode,
+		Phone:       address.Phone,
+		Metadata:    address.Metadata,
+	}
 }
 
 // toLineItemDTO converts the model to the external representation.

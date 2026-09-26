@@ -205,7 +205,8 @@ func TestAnOrderCanBeInvoicedOverHTTP(t *testing.T) {
 	assert.Equal(t, email, invoice.Data.Buyer.Email,
 		"the buyer's e-mail is the one field the ORDER knows, and it has to be filled in")
 	assert.Equal(t, "E2E Customer", invoice.Data.Buyer.Name,
-		"everything else about the buyer comes from the caller")
+		"a name the caller sends is printed as sent; the order's billing address fills only "+
+			"what the body leaves empty (ADR 0193)")
 
 	assert.Equal(t, happySubtotal, invoice.Data.Subtotal)
 	assert.Equal(t, happyTax, invoice.Data.TaxTotal)

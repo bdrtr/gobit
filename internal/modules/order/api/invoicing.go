@@ -63,7 +63,8 @@ type invoicingParty struct {
 type invoicingIssueRequest struct {
 	// SeriesPrefix is the letters of the series to take the number from.
 	SeriesPrefix string `json:"series_prefix"`
-	// Buyer is the customer; an empty e-mail is filled in from the order.
+	// Buyer is the customer; an empty e-mail is filled in from the order, and an
+	// empty name, address or country from its billing address (ADR 0193).
 	Buyer invoicingParty `json:"buyer"`
 	// Metadata is free structured context for the document.
 	Metadata map[string]any `json:"metadata"`

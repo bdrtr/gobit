@@ -70,7 +70,7 @@ func (h *Handler) adminGetOrder(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
-	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toOrderDetailDTO(detail)})
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toAdminOrderDetailDTO(detail)})
 }
 
 // orderPaymentDTO is the live payment view of an order.
@@ -206,7 +206,7 @@ func (h *Handler) writeCurrentOrder(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
-	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toOrderDetailDTO(detail)})
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toAdminOrderDetailDTO(detail)})
 }
 
 // timelineEntryDTO is one thing that happened to an order.

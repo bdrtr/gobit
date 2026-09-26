@@ -53,12 +53,14 @@ type Party struct {
 
 // IssueInput is the request to invoice an order.
 //
-// The BUYER comes from the caller, the SELLER from the shop's own record and the
-// lines from the order, and the split is not arbitrary. The buyer's details —
-// the VKN or TCKN and the tax office — are not in this repository's customer
-// model at all: a shop collects them at checkout as its own fields, and a
-// framework that guessed them would produce a document that is wrong in the one
-// way a document must not be.
+// The BUYER comes from the caller and the order, the SELLER from the shop's own
+// record and the lines from the order, and the split is not arbitrary. The
+// buyer's legal identity — the VKN or TCKN and the tax office — is not in this
+// repository's customer model at all: a shop collects it at checkout as its own
+// fields, and a framework that guessed it would produce a document that is wrong
+// in the one way a document must not be. The name, the address and the country
+// the order WAS billed to are the order's, and fill what the caller leaves
+// empty (ADR 0193).
 //
 // The seller used to come from the caller too, and its own note said why: "the
 // shop's own configuration, which lives in no module here". It lives in one now
@@ -71,8 +73,10 @@ type IssueInput struct {
 	SeriesPrefix string
 	// Buyer is the customer, as they are to be printed.
 	//
-	// An empty Email is filled in from the order; everything else is taken as
-	// given, because the order does not know it.
+	// An empty Email is filled in from the order, and an empty Name, Address or
+	// CountryCode from the order's billing address, each on its own
+	// ([buyerOf]). The tax number and office are taken as given, because the
+	// order does not know them.
 	Buyer Party
 	// Metadata is free structured context for the document.
 	Metadata map[string]any
@@ -187,10 +191,7 @@ func (w *Workflows) IssueForOrder(ctx context.Context, in IssueInput) (IssueResu
 		return IssueResult{}, err
 	}
 
-	buyer := in.Buyer
-	if buyer.Email == "" {
-		buyer.Email = order.Email
-	}
+	buyer := buyerOf(in.Buyer, order)
 
 	body, err := json.Marshal(document{
 		SeriesPrefix: in.SeriesPrefix,
@@ -320,6 +321,84 @@ type invoiceOrder struct {
 	ShippingTotal int64              `json:"shipping_total"`
 	Total         int64              `json:"total"`
 	Items         []invoiceOrderItem `json:"items"`
+	// BillingAddress is whom the order was billed to; nil when it recorded
+	// none (ADR 0193).
+	BillingAddress *invoiceAddress `json:"billing_address"`
+}
+
+// invoiceAddress is the order's billing address as the order surface sends it.
+type invoiceAddress struct {
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Company   string `json:"company"`
+	Address1  string `json:"address_1"`
+	Address2  string `json:"address_2"`
+	City      string `json:"city"`
+	// Province is the unit under the country, an il in Turkey, not the
+	// district (ADR 0067).
+	Province    string `json:"province"`
+	PostalCode  string `json:"postal_code"`
+	CountryCode string `json:"country_code"`
+}
+
+// buyerOf fills what the caller left empty from the order (ADR 0193).
+//
+// Each field is filled on its own, the way the e-mail always was: a caller who
+// knows the buyer's legal name and sends only that still gets the order's
+// address, and one who sends an address keeps it. A caller that sends a field
+// is never overruled.
+//
+// The name is the billing address's company when it has one, because a
+// document billed to a company is issued to the company; otherwise it is the
+// person's first and last name. The address is printed in lines: the two
+// street lines, then the postal code, city and province on one. Only the
+// BILLING address is read. The shipping address may name a gift's recipient,
+// who did not buy anything, so an order with no billing address leaves the
+// three fields as the caller sent them.
+func buyerOf(given Party, order invoiceOrder) Party {
+	buyer := given
+	if strings.TrimSpace(buyer.Email) == "" {
+		buyer.Email = order.Email
+	}
+
+	billing := order.BillingAddress
+	if billing == nil {
+		return buyer
+	}
+
+	if strings.TrimSpace(buyer.Name) == "" {
+		buyer.Name = strings.TrimSpace(billing.Company)
+		if buyer.Name == "" {
+			buyer.Name = strings.TrimSpace(billing.FirstName + " " + billing.LastName)
+		}
+	}
+	if strings.TrimSpace(buyer.Address) == "" {
+		buyer.Address = printedAddress(*billing)
+	}
+	if strings.TrimSpace(buyer.CountryCode) == "" {
+		buyer.CountryCode = billing.CountryCode
+	}
+
+	return buyer
+}
+
+// printedAddress lays an address out in lines, leaving out what is empty.
+func printedAddress(address invoiceAddress) string {
+	locality := strings.Join(nonEmpty(address.PostalCode, address.City, address.Province), " ")
+
+	return strings.Join(nonEmpty(address.Address1, address.Address2, locality), "\n")
+}
+
+// nonEmpty returns the values that are not blank, trimmed, in order.
+func nonEmpty(values ...string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+
+	return out
 }
 
 // invoiceOrderItem is one line of that order.

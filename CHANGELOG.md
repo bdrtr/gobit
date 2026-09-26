@@ -12,6 +12,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An order's addresses were kept and read by nothing** (D140). Since B11 the
+  order stores the shipping and billing addresses its cart carried, so that it
+  could say where it went and an invoice could print a buyer; no API field
+  returned them and the invoicing flow never read them. Closed for both by
+  ADR 0193; a carrier's label still gets no destination.
+
 - **Two analytics tests raced the event bus** (D139). They read the funnel
   as soon as a cart was completed, while the plugin's row was still being
   written on another goroutine, and failed on CI once. They now wait for their
@@ -52,6 +58,16 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **An order says where it went** (ADR 0193). **For API consumers:**
+  `GET /admin/v1/orders/{id}`, and the cancel, complete and archive answers,
+  carry `shipping_address` and `billing_address`; the storefront's
+  `GET /store/v1/orders/{id}` does not. `POST /admin/v1/orders/{id}/invoice`
+  fills an empty buyer `name`, `address` and `country_code` from the order's
+  billing address, each on its own: the company's name when the address names
+  one, the person's otherwise, and the address in lines. A field the body sends
+  is kept, and an order with no billing address fills none of them. **For
+  embedders:** the order interop's `OrderInvoiceJSON` carries `billing_address`.
 
 - **An order can add to another** (ADR 0192). **For API consumers:**
   `POST /store/v1/carts` and `POST /admin/v1/carts` take `adds_to_order_id`;

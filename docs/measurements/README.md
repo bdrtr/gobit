@@ -123,3 +123,4 @@ truth: a report says what was true on the day it was taken.
 | [One person's bookmarks — measured 2026-09-26](0190-one-persons-bookmarks.md) | 70 |
 | [A list shown in one read — measured 2026-09-26](0191-a-list-shown-in-one-read.md) | 59 |
 | [Goods bought afterwards — measured 2026-09-26](0192-goods-bought-afterwards.md) | 108 |
+| [An address nobody read — measured 2026-09-26](0193-an-address-nobody-read.md) | 83 |
